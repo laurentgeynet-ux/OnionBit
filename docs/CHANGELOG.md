@@ -3,6 +3,22 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Étape 8 — `tribler-daemon` : executable bout en bout (2026-09-28)
+
+- Assemblage complet : `CoreSession` (moteur BitTorrent + SQLite +
+  notifier) derriere `tribler-api`, servi par axum avec
+  `with_graceful_shutdown` (Ctrl-C -> `session.stop()` -> arret
+  propre).
+- CLI clap : `--listen` (defaut `127.0.0.1:8085` = `DEFAULT_API` de
+  tribler-cli), `--state-dir`, `--offline`. **Garde-fou** : refuse
+  toute adresse d'ecoute non-loopback (l'API de controle n'est jamais
+  exposee sur le reseau).
+- Logging `tracing` fmt + `EnvFilter` (`RUST_LOG`, defaut info) —
+  cf. regles de niveaux AGENTS.md (infos de cycle de vie seulement).
+- 1 test e2e : binaire reel en `--offline`, poll de `/api/downloads`
+  sur loopback, kill propre. Le test manuel "telechargement torrent
+  reel" reste a l'etape 16 (necessite du reseau).
+
 ## Étape 7 — `tribler-cli` : CLI de pilotage (2026-09-28)
 
 - Sous-commandes clap : `status`, `list`, `add` (`--paused`),

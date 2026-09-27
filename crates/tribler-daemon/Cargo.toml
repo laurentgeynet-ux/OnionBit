@@ -11,5 +11,17 @@ name = "tribler-daemon"
 path = "src/main.rs"
 
 [dependencies]
+tribler-api = { path = "../tribler-api" }
+tribler-core = { path = "../tribler-core" }
+tribler-bittorrent = { path = "../tribler-bittorrent" }
+clap.workspace = true
+axum.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+tracing-appender.workspace = true
 
 [dev-dependencies]
+reqwest.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true

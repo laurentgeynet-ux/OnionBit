@@ -74,10 +74,15 @@ Légende : `[ ]` à faire · `[~]` en cours · `[x]` terminée.
   `DEFAULT_API`). Erreurs `{error:{handled,message}}` affichées sur
   stderr. 1 test e2e : binaire réel contre serveur API loopback
   (`status`/`list`/`add`/`pause`/`resume`/`remove` + cas injoignable).
-- [ ] **Étape 8. Premier daemon exécutable de bout en bout.**
-  `tribler-daemon` assemble tout (sans IPv8) : config, logging
-  `tracing`, démarrage propre/arrêt propre. Jalon : télécharger et
-  suivre un torrent réel via `tribler-cli` de bout en bout.
+- [x] **Étape 8. Premier daemon exécutable de bout en bout.**
+  `tribler-daemon` (clap) : `--listen` (défaut `127.0.0.1:8085`,
+  **refuse toute adresse non-loopback**), `--state-dir`, `--offline`
+  (tests : aucun trafic sortant) ; logging `tracing`/`EnvFilter`
+  (`RUST_LOG`, info par défaut) ; démarrage `CoreSession` + serveur
+  axum avec graceful shutdown sur Ctrl-C (session stoppée proprement).
+  1 test e2e : binaire réel spawné en `--offline`, API joignable sur
+  loopback, arrêt. Le jalon "torrent réel via CLI" reste conditionné à
+  un essai manuel réseau (hors tests automatiques offline).
 
 ## Phase 3 — Réseau d'anonymisation IPv8
 
