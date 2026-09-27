@@ -224,7 +224,7 @@ async fn tunnel_echo_roundtrip_2_hops() {
         }
     });
 
-    let mut data_rx = nodes[0].tunnel.data_rx().expect("data_rx deja pris");
+    let mut data_rx = nodes[0].tunnel.data_rx();
     let payload = utp_payload(b"ping aller-retour");
     nodes[0]
         .tunnel
@@ -240,7 +240,7 @@ async fn tunnel_echo_roundtrip_2_hops() {
     let msg = tokio::time::timeout(TEST_TIMEOUT, data_rx.recv())
         .await
         .expect("pas de retour tunnel")
-        .expect("canal data ferme");
+        .expect("canal data ferme ou en retard");
     assert_eq!(msg.circuit_id, cid);
     assert_eq!(msg.data, payload);
     // L'origine rapportee doit etre le serveur d'echo.
@@ -458,7 +458,7 @@ async fn hidden_service_e2e_roundtrip() {
 
     // Donnee e2e downloader -> seeder : la couche hs est appliquee
     // (decryptee cote seeder) et le RP reexpedie.
-    let mut s_rx = s.tunnel.data_rx().expect("data_rx seeder");
+    let mut s_rx = s.tunnel.data_rx();
     let payload = b"e2e-hello-seeder";
     let zero = UdpAddress::from("0.0.0.0:0".parse::<SocketAddr>().unwrap());
     d.tunnel
@@ -787,7 +787,7 @@ async fn socks5_rejects_fake_ip_for_non_rp_circuit() {
     frame.extend_from_slice(b"escape-attempt");
     client_udp.send_to(&frame, relay).await.unwrap();
 
-    let mut s_rx = s.tunnel.data_rx().expect("data_rx seeder");
+    let mut s_rx = s.tunnel.data_rx();
 
     // Frame 2 : cid du circuit RP lie -> doit traverser jusqu'au
     // seeder. Si la frame 1 avait fuite, on ne verrait rien de ce
@@ -953,5 +953,98 @@ async fn tunnel_exit_drops_non_bt_or_unflagged() {
             .await
             .is_err(),
         "uTP sorti sans flag EXIT_BT"
+    );
+}
+
+/// Deux lanes SOCKS5 sur la meme community (`data_rx` broadcast) :
+/// chaque association ne recoit que les reponses de SES circuits
+/// (filtrage `return_map`), meme en trafic simultane.
+#[tokio::test]
+async fn socks5_two_lanes_isolated_returns() {
+    let a = make_node().await;
+    let b = make_node_flags(PEER_FLAG_RELAY | PEER_FLAG_EXIT_BT).await;
+    let c = make_node_flags(PEER_FLAG_RELAY | PEER_FLAG_EXIT_BT).await;
+    let nodes = [a, b, c];
+    // Circuit 1 saut (lane 1) et circuit 2 sauts (lane 2).
+    build_circuit(&nodes, 1).await;
+    build_circuit(&nodes, 2).await;
+
+    // Serveur d'echo externe.
+    let echo = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let echo_addr = echo.local_addr().unwrap();
+    tokio::spawn(async move {
+        let mut buf = [0u8; 2048];
+        while let Ok((n, src)) = echo.recv_from(&mut buf).await {
+            let _ = echo.send_to(&buf[..n], src).await;
+        }
+    });
+
+    // Deux "lanes" : hops=1 et hops=2, meme community sous-jacente.
+    let socks1 = Socks5Server::new(nodes[0].tunnel.clone(), 1);
+    let socks2 = Socks5Server::new(nodes[0].tunnel.clone(), 2);
+    let proxy1 = socks1.listen("127.0.0.1:0").await.unwrap();
+    let proxy2 = socks2.listen("127.0.0.1:0").await.unwrap();
+
+    async fn associate(proxy: SocketAddr) -> (TcpStream, tokio::net::UdpSocket, SocketAddr) {
+        let mut tcp = TcpStream::connect(proxy).await.unwrap();
+        tcp.write_all(&[0x05, 0x01, 0x00]).await.unwrap();
+        let mut g = [0u8; 2];
+        tcp.read_exact(&mut g).await.unwrap();
+        tcp.write_all(&[0x05, 0x03, 0x00, 0x01, 0, 0, 0, 0, 0, 0])
+            .await
+            .unwrap();
+        let mut rep = [0u8; 10];
+        tcp.read_exact(&mut rep).await.unwrap();
+        assert_eq!(rep[1], 0x00, "UDP ASSOCIATE refuse");
+        let relay = SocketAddr::new(
+            std::net::IpAddr::V4(std::net::Ipv4Addr::new(rep[4], rep[5], rep[6], rep[7])),
+            u16::from_be_bytes([rep[8], rep[9]]),
+        );
+        let udp = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        (tcp, udp, relay)
+    }
+
+    async fn send_frame(
+        udp: &tokio::net::UdpSocket,
+        relay: SocketAddr,
+        dest: SocketAddr,
+        tag: &[u8],
+    ) {
+        let msg = utp_payload(tag);
+        let mut frame = vec![0u8, 0, 0, 0x01];
+        match dest {
+            SocketAddr::V4(a) => frame.extend_from_slice(&a.ip().octets()),
+            SocketAddr::V6(_) => unreachable!("loopback v4"),
+        }
+        frame.extend_from_slice(&dest.port().to_be_bytes());
+        frame.extend_from_slice(&msg);
+        udp.send_to(&frame, relay).await.unwrap();
+    }
+
+    let (_t1, udp1, relay1) = associate(proxy1).await;
+    let (_t2, udp2, relay2) = associate(proxy2).await;
+
+    send_frame(&udp1, relay1, echo_addr, b"lane-1").await;
+    send_frame(&udp2, relay2, echo_addr, b"lane-2").await;
+
+    // Chaque client recoit la reponse de SA lane, avec son tag.
+    let mut buf = [0u8; 512];
+    let (n1, _) = tokio::time::timeout(TEST_TIMEOUT, udp1.recv_from(&mut buf))
+        .await
+        .expect("lane 1 sans reponse")
+        .unwrap();
+    assert_eq!(
+        &buf[10..n1],
+        utp_payload(b"lane-1"),
+        "lane 1 a recu la reponse d'une autre lane"
+    );
+    let (n2, _) = tokio::time::timeout(TEST_TIMEOUT, udp2.recv_from(&mut buf))
+        .await
+        .expect("lane 2 sans reponse")
+        .unwrap();
+    assert_eq!(
+        &buf[10..n2],
+        utp_payload(b"lane-2"),
+        "lane 2 a recu la reponse d'une autre lane"
     );
 }

@@ -30,4 +30,8 @@ hex.workspace = true
 [dev-dependencies]
 tempfile.workspace = true
 tribler-test-support = { path = "../tribler-test-support" }
+tribler-crypto = { path = "../tribler-crypto" }
+tribler-ipv8 = { path = "../tribler-ipv8" }
+tribler-tunnel = { path = "../tribler-tunnel" }
+tracing-subscriber.workspace = true
 

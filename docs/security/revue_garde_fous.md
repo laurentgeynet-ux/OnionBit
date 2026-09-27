@@ -29,9 +29,10 @@ moindre trafic.
 
 | Contrôle | Emplacement | Test |
 | :--- | :--- | :--- |
-| Drapeau atomique `engaged` → `guard()` refuse add/resume | `BtEngine::add`/`resume` appellent `ks.guard()` | `bittorrent::kill_switch_blocks_add_while_proxy_down` |
-| Watchdog sonde TCP périodique du proxy (5 s / timeout 2 s) | `BtEngine::spawn_proxy_watchdog` | idem (engagement + désengagement) |
-| Engageable par `tribler-tunnel` quand les circuits meurent | `engine.kill_switch()` partagé (Arc) | — |
+| Engagements **scopés** (`engage_scoped`/`release_scoped`) : le switch reste engagé tant qu'une portée est active — un proxy redevenu joignable ne désarme pas une panne de circuits | `kill_switch.rs` portées `proxy`/`circuits`/`manuel` | `kill_switch::tests::scopes_independants_*` |
+| `guard()` refuse add/resume tant qu'engagé | `BtEngine::add`/`resume` appellent `ks.guard()` | `bittorrent::kill_switch_blocks_add_while_proxy_down` |
+| Watchdog sonde TCP périodique du proxy (portée `proxy`) | `BtEngine::spawn_proxy_watchdog` | `kill_switch_midtransfer` (proxy mort en plein transfert) |
+| Watchdog **circuits** par lane (portée `circuits`) : engage quand la lane perd tous ses circuits `READY` à `hops` sauts après en avoir eu un — **proxy joignable ≠ circuit disponible** | `ipv8_stack::spawn_circuit_watchdog` + `TunnelCommunity::watch_circuits` (notification événementielle, tick 5 s en filet) | `tribler-core::circuit_detruit_bloque_la_lane_sans_fuite` |
 
 ## 4. Guard du proxy SOCKS5 — `proxy_guard.rs`
 

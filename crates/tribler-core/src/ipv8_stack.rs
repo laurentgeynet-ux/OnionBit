@@ -90,6 +90,58 @@ struct AnonLane {
     socks: Arc<Socks5Server>,
     /// Moteur BitTorrent route via le SOCKS5 (uTP only).
     pub engine: BtEngine,
+    /// Arret du watchdog de circuits de la lane.
+    circuit_watchdog_stop: Arc<tokio::sync::watch::Sender<bool>>,
+}
+
+/// Intervalle de sondage des circuits `READY` de la lane — filet de
+/// securite seulement : la reaction principale est evenementielle via
+/// [`TunnelCommunity::watch_circuits`], sinon une transition
+/// `READY -> detruit` plus rapide qu'un tick passerait inapercue.
+const CIRCUIT_PROBE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Watchdog de circuits d'une lane anonyme : la lane est
+/// **indisponible tant qu'aucun circuit `READY` a `hops` sauts
+/// n'existe** — la portee `"circuits"` est engagee des la creation
+/// (fail-closed : un `add`/`resume` avant le premier circuit est
+/// refuse par `guard()` au lieu d'attendre un CONNECT voue a
+/// l'echec) et tant que `ready_circuits_of_hops(hops)` est vide — le
+/// meme predicat que la selection de circuit donnees du serveur
+/// SOCKS5, donc un circuit d'un autre nombre de sauts ne desarme pas
+/// cette lane.
+///
+/// Distinct du watchdog proxy du moteur : le listener SOCKS5 local
+/// peut rester joignable alors que tous les circuits sont morts —
+/// `proxy joignable != circuit disponible`.
+fn spawn_circuit_watchdog(
+    tunnel: Arc<TunnelCommunity>,
+    hops: usize,
+    ks: Arc<tribler_network_policy::kill_switch::KillSwitch>,
+) -> Arc<tokio::sync::watch::Sender<bool>> {
+    // Fail-closed des la creation de la lane (avant tout circuit).
+    ks.engage_scoped("circuits", format!("aucun circuit READY a {hops} sauts"));
+    let (stop_tx, mut stop_rx) = tokio::sync::watch::channel(false);
+    let mut changes = tunnel.watch_circuits();
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(CIRCUIT_PROBE_INTERVAL);
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        // Premier tick immediat : absorbe (l'evaluation initiale est
+        // deja faite ci-dessus).
+        tick.tick().await;
+        loop {
+            tokio::select! {
+                _ = stop_rx.changed() => break,
+                _ = changes.changed() => {}
+                _ = tick.tick() => {}
+            }
+            if tunnel.ready_circuits_of_hops(hops).is_empty() {
+                ks.engage_scoped("circuits", format!("aucun circuit READY a {hops} sauts"));
+            } else {
+                ks.release_scoped("circuits");
+            }
+        }
+    });
+    Arc::new(stop_tx)
 }
 
 /// `ContentProvider` adosse a la base : santes depuis `torrent_state`,
@@ -508,7 +560,7 @@ impl Ipv8Stack {
             .tunnel
             .clone()
             .ok_or_else(|| CoreError::State("anonymat non active".into()))?;
-        let socks = Socks5Server::new(tunnel, hops);
+        let socks = Socks5Server::new(tunnel.clone(), hops);
         let socks_addr = socks
             .listen("127.0.0.1:0")
             .await
@@ -518,10 +570,18 @@ impl Ipv8Stack {
         cfg.utp_only = true;
         cfg.output_dir = self.downloads_dir.join(format!("anon{hops}"));
         let engine = BtEngine::start(cfg).await?;
+        let circuit_watchdog_stop = spawn_circuit_watchdog(
+            tunnel.clone(),
+            hops,
+            engine
+                .kill_switch()
+                .expect("kill switch absent avec proxy configure"),
+        );
         let lane = AnonLane {
             socks_addr,
             socks,
             engine: engine.clone(),
+            circuit_watchdog_stop,
         };
         self.anon_lanes.lock().unwrap().insert(hops, lane);
         tracing::info!(hops, %socks_addr, "lane anonyme creee");
@@ -559,6 +619,7 @@ impl Ipv8Stack {
             .map(|(_, l)| l)
             .collect();
         for lane in lanes {
+            let _ = lane.circuit_watchdog_stop.send(true);
             lane.engine.stop().await;
         }
     }

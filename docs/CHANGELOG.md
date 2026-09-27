@@ -3,6 +3,57 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Durcissement étapes 13/16 — rupture de circuit, proxy vivant (2026-09-27)
+
+Second scénario de fuite, distinct de la mort du proxy : le listener
+SOCKS5 de la lane reste joignable alors que le circuit est détruit —
+**proxy joignable ≠ circuit disponible** (une sonde TCP du watchdog
+proxy seule ne démontrait pas la protection).
+
+- `kill_switch.rs` → engagements **scopés**
+  (`engage_scoped`/`release_scoped`, portées `proxy`/`circuits`/
+  `manuel`) : le switch reste engagé tant qu'une portée signale une
+  panne ; `reason()` liste les portées actives. Le watchdog proxy du
+  moteur utilise la portée `proxy`.
+- `tribler-tunnel::TunnelCommunity::watch_circuits()` : canal
+  `watch` incrémenté à chaque mutation d'état de circuit (création,
+  hop ajouté → `READY`, `DESTROY` reçu → `on_destroy`). Le polling
+  seul ratait une transition `READY → détruit` plus rapide qu'un
+  tick — la détection est désormais événementielle (réaction en ms).
+- `tribler-core::ipv8_stack::spawn_circuit_watchdog` : une tâche par
+  lane anonyme, **fail-closed dès la création** — la portée
+  `circuits` est engagée avant le premier `READY` (un `add`/`resume`
+  prématuré est refusé par `guard()` plutôt que d'attendre un CONNECT
+  voué à l'échec), réengagée dès que `ready_circuits_of_hops(hops)`
+  devient vide et relâchée dès qu'un circuit `READY` au bon nombre de
+  sauts revient — même prédicat que la sélection de circuits données
+  du SOCKS5, donc une lane 2 sauts n'est pas désarmée par un circuit
+  1 saut ; tick de 5 s en filet de sécurité. Arrêtée à
+  `Ipv8Stack::stop`.
+- `TunnelCommunity::data_rx` : mpsc mono-consommateur → **broadcast
+  multi-abonnés** — sans cela, la première lane créée accaparait le
+  retour des cellules `data` et les lanes suivantes (« `data_rx` déjà
+  consommé ») ne recevaient jamais de données. Chaque `Socks5Server`
+  filtre par sa `return_map` ; le retard (`Lagged`) est traité comme
+  une perte UDP **et logué en `warn`** (reste observable : une
+  saturation du canal ne doit pas ressembler à une panne de circuit).
+  Isolation prouvée par `socks5_two_lanes_isolated_returns` : deux
+  lanes (1 et 2 sauts) actives simultanément sur la même community,
+  chacune ne reçoit que les réponses de ses circuits.
+- Test `crates/tribler-core/tests/circuit_death.rs` (~5 s) : portée
+  `circuits` engagée dès la création de la lane → vrai circuit 1 saut
+  vers un relais autonome → échange de données prouvé (`UDP ASSOCIATE`
+  SOCKS5 → cellules `data` → `exit_data` → echo UDP) → la lane à
+  2 sauts, elle, reste engagée (évaluation par lane) → le relais
+  envoie un vrai `DESTROY` cell → portée `circuits` réengagée
+  immédiatement **pendant que le listener SOCKS5 accepte encore les
+  connexions** → fenêtre morte bornée : zéro datagramme vers le
+  serveur d'écho (seule sortie possible du flux) et aucune réponse
+  encapsulée — aucune fuite directe, le serveur SOCKS5 n'a pas de
+  chemin de sortie hors tunnel → nouveau circuit → désarmement →
+  reprise de l'écho. Le scénario « proxy mort » reste couvert par
+  `kill_switch_midtransfer`.
+
 ## Durcissement étapes 13/16 — test de fuite en plein transfert (2026-09-27)
 
 - `crates/tribler-bittorrent/tests/kill_switch_midtransfer.rs` :

@@ -133,12 +133,14 @@ impl BtEngine {
                         .await;
                         match probe {
                             Ok(Ok(_)) => {
-                                if ks.is_engaged() {
+                                if ks.release_scoped("proxy") {
                                     tracing::info!(%addr, "proxy SOCKS5 de nouveau joignable");
-                                    ks.release();
                                 }
                             }
-                            _ => ks.engage(format!("proxy SOCKS5 {addr} injoignable")),
+                            _ => ks.engage_scoped(
+                                "proxy",
+                                format!("proxy SOCKS5 {addr} injoignable"),
+                            ),
                         }
                     }
                 }

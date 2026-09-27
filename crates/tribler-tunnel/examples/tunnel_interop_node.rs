@@ -140,7 +140,7 @@ async fn main() {
         .await
         .expect("send_data");
 
-    let mut rx = tunnel.data_rx().expect("data_rx");
+    let mut rx = tunnel.data_rx();
     let got = tokio::time::timeout(ECHO_TIMEOUT, rx.recv())
         .await
         .expect("pas d'echo retour")

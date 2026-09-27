@@ -106,18 +106,29 @@ impl Socks5Server {
 
     /// Tache : les donnees revenant sur nos circuits (`data_rx`) sont
     /// reencapsulees en frames SOCKS5 UDP vers le client associe.
+    /// `data_rx` est un broadcast partage entre les lanes : chaque
+    /// serveur filtre par sa `return_map` (circuit -> client).
     fn spawn_return_dispatcher(self: &Arc<Self>) {
-        let mut rx = match self.tunnel.data_rx() {
-            Some(rx) => rx,
-            None => {
-                tracing::warn!("data_rx deja consomme : retour SOCKS5 inactif");
-                return;
-            }
-        };
+        let mut rx = self.tunnel.data_rx();
         let this = self.clone();
         tokio::spawn(async move {
-            while let Some(msg) = rx.recv().await {
-                this.dispatch_incoming(msg).await;
+            loop {
+                match rx.recv().await {
+                    Ok(msg) => this.dispatch_incoming(msg).await,
+                    // Retard de lecture : les cellules sautees sont
+                    // perdues pour cette lane (comme un drop UDP) —
+                    // logue en warn pour distinguer une saturation du
+                    // canal d'une panne de circuit dans le diagnostic.
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        tracing::warn!(
+                            hops = this.hops,
+                            skipped = n,
+                            "socks5: retour tunnel en retard, cellules sautees"
+                        );
+                        continue;
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                }
             }
         });
     }

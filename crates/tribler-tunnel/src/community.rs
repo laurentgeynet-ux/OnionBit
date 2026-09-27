@@ -60,7 +60,7 @@ const HTTP_REQUEST_PARTS_CAP: usize = 64;
 
 /// Evenement "donnee recue sur un circuit" (livre au consommateur —
 /// equivalent du dispatch `on_data` vers SOCKS5/services internes).
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct CircuitData {
     /// `circuit_id`.
     pub circuit_id: u32,
@@ -188,13 +188,18 @@ pub struct TunnelCommunity {
     /// `global_time` (Lamport local pour les paquets signes, ex.
     /// `destroy`).
     pub(crate) global_time: AtomicU64,
-    /// Cellules `data` livrees au consommateur.
-    pub(crate) data_tx: tokio::sync::mpsc::Sender<CircuitData>,
-    /// Receveur cote consommateur (pris une fois par `data_rx()`).
-    pub(crate) data_rx: Mutex<Option<tokio::sync::mpsc::Receiver<CircuitData>>>,
+    /// Cellules `data` livrees aux consommateurs (broadcast : chaque
+    /// proxy SOCKS5 de lane recoit tout et filtre par `return_map` —
+    /// un mpsc unique laissait les lanes 2/3 sans retour de donnees).
+    pub(crate) data_tx: tokio::sync::broadcast::Sender<CircuitData>,
     /// Canal `e2e_ready` : (circuit_id, info_hash) quand `linked-e2e`
     /// termine la liaison (callback `e2e_callbacks` Python).
     pub(crate) e2e_ready_tx: tokio::sync::broadcast::Sender<(u32, [u8; 20])>,
+    /// Version incrementee a chaque mutation des circuits (creation,
+    /// hop ajoute — `READY` possible —, destruction). Permet aux
+    /// watchdogs de lanes anonymes de reagir a la perte d'un circuit
+    /// sans attendre leur intervalle de sondage.
+    pub(crate) circuits_changed_tx: tokio::sync::watch::Sender<u64>,
 }
 
 /// Instantane d'un circuit (endpoint `/api/ipv8/tunnel/circuits`).
@@ -287,8 +292,9 @@ impl TunnelCommunity {
         peer_flags: i32,
         community_id: tribler_ipv8::CommunityId,
     ) -> Arc<Self> {
-        let (data_tx, data_rx) = tokio::sync::mpsc::channel(DATA_CHANNEL_CAP);
+        let (data_tx, _) = tokio::sync::broadcast::channel(DATA_CHANNEL_CAP);
         let (e2e_ready_tx, _) = tokio::sync::broadcast::channel(E2E_CHANNEL_CAP);
+        let (circuits_changed_tx, _) = tokio::sync::watch::channel(0u64);
         let community = Arc::new(Self {
             community_id,
             key,
@@ -317,8 +323,8 @@ impl TunnelCommunity {
             identifier: AtomicU16::new(0),
             global_time: AtomicU64::new(0),
             data_tx,
-            data_rx: Mutex::new(Some(data_rx)),
             e2e_ready_tx,
+            circuits_changed_tx,
         });
         let weak = Arc::downgrade(&community);
         endpoint
@@ -349,8 +355,12 @@ impl TunnelCommunity {
     /// Receveur des donnees de circuit (un seul consommateur — le
     /// premier appel prend le receveur, les suivants obtiennent
     /// `None`).
-    pub fn data_rx(&self) -> Option<tokio::sync::mpsc::Receiver<CircuitData>> {
-        self.data_rx.lock().unwrap().take()
+    /// Flux des cellules `data` entrantes non abonnees par circuit
+    /// (`on_data` vers SOCKS5 pyipv8). Multi-abonnes : chaque lane
+    /// SOCKS5 s'abonne et ne garde que les `circuit_id` de sa
+    /// `return_map`.
+    pub fn data_rx(&self) -> tokio::sync::broadcast::Receiver<CircuitData> {
+        self.data_tx.subscribe()
     }
 
     /// Abonne un consommateur aux donnees d'un circuit (relais UDP du
@@ -381,6 +391,20 @@ impl TunnelCommunity {
     /// Nombre de circuits initiates connus.
     pub fn circuit_count(&self) -> usize {
         self.inner.lock().unwrap().circuits.len()
+    }
+
+    /// Abonnement aux changements d'etat des circuits : le receveur se
+    /// reveille sur chaque creation, hop ajoute (transition `READY`
+    /// possible) et destruction. Utilise par le watchdog de sante des
+    /// lanes anonymes (`tribler-core`).
+    pub fn watch_circuits(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.circuits_changed_tx.subscribe()
+    }
+
+    /// Signale aux abonnes de [`Self::watch_circuits`] qu'un circuit a
+    /// change d'etat.
+    pub(crate) fn notify_circuits_changed(&self) {
+        self.circuits_changed_tx.send_modify(|v| *v += 1);
     }
 
     /// Instantane des circuits pour `/api/ipv8/tunnel/circuits`
@@ -857,6 +881,7 @@ impl TunnelCommunity {
             inner.circuits.insert(circuit_id, circuit);
             inner.retry_requests.insert(circuit_id, identifier);
         }
+        self.notify_circuits_changed();
         let create = tp::Create {
             circuit_id,
             identifier,
@@ -1748,6 +1773,7 @@ impl TunnelCommunity {
             let done = circuit.hops.len();
             (goal, done, goal.saturating_sub(1) == done)
         };
+        self.notify_circuits_changed();
 
         if hops_done < goal {
             // Choix du prochain candidat : sorties si le prochain hop
@@ -1939,7 +1965,7 @@ impl TunnelCommunity {
                 let _ = tx.try_send(msg);
             }
             None => {
-                let _ = self.data_tx.try_send(msg);
+                let _ = self.data_tx.send(msg);
             }
         }
     }
@@ -2059,6 +2085,8 @@ impl TunnelCommunity {
         }
         inner.exit_sockets.remove(&circuit_id);
         inner.circuits.remove(&circuit_id);
+        drop(inner);
+        self.notify_circuits_changed();
         tracing::debug!(circuit_id, reason, "objet de routage detruit");
     }
 

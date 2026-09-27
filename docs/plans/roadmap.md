@@ -259,15 +259,21 @@ ne sont donc pas « terminées » au sens strict) · `[x]` terminée.
   uTP/tracker-UDP/DHT + `PEER_FLAG_EXIT_BT`, IPv8 + `PEER_FLAG_EXIT_IPV8`
   ou préfixe de la community ; source unique des constantes
   `PEER_FLAG_*` ré-exportées par `tribler-tunnel::routing`),
-  `kill_switch::KillSwitch` (atomic bool + raison, `guard()`),
+  `kill_switch::KillSwitch` (engagements **scopés** par portée
+  `proxy`/`circuits`/`manuel` — un proxy redevenu joignable ne
+  désarme pas une panne de circuits — `guard()`),
   `proxy_guard::validate_local_socks5_url` (loopback numérique
   uniquement). Intégrations : `tribler-tunnel::community` applique
   `is_exit_data_allowed` dans les deux sens (`exit_data` sortant et
   `exit_recv_data` rentrant, fidèle à `TunnelExitSocket`) ;
   `tribler-bittorrent::BtEngine` valide `socks5_proxy` au démarrage
   (refus = pas de démarrage, jamais de repli direct), crée un
-  `KillSwitch` sondé par watchdog TCP (engage tant que le proxy est
-  injoignable → `add`/`resume` refusés) ; `tribler-core` applique
+  `KillSwitch` sondé par watchdog TCP (portée `proxy` : engage tant
+  que le proxy est injoignable → `add`/`resume` refusés) ;
+  `tribler-core` ajoute un watchdog **circuits** par lane anonyme
+  (portée `circuits`, événementiel via
+  `TunnelCommunity::watch_circuits` : proxy joignable ≠ circuit
+  disponible) ; `tribler-core` applique
   `ip_policy` aux URI `http(s)` de `Session::add_download`
   (résolution DNS + refus fermé sur toute adresse niée).
   Tests : 9 unitaires politique + `tunnel_exit_drops_non_bt_or_unflagged`
@@ -309,7 +315,12 @@ ne sont donc pas « terminées » au sens strict) · `[x]` terminée.
   (`tribler-core::lifecycle` : DB fichier + `restore_downloads`),
   migration de schéma v1→v2 (`tribler-db::migrations` : conservation
   des données, idempotence, refus `SchemaTooNew`), kill switch +
-  anti-SSRF + proxy guard (`policy.rs` dans bittorrent et core).
+  anti-SSRF + proxy guard (`policy.rs` dans bittorrent et core),
+  fuite en plein transfert sous deux scénarios distincts : proxy mort
+  (`tribler-bittorrent::kill_switch_midtransfer`) et **circuit détruit
+  proxy vivant** (`tribler-core::circuit_death` — portée `circuits`
+  du kill switch, zéro datagramme vers la destination pendant la
+  fenêtre morte, reprise sur nouveau circuit).
   `tribler-test-support` peuplé (`test_torrent_bytes`, `free_port`,
   `wait_for`) — fixtures dupliquées dedupliquées. Revue des garde-fous
   dans `docs/security/revue_garde_fous.md`.
