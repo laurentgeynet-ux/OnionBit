@@ -7,5 +7,12 @@ license.workspace = true
 authors.workspace = true
 
 [dependencies]
+tribler-crypto = { path = "../tribler-crypto" }
+tribler-ipv8 = { path = "../tribler-ipv8" }
+tokio.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+rand.workspace = true
 
 [dev-dependencies]
+tempfile.workspace = true

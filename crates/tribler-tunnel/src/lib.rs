@@ -17,8 +17,19 @@
 //! Complexite/risque : eleve (protocole de circuit proprietaire, gestion
 //! des noeuds de sortie, resistance aux attaques Sybil). Cf. ADR-0002.
 //!
-//! Etat : squelette (etape 0). Implementation a l'etape 12
-//! ("TunnelCommunity : circuits et hidden seeding").
+//! Etat : etape 12 en cours — cellules, payloads, routage implementes ;
+//! `TunnelCommunity` (circuits) en cours d'ecriture.
+
+pub mod cell;
+pub mod payload;
+pub mod routing;
+
+/// `community_id` de `TunnelCommunity`/`HiddenTunnelCommunity`
+/// (`81ded07332bdc775aa5a46f96de9f8f390bbc9f3`, pyipv8).
+pub const TUNNEL_COMMUNITY_ID: tribler_ipv8::CommunityId = [
+    0x81, 0xde, 0xd0, 0x73, 0x32, 0xbd, 0xc7, 0x75, 0xaa, 0x5a, 0x46, 0xf9, 0x6d, 0xe9, 0xf8, 0xf3,
+    0x90, 0xbb, 0xc9, 0xf3,
+];
 
 /// Niveau d'anonymisation demande pour un telechargement, aligne sur les
 /// options historiques de Tribler (nombre de sauts du circuit).

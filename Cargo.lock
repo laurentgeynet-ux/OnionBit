@@ -3955,6 +3955,7 @@ dependencies = [
 name = "tribler-ipv8"
 version = "0.1.0"
 dependencies = [
+ "hex 0.4.3",
  "rand 0.8.8",
  "tempfile",
  "thiserror 2.0.21",
@@ -3974,6 +3975,15 @@ version = "0.1.0"
 [[package]]
 name = "tribler-tunnel"
 version = "0.1.0"
+dependencies = [
+ "rand 0.8.8",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "tribler-crypto",
+ "tribler-ipv8",
+]
 
 [[package]]
 name = "try-lock"

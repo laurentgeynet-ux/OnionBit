@@ -38,6 +38,21 @@ Références de vérité en local :
   `librqbit 9.0.1` packagée sur crates.io). À consulter pour connaître
   l'API exacte de `Session`/`ManagedTorrent`/stats/options plutôt que
   de deviner les signatures (docs.rs en secours : `librqbit 9.0.1`).
+- **Binaire Tribler installé (interop / ping-pong)** :
+  `C:\Program Files (x86)\Tribler` — Tribler **8.4.3** figé (CPython
+  3.12). `Tribler.exe` lance un vrai noeud Tribler complet (communities
+  IPv8, tunnels, API REST) : référence vivante pour les jalons
+  d'interop des étapes 9-12 (faire dialoguer `tribler-ipv8` /
+  `tribler-tunnel` avec le vrai réseau, pas seulement du loopback
+  Rust↔Rust). `lib/` contient toutes les dépendances figées
+  (`ipv8` en `.pyc`, `ipv8_rust_tunnels.pyd`, `libtorrent`, `aiohttp`,
+  `tribler`) : utilisable comme `PYTHONPATH` d'un venv **CPython 3.12**
+  pour rejouer/vérifier des paquets avec le pyipv8 exactement livré
+  (complément du checkout git `D:\Projet\Tribler_sources`).
+  `tribler_source/` contient les sources `.py` de la version installée.
+  `tools/reset.bat` / `tools/reset-keepid.bat` réinitialisent l'état.
+  Attention : pas de `python.exe` autonome (application figée) — les
+  `.pyc` exigent un interpréteur 3.12 fourni par le venv.
 
 ## Cartographie du dépôt
 

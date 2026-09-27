@@ -3,6 +3,44 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Référence supplémentaire : Tribler 8.4.3 installé (2026-09-27)
+
+- `C:\Program Files (x86)\Tribler` documenté dans `AGENTS.md` et
+  `docs/INDEX.md` comme référence locale supplémentaire : `Tribler.exe`
+  est un noeud Tribler réel (communities IPv8, tunnels, API REST)
+  utilisable pour les jalons d'interop ping-pong des étapes `[i]` 10-11
+  et des tunnels de l'étape 12 ; `lib/` fournit le pyipv8 figé
+  (`.pyc` CPython 3.12 + `ipv8_rust_tunnels.pyd` + `libtorrent`) pour
+  un venv interop via `PYTHONPATH` ; `tribler_source/` donne les `.py`
+  de la version installée ; `tools/reset*.bat` réinitialise son état.
+
+## Jalon interop — échange enregistré Rust↔pyipv8 (2026-09-27)
+
+L'échange reproductible exigé par la règle de cochage est en place et
+**passe** :
+
+- `scripts/interop/py_node.py` : noeud pyipv8 reel (`UDPEndpoint` +
+  `DiscoveryCommunity` sur `curve25519`, venv
+  `D:\Projet\Tribler_sources\.venv-interop`), journalise chaque
+  datagramme en hex et envoie des introduction-request a la cible Rust.
+- `scripts/interop/verify_packets.py` : decode chaque paquet
+  enregistre (prefix|msg_id|varlenH pubkey|global_time|payload|sig) et
+  verifie la signature Ed25519 via le vrai `default_eccrypto` pyipv8.
+- `crates/tribler-ipv8/examples/interop_node.rs` : noeud Rust
+  (`DiscoveryCommunity`) avec tap de paquets rx/tx (nouveau
+  `UdpEndpoint::set_tap`) ecrivant le meme journal hex.
+- `scripts/interop_ipv8.ps1` : orchestre les deux noeuds sur loopback,
+  verifie 39/39 paquets dans les deux sens, verifie que chaque noeud a
+  enregistre l'autre comme pair verifie. Chemins reseables via
+  `TRIBLER_PYIPV8` / `TRIBLER_INTEROP_PY`.
+- Fixtures enregistrees `crates/tribler-ipv8/tests/fixtures/*.hex`
+  (paquets reels pyipv8 + paquets Rust acceptes par pyipv8) rejouees en
+  CI par `tests/interop_replay.rs`.
+- `roadmap.md` : etape 9 repassee en `[x]` (format filaire + signatures
+  + discovery valides contre pyipv8) ; etapes 10-11 restent `[i]` —
+  payloads DHT (find/store/tokens) et introductions new-style/punctures
+  pas encore exerces contre un noeud Python reel.
+
 ## Revue documentaire — cohérence inter-documents (2026-09-27)
 
 Revue critique externe des documents + vérification contre les sources

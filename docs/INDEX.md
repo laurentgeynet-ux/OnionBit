@@ -36,4 +36,5 @@ chaque étape (cf. `AGENTS.md`, "Workflow par étape").
 | :--- | :--- |
 | `D:\Projet\Tribler_sources\tribler` | Sources officielles Tribler (+ sous-module `pyipv8/`) — référence de vérité protocolaire IPv8 / formats / API REST |
 | `D:\Projet\Rqbit` | Sources de rqbit (branche main) — référence de l'API interne `librqbit` (`Session`, `ManagedTorrent`, options, stats) ; plus récent que `librqbit 9.0.1` sur crates.io |
+| `C:\Program Files (x86)\Tribler` | Tribler **8.4.3** installé (application figée CPython 3.12) — `Tribler.exe` = noeud Tribler réel pour les tests d'interop/ping-pong des étapes 9-12 ; `lib/` = dépendances figées (`ipv8` en `.pyc`, `ipv8_rust_tunnels.pyd`, `libtorrent`, `tribler`) importables dans un venv **CPython 3.12** via `PYTHONPATH` ; `tribler_source/` = sources `.py` de la version installée ; `tools/reset*.bat` = réinitialisation de l'état |
 | `C:\Emule-Sion-UI-UX\app` | UI Flutter de référence (style) — **à ne pas modifier**, consultée uniquement pour la phase 6 |

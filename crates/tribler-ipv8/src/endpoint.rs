@@ -23,6 +23,18 @@ const MAX_DGRAM: usize = 65535;
 /// Args : (adresse source, paquet verifie).
 pub type PacketHandler = Arc<dyn Fn(SocketAddr, Packet) -> Result<(), Ipv8Error> + Send + Sync>;
 
+/// Sens d'un datagramme tapote (enregistrement interop/debug).
+#[derive(Debug, Clone, Copy)]
+pub enum TapDir {
+    /// Datagramme recu.
+    Rx,
+    /// Datagramme envoye.
+    Tx,
+}
+
+/// Evenement de tap : (sens, adresse distante, octets bruts).
+pub type TapEvent = (TapDir, SocketAddr, Vec<u8>);
+
 /// Endpoint UDP : dispatch par prefixe (community_id + version).
 ///
 /// Equivalent de `endpoint.add_prefix_listener` : chaque community
@@ -32,6 +44,9 @@ pub struct UdpEndpoint {
     socket: Arc<UdpSocket>,
     /// Listeners par prefixe de 22 octets.
     listeners: Mutex<HashMap<[u8; PREFIX_LEN], PacketHandler>>,
+    /// Tap optionnel : recoit chaque datagramme brut (rx+tx) pour
+    /// l'enregistrement d'echanges (jalon d'interop, debug).
+    tap: Mutex<Option<tokio::sync::broadcast::Sender<TapEvent>>>,
 }
 
 impl UdpEndpoint {
@@ -42,6 +57,7 @@ impl UdpEndpoint {
         Ok(Arc::new(Self {
             socket: Arc::new(socket),
             listeners: Mutex::new(HashMap::new()),
+            tap: Mutex::new(None),
         }))
     }
 
@@ -55,6 +71,14 @@ impl UdpEndpoint {
         self.listeners.lock().await.insert(prefix, handler);
     }
 
+    /// Installe le tap de paquets (un seul canal broadcast).
+    /// Retourne le receveur a consommer par l'appelant.
+    pub async fn set_tap(&self) -> tokio::sync::broadcast::Receiver<TapEvent> {
+        let (tx, rx) = tokio::sync::broadcast::channel(1024);
+        *self.tap.lock().await = Some(tx);
+        rx
+    }
+
     /// Envoie des octets bruts a une adresse (UDP numerique
     /// uniquement ; les noms de domaine sont resolus par l'appelant
     /// ou ignores en mode offline).
@@ -62,6 +86,9 @@ impl UdpEndpoint {
         match addr.to_socket_addr() {
             Some(sa) => {
                 self.socket.send_to(data, sa).await?;
+                if let Some(t) = self.tap.lock().await.as_ref() {
+                    let _ = t.send((TapDir::Tx, sa, data.to_vec()));
+                }
                 Ok(())
             }
             // Comme le Python : on ne peut pas envoyer a un nom de
@@ -80,6 +107,9 @@ impl UdpEndpoint {
         loop {
             let (n, src) = self.socket.recv_from(&mut buf).await?;
             let data = &buf[..n];
+            if let Some(t) = self.tap.lock().await.as_ref() {
+                let _ = t.send((TapDir::Rx, src, data.to_vec()));
+            }
             if data.len() < PREFIX_LEN {
                 continue;
             }
