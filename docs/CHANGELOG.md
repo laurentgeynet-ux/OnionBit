@@ -3,6 +3,30 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Étape 6 — `tribler-api` : REST + SSE (2026-09-28)
+
+- Routeur axum (`router.rs`) + etat partage `AppState` (`CoreSession`).
+- Endpoints : `GET /api/downloads` (filtres `infohash`/`excluded`),
+  `PUT /api/downloads` (`uri` magnet/http ou `torrent` chemin local,
+  `anon_hops` refuse tant que les tunnels ne sont pas faits),
+  `DELETE /api/downloads/{infohash}` (`remove_data`),
+  `PATCH /api/downloads/{infohash}` (`state` = `resume`/`stop`).
+- `GET /api/events` : flux **SSE** au format exact du Python
+  (`event: <topic>\ndata: <json>\n\n`), message initial
+  `events_start`, topics mappés depuis `Notification` — correction de
+  fidelite : le Python utilise SSE, pas WebSocket.
+- `dto.rs` : `DownloadInfo` miroir du dict `info` Python (codes
+  `DownloadStatus` 0..11 conserves, champs non encore disponibles emis
+  avec les valeurs par defaut Python pour compatibilite clients).
+- `error.rs` : `ApiError` → `{"error": {"handled", "message"}}`
+  (identique a `rest_manager.py`), mapping `CoreError::Bt(NotFound)` →
+  404.
+- `docs/reference_tribler/api_rest_mapping.md` cree (endpoints, DTO,
+  topics SSE, endpoints Python non couverts).
+- 6 tests : 5 integration HTTP loopback (`127.0.0.1:0`, reqwest —
+  cycle complet ajout/pause/resume/suppression, 400/404 au format
+  Tribler, format SSE verifie) + smoke test du routeur.
+
 ## Étape 5 — `tribler-core` : Session + Notifier (2026-09-28)
 
 - `CoreSession` : facade domaine (equivalent de `tribler.core.session.

@@ -1,11 +1,28 @@
 [package]
 name = "tribler-api"
-description = "Plan de controle REST + WebSocket (axum), en parite fonctionnelle avec l'API aiohttp de Tribler. Seule porte d'entree pour un client (CLI, future UI Flutter)."
+description = "Plan de controle REST + SSE (axum) du daemon Tribler Rust. Parite fonctionnelle avec tribler.core.restapi ; seule porte d'entree reseau locale."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
 
 [dependencies]
+tribler-core = { path = "../tribler-core" }
+tribler-bittorrent = { path = "../tribler-bittorrent" }
+tribler-crypto = { path = "../tribler-crypto" }
+tribler-db = { path = "../tribler-db" }
+tokio.workspace = true
+axum.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+futures-util.workspace = true
+tokio-stream = { version = "0.1", features = ["sync"] }
+hex.workspace = true
 
 [dev-dependencies]
+tribler-format = { path = "../tribler-format" }
+tempfile.workspace = true
+reqwest = { version = "0.13", features = ["json"] }
+tokio-tungstenite.workspace = true

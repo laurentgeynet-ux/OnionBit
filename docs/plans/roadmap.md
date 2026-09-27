@@ -57,11 +57,15 @@ Légende : `[ ]` à faire · `[~]` en cours · `[x]` terminée.
   tokio borné, non-bloquant, `Lagged` pour les abonnés lents),
   `CoreConfig` centralisée. Persistance automatique des ajouts dans
   `downloads`. 2 tests offline (session en mémoire + notifier).
-- [ ] **Étape 6. API REST + WebSocket minimale.** `tribler-api` (axum) :
-  endpoints `status`, `downloads` (list/add/remove/pause/resume),
-  WebSocket de notification de progression. Bindé sur `127.0.0.1`
-  uniquement. Documenter le mapping avec l'API Python dans
-  `docs/reference_tribler/api_rest_mapping.md`.
+- [x] **Étape 6. API REST + flux d'événements minimale.** `tribler-api`
+  (axum) : `GET/PUT/DELETE/PATCH /api/downloads` (list/add/remove/
+  pause/resume), `GET /api/events` en **SSE** (`event: <topic>\ndata:
+  <json>\n\n` — le Python utilise SSE et non WebSocket, correction de
+  fidélité), erreurs au format `{"error": {handled, message}}`, DTO
+  `downloads[]` miroir du dict `info` Python (codes `DownloadStatus`
+  0..11 conservés). Routeur destiné au bind `127.0.0.1` (fait dans
+  `tribler-daemon`). 5 tests d'intégration HTTP loopback + smoke test.
+  Mapping complet : `docs/reference_tribler/api_rest_mapping.md`.
 - [ ] **Étape 7. CLI de pilotage minimal.** `tribler-cli` :
   `status`/`list`/`add`/`remove`, parle uniquement à `tribler-api`.
 - [ ] **Étape 8. Premier daemon exécutable de bout en bout.**
@@ -143,6 +147,12 @@ risque IPv8 sous/sur-estimé, etc.), avec la date.
 - 2026-09-27 : étape 0 terminée. Découverte de `librqbit` (ADR-0001) qui
   réduit fortement le risque des phases 1-2 par rapport à l'hypothèse
   initiale d'un moteur BitTorrent écrit entièrement à la main.
+- 2026-09-28 : étape 6 terminée. Correction de fidélité : l'endpoint
+  `/api/events` Python est du **SSE** (`text/event-stream`), pas un
+  WebSocket — `tribler-api` reproduit ce format exact. Écarts DTO
+  connus consignés dans `api_rest_mapping.md` (`eta` en chaîne
+  formatée, `num_seeds`/`num_connected_seeds` à 0 tant que le scraping
+  trackers n'est pas implémenté).
 - 2026-09-28 : étapes 1 et 2 terminées. Deux corrections de fidélité par
   rapport au plan initial : (a) le chiffrement de tunnel IPv8 est
   **ChaCha20-Poly1305** et non AES-GCM (source : `ipv8-rust-tunnels`

@@ -16,7 +16,7 @@ chaque étape (cf. `AGENTS.md`, "Workflow par étape").
 | `crates/tribler-core/` | Domaine/orchestration : `Session`, `Notifier`, règles métier |
 | `crates/tribler-db/` | Persistance SQLite |
 | `crates/tribler-network-policy/` | Garde-fous réseau (anti-SSRF, exit policy, kill switch) |
-| `crates/tribler-api/` | API REST + WebSocket (axum) |
+| `crates/tribler-api/` | API REST + SSE (axum) |
 | `crates/tribler-cli/` | CLI de pilotage |
 | `crates/tribler-daemon/` | Binaire principal (composition racine) |
 | `crates/tribler-test-support/` | Fixtures/helpers de tests partagés |
@@ -25,6 +25,8 @@ chaque étape (cf. `AGENTS.md`, "Workflow par étape").
 | `docs/architecture/architecture.md` | Vue d'ensemble de la clean architecture |
 | `docs/architecture/decisions/000X-*.md` | ADRs |
 | `docs/reference_tribler/correspondance_modules.md` | Correspondance Python Tribler ↔ Rust |
+| `docs/reference_tribler/api_rest_mapping.md` | Mapping endpoints/DTO/topics SSE API Python ↔ `tribler-api` |
+| `docs/reference_tribler/ipv8_rust_tunnels/` | Extraits des sources `ipv8-rust-tunnels` (formats clés, DH, paquets) |
 | `docs/CHANGELOG.md` | Historique des étapes franchies |
 | `scripts/verify_all.ps1` | Validation complète (check/clippy/fmt/test) |
 
