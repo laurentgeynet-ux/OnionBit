@@ -158,11 +158,19 @@ ne sont donc pas « terminées » au sens strict) · `[x]` terminée.
   sortie UDP (`exit_data`), `destroy` signé, `ping`/`pong` de circuit,
   compteurs `relay_early` (borne 8), flags `plaintext` vérifiés.
   `UdpEndpoint` : listeners bruts par prefixe (`add_raw_prefix_listener`)
-  pour les cellules non signées. 5 tests loopback réels : circuits 1/2
-  sauts READY sur UDP, sortie de données au dernier saut, destroy.
-  **Reste** : SOCKS5, hidden services (e2e/introduction/rendezvous),
-  socket de sortie dédiée (réponses hors-prefixe), interop réelle
-  avec `TunnelCommunity` pyipv8.
+  pour les cellules non signées. Sockets de sortie dédiées
+  bidirectionnelles (`exit_sockets` + `back_map` + tache de reception
+  par socket). Proxy SOCKS5 (`socks5.rs`) : greeting sans auth, `UDP
+  ASSOCIATE`, decapsulage des frames SOCKS5 UDP vers cellules `data`,
+  selection sticky destination -> circuit `READY` du bon `goal_hops`,
+  reencapsulage des reponses vers le client (`return_map` circuit ->
+  (socket, client)). 7 tests loopback reels : circuits 1/2 sauts READY,
+  sortie de donnees, echo UDP bidirectionnel 2 sauts, destroy,
+  aller-retour SOCKS5 UDP ASSOCIATE complet.
+  **Reste** : hidden services (e2e/introduction/rendezvous), hidden
+  seeding, CONNECT SOCKS5 (requetes HTTP par cellules 31/33), interop
+  reelle avec `TunnelCommunity` pyipv8 / Tribler 8.4.3 installe,
+  telechargement anonyme reel (jalon final).
 - [ ] **Étape 13. Politiques de sécurité réseau et kill switch.**
   `tribler-network-policy` : anti-SSRF, politique des noeuds de sortie,
   kill switch atomique, garde-fous SOCKS5. Intégré dans

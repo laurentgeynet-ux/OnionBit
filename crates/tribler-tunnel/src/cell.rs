@@ -31,6 +31,10 @@ const OFF_MSG: usize = 30;
 /// http-request(31), http-response(33).
 pub const NO_CRYPTO_PACKETS: &[u8] = &[2, 3, 31, 33];
 
+/// Taille max d'une cellule sur le fil (borne du buffer de reception
+/// des sockets de sortie — un datagramme UDP tient sous 64 Ko).
+pub const MAX_CELL_WIRE: usize = 65535;
+
 /// `true` si `packet` ressemble a une cellule pour ce prefixe
 /// (`is_cell` des tunnels Rust : prefixe + `packet[22] == 0`).
 pub fn is_cell(prefix: &[u8; 22], packet: &[u8]) -> bool {

@@ -85,12 +85,22 @@ struct Inner {
     peer_flags: i32,
 }
 
-/// `TunnelExitSocket` simplifie : etat de sortie pour un circuit_id.
+/// `TunnelExitSocket` : socket UDP de sortie dediee par circuit —
+/// les reponses des destinations externes arrivent hors-prefixe sur
+/// cette socket et sont reencapsulees en cellules `data` (BACKWARD).
 struct ExitState {
     /// Saut amont (pair precedent + cles de session partagees).
     hop: Hop,
     /// `enabled` : premier octet de donnee vu venant du bon IP.
     enabled: bool,
+    /// Socket de sortie dediee.
+    socket: Arc<tokio::net::UdpSocket>,
+    /// `destination -> org_address` du dernier datagramme sorti
+    /// (pour reencapsuler les reponses — `TunnelExitSocket.dgram_src`).
+    back_map: HashMap<SocketAddr, UdpAddress>,
+    /// Canal d'arret de la tache de reception : conserve pour son
+    /// `Drop` (la tache se termine quand l'entree disparait).
+    _stop_tx: tokio::sync::watch::Sender<bool>,
 }
 
 /// `CreateRequestCache` Python (extend en attente d'un `created`).
@@ -212,6 +222,18 @@ impl TunnelCommunity {
             .circuits
             .values()
             .filter(|c| c.state() == CIRCUIT_STATE_READY)
+            .map(|c| c.base.circuit_id)
+            .collect()
+    }
+
+    /// Ids des circuits `READY` de `hops` sauts (`goal_hops`).
+    pub fn ready_circuits_of_hops(&self, hops: usize) -> Vec<u32> {
+        self.inner
+            .lock()
+            .unwrap()
+            .circuits
+            .values()
+            .filter(|c| c.state() == CIRCUIT_STATE_READY && c.goal_hops == hops)
             .map(|c| c.base.circuit_id)
             .collect()
     }
@@ -604,7 +626,11 @@ impl TunnelCommunity {
     }
 
     /// `join_circuit` : DH partage + `created` + exit socket local.
-    async fn join_circuit(&self, src: SocketAddr, p: tp::Create) -> Result<(), Ipv8Error> {
+    async fn join_circuit(
+        self: &Arc<Self>,
+        src: SocketAddr,
+        p: tp::Create,
+    ) -> Result<(), Ipv8Error> {
         let circuit_id = p.circuit_id;
         let ds = generate_diffie_shared_secret(&p.key, &self.key)?;
         let session_keys = generate_session_keys(&ds.shared)?;
@@ -641,6 +667,11 @@ impl TunnelCommunity {
         let mut enc_keys = session_keys.clone();
         let candidates_enc = enc_keys.encrypt_str(&keys_w.into_bytes(), Direction::Forward)?;
 
+        // Socket de sortie dediee (`TunnelExitSocket` : socket UDP
+        // propre recevant les reponses hors-prefixe des destinations).
+        let exit_socket = tokio::net::UdpSocket::bind("0.0.0.0:0").await?;
+        let exit_socket = Arc::new(exit_socket);
+        let (stop_tx, stop_rx) = tokio::sync::watch::channel(false);
         {
             let mut inner = self.inner.lock().unwrap();
             inner.created_requests.insert(
@@ -659,9 +690,13 @@ impl TunnelCommunity {
                         session_keys,
                     },
                     enabled: false,
+                    socket: exit_socket.clone(),
+                    back_map: HashMap::new(),
+                    _stop_tx: stop_tx,
                 },
             );
         }
+        self.spawn_exit_recv(circuit_id, exit_socket, stop_rx);
 
         let reply = tp::Created {
             circuit_id,
@@ -1004,9 +1039,9 @@ impl TunnelCommunity {
     }
 
     /// `exit_data` : activation au premier octet vu du bon IP puis
-    /// envoi UDP brut vers la destination.
+    /// envoi UDP brut vers la destination via la socket dediee.
     fn exit_data(&self, circuit_id: u32, src: SocketAddr, p: &tp::Data) {
-        {
+        let socket = {
             let mut inner = self.inner.lock().unwrap();
             let Some(exit) = inner.exit_sockets.get_mut(&circuit_id) else {
                 return;
@@ -1025,17 +1060,74 @@ impl TunnelCommunity {
             if !exit.enabled {
                 return;
             }
-        }
-        // TODO(etape 12) : socket de sortie UDP dediee (TunnelExitSocket)
-        // pour recevoir les reponses hors-prefixe et les renvoyer dans
-        // le tunnel. Le "spoke" reutilise l'endpoint pour l'instant.
+            // Table de retour : destination -> origine du datagramme.
+            if let Some(sa) = p.dest_address.to_socket_addr() {
+                exit.back_map.insert(sa, p.org_address.clone());
+            }
+            exit.socket.clone()
+        };
         tracing::trace!(circuit_id, dest = ?p.dest_address, "exit_data");
-        let ep = self.endpoint.clone();
-        let dest = p.dest_address.clone();
+        let Some(dest_sa) = p.dest_address.to_socket_addr() else {
+            return;
+        };
         let data = p.data.clone();
         tokio::spawn(async move {
-            let _ = ep.send_to(&dest, &data).await;
+            let _ = socket.send_to(&data, dest_sa).await;
         });
+    }
+
+    /// Tache de reception de la socket de sortie : les datagrammes
+    /// hors-prefixe revenant de l'exterieur sont reencapsules en
+    /// cellules `data` et renvoyes dans le tunnel (chiffrement
+    /// BACKWARD vers l'amont).
+    fn spawn_exit_recv(
+        self: &Arc<Self>,
+        circuit_id: u32,
+        socket: Arc<tokio::net::UdpSocket>,
+        mut stop_rx: tokio::sync::watch::Receiver<bool>,
+    ) {
+        let c = self.clone();
+        tokio::spawn(async move {
+            let mut buf = vec![0u8; crate::cell::MAX_CELL_WIRE];
+            loop {
+                tokio::select! {
+                    _ = stop_rx.changed() => break,
+                    recv = socket.recv_from(&mut buf) => {
+                        let Ok((n, src)) = recv else { break };
+                        c.exit_recv_data(circuit_id, src, &buf[..n]).await;
+                    }
+                }
+            }
+        });
+    }
+
+    /// Reencapsulation cote sortie : datagramme externe -> cellule
+    /// `data` vers l'amont (`dest` = `org_address` memorisee).
+    async fn exit_recv_data(&self, circuit_id: u32, src: SocketAddr, data: &[u8]) {
+        let (upstream_addr, org) = {
+            let inner = self.inner.lock().unwrap();
+            let Some(exit) = inner.exit_sockets.get(&circuit_id) else {
+                return;
+            };
+            if !exit.enabled {
+                return;
+            }
+            let Some(org) = exit.back_map.get(&src).cloned() else {
+                tracing::debug!(circuit_id, %src, "reponse de sortie sans mapping");
+                return;
+            };
+            let Some(addr) = exit.hop.address.clone() else {
+                return;
+            };
+            (addr, org)
+        };
+        let p = tp::Data {
+            circuit_id,
+            dest_address: org,
+            org_address: UdpAddress::from(src),
+            data: data.to_vec(),
+        };
+        let _ = self.send_cell(&upstream_addr, &p).await;
     }
 
     /// `on_destroy` : nettoie circuit/relais/sortie concernes.

@@ -26,6 +26,7 @@ pub mod cell;
 pub mod community;
 pub mod payload;
 pub mod routing;
+pub mod socks5;
 
 /// `community_id` de `TunnelCommunity`/`HiddenTunnelCommunity`
 /// (`81ded07332bdc775aa5a46f96de9f8f390bbc9f3`, pyipv8).

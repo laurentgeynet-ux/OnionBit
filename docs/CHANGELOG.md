@@ -3,6 +3,27 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Étape 12 (partie 2) — `tribler-tunnel` : sortie bidirectionnelle + SOCKS5 (2026-09-27)
+
+Le tunnel est maintenant bidirectionnel et expose un proxy SOCKS5 :
+
+- `community.rs` : sockets de sortie dédiées — chaque circuit-sortie
+  possède sa `UdpSocket` (bind `0.0.0.0:0`) avec tache de reception ;
+  `exit.back_map[src] = origine` memorise le demandeur pour router la
+  reponse dans le tunnel (`exit_recv_data`, chiffrement BACKWARD).
+- `socks5.rs` : proxy SOCKS5 minimal (`ipv8-rust-tunnels/src/socks5.rs`
+  en reference) — greeting sans auth, `UDP ASSOCIATE` (CONNECT/BIND →
+  `CommandNotSupported`), decapsulage des frames `RSV FRAG ATYP ADDR
+  PORT DATA` (IPv4/IPv6/domaine) vers `send_data`, selection sticky
+  destination → circuit `READY` du `goal_hops` voulu
+  (`ready_circuits_of_hops`), chemin retour : `data_rx` →
+  reencapsulation SOCKS5 UDP → `return_map` circuit → (socket, client).
+- Test `socks5_udp_associate_roundtrip` : greeting, associate, frame
+  UDP vers echo « exterieur », traverse un circuit 1 saut chiffre,
+  reponse reencapsulee et verifiee octet par octet.
+- Bug corrige en chemin : `handle_associate` relisait le port une
+  seconde fois (deja consomme par `read_address`) → blocage.
+
 ## Étape 12 (partie 1) — `tribler-tunnel` : circuits fonctionnels en loopback (2026-09-27)
 
 Premier tronçon de la TunnelCommunity, validé par tests loopback réels :
