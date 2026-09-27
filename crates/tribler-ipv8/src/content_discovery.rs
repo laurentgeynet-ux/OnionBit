@@ -249,6 +249,11 @@ impl ContentDiscoveryCommunity {
             let mut tick =
                 tokio::time::interval(gossip_interval.unwrap_or(DEFAULT_GOSSIP_INTERVAL));
             tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            // `tokio::interval` tire un premier tick **immediat** — on
+            // l'absorbe : le gossip est periodique, rien a emettre a
+            // froid (et un tir immediat dependant de l'ordonnancement
+            // rend le timing non deterministe).
+            tick.tick().await;
             loop {
                 tick.tick().await;
                 c.gossip_tick().await;
@@ -257,11 +262,9 @@ impl ContentDiscoveryCommunity {
         community
     }
 
-    /// `claim_global_time`.
-    fn claim_global_time(&self) -> u64 {
-        self.global_time.fetch_add(1, Ordering::Relaxed) + 1
-    }
-
+    /// `update_global_time` : l'horodatage recu fait avancer l'horloge
+    /// (Lamport) — les messages de cette community n'emettent pas de
+    /// `dist` (`ez_send` pyipv8) mais en recoivent via les intros.
     fn update_global_time(&self, t: u64) {
         self.global_time.fetch_max(t, Ordering::Relaxed);
     }
@@ -274,11 +277,11 @@ impl ContentDiscoveryCommunity {
     ) -> Result<(), Ipv8Error> {
         let mut w = Writer::new();
         payload.pack(&mut w)?;
-        let packet = Packet::sign(
+        // `ez_send` pyipv8 : sans `dist` (hors intros/punctures).
+        let packet = Packet::sign_no_dist(
             &CONTENT_DISCOVERY_COMMUNITY_ID,
             P::MSG_ID,
             &self.key,
-            self.claim_global_time() % 65536,
             &w.into_bytes(),
         );
         self.endpoint.send_to(addr, &packet).await
@@ -311,11 +314,13 @@ impl ContentDiscoveryCommunity {
             )
         };
         if let Some(p) = chosen_one {
-            let payload = HealthPayload::create(
-                HEALTH_REQUEST_RANDOM,
-                self.provider.healths_for(HEALTH_REQUEST_RANDOM),
-            );
-            let _ = self.send_payload(&p, &payload).await;
+            let healths = self.provider.healths_for(HEALTH_REQUEST_RANDOM);
+            // Coherent avec le handler `HEALTH_REQUEST` : rien a
+            // annoncer -> ne pas emettre de `HealthPayload` vide.
+            if !healths.is_empty() {
+                let payload = HealthPayload::create(HEALTH_REQUEST_RANDOM, healths);
+                let _ = self.send_payload(&p, &payload).await;
+            }
         }
         for p in targets {
             let _ = self

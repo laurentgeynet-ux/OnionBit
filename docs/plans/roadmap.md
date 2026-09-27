@@ -106,7 +106,7 @@ ne sont donc pas « terminées » au sens strict) · `[x]` terminée.
   avec succès en CI (`tests/interop_replay.rs`, `tests/fixtures/*.hex`,
   provenance : `tests/fixtures/README.md`). La cible distincte
   « Tribler 8.4.3 installé » n'est pas encore exercée.
-- [i] **Étape 10. DHT overlay IPv8.** `tribler-ipv8::dht` : `calc_node_id`
+- [x] **Étape 10. DHT overlay IPv8.** `tribler-ipv8::dht` : `calc_node_id`
   (CRC-32 IEEE d'IP masquée + `mid[:17]` — fidèle à `binascii.crc32`),
   `distance` XOR, `RoutingTable` (trie binaire, buckets de 8, split),
   `Storage` versionné, `DhtCommunity` (fusion `DHTCommunity` +
@@ -114,13 +114,16 @@ ne sont donc pas « terminées » au sens strict) · `[x]` terminée.
   `sha1(str(node)+secret)` tournants, crawl itératif (8/24/4),
   puncture-request **non signé** + puncture signé, valeurs signées
   Ed25519. Tests loopback : introduction → ping → `store_value` →
-  `find_values` de bout en bout entre deux noeuds. **Scénarios interop
-  attendus avant `[x]`** : aller-retour DHT Rust↔Python réel exercé —
-  `store_value`/`find_values` de bout en bout avec jetons tournants
-  (`sha1(str(node)+secret)`) acceptés et résultat contrôlé des deux
-  côtés (la couche paquet signé est déjà validée à l'étape 9 ; il reste
-  les payloads DHT propres : find/store/tokens contre un
-  `DHTCommunity` Python).
+  `find_values` de bout en bout entre deux noeuds. **Interop réelle
+  prouvée** (`scripts/interop_dht.ps1` → `INTEROP DHT OK`) contre un
+  `DHTCommunity` pyipv8 : `find_values`/`store_value` **signés** dans
+  les deux sens (signature vérifiée par le decodeur adverse),
+  token accepté/rejeté, **rotation des secrets Python** (token
+  evince → rejet, token frais → accepté). Correctif filaire associe :
+  `DIST_MSG_IDS` — `GlobalTimeDistributionPayload` n'est present que
+  pour les intros/punctures (246/245/234/233/249/231) ; les messages
+  DHT `ez_send` sont `[auth, payload]` sans `dist`
+  (`Packet::sign_no_dist`/`sign_auto`).
 - [i] **Étape 11. Framework de communities complet.** `tribler-ipv8` :
   `Network` complet (`_all_addresses`/`WalkableAddress`, `discover_address`,
   `get_walkable_addresses` filtré par service/old-style,

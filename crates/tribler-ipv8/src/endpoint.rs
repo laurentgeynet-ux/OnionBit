@@ -142,10 +142,23 @@ impl UdpEndpoint {
 
     /// Boucle de reception : dispatch par prefixe vers les listeners.
     /// Bloquante — a lancer dans une tache tokio.
+    ///
+    /// Les erreurs de `recv_from` (ex. `WSAECONNRESET` Windows quand un
+    /// ICMP « port injoignable » revient d'un envoi vers un pair mort)
+    /// ne doivent **pas** tuer la boucle — le socket reste utilisable.
     pub async fn run(self: &Arc<Self>) -> Result<(), Ipv8Error> {
         let mut buf = vec![0u8; MAX_DGRAM];
         loop {
-            let (n, src) = self.socket.recv_from(&mut buf).await?;
+            let (n, src) = match self.socket.recv_from(&mut buf).await {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::warn!(error = %e, "recv_from en erreur — ecoute poursuivie");
+                    // Petite pause : evite un busy-loop si l'erreur est
+                    // persistante (interface down, etc.).
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                    continue;
+                }
+            };
             self.bytes_down
                 .fetch_add(n as u64, std::sync::atomic::Ordering::Relaxed);
             let data = &buf[..n];
@@ -167,8 +180,9 @@ impl UdpEndpoint {
             if let Some(h) = handler {
                 match Packet::parse(data, None) {
                     Ok(pkt) => {
+                        let msg_id = pkt.msg_id;
                         if let Err(e) = h(src, pkt) {
-                            tracing::debug!(error = %e, "handler de community en erreur");
+                            tracing::debug!(error = %e, msg_id, "handler de community en erreur");
                         }
                     }
                     Err(e) => {

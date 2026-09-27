@@ -2094,13 +2094,9 @@ impl TunnelCommunity {
     ) -> Result<(), Ipv8Error> {
         let mut w = Writer::new();
         tp::Destroy { circuit_id, reason }.pack(&mut w)?;
-        let pkt = Packet::sign(
-            &self.community_id,
-            msg::DESTROY,
-            &self.key,
-            self.claim_global_time(),
-            &w.into_bytes(),
-        );
+        // `ezr_pack` pyipv8 (`send_destroy`) : signe sans `dist`.
+        let pkt =
+            Packet::sign_no_dist(&self.community_id, msg::DESTROY, &self.key, &w.into_bytes());
         self.endpoint.send_to(target, &pkt).await
     }
 

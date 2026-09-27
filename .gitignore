@@ -13,3 +13,6 @@ build/
 
 # Artefacts de build release (scripts/build_release.ps1)
 dist/
+
+# Config cargo locale (linker/jobs spécifiques à la machine)
+.cargo/

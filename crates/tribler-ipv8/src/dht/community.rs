@@ -421,9 +421,11 @@ impl DhtCommunity {
         now_secs() as u64 % 65536
     }
 
-    /// Signe + envoie un payload serialise.
+    /// Signe + envoie un payload serialise. `sign_auto` choisit le
+    /// layout selon `msg_id` : `dist` pour les intros/punctures
+    /// (246/245/249/231…), `ez_send` pur pour les messages DHT.
     async fn send(&self, addr: &UdpAddress, msg_id: u8, body: &[u8]) -> Result<(), Ipv8Error> {
-        let pkt = Packet::sign(&DHT_COMMUNITY_ID, msg_id, &self.key, Self::gtime(), body);
+        let pkt = Packet::sign_auto(&DHT_COMMUNITY_ID, msg_id, &self.key, Self::gtime(), body);
         self.endpoint.send_to(addr, &pkt).await
     }
 
@@ -1446,7 +1448,9 @@ impl DhtCommunity {
         let ep = self.endpoint.clone();
         let key = self.key.clone();
         tokio::spawn(async move {
-            let pkt = Packet::sign(
+            // `sign_auto` : `dist` uniquement pour les
+            // intros/punctures (`DIST_MSG_IDS`), `ez_send` pur sinon.
+            let pkt = Packet::sign_auto(
                 &DHT_COMMUNITY_ID,
                 msg_id,
                 &key,

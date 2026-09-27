@@ -7,7 +7,9 @@
 //! [0..22)  prefix = 0x00 + version(1o, 0x02) + community_id(20o)
 //! [22]     msg_id (1 octet)
 //! [23..]   auth  = varlenH(public_key_bin)   (74 octets utiles)
-//!          dist  = Q(global_time)            (8 octets)
+//!          dist  = Q(global_time)            (8 octets, uniquement
+//!                                              pour `DIST_MSG_IDS` :
+//!                                              intros/punctures)
 //!          payload serialise
 //! [fin-64] signature Ed25519 sur tout le paquet precedent
 //! ```
@@ -39,6 +41,18 @@ pub fn prefix_of(community_id: &CommunityId) -> [u8; PREFIX_LEN] {
 /// est `prefix + msg_id + Q(global_time) + payload`.
 pub const UNSIGNED_MSG_IDS: &[u8] = &[250, 232];
 
+/// `msg_id` des messages **signes** dont le corps commence par
+/// `GlobalTimeDistributionPayload` (`Q(global_time)`, 8 octets) : les
+/// introductions et punctures signees, construites dans pyipv8 par
+/// `create_introduction_*`/`create_puncture` via
+/// `_ez_pack(prefix, msg_id, [auth, dist, payload])`.
+///
+/// Tous les autres messages signes sont emis par `ez_send`
+/// (`ezr_pack`) = `prefix + msg_id + varlenH(pubkey) + payload`,
+/// **sans** `dist` — c'est le cas du DHT (`PingRequest`…) et des
+/// cellules tunnel.
+pub const DIST_MSG_IDS: &[u8] = &[246, 245, 234, 233, 249, 231];
+
 /// Paquet IPv8 decode (signature deja verifiee si `signed`).
 #[derive(Debug)]
 pub struct Packet {
@@ -49,7 +63,8 @@ pub struct Packet {
     /// Cle publique binaire de l'emetteur (`LibNaClPK:…`), vide si non
     /// signe.
     pub public_key_bin: Vec<u8>,
-    /// Horodatage de Lamport (`GlobalTimeDistributionPayload`).
+    /// Horodatage de Lamport (`GlobalTimeDistributionPayload`) — `0`
+    /// pour les messages signes `ez_send` qui n'en portent pas.
     pub global_time: u64,
     /// Octets du payload applicatif (apres auth+dist, avant signature).
     pub payload: Vec<u8>,
@@ -80,6 +95,45 @@ impl Packet {
         let sig = key.sign(&packet);
         packet.extend_from_slice(&sig);
         packet
+    }
+
+    /// Equivalent de `ez_send`/`ezr_pack` pyipv8 : `prefix + msg_id +
+    /// varlenH(pubkey) + payload` signe, **sans**
+    /// `GlobalTimeDistributionPayload` — reservee aux
+    /// introductions/punctures (`DIST_MSG_IDS`).
+    pub fn sign_no_dist(
+        community_id: &CommunityId,
+        msg_id: u8,
+        key: &LibNaClSecretKey,
+        payload: &[u8],
+    ) -> Vec<u8> {
+        let mut w = Writer::new();
+        w.bytes(&prefix_of(community_id));
+        w.u8(msg_id);
+        w.varlen_h(&key.public_key().to_bin());
+        w.raw(payload);
+        let mut packet = w.into_bytes();
+        let sig = key.sign(&packet);
+        packet.extend_from_slice(&sig);
+        packet
+    }
+
+    /// Choisit le layout signe selon `msg_id` : `dist` pour les
+    /// introductions/punctures (`DIST_MSG_IDS`), `ez_send` pur sinon —
+    /// comme pyipv8 qui ajoute `GlobalTimeDistributionPayload` au corps
+    /// uniquement dans `create_introduction_*`/`create_puncture*`.
+    pub fn sign_auto(
+        community_id: &CommunityId,
+        msg_id: u8,
+        key: &LibNaClSecretKey,
+        global_time: u64,
+        payload: &[u8],
+    ) -> Vec<u8> {
+        if DIST_MSG_IDS.contains(&msg_id) {
+            Self::sign(community_id, msg_id, key, global_time, payload)
+        } else {
+            Self::sign_no_dist(community_id, msg_id, key, payload)
+        }
     }
 
     /// Construit un paquet **non signe** (ni auth ni signature) :
@@ -154,7 +208,14 @@ impl Packet {
         // `raw` n'avale pas les 64 derniers octets.
         let mut r = Reader::new(&signed[23..]);
         let public_key_bin = r.varlen_h()?.to_vec();
-        let global_time = r.u64()?;
+        // `dist` n'est present que pour les intros/punctures signees
+        // (`DIST_MSG_IDS`) ; les autres messages `ez_send` enchainent
+        // directement sur le payload applicatif.
+        let global_time = if DIST_MSG_IDS.contains(&msg_id) {
+            r.u64()?
+        } else {
+            0
+        };
         let payload = r.raw().to_vec();
 
         // La signature couvre auth+dist+payload+prefix+msg_id, donc

@@ -61,8 +61,21 @@ async fn node(
     let addr = UdpAddress::from(ep.local_addr().unwrap());
     let net = Arc::new(Network::default());
     let key = LibNaClSecretKey::generate();
-    let community =
-        ContentDiscoveryCommunity::new(key, net.clone(), ep.clone(), provider, None).await;
+    // Gossip periodique desactive (intervalle tres long) : ces tests
+    // isolent le chemin requete/reponse explicite (msg 3/4, 101/102,
+    // 201/202) — le premier tick de `gossip_tick` se declenche
+    // immediatement (tokio::time::interval) a un instant non
+    // deterministe et peut emettre un `HealthPayload` legitime en
+    // doublon des qu'un pair est verifie, rendant les egalites
+    // strictes de compteur flaky.
+    let community = ContentDiscoveryCommunity::new(
+        key,
+        net.clone(),
+        ep.clone(),
+        provider,
+        Some(Duration::from_secs(3600)),
+    )
+    .await;
     tokio::spawn(async move {
         let _ = ep.run().await;
     });
@@ -112,6 +125,7 @@ async fn health_request_response_roundtrip() {
     let (ca, _na, _aa) = node(pa.clone() as Arc<dyn ContentProvider>).await;
     let (_cb, _nb, addr_b) = node(pb.clone() as Arc<dyn ContentProvider>).await;
 
+    eprintln!("DIAG addr_b={:?}", addr_b);
     ca.request_health(&addr_b, HEALTH_REQUEST_RANDOM)
         .await
         .unwrap();

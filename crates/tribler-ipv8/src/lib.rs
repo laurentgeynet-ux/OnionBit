@@ -108,10 +108,26 @@ mod tests {
         let key = tribler_crypto::ipv8::keys::LibNaClSecretKey::generate();
         let cid = DISCOVERY_COMMUNITY_ID;
         let payload = b"payload-de-test";
-        let raw = Packet::sign(&cid, 3, &key, 42, payload);
+        // `234` (intro request new-style) porte `dist` comme en pyipv8.
+        let raw = Packet::sign(&cid, 234, &key, 42, payload);
+        let pkt = Packet::parse(&raw, Some(&cid)).unwrap();
+        assert_eq!(pkt.msg_id, 234);
+        assert_eq!(pkt.global_time, 42);
+        assert_eq!(pkt.payload, payload);
+        assert_eq!(pkt.public_key_bin, key.public_key().to_bin());
+    }
+
+    #[test]
+    fn paquet_signe_sans_dist_aller_retour() {
+        let key = tribler_crypto::ipv8::keys::LibNaClSecretKey::generate();
+        let cid = DISCOVERY_COMMUNITY_ID;
+        let payload = b"payload-de-test";
+        // Messages `ez_send` (DHT, cellules…) : `auth + payload`, pas de
+        // `GlobalTimeDistributionPayload`.
+        let raw = Packet::sign_no_dist(&cid, 3, &key, payload);
         let pkt = Packet::parse(&raw, Some(&cid)).unwrap();
         assert_eq!(pkt.msg_id, 3);
-        assert_eq!(pkt.global_time, 42);
+        assert_eq!(pkt.global_time, 0);
         assert_eq!(pkt.payload, payload);
         assert_eq!(pkt.public_key_bin, key.public_key().to_bin());
     }

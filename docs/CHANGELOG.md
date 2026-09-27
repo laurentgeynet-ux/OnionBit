@@ -3,6 +3,70 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Étape 10 — interop DHT Rust ↔ pyipv8 prouvée (2026-09-27)
+
+- **Correctif filaire `Packet`** : pyipv8 n'insère
+  `GlobalTimeDistributionPayload` (`dist`, 8 octets) que dans les
+  paquets construits par `create_introduction_*`/`create_puncture*` —
+  intros/punctures signées `246/245/234/233/249/231` (+ non signées
+  `250/232`, déjà couvertes). Les messages `ez_send` (DHT 1-10,
+  cellules tunnel, content-discovery) sont `[auth, payload]` **sans
+  `dist`**. `Packet::parse` ne lit `global_time` que pour
+  `DIST_MSG_IDS` ; nouveaux `Packet::sign_no_dist` (layout `ez_send`)
+  et `sign_auto` (choix par `msg_id`). Sans cela, chaque paquet DHT
+  Python etait desaligne de 8 octets → `type d'adresse inconnu`, et
+  reciproquement les paquets Rust etaient rejetes par Python.
+  Confirmé par décodage octet-par-octet d'une capture
+  (`identifier/lan_address/target` exacts).
+- **Émetteurs corrigés** : `DhtCommunity::send`/`reply` → `sign_auto`
+  (les intros 246/245 que le DHT reutilise gardent `dist`),
+  `ContentDiscoveryCommunity::send_payload` → `sign_no_dist`,
+  `TunnelCommunity::send_destroy` → `sign_no_dist` (`send_destroy`
+  pyipv8 = `ezr_pack` sans dist).
+- **Banc d'interop** : `scripts/interop_dht.ps1` +
+  `crates/tribler-ipv8/examples/dht_interop_node.rs` +
+  `scripts/interop/py_dht_node.py` (vrai `DHTCommunity` pyipv8,
+  loopback 127.0.0.1:12100↔12101). Résultat **`INTEROP DHT OK`** —
+  les 10 assertions passent :
+  - Python→Rust : `find_values` (token), `store_value` **signé**
+    accepté, relecture avec signature vérifiée (`pubkey` non nul),
+    store à token bidon rejeté, lecture de la valeur signée Rust
+    (signature vérifiée par Python).
+  - Rust→Python : `find_values` (token), `store_value` signé accepté,
+    **rotation des secrets Python** au premier store → token évincé
+    rejeté (`RUST_STALE_REJECTED`), token frais accepté
+    (`RUST_REFRESHED_STORE_OK`).
+- Diagnostic : `msg_id` ajouté au log d'erreur des handlers
+  d'`UdpEndpoint` ; tap brut datagrammes dans l'exemple (déjà utilisé
+  par les bancs tunnel).
+- **`UdpEndpoint::run` résilient** : `recv_from` ne tue plus la boucle
+  d'écoute (`WSAECONNRESET` Windows après ICMP « port injoignable »
+  d'un envoi vers un pair mort rendait le noeud sourd — flaky tests
+  loopback) : erreur loguée `warn!` + pause 10 ms + poursuite.
+- **Flake `content_discovery` corrigé** : `gossip_tick` absorbait le
+  premier tick immediat de `tokio::interval` a un instant non
+  deterministe et pouvait emettre un `HealthPayload` en doublon des
+  qu'un pair etait verifie → egalite stricte de compteur cassante.
+  Tick immediat consomme + payload vide jamais emis (coherent avec le
+  handler `HEALTH_REQUEST`) + tests sur intervalle long.
+- **`verify_all.ps1` durci** : `$ErrorActionPreference` n'intercepte
+  pas les codes de sortie natifs — chaque etape verifie
+  `$LASTEXITCODE` et echoue immediatement (un `cargo test` rouge ne
+  peut plus etre masque par « Validation complete OK »).
+
+## Régression — `anon_hops` câblé dans PUT/PATCH `/api/downloads` (commit `718b2b8`)
+
+- `PUT /api/downloads` refusait `anon_hops > 0` alors que la session
+  supportait déjà les lanes anonymes — routage vers
+  `add_download_anon`/`add_torrent_bytes_anon`, validation
+  safe-seeding (sémantique Tribler) et stack IPv8 active.
+- `PATCH /api/downloads/{ih}` : `anon_hops` seul accepté —
+  `update_hops` détruit l'engine, recrée sur la nouvelle lane,
+  restaure l'état (pause, trackers), rollback best-effort en cas
+  d'échec, persistance DB (`downloads.anon_hops`, migration v2).
+- Réponses GET : `hops`/`anon_download` réels (plus codés à 0/false).
+- 22 tests API verts dont régression anonyme.
+
 ## Étapes 17-18 — packaging desktop + modèle mobile (2026-09-27)
 
 - **`scripts/build_release.ps1`** : build release reproductible
