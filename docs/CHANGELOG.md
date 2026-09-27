@@ -3,6 +3,35 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Revue documentaire — cohérence inter-documents (2026-09-27)
+
+Revue critique externe des documents + vérification contre les sources
+Python et le code. Corrections appliquées :
+
+- `roadmap.md` : nouveau marqueur `[i]` (implémentée, interop Python en
+  attente) appliqué aux étapes 9-11 — la règle de cochage exige la
+  validation manuelle, et l'échange reproductible avec un noeud pyipv8
+  réel n'a pas encore été fait. Jalon ajouté : script d'interop
+  Rust↔pyipv8 avec paquets enregistrés avant de repasser en `[x]`.
+- `roadmap.md` étape 12 : le chiffrement de tunnel est
+  **ChaCha20-Poly1305** (le texte était resté sur AES-GCM du plan
+  initial, contredisant l'étape 2).
+- `plan_faisabilite.md` et `architecture.md` : toutes les mentions
+  « WebSocket » corrigées en **SSE** — le Python utilise
+  `text/event-stream` (`events_endpoint.py`) ; la mention WebSocket
+  était une erreur sur la référence elle-même, pas une doc Rust
+  obsolète. `AGENTS.md` corrigé de même.
+- `decisions/0005-langue-francaise.md` : titre interne corrigé
+  « ADR-0003 » → « ADR-0005 » (doublon avec l'ADR licence).
+- `plan_faisabilite.md` §4 : la licence renvoyait à ADR-0004 (structure
+  workspace) → corrigé vers ADR-0003.
+- `correspondance_modules.md` : `api_rest_mapping.md` était annoncé
+  « à créer » alors qu'il existe depuis l'étape 6 — corrigé.
+- Dates du changelog : les étapes 1-8 étaient datées 2026-09-28 alors
+  que git atteste le 2026-09-27 — corrigé.
+- `plan_faisabilite.md` : références d'étapes obsolètes corrigées
+  (packaging = étapes 17-19, mobile = étape 18).
+
 ## Étape 11 — `tribler-ipv8` : framework de communities complet (2026-09-27)
 
 - `peer.rs` reecrit : `Peer` (+ `new_style_intro`, `update_clock`
@@ -83,7 +112,7 @@ en haut.
 - Jalon d'interop avec un noeud pyipv8 reel : formats repris a
   l'identique ; test manuel reseau reporte (hors tests offline).
 
-## Étape 8 — `tribler-daemon` : executable bout en bout (2026-09-28)
+## Étape 8 — `tribler-daemon` : executable bout en bout (2026-09-27)
 
 - Assemblage complet : `CoreSession` (moteur BitTorrent + SQLite +
   notifier) derriere `tribler-api`, servi par axum avec
@@ -99,7 +128,7 @@ en haut.
   sur loopback, kill propre. Le test manuel "telechargement torrent
   reel" reste a l'etape 16 (necessite du reseau).
 
-## Étape 7 — `tribler-cli` : CLI de pilotage (2026-09-28)
+## Étape 7 — `tribler-cli` : CLI de pilotage (2026-09-27)
 
 - Sous-commandes clap : `status`, `list`, `add` (`--paused`),
   `remove` (`--remove-data`), `pause`, `resume` ; option globale
@@ -116,7 +145,7 @@ en haut.
 - Piege corrige : `std::process::Command` bloque le runtime tokio
   mono-thread du test ; `tokio::process::Command` utilise.
 
-## Étape 6 — `tribler-api` : REST + SSE (2026-09-28)
+## Étape 6 — `tribler-api` : REST + SSE (2026-09-27)
 
 - Routeur axum (`router.rs`) + etat partage `AppState` (`CoreSession`).
 - Endpoints : `GET /api/downloads` (filtres `infohash`/`excluded`),
@@ -140,7 +169,7 @@ en haut.
   cycle complet ajout/pause/resume/suppression, 400/404 au format
   Tribler, format SSE verifie) + smoke test du routeur.
 
-## Étape 5 — `tribler-core` : Session + Notifier (2026-09-28)
+## Étape 5 — `tribler-core` : Session + Notifier (2026-09-27)
 
 - `CoreSession` : facade domaine (equivalent de `tribler.core.session.
   Session`) assemblant `BtEngine` + `Database` + `Notifier`.
@@ -160,7 +189,7 @@ en haut.
 - 2 tests : session offline bout en bout (ajout + stats + notification)
   et notifier sans abonnes.
 
-## Étape 4 — `tribler-db` : schema SQLite + migrations (2026-09-28)
+## Étape 4 — `tribler-db` : schema SQLite + migrations (2026-09-27)
 
 - `Database` : ouverture fichier/memoire, `Mutex<Connection>` pour le
   partage entre services async, WAL + `foreign_keys` actives.
@@ -181,7 +210,7 @@ en haut.
 - 5 tests en memoire (migrations, misc, sante+trackers, dedup
   channel_node, cycle downloads).
 
-## Étape 3 — `tribler-bittorrent` : enveloppe `librqbit` (2026-09-28)
+## Étape 3 — `tribler-bittorrent` : enveloppe `librqbit` (2026-09-27)
 
 - `BtEngine` : enveloppe de `librqbit::Session` v9 (cycle de vie
   start/stop, ajout magnet/URI/bytes `.torrent`, liste, pause, reprise,
@@ -199,7 +228,7 @@ en haut.
 - 1 test offline (session sans réseau + ajout de `.torrent` encodé par
   `tribler-format`).
 
-## Étape 1 — `tribler-format` : bencode, `.torrent`, magnet, `.mdblob` (2026-09-28)
+## Étape 1 — `tribler-format` : bencode, `.torrent`, magnet, `.mdblob` (2026-09-27)
 
 - Parser bencode borné maison (`bencode/parser.rs`) : profondeur max,
   tailles de chaînes/listes/dicts limitées via `limits.rs`, offsets
@@ -223,7 +252,7 @@ en haut.
   `tribler-crypto`.
 - 18 tests offline, `clippy -D warnings` et `fmt` propres.
 
-## Étape 2 — `tribler-crypto` : hachage et crypto IPv8 (2026-09-28)
+## Étape 2 — `tribler-crypto` : hachage et crypto IPv8 (2026-09-27)
 
 - `hash.rs` : SHA-1/SHA-256 + hex, validé contre vecteurs officiels.
 - `ipv8/keys.rs` : clés `LibNaCLPK`/`LibNaCLSK` au format binaire pyipv8

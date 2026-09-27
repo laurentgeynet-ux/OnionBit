@@ -12,7 +12,7 @@ crates d'infrastructure implémentent (adaptateurs).
                         │   Clients (hors backend)   │
                         │  tribler-cli | future UI   │
                         └─────────────┬─────────────┘
-                                      │ HTTP / WebSocket
+                                      │ HTTP / SSE
                         ┌─────────────▼─────────────┐
                         │        tribler-api         │  Interface (adaptateur entrant)
                         └─────────────┬─────────────┘
@@ -69,8 +69,9 @@ Règles de dépendance :
 `tribler-core::Notifier` est le bus d'événements interne (équivalent du
 `notifier.py` Python). Toute I/O qui produit un événement notable
 (progression de téléchargement, changement d'état de circuit, nouveau
-pair IPv8...) publie sur ce bus. `tribler-api` s'y abonne pour poussser
-les événements sur le WebSocket, exactement comme l'API Python actuelle.
+pair IPv8...) publie sur ce bus. `tribler-api` s'y abonne pour pousser
+les événements en SSE (`text/event-stream`), exactement comme l'API
+Python actuelle.
 
 ## 4. Pourquoi ne pas réécrire le moteur BitTorrent (ADR-0001)
 
@@ -96,5 +97,5 @@ circuits) doit être porté depuis `pyipv8`/`tribler.core.tunnel` sans
   service applicatif ; sujet dédié à traiter avant l'étape 14 (contraintes
   d'exécution en arrière-plan, cf. `plan_faisabilite.md` §7).
 - Web : pas de daemon dans le navigateur ; le futur frontend Flutter Web
-  se connecte en HTTP/WebSocket à une instance `tribler-daemon` locale ou
+  se connecte en HTTP/SSE à une instance `tribler-daemon` locale ou
   distante, comme le fait déjà l'UI React actuelle de Tribler.

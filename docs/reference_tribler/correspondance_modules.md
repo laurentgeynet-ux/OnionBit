@@ -20,6 +20,6 @@ avec les écarts de comportement constatés lors du portage.
 
 ## `api_rest_mapping.md`
 
-Fichier à créer à l'étape 6 (premiers endpoints) et complété à l'étape 15
+Fichier créé à l'étape 6 (premiers endpoints) et à compléter à l'étape 15
 (parité complète) : table `méthode + chemin Python` → `méthode + chemin
 Rust` → `statut` (identique / adapté / non porté + justification).

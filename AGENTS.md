@@ -15,10 +15,10 @@ qu'une fois le backend validé à 100 % sur ses fonctionnalités clés.
 - Réseau d'anonymisation : **portage du protocole IPv8** (`pyipv8` +
   `TunnelCommunity`) — aucune implémentation Rust complète n'existe à ce
   jour, c'est la brique la plus risquée du projet (cf. ADR-0002)
-- Contrôle du daemon : API **REST + WebSocket** (axum), en parité
+- Contrôle du daemon : API **REST + SSE** (axum), en parité
   fonctionnelle avec `tribler.core.restapi`, consommée par `tribler-cli`
   puis plus tard par l'UI Flutter — jamais d'accès direct à `tribler-core`
-- Licence : **GPL-3.0-or-later** (héritée de Tribler, cf. ADR-0004 —
+- Licence : **GPL-3.0-or-later** (héritée de Tribler, cf. ADR-0003 —
   le projet s'appuie sur l'architecture/la logique du code source GPL-3.0
   de Tribler, pas une réimplémentation clean-room)
 
@@ -51,7 +51,7 @@ Références de vérité en local :
 | `crates/tribler-core` | Domaine/orchestration : `Session`, `Notifier`, règles métier (decouverte, RSS, watch folder, torrent checker) |
 | `crates/tribler-db` | Persistance SQLite (torrents, canaux, votes, réglages) via `rusqlite` |
 | `crates/tribler-network-policy` | Anti-SSRF, politique des noeuds de sortie, kill switch, garde-fous SOCKS5 |
-| `crates/tribler-api` | Plan de contrôle REST + WebSocket (axum), seule porte d'entrée réseau locale |
+| `crates/tribler-api` | Plan de contrôle REST + SSE (axum), seule porte d'entrée réseau locale |
 | `crates/tribler-cli` | CLI de pilotage, parle uniquement à `tribler-api` |
 | `crates/tribler-daemon` | Binaire principal : assemble tout, config, cycle de vie |
 | `crates/tribler-test-support` | Fixtures/helpers de tests partagés inter-crates (dev-dependency uniquement) |

@@ -1,7 +1,7 @@
 //! Bus d'evenements interne (equivalent de `tribler.core.notifier`).
 //!
 //! Un `tokio::sync::broadcast` distribue les [`Notification`] aux
-//! abonnes : `tribler-api` (WebSocket), les services internes
+//! abonnes : `tribler-api` (SSE), les services internes
 //! (torrent_checker, content_discovery), les logs.
 //!
 //! La capacite du canal est bornee ([`CAPACITY`]) : un abonne lent
@@ -17,7 +17,7 @@ pub const CAPACITY: usize = 256;
 /// Evenement interne du daemon.
 ///
 /// Les variantes portent des donnees deja serialisables/legères ; la
-/// traduction vers les topics WebSocket Python
+/// traduction vers les topics SSE Python
 /// (`Notification.*` de `tribler.core.restapi`) se fait dans
 /// `tribler-api`.
 #[derive(Debug, Clone)]

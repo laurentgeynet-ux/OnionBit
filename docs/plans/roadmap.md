@@ -3,10 +3,13 @@
 Ce document est la **source de vérité de l'avancement**. Chaque étape est
 cochée quand : implémentée + testée + validée manuellement + documentée +
 commitée (cf. `AGENTS.md`, section "Workflow par étape"). Ne jamais
-démarrer l'UI Flutter (étape 15+) avant que toutes les étapes backend
+démarrer l'UI Flutter (étape 20+) avant que toutes les étapes backend
 soient cochées.
 
-Légende : `[ ]` à faire · `[~]` en cours · `[x]` terminée.
+Légende : `[ ]` à faire · `[~]` en cours · `[i]` implémentée et testée en
+loopback, mais **interopérabilité avec un noeud pyipv8 réel non encore
+validée** (la règle de cochage exige la validation manuelle — ces étapes
+ne sont donc pas « terminées » au sens strict) · `[x]` terminée.
 
 ## Phase 0 — Fondations du dépôt
 
@@ -30,7 +33,7 @@ Légende : `[ ]` à faire · `[~]` en cours · `[x]` terminée.
   binaire pyipv8 `LibNaCLPK:`/`LibNaCLSK:` + X25519 + Ed25519, MID =
   SHA-1), DH X25519 (`crypto_box_beforenm` + HSalsa20, fidèle à
   `ipv8-rust-tunnels`), dérivation de clés de session HKDF-SHA256,
-  AEAD ChaCha20-Poly1305 (pas AES-GCM : cf. note 2026-09-28), signatures
+  AEAD ChaCha20-Poly1305 (pas AES-GCM : cf. note 2026-09-27), signatures
   Ed25519. 16 tests.
 - [x] **Étape 3. Intégration `librqbit` et sessions de téléchargement.**
   `tribler-bittorrent` : `BtEngine` (enveloppe de `librqbit::Session`
@@ -86,7 +89,7 @@ Légende : `[ ]` à faire · `[~]` en cours · `[x]` terminée.
 
 ## Phase 3 — Réseau d'anonymisation IPv8
 
-- [x] **Étape 9. Overlay IPv8 minimal.** `tribler-ipv8` : serialiseur
+- [i] **Étape 9. Overlay IPv8 minimal.** `tribler-ipv8` : serialiseur
   binaire pyipv8 (formats `B/H/I/Q/?`, `varlenH`, `varlenHx20`, `ipv4`,
   `ip_address`, `bits`, `raw`, `20s/…`), paquets signés au format filaire
   exact (`0x00 + version 0x02 + community_id(20o) + msg_id + varlenH(pubkey)
@@ -97,7 +100,7 @@ Légende : `[ ]` à faire · `[~]` en cours · `[x]` terminée.
   aléatoire périodique. 4 tests dont échange réel ping/pong loopback entre
   deux noeuds. **Reste à valider** : interop avec un noeud pyipv8 réel
   (test manuel — les formats sont repris à l'identique des sources).
-- [x] **Étape 10. DHT overlay IPv8.** `tribler-ipv8::dht` : `calc_node_id`
+- [i] **Étape 10. DHT overlay IPv8.** `tribler-ipv8::dht` : `calc_node_id`
   (CRC-32 IEEE d'IP masquée + `mid[:17]` — fidèle à `binascii.crc32`),
   `distance` XOR, `RoutingTable` (trie binaire, buckets de 8, split),
   `Storage` versionné, `DhtCommunity` (fusion `DHTCommunity` +
@@ -107,7 +110,7 @@ Légende : `[ ]` à faire · `[~]` en cours · `[x]` terminée.
   Ed25519. Tests loopback : introduction → ping → `store_value` →
   `find_values` de bout en bout entre deux noeuds. **Reste** : interop
   avec des noeuds Python réels (formats repris à l'identique).
-- [x] **Étape 11. Framework de communities complet.** `tribler-ipv8` :
+- [i] **Étape 11. Framework de communities complet.** `tribler-ipv8` :
   `Network` complet (`_all_addresses`/`WalkableAddress`, `discover_address`,
   `get_walkable_addresses` filtré par service/old-style,
   `get_verified_by_address`, `get_introductions_from`, `blacklist` +
@@ -126,7 +129,7 @@ Légende : `[ ]` à faire · `[~]` en cours · `[x]` terminée.
   puncture-request → puncture.
 - [ ] **Étape 12. TunnelCommunity : circuits et hidden seeding.**
   `tribler-tunnel` : construction de circuits en onion routing (1/2/3
-  sauts), chiffrement AES-GCM par saut (`tribler-crypto`), hidden
+  sauts), chiffrement ChaCha20-Poly1305 par saut (`tribler-crypto`), hidden
   seeding, proxy SOCKS5 local. Jalon : téléchargement anonyme réel via
   un circuit construit contre le réseau Tribler existant.
 - [ ] **Étape 13. Politiques de sécurité réseau et kill switch.**
@@ -140,7 +143,7 @@ Légende : `[ ]` à faire · `[~]` en cours · `[x]` terminée.
   `content_discovery` (découverte via canaux), `torrent_checker`
   (scrape santé des torrents), `rss` (abonnements), `watch_folder`
   (import automatique de `.torrent`).
-- [ ] **Étape 15. Parité complète de l'API REST/WebSocket.** `tribler-api` :
+- [ ] **Étape 15. Parité complète de l'API REST/SSE.** `tribler-api` :
   couverture de tous les endpoints nécessaires à une future UI (canaux,
   recherche, paramètres, statistiques de circuits). Mise à jour complète
   de `docs/reference_tribler/api_rest_mapping.md`.
@@ -186,15 +189,28 @@ risque IPv8 sous/sur-estimé, etc.), avec la date.
 - 2026-09-27 : étape 0 terminée. Découverte de `librqbit` (ADR-0001) qui
   réduit fortement le risque des phases 1-2 par rapport à l'hypothèse
   initiale d'un moteur BitTorrent écrit entièrement à la main.
-- 2026-09-28 : étape 6 terminée. Correction de fidélité : l'endpoint
+- 2026-09-27 : étape 6 terminée. Correction de fidélité : l'endpoint
   `/api/events` Python est du **SSE** (`text/event-stream`), pas un
   WebSocket — `tribler-api` reproduit ce format exact. Écarts DTO
   connus consignés dans `api_rest_mapping.md` (`eta` en chaîne
   formatée, `num_seeds`/`num_connected_seeds` à 0 tant que le scraping
   trackers n'est pas implémenté).
-- 2026-09-28 : étapes 1 et 2 terminées. Deux corrections de fidélité par
+- 2026-09-27 : étapes 1 et 2 terminées. Deux corrections de fidélité par
   rapport au plan initial : (a) le chiffrement de tunnel IPv8 est
   **ChaCha20-Poly1305** et non AES-GCM (source : `ipv8-rust-tunnels`
   `crypto.rs`) ; (b) bencode est implémenté maison dans `tribler-format`
   plutôt que via `librqbit-bencode`, pour garder le parsing borné sous
   notre contrôle (et éviter une dépendance pour un codec simple).
+- 2026-09-27 : revue documentaire — les étapes 9-11 passent au marqueur
+  `[i]` : elles sont implémentées et testées en loopback Rust↔Rust, mais
+  l'interopérabilité avec un noeud pyipv8 réel reste à valider par un
+  échange reproductible enregistré (jalon manuel, hors CI). La règle de
+  cochage exige la validation manuelle ; elles ne sont donc pas
+  « terminées » au sens strict. Corrections associées : le chiffrement
+  de tunnel de l'étape 12 est ChaCha20-Poly1305 (et non AES-GCM, le texte
+  de l'étape était resté sur le plan initial) ; les mentions
+  « WebSocket » dans `plan_faisabilite.md`/`architecture.md` sont
+  remplacées par SSE — le Python utilise `text/event-stream`, la mention
+  WebSocket était une erreur sur la référence elle-même ; doublon de
+  titre ADR-0003 corrigé (la langue française est ADR-0005) et renvoi de
+  licence dans le plan de faisabilité corrigé vers ADR-0003.

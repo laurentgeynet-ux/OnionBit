@@ -6,7 +6,8 @@
 //!
 //! - `tribler-ipv8` pour la decouverte de pairs et la communication
 //!   overlay signee ;
-//! - `tribler-crypto` pour le chiffrement AES-GCM par saut de circuit ;
+//! - `tribler-crypto` pour le chiffrement ChaCha20-Poly1305 par saut de
+//!   circuit ;
 //! - `tribler-network-policy` pour les regles de securite des
 //!   noeuds de sortie (exit policy) et le kill switch.
 //!

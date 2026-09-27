@@ -1,4 +1,4 @@
-# ADR-0003 — Code et documentation en français
+# ADR-0005 — Code et documentation en français
 
 Statut : Acceptée (2026-09-27).
 

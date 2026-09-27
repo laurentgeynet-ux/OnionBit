@@ -4,7 +4,7 @@
 //! ports d'infrastructure (moteur BitTorrent `tribler-bittorrent`,
 //! persistance `tribler-db`) et publie les evenements internes sur le
 //! `Notifier`. Ce crate ne connait ni HTTP ni transports — il est
-//! consomme par `tribler-api` (REST/WebSocket) et `tribler-daemon`
+//! consomme par `tribler-api` (REST/SSE) et `tribler-daemon`
 //! (composition racine).
 //!
 //! Services secondaires (content_discovery, torrent_checker, rss,

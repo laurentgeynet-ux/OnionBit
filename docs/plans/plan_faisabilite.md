@@ -8,7 +8,7 @@ Statut : validé pour démarrage du backend (étape 0 terminée).
 Porter le daemon **Tribler** (client BitTorrent avec réseau d'anonymisation
 propriétaire IPv8/TunnelCommunity, https://github.com/Tribler/tribler,
 Python + aiohttp) vers un **daemon Rust natif**, exposé via une API
-REST + WebSocket locale, avec une future interface **Flutter**
+REST + SSE (Server-Sent Events) locale, avec une future interface **Flutter**
 multiplateforme (Windows x64/arm64, Linux, macOS, Android, iOS, Web) qui ne
 sera développée qu'une fois le backend validé à 100 % sur ses
 fonctionnalités clés.
@@ -23,7 +23,7 @@ Sources officielles étudiées : `D:\Projet\Tribler_sources\tribler`
 | `tribler.core.session` / `components.py` / `notifier.py` | `src/tribler/core` | Cycle de vie du daemon, bus d'événements | — |
 | `tribler.core.libtorrent` | `src/tribler/core/libtorrent` | Sessions de téléchargement (wrapper autour de `libtorrent` C++), `.torrent`/magnet | 5 fichiers |
 | `tribler.core.database` | `src/tribler/core/database` | Métadonnées torrents, canaux, votes (Pony ORM + SQLite) | 6 fichiers |
-| `tribler.core.restapi` | `src/tribler/core/restapi` | API REST aiohttp + notifications WebSocket | 11 fichiers |
+| `tribler.core.restapi` | `src/tribler/core/restapi` | API REST aiohttp + notifications SSE (`text/event-stream`) | 11 fichiers |
 | `tribler.core.tunnel` | `src/tribler/core/tunnel` | `TunnelCommunity` : circuits onion routing, hidden seeding | 4 fichiers |
 | `tribler.core.content_discovery` | `src/tribler/core/content_discovery` | Découverte de contenu via canaux | 4 fichiers |
 | `tribler.core.torrent_checker` | `src/tribler/core/torrent_checker` | Vérification de la santé des torrents (scrape trackers/DHT) | 5 fichiers |
@@ -31,10 +31,10 @@ Sources officielles étudiées : `D:\Projet\Tribler_sources\tribler`
 | `tribler.core.rss` | `src/tribler/core/rss` | Abonnements RSS vers torrents | 2 fichiers |
 | `tribler.core.watch_folder` | `src/tribler/core/watch_folder` | Import automatique de `.torrent` depuis un dossier surveillé | 2 fichiers |
 | `pyipv8` | `pyipv8/ipv8/` | Protocole overlay IPv8 : peer discovery, communities, DHT overlay, attestation, crypto | plusieurs milliers de lignes |
-| `ui/` | `src/tribler/ui` | Frontend React/TS consommant l'API REST/WebSocket | — |
+| `ui/` | `src/tribler/ui` | Frontend React/TS consommant l'API REST/SSE | — |
 
 **Constat clé** : l'architecture Python sépare déjà backend (daemon +
-API REST/WebSocket) et frontend (React web). C'est exactement le schéma
+API REST/SSE) et frontend (React web). C'est exactement le schéma
 visé (daemon Rust + Flutter), ce qui valide l'approche de découplage.
 
 **Découverte importante** : Tribler utilise déjà un crate Rust,
@@ -54,7 +54,7 @@ seulement une intuition.
 | Protocole IPv8 complet (overlay, discovery, communities, DHT overlay, attestation) | Aucune implémentation Rust complète connue (`ipv8-rust-tunnels` ne couvre que le plan de données des tunnels) | **Porter depuis `pyipv8`**, risque élevé assumé (cf. ADR-0002) |
 | Crypto Ed25519/X25519 | `ed25519-dalek`, `x25519-dalek` (mûrs, maintenus par le Dalek project) | Réutiliser |
 | SQLite | `rusqlite` (mode `bundled`, cohérent avec le choix fait dans eMule-Rust) | Réutiliser |
-| API REST + WebSocket | `axum` (déjà choisi dans eMule-Rust, cohérence d'écosystème) | Réutiliser |
+| API REST + SSE | `axum` (déjà choisi dans eMule-Rust, cohérence d'écosystème) | Réutiliser |
 
 Cette découverte change fortement l'estimation de risque/effort par
 rapport à un portage "tout à la main" : le moteur BitTorrent de base
@@ -69,7 +69,7 @@ fonctionnelle de l'API REST/DB.
 | :--- | :--- | :--- |
 | Moteur BitTorrent | Moteur Rust pur, en s'appuyant sur `librqbit` plutôt qu'un FFI vers `libtorrent-rasterbar` (C++) — nécessaire pour un portage mobile/web réaliste | ADR-0001 |
 | Périmètre IPv8/anonymat | Inclus dès la V1 du daemon (pas repoussé en V2) | ADR-0002 |
-| Licence du projet | GPL-3.0-or-later, héritée de Tribler | ADR-0004 |
+| Licence du projet | GPL-3.0-or-later, héritée de Tribler | ADR-0003 |
 | Structure du dépôt | Workspace Cargo multi-crates, inspiré de la structure du projet **eMule-Rust** de l'utilisateur (`C:\Emule-Sion-UI-UX`) | ADR-0004 |
 | UI | Flutter, développée **après** validation complète du backend ; réutilisation des patterns de style de `C:\Emule-Sion-UI-UX\app` | — (hors périmètre backend actuel) |
 | Plateformes cibles | Windows x64/arm64, Linux, macOS, Android, iOS, Web | — |
@@ -83,7 +83,7 @@ fonctionnelle de l'API REST/DB.
 | `tribler-bittorrent` (intégration `librqbit`) | Faible-Moyenne | Moyenne | Adapter l'API `librqbit::Session` aux besoins Tribler (notifications, routage optionnel via SOCKS5 tunnel) |
 | `tribler-db` (SQLite) | Faible | Moyenne | Reproduire le schéma logique de Pony ORM (torrents, canaux, votes, réglages) et ses migrations |
 | `tribler-network-policy` | Moyenne | Moyenne | Garde-fous de sécurité, logique métier propre mais critique |
-| `tribler-api` (REST + WebSocket) | Moyenne | Moyenne-Élevée | Beaucoup d'endpoints à couvrir pour la parité (11 fichiers côté Python) ; travail volumineux mais peu risqué techniquement |
+| `tribler-api` (REST + SSE) | Moyenne | Moyenne-Élevée | Beaucoup d'endpoints à couvrir pour la parité (11 fichiers côté Python) ; travail volumineux mais peu risqué techniquement |
 | `tribler-core` (orchestration) | Moyenne | Moyenne | Logique métier de `content_discovery`/`torrent_checker`/`rss`/`watch_folder` à reproduire |
 | `tribler-ipv8` (overlay) | **Élevé** | **Élevée** | Protocole propriétaire, aucune implémentation Rust de référence, NAT traversal, gestion du churn |
 | `tribler-tunnel` (TunnelCommunity) | **Élevé** | **Élevée** | Construction de circuits, crypto par saut, hidden seeding, résistance Sybil — dépend d'`tribler-ipv8` fiable |
@@ -105,7 +105,7 @@ pour aider à prioriser — pas une promesse de durée :
   durée réelle du projet. Un développement incrémental avec des jalons
   d'interopérabilité contre de vrais pairs IPv8 (le réseau Tribler existant)
   est recommandé pour détecter les écarts de protocole le plus tôt possible.
-- Packaging multiplateforme (étape 14) : volume modéré, mais à ne pas
+- Packaging multiplateforme (étapes 17-19) : volume modéré, mais à ne pas
   sous-estimer pour Android/iOS (contraintes d'exécution en arrière-plan).
 
 ## 7. Risques et points d'attention
@@ -123,12 +123,12 @@ pour aider à prioriser — pas une promesse de durée :
    bruts pour BitTorrent/DHT/IPv8. Le build Flutter Web devra donc parler,
    comme le fait déjà l'UI React actuelle de Tribler, à une instance du
    daemon Rust tournant sur la même machine ou un serveur distant, via
-   HTTP/WebSocket — jamais un daemon "dans le navigateur". Hypothèse à
+   HTTP/SSE — jamais un daemon "dans le navigateur". Hypothèse à
    documenter clairement dans le plan UI quand il sera rédigé.
 4. **Android/iOS** : l'exécution prolongée en arrière-plan d'un daemon
    P2P (DHT, tunnels) est contrainte par les OS mobiles (App Nap, Doze,
    restrictions de service en arrière-plan). À traiter comme un sujet
-   d'architecture dédié avant le portage mobile (étape 14+), pas
+   d'architecture dédié avant le portage mobile (étape 18), pas
    improvisé à la fin.
 5. **Dérive de dépendance** : `librqbit` évolue vite (releases fréquentes,
    parfois beta) — figer une version testée dans `Cargo.lock` et revalider
