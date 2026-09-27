@@ -3,6 +3,46 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Étape 16 — durcissement + tests de bout en bout (2026-09-27)
+
+- **`tribler-test-support` peuplé** : `test_torrent_bytes(name, len)`,
+  `free_port()`, `wait_for(timeout, f)` — fixtures dupliquées dans
+  `tribler-api`/`tribler-cli`/`tribler-daemon` remplacées par la
+  fixture partagée.
+- **Téléchargement loopback réel** (`tribler-bittorrent/tests/
+  loopback_download.rs`) : seeder + downloader rqbit uTP en loopback,
+  `initial_peers`, contenu vérifié octet-pour-octet.
+- **Persistance/redémarrage** (`tribler-core/tests/lifecycle.rs`) :
+  deux `CoreSession` successives sur le même `state_dir` — le
+  téléchargement est restauré (info-hash + état pause) ; un download
+  supprimé n'est pas restauré.
+- **Migration de schéma** (`tribler-db/tests/migrations.rs`) : base
+  figée à v1 migrée vers `SCHEMA_VERSION` à l'ouverture avec
+  conservation des données ; réouverture idempotente ; refus
+  `SchemaTooNew` si la base est plus récente.
+- **Revue de sécurité** `docs/security/revue_garde_fous.md` :
+  inventaire anti-SSRF / exit policy / kill switch / proxy guard /
+  hidden seeding + le test qui couvre chaque garde-fou.
+
+## Documentation — inventaire exhaustif de l'API web (2026-09-27)
+
+- `docs/reference_tribler/api_endpoints_complet.md` créé : recensement
+  complet des fonctions exposées à l'interface web Tribler (67 routes
+  `/api/*` + sous-endpoints `/api/ipv8/*` + `/ui` + `/docs`), avec pour
+  chacune la méthode, le chemin, la description, les paramètres et leurs
+  valeurs par défaut/bornes min-max, l'emplacement d'implantation Python
+  (`D:\Projet\Tribler_sources\tribler`) et le pendant Rust
+  (`crates/tribler-api`) avec statut de portage.
+- Inclut l'arbre de configuration complet servi par
+  `GET /api/settings` (défauts `tribler_config.py` + `ipv8/configuration.py`
+  + `TunnelSettings`) et les topics SSE de `/api/events`.
+- Écarts identifiés : routes Python non portées (`events/info`,
+  `downloads/clierrors`, `default_trackers`, `tracker_force_announce`,
+  panneau IPv8 `asyncio`/`dht`/`identity`/`isolation`/`network`/
+  `noblockdht`, speedtests de circuits…), signatures divergentes
+  (`dirspace` PUT→GET, `hop`→`session`), endpoint `/api/recommender/clicked`
+  appelé par l'UI sans backend Python.
+
 ## Étape 15 — parité API REST/SSE (2026-09-27)
 
 Couverture complète des endpoints `tribler.core.restapi` utiles au

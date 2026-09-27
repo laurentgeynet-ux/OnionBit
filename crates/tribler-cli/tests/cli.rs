@@ -9,17 +9,9 @@ use tokio::net::TcpListener;
 use tribler_api::{build, AppState};
 use tribler_core::{CoreConfig, CoreSession, Notifier};
 
-/// .torrent minimal valide (copie de la fixture de tribler-api).
+/// .torrent minimal valide (fixture partagee `tribler-test-support`).
 fn test_torrent_bytes() -> Vec<u8> {
-    use tribler_format::bencode::{encode, BValue};
-    let mut info = std::collections::BTreeMap::new();
-    info.insert(b"length".to_vec(), BValue::Int(42));
-    info.insert(b"name".to_vec(), BValue::Bytes(b"cli-test.bin".to_vec()));
-    info.insert(b"piece length".to_vec(), BValue::Int(16384));
-    info.insert(b"pieces".to_vec(), BValue::Bytes(vec![0u8; 20]));
-    let mut root = std::collections::BTreeMap::new();
-    root.insert(b"info".to_vec(), BValue::Dict(info));
-    encode(&BValue::Dict(root))
+    tribler_test_support::test_torrent_bytes("cli-test.bin", 42)
 }
 
 /// Montre le serveur API sur loopback, retourne l'URL de base.

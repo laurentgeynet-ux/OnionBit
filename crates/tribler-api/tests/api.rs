@@ -32,17 +32,9 @@ async fn read_until(buf: &mut String, resp: &mut reqwest::Response, needle: &str
 }
 
 /// .torrent minimal valide (info dict : fichier unique de 42 octets,
-/// une piece factice).
+/// une piece factice) — fixture partagee `tribler-test-support`.
 fn test_torrent_bytes() -> Vec<u8> {
-    use tribler_format::bencode::{encode, BValue};
-    let mut info = std::collections::BTreeMap::new();
-    info.insert(b"length".to_vec(), BValue::Int(42));
-    info.insert(b"name".to_vec(), BValue::Bytes(b"api-test.bin".to_vec()));
-    info.insert(b"piece length".to_vec(), BValue::Int(16384));
-    info.insert(b"pieces".to_vec(), BValue::Bytes(vec![0u8; 20]));
-    let mut root = std::collections::BTreeMap::new();
-    root.insert(b"info".to_vec(), BValue::Dict(info));
-    encode(&BValue::Dict(root))
+    tribler_test_support::test_torrent_bytes("api-test.bin", 42)
 }
 
 /// Serveur de test monte sur loopback.

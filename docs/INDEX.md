@@ -26,7 +26,9 @@ chaque étape (cf. `AGENTS.md`, "Workflow par étape").
 | `docs/architecture/decisions/000X-*.md` | ADRs |
 | `docs/reference_tribler/correspondance_modules.md` | Correspondance Python Tribler ↔ Rust |
 | `docs/reference_tribler/api_rest_mapping.md` | Mapping endpoints/DTO/topics SSE API Python ↔ `tribler-api` |
+| `docs/reference_tribler/api_endpoints_complet.md` | Inventaire exhaustif des fonctions de l'API web Tribler (routes, paramètres, défauts/min-max, implantation Python ↔ Rust) |
 | `docs/reference_tribler/ipv8_rust_tunnels/` | Extraits des sources `ipv8-rust-tunnels` (formats clés, DH, paquets) |
+| `docs/security/revue_garde_fous.md` | Inventaire des protections réseau (anti-SSRF, exit policy, kill switch, proxy guard, hidden seeding) + tests qui les couvrent |
 | `docs/CHANGELOG.md` | Historique des étapes franchies |
 | `scripts/verify_all.ps1` | Validation complète (check/clippy/fmt/test) |
 | `scripts/interop_ipv8.ps1` + `scripts/interop/` | Jalon d'interop Rust↔pyipv8 sur loopback : `py_node.py` (noeud Python), `verify_packets.py` (vérification Ed25519 via le vrai `default_eccrypto`), chemins réglables via `TRIBLER_PYIPV8`/`TRIBLER_INTEROP_PY` |

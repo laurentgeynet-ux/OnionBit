@@ -29,6 +29,8 @@ tokio-stream = { version = "0.1", features = ["sync"] }
 hex.workspace = true
 
 [dev-dependencies]
+tribler-test-support = { path = "../tribler-test-support" }
+
 tempfile.workspace = true
 reqwest = { version = "0.13", features = ["json"] }
 tokio-tungstenite.workspace = true

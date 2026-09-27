@@ -1,17 +1,12 @@
 //! Test e2e du binaire `tribler-daemon` : demarrage en `--offline`
 //! (aucun trafic sortant), reponse de l'API sur loopback, arret.
 
-use std::net::TcpListener as StdListener;
 use std::time::Duration;
 
-/// Cherche un port loopback libre, le libere, puis le confie au
-/// daemon (fenetre de course acceptable pour un test local).
+/// Cherche un port loopback libre — fixture partagee
+/// `tribler-test-support` (fenetre de course acceptable en test).
 fn free_port() -> u16 {
-    StdListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port()
+    tribler_test_support::free_port()
 }
 
 #[tokio::test]

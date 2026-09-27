@@ -7,5 +7,7 @@ license.workspace = true
 authors.workspace = true
 
 [dependencies]
+tribler-format = { path = "../tribler-format" }
+tokio.workspace = true
 
 [dev-dependencies]

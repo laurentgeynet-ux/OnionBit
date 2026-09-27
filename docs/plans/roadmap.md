@@ -290,11 +290,17 @@ ne sont donc pas « terminées » au sens strict) · `[x]` terminée.
   persistée dans `downloads.anon_hops` (migration v2). `tribler-format`
   gagne le sérialiseur signé `mdblob::encode_entry`. Mapping complet
   dans `docs/reference_tribler/api_rest_mapping.md`.
-- [ ] **Étape 16. Durcissement et tests de bout en bout.** Suite de tests
-  d'intégration via `tribler-test-support` couvrant les scénarios
-  critiques (téléchargement normal, téléchargement anonyme, redémarrage
-  du daemon, migration de schéma DB, kill switch). Revue de sécurité des
-  garde-fous réseau.
+- [x] **Étape 16. Durcissement et tests de bout en bout.** Couverture
+  e2e des scénarios critiques : téléchargement réel loopback
+  (`tribler-bittorrent::loopback_download`), téléchargement anonyme via
+  hidden service (`anon_download`), persistance/redémarrage du daemon
+  (`tribler-core::lifecycle` : DB fichier + `restore_downloads`),
+  migration de schéma v1→v2 (`tribler-db::migrations` : conservation
+  des données, idempotence, refus `SchemaTooNew`), kill switch +
+  anti-SSRF + proxy guard (`policy.rs` dans bittorrent et core).
+  `tribler-test-support` peuplé (`test_torrent_bytes`, `free_port`,
+  `wait_for`) — fixtures dupliquées dedupliquées. Revue des garde-fous
+  dans `docs/security/revue_garde_fous.md`.
 
 ## Phase 5 — Packaging multiplateforme du backend
 

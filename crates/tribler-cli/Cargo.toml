@@ -21,4 +21,6 @@ axum.workspace = true
 tribler-api = { path = "../tribler-api" }
 tribler-core = { path = "../tribler-core" }
 tribler-format = { path = "../tribler-format" }
+tribler-test-support = { path = "../tribler-test-support" }
+
 tempfile.workspace = true

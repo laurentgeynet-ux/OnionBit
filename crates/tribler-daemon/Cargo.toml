@@ -25,3 +25,5 @@ tracing-appender.workspace = true
 reqwest.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
+tribler-test-support = { path = "../tribler-test-support" }
+

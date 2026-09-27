@@ -3869,6 +3869,7 @@ dependencies = [
  "tribler-db",
  "tribler-format",
  "tribler-ipv8",
+ "tribler-test-support",
  "tribler-tunnel",
  "uuid",
 ]
@@ -3907,6 +3908,7 @@ dependencies = [
  "tribler-api",
  "tribler-core",
  "tribler-format",
+ "tribler-test-support",
 ]
 
 [[package]]
@@ -3931,6 +3933,7 @@ dependencies = [
  "tribler-format",
  "tribler-ipv8",
  "tribler-network-policy",
+ "tribler-test-support",
  "tribler-tunnel",
  "url",
 ]
@@ -3969,6 +3972,7 @@ dependencies = [
  "tribler-api",
  "tribler-bittorrent",
  "tribler-core",
+ "tribler-test-support",
 ]
 
 [[package]]
@@ -4015,6 +4019,10 @@ dependencies = [
 [[package]]
 name = "tribler-test-support"
 version = "0.1.0"
+dependencies = [
+ "tokio",
+ "tribler-format",
+]
 
 [[package]]
 name = "tribler-tunnel"
