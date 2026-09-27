@@ -341,7 +341,28 @@ impl Cellable for EstablishIntro {
 }
 
 /// `IntroEstablishedPayload` (msg 10) : `I, H`.
-pub type IntroEstablished = TunnelPing;
+#[derive(Debug)]
+pub struct IntroEstablished {
+    /// `circuit_id`.
+    pub circuit_id: u32,
+    /// `identifier`.
+    pub identifier: u16,
+}
+
+impl Cellable for IntroEstablished {
+    const MSG_ID: u8 = msg::INTRO_ESTABLISHED;
+    fn pack(&self, w: &mut Writer) -> Result<(), Ipv8Error> {
+        w.u32(self.circuit_id);
+        w.u16(self.identifier);
+        Ok(())
+    }
+    fn unpack(r: &mut Reader<'_>) -> Result<Self, Ipv8Error> {
+        Ok(Self {
+            circuit_id: r.u32()?,
+            identifier: r.u16()?,
+        })
+    }
+}
 
 /// `EstablishRendezvousPayload` (msg 11) : `I, H, 20s`.
 #[derive(Debug)]
@@ -511,7 +532,62 @@ impl Cellable for LinkE2E {
 }
 
 /// `LinkedE2EPayload` (msg 16) : `I, H`.
-pub type LinkedE2E = TunnelPing;
+#[derive(Debug)]
+pub struct LinkedE2E {
+    /// `circuit_id`.
+    pub circuit_id: u32,
+    /// `identifier`.
+    pub identifier: u16,
+}
+
+impl Cellable for LinkedE2E {
+    const MSG_ID: u8 = msg::LINKED_E2E;
+    fn pack(&self, w: &mut Writer) -> Result<(), Ipv8Error> {
+        w.u32(self.circuit_id);
+        w.u16(self.identifier);
+        Ok(())
+    }
+    fn unpack(r: &mut Reader<'_>) -> Result<Self, Ipv8Error> {
+        Ok(Self {
+            circuit_id: r.u32()?,
+            identifier: r.u16()?,
+        })
+    }
+}
+
+/// `RendezvousInfo` (corps chiffre dans `CreatedE2E.rp_info_enc`) :
+/// `ip_address, varlenH, 20s`.
+#[derive(Debug, Clone)]
+pub struct RendezvousInfo {
+    /// Adresse du point de rendez-vous.
+    pub address: UdpAddress,
+    /// Cle publique du dernier saut du circuit RP (`key_to_bin`).
+    pub key: Vec<u8>,
+    /// Cookie de rendez-vous.
+    pub cookie: [u8; 20],
+}
+
+impl RendezvousInfo {
+    /// Corps serialise.
+    pub fn pack(&self, w: &mut Writer) -> Result<(), Ipv8Error> {
+        w.ip_address(&self.address)?;
+        w.varlen_h(&self.key);
+        w.bytes(&self.cookie);
+        Ok(())
+    }
+    /// Parse du corps.
+    pub fn unpack(r: &mut Reader<'_>) -> Result<Self, Ipv8Error> {
+        let address = r.ip_address()?;
+        let key = r.varlen_h()?.to_vec();
+        let mut cookie = [0u8; 20];
+        cookie.copy_from_slice(r.take(20)?);
+        Ok(Self {
+            address,
+            key,
+            cookie,
+        })
+    }
+}
 
 /// `PeersRequestPayload` (msg 17) : `I, H, 20s`.
 #[derive(Debug)]

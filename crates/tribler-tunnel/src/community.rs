@@ -29,10 +29,11 @@ use tribler_ipv8::{Ipv8Error, UdpAddress};
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret};
 
 use crate::cell::{self, Cell};
+use crate::hidden_services::{E2ERequest, LinkRequest};
 use crate::payload::{self as tp, msg, Cellable};
 use crate::routing::{
-    Circuit, Hop, RelayRoute, RoutingObject, UnverifiedHop, CIRCUIT_STATE_READY, CIRCUIT_TYPE_DATA,
-    PEER_FLAG_RELAY,
+    Circuit, Hop, RelayRoute, RoutingObject, Swarm, UnverifiedHop, CIRCUIT_STATE_READY,
+    CIRCUIT_TYPE_DATA, PEER_FLAG_RELAY,
 };
 use crate::TUNNEL_COMMUNITY_ID;
 
@@ -46,6 +47,8 @@ const DATA_CHANNEL_CAP: usize = 512;
 /// `peers_list[:4]` Python : candidats relay/sortie annonces dans
 /// `created`/`extended`.
 const CANDIDATES_IN_RESPONSE: usize = 4;
+/// Capacite du canal broadcast `e2e_ready`.
+const E2E_CHANNEL_CAP: usize = 64;
 
 /// Evenement "donnee recue sur un circuit" (livre au consommateur —
 /// equivalent du dispatch `on_data` vers SOCKS5/services internes).
@@ -64,87 +67,108 @@ pub struct CircuitData {
 }
 
 /// Etat mutable de la community.
-struct Inner {
+pub(crate) struct Inner {
     /// `circuits` : circuits dont on est l'initiateur.
-    circuits: HashMap<u32, Circuit>,
+    pub(crate) circuits: HashMap<u32, Circuit>,
     /// `relay_from_to` : circuit_id entrant -> route sortante.
-    relays: HashMap<u32, RelayRoute>,
+    pub(crate) relays: HashMap<u32, RelayRoute>,
     /// `exit_sockets` : circuit_id -> etat de sortie (hop + activation).
-    exit_sockets: HashMap<u32, ExitState>,
+    pub(crate) exit_sockets: HashMap<u32, ExitState>,
     /// `CreateRequestCache` : identifiant du create envoye ->
     /// contexte d'extend en attente d'un `created`.
-    create_requests: HashMap<u16, CreateRequest>,
+    pub(crate) create_requests: HashMap<u16, CreateRequest>,
     /// `CreatedRequestCache` : circuit_id -> contexte de join en
     /// attente d'un `extend` (conserve apres le premier extend).
-    created_requests: HashMap<u32, CreatedRequest>,
+    pub(crate) created_requests: HashMap<u32, CreatedRequest>,
     /// `RetryRequestCache` : circuit_id -> identifier du create/
     /// extend emis par l'initiateur.
-    retry_requests: HashMap<u32, u16>,
+    pub(crate) retry_requests: HashMap<u32, u16>,
     /// Flags de service locaux (`settings.peer_flags` : RELAY par
     /// defaut ; 0 = refuser les `create`).
-    peer_flags: i32,
+    pub(crate) peer_flags: i32,
+    /// `intro_point_for` : `seeder_pk` -> (circuit_id de sortie,
+    /// info_hash) — on est le point d'introduction.
+    pub(crate) intro_point_for: HashMap<Vec<u8>, (u32, [u8; 20])>,
+    /// `rendezvous_point_for` : `cookie` -> circuit_id de sortie —
+    /// on est le point de rendez-vous.
+    pub(crate) rendezvous_point_for: HashMap<[u8; 20], u32>,
+    /// `swarms` : hidden swarms rejoints (`join_swarm`).
+    pub(crate) swarms: HashMap<[u8; 20], Swarm>,
+    /// `IPRequestCache` : identifier -> attente d'`intro-established`.
+    pub(crate) ip_requests: HashMap<u16, tokio::sync::oneshot::Sender<()>>,
+    /// `RPRequestCache` : identifier -> attente de `rendezvous-
+    /// established` (renvoie l'adresse WAN annoncee).
+    pub(crate) rp_requests: HashMap<u16, tokio::sync::oneshot::Sender<UdpAddress>>,
+    /// `PeersRequestCache` : identifier -> attente de `peers-response`.
+    pub(crate) peers_requests:
+        HashMap<u16, tokio::sync::oneshot::Sender<Vec<crate::routing::IntroductionPoint>>>,
+    /// `E2ERequestCache` : identifier -> contexte e2e en attente d'un
+    /// `created-e2e`.
+    pub(crate) e2e_requests: HashMap<u16, E2ERequest>,
+    /// `LinkRequestCache` : identifier -> attente de `linked-e2e`.
+    pub(crate) link_requests: HashMap<u16, LinkRequest>,
 }
 
 /// `TunnelExitSocket` : socket UDP de sortie dediee par circuit —
 /// les reponses des destinations externes arrivent hors-prefixe sur
 /// cette socket et sont reencapsulees en cellules `data` (BACKWARD).
-struct ExitState {
+pub(crate) struct ExitState {
     /// Saut amont (pair precedent + cles de session partagees).
-    hop: Hop,
+    pub(crate) hop: Hop,
     /// `enabled` : premier octet de donnee vu venant du bon IP.
-    enabled: bool,
+    pub(crate) enabled: bool,
     /// Socket de sortie dediee.
-    socket: Arc<tokio::net::UdpSocket>,
-    /// `destination -> org_address` du dernier datagramme sorti
-    /// (pour reencapsuler les reponses — `TunnelExitSocket.dgram_src`).
-    back_map: HashMap<SocketAddr, UdpAddress>,
+    pub(crate) socket: Arc<tokio::net::UdpSocket>,
     /// Canal d'arret de la tache de reception : conserve pour son
     /// `Drop` (la tache se termine quand l'entree disparait).
     _stop_tx: tokio::sync::watch::Sender<bool>,
 }
 
 /// `CreateRequestCache` Python (extend en attente d'un `created`).
-struct CreateRequest {
+pub(crate) struct CreateRequest {
     /// `to_circuit_id` : id du `create` envoye a `to_peer`.
-    to_circuit_id: u32,
+    pub(crate) to_circuit_id: u32,
     /// `from_circuit_id` : id du `extend` recu de `peer`.
-    from_circuit_id: u32,
+    pub(crate) from_circuit_id: u32,
     /// `peer` : pair amont (emetteur de l'extend — cible du `extended`).
-    peer: Peer,
+    pub(crate) peer: Peer,
     /// `to_peer` : pair aval (destinataire du create).
-    to_peer: Peer,
+    pub(crate) to_peer: Peer,
     /// `extend_identifier` : identifier du `extend` recu (repercute
     /// dans le `extended`).
-    extend_identifier: u16,
+    pub(crate) extend_identifier: u16,
 }
 
 /// `CreatedRequestCache` Python (join en attente d'un `extend`).
-struct CreatedRequest {
+pub(crate) struct CreatedRequest {
     /// Pair amont.
-    peer: Peer,
+    pub(crate) peer: Peer,
     /// Candidats proposes (`peers_dict` : pubkey_bin -> Peer).
-    candidates: HashMap<Vec<u8>, Peer>,
+    pub(crate) candidates: HashMap<Vec<u8>, Peer>,
 }
 
 /// `TunnelCommunity`.
 pub struct TunnelCommunity {
     /// Identite locale (LibNaCL).
-    key: LibNaClSecretKey,
+    pub(crate) key: LibNaClSecretKey,
     /// Annuaire reseau partage.
-    network: Arc<Network>,
+    pub(crate) network: Arc<Network>,
     /// Endpoint UDP partage.
-    endpoint: Arc<UdpEndpoint>,
+    pub(crate) endpoint: Arc<UdpEndpoint>,
     /// Etat interne.
-    inner: Mutex<Inner>,
+    pub(crate) inner: Mutex<Inner>,
     /// Compteur `identifier` des requetes (`number` du RequestCache).
-    identifier: AtomicU16,
+    pub(crate) identifier: AtomicU16,
     /// `global_time` (Lamport local pour les paquets signes, ex.
     /// `destroy`).
-    global_time: AtomicU64,
+    pub(crate) global_time: AtomicU64,
     /// Cellules `data` livrees au consommateur.
-    data_tx: tokio::sync::mpsc::Sender<CircuitData>,
+    pub(crate) data_tx: tokio::sync::mpsc::Sender<CircuitData>,
     /// Receveur cote consommateur (pris une fois par `data_rx()`).
-    data_rx: Mutex<Option<tokio::sync::mpsc::Receiver<CircuitData>>>,
+    pub(crate) data_rx: Mutex<Option<tokio::sync::mpsc::Receiver<CircuitData>>>,
+    /// Canal `e2e_ready` : (circuit_id, info_hash) quand `linked-e2e`
+    /// termine la liaison (callback `e2e_callbacks` Python).
+    pub(crate) e2e_ready_tx: tokio::sync::broadcast::Sender<(u32, [u8; 20])>,
 }
 
 impl TunnelCommunity {
@@ -158,6 +182,7 @@ impl TunnelCommunity {
         peer_flags: i32,
     ) -> Arc<Self> {
         let (data_tx, data_rx) = tokio::sync::mpsc::channel(DATA_CHANNEL_CAP);
+        let (e2e_ready_tx, _) = tokio::sync::broadcast::channel(E2E_CHANNEL_CAP);
         let community = Arc::new(Self {
             key,
             network,
@@ -170,11 +195,20 @@ impl TunnelCommunity {
                 created_requests: HashMap::new(),
                 retry_requests: HashMap::new(),
                 peer_flags,
+                intro_point_for: HashMap::new(),
+                rendezvous_point_for: HashMap::new(),
+                swarms: HashMap::new(),
+                ip_requests: HashMap::new(),
+                rp_requests: HashMap::new(),
+                peers_requests: HashMap::new(),
+                e2e_requests: HashMap::new(),
+                link_requests: HashMap::new(),
             }),
             identifier: AtomicU16::new(0),
             global_time: AtomicU64::new(0),
             data_tx,
             data_rx: Mutex::new(Some(data_rx)),
+            e2e_ready_tx,
         });
         let weak = Arc::downgrade(&community);
         endpoint
@@ -193,12 +227,12 @@ impl TunnelCommunity {
     }
 
     /// `number` du RequestCache Python (module 2**16).
-    fn next_id(&self) -> u16 {
+    pub(crate) fn next_id(&self) -> u16 {
         self.identifier.fetch_add(1, Ordering::Relaxed)
     }
 
     /// `claim_global_time` pour les paquets signes hors cellule.
-    fn claim_global_time(&self) -> u64 {
+    pub(crate) fn claim_global_time(&self) -> u64 {
         self.global_time.fetch_add(1, Ordering::Relaxed) + 1
     }
 
@@ -257,7 +291,11 @@ impl TunnelCommunity {
     /// `outgoing_crypto` (chiffrement selon le role local pour le
     /// circuit_id : initiateur -> FORWARD sur tous les hops, sortie ->
     /// BACKWARD sur son hop, relais -> direction de l'autre route).
-    async fn send_cell<P: Cellable>(&self, addr: &UdpAddress, p: &P) -> Result<(), Ipv8Error> {
+    pub(crate) async fn send_cell<P: Cellable>(
+        &self,
+        addr: &UdpAddress,
+        p: &P,
+    ) -> Result<(), Ipv8Error> {
         let mut w = Writer::new();
         p.pack(&mut w)?;
         let body = w.into_bytes();
@@ -272,6 +310,10 @@ impl TunnelCommunity {
         // puis `encrypt_cell` chiffre `cell[29..]` par couches.
         let mut relay_early = false;
         let mut crypto: Option<(Direction, Vec<SessionKeys>)> = None;
+        // Couche e2e additionnelle (`outgoing_crypto` Python :
+        // `hs_session_keys` appliquee AVANT les couches par saut —
+        // FORWARD sur RP_SEEDER, BACKWARD sinon).
+        let mut hs: Option<(Direction, SessionKeys)> = None;
         {
             let mut inner = self.inner.lock().unwrap();
             if let Some(circuit) = inner.circuits.get_mut(&circuit_id) {
@@ -281,6 +323,14 @@ impl TunnelCommunity {
                     circuit.relay_early_count += 1;
                 }
                 if !plaintext {
+                    if let Some(k) = &circuit.hs_session_keys {
+                        let dir = if circuit.ctype == crate::routing::CIRCUIT_TYPE_RP_SEEDER {
+                            Direction::Forward
+                        } else {
+                            Direction::Backward
+                        };
+                        hs = Some((dir, k.clone()));
+                    }
                     let keys: Vec<SessionKeys> = circuit
                         .hops
                         .iter()
@@ -294,9 +344,14 @@ impl TunnelCommunity {
                 }
             } else if let Some(relay) = inner.relays.get(&circuit_id) {
                 if !plaintext {
-                    // Route de retour : chiffre dans la direction de
-                    // l'AUTRE route (`other.direction`, `other.hop`).
-                    if let Some(other) = inner.relays.get(&relay.base.circuit_id) {
+                    if relay.rendezvous_relay {
+                        // Point de rendez-vous : reponse vers l'aval —
+                        // chiffre BACKWARD avec les cles de la jambe
+                        // entrante (`outgoing_crypto` Python).
+                        crypto = Some((Direction::Backward, vec![relay.hop.session_keys.clone()]));
+                    } else if let Some(other) = inner.relays.get(&relay.base.circuit_id) {
+                        // Route de retour : chiffre dans la direction de
+                        // l'AUTRE route (`other.direction`, `other.hop`).
                         crypto = Some((other.direction, vec![other.hop.session_keys.clone()]));
                     }
                 }
@@ -311,6 +366,9 @@ impl TunnelCommunity {
             plaintext,
             relay_early,
         );
+        if let Some((dir, mut k)) = hs {
+            wire = cell::encrypt_cell(&wire, dir, std::slice::from_mut(&mut k))?;
+        }
         if let Some((dir, mut keys)) = crypto {
             wire = cell::encrypt_cell(&wire, dir, &mut keys)?;
         }
@@ -324,18 +382,43 @@ impl TunnelCommunity {
         goal_hops: usize,
         first_hop: &Peer,
     ) -> Result<u32, Ipv8Error> {
+        self.create_circuit_typed(goal_hops, first_hop, CIRCUIT_TYPE_DATA, None, None)
+            .await
+    }
+
+    /// `create_circuit` complet : `ctype`, `required_exit` (cle publique
+    /// binaire exigee comme DERNIER saut), `info_hash` attache.
+    pub async fn create_circuit_typed(
+        self: &Arc<Self>,
+        goal_hops: usize,
+        first_hop: &Peer,
+        ctype: &str,
+        required_exit: Option<Vec<u8>>,
+        info_hash: Option<[u8; 20]>,
+    ) -> Result<u32, Ipv8Error> {
+        // `required_exit` est le DERNIER saut : pour un circuit a 1
+        // saut, c'est donc le premier hop (comme pyipv8).
+        let effective_first = if goal_hops == 1 {
+            required_exit
+                .as_ref()
+                .and_then(|pk| self.network.get_by_key(pk))
+                .unwrap_or_else(|| first_hop.clone())
+        } else {
+            first_hop.clone()
+        };
         let circuit_id = self.gen_circuit_id();
         let (dh_secret, dh_public) = generate_diffie_secret();
         let identifier = self.next_id();
-        let addr = first_hop
+        let addr = effective_first
             .address
             .clone()
             .ok_or(Ipv8Error::Malformed("hop sans adresse"))?;
         {
             let mut inner = self.inner.lock().unwrap();
-            let mut circuit = Circuit::new(circuit_id, goal_hops, CIRCUIT_TYPE_DATA, None);
+            let mut circuit = Circuit::new(circuit_id, goal_hops, ctype, info_hash);
+            circuit.required_exit = required_exit;
             circuit.unverified_hop = Some(UnverifiedHop {
-                public_key_bin: first_hop.public_key_bin.clone(),
+                public_key_bin: effective_first.public_key_bin.clone(),
                 address: Some(addr.clone()),
                 dh_secret,
                 identifier,
@@ -418,7 +501,58 @@ impl TunnelCommunity {
                     tracing::debug!(error = %e, "paquet tunnel rejete");
                 }
             }
-            Err(e) => tracing::trace!(error = %e, "datagramme ignore"),
+            Err(_) => {
+                // Paquets e2e NON signes (`ezr_pack(sig=False)` :
+                // `prefix + msg_id + payload` sans auth/dist) —
+                // `on_packet_from_circuit` avec circuit_id=None.
+                self.on_packet_from_circuit(src, data, None);
+            }
+        }
+    }
+
+    /// `on_packet_from_circuit` : dispatch d'un paquet de prefixe
+    /// tunnel non signe (`ezr_pack(sig=False)`), recu a nu sur la
+    /// socket (`circuit_id=None`) ou a l'interieur d'une cellule
+    /// `data` (`circuit_id` du circuit porteur).
+    pub(crate) fn on_packet_from_circuit(
+        self: &Arc<Self>,
+        src: SocketAddr,
+        data: &[u8],
+        circuit_id: Option<u32>,
+    ) {
+        let prefix = prefix_of(&TUNNEL_COMMUNITY_ID);
+        if data.len() <= prefix.len() + 1 || data[..prefix.len()] != prefix {
+            return;
+        }
+        let msg_id = data[prefix.len()];
+        let mut r = Reader::new(&data[prefix.len() + 1..]);
+        match msg_id {
+            msg::CREATE_E2E => {
+                if let Ok(p) = tp::CreateE2E::unpack(&mut r) {
+                    self.on_create_e2e(src, p, circuit_id);
+                }
+            }
+            msg::CREATED_E2E => {
+                if let Ok(p) = tp::CreatedE2E::unpack(&mut r) {
+                    let c = self.clone();
+                    tokio::spawn(async move {
+                        c.on_created_e2e(p, circuit_id).await;
+                    });
+                }
+            }
+            msg::PEERS_REQUEST => {
+                if let Ok(p) = tp::PeersRequest::unpack(&mut r) {
+                    self.on_peers_request(src, p, circuit_id);
+                }
+            }
+            msg::PEERS_RESPONSE => {
+                if let Ok(p) = tp::PeersResponse::unpack(&mut r) {
+                    self.on_peers_response(p);
+                }
+            }
+            _ => {
+                tracing::trace!(msg_id, "paquet tunnel non signe ignore");
+            }
         }
     }
 
@@ -444,14 +578,24 @@ impl TunnelCommunity {
         enum Crypto {
             None,
             Exit(SessionKeys),
-            Circuit(Vec<SessionKeys>),
+            Circuit(Vec<SessionKeys>, Option<(Direction, SessionKeys)>),
         }
         let crypto = {
             let inner = self.inner.lock().unwrap();
             if let Some(exit) = inner.exit_sockets.get(&circuit_id) {
                 Crypto::Exit(exit.hop.session_keys.clone())
             } else if let Some(c) = inner.circuits.get(&circuit_id) {
-                Crypto::Circuit(c.hops.iter().map(|h| h.session_keys.clone()).collect())
+                // Couche e2e (`incoming_crypto` Python : FORWARD sur
+                // RP_DOWNLOADER, BACKWARD sinon, APRES les hops).
+                let hs = c.hs_session_keys.clone().map(|k| {
+                    let dir = if c.ctype == crate::routing::CIRCUIT_TYPE_RP_DOWNLOADER {
+                        Direction::Forward
+                    } else {
+                        Direction::Backward
+                    };
+                    (dir, k)
+                });
+                Crypto::Circuit(c.hops.iter().map(|h| h.session_keys.clone()).collect(), hs)
             } else if parsed.plaintext {
                 Crypto::None
             } else {
@@ -463,7 +607,14 @@ impl TunnelCommunity {
         let decrypted = match crypto {
             Crypto::None => data.to_vec(),
             Crypto::Exit(k) => cell::decrypt_cell(data, Direction::Forward, &[k])?,
-            Crypto::Circuit(ks) => cell::decrypt_cell(data, Direction::Backward, &ks)?,
+            Crypto::Circuit(ks, hs) => {
+                let d = cell::decrypt_cell(data, Direction::Backward, &ks)?;
+                if let Some((dir, k)) = hs {
+                    cell::decrypt_cell(&d, dir, &[k])?
+                } else {
+                    d
+                }
+            }
         };
 
         // Checks de flags post-decrypt (comme `process_cell` Python).
@@ -575,6 +726,38 @@ impl TunnelCommunity {
             msg::DATA => {
                 let p = tp::Data::unpack(&mut r)?;
                 self.on_data(src, cell.circuit_id, p);
+            }
+            msg::ESTABLISH_INTRO => {
+                let p = tp::EstablishIntro::unpack(&mut r)?;
+                self.on_establish_intro(src, p, cell.circuit_id);
+            }
+            msg::INTRO_ESTABLISHED => {
+                let p = tp::IntroEstablished::unpack(&mut r)?;
+                self.on_intro_established(p);
+            }
+            msg::ESTABLISH_RENDEZVOUS => {
+                let p = tp::EstablishRendezvous::unpack(&mut r)?;
+                self.on_establish_rendezvous(src, p, cell.circuit_id);
+            }
+            msg::RENDEZVOUS_ESTABLISHED => {
+                let p = tp::RendezvousEstablished::unpack(&mut r)?;
+                self.on_rendezvous_established(p);
+            }
+            msg::LINK_E2E => {
+                let p = tp::LinkE2E::unpack(&mut r)?;
+                self.on_link_e2e(src, p, cell.circuit_id);
+            }
+            msg::LINKED_E2E => {
+                let p = tp::LinkedE2E::unpack(&mut r)?;
+                self.on_linked_e2e(p);
+            }
+            msg::PEERS_REQUEST => {
+                let p = tp::PeersRequest::unpack(&mut r)?;
+                self.on_peers_request(src, p, Some(cell.circuit_id));
+            }
+            msg::PEERS_RESPONSE => {
+                let p = tp::PeersResponse::unpack(&mut r)?;
+                self.on_peers_response(p);
             }
             _ => {
                 tracing::trace!(msg_id = cell.inner_msg_id, "cellule ignoree");
@@ -691,7 +874,6 @@ impl TunnelCommunity {
                     },
                     enabled: false,
                     socket: exit_socket.clone(),
-                    back_map: HashMap::new(),
                     _stop_tx: stop_tx,
                 },
             );
@@ -907,9 +1089,20 @@ impl TunnelCommunity {
             } else {
                 relay_keys
             };
-            let next = wanted
-                .iter()
-                .find_map(|pk| self.network.get_by_key(pk))
+            let required = {
+                let inner = self.inner.lock().unwrap();
+                inner.circuits.get(&circuit_id).and_then(|c| {
+                    if become_exit {
+                        c.required_exit.clone()
+                    } else {
+                        None
+                    }
+                })
+            };
+            let next = required
+                .as_ref()
+                .and_then(|pk| self.network.get_by_key(pk))
+                .or_else(|| wanted.iter().find_map(|pk| self.network.get_by_key(pk)))
                 .or_else(|| {
                     self.network
                         .peers_for_service(&TUNNEL_COMMUNITY_ID)
@@ -1017,25 +1210,45 @@ impl TunnelCommunity {
 
     /// `on_data` : cellule data decryptee. Cote sortie -> envoi UDP
     /// brut ; cote initiateur -> livraison au consommateur.
-    fn on_data(&self, src: SocketAddr, circuit_id: u32, p: tp::Data) {
-        let is_exit = {
-            self.inner
-                .lock()
-                .unwrap()
-                .exit_sockets
-                .contains_key(&circuit_id)
+    fn on_data(self: &Arc<Self>, src: SocketAddr, circuit_id: u32, p: tp::Data) {
+        let (is_exit, is_e2e, hop_addr) = {
+            let inner = self.inner.lock().unwrap();
+            let is_exit = inner.exit_sockets.contains_key(&circuit_id);
+            let c = inner.circuits.get(&circuit_id);
+            (
+                is_exit,
+                c.map(|c| {
+                    c.ctype == crate::routing::CIRCUIT_TYPE_RP_DOWNLOADER
+                        || c.ctype == crate::routing::CIRCUIT_TYPE_RP_SEEDER
+                })
+                .unwrap_or(false),
+                c.and_then(|c| c.first_hop().and_then(|h| h.address.clone())),
+            )
         };
         if is_exit {
             self.exit_data(circuit_id, src, &p);
-        } else {
-            let _ = self.data_tx.try_send(CircuitData {
-                circuit_id,
-                source: src,
-                destination: p.dest_address,
-                origin: p.org_address,
-                data: p.data,
-            });
+            return;
         }
+        // Circuit nous appartenant : paquet tunnel prefixe embarque
+        // (`could_be_ipv8`) -> `on_packet_from_circuit` ; circuits
+        // e2e (RP_*) livrent la donnee brute (`on_raw_data`).
+        let prefix = prefix_of(&TUNNEL_COMMUNITY_ID);
+        let from_hop = hop_addr.as_ref().and_then(|a| a.to_socket_addr()) == Some(src);
+        if from_hop && !is_e2e && p.data.len() > prefix.len() && p.data[..prefix.len()] == prefix {
+            // `source_address` Python = `org_address` du payload (le
+            // requester logique), PAS l'emetteur immediat de la
+            // cellule.
+            let origin = p.org_address.to_socket_addr().unwrap_or(src);
+            self.on_packet_from_circuit(origin, &p.data, Some(circuit_id));
+            return;
+        }
+        let _ = self.data_tx.try_send(CircuitData {
+            circuit_id,
+            source: src,
+            destination: p.dest_address,
+            origin: p.org_address,
+            data: p.data,
+        });
     }
 
     /// `exit_data` : activation au premier octet vu du bon IP puis
@@ -1059,10 +1272,6 @@ impl TunnelCommunity {
             }
             if !exit.enabled {
                 return;
-            }
-            // Table de retour : destination -> origine du datagramme.
-            if let Some(sa) = p.dest_address.to_socket_addr() {
-                exit.back_map.insert(sa, p.org_address.clone());
             }
             exit.socket.clone()
         };
@@ -1102,9 +1311,11 @@ impl TunnelCommunity {
     }
 
     /// Reencapsulation cote sortie : datagramme externe -> cellule
-    /// `data` vers l'amont (`dest` = `org_address` memorisee).
+    /// `data` vers l'amont. Comme `TunnelExitSocket.tunnel_data`
+    /// Python : `dest = 0.0.0.0:0` ("pour l'initiateur du circuit"),
+    /// `org = source UDP reelle` du datagramme (pas de back_map).
     async fn exit_recv_data(&self, circuit_id: u32, src: SocketAddr, data: &[u8]) {
-        let (upstream_addr, org) = {
+        let upstream_addr = {
             let inner = self.inner.lock().unwrap();
             let Some(exit) = inner.exit_sockets.get(&circuit_id) else {
                 return;
@@ -1112,18 +1323,14 @@ impl TunnelCommunity {
             if !exit.enabled {
                 return;
             }
-            let Some(org) = exit.back_map.get(&src).cloned() else {
-                tracing::debug!(circuit_id, %src, "reponse de sortie sans mapping");
-                return;
-            };
-            let Some(addr) = exit.hop.address.clone() else {
-                return;
-            };
-            (addr, org)
+            match exit.hop.address.clone() {
+                Some(a) => a,
+                None => return,
+            }
         };
         let p = tp::Data {
             circuit_id,
-            dest_address: org,
+            dest_address: UdpAddress::from("0.0.0.0:0".parse::<SocketAddr>().unwrap()),
             org_address: UdpAddress::from(src),
             data: data.to_vec(),
         };
@@ -1247,19 +1454,19 @@ pub fn generate_diffie_secret() -> ([u8; 32], [u8; 32]) {
 }
 
 /// Resultat de `generate_diffie_shared_secret`.
-struct DiffieShared {
+pub(crate) struct DiffieShared {
     /// Secret partage `s1 || s2` (64 octets).
-    shared: [u8; 64],
+    pub(crate) shared: [u8; 64],
     /// `crypt_pk` de la cle ephemere repondante (envoye dans `key`).
-    crypt_pk: [u8; 32],
+    pub(crate) crypt_pk: [u8; 32],
     /// `auth` = `crypto_auth(shared[:32], crypt_pk)`.
-    auth: [u8; 32],
+    pub(crate) auth: [u8; 32],
 }
 
 /// `generate_diffie_shared_secret` (hop) : `shared = DH(tmp2, dh) +
 /// DH(node_sk, dh)` ; retourne le secret partage, la cle publique
 /// ephemere et son auth.
-fn generate_diffie_shared_secret(
+pub(crate) fn generate_diffie_shared_secret(
     dh_received: &[u8],
     node_key: &LibNaClSecretKey,
 ) -> Result<DiffieShared, Ipv8Error> {
@@ -1280,7 +1487,7 @@ fn generate_diffie_shared_secret(
 /// `verify_and_generate_shared_secret` (initiateur) :
 /// `s1 = DH(tmp, dh_received)`, `s2 = DH(tmp, crypt_pk du hop)` ;
 /// verifie `auth`. Retourne le secret partage (64 octets).
-fn verify_and_generate_shared_secret(
+pub(crate) fn verify_and_generate_shared_secret(
     dh_secret: &[u8; 32],
     dh_received: &[u8],
     auth: &[u8; 32],

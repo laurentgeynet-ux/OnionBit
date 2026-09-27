@@ -335,3 +335,109 @@ async fn socks5_udp_associate_roundtrip() {
     assert_eq!(src_port, echo_addr.port(), "origine = serveur echo");
     assert_eq!(&r[10..], msg);
 }
+
+/// Hidden services e2e : un seeder cree un point d'introduction, un
+/// downloader decouvre l'IP via peers-request, etablit un circuit e2e
+/// (create-e2e -> RP -> link-e2e -> linked-e2e) et les donnees
+/// traversent dans les deux sens avec la couche `hs_session_keys`.
+#[tokio::test]
+async fn hidden_service_e2e_roundtrip() {
+    tracing_subscriber::fmt()
+        .with_env_filter("tribler=trace")
+        .with_writer(std::io::stderr)
+        .try_init()
+        .ok();
+    let d = make_node().await; // downloader
+    let s = make_node().await; // seeder
+    let i = make_node().await; // point d'introduction
+    let r1 = make_node().await; // relais du downloader
+    let r2 = make_node().await; // relais extra (peut servir de RP)
+    let nodes = [&d, &s, &i, &r1, &r2];
+    for a in &nodes {
+        for b in &nodes {
+            if !std::ptr::eq(*a, *b) {
+                learn(a, b);
+            }
+        }
+    }
+    let info_hash = [7u8; 20];
+
+    // Seeder : rejoint le swarm puis cree un IP direct vers `i`
+    // (swarm.hops=0 -> circuit IP_SEEDER de 1 saut).
+    s.tunnel.join_swarm(info_hash, 0, true);
+    let ip_peer = peer_of(&i);
+    let ip_cid = s
+        .tunnel
+        .create_introduction_point(info_hash, Some(&ip_peer))
+        .await
+        .expect("circuit IP_SEEDER");
+    s.tunnel
+        .wait_circuit_ready(ip_cid, TEST_TIMEOUT.as_millis() as u64)
+        .await
+        .expect("IP circuit READY");
+    let intro_rx = s
+        .tunnel
+        .send_establish_intro(ip_cid, info_hash)
+        .await
+        .expect("send establish-intro");
+    tokio::time::timeout(TEST_TIMEOUT, intro_rx)
+        .await
+        .expect("timeout intro-established")
+        .expect("intro-established");
+
+    // Downloader : swarm hops=1, circuit de donnees D->r1.
+    d.tunnel.join_swarm(info_hash, 1, false);
+    let r1_peer = peer_of(&r1);
+    let data_cid = d
+        .tunnel
+        .create_circuit(1, &r1_peer)
+        .await
+        .expect("circuit data D");
+    d.tunnel
+        .wait_circuit_ready(data_cid, TEST_TIMEOUT.as_millis() as u64)
+        .await
+        .expect("circuit data READY");
+
+    // peers-request au point d'introduction (chemin "PEX" : on
+    // contacte l'IP directement a travers le tunnel).
+    let ip_hint = tribler_tunnel::routing::IntroductionPoint {
+        address: UdpAddress::from(i.addr),
+        peer_key: i.key.public_key().to_bin(),
+        seeder_pk: Vec::new(),
+        source: tribler_tunnel::routing::PEER_SOURCE_UNKNOWN,
+    };
+    let ips = d
+        .tunnel
+        .send_peers_request(info_hash, Some(&ip_hint), 5000)
+        .await
+        .expect("peers-response");
+    assert_eq!(ips.len(), 1, "un point d'introduction attendu");
+    assert!(!ips[0].seeder_pk.is_empty(), "seeder_pk present");
+
+    // e2e : create-e2e -> ... -> linked-e2e.
+    let mut e2e_rx = d.tunnel.e2e_ready();
+    d.tunnel
+        .create_e2e(info_hash, &ips[0])
+        .await
+        .expect("create_e2e");
+    let (e2e_cid, e2e_ih) = tokio::time::timeout(TEST_TIMEOUT * 4, e2e_rx.recv())
+        .await
+        .expect("timeout e2e_ready")
+        .expect("canal e2e");
+    assert_eq!(e2e_ih, info_hash);
+
+    // Donnee e2e downloader -> seeder : la couche hs est appliquee
+    // (decryptee cote seeder) et le RP reexpedie.
+    let mut s_rx = s.tunnel.data_rx().expect("data_rx seeder");
+    let payload = b"e2e-hello-seeder";
+    let zero = UdpAddress::from("0.0.0.0:0".parse::<SocketAddr>().unwrap());
+    d.tunnel
+        .send_data(e2e_cid, &zero, &zero, payload)
+        .await
+        .expect("send e2e data");
+    let got = tokio::time::timeout(TEST_TIMEOUT, s_rx.recv())
+        .await
+        .expect("pas de donnee e2e au seeder")
+        .expect("canal data seeder");
+    assert_eq!(got.data, payload);
+}

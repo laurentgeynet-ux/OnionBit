@@ -2,6 +2,7 @@
 //! et `ipv8-rust-tunnels/src/routing/`) : `Hop`, `Circuit`,
 //! `RelayRoute`, `RendezvousPoint`, `IntroductionPoint`, `Swarm`.
 
+use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use tribler_crypto::ipv8::session::SessionKeys;
@@ -155,6 +156,10 @@ pub struct Circuit {
     /// `relay_early_count` : cellules deja relachees en `relay_early`
     /// (`send_cell` Python le pose si `< max_relay_early`).
     pub relay_early_count: u8,
+    /// `hs_session_keys` : couche e2e supplementaire (hidden services,
+    /// posee a la liaison `linked-e2e` — `crypto.py` `outgoing_crypto`
+    /// /`incoming_crypto`).
+    pub hs_session_keys: Option<SessionKeys>,
     /// Etat force a `CLOSING`.
     closing: Option<String>,
 }
@@ -177,6 +182,7 @@ impl Circuit {
             info_hash,
             required_exit: None,
             relay_early_count: 0,
+            hs_session_keys: None,
             closing: None,
         }
     }
@@ -244,8 +250,9 @@ pub struct RendezvousPoint {
     pub circuit: u32,
     /// Cookie de rendez-vous.
     pub cookie: [u8; 20],
-    /// Pret a etre lie.
-    pub ready: bool,
+    /// Adresse du point de rendez-vous (`rendezvous_point_addr` de la
+    /// reponse, `rp.address` Python).
+    pub address: Option<UdpAddress>,
 }
 
 /// `IntroductionPoint`.
@@ -272,5 +279,43 @@ impl std::hash::Hash for IntroductionPoint {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.peer_key.hash(state);
         self.seeder_pk.hash(state);
+    }
+}
+
+/// `Swarm` (hidden_services.py) : swarm attache a un `info_hash` —
+/// cote seeder (`seeder_sk` present) ou downloader.
+pub struct Swarm {
+    /// `info_hash` (SHA-1 du torrent).
+    pub info_hash: [u8; 20],
+    /// `hops` : sauts des circuits du swarm.
+    pub hops: usize,
+    /// `seeder_sk` : cle de service du seeder (`None` cote
+    /// downloader).
+    pub seeder_sk: Option<tribler_crypto::ipv8::keys::LibNaClSecretKey>,
+    /// `connections` : circuit_id e2e -> point d'introduction utilise.
+    pub connections: HashMap<u32, IntroductionPoint>,
+}
+
+impl Swarm {
+    /// `Swarm.__init__`.
+    pub fn new(
+        info_hash: [u8; 20],
+        hops: usize,
+        seeder_sk: Option<tribler_crypto::ipv8::keys::LibNaClSecretKey>,
+    ) -> Self {
+        Self {
+            info_hash,
+            hops,
+            seeder_sk,
+            connections: HashMap::new(),
+        }
+    }
+}
+
+/// Retourne les circuits e2e prets du swarm (`get_circuits` Python).
+impl Swarm {
+    /// Ids des circuits e2e connectes et prets.
+    pub fn e2e_circuits(&self) -> Vec<u32> {
+        self.connections.keys().copied().collect()
     }
 }

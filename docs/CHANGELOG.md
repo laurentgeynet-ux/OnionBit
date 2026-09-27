@@ -3,6 +3,39 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Étape 12 (partie 3) — `tribler-tunnel` : hidden services E2E (2026-09-27)
+
+Le flux de services cachés pyipv8 est implémenté et validé bout en
+bout en loopback :
+
+- `hidden_services.rs` : `Swarm` (info-hash -> points d'introduction),
+  `join_hidden_swarm`, `send_establish_intro` (circuits `IP_SEEDER`),
+  `send_peers_request`/`on_peers_request` (`peers_request` vers un IP
+  ou sortie DHT, `peers_response` avec `IntroductionInfo`),
+  `send_establish_rendezvous`, `send_create_e2e`/`on_create_e2e`,
+  `send_link_e2e`/`on_link_e2e` (identifier partage via le cookie
+  rendezvous), `send_linked_e2e`.
+- `routing.rs` : types de circuits `IP_SEEDER`/`RP_SEEDER`/
+  `RP_DOWNLOADER`, `hs_session_keys` (couche de session E2E
+  supplementaire, sens miroir downloader/seeder), `Swarm`.
+- `community.rs` : `create_circuit_full` avec `required_exit` (le
+  dernier hop — ou le premier si 1 saut — devient point d'intro/
+  rendezvous impose), dispatch des messages E2E (9-18) recus en
+  cellules `data` ou en paquets tunnel non signes, `send_cell` chiffre
+  BACKWARD avec les cles propres de la route quand `rendezvous_relay`,
+  `on_create_e2e` repond a `org_address` du payload `data` (pas au
+  saut immediat — comportement pyipv8).
+- Sortie bidirectionnelle alignee sur pyipv8 : suppression du
+  `back_map` — `exit_recv_data` construit la reponse avec
+  `org_address` = adresse source reelle du paquet UDP (la sortie
+  dediee du repondeur a un port different du destinataire).
+- Test `hidden_service_e2e_roundtrip` (8 tests au total dans le
+  crate) : le seeder rejoint le swarm, etablit un point
+  d'introduction, le downloader decouvre l'IP via `peers_request`,
+  cree un circuit E2E vers le rendezvous choisi par le seeder, les
+  deux circuits sont lies (`link_e2e`/`linked_e2e`) et les donnees
+  circulent dans les deux sens avec la couche `hs_session_keys`.
+
 ## Étape 12 (partie 2) — `tribler-tunnel` : sortie bidirectionnelle + SOCKS5 (2026-09-27)
 
 Le tunnel est maintenant bidirectionnel et expose un proxy SOCKS5 :
