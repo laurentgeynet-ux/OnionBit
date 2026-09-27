@@ -3,6 +3,32 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Étape 9 — `tribler-ipv8` : overlay minimal (2026-09-27)
+
+- `serializer.rs` : packers pyipv8 (`B/H/I/Q`, `varlenH`, `varlenHx20`,
+  `ipv4` `>4sH`, `ip_address` type+donnees, `bits` MSB-first, `raw`,
+  `20s/…`) — big-endian `struct`, bornes par `Reader`/`Writer`.
+- `packet.rs` : paquet signe au format filaire exact — prefixe `0x00 +
+  0x02 + community_id(20o)`, `msg_id`, `varlenH(pubkey)`, `Q(global_time)`,
+  payload, signature Ed25519 64o couvrant tout ; verification a la
+  reception avec rejet de prefixe etranger / signature invalide.
+- `address.rs` : `UdpAddress` (IPv4/IPv6/domaine) = `UDPv4Address`/
+  `UDPv6Address`/`DomainAddress` Python.
+- `peer.rs` : `Peer` (cle publique + MID SHA-1) et `Network` (index par
+  cle/adresse, `peers_for_service`).
+- `endpoint.rs` : `UdpEndpoint` (socket UDP, dispatch par prefixe de
+  22 octets comme `add_prefix_listener`).
+- `discovery.rs` : `DiscoveryCommunity` (`community_id` Python inchange),
+  msg 1-4 (similarity, ping/pong) et 245/246 (introduction ancien format),
+  marche aleatoire `step()` (similarity-request vers pair connu, sinon
+  introduction-request vers bootstrap).
+- `LibNaClSecretKey` gagne `Clone` (necessaire aux reponses spawn).
+- 4 tests : signature aller-retour, rejet signature corrompue, rejet
+  prefixe etranger, et **decouverte loopback reelle** (deux noeuds UDP
+  127.0.0.1 s'enregistrent mutuellement comme pairs verifies).
+- Jalon d'interop avec un noeud pyipv8 reel : formats repris a
+  l'identique ; test manuel reseau reporte (hors tests offline).
+
 ## Étape 8 — `tribler-daemon` : executable bout en bout (2026-09-28)
 
 - Assemblage complet : `CoreSession` (moteur BitTorrent + SQLite +

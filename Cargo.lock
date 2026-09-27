@@ -3954,6 +3954,14 @@ dependencies = [
 [[package]]
 name = "tribler-ipv8"
 version = "0.1.0"
+dependencies = [
+ "rand 0.8.8",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "tribler-crypto",
+]
 
 [[package]]
 name = "tribler-network-policy"

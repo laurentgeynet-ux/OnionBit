@@ -86,11 +86,17 @@ Légende : `[ ]` à faire · `[~]` en cours · `[x]` terminée.
 
 ## Phase 3 — Réseau d'anonymisation IPv8
 
-- [ ] **Étape 9. Overlay IPv8 minimal.** `tribler-ipv8` : encodage/décodage
-  des messages (format binaire pyipv8), bootstrap + peer discovery,
-  une community triviale de test. **Jalon critique d'interopérabilité** :
-  valider l'échange de messages avec un noeud Tribler Python réel
-  (`pyipv8`) avant de continuer.
+- [x] **Étape 9. Overlay IPv8 minimal.** `tribler-ipv8` : serialiseur
+  binaire pyipv8 (formats `B/H/I/Q/?`, `varlenH`, `varlenHx20`, `ipv4`,
+  `ip_address`, `bits`, `raw`, `20s/…`), paquets signés au format filaire
+  exact (`0x00 + version 0x02 + community_id(20o) + msg_id + varlenH(pubkey)
+  + Q(global_time) + payload + sig Ed25519 64o`), `UdpEndpoint` (dispatch
+  par préfixe 22o), `Peer`/`Network` (index clé/adresse, services),
+  `DiscoveryCommunity` (`7e313685…df5a`) : ping/pong, similarity-request/
+  response, introduction-request/response (ancien format IPv4), marche
+  aléatoire périodique. 4 tests dont échange réel ping/pong loopback entre
+  deux noeuds. **Reste à valider** : interop avec un noeud pyipv8 réel
+  (test manuel — les formats sont repris à l'identique des sources).
 - [ ] **Étape 10. DHT overlay IPv8.** `tribler-ipv8` : implémentation du
   DHT overlay (distinct du DHT BitTorrent BEP 5), lookup de pairs.
 - [ ] **Étape 11. Framework de communities complet.** `tribler-ipv8` :

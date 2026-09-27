@@ -96,6 +96,7 @@ impl LibNaClPublicKey {
 }
 
 /// Cle privee IPv8 (curve25519 : crypt_sk X25519 + seed Ed25519).
+#[derive(Clone)]
 pub struct LibNaClSecretKey {
     crypt_sk: StaticSecret,
     sign: SigningKey,
