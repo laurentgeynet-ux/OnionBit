@@ -3,6 +3,24 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Étape 12 (correctif) — robustesse des tests e2e sous charge (2026-09-27)
+
+Le handshake e2e (introduction -> peers-request -> create-e2e ->
+establish-rendezvous -> created-e2e -> link-e2e -> linked-e2e) echange
+~8 datagrammes UDP sans retransmission protocolaire : sous charge
+parallele des tests du workspace, une cellule loopback pouvait se
+perdre et le test `hidden_service_e2e_roundtrip` expirait a
+`e2e_ready` (2/3 echecs isoles observes).
+
+- `tests/circuits_loopback.rs` : `create_e2e_with_retry` — retente le
+  `create_e2e` jusqu'a 3 fois (equivalent du `RequestCache` a retry de
+  pyipv8), utilise aussi par le test de relais hidden seeding.
+- `tribler-bittorrent/tests/anon_download.rs` : meme repli sur la
+  creation e2e du telechargement anonyme.
+
+Validation : `verify_all.ps1` vert, le retry a ete observe en action
+sous charge (succes a la 2e tentative).
+
 ## Étape 12 (partie 5) — `tribler-tunnel` : relais UDP de hidden seeding (2026-09-27)
 
 Le pont entre les circuits e2e et un moteur BitTorrent a socket UDP

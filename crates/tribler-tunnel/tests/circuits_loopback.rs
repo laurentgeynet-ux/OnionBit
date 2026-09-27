@@ -340,6 +340,30 @@ async fn socks5_udp_associate_roundtrip() {
     assert_eq!(&r[10..], msg);
 }
 
+/// Cree un circuit e2e complet avec repli : le handshake a ~8
+/// datagrammes UDP sans retransmission protocolaire — sous charge
+/// parallele une cellule peut se perdre en loopback ; pyipv8 gere
+/// pareil via ses `RequestCache` a retry. On retente `create_e2e`.
+async fn create_e2e_with_retry(
+    d: &Node,
+    info_hash: [u8; 20],
+    ip: &tribler_tunnel::routing::IntroductionPoint,
+) -> u32 {
+    let mut e2e_rx = d.tunnel.e2e_ready();
+    for attempt in 0..3 {
+        d.tunnel
+            .create_e2e(info_hash, ip)
+            .await
+            .expect("create_e2e");
+        if let Ok(Ok((cid, ih))) = tokio::time::timeout(TEST_TIMEOUT * 4, e2e_rx.recv()).await {
+            assert_eq!(ih, info_hash);
+            return cid;
+        }
+        eprintln!("create_e2e tentative {} echouee, repli", attempt + 1);
+    }
+    panic!("e2e_ready jamais atteint apres 3 tentatives");
+}
+
 /// Hidden services e2e : un seeder cree un point d'introduction, un
 /// downloader decouvre l'IP via peers-request, etablit un circuit e2e
 /// (create-e2e -> RP -> link-e2e -> linked-e2e) et les donnees
@@ -418,17 +442,7 @@ async fn hidden_service_e2e_roundtrip() {
     assert_eq!(ips.len(), 1, "un point d'introduction attendu");
     assert!(!ips[0].seeder_pk.is_empty(), "seeder_pk present");
 
-    // e2e : create-e2e -> ... -> linked-e2e.
-    let mut e2e_rx = d.tunnel.e2e_ready();
-    d.tunnel
-        .create_e2e(info_hash, &ips[0])
-        .await
-        .expect("create_e2e");
-    let (e2e_cid, e2e_ih) = tokio::time::timeout(TEST_TIMEOUT * 4, e2e_rx.recv())
-        .await
-        .expect("timeout e2e_ready")
-        .expect("canal e2e");
-    assert_eq!(e2e_ih, info_hash);
+    let e2e_cid = create_e2e_with_retry(&d, info_hash, &ips[0]).await;
 
     // Donnee e2e downloader -> seeder : la couche hs est appliquee
     // (decryptee cote seeder) et le RP reexpedie.
@@ -510,15 +524,7 @@ async fn hidden_seed_udp_relay_roundtrip() {
         .send_peers_request(info_hash, Some(&ip_hint), 5000)
         .await
         .expect("peers-response");
-    let mut e2e_rx = d.tunnel.e2e_ready();
-    d.tunnel
-        .create_e2e(info_hash, &ips[0])
-        .await
-        .expect("create_e2e");
-    let (e2e_cid, _) = tokio::time::timeout(TEST_TIMEOUT * 4, e2e_rx.recv())
-        .await
-        .expect("timeout e2e_ready")
-        .expect("canal e2e");
+    let e2e_cid = create_e2e_with_retry(&d, info_hash, &ips[0]).await;
 
     // Cote seeder : "moteur" = socket UDP qui repond en echo ; le
     // relais `serve` l'alimente depuis le circuit RP_SEEDER.

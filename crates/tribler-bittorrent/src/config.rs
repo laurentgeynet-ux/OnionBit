@@ -48,6 +48,10 @@ pub struct EngineConfig {
     /// Activer le resume rapide (fastresume) : relit l'etat des pieces
     /// sans rehasher tout le contenu au demarrage.
     pub fastresume: bool,
+    /// Mode uTP uniquement (hidden seeding : les tunnels Tribler ne
+    /// transportent que de l'UDP — les connexions TCP sortantes et
+    /// l'ecoute TCP sont desactivees).
+    pub utp_only: bool,
 }
 
 impl Default for EngineConfig {
@@ -62,6 +66,7 @@ impl Default for EngineConfig {
             peer_limit: DEFAULT_PEER_LIMIT,
             socks5_proxy: None,
             fastresume: true,
+            utp_only: false,
         }
     }
 }
@@ -80,18 +85,21 @@ impl EngineConfig {
             peer_limit: DEFAULT_PEER_LIMIT,
             socks5_proxy: None,
             fastresume: false,
+            utp_only: false,
         }
     }
 
     /// Traduit la config en `librqbit::SessionOptions`.
     pub(crate) fn to_session_options(&self) -> librqbit::SessionOptions {
-        let connect = self
-            .socks5_proxy
-            .as_ref()
-            .map(|proxy| librqbit::ConnectionOptions {
-                proxy_url: Some(proxy.clone()),
+        let connect = if self.socks5_proxy.is_some() || self.utp_only {
+            Some(librqbit::ConnectionOptions {
+                proxy_url: self.socks5_proxy.clone(),
+                enable_tcp: !self.utp_only,
                 ..Default::default()
-            });
+            })
+        } else {
+            None
+        };
 
         librqbit::SessionOptions {
             dht: self.enable_dht.then(librqbit::DhtSessionConfig::default),
@@ -102,6 +110,11 @@ impl EngineConfig {
             peer_limit: Some(self.peer_limit),
             client_name_and_version: Some(CLIENT_NAME.to_string()),
             listen: self.listen_port.map(|port| librqbit::ListenerOptions {
+                mode: if self.utp_only {
+                    librqbit::ListenerMode::UtpOnly
+                } else {
+                    librqbit::ListenerMode::TcpAndUtp
+                },
                 listen_addr: SocketAddr::from(([0, 0, 0, 0], port)),
                 enable_upnp_port_forwarding: false,
                 ..Default::default()

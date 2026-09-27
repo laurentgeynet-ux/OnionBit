@@ -3860,8 +3860,11 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "tracing",
+ "tracing-subscriber",
  "tribler-crypto",
  "tribler-format",
+ "tribler-ipv8",
+ "tribler-tunnel",
  "url",
 ]
 
