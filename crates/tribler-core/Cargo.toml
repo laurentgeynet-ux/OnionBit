@@ -12,6 +12,10 @@ tribler-db = { path = "../tribler-db" }
 tribler-format = { path = "../tribler-format" }
 tribler-crypto = { path = "../tribler-crypto" }
 tribler-network-policy = { path = "../tribler-network-policy" }
+tribler-ipv8 = { path = "../tribler-ipv8" }
+tribler-tunnel = { path = "../tribler-tunnel" }
+rusqlite.workspace = true
+lz4_flex.workspace = true
 url.workspace = true
 reqwest.workspace = true
 bytes.workspace = true

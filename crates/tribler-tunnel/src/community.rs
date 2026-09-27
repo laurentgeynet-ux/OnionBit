@@ -197,6 +197,74 @@ pub struct TunnelCommunity {
     pub(crate) e2e_ready_tx: tokio::sync::broadcast::Sender<(u32, [u8; 20])>,
 }
 
+/// Instantane d'un circuit (endpoint `/api/ipv8/tunnel/circuits`).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct CircuitInfo {
+    /// `circuit_id`.
+    pub circuit_id: u32,
+    /// Sauts vises.
+    pub goal_hops: usize,
+    /// Sauts verifies.
+    pub actual_hops: usize,
+    /// Type (`CIRCUIT_TYPE_*`).
+    #[serde(rename = "type")]
+    pub ctype: String,
+    /// Etat (`EXTENDING`/`READY`/`CLOSING`).
+    pub state: String,
+    /// Octets envoyes.
+    pub bytes_up: u64,
+    /// Octets recus.
+    pub bytes_down: u64,
+    /// Flags de sortie connus du dernier saut.
+    pub exit_flags: i32,
+    /// Info-hash associe (swarms), hex.
+    pub info_hash: Option<String>,
+}
+
+/// Instantane d'un relais (`/api/ipv8/tunnel/relays`).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct RelayInfo {
+    /// Circuit entrant.
+    pub circuit_id_in: u32,
+    /// Circuit sortant.
+    pub circuit_id_out: u32,
+    /// Relais de rendez-vous (hidden services).
+    pub rendezvous_relay: bool,
+    /// Octets relayes (aller).
+    pub bytes_up: u64,
+    /// Octets relayes (retour).
+    pub bytes_down: u64,
+}
+
+/// Instantane d'une socket de sortie (`/api/ipv8/tunnel/exits`).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ExitInfo {
+    /// Circuit servi.
+    pub circuit_id: u32,
+    /// Sortie active.
+    pub enabled: bool,
+}
+
+/// Instantane d'un swarm hidden (`/api/ipv8/tunnel/swarms`).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SwarmInfo {
+    /// Info-hash du swarm (hex).
+    pub info_hash: String,
+    /// Connexions e2e etablies.
+    pub num_connections: usize,
+    /// `true` si ce noeud est le seeder du swarm.
+    pub seeder: bool,
+}
+
+/// Pair tunnel connu + flags de service (`/api/ipv8/tunnel/peers`).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct TunnelPeerInfo {
+    /// Cle publique binaire (hex).
+    pub public_key: String,
+    /// Flags de service annonces (`PEER_FLAG_*`).
+    pub flags: i32,
+}
+
 impl TunnelCommunity {
     /// Cree la community et s'enregistre en listener brut sur le
     /// prefixe tunnel. `peer_flags` : flags de service
@@ -313,6 +381,93 @@ impl TunnelCommunity {
     /// Nombre de circuits initiates connus.
     pub fn circuit_count(&self) -> usize {
         self.inner.lock().unwrap().circuits.len()
+    }
+
+    /// Instantane des circuits pour `/api/ipv8/tunnel/circuits`
+    /// (`get_circuits` pyipv8 : id, goal_hops, hops, type, state,
+    /// bytes).
+    pub fn circuits_info(&self) -> Vec<CircuitInfo> {
+        self.inner
+            .lock()
+            .unwrap()
+            .circuits
+            .values()
+            .map(|c| CircuitInfo {
+                circuit_id: c.base.circuit_id,
+                goal_hops: c.goal_hops,
+                actual_hops: c.hops.len(),
+                ctype: c.ctype.clone(),
+                state: c.state().to_string(),
+                bytes_up: c.base.bytes_up,
+                bytes_down: c.base.bytes_down,
+                exit_flags: c.exit_flags,
+                info_hash: c.info_hash.map(hex::encode),
+            })
+            .collect()
+    }
+
+    /// Instantane des relais pour `/api/ipv8/tunnel/relays`
+    /// (`get_relays` pyipv8 : cid_in -> cid_out, rendezvous).
+    pub fn relays_info(&self) -> Vec<RelayInfo> {
+        self.inner
+            .lock()
+            .unwrap()
+            .relays
+            .iter()
+            .map(|(in_cid, r)| RelayInfo {
+                circuit_id_in: *in_cid,
+                circuit_id_out: r.base.circuit_id,
+                rendezvous_relay: r.rendezvous_relay,
+                bytes_up: r.base.bytes_up,
+                bytes_down: r.base.bytes_down,
+            })
+            .collect()
+    }
+
+    /// Instantane des sockets de sortie pour `/api/ipv8/tunnel/exits`
+    /// (`get_exits` pyipv8 : cid -> enabled).
+    pub fn exits_info(&self) -> Vec<ExitInfo> {
+        self.inner
+            .lock()
+            .unwrap()
+            .exit_sockets
+            .keys()
+            .map(|cid| ExitInfo {
+                circuit_id: *cid,
+                enabled: true,
+            })
+            .collect()
+    }
+
+    /// Instantane des swarms (hidden services) pour
+    /// `/api/ipv8/tunnel/swarms` (`get_swarms` pyipv8).
+    pub fn swarms_info(&self) -> Vec<SwarmInfo> {
+        self.inner
+            .lock()
+            .unwrap()
+            .swarms
+            .values()
+            .map(|s| SwarmInfo {
+                info_hash: hex::encode(s.info_hash),
+                num_connections: s.connections.len(),
+                seeder: s.seeder_sk.is_some(),
+            })
+            .collect()
+    }
+
+    /// Pairs tunnel connus avec leurs flags de service pour
+    /// `/api/ipv8/tunnel/peers` (`get_peers` pyipv8).
+    pub fn tunnel_peers_info(&self) -> Vec<TunnelPeerInfo> {
+        self.inner
+            .lock()
+            .unwrap()
+            .flag_registry
+            .iter()
+            .map(|(pk, flags)| TunnelPeerInfo {
+                public_key: hex::encode(pk),
+                flags: *flags,
+            })
+            .collect()
     }
 
     /// Debug interop : dump hex des cles de session du premier hop

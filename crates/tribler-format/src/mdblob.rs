@@ -24,7 +24,7 @@
 //! (les autres types sont marques "deprecated" dans la reference) ; les
 //! autres sont parsees en en-tete seulement.
 
-use tribler_crypto::ipv8::keys::LibNaClPublicKey;
+use tribler_crypto::ipv8::keys::{LibNaClPublicKey, LibNaClSecretKey};
 
 use crate::error::{FormatError, Result};
 
@@ -205,6 +205,24 @@ impl TorrentMetadataPayload {
 }
 
 impl SignedPayloadHeader {
+    /// Construit un en-tete pour serialisation (signature a zero —
+    /// remplacee par [`encode_entry`]/[`encode_entry_presigned`]).
+    pub fn new(metadata_type: u16, reserved_flags: u16, public_key: [u8; PUBLIC_KEY_LEN]) -> Self {
+        Self {
+            metadata_type,
+            reserved_flags,
+            public_key,
+            signature: [0u8; SIGNATURE_LEN],
+            signed_data: Vec::new(),
+        }
+    }
+
+    /// Definit la signature (re-serialisation d'une entree recue).
+    pub fn with_signature(mut self, signature: [u8; SIGNATURE_LEN]) -> Self {
+        self.signature = signature;
+        self
+    }
+
     /// Verifie la signature Ed25519 du payload.
     ///
     /// La cle se reconstruit comme cote Python :
@@ -454,6 +472,103 @@ pub fn read_entry(data: &[u8], offset: usize) -> Result<(MetadataEntry, usize)> 
     };
 
     Ok((entry, offset + c.pos))
+}
+
+// --- Serialisation ----------------------------------------------------
+
+/// Ecrit les champs communs `ChannelNodePayload` (type + flags + cle +
+/// `id`/`origin_id`/`timestamp`).
+fn write_node_header(out: &mut Vec<u8>, node: &ChannelNodePayload) {
+    out.extend_from_slice(&node.header.metadata_type.to_be_bytes());
+    out.extend_from_slice(&node.header.reserved_flags.to_be_bytes());
+    out.extend_from_slice(&node.header.public_key);
+    out.extend_from_slice(&node.id.to_be_bytes());
+    out.extend_from_slice(&node.origin_id.to_be_bytes());
+    out.extend_from_slice(&node.timestamp.to_be_bytes());
+}
+
+/// `varlenI` : longueur u32 + octets.
+fn write_varlen_i(out: &mut Vec<u8>, data: &[u8]) {
+    out.extend_from_slice(&(data.len() as u32).to_be_bytes());
+    out.extend_from_slice(data);
+}
+
+fn write_torrent_fields(out: &mut Vec<u8>, t: &TorrentMetadataPayload) {
+    out.extend_from_slice(&t.infohash);
+    out.extend_from_slice(&t.size.to_be_bytes());
+    out.extend_from_slice(&t.torrent_date.to_be_bytes());
+    write_varlen_i(out, t.title.as_bytes());
+    write_varlen_i(out, t.tags.as_bytes());
+    write_varlen_i(out, t.tracker_info.as_bytes());
+}
+
+/// Serialise une entree `.mdblob` **sans la signature** : retourne les
+/// octets a signer (la signature Ed25519 couvre tout le payload,
+/// comme `SignedPayload` cote pyipv8).
+pub fn encode_entry_unsigned(entry: &MetadataEntry) -> Result<Vec<u8>> {
+    let mut out = Vec::new();
+    match entry {
+        MetadataEntry::RegularTorrent(t) => {
+            write_node_header(&mut out, &t.node);
+            write_torrent_fields(&mut out, t);
+        }
+        MetadataEntry::ChannelTorrent(c) => {
+            write_node_header(&mut out, &c.torrent.node);
+            write_torrent_fields(&mut out, &c.torrent);
+            out.extend_from_slice(&c.num_entries.to_be_bytes());
+            out.extend_from_slice(&c.start_timestamp.to_be_bytes());
+        }
+        MetadataEntry::CollectionNode(c) => {
+            write_node_header(&mut out, &c.node);
+            write_varlen_i(&mut out, c.title.as_bytes());
+            write_varlen_i(&mut out, c.tags.as_bytes());
+            out.extend_from_slice(&c.num_entries.to_be_bytes());
+        }
+        MetadataEntry::JsonNode(j) => {
+            write_node_header(&mut out, &j.node);
+            write_varlen_i(&mut out, j.json_text.as_bytes());
+        }
+        MetadataEntry::BinaryNode(b) => {
+            write_node_header(&mut out, &b.node);
+            write_varlen_i(&mut out, &b.binary_data);
+            write_varlen_i(&mut out, b.data_type.as_bytes());
+        }
+        MetadataEntry::Deleted(d) => {
+            out.extend_from_slice(&d.header.metadata_type.to_be_bytes());
+            out.extend_from_slice(&d.header.reserved_flags.to_be_bytes());
+            out.extend_from_slice(&d.header.public_key);
+            out.extend_from_slice(&d.delete_signature);
+        }
+        MetadataEntry::Rejected { metadata_type } => {
+            return Err(FormatError::BadBencode {
+                offset: 0,
+                reason: format!("type de metadonnee non serialisable: {metadata_type}"),
+            });
+        }
+    }
+    Ok(out)
+}
+
+/// Serialise et **signe** une entree `.mdblob` (signature Ed25519
+/// sur tous les octets precedents).
+pub fn encode_entry(entry: &MetadataEntry, signer: &LibNaClSecretKey) -> Result<Vec<u8>> {
+    let mut out = encode_entry_unsigned(entry)?;
+    let sig = signer.sign(&out);
+    out.extend_from_slice(&sig);
+    Ok(out)
+}
+
+/// Re-ecrit une entree deja signee (signature deja presente dans
+/// l'en-tete — propagation d'entrees distantes, `entries_to_chunk`
+/// cote Python).
+pub fn encode_entry_presigned(entry: &MetadataEntry) -> Result<Vec<u8>> {
+    let mut out = encode_entry_unsigned(entry)?;
+    let sig = entry
+        .header()
+        .map(|h| h.signature)
+        .unwrap_or([0u8; SIGNATURE_LEN]);
+    out.extend_from_slice(&sig);
+    Ok(out)
 }
 
 /// Parse toutes les entrees d'un blob `.mdblob` (sequence de payloads).

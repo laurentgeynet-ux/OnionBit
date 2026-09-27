@@ -276,10 +276,20 @@ ne sont donc pas « terminées » au sens strict) · `[x]` terminée.
   anti-SSRF ; watch folder `.torrent`/`.magnet` dédupliqué. Services
   démarrés/arrêtés par `CoreSession` via `CoreConfig` — validation
   complète verte (tests loopback uniquement).
-- [ ] **Étape 15. Parité complète de l'API REST/SSE.** `tribler-api` :
-  couverture de tous les endpoints nécessaires à une future UI (canaux,
-  recherche, paramètres, statistiques de circuits). Mise à jour complète
-  de `docs/reference_tribler/api_rest_mapping.md`.
+- [x] **Étape 15. Parité complète de l'API REST/SSE.** `tribler-api`
+  couvre les endpoints utiles au futur client : downloads (+ sous-
+  endpoints `torrent`/`trackers`/`files`/`stream`), `settings` (GET
+  + POST à chaud pour RSS/watch-folder), `shutdown`, `statistics/*`
+  (tribler, ipv8, dirspace), `metadata/*` (recherche locale, santé,
+  popular, tags), `search/remote` (RemoteSelect IPv8), `torrentinfo`,
+  `createtorrent`, `libtorrent/settings|session` (lanes anonymes),
+  `ipv8/overlays` + `ipv8/tunnel/*`, `files/browse|list|create`, `rss`,
+  `versioning/*`, `logging`. `CoreSession` expose la stack IPv8
+  optionnelle (`ipv8_stack.rs` : endpoint UDP, discovery, content
+  discovery, tunnel, SOCKS5, moteurs rqbit par lane `anon_hops`),
+  persistée dans `downloads.anon_hops` (migration v2). `tribler-format`
+  gagne le sérialiseur signé `mdblob::encode_entry`. Mapping complet
+  dans `docs/reference_tribler/api_rest_mapping.md`.
 - [ ] **Étape 16. Durcissement et tests de bout en bout.** Suite de tests
   d'intégration via `tribler-test-support` couvrant les scénarios
   critiques (téléchargement normal, téléchargement anonyme, redémarrage

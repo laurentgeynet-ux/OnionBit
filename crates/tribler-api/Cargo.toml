@@ -11,6 +11,9 @@ tribler-core = { path = "../tribler-core" }
 tribler-bittorrent = { path = "../tribler-bittorrent" }
 tribler-crypto = { path = "../tribler-crypto" }
 tribler-db = { path = "../tribler-db" }
+tribler-format = { path = "../tribler-format" }
+tribler-ipv8 = { path = "../tribler-ipv8" }
+tribler-tunnel = { path = "../tribler-tunnel" }
 tokio.workspace = true
 axum.workspace = true
 serde.workspace = true
@@ -18,11 +21,14 @@ serde_json.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 futures-util.workspace = true
+fs2.workspace = true
+librqbit.workspace = true
+rusqlite.workspace = true
+uuid.workspace = true
 tokio-stream = { version = "0.1", features = ["sync"] }
 hex.workspace = true
 
 [dev-dependencies]
-tribler-format = { path = "../tribler-format" }
 tempfile.workspace = true
 reqwest = { version = "0.13", features = ["json"] }
 tokio-tungstenite.workspace = true

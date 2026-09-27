@@ -39,6 +39,9 @@ pub struct CoreConfig {
     pub enable_torrent_checker: bool,
     /// Intervalle de controle du torrent checker (ms).
     pub torrent_checker_interval_ms: u64,
+    /// Stack IPv8 de session (decouverte, content discovery, tunnels
+    /// anonymes — etape 15). `enabled = false` par defaut.
+    pub ipv8: crate::ipv8_stack::Ipv8Config,
     /// Configuration du moteur BitTorrent sous-jacent.
     pub engine: tribler_bittorrent::EngineConfig,
 }
@@ -57,6 +60,7 @@ impl Default for CoreConfig {
             rss_urls: Vec::new(),
             enable_torrent_checker: true,
             torrent_checker_interval_ms: 10_000,
+            ipv8: crate::ipv8_stack::Ipv8Config::default(),
             engine: tribler_bittorrent::EngineConfig::default(),
         }
     }
@@ -84,6 +88,7 @@ impl CoreConfig {
             rss_urls: Vec::new(),
             enable_torrent_checker: false,
             torrent_checker_interval_ms: 10_000,
+            ipv8: crate::ipv8_stack::Ipv8Config::default(),
         }
     }
 }

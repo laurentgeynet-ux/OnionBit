@@ -3,6 +3,45 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Étape 15 — parité API REST/SSE (2026-09-27)
+
+Couverture complète des endpoints `tribler.core.restapi` utiles au
+futur client, avec les ajouts d'infrastructure nécessaires.
+
+- **Stack IPv8 dans `CoreSession`** (`tribler-core/src/ipv8_stack.rs`) :
+  endpoint UDP, `Network`, `DiscoveryCommunity`, `ContentDiscoveryCommunity`
+  (provider = base `channel_node` + sérialiseur mdblob signé),
+  `TunnelCommunity` optionnelle + serveur SOCKS5 par lane anonyme et
+  moteur `BtEngine` dédié par nombre de sauts (`anon_engine(hops)`).
+  Reglages dans `CoreConfig.ipv8` (`enabled`, `listen_addr`,
+  `bootstrap_peers`, `enable_anonymity`, `peer_flags`,
+  `tribler_tunnel_community`).
+- **`downloads.anon_hops`** (migration DB v2) : le téléchargement est
+  routé vers la lane anonyme correspondante (`anon_hops` de
+  `PUT /api/downloads`) et restauré sur la bonne lane au démarrage.
+- **`tribler-format::mdblob::encode_entry`** : sérialisation signée
+  `.mdblob` (réponses du remote-select).
+- **Endpoints ajoutés** (36 routes au total) : `downloads/{ih}/torrent`
+  `trackers` (GET/PUT) `files` `stream/{i}` (seek par `start`),
+  `settings` GET/POST, `shutdown`, `statistics/tribler|ipv8|dirspace`,
+  `metadata/torrents/{ih}/health` (+`refresh=1` via checker) `popular`
+  `health` `search/local|completions|vocabulary` `torrents/{ih}/tags`
+  (PUT/DELETE/PATCH), `search/remote`, `torrentinfo/uri|file`,
+  `createtorrent` (+`dryrun`, via `librqbit::create_torrent`),
+  `libtorrent/settings|session` (par lane), `ipv8/overlays` +
+  `ipv8/tunnel/{settings,circuits,relays,exits,swarms,peers}`,
+  `files/browse|list|create`, `rss`, `versioning/*`, `logging`.
+- **`tribler-bittorrent`** : `Download` expose `files()`/`trackers()`/
+  `add_tracker()`/`torrent_bytes()`/`stream_file_from()` (seek) ;
+  trackers additionnels partagés par info-hash au niveau `BtEngine`.
+- **`tribler-tunnel`/`tribler-ipv8`** : accesseurs de stats
+  (`circuits_info`, `relays_info`, `exits_info`, `swarms_info`,
+  `tunnel_peers_info`, compteurs d'octets `UdpEndpoint`).
+- Reglages mutables à chaud (`rss.urls`, `watch_folder`) reflétés par
+  `effective_config()` ; 13 nouveaux tests d'intégration HTTP.
+- Mapping complet et écarts assumés :
+  `docs/reference_tribler/api_rest_mapping.md`.
+
 ## Étape 14 — services secondaires : content discovery, torrent checker, RSS, watch folder (2026-09-27)
 
 Quatre services inspirés de Tribler (`src/tribler/core/content_discovery/`,

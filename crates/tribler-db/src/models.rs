@@ -103,4 +103,6 @@ pub struct DownloadRow {
     pub paused: bool,
     /// Telechargement termine.
     pub finished: bool,
+    /// Nombre de sauts anonymes du tunnel (0 = telechargement direct).
+    pub anon_hops: i64,
 }

@@ -58,6 +58,8 @@ reqwest = { version = "0.13", features = ["json"] }
 tokio-tungstenite = "0.24"
 tempfile = "3"
 proptest = "1"
+lz4_flex = "0.11"
+fs2 = "0.4"
 
 # Moteur BitTorrent reutilise (voir ADR-0001) : evite de reecrire bencode,
 # protocole peer-wire, DHT BEP5 et tracker HTTP/UDP qui existent deja en

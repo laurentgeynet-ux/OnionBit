@@ -41,12 +41,27 @@ struct Services {
     checker_stop: Option<tokio::sync::watch::Sender<bool>>,
 }
 
+/// Reglages applicables a chaud sans redemarrer la session.
+#[derive(Default)]
+struct ServiceOverrides {
+    /// Flux RSS surveilles (`Some` = remplace `config.rss_urls`).
+    rss_urls: Option<Vec<String>>,
+    /// Repertoire surveille (`Some` = remplace `config.watch_folder_dir`).
+    watch_folder_dir: Option<Option<std::path::PathBuf>>,
+}
+
 struct Inner {
     config: CoreConfig,
+    /// Sous-ensemble de reglages mutables a chaud (`POST /api/settings`) :
+    /// superposes a `config` par `effective_config()`.
+    overrides: std::sync::RwLock<ServiceOverrides>,
     engine: BtEngine,
     db: Arc<Database>,
     notifier: Notifier,
     services: std::sync::Mutex<Services>,
+    /// Stack IPv8 (discovery, content discovery, tunnel, lanes
+    /// anonymes) — `Some` si `config.ipv8.enabled`.
+    ipv8: Option<Arc<crate::ipv8_stack::Ipv8Stack>>,
 }
 
 impl std::fmt::Debug for CoreSession {
@@ -65,14 +80,18 @@ impl CoreSession {
         std::fs::create_dir_all(&config.state_dir)?;
         let db = Database::open(&config.db_path())?;
         let engine = BtEngine::start(config.engine.clone()).await?;
+        let db = Arc::new(db);
+        let ipv8 = start_ipv8(&config, db.clone()).await?;
         let services_config = config.clone();
         let session = Self {
             inner: Arc::new(Inner {
                 config,
+                overrides: std::sync::RwLock::new(ServiceOverrides::default()),
                 engine,
-                db: Arc::new(db),
+                db,
                 notifier,
                 services: std::sync::Mutex::new(Services::default()),
+                ipv8,
             }),
         };
         session.start_services(&services_config).await;
@@ -87,14 +106,18 @@ impl CoreSession {
     pub async fn start_offline(config: CoreConfig, notifier: Notifier) -> Result<Self> {
         let db = Database::memory()?;
         let engine = BtEngine::start(config.engine.clone()).await?;
+        let db = Arc::new(db);
+        let ipv8 = start_ipv8(&config, db.clone()).await?;
         let services_config = config.clone();
         let session = Self {
             inner: Arc::new(Inner {
                 config,
+                overrides: std::sync::RwLock::new(ServiceOverrides::default()),
                 engine,
-                db: Arc::new(db),
+                db,
                 notifier,
                 services: std::sync::Mutex::new(Services::default()),
+                ipv8,
             }),
         };
         session.start_services(&services_config).await;
@@ -102,7 +125,8 @@ impl CoreSession {
         Ok(session)
     }
 
-    /// Reinjecte dans le moteur les telechargements persistes.
+    /// Reinjecte dans les moteurs les telechargements persistes
+    /// (le moteur anonyme `anon_hops` est choisi selon la colonne DB).
     async fn restore_downloads(&self) {
         let rows = match self.inner.db.with(tribler_db::downloads::list) {
             Ok(r) => r,
@@ -112,13 +136,21 @@ impl CoreSession {
             }
         };
         for row in rows {
+            let engine = match self.engine_for(row.anon_hops as u32).await {
+                Ok(e) => e,
+                Err(e) => {
+                    tracing::warn!(
+                        infohash = %hex::encode(&row.infohash),
+                        error = %e,
+                        "moteur anonyme indisponible a la restauration"
+                    );
+                    continue;
+                }
+            };
             let res = if let Some(data) = &row.torrent_data {
-                self.inner
-                    .engine
-                    .add_torrent_bytes(data.clone(), row.paused)
-                    .await
+                engine.add_torrent_bytes(data.clone(), row.paused).await
             } else {
-                self.inner.engine.add_uri(&row.source_uri).await
+                engine.add_uri(&row.source_uri).await
             };
             match res {
                 Ok(dl) => {
@@ -127,7 +159,7 @@ impl CoreSession {
                         "telechargement restaure"
                     );
                     if row.paused {
-                        let _ = self.inner.engine.pause(&dl.id().to_string()).await;
+                        let _ = engine.pause(&dl.id().to_string()).await;
                     }
                 }
                 Err(e) => {
@@ -191,12 +223,59 @@ impl CoreSession {
         &self.inner.engine
     }
 
-    /// Ajoute un telechargement (magnet ou URI `http(s)`) et le
-    /// persiste.
+    /// Moteur cible pour un telechargement : principal si
+    /// `anon_hops == 0`, sinon la lane anonyme a `hops` sauts
+    /// (SOCKS5 de la `TunnelCommunity` + moteur uTP-only dedie —
+    /// equivalent des sessions libtorrent `hops=` de Tribler).
+    ///
+    /// Erreur si `anon_hops > 0` et que l'anonymat n'est pas active
+    /// (`ipv8.enable_anonymity`), comme `anon_hops` refuse sans tunnel
+    /// cote Python.
+    pub async fn engine_for(&self, anon_hops: u32) -> Result<BtEngine> {
+        if anon_hops == 0 {
+            return Ok(self.inner.engine.clone());
+        }
+        let stack = self.inner.ipv8.clone().ok_or(CoreError::InvalidState(
+            "anon_hops > 0 mais la stack ipv8 est inactive",
+        ))?;
+        stack.anon_engine(anon_hops as usize).await
+    }
+
+    /// Tous les moteurs (principal + lanes anonymes actives).
+    fn all_engines(&self) -> Vec<BtEngine> {
+        let mut engines = vec![self.inner.engine.clone()];
+        if let Some(stack) = &self.inner.ipv8 {
+            engines.extend(stack.anon_engines());
+        }
+        engines
+    }
+
+    /// Telechargement par info-hash ou id interne (tous moteurs —
+    /// `/api/downloads/{ih}/*`).
+    pub fn find_download(&self, id_or_hash: &str) -> Option<Download> {
+        self.all_engines().iter().find_map(|e| e.get(id_or_hash))
+    }
+
+    /// Ajoute un telechargement (magnet ou URI `http(s)`), eventuellement
+    /// anonyme (`anon_hops` sauts de tunnel — necessite
+    /// `ipv8.enable_anonymity`), et le persiste.
     pub async fn add_download(&self, uri: &str, paused: bool) -> Result<Download> {
-        self.check_uri_policy(uri).await?;
-        let dl = self.inner.engine.add_uri(uri).await?;
-        self.persist(&dl, uri, paused)?;
+        self.add_download_anon(uri, paused, 0).await
+    }
+
+    /// `add_download` avec choix du nombre de sauts anonymes.
+    pub async fn add_download_anon(
+        &self,
+        uri: &str,
+        paused: bool,
+        anon_hops: u32,
+    ) -> Result<Download> {
+        if anon_hops == 0 {
+            self.check_uri_policy(uri).await?;
+        }
+        let engine = self.engine_for(anon_hops).await?;
+        let dl = engine.add_uri(uri).await?;
+        self.persist(&dl, uri, paused, anon_hops)?;
         Ok(dl)
     }
 
@@ -229,18 +308,25 @@ impl CoreSession {
 
     /// Ajoute un telechargement depuis les octets d'un `.torrent`.
     pub async fn add_torrent_bytes(&self, bytes: Vec<u8>, paused: bool) -> Result<Download> {
+        self.add_torrent_bytes_anon(bytes, paused, 0).await
+    }
+
+    /// `add_torrent_bytes` avec choix du nombre de sauts anonymes.
+    pub async fn add_torrent_bytes_anon(
+        &self,
+        bytes: Vec<u8>,
+        paused: bool,
+        anon_hops: u32,
+    ) -> Result<Download> {
         // Parsing borne en amont pour extraire l'info-hash a persister.
         let meta = tribler_format::torrent::TorrentMeta::parse(&bytes)?;
-        let dl = self
-            .inner
-            .engine
-            .add_torrent_bytes(bytes.clone(), paused)
-            .await?;
-        self.persist_torrent(&dl, bytes, &meta, paused)?;
+        let engine = self.engine_for(anon_hops).await?;
+        let dl = engine.add_torrent_bytes(bytes.clone(), paused).await?;
+        self.persist_torrent(&dl, bytes, &meta, paused, anon_hops)?;
         Ok(dl)
     }
 
-    fn persist(&self, dl: &Download, uri: &str, paused: bool) -> Result<()> {
+    fn persist(&self, dl: &Download, uri: &str, paused: bool, anon_hops: u32) -> Result<()> {
         self.inner.db.with(|c| {
             tribler_db::downloads::upsert(
                 c,
@@ -251,6 +337,7 @@ impl CoreSession {
                     output_dir: dl.output_folder().display().to_string(),
                     added_on: now_unix(),
                     paused,
+                    anon_hops: anon_hops as i64,
                     ..Default::default()
                 },
             )
@@ -264,6 +351,7 @@ impl CoreSession {
         bytes: Vec<u8>,
         meta: &tribler_format::torrent::TorrentMeta,
         paused: bool,
+        anon_hops: u32,
     ) -> Result<()> {
         self.inner.db.with(|c| {
             tribler_db::downloads::upsert(
@@ -279,6 +367,7 @@ impl CoreSession {
                     output_dir: dl.output_folder().display().to_string(),
                     added_on: now_unix(),
                     paused,
+                    anon_hops: anon_hops as i64,
                     ..Default::default()
                 },
             )
@@ -286,29 +375,46 @@ impl CoreSession {
         Ok(())
     }
 
-    /// Liste les telechargements.
+    /// Liste les telechargements (moteur principal + lanes anonymes).
     pub fn downloads(&self) -> Vec<DownloadStats> {
-        self.inner.engine.list()
+        self.all_engines().iter().flat_map(|e| e.list()).collect()
+    }
+
+    /// Moteur detenant le telechargement `id_or_hash` (principal ou
+    /// lane anonyme).
+    fn owner_engine(&self, id_or_hash: &str) -> Option<BtEngine> {
+        self.all_engines()
+            .into_iter()
+            .find(|e| e.get(id_or_hash).is_some())
     }
 
     /// Pause / reprise / suppression.
     pub async fn pause(&self, id_or_hash: &str) -> Result<()> {
-        self.inner.engine.pause(id_or_hash).await?;
+        let engine = self
+            .owner_engine(id_or_hash)
+            .ok_or(CoreError::InvalidState("telechargement inconnu"))?;
+        engine.pause(id_or_hash).await?;
         self.notify_state(id_or_hash);
         Ok(())
     }
 
     /// Reprend un telechargement.
     pub async fn resume(&self, id_or_hash: &str) -> Result<()> {
-        self.inner.engine.resume(id_or_hash).await?;
+        let engine = self
+            .owner_engine(id_or_hash)
+            .ok_or(CoreError::InvalidState("telechargement inconnu"))?;
+        engine.resume(id_or_hash).await?;
         self.notify_state(id_or_hash);
         Ok(())
     }
 
     /// Supprime un telechargement (optionnellement ses fichiers).
     pub async fn remove(&self, id_or_hash: &str, delete_files: bool) -> Result<()> {
-        let infohash = self.inner.engine.get(id_or_hash).map(|d| d.info_hash_hex());
-        self.inner.engine.remove(id_or_hash, delete_files).await?;
+        let engine = self
+            .owner_engine(id_or_hash)
+            .ok_or(CoreError::InvalidState("telechargement inconnu"))?;
+        let infohash = engine.get(id_or_hash).map(|d| d.info_hash_hex());
+        engine.remove(id_or_hash, delete_files).await?;
         if let Some(h) = infohash {
             if let Some(ih) = tribler_crypto::hash::from_hex(&h) {
                 let _ = self
@@ -321,14 +427,16 @@ impl CoreSession {
     }
 
     fn notify_state(&self, id_or_hash: &str) {
-        if let Some(d) = self.inner.engine.get(id_or_hash) {
-            let s = d.stats();
-            self.inner
-                .notifier
-                .notify(Notification::DownloadStateChanged {
-                    infohash: s.info_hash,
-                    state: s.state,
-                });
+        if let Some(engine) = self.owner_engine(id_or_hash) {
+            if let Some(d) = engine.get(id_or_hash) {
+                let s = d.stats();
+                self.inner
+                    .notifier
+                    .notify(Notification::DownloadStateChanged {
+                        infohash: s.info_hash,
+                        state: s.state,
+                    });
+            }
         }
     }
 
@@ -398,6 +506,79 @@ impl CoreSession {
         self.inner.services.lock().unwrap().rss.clone()
     }
 
+    /// Stack IPv8 de la session (`None` si `config.ipv8.enabled =
+    /// false` — equivalent de `session.ipv8` conditionnel Python).
+    pub fn ipv8(&self) -> Option<Arc<crate::ipv8_stack::Ipv8Stack>> {
+        self.inner.ipv8.clone()
+    }
+
+    /// Acces a la base de metadonnees (endpoints `/api/metadata`).
+    pub fn db(&self) -> &Arc<Database> {
+        &self.inner.db
+    }
+
+    /// Configuration effective de la session.
+    pub fn config(&self) -> &CoreConfig {
+        &self.inner.config
+    }
+
+    /// Config de demarrage + overrides `apply_service_settings`
+    /// (reglages effectivement en cours pour `GET /api/settings`).
+    pub fn effective_config(&self) -> CoreConfig {
+        let mut cfg = self.inner.config.clone();
+        let ov = self.inner.overrides.read().unwrap();
+        if let Some(urls) = &ov.rss_urls {
+            cfg.rss_urls = urls.clone();
+        }
+        if let Some(dir) = &ov.watch_folder_dir {
+            cfg.watch_folder_dir = dir.clone();
+        }
+        cfg
+    }
+
+    /// Reconfigure les services a chaud (`POST /api/settings`) :
+    /// URLs RSS et watch folder. Les autres champs de config sont
+    /// consultables via `config()` mais non mutables a chaud.
+    pub fn apply_service_settings(&self, config: &CoreConfig) {
+        // Memorise le sous-ensemble applique pour que `effective_config()`
+        // (et `GET /api/settings`) reflete le reglage courant.
+        *self.inner.overrides.write().unwrap() = ServiceOverrides {
+            rss_urls: Some(config.rss_urls.clone()),
+            watch_folder_dir: Some(config.watch_folder_dir.clone()),
+        };
+        let mut services = self.inner.services.lock().unwrap();
+        // RSS : mise a jour du manager existant ou creation.
+        if let Some(rss) = &services.rss {
+            rss.update(&config.rss_urls);
+        } else if !config.rss_urls.is_empty() {
+            let mgr = crate::services::rss::RssManager::new(
+                self.inner.notifier.clone(),
+                config.ip_policy.clone(),
+            );
+            mgr.update(&config.rss_urls);
+            services.rss = Some(mgr);
+        }
+        // Watch folder : redemarrage si le repertoire change.
+        let current = services
+            .watch_folder
+            .as_ref()
+            .map(|w| w.directory().to_path_buf());
+        if current != config.watch_folder_dir {
+            if let Some(w) = services.watch_folder.take() {
+                w.stop();
+            }
+            if let Some(dir) = &config.watch_folder_dir {
+                let svc = crate::services::watch_folder::WatchFolderService::new(
+                    self.clone(),
+                    dir.clone(),
+                    std::time::Duration::from_millis(config.watch_folder_interval_ms),
+                );
+                svc.start();
+                services.watch_folder = Some(svc);
+            }
+        }
+    }
+
     /// Arret propre : services, moteur puis notification.
     pub async fn stop(&self) {
         self.inner.notifier.notify(Notification::SessionStopping);
@@ -411,6 +592,30 @@ impl CoreSession {
         if let Some(tx) = &services.checker_stop {
             let _ = tx.send(true);
         }
+        // Arret des lanes anonymes puis de la stack IPv8.
+        if let Some(stack) = &self.inner.ipv8 {
+            stack.stop().await;
+        }
         self.inner.engine.stop().await;
     }
+}
+
+/// Demarre la stack IPv8 si `config.ipv8.enabled` (endpoint UDP,
+/// discovery, content discovery, tunnel + lanes anonymes).
+async fn start_ipv8(
+    config: &CoreConfig,
+    db: Arc<Database>,
+) -> Result<Option<Arc<crate::ipv8_stack::Ipv8Stack>>> {
+    if !config.ipv8.enabled {
+        return Ok(None);
+    }
+    let stack = crate::ipv8_stack::Ipv8Stack::start(
+        &config.ipv8,
+        &config.state_dir,
+        &config.downloads_dir,
+        &config.engine,
+        db,
+    )
+    .await?;
+    Ok(Some(stack))
 }

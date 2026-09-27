@@ -89,6 +89,11 @@ impl DownloadStats {
 #[derive(Clone)]
 pub struct Download {
     pub(crate) inner: Arc<librqbit::ManagedTorrent>,
+    /// Trackers ajoutes a chaud via l'API (`PUT /downloads/{ih}/trackers`).
+    /// rqbit ne permet pas de muter `shared.trackers` apres
+    /// l'initialisation ; on les fusionne dans `trackers()` et ils
+    /// sont persistes dans la ligne `downloads` par le core.
+    pub(crate) extra_trackers: Arc<std::sync::Mutex<Vec<String>>>,
 }
 
 impl std::fmt::Debug for Download {
@@ -216,4 +221,156 @@ impl Download {
             .await
             .map_err(|e| crate::BtError::Engine(e.to_string()))
     }
+
+    /// Fichiers du contenu (metadonnees resolues ; `None` tant qu'un
+    /// magnet n'a pas recu son info — comme `download.tdef` Python).
+    /// `progress` = fraction d'octets deja presentes (`file_progress`
+    /// rqbit).
+    pub fn files(&self) -> Option<Vec<DownloadFile>> {
+        let md = self.inner.metadata.load();
+        let md = md.as_ref()?;
+        let progress = self.inner.stats().file_progress;
+        Some(
+            md.file_infos
+                .iter()
+                .enumerate()
+                .map(|(index, fi)| {
+                    let have = progress.get(index).copied().unwrap_or(0);
+                    DownloadFile {
+                        index,
+                        name: fi.relative_filename.display().to_string(),
+                        length: fi.len,
+                        progress: if fi.len == 0 {
+                            1.0
+                        } else {
+                            (have as f64 / fi.len as f64).clamp(0.0, 1.0)
+                        },
+                    }
+                })
+                .collect(),
+        )
+    }
+
+    /// URLs des trackers du torrent (`announce`/`announce-list`,
+    /// `HashSet` libtorrent-equivalent) **plus** ceux ajoutes a chaud
+    /// par `add_tracker`.
+    pub fn trackers(&self) -> Vec<String> {
+        let mut out: Vec<String> = self
+            .inner
+            .shared()
+            .trackers
+            .iter()
+            .map(|u| u.to_string())
+            .collect();
+        if let Ok(extra) = self.extra_trackers.lock() {
+            for t in extra.iter() {
+                if !out.iter().any(|e| e == t) {
+                    out.push(t.clone());
+                }
+            }
+        }
+        out
+    }
+
+    /// Enregistre un tracker additionnel (equivalent de
+    /// `PUT /downloads/{ih}/trackers` Python ; effectif a la prochaine
+    /// session pour rqbit qui ne reannonce pas a chaud).
+    pub fn add_tracker(&self, url: &str) {
+        if let Ok(mut extra) = self.extra_trackers.lock() {
+            if !extra.iter().any(|e| e == url) {
+                extra.push(url.to_string());
+            }
+        }
+    }
+
+    /// Octets du `.torrent` source (metadonnees resolues).
+    pub fn torrent_bytes(&self) -> Option<bytes::Bytes> {
+        self.inner
+            .metadata
+            .load()
+            .as_ref()
+            .map(|m| m.torrent_bytes.clone())
+    }
+
+    /// Ouvre un flux de lecture d'un fichier du torrent
+    /// (`GET /downloads/{ih}/stream/{i}`).
+    ///
+    /// `FileStream` de rqbit n'est pas reexporte publiquement : on le
+    /// pompe dans un canal de chunks (256 Kio) consomme par le handler
+    /// HTTP — equivalent du streaming de `stream()` Python.
+    pub async fn stream_file(&self, file_index: usize) -> crate::Result<DownloadStream> {
+        self.stream_file_from(file_index, 0).await
+    }
+
+    /// Variante avec offset de depart (`start` de l'endpoint de
+    /// streaming Python — seek avant lecture).
+    pub async fn stream_file_from(
+        &self,
+        file_index: usize,
+        start: u64,
+    ) -> crate::Result<DownloadStream> {
+        let stream = self
+            .inner
+            .clone()
+            .stream(file_index)
+            .await
+            .map_err(|e| crate::BtError::Engine(e.to_string()))?;
+        let len = stream.len();
+        let (tx, rx) = tokio::sync::mpsc::channel(STREAM_CHANNEL_CAP);
+        tokio::spawn(async move {
+            use tokio::io::{AsyncReadExt, AsyncSeek};
+            let mut fs = std::pin::pin!(stream);
+            if start > 0
+                && AsyncSeek::start_seek(fs.as_mut(), std::io::SeekFrom::Start(start)).is_err()
+            {
+                return;
+            }
+            loop {
+                let mut buf = vec![0u8; STREAM_CHUNK];
+                match fs.read(&mut buf).await {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        buf.truncate(n);
+                        if tx.send(Ok(bytes::Bytes::from(buf))).await.is_err() {
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        let _ = tx.send(Err(e)).await;
+                        break;
+                    }
+                }
+            }
+        });
+        Ok(DownloadStream { length: len, rx })
+    }
+}
+
+/// Taille d'un chunk de streaming (256 Kio — borne de buffer par
+/// client HTTP).
+const STREAM_CHUNK: usize = 262_144;
+
+/// Nombre de chunks en vol par flux (backpressure mpsc).
+const STREAM_CHANNEL_CAP: usize = 4;
+
+/// Flux d'un fichier de torrent en cours (stream HTTP).
+pub struct DownloadStream {
+    /// Taille totale du fichier.
+    pub length: u64,
+    /// Receveur de chunks.
+    pub rx: tokio::sync::mpsc::Receiver<std::io::Result<bytes::Bytes>>,
+}
+
+/// Fichier d'un telechargement (DTO interne, sans `serde` dans ce
+/// crate — la couche API le serialise).
+#[derive(Debug, Clone)]
+pub struct DownloadFile {
+    /// Index dans la liste des fichiers du torrent.
+    pub index: usize,
+    /// Chemin relatif dans le torrent.
+    pub name: String,
+    /// Taille en octets.
+    pub length: u64,
+    /// Fraction d'octets deja telecharges (0.0..1.0).
+    pub progress: f64,
 }

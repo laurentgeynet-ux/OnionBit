@@ -21,6 +21,12 @@ pub enum CoreError {
     /// Session deja demarree ou deja arretee.
     #[error("etat de session invalide: {0}")]
     InvalidState(&'static str),
+    /// Erreur d'etat avec message dynamique (services, stack ipv8).
+    #[error("etat: {0}")]
+    State(String),
+    /// Erreur cryptographique (cles IPv8).
+    #[error("crypto: {0}")]
+    Crypto(#[from] tribler_crypto::CryptoError),
     /// Refus impose par une politique reseau (anti-SSRF).
     #[error("politique reseau: {0}")]
     Policy(#[from] tribler_network_policy::PolicyError),

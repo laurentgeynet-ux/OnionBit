@@ -620,30 +620,35 @@ impl DiscoveryCommunity {
     /// connu (choisi au hasard), sinon marche vers une adresse
     /// "walkable", sinon bootstrap. Avec 5 % de chance, re-bootstrap.
     pub async fn get_new_introduction(&self, bootstrap: &[UdpAddress]) -> Result<(), Ipv8Error> {
+        // `ThreadRng` n'est pas `Send` : tout le tirage est fait dans
+        // des blocs separes, jamais a travers un `.await`.
         let available = self.network.peers_for_service(&DISCOVERY_COMMUNITY_ID);
         if !available.is_empty() {
             // Petit hasard de reparation d'un reseau partitionne.
-            if !bootstrap.is_empty() && rand::random::<f64>() < REBOOTSTRAP_CHANCE {
-                if let Some(b) = bootstrap.choose(&mut rand::thread_rng()) {
-                    return self.send_introduction_request(b).await.map(|_| ());
+            let rebootstrap = !bootstrap.is_empty() && rand::random::<f64>() < REBOOTSTRAP_CHANCE;
+            let target = {
+                let mut rng = rand::thread_rng();
+                if rebootstrap {
+                    bootstrap.choose(&mut rng).cloned()
+                } else {
+                    available.choose(&mut rng).and_then(|p| p.address.clone())
                 }
-            }
-            let mut rng = rand::thread_rng();
-            if let Some(p) = available.choose(&mut rng) {
-                if let Some(addr) = p.address.clone() {
-                    return self.send_introduction_request(&addr).await.map(|_| ());
-                }
+            };
+            if let Some(addr) = target {
+                return self.send_introduction_request(&addr).await.map(|_| ());
             }
         }
         // Sinon : adresse walkable connue (du discovery), sinon bootstrap.
         let walkable = self
             .network
             .get_walkable_addresses(Some(&DISCOVERY_COMMUNITY_ID), false);
-        let mut rng = rand::thread_rng();
-        let target = walkable
-            .choose(&mut rng)
-            .cloned()
-            .or_else(|| bootstrap.choose(&mut rng).cloned());
+        let target = {
+            let mut rng = rand::thread_rng();
+            walkable
+                .choose(&mut rng)
+                .cloned()
+                .or_else(|| bootstrap.choose(&mut rng).cloned())
+        };
         if let Some(addr) = target {
             self.send_introduction_request(&addr).await?;
         }

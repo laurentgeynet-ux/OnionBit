@@ -42,8 +42,11 @@ Règles de dépendance :
 - `tribler-core` ne dépend **jamais** de `tribler-api`, `tribler-bittorrent`,
   `tribler-ipv8`, `tribler-tunnel` ou `tribler-db` concrètement — il expose
   des traits, ces crates les implémentent.
-- `tribler-api` ne dépend que de `tribler-core` (jamais directement de
-  `tribler-bittorrent`/`tribler-ipv8`/`tribler-db`).
+- `tribler-api` consomme `tribler-core` pour la logique métier ; il peut
+  importer les **types/DTO** des crates d'infrastructure
+  (`tribler-bittorrent`, `tribler-format`, `tribler-ipv8`,
+  `tribler-tunnel`, `tribler-db`) pour la sérialisation — jamais pour
+  y déléguer de la logique de domaine.
 - `tribler-daemon` est le seul crate autorisé à connaître **tout le monde**
   (c'est le point de câblage/composition racine, "main composition root").
 - `tribler-tunnel` dépend de `tribler-ipv8` (et non l'inverse).

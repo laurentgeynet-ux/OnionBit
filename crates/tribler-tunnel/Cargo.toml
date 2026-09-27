@@ -10,6 +10,7 @@ authors.workspace = true
 tribler-crypto = { path = "../tribler-crypto" }
 tribler-ipv8 = { path = "../tribler-ipv8" }
 tribler-network-policy = { path = "../tribler-network-policy" }
+serde.workspace = true
 tokio.workspace = true
 thiserror.workspace = true
 tracing.workspace = true

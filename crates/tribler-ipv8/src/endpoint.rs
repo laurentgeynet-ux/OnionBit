@@ -61,6 +61,10 @@ pub struct UdpEndpoint {
     /// Tap optionnel : recoit chaque datagramme brut (rx+tx) pour
     /// l'enregistrement d'echanges (jalon d'interop, debug).
     tap: Mutex<Option<tokio::sync::broadcast::Sender<TapEvent>>>,
+    /// Octets envoyes (`IPv8StatsEndpoint.bytes_up` Python).
+    bytes_up: std::sync::atomic::AtomicU64,
+    /// Octets recus (`IPv8StatsEndpoint.bytes_down` Python).
+    bytes_down: std::sync::atomic::AtomicU64,
 }
 
 impl UdpEndpoint {
@@ -73,7 +77,15 @@ impl UdpEndpoint {
             listeners: Mutex::new(HashMap::new()),
             raw_listeners: Mutex::new(HashMap::new()),
             tap: Mutex::new(None),
+            bytes_up: std::sync::atomic::AtomicU64::new(0),
+            bytes_down: std::sync::atomic::AtomicU64::new(0),
         }))
+    }
+
+    /// Compteurs d'octets pour `/api/statistics/ipv8`.
+    pub fn bytes_counters(&self) -> (u64, u64) {
+        use std::sync::atomic::Ordering::Relaxed;
+        (self.bytes_up.load(Relaxed), self.bytes_down.load(Relaxed))
     }
 
     /// Adresse locale du socket.
@@ -112,6 +124,8 @@ impl UdpEndpoint {
         match addr.to_socket_addr() {
             Some(sa) => {
                 self.socket.send_to(data, sa).await?;
+                self.bytes_up
+                    .fetch_add(data.len() as u64, std::sync::atomic::Ordering::Relaxed);
                 if let Some(t) = self.tap.lock().await.as_ref() {
                     let _ = t.send((TapDir::Tx, sa, data.to_vec()));
                 }
@@ -132,6 +146,8 @@ impl UdpEndpoint {
         let mut buf = vec![0u8; MAX_DGRAM];
         loop {
             let (n, src) = self.socket.recv_from(&mut buf).await?;
+            self.bytes_down
+                .fetch_add(n as u64, std::sync::atomic::Ordering::Relaxed);
             let data = &buf[..n];
             if let Some(t) = self.tap.lock().await.as_ref() {
                 let _ = t.send((TapDir::Rx, src, data.to_vec()));

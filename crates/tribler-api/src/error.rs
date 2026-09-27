@@ -70,7 +70,20 @@ impl From<tribler_core::CoreError> for ApiError {
             tribler_core::CoreError::Bt(tribler_bittorrent::BtError::NotFound(id)) => {
                 ApiError::not_found(format!("this download does not exist: {id}"))
             }
+            tribler_core::CoreError::InvalidState(m) => ApiError::not_found(m),
             other => ApiError::internal(other.to_string()),
         }
+    }
+}
+
+impl From<tribler_db::DbError> for ApiError {
+    fn from(e: tribler_db::DbError) -> Self {
+        ApiError::internal(e.to_string())
+    }
+}
+
+impl From<tribler_bittorrent::BtError> for ApiError {
+    fn from(e: tribler_bittorrent::BtError) -> Self {
+        ApiError::from(tribler_core::CoreError::Bt(e))
     }
 }

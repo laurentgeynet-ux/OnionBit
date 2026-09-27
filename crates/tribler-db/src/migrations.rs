@@ -11,10 +11,11 @@
 //! semantique du schema, pas l'interoperabilite binaire).
 
 /// Version courante du schema de ce crate.
-pub const SCHEMA_VERSION: i64 = 1;
+pub const SCHEMA_VERSION: i64 = 2;
 
 /// Script SQL de chaque migration, dans l'ordre (index 0 = v1).
-pub const MIGRATIONS: &[&str] = &["
+pub const MIGRATIONS: &[&str] = &[
+    "
 -- Cle/valeur divers (db_version, reglages persistants).
 CREATE TABLE misc (
     name  TEXT PRIMARY KEY,
@@ -93,7 +94,13 @@ CREATE TABLE downloads (
     paused       INTEGER NOT NULL DEFAULT 0,
     finished     INTEGER NOT NULL DEFAULT 0
 );
-"];
+",
+    // v2 : telechargements anonymes (`anon_hops` cote Tribler) — nombre
+    // de sauts du tunnel associe au telechargement (0 = non anonyme).
+    "
+ALTER TABLE downloads ADD COLUMN anon_hops INTEGER NOT NULL DEFAULT 0;
+",
+];
 
 /// Applique les migrations en attente sur une connexion ouverte.
 ///

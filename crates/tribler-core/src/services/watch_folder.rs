@@ -52,6 +52,12 @@ impl WatchFolderService {
     }
 
     /// Lance le scan periodique (`register_task` Python).
+    /// Repertoire surveille (pour `apply_service_settings` —
+    /// redemarrage si le chemin change).
+    pub fn directory(&self) -> &Path {
+        &self.dir
+    }
+
     pub fn start(&self) {
         let svc = self.clone();
         let mut stop_rx = self.stop.subscribe();

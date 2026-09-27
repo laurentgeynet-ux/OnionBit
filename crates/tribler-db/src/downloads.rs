@@ -7,7 +7,7 @@ use crate::models::DownloadRow;
 use crate::Result;
 
 const COLS: &str = "rowid, infohash, name, source_uri, torrent_data,
-                    output_dir, added_on, paused, finished";
+                    output_dir, added_on, paused, finished, anon_hops";
 
 fn from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<DownloadRow> {
     Ok(DownloadRow {
@@ -20,6 +20,7 @@ fn from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<DownloadRow> {
         added_on: r.get("added_on")?,
         paused: r.get::<_, i64>("paused")? != 0,
         finished: r.get::<_, i64>("finished")? != 0,
+        anon_hops: r.get("anon_hops")?,
     })
 }
 
@@ -29,14 +30,15 @@ pub fn upsert(conn: &Connection, row: &DownloadRow) -> Result<i64> {
     conn.execute(
         "INSERT INTO downloads(
             infohash, name, source_uri, torrent_data, output_dir,
-            added_on, paused, finished
-         ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)
+            added_on, paused, finished, anon_hops
+         ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)
          ON CONFLICT(infohash) DO UPDATE SET
             name = excluded.name,
             torrent_data = coalesce(excluded.torrent_data, downloads.torrent_data),
             output_dir = excluded.output_dir,
             paused = excluded.paused,
-            finished = excluded.finished",
+            finished = excluded.finished,
+            anon_hops = excluded.anon_hops",
         params![
             row.infohash,
             row.name,
@@ -46,6 +48,7 @@ pub fn upsert(conn: &Connection, row: &DownloadRow) -> Result<i64> {
             row.added_on,
             row.paused as i64,
             row.finished as i64,
+            row.anon_hops,
         ],
     )?;
     Ok(conn.last_insert_rowid())

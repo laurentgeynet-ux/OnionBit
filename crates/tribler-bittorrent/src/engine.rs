@@ -37,7 +37,18 @@ pub struct BtEngine {
     kill_switch: Option<Arc<KillSwitch>>,
     /// Arret du watchdog de sondage du proxy.
     watchdog_stop: Option<Arc<tokio::sync::watch::Sender<bool>>>,
+    /// Trackers ajoutes a chaud par info-hash (rqbit ne permet pas de
+    /// muter `shared.trackers` apres initialisation). Un `Arc` par
+    /// torrent, partage entre tous les clones `Download`.
+    extra_trackers: ExtraTrackers,
 }
+
+/// Liste de trackers additionnels d'un torrent, partagee entre les
+/// clones `Download` (`PUT /downloads/{ih}/trackers` Python).
+pub type TrackerList = Arc<std::sync::Mutex<Vec<String>>>;
+
+/// Table info-hash -> trackers additionnels (un `Arc` par torrent).
+type ExtraTrackers = Arc<std::sync::Mutex<std::collections::HashMap<[u8; 20], TrackerList>>>;
 
 impl std::fmt::Debug for BtEngine {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -89,6 +100,7 @@ impl BtEngine {
             config,
             kill_switch,
             watchdog_stop,
+            extra_trackers: Default::default(),
         })
     }
 
@@ -198,26 +210,41 @@ impl BtEngine {
             .map_err(|e| BtError::Engine(e.to_string()))?;
         match response {
             AddTorrentResponse::AlreadyManaged(_, handle)
-            | AddTorrentResponse::Added(_, handle) => Ok(Download { inner: handle }),
+            | AddTorrentResponse::Added(_, handle) => Ok(self.wrap(handle)),
             AddTorrentResponse::ListOnly(_) => Err(BtError::NoHandle),
+        }
+    }
+
+    /// Enveloppe un handle rqbit en `Download` (avec la liste de
+    /// trackers additionnels partagee du moteur, keyed par info-hash).
+    fn wrap(&self, inner: Arc<librqbit::ManagedTorrent>) -> Download {
+        let key = inner.info_hash().0;
+        let extra_trackers = self
+            .extra_trackers
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .entry(key)
+            .or_default()
+            .clone();
+        Download {
+            inner,
+            extra_trackers,
         }
     }
 
     /// Liste les telechargements courants (instantanes d'etat).
     pub fn list(&self) -> Vec<DownloadStats> {
         self.session.with_torrents(|it| {
-            it.map(|(_, t)| Download {
-                inner: Arc::clone(t),
-            })
-            .map(|d| d.stats())
-            .collect()
+            it.map(|(_, t)| self.wrap(Arc::clone(t)))
+                .map(|d| d.stats())
+                .collect()
         })
     }
 
     /// Recupere un telechargement par id interne ou info-hash hex.
     pub fn get(&self, id_or_hash: &str) -> Option<Download> {
         let key = parse_id_or_hash(id_or_hash)?;
-        self.session.get(key).map(|inner| Download { inner })
+        self.session.get(key).map(|inner| self.wrap(inner))
     }
 
     /// Met en pause un telechargement.
