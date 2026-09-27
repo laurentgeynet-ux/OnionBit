@@ -16,6 +16,10 @@ pub const PEER_FLAG_EXIT_BT: i32 = 2;
 pub const PEER_FLAG_EXIT_IPV8: i32 = 4;
 /// `PEER_FLAG_SPEED_TEST`.
 pub const PEER_FLAG_SPEED_TEST: i32 = 8;
+/// `PEER_FLAG_EXIT_HTTP` (`ipv8-rust-tunnels` `PeerFlag::ExitHttp`) :
+/// la sortie accepte les requetes `http-request`/`http-response`
+/// (messages 28/29) — ex. annonces tracker via le tunnel.
+pub const PEER_FLAG_EXIT_HTTP: i32 = 32768;
 
 /// `PEER_SOURCE_UNKNOWN`.
 pub const PEER_SOURCE_UNKNOWN: u8 = 0;
@@ -160,6 +164,10 @@ pub struct Circuit {
     /// posee a la liaison `linked-e2e` — `crypto.py` `outgoing_crypto`
     /// /`incoming_crypto`).
     pub hs_session_keys: Option<SessionKeys>,
+    /// `exit_flags` (`ipv8-rust-tunnels` `Circuit.exit_flags`) : flags
+    /// de service du dernier saut, si connus (selection des circuits
+    /// compatibles HTTP).
+    pub exit_flags: i32,
     /// Etat force a `CLOSING`.
     closing: Option<String>,
 }
@@ -183,6 +191,7 @@ impl Circuit {
             required_exit: None,
             relay_early_count: 0,
             hs_session_keys: None,
+            exit_flags: 0,
             closing: None,
         }
     }

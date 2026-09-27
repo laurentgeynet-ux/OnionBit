@@ -33,7 +33,7 @@ use crate::hidden_services::{E2ERequest, LinkRequest};
 use crate::payload::{self as tp, msg, Cellable};
 use crate::routing::{
     Circuit, Hop, RelayRoute, RoutingObject, Swarm, UnverifiedHop, CIRCUIT_STATE_READY,
-    CIRCUIT_TYPE_DATA, PEER_FLAG_RELAY,
+    CIRCUIT_TYPE_DATA, PEER_FLAG_EXIT_HTTP, PEER_FLAG_RELAY,
 };
 use crate::TUNNEL_COMMUNITY_ID;
 
@@ -49,6 +49,8 @@ const DATA_CHANNEL_CAP: usize = 512;
 const CANDIDATES_IN_RESPONSE: usize = 4;
 /// Capacite du canal broadcast `e2e_ready`.
 const E2E_CHANNEL_CAP: usize = 64;
+/// Capacite du canal de chunks `http-response` par requete en cours.
+const HTTP_REQUEST_PARTS_CAP: usize = 64;
 
 /// Evenement "donnee recue sur un circuit" (livre au consommateur —
 /// equivalent du dispatch `on_data` vers SOCKS5/services internes).
@@ -107,6 +109,10 @@ pub(crate) struct Inner {
     pub(crate) e2e_requests: HashMap<u16, E2ERequest>,
     /// `LinkRequestCache` : identifier -> attente de `linked-e2e`.
     pub(crate) link_requests: HashMap<u16, LinkRequest>,
+    /// Cache `HTTPRequest` (`ipv8-rust-tunnels` `request_cache`) :
+    /// identifier u32 -> canal recevant les chunks `http-response`.
+    pub(crate) http_requests:
+        HashMap<u32, tokio::sync::mpsc::Sender<tp::HttpResponse>>,
 }
 
 /// `TunnelExitSocket` : socket UDP de sortie dediee par circuit —
@@ -122,6 +128,9 @@ pub(crate) struct ExitState {
     /// Canal d'arret de la tache de reception : conserve pour son
     /// `Drop` (la tache se termine quand l'entree disparait).
     _stop_tx: tokio::sync::watch::Sender<bool>,
+    /// `http_requests` (`exit.rs`) : borne de requetes HTTP
+    /// simultanees par circuit de sortie.
+    pub(crate) http_permits: Arc<tokio::sync::Semaphore>,
 }
 
 /// `CreateRequestCache` Python (extend en attente d'un `created`).
@@ -203,6 +212,7 @@ impl TunnelCommunity {
                 peers_requests: HashMap::new(),
                 e2e_requests: HashMap::new(),
                 link_requests: HashMap::new(),
+            http_requests: HashMap::new(),
             }),
             identifier: AtomicU16::new(0),
             global_time: AtomicU64::new(0),
@@ -270,6 +280,33 @@ impl TunnelCommunity {
             .filter(|c| c.state() == CIRCUIT_STATE_READY && c.goal_hops == hops)
             .map(|c| c.base.circuit_id)
             .collect()
+    }
+
+    /// Ids des circuits `READY` de `hops` sauts dont le dernier saut
+    /// annonce le flag `flag` (`exit_flags`, ex.
+    /// `PEER_FLAG_EXIT_HTTP`).
+    pub fn ready_circuits_of_hops_flags(&self, hops: usize, flag: i32) -> Vec<u32> {
+        self.inner
+            .lock()
+            .unwrap()
+            .circuits
+            .values()
+            .filter(|c| {
+                c.state() == CIRCUIT_STATE_READY
+                    && c.goal_hops == hops
+                    && c.exit_flags & flag != 0
+            })
+            .map(|c| c.base.circuit_id)
+            .collect()
+    }
+
+    /// Enregistre les flags de service du dernier saut (`exit_flags`)
+    /// quand ils sont connus (decouverte, annonces).
+    pub fn set_circuit_exit_flags(&self, circuit_id: u32, flags: i32) {
+        let mut inner = self.inner.lock().unwrap();
+        if let Some(c) = inner.circuits.get_mut(&circuit_id) {
+            c.exit_flags = flags;
+        }
     }
 
     /// `_generate_circuit_id` Python (aleatoire, sans collision avec
@@ -373,6 +410,135 @@ impl TunnelCommunity {
             wire = cell::encrypt_cell(&wire, dir, &mut keys)?;
         }
         self.endpoint.send_to(addr, &wire).await
+    }
+
+    /// `perform_http_request` (`ipv8-rust-tunnels` `socks5.rs`) :
+    /// envoie une requete HTTP brute en cellule `http-request` sur le
+    /// circuit `circuit_id` et recolle les chunks `http-response`
+    /// (`part`/`total`) jusqu'a la reponse complete.
+    pub async fn perform_http_request(
+        &self,
+        circuit_id: u32,
+        target: &UdpAddress,
+        request: &[u8],
+        timeout_ms: u64,
+    ) -> Result<Vec<u8>, Ipv8Error> {
+        let identifier = rand::thread_rng().next_u32();
+        let (tx, mut rx) = tokio::sync::mpsc::channel(HTTP_REQUEST_PARTS_CAP);
+        self.inner
+            .lock()
+            .unwrap()
+            .http_requests
+            .insert(identifier, tx);
+        let p = tp::HttpRequest {
+            circuit_id,
+            identifier,
+            target: target.clone(),
+            request: request.to_vec(),
+        };
+        let addr = {
+            let inner = self.inner.lock().unwrap();
+            inner
+                .circuits
+                .get(&circuit_id)
+                .and_then(|c| c.first_hop().and_then(|h| h.address.clone()))
+                .ok_or(Ipv8Error::Malformed("circuit HTTP inconnu"))?
+        };
+        self.send_cell(&addr, &p).await?;
+        let collected = tokio::time::timeout(
+            std::time::Duration::from_millis(timeout_ms),
+            async {
+                let mut parts: HashMap<u16, Vec<u8>> = HashMap::new();
+                while let Some(chunk) = rx.recv().await {
+                    parts.insert(chunk.part, chunk.response);
+                    if parts.len() >= chunk.total as usize {
+                        break;
+                    }
+                }
+                let mut ordered: Vec<(u16, Vec<u8>)> = parts.into_iter().collect();
+                ordered.sort_by_key(|(i, _)| *i);
+                ordered.into_iter().flat_map(|(_, d)| d).collect::<Vec<u8>>()
+            },
+        )
+        .await;
+        self.inner.lock().unwrap().http_requests.remove(&identifier);
+        collected.map_err(|_| Ipv8Error::Malformed("timeout http-response"))
+    }
+
+    /// `on_http_request` (`socket.rs`) : cote sortie — exige
+    /// `PEER_FLAG_EXIT_HTTP`, borne les requetes simultanees par un
+    /// semaphore, execute la requete TCP puis renvoie la reponse
+    /// decoupee en chunks `HTTP_RESPONSE_CHUNK`.
+    fn on_http_request(self: &Arc<Self>, circuit_id: u32, p: tp::HttpRequest) {
+        if self.inner.lock().unwrap().peer_flags & PEER_FLAG_EXIT_HTTP == 0 {
+            tracing::debug!(circuit_id, "http-request refuse (EXIT_HTTP inactif)");
+            return;
+        }
+        let (permit, addr) = {
+            let inner = self.inner.lock().unwrap();
+            let Some(exit) = inner.exit_sockets.get(&circuit_id) else {
+                tracing::debug!(circuit_id, "http-request refuse (sortie inconnue)");
+                return;
+            };
+            let Some(addr) = exit.hop.address.clone() else {
+                return;
+            };
+            match exit.http_permits.clone().try_acquire_owned() {
+                Ok(permit) => (permit, addr),
+                Err(_) => {
+                    tracing::debug!(circuit_id, "http-request refuse (limite atteinte)");
+                    return;
+                }
+            }
+        };
+        let this = Arc::clone(self);
+        tokio::spawn(async move {
+            let result = tokio::time::timeout(
+                std::time::Duration::from_millis(crate::http_tunnel::HTTP_TCP_TIMEOUT_MS),
+                crate::http_tunnel::send_tcp_request(&p.target, &p.request),
+            )
+            .await;
+            let Ok(Ok(response)) = result else {
+                tracing::warn!(circuit_id, "requete TCP de sortie en echec");
+                return;
+            };
+            let total = response
+                .len()
+                .div_ceil(crate::http_tunnel::HTTP_RESPONSE_CHUNK)
+                .max(1) as u16;
+            for (index, chunk) in response
+                .chunks(crate::http_tunnel::HTTP_RESPONSE_CHUNK)
+                .enumerate()
+            {
+                let part = tp::HttpResponse {
+                    circuit_id,
+                    identifier: p.identifier,
+                    part: index as u16,
+                    total,
+                    response: chunk.to_vec(),
+                };
+                if let Err(e) = this.send_cell(&addr, &part).await {
+                    tracing::warn!(circuit_id, error = %e, "envoi http-response en echec");
+                    return;
+                }
+            }
+            drop(permit);
+        });
+    }
+
+    /// `on_http_response` (`socket.rs`) : cote demandeur — achemine le
+    /// chunk vers le cache `HTTPRequest` par `identifier`.
+    fn on_http_response(&self, p: tp::HttpResponse) {
+        let tx = {
+            let inner = self.inner.lock().unwrap();
+            inner.http_requests.get(&p.identifier).cloned()
+        };
+        match tx {
+            Some(tx) => {
+                let _ = tx.try_send(p);
+            }
+            None => tracing::trace!(id = p.identifier, "http-response inattendue"),
+        }
     }
 
     /// `create_circuit` : cree un circuit de `goal_hops` sauts dont le
@@ -759,6 +925,14 @@ impl TunnelCommunity {
                 let p = tp::PeersResponse::unpack(&mut r)?;
                 self.on_peers_response(p);
             }
+            msg::HTTP_REQUEST => {
+                let p = tp::HttpRequest::unpack(&mut r)?;
+                self.on_http_request(cell.circuit_id, p);
+            }
+            msg::HTTP_RESPONSE => {
+                let p = tp::HttpResponse::unpack(&mut r)?;
+                self.on_http_response(p);
+            }
             _ => {
                 tracing::trace!(msg_id = cell.inner_msg_id, "cellule ignoree");
             }
@@ -875,6 +1049,9 @@ impl TunnelCommunity {
                     enabled: false,
                     socket: exit_socket.clone(),
                     _stop_tx: stop_tx,
+                    http_permits: Arc::new(tokio::sync::Semaphore::new(
+                        crate::http_tunnel::MAX_HTTP_REQUESTS_PER_CIRCUIT,
+                    )),
                 },
             );
         }

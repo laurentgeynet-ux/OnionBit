@@ -25,6 +25,7 @@
 pub mod cell;
 pub mod community;
 pub mod hidden_services;
+pub mod http_tunnel;
 pub mod payload;
 pub mod routing;
 pub mod socks5;

@@ -12,9 +12,12 @@
 //!   du bon nombre de sauts (sticky destination -> circuit) ;
 //! - chemin retour : les `CircuitData` de la community sont
 //!   reencapsules en frames SOCKS5 UDP vers le client ;
-//! - `CONNECT`/`BIND` : repond `CommandNotSupported` (le CONNECT de
-//!   pyipv8 sert aux requetes HTTP via cellules 31/33 — hors perimetre
-//!   pour l'instant).
+//! - `CONNECT` : lit la requete HTTP brute du client et l'envoie en
+//!   cellule `http-request` (msg 28) sur un circuit dont la sortie
+//!   annonce `PEER_FLAG_EXIT_HTTP` ; la reponse (chunks msg 29) est
+//!   recollee puis reecrite sur la connexion (`ipv8-rust-tunnels`
+//!   `socks5.rs` `perform_http_request`) ;
+//! - `BIND` : repond `CommandNotSupported`.
 
 use std::collections::HashMap;
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
@@ -161,7 +164,8 @@ impl Socks5Server {
         }
         match cmd {
             CMD_UDP_ASSOCIATE => self.handle_associate(conn).await,
-            CMD_CONNECT | CMD_BIND => {
+            CMD_CONNECT => self.handle_connect(conn).await,
+            CMD_BIND => {
                 // Reponse negative (adresse nulle) puis fermeture.
                 let mut rep = vec![SOCKS5_VER, REP_CMD_UNSUPPORTED, 0, ATYP_IPV4];
                 rep.extend_from_slice(&[0; 4]);
@@ -171,6 +175,50 @@ impl Socks5Server {
             }
             _ => Err(Ipv8Error::Malformed("commande SOCKS5 inconnue")),
         }
+    }
+
+    /// `CONNECT` (`socks5.rs` `ipv8-rust-tunnels`) : le client
+    /// SOCKS5 est libtorrent — la requete lue est HTTP brute, relayee
+    /// en cellules `http-request`/`http-response` sur un circuit dont
+    /// la sortie porte `PEER_FLAG_EXIT_HTTP`.
+    async fn handle_connect(&self, mut conn: TcpStream) -> Result<(), Ipv8Error> {
+        let target = read_address(&mut conn).await?;
+        // Reponse positive : CONNECT "reussi" cote SOCKS5 (la requete
+        // proprement dite part ensuite en cellules).
+        let mut rep = vec![SOCKS5_VER, REP_SUCCEEDED, 0, ATYP_IPV4];
+        rep.extend_from_slice(&[0; 4]);
+        rep.extend_from_slice(&[0; 2]);
+        conn.write_all(&rep).await?;
+
+        let mut buf = vec![0u8; crate::http_tunnel::CONNECT_REQUEST_MAX];
+        let n = conn.read(&mut buf).await?;
+        let cid = self.select_http_circuit()?;
+        tracing::trace!(cid, ?target, "socks5: CONNECT -> http-request");
+        let response = self
+            .tunnel
+            .perform_http_request(
+                cid,
+                &target,
+                &buf[..n],
+                crate::http_tunnel::HTTP_RESPONSE_TIMEOUT_MS,
+            )
+            .await?;
+        conn.write_all(&response).await?;
+        conn.shutdown().await?;
+        Ok(())
+    }
+
+    /// Circuit `READY` a `self.hops` sauts dont la sortie porte
+    /// `PEER_FLAG_EXIT_HTTP` (selection des tunnels Rust).
+    fn select_http_circuit(&self) -> Result<u32, Ipv8Error> {
+        let mut usable = self
+            .tunnel
+            .ready_circuits_of_hops_flags(self.hops, crate::routing::PEER_FLAG_EXIT_HTTP);
+        usable.shuffle(&mut rand::thread_rng());
+        usable
+            .first()
+            .copied()
+            .ok_or(Ipv8Error::Malformed("aucun circuit HTTP pret"))
     }
 
     /// `UDP ASSOCIATE` : socket UDP de relais + boucle de decapsulage.

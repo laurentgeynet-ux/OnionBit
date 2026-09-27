@@ -164,7 +164,11 @@ ne sont donc pas « terminées » au sens strict) · `[x]` terminée.
   Proxy SOCKS5 (`socks5.rs`) : greeting sans auth, `UDP ASSOCIATE`,
   decapsulage des frames SOCKS5 UDP vers cellules `data`, selection
   sticky destination -> circuit `READY` du bon `goal_hops`,
-  reencapsulage des reponses vers le client.
+  reencapsulage des reponses vers le client ; `CONNECT` : requete
+  HTTP brute -> cellules `http-request`/`http-response` (msgs 28/29,
+  chunks de 1400o, sortie `PEER_FLAG_EXIT_HTTP` = 32768, borne de 5
+  requetes simultanees par circuit — `http_tunnel.rs`,
+  `send_tcp_request` avec `Content-Length`/`chunked`).
   Hidden services (`hidden_services.rs`) : `Swarm` (info-hash ->
   points d'introduction), `establish_intro`/`intro_established`,
   `peers_request`/`peers_response` (`IntroductionInfo`), circuits E2E
@@ -174,16 +178,17 @@ ne sont donc pas « terminées » au sens strict) · `[x]` terminée.
   `create_e2e`/`created_e2e` en paquets tunnel non signes, liaison
   `link_e2e`/`linked_e2e` (identifier partage), couche de session
   `hs_session_keys` supplementaire sur les circuits E2E (sens miroir
-  downloader/seeder). 8 tests loopback reels : circuits 1/2 sauts
+  downloader/seeder). 9 tests loopback reels : circuits 1/2 sauts
   READY, sortie de donnees, echo UDP bidirectionnel 2 sauts, destroy,
-  aller-retour SOCKS5 UDP ASSOCIATE complet, et
+  aller-retour SOCKS5 UDP ASSOCIATE complet, CONNECT HTTP via
+  cellules 28/29 vers un faux tracker, et
   `hidden_service_e2e_roundtrip` — seeder joint le swarm, IP etabli,
   peers-request/reponse, E2E via rendezvous lie, donnees bidirection-
   nelles sur le circuit cache.
-  **Reste** : hidden seeding branche a `tribler-bittorrent`, CONNECT
-  SOCKS5 (requetes HTTP par cellules 31/33), interop reelle avec
-  `TunnelCommunity` pyipv8 / Tribler 8.4.3 installe, telechargement
-  anonyme reel (jalon final).
+  **Reste** : hidden seeding branche a `tribler-bittorrent`, suivi des
+  flags de sortie via la decouverte (`exit_flags` pose manuellement
+  pour l'instant), interop reelle avec `TunnelCommunity` pyipv8 /
+  Tribler 8.4.3 installe, telechargement anonyme reel (jalon final).
 - [ ] **Étape 13. Politiques de sécurité réseau et kill switch.**
   `tribler-network-policy` : anti-SSRF, politique des noeuds de sortie,
   kill switch atomique, garde-fous SOCKS5. Intégré dans

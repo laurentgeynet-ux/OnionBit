@@ -53,6 +53,12 @@ pub mod msg {
     pub const TEST_REQUEST: u8 = 19;
     /// `TestResponsePayload`.
     pub const TEST_RESPONSE: u8 = 20;
+    /// `HTTPRequestPayload` (Tribler `core/tunnel/payload.py`,
+    /// `ipv8-rust-tunnels`) : requete HTTP via un circuit (CONNECT
+    /// SOCKS5, annonces tracker).
+    pub const HTTP_REQUEST: u8 = 28;
+    /// `HTTPResponsePayload` : reponse decoupee en chunks.
+    pub const HTTP_RESPONSE: u8 = 29;
 }
 
 /// Trait minimal de payload de cellule.
@@ -743,6 +749,76 @@ impl Cellable for TestResponse {
             circuit_id: r.u32()?,
             identifier: r.u16()?,
             data: r.raw().to_vec(),
+        })
+    }
+}
+
+/// `HTTPRequestPayload` (msg 28) : `I, I, address, varlenH`
+/// (`tribler/core/tunnel/payload.py`, `ipv8-rust-tunnels`).
+#[derive(Debug)]
+pub struct HttpRequest {
+    /// `circuit_id`.
+    pub circuit_id: u32,
+    /// `identifier` (u32 — cache de requetes).
+    pub identifier: u32,
+    /// `target` : destination HTTP.
+    pub target: UdpAddress,
+    /// `request` : octets de la requete HTTP brute.
+    pub request: Vec<u8>,
+}
+
+impl Cellable for HttpRequest {
+    const MSG_ID: u8 = msg::HTTP_REQUEST;
+    fn pack(&self, w: &mut Writer) -> Result<(), Ipv8Error> {
+        w.u32(self.circuit_id);
+        w.u32(self.identifier);
+        w.ip_address(&self.target)?;
+        w.varlen_h(&self.request);
+        Ok(())
+    }
+    fn unpack(r: &mut Reader<'_>) -> Result<Self, Ipv8Error> {
+        Ok(Self {
+            circuit_id: r.u32()?,
+            identifier: r.u32()?,
+            target: r.ip_address()?,
+            request: r.varlen_h()?.to_vec(),
+        })
+    }
+}
+
+/// `HTTPResponsePayload` (msg 29) : `I, I, H, H, varlenH` — la
+/// reponse TCP est decoupee en `total` chunks de 1400 octets max.
+#[derive(Debug)]
+pub struct HttpResponse {
+    /// `circuit_id`.
+    pub circuit_id: u32,
+    /// `identifier`.
+    pub identifier: u32,
+    /// `part` : indice du chunk.
+    pub part: u16,
+    /// `total` : nombre total de chunks.
+    pub total: u16,
+    /// `response` : fragment.
+    pub response: Vec<u8>,
+}
+
+impl Cellable for HttpResponse {
+    const MSG_ID: u8 = msg::HTTP_RESPONSE;
+    fn pack(&self, w: &mut Writer) -> Result<(), Ipv8Error> {
+        w.u32(self.circuit_id);
+        w.u32(self.identifier);
+        w.u16(self.part);
+        w.u16(self.total);
+        w.varlen_h(&self.response);
+        Ok(())
+    }
+    fn unpack(r: &mut Reader<'_>) -> Result<Self, Ipv8Error> {
+        Ok(Self {
+            circuit_id: r.u32()?,
+            identifier: r.u32()?,
+            part: r.u16()?,
+            total: r.u16()?,
+            response: r.varlen_h()?.to_vec(),
         })
     }
 }

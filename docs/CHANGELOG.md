@@ -3,6 +3,34 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Étape 12 (partie 4) — `tribler-tunnel` : CONNECT HTTP par cellules 28/29 (2026-09-27)
+
+Le SOCKS5 CONNECT est desormais fonctionnel (requetes HTTP via le
+tunnel — le chemin des annonces de tracker de Tribler) :
+
+- `payload.rs` : `HTTPRequestPayload` (msg 28 : `I, I, address,
+  varlenH`) et `HTTPResponsePayload` (msg 29 : `I, I, H, H, varlenH`)
+  — numerotation et formats de `tribler/core/tunnel/payload.py`
+  (Tribler 8.4.3) et `ipv8-rust-tunnels`.
+- `routing.rs` : `PEER_FLAG_EXIT_HTTP = 32768` (extension
+  `ipv8-rust-tunnels`), `Circuit.exit_flags` +
+  `set_circuit_exit_flags`/`ready_circuits_of_hops_flags`.
+- `http_tunnel.rs` : `send_tcp_request` (port de
+  `ipv8-rust-tunnels/util.rs` — TCP brut, lecture des en-tetes, corps
+  par `Content-Length` ou reassemblage `chunked`), constantes
+  `HTTP_RESPONSE_CHUNK=1400`, `MAX_HTTP_REQUESTS_PER_CIRCUIT=5`,
+  timeouts 5 s.
+- `community.rs` : `perform_http_request` (identifier u32 + cache de
+  requetes + recollage des chunks `part`/`total`), `on_http_request`
+  cote sortie (flag `EXIT_HTTP` requis, semaphore de 5 requetes par
+  circuit, tache dediee), `on_http_response` (acheminement vers le
+  cache par identifier).
+- `socks5.rs` : `CONNECT` repond `Succeeded` puis relaie la requete
+  HTTP brute du client ; `BIND` reste refuse.
+- Test `socks5_connect_http_roundtrip` : circuit 1 saut + faux
+  tracker HTTP loopback ; annonce bencodee renvoyee par le tunnel et
+  verifiee octet par octet (9 tests au total).
+
 ## Étape 12 (partie 3) — `tribler-tunnel` : hidden services E2E (2026-09-27)
 
 Le flux de services cachés pyipv8 est implémenté et validé bout en

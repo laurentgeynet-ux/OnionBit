@@ -13,7 +13,9 @@ use tribler_ipv8::endpoint::UdpEndpoint;
 use tribler_ipv8::peer::{Network, Peer};
 use tribler_ipv8::UdpAddress;
 use tribler_tunnel::community::TunnelCommunity;
-use tribler_tunnel::routing::{DESTROY_REASON_UNNEEDED, PEER_FLAG_RELAY};
+use tribler_tunnel::routing::{
+    DESTROY_REASON_UNNEEDED, PEER_FLAG_EXIT_HTTP, PEER_FLAG_RELAY,
+};
 use tribler_tunnel::socks5::Socks5Server;
 use tribler_tunnel::TUNNEL_COMMUNITY_ID;
 
@@ -36,12 +38,17 @@ struct Node {
 
 /// Cree un noeud complet sur loopback et lance sa boucle de reception.
 async fn make_node() -> Node {
+    make_node_flags(PEER_FLAG_RELAY).await
+}
+
+/// `make_node` avec des flags de service explicites (`PEER_FLAG_*`).
+async fn make_node_flags(flags: i32) -> Node {
     let key = LibNaClSecretKey::generate();
     let network = Arc::new(Network::default());
     let ep = UdpEndpoint::bind("127.0.0.1:0").await.unwrap();
     let addr = ep.local_addr().unwrap();
     let tunnel =
-        TunnelCommunity::new(key.clone(), network.clone(), ep.clone(), PEER_FLAG_RELAY).await;
+        TunnelCommunity::new(key.clone(), network.clone(), ep.clone(), flags).await;
     let ep_run = ep.clone();
     tokio::spawn(async move {
         let _ = ep_run.run().await;
@@ -440,4 +447,85 @@ async fn hidden_service_e2e_roundtrip() {
         .expect("pas de donnee e2e au seeder")
         .expect("canal data seeder");
     assert_eq!(got.data, payload);
+}
+
+/// SOCKS5 CONNECT : la requete HTTP brute traverse le tunnel en
+/// cellules `http-request`/`http-response` (msgs 28/29) jusqu'a une
+/// sortie `PEER_FLAG_EXIT_HTTP`, qui l'execute en TCP reel puis
+/// renvoie la reponse chunk-ee.
+#[tokio::test]
+async fn socks5_connect_http_roundtrip() {
+    let a = make_node().await;
+    let b = make_node_flags(PEER_FLAG_RELAY | PEER_FLAG_EXIT_HTTP).await;
+    let nodes = [a, b];
+    let (cid, _) = build_circuit(&nodes, 1).await;
+    nodes[0]
+        .tunnel
+        .set_circuit_exit_flags(cid, PEER_FLAG_EXIT_HTTP);
+
+    // Faux tracker HTTP loopback : repond une annonce bencodee.
+    let tracker = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let tracker_addr = tracker.local_addr().unwrap();
+    tokio::spawn(async move {
+        let (mut conn, _) = tracker.accept().await.unwrap();
+        let mut req = Vec::new();
+        let mut buf = [0u8; 4096];
+        loop {
+            let n = conn.read(&mut buf).await.unwrap();
+            if n == 0 {
+                break;
+            }
+            req.extend_from_slice(&buf[..n]);
+            if req.windows(4).any(|w| w == b"\r\n\r\n") {
+                break;
+            }
+        }
+        let body = b"d8:intervali1800e5:peers0:e";
+        let head = format!(
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n",
+            body.len()
+        );
+        conn.write_all(head.as_bytes()).await.unwrap();
+        conn.write_all(body).await.unwrap();
+        let _ = conn.shutdown().await;
+    });
+
+    // Proxy SOCKS5 + client : greeting puis CONNECT vers le tracker.
+    let socks = Socks5Server::new(nodes[0].tunnel.clone(), 1);
+    let proxy = socks.listen("127.0.0.1:0").await.unwrap();
+    let mut tcp = TcpStream::connect(proxy).await.unwrap();
+    tcp.write_all(&[0x05, 0x01, 0x00]).await.unwrap();
+    let mut g = [0u8; 2];
+    tcp.read_exact(&mut g).await.unwrap();
+    assert_eq!(g, [0x05, 0x00], "greeting refuse");
+
+    let mut conn_req = vec![0x05, 0x01, 0x00, 0x01];
+    match tracker_addr {
+        SocketAddr::V4(a) => conn_req.extend_from_slice(&a.ip().octets()),
+        SocketAddr::V6(_) => unreachable!("loopback v4"),
+    }
+    conn_req.extend_from_slice(&tracker_addr.port().to_be_bytes());
+    tcp.write_all(&conn_req).await.unwrap();
+    let mut rep = [0u8; 10];
+    tcp.read_exact(&mut rep).await.unwrap();
+    assert_eq!(rep[1], 0x00, "CONNECT refuse");
+
+    // La requete HTTP part en cellules 28 ; la reponse (29) revient.
+    tcp.write_all(b"GET /announce?info_hash=x HTTP/1.1\r\nHost: t\r\n\r\n")
+        .await
+        .unwrap();
+    let mut out = Vec::new();
+    tokio::time::timeout(TEST_TIMEOUT, tcp.read_to_end(&mut out))
+        .await
+        .expect("pas de reponse http-response")
+        .unwrap();
+    assert!(
+        out.starts_with(b"HTTP/1.1 200 OK"),
+        "reponse inattendue: {}",
+        String::from_utf8_lossy(&out)
+    );
+    assert!(
+        out.ends_with(b"d8:intervali1800e5:peers0:e"),
+        "corps bencode absent"
+    );
 }
