@@ -99,8 +99,6 @@ async def main() -> int:
     check_token_and_rotate.rotated = False
     community.check_token = check_token_and_rotate
 
-    log(f"KEY|{key.pub().key_to_bin().hex()}")
-
     t0 = time.time()
 
     async def at(t, coro):

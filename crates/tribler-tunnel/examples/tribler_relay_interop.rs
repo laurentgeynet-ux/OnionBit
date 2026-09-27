@@ -193,9 +193,6 @@ async fn main() {
         std::process::exit(1);
     }
     eprintln!("circuit {cid} READY via relais Tribler");
-    if let Some(keys) = tunnel_a.debug_session_keys(cid) {
-        eprintln!("KEYS|{cid}|{keys}");
-    }
 
     // 3) Donnee uTP -> B sort -> echo -> retour par le tunnel.
     let echo_addr = UdpAddress::from(echo.parse::<SocketAddr>().unwrap());

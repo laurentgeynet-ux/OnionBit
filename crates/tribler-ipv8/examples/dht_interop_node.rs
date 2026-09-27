@@ -93,7 +93,6 @@ async fn main() {
     if let Some(f) = &key_file {
         std::fs::write(f, hex::encode(key.public_key().to_bin())).unwrap();
     }
-    eprintln!("KEY|{}", hex::encode(key.public_key().to_bin()));
 
     let community = DhtCommunity::new(key, wan, lan, ep.clone()).await;
     let ep2 = ep.clone();

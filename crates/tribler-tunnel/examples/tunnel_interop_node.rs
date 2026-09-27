@@ -127,9 +127,6 @@ async fn main() {
         std::process::exit(1);
     }
     eprintln!("circuit {cid} READY (create->created OK avec pyipv8)");
-    if let Some(keys) = tunnel.debug_session_keys(cid) {
-        eprintln!("KEYS|{cid}|{keys}");
-    }
 
     // Donnee "uTP" vers l'echo Python a travers la sortie.
     let echo_addr = UdpAddress::from(echo.parse::<SocketAddr>().unwrap());

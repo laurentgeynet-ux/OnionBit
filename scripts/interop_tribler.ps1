@@ -29,10 +29,30 @@ $confDir = Join-Path $stateDir "8.0"            # VERSION_SUBDIR
 $confFile = Join-Path $confDir "configuration.json"
 New-Item -ItemType Directory -Force -Path $confDir | Out-Null
 
-$triblerPort = 22090   # interface UDPIPv4 de Tribler
-$apiPort = 23100       # REST API (juste pour la disponibilite)
+# Ports dynamiques fail-safe : un port fixe peut entrer en collision
+# avec un vrai Tribler local ou un reste de run precedent. On prend un
+# port libre (fenetre de course acceptable en loopback de test).
+function Get-FreeUdpPort {
+    $u = [System.Net.Sockets.UdpClient]::new([System.Net.IPAddress]::Loopback, 0)
+    $p = $u.Client.LocalEndPoint.Port
+    $u.Close()
+    return $p
+}
+function Get-FreeTcpPort {
+    $l = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+    $l.Start()
+    $p = $l.LocalEndpoint.Port
+    $l.Stop()
+    return $p
+}
+
+$triblerPort = Get-FreeUdpPort   # interface UDPIPv4 de Tribler
+$apiPort = Get-FreeTcpPort       # REST API (juste pour la disponibilite)
 $apiKey = "interoptest"
-$echoPort = 22091      # echo UDP (destination de sortie)
+$echoPort = Get-FreeUdpPort      # echo UDP (destination de sortie)
+# Deux tirages UDP successifs peuvent retomber sur le meme port (le
+# premier socket est referme avant le second tirage) : on retire.
+while ($echoPort -eq $triblerPort) { $echoPort = Get-FreeUdpPort }
 $rsLog = Join-Path $outDir "rust_tribler_packets.log"
 $pem = Join-Path $stateDir "ec_multichain.pem"   # genere par Tribler au 1er demarrage
 

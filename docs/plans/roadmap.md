@@ -366,6 +366,22 @@ Ajouter ici, au fil de l'avancement, tout écart constaté par rapport au
 plan initial (dépendance qui ne convient pas, étape scindée en deux,
 risque IPv8 sous/sur-estimé, etc.), avec la date.
 
+- 2026-09-27 : durcissement des bancs d'interop. `verify_packets.py`
+  exige désormais une whitelist de `msg_id` (`--allow-msg-id`) —
+  premier run : détection d'un `similarity-request` pyipv8 (msg_id=1)
+  que l'ancien total global absorbait ; whitelist `interop_ipv8.ps1` =
+  `1,2,3,4,246,245,250,249` (famille DiscoveryCommunity complète) —
+  et compte des statistiques séparées par `msg_id`/type
+  (signé/non-signé/invalide). Suppression des dumps de secrets de
+  session : `KEYS|` (clés+sels) retiré de `py_tunnel_node.py` et des
+  exemples tunnel Rust, accesseur `debug_session_keys` supprimé ;
+  `KEY|` (clé publique, redondante avec les fichiers `--key-file`)
+  retiré de `py_dht_node.py`, `dht_interop_node` et
+  `discovery_interop_node`. `interop_tribler.ps1` : ports fixes
+  22090/23100/22091 remplacés par tirage de ports libres (UDP×2
+  distincts + TCP) — plus de collision avec un Tribler local ou un
+  reste de run. Les quatre bancs (ipv8, dht, discovery, tunnel)
+  + `interop_tribler.ps1` restent verts après le durcissement.
 - 2026-09-27 : étape 0 terminée. Découverte de `librqbit` (ADR-0001) qui
   réduit fortement le risque des phases 1-2 par rapport à l'hypothèse
   initiale d'un moteur BitTorrent écrit entièrement à la main.

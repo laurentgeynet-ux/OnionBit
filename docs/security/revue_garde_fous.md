@@ -64,3 +64,26 @@ moindre trafic.
   répertoire `v*` validé de `state_dir` (pas de traversée de chemin).
 - `createtorrent/dryrun` écrit un fichier `.tribler-*-probe` puis le
   supprime — pas d'écriture arbitraire.
+
+## Bancs d'interop (2026-09-27)
+
+Les bancs écrivent des journaux partagés — ils ne doivent contenir
+aucun secret réutilisable ni absorber du trafic parasite.
+
+- **Plus de secrets de session dans les journaux** : les dumps
+  `KEYS|` (clés forward/backward + sels de circuit) sont supprimés de
+  `py_tunnel_node.py` et des exemples tunnel Rust ; l'accesseur
+  `debug_session_keys` n'existe plus dans `TunnelCommunity` — les
+  clés de session ne quittent plus le processus. Les clés publiques
+  restent échangées uniquement via les fichiers `--key-file`
+  (sortie `KEY|` redondante supprimée).
+- **`verify_packets.py` exige une whitelist** (`--allow-msg-id`) : un
+  `msg_id` inattendu dans une capture est un échec, pas du bruit —
+  une capture ne peut plus valider en noyant un flux parasite dans un
+  total global ; compteurs séparés par `msg_id`/type pour le
+  diagnostic.
+- **`interop_tribler.ps1` en ports dynamiques** : un port fixe
+  pouvait entrer en collision avec un Tribler local ou un reste de
+  run précédent — le scénario aurait alors exercé le mauvais pair.
+  Tirage de ports libres (UDP×2 + TCP) au démarrage, propagés à tous
+  les processus ; cleanup garanti par `finally`.

@@ -494,24 +494,6 @@ impl TunnelCommunity {
             .collect()
     }
 
-    /// Debug interop : dump hex des cles de session du premier hop
-    /// d'un circuit (`kf|kb|sf|sb`, comme le dump `KEYS|` cote
-    /// `py_tunnel_node.py`).
-    #[doc(hidden)]
-    pub fn debug_session_keys(&self, circuit_id: u32) -> Option<String> {
-        let inner = self.inner.lock().unwrap();
-        let c = inner.circuits.get(&circuit_id)?;
-        let h = c.hops.first()?;
-        let k = &h.session_keys;
-        Some(format!(
-            "{}|{}|{}|{}",
-            hex::encode(k.key_forward),
-            hex::encode(k.key_backward),
-            hex::encode(k.salt_forward),
-            hex::encode(k.salt_backward)
-        ))
-    }
-
     /// Ids des circuits `READY`.
     pub fn ready_circuits(&self) -> Vec<u32> {
         self.inner

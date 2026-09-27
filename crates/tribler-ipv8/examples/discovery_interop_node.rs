@@ -66,7 +66,6 @@ async fn main() {
         }
     });
     let key = LibNaClSecretKey::generate();
-    eprintln!("KEY|{}", hex::encode(key.public_key().to_bin()));
     let lan = UdpAddress::from("127.0.0.1:0".parse::<SocketAddr>().unwrap());
     let community = DiscoveryCommunity::new(
         key,

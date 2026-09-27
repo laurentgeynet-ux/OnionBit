@@ -107,15 +107,9 @@ async def main() -> int:
         )
 
         deadline = time.time() + args.duration
-        # Dump les cles de session des exit sockets (debug interop).
+        # NOTE : ne jamais journaliser les cles de session
+        # (`exit_sockets[].hop.keys`) — secret cryptographique.
         while time.time() < deadline:
-            for cid, es in community.exit_sockets.items():
-                k = es.hop.keys
-                log.write(
-                    f"KEYS|{cid}|{k.key_forward.hex()}|{k.key_backward.hex()}"
-                    f"|{k.salt_forward.hex()}|{k.salt_backward.hex()}\n"
-                )
-                log.flush()
             await asyncio.sleep(0.5)
 
         n_exit = len(community.exit_sockets)

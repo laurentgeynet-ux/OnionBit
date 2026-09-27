@@ -3,6 +3,38 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Durcissement des bancs d'interop (2026-09-27)
+
+Les bancs produisent des journaux partagés : on retire ce qui n'a pas
+à y figurer et on rend le vérificateur exigeant sur ce qu'il accepte.
+
+- `scripts/interop/verify_packets.py` : `--allow-msg-id` (whitelist
+  CSV) — tout `msg_id` hors liste est un échec, même si la signature
+  est valide ; compteurs séparés par `msg_id` et par type
+  (signé/non-signé/invalide) au lieu d'un total unique ; layout
+  `dist` décodé uniquement pour les messages qui le portent
+  (246/245/234/233/249/231), fidèle au fix filaire de l'étape 10.
+  Premier run : la whitelist a immédiatement détecté un
+  `similarity-request` pyipv8 (msg_id=1, famille DiscoveryCommunity,
+  payload.py) que l'ancien total absorbait — whitelist
+  `interop_ipv8.ps1` = `1,2,3,4,246,245,250,249`.
+- Secrets de session : dump `KEYS|` (clés forward/backward + sels)
+  supprimé de `py_tunnel_node.py` et des exemples
+  `tribler_relay_interop`/`tunnel_interop_node` ; accesseur
+  `TunnelCommunity::debug_session_keys` supprimé (n'existait que pour
+  ces dumps). Les `KEY|` (clé publique, non secrète mais redondante
+  — la coordination passe par les fichiers `--key-file`) sont
+  retirés de `py_dht_node.py`, `dht_interop_node` et
+  `discovery_interop_node`.
+- `scripts/interop_tribler.ps1` : ports fixes `22090`/`23100`/`22091`
+  → tirage de ports libres (UDP×2 distincts + TCP) propagés à la
+  config Tribler, l'API, l'echo et les arguments Rust — plus de
+  collision avec un Tribler local ou un reste de run.
+- Validé : `interop_ipv8.ps1`, `interop_dht.ps1`,
+  `interop_discovery.ps1`, `interop_tunnel.ps1` et
+  `interop_tribler.ps1` tous verts après durcissement ; aucun `KEYS|`
+  ou `KEY|` dans les journaux produits.
+
 ## Durcissement étapes 13/16 — rupture de circuit, proxy vivant (2026-09-27)
 
 Second scénario de fuite, distinct de la mort du proxy : le listener

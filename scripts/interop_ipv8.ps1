@@ -39,12 +39,18 @@ $rsProc = Start-Process -FilePath ".\target\debug\examples\interop_node.exe" -Pa
 $rsProc.WaitForExit()
 $pyProc.WaitForExit()
 
+# Whitelist : ce banc n'echange que des messages DiscoveryCommunity —
+# 1/2 similarity-request/response, 3/4 ping/pong, 246/245
+# introduction-request/response ancien format, 250/249
+# puncture-request/response. Tout autre msg_id est un echec.
+$allow = "1,2,3,4,246,245,250,249"
+
 Write-Host "== verification des paquets Rust par pyipv8 =="
-& $venvPy "$PSScriptRoot\interop\verify_packets.py" $rsLog
+& $venvPy "$PSScriptRoot\interop\verify_packets.py" $rsLog --allow-msg-id $allow
 $rustOk = $LASTEXITCODE -eq 0
 
 Write-Host "== verification des paquets Python par pyipv8 (sanity) =="
-& $venvPy "$PSScriptRoot\interop\verify_packets.py" $pyLog
+& $venvPy "$PSScriptRoot\interop\verify_packets.py" $pyLog --allow-msg-id $allow
 $pyOk = $LASTEXITCODE -eq 0
 
 # Echange reussi si chaque cote a vu l'autre (peers verifies dans les
