@@ -375,9 +375,77 @@ impl CoreSession {
         Ok(())
     }
 
+    /// `update_hops` Python (`DownloadManager.update_hops`) : retire le
+    /// telechargement de son moteur actuel puis le recree sur le moteur
+    /// a `new_hops` sauts — les donnees sur disque sont conservees et
+    /// le telechargement repart actif (comportement Python identique).
+    ///
+    /// La source de re-creation est, par ordre : les octets du
+    /// `.torrent` persistes en base, sinon la `source_uri` enregistree.
+    pub async fn update_hops(&self, id_or_hash: &str, new_hops: u32) -> Result<()> {
+        let dl = self
+            .find_download(id_or_hash)
+            .ok_or(CoreError::InvalidState("telechargement inconnu"))?;
+        let ih = dl.info_hash();
+        let row = self.inner.db.with(|c| tribler_db::downloads::get(c, &ih))?;
+        let old_hops = row.as_ref().map(|r| r.anon_hops.max(0) as u32).unwrap_or(0);
+        let bytes = row
+            .as_ref()
+            .and_then(|r| r.torrent_data.clone())
+            .or_else(|| dl.torrent_bytes().map(|b| b.to_vec()));
+        let uri = row
+            .map(|r| r.source_uri)
+            .filter(|u| !u.is_empty())
+            .unwrap_or_else(|| {
+                format!("magnet:?xt=urn:btih:{}", tribler_crypto::hash::to_hex(&ih))
+            });
+        self.remove(id_or_hash, false).await?;
+        let readded = match bytes.clone() {
+            Some(b) => self.add_torrent_bytes_anon(b, false, new_hops).await,
+            None => self.add_download_anon(&uri, false, new_hops).await,
+        };
+        if let Err(e) = readded {
+            // Rollback best-effort sur l'ancien moteur : Python laisse
+            // le download perdu dans ce cas, mais la ligne DB disparait
+            // aussi chez nous — on prefere restaurer l'etat initial.
+            let rollback = match bytes {
+                Some(b) => self.add_torrent_bytes_anon(b, false, old_hops).await,
+                None => self.add_download_anon(&uri, false, old_hops).await,
+            };
+            if let Err(rb) = rollback {
+                tracing::warn!(
+                    infohash = %tribler_crypto::hash::to_hex(&ih),
+                    error = %rb,
+                    "update_hops: rollback impossible — download perdu"
+                );
+            }
+            return Err(e);
+        }
+        Ok(())
+    }
+
     /// Liste les telechargements (moteur principal + lanes anonymes).
     pub fn downloads(&self) -> Vec<DownloadStats> {
         self.all_engines().iter().flat_map(|e| e.list()).collect()
+    }
+
+    /// `anon_hops` par info-hash hex, d'apres la persistance DB
+    /// (utilise par `GET /api/downloads` pour `hops`/`anon_download`).
+    pub fn anon_hops_map(&self) -> std::collections::HashMap<String, u32> {
+        self.inner
+            .db
+            .with(tribler_db::downloads::list)
+            .map(|rows| {
+                rows.into_iter()
+                    .map(|r| {
+                        (
+                            tribler_crypto::hash::to_hex(&r.infohash),
+                            r.anon_hops.max(0) as u32,
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     /// Moteur detenant le telechargement `id_or_hash` (principal ou

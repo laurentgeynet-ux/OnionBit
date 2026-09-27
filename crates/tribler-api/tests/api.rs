@@ -198,6 +198,130 @@ async fn patch_infohash_inconnu_retourne_404() {
     srv.session.stop().await;
 }
 
+/// Regression : `PUT /api/downloads` avec `anon_hops > 0` sans
+/// `safe_seeding` est refuse (message Python litteral).
+#[tokio::test]
+async fn put_anon_sans_safe_seeding_retourne_400() {
+    let srv = spawn_server().await;
+    let torrent_path = srv._dir.path().join("api-test.torrent");
+    std::fs::write(&torrent_path, test_torrent_bytes()).unwrap();
+    let resp = srv
+        .client
+        .put(srv.url("/api/downloads"))
+        .json(&serde_json::json!({
+            "torrent": torrent_path.display().to_string(),
+            "anon_hops": 1,
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 400);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["error"]["handled"], true);
+    assert!(body["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("safe seeding"));
+    srv.session.stop().await;
+}
+
+/// Regression : avec `safe_seeding: true` mais la stack IPv8 inactive
+/// (session offline), l'ajout anonyme echoue en **400** — pas en 500.
+#[tokio::test]
+async fn put_anon_stack_inactive_retourne_400() {
+    let srv = spawn_server().await;
+    let torrent_path = srv._dir.path().join("api-test.torrent");
+    std::fs::write(&torrent_path, test_torrent_bytes()).unwrap();
+    let resp = srv
+        .client
+        .put(srv.url("/api/downloads"))
+        .json(&serde_json::json!({
+            "torrent": torrent_path.display().to_string(),
+            "anon_hops": 1,
+            "safe_seeding": true,
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 400);
+    srv.session.stop().await;
+}
+
+/// `PATCH anon_hops` doit etre le seul parametre de la requete
+/// (regle Python : 400 sinon).
+#[tokio::test]
+async fn patch_anon_hops_combine_retourne_400() {
+    let srv = spawn_server().await;
+    let resp = srv
+        .client
+        .patch(srv.url("/api/downloads/0000000000000000000000000000000000000000"))
+        .json(&serde_json::json!({"state": "stop", "anon_hops": 1}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 400);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert!(body["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("only parameter"));
+    srv.session.stop().await;
+}
+
+/// `PATCH anon_hops` sur un telechargement inconnu : 404 (pas 500).
+#[tokio::test]
+async fn patch_anon_hops_inconnu_retourne_404() {
+    let srv = spawn_server().await;
+    let resp = srv
+        .client
+        .patch(srv.url("/api/downloads/0000000000000000000000000000000000000000"))
+        .json(&serde_json::json!({"anon_hops": 1}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 404);
+    srv.session.stop().await;
+}
+
+/// `PATCH anon_hops` seul sur un download existant : le telechargement
+/// est recree ; sans stack IPv8 la session refuse proprement (400).
+#[tokio::test]
+async fn patch_anon_hops_existant_stack_inactive_400() {
+    let srv = spawn_server().await;
+    let torrent_path = srv._dir.path().join("api-test.torrent");
+    std::fs::write(&torrent_path, test_torrent_bytes()).unwrap();
+    let resp = srv
+        .client
+        .put(srv.url("/api/downloads"))
+        .json(&serde_json::json!({"torrent": torrent_path.display().to_string()}))
+        .send()
+        .await
+        .unwrap();
+    let infohash = resp.json::<serde_json::Value>().await.unwrap()["infohash"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let resp = srv
+        .client
+        .patch(srv.url(&format!("/api/downloads/{infohash}")))
+        .json(&serde_json::json!({"anon_hops": 2}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 400);
+    // Rollback : le download d'origine survit a l'echec de re-creation.
+    let resp = srv
+        .client
+        .get(srv.url(&format!("/api/downloads?infohash={infohash}")))
+        .send()
+        .await
+        .unwrap();
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["downloads"].as_array().unwrap().len(), 1);
+    srv.session.stop().await;
+}
+
 #[tokio::test]
 async fn events_sse_format_tribler() {
     let srv = spawn_server().await;

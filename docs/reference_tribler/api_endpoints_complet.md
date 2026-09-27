@@ -65,7 +65,7 @@ Python : `core/libtorrent/restapi/downloads_endpoint.py` · Rust : `handlers/dow
 | PUT | `/api/downloads` | Démarre un téléchargement depuis un URI (magnet/http/file) **ou** un `.torrent` brut (`Content-Type: applications/x-bittorrent`, paramètres en query) | `uri*` str ; `anon_hops` int (≥0, >0 exige `safe_seeding`) ; `safe_seeding` bool ; `destination` str ; `completed_dir` str ; `selected_files` int[] ; `auto_managed` bool ; `only_metadata` bool `"false"` ; `cli` bool false | ✅ |
 | GET | `/api/downloads/clierrors` | Vide et retourne la file d'erreurs non remontées en mode CLI (max 100 conservées) | — | ❌ |
 | DELETE | `/api/downloads/{infohash}` | Supprime un téléchargement | `remove_data*` bool (corps JSON, obligatoire) | ✅ |
-| PATCH | `/api/downloads/{infohash}` | Modifie un téléchargement | `state` : `resume`/`stop`/`recheck`/`move_storage` (+`dest_dir`*, +`completed_dir`) ; `selected_files` int[] (0..max_index) ; `file_priority` [index, prio] (**prio 0..7**) ; `anon_hops` int (**doit être seul**) ; `upload_limit` int o/s ; `download_limit` int o/s ; `seeding_ratio` float ; `seeding_ratio_default` bool ; `queue_position` : `queue_up`/`queue_top`/`queue_down`/`queue_bottom` ; `auto_managed` bool | ⚠️ (`state` resume/stop ; `recheck`/`move_storage` → 400 côté Rust actuel) |
+| PATCH | `/api/downloads/{infohash}` | Modifie un téléchargement | `state` : `resume`/`stop`/`recheck`/`move_storage` (+`dest_dir`*, +`completed_dir`) ; `selected_files` int[] (0..max_index) ; `file_priority` [index, prio] (**prio 0..7**) ; `anon_hops` int (**doit être seul**) ; `upload_limit` int o/s ; `download_limit` int o/s ; `seeding_ratio` float ; `seeding_ratio_default` bool ; `queue_position` : `queue_up`/`queue_top`/`queue_down`/`queue_bottom` ; `auto_managed` bool | ⚠️ (`state` resume/stop + `anon_hops` seul (`update_hops`, rollback si échec) ; `recheck`/`move_storage`/`selected_files`/`file_priority`/limites/`queue_position`/`auto_managed` → non implémentés) |
 | GET | `/api/downloads/{infohash}/torrent` | Retourne le `.torrent` bencodé (`application/x-bittorrent`) | — | ✅ |
 | PUT | `/api/downloads/{infohash}/trackers` | Ajoute un tracker + réannonce immédiate | `url*` str (corps JSON) | ✅ (sans réannonce à chaud — rqbit) |
 | PUT | `/api/downloads/{infohash}/default_trackers` | Planifie l'ajout des trackers par défaut (`trackers_file`) au prochain handle | — | ❌ |
@@ -502,6 +502,12 @@ qui enregistre 8 sous-endpoints. Rust : `handlers/ipv8.rs`.
   `tunnel/peers/dht`, `tunnel/peers/pex`
 - Écarts de signature : `PUT /api/statistics/dirspace` (Rust = GET `?path=`),
   `?hop=` libtorrent (Rust = `?session=`).
+- Écarts de type/valeur dans `GET /api/downloads` : `eta` est une chaîne
+  formatée (`"3m 20s"`) alors que Python émet un `Integer`/`float` de
+  secondes ; `num_seeds`/`num_connected_seeds` fixés à 0 (pas de scrape
+  intégré au listing) ; `trackers` fixé à `[]` ; `safe_seeding` fixé à
+  `false` (le drapeau n'est pas persisté par download — la condition
+  `anon_hops>0 ⇒ safe_seeding` est en revanche appliquée au `PUT`).
 
 ---
 

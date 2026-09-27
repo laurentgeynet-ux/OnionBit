@@ -18,6 +18,7 @@ pub async fn get_downloads(
     State(state): State<AppState>,
     axum::extract::Query(params): axum::extract::Query<DownloadQuery>,
 ) -> Json<serde_json::Value> {
+    let hops_map = state.session.anon_hops_map();
     let downloads: Vec<DownloadInfo> = state
         .session
         .downloads()
@@ -36,7 +37,13 @@ pub async fn get_downloads(
                 .map(|ih| !ih.eq_ignore_ascii_case(&s.info_hash))
                 .unwrap_or(true)
         })
-        .map(DownloadInfo::from_stats)
+        .map(|s| {
+            let mut info = DownloadInfo::from_stats(s);
+            let hops = hops_map.get(&s.info_hash).copied().unwrap_or(0);
+            info.hops = hops;
+            info.anon_download = hops > 0;
+            info
+        })
         .collect();
     Json(serde_json::json!({
         "downloads": downloads,
@@ -70,30 +77,44 @@ pub struct AddDownloadRequest {
     pub torrent: Option<String>,
     /// Repertoire de destination (defaut : config du daemon).
     pub destination: Option<String>,
-    /// Nombre de sauts anonymes (ignore tant que les tunnels ne sont
-    /// pas implementes — etape 12).
+    /// Nombre de sauts anonymes (0 = telechargement direct).
+    /// Exige `safe_seeding` et la stack IPv8 avec anonymat actif.
     pub anon_hops: Option<u32>,
+    /// Seeding anonyme — obligatoire si `anon_hops > 0` (Python).
+    pub safe_seeding: Option<bool>,
     /// Demarrer en pause.
     pub paused: Option<bool>,
 }
 
 /// `PUT /api/downloads` — ajoute un telechargement.
+///
+/// Fidele au Python : `anon_hops > 0` sans `safe_seeding` est refuse,
+/// et le telechargement part sur la lane anonyme correspondante.
 pub async fn add_download(
     State(state): State<AppState>,
     Json(req): Json<AddDownloadRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    if req.anon_hops.unwrap_or(0) > 0 {
+    let hops = req.anon_hops.unwrap_or(0);
+    if hops > 0 && !req.safe_seeding.unwrap_or(false) {
         return Err(ApiError::bad_request(
-            "anon_hops non supporte tant que les tunnels ne sont pas implementes (etape 12)",
+            "Cannot set anonymous download without safe seeding enabled",
         ));
     }
     let paused = req.paused.unwrap_or(false);
     let dl = if let Some(uri) = &req.uri {
-        state.session.add_download(uri, paused).await?
+        state
+            .session
+            .add_download_anon(uri, paused, hops)
+            .await
+            .map_err(invalid_state_as_bad_request)?
     } else if let Some(path) = &req.torrent {
         let bytes = std::fs::read(path)
             .map_err(|e| ApiError::bad_request(format!("lecture du .torrent: {e}")))?;
-        state.session.add_torrent_bytes(bytes, paused).await?
+        state
+            .session
+            .add_torrent_bytes_anon(bytes, paused, hops)
+            .await
+            .map_err(invalid_state_as_bad_request)?
     } else {
         return Err(ApiError::bad_request("missing uri or torrent"));
     };
@@ -133,20 +154,40 @@ pub struct UpdateDownloadRequest {
     /// `"resume"`, `"stop"`, `"recheck"` (recheck non supporte), ou
     /// `"move_storage"` (non supporte).
     pub state: Option<String>,
-    /// anon_hops : reserve, refuse si combine (comme en Python).
+    /// Nouveau nombre de sauts anonymes — doit etre le seul parametre
+    /// de la requete (comme en Python).
     pub anon_hops: Option<u32>,
 }
 
 /// `PATCH /api/downloads/{infohash}` — modifie l'etat.
+///
+/// `anon_hops` seul : le telechargement est deplace sur le moteur a
+/// `n` sauts (`update_hops` Python — suppression + re-creation).
 pub async fn update_download(
     State(state): State<AppState>,
     Path(infohash): Path<String>,
     Json(req): Json<UpdateDownloadRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    if req.anon_hops.is_some() {
-        return Err(ApiError::bad_request(
-            "anon_hops non supporte tant que les tunnels ne sont pas implementes (etape 12)",
-        ));
+    if let Some(hops) = req.anon_hops {
+        if req.state.is_some() {
+            return Err(ApiError::bad_request(
+                "anon_hops must be the only parameter in this request",
+            ));
+        }
+        if state.session.find_download(&infohash).is_none() {
+            return Err(ApiError::not_found(format!(
+                "this download does not exist: {infohash}"
+            )));
+        }
+        state
+            .session
+            .update_hops(&infohash, hops)
+            .await
+            .map_err(invalid_state_as_bad_request)?;
+        return Ok(Json(serde_json::json!({
+            "modified": true,
+            "infohash": infohash,
+        })));
     }
     let modified = match req.state.as_deref() {
         Some("resume") => {
@@ -172,4 +213,14 @@ pub async fn update_download(
         "modified": modified,
         "infohash": infohash,
     })))
+}
+
+/// Les erreurs metier `InvalidState` des chemins anonymes (stack ipv8
+/// inactive, lane indisponible) sont des erreurs de requete, pas des
+/// 404 : les ressources introuvables sont testees explicitement avant.
+fn invalid_state_as_bad_request(e: tribler_core::CoreError) -> ApiError {
+    match e {
+        tribler_core::CoreError::InvalidState(m) => ApiError::bad_request(m),
+        other => ApiError::from(other),
+    }
 }
