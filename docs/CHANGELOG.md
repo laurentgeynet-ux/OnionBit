@@ -3,6 +3,29 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Durcissement documentaire du jalon interop (2026-09-27)
+
+Suite à revue externe de la preuve de l'étape 9 :
+
+- `roadmap.md` étape 9 : formulation de la preuve bornée à ce qui a
+  été mesuré (discovery signée sur loopback contre pyipv8, 39/39
+  paquets de l'essai dans les deux sens, fixtures rejouées en CI) —
+  sans extrapoler aux formats non exercés.
+- `roadmap.md` étapes 10-11 : les « interop à faire » vagues sont
+  remplacés par les scénarios attendus explicites — aller-retour
+  `store_value`/`find_values` + jetons avec résultat contrôlé des deux
+  côtés (10) ; introductions new-style 233/234 et punctures
+  250/232 → 249/231 avec payloads décodés (11).
+- `crates/tribler-ipv8/tests/fixtures/README.md` créé : provenance des
+  captures (commit pyipv8 `4a294ed1`, commit Tribler `3ac2f4b4`,
+  sens de chaque fichier, msg_ids contenus, procédure de
+  régénération) — une évolution de la référence ne pourra plus effacer
+  la signification du rejeu.
+- Distinction des cibles d'interop actée : « venv pyipv8 » (validé)
+  ≠ « Tribler 8.4.3 installé » (ressource disponible, non encore
+  exercée) ; les résultats futurs seront rapportés séparément.
+- `docs/INDEX.md` : scripts d'interop et fixtures référencés.
+
 ## Référence supplémentaire : Tribler 8.4.3 installé (2026-09-27)
 
 - `C:\Program Files (x86)\Tribler` documenté dans `AGENTS.md` et

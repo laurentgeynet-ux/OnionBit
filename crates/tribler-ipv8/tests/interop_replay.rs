@@ -4,6 +4,9 @@
 //! **produits par le vrai pyipv8** (ou par notre noeud et verifies par
 //! lui) — le test prouve que notre parseur/verifier Ed25519 les
 //! accepte, de facon permanente dans la CI.
+//!
+//! Provenance (commit pyipv8, sens, msg_ids, regeneration) :
+//! `tests/fixtures/README.md`.
 
 use tribler_ipv8::discovery::DISCOVERY_COMMUNITY_ID;
 use tribler_ipv8::packet::Packet;

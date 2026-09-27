@@ -29,6 +29,8 @@ chaque étape (cf. `AGENTS.md`, "Workflow par étape").
 | `docs/reference_tribler/ipv8_rust_tunnels/` | Extraits des sources `ipv8-rust-tunnels` (formats clés, DH, paquets) |
 | `docs/CHANGELOG.md` | Historique des étapes franchies |
 | `scripts/verify_all.ps1` | Validation complète (check/clippy/fmt/test) |
+| `scripts/interop_ipv8.ps1` + `scripts/interop/` | Jalon d'interop Rust↔pyipv8 sur loopback : `py_node.py` (noeud Python), `verify_packets.py` (vérification Ed25519 via le vrai `default_eccrypto`), chemins réglables via `TRIBLER_PYIPV8`/`TRIBLER_INTEROP_PY` |
+| `crates/tribler-ipv8/tests/fixtures/` | Paquets filaires réels enregistrés pendant l'interop (`.hex`) + `README.md` de provenance (commit pyipv8, sens, msg_ids) ; rejoués par `tests/interop_replay.rs` |
 
 ## Sources externes de référence (locales)
 

@@ -98,11 +98,14 @@ ne sont donc pas « terminées » au sens strict) · `[x]` terminée.
   `DiscoveryCommunity` (`7e313685…df5a`) : ping/pong, similarity-request/
   response, introduction-request/response (ancien format IPv4), marche
   aléatoire périodique. 4 tests dont échange réel ping/pong loopback entre
-  deux noeuds. **Interop pyipv8 validée** : échange réel enregistré via
-  `scripts/interop_ipv8.ps1` (noeud pyipv8 reel en venv loopback) —
-  39/39 paquets signés vérifiés dans les deux sens par le vrai
-  `default_eccrypto`, pairs mutuellement enregistrés ; rejeu permanent
-  en CI : `tests/interop_replay.rs` + fixtures `tests/fixtures/*.hex`.
+  deux noeuds. **Preuve d'interop (bornée)** : discovery signée validée
+  sur loopback contre pyipv8 (venv `D:\Projet\Tribler_sources\
+  .venv-interop`, via `scripts/interop_ipv8.ps1`) — 39/39 paquets de
+  l'essai acceptés dans les deux sens par le vrai `default_eccrypto`,
+  pairs mutuellement enregistrés ; fixtures issues de pyipv8 rejouées
+  avec succès en CI (`tests/interop_replay.rs`, `tests/fixtures/*.hex`,
+  provenance : `tests/fixtures/README.md`). La cible distincte
+  « Tribler 8.4.3 installé » n'est pas encore exercée.
 - [i] **Étape 10. DHT overlay IPv8.** `tribler-ipv8::dht` : `calc_node_id`
   (CRC-32 IEEE d'IP masquée + `mid[:17]` — fidèle à `binascii.crc32`),
   `distance` XOR, `RoutingTable` (trie binaire, buckets de 8, split),
@@ -111,10 +114,13 @@ ne sont donc pas « terminées » au sens strict) · `[x]` terminée.
   `sha1(str(node)+secret)` tournants, crawl itératif (8/24/4),
   puncture-request **non signé** + puncture signé, valeurs signées
   Ed25519. Tests loopback : introduction → ping → `store_value` →
-  `find_values` de bout en bout entre deux noeuds. **Interop partielle** :
-  la couche paquet signé est validée contre pyipv8 (étape 9), mais les
-  payloads DHT propres (find/store/tokens) n'ont pas encore été échangés
-  avec un `DHTCommunity` Python réel.
+  `find_values` de bout en bout entre deux noeuds. **Scénarios interop
+  attendus avant `[x]`** : aller-retour DHT Rust↔Python réel exercé —
+  `store_value`/`find_values` de bout en bout avec jetons tournants
+  (`sha1(str(node)+secret)`) acceptés et résultat contrôlé des deux
+  côtés (la couche paquet signé est déjà validée à l'étape 9 ; il reste
+  les payloads DHT propres : find/store/tokens contre un
+  `DHTCommunity` Python).
 - [i] **Étape 11. Framework de communities complet.** `tribler-ipv8` :
   `Network` complet (`_all_addresses`/`WalkableAddress`, `discover_address`,
   `get_walkable_addresses` filtré par service/old-style,
@@ -131,10 +137,13 @@ ne sont donc pas « terminées » au sens strict) · `[x]` terminée.
   127/8, 169.254/16), `get_new_introduction` (pair aléatoire →
   walkable → bootstrap, 5 % de re-bootstrap). 3 tests loopback :
   introduction nouveau style, adresses walkable via introduction,
-  puncture-request → puncture. **Interop partielle** : l'échange
-  introduction-request/response ancien format + similarity est validé
-  contre pyipv8 (étape 9) ; les formats 233/234 et punctures restent à
-  exercer contre un noeud Python réel.
+  puncture-request → puncture. **Scénarios interop attendus avant
+  `[x]`** : introductions new-style (request 234 → response 233, bits
+  `intro_supports_new_style` propagé) et punctures (puncture-request
+  non signé 250/232 → puncture signé 249/231) échangées avec un noeud
+  Python réel, **payloads décodés et vérifiés** des deux côtés — pas
+  seulement la signature de paquets génériques (l'introduction ancien
+  format + similarity sont déjà validées à l'étape 9).
 - [ ] **Étape 12. TunnelCommunity : circuits et hidden seeding.**
   `tribler-tunnel` : construction de circuits en onion routing (1/2/3
   sauts), chiffrement ChaCha20-Poly1305 par saut (`tribler-crypto`), hidden
@@ -213,6 +222,9 @@ risque IPv8 sous/sur-estimé, etc.), avec la date.
   installé (`C:\Program Files (x86)\Tribler`) : `Tribler.exe` = noeud
   Tribler réel pour les tests ping-pong des étapes `[i]` et de l'étape
   12 ; `lib/` = pyipv8 figé importable dans un venv CPython 3.12.
+  **Cible distincte du venv pyipv8** : son existence ne prouve aucun
+  échange réussi — elle reste à exercer, et les résultats doivent être
+  rapportés séparément de l'interop venv.
 - 2026-09-27 : revue documentaire — les étapes 9-11 passent au marqueur
   `[i]` : elles sont implémentées et testées en loopback Rust↔Rust, mais
   l'interopérabilité avec un noeud pyipv8 réel reste à valider par un
