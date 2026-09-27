@@ -3,6 +3,27 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Étape 4 — `tribler-db` : schema SQLite + migrations (2026-09-28)
+
+- `Database` : ouverture fichier/memoire, `Mutex<Connection>` pour le
+  partage entre services async, WAL + `foreign_keys` actives.
+- `migrations.rs` : migrations versionnees via `PRAGMA user_version`
+  (`SCHEMA_VERSION = 1`), rejet des bases plus recentes
+  (`SchemaTooNew`).
+- Schema fidele aux entites Pony de `tribler.core.database` (v15) :
+  `misc`, `torrent_state` (seeders/leechers/last_check), `tracker_state`,
+  lien N-N `torrent_state_tracker`, `channel_node` (tous les champs de
+  `TorrentMetadata` : `metadata_type` discriminateur, `signature` NULL
+  pour les entrees FFA, contrainte `UNIQUE(public_key, id_)`), plus
+  `downloads` (persistance des telechargements du daemon).
+- Adaptations documentees : `datetime` → secondes Unix `INTEGER`,
+  `bool` → 0/1 ; compatibilite binaire avec les bases Python non
+  visee (semantique seulement).
+- `channel::insert` reproduit le comportement Python : creation
+  automatique du `torrent_state` associe a l'infohash.
+- 5 tests en memoire (migrations, misc, sante+trackers, dedup
+  channel_node, cycle downloads).
+
 ## Étape 3 — `tribler-bittorrent` : enveloppe `librqbit` (2026-09-28)
 
 - `BtEngine` : enveloppe de `librqbit::Session` v9 (cycle de vie

@@ -41,9 +41,13 @@ Légende : `[ ]` à faire · `[~]` en cours · `[x]` terminée.
   ajout de `.torrent` construit par `tribler-format`. Note : le test
   "téléchargement réel de bout en bout" reste à faire (nécessite du
   réseau ; hors scope des tests offline) — voir étape 16.
-- [ ] **Étape 4. Schéma SQLite et migrations.** `tribler-db` : torrents
-  connus, canaux, votes, réglages. Migrations versionnées
-  (`SCHEMA_VERSION`). Tests avec base en mémoire.
+- [x] **Étape 4. Schéma SQLite et migrations.** `tribler-db` :
+  `misc`, `torrent_state` (santé essaims), `tracker_state`, lien N-N
+  essaim↔trackers, `channel_node` (table discriminée fidèle au mapping
+  Pony v15 : metadata_type, signature nullable unique pour FFA,
+  `UNIQUE(public_key,id_)` de déduplication), `downloads` (torrents
+  connus du daemon). Migrations versionnées via `PRAGMA user_version`
+  (SCHEMA_VERSION=1), WAL + foreign_keys. 5 tests en mémoire.
 
 ## Phase 2 — Daemon minimal et API de contrôle
 
