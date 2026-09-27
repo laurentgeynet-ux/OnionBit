@@ -60,6 +60,16 @@ async fn make_node_flags(flags: i32) -> Node {
     }
 }
 
+/// Datagramme conforme `DataChecker.could_be_utp` : ST_SYN v1, ext 0,
+/// minimum 20 octets. Depuis l'etape 13, la sortie n'accepte que du
+/// trafic BT/IPv8 reconnaissable (`is_allowed` pyipv8).
+fn utp_payload(tag: &[u8]) -> Vec<u8> {
+    let mut p = vec![0x41, 0x00];
+    p.extend_from_slice(&[0; 18]);
+    p.extend_from_slice(tag);
+    p
+}
+
 /// `Peer` correspondant au noeud (enregistre service tunnel).
 fn peer_of(node: &Node) -> Peer {
     Peer::new(
@@ -131,13 +141,13 @@ async fn tunnel_circuit_2_hops_becomes_ready() {
 #[tokio::test]
 async fn tunnel_data_exits_1_hop() {
     let a = make_node().await;
-    let b = make_node().await;
+    let b = make_node_flags(PEER_FLAG_RELAY | PEER_FLAG_EXIT_BT).await;
     let nodes = [a, b];
     let (cid, _) = build_circuit(&nodes, 1).await;
 
     let dest = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
     let dest_addr = dest.local_addr().unwrap();
-    let payload = b"hello 1 hop";
+    let payload = utp_payload(b"hello 1 hop");
 
     nodes[0]
         .tunnel
@@ -145,7 +155,7 @@ async fn tunnel_data_exits_1_hop() {
             cid,
             &UdpAddress::from(dest_addr),
             &UdpAddress::from(nodes[0].addr),
-            payload,
+            &payload,
         )
         .await
         .unwrap();
@@ -167,14 +177,14 @@ async fn tunnel_data_exits_at_last_hop() {
         .ok();
     let a = make_node().await;
     let b = make_node().await;
-    let c = make_node().await;
+    let c = make_node_flags(PEER_FLAG_RELAY | PEER_FLAG_EXIT_BT).await;
     let nodes = [a, b, c];
     let (cid, _) = build_circuit(&nodes, 2).await;
 
     // Socket de destination "monde exterieur" (receveur UDP brut).
     let dest = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
     let dest_addr = dest.local_addr().unwrap();
-    let payload = b"hello via tunnel";
+    let payload = utp_payload(b"hello via tunnel");
 
     nodes[0]
         .tunnel
@@ -182,7 +192,7 @@ async fn tunnel_data_exits_at_last_hop() {
             cid,
             &UdpAddress::from(dest_addr),
             &UdpAddress::from(nodes[0].addr),
-            payload,
+            &payload,
         )
         .await
         .unwrap();
@@ -200,7 +210,7 @@ async fn tunnel_data_exits_at_last_hop() {
 async fn tunnel_echo_roundtrip_2_hops() {
     let a = make_node().await;
     let b = make_node().await;
-    let c = make_node().await;
+    let c = make_node_flags(PEER_FLAG_RELAY | PEER_FLAG_EXIT_BT).await;
     let nodes = [a, b, c];
     let (cid, _) = build_circuit(&nodes, 2).await;
 
@@ -215,14 +225,14 @@ async fn tunnel_echo_roundtrip_2_hops() {
     });
 
     let mut data_rx = nodes[0].tunnel.data_rx().expect("data_rx deja pris");
-    let payload = b"ping aller-retour";
+    let payload = utp_payload(b"ping aller-retour");
     nodes[0]
         .tunnel
         .send_data(
             cid,
             &UdpAddress::from(echo_addr),
             &UdpAddress::from(nodes[0].addr),
-            payload,
+            &payload,
         )
         .await
         .unwrap();
@@ -275,7 +285,7 @@ async fn socks5_udp_associate_roundtrip() {
         .try_init()
         .ok();
     let a = make_node().await;
-    let b = make_node().await;
+    let b = make_node_flags(PEER_FLAG_RELAY | PEER_FLAG_EXIT_BT).await;
     let nodes = [a, b];
     let (_cid, _) = build_circuit(&nodes, 1).await;
 
@@ -318,14 +328,14 @@ async fn socks5_udp_associate_roundtrip() {
 
     // Frame SOCKS5 UDP vers le serveur d'echo.
     let client_udp = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
-    let msg = b"tribler-socks5-ping";
+    let msg = utp_payload(b"socks5-ping");
     let mut frame = vec![0u8, 0, 0, 0x01];
     match echo_addr {
         SocketAddr::V4(a) => frame.extend_from_slice(&a.ip().octets()),
         SocketAddr::V6(_) => unreachable!("loopback v4"),
     }
     frame.extend_from_slice(&echo_addr.port().to_be_bytes());
-    frame.extend_from_slice(msg);
+    frame.extend_from_slice(&msg);
     client_udp.send_to(&frame, relay).await.unwrap();
 
     // La reponse revient encapsulee en frame SOCKS5 UDP.
@@ -912,4 +922,36 @@ async fn tunnel_introduction_tracks_exit_flags() {
         .peers_for_service(&TUNNEL_COMMUNITY_ID)
         .iter()
         .any(|p| p.public_key_bin == b.key.public_key().to_bin()));
+}
+
+/// Politique de sortie (`is_allowed` pyipv8) : sans `PEER_FLAG_EXIT_BT`
+/// annonce, un datagramme uTP est rejete par l'exit ; avec le flag,
+/// une donnee quelconque (non BT/IPv8) l'est aussi.
+#[tokio::test]
+async fn tunnel_exit_drops_non_bt_or_unflagged() {
+    let a = make_node().await;
+    // Exit sans flag BT : meme un uTP valide ne sort pas.
+    let b = make_node_flags(PEER_FLAG_RELAY).await;
+    let nodes = [a, b];
+    let (cid, _) = build_circuit(&nodes, 1).await;
+
+    let dest = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let dest_addr = dest.local_addr().unwrap();
+    nodes[0]
+        .tunnel
+        .send_data(
+            cid,
+            &UdpAddress::from(dest_addr),
+            &UdpAddress::from(nodes[0].addr),
+            &utp_payload(b"utp-ok-mais-pas-de-flag"),
+        )
+        .await
+        .unwrap();
+    let mut buf = [0u8; 256];
+    assert!(
+        tokio::time::timeout(Duration::from_millis(500), dest.recv_from(&mut buf))
+            .await
+            .is_err(),
+        "uTP sorti sans flag EXIT_BT"
+    );
 }

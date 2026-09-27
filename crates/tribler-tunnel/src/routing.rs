@@ -8,18 +8,13 @@ use std::time::{Duration, Instant};
 use tribler_crypto::ipv8::session::SessionKeys;
 use tribler_ipv8::UdpAddress;
 
-/// `PEER_FLAG_RELAY` : le pair accepte de relayer.
-pub const PEER_FLAG_RELAY: i32 = 1;
-/// `PEER_FLAG_EXIT_BT` : le pair accepte de sortir du trafic BT.
-pub const PEER_FLAG_EXIT_BT: i32 = 2;
-/// `PEER_FLAG_EXIT_IPV8`.
-pub const PEER_FLAG_EXIT_IPV8: i32 = 4;
-/// `PEER_FLAG_SPEED_TEST`.
-pub const PEER_FLAG_SPEED_TEST: i32 = 8;
-/// `PEER_FLAG_EXIT_HTTP` (`ipv8-rust-tunnels` `PeerFlag::ExitHttp`) :
-/// la sortie accepte les requetes `http-request`/`http-response`
-/// (messages 28/29) — ex. annonces tracker via le tunnel.
-pub const PEER_FLAG_EXIT_HTTP: i32 = 32768;
+// Flags de service du protocole de tunnels : la source de verite
+// est `tribler-network-policy::exit_policy` (politique de sortie
+// appliquee dans `exit_data`).
+pub use tribler_network_policy::exit_policy::{
+    PEER_FLAG_EXIT_BT, PEER_FLAG_EXIT_HTTP, PEER_FLAG_EXIT_IPV8, PEER_FLAG_RELAY,
+    PEER_FLAG_SPEED_TEST,
+};
 
 /// `PEER_SOURCE_UNKNOWN`.
 pub const PEER_SOURCE_UNKNOWN: u8 = 0;

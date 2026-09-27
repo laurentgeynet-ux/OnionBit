@@ -21,6 +21,10 @@ pub enum BtError {
     /// Le torrent ajoute n'a pas produit de handle (ex. list_only).
     #[error("pas de handle de torrent")]
     NoHandle,
+    /// Refus impose par une politique reseau (proxy non local,
+    /// kill switch engage).
+    #[error("politique reseau: {0}")]
+    Policy(#[from] tribler_network_policy::PolicyError),
     /// Erreur d'E/S.
     #[error("io: {0}")]
     Io(#[from] std::io::Error),

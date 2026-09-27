@@ -3864,6 +3864,7 @@ dependencies = [
  "tribler-crypto",
  "tribler-format",
  "tribler-ipv8",
+ "tribler-network-policy",
  "tribler-tunnel",
  "url",
 ]
@@ -3898,6 +3899,8 @@ dependencies = [
  "tribler-crypto",
  "tribler-db",
  "tribler-format",
+ "tribler-network-policy",
+ "url",
 ]
 
 [[package]]
@@ -3970,6 +3973,10 @@ dependencies = [
 [[package]]
 name = "tribler-network-policy"
 version = "0.1.0"
+dependencies = [
+ "thiserror 2.0.21",
+ "tracing",
+]
 
 [[package]]
 name = "tribler-test-support"
@@ -3988,6 +3995,7 @@ dependencies = [
  "tracing-subscriber",
  "tribler-crypto",
  "tribler-ipv8",
+ "tribler-network-policy",
  "x25519-dalek",
 ]
 

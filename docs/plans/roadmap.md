@@ -238,10 +238,30 @@ ne sont donc pas « terminées » au sens strict) · `[x]` terminée.
   conception). **Reste** : rien de bloquant documente — l'etape est
   validee au niveau protocole (RQBIT reel via circuits e2e Rust +
   relais via le vrai client Tribler).
-- [ ] **Étape 13. Politiques de sécurité réseau et kill switch.**
-  `tribler-network-policy` : anti-SSRF, politique des noeuds de sortie,
-  kill switch atomique, garde-fous SOCKS5. Intégré dans
-  `tribler-tunnel`/`tribler-bittorrent`.
+- [x] **Étape 13. Politiques de sécurité réseau et kill switch.**
+  `tribler-network-policy` : crate de politiques pures sans dépendance
+  vers `tribler-ipv8`/`tribler-bittorrent` — `address_policy::IpPolicy`
+  (anti-SSRF : loopback, privé/CGNAT, link-local, multicast,
+  unspecified, réservé, IPv4-mapped IPv6, ports bornés),
+  `exit_policy` (port fidèle de `DataChecker`/`is_allowed` pyipv8 :
+  uTP/tracker-UDP/DHT + `PEER_FLAG_EXIT_BT`, IPv8 + `PEER_FLAG_EXIT_IPV8`
+  ou préfixe de la community ; source unique des constantes
+  `PEER_FLAG_*` ré-exportées par `tribler-tunnel::routing`),
+  `kill_switch::KillSwitch` (atomic bool + raison, `guard()`),
+  `proxy_guard::validate_local_socks5_url` (loopback numérique
+  uniquement). Intégrations : `tribler-tunnel::community` applique
+  `is_exit_data_allowed` dans les deux sens (`exit_data` sortant et
+  `exit_recv_data` rentrant, fidèle à `TunnelExitSocket`) ;
+  `tribler-bittorrent::BtEngine` valide `socks5_proxy` au démarrage
+  (refus = pas de démarrage, jamais de repli direct), crée un
+  `KillSwitch` sondé par watchdog TCP (engage tant que le proxy est
+  injoignable → `add`/`resume` refusés) ; `tribler-core` applique
+  `ip_policy` aux URI `http(s)` de `Session::add_download`
+  (résolution DNS + refus fermé sur toute adresse niée).
+  Tests : 9 unitaires politique + `tunnel_exit_drops_non_bt_or_unflagged`
+  + `policy.rs` (bittorrent : proxy distant rejeté, kill switch
+  engage/release ; core : URI loopback refusée en strict, acceptée en
+  permissif) — 14 tests tunnel, workspace `verify_all` vert.
 
 ## Phase 4 — Parité fonctionnelle et services secondaires
 

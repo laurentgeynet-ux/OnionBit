@@ -22,6 +22,11 @@ pub struct CoreConfig {
     pub db_filename: String,
     /// Intervalle de publication des stats de progression.
     pub progress_interval_ms: u64,
+    /// Politique anti-SSRF appliquee aux URI distantes (`http(s)`)
+    /// ajoutees comme telechargements : resolution DNS puis refus de
+    /// toute adresse non autorisee. `strict` en production,
+    /// `permissive` en test offline.
+    pub ip_policy: tribler_network_policy::IpPolicy,
     /// Configuration du moteur BitTorrent sous-jacent.
     pub engine: tribler_bittorrent::EngineConfig,
 }
@@ -33,6 +38,7 @@ impl Default for CoreConfig {
             downloads_dir: PathBuf::from("downloads"),
             db_filename: "tribler.db".into(),
             progress_interval_ms: DEFAULT_PROGRESS_INTERVAL_MS,
+            ip_policy: tribler_network_policy::IpPolicy::strict(),
             engine: tribler_bittorrent::EngineConfig::default(),
         }
     }
@@ -53,6 +59,7 @@ impl CoreConfig {
             state_dir,
             db_filename: "tribler.db".into(),
             progress_interval_ms: DEFAULT_PROGRESS_INTERVAL_MS,
+            ip_policy: tribler_network_policy::IpPolicy::permissive(),
         }
     }
 }

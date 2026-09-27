@@ -3,6 +3,70 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Etape 13 - tribler-network-policy : anti-SSRF, exit policy, kill switch (2026-09-27)
+
+Crate de politiques reseau pures (sans dependance vers ipv8/bittorrent)
++ integration dans tunnel, bittorrent et core.
+
+-  : anti-SSRF — categories refusables
+  (loopback, prive RFC1918 + CGNAT + ULA, link-local, multicast,
+  unspecified, reserve/documentation, IPv4-mapped IPv6), ports bornables.
+-  : port fidele de / (pyipv8
+  ) — ///,
+   exige /
+  ou le prefixe de la community. Les constantes  vivent
+  ici desormais (source unique, re-exportees par ).
+-  : atomic bool + raison diagnostic + .
+-  : /
+  numerique loopback uniquement (ni DNS, ni credentials, ni port nul).
+-  :  ET  appliquent
+   (les deux sens, comme  +
+   cote pyipv8) ; les flags sortie = 
+  locaux annonces. Test  ;
+  les sorties des tests existants portent desormais  et des
+  payloads uTP-shaped.
+-  :  valide 
+  (distant = echec de demarrage) ; watchdog TCP par proxy cree un
+   qui bloque / tant que le proxy est mort ;
+   exposee pour le futur cablage tunnel (circuits
+  morts). Tests .
+-  :  (strict par defaut,
+  permissive offline) appliquee dans  aux URI
+   — resolution DNS puis refus ferme sur toute adresse niee.
+  Tests .
+
+## Étape 13 — `tribler-network-policy` : anti-SSRF, exit policy, kill switch (2026-09-27)
+
+Crate de politiques réseau pures (sans dépendance vers ipv8/bittorrent)
++ intégration dans tunnel, bittorrent et core.
+
+- `address_policy::IpPolicy` : anti-SSRF — catégories refusables
+  (loopback, privé RFC1918 + CGNAT + ULA, link-local, multicast,
+  unspecified, réservé/documentation, IPv4-mapped IPv6), ports bornables.
+- `exit_policy` : port fidèle de `DataChecker`/`is_allowed` (pyipv8
+  `exit_socket.py`) — `could_be_utp`/`udp_tracker`/`dht`/`ipv8`,
+  `is_exit_data_allowed` exige `PEER_FLAG_EXIT_BT`/`PEER_FLAG_EXIT_IPV8`
+  ou le préfixe de la community. Les constantes `PEER_FLAG_*` vivent
+  ici désormais (source unique, ré-exportées par `tribler-tunnel::routing`).
+- `kill_switch::KillSwitch` : atomic bool + raison diagnostic + `guard()`.
+- `proxy_guard::validate_local_socks5_url` : `socks5://`/`socks5h://`
+  numérique loopback uniquement (ni DNS, ni credentials, ni port nul).
+- `tribler-tunnel` : `exit_data` ET `exit_recv_data` appliquent
+  `is_exit_data_allowed` (les deux sens, comme `sendto` +
+  `datagram_received` côté pyipv8) ; les flags de sortie = `peer_flags`
+  locaux annoncés. Test `tunnel_exit_drops_non_bt_or_unflagged` ;
+  les sorties des tests existants portent désormais `EXIT_BT` et des
+  payloads uTP-shaped.
+- `tribler-bittorrent` : `BtEngine::start` valide `socks5_proxy`
+  (distant = échec de démarrage, jamais de repli direct) ; watchdog
+  TCP du proxy + `KillSwitch` qui bloque `add`/`resume` tant que le
+  proxy est injoignable ; `kill_switch()` exposée pour le futur
+  câblage tunnel (circuits morts). Tests `tests/policy.rs`.
+- `tribler-core` : `CoreConfig.ip_policy` (stricte par défaut,
+  permissive offline) appliquée dans `Session::add_download` aux URI
+  `http(s)` — résolution DNS puis refus fermé sur toute adresse niée.
+  Tests `tests/policy.rs`.
+
 ## Étape 12 (jalon) — suivi des flags + interop Tribler 8.4.3 installé (2026-09-27)
 
 L'etape 12 est close : les deux items restants du roadmap sont

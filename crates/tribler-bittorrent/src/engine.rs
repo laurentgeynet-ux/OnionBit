@@ -5,14 +5,23 @@
 //! pause/reprise des telechargements. Il ne connait ni REST ni base de
 //! donnees : ces couches vivent dans `tribler-api` et `tribler-db`.
 
+use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 
 use librqbit::api::TorrentIdOrHash;
 use librqbit::{AddTorrent, AddTorrentOptions, AddTorrentResponse};
+use tribler_network_policy::kill_switch::KillSwitch;
+use tribler_network_policy::proxy_guard::validate_local_socks5_url;
 
 use crate::config::EngineConfig;
 use crate::download::{Download, DownloadStats};
 use crate::error::{BtError, Result};
+
+/// Intervalle entre deux sondes TCP du proxy SOCKS5 (kill switch).
+const PROXY_PROBE_INTERVAL: Duration = Duration::from_secs(5);
+/// Timeout d'une sonde TCP du proxy SOCKS5.
+const PROXY_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Moteur BitTorrent du daemon (equivalent de
 /// `tribler.core.libtorrent.download_manager.DownloadManager`).
@@ -22,6 +31,12 @@ use crate::error::{BtError, Result};
 pub struct BtEngine {
     session: Arc<librqbit::Session>,
     config: EngineConfig,
+    /// Kill switch d'anonymat : present uniquement quand
+    /// `socks5_proxy` est configure. Sonde le proxy et suspend tout
+    /// trafic pair si l'anonymat n'est plus garanti.
+    kill_switch: Option<Arc<KillSwitch>>,
+    /// Arret du watchdog de sondage du proxy.
+    watchdog_stop: Option<Arc<tokio::sync::watch::Sender<bool>>>,
 }
 
 impl std::fmt::Debug for BtEngine {
@@ -40,23 +55,91 @@ impl BtEngine {
     /// (tests), aucun trafic reseau n'est emis.
     pub async fn start(config: EngineConfig) -> Result<Self> {
         std::fs::create_dir_all(&config.output_dir)?;
+        // Proxy guard : le SOCKS5 doit etre le proxy local des tunnels
+        // — une URL distante fait echouer le demarrage (pas de repli
+        // silencieux vers une connexion directe).
+        let proxy_addr = config
+            .socks5_proxy
+            .as_deref()
+            .map(validate_local_socks5_url)
+            .transpose()?;
         let session = librqbit::Session::new_with_opts(
             config.output_dir.clone(),
             config.to_session_options(),
         )
         .await
         .map_err(|e| BtError::Engine(e.to_string()))?;
+        let (kill_switch, watchdog_stop) = match proxy_addr {
+            Some(addr) => {
+                let ks = Arc::new(KillSwitch::new());
+                let stop = Self::spawn_proxy_watchdog(addr, ks.clone());
+                (Some(ks), Some(stop))
+            }
+            None => (None, None),
+        };
         tracing::info!(
             output_dir = %config.output_dir.display(),
             dht = config.enable_dht,
             listen = ?config.listen_port,
+            proxy = ?proxy_addr,
             "session bittorrent demarree"
         );
-        Ok(Self { session, config })
+        Ok(Self {
+            session,
+            config,
+            kill_switch,
+            watchdog_stop,
+        })
+    }
+
+    /// Kill switch d'anonymat partage (ex. pour que `tribler-tunnel`
+    /// l'engage quand tous les circuits sont morts). `None` si aucun
+    /// proxy anonyme n'est configure.
+    pub fn kill_switch(&self) -> Option<Arc<KillSwitch>> {
+        self.kill_switch.clone()
+    }
+
+    /// Watchdog du proxy : sonde TCP periodique ; engage le kill
+    /// switch tant que le proxy est injoignable (le trafic pair
+    /// anonyme est suspendu par [`KillSwitch::guard`]).
+    fn spawn_proxy_watchdog(
+        addr: SocketAddr,
+        ks: Arc<KillSwitch>,
+    ) -> Arc<tokio::sync::watch::Sender<bool>> {
+        let (stop_tx, mut stop_rx) = tokio::sync::watch::channel(false);
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(PROXY_PROBE_INTERVAL);
+            tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                tokio::select! {
+                    _ = stop_rx.changed() => break,
+                    _ = tick.tick() => {
+                        let probe = tokio::time::timeout(
+                            PROXY_PROBE_TIMEOUT,
+                            tokio::net::TcpStream::connect(addr),
+                        )
+                        .await;
+                        match probe {
+                            Ok(Ok(_)) => {
+                                if ks.is_engaged() {
+                                    tracing::info!(%addr, "proxy SOCKS5 de nouveau joignable");
+                                    ks.release();
+                                }
+                            }
+                            _ => ks.engage(format!("proxy SOCKS5 {addr} injoignable")),
+                        }
+                    }
+                }
+            }
+        });
+        Arc::new(stop_tx)
     }
 
     /// Arret propre de la session et de toutes ses taches.
     pub async fn stop(&self) {
+        if let Some(tx) = &self.watchdog_stop {
+            let _ = tx.send(true);
+        }
         self.session.stop().await;
         tracing::info!("session bittorrent arretee");
     }
@@ -105,6 +188,9 @@ impl BtEngine {
     }
 
     async fn add(&self, add: AddTorrent<'_>, opts: Option<AddTorrentOptions>) -> Result<Download> {
+        if let Some(ks) = &self.kill_switch {
+            ks.guard()?;
+        }
         let response = self
             .session
             .add_torrent(add, opts)
@@ -147,6 +233,9 @@ impl BtEngine {
 
     /// Reprend un telechargement en pause.
     pub async fn resume(&self, id_or_hash: &str) -> Result<()> {
+        if let Some(ks) = &self.kill_switch {
+            ks.guard()?;
+        }
         let d = self
             .get(id_or_hash)
             .ok_or_else(|| BtError::NotFound(id_or_hash.to_string()))?;

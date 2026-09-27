@@ -11,6 +11,7 @@ librqbit.workspace = true
 librqbit-core.workspace = true
 tribler-format = { path = "../tribler-format" }
 tribler-crypto = { path = "../tribler-crypto" }
+tribler-network-policy = { path = "../tribler-network-policy" }
 tokio.workspace = true
 thiserror.workspace = true
 tracing.workspace = true

@@ -1813,6 +1813,18 @@ impl TunnelCommunity {
             }
             exit.socket.clone()
         };
+        // `is_allowed` (pyipv8 `DataChecker` + flags de sortie) : la
+        // sortie ne relaie que du trafic BT/IPv8 reconnaissable — un
+        // circuit ne doit pas devenir un proxy UDP generique.
+        let flags = self.inner.lock().unwrap().peer_flags;
+        let prefix = prefix_of(&self.community_id);
+        if !tribler_network_policy::exit_policy::is_exit_data_allowed(&p.data, flags, &prefix) {
+            tracing::debug!(
+                circuit_id,
+                "exit_data rejete : donnee hors politique de sortie"
+            );
+            return;
+        }
         tracing::trace!(circuit_id, dest = ?p.dest_address, "exit_data");
         let Some(dest_sa) = p.dest_address.to_socket_addr() else {
             return;
@@ -1866,6 +1878,15 @@ impl TunnelCommunity {
                 None => return,
             }
         };
+        // `is_allowed` est applique dans les deux sens par pyipv8
+        // (`sendto` ET `datagram_received`) : une reponse externe non
+        // conforme ne doit pas non plus retourner dans le tunnel.
+        let flags = self.inner.lock().unwrap().peer_flags;
+        let prefix = prefix_of(&self.community_id);
+        if !tribler_network_policy::exit_policy::is_exit_data_allowed(data, flags, &prefix) {
+            tracing::debug!(circuit_id, "exit_recv_data rejete : reponse hors politique");
+            return;
+        }
         let p = tp::Data {
             circuit_id,
             dest_address: UdpAddress::from("0.0.0.0:0".parse::<SocketAddr>().unwrap()),

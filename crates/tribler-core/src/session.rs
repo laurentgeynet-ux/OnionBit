@@ -11,7 +11,7 @@ use tribler_bittorrent::{BtEngine, Download, DownloadStats};
 use tribler_db::{Database, DownloadRow};
 
 use crate::config::CoreConfig;
-use crate::error::Result;
+use crate::error::{CoreError, Result};
 use crate::notifier::{Notification, Notifier};
 
 /// Unite de temps des timestamps persistants : secondes Unix.
@@ -170,9 +170,37 @@ impl CoreSession {
     /// Ajoute un telechargement (magnet ou URI `http(s)`) et le
     /// persiste.
     pub async fn add_download(&self, uri: &str, paused: bool) -> Result<Download> {
+        self.check_uri_policy(uri).await?;
         let dl = self.inner.engine.add_uri(uri).await?;
         self.persist(&dl, uri, paused)?;
         Ok(dl)
+    }
+
+    /// Anti-SSRF : une URI `http(s)` (fournie par un tiers via
+    /// l'API) ne doit jamais faire ressortir une requete vers une
+    /// adresse refusee par `config.ip_policy`. Resolution DNS puis
+    /// refus ferme : TOUTE adresse resolue doit etre autorisee.
+    async fn check_uri_policy(&self, uri: &str) -> Result<()> {
+        if !uri.starts_with("http://") && !uri.starts_with("https://") {
+            return Ok(());
+        }
+        let parsed =
+            url::Url::parse(uri).map_err(|_| CoreError::InvalidState("uri http(s) invalide"))?;
+        let host = parsed
+            .host_str()
+            .ok_or(CoreError::InvalidState("uri http(s) sans hote"))?;
+        let port = parsed
+            .port_or_known_default()
+            .ok_or(CoreError::InvalidState("uri http(s) sans port"))?;
+        let mut count = 0usize;
+        for addr in tokio::net::lookup_host((host, port)).await? {
+            self.inner.config.ip_policy.check(&addr)?;
+            count += 1;
+        }
+        if count == 0 {
+            return Err(CoreError::InvalidState("uri http(s) sans adresse"));
+        }
+        Ok(())
     }
 
     /// Ajoute un telechargement depuis les octets d'un `.torrent`.

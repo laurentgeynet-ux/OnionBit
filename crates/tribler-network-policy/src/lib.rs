@@ -5,33 +5,36 @@
 //! affaiblies localement dans un autre crate :
 //!
 //! - protection anti-SSRF sur toute requete HTTP declenchee par du
-//!   contenu distant (trackers, RSS, listes de canaux) ;
+//!   contenu distant (trackers, RSS, listes de canaux) —
+//!   [`address_policy::IpPolicy`] ;
 //! - politique des noeuds de sortie de `tribler-tunnel` (quelles
-//!   destinations un exit node est autorise a relayer) ;
-//! - kill switch atomique : coupe tout trafic reseau si l'etat
-//!   d'anonymisation attendu ne peut plus etre garanti ;
-//! - validation des connexions au proxy SOCKS5 expose par les tunnels.
+//!   donnees un exit node est autorise a relayer — port fidele de
+//!   `DataChecker`/`is_allowed` pyipv8) — [`exit_policy`] ;
+//! - kill switch atomique : coupe tout trafic conditionne par
+//!   l'anonymat quand il ne peut plus etre garanti —
+//!   [`kill_switch::KillSwitch`] ;
+//! - validation du proxy SOCKS5 expose par les tunnels —
+//!   [`proxy_guard::validate_local_socks5_url`].
 //!
 //! Ce crate est volontairement sans dependance vers `tribler-ipv8` ou
-//! `tribler-bittorrent` : il expose des politiques pures, appliquees par
-//! les autres crates.
-//!
-//! Etat : squelette (etape 0). Implementation a l'etape 13
-//! ("Politiques de securite reseau et kill switch").
+//! `tribler-bittorrent` : il expose des politiques pures, appliquees
+//! par les autres crates. Les constantes `PEER_FLAG_*` du protocole
+//! de tunnels vivent ici ([`exit_policy`]) et sont re-exportees par
+//! `tribler-tunnel::routing`.
+
+pub mod address_policy;
+pub mod error;
+pub mod exit_policy;
+pub mod kill_switch;
+pub mod proxy_guard;
+
+pub use address_policy::IpPolicy;
+pub use error::{PolicyError, Result};
+pub use kill_switch::KillSwitch;
 
 /// Decision d'une politique reseau : autoriser ou refuser une action.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PolicyDecision {
     Allow,
     Deny,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn les_decisions_de_politique_sont_distinctes() {
-        assert_ne!(PolicyDecision::Allow, PolicyDecision::Deny);
-    }
 }

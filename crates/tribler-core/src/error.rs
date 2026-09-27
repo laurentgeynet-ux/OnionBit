@@ -21,4 +21,7 @@ pub enum CoreError {
     /// Session deja demarree ou deja arretee.
     #[error("etat de session invalide: {0}")]
     InvalidState(&'static str),
+    /// Refus impose par une politique reseau (anti-SSRF).
+    #[error("politique reseau: {0}")]
+    Policy(#[from] tribler_network_policy::PolicyError),
 }
