@@ -52,6 +52,23 @@ pub struct DownloadStats {
     pub finished: bool,
     /// Torrent actif (connexions etablies).
     pub live: bool,
+    /// Debit descendant en octets/s (0 si non actif).
+    pub download_speed: u64,
+    /// Debit montant en octets/s (0 si non actif).
+    pub upload_speed: u64,
+    /// Pairs connectes.
+    pub peers_live: u32,
+    /// Pairs en cours de connexion.
+    pub peers_connecting: u32,
+    /// Pairs en file d'attente.
+    pub peers_queued: u32,
+    /// Pairs vus (cumul).
+    pub peers_seen: u32,
+    /// Pairs morts/erreurs.
+    pub peers_dead: u32,
+    /// Temps restant estime, formate (ex. "3m 20s"). `None` si
+    /// indeterminable.
+    pub eta_human: Option<String>,
     /// Message d'erreur si `state == Error`.
     pub error: Option<String>,
 }
@@ -138,6 +155,28 @@ impl Download {
                 }
             }
         };
+        let (
+            download_speed,
+            upload_speed,
+            peers_live,
+            peers_connecting,
+            peers_queued,
+            peers_seen,
+            peers_dead,
+            eta_human,
+        ) = match &s.live {
+            Some(live) => (
+                live.download_speed.as_bytes(),
+                live.upload_speed.as_bytes(),
+                live.snapshot.peer_stats.live,
+                live.snapshot.peer_stats.connecting,
+                live.snapshot.peer_stats.queued,
+                live.snapshot.peer_stats.seen,
+                live.snapshot.peer_stats.dead,
+                live.time_remaining.as_ref().map(|t| t.to_string()),
+            ),
+            None => (0, 0, 0, 0, 0, 0, 0, None),
+        };
         DownloadStats {
             id: self.id(),
             info_hash: self.info_hash_hex(),
@@ -149,6 +188,14 @@ impl Download {
             file_progress: s.file_progress,
             finished: s.finished,
             live: matches!(s.state, TorrentStatsState::Live),
+            download_speed,
+            upload_speed,
+            peers_live,
+            peers_connecting,
+            peers_queued,
+            peers_seen,
+            peers_dead,
+            eta_human,
             error: s.error,
         }
     }

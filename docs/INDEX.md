@@ -27,3 +27,11 @@ chaque étape (cf. `AGENTS.md`, "Workflow par étape").
 | `docs/reference_tribler/correspondance_modules.md` | Correspondance Python Tribler ↔ Rust |
 | `docs/CHANGELOG.md` | Historique des étapes franchies |
 | `scripts/verify_all.ps1` | Validation complète (check/clippy/fmt/test) |
+
+## Sources externes de référence (locales)
+
+| Chemin | Rôle |
+| :--- | :--- |
+| `D:\Projet\Tribler_sources\tribler` | Sources officielles Tribler (+ sous-module `pyipv8/`) — référence de vérité protocolaire IPv8 / formats / API REST |
+| `D:\Projet\Rqbit` | Sources de rqbit (branche main) — référence de l'API interne `librqbit` (`Session`, `ManagedTorrent`, options, stats) ; plus récent que `librqbit 9.0.1` sur crates.io |
+| `C:\Emule-Sion-UI-UX\app` | UI Flutter de référence (style) — **à ne pas modifier**, consultée uniquement pour la phase 6 |

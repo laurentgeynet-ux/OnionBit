@@ -27,10 +27,17 @@ Android, iOS, Web (le build Web du frontend Flutter se connecte à un
 daemon distant/local via HTTP — un navigateur ne peut pas ouvrir de
 sockets BitTorrent/UDP bruts, cf. `docs/plans/plan_faisabilite.md`).
 
-Référence de vérité protocolaire : sources officielles Tribler en local
-`D:\Projet\Tribler_sources\tribler` (dont le sous-module `pyipv8/`). Tout
-portage de comportement filaire ou de protocole IPv8/BitTorrent doit être
-vérifié contre ces sources avant d'être considéré terminé.
+Références de vérité en local :
+
+- **Protocole / comportement Tribler** : `D:\Projet\Tribler_sources\tribler`
+  (dont le sous-module `pyipv8/`). Tout portage de comportement filaire ou
+  de protocole IPv8/BitTorrent doit être vérifié contre ces sources avant
+  d'être considéré terminé.
+- **API interne du moteur BitTorrent** : `D:\Projet\Rqbit` (sources
+  complètes de rqbit, branche main — plus récent que la version
+  `librqbit 9.0.1` packagée sur crates.io). À consulter pour connaître
+  l'API exacte de `Session`/`ManagedTorrent`/stats/options plutôt que
+  de deviner les signatures (docs.rs en secours : `librqbit 9.0.1`).
 
 ## Cartographie du dépôt
 
@@ -90,7 +97,9 @@ powershell -NoProfile -ExecutionPolicy RemoteSigned -File scripts\verify_all.ps1
    `docs/reference_tribler/`.
 3. **Ne pas réinventer ce qui existe déjà en Rust mûr** : le moteur
    BitTorrent passe par `librqbit` (cf. ADR-0001) plutôt qu'une
-   réimplémentation de bencode/peer-wire/DHT. Vérifier `docs/plans/plan_faisabilite.md`
+   réimplémentation de bencode/peer-wire/DHT. En cas de doute sur l'API
+   `librqbit`, consulter les sources locales `D:\Projet\Rqbit` (branche
+   main) avant docs.rs. Vérifier `docs/plans/plan_faisabilite.md`
    avant d'ajouter une grosse dépendance protocolaire alternative.
 4. **Sécurité non négociable** : ne jamais affaiblir les garde-fous de
    `tribler-network-policy` (anti-SSRF, isolation loopback par défaut de
