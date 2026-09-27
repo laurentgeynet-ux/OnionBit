@@ -3,6 +3,15 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Étape 12 (correctif) — `perform_http_request` : assemblage strict + pas de fuite (2026-09-27)
+
+- `community.rs::perform_http_request` : le `total` est fige au
+  premier chunk recu (chunks incoherents ignores), l'assemblage exige
+  la contiguite `0..total` (un trou = timeout, plus de reponse
+  partielle silencieuse), et l'entree `http_requests` est retiree sur
+  TOUS les chemins (succes, timeout, erreur d'envoi/circuit) — avant,
+  les erreurs precoces fuyaient l'entree.
+
 ## Étape 12 (jalon) — interop tunnels Rust↔pyipv8 validée (2026-09-27)
 
 L'objection « tout le chiffrement peut diverger » est levee pour le

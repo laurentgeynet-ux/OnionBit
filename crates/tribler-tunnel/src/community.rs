@@ -488,39 +488,63 @@ impl TunnelCommunity {
             .unwrap()
             .http_requests
             .insert(identifier, tx);
-        let p = tp::HttpRequest {
-            circuit_id,
-            identifier,
-            target: target.clone(),
-            request: request.to_vec(),
-        };
-        let addr = {
-            let inner = self.inner.lock().unwrap();
-            inner
-                .circuits
-                .get(&circuit_id)
-                .and_then(|c| c.first_hop().and_then(|h| h.address.clone()))
-                .ok_or(Ipv8Error::Malformed("circuit HTTP inconnu"))?
-        };
-        self.send_cell(&addr, &p).await?;
-        let collected = tokio::time::timeout(std::time::Duration::from_millis(timeout_ms), async {
-            let mut parts: HashMap<u16, Vec<u8>> = HashMap::new();
-            while let Some(chunk) = rx.recv().await {
-                parts.insert(chunk.part, chunk.response);
-                if parts.len() >= chunk.total as usize {
-                    break;
-                }
+        let result = async {
+            let p = tp::HttpRequest {
+                circuit_id,
+                identifier,
+                target: target.clone(),
+                request: request.to_vec(),
+            };
+            let addr = {
+                let inner = self.inner.lock().unwrap();
+                inner
+                    .circuits
+                    .get(&circuit_id)
+                    .and_then(|c| c.first_hop().and_then(|h| h.address.clone()))
+                    .ok_or(Ipv8Error::Malformed("circuit HTTP inconnu"))?
+            };
+            self.send_cell(&addr, &p).await?;
+            // Le `total` est fige au premier chunk recu (les suivants
+            // incoherents sont ignores) et l'assemblage exige la
+            // contiguite 0..total — un trou = timeout, jamais une
+            // reponse partielle silencieuse.
+            let collected =
+                tokio::time::timeout(std::time::Duration::from_millis(timeout_ms), async {
+                    let mut parts: HashMap<u16, Vec<u8>> = HashMap::new();
+                    let mut total: Option<u16> = None;
+                    while let Some(chunk) = rx.recv().await {
+                        let t = *total.get_or_insert(chunk.total);
+                        if chunk.total != t || chunk.part >= t {
+                            continue;
+                        }
+                        parts.insert(chunk.part, chunk.response);
+                        if parts.len() >= t as usize {
+                            break;
+                        }
+                    }
+                    let t = total.unwrap_or(0);
+                    let mut out = Vec::new();
+                    for i in 0..t {
+                        match parts.get(&i) {
+                            Some(d) => out.extend_from_slice(d),
+                            None => {
+                                return Err(Ipv8Error::Malformed("chunk http-response manquant"))
+                            }
+                        }
+                    }
+                    Ok::<Vec<u8>, Ipv8Error>(out)
+                })
+                .await;
+            match collected {
+                Ok(r) => r,
+                Err(_) => Err(Ipv8Error::Malformed("timeout http-response")),
             }
-            let mut ordered: Vec<(u16, Vec<u8>)> = parts.into_iter().collect();
-            ordered.sort_by_key(|(i, _)| *i);
-            ordered
-                .into_iter()
-                .flat_map(|(_, d)| d)
-                .collect::<Vec<u8>>()
-        })
+        }
         .await;
+        // Retrait sur TOUS les chemins (succes, timeout, erreur
+        // d'envoi) : sinon l'entree `http_requests` fuit.
         self.inner.lock().unwrap().http_requests.remove(&identifier);
-        collected.map_err(|_| Ipv8Error::Malformed("timeout http-response"))
+        result
     }
 
     /// `on_http_request` (`socket.rs`) : cote sortie — exige
