@@ -1,0 +1,11 @@
+[package]
+name = "tribler-network-policy"
+description = "Garde-fous reseau : anti-SSRF, politique des noeuds de sortie des tunnels, kill switch, validation du proxy SOCKS5."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+
+[dev-dependencies]

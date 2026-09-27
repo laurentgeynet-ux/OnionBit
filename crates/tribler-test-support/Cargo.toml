@@ -1,0 +1,11 @@
+[package]
+name = "tribler-test-support"
+description = "Helpers et fixtures de tests partages inter-crates (torrents/canaux d'exemple, pairs IPv8 de boucle locale, etat de daemon jetable)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+
+[dev-dependencies]

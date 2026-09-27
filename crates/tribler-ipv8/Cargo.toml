@@ -1,0 +1,11 @@
+[package]
+name = "tribler-ipv8"
+description = "Moteur overlay IPv8 : decouverte de pairs, framework de communities, DHT overlay, signature/verification des messages."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+
+[dev-dependencies]

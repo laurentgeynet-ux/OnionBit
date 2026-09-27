@@ -1,0 +1,11 @@
+[package]
+name = "tribler-api"
+description = "Plan de controle REST + WebSocket (axum), en parite fonctionnelle avec l'API aiohttp de Tribler. Seule porte d'entree pour un client (CLI, future UI Flutter)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+
+[dev-dependencies]

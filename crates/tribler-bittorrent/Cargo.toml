@@ -1,0 +1,11 @@
+[package]
+name = "tribler-bittorrent"
+description = "Enveloppe autour du moteur BitTorrent (librqbit) : sessions de telechargement/upload, stockage des pieces, routage optionnel via le SOCKS5 des tunnels."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+
+[dev-dependencies]

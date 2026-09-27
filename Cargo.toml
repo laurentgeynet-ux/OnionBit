@@ -1,0 +1,67 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/tribler-format",
+    "crates/tribler-crypto",
+    "crates/tribler-bittorrent",
+    "crates/tribler-ipv8",
+    "crates/tribler-tunnel",
+    "crates/tribler-core",
+    "crates/tribler-db",
+    "crates/tribler-network-policy",
+    "crates/tribler-api",
+    "crates/tribler-cli",
+    "crates/tribler-daemon",
+    "crates/tribler-test-support",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+authors = ["Lou"]
+repository = "https://github.com/Tribler/tribler"
+rust-version = "1.80"
+
+# NOTE: cette table de dependances partagees est preparee a l'avance (cf.
+# docs/architecture/architecture.md) mais la plupart ne sont pas encore
+# consommees par les crates au stade "scaffold" (etape 0). Chaque phase de
+# docs/plans/roadmap.md active progressivement les dependances dont elle a
+# besoin dans le Cargo.toml du crate concerne.
+[workspace.dependencies]
+tokio = { version = "1", features = ["full"] }
+axum = { version = "0.8", features = ["ws"] }
+tower-http = { version = "0.6", features = ["fs", "cors"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
+tracing-appender = "0.2"
+clap = { version = "4", features = ["derive"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+rand = "0.8"
+sha1 = "0.10"
+sha2 = "0.10"
+ed25519-dalek = "2"
+x25519-dalek = "2"
+aes-gcm = "0.10"
+hex = "0.4"
+uuid = { version = "1", features = ["v4", "serde"] }
+url = "2"
+bytes = "1"
+futures-util = "0.3"
+tokio-tungstenite = "0.24"
+tempfile = "3"
+proptest = "1"
+
+# Moteur BitTorrent reutilise (voir ADR-0001) : evite de reecrire bencode,
+# protocole peer-wire, DHT BEP5 et tracker HTTP/UDP qui existent deja en
+# Rust pur et sont actifs/matures.
+librqbit = "9"
+librqbit-core = "5"
+librqbit-bencode = "3"
+
+[profile.release]
+opt-level = 3
+lto = "thin"

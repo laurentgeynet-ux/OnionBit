@@ -1,0 +1,11 @@
+[package]
+name = "tribler-db"
+description = "Persistance SQLite : torrents connus, canaux, votes/popularite, parametres utilisateur (remplace Pony ORM)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+
+[dev-dependencies]

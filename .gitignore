@@ -1,0 +1,12 @@
+/target
+**/target
+Cargo.lock.bak
+*.swp
+*.log
+logs/
+.vscode/
+.idea/
+*.iml
+.dart_tool/
+build/
+.flutter-plugins-dependencies

@@ -1,0 +1,11 @@
+[package]
+name = "tribler-crypto"
+description = "Primitives cryptographiques : hachage BitTorrent (SHA-1/SHA-256), cles IPv8 (Ed25519/X25519), chiffrement des tunnels anonymes."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+
+[dev-dependencies]

@@ -1,0 +1,15 @@
+[package]
+name = "tribler-cli"
+description = "Outil de pilotage en ligne de commande du daemon, via tribler-api (REST/WebSocket)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "tribler-cli"
+path = "src/main.rs"
+
+[dependencies]
+
+[dev-dependencies]

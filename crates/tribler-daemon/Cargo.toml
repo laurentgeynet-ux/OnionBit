@@ -1,0 +1,15 @@
+[package]
+name = "tribler-daemon"
+description = "Binaire principal : assemble tribler-core, tribler-bittorrent, tribler-ipv8, tribler-tunnel, tribler-db et tribler-api ; gere la configuration et le cycle de vie du processus."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "tribler-daemon"
+path = "src/main.rs"
+
+[dependencies]
+
+[dev-dependencies]

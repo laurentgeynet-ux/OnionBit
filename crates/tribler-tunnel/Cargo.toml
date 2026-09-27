@@ -1,0 +1,11 @@
+[package]
+name = "tribler-tunnel"
+description = "Reseau anonyme (TunnelCommunity) : construction de circuits en onion routing, hidden seeding, relais/noeuds de sortie."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+
+[dev-dependencies]
