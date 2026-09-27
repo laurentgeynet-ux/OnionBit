@@ -1,11 +1,22 @@
 [package]
 name = "tribler-core"
-description = "Couche domaine/application : Session Tribler, Notifier d'evenements, orchestration bittorrent+ipv8+tunnel+db, regles metier (decouverte, RSS, watch folder, torrent checker)."
+description = "Domaine et orchestration : Session (cycle de vie), Notifier (bus d'evenements), ports vers les crates d'infrastructure."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
 
 [dependencies]
+tribler-bittorrent = { path = "../tribler-bittorrent" }
+tribler-db = { path = "../tribler-db" }
+tribler-format = { path = "../tribler-format" }
+tribler-crypto = { path = "../tribler-crypto" }
+tokio.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+hex.workspace = true
 
 [dev-dependencies]
+tempfile.workspace = true

@@ -1,44 +1,90 @@
 //! `tribler-core` — domaine et orchestration.
 //!
-//! Coeur de la "clean architecture" du projet : ce crate ne fait aucune
-//! I/O directe (pas de socket, pas de SQL, pas de HTTP) — il definit les
-//! entites du domaine et orchestre les crates d'infrastructure au travers
-//! de traits (ports), a l'image de `tribler.core.session`/`components.py`
-//! cote Python :
+//! Equivalent de `tribler.core.session` : `CoreSession` assemble les
+//! ports d'infrastructure (moteur BitTorrent `tribler-bittorrent`,
+//! persistance `tribler-db`) et publie les evenements internes sur le
+//! `Notifier`. Ce crate ne connait ni HTTP ni transports — il est
+//! consomme par `tribler-api` (REST/WebSocket) et `tribler-daemon`
+//! (composition racine).
 //!
-//! - `Session` : cycle de vie du daemon, demarrage/arret ordonne des
-//!   composants (bittorrent, ipv8, tunnel, db) ;
-//! - `Notifier` : bus d'evenements interne (progression de telechargement,
-//!   changements d'etat de circuit, etc.), consomme par `tribler-api`
-//!   pour alimenter le WebSocket ;
-//! - regles metier historiquement dans
-//!   `content_discovery/`, `torrent_checker/`, `rss/`, `watch_folder/`.
-//!
-//! Depend de `tribler-bittorrent`, `tribler-tunnel`, `tribler-db` et
-//! `tribler-format` via des traits definis ici (inversion de dependance),
-//! jamais l'inverse.
-//!
-//! Etat : squelette (etape 0). L'orchestration reelle arrive
-//! progressivement a partir de l'etape 5 ("Session et Notifier") puis se
-//! complete au fil des etapes suivantes.
+//! Services secondaires (content_discovery, torrent_checker, rss,
+//! watch_folder) : ajoutes a l'etape 14 du roadmap.
 
-/// Evenement de domaine emis par la `Session` vers le `Notifier`.
-///
-/// Enumeration volontairement minimale au stade squelette ; sera etendue
-/// au fil des etapes pour couvrir tunnels, canaux, etc.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DomainEvent {
-    SessionStarted,
-    SessionStopped,
-}
+pub mod config;
+pub mod error;
+pub mod notifier;
+pub mod session;
+
+pub use config::CoreConfig;
+pub use error::{CoreError, Result};
+pub use notifier::{Notification, Notifier};
+pub use session::CoreSession;
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    /// .torrent minimal produit par le bencode de tribler-format.
+    fn test_torrent_bytes() -> Vec<u8> {
+        let mut info = std::collections::BTreeMap::new();
+        info.insert(b"length".to_vec(), tribler_format::bencode::BValue::Int(42));
+        info.insert(
+            b"name".to_vec(),
+            tribler_format::bencode::BValue::Bytes(b"core-test.bin".to_vec()),
+        );
+        info.insert(
+            b"piece length".to_vec(),
+            tribler_format::bencode::BValue::Int(16384),
+        );
+        info.insert(
+            b"pieces".to_vec(),
+            tribler_format::bencode::BValue::Bytes(vec![0u8; 20]),
+        );
+        let mut root = std::collections::BTreeMap::new();
+        root.insert(
+            b"info".to_vec(),
+            tribler_format::bencode::BValue::Dict(info),
+        );
+        tribler_format::bencode::encode(&tribler_format::bencode::BValue::Dict(root))
+    }
+
+    #[tokio::test]
+    async fn session_offline_ajoute_et_persiste_un_torrent() {
+        let dir = tempfile::tempdir().unwrap();
+        let notifier = Notifier::new();
+        let mut rx = notifier.subscribe();
+        let session = CoreSession::start_offline(CoreConfig::offline(dir.path().into()), notifier)
+            .await
+            .unwrap();
+
+        let dl = session
+            .add_torrent_bytes(test_torrent_bytes(), true)
+            .await
+            .unwrap();
+        assert_eq!(dl.name().as_deref(), Some("core-test.bin"));
+        assert_eq!(session.downloads().len(), 1);
+
+        // Le notifier a vu l'ajout via les evenements de progression
+        // (la boucle tourne en tache de fond ; on attend un evenement).
+        let n = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
+            .await
+            .expect("aucune notification recue")
+            .unwrap();
+        assert!(matches!(n, Notification::DownloadProgress(_)));
+
+        session.stop().await;
+    }
+
     #[test]
-    fn les_evenements_de_domaine_sont_comparables() {
-        assert_eq!(DomainEvent::SessionStarted, DomainEvent::SessionStarted);
-        assert_ne!(DomainEvent::SessionStarted, DomainEvent::SessionStopped);
+    fn notifier_sans_abonne_ne_bloque_pas() {
+        let n = Notifier::new();
+        n.notify(Notification::SessionStarted);
+        // Pas de panique ni de blocage sans abonnes.
+        let mut rx = n.subscribe();
+        n.notify(Notification::SessionStopping);
+        assert!(matches!(
+            rx.try_recv().unwrap(),
+            Notification::SessionStopping
+        ));
     }
 }

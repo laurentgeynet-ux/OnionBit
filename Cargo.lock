@@ -3536,6 +3536,19 @@ version = "0.1.0"
 [[package]]
 name = "tribler-core"
 version = "0.1.0"
+dependencies = [
+ "hex 0.4.3",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "tribler-bittorrent",
+ "tribler-crypto",
+ "tribler-db",
+ "tribler-format",
+]
 
 [[package]]
 name = "tribler-crypto"

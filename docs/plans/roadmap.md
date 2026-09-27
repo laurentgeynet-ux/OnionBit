@@ -51,9 +51,12 @@ Légende : `[ ]` à faire · `[~]` en cours · `[x]` terminée.
 
 ## Phase 2 — Daemon minimal et API de contrôle
 
-- [ ] **Étape 5. Session et Notifier.** `tribler-core` : `Session`
-  (démarrage/arrêt ordonné), `Notifier` (bus d'événements interne),
-  traits (ports) vers `tribler-bittorrent`/`tribler-db`.
+- [x] **Étape 5. Session et Notifier.** `tribler-core` : `CoreSession`
+  (démarrage/arrêt ordonné, restauration des téléchargements persistés,
+  boucle de progression périodique bornée), `Notifier` (broadcast
+  tokio borné, non-bloquant, `Lagged` pour les abonnés lents),
+  `CoreConfig` centralisée. Persistance automatique des ajouts dans
+  `downloads`. 2 tests offline (session en mémoire + notifier).
 - [ ] **Étape 6. API REST + WebSocket minimale.** `tribler-api` (axum) :
   endpoints `status`, `downloads` (list/add/remove/pause/resume),
   WebSocket de notification de progression. Bindé sur `127.0.0.1`

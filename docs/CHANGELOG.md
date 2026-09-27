@@ -3,6 +3,26 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Étape 5 — `tribler-core` : Session + Notifier (2026-09-28)
+
+- `CoreSession` : facade domaine (equivalent de `tribler.core.session.
+  Session`) assemblant `BtEngine` + `Database` + `Notifier`.
+- Restauration des telechargements persistes (`downloads`) au
+  demarrage, avec re-pause si necessaire.
+- Boucle de progression periodique (`progress_interval_ms`) :
+  `DownloadProgress` par torrent + detection de fin
+  (`DownloadFinished`) + marquage `finished` en base.
+- `Notifier` : `tokio::sync::broadcast` borne (256), non-bloquant,
+  variantes `SessionStarted/SessionStopping/DownloadProgress/
+  DownloadFinished/DownloadStateChanged/TorrentMetadataCreated`.
+- `CoreConfig` : tous les reglages d'orchestration (state_dir,
+  downloads_dir, db_filename, intervalle, EngineConfig) + preset
+  `offline` pour tests.
+- `add_torrent_bytes` persiste les octets `.torrent` en base pour la
+  reprise exacte au redemarrage.
+- 2 tests : session offline bout en bout (ajout + stats + notification)
+  et notifier sans abonnes.
+
 ## Étape 4 — `tribler-db` : schema SQLite + migrations (2026-09-28)
 
 - `Database` : ouverture fichier/memoire, `Mutex<Connection>` pour le
