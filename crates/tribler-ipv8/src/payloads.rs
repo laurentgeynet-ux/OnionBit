@@ -363,6 +363,146 @@ impl Payload for IntroductionResponse {
     }
 }
 
+/// `NewIntroductionRequestPayload` (msg 234) :
+/// `ip_address x3, H, bits, raw`.
+///
+/// Bits (ordre `names` Python, MSB-first) : `connection_type_0`,
+/// `connection_type_1`, `supports_new_style`, `dflag1`, `dflag2`,
+/// `tunnel`, `sync`, `advice`.
+#[derive(Debug)]
+pub struct NewIntroductionRequest {
+    /// Adresse de destination (WAN cense).
+    pub destination_address: UdpAddress,
+    /// LAN de l'emetteur.
+    pub source_lan_address: UdpAddress,
+    /// WAN de l'emetteur.
+    pub source_wan_address: UdpAddress,
+    /// Identifiant a renvoyer.
+    pub identifier: u16,
+    /// Type de connexion.
+    pub connection_type: ConnectionType,
+    /// `supports_new_style`.
+    pub supports_new_style: bool,
+    /// `tunnel` (le demandeur veut du tunnel).
+    pub tunnel: bool,
+    /// `sync` (le demandeur veut synchroniser).
+    pub sync: bool,
+    /// `advice` (introduction a un autre pair souhaitee).
+    pub advice: bool,
+    /// Octets libres.
+    pub extra_bytes: Vec<u8>,
+}
+
+impl Payload for NewIntroductionRequest {
+    const MSG_ID: u8 = msg::NEW_INTRODUCTION_REQUEST;
+
+    fn pack(&self, w: &mut Writer) -> Result<(), Ipv8Error> {
+        let (b0, b1) = self.connection_type.encode();
+        w.ip_address(&self.destination_address)?;
+        w.ip_address(&self.source_lan_address)?;
+        w.ip_address(&self.source_wan_address)?;
+        w.u16(self.identifier);
+        w.bits([
+            b0,
+            b1,
+            self.supports_new_style,
+            false,
+            false,
+            self.tunnel,
+            self.sync,
+            self.advice,
+        ]);
+        w.raw(&self.extra_bytes);
+        Ok(())
+    }
+
+    fn unpack(r: &mut Reader<'_>) -> Result<Self, Ipv8Error> {
+        let destination_address = r.ip_address()?;
+        let source_lan_address = r.ip_address()?;
+        let source_wan_address = r.ip_address()?;
+        let identifier = r.u16()?;
+        let bits = r.bits()?;
+        let extra_bytes = r.raw().to_vec();
+        Ok(Self {
+            destination_address,
+            source_lan_address,
+            source_wan_address,
+            identifier,
+            connection_type: ConnectionType::decode(bits[0], bits[1]),
+            supports_new_style: bits[2],
+            tunnel: bits[5],
+            sync: bits[6],
+            advice: bits[7],
+            extra_bytes,
+        })
+    }
+}
+
+/// `NewIntroductionResponsePayload` (msg 233) :
+/// `ip_address x5, H, bits, raw`.
+///
+/// Bits : `intro_supports_new_style` (bit 0), puis `flag1..flag7`.
+#[derive(Debug)]
+pub struct NewIntroductionResponse {
+    /// Adresse du destinataire.
+    pub destination_address: UdpAddress,
+    /// LAN de l'emetteur.
+    pub source_lan_address: UdpAddress,
+    /// WAN de l'emetteur.
+    pub source_wan_address: UdpAddress,
+    /// LAN du pair introduit.
+    pub lan_introduction_address: UdpAddress,
+    /// WAN du pair introduit.
+    pub wan_introduction_address: UdpAddress,
+    /// Identifiant de la requete.
+    pub identifier: u16,
+    /// `intro_supports_new_style`.
+    pub intro_supports_new_style: bool,
+    /// Octets libres.
+    pub extra_bytes: Vec<u8>,
+}
+
+impl Payload for NewIntroductionResponse {
+    const MSG_ID: u8 = msg::NEW_INTRODUCTION_RESPONSE;
+
+    fn pack(&self, w: &mut Writer) -> Result<(), Ipv8Error> {
+        w.ip_address(&self.destination_address)?;
+        w.ip_address(&self.source_lan_address)?;
+        w.ip_address(&self.source_wan_address)?;
+        w.ip_address(&self.lan_introduction_address)?;
+        w.ip_address(&self.wan_introduction_address)?;
+        w.u16(self.identifier);
+        w.bits([
+            self.intro_supports_new_style,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+        ]);
+        w.raw(&self.extra_bytes);
+        Ok(())
+    }
+
+    fn unpack(r: &mut Reader<'_>) -> Result<Self, Ipv8Error> {
+        Ok(Self {
+            destination_address: r.ip_address()?,
+            source_lan_address: r.ip_address()?,
+            source_wan_address: r.ip_address()?,
+            lan_introduction_address: r.ip_address()?,
+            wan_introduction_address: r.ip_address()?,
+            identifier: r.u16()?,
+            intro_supports_new_style: {
+                let bits = r.bits()?;
+                bits[0]
+            },
+            extra_bytes: r.raw().to_vec(),
+        })
+    }
+}
+
 /// `PunctureRequestPayload` (msg 250, **non signe**) :
 /// `ipv4, ipv4, H`.
 #[derive(Debug)]

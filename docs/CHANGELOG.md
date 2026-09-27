@@ -3,6 +3,32 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Étape 11 — `tribler-ipv8` : framework de communities complet (2026-09-27)
+
+- `peer.rs` reecrit : `Peer` (+ `new_style_intro`, `update_clock`
+  Lamport, `last_response`), `WalkableAddress`, `Network` complet —
+  `_all_addresses`, `discover_address`, `get_walkable_addresses`
+  (filtre service + `old_style`), `get_verified_by_address`,
+  `get_introductions_from`, `remove_by_address`, `blacklist`/
+  `blacklist_mids`, `reverse_intro` borne FIFO (500).
+- `payloads.rs` : `NewIntroductionRequest` (234) et
+  `NewIntroductionResponse` (233) au format `ip_address` — bits
+  `connection_type(2) + supports_new_style + tunnel + sync + advice`
+  cote request, `intro_supports_new_style` en **bit 0** cote response.
+- `discovery.rs` reecrit : horloge de Lamport par community
+  (`claim_global_time`/`update_global_time`, `% 65536` pour les
+  introductions), handlers 233/234/249/250/231/232, reponse new-style
+  si le demandeur le supporte, `my_estimated_wan` appris depuis
+  `destination_address` hors sous-reseaux LAN (`is_lan_subnet`),
+  `get_new_introduction` (pair aleatoire → adresse walkable →
+  bootstrap, re-bootstrap 5 %), puncture-request non signe → puncture
+  signe vers `wan_walker` (ou `lan_walker` si meme IP WAN), selection
+  des introductions LAN/WAN fidele a `introductions` Python.
+- Tests `community_framework.rs` (loopback) : introduction nouveau
+  style 234→233 avec propagation du flag, adresses walkable apprises
+  via introduction puis `get_new_introduction` vers un 3e noeud,
+  puncture-request non signe → puncture signe verifie sur socket brut.
+
 ## Étape 10 — `tribler-ipv8` : overlay DHT (2026-09-27)
 
 - `dht/routing.rs` : `calc_node_id` (CRC-32 **IEEE/zlib** d'IP masquee

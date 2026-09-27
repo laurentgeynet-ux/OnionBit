@@ -107,9 +107,23 @@ Légende : `[ ]` à faire · `[~]` en cours · `[x]` terminée.
   Ed25519. Tests loopback : introduction → ping → `store_value` →
   `find_values` de bout en bout entre deux noeuds. **Reste** : interop
   avec des noeuds Python réels (formats repris à l'identique).
-- [ ] **Étape 11. Framework de communities complet.** `tribler-ipv8` :
-  gestion de plusieurs communities simultanées, signatures Ed25519 sur
-  tous les messages, gestion du churn/déconnexions.
+- [x] **Étape 11. Framework de communities complet.** `tribler-ipv8` :
+  `Network` complet (`_all_addresses`/`WalkableAddress`, `discover_address`,
+  `get_walkable_addresses` filtré par service/old-style,
+  `get_verified_by_address`, `get_introductions_from`, `blacklist` +
+  `blacklist_mids`, cache `reverse_intro` borné FIFO à 500),
+  `Peer::update_clock` (Lamport + `last_response`), horloge de Lamport
+  par community (`claim_global_time`/`update_global_time`, `% 65536`
+  pour les introductions comme le Python), nouveaux formats
+  d'introduction 233/234 (`ip_address` générique, bits
+  `intro_supports_new_style` en bit 0), puncture-request **non signé**
+  (250/232) → puncture signé (249/231) vers `wan_walker` (ou
+  `lan_walker` si même IP WAN), `my_estimated_wan` appris depuis
+  `destination_address` (`is_lan_subnet` 10/8, 172.16/12, 192.168/16,
+  127/8, 169.254/16), `get_new_introduction` (pair aléatoire →
+  walkable → bootstrap, 5 % de re-bootstrap). 3 tests loopback :
+  introduction nouveau style, adresses walkable via introduction,
+  puncture-request → puncture.
 - [ ] **Étape 12. TunnelCommunity : circuits et hidden seeding.**
   `tribler-tunnel` : construction de circuits en onion routing (1/2/3
   sauts), chiffrement AES-GCM par saut (`tribler-crypto`), hidden

@@ -1,15 +1,19 @@
-//! `DiscoveryCommunity` (equivalent de `peerdiscovery/community.py`) :
-//! bootstrap + marche aleatoire via similarity-request + ping/pong +
-//! introduction-request/response (ancien format IPv4 — suffisant pour
-//! l'etape 9 ; le format "new style" `ip_address` arrive a l'etape 11).
+//! `DiscoveryCommunity` (equivalent de `peerdiscovery/community.py` +
+//! handlers generiques de `community.py`) : bootstrap + marche
+//! aleatoire via similarity-request + ping/pong +
+//! introduction-request/response (formats **ancien IPv4** et **nouveau
+//! `ip_address`**), gestion des adresses "walkable" introduites,
+//! puncture/puncture-request, horloge de Lamport.
 //!
 //! `community_id` = `7e313685c1912a141279f8248fc8db5899c5df5a`
 //! (identique au Python).
 
 use std::net::SocketAddr;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use rand::seq::SliceRandom;
 use tribler_crypto::ipv8::keys::LibNaClSecretKey;
 
 use crate::address::UdpAddress;
@@ -17,11 +21,11 @@ use crate::endpoint::UdpEndpoint;
 use crate::error::Ipv8Error;
 use crate::packet::{prefix_of, Packet};
 use crate::payloads::{
-    msg, ConnectionType, IntroductionRequest, IntroductionResponse, Payload, Ping,
-    SimilarityRequest, SimilarityResponse,
+    msg, ConnectionType, IntroductionRequest, IntroductionResponse, NewIntroductionRequest,
+    NewIntroductionResponse, Payload, Ping, SimilarityRequest, SimilarityResponse,
 };
 use crate::peer::{Network, Peer};
-use crate::serializer::Writer;
+use crate::serializer::{Reader, Writer};
 use crate::CommunityId;
 
 /// `community_id` de la `DiscoveryCommunity` pyipv8 (inchange).
@@ -39,15 +43,33 @@ const WALK_INTERVAL: Duration = Duration::from_secs(25);
 /// (`max_peers` Python par defaut cote strategy).
 const DEFAULT_MAX_PEERS: usize = 30;
 
-/// Lamport clock locale (compteur monotone par community).
-fn now_global_time() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
+/// Probabilite de re-bootstrap quand des pairs existent
+/// (`random() < 0.05` Python dans `get_new_introduction`).
+const REBOOTSTRAP_CHANCE: f64 = 0.05;
+
+/// Adresse "non definie" (`0.0.0.0:0`).
+fn unspecified() -> UdpAddress {
+    UdpAddress::Ipv4(std::net::SocketAddrV4::new(
+        std::net::Ipv4Addr::UNSPECIFIED,
+        0,
+    ))
 }
 
-/// Community de decouverte minimale.
+/// `true` si l'IPv4 est dans un sous-reseau LAN prive
+/// (`address_in_lan_subnets` Python : 10/8, 172.16/12, 192.168/16,
+/// 127/8, 169.254/16).
+pub fn is_lan_subnet(ip: std::net::Ipv4Addr) -> bool {
+    let o = ip.octets();
+    o[0] == 10
+        || (o[0] == 172 && (16..=31).contains(&o[1]))
+        || (o[0] == 192 && o[1] == 168)
+        || o[0] == 127
+        || (o[0] == 169 && o[1] == 254)
+}
+
+/// Community de decouverte (overlay generique : marche aleatoire +
+/// puncture + Lamport — les autres communities reutilisent les memes
+/// primitives via `packet`/`payloads`).
 pub struct DiscoveryCommunity {
     /// Identite locale.
     key: LibNaClSecretKey,
@@ -55,25 +77,41 @@ pub struct DiscoveryCommunity {
     network: Arc<Network>,
     /// Endpoint UDP partage.
     endpoint: Arc<UdpEndpoint>,
+    /// `Weak` pour respawner depuis les handlers synchrones.
+    weak: std::sync::Weak<Self>,
     /// Nonce courant pour ping/introduction (mod 65536).
     identifier: std::sync::atomic::AtomicU16,
+    /// Horloge de Lamport (`my_peer.lamport_timestamp` de l'overlay).
+    global_time: AtomicU64,
+    /// `my_estimated_wan` Python (appris via introduction-response).
+    my_estimated_wan: Mutex<UdpAddress>,
+    /// `my_estimated_lan`.
+    my_estimated_lan: Mutex<UdpAddress>,
     /// Requetes d'introduction en attente (identifier -> instant).
-    pending_intro: std::sync::Mutex<std::collections::HashMap<u16, (UdpAddress, Instant)>>,
+    pending_intro: Mutex<std::collections::HashMap<u16, (UdpAddress, Instant)>>,
 }
 
 impl DiscoveryCommunity {
     /// Cree la community et s'enregistre aupres de l'endpoint.
+    /// `my_lan` : adresse LAN estimee (`UdpAddress::Ipv4(0.0.0.0:0)`
+    /// si inconnue — le Python fait une resolution d'interface reelle,
+    /// reportee).
     pub async fn new(
         key: LibNaClSecretKey,
         network: Arc<Network>,
         endpoint: Arc<UdpEndpoint>,
+        my_lan: UdpAddress,
     ) -> Arc<Self> {
-        let community = Arc::new(Self {
+        let community = Arc::new_cyclic(|weak| Self {
             key,
             network,
             endpoint: endpoint.clone(),
+            weak: weak.clone(),
             identifier: std::sync::atomic::AtomicU16::new(0),
-            pending_intro: std::sync::Mutex::new(std::collections::HashMap::new()),
+            global_time: AtomicU64::new(0),
+            my_estimated_wan: Mutex::new(unspecified()),
+            my_estimated_lan: Mutex::new(my_lan),
+            pending_intro: Mutex::new(std::collections::HashMap::new()),
         });
         let prefix = prefix_of(&DISCOVERY_COMMUNITY_ID);
         let c = community.clone();
@@ -83,14 +121,41 @@ impl DiscoveryCommunity {
         community
     }
 
+    /// `global_time` (lecture seule — tests et observabilite).
+    pub fn global_time(&self) -> u64 {
+        self.global_time.load(Ordering::Relaxed)
+    }
+
+    /// `claim_global_time` : incremente et retourne l'horodatage.
+    fn claim_global_time(&self) -> u64 {
+        self.global_time.fetch_add(1, Ordering::Relaxed) + 1
+    }
+
+    /// `update_global_time` : l'horodatage recu fait avancer l'horloge.
+    fn update_global_time(&self, t: u64) {
+        self.global_time.fetch_max(t, Ordering::Relaxed);
+    }
+
     /// Prochain identifiant de requete (mod 65536 comme le Python —
     /// `fetch_add` sur `u16` boucle naturellement).
     fn next_id(&self) -> u16 {
-        self.identifier
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        self.identifier.fetch_add(1, Ordering::Relaxed)
     }
 
-    /// Serialise + signe + envoie un payload a une adresse.
+    /// `my_estimated_wan`.
+    pub fn my_estimated_wan(&self) -> UdpAddress {
+        self.my_estimated_wan.lock().unwrap().clone()
+    }
+
+    /// `my_estimated_lan`.
+    pub fn my_estimated_lan(&self) -> UdpAddress {
+        self.my_estimated_lan.lock().unwrap().clone()
+    }
+
+    /// Serialise + signe + envoie un payload (global_time mod 65536
+    /// comme les introductions Python — `_ez_pack` prend la valeur
+    /// brute mais les champs `identifier`/`global_time` sont tires
+    /// modulo 2^16 dans `create_introduction_*`).
     async fn send_payload<P: Payload>(
         &self,
         addr: &UdpAddress,
@@ -102,125 +167,101 @@ impl DiscoveryCommunity {
             &DISCOVERY_COMMUNITY_ID,
             P::MSG_ID,
             &self.key,
-            now_global_time() % 65536,
+            self.claim_global_time() % 65536,
             &w.into_bytes(),
         );
         self.endpoint.send_to(addr, &packet).await
     }
 
     /// `on_packet` : dispatch par `msg_id` (cf. `decode_map` Python).
-    fn on_packet(&self, src: SocketAddr, pkt: Packet) -> Result<(), Ipv8Error> {
-        // Le pair est "verifie" (signature OK deja controlee par
-        // `Packet::parse`) — enregistre dans l'annuaire.
-        let peer = Peer::new(pkt.public_key_bin.clone(), Some(UdpAddress::from(src)));
+    fn on_packet(self: &Arc<Self>, src: SocketAddr, pkt: Packet) -> Result<(), Ipv8Error> {
+        let src_addr = UdpAddress::from(src);
+
+        // Messages non signes : puncture-request (250/232).
+        if !pkt.signed {
+            return self.on_puncture_request(src_addr, &pkt);
+        }
+
+        // `update_global_time` avant tout (horloge de Lamport).
+        self.update_global_time(pkt.global_time);
+
+        let peer = Peer::new(pkt.public_key_bin.clone(), Some(src_addr.clone()));
         if let Some(p) = &peer {
             self.network.add_verified(p.clone());
             self.network
                 .discover_service(&pkt.public_key_bin, DISCOVERY_COMMUNITY_ID);
         }
 
-        let mut r = crate::serializer::Reader::new(&pkt.payload);
+        let mut r = Reader::new(&pkt.payload);
         match pkt.msg_id {
             msg::PING => {
                 let p = Ping::unpack(&mut r)?;
-                let ep = self.endpoint.clone();
-                let key = self.key.clone();
-                let addr = UdpAddress::from(src);
-                let mut w = Writer::new();
-                w.u16(p.identifier);
-                let packet = Packet::sign(
-                    &DISCOVERY_COMMUNITY_ID,
-                    msg::PONG,
-                    &key,
-                    now_global_time() % 65536,
-                    &w.into_bytes(),
-                );
+                let c = self.clone();
                 tokio::spawn(async move {
-                    let _ = ep.send_to(&addr, &packet).await;
+                    let _ = c
+                        .send_payload(
+                            &src_addr,
+                            &crate::payloads::Pong {
+                                identifier: p.identifier,
+                            },
+                        )
+                        .await;
                 });
+            }
+            msg::PONG => {
+                // `on_pong` : le pair est deja verifie (signature OK) —
+                // Python met a jour `last_response` ; rien d'autre.
             }
             msg::SIMILARITY_REQUEST => {
                 let p = SimilarityRequest::unpack(&mut r)?;
-                // Repond par la liste des services connus du demandeur
-                // (ici : la discovery community elle-meme).
+                // Repond par les services connus du demandeur.
                 let resp = SimilarityResponse {
                     identifier: p.identifier,
                     preference_list: vec![DISCOVERY_COMMUNITY_ID],
                     tb_overlap: vec![(DISCOVERY_COMMUNITY_ID, 0)],
                 };
-                let ep = self.endpoint.clone();
-                let key = self.key.clone();
-                let addr = UdpAddress::from(src);
+                let c = self.clone();
                 tokio::spawn(async move {
-                    let mut w = Writer::new();
-                    if resp.pack(&mut w).is_ok() {
-                        let packet = Packet::sign(
-                            &DISCOVERY_COMMUNITY_ID,
-                            msg::SIMILARITY_RESPONSE,
-                            &key,
-                            now_global_time() % 65536,
-                            &w.into_bytes(),
-                        );
-                        let _ = ep.send_to(&addr, &packet).await;
-                    }
+                    let _ = c.send_payload(&src_addr, &resp).await;
                 });
             }
             msg::INTRODUCTION_REQUEST => {
-                let addr = UdpAddress::from(src);
                 let p = IntroductionRequest::unpack(&mut r)?;
-                let ep = self.endpoint.clone();
-                let key = self.key.clone();
-                let my_lan = guess_lan(src);
-                let my_wan = UdpAddress::from(src);
-                // Pair introduit : le premier autre pair connu (simple).
-                let intro = self
-                    .network
-                    .peers_for_service(&DISCOVERY_COMMUNITY_ID)
-                    .into_iter()
-                    .find(|q| q.public_key_bin != pkt.public_key_bin)
-                    .and_then(|q| q.address);
-                let (lan_i, wan_i) = match &intro {
-                    Some(a) => (
-                        UdpAddress::from(a.to_socket_addr().unwrap_or(src)),
-                        a.clone(),
-                    ),
-                    None => (
-                        UdpAddress::Ipv4(std::net::SocketAddrV4::new(
-                            std::net::Ipv4Addr::UNSPECIFIED,
-                            0,
-                        )),
-                        UdpAddress::Ipv4(std::net::SocketAddrV4::new(
-                            std::net::Ipv4Addr::UNSPECIFIED,
-                            0,
-                        )),
-                    ),
-                };
-                let resp = IntroductionResponse {
-                    destination_address: p.source_wan_address.clone(),
-                    source_lan_address: my_lan,
-                    source_wan_address: my_wan,
-                    lan_introduction_address: lan_i,
-                    wan_introduction_address: wan_i,
-                    connection_type: ConnectionType::Unknown,
-                    supports_new_style: false,
-                    intro_supports_new_style: false,
-                    peer_limit_reached: self.network.len() >= DEFAULT_MAX_PEERS,
-                    identifier: p.identifier,
-                    extra_bytes: Vec::new(),
-                };
-                tokio::spawn(async move {
-                    let mut w = Writer::new();
-                    if resp.pack(&mut w).is_ok() {
-                        let packet = Packet::sign(
-                            &DISCOVERY_COMMUNITY_ID,
-                            msg::INTRODUCTION_RESPONSE,
-                            &key,
-                            now_global_time() % 65536,
-                            &w.into_bytes(),
-                        );
-                        let _ = ep.send_to(&addr, &packet).await;
-                    }
-                });
+                self.on_introduction_request(peer.clone(), &src_addr, IntroFields::from(&p), false);
+            }
+            msg::NEW_INTRODUCTION_REQUEST => {
+                let p = NewIntroductionRequest::unpack(&mut r)?;
+                // `peer.new_style_intro = True` avant traitement.
+                let mut peer = peer;
+                if let Some(ref mut p) = peer {
+                    p.new_style_intro = true;
+                }
+                self.on_introduction_request(peer, &src_addr, IntroFields::from(&p), true);
+            }
+            msg::INTRODUCTION_RESPONSE => {
+                let p = IntroductionResponse::unpack(&mut r)?;
+                let mut peer = peer;
+                if let Some(ref mut pr) = peer {
+                    pr.new_style_intro = p.supports_new_style;
+                }
+                self.on_introduction_response(
+                    &src_addr,
+                    IntroResponseFields::from(&p),
+                    peer,
+                    false,
+                );
+            }
+            msg::NEW_INTRODUCTION_RESPONSE => {
+                let p = NewIntroductionResponse::unpack(&mut r)?;
+                let mut peer = peer;
+                if let Some(ref mut pr) = peer {
+                    pr.new_style_intro = true;
+                }
+                self.on_introduction_response(&src_addr, IntroResponseFields::from(&p), peer, true);
+            }
+            msg::PUNCTURE | msg::NEW_PUNCTURE => {
+                // `on_puncture` Python : no-op (le trou NAT est ouvert
+                // par la reception meme).
             }
             _ => {
                 tracing::trace!(msg_id = pkt.msg_id, "message discovery ignore");
@@ -229,23 +270,297 @@ impl DiscoveryCommunity {
         Ok(())
     }
 
-    /// Envoie un `ping` (msg 3) — equivalent de `send_ping` Python.
+    /// Corps de `on_introduction_request` Python (commun aux formats
+    /// ancien/nouveau).
+    fn on_introduction_request(
+        self: &Arc<Self>,
+        peer: Option<Peer>,
+        src_addr: &UdpAddress,
+        req: IntroFields,
+        new_style: bool,
+    ) {
+        let Some(peer) = peer else { return };
+        if self.network.len() >= DEFAULT_MAX_PEERS {
+            tracing::debug!("introduction-request ignoree : trop de pairs");
+            return;
+        }
+        // L'adresse LAN annoncee devient l'adresse preferee si c'est
+        // une IPv4 (`peer.address = UDPv4LANAddress(...)` Python —
+        // simplifie : on conserve l'adresse source vue).
+        self.network.add_verified(peer.clone());
+        self.network
+            .discover_service(&peer.public_key_bin, DISCOVERY_COMMUNITY_ID);
+
+        // Choix du pair a introduire (`get_peer_for_introduction`).
+        let intro_peer = self
+            .network
+            .peers_for_service(&DISCOVERY_COMMUNITY_ID)
+            .into_iter()
+            .filter(|q| q.public_key_bin != peer.public_key_bin)
+            .filter(|q| q.address.as_ref().is_some_and(|a| !a.is_unspecified()))
+            .collect::<Vec<_>>();
+        let introduction = intro_peer.choose(&mut rand::thread_rng()).cloned();
+        let (lan_i, wan_i) = match introduction.as_ref().and_then(|p| p.address.clone()) {
+            Some(a) => (a.clone(), a),
+            None => (unspecified(), unspecified()),
+        };
+
+        // Reponse : nouveau format si le demandeur le supporte.
+        let c = self.clone();
+        let dst = src_addr.clone();
+        let id = req.identifier;
+        let my_lan = self.my_estimated_lan();
+        let my_wan = if self.my_estimated_wan().is_unspecified() {
+            src_addr.clone()
+        } else {
+            self.my_estimated_wan()
+        };
+        let dest = req.source_wan_address.clone();
+        let limit = self.network.len() >= DEFAULT_MAX_PEERS;
+        let intro_new_style = introduction
+            .as_ref()
+            .map(|p| p.new_style_intro)
+            .unwrap_or(false);
+        tokio::spawn(async move {
+            let mut w = Writer::new();
+            let res = if new_style {
+                NewIntroductionResponse {
+                    destination_address: dest,
+                    source_lan_address: my_lan,
+                    source_wan_address: my_wan,
+                    lan_introduction_address: lan_i,
+                    wan_introduction_address: wan_i,
+                    identifier: id,
+                    intro_supports_new_style: intro_new_style,
+                    extra_bytes: Vec::new(),
+                }
+                .pack(&mut w)
+            } else {
+                IntroductionResponse {
+                    destination_address: dest,
+                    source_lan_address: my_lan,
+                    source_wan_address: my_wan,
+                    lan_introduction_address: lan_i.clone(),
+                    wan_introduction_address: wan_i.clone(),
+                    connection_type: ConnectionType::Unknown,
+                    supports_new_style: true,
+                    peer_limit_reached: limit,
+                    identifier: id,
+                    intro_supports_new_style: intro_new_style,
+                    extra_bytes: Vec::new(),
+                }
+                .pack(&mut w)
+            };
+            if res.is_ok() {
+                let pkt = Packet::sign(
+                    &DISCOVERY_COMMUNITY_ID,
+                    if new_style {
+                        msg::NEW_INTRODUCTION_RESPONSE
+                    } else {
+                        msg::INTRODUCTION_RESPONSE
+                    },
+                    &c.key,
+                    c.claim_global_time() % 65536,
+                    &w.into_bytes(),
+                );
+                let _ = c.endpoint.send_to(&dst, &pkt).await;
+            }
+        });
+
+        // Si un pair a ete introduit : puncture-request vers lui pour
+        // qu'il ouvre son NAT vers le demandeur
+        // (`create_introduction_response` Python).
+        if let Some(intro) = introduction {
+            if let Some(intro_addr) = intro.address {
+                let req_lan = req.source_lan_address.clone();
+                let req_wan = req.source_wan_address.clone();
+                let c = self.clone();
+                tokio::spawn(async move {
+                    let pkt = c.make_puncture_request(&req_lan, &req_wan, id, new_style);
+                    let _ = c.endpoint.send_to(&intro_addr, &pkt).await;
+                });
+            }
+        }
+    }
+
+    /// Corps de `on_introduction_response` Python : met a jour
+    /// `my_estimated_wan`, enregistre le pair et les adresses
+    /// introduites comme "walkable".
+    fn on_introduction_response(
+        &self,
+        src_addr: &UdpAddress,
+        resp: IntroResponseFields,
+        peer: Option<Peer>,
+        _new_style: bool,
+    ) {
+        // `my_estimated_wan` = destination_address si elle n'est pas
+        // dans un sous-reseau LAN (`address_in_lan_subnets` Python).
+        if let UdpAddress::Ipv4(d) = &resp.destination_address {
+            if !is_lan_subnet(*d.ip()) {
+                *self.my_estimated_wan.lock().unwrap() = UdpAddress::Ipv4(*d);
+            }
+        } else if !resp.destination_address.is_unspecified() {
+            *self.my_estimated_wan.lock().unwrap() = resp.destination_address.clone();
+        }
+
+        if let Some(peer) = peer {
+            self.network.add_verified(peer.clone());
+            self.network
+                .discover_service(&peer.public_key_bin, DISCOVERY_COMMUNITY_ID);
+
+            // Selection des introductions (`introductions` Python) :
+            // - WAN != notre WAN : on accepte LAN + WAN ;
+            // - WAN == notre WAN : LAN seul ;
+            // - sinon : WAN + (notre LAN ip, port WAN).
+            let my_wan = self.my_estimated_wan();
+            let same_wan_ip = |a: &UdpAddress| match (a, &my_wan) {
+                (UdpAddress::Ipv4(x), UdpAddress::Ipv4(y)) => x.ip() == y.ip(),
+                (UdpAddress::Ipv6(x), UdpAddress::Ipv6(y)) => x.ip() == y.ip(),
+                _ => false,
+            };
+            let mut introductions = Vec::new();
+            if !resp.wan_introduction_address.is_unspecified()
+                && !same_wan_ip(&resp.wan_introduction_address)
+            {
+                if !resp.lan_introduction_address.is_unspecified() {
+                    introductions.push(resp.lan_introduction_address.clone());
+                }
+                introductions.push(resp.wan_introduction_address.clone());
+            } else if !resp.lan_introduction_address.is_unspecified()
+                && same_wan_ip(&resp.wan_introduction_address)
+            {
+                introductions.push(resp.lan_introduction_address.clone());
+            } else if !resp.wan_introduction_address.is_unspecified() {
+                introductions.push(resp.wan_introduction_address.clone());
+                if let (UdpAddress::Ipv4(wan_i), UdpAddress::Ipv4(lan)) =
+                    (&resp.wan_introduction_address, &my_wan)
+                {
+                    // Meme WAN : on tente (ip LAN, port WAN).
+                    let my_lan = self.my_estimated_lan();
+                    if let UdpAddress::Ipv4(my_lan_v4) = my_lan {
+                        introductions.push(UdpAddress::Ipv4(std::net::SocketAddrV4::new(
+                            *my_lan_v4.ip(),
+                            wan_i.port(),
+                        )));
+                        let _ = lan;
+                    }
+                }
+            }
+            for addr in introductions {
+                self.network.discover_address(
+                    &peer,
+                    addr,
+                    Some(DISCOVERY_COMMUNITY_ID),
+                    resp.intro_supports_new_style,
+                );
+            }
+        }
+        let _ = src_addr;
+    }
+
+    /// `on_puncture_request` : envoie un puncture (signe, msg 249/231)
+    /// vers `wan_walker` (ou `lan_walker` si meme IP WAN que nous).
+    fn on_puncture_request(&self, _src: UdpAddress, pkt: &Packet) -> Result<(), Ipv8Error> {
+        let mut r = Reader::new(&pkt.payload);
+        let (lan_walker, wan_walker, identifier, new_style) = match pkt.msg_id {
+            msg::PUNCTURE_REQUEST => {
+                let p = crate::payloads::PunctureRequestPayload::unpack(&mut r)?;
+                (
+                    p.lan_walker_address,
+                    p.wan_walker_address,
+                    p.identifier,
+                    false,
+                )
+            }
+            msg::NEW_PUNCTURE_REQUEST => {
+                let p = crate::payloads::NewPunctureRequestPayload::unpack(&mut r)?;
+                (
+                    p.lan_walker_address,
+                    p.wan_walker_address,
+                    p.identifier,
+                    true,
+                )
+            }
+            _ => return Ok(()),
+        };
+        let target = if same_ip(&wan_walker, &self.my_estimated_wan()) {
+            lan_walker
+        } else {
+            wan_walker.clone()
+        };
+        let c = self.weak.upgrade();
+        if let Some(c) = c {
+            let my_lan = c.my_estimated_lan();
+            tokio::spawn(async move {
+                let mut w = Writer::new();
+                let msg_id = if new_style {
+                    let _ = w.ip_address(&my_lan);
+                    let _ = w.ip_address(&wan_walker);
+                    msg::NEW_PUNCTURE
+                } else {
+                    let _ = w.ipv4(&my_lan);
+                    let _ = w.ipv4(&wan_walker);
+                    msg::PUNCTURE
+                };
+                w.u16(identifier);
+                let pkt = Packet::sign(
+                    &DISCOVERY_COMMUNITY_ID,
+                    msg_id,
+                    &c.key,
+                    c.claim_global_time(),
+                    &w.into_bytes(),
+                );
+                let _ = c.endpoint.send_to(&target, &pkt).await;
+            });
+        }
+        Ok(())
+    }
+
+    /// `create_puncture_request` : paquet **non signe** demandant a un
+    /// pair de nous puncturer vers (`lan_walker`, `wan_walker`).
+    fn make_puncture_request(
+        &self,
+        lan_walker: &UdpAddress,
+        wan_walker: &UdpAddress,
+        identifier: u16,
+        new_style: bool,
+    ) -> Vec<u8> {
+        let mut w = Writer::new();
+        let msg_id = if new_style
+            || !matches!(lan_walker, UdpAddress::Ipv4(_))
+            || !matches!(wan_walker, UdpAddress::Ipv4(_))
+        {
+            let _ = w.ip_address(lan_walker);
+            let _ = w.ip_address(wan_walker);
+            msg::NEW_PUNCTURE_REQUEST
+        } else {
+            let _ = w.ipv4(lan_walker);
+            let _ = w.ipv4(wan_walker);
+            msg::PUNCTURE_REQUEST
+        };
+        w.u16(identifier);
+        Packet::pack_unsigned(
+            &DISCOVERY_COMMUNITY_ID,
+            msg_id,
+            self.claim_global_time(),
+            &w.into_bytes(),
+        )
+    }
+
+    /// Envoie un `ping` (msg 3).
     pub async fn send_ping(&self, addr: &UdpAddress) -> Result<u16, Ipv8Error> {
         let id = self.next_id();
         self.send_payload(addr, &Ping { identifier: id }).await?;
         Ok(id)
     }
 
-    /// Envoie une `similarity-request` (msg 1) — coeur de la marche
-    /// aleatoire (`RandomWalk.take_step`).
+    /// Envoie une `similarity-request` (msg 1).
     pub async fn send_similarity_request(&self, addr: &UdpAddress) -> Result<u16, Ipv8Error> {
         let id = self.next_id();
-        let lan = guess_lan_for(addr);
-        let wan = addr.clone();
         let p = SimilarityRequest {
             identifier: id,
-            lan_address: lan,
-            wan_address: wan,
+            lan_address: self.my_estimated_lan(),
+            wan_address: self.my_estimated_wan(),
             connection_type: ConnectionType::Unknown,
             preference_list: vec![DISCOVERY_COMMUNITY_ID],
         };
@@ -253,22 +568,47 @@ impl DiscoveryCommunity {
         Ok(id)
     }
 
-    /// Envoie une `introduction-request` (msg 246).
+    /// Envoie une `introduction-request` (msg 246 ancien, 234 nouveau
+    /// si `is_new_style` ou adresse non-IPv4).
     pub async fn send_introduction_request(&self, addr: &UdpAddress) -> Result<u16, Ipv8Error> {
         let id = self.next_id();
-        let lan = guess_lan_for(addr);
-        let wan = addr.clone();
-        let p = IntroductionRequest {
-            destination_address: addr.clone(),
-            source_lan_address: lan,
-            source_wan_address: wan,
-            advice: true,
-            supports_new_style: false,
-            connection_type: ConnectionType::Unknown,
-            identifier: id,
-            extra_bytes: Vec::new(),
-        };
-        self.send_payload(addr, &p).await?;
+        let new_style = self.network.is_new_style(addr) || !matches!(addr, UdpAddress::Ipv4(_));
+        if new_style {
+            let p = NewIntroductionRequest {
+                destination_address: addr.clone(),
+                source_lan_address: self.my_estimated_lan(),
+                source_wan_address: self.my_estimated_wan(),
+                identifier: id,
+                connection_type: ConnectionType::Unknown,
+                supports_new_style: true,
+                tunnel: false,
+                sync: false,
+                advice: true,
+                extra_bytes: Vec::new(),
+            };
+            let mut w = Writer::new();
+            p.pack(&mut w)?;
+            let pkt = Packet::sign(
+                &DISCOVERY_COMMUNITY_ID,
+                msg::NEW_INTRODUCTION_REQUEST,
+                &self.key,
+                self.claim_global_time() % 65536,
+                &w.into_bytes(),
+            );
+            self.endpoint.send_to(addr, &pkt).await?;
+        } else {
+            let p = IntroductionRequest {
+                destination_address: addr.clone(),
+                source_lan_address: self.my_estimated_lan(),
+                source_wan_address: self.my_estimated_wan(),
+                advice: true,
+                supports_new_style: true,
+                connection_type: ConnectionType::Unknown,
+                identifier: id,
+                extra_bytes: Vec::new(),
+            };
+            self.send_payload(addr, &p).await?;
+        }
         self.pending_intro
             .lock()
             .unwrap()
@@ -276,21 +616,44 @@ impl DiscoveryCommunity {
         Ok(id)
     }
 
-    /// Une etape de marche aleatoire : envoie similarity-request a un
-    /// pair connu (ou a un bootstrap si aucun). Equivalent de
-    /// `RandomChurn`/`take_step`.
-    pub async fn step(&self, bootstrap: &[UdpAddress]) -> Result<(), Ipv8Error> {
-        let peers = self.network.peers_for_service(&DISCOVERY_COMMUNITY_ID);
-        if let Some(p) = peers.first() {
-            if let Some(addr) = &p.address {
-                self.send_similarity_request(addr).await?;
-                return Ok(());
+    /// `get_new_introduction` : introduction-request vers un pair
+    /// connu (choisi au hasard), sinon marche vers une adresse
+    /// "walkable", sinon bootstrap. Avec 5 % de chance, re-bootstrap.
+    pub async fn get_new_introduction(&self, bootstrap: &[UdpAddress]) -> Result<(), Ipv8Error> {
+        let available = self.network.peers_for_service(&DISCOVERY_COMMUNITY_ID);
+        if !available.is_empty() {
+            // Petit hasard de reparation d'un reseau partitionne.
+            if !bootstrap.is_empty() && rand::random::<f64>() < REBOOTSTRAP_CHANCE {
+                if let Some(b) = bootstrap.choose(&mut rand::thread_rng()) {
+                    return self.send_introduction_request(b).await.map(|_| ());
+                }
+            }
+            let mut rng = rand::thread_rng();
+            if let Some(p) = available.choose(&mut rng) {
+                if let Some(addr) = p.address.clone() {
+                    return self.send_introduction_request(&addr).await.map(|_| ());
+                }
             }
         }
-        if let Some(addr) = bootstrap.first() {
-            self.send_introduction_request(addr).await?;
+        // Sinon : adresse walkable connue (du discovery), sinon bootstrap.
+        let walkable = self
+            .network
+            .get_walkable_addresses(Some(&DISCOVERY_COMMUNITY_ID), false);
+        let mut rng = rand::thread_rng();
+        let target = walkable
+            .choose(&mut rng)
+            .cloned()
+            .or_else(|| bootstrap.choose(&mut rng).cloned());
+        if let Some(addr) = target {
+            self.send_introduction_request(&addr).await?;
         }
         Ok(())
+    }
+
+    /// Une etape de marche aleatoire (`take_step`) : introduction vers
+    /// un pair connu ou une adresse walkable/bootstrap.
+    pub async fn step(&self, bootstrap: &[UdpAddress]) -> Result<(), Ipv8Error> {
+        self.get_new_introduction(bootstrap).await
     }
 
     /// Boucle de marche aleatoire (a spawner).
@@ -308,25 +671,90 @@ impl DiscoveryCommunity {
     pub fn peer_count(&self) -> usize {
         self.network.len()
     }
+
+    /// Annuaire reseau partage (acces pour les autres communities).
+    pub fn network(&self) -> &Arc<Network> {
+        &self.network
+    }
 }
 
-/// Estime l'adresse LAN a partir de l'adresse source vue (meme
-/// heuristique simplifiee que le Python : adresse locale du socket si
-/// non resoluble).
-fn guess_lan(_src: SocketAddr) -> UdpAddress {
-    // Approximation : on renseigne 0.0.0.0:0 si on ne connait pas
-    // mieux — le Python fait une resolution d'interface reelle
-    // (`interfaces/lan_addresses`), reportee a l'etape 11.
-    UdpAddress::Ipv4(std::net::SocketAddrV4::new(
-        std::net::Ipv4Addr::UNSPECIFIED,
-        0,
-    ))
+/// Champs communs des deux formats d'introduction-request
+/// (`destination_address` est remplace par l'adresse source reelle du
+/// paquet, qui est toujours plus fiable).
+struct IntroFields {
+    /// `source_lan_address`.
+    source_lan_address: UdpAddress,
+    /// `source_wan_address`.
+    source_wan_address: UdpAddress,
+    /// `identifier`.
+    identifier: u16,
 }
 
-/// Variante pour l'emission : meme heuristique simplifiee.
-fn guess_lan_for(_dst: &UdpAddress) -> UdpAddress {
-    UdpAddress::Ipv4(std::net::SocketAddrV4::new(
-        std::net::Ipv4Addr::UNSPECIFIED,
-        0,
-    ))
+impl From<&IntroductionRequest> for IntroFields {
+    fn from(p: &IntroductionRequest) -> Self {
+        Self {
+            source_lan_address: p.source_lan_address.clone(),
+            source_wan_address: p.source_wan_address.clone(),
+            identifier: p.identifier,
+        }
+    }
+}
+
+impl From<&NewIntroductionRequest> for IntroFields {
+    fn from(p: &NewIntroductionRequest) -> Self {
+        Self {
+            source_lan_address: p.source_lan_address.clone(),
+            source_wan_address: p.source_wan_address.clone(),
+            identifier: p.identifier,
+        }
+    }
+}
+
+/// Champs communs des deux formats d'introduction-response.
+struct IntroResponseFields {
+    /// `destination_address`.
+    destination_address: UdpAddress,
+    /// `lan_introduction_address`.
+    lan_introduction_address: UdpAddress,
+    /// `wan_introduction_address`.
+    wan_introduction_address: UdpAddress,
+    /// `intro_supports_new_style`.
+    intro_supports_new_style: bool,
+    /// `identifier`.
+    #[allow(dead_code)]
+    identifier: u16,
+}
+
+impl From<&IntroductionResponse> for IntroResponseFields {
+    fn from(p: &IntroductionResponse) -> Self {
+        Self {
+            destination_address: p.destination_address.clone(),
+            lan_introduction_address: p.lan_introduction_address.clone(),
+            wan_introduction_address: p.wan_introduction_address.clone(),
+            intro_supports_new_style: p.intro_supports_new_style,
+            identifier: p.identifier,
+        }
+    }
+}
+
+impl From<&NewIntroductionResponse> for IntroResponseFields {
+    fn from(p: &NewIntroductionResponse) -> Self {
+        Self {
+            destination_address: p.destination_address.clone(),
+            lan_introduction_address: p.lan_introduction_address.clone(),
+            wan_introduction_address: p.wan_introduction_address.clone(),
+            intro_supports_new_style: p.intro_supports_new_style,
+            identifier: p.identifier,
+        }
+    }
+}
+
+/// `true` si les deux adresses ont la meme IP (peu importe le port).
+fn same_ip(a: &UdpAddress, b: &UdpAddress) -> bool {
+    match (a, b) {
+        (UdpAddress::Ipv4(x), UdpAddress::Ipv4(y)) => x.ip() == y.ip(),
+        (UdpAddress::Ipv6(x), UdpAddress::Ipv6(y)) => x.ip() == y.ip(),
+        (UdpAddress::Domain(h1, _), UdpAddress::Domain(h2, _)) => h1 == h2,
+        _ => false,
+    }
 }

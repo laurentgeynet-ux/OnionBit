@@ -70,8 +70,9 @@ mod tests {
         let key_a = tribler_crypto::ipv8::keys::LibNaClSecretKey::generate();
         let key_b = tribler_crypto::ipv8::keys::LibNaClSecretKey::generate();
 
-        let ca = DiscoveryCommunity::new(key_a, net_a.clone(), ep_a.clone()).await;
-        let _cb = DiscoveryCommunity::new(key_b, net_b.clone(), ep_b.clone()).await;
+        let lan = UdpAddress::from("127.0.0.1:0".parse::<std::net::SocketAddr>().unwrap());
+        let ca = DiscoveryCommunity::new(key_a, net_a.clone(), ep_a.clone(), lan.clone()).await;
+        let _cb = DiscoveryCommunity::new(key_b, net_b.clone(), ep_b.clone(), lan).await;
 
         let ra = tokio::spawn({
             let ep = ep_a.clone();
