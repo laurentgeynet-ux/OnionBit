@@ -65,10 +65,12 @@ pub struct SessionKeys {
 ///
 /// Equivalent de `generate_session_keys` cote pyipv8.
 pub fn generate_session_keys(shared_secret: &[u8]) -> Result<SessionKeys, CryptoError> {
-    // HKDF en mode "expand only" : la reference utilise `set_hkdf_key` sans
-    // sel explicite, ce qui correspond a un extract avec un sel nul de la
-    // taille du digest, puis expand avec info="key_generation".
-    let hkdf = Hkdf::<sha2::Sha256>::new(None, shared_secret);
+    // HKDF "EXPAND_ONLY" de la reference (`ipv8_rust_tunnels` :
+    // `set_hkdf_mode(EXPAND_ONLY)` + `set_hkdf_key(shared_secret)`) : le
+    // secret partage est la PRK telle quelle, sans etape extract.
+    // `Hkdf::from_prk` reproduit exactement cela.
+    let hkdf = Hkdf::<sha2::Sha256>::from_prk(shared_secret)
+        .map_err(|e| CryptoError::KeyDerivation(format!("HKDF prk: {e}")))?;
     let mut key = [0u8; SESSION_KEY_MATERIAL_LEN];
     hkdf.expand(HKDF_INFO_KEY_GENERATION, &mut key)
         .map_err(|e| CryptoError::KeyDerivation(format!("HKDF expand: {e}")))?;

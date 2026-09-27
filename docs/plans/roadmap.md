@@ -204,11 +204,21 @@ ne sont donc pas « terminées » au sens strict) · `[x]` terminée.
   circuits 1/2 sauts, sortie, echo 2 sauts, destroy, SOCKS5 UDP
   ASSOCIATE (+ rejet IPv4 factice sur circuit DATA), CONNECT HTTP
   28/29, e2e hidden services complet, retry e2e sans doublon, et
-  `hidden_seed_udp_relay_roundtrip`.
-  **Reste** : branchement a `tribler-bittorrent` (rqbit uTP via
-  `udp_relay`), suivi des flags de sortie via la decouverte,
-  interop reelle `TunnelCommunity` pyipv8 / Tribler 8.4.3 installe,
-  telechargement anonyme reel (jalon final).
+  `hidden_seed_udp_relay_roundtrip`. Telechargement anonyme REEL
+  valide : `tribler-bittorrent/tests/anon_download.rs` — 200 Ko
+  rqbit/uTP a travers un circuit e2e lie via `udp_relay`.
+  **Preuve d'interop tunnels (bornee)** : `scripts/interop_tunnel.ps1`
+  — un noeud Rust cree un circuit vers le vrai `TunnelCommunity`
+  pyipv8 du venv (`scripts/interop/py_tunnel_node.py`), chiffre par
+  couches ChaCha20-Poly1305 accepte par le `decrypt_str` officiel,
+  datagramme "uTP" sorti puis reponse re-entree par le circuit
+  (cles de session identiques des deux cotes, verifiees par dump).
+  Deux divergences de format corrigees a cette occasion : le
+  `circuit_id` n'apparait qu'en en-tete de cellule (`body[4:]`, cf.
+  `send_cell` Python) et `generate_session_keys` est HKDF
+  **EXPAND_ONLY** (`Hkdf::from_prk`), pas extract+expand.
+  **Reste** : interop contre Tribler 8.4.3 installe (noeud complet,
+  distinct du venv), suivi des flags de sortie via la decouverte.
 - [ ] **Étape 13. Politiques de sécurité réseau et kill switch.**
   `tribler-network-policy` : anti-SSRF, politique des noeuds de sortie,
   kill switch atomique, garde-fous SOCKS5. Intégré dans

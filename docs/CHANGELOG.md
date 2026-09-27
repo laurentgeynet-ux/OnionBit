@@ -3,6 +3,41 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Étape 12 (jalon) — interop tunnels Rust↔pyipv8 validée (2026-09-27)
+
+L'objection « tout le chiffrement peut diverger » est levee pour le
+plan de donnees des tunnels : `scripts/interop_tunnel.ps1` fait
+converser le vrai `TunnelCommunity` pyipv8 (venv interop) avec notre
+`tribler-tunnel` en loopback.
+
+- `scripts/interop/py_tunnel_node.py` : noeud `TunnelCommunity`
+  (flags RELAY|EXIT_IPV8|EXIT_BT) + echo UDP + dump des
+  `SessionKeys` ; exporte sa cle publique via keyfile.
+- `crates/tribler-tunnel/examples/tunnel_interop_node.rs` : noeud
+  Rust qui cree un circuit 1 saut vers le pair Python
+  (`create`→`created` accepte), envoie un datagramme
+  « uTP-compatible » (`DataChecker.could_be_utp`) vers l'echo a
+  travers la sortie et verifie la reponse.
+- Resultat : clés de session **identiques** des deux cotes (dumps
+  `KEYS|` concordants), `decrypt_str` pyipv8 accepte nos cellules
+  chiffrees par couches, echo uTP complet.
+
+Deux bugs de fidelite de protocole trouves et corriges grace a ce
+montage :
+
+- `cell.rs`/`community.rs` : `send_cell` envoyait le `circuit_id`
+  deux fois ; pyipv8 le strippe (`pack_serializable(payload)[4:]`)
+  et le reinsere via `unwrap`. Le message cellule est desormais
+  `msg_id + payload[4:]`.
+- `tribler-crypto/src/ipv8/session.rs` : `generate_session_keys`
+  faisait un HKDF extract+expand (sel nul) alors que la reference
+  est **EXPAND_ONLY** (`set_hkdf_key(shared_secret)` comme PRK
+  directe) → `Hkdf::from_prk`. C'est la raison du "Decryption
+  failed" cote Python avant ce fix.
+
+Le jalon Tribler 8.4.3 installe (client complet) reste distinct et
+a faire separement.
+
 ## Étape 12 (correctif) — garde-fou IPv4 factice, relais UDP first-seen, idempotence `create_e2e` (2026-09-27)
 
 Suite à une revue externe puis vérification directe du code, trois défauts
