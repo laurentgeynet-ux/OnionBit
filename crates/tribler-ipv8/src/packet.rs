@@ -33,19 +33,31 @@ pub fn prefix_of(community_id: &CommunityId) -> [u8; PREFIX_LEN] {
     p
 }
 
-/// Paquet IPv8 decode (signature deja verifiee).
+/// `msg_id` IPv8 historiquement **non signes** (cf.
+/// `lazy_wrapper_unsigned` pyipv8) : les requetes de puncture (anciennes
+/// `250` et nouvelles `232`) ne portent ni auth ni signature — le paquet
+/// est `prefix + msg_id + Q(global_time) + payload`.
+pub const UNSIGNED_MSG_IDS: &[u8] = &[250, 232];
+
+/// Paquet IPv8 decode (signature deja verifiee si `signed`).
 #[derive(Debug)]
 pub struct Packet {
     /// Community destinataire (extraite du prefixe).
     pub community_id: CommunityId,
     /// Identifiant du message dans la community.
     pub msg_id: u8,
-    /// Cle publique binaire de l'emetteur (`LibNaClPK:…`).
+    /// Cle publique binaire de l'emetteur (`LibNaClPK:…`), vide si non
+    /// signe.
     pub public_key_bin: Vec<u8>,
     /// Horodatage de Lamport (`GlobalTimeDistributionPayload`).
     pub global_time: u64,
     /// Octets du payload applicatif (apres auth+dist, avant signature).
     pub payload: Vec<u8>,
+    /// `true` si le paquet portait auth + signature Ed25519 valide.
+    /// `false` pour les messages historiquement non signes
+    /// (`UNSIGNED_MSG_IDS`) — l'emetteur **ne doit pas** etre marque
+    /// pair verifie.
+    pub signed: bool,
 }
 
 impl Packet {
@@ -70,15 +82,32 @@ impl Packet {
         packet
     }
 
+    /// Construit un paquet **non signe** (ni auth ni signature) :
+    /// `prefix + msg_id + Q(global_time) + payload`. Utilise par
+    /// `create_puncture_request` Python (`_ez_pack(..., sig=False)`).
+    pub fn pack_unsigned(
+        community_id: &CommunityId,
+        msg_id: u8,
+        global_time: u64,
+        payload: &[u8],
+    ) -> Vec<u8> {
+        let mut w = Writer::new();
+        w.bytes(&prefix_of(community_id));
+        w.u8(msg_id);
+        w.u64(global_time);
+        w.raw(payload);
+        w.into_bytes()
+    }
+
     /// Decode et verifie la signature d'un paquet recu.
     ///
     /// `expected` peut etre `None` pour accepter n'importe quel prefixe
     /// (dispatcher) ; sinon le paquet est rejete si le prefixe ne
     /// correspond pas (comme `on_packet` Python).
     pub fn parse(data: &[u8], expected: Option<&CommunityId>) -> Result<Self, Ipv8Error> {
-        if data.len() < PREFIX_LEN + 1 + SIGNATURE_LENGTH {
+        if data.len() < PREFIX_LEN + 1 {
             return Err(Ipv8Error::Truncated {
-                need: PREFIX_LEN + 1 + SIGNATURE_LENGTH,
+                need: PREFIX_LEN + 1,
                 have: data.len(),
             });
         }
@@ -93,6 +122,29 @@ impl Packet {
             }
         }
         let msg_id = data[22];
+
+        // Messages historiquement non signes (`lazy_wrapper_unsigned`) :
+        // `msg_id + Q(global_time) + payload`, sans auth ni signature.
+        if UNSIGNED_MSG_IDS.contains(&msg_id) {
+            let mut r = Reader::new(&data[23..]);
+            let global_time = r.u64()?;
+            let payload = r.raw().to_vec();
+            return Ok(Self {
+                community_id,
+                msg_id,
+                public_key_bin: Vec::new(),
+                global_time,
+                payload,
+                signed: false,
+            });
+        }
+
+        if data.len() < PREFIX_LEN + 1 + SIGNATURE_LENGTH {
+            return Err(Ipv8Error::Truncated {
+                need: PREFIX_LEN + 1 + SIGNATURE_LENGTH,
+                have: data.len(),
+            });
+        }
 
         // Signature = 64 derniers octets ; porte sur tout le reste.
         let sig = &data[data.len() - SIGNATURE_LENGTH..];
@@ -117,6 +169,7 @@ impl Packet {
             public_key_bin,
             global_time,
             payload,
+            signed: true,
         })
     }
 }

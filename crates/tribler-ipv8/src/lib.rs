@@ -29,6 +29,7 @@
 //! pyipv8` (voir `docs/reference_tribler/`).
 
 pub mod address;
+pub mod dht;
 pub mod discovery;
 pub mod endpoint;
 pub mod error;
@@ -38,6 +39,7 @@ pub mod peer;
 pub mod serializer;
 
 pub use address::UdpAddress;
+pub use dht::{DhtCommunity, DHT_COMMUNITY_ID};
 pub use discovery::{DiscoveryCommunity, DISCOVERY_COMMUNITY_ID};
 pub use endpoint::UdpEndpoint;
 pub use error::Ipv8Error;

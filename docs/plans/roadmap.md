@@ -97,8 +97,16 @@ Légende : `[ ]` à faire · `[~]` en cours · `[x]` terminée.
   aléatoire périodique. 4 tests dont échange réel ping/pong loopback entre
   deux noeuds. **Reste à valider** : interop avec un noeud pyipv8 réel
   (test manuel — les formats sont repris à l'identique des sources).
-- [ ] **Étape 10. DHT overlay IPv8.** `tribler-ipv8` : implémentation du
-  DHT overlay (distinct du DHT BitTorrent BEP 5), lookup de pairs.
+- [x] **Étape 10. DHT overlay IPv8.** `tribler-ipv8::dht` : `calc_node_id`
+  (CRC-32 IEEE d'IP masquée + `mid[:17]` — fidèle à `binascii.crc32`),
+  `distance` XOR, `RoutingTable` (trie binaire, buckets de 8, split),
+  `Storage` versionné, `DhtCommunity` (fusion `DHTCommunity` +
+  `DHTDiscoveryCommunity`, cid `8d0be184…`) : msgs 1-10, jetons
+  `sha1(str(node)+secret)` tournants, crawl itératif (8/24/4),
+  puncture-request **non signé** + puncture signé, valeurs signées
+  Ed25519. Tests loopback : introduction → ping → `store_value` →
+  `find_values` de bout en bout entre deux noeuds. **Reste** : interop
+  avec des noeuds Python réels (formats repris à l'identique).
 - [ ] **Étape 11. Framework de communities complet.** `tribler-ipv8` :
   gestion de plusieurs communities simultanées, signatures Ed25519 sur
   tous les messages, gestion du churn/déconnexions.

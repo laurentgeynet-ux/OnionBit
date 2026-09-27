@@ -102,6 +102,21 @@ impl Network {
         keys.iter().filter_map(|k| self.get_by_key(k)).collect()
     }
 
+    /// Retire un pair par cle publique (`remove_peer` Python).
+    pub fn remove_peer_key(&self, public_key_bin: &[u8]) {
+        if let Some(p) = self.by_key.lock().unwrap().remove(public_key_bin) {
+            if let Some(sa) = p.address.and_then(|a| a.to_socket_addr()) {
+                self.by_addr.lock().unwrap().remove(&sa);
+            }
+        }
+        self.services.lock().unwrap().remove(public_key_bin);
+    }
+
+    /// `true` si la cle est un pair connu.
+    pub fn contains_key(&self, public_key_bin: &[u8]) -> bool {
+        self.by_key.lock().unwrap().contains_key(public_key_bin)
+    }
+
     /// Nombre total de pairs verifies.
     pub fn len(&self) -> usize {
         self.by_key.lock().unwrap().len()

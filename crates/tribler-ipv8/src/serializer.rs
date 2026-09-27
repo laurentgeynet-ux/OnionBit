@@ -81,7 +81,7 @@ impl<'a> Reader<'a> {
         if !raw.len().is_multiple_of(20) {
             return Err(Ipv8Error::Malformed("varlenHx20 non multiple de 20"));
         }
-        Ok(raw.as_chunks::<20>().0.iter().copied().collect())
+        Ok(raw.as_chunks::<20>().0.to_vec())
     }
 
     /// `ipv4` : `>4sH` (6 octets).

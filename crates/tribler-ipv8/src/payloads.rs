@@ -121,7 +121,7 @@ impl Payload for SimilarityRequest {
             lan_address,
             wan_address,
             connection_type: ConnectionType::decode(bits[0], bits[1]),
-            preference_list: raw.as_chunks::<20>().0.iter().copied().collect(),
+            preference_list: raw.as_chunks::<20>().0.to_vec(),
         })
     }
 }
@@ -359,6 +359,52 @@ impl Payload for IntroductionResponse {
             peer_limit_reached: bits[5],
             identifier,
             extra_bytes,
+        })
+    }
+}
+
+/// `PunctureRequestPayload` (msg 250, **non signe**) :
+/// `ipv4, ipv4, H`.
+#[derive(Debug)]
+pub struct PunctureRequestPayload {
+    /// Adresse LAN du pair a puncturer.
+    pub lan_walker_address: UdpAddress,
+    /// Adresse WAN du pair a puncturer.
+    pub wan_walker_address: UdpAddress,
+    /// Identifiant de la demande.
+    pub identifier: u16,
+}
+
+impl PunctureRequestPayload {
+    /// Deserialise.
+    pub fn unpack(r: &mut Reader<'_>) -> Result<Self, Ipv8Error> {
+        Ok(Self {
+            lan_walker_address: r.ipv4()?,
+            wan_walker_address: r.ipv4()?,
+            identifier: r.u16()?,
+        })
+    }
+}
+
+/// `NewPunctureRequestPayload` (msg 232, **non signe**) :
+/// `ip_address, ip_address, H`.
+#[derive(Debug)]
+pub struct NewPunctureRequestPayload {
+    /// LAN du pair a puncturer.
+    pub lan_walker_address: UdpAddress,
+    /// WAN du pair a puncturer.
+    pub wan_walker_address: UdpAddress,
+    /// Identifiant de la demande.
+    pub identifier: u16,
+}
+
+impl NewPunctureRequestPayload {
+    /// Deserialise.
+    pub fn unpack(r: &mut Reader<'_>) -> Result<Self, Ipv8Error> {
+        Ok(Self {
+            lan_walker_address: r.ip_address()?,
+            wan_walker_address: r.ip_address()?,
+            identifier: r.u16()?,
         })
     }
 }

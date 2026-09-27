@@ -3,6 +3,34 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Étape 10 — `tribler-ipv8` : overlay DHT (2026-09-27)
+
+- `dht/routing.rs` : `calc_node_id` (CRC-32 **IEEE/zlib** d'IP masquee
+  `0x030f3fff`/`0x0103070f1f3f7fff` + `mid[:17]` — le commentaire Python
+  dit "crc32c" mais `binascii.crc32` est CRC-32 IEEE), `distance` XOR
+  lexicographique, `Node` (metriques `last_response/last_queries/
+  last_ping_sent/failed/rtt`, `blocked` = 10 requetes/5 s, `status`
+  BEP-5), `Bucket` (8 noeuds, eviction BAD ou 2x plus lent), `RoutingTable`
+  (prefixes binaires, split si le bucket contient `my_node_id`,
+  `closest_nodes` par distance+statut).
+- `dht/storage.rs` : `Storage` (insertion tete, `id==key` en dernier,
+  remplacement si `version>=`, expiration `max_age`).
+- `dht/payloads.rs` : msgs 1-10 du protocole DHT + `serialize_value`/
+  `unserialize_value` (blobs `0x00+raw` / `0x01+varlenH+I+varlenH+sig`).
+- `dht/community.rs` : `DhtCommunity` (`DHTCommunity` +
+  `DHTDiscoveryCommunity` fusionnees) : request-cache a oneshot +
+  timeouts (5 s / 2 s find), tokens anti-spoofing `sha1("Peer<ip:port,
+  b64(mid)>" + secret)` (2 secrets tournants), crawl iteratif
+  (`MAX_CRAWL_NODES=8`, `REQUESTS=24`, `TASKS=4`), puncture-request non
+  signe + puncture signe, `step()` (PingChurn + ping_all), maintenance
+  tokens/noeuds/valeurs.
+- `packet.rs` : paquets **non signes** (`lazy_wrapper_unsigned` Python)
+  pour msgs 250/232 — `prefix + msg_id + Q + payload` ; `Packet.signed`
+  distingue l'absence d'auth.
+- `peer.rs` : `remove_peer_key`, `contains_key`.
+- Tests loopback : introduction DHT -> ping -> `store_value` signe ->
+  `find_values` entre deux noeuds ; rejet de valeur corrompue.
+
 ## Étape 9 — `tribler-ipv8` : overlay minimal (2026-09-27)
 
 - `serializer.rs` : packers pyipv8 (`B/H/I/Q`, `varlenH`, `varlenHx20`,
