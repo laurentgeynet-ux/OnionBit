@@ -296,6 +296,25 @@ impl Socks5Server {
         let dest = read_udp_address(&mut r)?;
         let data = r.raw().to_vec();
 
+        // `select_circuit` (`ipv8-rust-tunnels` `socks5.rs`) : une IPv4
+        // a port `CIRCUIT_ID_PORT` encode directement le circuit e2e
+        // (`ip_to_circuit_id`) — le pair cache.
+        if let UdpAddress::Ipv4(a) = &dest {
+            if a.port() == crate::routing::CIRCUIT_ID_PORT {
+                let cid = crate::routing::ip_to_circuit_id(a.ip());
+                self.register_return(cid, socket.clone(), src);
+                return self
+                    .tunnel
+                    .send_data(
+                        cid,
+                        &dest,
+                        &UdpAddress::from("0.0.0.0:0".parse::<SocketAddr>().unwrap()),
+                        &data,
+                    )
+                    .await;
+            }
+        }
+
         let cid = match addr_to_cid.get(&dest).copied() {
             Some(cid) if self.circuit_is_usable(cid) => cid,
             _ => {

@@ -29,6 +29,7 @@ pub mod http_tunnel;
 pub mod payload;
 pub mod routing;
 pub mod socks5;
+pub mod udp_relay;
 
 /// `community_id` de `TunnelCommunity`/`HiddenTunnelCommunity`
 /// (`81ded07332bdc775aa5a46f96de9f8f390bbc9f3`, pyipv8).

@@ -13,9 +13,7 @@ use tribler_ipv8::endpoint::UdpEndpoint;
 use tribler_ipv8::peer::{Network, Peer};
 use tribler_ipv8::UdpAddress;
 use tribler_tunnel::community::TunnelCommunity;
-use tribler_tunnel::routing::{
-    DESTROY_REASON_UNNEEDED, PEER_FLAG_EXIT_HTTP, PEER_FLAG_RELAY,
-};
+use tribler_tunnel::routing::{DESTROY_REASON_UNNEEDED, PEER_FLAG_EXIT_HTTP, PEER_FLAG_RELAY};
 use tribler_tunnel::socks5::Socks5Server;
 use tribler_tunnel::TUNNEL_COMMUNITY_ID;
 
@@ -47,8 +45,7 @@ async fn make_node_flags(flags: i32) -> Node {
     let network = Arc::new(Network::default());
     let ep = UdpEndpoint::bind("127.0.0.1:0").await.unwrap();
     let addr = ep.local_addr().unwrap();
-    let tunnel =
-        TunnelCommunity::new(key.clone(), network.clone(), ep.clone(), flags).await;
+    let tunnel = TunnelCommunity::new(key.clone(), network.clone(), ep.clone(), flags).await;
     let ep_run = ep.clone();
     tokio::spawn(async move {
         let _ = ep_run.run().await;
@@ -449,6 +446,114 @@ async fn hidden_service_e2e_roundtrip() {
     assert_eq!(got.data, payload);
 }
 
+/// Hidden seeding via relais UDP transparent (`udp_relay.rs`) : deux
+/// "moteurs" (sockets uTP factices) dialoguent bout en bout a travers
+/// le circuit e2e lie — equivalent du montage SOCKS5 +
+/// `udp_associate_default_remote` de Tribler, sans SOCKS5.
+#[tokio::test]
+async fn hidden_seed_udp_relay_roundtrip() {
+    let d = make_node().await;
+    let s = make_node().await;
+    let i = make_node().await;
+    let r1 = make_node().await;
+    let r2 = make_node().await;
+    let nodes = [&d, &s, &i, &r1, &r2];
+    for a in &nodes {
+        for b in &nodes {
+            if !std::ptr::eq(*a, *b) {
+                learn(a, b);
+            }
+        }
+    }
+    let info_hash = [9u8; 20];
+
+    // Meme montage que `hidden_service_e2e_roundtrip` : IP puis e2e.
+    s.tunnel.join_swarm(info_hash, 0, true);
+    let ip_cid = s
+        .tunnel
+        .create_introduction_point(info_hash, Some(&peer_of(&i)))
+        .await
+        .expect("circuit IP_SEEDER");
+    s.tunnel
+        .wait_circuit_ready(ip_cid, TEST_TIMEOUT.as_millis() as u64)
+        .await
+        .expect("IP READY");
+    let intro_rx = s
+        .tunnel
+        .send_establish_intro(ip_cid, info_hash)
+        .await
+        .expect("establish-intro");
+    tokio::time::timeout(TEST_TIMEOUT, intro_rx)
+        .await
+        .expect("timeout intro-established")
+        .expect("intro-established");
+
+    d.tunnel.join_swarm(info_hash, 1, false);
+    let data_cid = d
+        .tunnel
+        .create_circuit(1, &peer_of(&r1))
+        .await
+        .expect("circuit data D");
+    d.tunnel
+        .wait_circuit_ready(data_cid, TEST_TIMEOUT.as_millis() as u64)
+        .await
+        .expect("circuit data READY");
+
+    let ip_hint = tribler_tunnel::routing::IntroductionPoint {
+        address: UdpAddress::from(i.addr),
+        peer_key: i.key.public_key().to_bin(),
+        seeder_pk: Vec::new(),
+        source: tribler_tunnel::routing::PEER_SOURCE_UNKNOWN,
+    };
+    let ips = d
+        .tunnel
+        .send_peers_request(info_hash, Some(&ip_hint), 5000)
+        .await
+        .expect("peers-response");
+    let mut e2e_rx = d.tunnel.e2e_ready();
+    d.tunnel
+        .create_e2e(info_hash, &ips[0])
+        .await
+        .expect("create_e2e");
+    let (e2e_cid, _) = tokio::time::timeout(TEST_TIMEOUT * 4, e2e_rx.recv())
+        .await
+        .expect("timeout e2e_ready")
+        .expect("canal e2e");
+
+    // Cote seeder : "moteur" = socket UDP qui repond en echo ; le
+    // relais `serve` l'alimente depuis le circuit RP_SEEDER.
+    let engine = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let engine_addr = engine.local_addr().unwrap();
+    tokio::spawn(async move {
+        let mut buf = [0u8; 4096];
+        while let Ok((n, src)) = engine.recv_from(&mut buf).await {
+            let _ = engine.send_to(&buf[..n], src).await;
+        }
+    });
+    let seeder_cids = s
+        .tunnel
+        .ready_circuits_of_type(tribler_tunnel::routing::CIRCUIT_TYPE_RP_SEEDER);
+    assert_eq!(seeder_cids.len(), 1, "un circuit RP_SEEDER lie attendu");
+    tribler_tunnel::udp_relay::serve(s.tunnel.clone(), seeder_cids[0], engine_addr)
+        .await
+        .expect("serve relay");
+
+    // Cote downloader : `dial` expose le circuit e2e en socket
+    // loopback — le "client" envoie son datagramme uTP au pair cache.
+    let peer_addr = tribler_tunnel::udp_relay::dial(d.tunnel.clone(), e2e_cid)
+        .await
+        .expect("dial relay");
+    let client = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let ping = b"utp-handshake-syn";
+    client.send_to(ping, peer_addr).await.unwrap();
+    let mut buf = [0u8; 2048];
+    let (n, _src) = tokio::time::timeout(TEST_TIMEOUT, client.recv_from(&mut buf))
+        .await
+        .expect("pas d'echo via relais e2e")
+        .unwrap();
+    assert_eq!(&buf[..n], ping, "echo uTP via circuit e2e + relais");
+}
+
 /// SOCKS5 CONNECT : la requete HTTP brute traverse le tunnel en
 /// cellules `http-request`/`http-response` (msgs 28/29) jusqu'a une
 /// sortie `PEER_FLAG_EXIT_HTTP`, qui l'execute en TCP reel puis
@@ -481,10 +586,7 @@ async fn socks5_connect_http_roundtrip() {
             }
         }
         let body = b"d8:intervali1800e5:peers0:e";
-        let head = format!(
-            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n",
-            body.len()
-        );
+        let head = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n", body.len());
         conn.write_all(head.as_bytes()).await.unwrap();
         conn.write_all(body).await.unwrap();
         let _ = conn.shutdown().await;

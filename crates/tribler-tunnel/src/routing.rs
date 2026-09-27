@@ -45,7 +45,23 @@ pub const CIRCUIT_STATE_EXTENDING: &str = "EXTENDING";
 pub const CIRCUIT_STATE_CLOSING: &str = "CLOSING";
 
 /// `CIRCUIT_ID_PORT` : adresse "de sortie" factice cote initiateur.
+/// Un pair cache est vu par le client (libtorrent/rqbit) comme
+/// `circuit_id_to_ip(circuit_id):CIRCUIT_ID_PORT` — le SOCKS5 decode
+/// le circuit_id depuis l'IPv4 (`select_circuit` dans
+/// `ipv8-rust-tunnels`).
 pub const CIRCUIT_ID_PORT: u16 = 1024;
+
+/// `ip_to_circuit_id` (`packet.rs` des tunnels Rust) : l'IPv4 factice
+/// encode le `circuit_id` en big-endian.
+pub fn ip_to_circuit_id(ip: &std::net::Ipv4Addr) -> u32 {
+    u32::from_be_bytes(ip.octets())
+}
+
+/// `circuit_id_to_ip` : adresse IPv4 factice representant le circuit
+/// e2e dans les frames SOCKS5.
+pub fn circuit_id_to_ip(circuit_id: u32) -> std::net::Ipv4Addr {
+    std::net::Ipv4Addr::from(circuit_id.to_be_bytes())
+}
 
 /// `DESTROY_REASON_UNKNOWN`.
 pub const DESTROY_REASON_UNKNOWN: u16 = 1;

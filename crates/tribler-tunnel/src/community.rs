@@ -111,8 +111,11 @@ pub(crate) struct Inner {
     pub(crate) link_requests: HashMap<u16, LinkRequest>,
     /// Cache `HTTPRequest` (`ipv8-rust-tunnels` `request_cache`) :
     /// identifier u32 -> canal recevant les chunks `http-response`.
-    pub(crate) http_requests:
-        HashMap<u32, tokio::sync::mpsc::Sender<tp::HttpResponse>>,
+    pub(crate) http_requests: HashMap<u32, tokio::sync::mpsc::Sender<tp::HttpResponse>>,
+    /// Abonnes par circuit (`subscribe_circuit_data`) — les relais
+    /// UDP du hidden seeding captent les donnees de leurs circuits
+    /// e2e avant le canal `data_tx` general (SOCKS5).
+    pub(crate) data_subscribers: HashMap<u32, tokio::sync::mpsc::Sender<CircuitData>>,
 }
 
 /// `TunnelExitSocket` : socket UDP de sortie dediee par circuit —
@@ -212,7 +215,8 @@ impl TunnelCommunity {
                 peers_requests: HashMap::new(),
                 e2e_requests: HashMap::new(),
                 link_requests: HashMap::new(),
-            http_requests: HashMap::new(),
+                http_requests: HashMap::new(),
+                data_subscribers: HashMap::new(),
             }),
             identifier: AtomicU16::new(0),
             global_time: AtomicU64::new(0),
@@ -253,6 +257,31 @@ impl TunnelCommunity {
         self.data_rx.lock().unwrap().take()
     }
 
+    /// Abonne un consommateur aux donnees d'un circuit (relais UDP du
+    /// hidden seeding). Les `CircuitData` du circuit vont a ce canal ;
+    /// les autres circuits restent sur `data_rx`.
+    pub fn subscribe_circuit_data(
+        &self,
+        circuit_id: u32,
+    ) -> tokio::sync::mpsc::Receiver<CircuitData> {
+        let (tx, rx) = tokio::sync::mpsc::channel(DATA_CHANNEL_CAP);
+        self.inner
+            .lock()
+            .unwrap()
+            .data_subscribers
+            .insert(circuit_id, tx);
+        rx
+    }
+
+    /// Retire l'abonnement de donnees d'un circuit.
+    pub fn unsubscribe_circuit_data(&self, circuit_id: u32) {
+        self.inner
+            .lock()
+            .unwrap()
+            .data_subscribers
+            .remove(&circuit_id);
+    }
+
     /// Nombre de circuits initiates connus.
     pub fn circuit_count(&self) -> usize {
         self.inner.lock().unwrap().circuits.len()
@@ -266,6 +295,18 @@ impl TunnelCommunity {
             .circuits
             .values()
             .filter(|c| c.state() == CIRCUIT_STATE_READY)
+            .map(|c| c.base.circuit_id)
+            .collect()
+    }
+
+    /// Ids des circuits `READY` d'un `ctype` (`CIRCUIT_TYPE_*`).
+    pub fn ready_circuits_of_type(&self, ctype: &str) -> Vec<u32> {
+        self.inner
+            .lock()
+            .unwrap()
+            .circuits
+            .values()
+            .filter(|c| c.state() == CIRCUIT_STATE_READY && c.ctype == ctype)
             .map(|c| c.base.circuit_id)
             .collect()
     }
@@ -292,9 +333,7 @@ impl TunnelCommunity {
             .circuits
             .values()
             .filter(|c| {
-                c.state() == CIRCUIT_STATE_READY
-                    && c.goal_hops == hops
-                    && c.exit_flags & flag != 0
+                c.state() == CIRCUIT_STATE_READY && c.goal_hops == hops && c.exit_flags & flag != 0
             })
             .map(|c| c.base.circuit_id)
             .collect()
@@ -445,21 +484,21 @@ impl TunnelCommunity {
                 .ok_or(Ipv8Error::Malformed("circuit HTTP inconnu"))?
         };
         self.send_cell(&addr, &p).await?;
-        let collected = tokio::time::timeout(
-            std::time::Duration::from_millis(timeout_ms),
-            async {
-                let mut parts: HashMap<u16, Vec<u8>> = HashMap::new();
-                while let Some(chunk) = rx.recv().await {
-                    parts.insert(chunk.part, chunk.response);
-                    if parts.len() >= chunk.total as usize {
-                        break;
-                    }
+        let collected = tokio::time::timeout(std::time::Duration::from_millis(timeout_ms), async {
+            let mut parts: HashMap<u16, Vec<u8>> = HashMap::new();
+            while let Some(chunk) = rx.recv().await {
+                parts.insert(chunk.part, chunk.response);
+                if parts.len() >= chunk.total as usize {
+                    break;
                 }
-                let mut ordered: Vec<(u16, Vec<u8>)> = parts.into_iter().collect();
-                ordered.sort_by_key(|(i, _)| *i);
-                ordered.into_iter().flat_map(|(_, d)| d).collect::<Vec<u8>>()
-            },
-        )
+            }
+            let mut ordered: Vec<(u16, Vec<u8>)> = parts.into_iter().collect();
+            ordered.sort_by_key(|(i, _)| *i);
+            ordered
+                .into_iter()
+                .flat_map(|(_, d)| d)
+                .collect::<Vec<u8>>()
+        })
         .await;
         self.inner.lock().unwrap().http_requests.remove(&identifier);
         collected.map_err(|_| Ipv8Error::Malformed("timeout http-response"))
@@ -1419,13 +1458,38 @@ impl TunnelCommunity {
             self.on_packet_from_circuit(origin, &p.data, Some(circuit_id));
             return;
         }
-        let _ = self.data_tx.try_send(CircuitData {
+        // `data_to_socks5` (`routing/circuit.rs` des tunnels Rust) :
+        // sur les circuits e2e l'origine presentee au client est
+        // reecrite en `circuit_id_to_ip(circuit_id):CIRCUIT_ID_PORT`
+        // pour que les frames de reponse soient reroutees sur le meme
+        // circuit.
+        let origin = if is_e2e {
+            UdpAddress::from(SocketAddr::V4(std::net::SocketAddrV4::new(
+                crate::routing::circuit_id_to_ip(circuit_id),
+                crate::routing::CIRCUIT_ID_PORT,
+            )))
+        } else {
+            p.org_address
+        };
+        let msg = CircuitData {
             circuit_id,
             source: src,
             destination: p.dest_address,
-            origin: p.org_address,
+            origin,
             data: p.data,
-        });
+        };
+        let sub = {
+            let inner = self.inner.lock().unwrap();
+            inner.data_subscribers.get(&circuit_id).cloned()
+        };
+        match sub {
+            Some(tx) => {
+                let _ = tx.try_send(msg);
+            }
+            None => {
+                let _ = self.data_tx.try_send(msg);
+            }
+        }
     }
 
     /// `exit_data` : activation au premier octet vu du bon IP puis

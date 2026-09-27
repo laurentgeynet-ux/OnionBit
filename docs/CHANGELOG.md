@@ -3,6 +3,32 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Étape 12 (partie 5) — `tribler-tunnel` : relais UDP de hidden seeding (2026-09-27)
+
+Le pont entre les circuits e2e et un moteur BitTorrent a socket UDP
+concrete (rqbit) est en place :
+
+- `routing.rs` : `circuit_id_to_ip`/`ip_to_circuit_id` — le pair cache
+  est adresse `X.X.X.X:1024` ou l'IPv4 encode le `circuit_id`
+  (`CIRCUIT_ID_PORT`, comme `packet.rs`/`select_circuit` de
+  `ipv8-rust-tunnels`).
+- `community.rs` : `subscribe_circuit_data`/`unsubscribe_circuit_data`
+  (routage des `CircuitData` par circuit avant le canal general), et
+  l'origine des donnees des circuits `RP_*` est reecrite en
+  `circuit_id_to_ip(cid):1024` (`data_to_socks5` des tunnels Rust) ;
+  `ready_circuits_of_type`.
+- `socks5.rs` : une frame UDP vers `IPv4:CIRCUIT_ID_PORT` envoie la
+  donnee directement sur le circuit e2e decode de l'adresse.
+- `udp_relay.rs` : `dial` (cote downloader : socket loopback ->
+  cellules `data` sur le circuit e2e, retour vers le client appris)
+  et `serve` (cote seeder : donnees du circuit -> service UDP local,
+  reponses -> tunnel). Equivalent du SOCKS5 +
+  `set_udp_associate_default_remote` de Tribler sans exiger que le
+  moteur parle SOCKS5 UDP (rqbit n'expose qu'une socket concrete).
+- Test `hidden_seed_udp_relay_roundtrip` : circuit e2e lie complet,
+  faux moteur echo cote seeder, datagramme du client downloader
+  revenant en echo a travers le tunnel (10 tests au total).
+
 ## Étape 12 (partie 4) — `tribler-tunnel` : CONNECT HTTP par cellules 28/29 (2026-09-27)
 
 Le SOCKS5 CONNECT est desormais fonctionnel (requetes HTTP via le

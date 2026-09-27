@@ -178,17 +178,24 @@ ne sont donc pas « terminées » au sens strict) · `[x]` terminée.
   `create_e2e`/`created_e2e` en paquets tunnel non signes, liaison
   `link_e2e`/`linked_e2e` (identifier partage), couche de session
   `hs_session_keys` supplementaire sur les circuits E2E (sens miroir
-  downloader/seeder). 9 tests loopback reels : circuits 1/2 sauts
-  READY, sortie de donnees, echo UDP bidirectionnel 2 sauts, destroy,
-  aller-retour SOCKS5 UDP ASSOCIATE complet, CONNECT HTTP via
-  cellules 28/29 vers un faux tracker, et
-  `hidden_service_e2e_roundtrip` — seeder joint le swarm, IP etabli,
-  peers-request/reponse, E2E via rendezvous lie, donnees bidirection-
-  nelles sur le circuit cache.
-  **Reste** : hidden seeding branche a `tribler-bittorrent`, suivi des
-  flags de sortie via la decouverte (`exit_flags` pose manuellement
-  pour l'instant), interop reelle avec `TunnelCommunity` pyipv8 /
-  Tribler 8.4.3 installe, telechargement anonyme reel (jalon final).
+  downloader/seeder). Adressage des pairs caches
+  `circuit_id_to_ip(cid):CIRCUIT_ID_PORT(1024)` : le SOCKS5 decode le
+  circuit_id de l'IPv4 factice (`ip_to_circuit_id`) et les donnees
+  entrantes des circuits RP_* sont reecrites avec cette origine
+  (`data_to_socks5` des tunnels Rust). Relais UDP transparent
+  (`udp_relay.rs`) : `dial` expose un circuit e2e sous une adresse
+  loopback (client appris au premier datagramme — socket uTP unique
+  du moteur), `serve` achemine les donnees entrantes du circuit vers
+  un service UDP local et renvoie les reponses — equivalent
+  SOCKS5+`udp_associate_default_remote` sans exiger SOCKS5 cote
+  moteur (rqbit). 10 tests loopback : circuits 1/2 sauts, sortie,
+  echo 2 sauts, destroy, SOCKS5 UDP ASSOCIATE, CONNECT HTTP 28/29,
+  e2e hidden services complet, et `hidden_seed_udp_relay_roundtrip`
+  (datagrammes d'un faux moteur dans les deux sens sur circuit lie).
+  **Reste** : branchement a `tribler-bittorrent` (rqbit uTP via
+  `udp_relay`), suivi des flags de sortie via la decouverte,
+  interop reelle `TunnelCommunity` pyipv8 / Tribler 8.4.3 installe,
+  telechargement anonyme reel (jalon final).
 - [ ] **Étape 13. Politiques de sécurité réseau et kill switch.**
   `tribler-network-policy` : anti-SSRF, politique des noeuds de sortie,
   kill switch atomique, garde-fous SOCKS5. Intégré dans

@@ -36,16 +36,11 @@ pub const CONNECT_REQUEST_MAX: usize = 100 * 1024;
 /// octets de la requete brute sur TCP et relit la reponse complete
 /// (headers + corps, avec support `Content-Length` et `chunked`).
 /// Retourne les octets filaires complets de la reponse.
-pub async fn send_tcp_request(
-    target: &UdpAddress,
-    request: &[u8],
-) -> Result<Vec<u8>, Ipv8Error> {
+pub async fn send_tcp_request(target: &UdpAddress, request: &[u8]) -> Result<Vec<u8>, Ipv8Error> {
     let mut stream = match target {
         UdpAddress::Ipv4(a) => TcpStream::connect(SocketAddr::V4(*a)).await?,
         UdpAddress::Ipv6(a) => TcpStream::connect(SocketAddr::V6(*a)).await?,
-        UdpAddress::Domain(host, port) => {
-            TcpStream::connect((host.as_str(), *port)).await?
-        }
+        UdpAddress::Domain(host, port) => TcpStream::connect((host.as_str(), *port)).await?,
     };
     stream.write_all(request).await?;
 
