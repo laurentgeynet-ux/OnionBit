@@ -707,6 +707,10 @@ version = "0.1.0"
 [[package]]
 name = "tribler-format"
 version = "0.1.0"
+dependencies = [
+ "thiserror",
+ "tribler-crypto",
+]
 
 [[package]]
 name = "tribler-ipv8"

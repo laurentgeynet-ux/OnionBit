@@ -18,13 +18,20 @@ Légende : `[ ]` à faire · `[~]` en cours · `[x]` terminée.
 
 ## Phase 1 — Moteur BitTorrent (via `librqbit`)
 
-- [ ] **Étape 1. Fondations formats.** `tribler-format` : parsing
-  `.torrent` (bencode via `librqbit-bencode` ou équivalent), liens
-  magnet (BEP 9), calcul d'info-hash v1/v2. Tests contre des fichiers
-  `.torrent` réels.
-- [ ] **Étape 2. Crypto de base.** `tribler-crypto` : hachage SHA-1/SHA-256
-  de pièces, génération de clés Ed25519/X25519 (tailles pyipv8
-  low/medium/high). Tests contre des vecteurs connus.
+- [x] **Étape 1. Fondations formats.** `tribler-format` : parser
+  bencode borné maison (zéro dépendance réseau, profondeur et tailles
+  limitées), parsing `.torrent` (info-hash v1 calculé sur le dict `info`
+  brut, support partiel v2/hybride : `pieces root`, `file tree`),
+  liens magnet (btih hex/base32, btmh v2, trackers, webseeds, `dn`),
+  blobs `.mdblob` (payloads signés Ed25519 des types du mapping Python
+  `METADATA_TYPE_TO_PAYLOAD_CLASS`). 18 tests offline.
+- [x] **Étape 2. Crypto de base.** `tribler-crypto` : SHA-1/SHA-256
+  (vecteurs officiels), clés IPv8 `LibNaCLPK`/`LibNaCLSK` (format
+  binaire pyipv8 `LibNaCLPK:`/`LibNaCLSK:` + X25519 + Ed25519, MID =
+  SHA-1), DH X25519 (`crypto_box_beforenm` + HSalsa20, fidèle à
+  `ipv8-rust-tunnels`), dérivation de clés de session HKDF-SHA256,
+  AEAD ChaCha20-Poly1305 (pas AES-GCM : cf. note 2026-09-28), signatures
+  Ed25519. 16 tests.
 - [ ] **Étape 3. Intégration `librqbit` et sessions de téléchargement.**
   `tribler-bittorrent` : démarrer/arrêter un téléchargement, suivre sa
   progression, DHT mainline, trackers HTTP/UDP. Test d'intégration :
@@ -125,3 +132,9 @@ risque IPv8 sous/sur-estimé, etc.), avec la date.
 - 2026-09-27 : étape 0 terminée. Découverte de `librqbit` (ADR-0001) qui
   réduit fortement le risque des phases 1-2 par rapport à l'hypothèse
   initiale d'un moteur BitTorrent écrit entièrement à la main.
+- 2026-09-28 : étapes 1 et 2 terminées. Deux corrections de fidélité par
+  rapport au plan initial : (a) le chiffrement de tunnel IPv8 est
+  **ChaCha20-Poly1305** et non AES-GCM (source : `ipv8-rust-tunnels`
+  `crypto.rs`) ; (b) bencode est implémenté maison dans `tribler-format`
+  plutôt que via `librqbit-bencode`, pour garder le parsing borné sous
+  notre contrôle (et éviter une dépendance pour un codec simple).
