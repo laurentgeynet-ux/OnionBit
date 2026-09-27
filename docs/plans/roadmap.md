@@ -144,7 +144,7 @@ ne sont donc pas « terminées » au sens strict) · `[x]` terminée.
   Python réel, **payloads décodés et vérifiés** des deux côtés — pas
   seulement la signature de paquets génériques (l'introduction ancien
   format + similarity sont déjà validées à l'étape 9).
-- [i] **Étape 12. TunnelCommunity : circuits et hidden seeding.**
+- [x] **Étape 12. TunnelCommunity : circuits et hidden seeding.**
   `tribler-tunnel` : construction de circuits en onion routing (1/2/3
   sauts), chiffrement ChaCha20-Poly1305 par saut (`tribler-crypto`), hidden
   seeding, proxy SOCKS5 local. Jalon : téléchargement anonyme réel via
@@ -217,8 +217,27 @@ ne sont donc pas « terminées » au sens strict) · `[x]` terminée.
   `circuit_id` n'apparait qu'en en-tete de cellule (`body[4:]`, cf.
   `send_cell` Python) et `generate_session_keys` est HKDF
   **EXPAND_ONLY** (`Hkdf::from_prk`), pas extract+expand.
-  **Reste** : interop contre Tribler 8.4.3 installe (noeud complet,
-  distinct du venv), suivi des flags de sortie via la decouverte.
+  **Suivi des flags de sortie via la decouverte** : introductions
+  signees sur le prefixe tunnel (`introduction-request`/`response`,
+  ancien et nouveau style) avec `extra_bytes` = bitmask
+  `ExtraIntroductionPayload.flags` (`>H`, OR des `PEER_FLAG_*`) ;
+  `flag_registry` (equivalent `candidates` Python) alimente
+  `get_candidates(flag)` et le marquage sortie des candidats
+  `created`/`extended`. `community_id` parametrable
+  (`TunnelCommunity::new_with_id`, `TRIBLER_TUNNEL_COMMUNITY_ID` =
+  `a3591a6b…d6bc` pour `TriblerTunnelCommunity`).
+  **Interop Tribler 8.4.3 installe** : `scripts/interop_tribler.ps1`
+  + `examples/tribler_relay_interop.rs` — `Tribler.exe -s` lance avec
+  un etat isole (`TSTATEDIR`, `CORE_API_PORT`/`CORE_API_KEY`,
+  bootstrappeurs vides — aucun trafic externe). Valide contre le
+  vrai client : `introduction-request`/`response` sur le prefixe
+  TriblerTunnelCommunity avec ses flags (`{RELAY, SPEED_TEST}` = 9),
+  `create`/`created` puis circuit **2 sauts Rust → Tribler (relais)
+  → Rust (sortie)** avec echo uTP de bout en bout (Tribler ne sort
+  pas : `exitnode_enabled` non exposable — relais seul, par
+  conception). **Reste** : rien de bloquant documente — l'etape est
+  validee au niveau protocole (RQBIT reel via circuits e2e Rust +
+  relais via le vrai client Tribler).
 - [ ] **Étape 13. Politiques de sécurité réseau et kill switch.**
   `tribler-network-policy` : anti-SSRF, politique des noeuds de sortie,
   kill switch atomique, garde-fous SOCKS5. Intégré dans

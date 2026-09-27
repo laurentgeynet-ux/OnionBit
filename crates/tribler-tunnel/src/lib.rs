@@ -38,6 +38,15 @@ pub const TUNNEL_COMMUNITY_ID: tribler_ipv8::CommunityId = [
     0x90, 0xbb, 0xc9, 0xf3,
 ];
 
+/// `community_id` de `TriblerTunnelCommunity` (Tribler >= 7.x —
+/// `a3591a6bd89bbaca0974062a1287afcfbc6fd6bc`). Utilisable via
+/// `TunnelCommunity::new_with_id` pour l'interop avec le client
+/// Tribler installe (dont le prefixe differe de celui de pyipv8).
+pub const TRIBLER_TUNNEL_COMMUNITY_ID: tribler_ipv8::CommunityId = [
+    0xa3, 0x59, 0x1a, 0x6b, 0xd8, 0x9b, 0xba, 0xca, 0x09, 0x74, 0x06, 0x2a, 0x12, 0x87, 0xaf, 0xcf,
+    0xbc, 0x6f, 0xd6, 0xbc,
+];
+
 /// Niveau d'anonymisation demande pour un telechargement, aligne sur les
 /// options historiques de Tribler (nombre de sauts du circuit).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

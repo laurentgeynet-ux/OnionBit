@@ -23,6 +23,7 @@ use tribler_crypto::ipv8::session::{
 };
 use tribler_ipv8::endpoint::UdpEndpoint;
 use tribler_ipv8::packet::{prefix_of, Packet};
+use tribler_ipv8::payloads::{self as ip, Payload};
 use tribler_ipv8::peer::{Network, Peer};
 use tribler_ipv8::serializer::{Reader, Writer};
 use tribler_ipv8::{Ipv8Error, UdpAddress};
@@ -33,9 +34,14 @@ use crate::hidden_services::{E2ERequest, LinkRequest};
 use crate::payload::{self as tp, msg, Cellable};
 use crate::routing::{
     Circuit, Hop, RelayRoute, RoutingObject, Swarm, UnverifiedHop, CIRCUIT_STATE_READY,
-    CIRCUIT_TYPE_DATA, PEER_FLAG_EXIT_HTTP, PEER_FLAG_RELAY,
+    CIRCUIT_TYPE_DATA, PEER_FLAG_EXIT_BT, PEER_FLAG_EXIT_HTTP, PEER_FLAG_EXIT_IPV8,
+    PEER_FLAG_RELAY,
 };
 use crate::TUNNEL_COMMUNITY_ID;
+
+/// Flags de sortie (tous types confondus) pour le partitionnement
+/// des candidats `created`/`extended`.
+const ANY_EXIT_FLAGS: i32 = PEER_FLAG_EXIT_BT | PEER_FLAG_EXIT_IPV8 | PEER_FLAG_EXIT_HTTP;
 
 /// `max_relay_early` Python (`TunnelSettings.max_relay_early`).
 const MAX_RELAY_EARLY: u8 = 8;
@@ -116,6 +122,10 @@ pub(crate) struct Inner {
     /// UDP du hidden seeding captent les donnees de leurs circuits
     /// e2e avant le canal `data_tx` general (SOCKS5).
     pub(crate) data_subscribers: HashMap<u32, tokio::sync::mpsc::Sender<CircuitData>>,
+    /// `candidates` Python : `public_key_bin` -> bitmask de flags de
+    /// service appris via `ExtraIntroductionPayload` (introductions
+    /// signees sur le prefixe tunnel). Alimente `get_candidates`.
+    pub(crate) flag_registry: HashMap<Vec<u8>, i32>,
 }
 
 /// `TunnelExitSocket` : socket UDP de sortie dediee par circuit —
@@ -161,6 +171,10 @@ pub(crate) struct CreatedRequest {
 
 /// `TunnelCommunity`.
 pub struct TunnelCommunity {
+    /// `community_id` (prefixe reseau) — `TUNNEL_COMMUNITY_ID` pyipv8
+    /// par defaut ; `a3591a6b…d6bc` pour `TriblerTunnelCommunity`
+    /// (Tribler >= 7.x).
+    pub(crate) community_id: tribler_ipv8::CommunityId,
     /// Identite locale (LibNaCL).
     pub(crate) key: LibNaClSecretKey,
     /// Annuaire reseau partage.
@@ -193,9 +207,22 @@ impl TunnelCommunity {
         endpoint: Arc<UdpEndpoint>,
         peer_flags: i32,
     ) -> Arc<Self> {
+        Self::new_with_id(key, network, endpoint, peer_flags, TUNNEL_COMMUNITY_ID).await
+    }
+
+    /// `new` avec un `community_id` explicite (ex. prefixe de
+    /// `TriblerTunnelCommunity` pour l'interop Tribler installe).
+    pub async fn new_with_id(
+        key: LibNaClSecretKey,
+        network: Arc<Network>,
+        endpoint: Arc<UdpEndpoint>,
+        peer_flags: i32,
+        community_id: tribler_ipv8::CommunityId,
+    ) -> Arc<Self> {
         let (data_tx, data_rx) = tokio::sync::mpsc::channel(DATA_CHANNEL_CAP);
         let (e2e_ready_tx, _) = tokio::sync::broadcast::channel(E2E_CHANNEL_CAP);
         let community = Arc::new(Self {
+            community_id,
             key,
             network,
             endpoint: endpoint.clone(),
@@ -217,6 +244,7 @@ impl TunnelCommunity {
                 link_requests: HashMap::new(),
                 http_requests: HashMap::new(),
                 data_subscribers: HashMap::new(),
+                flag_registry: HashMap::new(),
             }),
             identifier: AtomicU16::new(0),
             global_time: AtomicU64::new(0),
@@ -227,7 +255,7 @@ impl TunnelCommunity {
         let weak = Arc::downgrade(&community);
         endpoint
             .add_raw_prefix_listener(
-                prefix_of(&TUNNEL_COMMUNITY_ID),
+                prefix_of(&community_id),
                 Arc::new(move |src, data| {
                     let Some(c) = weak.upgrade() else {
                         return Ok(());
@@ -454,7 +482,7 @@ impl TunnelCommunity {
         }
 
         let mut wire = Cell::to_wire(
-            &prefix_of(&TUNNEL_COMMUNITY_ID),
+            &prefix_of(&self.community_id),
             circuit_id,
             P::MSG_ID,
             &body[4..],
@@ -736,14 +764,14 @@ impl TunnelCommunity {
 
     /// Point d'entree brut (raw prefix listener) : cellule ou paquet.
     pub fn on_raw_datagram(self: &Arc<Self>, src: SocketAddr, data: &[u8]) {
-        let prefix = prefix_of(&TUNNEL_COMMUNITY_ID);
+        let prefix = prefix_of(&self.community_id);
         if cell::is_cell(&prefix, data) {
             if let Err(e) = self.process_cell(src, data) {
                 tracing::debug!(error = %e, "cellule rejetee");
             }
             return;
         }
-        match Packet::parse(data, Some(&TUNNEL_COMMUNITY_ID)) {
+        match Packet::parse(data, Some(&self.community_id)) {
             Ok(pkt) => {
                 if let Err(e) = self.on_packet(src, pkt) {
                     tracing::debug!(error = %e, "paquet tunnel rejete");
@@ -768,7 +796,7 @@ impl TunnelCommunity {
         data: &[u8],
         circuit_id: Option<u32>,
     ) {
-        let prefix = prefix_of(&TUNNEL_COMMUNITY_ID);
+        let prefix = prefix_of(&self.community_id);
         if data.len() <= prefix.len() + 1 || data[..prefix.len()] != prefix {
             return;
         }
@@ -1037,14 +1065,217 @@ impl TunnelCommunity {
         Ok(())
     }
 
+    /// `extract_peer_flags` : `ExtraIntroductionPayload.flags` est le
+    /// OR des `PEER_FLAG_*` serialise `>H` (packer `Flags` pyipv8).
+    fn extract_peer_flags(extra_bytes: &[u8]) -> i32 {
+        if extra_bytes.len() < 2 {
+            return 0;
+        }
+        i32::from(u16::from_be_bytes([extra_bytes[0], extra_bytes[1]]))
+    }
+
+    /// `candidates[peer] = flags` : enregistre le pair + ses flags
+    /// appris par une introduction signee sur le prefixe tunnel.
+    fn register_tunnel_peer(&self, public_key_bin: &[u8], src: SocketAddr, flags: i32) {
+        let Some(peer) = Peer::new(public_key_bin.to_vec(), Some(UdpAddress::from(src))) else {
+            return;
+        };
+        self.network.add_verified(peer.clone());
+        self.network
+            .discover_service(&peer.public_key_bin, self.community_id);
+        self.inner
+            .lock()
+            .unwrap()
+            .flag_registry
+            .insert(peer.public_key_bin.clone(), flags);
+    }
+
+    /// `get_candidates(*flags)` : pairs connus portant `flag`
+    /// (`PEER_FLAG_*`) dans leur bitmask annonce.
+    pub fn get_candidates(&self, flag: i32) -> Vec<Peer> {
+        let inner = self.inner.lock().unwrap();
+        self.network
+            .peers_for_service(&self.community_id)
+            .into_iter()
+            .filter(|p| {
+                inner
+                    .flag_registry
+                    .get(&p.public_key_bin)
+                    .is_some_and(|f| f & flag != 0)
+            })
+            .collect()
+    }
+
+    /// Flags annonces par un pair (0 si inconnu).
+    pub fn peer_flags_of(&self, public_key_bin: &[u8]) -> i32 {
+        self.inner
+            .lock()
+            .unwrap()
+            .flag_registry
+            .get(public_key_bin)
+            .copied()
+            .unwrap_or(0)
+    }
+
+    /// `create_introduction_request` : requete signee sur le prefixe
+    /// tunnel avec `extra_bytes` = nos `peer_flags` (`>H` — packer
+    /// `Flags`). A utiliser pour decouvrir les flags d'un pair
+    /// connu (`network`) avant de l'integrer comme saut/sortie.
+    pub async fn send_introduction_request(&self, addr: &UdpAddress) -> Result<(), Ipv8Error> {
+        let local = self.endpoint.local_addr()?;
+        let my_addr = UdpAddress::from(local);
+        let mut w = Writer::new();
+        ip::IntroductionRequest {
+            destination_address: addr.clone(),
+            source_lan_address: my_addr.clone(),
+            source_wan_address: my_addr,
+            advice: true,
+            supports_new_style: true,
+            connection_type: ip::ConnectionType::Unknown,
+            identifier: self.next_id(),
+            extra_bytes: (self.inner.lock().unwrap().peer_flags as u16)
+                .to_be_bytes()
+                .to_vec(),
+        }
+        .pack(&mut w)?;
+        let pkt = Packet::sign(
+            &self.community_id,
+            ip::IntroductionRequest::MSG_ID,
+            &self.key,
+            self.claim_global_time() % 65536,
+            &w.into_bytes(),
+        );
+        self.endpoint.send_to(addr, &pkt).await
+    }
+
+    /// `introduction_request_callback` + reponse : enregistre les
+    /// flags du demandeur, marque le pair service tunnel, renvoie une
+    /// `introduction-response` (meme style que la requete) portant nos
+    /// flags. Simplifie vs `Community` : pas de `puncture-request` (le
+    /// suivi NAT est du ressort de `DiscoveryCommunity`).
+    fn on_introduction_request(
+        self: &Arc<Self>,
+        src: SocketAddr,
+        public_key_bin: &[u8],
+        identifier: u16,
+        source_wan: &UdpAddress,
+        new_style: bool,
+        extra_bytes: &[u8],
+    ) {
+        let flags = Self::extract_peer_flags(extra_bytes);
+        self.register_tunnel_peer(public_key_bin, src, flags);
+
+        let c = self.clone();
+        let dst = UdpAddress::from(src);
+        let dest_addr = source_wan.clone();
+        tokio::spawn(async move {
+            let local = match c.endpoint.local_addr() {
+                Ok(a) => a,
+                Err(_) => return,
+            };
+            let my_addr = UdpAddress::from(local);
+            let unspecified = || UdpAddress::from("0.0.0.0:0".parse::<SocketAddr>().unwrap());
+            let flags_bytes = (c.inner.lock().unwrap().peer_flags as u16)
+                .to_be_bytes()
+                .to_vec();
+            let mut w = Writer::new();
+            let (res, msg_id) = if new_style {
+                (
+                    ip::NewIntroductionResponse {
+                        destination_address: dest_addr,
+                        source_lan_address: my_addr.clone(),
+                        source_wan_address: my_addr,
+                        lan_introduction_address: unspecified(),
+                        wan_introduction_address: unspecified(),
+                        identifier,
+                        intro_supports_new_style: false,
+                        extra_bytes: flags_bytes,
+                    }
+                    .pack(&mut w),
+                    ip::NewIntroductionResponse::MSG_ID,
+                )
+            } else {
+                (
+                    ip::IntroductionResponse {
+                        destination_address: dest_addr,
+                        source_lan_address: my_addr.clone(),
+                        source_wan_address: my_addr,
+                        lan_introduction_address: unspecified(),
+                        wan_introduction_address: unspecified(),
+                        connection_type: ip::ConnectionType::Unknown,
+                        supports_new_style: true,
+                        peer_limit_reached: false,
+                        identifier,
+                        intro_supports_new_style: false,
+                        extra_bytes: flags_bytes,
+                    }
+                    .pack(&mut w),
+                    ip::IntroductionResponse::MSG_ID,
+                )
+            };
+            if res.is_ok() {
+                let pkt = Packet::sign(
+                    &c.community_id,
+                    msg_id,
+                    &c.key,
+                    c.claim_global_time() % 65536,
+                    &w.into_bytes(),
+                );
+                let _ = c.endpoint.send_to(&dst, &pkt).await;
+            }
+        });
+    }
+
+    /// `introduction_response_callback` : enregistre les flags de
+    /// l'emetteur de la reponse.
+    fn on_introduction_response(&self, src: SocketAddr, public_key_bin: &[u8], extra_bytes: &[u8]) {
+        let flags = Self::extract_peer_flags(extra_bytes);
+        self.register_tunnel_peer(public_key_bin, src, flags);
+    }
+
     /// Paquet IPv8 (signe ou non) recu sur le prefixe tunnel :
-    /// `destroy` et messages E2E (non-cellules).
-    fn on_packet(&self, src: SocketAddr, pkt: Packet) -> Result<(), Ipv8Error> {
+    /// `destroy`, introductions (suivi des flags de sortie) et
+    /// messages E2E (non-cellules).
+    fn on_packet(self: &Arc<Self>, src: SocketAddr, pkt: Packet) -> Result<(), Ipv8Error> {
         match pkt.msg_id {
             msg::DESTROY => {
                 let mut r = Reader::new(&pkt.payload);
                 let d = tp::Destroy::unpack(&mut r)?;
                 self.on_destroy(src, d.circuit_id, d.reason);
+            }
+            x if x == ip::IntroductionRequest::MSG_ID => {
+                let mut r = Reader::new(&pkt.payload);
+                let p = ip::IntroductionRequest::unpack(&mut r)?;
+                self.on_introduction_request(
+                    src,
+                    &pkt.public_key_bin,
+                    p.identifier,
+                    &p.source_wan_address,
+                    false,
+                    &p.extra_bytes,
+                );
+            }
+            x if x == ip::NewIntroductionRequest::MSG_ID => {
+                let mut r = Reader::new(&pkt.payload);
+                let p = ip::NewIntroductionRequest::unpack(&mut r)?;
+                self.on_introduction_request(
+                    src,
+                    &pkt.public_key_bin,
+                    p.identifier,
+                    &p.source_wan_address,
+                    true,
+                    &p.extra_bytes,
+                );
+            }
+            x if x == ip::IntroductionResponse::MSG_ID => {
+                let mut r = Reader::new(&pkt.payload);
+                let p = ip::IntroductionResponse::unpack(&mut r)?;
+                self.on_introduction_response(src, &pkt.public_key_bin, &p.extra_bytes);
+            }
+            x if x == ip::NewIntroductionResponse::MSG_ID => {
+                let mut r = Reader::new(&pkt.payload);
+                let p = ip::NewIntroductionResponse::unpack(&mut r)?;
+                self.on_introduction_response(src, &pkt.public_key_bin, &p.extra_bytes);
             }
             _ => {
                 tracing::trace!(msg_id = pkt.msg_id, %src, "paquet tunnel ignore");
@@ -1093,12 +1324,20 @@ impl TunnelCommunity {
             .ok_or(Ipv8Error::Malformed("cle de requete invalide"))?;
 
         // Candidats proposes : relays puis sorties (marqueur = premiere
-        // sortie dupliquee — convention `join_circuit` Python).
-        let peers = self.network.peers_for_service(&TUNNEL_COMMUNITY_ID);
+        // sortie dupliquee — convention `join_circuit` Python). Les
+        // sorties sont celles dont les `PEER_FLAG_EXIT_*` sont connus
+        // via le suivi des flags (`flag_registry`).
+        let peers = self.network.peers_for_service(&self.community_id);
+        let flags_snapshot: HashMap<Vec<u8>, i32> =
+            self.inner.lock().unwrap().flag_registry.clone();
         let (exits, relays_only): (Vec<Peer>, Vec<Peer>) = peers
             .into_iter()
             .filter(|q| q.public_key_bin != requester.public_key_bin)
-            .partition(q_is_exit_candidate);
+            .partition(|q| {
+                flags_snapshot
+                    .get(&q.public_key_bin)
+                    .is_some_and(|f| f & ANY_EXIT_FLAGS != 0)
+            });
         let mut list: Vec<Peer> = relays_only
             .into_iter()
             .take(CANDIDATES_IN_RESPONSE)
@@ -1379,7 +1618,7 @@ impl TunnelCommunity {
                 .or_else(|| wanted.iter().find_map(|pk| self.network.get_by_key(pk)))
                 .or_else(|| {
                     self.network
-                        .peers_for_service(&TUNNEL_COMMUNITY_ID)
+                        .peers_for_service(&self.community_id)
                         .into_iter()
                         .find(|q| {
                             let inner = self.inner.lock().unwrap();
@@ -1506,7 +1745,7 @@ impl TunnelCommunity {
         // Circuit nous appartenant : paquet tunnel prefixe embarque
         // (`could_be_ipv8`) -> `on_packet_from_circuit` ; circuits
         // e2e (RP_*) livrent la donnee brute (`on_raw_data`).
-        let prefix = prefix_of(&TUNNEL_COMMUNITY_ID);
+        let prefix = prefix_of(&self.community_id);
         let from_hop = hop_addr.as_ref().and_then(|a| a.to_socket_addr()) == Some(src);
         if from_hop && !is_e2e && p.data.len() > prefix.len() && p.data[..prefix.len()] == prefix {
             // `source_address` Python = `org_address` du payload (le
@@ -1680,7 +1919,7 @@ impl TunnelCommunity {
         let mut w = Writer::new();
         tp::Destroy { circuit_id, reason }.pack(&mut w)?;
         let pkt = Packet::sign(
-            &TUNNEL_COMMUNITY_ID,
+            &self.community_id,
             msg::DESTROY,
             &self.key,
             self.claim_global_time(),
@@ -1801,13 +2040,4 @@ pub(crate) fn verify_and_generate_shared_secret(
         return Err(Ipv8Error::Crypto(tribler_crypto::CryptoError::Aead));
     }
     Ok(shared)
-}
-
-/// Heuristique "candidat sortie" (approximation de
-/// `get_candidates(PEER_FLAG_EXIT_BT)` : le suivi des flags distants
-/// par pair n'est pas encore cable dans `Network` — aucun pair n'est
-/// marque sortie, les listes de candidats ne portent donc que des
-/// relais pour l'instant).
-fn q_is_exit_candidate(_p: &Peer) -> bool {
-    false
 }

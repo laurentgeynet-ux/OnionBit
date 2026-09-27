@@ -3,6 +3,33 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Étape 12 (jalon) — suivi des flags + interop Tribler 8.4.3 installé (2026-09-27)
+
+L'etape 12 est close : les deux items restants du roadmap sont
+valides.
+
+- **Suivi des flags de service via la decouverte**
+  (`community.rs`) : handlers `introduction-request`/`response`
+  (anciens msgs 246/245 et nouveaux 234/233) sur le prefixe tunnel ;
+  `extra_bytes` = bitmask `>H` (`ExtraIntroductionPayload.flags`,
+  packer `Flags` pyipv8). `flag_registry` = `candidates` Python :
+  `get_candidates(flag)` filtre les pairs par flags annonces, les
+  candidats `created`/`extended` marquent les vraies sorties
+  (`ANY_EXIT_FLAGS`), `send_introduction_request` publie nos flags.
+  Test `tunnel_introduction_tracks_exit_flags`.
+- **`community_id` parametrable** : `TunnelCommunity::new_with_id` +
+  `TRIBLER_TUNNEL_COMMUNITY_ID` (`a3591a6b…d6bc`, prefixe de
+  `TriblerTunnelCommunity` — distinct du `81ded073…c9f3` pyipv8).
+- **Interop contre Tribler 8.4.3 installe** (`scripts/interop_tribler.ps1`,
+  `examples/tribler_relay_interop.rs`) : `Tribler.exe -s` en etat
+  isole (`TSTATEDIR` + `CORE_API_PORT`/`CORE_API_KEY`, config
+  pre-ecrite sans BOM, bootstrappeurs vides — aucun trafic externe).
+  Resultat valide : flags Tribler appris par introduction (`9` =
+  RELAY|SPEED_TEST), `create`→`created`, circuit 2 sauts
+  Rust→Tribler(relais)→Rust(sortie) et echo uTP 20 octets de bout en
+  bout. Tribler relaie mais ne sort pas (`exitnode_enabled` non
+  exposable par config — par conception).
+
 ## Étape 12 (correctif) — `perform_http_request` : assemblage strict + pas de fuite (2026-09-27)
 
 - `community.rs::perform_http_request` : le `total` est fige au

@@ -30,7 +30,6 @@ use crate::routing::{
     IntroductionPoint, PendingE2e, RendezvousPoint, Swarm, CIRCUIT_TYPE_IP_SEEDER,
     CIRCUIT_TYPE_RP_DOWNLOADER, CIRCUIT_TYPE_RP_SEEDER, PEER_SOURCE_DHT,
 };
-use crate::TUNNEL_COMMUNITY_ID;
 
 /// `PeersResponse` plafond (`random.sample(intro_points, 7)` Python).
 const MAX_PEERS_IN_RESPONSE: usize = 7;
@@ -113,8 +112,8 @@ pub(crate) struct LinkRequest {
 
 /// Paquet tunnel non signe : `prefix + msg_id + corps` (`ezr_pack`,
 /// `sig=False`).
-fn pack_unsigned(msg_id: u8, body: &[u8]) -> Vec<u8> {
-    let prefix = prefix_of(&TUNNEL_COMMUNITY_ID);
+fn pack_unsigned(cid: &tribler_ipv8::CommunityId, msg_id: u8, body: &[u8]) -> Vec<u8> {
+    let prefix = prefix_of(cid);
     let mut out = Vec::with_capacity(prefix.len() + 1 + body.len());
     out.extend_from_slice(&prefix);
     out.push(msg_id);
@@ -175,7 +174,7 @@ impl TunnelCommunity {
         let my_pk = self.key.public_key().to_bin();
         let mut peers: Vec<Peer> = self
             .network
-            .peers_for_service(&TUNNEL_COMMUNITY_ID)
+            .peers_for_service(&self.community_id)
             .into_iter()
             .filter(|p| p.public_key_bin != my_pk && Some(p.public_key_bin.as_slice()) != exclude)
             .collect();
@@ -520,7 +519,7 @@ impl TunnelCommunity {
                 self.tunnel_data(
                     cid,
                     &ip.address,
-                    &pack_unsigned(msg::PEERS_REQUEST, &w.into_bytes()),
+                    &pack_unsigned(&self.community_id, msg::PEERS_REQUEST, &w.into_bytes()),
                 )
                 .await?;
             }
@@ -592,7 +591,14 @@ impl TunnelCommunity {
                     let _ = reply.pack(&mut w);
                     let _ = this
                         .endpoint
-                        .send_to(&addr, &pack_unsigned(msg::PEERS_RESPONSE, &w.into_bytes()))
+                        .send_to(
+                            &addr,
+                            &pack_unsigned(
+                                &this.community_id,
+                                msg::PEERS_RESPONSE,
+                                &w.into_bytes(),
+                            ),
+                        )
                         .await;
                 }
             }
@@ -689,7 +695,7 @@ impl TunnelCommunity {
         };
         let mut w = Writer::new();
         p.pack(&mut w)?;
-        let packet = pack_unsigned(msg::CREATE_E2E, &w.into_bytes());
+        let packet = pack_unsigned(&self.community_id, msg::CREATE_E2E, &w.into_bytes());
         {
             let mut inner = self.inner.lock().unwrap();
             inner.e2e_requests.insert(
@@ -808,7 +814,8 @@ impl TunnelCommunity {
                     if p.pack(&mut w).is_err() {
                         return;
                     }
-                    let packet = pack_unsigned(msg::CREATE_E2E, &w.into_bytes());
+                    let packet =
+                        pack_unsigned(&self.community_id, msg::CREATE_E2E, &w.into_bytes());
                     let this = self.clone();
                     let dest = UdpAddress::from(src);
                     tokio::spawn(async move {
@@ -954,7 +961,7 @@ impl TunnelCommunity {
         if reply.pack(&mut w).is_err() {
             return;
         }
-        let packet = pack_unsigned(msg::CREATED_E2E, &w.into_bytes());
+        let packet = pack_unsigned(&self.community_id, msg::CREATED_E2E, &w.into_bytes());
         {
             let mut inner = self.inner.lock().unwrap();
             if let Some(s) = inner.swarms.get_mut(&p.info_hash) {
@@ -1032,7 +1039,7 @@ impl TunnelCommunity {
         // l'apprend (son adresse vient du `rp_info` signe DH).
         self.network.add_verified(required);
         self.network
-            .discover_service(&rp_info.key, TUNNEL_COMMUNITY_ID);
+            .discover_service(&rp_info.key, self.community_id);
         // Exclut le RP du tirage du premier saut : sinon un circuit a
         // 2 sauts pourrait choisir le RP comme premier ET dernier
         // saut (etendu vers lui-meme pour satisfaire

@@ -13,7 +13,9 @@ use tribler_ipv8::endpoint::UdpEndpoint;
 use tribler_ipv8::peer::{Network, Peer};
 use tribler_ipv8::UdpAddress;
 use tribler_tunnel::community::TunnelCommunity;
-use tribler_tunnel::routing::{DESTROY_REASON_UNNEEDED, PEER_FLAG_EXIT_HTTP, PEER_FLAG_RELAY};
+use tribler_tunnel::routing::{
+    DESTROY_REASON_UNNEEDED, PEER_FLAG_EXIT_BT, PEER_FLAG_EXIT_HTTP, PEER_FLAG_RELAY,
+};
 use tribler_tunnel::socks5::Socks5Server;
 use tribler_tunnel::TUNNEL_COMMUNITY_ID;
 
@@ -869,4 +871,45 @@ async fn socks5_connect_http_roundtrip() {
         out.ends_with(b"d8:intervali1800e5:peers0:e"),
         "corps bencode absent"
     );
+}
+
+/// Suivi des flags de service via les introductions sur le prefixe
+/// tunnel : `ExtraIntroductionPayload` piggybacke dans les
+/// `introduction-request`/`response` (`extra_bytes` = bitmask `>H`),
+/// alimente `get_candidates` (equivalent `candidates` Python).
+#[tokio::test]
+async fn tunnel_introduction_tracks_exit_flags() {
+    let a = make_node_flags(PEER_FLAG_RELAY).await;
+    let b = make_node_flags(PEER_FLAG_RELAY | PEER_FLAG_EXIT_BT).await;
+
+    // A -> B : introduction-request signee sur le prefixe tunnel ;
+    // B enregistre nos flags et repond avec les siens.
+    a.tunnel
+        .send_introduction_request(&UdpAddress::from(b.addr))
+        .await
+        .unwrap();
+
+    let deadline = Instant::now() + TEST_TIMEOUT;
+    loop {
+        let a_knows = a.tunnel.peer_flags_of(&b.key.public_key().to_bin());
+        let b_knows = b.tunnel.peer_flags_of(&a.key.public_key().to_bin());
+        if a_knows & PEER_FLAG_EXIT_BT != 0 && b_knows & PEER_FLAG_RELAY != 0 {
+            break;
+        }
+        assert!(Instant::now() < deadline, "flags non echanges");
+        tokio::time::sleep(POLL).await;
+    }
+
+    // `get_candidates` : B sortie BT candidate pour A ; A
+    // (relay-only) n'est pas une sortie pour B.
+    let exits = a.tunnel.get_candidates(PEER_FLAG_EXIT_BT);
+    assert_eq!(exits.len(), 1);
+    assert_eq!(exits[0].public_key_bin, b.key.public_key().to_bin());
+    assert!(b.tunnel.get_candidates(PEER_FLAG_EXIT_BT).is_empty());
+    // Le service tunnel est decouvert sur les deux cotes.
+    assert!(a
+        .network
+        .peers_for_service(&TUNNEL_COMMUNITY_ID)
+        .iter()
+        .any(|p| p.public_key_bin == b.key.public_key().to_bin()));
 }
