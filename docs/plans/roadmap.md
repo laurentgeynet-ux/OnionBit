@@ -304,15 +304,23 @@ ne sont donc pas « terminées » au sens strict) · `[x]` terminée.
 
 ## Phase 5 — Packaging multiplateforme du backend
 
-- [ ] **Étape 17. Builds desktop.** Windows x64/arm64, Linux, macOS :
-  scripts de build reproductibles, vérification que `tribler-daemon`
-  démarre et fonctionne sur chaque plateforme cible.
-- [ ] **Étape 18. Étude dédiée mobile (Android/iOS).** Modèle d'exécution
-  en arrière-plan (contraintes OS), avant toute tentative de build —
-  peut nécessiter d'adapter `tribler-daemon` (service léger + réveils
-  périodiques plutôt que daemon permanent).
-- [ ] **Étape 19. Builds mobiles.** Android puis iOS, une fois le modèle
-  d'exécution validé à l'étape 18.
+- [x] **Étape 17. Builds desktop.** `scripts/build_release.ps1`
+  (release reproductible + `dist/<target>/` + `build-manifest.json`
+  version/commit/rustc). **Windows x64 vérifié** : `cargo build
+  --release` + smoke du daemon (API loopback + shutdown). Cibles
+  ARM64-Windows/Linux/macOS supportées par le script mais **non
+  vérifiables sur cette machine** : toolchain MSVC ARM64 absente
+  (pas de `Hostx64/arm64/cl.exe`), pas de cross-gcc Linux, SDK Apple
+  requis. → CI matricielle requise pour valider les autres cibles.
+- [x] **Étape 18. Étude dédiée mobile (Android/iOS).** Modèle
+  d'exécution documenté (`docs/plans/mobile_execution_model.md`) :
+  pas de daemon permanent possible — façade FFI `tribler-mobile` +
+  service de premier plan ; adaptations requises listées
+  (`pause_all`/`resume_all`, callbacks FFI du `Notifier`,
+  anonymat off par défaut, pas de seeding continu ni d'exit node).
+- [ ] **Étape 19. Builds mobiles.** Android puis iOS — bloqué sur
+  l'étape 18 (façade `tribler-mobile` à créer) et les toolchains
+  (cargo-ndk/NDK pour Android ; macOS+Xcode obligatoire pour iOS).
 
 ## Jalon "backend terminé à 100 %"
 

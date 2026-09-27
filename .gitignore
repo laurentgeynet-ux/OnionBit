@@ -10,3 +10,6 @@ logs/
 .dart_tool/
 build/
 .flutter-plugins-dependencies
+
+# Artefacts de build release (scripts/build_release.ps1)
+dist/

@@ -3,6 +3,22 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Étapes 17-18 — packaging desktop + modèle mobile (2026-09-27)
+
+- **`scripts/build_release.ps1`** : build release reproductible
+  (cible hôte ou `-Target`), sortie `dist/<target>/` +
+  `build-manifest.json` (version, commit, rustc, date UTC). Matrice
+  prévue : windows-x64, windows-arm64, linux-x64, macos-arm64.
+- **Windows x64 vérifié** : release build OK, smoke test du binaire
+  (API loopback + `PUT /api/shutdown` propres). Autres cibles non
+  vérifiables sur cette machine (toolchain MSVC ARM64, cross-gcc
+  Linux, SDK Apple absents) → CI matricielle requise.
+- **Étape 18 documentée** (`docs/plans/mobile_execution_model.md`) :
+  Android/iOS imposent un service de premier plan, pas de daemon —
+  façade FFI `tribler-mobile` à créer (étape 19), anonymat off par
+  défaut, `pause_all`/`resume_all` à ajouter. Verdict : compilable,
+  comportement adapté (pas de seeding permanent ni d'exit node).
+
 ## Étape 16 — durcissement + tests de bout en bout (2026-09-27)
 
 - **`tribler-test-support` peuplé** : `test_torrent_bytes(name, len)`,

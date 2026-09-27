@@ -29,6 +29,8 @@ chaque étape (cf. `AGENTS.md`, "Workflow par étape").
 | `docs/reference_tribler/api_endpoints_complet.md` | Inventaire exhaustif des fonctions de l'API web Tribler (routes, paramètres, défauts/min-max, implantation Python ↔ Rust) |
 | `docs/reference_tribler/ipv8_rust_tunnels/` | Extraits des sources `ipv8-rust-tunnels` (formats clés, DH, paquets) |
 | `docs/security/revue_garde_fous.md` | Inventaire des protections réseau (anti-SSRF, exit policy, kill switch, proxy guard, hidden seeding) + tests qui les couvrent |
+| `docs/plans/mobile_execution_model.md` | Étape 18 — modèle d'exécution Android/iOS (façade FFI, foreground service, contraintes) |
+| `scripts/build_release.ps1` | Build release reproductible multi-cibles + `dist/<target>/` + manifest |
 | `docs/CHANGELOG.md` | Historique des étapes franchies |
 | `scripts/verify_all.ps1` | Validation complète (check/clippy/fmt/test) |
 | `scripts/interop_ipv8.ps1` + `scripts/interop/` | Jalon d'interop Rust↔pyipv8 sur loopback : `py_node.py` (noeud Python), `verify_packets.py` (vérification Ed25519 via le vrai `default_eccrypto`), chemins réglables via `TRIBLER_PYIPV8`/`TRIBLER_INTEROP_PY` |
