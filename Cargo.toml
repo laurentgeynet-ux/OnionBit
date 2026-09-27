@@ -62,8 +62,8 @@ proptest = "1"
 # protocole peer-wire, DHT BEP5 et tracker HTTP/UDP qui existent deja en
 # Rust pur et sont actifs/matures.
 librqbit = "9"
-librqbit-core = "5"
-librqbit-bencode = "3"
+librqbit-core = "9"
+librqbit-bencode = "9"
 
 [profile.release]
 opt-level = 3

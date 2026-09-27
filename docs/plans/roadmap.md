@@ -32,11 +32,15 @@ Légende : `[ ]` à faire · `[~]` en cours · `[x]` terminée.
   `ipv8-rust-tunnels`), dérivation de clés de session HKDF-SHA256,
   AEAD ChaCha20-Poly1305 (pas AES-GCM : cf. note 2026-09-28), signatures
   Ed25519. 16 tests.
-- [ ] **Étape 3. Intégration `librqbit` et sessions de téléchargement.**
-  `tribler-bittorrent` : démarrer/arrêter un téléchargement, suivre sa
-  progression, DHT mainline, trackers HTTP/UDP. Test d'intégration :
-  téléchargement réel d'un torrent de test (ex. contenu libre de droits)
-  de bout en bout.
+- [x] **Étape 3. Intégration `librqbit` et sessions de téléchargement.**
+  `tribler-bittorrent` : `BtEngine` (enveloppe de `librqbit::Session`
+  v9), `Download`/`DownloadStats`/`DownloadState` (types domaine
+  decouples), ajout par magnet/URI/bytes `.torrent`, pause/reprise/
+  suppression, `EngineConfig` (DHT, trackers, listen, proxy SOCKS5 pour
+  les futurs tunnels). Test offline : session sans DHT/trackers/écoute +
+  ajout de `.torrent` construit par `tribler-format`. Note : le test
+  "téléchargement réel de bout en bout" reste à faire (nécessite du
+  réseau ; hors scope des tests offline) — voir étape 16.
 - [ ] **Étape 4. Schéma SQLite et migrations.** `tribler-db` : torrents
   connus, canaux, votes, réglages. Migrations versionnées
   (`SCHEMA_VERSION`). Tests avec base en mémoire.

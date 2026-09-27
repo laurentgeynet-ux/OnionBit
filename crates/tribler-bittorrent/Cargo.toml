@@ -7,5 +7,16 @@ license.workspace = true
 authors.workspace = true
 
 [dependencies]
+librqbit.workspace = true
+librqbit-core.workspace = true
+tribler-format = { path = "../tribler-format" }
+tribler-crypto = { path = "../tribler-crypto" }
+tokio.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+url.workspace = true
+bytes.workspace = true
+hex.workspace = true
 
 [dev-dependencies]
+tempfile.workspace = true

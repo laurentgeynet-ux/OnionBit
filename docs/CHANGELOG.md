@@ -3,6 +3,24 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Étape 3 — `tribler-bittorrent` : enveloppe `librqbit` (2026-09-28)
+
+- `BtEngine` : enveloppe de `librqbit::Session` v9 (cycle de vie
+  start/stop, ajout magnet/URI/bytes `.torrent`, liste, pause, reprise,
+  suppression avec/sans fichiers).
+- `Download` : handle léger (`Arc`) exposant id, info-hash, nom, stats.
+- `DownloadStats`/`DownloadState` : types domaine découplés de
+  `librqbit` (mapping `TorrentStatsState` → `Initializing/Checking/
+  Downloading/Seeding/Paused/Error/Stopped`), `progress()` normalisé.
+- `EngineConfig` : regroupe tous les réglages (output_dir, DHT,
+  trackers, LSD, IPv4-only, port d'écoute, peer_limit, fastresume,
+  proxy SOCKS5 point d'intégration `tribler-tunnel`). Constructeur
+  `EngineConfig::offline` pour les tests sans réseau.
+- Traduction `EngineConfig → librqbit::SessionOptions`
+  (`ListenerOptions`, `ConnectionOptions::proxy_url`).
+- 1 test offline (session sans réseau + ajout de `.torrent` encodé par
+  `tribler-format`).
+
 ## Étape 1 — `tribler-format` : bencode, `.torrent`, magnet, `.mdblob` (2026-09-28)
 
 - Parser bencode borné maison (`bencode/parser.rs`) : profondeur max,

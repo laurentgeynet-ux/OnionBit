@@ -1,41 +1,70 @@
 //! `tribler-bittorrent` — moteur BitTorrent.
 //!
 //! Responsabilite unique : exposer une API Tribler-idiomatique
-//! (`DownloadHandle`, `DownloadConfig`, evenements de progression) au
-//! dessus du moteur BitTorrent reutilise `librqbit` (voir ADR-0001) :
-//! bencode, protocole peer-wire, DHT mainline (BEP 5), uTP, communication
-//! avec les trackers HTTP/UDP.
+//! ([`BtEngine`], [`Download`], [`DownloadStats`], [`DownloadState`])
+//! au-dessus du moteur BitTorrent reutilise `librqbit` (ADR-0001) :
+//! bencode, protocole peer-wire, DHT mainline (BEP 5), uTP, trackers
+//! HTTP/UDP.
 //!
-//! Ce crate est l'equivalent du module Python `tribler.core.libtorrent`,
-//! mais ne reimplemente pas le protocole filaire bas niveau : il pilote
-//! `librqbit::Session` et traduit son etat vers/depuis les types du
-//! domaine Tribler (`tribler-core`).
+//! Ce crate est l'equivalent du module Python
+//! `tribler.core.libtorrent`, mais ne reimplemente pas le protocole
+//! filaire bas niveau : il pilote `librqbit::Session` et traduit son
+//! etat vers les types du domaine.
 //!
-//! Point d'integration futur avec `tribler-tunnel` : possibilite de
-//! forcer le trafic peer d'un telechargement a travers le proxy SOCKS5
-//! expose par un circuit anonyme (cf. `tribler-network-policy` pour les
-//! garde-fous).
-//!
-//! Etat : squelette (etape 0). Implementation a l'etape 3 ("Integration
-//! librqbit et sessions de telechargement").
+//! Point d'integration futur avec `tribler-tunnel` : `EngineConfig::
+//! socks5_proxy` force le trafic pair sortant a travers le proxy SOCKS5
+//! local expose par un circuit anonyme (cf. `tribler-network-policy`
+//! pour les garde-fous — loopback uniquement).
 
-/// Etat de haut niveau d'un telechargement, tel qu'expose par ce crate.
-///
-/// Types provisoires : la forme definitive sera alignee sur les besoins de
-/// l'API REST (`tribler-api`) a l'etape 3.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DownloadStatus {
-    Stopped,
-    Downloading,
-    Seeding,
-}
+pub mod config;
+pub mod download;
+pub mod engine;
+pub mod error;
+
+pub use config::EngineConfig;
+pub use download::{Download, DownloadState, DownloadStats};
+pub use engine::BtEngine;
+pub use error::{BtError, Result};
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn le_squelette_expose_un_statut_par_defaut_coherent() {
-        assert_eq!(DownloadStatus::Stopped, DownloadStatus::Stopped);
+    #[tokio::test]
+    async fn session_offline_demarre_et_ajoute_un_torrent() {
+        let dir = tempfile::tempdir().unwrap();
+        let engine = BtEngine::start(EngineConfig::offline(dir.path().join("dl")))
+            .await
+            .unwrap();
+
+        // .torrent minimal construit avec le bencode de tribler-format.
+        let mut info = std::collections::BTreeMap::new();
+        info.insert(b"length".to_vec(), tribler_format::bencode::BValue::Int(42));
+        info.insert(
+            b"name".to_vec(),
+            tribler_format::bencode::BValue::Bytes(b"test.bin".to_vec()),
+        );
+        info.insert(
+            b"piece length".to_vec(),
+            tribler_format::bencode::BValue::Int(16384),
+        );
+        info.insert(
+            b"pieces".to_vec(),
+            tribler_format::bencode::BValue::Bytes(vec![0u8; 20]),
+        );
+        let mut root = std::collections::BTreeMap::new();
+        root.insert(
+            b"info".to_vec(),
+            tribler_format::bencode::BValue::Dict(info),
+        );
+        let bytes = tribler_format::bencode::encode(&tribler_format::bencode::BValue::Dict(root));
+
+        let dl = engine.add_torrent_bytes(bytes, true).await.unwrap();
+        assert_eq!(dl.name().as_deref(), Some("test.bin"));
+        let stats = dl.stats();
+        assert_eq!(stats.total_bytes, 42);
+        assert_eq!(engine.list().len(), 1);
+
+        engine.stop().await;
     }
 }
