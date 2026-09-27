@@ -2,7 +2,7 @@
 //! et `ipv8-rust-tunnels/src/routing/`) : `Hop`, `Circuit`,
 //! `RelayRoute`, `RendezvousPoint`, `IntroductionPoint`, `Swarm`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
 use tribler_crypto::ipv8::session::SessionKeys;
@@ -319,6 +319,39 @@ pub struct Swarm {
     pub seeder_sk: Option<tribler_crypto::ipv8::keys::LibNaClSecretKey>,
     /// `connections` : circuit_id e2e -> point d'introduction utilise.
     pub connections: HashMap<u32, IntroductionPoint>,
+    /// Retentative idempotente (`RequestCache` a retry de pyipv8, cote
+    /// downloader) : etape + horodatage de la requete e2e en cours par
+    /// point d'introduction. Une retentative re-expedie le MEME
+    /// `create-e2e`/`link-e2e` plutot qu'un nouveau handshake qui
+    /// creerait un second `RP_SEEDER` cote seeder — sauf si l'etape
+    /// est perimee (`PENDING_E2E_TTL`), auquel cas on abandonne cette
+    /// tentative et on repart sur un handshake neuf (comme la
+    /// reference sans retry, qui reussit toujours ainsi) plutot que de
+    /// re-emettre indefiniment un cote qui ne progresse plus.
+    pub pending_e2e: HashMap<IntroductionPoint, (PendingE2e, Instant)>,
+    /// Dedup (cote seeder) : paquet `created-e2e` deja emis par
+    /// (`identifier`, demandeur). Une retransmission du meme
+    /// `create-e2e` recoit la copie cachee au lieu de creer un second
+    /// circuit `RP_SEEDER`.
+    pub seen_e2e: HashMap<(u16, UdpAddress), Vec<u8>>,
+    /// Reservation (cote seeder) : `create-e2e` en cours de traitement
+    /// par (`identifier`, demandeur) — la reponse n'est pas encore
+    /// dans `seen_e2e`, le doublon est ignore. Retire quand le
+    /// traitement se termine (succes ou echec).
+    pub in_flight_e2e: HashSet<(u16, UdpAddress)>,
+}
+
+/// Etape d'une requete e2e en cours (`Swarm::pending_e2e`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PendingE2e {
+    /// `create-e2e` emis, `created-e2e` attendu (`e2e_requests`).
+    Create(u16),
+    /// `created-e2e` recu : circuit `RP_DOWNLOADER` en construction,
+    /// `link-e2e` pas encore emis — une retentative attend sans rien
+    /// re-expedier.
+    Building,
+    /// `link-e2e` emis, `linked-e2e` attendu (`link_requests`).
+    Link(u16),
 }
 
 impl Swarm {
@@ -333,6 +366,9 @@ impl Swarm {
             hops,
             seeder_sk,
             connections: HashMap::new(),
+            pending_e2e: HashMap::new(),
+            seen_e2e: HashMap::new(),
+            in_flight_e2e: HashSet::new(),
         }
     }
 }

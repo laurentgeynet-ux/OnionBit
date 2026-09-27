@@ -188,10 +188,23 @@ ne sont donc pas « terminées » au sens strict) · `[x]` terminée.
   du moteur), `serve` achemine les donnees entrantes du circuit vers
   un service UDP local et renvoie les reponses — equivalent
   SOCKS5+`udp_associate_default_remote` sans exiger SOCKS5 cote
-  moteur (rqbit). 10 tests loopback : circuits 1/2 sauts, sortie,
-  echo 2 sauts, destroy, SOCKS5 UDP ASSOCIATE, CONNECT HTTP 28/29,
-  e2e hidden services complet, et `hidden_seed_udp_relay_roundtrip`
-  (datagrammes d'un faux moteur dans les deux sens sur circuit lie).
+  moteur (rqbit). Garde-fou anti-fuite `CIRCUIT_ID_PORT` :
+  `is_ready_rp_circuit` exige un circuit `READY` `RP_DOWNLOADER`/
+  `RP_SEEDER` (sinon rejet sans repli vers un circuit `DATA` —
+  divergence volontaire par rapport a `ipv8-rust-tunnels`). Relais
+  UDP en `first-seen` (le premier expediteur est verrouille). Retry
+  `create_e2e` idempotent (`Swarm::pending_e2e`/`seen_e2e`/
+  `in_flight_e2e`) : identifiant+DH stables sur retransmission,
+  dedup cote seeder, `link-e2e` retransmis re-repondu de facon
+  idempotente par le point de rendez-vous plutot que relaye comme
+  donnee — corrige un doublon `RP_SEEDER` observe en test. Cause
+  racine associee corrigee : `pick_first_hop` exclut desormais le
+  pair `required_exit` (sinon un circuit a 2 sauts pouvait choisir
+  ce meme pair comme premier ET dernier saut). 12 tests loopback :
+  circuits 1/2 sauts, sortie, echo 2 sauts, destroy, SOCKS5 UDP
+  ASSOCIATE (+ rejet IPv4 factice sur circuit DATA), CONNECT HTTP
+  28/29, e2e hidden services complet, retry e2e sans doublon, et
+  `hidden_seed_udp_relay_roundtrip`.
   **Reste** : branchement a `tribler-bittorrent` (rqbit uTP via
   `udp_relay`), suivi des flags de sortie via la decouverte,
   interop reelle `TunnelCommunity` pyipv8 / Tribler 8.4.3 installe,

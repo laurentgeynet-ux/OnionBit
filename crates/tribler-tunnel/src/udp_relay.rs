@@ -52,7 +52,10 @@ pub async fn dial(tunnel: Arc<TunnelCommunity>, circuit_id: u32) -> Result<Socke
     // moteur) — partage entre les deux taches.
     let client = Arc::new(std::sync::Mutex::new(None::<SocketAddr>));
 
-    // Sortant : datagrammes du moteur -> cellules `data`.
+    // Sortant : datagrammes du moteur -> cellules `data`. Le client
+    // est fige au premier datagramme (first-seen, comme le
+    // `socket.connect` de la reference) : un second emetteur ne peut
+    // pas detourner les reponses.
     let out_client = client.clone();
     let out_sock = socket.clone();
     let out_tunnel = tunnel.clone();
@@ -61,7 +64,15 @@ pub async fn dial(tunnel: Arc<TunnelCommunity>, circuit_id: u32) -> Result<Socke
         loop {
             match out_sock.recv_from(&mut buf).await {
                 Ok((n, src)) => {
-                    *out_client.lock().unwrap() = Some(src);
+                    {
+                        let mut c = out_client.lock().unwrap();
+                        if c.is_none() {
+                            *c = Some(src);
+                        } else if *c != Some(src) {
+                            tracing::debug!(circuit_id, %src, "relais: datagramme d'un autre client ignore");
+                            continue;
+                        }
+                    }
                     if let Err(e) = out_tunnel
                         .send_data(circuit_id, &dest, &zero_address(), &buf[..n])
                         .await

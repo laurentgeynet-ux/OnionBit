@@ -287,6 +287,24 @@ impl TunnelCommunity {
         self.inner.lock().unwrap().circuits.len()
     }
 
+    /// Debug interop : dump hex des cles de session du premier hop
+    /// d'un circuit (`kf|kb|sf|sb`, comme le dump `KEYS|` cote
+    /// `py_tunnel_node.py`).
+    #[doc(hidden)]
+    pub fn debug_session_keys(&self, circuit_id: u32) -> Option<String> {
+        let inner = self.inner.lock().unwrap();
+        let c = inner.circuits.get(&circuit_id)?;
+        let h = c.hops.first()?;
+        let k = &h.session_keys;
+        Some(format!(
+            "{}|{}|{}|{}",
+            hex::encode(k.key_forward),
+            hex::encode(k.key_backward),
+            hex::encode(k.salt_forward),
+            hex::encode(k.salt_backward)
+        ))
+    }
+
     /// Ids des circuits `READY`.
     pub fn ready_circuits(&self) -> Vec<u32> {
         self.inner
@@ -380,10 +398,11 @@ impl TunnelCommunity {
         }
         let circuit_id = u32::from_be_bytes(body[..4].try_into().unwrap());
         let plaintext = cell::NO_CRYPTO_PACKETS.contains(&P::MSG_ID);
-        // `cell.message` Python = `inner_msg_id + payload` (le
-        // `circuit_id` figure deux fois : en-tete de cellule ET
-        // premier champ du payload). On construit la cellule en clair
-        // puis `encrypt_cell` chiffre `cell[29..]` par couches.
+        // `cell.message` Python = `inner_msg_id + payload[4:]` : le
+        // `circuit_id` n'apparait qu'en en-tete de cellule et est
+        // reinsere par `unwrap` a la reception. On construit la
+        // cellule en clair puis `encrypt_cell` chiffre `cell[29..]`
+        // par couches.
         let mut relay_early = false;
         let mut crypto: Option<(Direction, Vec<SessionKeys>)> = None;
         // Couche e2e additionnelle (`outgoing_crypto` Python :
@@ -438,7 +457,7 @@ impl TunnelCommunity {
             &prefix_of(&TUNNEL_COMMUNITY_ID),
             circuit_id,
             P::MSG_ID,
-            &body,
+            &body[4..],
             plaintext,
             relay_early,
         );
@@ -863,6 +882,15 @@ impl TunnelCommunity {
                 Direction::Forward,
                 std::slice::from_ref(&hop.session_keys),
             )?;
+            // Un `link-e2e` retransmis apres liaison arrive encore sur
+            // cette route : il est destine au point de rendez-vous, pas
+            // a relayer — dispatch local (`on_link_e2e` re-repond
+            // `linked-e2e` si la paire est deja liee).
+            if let Ok(inner_cell) = Cell::parse(&dec) {
+                if inner_cell.inner_msg_id == msg::LINK_E2E {
+                    return self.on_cell_message(_src, &inner_cell);
+                }
+            }
             let mut keys = [other];
             cell::encrypt_cell(&dec, Direction::Backward, &mut keys)?
         } else {
@@ -902,8 +930,14 @@ impl TunnelCommunity {
     }
 
     /// Dispatch du message interne de la cellule (post-decrypt).
+    /// `cell.message` exclut le `circuit_id` (present en en-tete) : on
+    /// le reinsere pour retrouver le payload `pack_serializable`
+    /// complet attendu par les `unpack`.
     fn on_cell_message(self: &Arc<Self>, src: SocketAddr, cell: &Cell) -> Result<(), Ipv8Error> {
-        let mut r = Reader::new(&cell.message);
+        let mut full = Vec::with_capacity(4 + cell.message.len());
+        full.extend_from_slice(&cell.circuit_id.to_be_bytes());
+        full.extend_from_slice(&cell.message);
+        let mut r = Reader::new(&full);
         match cell.inner_msg_id {
             msg::CREATE => {
                 let p = tp::Create::unpack(&mut r)?;

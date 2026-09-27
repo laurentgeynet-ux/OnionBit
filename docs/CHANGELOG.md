@@ -3,6 +3,60 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Étape 12 (correctif) — garde-fou IPv4 factice, relais UDP first-seen, idempotence `create_e2e` (2026-09-27)
+
+Suite à une revue externe puis vérification directe du code, trois défauts
+de sécurité/robustesse ont été corrigés dans `tribler-tunnel` :
+
+- **Fuite réseau via l'IPv4 factice** (`socks5.rs`) : `handle_udp_frame`
+  décodait un `circuit_id` depuis l'adresse `CIRCUIT_ID_PORT` sans vérifier
+  ni le type ni l'état du circuit visé — un `circuit_id` de circuit `DATA`
+  ordinaire pouvait ainsi émettre un vrai datagramme UDP vers l'adresse
+  factice. Correctif : `is_ready_rp_circuit` exige un circuit `READY` de
+  type `RP_DOWNLOADER`/`RP_SEEDER` ; sinon rejet **sans repli** vers la
+  sélection de circuit normale. C'est une **divergence volontaire** par
+  rapport à `ipv8-rust-tunnels` (qui vérifie type + clés mais retombe sur
+  un circuit `DATA`, laissant la fuite possible) — documentée ici plutôt
+  que présentée comme un portage fidèle. Test :
+  `socks5_rejects_fake_ip_for_non_rp_circuit`.
+- **Relais UDP `last-seen`** (`udp_relay.rs`) : `dial` réécrivait
+  `out_client` à chaque datagramme reçu, permettant à un second émetteur
+  de détourner le trafic retour. Passage en `first-seen` (le premier
+  expéditeur est verrouillé, les suivants sont ignorés), alignant enfin le
+  code sur la docstring.
+- **Doublon `RP_SEEDER` après retry `create_e2e`** (bug observé en test,
+  pas seulement théorique) : chaque retry appelait `create_e2e` avec un
+  nouvel `identifier` et un nouveau secret DH, donc une réponse tardive de
+  la tentative précédente pouvait lier un second `RP_SEEDER` après le
+  succès de la tentative suivante (`left: 2, right: 1` observé). Correctif
+  dans `hidden_services.rs` :
+  - `Swarm::pending_e2e` (`routing.rs`) retient l'étape de la requête e2e
+    en cours par point d'introduction (`Create`/`Building`/`Link`) ;
+    `create_e2e` ré-émet le **même** paquet plutôt que d'ouvrir un
+    handshake neuf.
+  - `Swarm::seen_e2e`/`in_flight_e2e` cachent la réponse `created-e2e` déjà
+    produite par (`identifier`, demandeur) et réservent la clé
+    **avant** de spawner le traitement (dédup atomique côté seeder).
+  - `on_link_e2e` répond `linked-e2e` de façon idempotente si la paire est
+    déjà liée, plutôt que de laisser une retransmission expirer.
+  - `community.rs::relay_cell` intercepte un `link-e2e` retransmis arrivant
+    sur une route de rendez-vous déjà établie et le dispatche localement
+    au lieu de le relayer comme une donnée applicative.
+  - Test de régression : `hidden_service_e2e_retry_single_rp` (deux
+    `create_e2e` en rafale → un seul `RP_SEEDER` lié).
+  - **Cause racine du flake observé pendant le développement** :
+    `pick_first_hop` (choix du premier saut d'un nouveau circuit) ne
+    s'excluait pas du pair `required_exit` — un circuit `RP_DOWNLOADER` à
+    2 sauts pouvait tirer le **même** pair comme premier ET dernier saut
+    (`EXTEND` vers lui-même), corrompant l'établissement des clés de
+    session sur ~30 % des tirages dans une topologie à pairs limités.
+    Corrigé en excluant `required_exit` du tirage dans `on_created_e2e`.
+
+Validation : `cargo check/clippy/fmt` propres sur le workspace,
+`cargo test --workspace` vert, suite `tribler-tunnel` (12 tests) stable
+sur des dizaines d'exécutions séquentielles et parallèles après le
+correctif de `pick_first_hop`.
+
 ## Étape 12 (correctif) — robustesse des tests e2e sous charge (2026-09-27)
 
 Le handshake e2e (introduction -> peers-request -> create-e2e ->

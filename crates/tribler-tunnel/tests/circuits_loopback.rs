@@ -460,6 +460,114 @@ async fn hidden_service_e2e_roundtrip() {
     assert_eq!(got.data, payload);
 }
 
+/// Retry `create_e2e` idempotent (regression) : deux appels en rafale
+/// — le second arrive avant la reponse, comme sous perte loopback —
+/// doivent laisser UN seul `RP_SEEDER` lie cote seeder. Sans dedup,
+/// chaque retry ouvrait un handshake neuf (identifier+DH nouveaux) et
+/// une reponse tardive liait un second circuit RP (observe en test :
+/// 2 `RP_SEEDER` au lieu de 1).
+#[tokio::test]
+async fn hidden_service_e2e_retry_single_rp() {
+    let d = make_node().await;
+    let s = make_node().await;
+    let i = make_node().await;
+    let r1 = make_node().await;
+    let nodes = [&d, &s, &i, &r1];
+    for a in &nodes {
+        for b in &nodes {
+            if !std::ptr::eq(*a, *b) {
+                learn(a, b);
+            }
+        }
+    }
+    let info_hash = [9u8; 20];
+
+    s.tunnel.join_swarm(info_hash, 0, true);
+    let ip_peer = peer_of(&i);
+    let ip_cid = s
+        .tunnel
+        .create_introduction_point(info_hash, Some(&ip_peer))
+        .await
+        .expect("circuit IP_SEEDER");
+    s.tunnel
+        .wait_circuit_ready(ip_cid, TEST_TIMEOUT.as_millis() as u64)
+        .await
+        .expect("IP circuit READY");
+    let intro_rx = s
+        .tunnel
+        .send_establish_intro(ip_cid, info_hash)
+        .await
+        .expect("send establish-intro");
+    tokio::time::timeout(TEST_TIMEOUT, intro_rx)
+        .await
+        .expect("timeout intro-established")
+        .expect("intro-established");
+
+    d.tunnel.join_swarm(info_hash, 1, false);
+    let r1_peer = peer_of(&r1);
+    let data_cid = d
+        .tunnel
+        .create_circuit(1, &r1_peer)
+        .await
+        .expect("circuit data D");
+    d.tunnel
+        .wait_circuit_ready(data_cid, TEST_TIMEOUT.as_millis() as u64)
+        .await
+        .expect("circuit data READY");
+
+    let ip_hint = tribler_tunnel::routing::IntroductionPoint {
+        address: UdpAddress::from(i.addr),
+        peer_key: i.key.public_key().to_bin(),
+        seeder_pk: Vec::new(),
+        source: tribler_tunnel::routing::PEER_SOURCE_UNKNOWN,
+    };
+    let ips = d
+        .tunnel
+        .send_peers_request(info_hash, Some(&ip_hint), 5000)
+        .await
+        .expect("peers-response");
+    assert_eq!(ips.len(), 1, "un point d'introduction attendu");
+
+    // Deux create-e2e en rafale : le second re-emet le MEME handshake
+    // (`pending_e2e`) et le seeder deduque — aucun second RP. Les
+    // retries suivants re-emettent toujours la meme requete.
+    let mut e2e_rx = d.tunnel.e2e_ready();
+    d.tunnel
+        .create_e2e(info_hash, &ips[0])
+        .await
+        .expect("create_e2e #1");
+    d.tunnel
+        .create_e2e(info_hash, &ips[0])
+        .await
+        .expect("create_e2e #2 (retry)");
+    let mut linked = false;
+    for _ in 0..3 {
+        if tokio::time::timeout(TEST_TIMEOUT * 4, e2e_rx.recv())
+            .await
+            .is_ok()
+        {
+            linked = true;
+            break;
+        }
+        d.tunnel
+            .create_e2e(info_hash, &ips[0])
+            .await
+            .expect("re-emission e2e");
+    }
+    assert!(linked, "e2e_ready jamais atteint");
+
+    // Une reponse tardive est servie par le cache de dedup seeder,
+    // pas par un second circuit RP.
+    tokio::time::sleep(TEST_TIMEOUT).await;
+    assert_eq!(
+        s.tunnel
+            .ready_circuits_of_type(tribler_tunnel::routing::CIRCUIT_TYPE_RP_SEEDER)
+            .len(),
+        1,
+        "un seul RP_SEEDER attendu malgre le retry"
+    );
+}
+
 /// Hidden seeding via relais UDP transparent (`udp_relay.rs`) : deux
 /// "moteurs" (sockets uTP factices) dialoguent bout en bout a travers
 /// le circuit e2e lie — equivalent du montage SOCKS5 +
@@ -558,6 +666,131 @@ async fn hidden_seed_udp_relay_roundtrip() {
         .expect("pas d'echo via relais e2e")
         .unwrap();
     assert_eq!(&buf[..n], ping, "echo uTP via circuit e2e + relais");
+}
+
+/// Garde-fou anti-fuite de l'adressage `circuit_id_to_ip` : une frame
+/// SOCKS5 UDP dont l'IPv4 factice encode un circuit `DATA` ordinaire
+/// doit etre rejetee (jamais emise vers le reseau reel) — divergence
+/// volontaire : la reference retombe sur un circuit DATA quand le cid
+/// n'est pas un RP valide. Le chemin legitime (circuit RP lie) doit
+/// lui fonctionner.
+#[tokio::test]
+async fn socks5_rejects_fake_ip_for_non_rp_circuit() {
+    let d = make_node().await;
+    let s = make_node().await;
+    let i = make_node().await;
+    // Relais dedie (comme `hidden_service_e2e_roundtrip`) : avec
+    // seulement `s`/`i` comme pairs, le circuit `RP_DOWNLOADER` a 2
+    // sauts (`swarm.hops=1` +1) manque de diversite pour se construire
+    // de facon fiable (le meme pair devrait servir de relais ET de
+    // point de rendez-vous). `r1` fournit un premier saut distinct.
+    let r1 = make_node().await;
+    let nodes = [&d, &s, &i, &r1];
+    for a in &nodes {
+        for b in &nodes {
+            if !std::ptr::eq(*a, *b) {
+                learn(a, b);
+            }
+        }
+    }
+    let info_hash = [11u8; 20];
+
+    // Montage e2e complet (meme sequence que hidden_seed_udp_relay).
+    s.tunnel.join_swarm(info_hash, 0, true);
+    let ip_cid = s
+        .tunnel
+        .create_introduction_point(info_hash, Some(&peer_of(&i)))
+        .await
+        .expect("circuit IP_SEEDER");
+    s.tunnel
+        .wait_circuit_ready(ip_cid, TEST_TIMEOUT.as_millis() as u64)
+        .await
+        .expect("IP READY");
+    let intro_rx = s
+        .tunnel
+        .send_establish_intro(ip_cid, info_hash)
+        .await
+        .expect("establish-intro");
+    tokio::time::timeout(TEST_TIMEOUT, intro_rx)
+        .await
+        .expect("timeout intro-established")
+        .expect("intro-established");
+
+    d.tunnel.join_swarm(info_hash, 1, false);
+    let data_cid = d
+        .tunnel
+        .create_circuit(1, &peer_of(&i))
+        .await
+        .expect("circuit data D");
+    d.tunnel
+        .wait_circuit_ready(data_cid, TEST_TIMEOUT.as_millis() as u64)
+        .await
+        .expect("circuit data READY");
+
+    let ip_hint = tribler_tunnel::routing::IntroductionPoint {
+        address: UdpAddress::from(i.addr),
+        peer_key: i.key.public_key().to_bin(),
+        seeder_pk: Vec::new(),
+        source: tribler_tunnel::routing::PEER_SOURCE_UNKNOWN,
+    };
+    let ips = d
+        .tunnel
+        .send_peers_request(info_hash, Some(&ip_hint), 5000)
+        .await
+        .expect("peers-response");
+    let e2e_cid = create_e2e_with_retry(&d, info_hash, &ips[0]).await;
+
+    // Le proxy voit les deux circuits : DATA = rejete, RP = accepte.
+    let socks = Socks5Server::new(d.tunnel.clone(), 1);
+    let proxy = socks.listen("127.0.0.1:0").await.unwrap();
+    assert!(
+        !socks.is_ready_rp_circuit(data_cid),
+        "un circuit DATA ne doit pas etre une cible RP"
+    );
+    assert!(
+        socks.is_ready_rp_circuit(e2e_cid),
+        "le circuit RP_DOWNLOADER lie doit etre accepte"
+    );
+
+    // Client SOCKS5 : greeting + UDP ASSOCIATE.
+    let mut tcp = TcpStream::connect(proxy).await.unwrap();
+    tcp.write_all(&[0x05, 0x01, 0x00]).await.unwrap();
+    let mut g = [0u8; 2];
+    tcp.read_exact(&mut g).await.unwrap();
+    tcp.write_all(&[0x05, 0x03, 0x00, 0x01, 0, 0, 0, 0, 0, 0])
+        .await
+        .unwrap();
+    let mut rep = [0u8; 10];
+    tcp.read_exact(&mut rep).await.unwrap();
+    let relay_port = u16::from_be_bytes([rep[8], rep[9]]);
+    let relay = SocketAddr::new(std::net::Ipv4Addr::LOCALHOST.into(), relay_port);
+
+    let client_udp = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let fake_ip = |cid: u32| tribler_tunnel::routing::circuit_id_to_ip(cid);
+
+    // Frame 1 : cid d'un circuit DATA -> doit etre rejetee.
+    let mut frame = vec![0u8, 0, 0, 0x01];
+    frame.extend_from_slice(&fake_ip(data_cid).octets());
+    frame.extend_from_slice(&tribler_tunnel::routing::CIRCUIT_ID_PORT.to_be_bytes());
+    frame.extend_from_slice(b"escape-attempt");
+    client_udp.send_to(&frame, relay).await.unwrap();
+
+    let mut s_rx = s.tunnel.data_rx().expect("data_rx seeder");
+
+    // Frame 2 : cid du circuit RP lie -> doit traverser jusqu'au
+    // seeder. Si la frame 1 avait fuite, on ne verrait rien de ce
+    // cote ; l'assertion porte sur la livraison de la frame 2.
+    let mut frame = vec![0u8, 0, 0, 0x01];
+    frame.extend_from_slice(&fake_ip(e2e_cid).octets());
+    frame.extend_from_slice(&tribler_tunnel::routing::CIRCUIT_ID_PORT.to_be_bytes());
+    frame.extend_from_slice(b"via-rp-circuit");
+    client_udp.send_to(&frame, relay).await.unwrap();
+
+    let msg = tokio::time::timeout(TEST_TIMEOUT, s_rx.recv())
+        .await
+        .expect("la frame RP n'est pas arrivee au seeder")
+        .expect("canal data seeder");
+    assert_eq!(msg.data, b"via-rp-circuit");
 }
 
 /// SOCKS5 CONNECT : la requete HTTP brute traverse le tunnel en

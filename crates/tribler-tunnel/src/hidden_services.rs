@@ -11,6 +11,7 @@
 
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Instant;
 
 use rand::seq::SliceRandom;
 use tribler_crypto::ipv8::keys::{LibNaClPublicKey, LibNaClSecretKey};
@@ -26,13 +27,15 @@ use crate::community::{
 };
 use crate::payload::{self as tp, msg, Cellable};
 use crate::routing::{
-    IntroductionPoint, RendezvousPoint, Swarm, CIRCUIT_TYPE_IP_SEEDER, CIRCUIT_TYPE_RP_DOWNLOADER,
-    CIRCUIT_TYPE_RP_SEEDER, PEER_SOURCE_DHT,
+    IntroductionPoint, PendingE2e, RendezvousPoint, Swarm, CIRCUIT_TYPE_IP_SEEDER,
+    CIRCUIT_TYPE_RP_DOWNLOADER, CIRCUIT_TYPE_RP_SEEDER, PEER_SOURCE_DHT,
 };
 use crate::TUNNEL_COMMUNITY_ID;
 
 /// `PeersResponse` plafond (`random.sample(intro_points, 7)` Python).
 const MAX_PEERS_IN_RESPONSE: usize = 7;
+/// Plafond du cache `created-e2e` par swarm (dedup des retries seeder).
+const MAX_SEEN_E2E: usize = 64;
 /// Nombre d'essais internes d'attente `READY` (poll 20 ms).
 const READY_POLL_MS: u64 = 20;
 
@@ -47,6 +50,52 @@ pub(crate) struct E2ERequest {
     pub(crate) seeder_pk: Vec<u8>,
     /// Point d'introduction contacte.
     pub(crate) intro_point: IntroductionPoint,
+    /// Paquet `create-e2e` complet (prefixe + msg + corps) — re-emis
+    /// tel quel par une retentative idempotente.
+    pub(crate) packet: Vec<u8>,
+}
+
+/// Purge `pending_e2e` si la construction `RP_DOWNLOADER` echoue —
+/// desarme (`disarm`) quand l'etape `Link` prend le relais.
+struct PendingGuard<'a> {
+    community: &'a TunnelCommunity,
+    info_hash: [u8; 20],
+    intro_point: IntroductionPoint,
+    armed: bool,
+}
+
+impl<'a> PendingGuard<'a> {
+    fn new(community: &'a TunnelCommunity, req: &E2ERequest) -> Self {
+        Self {
+            community,
+            info_hash: req.info_hash,
+            intro_point: req.intro_point.clone(),
+            armed: true,
+        }
+    }
+
+    /// La liaison est entreine : l'etape `Link` detient desormais le
+    /// pending, le guard ne doit plus rien purger.
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for PendingGuard<'_> {
+    fn drop(&mut self) {
+        if self.armed {
+            if let Some(s) = self
+                .community
+                .inner
+                .lock()
+                .unwrap()
+                .swarms
+                .get_mut(&self.info_hash)
+            {
+                s.pending_e2e.remove(&self.intro_point);
+            }
+        }
+    }
 }
 
 /// `LinkRequestCache` Python : contexte d'un `link-e2e` emis.
@@ -57,6 +106,9 @@ pub(crate) struct LinkRequest {
     pub(crate) info_hash: [u8; 20],
     /// Cles e2e a poser sur le circuit au `linked-e2e`.
     pub(crate) hs_session_keys: SessionKeys,
+    /// `cookie` de rendez-vous — permet la re-emission du `link-e2e`
+    /// lors d'une retentative idempotente.
+    pub(crate) cookie: [u8; 20],
 }
 
 /// Paquet tunnel non signe : `prefix + msg_id + corps` (`ezr_pack`,
@@ -110,14 +162,22 @@ impl TunnelCommunity {
     }
 
     /// Choisit un premier hop au hasard parmi les pairs du service
-    /// tunnel (hors nous-meme).
-    fn pick_first_hop(&self) -> Option<Peer> {
+    /// tunnel (hors nous-meme et hors `exclude`).
+    ///
+    /// `exclude` doit porter la cle du `required_exit` quand le
+    /// circuit vise un dernier saut impose (ex. `RP_DOWNLOADER`) :
+    /// sans cette exclusion, un tirage malheureux peut choisir CE
+    /// MEME pair comme premier saut, puis `on_extended` l'`EXTEND`
+    /// vers lui-meme pour satisfaire `required_exit` — un circuit a 2
+    /// "sauts" distincts vers le meme pair physique, dont le
+    /// etablissement crypto echoue de facon intermittente.
+    fn pick_first_hop(&self, exclude: Option<&[u8]>) -> Option<Peer> {
         let my_pk = self.key.public_key().to_bin();
         let mut peers: Vec<Peer> = self
             .network
             .peers_for_service(&TUNNEL_COMMUNITY_ID)
             .into_iter()
-            .filter(|p| p.public_key_bin != my_pk)
+            .filter(|p| p.public_key_bin != my_pk && Some(p.public_key_bin.as_slice()) != exclude)
             .collect();
         peers.shuffle(&mut rand::thread_rng());
         peers.into_iter().next()
@@ -225,7 +285,7 @@ impl TunnelCommunity {
         let first_hop = match required_ip {
             Some(p) => p.clone(),
             None => self
-                .pick_first_hop()
+                .pick_first_hop(None)
                 .ok_or(Ipv8Error::Malformed("aucun pair tunnel"))?,
         };
         let required_exit = required_ip.map(|p| p.public_key_bin.clone());
@@ -334,7 +394,7 @@ impl TunnelCommunity {
             .swarm_circuit_hops(&info_hash, CIRCUIT_TYPE_RP_SEEDER)
             .ok_or(Ipv8Error::Malformed("swarm inconnu"))?;
         let first_hop = self
-            .pick_first_hop()
+            .pick_first_hop(None)
             .ok_or(Ipv8Error::Malformed("aucun pair tunnel"))?;
         let cid = self
             .create_circuit_typed(
@@ -565,11 +625,50 @@ impl TunnelCommunity {
 
     /// `create_e2e` : envoie `create-e2e` au point d'introduction via
     /// `tunnel_data` (paquet non signe dans une cellule `data`).
+    ///
+    /// Retentative idempotente (`RequestCache` a retry de pyipv8) :
+    /// tant qu'une requete est en cours vers ce point d'introduction,
+    /// le MEME paquet est re-emis — meme `identifier`, meme cle DH —
+    /// pour qu'une reponse tardive correle avec la requete en cours
+    /// plutot que d'amorcer un second handshake (qui creerait un
+    /// second `RP_SEEDER` cote seeder).
     pub async fn create_e2e(
         self: &Arc<Self>,
         info_hash: [u8; 20],
         intro_point: &IntroductionPoint,
     ) -> Result<(), Ipv8Error> {
+        // Re-emission tant qu'une requete est en cours : le MEME
+        // `create-e2e`/`link-e2e` (identifier+DH stables) est
+        // re-expedie plutot qu'un nouveau handshake. Pas d'abandon
+        // temporel : une requete "abandonnee" qui aboutirait malgre
+        // tout en retard cote seeder creerait un second `RP_SEEDER`
+        // (l'identifiant NEUF serait traite comme une demande
+        // distincte) — exactement le bug que la dedup doit eviter.
+        // Un pending perime (requete consommee, liaison abandonnee
+        // faute de circuit) est purge et on retombe sur un handshake
+        // neuf dans le meme appel.
+        loop {
+            let pending = {
+                let inner = self.inner.lock().unwrap();
+                inner
+                    .swarms
+                    .get(&info_hash)
+                    .and_then(|s| s.pending_e2e.get(intro_point))
+                    .map(|(stage, _)| *stage)
+            };
+            match pending {
+                // `created-e2e` recu, circuit `RP_DOWNLOADER` en
+                // construction : rien a re-emettre, la liaison est
+                // en cours.
+                Some(PendingE2e::Building) => return Ok(()),
+                Some(PendingE2e::Create(id)) | Some(PendingE2e::Link(id)) => {
+                    if self.resend_e2e(info_hash, intro_point, id).await? {
+                        return Ok(());
+                    }
+                }
+                None => break,
+            }
+        }
         let hops = {
             let inner = self.inner.lock().unwrap();
             inner.swarms.get(&info_hash).map(|s| s.hops)
@@ -582,15 +681,6 @@ impl TunnelCommunity {
             .ok_or(Ipv8Error::Malformed("aucun circuit pour e2e"))?;
         let (dh_secret, dh_public) = generate_diffie_secret();
         let identifier = self.next_id();
-        self.inner.lock().unwrap().e2e_requests.insert(
-            identifier,
-            E2ERequest {
-                info_hash,
-                dh_secret,
-                seeder_pk: intro_point.seeder_pk.clone(),
-                intro_point: intro_point.clone(),
-            },
-        );
         let p = tp::CreateE2E {
             identifier,
             info_hash,
@@ -599,12 +689,103 @@ impl TunnelCommunity {
         };
         let mut w = Writer::new();
         p.pack(&mut w)?;
-        self.tunnel_data(
-            cid,
-            &intro_point.address,
-            &pack_unsigned(msg::CREATE_E2E, &w.into_bytes()),
-        )
-        .await
+        let packet = pack_unsigned(msg::CREATE_E2E, &w.into_bytes());
+        {
+            let mut inner = self.inner.lock().unwrap();
+            inner.e2e_requests.insert(
+                identifier,
+                E2ERequest {
+                    info_hash,
+                    dh_secret,
+                    seeder_pk: intro_point.seeder_pk.clone(),
+                    intro_point: intro_point.clone(),
+                    packet: packet.clone(),
+                },
+            );
+            if let Some(s) = inner.swarms.get_mut(&info_hash) {
+                s.pending_e2e.insert(
+                    intro_point.clone(),
+                    (PendingE2e::Create(identifier), Instant::now()),
+                );
+            }
+        }
+        self.tunnel_data(cid, &intro_point.address, &packet).await
+    }
+
+    /// Re-emission de la requete e2e en cours vers un point
+    /// d'introduction : le `create-e2e` d'origine tant que le
+    /// `created-e2e` n'est pas arrive, sinon le `link-e2e` tant que le
+    /// `linked-e2e` n'est pas arrive. Retourne `false` quand le pending
+    /// est perime (requete consommee sans liaison) — il est alors
+    /// purge et l'appelant ouvre un handshake neuf.
+    async fn resend_e2e(
+        self: &Arc<Self>,
+        info_hash: [u8; 20],
+        intro_point: &IntroductionPoint,
+        identifier: u16,
+    ) -> Result<bool, Ipv8Error> {
+        enum Stage {
+            Create(Vec<u8>),
+            Link { circuit_id: u32, cookie: [u8; 20] },
+            Stale,
+        }
+        let stage = {
+            let inner = self.inner.lock().unwrap();
+            if let Some(req) = inner.e2e_requests.get(&identifier) {
+                Stage::Create(req.packet.clone())
+            } else if let Some(req) = inner.link_requests.get(&identifier) {
+                Stage::Link {
+                    circuit_id: req.circuit_id,
+                    cookie: req.cookie,
+                }
+            } else {
+                Stage::Stale
+            }
+        };
+        match stage {
+            Stage::Create(packet) => {
+                let hops = {
+                    let inner = self.inner.lock().unwrap();
+                    inner.swarms.get(&info_hash).map(|s| s.hops)
+                }
+                .ok_or(Ipv8Error::Malformed("swarm inconnu"))?;
+                let cid = self
+                    .ready_circuits_of_hops(hops)
+                    .first()
+                    .copied()
+                    .ok_or(Ipv8Error::Malformed("aucun circuit pour e2e"))?;
+                self.tunnel_data(cid, &intro_point.address, &packet).await?;
+                Ok(true)
+            }
+            Stage::Link { circuit_id, cookie } => {
+                let addr = {
+                    let inner = self.inner.lock().unwrap();
+                    inner
+                        .circuits
+                        .get(&circuit_id)
+                        .and_then(|c| c.first_hop().and_then(|h| h.address.clone()))
+                };
+                let Some(addr) = addr else {
+                    return Err(Ipv8Error::Malformed("circuit e2e disparu"));
+                };
+                self.send_cell(
+                    &addr,
+                    &tp::LinkE2E {
+                        circuit_id,
+                        identifier,
+                        cookie,
+                    },
+                )
+                .await?;
+                Ok(true)
+            }
+            Stage::Stale => {
+                if let Some(s) = self.inner.lock().unwrap().swarms.get_mut(&info_hash) {
+                    s.pending_e2e.remove(intro_point);
+                }
+                Ok(false)
+            }
+        }
     }
 
     /// `on_create_e2e` : a nu sur la socket (`circuit_id=None`) →
@@ -638,22 +819,60 @@ impl TunnelCommunity {
                 }
             }
             Some(cid) => {
-                let seeding = {
-                    let inner = self.inner.lock().unwrap();
-                    inner
-                        .swarms
-                        .get(&p.info_hash)
-                        .map(|s| s.seeder_sk.is_some())
-                        .unwrap_or(false)
-                };
-                if !seeding {
-                    tracing::debug!("create-e2e recu sans swarm seeder");
-                    return;
+                // Dedup des retransmissions, atomique sous le lock :
+                // reponse deja produite -> copie cachee ; traitement
+                // en cours -> doublon ignore ; sinon on reserve la
+                // cle AVANT de spawner (sinon deux create-e2e quasi
+                // simultanes creeraient chacun un `RP_SEEDER`).
+                enum Dedup {
+                    New,
+                    Busy,
+                    Reply(Vec<u8>),
                 }
-                let this = self.clone();
-                tokio::spawn(async move {
-                    this.create_created_e2e(p, UdpAddress::from(src), cid).await;
-                });
+                let requester = UdpAddress::from(src);
+                let key = (p.identifier, requester.clone());
+                let action = {
+                    let mut inner = self.inner.lock().unwrap();
+                    let Some(s) = inner.swarms.get_mut(&p.info_hash) else {
+                        tracing::debug!("create-e2e recu sans swarm seeder");
+                        return;
+                    };
+                    if s.seeder_sk.is_none() {
+                        tracing::debug!("create-e2e recu sans swarm seeder");
+                        return;
+                    }
+                    if let Some(reply) = s.seen_e2e.get(&key).cloned() {
+                        Dedup::Reply(reply)
+                    } else if !s.in_flight_e2e.insert(key.clone()) {
+                        Dedup::Busy
+                    } else {
+                        Dedup::New
+                    }
+                };
+                match action {
+                    Dedup::Reply(reply) => {
+                        let this = self.clone();
+                        tokio::spawn(async move {
+                            let _ = this.tunnel_data(cid, &requester, &reply).await;
+                        });
+                    }
+                    Dedup::Busy => {
+                        tracing::debug!("create-e2e duplique en cours, ignore");
+                    }
+                    Dedup::New => {
+                        let info_hash = p.info_hash;
+                        let this = self.clone();
+                        tokio::spawn(async move {
+                            this.create_created_e2e(p, requester, cid).await;
+                            // La reservation expire quoi qu'il arrive :
+                            // echec -> un retry ulterieur est retraite ;
+                            // succes -> la reponse reste en `seen_e2e`.
+                            if let Some(s) = this.inner.lock().unwrap().swarms.get_mut(&info_hash) {
+                                s.in_flight_e2e.remove(&key);
+                            }
+                        });
+                    }
+                }
             }
         }
     }
@@ -735,13 +954,17 @@ impl TunnelCommunity {
         if reply.pack(&mut w).is_err() {
             return;
         }
-        let _ = self
-            .tunnel_data(
-                intro_circuit,
-                &requester,
-                &pack_unsigned(msg::CREATED_E2E, &w.into_bytes()),
-            )
-            .await;
+        let packet = pack_unsigned(msg::CREATED_E2E, &w.into_bytes());
+        {
+            let mut inner = self.inner.lock().unwrap();
+            if let Some(s) = inner.swarms.get_mut(&p.info_hash) {
+                if s.seen_e2e.len() < MAX_SEEN_E2E {
+                    s.seen_e2e
+                        .insert((p.identifier, requester.clone()), packet.clone());
+                }
+            }
+        }
+        let _ = self.tunnel_data(intro_circuit, &requester, &packet).await;
     }
 
     /// `on_created_e2e` (downloader) : verifie l'auth, dechiffre
@@ -763,6 +986,18 @@ impl TunnelCommunity {
             tracing::debug!("created-e2e inattendu");
             return;
         };
+        // Etape "construction" : un retry pendant la creation du
+        // circuit `RP_DOWNLOADER` attend sans relancer un handshake
+        // parallele ni re-emettre un `create-e2e` deja repondu. En cas
+        // d'echec plus bas, le guard purge le pending pour permettre
+        // une nouvelle tentative.
+        let mut pending_guard = PendingGuard::new(self, &req);
+        if let Some(s) = self.inner.lock().unwrap().swarms.get_mut(&req.info_hash) {
+            s.pending_e2e.insert(
+                req.intro_point.clone(),
+                (PendingE2e::Building, Instant::now()),
+            );
+        }
         let Ok(seeder_pk) = LibNaClPublicKey::from_bin(&req.seeder_pk) else {
             return;
         };
@@ -798,7 +1033,11 @@ impl TunnelCommunity {
         self.network.add_verified(required);
         self.network
             .discover_service(&rp_info.key, TUNNEL_COMMUNITY_ID);
-        let Some(first_hop) = self.pick_first_hop() else {
+        // Exclut le RP du tirage du premier saut : sinon un circuit a
+        // 2 sauts pourrait choisir le RP comme premier ET dernier
+        // saut (etendu vers lui-meme pour satisfaire
+        // `required_exit`), ce qui corrompt l'etablissement crypto.
+        let Some(first_hop) = self.pick_first_hop(Some(&rp_info.key)) else {
             return;
         };
         let cid = match self
@@ -832,14 +1071,28 @@ impl TunnelCommunity {
             return;
         }
         let identifier = self.next_id();
-        self.inner.lock().unwrap().link_requests.insert(
-            identifier,
-            LinkRequest {
-                circuit_id: cid,
-                info_hash: req.info_hash,
-                hs_session_keys: session_keys,
-            },
-        );
+        {
+            let mut inner = self.inner.lock().unwrap();
+            inner.link_requests.insert(
+                identifier,
+                LinkRequest {
+                    circuit_id: cid,
+                    info_hash: req.info_hash,
+                    hs_session_keys: session_keys,
+                    cookie: rp_info.cookie,
+                },
+            );
+            // La requete progresse a l'etape `link` : `pending_e2e`
+            // pointe desormais vers `link_requests` — une retentative
+            // re-emettra le `link-e2e`, pas le `create-e2e`.
+            if let Some(s) = inner.swarms.get_mut(&req.info_hash) {
+                s.pending_e2e.insert(
+                    req.intro_point.clone(),
+                    (PendingE2e::Link(identifier), Instant::now()),
+                );
+            }
+        }
+        pending_guard.disarm();
         let addr = {
             let inner = self.inner.lock().unwrap();
             match inner
@@ -872,53 +1125,64 @@ impl TunnelCommunity {
                 tracing::debug!("link-e2e : cookie inconnu");
                 return;
             };
-            let Some(exit_dl) = inner.exit_sockets.get(&circuit_id) else {
-                return;
-            };
-            if exit_dl.enabled {
-                tracing::debug!("link-e2e : exit deja active");
-                return;
-            }
-            let Some(exit_rp) = inner.exit_sockets.get(&relay_cid) else {
-                return;
-            };
-            if exit_rp.enabled {
-                return;
-            }
-            // Detache les deux exits et installe les routes de
-            // rendez-vous bidirectionnelles (FORWARD + decrypt/
-            // encrypt via `relay_cell`).
-            let exit_dl = inner.exit_sockets.remove(&circuit_id).unwrap();
-            let exit_rp = inner.exit_sockets.remove(&relay_cid).unwrap();
-            inner.relays.insert(
-                circuit_id,
-                crate::routing::RelayRoute {
-                    base: crate::routing::RoutingObject::new(relay_cid),
-                    hop: crate::routing::Hop {
-                        public_key_bin: exit_rp.hop.public_key_bin.clone(),
-                        address: exit_rp.hop.address.clone(),
-                        session_keys: exit_dl.hop.session_keys.clone(),
+            // Retransmission d'un `link-e2e` deja traite : les deux
+            // exits sont deja relayes — on re-repond `linked-e2e`
+            // (idempotent) plutot que de laisser la requete expirer.
+            if inner
+                .relays
+                .get(&circuit_id)
+                .is_some_and(|r| r.rendezvous_relay && r.base.circuit_id == relay_cid)
+            {
+                true
+            } else {
+                let Some(exit_dl) = inner.exit_sockets.get(&circuit_id) else {
+                    return;
+                };
+                if exit_dl.enabled {
+                    tracing::debug!("link-e2e : exit deja active");
+                    return;
+                }
+                let Some(exit_rp) = inner.exit_sockets.get(&relay_cid) else {
+                    return;
+                };
+                if exit_rp.enabled {
+                    return;
+                }
+                // Detache les deux exits et installe les routes de
+                // rendez-vous bidirectionnelles (FORWARD + decrypt/
+                // encrypt via `relay_cell`).
+                let exit_dl = inner.exit_sockets.remove(&circuit_id).unwrap();
+                let exit_rp = inner.exit_sockets.remove(&relay_cid).unwrap();
+                inner.relays.insert(
+                    circuit_id,
+                    crate::routing::RelayRoute {
+                        base: crate::routing::RoutingObject::new(relay_cid),
+                        hop: crate::routing::Hop {
+                            public_key_bin: exit_rp.hop.public_key_bin.clone(),
+                            address: exit_rp.hop.address.clone(),
+                            session_keys: exit_dl.hop.session_keys.clone(),
+                        },
+                        direction: Direction::Forward,
+                        rendezvous_relay: true,
+                        relay_early_count: 0,
                     },
-                    direction: Direction::Forward,
-                    rendezvous_relay: true,
-                    relay_early_count: 0,
-                },
-            );
-            inner.relays.insert(
-                relay_cid,
-                crate::routing::RelayRoute {
-                    base: crate::routing::RoutingObject::new(circuit_id),
-                    hop: crate::routing::Hop {
-                        public_key_bin: exit_dl.hop.public_key_bin.clone(),
-                        address: exit_dl.hop.address.clone(),
-                        session_keys: exit_rp.hop.session_keys.clone(),
+                );
+                inner.relays.insert(
+                    relay_cid,
+                    crate::routing::RelayRoute {
+                        base: crate::routing::RoutingObject::new(circuit_id),
+                        hop: crate::routing::Hop {
+                            public_key_bin: exit_dl.hop.public_key_bin.clone(),
+                            address: exit_dl.hop.address.clone(),
+                            session_keys: exit_rp.hop.session_keys.clone(),
+                        },
+                        direction: Direction::Forward,
+                        rendezvous_relay: true,
+                        relay_early_count: 0,
                     },
-                    direction: Direction::Forward,
-                    rendezvous_relay: true,
-                    relay_early_count: 0,
-                },
-            );
-            true
+                );
+                true
+            }
         };
         if !linked {
             return;
@@ -949,6 +1213,13 @@ impl TunnelCommunity {
         };
         {
             let mut inner = self.inner.lock().unwrap();
+            // La liaison est faite : la requete n'est plus en cours —
+            // un nouvel appel `create_e2e` pourra ouvrir un handshake
+            // neuf vers ce point d'introduction.
+            if let Some(s) = inner.swarms.get_mut(&req.info_hash) {
+                s.pending_e2e
+                    .retain(|_, (stage, _)| *stage != PendingE2e::Link(p.identifier));
+            }
             if let Some(c) = inner.circuits.get_mut(&req.circuit_id) {
                 c.e2e = true;
                 c.hs_session_keys = Some(req.hs_session_keys);

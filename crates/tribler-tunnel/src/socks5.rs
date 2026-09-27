@@ -302,6 +302,16 @@ impl Socks5Server {
         if let UdpAddress::Ipv4(a) = &dest {
             if a.port() == crate::routing::CIRCUIT_ID_PORT {
                 let cid = crate::routing::ip_to_circuit_id(a.ip());
+                // Divergence de securite volontaire vs la reference :
+                // `ipv8-rust-tunnels` retombe sur la selection d'un
+                // circuit DATA quand le cid n'est pas un RP valide —
+                // l'IP factice partirait alors comme destination reelle
+                // en UDP depuis une sortie. On rejette sans repli.
+                if !self.is_ready_rp_circuit(cid) {
+                    return Err(Ipv8Error::Malformed(
+                        "adresse circuit_id sans circuit RP pret — rejetee",
+                    ));
+                }
                 self.register_return(cid, socket.clone(), src);
                 return self
                     .tunnel
@@ -335,6 +345,21 @@ impl Socks5Server {
                 &data,
             )
             .await
+    }
+
+    /// `true` si `cid` est un circuit de rendez-vous (`RP_DOWNLOADER`
+    /// ou `RP_SEEDER`) a l'etat `READY` — seule cible legitime de
+    /// l'adressage `CIRCUIT_ID_PORT` (`ipv8-rust-tunnels` exige le type
+    /// RP et `keys.len() == goal_hops`, couvert ici par l'etat READY).
+    /// Public : surface de test pour le garde-fou anti-fuite.
+    pub fn is_ready_rp_circuit(&self, cid: u32) -> bool {
+        self.tunnel
+            .ready_circuits_of_type(crate::routing::CIRCUIT_TYPE_RP_DOWNLOADER)
+            .contains(&cid)
+            || self
+                .tunnel
+                .ready_circuits_of_type(crate::routing::CIRCUIT_TYPE_RP_SEEDER)
+                .contains(&cid)
     }
 
     /// Choix d'un circuit `READY` a `self.hops` sauts
