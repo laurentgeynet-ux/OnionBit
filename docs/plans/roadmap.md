@@ -66,8 +66,14 @@ Légende : `[ ]` à faire · `[~]` en cours · `[x]` terminée.
   0..11 conservés). Routeur destiné au bind `127.0.0.1` (fait dans
   `tribler-daemon`). 5 tests d'intégration HTTP loopback + smoke test.
   Mapping complet : `docs/reference_tribler/api_rest_mapping.md`.
-- [ ] **Étape 7. CLI de pilotage minimal.** `tribler-cli` :
-  `status`/`list`/`add`/`remove`, parle uniquement à `tribler-api`.
+- [x] **Étape 7. CLI de pilotage minimal.** `tribler-cli` (clap +
+  reqwest) : `status`, `list` (tableau infohash/statut/progression/
+  débits/nom), `add` (magnet/URI → `uri`, chemin → `torrent`),
+  `remove` (`--remove-data`), `pause`, `resume`. Parle uniquement à
+  `tribler-api` via `--api` (défaut `http://127.0.0.1:8085`, cf.
+  `DEFAULT_API`). Erreurs `{error:{handled,message}}` affichées sur
+  stderr. 1 test e2e : binaire réel contre serveur API loopback
+  (`status`/`list`/`add`/`pause`/`resume`/`remove` + cas injoignable).
 - [ ] **Étape 8. Premier daemon exécutable de bout en bout.**
   `tribler-daemon` assemble tout (sans IPv8) : config, logging
   `tracing`, démarrage propre/arrêt propre. Jalon : télécharger et

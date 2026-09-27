@@ -3,6 +3,23 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Étape 7 — `tribler-cli` : CLI de pilotage (2026-09-28)
+
+- Sous-commandes clap : `status`, `list`, `add` (`--paused`),
+  `remove` (`--remove-data`), `pause`, `resume` ; option globale
+  `--api` (defaut `http://127.0.0.1:8085`, constante `DEFAULT_API` —
+  le Python utilise `api/http_port=0` aleatoire, on documente un port
+  fixe pour le daemon de l'etape 8).
+- `add` choisit le champ JSON selon la source (`uri` pour magnet/http,
+  `torrent` pour un chemin local), comme l'API Python.
+- Erreurs d'API affichees au format Tribler (`HTTP <code> : <message>`
+  sur stderr, exit code 1).
+- 1 test d'integration reel : binaire `tribler-cli` (via
+  `CARGO_BIN_EXE_*`) contre un serveur `tribler-api` sur
+  `127.0.0.1:0` — cycle complet + cas daemon injoignable.
+- Piege corrige : `std::process::Command` bloque le runtime tokio
+  mono-thread du test ; `tokio::process::Command` utilise.
+
 ## Étape 6 — `tribler-api` : REST + SSE (2026-09-28)
 
 - Routeur axum (`router.rs`) + etat partage `AppState` (`CoreSession`).
