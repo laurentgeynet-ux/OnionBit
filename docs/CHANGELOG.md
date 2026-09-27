@@ -3,6 +3,23 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Durcissement étapes 13/16 — test de fuite en plein transfert (2026-09-27)
+
+- `crates/tribler-bittorrent/tests/kill_switch_midtransfer.rs` :
+  stub SOCKS5 pilotable (RFC 1928 CONNECT, relais bridé ~400 Ko/s,
+  `kill()` ferme le listener **et** coupe les flux établis) +
+  downloader rqbit dont tout le trafic pair passe par le proxy.
+- Prouvé : transfert en cours → mort du proxy → watchdog engage le
+  kill switch (≤ 12 s) → **progression gelée et téléchargement non
+  terminé alors que le seeder reste joignable en direct** (toute
+  fuite de repli direct l'aurait fini — or rqbit court-circuite sur
+  `proxy_config`, vérifié à la source : `StreamConnector::connect`
+  propage l'échec sans repli TCP/uTP) → `resume` refusé pendant la
+  panne → proxy restauré → watchdog relâche → pause/resume force la
+  reconnexion → téléchargement complété, contenu identique.
+- Durée ~25 s (pause/resume court-circuite le backoff de reconnexion
+  rqbit après rétablissement).
+
 ## Étape 11 — interop discovery new-style + punctures prouvée (2026-09-27)
 
 - **Banc** `scripts/interop_discovery.ps1` +
