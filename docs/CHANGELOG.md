@@ -3,37 +3,41 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
-## Etape 13 - tribler-network-policy : anti-SSRF, exit policy, kill switch (2026-09-27)
+## Étape 14 — services secondaires : content discovery, torrent checker, RSS, watch folder (2026-09-27)
 
-Crate de politiques reseau pures (sans dependance vers ipv8/bittorrent)
-+ integration dans tunnel, bittorrent et core.
+Quatre services inspirés de Tribler (`src/tribler/core/content_discovery/`,
+`torrent_checker/`, `rss/`, `watch_folder/`), câblés dans `CoreSession`
+via `CoreConfig`.
 
--  : anti-SSRF — categories refusables
-  (loopback, prive RFC1918 + CGNAT + ULA, link-local, multicast,
-  unspecified, reserve/documentation, IPv4-mapped IPv6), ports bornables.
--  : port fidele de / (pyipv8
-  ) — ///,
-   exige /
-  ou le prefixe de la community. Les constantes  vivent
-  ici desormais (source unique, re-exportees par ).
--  : atomic bool + raison diagnostic + .
--  : /
-  numerique loopback uniquement (ni DNS, ni credentials, ni port nul).
--  :  ET  appliquent
-   (les deux sens, comme  +
-   cote pyipv8) ; les flags sortie = 
-  locaux annonces. Test  ;
-  les sorties des tests existants portent desormais  et des
-  payloads uTP-shaped.
--  :  valide 
-  (distant = echec de demarrage) ; watchdog TCP par proxy cree un
-   qui bloque / tant que le proxy est mort ;
-   exposee pour le futur cablage tunnel (circuits
-  morts). Tests .
--  :  (strict par defaut,
-  permissive offline) appliquee dans  aux URI
-   — resolution DNS puis refus ferme sur toute adresse niee.
-  Tests .
+- `tribler-ipv8::content_discovery` : community `9aca62f8…1648` —
+  payloads santé (msgs 3/4, `HealthInfo` binaire pyipv8), version
+  (101/102) et remote-select (201/202) ; trait `ContentProvider`
+  injecté par la couche supérieure ; gossip périodique des santés
+  vers les pairs de la community. Tests loopback `tests/content_discovery.rs`.
+- `tribler-core::services::torrent_checker` : scrape BEP-15 UDP
+  (connect/announce→scrape) et HTTP bencode (`files` dict), socket UDP
+  dédiée partagée, sélection des torrents les moins récemment vérifiés
+  depuis `torrent_state`, persistance seeders/leechers/last_check +
+  notification `TorrentHealthUpdated`. `IpPolicy` appliquée aux
+  trackers. Test `torrent_checker_udp_scrape` (tracker factice
+  loopback).
+- `tribler-core::services::rss` : watchers périodiques (`RssManager`),
+  extraction des URLs `.torrent` du XML, requêtes conditionnelles
+  (ETag/Last-Modified) et backoff `Keep-Alive: timeout=N`, fetch des
+  torrents via le helper anti-SSRF partagé, notification
+  `TorrentMetadataCreated`. Test `rss_discovers_torrent_and_notifies`.
+- `tribler-core::services::watch_folder` : scan récursif périodique,
+  `.torrent` et `.magnet`, dédup par chemin+hash, import via
+  `CoreSession::add_download`. Test `watch_folder_imports_torrent`
+  (`.torrent` — le magnet nécessite le DHT, hors champ offline).
+- `CoreConfig` : `watch_folder_dir`, `watch_folder_interval_ms`,
+  `rss_urls`, `rss_interval_ms`, `enable_torrent_checker`,
+  `torrent_checker_interval_ms` (tous désactivés par défaut).
+- `CoreSession` : démarre les services configurés dans `start`/
+  `start_offline`, les arrête dans `stop()` (pas de tâche orpheline),
+  expose `torrent_checker()`/`rss()` pour l'API future.
+- `Notification::TorrentHealthUpdated` → event SSE
+  `torrent_health_updated` dans `tribler-api`.
 
 ## Étape 13 — `tribler-network-policy` : anti-SSRF, exit policy, kill switch (2026-09-27)
 

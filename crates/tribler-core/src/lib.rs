@@ -13,6 +13,7 @@
 pub mod config;
 pub mod error;
 pub mod notifier;
+pub mod services;
 pub mod session;
 
 pub use config::CoreConfig;

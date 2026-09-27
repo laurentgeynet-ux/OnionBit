@@ -13,6 +13,9 @@ tribler-format = { path = "../tribler-format" }
 tribler-crypto = { path = "../tribler-crypto" }
 tribler-network-policy = { path = "../tribler-network-policy" }
 url.workspace = true
+reqwest.workspace = true
+bytes.workspace = true
+rand.workspace = true
 tokio.workspace = true
 thiserror.workspace = true
 tracing.workspace = true

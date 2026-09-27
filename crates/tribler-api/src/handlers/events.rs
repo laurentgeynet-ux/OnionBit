@@ -54,6 +54,19 @@ fn notification_to_event(n: &Notification) -> Option<(String, serde_json::Value)
             "new_torrent_metadata_created".into(),
             serde_json::json!({"infohash": infohash, "title": title}),
         ),
+        Notification::TorrentHealthUpdated {
+            infohash,
+            seeders,
+            leechers,
+            ..
+        } => (
+            "torrent_health_updated".into(),
+            serde_json::json!({
+                "infohash": infohash,
+                "seeders": seeders,
+                "leechers": leechers,
+            }),
+        ),
     };
     Some((topic, kwargs))
 }

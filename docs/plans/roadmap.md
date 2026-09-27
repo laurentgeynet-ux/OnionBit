@@ -265,10 +265,17 @@ ne sont donc pas « terminées » au sens strict) · `[x]` terminée.
 
 ## Phase 4 — Parité fonctionnelle et services secondaires
 
-- [ ] **Étape 14. Services secondaires.** `tribler-core` : équivalents de
+- [x] **Étape 14. Services secondaires.** `tribler-core` : équivalents de
   `content_discovery` (découverte via canaux), `torrent_checker`
   (scrape santé des torrents), `rss` (abonnements), `watch_folder`
-  (import automatique de `.torrent`).
+  (import automatique de `.torrent`). Community `ContentDiscovery`
+  (id `9aca62f8…1648`, msgs 3/4 santés, 101/102 version, 201/202
+  remote-select) dans `tribler-ipv8` ; checker BEP-15 UDP + scrape
+  HTTP avec persistance `torrent_state` et `Notification::
+  TorrentHealthUpdated` ; watchers RSS conditionnels (ETag) + fetch
+  anti-SSRF ; watch folder `.torrent`/`.magnet` dédupliqué. Services
+  démarrés/arrêtés par `CoreSession` via `CoreConfig` — validation
+  complète verte (tests loopback uniquement).
 - [ ] **Étape 15. Parité complète de l'API REST/SSE.** `tribler-api` :
   couverture de tous les endpoints nécessaires à une future UI (canaux,
   recherche, paramètres, statistiques de circuits). Mise à jour complète

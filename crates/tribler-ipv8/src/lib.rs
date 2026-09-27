@@ -29,6 +29,7 @@
 //! pyipv8` (voir `docs/reference_tribler/`).
 
 pub mod address;
+pub mod content_discovery;
 pub mod dht;
 pub mod discovery;
 pub mod endpoint;
@@ -39,6 +40,7 @@ pub mod peer;
 pub mod serializer;
 
 pub use address::UdpAddress;
+pub use content_discovery::CONTENT_DISCOVERY_COMMUNITY_ID;
 pub use dht::{DhtCommunity, DHT_COMMUNITY_ID};
 pub use discovery::{DiscoveryCommunity, DISCOVERY_COMMUNITY_ID};
 pub use endpoint::UdpEndpoint;

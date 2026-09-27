@@ -3888,7 +3888,10 @@ dependencies = [
 name = "tribler-core"
 version = "0.1.0"
 dependencies = [
+ "bytes",
  "hex 0.4.3",
+ "rand 0.8.8",
+ "reqwest",
  "serde",
  "serde_json",
  "tempfile",
@@ -3963,10 +3966,12 @@ version = "0.1.0"
 dependencies = [
  "hex 0.4.3",
  "rand 0.8.8",
+ "serde_json",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
  "tracing",
+ "tracing-subscriber",
  "tribler-crypto",
 ]
 

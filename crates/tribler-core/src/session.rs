@@ -30,11 +30,23 @@ pub struct CoreSession {
     inner: Arc<Inner>,
 }
 
+/// Handles des services secondaires (tous optionnels, actives par
+/// la configuration — etape 14).
+#[derive(Default)]
+struct Services {
+    watch_folder: Option<crate::services::watch_folder::WatchFolderService>,
+    rss: Option<Arc<crate::services::rss::RssManager>>,
+    checker: Option<Arc<crate::services::torrent_checker::TorrentChecker>>,
+    /// Arret de la boucle periodique du checker.
+    checker_stop: Option<tokio::sync::watch::Sender<bool>>,
+}
+
 struct Inner {
     config: CoreConfig,
     engine: BtEngine,
-    db: Database,
+    db: Arc<Database>,
     notifier: Notifier,
+    services: std::sync::Mutex<Services>,
 }
 
 impl std::fmt::Debug for CoreSession {
@@ -53,14 +65,17 @@ impl CoreSession {
         std::fs::create_dir_all(&config.state_dir)?;
         let db = Database::open(&config.db_path())?;
         let engine = BtEngine::start(config.engine.clone()).await?;
+        let services_config = config.clone();
         let session = Self {
             inner: Arc::new(Inner {
                 config,
                 engine,
-                db,
+                db: Arc::new(db),
                 notifier,
+                services: std::sync::Mutex::new(Services::default()),
             }),
         };
+        session.start_services(&services_config).await;
         session.restore_downloads().await;
         session.spawn_progress_loop();
         session.inner.notifier.notify(Notification::SessionStarted);
@@ -72,14 +87,17 @@ impl CoreSession {
     pub async fn start_offline(config: CoreConfig, notifier: Notifier) -> Result<Self> {
         let db = Database::memory()?;
         let engine = BtEngine::start(config.engine.clone()).await?;
+        let services_config = config.clone();
         let session = Self {
             inner: Arc::new(Inner {
                 config,
                 engine,
-                db,
+                db: Arc::new(db),
                 notifier,
+                services: std::sync::Mutex::new(Services::default()),
             }),
         };
+        session.start_services(&services_config).await;
         session.spawn_progress_loop();
         Ok(session)
     }
@@ -165,6 +183,12 @@ impl CoreSession {
     /// Acces au bus d'evenements.
     pub fn notifier(&self) -> &Notifier {
         &self.inner.notifier
+    }
+
+    /// Acces direct au moteur (services internes : watch folder,
+    /// torrent checker…).
+    pub fn engine(&self) -> &BtEngine {
+        &self.inner.engine
     }
 
     /// Ajoute un telechargement (magnet ou URI `http(s)`) et le
@@ -308,9 +332,85 @@ impl CoreSession {
         }
     }
 
-    /// Arret propre : moteur puis notification.
+    /// Demarre les services secondaires actives par la
+    /// configuration (watch folder, RSS, torrent checker).
+    async fn start_services(&self, config: &CoreConfig) {
+        let mut services = Services::default();
+        if let Some(dir) = &config.watch_folder_dir {
+            let svc = crate::services::watch_folder::WatchFolderService::new(
+                self.clone(),
+                dir.clone(),
+                std::time::Duration::from_millis(config.watch_folder_interval_ms),
+            );
+            svc.start();
+            services.watch_folder = Some(svc);
+        }
+        if !config.rss_urls.is_empty() {
+            let mgr = crate::services::rss::RssManager::new(
+                self.inner.notifier.clone(),
+                config.ip_policy.clone(),
+            );
+            mgr.update(&config.rss_urls);
+            services.rss = Some(mgr);
+        }
+        if config.enable_torrent_checker {
+            match crate::services::torrent_checker::TorrentChecker::new(
+                self.inner.db.clone(),
+                self.inner.notifier.clone(),
+                config.ip_policy.clone(),
+            )
+            .await
+            {
+                Ok(checker) => {
+                    let interval =
+                        std::time::Duration::from_millis(config.torrent_checker_interval_ms);
+                    let checker = Arc::new(checker);
+                    let (stop_tx, mut stop_rx) = tokio::sync::watch::channel(false);
+                    let c = checker.clone();
+                    tokio::spawn(async move {
+                        let mut tick = tokio::time::interval(interval);
+                        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                        loop {
+                            tokio::select! {
+                                _ = stop_rx.changed() => break,
+                                _ = tick.tick() => {
+                                    let _ = c.check_oldest().await;
+                                }
+                            }
+                        }
+                    });
+                    services.checker = Some(checker);
+                    services.checker_stop = Some(stop_tx);
+                }
+                Err(e) => tracing::warn!(error = %e, "torrent checker indisponible"),
+            }
+        }
+        *self.inner.services.lock().unwrap() = services;
+    }
+
+    /// Acces au torrent checker (API, tests).
+    pub fn torrent_checker(&self) -> Option<Arc<crate::services::torrent_checker::TorrentChecker>> {
+        self.inner.services.lock().unwrap().checker.clone()
+    }
+
+    /// Acces au gestionnaire RSS.
+    pub fn rss(&self) -> Option<Arc<crate::services::rss::RssManager>> {
+        self.inner.services.lock().unwrap().rss.clone()
+    }
+
+    /// Arret propre : services, moteur puis notification.
     pub async fn stop(&self) {
         self.inner.notifier.notify(Notification::SessionStopping);
+        let services = std::mem::take(&mut *self.inner.services.lock().unwrap());
+        if let Some(w) = &services.watch_folder {
+            w.stop();
+        }
+        if let Some(r) = &services.rss {
+            r.stop();
+        }
+        if let Some(tx) = &services.checker_stop {
+            let _ = tx.send(true);
+        }
         self.inner.engine.stop().await;
     }
 }

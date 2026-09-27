@@ -27,6 +27,18 @@ pub struct CoreConfig {
     /// toute adresse non autorisee. `strict` en production,
     /// `permissive` en test offline.
     pub ip_policy: tribler_network_policy::IpPolicy,
+    /// Repertoire surveille par le watch folder (`None` = desactive,
+    /// `watch_folder/directory` Python).
+    pub watch_folder_dir: Option<PathBuf>,
+    /// Intervalle de scan du watch folder (ms).
+    pub watch_folder_interval_ms: u64,
+    /// Flux RSS surveilles (`rss` Python — liste vide = desactive).
+    pub rss_urls: Vec<String>,
+    /// Active le controle periodique de sante des torrents
+    /// (`torrent_checker`).
+    pub enable_torrent_checker: bool,
+    /// Intervalle de controle du torrent checker (ms).
+    pub torrent_checker_interval_ms: u64,
     /// Configuration du moteur BitTorrent sous-jacent.
     pub engine: tribler_bittorrent::EngineConfig,
 }
@@ -39,6 +51,12 @@ impl Default for CoreConfig {
             db_filename: "tribler.db".into(),
             progress_interval_ms: DEFAULT_PROGRESS_INTERVAL_MS,
             ip_policy: tribler_network_policy::IpPolicy::strict(),
+            watch_folder_dir: None,
+            watch_folder_interval_ms: crate::services::watch_folder::DEFAULT_CHECK_INTERVAL
+                .as_millis() as u64,
+            rss_urls: Vec::new(),
+            enable_torrent_checker: true,
+            torrent_checker_interval_ms: 10_000,
             engine: tribler_bittorrent::EngineConfig::default(),
         }
     }
@@ -60,6 +78,12 @@ impl CoreConfig {
             db_filename: "tribler.db".into(),
             progress_interval_ms: DEFAULT_PROGRESS_INTERVAL_MS,
             ip_policy: tribler_network_policy::IpPolicy::permissive(),
+            watch_folder_dir: None,
+            watch_folder_interval_ms: crate::services::watch_folder::DEFAULT_CHECK_INTERVAL
+                .as_millis() as u64,
+            rss_urls: Vec::new(),
+            enable_torrent_checker: false,
+            torrent_checker_interval_ms: 10_000,
         }
     }
 }

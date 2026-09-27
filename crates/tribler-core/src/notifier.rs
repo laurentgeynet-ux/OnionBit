@@ -46,6 +46,16 @@ pub enum Notification {
         /// Titre.
         title: String,
     },
+    /// Sante d'un torrent mise a jour (`torrent_health_finished` /
+    /// `remote_torrent_health_update` cote Python).
+    TorrentHealthUpdated {
+        /// Info-hash hex.
+        infohash: String,
+        /// Seeders observes.
+        seeders: i64,
+        /// Leechers observes.
+        leechers: i64,
+    },
     /// Le daemon a termine son demarrage.
     SessionStarted,
     /// Le daemon s'arrete.
