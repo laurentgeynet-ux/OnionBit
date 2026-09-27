@@ -127,13 +127,45 @@ pub struct Network {
 }
 
 impl Network {
-    /// `add_verified_peer` : enregistre un pair verifie (sauf si son
-    /// mid est en `blacklist_mids`).
+    /// `add_verified_peer` : enregistre un pair verifie. Fidele a
+    /// pyipv8 :
+    /// - `mid` en `blacklist_mids` -> ignore ;
+    /// - deja connu par cle -> mise a jour d'adresse seulement ;
+    /// - adresse deja dans `_all_addresses` -> verifie ;
+    /// - adresse non blacklistee -> inscrite dans `_all_addresses`
+    ///   (`WalkableAddress(b"", None, False)` : introduite par
+    ///   personne, pas de service, pas new-style) puis verifie ;
+    /// - sinon (adresse blacklistee inconnue) -> PAS verifie.
     pub fn add_verified(&self, peer: Peer) {
         if self.blacklist_mids.lock().unwrap().contains(&peer.mid) {
             return;
         }
+        if let Some(known) = self.by_key.lock().unwrap().get_mut(&peer.public_key_bin) {
+            // `known.addresses.update(...)` + objet partage Python :
+            // le pair stocke absorbe l'adresse et le flag
+            // `new_style_intro` du nouvel exemplaire.
+            if let Some(a) = &peer.address {
+                known.address = Some(a.clone());
+            }
+            known.new_style_intro |= peer.new_style_intro;
+            return;
+        }
         if let Some(addr) = &peer.address {
+            let known_walkable = self.all_addresses.lock().unwrap().contains_key(addr);
+            if !known_walkable {
+                if self.blacklist.lock().unwrap().contains(addr) {
+                    // Adresse blacklistee et inconnue : pas de verify.
+                    return;
+                }
+                self.all_addresses.lock().unwrap().insert(
+                    addr.clone(),
+                    WalkableAddress {
+                        introduced_by: Vec::new(),
+                        service: None,
+                        new_style: false,
+                    },
+                );
+            }
             if let Some(sa) = addr.to_socket_addr() {
                 self.by_addr
                     .lock()

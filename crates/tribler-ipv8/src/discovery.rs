@@ -89,6 +89,12 @@ pub struct DiscoveryCommunity {
     my_estimated_lan: Mutex<UdpAddress>,
     /// Requetes d'introduction en attente (identifier -> instant).
     pending_intro: Mutex<std::collections::HashMap<u16, (UdpAddress, Instant)>>,
+    /// Observables de decode (equivalents des hooks pyipv8
+    /// `introduction_request/response_callback` et `on_puncture`) —
+    /// utilises par les tests et le banc d'interop.
+    intro_requests_seen: std::sync::atomic::AtomicUsize,
+    intro_responses_seen: std::sync::atomic::AtomicUsize,
+    punctures_seen: std::sync::atomic::AtomicUsize,
 }
 
 impl DiscoveryCommunity {
@@ -112,6 +118,9 @@ impl DiscoveryCommunity {
             my_estimated_wan: Mutex::new(unspecified()),
             my_estimated_lan: Mutex::new(my_lan),
             pending_intro: Mutex::new(std::collections::HashMap::new()),
+            intro_requests_seen: std::sync::atomic::AtomicUsize::new(0),
+            intro_responses_seen: std::sync::atomic::AtomicUsize::new(0),
+            punctures_seen: std::sync::atomic::AtomicUsize::new(0),
         });
         let prefix = prefix_of(&DISCOVERY_COMMUNITY_ID);
         let c = community.clone();
@@ -261,7 +270,9 @@ impl DiscoveryCommunity {
             }
             msg::PUNCTURE | msg::NEW_PUNCTURE => {
                 // `on_puncture` Python : no-op (le trou NAT est ouvert
-                // par la reception meme).
+                // par la reception meme) — on compte juste le decode.
+                self.punctures_seen
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             }
             _ => {
                 tracing::trace!(msg_id = pkt.msg_id, "message discovery ignore");
@@ -284,6 +295,8 @@ impl DiscoveryCommunity {
             tracing::debug!("introduction-request ignoree : trop de pairs");
             return;
         }
+        self.intro_requests_seen
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         // L'adresse LAN annoncee devient l'adresse preferee si c'est
         // une IPv4 (`peer.address = UDPv4LANAddress(...)` Python —
         // simplifie : on conserve l'adresse source vue).
@@ -393,6 +406,8 @@ impl DiscoveryCommunity {
         peer: Option<Peer>,
         _new_style: bool,
     ) {
+        self.intro_responses_seen
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         // `my_estimated_wan` = destination_address si elle n'est pas
         // dans un sous-reseau LAN (`address_in_lan_subnets` Python).
         if let UdpAddress::Ipv4(d) = &resp.destination_address {
@@ -547,6 +562,23 @@ impl DiscoveryCommunity {
         )
     }
 
+    /// `endpoint.send(create_puncture_request(...))` pyipv8 : envoie
+    /// une `puncture-request` **non signee** (msg 250 ancien, 232
+    /// nouveau si `new_style` ou adresse non-IPv4) a `addr` pour que le
+    /// pair puncture (`lan_walker`, `wan_walker`).
+    pub async fn send_puncture_request(
+        &self,
+        addr: &UdpAddress,
+        lan_walker: &UdpAddress,
+        wan_walker: &UdpAddress,
+        new_style: bool,
+    ) -> Result<u16, Ipv8Error> {
+        let id = self.next_id();
+        let pkt = self.make_puncture_request(lan_walker, wan_walker, id, new_style);
+        self.endpoint.send_to(addr, &pkt).await?;
+        Ok(id)
+    }
+
     /// Envoie un `ping` (msg 3).
     pub async fn send_ping(&self, addr: &UdpAddress) -> Result<u16, Ipv8Error> {
         let id = self.next_id();
@@ -673,6 +705,24 @@ impl DiscoveryCommunity {
     }
 
     /// Nombre de pairs verifies connus.
+    /// `introduction-response` decodees (233/245) — observable d'interop.
+    pub fn intro_response_count(&self) -> usize {
+        self.intro_responses_seen
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// `introduction-request` decodees et traitees (246/234).
+    pub fn intro_request_count(&self) -> usize {
+        self.intro_requests_seen
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// `puncture` decodees (249/231).
+    pub fn puncture_count(&self) -> usize {
+        self.punctures_seen
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
     pub fn peer_count(&self) -> usize {
         self.network.len()
     }

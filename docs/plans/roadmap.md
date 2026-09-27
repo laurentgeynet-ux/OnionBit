@@ -124,7 +124,7 @@ ne sont donc pas « terminées » au sens strict) · `[x]` terminée.
   pour les intros/punctures (246/245/234/233/249/231) ; les messages
   DHT `ez_send` sont `[auth, payload]` sans `dist`
   (`Packet::sign_no_dist`/`sign_auto`).
-- [i] **Étape 11. Framework de communities complet.** `tribler-ipv8` :
+- [x] **Étape 11. Framework de communities complet.** `tribler-ipv8` :
   `Network` complet (`_all_addresses`/`WalkableAddress`, `discover_address`,
   `get_walkable_addresses` filtré par service/old-style,
   `get_verified_by_address`, `get_introductions_from`, `blacklist` +
@@ -140,13 +140,22 @@ ne sont donc pas « terminées » au sens strict) · `[x]` terminée.
   127/8, 169.254/16), `get_new_introduction` (pair aléatoire →
   walkable → bootstrap, 5 % de re-bootstrap). 3 tests loopback :
   introduction nouveau style, adresses walkable via introduction,
-  puncture-request → puncture. **Scénarios interop attendus avant
-  `[x]`** : introductions new-style (request 234 → response 233, bits
-  `intro_supports_new_style` propagé) et punctures (puncture-request
-  non signé 250/232 → puncture signé 249/231) échangées avec un noeud
-  Python réel, **payloads décodés et vérifiés** des deux côtés — pas
-  seulement la signature de paquets génériques (l'introduction ancien
-  format + similarity sont déjà validées à l'étape 9).
+  puncture-request → puncture. 3 tests loopback :
+  introduction nouveau style, adresses walkable via introduction,
+  puncture-request → puncture.
+  **Interop prouvée** (`scripts/interop_discovery.ps1` →
+  `INTEROP DISCOVERY OK`) : contre un vrai `DiscoveryCommunity`
+  pyipv8 — Rust→Python : 234 décodé+répondu 233 (flag
+  `new_style_intro` propagé), 232→231 et 250→249 ; Python→Rust :
+  234→233 (réponse décodée + signature vérifiée), 232→231 et
+  250→249 — chaque handler pyipv8 passe par `lazy_wrapper` (decode +
+  signature). Corrections de fidélité faites à cette occasion :
+  `add_verified` inscrit l'adresse dans `_all_addresses`
+  (`WalkableAddress(b"", None, False)`), ne vérifie pas un pair à
+  adresse blacklistée inconnue, et fusionne `new_style_intro` à la
+  mise à jour d'un pair connu (objet partagé Python). Observables
+  ajoutés : `intro_request_count`/`intro_response_count`/
+  `puncture_count` + `send_puncture_request` publique.
 - [x] **Étape 12. TunnelCommunity : circuits et hidden seeding.**
   `tribler-tunnel` : construction de circuits en onion routing (1/2/3
   sauts), chiffrement ChaCha20-Poly1305 par saut (`tribler-crypto`), hidden

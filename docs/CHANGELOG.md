@@ -3,6 +3,41 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Étape 11 — interop discovery new-style + punctures prouvée (2026-09-27)
+
+- **Banc** `scripts/interop_discovery.ps1` +
+  `examples/discovery_interop_node.rs` +
+  `scripts/interop/py_discovery_node.py` (vrai `DiscoveryCommunity`
+  pyipv8, endpoints enregistreurs des deux côtés).
+- **`INTEROP DISCOVERY OK`**, 10 flags dans les deux sens :
+  - Rust → Python : `send_introduction_request` émet un vrai `234`
+    (adresse introduite new-style) → Python décode
+    (`PY_RECV_NEW_INTRO_REQ`) et répond `233` → `RUST_NEW_INTRO_OK` ;
+    `send_puncture_request` émet `232`/`250` (non signés, `dist`
+    inclus) → Python décode (`PY_RECV_{NEW,OLD}_PUNCTURE_REQ`) et
+    répond `231`/`249` → `RUST_{NEW,OLD}_PUNCTURE_OK`.
+  - Python → Rust : `create_introduction_request(new_style=True)`
+    (`234`) → Rust répond `233` → Python décode + vérifie la
+    signature (`PY_NEW_INTRO_RESP_OK`) ; `create_puncture_request`
+    `232`/`250` → Rust répond `231`/`249` vers `lan_walker` (même IP
+    WAN loopback, règle `on_puncture_request`) →
+    `PY_{NEW,OLD}_PUNCTURE_OK`.
+- **Corrections de fidélité `Network::add_verified`** (révélées par
+  le banc) : l'adresse du pair est désormais inscrite dans
+  `_all_addresses` (`WalkableAddress(b"", None, False)`) comme le
+  fait `add_verified_peer` pyipv8 ; un pair à adresse blacklistée
+  inconnue n'est **pas** vérifié ; un pair déjà connu absorbe
+  l'adresse et le flag `new_style_intro` (objet partagé Python —
+  sans cela le flag posé par un `234` reçu était perdu).
+- **API ajoutée** : `DiscoveryCommunity::send_puncture_request`
+  (équivalent `endpoint.send(create_puncture_request(...))`),
+  compteurs-observables `intro_request_count`/`intro_response_count`/
+  `puncture_count` (équivalents des hooks `introduction_*_callback`/
+  `on_puncture`).
+- Robustesse du banc : retries Python sur le premier `234` (course de
+  démarrage UDP), timeouts par phase côté Rust (un échec ne cascade
+  plus sur les phases suivantes).
+
 ## Étape 10 — interop DHT Rust ↔ pyipv8 prouvée (2026-09-27)
 
 - **Correctif filaire `Packet`** : pyipv8 n'insère
