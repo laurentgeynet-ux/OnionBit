@@ -23,6 +23,16 @@ const MAX_DGRAM: usize = 65535;
 /// Args : (adresse source, paquet verifie).
 pub type PacketHandler = Arc<dyn Fn(SocketAddr, Packet) -> Result<(), Ipv8Error> + Send + Sync>;
 
+/// Handler appele pour chaque datagramme brut d'un prefixe.
+///
+/// Utilise par les communities dont les messages ne sont pas tous des
+/// `Packet` IPv8 (ex. `TunnelCommunity` : les cellules `msg_id == 0`
+/// ne portent ni cle publique ni signature). Quand un raw listener
+/// est enregistre sur un prefixe, il recoit le datagramme **en plus**
+/// du listener `PacketHandler` eventuel — c'est a lui de decider si
+/// les octets sont une cellule ou un paquet signe (`Packet::parse`).
+pub type RawPacketHandler = Arc<dyn Fn(SocketAddr, &[u8]) -> Result<(), Ipv8Error> + Send + Sync>;
+
 /// Sens d'un datagramme tapote (enregistrement interop/debug).
 #[derive(Debug, Clone, Copy)]
 pub enum TapDir {
@@ -42,8 +52,12 @@ pub type TapEvent = (TapDir, SocketAddr, Vec<u8>);
 /// correspondants.
 pub struct UdpEndpoint {
     socket: Arc<UdpSocket>,
-    /// Listeners par prefixe de 22 octets.
+    /// Listeners par prefixe de 22 octets (paquets `Packet` decodes).
     listeners: Mutex<HashMap<[u8; PREFIX_LEN], PacketHandler>>,
+    /// Listeners "bruts" par prefixe (datagrammes non interpretes :
+    /// cellules de tunnel, protocoles hybrides). Dispatch en plus du
+    /// `PacketHandler` si les deux sont enregistres.
+    raw_listeners: Mutex<HashMap<[u8; PREFIX_LEN], RawPacketHandler>>,
     /// Tap optionnel : recoit chaque datagramme brut (rx+tx) pour
     /// l'enregistrement d'echanges (jalon d'interop, debug).
     tap: Mutex<Option<tokio::sync::broadcast::Sender<TapEvent>>>,
@@ -57,6 +71,7 @@ impl UdpEndpoint {
         Ok(Arc::new(Self {
             socket: Arc::new(socket),
             listeners: Mutex::new(HashMap::new()),
+            raw_listeners: Mutex::new(HashMap::new()),
             tap: Mutex::new(None),
         }))
     }
@@ -69,6 +84,17 @@ impl UdpEndpoint {
     /// Enregistre un listener pour un prefixe de community.
     pub async fn add_prefix_listener(&self, prefix: [u8; PREFIX_LEN], handler: PacketHandler) {
         self.listeners.lock().await.insert(prefix, handler);
+    }
+
+    /// Enregistre un listener brut pour un prefixe de community.
+    /// Le handler recoit les octets du datagramme tels quels (apres
+    /// le match de prefixe) — a lui de distinguer cellule/paquet.
+    pub async fn add_raw_prefix_listener(
+        &self,
+        prefix: [u8; PREFIX_LEN],
+        handler: RawPacketHandler,
+    ) {
+        self.raw_listeners.lock().await.insert(prefix, handler);
     }
 
     /// Installe le tap de paquets (un seul canal broadcast).
@@ -115,6 +141,12 @@ impl UdpEndpoint {
             }
             let mut prefix = [0u8; PREFIX_LEN];
             prefix.copy_from_slice(&data[..PREFIX_LEN]);
+            let raw_handler = { self.raw_listeners.lock().await.get(&prefix).cloned() };
+            if let Some(h) = raw_handler {
+                if let Err(e) = h(src, data) {
+                    tracing::debug!(error = %e, "raw handler de community en erreur");
+                }
+            }
             let handler = { self.listeners.lock().await.get(&prefix).cloned() };
             if let Some(h) = handler {
                 match Packet::parse(data, None) {

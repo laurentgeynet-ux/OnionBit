@@ -3,6 +3,43 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Étape 12 (partie 1) — `tribler-tunnel` : circuits fonctionnels en loopback (2026-09-27)
+
+Premier tronçon de la TunnelCommunity, validé par tests loopback réels :
+
+- `cell.rs` : format `CellPayload` fidèle (prefixe 22o + msg 0 +
+  circuit_id u32BE + plaintext + relay_early + message), crypto par
+  couches (`encrypt_cell`/`decrypt_cell`, compteur explicite 8o +
+  tag 16o), `NO_CRYPTO_PACKETS` (create/created), `check_cell_flags`
+  et `swap_circuit_id`.
+- `payload.rs` : messages tunnel 1-20 (data, create/created,
+  extend/extended, ping/pong, destroy, intro/rendezvous, e2e, peers,
+  test) au format big-endian pyipv8 (`varlenH`, `[X]`-lists).
+- `routing.rs` : `RoutingObject`, `Hop`, `UnverifiedHop` (secret DH
+  éphémère conservé jusqu'au `created`), `Circuit` (états
+  EXTENDING/READY/CLOSING, `relay_early_count`), `RelayRoute`
+  (direction FORWARD/BACKWARD, `rendezvous_relay`).
+- `community.rs` : `TunnelCommunity` — `create_circuit`, `send_extend`,
+  `join_circuit` (DH `generate_diffie_shared_secret` = DH(tmp2,dh) +
+  DH(node_sk,dh), `crypto_auth`, HKDF-SHA256), `relay_created` (routes
+  duales + `extended` vers l'amont chiffré BACKWARD), `_ours_on_created_
+  extended` (vérif auth + split relais/sorties des candidats),
+  `exit_data` (activation au premier octet du bon IP), `send_destroy`
+  (paquet signé), `ping`/`pong` de circuit, `send_cell` = `outgoing_
+  crypto` (circuit → FORWARD tous hops, exit → BACKWARD, relais →
+  direction de l'autre route).
+- `tribler-ipv8::endpoint` : `add_raw_prefix_listener` — les cellules
+  ne sont pas des `Packet` signés et étaient rejetées par le dispatch.
+- Tests `tests/circuits_loopback.rs` : 5 tests sur sockets UDP réels —
+  circuit 1 saut et 2 sauts READY (DH complet + relais), données
+  traversant 2 hops et sortant en UDP brut au dernier saut, destroy.
+- Correction d'un auto-deadlock `std::sync::Mutex` (guard temporaire
+  étendu au corps d'un `if let` entourant `relay_cell`).
+
+**Reste pour `[x]`** : SOCKS5, hidden services (`establish_intro`/
+`e2e`/rendezvous), socket de sortie UDP dédiée (réponses hors-prefixe),
+interops contre un `TunnelCommunity` Python réel.
+
 ## Durcissement documentaire du jalon interop (2026-09-27)
 
 Suite à revue externe de la preuve de l'étape 9 :

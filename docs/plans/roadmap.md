@@ -144,11 +144,25 @@ ne sont donc pas « terminées » au sens strict) · `[x]` terminée.
   Python réel, **payloads décodés et vérifiés** des deux côtés — pas
   seulement la signature de paquets génériques (l'introduction ancien
   format + similarity sont déjà validées à l'étape 9).
-- [ ] **Étape 12. TunnelCommunity : circuits et hidden seeding.**
+- [i] **Étape 12. TunnelCommunity : circuits et hidden seeding.**
   `tribler-tunnel` : construction de circuits en onion routing (1/2/3
   sauts), chiffrement ChaCha20-Poly1305 par saut (`tribler-crypto`), hidden
   seeding, proxy SOCKS5 local. Jalon : téléchargement anonyme réel via
   un circuit construit contre le réseau Tribler existant.
+  **Fait** : format de cellule (`cell.rs`, fidèle à `CellPayload`),
+  payloads 1-20 (`payload.rs`), `Circuit`/`Hop`/`RelayRoute`/
+  `UnverifiedHop` (`routing.rs`), `TunnelCommunity` (`community.rs`) :
+  `create`/`created` (DH X25519+HSalsa20, `crypto_auth` HMAC-SHA-512,
+  clés de session HKDF-SHA256), `extend`/`extended` avec relais
+  transformé (`relay_cell` : decrypt FORWARD / encrypt BACKWARD),
+  sortie UDP (`exit_data`), `destroy` signé, `ping`/`pong` de circuit,
+  compteurs `relay_early` (borne 8), flags `plaintext` vérifiés.
+  `UdpEndpoint` : listeners bruts par prefixe (`add_raw_prefix_listener`)
+  pour les cellules non signées. 5 tests loopback réels : circuits 1/2
+  sauts READY sur UDP, sortie de données au dernier saut, destroy.
+  **Reste** : SOCKS5, hidden services (e2e/introduction/rendezvous),
+  socket de sortie dédiée (réponses hors-prefixe), interop réelle
+  avec `TunnelCommunity` pyipv8.
 - [ ] **Étape 13. Politiques de sécurité réseau et kill switch.**
   `tribler-network-policy` : anti-SSRF, politique des noeuds de sortie,
   kill switch atomique, garde-fous SOCKS5. Intégré dans

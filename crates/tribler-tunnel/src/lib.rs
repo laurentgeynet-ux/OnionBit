@@ -17,10 +17,13 @@
 //! Complexite/risque : eleve (protocole de circuit proprietaire, gestion
 //! des noeuds de sortie, resistance aux attaques Sybil). Cf. ADR-0002.
 //!
-//! Etat : etape 12 en cours — cellules, payloads, routage implementes ;
-//! `TunnelCommunity` (circuits) en cours d'ecriture.
+//! Etat : etape 12 en cours — cellules, payloads, routage et
+//! `TunnelCommunity` (create/created/extend/extended, relais, sortie
+//! UDP, destroy, ping/pong) implementes ; SOCKS5 et hidden services
+//! en cours.
 
 pub mod cell;
+pub mod community;
 pub mod payload;
 pub mod routing;
 

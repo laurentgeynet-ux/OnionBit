@@ -2,7 +2,6 @@
 //! et `ipv8-rust-tunnels/src/routing/`) : `Hop`, `Circuit`,
 //! `RelayRoute`, `RendezvousPoint`, `IntroductionPoint`, `Swarm`.
 
-use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
 use tribler_crypto::ipv8::session::SessionKeys;
@@ -77,7 +76,7 @@ impl Clone for Hop {
 }
 
 /// `RoutingObject` : stats communes circuit/relais/sortie.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct RoutingObject {
     /// `circuit_id`.
     pub circuit_id: u32,
@@ -119,6 +118,21 @@ impl RoutingObject {
     }
 }
 
+/// `unverified_hop` Python : saut en cours d'ajout, avant que le
+/// `created`/`extended` ne revele les cles de session (le DH secret
+/// ephemere est conserve pour `verify_and_generate_shared_secret`).
+#[derive(Debug)]
+pub struct UnverifiedHop {
+    /// Cle publique binaire du saut.
+    pub public_key_bin: Vec<u8>,
+    /// Adresse du saut.
+    pub address: Option<UdpAddress>,
+    /// Secret DH ephemere local (32 octets).
+    pub dh_secret: [u8; 32],
+    /// `identifier` du create/extend en vol (`packet_identifier`).
+    pub identifier: u16,
+}
+
 /// `Circuit` : circuit en cours de construction ou pret.
 #[derive(Debug)]
 pub struct Circuit {
@@ -131,37 +145,38 @@ pub struct Circuit {
     /// Sauts verifies (avec cles de session).
     pub hops: Vec<Hop>,
     /// `unverified_hop` : saut en cours d'ajout (create envoye).
-    pub unverified_hop: Option<Hop>,
-    /// `unverified_hop` DH secret ephemere (pour
-    /// `verify_and_generate_shared_secret`).
-    pub unverified_dh_secret: Option<Vec<u8>>,
-    /// Identifiant de la requete `create`/`extend` en vol
-    /// (`RetryRequestCache` simplifie).
-    pub pending_identifier: Option<u16>,
+    pub unverified_hop: Option<UnverifiedHop>,
     /// `e2e` : circuit de bout en bout (hidden services).
     pub e2e: bool,
     /// `info_hash` associe (swarm).
     pub info_hash: Option<[u8; 20]>,
     /// `required_exit` : sortie requise.
     pub required_exit: Option<Vec<u8>>,
+    /// `relay_early_count` : cellules deja relachees en `relay_early`
+    /// (`send_cell` Python le pose si `< max_relay_early`).
+    pub relay_early_count: u8,
     /// Etat force a `CLOSING`.
     closing: Option<String>,
 }
 
 impl Circuit {
     /// `Circuit.__init__`.
-    pub fn new(circuit_id: u32, goal_hops: usize, ctype: &str, info_hash: Option<[u8; 20]>) -> Self {
+    pub fn new(
+        circuit_id: u32,
+        goal_hops: usize,
+        ctype: &str,
+        info_hash: Option<[u8; 20]>,
+    ) -> Self {
         Self {
             base: RoutingObject::new(circuit_id),
             goal_hops,
             ctype: ctype.to_string(),
             hops: Vec::new(),
             unverified_hop: None,
-            unverified_dh_secret: None,
-            pending_identifier: None,
             e2e: false,
             info_hash,
             required_exit: None,
+            relay_early_count: 0,
             closing: None,
         }
     }
@@ -170,7 +185,6 @@ impl Circuit {
     pub fn add_hop(&mut self, hop: Hop) {
         self.hops.push(hop);
         self.unverified_hop = None;
-        self.unverified_dh_secret = None;
     }
 
     /// Premier saut (`circuit.hop` — celui auquel on envoie les
@@ -201,20 +215,26 @@ impl Circuit {
     }
 }
 
-/// `RelayRoute` : correspondance de relais.
-#[derive(Debug)]
+/// `RelayRoute` : correspondance de relais. Mappe un circuit_id
+/// entrant (cle de la table) vers le circuit_id sortant
+/// (`base.circuit_id`) et le saut cible (`hop` — pair vers lequel la
+/// cellule est envoyee : aval pour FORWARD, amont pour BACKWARD).
+#[derive(Debug, Clone)]
 pub struct RelayRoute {
-    /// Base commune.
+    /// Base commune (`circuit_id` = id sortant).
     pub base: RoutingObject,
-    /// Saut (pair + cles de session).
+    /// Saut cible (pair suivant + cles de session amont-partagees).
     pub hop: Hop,
-    /// Direction du relais (`FORWARD`/`BACKWARD` de la direction des
-    /// donnees vues par ce relais).
+    /// Direction du flux sur le circuit entrant (`FORWARD` = la
+    /// cellule va vers la sortie -> decrypt une couche ; `BACKWARD` =
+    /// retour vers l'initiateur -> encrypt une couche).
     pub direction: tribler_crypto::ipv8::session::Direction,
-    /// `rendezvous_relay`.
+    /// `rendezvous_relay` : transforme FORWARD->BACKWARD au point de
+    /// rendez-vous (hidden services).
     pub rendezvous_relay: bool,
-    /// `sock_addr` du saut precedent (pour renvoyer les reponses).
-    pub prev_addr: Option<SocketAddr>,
+    /// Compteur de cellules relayees en `relay_early` (borne
+    /// `max_relay_early` Python).
+    pub relay_early_count: u8,
 }
 
 /// `RendezvousPoint`.

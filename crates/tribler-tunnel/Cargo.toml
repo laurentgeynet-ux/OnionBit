@@ -13,6 +13,8 @@ tokio.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 rand.workspace = true
+x25519-dalek.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+tracing-subscriber.workspace = true

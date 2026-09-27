@@ -98,8 +98,7 @@ impl Cell {
     /// `unwrap` Python : reconstruit `prefix + msg_id + circuit_id +
     /// payload` (le format "decapsule" lu par les handlers).
     pub fn unwrap(&self, prefix: &[u8; 22]) -> Vec<u8> {
-        let mut out =
-            Vec::with_capacity(22 + 1 + 4 + self.message.len());
+        let mut out = Vec::with_capacity(22 + 1 + 4 + self.message.len());
         out.extend_from_slice(prefix);
         out.push(self.inner_msg_id);
         out.extend_from_slice(&self.circuit_id.to_be_bytes());
@@ -120,9 +119,7 @@ impl Cell {
 pub fn check_cell_flags(cell: &[u8], max_relay_early: u8) -> Result<(), Ipv8Error> {
     // relay_early non nul uniquement pour extend (msg 4).
     if (cell[OFF_RELAY_EARLY] == 0 && cell[OFF_INNER_MSG_ID] == 4) || max_relay_early == 0 {
-        return Err(Ipv8Error::Malformed(
-            "flag relay_early absent ou inattendu",
-        ));
+        return Err(Ipv8Error::Malformed("flag relay_early absent ou inattendu"));
     }
     if cell[OFF_PLAINTEXT] != 0 && !NO_CRYPTO_PACKETS.contains(&cell[OFF_INNER_MSG_ID]) {
         return Err(Ipv8Error::Malformed(
