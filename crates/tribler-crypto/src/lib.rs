@@ -1,40 +1,25 @@
 //! `tribler-crypto` — primitives cryptographiques partagees.
 //!
-//! Responsabilite unique :
+//! - [`hash`] : SHA-1/SHA-256 pour les info-hash BitTorrent et les `mid`
+//!   IPv8 ;
+//! - [`ipv8::keys`] : cles IPv8 "LibNaCL dual" (Ed25519 + X25519) au format
+//!   filaire exact de pyipv8 ;
+//! - [`ipv8::dh`] : `crypto_box_beforenm` (X25519 + HSalsa20) pour les
+//!   echanges de cles de circuit ;
+//! - [`ipv8::session`] : cles de session HKDF-SHA256 et chiffrement
+//!   ChaCha20-Poly1305 des cellules de tunnel ;
+//! - [`error`] : erreurs typees.
 //!
-//! - hachage de pieces/fichiers BitTorrent (SHA-1 pour BEP 3, SHA-256 pour
-//!   BEP 52 "v2") ;
-//! - gestion des cles IPv8 (Ed25519 pour la signature des messages
-//!   overlay, X25519 pour l'echange de cles des circuits de tunnel),
-//!   avec les trois niveaux de taille de cle historiques de pyipv8
-//!   (`low`/`medium`/`high`) ;
-//! - chiffrement/dechiffrement des donnees de tunnel (AES-GCM par saut de
-//!   circuit).
+//! Reference de verite : `docs/reference_tribler/ipv8_rust_tunnels/`
+//! (copie locale des sources Rust officielles du projet
+//! `Tribler/ipv8-rust-tunnels`, qui implementent le plan de donnees des
+//! tunnels utilise par pyipv8).
 //!
 //! Aucune logique reseau ou de protocole ici : uniquement des fonctions
-//! pures/deterministes autour des cles et des hachages. Cf. ADR-0003 pour
-//! la justification du choix des algorithmes face aux equivalents pyipv8
-//! (libnacl/curve25519).
-//!
-//! Etat : squelette (etape 0). Implementation a l'etape 2 ("Crypto de
-//! base") et etape 9 ("Cles et crypto IPv8/tunnel").
+//! autour des cles et des hachages.
 
-/// Tailles de cle IPv8 historiques (pyipv8 `LibNaCLSK`), a reimplementer a
-/// l'identique pour l'interoperabilite avec les pairs IPv8 existants.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Ipv8KeySize {
-    Low,
-    Medium,
-    High,
-}
+pub mod error;
+pub mod hash;
+pub mod ipv8;
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn les_trois_tailles_de_cle_sont_distinctes() {
-        assert_ne!(Ipv8KeySize::Low, Ipv8KeySize::Medium);
-        assert_ne!(Ipv8KeySize::Medium, Ipv8KeySize::High);
-    }
-}
+pub use error::CryptoError;
