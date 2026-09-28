@@ -730,14 +730,21 @@ impl DaemonConfig {
         if self.libtorrent.max_concurrent_http_announces != 50 {
             tracing::debug!("libtorrent/max_concurrent_http_announces : non expose par librqbit");
         }
-        // Composants Python non portes : `enabled` est lu et trace
-        // plutot que silencieusement ignore (implementation = roadmap).
+        // `recommender`/`rendezvous` : cles mortes dans Tribler 8.x
+        // meme (declarees dans `tribler_config.py`, jamais relues —
+        // vestiges des composants 7.x). Leur fonction historique est
+        // absorbee : `recommender` -> tache periodique "check local
+        // torrents" du torrent_checker (`TorrentChecker::check_oldest`),
+        // `rendezvous` -> points de rendez-vous des hidden services
+        // dans `TunnelCommunity` (`hidden_services.rs`). Un `enabled`
+        // a `false` n'est donc pas honore — parite stricte avec le
+        // comportement Python 8.x, qui ignore aussi la cle.
         for (name, enabled) in [
             ("recommender", self.recommender.enabled),
             ("rendezvous", self.rendezvous.enabled),
         ] {
             if enabled {
-                tracing::warn!("composant {name} active dans la config mais non encore implemente");
+                tracing::debug!("composant {name} : cle morte dans Tribler 8.x, fonction absorbee");
             }
         }
         // `versioning/allow_pre` filtre les pre-versions rapportees

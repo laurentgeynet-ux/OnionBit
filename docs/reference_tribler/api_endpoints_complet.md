@@ -304,8 +304,8 @@ Défauts par download (`DownloadConfig`, `download_config.py`) : `hops=0`, `safe
 | `content_discovery_community/enabled` | `true` | |
 | `database/enabled` | `true` | |
 | `dht_discovery/enabled` | `true` | |
-| `recommender/enabled` | `true` | ⚠️ aucun endpoint serveur (voir §13) |
-| `rendezvous/enabled` | `true` | |
+| `recommender/enabled` | `true` | ⚠️ clé morte en Python (voir §13) — absorbée par `torrent_checker` |
+| `rendezvous/enabled` | `true` | ⚠️ clé morte en Python — absorbée par `TunnelCommunity` (RP hidden services) |
 | `rss/enabled` | `true` ; `rss/urls` `[]` | |
 | `torrent_checker/enabled` | `true` | |
 | `tunnel_community/enabled` | `true` | |

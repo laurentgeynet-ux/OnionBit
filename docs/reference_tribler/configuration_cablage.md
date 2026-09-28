@@ -23,7 +23,7 @@ log (`warn`/`debug`) plutôt que de les ignorer silencieusement.
 | `libtorrent/active_lsd_limit` | `60` | idem — `debug`. |
 | `ipv8/interfaces[].worker_threads` | `null` | inerte : Tokio gère le multi-threading, pas de worker par interface. |
 | `ipv8/statistics` | `false` | inerte : clé morte dans Tribler 8.x même (résidu pyipv8 `StatisticsIPv8`). |
-| `recommender` / `rendezvous` | `enabled=false` | composants Python non portés — `warn` si `enabled=true` (implémentation = roadmap). |
+| `recommender` / `rendezvous` | `enabled=false` | clés mortes dans Tribler 8.x même (jamais relues après `tribler_config.py`) — fonctions historiques absorbées : `recommender` → tâche périodique de re-vérification du `torrent_checker` (`check_oldest`), `rendezvous` → points de rendez-vous des hidden services dans `TunnelCommunity`. `enabled` ignoré (parité Python) — `debug`. |
 
 ## Application à chaud (`POST /api/settings`)
 

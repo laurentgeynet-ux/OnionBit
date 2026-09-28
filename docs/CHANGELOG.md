@@ -3,6 +3,25 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Config : `recommender`/`rendezvous` requalifiés en clés mortes (2026-09-29)
+
+Le `warn` « composant actif mais non implémenté » des sections
+`recommender` et `rendezvous` était trompeur : ces clés sont **mortes
+dans Tribler 8.x lui-même** — déclarées dans `tribler_config.py` mais
+jamais relues (vestiges des composants 7.x). Leur fonction historique
+est déjà absorbée :
+
+- `recommender` → tâche périodique « check local torrents » de
+  `torrent_checker` (`TorrentChecker::check_oldest`, équivalent du
+  `check_local_torrents` de Tribler 8.x) ;
+- `rendezvous` → points de rendez-vous des hidden services dans
+  `TunnelCommunity` (`create_rendezvous_point`/`on_establish_rendezvous`,
+  `rendezvous_relay`).
+
+Le `warn` devient un `debug!` documentant la parité ; `enabled=false`
+n'est pas honoré — comme en Python. Docs alignées :
+`configuration_cablage.md`, `api_endpoints_complet.md`.
+
 ## UI Flutter — seconde passe : toutes les fonctions du daemon (2026-09-28)
 
 La contrainte « backend d'abord » est levée (décision utilisateur) :
