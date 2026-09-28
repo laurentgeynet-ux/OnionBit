@@ -3,6 +3,33 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Correctif : circuits anonymes bloqués indéfiniment en `EXTENDING` (2026-09-28)
+
+Bug historique : un téléchargement en `hops` 1/2/3 ne démarrait jamais
+(fonctionnait en `hops=0`), avec les logs SOCKS5 `aucun circuit HTTP
+pret` en boucle et un seul log `tentative de creation proactive de
+circuit` sur toute la durée de vie du daemon.
+
+Cause racine : `TunnelCommunity::create_circuit_typed`/`send_extend`
+n'avaient aucun mécanisme de timeout (`retry_requests` n'était qu'un
+registre passif). Si le premier saut ne répondait jamais à un `create`/
+`extend` (paquet UDP perdu, pair injoignable, pair sans le flag
+requis…), le circuit restait pour toujours dans l'état `EXTENDING`
+(`unverified_hop` non résolu). `build_circuits_if_needed` compte les
+circuits `!= READY` comme « en cours » vis-à-vis de `min_circuits`,
+donc aucune nouvelle tentative avec un autre pair n'était jamais
+lancée — la lane anonyme restait bloquée par le kill switch pour
+toujours.
+
+- `TunnelCommunity::spawn_hop_timeout` (`crates/tribler-tunnel/src/
+  community.rs`) : après l'envoi d'un `create`/`extend`, programme une
+  purge du circuit (`remove_circuit`) si `retry_requests` porte
+  toujours le même `identifier` après `CIRCUIT_READY_TIMEOUT_MS`
+  (`next_hop_timeout` pyipv8, 10 s) — équivalent du `on_timeout` de
+  `NextHopRequestCache` côté Python. Le watchdog de circuits
+  (`spawn_circuit_watchdog`, `tribler-core/src/ipv8_stack.rs`) peut
+  alors retenter avec un autre pair au tick suivant.
+
 ## Suppression des lanceurs `demarrer`/`arreter` (2026-09-28)
 
 Devenus inutiles : `tribler_ui.exe` lance le daemon elle-même

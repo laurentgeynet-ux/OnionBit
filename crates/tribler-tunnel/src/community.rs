@@ -1054,7 +1054,38 @@ impl TunnelCommunity {
             key: dh_public.to_vec(),
         };
         self.send_cell(&addr, &create).await?;
+        self.spawn_hop_timeout(circuit_id, identifier);
         Ok(circuit_id)
+    }
+
+    /// Purge un circuit dont le saut suivant (`create`/`extend`) n'a
+    /// pas repondu apres `CIRCUIT_READY_TIMEOUT_MS` (`next_hop_timeout`
+    /// Python). Sans ce garde-fou un circuit bloque en `EXTENDING` est
+    /// compte comme "en cours" par `build_circuits_if_needed` pour
+    /// toujours, et aucune nouvelle tentative avec un autre pair n'est
+    /// jamais lancee.
+    fn spawn_hop_timeout(self: &Arc<Self>, circuit_id: u32, identifier: u16) {
+        let this = self.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(CIRCUIT_READY_TIMEOUT_MS)).await;
+            let still_pending = this
+                .inner
+                .lock()
+                .unwrap()
+                .retry_requests
+                .get(&circuit_id)
+                .copied()
+                == Some(identifier);
+            if still_pending {
+                tracing::debug!(
+                    circuit_id,
+                    identifier,
+                    "timeout du saut suivant, circuit abandonne"
+                );
+                this.remove_circuit(circuit_id, "timeout du saut suivant")
+                    .await;
+            }
+        });
     }
 
     /// `send_extend` : envoie un `ExtendPayload` chiffre au premier
@@ -1104,7 +1135,9 @@ impl TunnelCommunity {
             key: dh_public.to_vec(),
             node_addr,
         };
-        self.send_cell(&first_hop_addr, &p).await.map(|_| ())
+        self.send_cell(&first_hop_addr, &p).await?;
+        self.spawn_hop_timeout(circuit_id, identifier);
+        Ok(())
     }
 
     /// Adresse du premier saut d'un circuit (`circuit.hop` Python :
