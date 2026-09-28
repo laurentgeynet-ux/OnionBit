@@ -20,6 +20,13 @@ en haut.
   repli automatique sur port éphémère si le port UDP 8090 est occupé,
   options CLI `--no-ipv8`, `--no-anonymity`, `--ipv8-port`, `--bootstrap`.
   Binaires release régénérés dans `dist\` et le dossier de bureau.
+- **Support de l'upload binaire brut de `.torrent` dans `tribler-api`** :
+  `PUT /api/downloads` accepte désormais à la fois le JSON standard et
+  le flux binaire brut (`Content-Type: applications/x-bittorrent` ou
+  `application/x-bittorrent`) avec query parameters (`anon_hops`, `safe_seeding`,
+  `paused`), en conformité exacte avec le contrat de Tribler Python.
+  Augmentation du `DefaultBodyLimit` à 20 Mo pour accepter les gros fichiers
+  `.torrent`. Résout l'erreur `10053` (`WSAECONNABORTED`) lors de l'ajout depuis l'UI.
 
 Première implémentation de l'UI dans `app/` (le brouillon initial est
 remplacé) :
