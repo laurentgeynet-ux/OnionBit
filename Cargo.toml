@@ -62,6 +62,15 @@ lz4_flex = "0.11"
 fs2 = "0.4"
 base64 = "0.22"
 
+# API HTTPS (tribler-daemon) : listener TLS de l'API de controle
+# (`api/https_*` Python) — axum-server pour le serveur rustls,
+# rustls-pemfile pour parser le PEM `https_certfile` (cert + cle dans
+# le meme fichier, comme `load_cert_chain`), rcgen pour le certificat
+# auto-signe genere quand le fichier est absent.
+axum-server = { version = "0.8", features = ["tls-rustls"] }
+rustls-pemfile = "2"
+rcgen = "0.13"
+
 # Bureau Windows (tribler-daemon) : icone systray, cle Run d'autostart,
 # console/icone executable. Version epinglee exacte pour tray-icon
 # (0.25.1, 2026-09-16) : eviter de resoudre vers une version fraiche.

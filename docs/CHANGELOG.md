@@ -3,6 +3,43 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Câblage de la configuration (lot API HTTPS) : second listener TLS (2026-09-29)
+
+Quatrième et dernier lot du câblage des champs `configuration.json`
+non lus : la section `api/https_*` (parité `start_https_site` de
+`rest_manager.py`).
+
+- **`api/https_enabled`, `https_host`, `https_port`, `https_certfile`** :
+  quand `https_enabled`, le daemon démarre un second listener TLS
+  (`axum-server` + rustls) qui sert **le même routeur axum** que le HTTP
+  (même middleware `X-Api-Key`/`?key=`/cookie `api_key`), bindé sur
+  `https_host:https_port` — loopback obligatoire, même politique que
+  l'écoute HTTP (`HttpsError::NotLoopback`).
+- **Certificat** : `https_certfile` = PEM certificat + clé privée dans
+  le même fichier (comme `SSLContext.load_cert_chain` sans keyfile —
+  PKCS8/PKCS1/SEC1 acceptés). **Écart assumé** : fichier absent ou
+  invalide → certificat auto-signé `rcgen` (SAN `localhost`,
+  `127.0.0.1`, `::1`) généré et écrit au chemin configuré pour être
+  réutilisé — Python échoue au `load_cert_chain` dans ce cas.
+- **`https_port_running`** : réécrit avec le port réellement lié
+  (`0` = éphémère supporté), comme `http_port_running`.
+- **Arrêt** : le main garde le `axum_server::Handle` et appelle
+  `graceful_shutdown` (5 s de grâce) dans sa séquence d'arrêt —
+  pas de second wait sur `ShutdownSignal` (`notify_one` n'éveille
+  qu'un seul waiter).
+- **Dépendances** : `axum-server` (TLS), `rustls-pemfile` (parse PEM),
+  `rcgen` (auto-génération) — licences MIT/Apache-2.0 compatibles GPL.
+- **Correction de blocage** : le `std::net::TcpListener` bindé à la
+  main doit passer en `set_nonblocking(true)` avant
+  `axum_server::from_tcp` (`tokio::from_std` ne le fait pas) — sinon
+  l'accept loop n'est jamais réveillé et le handshake TLS reste figé
+  (le listener accepte au niveau kernel mais ne répond jamais).
+- Test e2e `daemon_offline_sert_l_api_en_https` : daemon `--offline`
+  + `https_enabled` pré-écrit → `401` sans clé, `200` avec `X-Api-Key`
+  (reqwest `danger_accept_invalid_certs`), PEM généré,
+  `https_port_running` publié. Timeout de 5 s par requête dans les
+  tests daemon (un handshake figé doit échouer, pas bloquer).
+
 ## Câblage de la configuration (lot daemon/flags) : headless, tray, DB, versioning, canaux (2026-09-29)
 
 Troisième lot du câblage des champs `configuration.json` non lus :

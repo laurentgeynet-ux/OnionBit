@@ -63,7 +63,12 @@ async fn daemon_offline_repond_a_l_api_avec_cle_puis_s_arrete() {
     assert_eq!(key.len(), 32, "cle API hex attendue : {key}");
 
     // Sans cle -> 401 {error:{handled:true}} ; avec la cle -> 200.
-    let client = reqwest::Client::new();
+    // Timeout par requete : une connexion qui fige (handshake, etc.)
+    // doit remonter en erreur pour que la deadline de 30 s s'applique.
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .unwrap();
     let deadline = std::time::Instant::now() + Duration::from_secs(30);
     let mut up = false;
     while std::time::Instant::now() < deadline {
@@ -112,6 +117,100 @@ async fn daemon_offline_repond_a_l_api_avec_cle_puis_s_arrete() {
     assert_eq!(resp.status(), 200);
 
     // Arret du processus (kill_on_drop assure le nettoyage en plus).
+    child.kill().await.unwrap();
+    let _ = child.wait().await;
+}
+
+/// `api/https_*` : le daemon sert aussi l'API en TLS quand
+/// `https_enabled` (second site du meme routeur, certificat PEM
+/// `https_certfile` auto-genere si absent, port reel reecrit dans
+/// `https_port_running`).
+#[tokio::test]
+async fn daemon_offline_sert_l_api_en_https() {
+    let dir = tempfile::tempdir().unwrap();
+    let http_port = free_port();
+    let https_port = free_port();
+    let listen = format!("127.0.0.1:{http_port}");
+
+    // Pre-ecrit la config : HTTPS active, PEM absent du state_dir
+    // (le daemon le genere — cert auto-signe localhost).
+    let config_path = dir.path().join("configuration.json");
+    std::fs::write(
+        &config_path,
+        serde_json::json!({
+            "api": {
+                "https_enabled": true,
+                "https_host": "127.0.0.1",
+                "https_port": https_port,
+                "https_certfile": "test_https.pem"
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let bin = env!("CARGO_BIN_EXE_tribler-daemon");
+    let mut child = tokio::process::Command::new(bin)
+        .arg("--listen")
+        .arg(&listen)
+        .arg("--state-dir")
+        .arg(dir.path())
+        .arg("--offline")
+        .arg("--no-tray")
+        .kill_on_drop(true)
+        .spawn()
+        .expect("lancement tribler-daemon");
+
+    let config = read_config(&config_path).await;
+    let key = config
+        .pointer("/api/key")
+        .and_then(|k| k.as_str())
+        .expect("api.key absente")
+        .to_string();
+
+    // Client TLS acceptant le cert auto-signe genere. Timeout par
+    // requete : un handshake fige doit remonter en erreur plutot que
+    // bloquer la boucle (le deadline de 30 s ne vaut que si `send`
+    // retourne).
+    let client = reqwest::Client::builder()
+        .danger_accept_invalid_certs(true)
+        .timeout(Duration::from_secs(5))
+        .build()
+        .unwrap();
+    let base = format!("https://127.0.0.1:{https_port}");
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    let mut up = false;
+    while std::time::Instant::now() < deadline {
+        match client.get(format!("{base}/api/downloads")).send().await {
+            Ok(r) if r.status() == 401 => {
+                up = true;
+                break;
+            }
+            _ => tokio::time::sleep(Duration::from_millis(200)).await,
+        }
+    }
+    assert!(up, "le daemon n'a pas expose l'API HTTPS sur {base}");
+
+    let resp = client
+        .get(format!("{base}/api/downloads"))
+        .header("x-api-key", &key)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    // PEM ecrit dans le state_dir + port reel publie.
+    assert!(dir.path().join("test_https.pem").exists());
+    let config: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
+    assert_eq!(
+        config
+            .pointer("/api/https_port_running")
+            .and_then(|v| v.as_u64()),
+        Some(https_port as u64),
+        "https_port_running devrait valoir {https_port}"
+    );
+
     child.kill().await.unwrap();
     let _ = child.wait().await;
 }

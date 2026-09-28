@@ -17,6 +17,7 @@
 #[cfg(windows)]
 mod autostart;
 mod console;
+mod https;
 mod instance;
 mod shutdown;
 mod tray;
@@ -381,13 +382,47 @@ async fn main() -> ExitCode {
         }
     };
 
-    // Publie le port reel (`api/http_port_running`, lu par les clients
-    // comme tribler-cli — Python fait de meme en fin de demarrage).
+    let app = build(
+        AppState::new(session.clone())
+            .with_daemon_config(daemon_config.clone(), Some(config_path.clone()))
+            .with_shutdown_notify(shutdown_signal.notifier()),
+    );
+
+    // `api/https_*` Python : second site TLS du meme routeur
+    // (`start_https_site`), port reel reecrit dans
+    // `https_port_running`.
+    let https_handle = if daemon_config.api.https_enabled {
+        match https::spawn(
+            app.clone(),
+            &daemon_config.api.https_host,
+            daemon_config.api.https_port,
+            &daemon_config.api.https_certfile,
+            &args.state_dir,
+        )
+        .await
+        {
+            Ok((port, handle)) => {
+                daemon_config.api.https_port_running = port;
+                Some(handle)
+            }
+            Err(e) => {
+                // Python : l'echec du site HTTPS n'arrete pas l'HTTP.
+                tracing::error!(error = %e, "demarrage du listener HTTPS impossible");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    // Publie les ports reels (`api/http_port_running` et
+    // `api/https_port_running`, lus par les clients comme tribler-cli —
+    // Python fait de meme en fin de demarrage).
     if let Ok(addr) = listener.local_addr() {
         daemon_config.api.http_port_running = addr.port();
-        if let Err(e) = daemon_config.write(&config_path) {
-            tracing::warn!(error = %e, "reecriture de configuration.json impossible");
-        }
+    }
+    if let Err(e) = daemon_config.write(&config_path) {
+        tracing::warn!(error = %e, "reecriture de configuration.json impossible");
     }
 
     let tray = spawn_tray(
@@ -395,12 +430,6 @@ async fn main() -> ExitCode {
         &daemon_config,
         format!("Tribler — {listen}"),
         &shutdown_signal,
-    );
-
-    let app = build(
-        AppState::new(session.clone())
-            .with_daemon_config(daemon_config, Some(config_path))
-            .with_shutdown_notify(shutdown_signal.notifier()),
     );
 
     // Arret propre : Ctrl-C / tray « Quitter » / PUT /api/shutdown ->
@@ -413,6 +442,9 @@ async fn main() -> ExitCode {
             wait_shutdown_sources(&signal).await;
             tracing::info!("signal d'arret recu, fermeture de la session");
             session.stop().await;
+            if let Some(handle) = https_handle {
+                handle.graceful_shutdown(Some(https::SHUTDOWN_GRACE));
+            }
         }
     };
 

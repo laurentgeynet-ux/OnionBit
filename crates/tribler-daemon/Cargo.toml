@@ -16,6 +16,10 @@ tribler-core = { path = "../tribler-core" }
 tribler-bittorrent = { path = "../tribler-bittorrent" }
 clap.workspace = true
 axum.workspace = true
+axum-server.workspace = true
+rustls-pemfile.workspace = true
+rcgen.workspace = true
+thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
@@ -41,7 +45,7 @@ windows-sys = { workspace = true, features = [
 embed-resource.workspace = true
 
 [dev-dependencies]
-reqwest.workspace = true
+reqwest = { workspace = true, features = ["rustls"] }
 serde_json.workspace = true
 tempfile.workspace = true
 tribler-test-support = { path = "../tribler-test-support" }
