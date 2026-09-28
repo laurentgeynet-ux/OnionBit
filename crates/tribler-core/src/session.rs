@@ -8,7 +8,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use tribler_bittorrent::{AddDownloadOptions, BtEngine, Download, DownloadStats};
+use tribler_bittorrent::{AddDownloadOptions, BtEngine, Download, DownloadState, DownloadStats};
 use tribler_db::{Database, DownloadRow};
 
 use crate::config::CoreConfig;
@@ -296,6 +296,8 @@ impl CoreSession {
         );
         tokio::spawn(async move {
             let mut finished: std::collections::HashSet<String> = std::collections::HashSet::new();
+            let mut queue_paused: std::collections::HashSet<String> =
+                std::collections::HashSet::new();
             let mut tick = tokio::time::interval(interval);
             tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
@@ -318,6 +320,23 @@ impl CoreSession {
                                 .db
                                 .with(|c| tribler_db::downloads::set_finished(c, &ih, true));
                         }
+                        // `libtorrent/check_after_complete` Python :
+                        // reverification des pieces a la fin
+                        // (`session.recheck` = remove + re-add, le
+                        // hash-check rqbit sert de recheck).
+                        if session.inner.config.check_after_complete {
+                            let session = session.clone();
+                            let ih = stats.info_hash.clone();
+                            tokio::spawn(async move {
+                                if let Err(e) = session.recheck(&ih).await {
+                                    tracing::warn!(
+                                        error = %e,
+                                        infohash = %ih,
+                                        "check_after_complete en erreur"
+                                    );
+                                }
+                            });
+                        }
                     }
                     session.enforce_seeding_policy(&stats);
                     session
@@ -325,6 +344,7 @@ impl CoreSession {
                         .notifier
                         .notify(Notification::DownloadProgress(stats));
                 }
+                session.enforce_queue_limits(&mut queue_paused).await;
             }
         });
     }
@@ -434,6 +454,170 @@ impl CoreSession {
                 }
             });
             let _ = self.update_download_row(&ih, |r| r.paused = true);
+        }
+    }
+
+    /// Gestionnaire de file libtorrent (`active_downloads` /
+    /// `active_seeds` / `active_limit`) : librqbit n'a pas de file —
+    /// au-dela des bornes, les telechargements `auto_managed` en fin
+    /// de file (`queue_position` decroissante) sont mis en pause par
+    /// le moteur ; quand des slots se liberent ils sont repris par
+    /// `queue_position` croissante. Les pauses de file ne touchent pas
+    /// `paused`/`user_stopped` persistes (distinction `queued` Python)
+    /// ; si l'utilisateur pause ou reprend un torrent mis en file, la
+    /// ligne reprend la main et l'entree est purgee de `queue_paused`.
+    async fn enforce_queue_limits(&self, queue_paused: &mut std::collections::HashSet<String>) {
+        let q = &self.inner.config.queue;
+        if q.disabled() {
+            queue_paused.clear();
+            return;
+        }
+        let rows = self
+            .inner
+            .db
+            .with(tribler_db::downloads::list)
+            .unwrap_or_default();
+        let row_of = |hash: &str| {
+            tribler_crypto::hash::from_hex(hash)
+                .and_then(|ih| rows.iter().find(|r| r.infohash == ih))
+        };
+        // La ligne persistante reprend la main : purge des pauses de
+        // file dont le telechargement a ete pause par l'utilisateur.
+        queue_paused.retain(|h| row_of(h).is_some_and(|r| !r.paused && !r.user_stopped));
+        for engine in self.all_engines() {
+            let stats = engine.list();
+            let known: std::collections::HashSet<&str> =
+                stats.iter().map(|s| s.info_hash.as_str()).collect();
+            queue_paused.retain(|h| known.contains(h.as_str()));
+            // Actifs de la file : seuls les `auto_managed` comptent
+            // dans les bornes (regle libtorrent — les autres sont
+            // totalement exempts de la file).
+            let mut n_dl = 0i64;
+            let mut n_seed = 0i64;
+            let mut running: Vec<(i64, String, bool)> = Vec::new();
+            for s in &stats {
+                let Some(row) = row_of(&s.info_hash) else {
+                    continue;
+                };
+                if !row.auto_managed
+                    || row.paused
+                    || row.user_stopped
+                    || queue_paused.contains(&s.info_hash)
+                {
+                    continue;
+                }
+                match s.state {
+                    DownloadState::Downloading
+                    | DownloadState::Checking
+                    | DownloadState::Initializing
+                    | DownloadState::Seeding => {
+                        if s.finished {
+                            n_seed += 1;
+                        } else {
+                            n_dl += 1;
+                        }
+                        running.push((row.queue_position, s.info_hash.clone(), s.finished));
+                    }
+                    _ => {}
+                }
+            }
+            // Pause de l'excedent en partant de la fin de la file.
+            let mut excess_dl = if q.active_downloads >= 0 {
+                (n_dl - q.active_downloads).max(0)
+            } else {
+                0
+            };
+            let mut excess_seed = if q.active_seeds >= 0 {
+                (n_seed - q.active_seeds).max(0)
+            } else {
+                0
+            };
+            let mut excess_total = if q.active_limit >= 0 {
+                (n_dl + n_seed - q.active_limit).max(0)
+            } else {
+                0
+            };
+            running.sort_by_key(|e| std::cmp::Reverse(e.0));
+            let mut paused_now = 0usize;
+            for (_, hash, is_seed) in &running {
+                let over = if *is_seed {
+                    excess_seed > 0 || excess_total > 0
+                } else {
+                    excess_dl > 0 || excess_total > 0
+                };
+                if !over {
+                    break; // tri desc : les plus prioritaires sont gardes
+                }
+                if let Err(e) = engine.pause(hash).await {
+                    tracing::warn!(error = %e, infohash = %hash, "pause de file impossible");
+                } else {
+                    queue_paused.insert(hash.clone());
+                    paused_now += 1;
+                    if *is_seed {
+                        excess_seed -= 1;
+                    } else {
+                        excess_dl -= 1;
+                    }
+                    excess_total -= 1;
+                }
+            }
+            if paused_now > 0 {
+                continue; // les reprises seront evaluees au prochain tick
+            }
+            // Reprise des pauses de file quand des slots se liberent.
+            let mut free_dl = if q.active_downloads >= 0 {
+                q.active_downloads - n_dl
+            } else {
+                i64::MAX
+            };
+            let mut free_seed = if q.active_seeds >= 0 {
+                q.active_seeds - n_seed
+            } else {
+                i64::MAX
+            };
+            let mut free_total = if q.active_limit >= 0 {
+                q.active_limit - n_dl - n_seed
+            } else {
+                i64::MAX
+            };
+            let mut queued: Vec<(i64, String, bool)> = queue_paused
+                .iter()
+                .filter(|h| known.contains(h.as_str()))
+                .map(|h| {
+                    let done = stats
+                        .iter()
+                        .find(|s| s.info_hash == *h)
+                        .map(|s| s.finished)
+                        .unwrap_or(false);
+                    (
+                        row_of(h).map(|r| r.queue_position).unwrap_or(i64::MAX),
+                        h.clone(),
+                        done,
+                    )
+                })
+                .collect();
+            queued.sort_by_key(|e| e.0);
+            for (_, hash, is_seed) in queued {
+                let slot = if is_seed {
+                    free_seed > 0 && free_total > 0
+                } else {
+                    free_dl > 0 && free_total > 0
+                };
+                if !slot {
+                    continue;
+                }
+                match engine.resume(&hash).await {
+                    Ok(()) => {
+                        queue_paused.remove(&hash);
+                        free_seed -= i64::from(is_seed);
+                        free_dl -= i64::from(!is_seed);
+                        free_total -= 1;
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, infohash = %hash, "reprise de file impossible")
+                    }
+                }
+            }
         }
     }
 

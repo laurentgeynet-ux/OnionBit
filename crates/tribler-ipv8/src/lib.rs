@@ -181,10 +181,7 @@ mod tests {
         data.extend_from_slice(b"ping-v6");
         ep.send_to(&UdpAddress::from(v6), &data).await.unwrap();
         let got = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv()).await;
-        assert_eq!(
-            got.expect("aucun datagramme v6 recu"),
-            Some(data.len())
-        );
+        assert_eq!(got.expect("aucun datagramme v6 recu"), Some(data.len()));
         run.abort();
     }
 

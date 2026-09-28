@@ -73,7 +73,7 @@ embed-resource = "3"
 # Moteur BitTorrent reutilise (voir ADR-0001) : evite de reecrire bencode,
 # protocole peer-wire, DHT BEP5 et tracker HTTP/UDP qui existent deja en
 # Rust pur et sont actifs/matures.
-librqbit = "9"
+librqbit = { version = "9", features = ["storage_examples"] }
 librqbit-core = "9"
 librqbit-bencode = "9"
 

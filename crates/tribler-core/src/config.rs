@@ -64,6 +64,42 @@ impl Default for DownloadDefaults {
     }
 }
 
+/// Limites de file libtorrent (`libtorrent/active_downloads`,
+/// `active_seeds`, `active_limit` Tribler ; `< 0` = illimite).
+///
+/// librqbit n'a pas de gestionnaire de file : `CoreSession` les
+/// applique en pause/reprise des telechargements `auto_managed` (les
+/// autres restent hors file, comme les torrents non auto-manages chez
+/// libtorrent). Les pauses de file ne modifient pas `paused`/`user_stopped`
+/// persistes — distinction `queued` Python.
+#[derive(Debug, Clone)]
+pub struct QueueLimits {
+    /// Telechargements actifs simultanes.
+    pub active_downloads: i64,
+    /// Seeds actifs simultanes.
+    pub active_seeds: i64,
+    /// Torrents actifs simultanes au total (download + seed).
+    pub active_limit: i64,
+}
+
+impl QueueLimits {
+    /// Aucune borne effective (toutes les limites `< 0` = illimite).
+    pub fn disabled(&self) -> bool {
+        self.active_downloads < 0 && self.active_seeds < 0 && self.active_limit < 0
+    }
+}
+
+impl Default for QueueLimits {
+    /// Memes defauts que `TriblerConfig.libtorrent` (3/5/500).
+    fn default() -> Self {
+        Self {
+            active_downloads: 3,
+            active_seeds: 5,
+            active_limit: 500,
+        }
+    }
+}
+
 /// Configuration de [`crate::CoreSession`].
 #[derive(Debug, Clone)]
 pub struct CoreConfig {
@@ -100,6 +136,12 @@ pub struct CoreConfig {
     /// Reglages par defaut appliques aux nouveaux telechargements
     /// (`download_defaults` Python).
     pub download_defaults: DownloadDefaults,
+    /// Limites de file (`libtorrent/active_*` Python).
+    pub queue: QueueLimits,
+    /// Reverifie les pieces d'un telechargement a la fin
+    /// (`libtorrent/check_after_complete` Python — `session.recheck`
+    /// cote moteur, rqbit n'ayant pas de recheck in-place).
+    pub check_after_complete: bool,
 }
 
 impl Default for CoreConfig {
@@ -119,6 +161,8 @@ impl Default for CoreConfig {
             ipv8: crate::ipv8_stack::Ipv8Config::default(),
             engine: tribler_bittorrent::EngineConfig::default(),
             download_defaults: DownloadDefaults::default(),
+            queue: QueueLimits::default(),
+            check_after_complete: false,
         }
     }
 }
@@ -150,6 +194,8 @@ impl CoreConfig {
             // offline : la politique de seed et les tests de
             // persistance en dependent.
             download_defaults: DownloadDefaults::default(),
+            queue: QueueLimits::default(),
+            check_after_complete: false,
         }
     }
 }

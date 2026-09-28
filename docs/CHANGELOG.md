@@ -3,6 +3,50 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Câblage de la configuration (lot libtorrent) : file d'attente, mmap, DHT, `.parts` (2026-09-29)
+
+Deuxième lot du câblage des champs `configuration.json` non lus :
+les réglages `libtorrent` restants.
+
+- **`libtorrent/allow_mmap`** : `EngineConfig.allow_mmap` →
+  `default_storage_factory = MmapFilesystemStorageFactory` (feature
+  `librqbit/storage_examples` activée dans le workspace). Sans effet
+  sur les lanes anonymes `utp_only`, comme `enable_mmap and hops < 0`
+  Python.
+- **`libtorrent/dht_readiness_timeout`** :
+  `EngineConfig.dht_readiness_timeout_secs` — `BtEngine::start` attend
+  que la table de routage DHT soit peuplée (borne en secondes, warn si
+  le délai s'écoule), comme le `wait_for_dht` de `start_tribler_core`
+  Python. `0` = pas d'attente (tests offline).
+- **`libtorrent/clear_orphaned_parts`** : `BtEngine::stop` purge les
+  `*.parts` orphelins de l'`output_dir` (stem `<infohash>` hex absent
+  des téléchargements connus). librqbit n'écrit pas de `.parts` — le
+  nettoyage vise les restes d'autres clients libtorrent dans le même
+  dossier.
+- **`libtorrent/check_after_complete`** : `CoreConfig.check_after_
+  complete` — la boucle de progression appelle `session.recheck` (le
+  re-add rqbit fait office de recheck) dès qu'un téléchargement passe
+  `finished`.
+- **`libtorrent/active_downloads` / `active_seeds` / `active_limit`** :
+  `CoreConfig.queue` (`QueueLimits`, `< 0` = illimité). Nouveau
+  `CoreSession::enforce_queue_limits` dans la boucle de progression :
+  les téléchargements `auto_managed` au-delà des bornes sont mis en
+  pause par le moteur (fin de file d'abord, `queue_position`
+  décroissante) et repris par ordre croissant quand des slots se
+  libèrent. Les pauses de file n'écrivent ni `paused` ni
+  `user_stopped` en base — distinction `queued`/pause utilisateur de
+  Python ; si l'utilisateur pause un torrent mis en file, la ligne
+  reprend la main. Les téléchargements non `auto_managed` sont
+  totalement exempts (règle libtorrent). Tests `tests/queue.rs` :
+  pause + reprise après suppression, exemption des non-managés.
+- **Écarts explicites** (tracés en `debug` au `to_core_config`,
+  jamais ignorés silencieusement) : `natpmp` (non supporté par
+  librqbit — UPnP couvre le besoin), `announce_to_all_tiers` /
+  `announce_to_all_trackers` (rqbit annonce déjà à tous les trackers,
+  pas de tiering), `max_concurrent_http_announces`,
+  `active_{dht,tracker,lsd}_limit` (quotas libtorrent par fonction
+  sans équivalent rqbit).
+
 ## Câblage de la configuration (lot 1) : tunnels, IPv6, SOCKS5, logs (2026-09-28)
 
 Premier lot du câblage des champs de `configuration.json` déclarés mais

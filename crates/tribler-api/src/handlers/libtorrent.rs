@@ -57,17 +57,23 @@ pub async fn get_libtorrent_settings(
         "hop": hops,
         "settings": {
             "listen_interfaces": engine_cfg
-                .listen_port
-                .map(|p| format!("0.0.0.0:{p}"))
+                .listen_addr_v6
+                .map(|a| a.to_string())
+                .or_else(|| {
+                    engine_cfg
+                        .listen_port
+                        .map(|p| format!("{}:{p}", engine_cfg.listen_ip))
+                })
                 .unwrap_or_default(),
             "proxy_type": engine_cfg.socks5_proxy.as_ref().map(|_| 5),
             "proxy_hostname": engine_cfg.socks5_proxy,
             "enable_dht": engine_cfg.enable_dht,
             "enable_lsd": !engine_cfg.disable_lsd,
-            "enable_upnp": false,
+            "enable_upnp": engine_cfg.enable_upnp,
+            "enable_utp": engine_cfg.enable_utp,
             "enable_natpmp": false,
             "utp_only": engine_cfg.utp_only,
-            "peer_connections_limit": engine_cfg.peer_limit,
+            "peer_connections_limit": engine_cfg.peer_limit.map(|v| v as i64).unwrap_or(-1),
             "user_agent": tribler_bittorrent::config::CLIENT_NAME,
             "download_rate_limit": 0,
             "upload_rate_limit": 0,

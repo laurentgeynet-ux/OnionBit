@@ -80,6 +80,16 @@ impl BtEngine {
         )
         .await
         .map_err(|e| BtError::Engine(e.to_string()))?;
+        // `libtorrent/dht_readiness_timeout` Tribler : attendre que la
+        // DHT soit peuplee avant de declarer la session prete (sans
+        // effet si la DHT est desactivee).
+        if config.enable_dht && config.dht_readiness_timeout_secs > 0 {
+            Self::wait_dht_ready(
+                &session,
+                Duration::from_secs(config.dht_readiness_timeout_secs),
+            )
+            .await;
+        }
         let (kill_switch, watchdog_stop) = match proxy_addr {
             Some(addr) => {
                 let ks = Arc::new(KillSwitch::new());
@@ -154,8 +164,68 @@ impl BtEngine {
         if let Some(tx) = &self.watchdog_stop {
             let _ = tx.send(true);
         }
+        if self.config.clear_orphaned_parts {
+            self.remove_orphaned_parts();
+        }
         self.session.stop().await;
         tracing::info!("session bittorrent arretee");
+    }
+
+    /// `rm_orphaned_files_and_subfolders` Python, restreint aux
+    /// fichiers `*.parts` (comme `clear_orphaned_parts`) : un `.parts`
+    /// `<infohash>.parts` (nommage libtorrent) est orphelin quand son
+    /// info-hash n'est pas parmi les telechargements connus du moteur.
+    /// librqbit n'ecrit pas de `.parts` lui-meme — le nettoyage couvre
+    /// les restes laisses par d'autres clients dans le meme dossier.
+    fn remove_orphaned_parts(&self) {
+        let known: std::collections::HashSet<String> = self
+            .session
+            .with_torrents(|it| it.map(|(_, t)| hex::encode(t.info_hash().0)).collect());
+        let Ok(entries) = std::fs::read_dir(&self.config.output_dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_file() || path.extension().and_then(|e| e.to_str()) != Some("parts") {
+                continue;
+            }
+            let orphan = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .map(|stem| !known.contains(stem))
+                .unwrap_or(true);
+            if orphan {
+                match std::fs::remove_file(&path) {
+                    Ok(()) => tracing::info!(path = %path.display(), ".parts orphelin supprime"),
+                    Err(e) => {
+                        tracing::warn!(error = %e, path = %path.display(), ".parts orphelin non supprime")
+                    }
+                }
+            }
+        }
+    }
+
+    /// Attend que la table de routage DHT soit peuplee (borne par
+    /// `timeout`) — `dht_readiness_timeout` Python : Tribler reporte
+    /// les premieres annonces tant que la DHT n'a pas de noeuds.
+    async fn wait_dht_ready(session: &librqbit::Session, timeout: Duration) {
+        let deadline = std::time::Instant::now() + timeout;
+        let poll = Duration::from_millis(500);
+        while std::time::Instant::now() < deadline {
+            let ready = session.get_dht().is_some_and(|dht| {
+                let stats = dht.stats();
+                stats.routing_table_size + stats.routing_table_size_v6 > 0
+            });
+            if ready {
+                tracing::info!("dht prete");
+                return;
+            }
+            tokio::time::sleep(poll).await;
+        }
+        tracing::warn!(
+            timeout_secs = timeout.as_secs(),
+            "dht_readiness_timeout ecoule — session prete sans DHT peuplee"
+        );
     }
 
     /// Configuration en cours.

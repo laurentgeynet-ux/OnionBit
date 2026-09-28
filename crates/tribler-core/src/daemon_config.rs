@@ -610,22 +610,105 @@ impl DaemonConfig {
             PathBuf::from(&dd.saveas)
         };
 
+        // `listen_interface` Python est une IP (`"0.0.0.0"`) ;
+        // `listen_interface_v6` non vide active l'écoute v6 (socket
+        // dual-stack — librqbit n'ouvre qu'un seul socket d'écoute,
+        // la v6 couvre alors aussi le v4).
+        let listen_ip = self
+            .libtorrent
+            .listen_interface
+            .parse::<std::net::IpAddr>()
+            .unwrap_or_else(|_| {
+                tracing::warn!(
+                    listen_interface = %self.libtorrent.listen_interface,
+                    "libtorrent/listen_interface invalide, repli sur 0.0.0.0"
+                );
+                std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED)
+            });
+        let listen_addr_v6 = if self.libtorrent.listen_interface_v6.is_empty() {
+            None
+        } else {
+            self.libtorrent
+                .listen_interface_v6
+                .parse::<std::net::IpAddr>()
+                .ok()
+                .map(|ip| std::net::SocketAddr::new(ip, self.libtorrent.port_v6))
+        };
         let mut engine = tribler_bittorrent::EngineConfig {
             output_dir: downloads_dir.clone(),
             enable_dht: self.libtorrent.dht,
             disable_lsd: !self.libtorrent.lsd,
             listen_port: Some(self.libtorrent.port),
+            listen_ip,
+            listen_addr_v6,
+            enable_utp: self.libtorrent.utp,
+            enable_upnp: self.libtorrent.upnp,
+            // `max_connections_download` Python : -1 = illimité.
+            peer_limit: (self.libtorrent.max_connections_download >= 0)
+                .then_some(self.libtorrent.max_connections_download as usize),
+            // `active_checking` Python -> `concurrent_init_limit`
+            // rqbit (init/vérification concurrentes) : <= 0 = pas de
+            // borne explicite.
+            concurrent_init_limit: (self.libtorrent.active_checking > 0)
+                .then_some(self.libtorrent.active_checking as usize),
             // `max_*_rate` Python : 0 = illimite.
             max_upload_bps: (self.libtorrent.max_upload_rate > 0)
                 .then_some(self.libtorrent.max_upload_rate),
             max_download_bps: (self.libtorrent.max_download_rate > 0)
                 .then_some(self.libtorrent.max_download_rate),
+            allow_mmap: self.libtorrent.allow_mmap,
+            clear_orphaned_parts: self.libtorrent.clear_orphaned_parts,
+            dht_readiness_timeout_secs: self.libtorrent.dht_readiness_timeout,
             ..Default::default()
         };
-        // proxy_type 2/3 = SOCKS5 (enum libtorrent). Le proxy guard
-        // (loopback uniquement) reste appliqué au démarrage du moteur.
-        if matches!(self.libtorrent.proxy_type, 2 | 3) && !self.libtorrent.proxy_server.is_empty() {
-            engine.socks5_proxy = Some(format!("socks5://{}", self.libtorrent.proxy_server));
+        // proxy_type 2/3 = SOCKS5 (enum libtorrent), 4/5 = HTTP non
+        // supporté par librqbit. `proxy_auth` Python : `user:pass` en
+        // userinfo de l'URL. Le proxy guard (loopback uniquement)
+        // reste appliqué au démarrage du moteur.
+        if !self.libtorrent.proxy_server.is_empty() {
+            match self.libtorrent.proxy_type {
+                2 | 3 => {
+                    let auth = if self.libtorrent.proxy_auth.is_empty() {
+                        String::new()
+                    } else {
+                        format!("{}@", self.libtorrent.proxy_auth)
+                    };
+                    engine.socks5_proxy =
+                        Some(format!("socks5://{auth}{}", self.libtorrent.proxy_server));
+                }
+                4 | 5 => {
+                    tracing::warn!(
+                        proxy_type = self.libtorrent.proxy_type,
+                        "libtorrent/proxy_type HTTP non supporte par librqbit (proxy ignore)"
+                    );
+                }
+                _ => {}
+            }
+        }
+        // Réglages sans équivalent librqbit : écart explicite tracé
+        // plutôt que champ silencieusement ignoré (cf.
+        // `docs/reference_tribler/`).
+        if self.libtorrent.natpmp {
+            tracing::debug!("libtorrent/natpmp : non supporte par librqbit (upnp seul)");
+        }
+        if !self.libtorrent.announce_to_all_tiers || !self.libtorrent.announce_to_all_trackers {
+            tracing::debug!(
+                "libtorrent/announce_to_all_* : librqbit annonce deja a tous les trackers"
+            );
+        }
+        // Quotas par fonction propres a libtorrent, sans reglage
+        // equivalent chez librqbit : tracés une fois plutot que
+        // silencieusement ignores.
+        if self.libtorrent.active_dht_limit >= 0
+            || self.libtorrent.active_tracker_limit >= 0
+            || self.libtorrent.active_lsd_limit >= 0
+        {
+            tracing::debug!(
+                "libtorrent/active_{{dht,tracker,lsd}}_limit : pas d'equivalent librqbit"
+            );
+        }
+        if self.libtorrent.max_concurrent_http_announces != 50 {
+            tracing::debug!("libtorrent/max_concurrent_http_announces : non expose par librqbit");
         }
 
         let listen = self
@@ -694,6 +777,12 @@ impl DaemonConfig {
             enable_torrent_checker: self.torrent_checker.enabled,
             ipv8,
             engine,
+            queue: crate::config::QueueLimits {
+                active_downloads: self.libtorrent.active_downloads,
+                active_seeds: self.libtorrent.active_seeds,
+                active_limit: self.libtorrent.active_limit,
+            },
+            check_after_complete: self.libtorrent.check_after_complete,
             download_defaults: crate::config::DownloadDefaults {
                 anonymity_enabled: dd.anonymity_enabled,
                 number_hops: dd.number_hops,
@@ -719,6 +808,22 @@ impl DaemonConfig {
         self.libtorrent.dht = core.engine.enable_dht;
         self.libtorrent.lsd = !core.engine.disable_lsd;
         self.libtorrent.port = core.engine.listen_port.unwrap_or(0);
+        self.libtorrent.listen_interface = core.engine.listen_ip.to_string();
+        self.libtorrent.listen_interface_v6 = core
+            .engine
+            .listen_addr_v6
+            .map(|a| a.ip().to_string())
+            .unwrap_or_default();
+        self.libtorrent.port_v6 = core.engine.listen_addr_v6.map(|a| a.port()).unwrap_or(0);
+        self.libtorrent.utp = core.engine.enable_utp;
+        self.libtorrent.upnp = core.engine.enable_upnp;
+        self.libtorrent.max_connections_download =
+            core.engine.peer_limit.map(|v| v as i64).unwrap_or(-1);
+        self.libtorrent.active_checking = core
+            .engine
+            .concurrent_init_limit
+            .map(|v| v as i64)
+            .unwrap_or(-1);
         self.libtorrent.proxy_type = if core.engine.socks5_proxy.is_some() {
             2
         } else {
