@@ -85,6 +85,20 @@ embed-resource = "3"
 librqbit = { version = "9", features = ["storage_examples"] }
 librqbit-core = "9"
 librqbit-bencode = "9"
+librqbit-utp = "0.7"
+
+# Copie vendored + patchee de librqbit 9.0.1 : les tunnels anonymes
+# Tribler n'ont pas de relais TCP generique — le trafic pair anonyme doit
+# passer en uTP/DHT/trackers-UDP a travers les cellules `data` du tunnel
+# (cf. `ipv8-rust-tunnels` de reference). Les patches ajoutent
+# l'injection de sockets UDP « tunnel » (uTP connecteur, DHT, tracker
+# UDP) sans changer le comportement par defaut.
+[patch.crates-io]
+librqbit = { path = "vendor/librqbit" }
+librqbit-dht = { path = "vendor/librqbit-dht" }
+librqbit-tracker-comms = { path = "vendor/librqbit-tracker-comms" }
+librqbit-dualstack-sockets = { path = "vendor/librqbit-dualstack-sockets" }
+librqbit-utp = { path = "vendor/librqbit-utp" }
 
 [profile.release]
 opt-level = 3

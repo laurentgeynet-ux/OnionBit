@@ -1125,10 +1125,24 @@ impl Ipv8Stack {
             }
             Err(e) => return Err(CoreError::State(format!("socks5 bind: {e}"))),
         };
+        // Sockets datagramme tunnelsees (cellules `data`) : en Tribler
+        // les lanes anonymes desactivent le TCP (`enable_outgoing_tcp`
+        // =False) — les pairs passent en uTP a travers le tunnel, la
+        // DHT et les trackers UDP aussi ; seuls les trackers HTTP(S)
+        // utilisent le SOCKS5 (`http-request` one-shot).
+        let udp_sockets = tribler_tunnel::tunnel_udp_socket::TunnelUdpSockets::new(
+            tunnel.clone(),
+            hops,
+            socks_addr,
+        )
+        .map_err(|e| CoreError::State(format!("socket uTP tunnel: {e}")))?;
         let mut cfg = self.engine_config.clone();
         cfg.socks5_proxy = Some(format!("socks5://{socks_addr}"));
         cfg.utp_only = true;
-        cfg.enable_dht = false;
+        cfg.enable_dht = true;
+        cfg.utp_socket = Some(udp_sockets.utp);
+        cfg.dht_socket = Some(std::sync::Arc::new(udp_sockets.dht));
+        cfg.udp_tracker_socket = Some(std::sync::Arc::new(udp_sockets.tracker));
         cfg.disable_lsd = true;
         cfg.listen_port = None;
         cfg.output_dir = self.downloads_dir.join(format!("anon{hops}"));

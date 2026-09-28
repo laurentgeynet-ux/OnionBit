@@ -3,6 +3,45 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Correctif majeur (bis) : trafic anonyme routé en UDP tunnel — librqbit vendored (2026-09-29)
+
+Le flux continu `http-request`/`http-response` de `6d2f11c` n'était
+**pas interopérable** avec les sorties réelles : la référence
+`ipv8-rust-tunnels` (le `.pyd` des noeuds Tribler) montre que le
+protocole filaire est **one-shot** (chaque `http-request` → un
+`send_tcp_request` complet chez la sortie → `http-response` en chunks
+bornés). Pas de relais TCP générique — les trackers HTTPS sont
+infaisables même dans Tribler officiel (le `ClientHello` binaire n'est
+pas du HTTP parseable). Revert de `6d2f11c` → parité stricte.
+
+**Vraie architecture** (vérifiée sur `download_manager.py` Tribler :
+`enable_outgoing_tcp=False`, `enable_outgoing_utp=True`,
+`anonymous_mode`, `force_proxy`) : le trafic pairs anonyme est **uTP +
+DHT + trackers UDP via cellules `data`**, pas TCP. Mais `librqbit`
+9.0.1 n'a aucun client SOCKS5-UDP — proxy TCP-only, uTP/DHT/trackers
+bindant des sockets réelles. D'où le vendoring :
+
+- **`vendor/`** : `librqbit`, `librqbit-dht`, `librqbit-tracker-comms`,
+  `librqbit-dualstack-sockets`, `librqbit-utp` (9.0.1/0.7.0) patchés —
+  trait object-safe `DatagramSocket` (dualstack), socket injectable
+  DHT + tracker UDP, `ConnectionOptions.utp_socket`
+  (`Arc<dyn UtpConnector>` sur `UtpSocket<T,E>`), re-export
+  `UtpEnvironment`, proxy pair uniquement si `enable_tcp` (ADR-0007).
+- **`tribler-tunnel::tunnel_udp_socket`** : `TunnelUdpSocket`
+  implémente `librqbit_utp::Transport` + `DatagramSocket` par-dessus
+  `send_data`/`data_rx` — pinning destination→circuit (préférence
+  `PEER_FLAG_EXIT_BT`), réception démuxée par forme de paquet
+  (`could_be_utp`/`dht`/`udp_tracker`, sans recouvrement), pertes UDP
+  quand aucun circuit n'est prêt (anti-fuite par construction).
+- **`anon_engine`** : `TunnelUdpSockets` (uTP/DHT/tracker) par lane ;
+  DHT anonyme **réactivée** (routée dans le tunnel, parité Tribler) ;
+  `enable_tcp=false` coupe tout TCP pair. Trackers HTTP : one-shot
+  `http-request` via SOCKS5 (inchangé) ; HTTPS non supporté, comme
+  Tribler.
+- **Tests** : `tunnel_udp_socket_utp_roundtrip` (datagramme uTP →
+  cellule → sortie → écho UDP → retour tunnel), pinning par
+  destination, isolation du démux DHT/uTP.
+
 ## Config : `recommender`/`rendezvous` requalifiés en clés mortes (2026-09-29)
 
 Le `warn` « composant actif mais non implémenté » des sections
@@ -97,12 +136,6 @@ sortie.
   (TLS reste de bout en bout entre le client et le vrai serveur) :
   plus sûr que l'alternative (une sortie qui terminerait le TLS pour
   le compte du client).
-- **Tests** : `socks5_connect_http_roundtrip` (existant, HTTP en
-  clair) toujours vert ; nouveau `socks5_connect_https_roundtrip`
-  (serveur `axum`+`rcgen` auto-signé, requête `reqwest` via SOCKS5
-  avec négociation TLS réelle de bout en bout) — reproduit et
-  valide le scénario exact qui échouait en production.
-
 ## Logs : un fichier par run + horodatage local (2026-09-29)
 
 - **Rotation par run** : `rolling::daily` concaténait tous les runs du

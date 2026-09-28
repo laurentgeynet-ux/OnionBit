@@ -6,6 +6,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use librqbit_utp::Transport;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tribler_crypto::ipv8::keys::LibNaClSecretKey;
@@ -21,6 +22,7 @@ use tribler_tunnel::routing::{
     PEER_FLAG_SPEED_TEST, PEER_SOURCE_PEX,
 };
 use tribler_tunnel::socks5::Socks5Server;
+use tribler_tunnel::tunnel_udp_socket::{TunnelUdpKind, TunnelUdpSocket};
 use tribler_tunnel::TUNNEL_COMMUNITY_ID;
 
 /// Delai max d'attente d'un evenement de test.
@@ -976,71 +978,82 @@ async fn socks5_connect_http_roundtrip() {
     );
 }
 
-/// SOCKS5 CONNECT vers une cible **HTTPS** : le relais doit rester
-/// transparent (aucun parsing du contenu par l'exit) pour laisser le
-/// client (`reqwest`) negocier sa propre session TLS de bout en bout
-/// a travers le tunnel — c'est le scenario qui echouait
-/// systematiquement avant le passage au relais bidirectionnel en
-/// flux continu (l'ancien mecanisme "une requete, une reponse" ne
-/// pouvait pas relayer un `ClientHello`/`ServerHello` TLS).
+/// `TunnelUdpSocket` (le transport injecte a rqbit pour les lanes
+/// anonymes) : un datagramme uTP part en cellule `data`, sort en UDP
+/// reel chez la sortie, et la reponse revient sur la meme socket via
+/// `data_rx`. Une socket `Dht` parallele ne doit PAS recevoir le
+/// datagramme uTP (demux par forme de paquet).
 #[tokio::test]
-async fn socks5_connect_https_roundtrip() {
+async fn tunnel_udp_socket_utp_roundtrip() {
     let a = make_node().await;
-    let b = make_node_flags(PEER_FLAG_RELAY | PEER_FLAG_EXIT_HTTP).await;
+    let b = make_node_flags(PEER_FLAG_RELAY | PEER_FLAG_EXIT_BT).await;
     let nodes = [a, b];
-    let (cid, _) = build_circuit(&nodes, 1).await;
-    nodes[0]
-        .tunnel
-        .set_circuit_exit_flags(cid, PEER_FLAG_EXIT_HTTP);
+    let (_cid, _) = build_circuit(&nodes, 1).await;
 
-    // Faux tracker HTTPS loopback (axum + certificat auto-signe).
-    let certified =
-        rcgen::generate_simple_self_signed(vec!["localhost".into(), "127.0.0.1".into()]).unwrap();
-    let tls_config = axum_server::tls_rustls::RustlsConfig::from_pem(
-        certified.cert.pem().into_bytes(),
-        certified.key_pair.serialize_pem().into_bytes(),
-    )
-    .await
-    .unwrap();
-    let app = axum::Router::new().route(
-        "/announce",
-        axum::routing::get(|| async { "d8:intervali1800e5:peers0:e" }),
-    );
-    let std_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let tracker_addr = std_listener.local_addr().unwrap();
-    std_listener.set_nonblocking(true).unwrap();
+    // Serveur d'echo UDP "exterieur" (atteint par la sortie).
+    let echo = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let echo_addr = echo.local_addr().unwrap();
     tokio::spawn(async move {
-        axum_server::from_tcp_rustls(std_listener, tls_config)
-            .unwrap()
-            .serve(app.into_make_service())
-            .await
-            .unwrap();
+        let mut buf = [0u8; 2048];
+        while let Ok((n, src)) = echo.recv_from(&mut buf).await {
+            let _ = echo.send_to(&buf[..n], src).await;
+        }
     });
 
-    // Proxy SOCKS5 + client reqwest : CONNECT via socks5, TLS de bout
-    // en bout negocie par reqwest lui-meme (cert auto-signe accepte).
-    let socks = Socks5Server::new(nodes[0].tunnel.clone(), 1);
-    let proxy = socks.listen("127.0.0.1:0").await.unwrap();
-    let client = reqwest::Client::builder()
-        .proxy(reqwest::Proxy::all(format!("socks5://{proxy}")).unwrap())
-        .danger_accept_invalid_certs(true)
-        .build()
+    let bind = "127.0.0.1:1111".parse().unwrap();
+    let utp_sock = TunnelUdpSocket::new(nodes[0].tunnel.clone(), 1, TunnelUdpKind::Utp, bind);
+    let dht_sock = TunnelUdpSocket::new(nodes[0].tunnel.clone(), 1, TunnelUdpKind::Dht, bind);
+
+    let msg = utp_payload(b"tunnel-udp-ping");
+    utp_sock.send_to(&msg, echo_addr).await.unwrap();
+    let mut buf = [0u8; 512];
+    let (n, src) = tokio::time::timeout(TEST_TIMEOUT, utp_sock.recv_from(&mut buf))
+        .await
+        .expect("pas de reponse uTP via tunnel")
         .unwrap();
-    let resp = tokio::time::timeout(
-        TEST_TIMEOUT,
-        client
-            .get(format!(
-                "https://127.0.0.1:{}/announce",
-                tracker_addr.port()
-            ))
-            .send(),
-    )
-    .await
-    .expect("pas de reponse a travers le tunnel HTTPS")
-    .expect("requete HTTPS echouee");
-    assert_eq!(resp.status(), 200);
-    let body = resp.text().await.unwrap();
-    assert_eq!(body, "d8:intervali1800e5:peers0:e");
+    assert_eq!(&buf[..n], msg, "payload uTP altere");
+    assert_eq!(src, echo_addr, "origine = serveur echo");
+
+    // La socket DHT ne voit pas le datagramme uTP (filtre de forme).
+    let mut buf2 = [0u8; 512];
+    let res = tokio::time::timeout(Duration::from_millis(300), dht_sock.recv_from(&mut buf2)).await;
+    assert!(res.is_err(), "socket DHT a recu du uTP");
+}
+
+/// Le pinning destination -> circuit survit aux envois repetes : deux
+/// datagrammes vers la meme destination partent sur le meme circuit.
+#[tokio::test]
+async fn tunnel_udp_socket_pins_circuit_per_destination() {
+    let a = make_node().await;
+    let b = make_node_flags(PEER_FLAG_RELAY | PEER_FLAG_EXIT_BT).await;
+    let nodes = [a, b];
+    let (cid, _) = build_circuit(&nodes, 1).await;
+
+    let echo = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let echo_addr = echo.local_addr().unwrap();
+    tokio::spawn(async move {
+        let mut buf = [0u8; 2048];
+        while let Ok((n, src)) = echo.recv_from(&mut buf).await {
+            let _ = echo.send_to(&buf[..n], src).await;
+        }
+    });
+
+    let bind = "127.0.0.1:1111".parse().unwrap();
+    let sock = TunnelUdpSocket::new(nodes[0].tunnel.clone(), 1, TunnelUdpKind::Utp, bind);
+    for i in 0..3 {
+        let msg = utp_payload(format!("ping-{i}").as_bytes());
+        sock.send_to(&msg, echo_addr).await.unwrap();
+        let mut buf = [0u8; 512];
+        tokio::time::timeout(TEST_TIMEOUT, sock.recv_from(&mut buf))
+            .await
+            .expect("reponse perdue")
+            .unwrap();
+    }
+    assert_eq!(
+        sock.pinned_circuit_for(echo_addr),
+        Some(cid),
+        "destination epinglee au circuit"
+    );
 }
 
 /// Suivi des flags de service via les introductions sur le prefixe

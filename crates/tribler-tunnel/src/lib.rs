@@ -31,6 +31,7 @@ pub(crate) mod pex;
 pub mod routing;
 pub mod socks5;
 pub mod speedtest;
+pub mod tunnel_udp_socket;
 pub mod udp_relay;
 
 /// `community_id` de `TunnelCommunity`/`HiddenTunnelCommunity`

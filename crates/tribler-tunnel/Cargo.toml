@@ -18,11 +18,12 @@ tracing.workspace = true
 rand.workspace = true
 x25519-dalek.workspace = true
 hex.workspace = true
+# Socket uTP/DHT/tracker au-dessus des cellules `data` du tunnel
+# (`TunnelUdpSocket`) — traits `Transport`/`DatagramSocket` des crates
+# vendored/patchees.
+librqbit-utp.workspace = true
+librqbit-dualstack-sockets = "0.7"
 
 [dev-dependencies]
 tempfile.workspace = true
 tracing-subscriber.workspace = true
-axum.workspace = true
-axum-server.workspace = true
-rcgen.workspace = true
-reqwest = { workspace = true, features = ["json", "socks", "rustls"] }

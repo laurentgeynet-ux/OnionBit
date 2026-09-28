@@ -2244,8 +2244,6 @@ dependencies = [
 [[package]]
 name = "librqbit"
 version = "9.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4349c0f35ede576a87cc2881dc6eb286ff7a1c8fc4d1f7fef95b5c5a530a7174"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -2376,8 +2374,6 @@ dependencies = [
 [[package]]
 name = "librqbit-dht"
 version = "9.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "575f94f543c16de3088f8aa84175203d65437c8886dc24d383941f408dc26488"
 dependencies = [
  "anyhow",
  "backon",
@@ -2407,8 +2403,6 @@ dependencies = [
 [[package]]
 name = "librqbit-dualstack-sockets"
 version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f7189f1ff66ca75055137a38b062ba7df9691d071b7172e5090997c62eb4b4de"
 dependencies = [
  "axum",
  "backon",
@@ -2475,8 +2469,6 @@ dependencies = [
 [[package]]
 name = "librqbit-tracker-comms"
 version = "9.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b561cb29abec85eee031c998f9e0c987f82d3e193b087f4d2bdc8f00d825796c"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -2526,8 +2518,6 @@ dependencies = [
 [[package]]
 name = "librqbit-utp"
 version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4f3bfdc73944bc76cab24d5690a98816770040a654c449edf5ff2b9ba22626aa"
 dependencies = [
  "bitvec",
  "dontfrag",
@@ -4844,13 +4834,11 @@ dependencies = [
 name = "tribler-tunnel"
 version = "0.1.0"
 dependencies = [
- "axum",
- "axum-server",
  "futures-util",
  "hex 0.4.3",
+ "librqbit-dualstack-sockets",
+ "librqbit-utp",
  "rand 0.8.8",
- "rcgen",
- "reqwest",
  "serde",
  "tempfile",
  "thiserror 2.0.21",

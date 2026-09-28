@@ -94,6 +94,19 @@ pub struct EngineConfig {
     /// table de routage DHT se peuple avant d'etre prete. `0` = pas
     /// d'attente ; sans effet quand `enable_dht` est faux.
     pub dht_readiness_timeout_secs: u64,
+    /// Socket uTP injectee pour les connexions pairs sortantes
+    /// (`TunnelUdpSockets::utp` — lanes anonymes : le trafic part en
+    /// cellules `data` du tunnel). Prioritaire sur la socket uTP
+    /// d'ecoute cote librqbit.
+    pub utp_socket: Option<std::sync::Arc<dyn librqbit::UtpConnector>>,
+    /// Socket datagramme injectee pour la DHT (`DhtSessionConfig::
+    /// socket` — lane anonyme : DHT routee dans le tunnel au lieu
+    /// d'une socket UDP reelle).
+    pub dht_socket: Option<std::sync::Arc<dyn librqbit::DatagramSocket>>,
+    /// Socket datagramme injectee pour les trackers `udp://`
+    /// (`SessionOptions::udp_tracker_socket` — anti-fuite : sans elle,
+    /// les annonces UDP tracker partiraient en UDP clair hors tunnel).
+    pub udp_tracker_socket: Option<std::sync::Arc<dyn librqbit::DatagramSocket>>,
 }
 
 impl Default for EngineConfig {
@@ -119,6 +132,9 @@ impl Default for EngineConfig {
             allow_mmap: true,
             clear_orphaned_parts: false,
             dht_readiness_timeout_secs: 0,
+            utp_socket: None,
+            dht_socket: None,
+            udp_tracker_socket: None,
         }
     }
 }
@@ -148,15 +164,19 @@ impl EngineConfig {
             allow_mmap: false,
             clear_orphaned_parts: false,
             dht_readiness_timeout_secs: 0,
+            utp_socket: None,
+            dht_socket: None,
+            udp_tracker_socket: None,
         }
     }
 
     /// Traduit la config en `librqbit::SessionOptions`.
     pub(crate) fn to_session_options(&self) -> librqbit::SessionOptions {
-        let connect = if self.socks5_proxy.is_some() || self.utp_only {
+        let connect = if self.socks5_proxy.is_some() || self.utp_only || self.utp_socket.is_some() {
             Some(librqbit::ConnectionOptions {
                 proxy_url: self.socks5_proxy.clone(),
                 enable_tcp: !self.utp_only,
+                utp_socket: self.utp_socket.clone(),
                 ..Default::default()
             })
         } else {
@@ -166,6 +186,7 @@ impl EngineConfig {
         let dht = if self.enable_dht {
             Some(librqbit::DhtSessionConfig {
                 persistence: None,
+                socket: self.dht_socket.clone(),
                 ..Default::default()
             })
         } else {
@@ -214,6 +235,7 @@ impl EngineConfig {
                     ..Default::default()
                 }),
             connect,
+            udp_tracker_socket: self.udp_tracker_socket.clone(),
             ..Default::default()
         }
     }

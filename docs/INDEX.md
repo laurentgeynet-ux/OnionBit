@@ -12,7 +12,7 @@ chaque étape (cf. `AGENTS.md`, "Workflow par étape").
 | `crates/tribler-crypto/` | Hachage, clés IPv8, crypto tunnel |
 | `crates/tribler-bittorrent/` | Intégration `librqbit`, sessions de téléchargement |
 | `crates/tribler-ipv8/` | Moteur overlay IPv8 (discovery, communities, DHT overlay) |
-| `crates/tribler-tunnel/` | `TunnelCommunity` : circuits, hidden seeding |
+| `crates/tribler-tunnel/` | `TunnelCommunity` : circuits, hidden seeding, `TunnelUdpSocket` (uTP/DHT/tracker via cellules `data`) |
 | `crates/tribler-core/` | Domaine/orchestration : `Session`, `Notifier`, règles métier |
 | `crates/tribler-db/` | Persistance SQLite |
 | `crates/tribler-network-policy/` | Garde-fous réseau (anti-SSRF, exit policy, kill switch) |
@@ -20,6 +20,7 @@ chaque étape (cf. `AGENTS.md`, "Workflow par étape").
 | `crates/tribler-cli/` | CLI de pilotage |
 | `crates/tribler-daemon/` | Binaire principal (composition racine) |
 | `crates/tribler-test-support/` | Fixtures/helpers de tests partagés |
+| `vendor/` | `librqbit*` vendored+patchés (`[patch.crates-io]`) : `DatagramSocket` injectable, uTP/DHT/tracker-UDP sur tunnel (ADR-0007) |
 | `app/` | Interface Flutter desktop (Riverpod + go_router, consomme `tribler-api` REST/SSE) |
 | `docs/plans/plan_faisabilite.md` | Analyse de faisabilité, risques, décisions |
 | `docs/plans/roadmap.md` | Plan d'implémentation détaillé (source de vérité de l'avancement) |
