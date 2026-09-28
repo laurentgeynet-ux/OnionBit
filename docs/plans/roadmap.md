@@ -463,6 +463,32 @@ activée en parité Python (loopback compris — `tribler-cli` la lit dans
   `api_endpoints_complet.md`/`api_rest_mapping.md` ; ADR pour les
   écarts résiduels (exclusion `identity/*` comprise).
 
+## Phase 5c — Cycle de vie desktop du daemon
+
+- [i] **Étape 29. Systray Windows et arrêt unifié du daemon.**
+  `tribler-daemon` passe en sous-système GUI
+  (`#![windows_subsystem = "windows"]` — plus aucune fenêtre console
+  au lancement) : icône de zone de notification (`tray-icon` sur un
+  thread dédié à pompe de messages Win32) avec menu « Ouvrir
+  Tribler » (lance `tribler_ui.exe` à côté de l'exe), « Démarrer
+  avec Windows » (valeur `HKCU\...\Run` via `winreg`, état coché
+  reflété en direct), « Ouvrir le dossier des logs », « Quitter ».
+  Icône `tribler.ico` embarquée via `embed-resource` + `resources.rc`
+  (ressource 101, sert aussi d'icône de l'exe). Arrêt unifié :
+  `ShutdownSignal` (`tokio::sync::Notify`) déclenché par Ctrl-C, «
+  Quitter » ou `PUT /api/shutdown` — le endpoint termine désormais
+  réellement le processus (écart corrigé : avant il ne stoppait que
+  la session, `arreter.cmd` finissait au `taskkill`) ;
+  `CoreSession::stop()` rendu idempotent (`stopped: AtomicBool`).
+  Mutex d'instance unique par `state_dir`
+  (`Local\TriblerRustDaemon-{hash}` — un second lancement sort
+  silencieusement, pas de double icône). Flags `--console`
+  (AttachConsole/AllocConsole + handles `CONOUT$`, pour le debug) et
+  `--no-tray` ; réglage persisté `tray/enabled` dans
+  `configuration.json`. `demarrer.ps1` (template `build_dist.ps1`)
+  sans `-WindowStyle`. **Reste** : validation visuelle manuelle
+  (clic des items du menu, bascule autostart) avant `[x]`.
+
 ## Jalon "backend terminé à 100 %"
 
 Toutes les étapes 0 à 18 cochées ; étape 12 reste `[i]` (critère

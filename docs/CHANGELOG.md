@@ -3,6 +3,50 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Étape 29 — daemon systray Windows + arrêt unifié (2026-09-28)
+
+Le daemon n'affiche plus de fenêtre console : il vit dans la zone de
+notification, comme les clients BitTorrent classiques.
+
+- `tribler-daemon` en sous-système GUI (`#![windows_subsystem =
+  "windows"]`) ; `--console` rattache la console parente ou en alloue
+  une (`AttachConsole`/`AllocConsole` + handles `CONOUT$`, en
+  préservant les redirections déjà branchées — `api_parity_run.ps1`
+  continue de capter stdout/stderr sans le flag).
+- Icône systray via `tray-icon` 0.25.1 (écosystème Tauri) sur un
+  thread dédié à pompe Win32 (`GetMessage`/`DispatchMessage` — les
+  `WM_COMMAND` du menu sont drainés après chaque dispatch) ; `WM_QUIT`
+  termine le thread et retire l'icône. Menu : « Ouvrir Tribler »
+  (lance `tribler_ui.exe` voisin de l'exe, désactivé s'il est absent),
+  « Démarrer avec Windows » (`HKCU\...\Run\TriblerRustDaemon` via
+  `winreg`, item coché reflétant le registre), « Ouvrir le dossier
+  des logs », « Quitter ». Icône `tribler.ico` embarquée dans l'exe
+  (`embed-resource` + `resources.rc`, ressource 101 — icône de
+  fichier comprise), repli `tribler.ico` à côté de l'exe puis RGBA
+  généré.
+- Arrêt unifié : `ShutdownSignal` (`tokio::sync::Notify`) consommé
+  par le graceful shutdown axum ; déclenché par Ctrl-C, « Quitter »
+  du tray ou `PUT /api/shutdown` — qui terminait auparavant la
+  session sans jamais fermer le processus (le `taskkill /F` de
+  `arreter.cmd` faisait le vrai travail). `CoreSession::stop()` est
+  désormais idempotent (`stopped: AtomicBool`) : le handler API et la
+  séquence principale peuvent l'appeler sans se dédoubler.
+- Instance unique par `state_dir` : mutex nommé
+  `Local\TriblerRustDaemon-{hash du chemin}` — un second lancement
+  sort silencieusement (vérifié : `ExitCode 0`, pas de double icône).
+- Réglages : `tray/enabled` dans `configuration.json` (section
+  propre au portage), flag `--no-tray` (tests, sessions non
+  interactives — `api_parity_run.ps1` et le test e2e le passent).
+- `demarrer.ps1` : plus de `-WindowStyle Minimized` (inutile en GUI
+  subsystem) ; message d'échec renvoyé vers `state\logs\tribler.log`.
+- Vérifié en live : lancement détaché sans console, icône créée,
+  API 200, `PUT /api/shutdown` → `signal d'arret recu` →
+  `thread systray terminé` → `daemon arrete proprement`, mutex
+  d'instance refusant le second processus. Reste la validation
+  visuelle du menu (clics, autostart) — étape `[i]`.
+- Plan Flutter ajusté : `tray_manager` retiré de
+  `flutter_architecture.md` (l'icône appartient au daemon).
+
 ## Fix `/api/logging` : journal vide dans l'UI (2026-09-28)
 
 - `tracing_appender::rolling::daily` produit

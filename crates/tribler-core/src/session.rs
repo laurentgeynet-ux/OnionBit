@@ -99,6 +99,10 @@ struct Inner {
     /// Etat de `/api/ipv8/asyncio/*` : derive des ticks, registre des
     /// taches nommees (`all_tasks()`), buffer du debug log.
     asyncio: crate::asyncio::AsyncioMonitor,
+    /// `stop()` idempotent : plusieurs sources peuvent demander
+    /// l'arret (Ctrl-C, item « Quitter » du systray, `PUT
+    /// /api/shutdown` puis le graceful shutdown du serveur).
+    stopped: std::sync::atomic::AtomicBool,
 }
 
 impl std::fmt::Debug for CoreSession {
@@ -138,6 +142,7 @@ impl CoreSession {
                 ipv8,
                 last_tracker_sync: std::sync::Mutex::new(None),
                 asyncio,
+                stopped: std::sync::atomic::AtomicBool::new(false),
             }),
         };
         session.start_services(&services_config).await;
@@ -167,6 +172,7 @@ impl CoreSession {
                 ipv8,
                 last_tracker_sync: std::sync::Mutex::new(None),
                 asyncio,
+                stopped: std::sync::atomic::AtomicBool::new(false),
             }),
         };
         session.start_services(&services_config).await;
@@ -1439,8 +1445,17 @@ impl CoreSession {
         });
     }
 
-    /// Arret propre : services, moteur puis notification.
+    /// Arret propre : services, moteur puis notification. Idempotent —
+    /// les appels concurrents ou répétés (tray, API, Ctrl-C) sont des
+    /// no-ops.
     pub async fn stop(&self) {
+        if self
+            .inner
+            .stopped
+            .swap(true, std::sync::atomic::Ordering::SeqCst)
+        {
+            return;
+        }
         self.inner.notifier.notify(Notification::SessionStopping);
         let services = std::mem::take(&mut *self.inner.services.lock().unwrap());
         self.shutdown_state("Shutting down torrent checker.");

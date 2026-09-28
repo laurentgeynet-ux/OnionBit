@@ -130,7 +130,7 @@ lib/
     layout/                — coquille (rail de navigation, barre d'état)
     logging/
     notifications/         — notifications Windows (torrent terminé…)
-    platform/              — window_manager/tray, démarrage auto
+    platform/              — window_manager (tray/autostart : côté daemon, étape 29)
     router/                — go_router
     storage/               — shared_preferences wrappers
     theme/                 — Material 3, seed color persisté
@@ -173,10 +173,12 @@ repository) → `presentation/` (pages, providers, widgets).
 
 ## Cycle de vie desktop
 
-- Fenêtre : `window_manager` (taille/position persistées, fermeture
-  vers le tray optionnelle).
-- `tray_manager` : icône de zone de notification + menu
-  (afficher/quitter) — le daemon continue en tâche de fond.
+- Fenêtre : `window_manager` (taille/position persistées). Pas de
+  fermeture vers le tray dans l'app : l'icône systray vit dans le
+  **daemon** depuis l'étape 29 (menu « Ouvrir Tribler » relance
+  l'UI) — un `tray_manager` Flutter ferait double emploi.
+- Quitter l'UI ne ferme pas le daemon : il continue en tâche de fond
+  sous son icône systray (« Quitter » du menu → arrêt propre).
 - Connexion : `ApiClient` pointe `http://127.0.0.1:<port>` par
   défaut ; démarrage du daemon embarqué (process enfant) ou connexion
   à un daemon existant — décision V1 : **daemon enfant lancé par

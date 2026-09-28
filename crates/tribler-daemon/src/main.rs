@@ -7,6 +7,19 @@
 //! base) puis demarre `tribler-api` pour exposer le plan de controle
 //! local sur `127.0.0.1` derriere la cle API. Aucun client (CLI ou
 //! future UI Flutter) ne parle a autre chose qu'a `tribler-api`.
+//!
+//! Sous-systeme Windows `windows` : aucune console n'est allouee — le
+//! daemon vit dans la zone de notification (icône tray + menu «
+//! Quitter »). `--console` rattache/alloue une console pour le debug.
+
+#![cfg_attr(windows, windows_subsystem = "windows")]
+
+#[cfg(windows)]
+mod autostart;
+mod console;
+mod instance;
+mod shutdown;
+mod tray;
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -15,6 +28,7 @@ use std::process::ExitCode;
 use clap::Parser;
 use tracing_subscriber::EnvFilter;
 
+use shutdown::ShutdownSignal;
 use tribler_api::{build, AppState};
 use tribler_core::{CoreConfig, CoreSession, DaemonConfig, Notifier, CONFIG_FILENAME};
 
@@ -59,6 +73,18 @@ struct Args {
     /// (repetable, s'ajoute aux noeuds bootstrap de la configuration).
     #[arg(long = "bootstrap")]
     bootstrap_peers: Vec<String>,
+
+    /// Rattache une console pour voir les logs (Windows : le binaire
+    /// est en sous-systeme GUI, aucune console n'est allouee par
+    /// defaut ; une nouvelle console est creee si le processus parent
+    /// n'en a pas).
+    #[arg(long)]
+    console: bool,
+
+    /// Pas d'icone de zone de notification (tests, sessions non
+    /// interactives). Equivalent de `tray/enabled = false`.
+    #[arg(long)]
+    no_tray: bool,
 }
 
 use tracing_subscriber::layer::SubscriberExt;
@@ -66,8 +92,10 @@ use tracing_subscriber::util::SubscriberInitExt;
 
 /// Initialise le logging `tracing` (fmt, filtre `RUST_LOG`, info par
 /// defaut — cf. AGENTS.md "Niveaux de log").
-/// Ecrit a la fois sur stdout et dans le fichier tournant `state_dir/logs/tribler.log`
-/// (exploite par l'endpoint `/api/logging` et l'onglet Diagnostic de l'UI).
+/// Ecrit dans le fichier tournant `state_dir/logs/tribler.log`
+/// (exploite par l'endpoint `/api/logging` et l'onglet Diagnostic de
+/// l'UI) et sur stdout quand une console est disponible (`--console`
+/// ou redirection du lanceur).
 fn init_tracing(state_dir: &std::path::Path) {
     // Directive d'origine (RUST_LOG ou `info`) — `PUT
     // /api/ipv8/asyncio/debug` recharge le filtre a chaud :
@@ -87,12 +115,17 @@ fn init_tracing(state_dir: &std::path::Path) {
         .with_target(false)
         .with_writer(non_blocking);
 
-    tracing_subscriber::registry()
+    let registry = tracing_subscriber::registry()
         .with(filter)
-        .with(stdout_layer)
         .with(file_layer)
-        .with(tribler_core::asyncio::DebugLogLayer)
-        .init();
+        .with(tribler_core::asyncio::DebugLogLayer);
+    // Sous-systeme GUI sans console : le handle stdout est invalide,
+    // la couche fmt ne servirait qu'a echouer en silence.
+    if console::stdout_available() {
+        registry.with(stdout_layer).init();
+    } else {
+        registry.init();
+    }
 
     // Pont `PUT /debug` → `EnvFilter` : le hook vit dans
     // `tribler-core` (la couche REST ne depend pas du daemon).
@@ -108,10 +141,84 @@ fn init_tracing(state_dir: &std::path::Path) {
     });
 }
 
+/// Ctrl-C d'une console attachee. En sous-systeme GUI sans console,
+/// l'enregistrement du handler peut echouer — le futur ne doit alors
+/// JAMAIS se resoudre (sinon le graceful shutdown partirait au
+/// demarrage).
+async fn ctrl_c_or_never() {
+    if tokio::signal::ctrl_c().await.is_err() {
+        std::future::pending::<()>().await;
+    }
+}
+
+/// Attend la premiere source d'arret : `ShutdownSignal` (tray «
+/// Quitter », `PUT /api/shutdown`) ou Ctrl-C.
+async fn wait_shutdown_sources(signal: &ShutdownSignal) {
+    tokio::select! {
+        _ = signal.wait() => {}
+        _ = ctrl_c_or_never() => {}
+    }
+}
+
+/// Cree l'icone systray si `tray.enabled` et pas `--no-tray`. `None`
+/// hors Windows ou si la creation a echoue (le daemon continue).
+fn spawn_tray(
+    args: &Args,
+    daemon_config: &DaemonConfig,
+    tooltip: String,
+    signal: &ShutdownSignal,
+) -> Option<tray::TrayHandle> {
+    if args.no_tray || !daemon_config.tray.enabled {
+        return None;
+    }
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.to_path_buf()));
+    let ui_exe = exe_dir
+        .as_ref()
+        .map(|d| d.join("tribler_ui.exe"))
+        .filter(|p| p.exists());
+    // La cle Run doit survivre au repertoire courant : chemins absolus.
+    let autostart_cmd = match (
+        std::env::current_exe(),
+        std::path::absolute(&args.state_dir),
+    ) {
+        (Ok(exe), Ok(state)) => {
+            format!("\"{}\" --state-dir \"{}\"", exe.display(), state.display())
+        }
+        _ => String::new(),
+    };
+    tray::spawn(tray::TrayOptions {
+        tooltip,
+        logs_dir: args.state_dir.join("logs"),
+        ui_exe,
+        autostart_cmd,
+        shutdown: signal.clone(),
+    })
+}
+
 #[tokio::main]
 async fn main() -> ExitCode {
     let args = Args::parse();
+    #[cfg(windows)]
+    if args.console {
+        console::attach();
+    }
     init_tracing(&args.state_dir);
+
+    // Instance unique par state_dir : un second lancement (double-clic
+    // sur demarrer.cmd, autostart + demarrage manuel) n'ajoute ni
+    // icone ni bind en double — il sort silencieusement.
+    let _instance = match instance::acquire(&args.state_dir) {
+        Some(guard) => guard,
+        None => {
+            tracing::warn!(
+                state_dir = %args.state_dir.display(),
+                "une instance du daemon est deja en cours pour ce repertoire d'etat"
+            );
+            return ExitCode::SUCCESS;
+        }
+    };
 
     // Configuration persistee (`configuration.json`, equivalent de
     // `TriblerConfigManager` : absent ou corrompu -> defauts ; la cle
@@ -187,12 +294,20 @@ async fn main() -> ExitCode {
             .notify(tribler_core::Notification::ReportConfigError { error: err });
     }
 
+    // Source unique d'arret : Ctrl-C, tray « Quitter », /api/shutdown.
+    let shutdown_signal = ShutdownSignal::new();
+
     if !daemon_config.api.http_enabled {
         // api/http_enabled=false : le daemon tourne sans plan de
         // controle HTTP (comme Tribler sans REST manager).
         tracing::warn!("api/http_enabled=false : l'API de controle n'est pas exposee");
-        let _ = tokio::signal::ctrl_c().await;
+        let tray = spawn_tray(&args, &daemon_config, "Tribler".into(), &shutdown_signal);
+        wait_shutdown_sources(&shutdown_signal).await;
+        tracing::info!("signal d'arret recu, fermeture de la session");
         session.stop().await;
+        if let Some(t) = tray {
+            t.stop();
+        }
         tracing::info!("daemon arrete proprement");
         return ExitCode::SUCCESS;
     }
@@ -217,20 +332,39 @@ async fn main() -> ExitCode {
         }
     }
 
-    let app =
-        build(AppState::new(session.clone()).with_daemon_config(daemon_config, Some(config_path)));
+    let tray = spawn_tray(
+        &args,
+        &daemon_config,
+        format!("Tribler — {listen}"),
+        &shutdown_signal,
+    );
 
-    // Arret propre : Ctrl-C -> session.stop() -> fin du serveur.
-    let shutdown = async move {
-        let _ = tokio::signal::ctrl_c().await;
-        tracing::info!("signal d'arret recu, fermeture de la session");
-        session.stop().await;
+    let app = build(
+        AppState::new(session.clone())
+            .with_daemon_config(daemon_config, Some(config_path))
+            .with_shutdown_notify(shutdown_signal.notifier()),
+    );
+
+    // Arret propre : Ctrl-C / tray « Quitter » / PUT /api/shutdown ->
+    // session.stop() -> fin du serveur. `stop()` est idempotent : la
+    // sequence lancee par le handler shutdown n'est pas dedoublee.
+    let shutdown = {
+        let signal = shutdown_signal.clone();
+        let session = session.clone();
+        async move {
+            wait_shutdown_sources(&signal).await;
+            tracing::info!("signal d'arret recu, fermeture de la session");
+            session.stop().await;
+        }
     };
 
-    if let Err(e) = axum::serve(listener, app)
+    let serve_result = axum::serve(listener, app)
         .with_graceful_shutdown(shutdown)
-        .await
-    {
+        .await;
+    if let Some(t) = tray {
+        t.stop();
+    }
+    if let Err(e) = serve_result {
         tracing::error!(error = %e, "serveur API en erreur");
         return ExitCode::FAILURE;
     }

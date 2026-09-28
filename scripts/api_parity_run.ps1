@@ -119,7 +119,7 @@ $pyProc = Start-Process -FilePath $triblerExe -PassThru -NoNewWindow `
 
 Write-Host "== tribler-daemon (api :$rsApiPort, ipv8 :$rsUdpPort) =="
 $rsProc = Start-Process -FilePath $rustBin -PassThru -NoNewWindow `
-    -ArgumentList "--state-dir", "`"$rustState`"", "--listen", "127.0.0.1:$rsApiPort", "--ipv8-port", "$rsUdpPort" `
+    -ArgumentList "--state-dir", "`"$rustState`"", "--listen", "127.0.0.1:$rsApiPort", "--ipv8-port", "$rsUdpPort", "--no-tray" `
     -RedirectStandardOutput (Join-Path $outDir "rust_stdout.log") `
     -RedirectStandardError (Join-Path $outDir "rust_stderr.log")
 

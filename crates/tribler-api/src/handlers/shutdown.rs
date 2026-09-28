@@ -16,5 +16,12 @@ pub async fn shutdown(State(state): State<AppState>) -> Json<serde_json::Value> 
     tokio::spawn(async move {
         session.stop().await;
     });
+    // Termine aussi le processus : le graceful shutdown d'axum attend
+    // la fin des reponses en vol (celle-ci comprise) puis le daemon
+    // quitte. `stop()` est idempotent — l'appel ci-dessus et celui de
+    // la sequence d'arret principale ne se dedoublent pas.
+    if let Some(notify) = &state.shutdown_notify {
+        notify.notify_one();
+    }
     Json(serde_json::json!({ "shutdown": true }))
 }

@@ -123,9 +123,9 @@ function Test-ApiAlive([int]$port) {
 
 $port = Get-ApiPort
 if (-not (Test-ApiAlive $port)) {
-    Write-Host 'Demarrage du daemon - console minimisee, fermer la fenetre = arreter.'
+    Write-Host 'Demarrage du daemon - pas de fenetre, icone dans la zone de notification.'
     Start-Process -FilePath (Join-Path $dist 'tribler-daemon.exe') `
-        -ArgumentList '--state-dir', "`"$stateDir`"" -WindowStyle Minimized
+        -ArgumentList '--state-dir', "`"$stateDir`""
 } else {
     Write-Host "Daemon deja actif sur 127.0.0.1:$port."
 }
@@ -140,7 +140,7 @@ while ((Get-Date) -lt $deadline) {
 if (-not $alive) {
     Write-Host ''
     Write-Host "ERREUR : le daemon ne repond pas (port API $port)."
-    Write-Host 'Consultez la console tribler-daemon pour la cause.'
+    Write-Host 'Consultez state\logs\tribler.log pour la cause.'
     exit 1
 }
 

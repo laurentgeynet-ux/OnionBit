@@ -29,6 +29,11 @@ pub struct AppState {
     /// Nombre de clients SSE connectes a `/api/events` (le champ
     /// `sessions` du message `events_start` / `/api/events/info`).
     pub sse_sessions: Arc<std::sync::atomic::AtomicUsize>,
+    /// Signal d'arret du processus notifie par `PUT /api/shutdown`
+    /// (consomme par le graceful shutdown du daemon ; `None` dans les
+    /// tests de l'API — la session est alors arretee sans que le
+    /// processus ne quitte).
+    pub shutdown_notify: Option<Arc<tokio::sync::Notify>>,
 }
 
 impl AppState {
@@ -42,6 +47,7 @@ impl AppState {
             config_path: None,
             unhandled_cli: Arc::new(Mutex::new(std::collections::VecDeque::new())),
             sse_sessions: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            shutdown_notify: None,
         }
     }
 
@@ -61,6 +67,13 @@ impl AppState {
     /// Impose une cle API sans fichier de configuration (tests).
     pub fn with_api_key(mut self, key: impl Into<String>) -> Self {
         self.api_key = Some(key.into());
+        self
+    }
+
+    /// Branche le signal d'arret du daemon (`PUT /api/shutdown`
+    /// terminera le processus, pas seulement la session).
+    pub fn with_shutdown_notify(mut self, notify: Arc<tokio::sync::Notify>) -> Self {
+        self.shutdown_notify = Some(notify);
         self
     }
 

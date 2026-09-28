@@ -476,6 +476,10 @@ pub struct DaemonConfig {
     pub versioning: VersioningConfig,
     /// Section `watch_folder`.
     pub watch_folder: WatchFolderConfig,
+    /// Section `tray` — icône de zone de notification du daemon
+    /// (extension propre au portage, absente de `TriblerConfig` Python ;
+    /// `enabled=false` = `--no-tray`).
+    pub tray: EnabledSection,
     /// Mode sans GUI.
     pub headless: bool,
     /// Démarrage minimisé (UI — inerte en daemon).
@@ -509,6 +513,7 @@ impl Default for DaemonConfig {
             torrent_checker: EnabledSection::enabled(),
             versioning: VersioningConfig::default(),
             watch_folder: WatchFolderConfig::default(),
+            tray: EnabledSection::enabled(),
             headless: false,
             start_minimized: false,
             statistics: false,

@@ -1,0 +1,225 @@
+//! Icône de zone de notification (systray) du daemon — implémentation
+//! Windows.
+//!
+//! `tray-icon` exige une boucle de messages Win32 sur le thread qui
+//! crée l'icône : le tray vit donc sur un thread dédié (la boucle
+//! `GetMessage`/`DispatchMessage` pompe aussi les `WM_COMMAND` du menu
+//! contextuel — les `MenuEvent` de muda sont poussés dans le channel
+//! pendant `DispatchMessage`, on les draine après chaque message).
+//! `stop()` poste `WM_QUIT` au thread : la boucle sort, le `TrayIcon`
+//! est droppé (l'icône disparaît) puis le thread est joint.
+
+use std::path::PathBuf;
+
+use crate::shutdown::ShutdownSignal;
+
+/// Paramètres de l'icône tray (le type existe sur toutes les
+/// plateformes pour que `main` reste sans `cfg`).
+pub struct TrayOptions {
+    /// Texte au survol (`Tribler — 127.0.0.1:<port>`).
+    pub tooltip: String,
+    /// Dossier ouvert par « Ouvrir le dossier des logs ».
+    pub logs_dir: PathBuf,
+    /// `tribler_ui.exe` à côté du daemon (`None` → item désactivé).
+    pub ui_exe: Option<PathBuf>,
+    /// Ligne de commande écrite dans la clé Run (autostart).
+    pub autostart_cmd: String,
+    /// Signal déclenché par « Quitter ».
+    pub shutdown: ShutdownSignal,
+}
+
+/// Handle runtime du tray (`None` si désactivé ou échec de création).
+pub struct TrayHandle {
+    #[cfg(windows)]
+    inner: windows_impl::Inner,
+}
+
+#[cfg(windows)]
+mod windows_impl {
+    use std::process::Command;
+    use std::ptr::null_mut;
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    use tray_icon::menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem};
+    use tray_icon::{Icon, TrayIconBuilder};
+    use windows_sys::Win32::System::Threading::GetCurrentThreadId;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        DispatchMessageW, GetMessageW, PostThreadMessageW, TranslateMessage, MSG, WM_QUIT,
+    };
+
+    use super::TrayOptions;
+    use crate::autostart;
+
+    /// Identifiant de la ressource icône (cf. `resources.rc`).
+    const IDI_ICON: u16 = 101;
+
+    pub struct Inner {
+        thread_id: u32,
+        join: std::thread::JoinHandle<()>,
+    }
+
+    impl Inner {
+        /// `WM_QUIT` termine la pompe à messages ; le drop du `TrayIcon`
+        /// retire l'icône de la zone de notification, puis on joint.
+        pub fn stop(self) {
+            unsafe {
+                let _ = PostThreadMessageW(self.thread_id, WM_QUIT, 0, 0);
+            }
+            let _ = self.join.join();
+        }
+    }
+
+    /// Crée le thread tray. `None` si le thread ou l'icône n'a pas pu
+    /// être créée (le daemon continue sans systray).
+    pub fn spawn(opts: TrayOptions) -> Option<Inner> {
+        let (tx, rx) = mpsc::channel();
+        let join = std::thread::Builder::new()
+            .name("tray".into())
+            .spawn(move || run(opts, tx))
+            .map_err(|e| {
+                tracing::warn!(error = %e, "thread systray impossible à créer");
+                e
+            })
+            .ok()?;
+        // Le thread répond Some(tid) si l'icône est créée, None sinon.
+        match rx.recv_timeout(Duration::from_secs(10)) {
+            Ok(Some(thread_id)) => Some(Inner { thread_id, join }),
+            Ok(None) => {
+                let _ = join.join();
+                None
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "thread systray muet");
+                None
+            }
+        }
+    }
+
+    fn run(opts: TrayOptions, ready: mpsc::Sender<Option<u32>>) {
+        let thread_id = unsafe { GetCurrentThreadId() };
+
+        let open_ui = MenuItem::new("Ouvrir Tribler", opts.ui_exe.is_some(), None);
+        let autostart_item =
+            CheckMenuItem::new("Démarrer avec Windows", true, autostart::is_enabled(), None);
+        let open_logs = MenuItem::new("Ouvrir le dossier des logs", true, None);
+        let quit = MenuItem::new("Quitter", true, None);
+
+        let menu = Menu::new();
+        if menu
+            .append_items(&[
+                &open_ui,
+                &autostart_item,
+                &open_logs,
+                &PredefinedMenuItem::separator(),
+                &quit,
+            ])
+            .is_err()
+        {
+            tracing::warn!("menu systray impossible à construire");
+            let _ = ready.send(None);
+            return;
+        }
+
+        let tray = TrayIconBuilder::new()
+            .with_menu(Box::new(menu))
+            .with_tooltip(&opts.tooltip)
+            .with_icon(load_icon())
+            .build();
+        let _tray = match tray {
+            Ok(t) => t,
+            Err(e) => {
+                tracing::warn!(error = %e, "icône systray impossible à créer");
+                let _ = ready.send(None);
+                return;
+            }
+        };
+        let _ = ready.send(Some(thread_id));
+        tracing::info!("icône de notification créée");
+
+        // Pompe Win32 : les WM_COMMAND du menu arrivent pendant
+        // DispatchMessageW — drainer les MenuEvent juste après.
+        unsafe {
+            let mut msg: MSG = std::mem::zeroed();
+            while GetMessageW(&mut msg, null_mut(), 0, 0) > 0 {
+                TranslateMessage(&msg);
+                DispatchMessageW(&msg);
+                drain_menu_events(&opts, &open_ui, &autostart_item, &open_logs, &quit);
+            }
+        }
+        tracing::info!("thread systray terminé");
+    }
+
+    /// Consomme tous les événements menu en attente.
+    fn drain_menu_events(
+        opts: &TrayOptions,
+        open_ui: &MenuItem,
+        autostart_item: &CheckMenuItem,
+        open_logs: &MenuItem,
+        quit: &MenuItem,
+    ) {
+        while let Ok(event) = MenuEvent::receiver().try_recv() {
+            let id = &event.id;
+            if id == quit.id() {
+                tracing::info!("arrêt demandé via le systray");
+                opts.shutdown.trigger();
+            } else if id == open_logs.id() {
+                let _ = Command::new("explorer").arg(&opts.logs_dir).spawn();
+            } else if id == open_ui.id() {
+                if let Some(exe) = &opts.ui_exe {
+                    if let Err(e) = Command::new(exe).spawn() {
+                        tracing::warn!(error = %e, "lancement de tribler_ui impossible");
+                    }
+                }
+            } else if id == autostart_item.id() {
+                match autostart::toggle(&opts.autostart_cmd) {
+                    Ok(on) => autostart_item.set_checked(on),
+                    Err(e) => {
+                        tracing::warn!(error = %e, "bascule de l'autostart impossible");
+                    }
+                }
+            }
+        }
+    }
+
+    /// Icône du tray : ressource embarquée `IDI_ICON` (build.rs) →
+    /// `tribler.ico` à côté de l'exe → carré bleu généré (dernier
+    /// recours pour que l'entrée systray existe toujours).
+    fn load_icon() -> Icon {
+        if let Ok(icon) = Icon::from_resource(IDI_ICON, Some((32, 32))) {
+            return icon;
+        }
+        if let Some(path) = std::env::current_exe()
+            .ok()
+            .and_then(|exe| exe.parent().map(|d| d.join("tribler.ico")))
+            .filter(|p| p.exists())
+        {
+            if let Ok(icon) = Icon::from_path(&path, Some((32, 32))) {
+                return icon;
+            }
+        }
+        // 32×32 BGRA opaque (bleu Tribler #2F6FED — accent du thème UI).
+        let rgba = vec![[0x2F, 0x6F, 0xED, 0xFF]; 32 * 32].concat();
+        Icon::from_rgba(rgba, 32, 32).expect("icone RGBA 32×32 toujours valide")
+    }
+}
+
+#[cfg(windows)]
+pub fn spawn(opts: TrayOptions) -> Option<TrayHandle> {
+    windows_impl::spawn(opts).map(|inner| TrayHandle { inner })
+}
+
+/// Hors Windows : pas de systray pour l'instant (Linux/macOS feront
+/// l'objet d'une étape dédiée — AppIndicator/gtk ou NSStatusItem).
+#[cfg(not(windows))]
+pub fn spawn(_opts: TrayOptions) -> Option<TrayHandle> {
+    None
+}
+
+impl TrayHandle {
+    /// Retire l'icône et termine le thread tray.
+    pub fn stop(self) {
+        #[cfg(windows)]
+        self.inner.stop();
+    }
+}

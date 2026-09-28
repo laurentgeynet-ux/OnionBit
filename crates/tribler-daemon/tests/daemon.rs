@@ -46,6 +46,8 @@ async fn daemon_offline_repond_a_l_api_avec_cle_puis_s_arrete() {
         .arg("--state-dir")
         .arg(dir.path())
         .arg("--offline")
+        // Pas d'icone systray pendant les tests.
+        .arg("--no-tray")
         .kill_on_drop(true)
         .spawn()
         .expect("lancement tribler-daemon");

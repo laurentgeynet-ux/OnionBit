@@ -62,6 +62,14 @@ lz4_flex = "0.11"
 fs2 = "0.4"
 base64 = "0.22"
 
+# Bureau Windows (tribler-daemon) : icone systray, cle Run d'autostart,
+# console/icone executable. Version epinglee exacte pour tray-icon
+# (0.25.1, 2026-09-16) : eviter de resoudre vers une version fraiche.
+tray-icon = "=0.25.1"
+winreg = "0.55"
+windows-sys = "0.61"
+embed-resource = "3"
+
 # Moteur BitTorrent reutilise (voir ADR-0001) : evite de reecrire bencode,
 # protocole peer-wire, DHT BEP5 et tracker HTTP/UDP qui existent deja en
 # Rust pur et sont actifs/matures.
