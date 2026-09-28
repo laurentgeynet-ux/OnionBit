@@ -3,6 +3,25 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Validation parité réelle — `api_parity_run.ps1` (2026-09-28)
+
+- **`scripts/api_parity_run.ps1`** : orchestrateur du banc — états
+  isolés `TSTATEDIR`/`--state-dir`, ports libres dédiés, lancement de
+  `Tribler.exe -s` (config `configuration.json` générée avec
+  `rss`/`versioning` activés pour que leurs endpoints soient montés)
+  et de `tribler-daemon`, attente de disponibilité des deux API,
+  exécution d'`api_parity.ps1`, nettoyage (arrêt des processus,
+  journaux conservés sous `target/parity/`).
+- **Comparaison en sous-ensemble** : le Rust doit fournir toutes les
+  clés de premier niveau renvoyées par Python (avec le même type) ; les
+  clés supplémentaires sont des extensions documentées (`clierrors`
+  dans `/api/downloads`, absent du binaire 8.4.3 mais présent dans les
+  sources plus récentes).
+- **Résultat mesuré contre le binaire 8.4.3 réel** : 26/27 réponses
+  identiques (codes + shapes) ; seule divergence, `/api/rss` GET —
+  500 côté Python (méthode inexistante) vs 200 côté Rust, extension
+  actée en ADR-0006.
+
 ## Étape 28 — `asyncio/*` tokio, items RSS, banc de parité (2026-09-28)
 
 - **`/api/ipv8/asyncio/*`** (`handlers/asyncio.rs` +

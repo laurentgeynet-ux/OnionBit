@@ -54,9 +54,22 @@ backend Rust de Tribler).
 
 ### `GET /api/rss` est une extension Rust
 
-Python n'expose que `PUT /api/rss`. Le `GET` (listing `{items}` des
-entrées `.torrent` découvertes, table `rss_items` — migration v5) est
-un ajout pour l'UI ; il n'a pas de contrepartie à comparer.
+Python n'expose que `PUT /api/rss` : le `GET` Python renvoie **500**
+(`{"error": {...}}` — la méthode n'existe pas sur l'endpoint et le
+middleware la convertit en erreur non gérée). Le `GET` Rust (listing
+`{items}` des entrées `.torrent` découvertes, table `rss_items` —
+migration v5) est un ajout pour l'UI ; le banc de parité la signale
+donc en divergence de statut actée.
+
+### `GET /api/downloads[].clierrors` — décalage de version
+
+Le binaire Tribler **8.4.3** installé renvoie
+`{"downloads", "checkpoints"}` ; le checkout source (branche plus
+récente, référence de vérité déclarée dans `AGENTS.md`) ajoute
+`"clierrors": len(unhandled_cli_log)`. Le Rust suit la source et émet
+`clierrors`. Le comparateur `api_parity.ps1` fonctionne en **sous-
+ensemble** : une clé Rust supplémentaire n'est pas une divergence,
+une clé Python manquante ou de type différent en est une.
 
 ### Écarts de valeurs hérités des étapes précédentes
 
@@ -86,8 +99,12 @@ validation aiohttp_apispec — les schémas sont docs-only) :
 
 ## Conséquences
 
-- `scripts/api_parity.ps1` peut rapporter des diffs de shape attendus
-  sur `/api/ipv8/asyncio/tasks` (champs `running`/`stack`) —
-  considérer ces écarts comme documentés.
+- `scripts/api_parity.ps1` rapporte une divergence de statut attendue
+  sur `/api/rss` (GET inexistant côté Python) — documentée ci-dessus.
+  La comparaison de shape est en sous-ensemble (`clierrors` de
+  `/api/downloads` est donc toléré).
+- Contre le binaire 8.4.3 réel (config isolée `api_parity_run.ps1`),
+  la batterie de 27 GET donne **26 réponses identiques** + le diff
+  acté `/api/rss`.
 - Toute nouvelle divergence constatée doit rejoindre cette liste ou
   être corrigée — pas de divergence silencieuse.

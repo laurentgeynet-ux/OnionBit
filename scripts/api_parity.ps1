@@ -1,9 +1,12 @@
 # api_parity.ps1 - banc de parite REST Tribler Python <-> daemon Rust.
 #
 # Envoie la meme batterie de requetes (GET sans effet de bord) aux deux
-# daemons et compare : code HTTP, ensemble des cles JSON de premier
-# niveau et type de chaque cle. Les divergences residuelles connues
-# sont documentees dans docs/architecture/decisions/0006-*.
+# daemons et compare : code HTTP, puis pour chaque cle JSON de premier
+# niveau renvoyee par Python, sa presence et son type cote Rust
+# (sous-ensemble : une cle supplementaire cote Rust est une extension
+# documentee, ex. `clierrors` absent du binaire 8.4.3 mais present dans
+# les sources plus recentes). Les divergences residuelles connues sont
+# documentees dans docs/architecture/decisions/0006-*.
 #
 # Les deux daemons doivent deja tourner :
 #   - Tribler Python : `Tribler.exe -s` (cle API dans
@@ -24,6 +27,8 @@ param(
     [Parameter(Mandatory)] [string] $RustKey,
     # Code de sortie 1 si une divergence est detectee (defaut : rapport seul).
     [switch] $FailOnDiff,
+    # Affiche les deux signatures JSON pour chaque divergence.
+    [switch] $ShowDiff,
     [int] $TimeoutSec = 15
 )
 
@@ -96,12 +101,34 @@ function Get-Shape {
     return "scalar:$($Json.GetType().Name)"
 }
 
+function Test-ShapeSubset {
+    # Vrai si toutes les cles de premier niveau de la reponse Python sont
+    # presentes cote Rust avec le meme type (les cles supplementaires
+    # Rust sont des extensions tolerees).
+    param($PyJson, $RsJson)
+    if ($null -eq $PyJson -or $null -eq $RsJson) {
+        return ($null -eq $PyJson) -eq ($null -eq $RsJson)
+    }
+    if (-not ($PyJson -is [System.Management.Automation.PSCustomObject]) -or
+        -not ($RsJson -is [System.Management.Automation.PSCustomObject])) {
+        return $PyJson.GetType().Name -eq $RsJson.GetType().Name
+    }
+    foreach ($prop in $PyJson.PSObject.Properties) {
+        $rsProp = $RsJson.PSObject.Properties[$prop.Name]
+        if ($null -eq $rsProp) { return $false }
+        if ($prop.Value.GetType().Name -ne $rsProp.Value.GetType().Name) {
+            return $false
+        }
+    }
+    return $true
+}
+
 $diffs = @()
 foreach ($path in $Battery) {
     $py = Invoke-Api -Base $TriblerUrl -Key $TriblerKey -Path $path
     $rs = Invoke-Api -Base $RustUrl -Key $RustKey -Path $path
     $statusDiff = $py.Status -ne $rs.Status
-    $shapeDiff = (Get-Shape $py.Json) -ne (Get-Shape $rs.Json)
+    $shapeDiff = -not (Test-ShapeSubset $py.Json $rs.Json)
     $mark = if ($statusDiff -or $shapeDiff) { "DIFF" } else { "ok  " }
     Write-Host "$mark $path  (py=$($py.Status) rs=$($rs.Status))"
     if ($statusDiff -or $shapeDiff) {
@@ -110,6 +137,10 @@ foreach ($path in $Battery) {
             PyStatus  = $py.Status
             RsStatus  = $rs.Status
             ShapeDiff = $shapeDiff
+        }
+        if ($ShowDiff) {
+            Write-Host "    py: $((Get-Shape $py.Json) -replace "`n", ' | ')"
+            Write-Host "    rs: $((Get-Shape $rs.Json) -replace "`n", ' | ')"
         }
     }
 }
