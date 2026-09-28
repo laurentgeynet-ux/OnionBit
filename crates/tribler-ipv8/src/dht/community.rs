@@ -777,8 +777,10 @@ impl DhtCommunity {
         payloads::unserialize_value(value)
     }
 
-    /// `add_value`.
-    fn add_value(&self, key: &[u8; 20], value: &[u8], addr: &UdpAddress, max_age: f64) {
+    /// `add_value` — insertion directe dans le stockage local
+    /// (equivalent du `storage.put` pyipv8 accessible aux peers
+    /// REST/tests ; `_store` y recourt pour la part locale).
+    pub fn add_value(&self, key: &[u8; 20], value: &[u8], addr: &UdpAddress, max_age: f64) {
         if let Some((_, public_key, version)) = self.unserialize_value(value) {
             let id = public_key
                 .as_deref()

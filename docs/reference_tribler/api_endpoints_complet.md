@@ -470,15 +470,15 @@ qui enregistre 8 sous-endpoints. Rust : `handlers/ipv8.rs`.
 | :--- | :--- | :--- | :--- | :--- |
 | GET | `/tunnel/settings` | Réglages `TunnelSettings` (cf. table §9) | — | ✅ |
 | GET | `/tunnel/circuits` | Circuits : `circuit_id, goal_hops, actual_hops, verified_hops[ mids], unverified_hop, type, state, bytes_up/down, creation_time, exit_flags` | — | ✅ |
-| GET | `/tunnel/circuits/test` | Speedtest sur un **nouveau** circuit (détruit après), flux SSE `speed: {"up","down"} MiB/s` | `goal_hops` `"1"` (**1..3**) ; `request_size` `50` (**0..2000**) ; `response_size` `1024` (**0..2000**) ; `test_time_ms` `"5000"` (**1..60000**) | ❌ |
-| GET | `/tunnel/circuits/{circuit_id}/test` | Speedtest d'un circuit existant (doit être `READY` + flag `PEER_FLAG_SPEED_TEST`) | mêmes bornes, sans `goal_hops` | ❌ |
+| GET | `/tunnel/circuits/test` | Speedtest sur un **nouveau** circuit (détruit après), flux SSE `speed: {"up","down"} MiB/s` | `goal_hops` `"1"` (**1..3**) ; `request_size` `50` (**0..2000**) ; `response_size` `1024` (**0..2000**) ; `test_time_ms` `"5000"` (**1..60000**) | ✅ |
+| GET | `/tunnel/circuits/{circuit_id}/test` | Speedtest d'un circuit existant (doit être `READY` + flag `PEER_FLAG_SPEED_TEST`) | mêmes bornes, sans `goal_hops` | ✅ |
 | GET | `/tunnel/relays` | Relais : `circuit_from, circuit_to, is_rendezvous, direction forward/backward, bytes_up/down, creation_time` | — | ✅ |
 | GET | `/tunnel/exits` | Sockets de sortie : `circuit_from, enabled, bytes_up/down, creation_time, is_introduction, is_rendezvous` | — | ✅ |
 | GET | `/tunnel/swarms` | Swarms hidden services : `info_hash, num_seeders, num_connections(_incomplete), num_ips_from_dht/pex, seeding, last_lookup, bytes_up/down` | — | ✅ |
-| GET | `/tunnel/swarms/{infohash}/size` | Estimation de taille d'un swarm caché | `hops` `1` | ❌ |
+| GET | `/tunnel/swarms/{infohash}/size` | Estimation de taille d'un swarm caché | `hops` `1` | ✅ |
 | GET | `/tunnel/peers` | Pairs tunnel : `ip, port, mid, is_key_compatible, flags[]` | — | ✅ |
-| GET | `/tunnel/peers/dht` | Introduction points du store DHT local | — | ❌ |
-| GET | `/tunnel/peers/pex` | Introduction points du store PEX local | — | ❌ |
+| GET | `/tunnel/peers/dht` | Introduction points du store DHT local | — | ✅ |
+| GET | `/tunnel/peers/pex` | Introduction points du store PEX local | — | ✅ |
 
 ---
 
@@ -497,8 +497,7 @@ qui enregistre 8 sous-endpoints. Rust : `handlers/ipv8.rs`.
 - `GET /api/downloads/clierrors`
 - `PUT /api/downloads/{ih}/default_trackers`, `DELETE /api/downloads/{ih}/trackers`,
   `PUT /api/downloads/{ih}/tracker_force_announce`
-- IPv8 : tout `asyncio/*`, `identity/*`, `tunnel/circuits/*/test`,
-  `tunnel/swarms/{ih}/size`, `tunnel/peers/dht`, `tunnel/peers/pex`
+- IPv8 : tout `asyncio/*`, `identity/*`
 - Écarts de signature : `PUT /api/statistics/dirspace` (Rust = GET `?path=`),
   `?hop=` libtorrent (Rust = `?session=`).
 - Écarts de type/valeur dans `GET /api/downloads` : `eta` est une chaîne

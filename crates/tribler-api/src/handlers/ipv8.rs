@@ -7,10 +7,11 @@
 //! 500 `{"error": {"handled": false, "message"}}`.
 
 use axum::body::Bytes;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
+use futures_util::StreamExt;
 
 use base64::Engine;
 use tribler_ipv8::overlays::{addr_parts, OverlayInfo};
@@ -357,4 +358,319 @@ pub async fn get_tunnel_peers(State(state): State<AppState>) -> Response {
         return Json(serde_json::json!({ "peers": [] })).into_response();
     };
     Json(serde_json::json!({ "peers": tunnel.tunnel_peers_info() })).into_response()
+}
+
+/// Corps `{"error": ...}` brut de `Response(dict, status)` pyipv8
+/// (forme propre au `tunnel_endpoint` — sans `success` ni
+/// `handled`).
+fn error_response(status: StatusCode, message: &str) -> Response {
+    (status, Json(serde_json::json!({ "error": message }))).into_response()
+}
+
+/// `IntroductionPoint.to_dict()` pyipv8.
+fn intro_point_json(ip: &tribler_tunnel::routing::IntroductionPoint) -> serde_json::Value {
+    let (ip_s, port) = addr_parts(Some(&ip.address));
+    serde_json::json!({
+        "address": {
+            "ip": ip_s,
+            "port": port,
+            "public_key": hex::encode(&ip.peer_key),
+        },
+        "seeder_pk": hex::encode(&ip.seeder_pk),
+        "source": ip.source,
+    })
+}
+
+/// `DHTIntroPointPayload` (`["ip_address","I","varlenH","varlenH"]`)
+/// → `IntroductionPoint` (`Peer(b"LibNaCLPK:"+intro_pk)`, source
+/// `PEER_SOURCE_DHT`). `None` sur `PackError` (valeur ignoree).
+fn unpack_dht_intro_point(data: &[u8]) -> Option<tribler_tunnel::routing::IntroductionPoint> {
+    let mut r = tribler_ipv8::serializer::Reader::new(data);
+    let address = r.ip_address().ok()?;
+    let last_seen = r.u32().ok()?;
+    let intro_pk = r.varlen_h().ok()?;
+    let seeder_pk = r.varlen_h().ok()?;
+    Some(tribler_tunnel::routing::IntroductionPoint {
+        address,
+        peer_key: [b"LibNaCLPK:".as_slice(), intro_pk].concat(),
+        seeder_pk: [b"LibNaCLPK:".as_slice(), seeder_pk].concat(),
+        source: tribler_tunnel::routing::PEER_SOURCE_DHT,
+        last_seen_secs: last_seen as u64,
+    })
+}
+
+/// `GET /api/ipv8/tunnel/swarms/{infohash}/size` — `get_swarm_size`
+/// pyipv8 : `{"swarm_size": n}` (`{"swarms": []}` sans tunnel).
+pub async fn get_swarm_size(
+    State(state): State<AppState>,
+    Path(infohash): Path<String>,
+    Query(query): Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    let Some(tunnel) = tunnel_of(&state) else {
+        // `tunnels is None` → `Response({"swarms": []})`.
+        return Json(serde_json::json!({ "swarms": [] })).into_response();
+    };
+    // `unhexlify` : hex invalide → `binascii.Error` → 500.
+    let Ok(raw) = hex::decode(&infohash) else {
+        return unhandled("Non-hexadecimal digit found".into());
+    };
+    // `request.query.get("hops", 1)` : present → CHAINE →
+    // `select_circuit(hops="n")` ne match aucun circuit → toutes les
+    // requetes levent `RuntimeError` → `swarm_size` 0 (quirk Python).
+    if query.contains_key("hops") {
+        return Json(serde_json::json!({ "swarm_size": 0 })).into_response();
+    }
+    // `PeersRequestPayload` `"20s"` : `struct.pack` tronque/pad —
+    // meme comportement pour un infohash d'une autre longueur.
+    let mut ih = [0u8; 20];
+    let n = raw.len().min(20);
+    ih[..n].copy_from_slice(&raw[..n]);
+    let swarm_size = tunnel.estimate_swarm_size(ih, 1).await;
+    Json(serde_json::json!({ "swarm_size": swarm_size })).into_response()
+}
+
+/// `GET /api/ipv8/tunnel/peers/dht` — `get_dht_peers` pyipv8 : points
+/// d'introduction stockes dans la DHT locale (`[]` brut sans tunnel
+/// ni provider DHT).
+pub async fn get_dht_peers(State(state): State<AppState>) -> Response {
+    let Some(stack) = state.session.ipv8() else {
+        return Json(serde_json::json!([])).into_response();
+    };
+    let (Some(_tunnel), Some(dht)) = (stack.tunnel.as_ref(), stack.dht.as_ref()) else {
+        return Json(serde_json::json!([])).into_response();
+    };
+    // `ips_by_infohash[key] = []` pour chaque cle de chaque storage ;
+    // les valeurs non-`DHTIntroPointPayload` sont ignorees
+    // (`PackError` → `continue`).
+    let mut grouped: Vec<(String, Vec<serde_json::Value>)> = Vec::new();
+    let mut index: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for sv in dht.stored_values() {
+        let pos = *index.entry(sv.key.clone()).or_insert_with(|| {
+            grouped.push((sv.key, Vec::new()));
+            grouped.len() - 1
+        });
+        if let Some(ip) = unpack_dht_intro_point(&sv.data) {
+            grouped[pos].1.push(intro_point_json(&ip));
+        }
+    }
+    Json(serde_json::Value::Array(
+        grouped
+            .into_iter()
+            .map(|(key, peers)| serde_json::json!({ "info_hash": key, "peers": peers }))
+            .collect(),
+    ))
+    .into_response()
+}
+
+/// `GET /api/ipv8/tunnel/peers/pex` — `get_pex_peers` pyipv8 : points
+/// d'introduction du store PEX par swarm (`[]` brut sans tunnel).
+pub async fn get_pex_peers(State(state): State<AppState>) -> Response {
+    let Some(tunnel) = tunnel_of(&state) else {
+        return Json(serde_json::json!([])).into_response();
+    };
+    let rows = tunnel.pex_intro_points();
+    Json(serde_json::Value::Array(
+        rows.into_iter()
+            .map(|(ih, ips)| {
+                serde_json::json!({
+                    "info_hash": hex::encode(ih),
+                    "peers": ips.iter().map(intro_point_json).collect::<Vec<_>>(),
+                })
+            })
+            .collect(),
+    ))
+    .into_response()
+}
+
+/// `isdigit()` Python : non vide et chiffres ASCII uniquement.
+fn is_digit_str(s: &str) -> bool {
+    !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit())
+}
+
+/// `run_speed_test` pyipv8 : valide `request_size`/`response_size`/
+/// `test_time_ms`, lance `run_speedtest` et streame les snapshots en
+/// `text/event-stream` (`speed: {...}\n` par ligne).
+async fn run_speed_test(
+    tunnel: std::sync::Arc<tribler_tunnel::community::TunnelCommunity>,
+    circuit_id: u32,
+    params: &std::collections::HashMap<String, String>,
+) -> Response {
+    // `params.get("request_size", 50)` : present → CHAINE →
+    // `0 <= "50"` leve TypeError → 500 (quirk Python conserve ;
+    // le schema `Integer` n'est pas applique sans
+    // `validation_middleware`).
+    if params.contains_key("request_size") || params.contains_key("response_size") {
+        return unhandled("'<' not supported between instances of 'int' and 'str'".into());
+    }
+    /// `request_size`/`response_size` par defaut Python.
+    const DEFAULT_REQUEST_SIZE: u16 = 50;
+    const DEFAULT_RESPONSE_SIZE: u16 = 1024;
+    let test_time_ms = params.get("test_time_ms").map_or("5000", String::as_str);
+    let parsed = is_digit_str(test_time_ms)
+        .then(|| test_time_ms.parse::<u64>().ok())
+        .flatten()
+        .unwrap_or(0);
+    if !(1..=60_000).contains(&parsed) {
+        return error_response(StatusCode::BAD_REQUEST, "invalid test time specified");
+    }
+    let rx = tunnel.run_speedtest(
+        circuit_id,
+        parsed,
+        DEFAULT_REQUEST_SIZE,
+        DEFAULT_RESPONSE_SIZE,
+    );
+    // `callback` pyipv8 : `{tid: [ts_envoi, octets_envoyes,
+    // ts_reception, octets_recus]}` — `up`/`down` en MiB/s sur les
+    // nouveaux echantillons, ligne `speed: {json}` par snapshot.
+    let mut tx_ids: std::collections::HashSet<u32> = std::collections::HashSet::new();
+    let mut rx_ids: std::collections::HashSet<u32> = std::collections::HashSet::new();
+    let stream =
+        tokio_stream::wrappers::ReceiverStream::new(rx).filter_map(move |(stats, _done)| {
+            let mut send_times: Vec<(u32, u64, u64)> = stats
+                .iter()
+                .filter(|(tid, _)| !tx_ids.contains(*tid))
+                .map(|(tid, s)| (*tid, s[2], s[3]))
+                .collect();
+            send_times.sort_by_key(|e| e.1);
+            let mut recv_times: Vec<(u32, u64, u64)> = stats
+                .iter()
+                .filter(|(tid, s)| !rx_ids.contains(*tid) && s[2] != 0)
+                .map(|(tid, s)| (*tid, s[2], s[3]))
+                .collect();
+            recv_times.sort_by_key(|e| e.1);
+            tx_ids.extend(send_times.iter().map(|e| e.0));
+            rx_ids.extend(recv_times.iter().map(|e| e.0));
+            // `send_times[-1]` leve IndexError sur snapshot vide →
+            // le callback Python n'ecrit rien ce tour-ci.
+            let Some((_, first_send_ts, _)) = send_times.first().copied() else {
+                return futures_util::future::ready(None);
+            };
+            let last_send_ts = send_times.last().map(|e| e.1).unwrap_or(0);
+            let up_time = last_send_ts.saturating_sub(first_send_ts) as f64 / 1000.0;
+            let sent_bytes: u64 = send_times.iter().map(|e| e.2).sum();
+            let up = if up_time > 0.0 {
+                sent_bytes as f64 / up_time
+            } else {
+                0.0
+            };
+            let down_time = match (recv_times.first(), recv_times.last()) {
+                (Some(f), Some(l)) => l.1.saturating_sub(f.1) as f64 / 1000.0,
+                _ => 0.0,
+            };
+            let recv_bytes: u64 = recv_times.iter().map(|e| e.2).sum();
+            let down = if down_time > 0.0 {
+                recv_bytes as f64 / down_time
+            } else {
+                0.0
+            };
+            let line = format!(
+                "speed: {}\n",
+                serde_json::json!({
+                    "up": up / 1_048_576.0,
+                    "down": down / 1_048_576.0,
+                })
+            );
+            futures_util::future::ready(Some(Ok::<Bytes, std::convert::Infallible>(Bytes::from(
+                line,
+            ))))
+        });
+    Response::builder()
+        .status(StatusCode::OK)
+        .header("Content-Type", "text/event-stream")
+        .header("Cache-Control", "no-cache")
+        .header("Connection", "keep-alive")
+        .body(axum::body::Body::from_stream(stream))
+        .unwrap_or_else(|_| Response::new(axum::body::Body::empty()))
+}
+
+/// `GET /api/ipv8/tunnel/circuits/test` — `speed_test_new_circuit` :
+/// circuit `SPEED_TEST` temporaire, test, puis destruction.
+pub async fn speed_test_new_circuit(
+    State(state): State<AppState>,
+    Query(query): Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    // `self.tunnels is None` verifie AVANT `goal_hops` (404 prioritaire).
+    let Some(tunnel) = tunnel_of(&state) else {
+        return error_response(StatusCode::NOT_FOUND, "TunnelCommunity is not initialized");
+    };
+    let goal_hops = query.get("goal_hops").map_or("1", String::as_str);
+    let hops = is_digit_str(goal_hops)
+        .then(|| goal_hops.parse::<usize>().ok())
+        .flatten()
+        .unwrap_or(0);
+    if !(1..=3).contains(&hops) {
+        return error_response(StatusCode::BAD_REQUEST, "invalid number of hops specified");
+    }
+    let Some(circuit_id) = tunnel
+        .create_circuit_with_flags(
+            hops,
+            tribler_tunnel::routing::CIRCUIT_TYPE_SPEED_TEST,
+            &[tribler_tunnel::routing::PEER_FLAG_SPEED_TEST],
+        )
+        .await
+        .ok()
+        .flatten()
+    else {
+        return error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to create circuit",
+        );
+    };
+    // `await circuit.ready` : le circuit doit etre pret.
+    if !tunnel.await_circuit_ready(circuit_id).await {
+        tunnel
+            .remove_circuit(circuit_id, "speed test finished")
+            .await;
+        return error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to create circuit",
+        );
+    }
+    let result = run_speed_test(tunnel.clone(), circuit_id, &query).await;
+    tunnel
+        .remove_circuit(circuit_id, "speed test finished")
+        .await;
+    result
+}
+
+/// `GET /api/ipv8/tunnel/circuits/{circuit_id}/test` —
+/// `speed_test_existing_circuit` : circuit `READY` avec flag
+/// `PEER_FLAG_SPEED_TEST`.
+pub async fn speed_test_existing_circuit(
+    State(state): State<AppState>,
+    Path(circuit_id): Path<String>,
+    Query(query): Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    // `circuit_id.isdigit()` avant `self.tunnels is None`.
+    if !is_digit_str(&circuit_id) {
+        return error_response(StatusCode::BAD_REQUEST, "circuit_id must be an integer");
+    }
+    let Some(tunnel) = tunnel_of(&state) else {
+        return error_response(StatusCode::NOT_FOUND, "TunnelCommunity is not initialized");
+    };
+    // `int(circuit_id)` Python : precision arbitraire — un entier
+    // > u32 ne matche jamais un circuit → 404.
+    let cid = circuit_id.parse::<u64>().unwrap_or(u64::MAX);
+    let Some(info) = tunnel
+        .circuits_info()
+        .into_iter()
+        .find(|c| c.circuit_id as u64 == cid)
+    else {
+        return error_response(StatusCode::NOT_FOUND, "could not find requested circuit");
+    };
+    if info.state != tribler_tunnel::routing::CIRCUIT_STATE_READY {
+        return error_response(
+            StatusCode::BAD_REQUEST,
+            "the requested circuit is not ready to transfer data",
+        );
+    }
+    if info.ctype == tribler_tunnel::routing::CIRCUIT_TYPE_DATA
+        && info.exit_flags & tribler_tunnel::routing::PEER_FLAG_SPEED_TEST == 0
+    {
+        return error_response(
+            StatusCode::BAD_REQUEST,
+            "the requested circuit does not support speed testing",
+        );
+    }
+    run_speed_test(tunnel, info.circuit_id, &query).await
 }

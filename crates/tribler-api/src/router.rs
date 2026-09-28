@@ -140,7 +140,21 @@ pub fn build(state: AppState) -> Router {
         .route("/api/ipv8/tunnel/relays", get(ipv8::get_tunnel_relays))
         .route("/api/ipv8/tunnel/exits", get(ipv8::get_tunnel_exits))
         .route("/api/ipv8/tunnel/swarms", get(ipv8::get_tunnel_swarms))
+        .route(
+            "/api/ipv8/tunnel/swarms/{infohash}/size",
+            get(ipv8::get_swarm_size),
+        )
         .route("/api/ipv8/tunnel/peers", get(ipv8::get_tunnel_peers))
+        .route("/api/ipv8/tunnel/peers/dht", get(ipv8::get_dht_peers))
+        .route("/api/ipv8/tunnel/peers/pex", get(ipv8::get_pex_peers))
+        .route(
+            "/api/ipv8/tunnel/circuits/test",
+            get(ipv8::speed_test_new_circuit),
+        )
+        .route(
+            "/api/ipv8/tunnel/circuits/{circuit_id}/test",
+            get(ipv8::speed_test_existing_circuit),
+        )
         // -- DHT IPv8 (dht_endpoint.py, pyipv8) -------------------------
         .route("/api/ipv8/dht/statistics", get(dht::get_statistics))
         .route("/api/ipv8/dht/values", get(dht::get_stored_values))

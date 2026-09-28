@@ -3,6 +3,57 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Étape 27 — Tunnel avancé : swarm size, peers dht/pex, speed-test SSE (2026-09-28)
+
+- **Speed-test de circuits** (`tribler-tunnel/src/speedtest.rs` +
+  dispatch dans `community.rs`) : port de `run_speedtest`
+  d'`ipv8-rust-tunnels` — cellules `test-request`(21)/
+  `test-response`(22) avec `identifier` **u32** (filaire réel de
+  Tribler 8.x) **et** cellules 19/20 `identifier` u16 du backend
+  Python pur ; boucle d'envoi throttlée par RTT moyen
+  (`target_rtt` 100 ms), snapshots `{tid: [ts_send, bytes_send,
+  ts_recv, bytes_recv]}` toutes les 500 ms puis snapshot final
+  `done` après drain `2*target_rtt`. `send_cell` renvoie
+  désormais le nombre d'octets émis. `create_circuit_with_flags`
+  (sélection sortie par flags + premier hop le moins utilisé),
+  `await_circuit_ready` (borne `next_hop_timeout` 10 s),
+  `remove_circuit` avec `remove_tunnel_delay` 5 s.
+- **`GET /api/ipv8/tunnel/circuits/test`** : nouveau circuit
+  `SPEED_TEST` + flux `text/event-stream` de lignes
+  `speed: {"up","down"}` (MiB/s, calcul `run_speed_test` pyipv8
+  reproduit avec `tx_ids`/`rx_ids`) ; `goal_hops` 1..3 sinon 400 ;
+  `tunnels` absent → 404 ; échec de création → 500 ; circuit
+  détruit après le test. **Quirk conservé** : `request_size`/
+  `response_size` en query sont des chaînes → `TypeError` Python →
+  500 `{"error":{"handled":false}}` (pas de `validation_middleware`
+  dans pyipv8 — le schéma `Integer` est docs-only).
+- **`GET /api/ipv8/tunnel/circuits/{cid}/test`** : `circuit_id`
+  non numérique → 400 ; tunnel absent ou circuit inconnu → 404 ;
+  état ≠ `READY` → 400 ; `DATA` sans `PEER_FLAG_SPEED_TEST` → 400.
+- **`GET /api/ipv8/tunnel/swarms/{ih}/size`** :
+  `estimate_swarm_size` (crawl `peers-request` : `None`=DHT puis
+  IPs découvertes, ≤ `SWARM_SIZE_MAX_REQUESTS` contacts en parallèle,
+  comptage des `seeder_pk` uniques `source==PEER_SOURCE_PEX`) ;
+  `{"swarms":[]}` sans tunnel ; hex invalide → 500 ; **quirk** :
+  `?hops=` arrive en chaîne → `select_circuit` échoue → 0 ;
+  infohash ≠ 20o paddé/tronqué comme `struct.pack("20s")`.
+- **`GET /api/ipv8/tunnel/peers/dht`** : `DHTIntroPointPayload`
+  (`["ip_address","I","varlenH","varlenH"]`) décodé depuis les
+  storages DHT locaux (`post_process_values`) → `[{info_hash,
+  peers: [{address:{ip,port,public_key}, seeder_pk, source:1}]}]` ;
+  `[]` brut sans tunnel/provider ; valeurs malformées ignorées
+  (`PackError` → `continue`).
+- **`GET /api/ipv8/tunnel/peers/pex`** : nouveau `pex.rs`
+  (`PexStore` = `PexCommunity` réduite à ses données : deque bornée
+  20 + TTL 300 s + `intro_points_for` de nos annonces) ;
+  `start_announce` dans `on_establish_intro`, `stop_announce` +
+  déchargement dans `cleanup_exit_socket` (`remove_exit_socket`
+  Python — désormais aussi la purge `rendezvous_point_for`/`pex`
+  manquante sur destroy d'exit). `on_peers_request` répond d'abord
+  depuis le store PEX comme `hidden_services.py`.
+- **`DhtCommunity::add_value`** rendu pub (insertion locale directe,
+  utilisée par les tests pour peupler `storage.put`).
+
 ## Étape 26 — IPv8 réseau, isolation, noblockdht, overlays/statistics (2026-09-28)
 
 - **`StatisticsEndpoint`** (`tribler-ipv8/src/endpoint.rs`) :

@@ -27,8 +27,10 @@ pub mod community;
 pub mod hidden_services;
 pub mod http_tunnel;
 pub mod payload;
+pub(crate) mod pex;
 pub mod routing;
 pub mod socks5;
+pub mod speedtest;
 pub mod udp_relay;
 
 /// `community_id` de `TunnelCommunity`/`HiddenTunnelCommunity`

@@ -53,6 +53,14 @@ pub mod msg {
     pub const TEST_REQUEST: u8 = 19;
     /// `TestResponsePayload`.
     pub const TEST_RESPONSE: u8 = 20;
+    /// `TestRequestPayload` filaire d'`ipv8-rust-tunnels`
+    /// (`socket.rs` — `identifier` u32, cellule 21). C'est le format
+    /// effectivement emis par Tribler 8.x ; 19/20 (u16) est le format
+    /// du backend Python pur de pyipv8.
+    pub const SPEED_TEST_REQUEST: u8 = 21;
+    /// `TestResponsePayload` filaire d'`ipv8-rust-tunnels` (cellule
+    /// 22, `identifier` u32).
+    pub const SPEED_TEST_RESPONSE: u8 = 22;
     /// `HTTPRequestPayload` (Tribler `core/tunnel/payload.py`,
     /// `ipv8-rust-tunnels`) : requete HTTP via un circuit (CONNECT
     /// SOCKS5, annonces tracker).
@@ -753,6 +761,69 @@ impl Cellable for TestResponse {
     }
 }
 
+/// `TestRequestPayload` filaire `ipv8-rust-tunnels` (cellule 21) :
+/// `I, I, H, raw` — `identifier` **u32** (a la difference du
+/// `TestRequest` Python u16 de la cellule 19).
+#[derive(Debug)]
+pub struct SpeedTestRequest {
+    /// `circuit_id`.
+    pub circuit_id: u32,
+    /// `identifier` de la requete de test (u32).
+    pub identifier: u32,
+    /// Taille de la reponse demandee (`response_size`).
+    pub response_size: u16,
+    /// `data` aleatoire de `request_size` octets.
+    pub data: Vec<u8>,
+}
+
+impl Cellable for SpeedTestRequest {
+    const MSG_ID: u8 = msg::SPEED_TEST_REQUEST;
+    fn pack(&self, w: &mut Writer) -> Result<(), Ipv8Error> {
+        w.u32(self.circuit_id);
+        w.u32(self.identifier);
+        w.u16(self.response_size);
+        w.raw(&self.data);
+        Ok(())
+    }
+    fn unpack(r: &mut Reader<'_>) -> Result<Self, Ipv8Error> {
+        Ok(Self {
+            circuit_id: r.u32()?,
+            identifier: r.u32()?,
+            response_size: r.u16()?,
+            data: r.raw().to_vec(),
+        })
+    }
+}
+
+/// `TestResponsePayload` filaire `ipv8-rust-tunnels` (cellule 22) :
+/// `I, I, raw` — `identifier` u32.
+#[derive(Debug)]
+pub struct SpeedTestResponse {
+    /// `circuit_id`.
+    pub circuit_id: u32,
+    /// `identifier` de la requete.
+    pub identifier: u32,
+    /// `data` de `response_size` octets.
+    pub data: Vec<u8>,
+}
+
+impl Cellable for SpeedTestResponse {
+    const MSG_ID: u8 = msg::SPEED_TEST_RESPONSE;
+    fn pack(&self, w: &mut Writer) -> Result<(), Ipv8Error> {
+        w.u32(self.circuit_id);
+        w.u32(self.identifier);
+        w.raw(&self.data);
+        Ok(())
+    }
+    fn unpack(r: &mut Reader<'_>) -> Result<Self, Ipv8Error> {
+        Ok(Self {
+            circuit_id: r.u32()?,
+            identifier: r.u32()?,
+            data: r.raw().to_vec(),
+        })
+    }
+}
+
 /// `HTTPRequestPayload` (msg 28) : `I, I, address, varlenH`
 /// (`tribler/core/tunnel/payload.py`, `ipv8-rust-tunnels`).
 #[derive(Debug)]
@@ -820,5 +891,90 @@ impl Cellable for HttpResponse {
             total: r.u16()?,
             response: r.varlen_h()?.to_vec(),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tribler_ipv8::serializer::{Reader, Writer};
+
+    /// Roundtrip cellule 19 (`I, H, H, raw`) — format pyipv8 pur.
+    #[test]
+    fn test_request_u16_roundtrip() {
+        let p = TestRequest {
+            circuit_id: 0xAABBCCDD,
+            identifier: 0x1234,
+            response_size: 64,
+            data: vec![1, 2, 3],
+        };
+        assert_eq!(TestRequest::MSG_ID, 19);
+        let mut w = Writer::new();
+        p.pack(&mut w).unwrap();
+        // I + H + H + raw(3) = 11 octets.
+        let buf = w.into_bytes();
+        assert_eq!(buf.len(), 4 + 2 + 2 + 3);
+        let q = TestRequest::unpack(&mut Reader::new(&buf)).unwrap();
+        assert_eq!(q.circuit_id, 0xAABBCCDD);
+        assert_eq!(q.identifier, 0x1234);
+        assert_eq!(q.response_size, 64);
+        assert_eq!(q.data, vec![1, 2, 3]);
+    }
+
+    /// Roundtrip cellule 20 (`I, H, raw`).
+    #[test]
+    fn test_response_u16_roundtrip() {
+        let p = TestResponse {
+            circuit_id: 7,
+            identifier: 0xBEEF,
+            data: vec![9; 5],
+        };
+        assert_eq!(TestResponse::MSG_ID, 20);
+        let mut w = Writer::new();
+        p.pack(&mut w).unwrap();
+        let q = TestResponse::unpack(&mut Reader::new(&w.into_bytes())).unwrap();
+        assert_eq!(q.circuit_id, 7);
+        assert_eq!(q.identifier, 0xBEEF);
+        assert_eq!(q.data.len(), 5);
+    }
+
+    /// Roundtrip cellule 21 (`I, I, H, raw`) — format
+    /// `ipv8-rust-tunnels` avec `identifier` u32.
+    #[test]
+    fn speedtest_request_u32_roundtrip() {
+        let p = SpeedTestRequest {
+            circuit_id: 1,
+            identifier: 0xDEADBEEF,
+            response_size: 1024,
+            data: vec![0xAA; 50],
+        };
+        assert_eq!(SpeedTestRequest::MSG_ID, 21);
+        let mut w = Writer::new();
+        p.pack(&mut w).unwrap();
+        let buf = w.into_bytes();
+        // I + I + H + raw(50) = 60 octets ; l'identifier tient sur 4
+        // octets (impossible avec le format 19 u16).
+        assert_eq!(buf.len(), 4 + 4 + 2 + 50);
+        let q = SpeedTestRequest::unpack(&mut Reader::new(&buf)).unwrap();
+        assert_eq!(q.identifier, 0xDEADBEEF);
+        assert_eq!(q.response_size, 1024);
+        assert_eq!(q.data, vec![0xAA; 50]);
+    }
+
+    /// Roundtrip cellule 22 (`I, I, raw`).
+    #[test]
+    fn speedtest_response_u32_roundtrip() {
+        let p = SpeedTestResponse {
+            circuit_id: 3,
+            identifier: 0xFFFFFFFE,
+            data: vec![7; 2000],
+        };
+        assert_eq!(SpeedTestResponse::MSG_ID, 22);
+        let mut w = Writer::new();
+        p.pack(&mut w).unwrap();
+        let q = SpeedTestResponse::unpack(&mut Reader::new(&w.into_bytes())).unwrap();
+        assert_eq!(q.circuit_id, 3);
+        assert_eq!(q.identifier, 0xFFFFFFFE);
+        assert_eq!(q.data.len(), 2000);
     }
 }

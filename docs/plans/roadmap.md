@@ -432,12 +432,22 @@ activée en parité Python (loopback compris — `tribler-cli` la lit dans
   `my_estimated_*`, `strategies` RandomWalk/RandomChurn/
   PeriodicSimilarity) ; handlers tunnel alignes Python (collections
   vides en 200 quand `tunnels is None`).
-- [ ] **Étape 27. Tunnel avancé.** `GET …/swarms/{ih}/size`
-  (estimation via lookups), `peers/dht` (`Storage` DHT de l'étape 25),
-  `peers/pex` ; `GET …/circuits/test` + `/{cid}/test` : `run_speedtest`
-  dans `TunnelCommunity` (messages speedtest pyipv8, flag
-  `PEER_FLAG_SPEED_TEST`, bornes `request_size`/`response_size`/
-  `test_time_ms`), réponse SSE `speed: {"up","down"} MiB/s`.
+- [x] **Étape 27. Tunnel avancé.** `GET …/swarms/{ih}/size`
+  (`estimate_swarm_size` : crawl `peers-request` itératif, DHT puis
+  IPs PEX, comptage des `seeder_pk` uniques de source PEX — quirk
+  conservé : `?hops=` arrive en chaîne → `swarm_size` 0),
+  `peers/dht` (`DHTIntroPointPayload` `["ip_address","I","varlenH",
+  "varlenH"]` décodé depuis le `Storage` DHT local, `PackError`
+  ignorée), `peers/pex` (store `PexStore` par info_hash alimenté par
+  `on_establish_intro`/`stop_announce`, TTL 300 s, borne 20) ;
+  `GET …/circuits/test` + `/{cid}/test` : `run_speedtest` dans
+  `TunnelCommunity` (cellules `test-request`/`test-response`
+  **21/22 u32** d'`ipv8-rust-tunnels` — le filaire réel de Tribler
+  8.x — plus 19/20 u16 du backend Python pur ; `send_cell` renvoie
+  les octets émis ; flux `text/event-stream` de lignes
+  `speed: {"up","down"}` MiB/s, validation `goal_hops`/`test_time_ms`,
+  circuit `READY` + `PEER_FLAG_SPEED_TEST` sur `DATA`, suppression
+  du circuit de test après 5 s de `remove_tunnel_delay`).
 - [ ] **Étape 28. `asyncio/*` adapté à tokio + RSS items + clôture.**
   `/api/ipv8/asyncio/drift` (dérive des intervalles périodiques,
   historique 100), `/tasks` (registre des tâches nommées du daemon),

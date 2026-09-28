@@ -123,10 +123,11 @@ async fn link_hidden_circuit(
         peer_key: i.key.public_key().to_bin(),
         seeder_pk: Vec::new(),
         source: PEER_SOURCE_UNKNOWN,
+        last_seen_secs: 0,
     };
     let ips = d
         .tunnel
-        .send_peers_request(info_hash, Some(&ip_hint), 5000)
+        .send_peers_request(info_hash, Some(&ip_hint), 1)
         .await
         .expect("peers-response");
     assert_eq!(ips.len(), 1);

@@ -14,6 +14,7 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU16, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use rand::RngCore;
 use tribler_crypto::ipv8::dh::crypto_box_beforenm;
@@ -61,6 +62,15 @@ const CIRCUIT_REMOVED_CHANNEL_CAP: usize = 64;
 /// Capacite du canal de chunks `http-response` par requete en cours.
 const HTTP_REQUEST_PARTS_CAP: usize = 64;
 
+/// `circuit_timeout`/`next_hop_timeout` Python (60 s/10 s) : borne
+/// d'attente `await circuit.ready` du speed-test REST — un circuit
+/// dont le premier hop ne repond pas n'a aucune raison d'etre
+/// conserve au-dela du premier timeout de saut.
+const CIRCUIT_READY_TIMEOUT_MS: u64 = 10_000;
+/// `remove_tunnel_delay` Python (5 s) : delai entre `close()` et le
+/// retrait effectif d'un circuit.
+const REMOVE_TUNNEL_DELAY_MS: u64 = 5_000;
+
 /// Evenement "donnee recue sur un circuit" (livre au consommateur —
 /// equivalent du dispatch `on_data` vers SOCKS5/services internes).
 #[derive(Debug, Clone)]
@@ -100,6 +110,9 @@ pub(crate) struct Inner {
     /// `intro_point_for` : `seeder_pk` -> (circuit_id de sortie,
     /// info_hash) — on est le point d'introduction.
     pub(crate) intro_point_for: HashMap<Vec<u8>, (u32, [u8; 20])>,
+    /// `pex` : `info_hash` -> store d'introductions (`PexCommunity`
+    /// reduite a ses donnees — `pex.rs`).
+    pub(crate) pex: HashMap<[u8; 20], crate::pex::PexStore>,
     /// `rendezvous_point_for` : `cookie` -> circuit_id de sortie —
     /// on est le point de rendez-vous.
     pub(crate) rendezvous_point_for: HashMap<[u8; 20], u32>,
@@ -210,6 +223,10 @@ pub struct TunnelCommunity {
     /// de routage detruit (circuit, relais, socket de sortie) —
     /// relaye vers le bus `tribler-core` sans dependance inverse.
     pub(crate) circuit_removed_tx: tokio::sync::broadcast::Sender<CircuitRemovedEvent>,
+    /// `test_channel` de `ipv8-rust-tunnels` (`socket.rs`) :
+    /// `(identifier, octets_cellule)` de chaque `test-response` (cell.
+    /// 22) recue — consomme par `run_speedtest`.
+    pub(crate) test_tx: tokio::sync::broadcast::Sender<(u32, usize)>,
 }
 
 /// Detail d'un objet de routage detruit (`circuit_removed` pyipv8) —
@@ -325,6 +342,8 @@ impl TunnelCommunity {
         let (e2e_ready_tx, _) = tokio::sync::broadcast::channel(E2E_CHANNEL_CAP);
         let (circuits_changed_tx, _) = tokio::sync::watch::channel(0u64);
         let (circuit_removed_tx, _) = tokio::sync::broadcast::channel(CIRCUIT_REMOVED_CHANNEL_CAP);
+        let (test_tx, _) =
+            tokio::sync::broadcast::channel(crate::speedtest::SPEED_TEST_CHANNEL_CAP);
         let community = Arc::new(Self {
             community_id,
             key,
@@ -339,6 +358,7 @@ impl TunnelCommunity {
                 retry_requests: HashMap::new(),
                 peer_flags,
                 intro_point_for: HashMap::new(),
+                pex: HashMap::new(),
                 rendezvous_point_for: HashMap::new(),
                 swarms: HashMap::new(),
                 ip_requests: HashMap::new(),
@@ -356,6 +376,7 @@ impl TunnelCommunity {
             e2e_ready_tx,
             circuits_changed_tx,
             circuit_removed_tx,
+            test_tx,
         });
         let weak = Arc::downgrade(&community);
         endpoint
@@ -507,6 +528,22 @@ impl TunnelCommunity {
                 num_connections: s.connections.len(),
                 seeder: s.seeder_sk.is_some(),
             })
+            .collect()
+    }
+
+    /// `pex.items()` → `info_hash` + `get_intro_points()`
+    /// (`get_pex_peers` pyipv8) : points d'introduction appris puis
+    /// nos propres annonces (`intro_points_for` → `my_peer` sur
+    /// `my_estimated_wan` — `0.0.0.0:0` sans estimation WAN).
+    pub fn pex_intro_points(&self) -> Vec<([u8; 20], Vec<crate::routing::IntroductionPoint>)> {
+        let mut inner = self.inner.lock().unwrap();
+        let our_key = self.key.public_key().to_bin();
+        let our_wan = UdpAddress::unspecified();
+        let now = crate::pex::epoch_secs();
+        inner
+            .pex
+            .iter_mut()
+            .map(|(ih, store)| (*ih, store.intro_points(&our_key, &our_wan, now)))
             .collect()
     }
 
@@ -665,11 +702,14 @@ impl TunnelCommunity {
     /// `outgoing_crypto` (chiffrement selon le role local pour le
     /// circuit_id : initiateur -> FORWARD sur tous les hops, sortie ->
     /// BACKWARD sur son hop, relais -> direction de l'autre route).
+    /// Retourne le nombre d'octets de la cellule envoyee sur le fil
+    /// (le `n` de `rt.send_cell` des tunnels Rust — comptabilise dans
+    /// les stats du speed-test).
     pub(crate) async fn send_cell<P: Cellable>(
         &self,
         addr: &UdpAddress,
         p: &P,
-    ) -> Result<(), Ipv8Error> {
+    ) -> Result<usize, Ipv8Error> {
         let mut w = Writer::new();
         p.pack(&mut w)?;
         let body = w.into_bytes();
@@ -747,7 +787,7 @@ impl TunnelCommunity {
         if let Some((dir, mut keys)) = crypto {
             wire = cell::encrypt_cell(&wire, dir, &mut keys)?;
         }
-        self.endpoint.send_to(addr, &wire).await
+        self.endpoint.send_to(addr, &wire).await.map(|_| wire.len())
     }
 
     /// `perform_http_request` (`ipv8-rust-tunnels` `socks5.rs`) :
@@ -1012,7 +1052,214 @@ impl TunnelCommunity {
             key: dh_public.to_vec(),
             node_addr,
         };
-        self.send_cell(&first_hop_addr, &p).await
+        self.send_cell(&first_hop_addr, &p).await.map(|_| ())
+    }
+
+    /// Adresse du premier saut d'un circuit (`circuit.hop` Python :
+    /// `hops[0]` sinon `unverified_hop`).
+    pub(crate) fn circuit_first_hop_addr(&self, circuit_id: u32) -> Option<UdpAddress> {
+        let inner = self.inner.lock().unwrap();
+        inner.circuits.get(&circuit_id).and_then(|c| {
+            c.first_hop()
+                .and_then(|h| h.address.clone())
+                .or_else(|| c.unverified_hop.as_ref().and_then(|h| h.address.clone()))
+        })
+    }
+
+    /// `get_candidates(*flags)` pyipv8 — sous-ensemble : le pair doit
+    /// porter TOUS les flags demandes
+    /// (`set(requested) <= set(flags)`).
+    pub fn get_candidates_subset(&self, flags: &[i32]) -> Vec<Peer> {
+        let inner = self.inner.lock().unwrap();
+        self.network
+            .peers_for_service(&self.community_id)
+            .into_iter()
+            .filter(|p| {
+                inner
+                    .flag_registry
+                    .get(&p.public_key_bin)
+                    .is_some_and(|f| flags.iter().all(|flag| f & flag == *flag))
+            })
+            .collect()
+    }
+
+    /// `select_exit` pyipv8 : pair aleatoire portant `exit_flags`, ou
+    /// selon `ctype` (`DATA` → `EXIT_BT` ; `IP_SEEDER` →
+    /// `EXIT_BT`|`EXIT_IPV8`|`RELAY` ; sinon `RELAY`|`EXIT_BT`).
+    fn select_exit(&self, exit_flags: &[i32], ctype: &str) -> Option<Peer> {
+        let candidates = if !exit_flags.is_empty() {
+            self.get_candidates_subset(exit_flags)
+        } else if ctype == crate::routing::CIRCUIT_TYPE_DATA {
+            self.get_candidates(crate::routing::PEER_FLAG_EXIT_BT)
+        } else if ctype == crate::routing::CIRCUIT_TYPE_IP_SEEDER {
+            let c = self.get_candidates(crate::routing::PEER_FLAG_EXIT_BT);
+            if c.is_empty() {
+                let c = self.get_candidates(crate::routing::PEER_FLAG_EXIT_IPV8);
+                if c.is_empty() {
+                    self.get_candidates(crate::routing::PEER_FLAG_RELAY)
+                } else {
+                    c
+                }
+            } else {
+                c
+            }
+        } else {
+            let c = self.get_candidates(crate::routing::PEER_FLAG_RELAY);
+            if c.is_empty() {
+                self.get_candidates(crate::routing::PEER_FLAG_EXIT_BT)
+            } else {
+                c
+            }
+        };
+        use rand::seq::SliceRandom;
+        candidates.choose(&mut rand::thread_rng()).cloned()
+    }
+
+    /// `create_circuit` pyipv8 complet : selection automatique de la
+    /// sortie (`select_exit(exit_flags)`) et du premier hop (sortie
+    /// requise pour 1 saut ; sinon saut le moins utilise parmi les
+    /// premiers hops existants du meme `ctype` + candidats `RELAY` /
+    /// `RELAY&EXIT_BT`). `Ok(None)` = "no available exit-nodes" /
+    /// "no first hop available" (le Python retourne `None`).
+    pub async fn create_circuit_with_flags(
+        self: &Arc<Self>,
+        goal_hops: usize,
+        ctype: &str,
+        exit_flags: &[i32],
+    ) -> Result<Option<u32>, Ipv8Error> {
+        let mut required_exit = if ctype == crate::routing::CIRCUIT_TYPE_IP_SEEDER {
+            self.select_exit(&[], ctype)
+        } else if !exit_flags.is_empty() {
+            self.select_exit(exit_flags, ctype)
+        } else {
+            None
+        };
+        let required_key = required_exit.as_ref().map(|p| p.public_key_bin.clone());
+        let first_hop = if goal_hops == 1 {
+            if required_exit.is_none() {
+                required_exit = self.select_exit(exit_flags, ctype);
+            }
+            match required_exit {
+                Some(p) => p,
+                // "Could not create circuit, no available exit-nodes".
+                None => return Ok(None),
+            }
+        } else {
+            // Premier hops des circuits de meme ctype + candidats
+            // RELAY + RELAY&EXIT_BT, tries par frequence d'usage
+            // ascendante (`Counter.most_common().reverse()`), hors
+            // `required_exit`.
+            let mut freq: Vec<(Peer, usize)> = Vec::new();
+            let mut push = |p: Peer| match freq
+                .iter_mut()
+                .find(|(q, _)| q.public_key_bin == p.public_key_bin)
+            {
+                Some((_, n)) => *n += 1,
+                None => freq.push((p, 1)),
+            };
+            {
+                let inner = self.inner.lock().unwrap();
+                for c in inner.circuits.values() {
+                    if c.ctype == ctype {
+                        if let Some(h) = c.first_hop() {
+                            if let Some(p) = Peer::new(h.public_key_bin.clone(), h.address.clone())
+                            {
+                                push(p);
+                            }
+                        }
+                    }
+                }
+            }
+            for p in self.get_candidates(crate::routing::PEER_FLAG_RELAY) {
+                push(p);
+            }
+            for p in self.get_candidates_subset(&[
+                crate::routing::PEER_FLAG_RELAY,
+                crate::routing::PEER_FLAG_EXIT_BT,
+            ]) {
+                push(p);
+            }
+            let mut possible: Vec<(Peer, usize)> = freq
+                .into_iter()
+                .filter(|(p, _)| Some(&p.public_key_bin) != required_key.as_ref())
+                .collect();
+            possible.sort_by_key(|(_, n)| *n);
+            match possible.into_iter().map(|(p, _)| p).next() {
+                Some(p) => p,
+                // "Could not create circuit, no first hop available".
+                None => return Ok(None),
+            }
+        };
+        self.create_circuit_typed(goal_hops, &first_hop, ctype, required_key, None)
+            .await
+            .map(Some)
+    }
+
+    /// `await circuit.ready` pyipv8 : attend que le circuit atteigne
+    /// `READY`, soit detruit, ou que `timeout` expire (borne —
+    /// `CIRCUIT_READY_TIMEOUT_MS`, ~`next_hop_timeout`).
+    pub async fn await_circuit_ready(&self, circuit_id: u32) -> bool {
+        let mut rx = self.circuits_changed_tx.subscribe();
+        let deadline = std::time::Instant::now() + Duration::from_millis(CIRCUIT_READY_TIMEOUT_MS);
+        loop {
+            {
+                let inner = self.inner.lock().unwrap();
+                match inner.circuits.get(&circuit_id) {
+                    // `ready.set_result(None)` cote Python quand le
+                    // circuit meurt avant d'etre pret.
+                    None => return false,
+                    Some(c) if c.ready() => return true,
+                    _ => {}
+                }
+            }
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            if remaining.is_zero() || tokio::time::timeout(remaining, rx.changed()).await.is_err() {
+                return false;
+            }
+        }
+    }
+
+    /// `remove_circuit` pyipv8 (`destroy` non envoye — usage
+    /// `speed test finished`) : `close()` puis retrait apres
+    /// `remove_tunnel_delay`, avec `circuit_removed`.
+    pub async fn remove_circuit(self: &Arc<Self>, circuit_id: u32, additional_info: &str) {
+        let ev = {
+            let mut inner = self.inner.lock().unwrap();
+            inner.retry_requests.remove(&circuit_id);
+            match inner.circuits.get_mut(&circuit_id) {
+                // "Cannot remove unknown circuit" — warning Python.
+                None => return,
+                Some(c) => {
+                    c.close(additional_info);
+                    CircuitRemovedEvent {
+                        circuit_id,
+                        circuit_class: "Circuit",
+                        bytes_up: c.base.bytes_up,
+                        bytes_down: c.base.bytes_down,
+                        uptime_secs: c.base.creation_time.elapsed().as_secs_f64(),
+                        additional_info: additional_info.to_string(),
+                    }
+                }
+            }
+        };
+        self.notify_circuits_changed();
+        let this = self.clone();
+        let info = additional_info.to_string();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(REMOVE_TUNNEL_DELAY_MS)).await;
+            if this
+                .inner
+                .lock()
+                .unwrap()
+                .circuits
+                .remove(&circuit_id)
+                .is_some()
+            {
+                this.notify_circuits_changed();
+                this.emit_circuit_removed(ev);
+                tracing::debug!(circuit_id, info, "circuit retire");
+            }
+        });
     }
 
     /// Point d'entree brut (raw prefix listener) : cellule ou paquet.
@@ -1310,6 +1557,27 @@ impl TunnelCommunity {
             msg::HTTP_RESPONSE => {
                 let p = tp::HttpResponse::unpack(&mut r)?;
                 self.on_http_response(p);
+            }
+            // Cellules de speed-test : 19/20 = format pyipv8 pur
+            // (`identifier` u16), 21/22 = format `ipv8-rust-tunnels`
+            // (`identifier` u32 — le filaire reel de Tribler 8.x).
+            msg::TEST_REQUEST => {
+                let p = tp::TestRequest::unpack(&mut r)?;
+                self.on_py_test_request(src, p);
+            }
+            msg::TEST_RESPONSE => {
+                let p = tp::TestResponse::unpack(&mut r)?;
+                self.on_py_test_response(p);
+            }
+            msg::SPEED_TEST_REQUEST => {
+                let p = tp::SpeedTestRequest::unpack(&mut r)?;
+                self.on_speedtest_request(src, p);
+            }
+            msg::SPEED_TEST_RESPONSE => {
+                let p = tp::SpeedTestResponse::unpack(&mut r)?;
+                // `cell.len()` Python : taille de la cellule sur le
+                // fil = 30 octets d'en-tete + message interne.
+                self.on_speedtest_response(p.identifier, 30 + cell.message.len());
             }
             _ => {
                 tracing::trace!(msg_id = cell.inner_msg_id, "cellule ignoree");
@@ -1715,7 +1983,9 @@ impl TunnelCommunity {
             auth: ds.auth,
             candidates_enc,
         };
-        self.send_cell(&UdpAddress::from(src), &reply).await
+        self.send_cell(&UdpAddress::from(src), &reply)
+            .await
+            .map(|_| ())
     }
 
     /// `on_created` : soit a relayer (extend en cours), soit reponse a
@@ -2242,6 +2512,10 @@ impl TunnelCommunity {
             });
         }
         if let Some(exit) = inner.exit_sockets.remove(&circuit_id) {
+            // `remove_exit_socket` : purge `intro_point_for` (avec
+            // `pex.stop_announce`/dechargement du store) et
+            // `rendezvous_point_for` attaches a cette sortie.
+            cleanup_exit_socket(&mut inner, circuit_id);
             events.push(CircuitRemovedEvent {
                 circuit_id,
                 circuit_class: "TunnelExitSocket",
@@ -2332,7 +2606,7 @@ impl TunnelCommunity {
             org_address: origin.clone(),
             data: data.to_vec(),
         };
-        self.send_cell(&addr, &p).await
+        self.send_cell(&addr, &p).await.map(|_| ())
     }
 
     /// `send_ping` : cellule ping sur un circuit connu.
@@ -2357,8 +2631,32 @@ impl TunnelCommunity {
             circuit_id,
             identifier: self.next_id(),
         };
-        self.send_cell(&addr, &ping).await
+        self.send_cell(&addr, &ping).await.map(|_| ())
     }
+}
+
+/// `remove_exit_socket` (`hidden_services.py`) : purge les entrees
+/// `intro_point_for` rattachees a cette sortie (`stop_announce` dans
+/// le store PEX, decharge si `done`) et les `rendezvous_point_for`.
+fn cleanup_exit_socket(inner: &mut Inner, circuit_id: u32) {
+    let detached: Vec<(Vec<u8>, [u8; 20])> = inner
+        .intro_point_for
+        .iter()
+        .filter(|(_, (cid, _))| *cid == circuit_id)
+        .map(|(pk, (_, ih))| (pk.clone(), *ih))
+        .collect();
+    for (seeder_pk, info_hash) in detached {
+        inner.intro_point_for.remove(&seeder_pk);
+        if let Some(store) = inner.pex.get_mut(&info_hash) {
+            store.stop_announce(&seeder_pk);
+            if store.is_done() {
+                inner.pex.remove(&info_hash);
+            }
+        }
+    }
+    inner
+        .rendezvous_point_for
+        .retain(|_, cid| *cid != circuit_id);
 }
 
 /// `generate_diffie_secret` : nouvelle paire X25519 ephemere —

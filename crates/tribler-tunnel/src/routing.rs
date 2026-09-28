@@ -31,6 +31,9 @@ pub const CIRCUIT_TYPE_IP_SEEDER: &str = "IP_SEEDER";
 pub const CIRCUIT_TYPE_RP_SEEDER: &str = "RP_SEEDER";
 /// `CIRCUIT_TYPE_RP_DOWNLOADER`.
 pub const CIRCUIT_TYPE_RP_DOWNLOADER: &str = "RP_DOWNLOADER";
+/// `"SPEED_TEST"` (`tunnel_endpoint.py` : circuits temporaires
+/// du speed-test REST).
+pub const CIRCUIT_TYPE_SPEED_TEST: &str = "SPEED_TEST";
 
 /// `CIRCUIT_STATE_READY`.
 pub const CIRCUIT_STATE_READY: &str = "READY";
@@ -286,6 +289,9 @@ pub struct IntroductionPoint {
     pub seeder_pk: Vec<u8>,
     /// `source` (PEER_SOURCE_*).
     pub source: u8,
+    /// `last_seen` (epoch secondes) — TTL de 300 s dans
+    /// `PexCommunity.get_intro_points`.
+    pub last_seen_secs: u64,
 }
 
 impl PartialEq for IntroductionPoint {

@@ -4032,6 +4032,7 @@ dependencies = [
 name = "tribler-tunnel"
 version = "0.1.0"
 dependencies = [
+ "futures-util",
  "hex 0.4.3",
  "rand 0.8.8",
  "serde",

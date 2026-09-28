@@ -9,6 +9,7 @@
 //! sur la socket UDP (apres sortie de tunnel), soit a l'interieur
 //! d'une cellule `data` (`tunnel_data`).
 
+use std::collections::HashSet;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Instant;
@@ -28,8 +29,13 @@ use crate::community::{
 use crate::payload::{self as tp, msg, Cellable};
 use crate::routing::{
     IntroductionPoint, PendingE2e, RendezvousPoint, Swarm, CIRCUIT_TYPE_IP_SEEDER,
-    CIRCUIT_TYPE_RP_DOWNLOADER, CIRCUIT_TYPE_RP_SEEDER, PEER_SOURCE_DHT,
+    CIRCUIT_TYPE_RP_DOWNLOADER, CIRCUIT_TYPE_RP_SEEDER, PEER_SOURCE_DHT, PEER_SOURCE_PEX,
 };
+
+/// `PeersRequestCache.timeout_delay` pyipv8 (`RequestCache` : 10 s).
+const PEERS_REQUEST_TIMEOUT_MS: u64 = 10_000;
+/// `max_requests` de `estimate_swarm_size` pyipv8.
+const SWARM_SIZE_MAX_REQUESTS: usize = 10;
 
 /// `PeersResponse` plafond (`random.sample(intro_points, 7)` Python).
 const MAX_PEERS_IN_RESPONSE: usize = 7;
@@ -259,7 +265,7 @@ impl TunnelCommunity {
         let target = match via {
             Via::Circuit(a) | Via::Exit(a) => a,
         };
-        self.send_cell(&target, &data).await
+        self.send_cell(&target, &data).await.map(|_| ())
     }
 
     /// `create_introduction_point` : circuit `IP_SEEDER` vers un pair
@@ -362,6 +368,14 @@ impl TunnelCommunity {
             inner
                 .intro_point_for
                 .insert(p.public_key.clone(), (cid, p.info_hash));
+            // `on_establish_intro` Python : cree le store PEX de ce
+            // swarm si besoin puis `start_announce(seeder_pk)` — on
+            // s'annonce point d'introduction.
+            inner
+                .pex
+                .entry(p.info_hash)
+                .or_default()
+                .start_announce(p.public_key.clone());
             cid
         };
         let reply = tp::IntroEstablished {
@@ -484,17 +498,14 @@ impl TunnelCommunity {
 
     /// `send_peers_request` : demande de peers via un point
     /// d'introduction (`Some`) ou via la sortie d'un circuit (`None` —
-    /// chemin DHT, non implemente sans `dht_provider`).
+    /// chemin DHT, non implemente sans `dht_provider`). `hops` est le
+    /// nombre de sauts du circuit choisi (`select_circuit` Python).
     pub async fn send_peers_request(
         self: &Arc<Self>,
         info_hash: [u8; 20],
         target: Option<&IntroductionPoint>,
-        timeout_ms: u64,
+        hops: usize,
     ) -> Result<Vec<IntroductionPoint>, Ipv8Error> {
-        let hops = {
-            let inner = self.inner.lock().unwrap();
-            inner.swarms.get(&info_hash).map(|s| s.hops).unwrap_or(1)
-        };
         let cid = self
             .ready_circuits_of_hops(hops)
             .first()
@@ -512,33 +523,94 @@ impl TunnelCommunity {
             identifier,
             info_hash,
         };
-        match target {
+        // `target is not None and target.peer.public_key !=
+        // circuit.hops[-1].public_key` Python : requete PEX via
+        // `tunnel_data` vers l'IP ; sinon cellule vers la sortie
+        // (chemin DHT).
+        let via_tunnel = match target {
             Some(ip) => {
-                let mut w = Writer::new();
-                p.pack(&mut w)?;
-                self.tunnel_data(
-                    cid,
-                    &ip.address,
-                    &pack_unsigned(&self.community_id, msg::PEERS_REQUEST, &w.into_bytes()),
-                )
-                .await?;
-            }
-            None => {
-                let addr = {
+                let last_hop_pk = {
                     let inner = self.inner.lock().unwrap();
                     inner
                         .circuits
                         .get(&cid)
-                        .and_then(|c| c.first_hop().and_then(|h| h.address.clone()))
-                        .ok_or(Ipv8Error::Malformed("circuit sans hop"))?
+                        .and_then(|c| c.hops.last().map(|h| h.public_key_bin.clone()))
                 };
-                self.send_cell(&addr, &p).await?;
+                Some(&ip.peer_key) != last_hop_pk.as_ref()
+            }
+            None => false,
+        };
+        if via_tunnel {
+            let ip = target.unwrap();
+            let mut w = Writer::new();
+            p.pack(&mut w)?;
+            self.tunnel_data(
+                cid,
+                &ip.address,
+                &pack_unsigned(&self.community_id, msg::PEERS_REQUEST, &w.into_bytes()),
+            )
+            .await?;
+        } else {
+            let addr = {
+                let inner = self.inner.lock().unwrap();
+                inner
+                    .circuits
+                    .get(&cid)
+                    .and_then(|c| c.first_hop().and_then(|h| h.address.clone()))
+                    .ok_or(Ipv8Error::Malformed("circuit sans hop"))?
+            };
+            self.send_cell(&addr, &p).await?;
+        }
+        tokio::time::timeout(
+            std::time::Duration::from_millis(PEERS_REQUEST_TIMEOUT_MS),
+            rx,
+        )
+        .await
+        .map_err(|_| Ipv8Error::Malformed("timeout peers-response"))?
+        .map_err(|_| Ipv8Error::Malformed("cache peers abandonne"))
+    }
+
+    /// `estimate_swarm_size` pyipv8 : crawl iteratif — la requete
+    /// `None` (DHT via la sortie du circuit) d'abord, puis les points
+    /// d'introduction decouverts (PEX), jusqu'a
+    /// `SWARM_SIZE_MAX_REQUESTS` contacts. Retourne le nombre de
+    /// `seeder_pk` uniques de source `PEER_SOURCE_PEX`.
+    pub async fn estimate_swarm_size(self: &Arc<Self>, info_hash: [u8; 20], hops: usize) -> usize {
+        use rand::seq::SliceRandom;
+        // `None` represente la requete DHT initiale.
+        let mut all: HashSet<Option<IntroductionPoint>> = HashSet::from([None]);
+        let mut tried: HashSet<Option<IntroductionPoint>> = HashSet::new();
+        while tried.len() < SWARM_SIZE_MAX_REQUESTS {
+            let mut not_tried: Vec<Option<IntroductionPoint>> =
+                all.difference(&tried).cloned().collect();
+            if not_tried.is_empty() {
+                break;
+            }
+            // `random.sample` Python.
+            not_tried.shuffle(&mut rand::thread_rng());
+            let take = not_tried.len().min(SWARM_SIZE_MAX_REQUESTS - tried.len());
+            let ips: Vec<Option<IntroductionPoint>> = not_tried.into_iter().take(take).collect();
+            // `gather(..., return_exceptions=True)` : les echecs
+            // n'alimentent pas `all`, seuls les succes comptent.
+            let results = futures_util::future::join_all(ips.iter().map(|ip| {
+                let this = self.clone();
+                let ip = ip.clone();
+                async move { this.send_peers_request(info_hash, ip.as_ref(), hops).await }
+            }))
+            .await;
+            for (ip, result) in ips.into_iter().zip(results) {
+                if let Ok(found) = result {
+                    all.extend(found.into_iter().map(Some));
+                }
+                tried.insert(ip);
             }
         }
-        tokio::time::timeout(std::time::Duration::from_millis(timeout_ms), rx)
-            .await
-            .map_err(|_| Ipv8Error::Malformed("timeout peers-response"))?
-            .map_err(|_| Ipv8Error::Malformed("cache peers abandonne"))
+        all.iter()
+            .flatten()
+            .filter(|ip| ip.source == PEER_SOURCE_PEX)
+            .map(|ip| ip.seeder_pk.clone())
+            .collect::<HashSet<_>>()
+            .len()
     }
 
     /// `on_peers_request` : repond avec les points d'introduction que
@@ -556,19 +628,37 @@ impl TunnelCommunity {
             .map(UdpAddress::from)
             .unwrap_or_else(|_| unspecified_addr());
         let peers: Vec<tp::IntroductionInfo> = {
-            let inner = self.inner.lock().unwrap();
-            inner
-                .intro_point_for
-                .iter()
-                .filter(|(_, (_, ih))| *ih == p.info_hash)
-                .take(MAX_PEERS_IN_RESPONSE)
-                .map(|(seeder_pk, _)| tp::IntroductionInfo {
-                    address: my_addr.clone(),
-                    key: self.key.public_key().to_bin(),
-                    seeder_pk: seeder_pk.clone(),
-                    source: PEER_SOURCE_DHT,
-                })
-                .collect()
+            let mut inner = self.inner.lock().unwrap();
+            // `if info_hash in self.pex` Python : le store PEX
+            // repond d'abord (nos annonces `intro_points_for`).
+            if let Some(store) = inner.pex.get_mut(&p.info_hash) {
+                let now = crate::pex::epoch_secs();
+                let our_key = self.key.public_key().to_bin();
+                store
+                    .intro_points(&our_key, &my_addr, now)
+                    .into_iter()
+                    .take(MAX_PEERS_IN_RESPONSE)
+                    .map(|ip| tp::IntroductionInfo {
+                        address: ip.address,
+                        key: ip.peer_key,
+                        seeder_pk: ip.seeder_pk,
+                        source: ip.source,
+                    })
+                    .collect()
+            } else {
+                inner
+                    .intro_point_for
+                    .iter()
+                    .filter(|(_, (_, ih))| *ih == p.info_hash)
+                    .take(MAX_PEERS_IN_RESPONSE)
+                    .map(|(seeder_pk, _)| tp::IntroductionInfo {
+                        address: my_addr.clone(),
+                        key: self.key.public_key().to_bin(),
+                        seeder_pk: seeder_pk.clone(),
+                        source: PEER_SOURCE_DHT,
+                    })
+                    .collect()
+            }
         };
         let reply = tp::PeersResponse {
             circuit_id: p.circuit_id,
@@ -623,6 +713,7 @@ impl TunnelCommunity {
                     peer_key: i.key,
                     seeder_pk: i.seeder_pk,
                     source: i.source,
+                    last_seen_secs: crate::pex::epoch_secs(),
                 })
                 .collect();
             let _ = tx.send(ips);

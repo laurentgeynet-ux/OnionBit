@@ -15,6 +15,7 @@ use tribler_ipv8::UdpAddress;
 use tribler_tunnel::community::TunnelCommunity;
 use tribler_tunnel::routing::{
     DESTROY_REASON_UNNEEDED, PEER_FLAG_EXIT_BT, PEER_FLAG_EXIT_HTTP, PEER_FLAG_RELAY,
+    PEER_FLAG_SPEED_TEST, PEER_SOURCE_PEX,
 };
 use tribler_tunnel::socks5::Socks5Server;
 use tribler_tunnel::TUNNEL_COMMUNITY_ID;
@@ -445,10 +446,11 @@ async fn hidden_service_e2e_roundtrip() {
         peer_key: i.key.public_key().to_bin(),
         seeder_pk: Vec::new(),
         source: tribler_tunnel::routing::PEER_SOURCE_UNKNOWN,
+        last_seen_secs: 0,
     };
     let ips = d
         .tunnel
-        .send_peers_request(info_hash, Some(&ip_hint), 5000)
+        .send_peers_request(info_hash, Some(&ip_hint), 1)
         .await
         .expect("peers-response");
     assert_eq!(ips.len(), 1, "un point d'introduction attendu");
@@ -532,10 +534,11 @@ async fn hidden_service_e2e_retry_single_rp() {
         peer_key: i.key.public_key().to_bin(),
         seeder_pk: Vec::new(),
         source: tribler_tunnel::routing::PEER_SOURCE_UNKNOWN,
+        last_seen_secs: 0,
     };
     let ips = d
         .tunnel
-        .send_peers_request(info_hash, Some(&ip_hint), 5000)
+        .send_peers_request(info_hash, Some(&ip_hint), 1)
         .await
         .expect("peers-response");
     assert_eq!(ips.len(), 1, "un point d'introduction attendu");
@@ -638,10 +641,11 @@ async fn hidden_seed_udp_relay_roundtrip() {
         peer_key: i.key.public_key().to_bin(),
         seeder_pk: Vec::new(),
         source: tribler_tunnel::routing::PEER_SOURCE_UNKNOWN,
+        last_seen_secs: 0,
     };
     let ips = d
         .tunnel
-        .send_peers_request(info_hash, Some(&ip_hint), 5000)
+        .send_peers_request(info_hash, Some(&ip_hint), 1)
         .await
         .expect("peers-response");
     let e2e_cid = create_e2e_with_retry(&d, info_hash, &ips[0]).await;
@@ -744,10 +748,11 @@ async fn socks5_rejects_fake_ip_for_non_rp_circuit() {
         peer_key: i.key.public_key().to_bin(),
         seeder_pk: Vec::new(),
         source: tribler_tunnel::routing::PEER_SOURCE_UNKNOWN,
+        last_seen_secs: 0,
     };
     let ips = d
         .tunnel
-        .send_peers_request(info_hash, Some(&ip_hint), 5000)
+        .send_peers_request(info_hash, Some(&ip_hint), 1)
         .await
         .expect("peers-response");
     let e2e_cid = create_e2e_with_retry(&d, info_hash, &ips[0]).await;
@@ -1047,4 +1052,86 @@ async fn socks5_two_lanes_isolated_returns() {
         utp_payload(b"lane-2"),
         "lane 2 a recu la reponse d'une autre lane"
     );
+}
+
+/// Speed-test loopback (etape 27) : `run_speedtest` envoie des
+/// cellules `test-request`(21) sur le circuit, la sortie repond
+/// `test-response`(22) — le dernier snapshot (`done=true`) doit
+/// contenir des reponses mesurees.
+#[tokio::test]
+async fn speedtest_cells_roundtrip_1_hop() {
+    let a = make_node().await;
+    let b = make_node_flags(PEER_FLAG_RELAY | PEER_FLAG_EXIT_BT | PEER_FLAG_SPEED_TEST).await;
+    let nodes = [a, b];
+    let (cid, _) = build_circuit(&nodes, 1).await;
+
+    let mut rx = nodes[0].tunnel.run_speedtest(cid, 800, 50, 256);
+    let mut answered = 0usize;
+    let mut saw_done = false;
+    while let Ok(item) = tokio::time::timeout(TEST_TIMEOUT * 4, rx.recv()).await {
+        let Some((stats, done)) = item else { break };
+        answered += stats.values().filter(|s| s[3] > 0).count();
+        if done {
+            saw_done = true;
+            break;
+        }
+    }
+    assert!(saw_done, "snapshot final `done` attendu");
+    assert!(answered > 0, "au moins une test-response mesuree");
+}
+
+/// `estimate_swarm_size` sans circuit disponible : toutes les
+/// requetes levent "no circuit" → `swarm_size` 0 (comportement
+/// `return_exceptions=True` de Python).
+#[tokio::test]
+async fn estimate_swarm_size_sans_circuit_zero() {
+    let a = make_node().await;
+    let n = tokio::time::timeout(TEST_TIMEOUT, a.tunnel.estimate_swarm_size([1u8; 20], 1))
+        .await
+        .expect("estimate_swarm_size");
+    assert_eq!(n, 0);
+}
+
+/// `on_establish_intro` alimente le store PEX du point
+/// d'introduction (`start_announce`) : `pex_intro_points` expose le
+/// `seeder_pk` annonce avec `source = PEER_SOURCE_PEX`.
+#[tokio::test]
+async fn establish_intro_populates_pex_store() {
+    let s = make_node().await; // seeder
+    let i = make_node().await; // point d'introduction
+    learn(&s, &i);
+    learn(&i, &s);
+    let info_hash = [9u8; 20];
+
+    s.tunnel.join_swarm(info_hash, 0, true);
+    let ip_cid = s
+        .tunnel
+        .create_introduction_point(info_hash, Some(&peer_of(&i)))
+        .await
+        .expect("circuit IP_SEEDER");
+    s.tunnel
+        .wait_circuit_ready(ip_cid, TEST_TIMEOUT.as_millis() as u64)
+        .await
+        .expect("IP circuit READY");
+    let intro_rx = s
+        .tunnel
+        .send_establish_intro(ip_cid, info_hash)
+        .await
+        .expect("send establish-intro");
+    tokio::time::timeout(TEST_TIMEOUT, intro_rx)
+        .await
+        .expect("timeout intro-established")
+        .expect("intro-established");
+
+    let pex = i.tunnel.pex_intro_points();
+    assert_eq!(pex.len(), 1, "un swarm dans le store PEX");
+    assert_eq!(pex[0].0, info_hash);
+    assert_eq!(pex[0].1.len(), 1, "une annonce");
+    let ip = &pex[0].1[0];
+    assert_eq!(ip.source, PEER_SOURCE_PEX);
+    // `seeder_pk` = cle de SWARM du seeder (`seeder_sk` generee par
+    // `join_swarm`), pas sa cle de pair — `LibNaCLPK:` + 64o.
+    assert_eq!(ip.seeder_pk.len(), 74);
+    assert!(ip.seeder_pk.starts_with(b"LibNaCLPK:"));
+    assert_eq!(ip.peer_key, i.key.public_key().to_bin());
 }

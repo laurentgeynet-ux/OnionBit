@@ -79,7 +79,12 @@ Convention générale :
 | `GET /api/ipv8/tunnel/relays` | idem | ✅ | Relais actifs |
 | `GET /api/ipv8/tunnel/exits` | idem | ✅ | Sockets de sortie |
 | `GET /api/ipv8/tunnel/swarms` | idem | ✅ | Swarms hidden services |
+| `GET /api/ipv8/tunnel/swarms/{infohash}/size` | idem | ✅ | `estimate_swarm_size` (crawl `peers-request` DHT→PEX, `seeder_pk` uniques source PEX) ; `{"swarms":[]}` sans tunnel ; hex invalide → 500 ; **quirk conservé** : `?hops=` arrive en chaîne → `swarm_size` 0 |
 | `GET /api/ipv8/tunnel/peers` | idem | ✅ | Pairs tunnel + flags |
+| `GET /api/ipv8/tunnel/peers/dht` | idem | ✅ | `DHTIntroPointPayload` décodé du `Storage` DHT local → `[{info_hash, peers: [IntroductionPoint.to_dict()]}]` ; `[]` brut sans tunnel/provider ; `PackError` ignorée |
+| `GET /api/ipv8/tunnel/peers/pex` | idem | ✅ | Store PEX par info_hash (annoncé par `on_establish_intro`) → même shape ; `[]` brut sans tunnel |
+| `GET /api/ipv8/tunnel/circuits/test` | idem | ✅ | Nouveau circuit `SPEED_TEST` + `run_speedtest` (cellules 21/22 u32 `ipv8-rust-tunnels` + 19/20 u16 pyipv8) ; flux `text/event-stream` `speed: {"up","down"} MiB/s` ; `goal_hops` 1..3 sinon 400 ; échec création → 500 ; **quirk conservé** : `request_size`/`response_size` présents → 500 (`TypeError` Python) ; `test_time_ms` 1..60000 |
+| `GET /api/ipv8/tunnel/circuits/{circuit_id}/test` | idem | ✅ | `circuit_id` non numérique → 400 ; tunnel absent ou circuit inconnu → 404 ; non `READY` → 400 ; `DATA` sans `PEER_FLAG_SPEED_TEST` → 400 ; même flux SSE |
 | **DHT** (`dht_endpoint.py`, pyipv8) | | | |
 | `GET /api/ipv8/dht/statistics` | idem | ✅ | `statistics.peer_id`/`num_tokens`/`endpoints[]` + `num_peers_in_store`/`num_store_for_me` (community = `DHTDiscoveryCommunity`, activée par `dht_discovery/enabled`) ; 404 `{"success":false,"error":"DHT community not found"}` sans community |
 | `GET /api/ipv8/dht/values` | idem | ✅ | Objet `{cle_hex: [{endpoint, public_key(b64\|null), key, value}]}` post-`post_process_values` |

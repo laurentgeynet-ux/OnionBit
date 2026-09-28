@@ -2450,3 +2450,260 @@ async fn ipv8_noblockdht_semantique() {
     assert!(body.get("success").is_none());
     srv.session.stop().await;
 }
+
+/// Serveur IPv8 **avec tunnel** (`enable_anonymity`) — loopback
+/// UDP ephemere, aucun pair : couvre `/api/ipv8/tunnel/*` avec une
+/// `TunnelCommunity` vivante mais sans circuit.
+async fn spawn_server_ipv8_anon() -> TestServer {
+    let dir = tempfile::tempdir().unwrap();
+    let mut cfg = CoreConfig::offline(dir.path().into());
+    cfg.ipv8.enabled = true;
+    cfg.ipv8.listen_addr = "0.0.0.0:0".into();
+    cfg.ipv8.bootstrap_peers = Vec::new();
+    cfg.ipv8.enable_dht = true;
+    cfg.ipv8.enable_anonymity = true;
+    let session = CoreSession::start_offline(cfg, Notifier::new())
+        .await
+        .unwrap();
+    let state = AppState::new(session.clone());
+    let app = build(state.clone());
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    TestServer {
+        addr,
+        session,
+        state,
+        client: reqwest::Client::new(),
+        _dir: dir,
+    }
+}
+
+/// `GET /api/ipv8/tunnel/swarms/{ih}/size` — etape 27 : collection
+/// vide sans tunnel, `unhexlify` → 500, `hops` (string) → 0 quirk,
+/// `{"swarm_size": n}` nominal.
+#[tokio::test]
+async fn tunnel_swarm_size_semantique() {
+    let ih = "0123456789abcdef0123456789abcdef01234567";
+
+    // Sans stack IPv8 → `Response({"swarms": []})` (pas un swarm_size).
+    let srv = spawn_server().await;
+    let body: serde_json::Value = srv
+        .client
+        .get(srv.url(&format!("/api/ipv8/tunnel/swarms/{ih}/size")))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(body, serde_json::json!({ "swarms": [] }));
+    srv.session.stop().await;
+
+    let srv = spawn_server_ipv8_anon().await;
+
+    // Hex invalide → `binascii.Error` Python → 500 non geree.
+    let resp = srv
+        .client
+        .get(srv.url("/api/ipv8/tunnel/swarms/zz/size"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 500);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["error"]["handled"], false);
+
+    // `?hops=` present → la valeur arrive en CHAINE chez Python →
+    // `select_circuit(hops="2")` echoue → `{"swarm_size": 0}`.
+    let body: serde_json::Value = srv
+        .client
+        .get(srv.url(&format!("/api/ipv8/tunnel/swarms/{ih}/size?hops=2")))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(body, serde_json::json!({ "swarm_size": 0 }));
+
+    // Sans `hops` : aucun circuit → toutes les requetes echouent → 0.
+    let body: serde_json::Value = srv
+        .client
+        .get(srv.url(&format!("/api/ipv8/tunnel/swarms/{ih}/size")))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(body, serde_json::json!({ "swarm_size": 0 }));
+    srv.session.stop().await;
+}
+
+/// `GET /api/ipv8/tunnel/peers/dht` + `peers/pex` — listes brutes
+/// `[]` sans tunnel ; shape `{info_hash, peers[]}` peuplee via
+/// `PUT /api/ipv8/dht/values/{key}` (DHTIntroPointPayload).
+#[tokio::test]
+async fn tunnel_peers_dht_pex_semantique() {
+    // Sans stack → `Response([])` brut.
+    let srv = spawn_server().await;
+    for path in ["/api/ipv8/tunnel/peers/dht", "/api/ipv8/tunnel/peers/pex"] {
+        let resp = srv.client.get(srv.url(path)).send().await.unwrap();
+        assert_eq!(resp.status(), 200);
+        let body: serde_json::Value = resp.json().await.unwrap();
+        assert_eq!(body, serde_json::json!([]));
+    }
+    srv.session.stop().await;
+
+    let srv = spawn_server_ipv8_anon().await;
+    // Stores vides → `[]`.
+    for path in ["/api/ipv8/tunnel/peers/dht", "/api/ipv8/tunnel/peers/pex"] {
+        let body: serde_json::Value = srv
+            .client
+            .get(srv.url(path))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(body, serde_json::json!([]));
+    }
+
+    // Peuple la DHT avec un `DHTIntroPointPayload` :
+    // ["ip_address"(type+ipv4+port), "I" last_seen, "varlenH" intro_pk,
+    // "varlenH" seeder_pk].
+    let mut value = vec![0x01u8]; // ADDRESS_TYPE_IPV4
+    value.extend_from_slice(&[10, 0, 0, 7]);
+    value.extend_from_slice(&4242u16.to_be_bytes());
+    value.extend_from_slice(&1_700_000_000u32.to_be_bytes());
+    let intro_pk = [0xAAu8; 32];
+    let seeder_pk = [0xBBu8; 32];
+    value.extend_from_slice(&32u16.to_be_bytes());
+    value.extend_from_slice(&intro_pk);
+    value.extend_from_slice(&32u16.to_be_bytes());
+    value.extend_from_slice(&seeder_pk);
+
+    // Injection directe dans le stockage local (`storage.put`
+    // Python) — `PUT /dht/values` exigerait des noeuds DHT connus.
+    let key = "11223344556677889900aabbccddeeff00112233";
+    let stack = srv.session.ipv8().expect("stack ipv8");
+    let dht = stack.dht.clone().expect("dht community");
+    let serialized = dht.serialize_value(&value, false);
+    let key_bytes: [u8; 20] = hex::decode(key).unwrap().try_into().unwrap();
+    dht.add_value(
+        &key_bytes,
+        &serialized,
+        &tribler_ipv8::UdpAddress::unspecified(),
+        3600.0,
+    );
+
+    let body: serde_json::Value = srv
+        .client
+        .get(srv.url("/api/ipv8/tunnel/peers/dht"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let arr = body.as_array().expect("liste");
+    assert_eq!(arr.len(), 1);
+    assert_eq!(arr[0]["info_hash"], key);
+    let peers = arr[0]["peers"].as_array().unwrap();
+    assert_eq!(peers.len(), 1);
+    assert_eq!(peers[0]["address"]["ip"], "10.0.0.7");
+    assert_eq!(peers[0]["address"]["port"], 4242);
+    // `Peer(b"LibNaCLPK:"+intro_pk)` → hex(prefixe+cle).
+    let mut expected_pk = b"LibNaCLPK:".to_vec();
+    expected_pk.extend_from_slice(&intro_pk);
+    assert_eq!(peers[0]["address"]["public_key"], hex::encode(&expected_pk));
+    let mut expected_seeder = b"LibNaCLPK:".to_vec();
+    expected_seeder.extend_from_slice(&seeder_pk);
+    assert_eq!(peers[0]["seeder_pk"], hex::encode(&expected_seeder));
+    assert_eq!(peers[0]["source"], 1);
+    srv.session.stop().await;
+}
+
+/// `GET /api/ipv8/tunnel/circuits/test` + `/{circuit_id}/test` —
+/// ordre des validations et erreurs `{"error": ...}` brutes de
+/// `tunnel_endpoint.py`.
+#[tokio::test]
+async fn tunnel_speed_test_validations() {
+    // Sans stack → `tunnels is None` → 404 (circuit_id non-numerique
+    // reste 400 : l'ordre Python garde la validation du path d'abord).
+    let srv = spawn_server().await;
+    let resp = srv
+        .client
+        .get(srv.url("/api/ipv8/tunnel/circuits/test"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 404);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "TunnelCommunity is not initialized");
+    let resp = srv
+        .client
+        .get(srv.url("/api/ipv8/tunnel/circuits/abc/test"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 400);
+    let resp = srv
+        .client
+        .get(srv.url("/api/ipv8/tunnel/circuits/123/test"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 404);
+    srv.session.stop().await;
+
+    let srv = spawn_server_ipv8_anon().await;
+
+    // `goal_hops` : `isdigit` + 1..=3.
+    for q in [
+        "?goal_hops=0",
+        "?goal_hops=4",
+        "?goal_hops=x",
+        "?goal_hops=",
+    ] {
+        let resp = srv
+            .client
+            .get(srv.url(&format!("/api/ipv8/tunnel/circuits/test{q}")))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 400, "{q}");
+        let body: serde_json::Value = resp.json().await.unwrap();
+        assert_eq!(body["error"], "invalid number of hops specified");
+    }
+
+    // Pas de pair candidat → `create_circuit` renvoie None →
+    // `{"error": "failed to create circuit"}` 500.
+    let resp = srv
+        .client
+        .get(srv.url("/api/ipv8/tunnel/circuits/test"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 500);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "failed to create circuit");
+
+    // Circuit inexistant → 404 ; circuit_id trop grand → 404 aussi
+    // (`int` Python a precision arbitraire).
+    for id in ["999", "99999999999999999999"] {
+        let resp = srv
+            .client
+            .get(srv.url(&format!("/api/ipv8/tunnel/circuits/{id}/test")))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 404, "{id}");
+        let body: serde_json::Value = resp.json().await.unwrap();
+        assert_eq!(body["error"], "could not find requested circuit");
+    }
+    srv.session.stop().await;
+}
