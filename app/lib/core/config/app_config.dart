@@ -1,8 +1,10 @@
 /// Configuration de connexion au daemon `tribler-daemon`.
 ///
-/// V1 : daemon embarqué ou local, API sur `127.0.0.1:8085` (défaut du
-/// daemon). `apiKey` correspond à `api.key` de la config Tribler —
-/// vide par défaut (l'API Rust n'exige pas de clé sur loopback).
+/// V1 : daemon embarqué ou local, API sur `127.0.0.1:8085` (défaut
+/// historique). `apiKey` correspond à `api.key` du
+/// `configuration.json` du daemon — exigée même sur loopback (parité
+/// `ApiKeyMiddleware` Tribler) ; elle est résolue automatiquement par
+/// `daemon_api_resolver` quand le fichier est accessible.
 class AppConfig {
   const AppConfig({this.baseUrl = 'http://127.0.0.1:8085', this.apiKey = ''});
 

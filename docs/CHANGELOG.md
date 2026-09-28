@@ -3,6 +3,22 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Correctif — Connexion UI après activation de la clé API (2026-09-28)
+
+- **Auto-découverte de la session daemon** (`app/lib/core/config/daemon_api_resolver*.dart`) :
+  même mécanisme que `session_resolver` d'eMule-Rust — l'UI lit
+  `configuration.json` du daemon (`api.key` + `api.http_port_running`)
+  dans les répertoires candidats (`<exe>/state`, `<cwd>/.tribler`, …)
+  ou `TRIBLER_API_KEY`/`TRIBLER_API` en environnement, puis retombe sur
+  les préférences. Un réglage utilisateur vers un daemon distant
+  (non-loopback) reste prioritaire. Conditional import : stub `null`
+  sur web.
+- **Lanceurs `dist/`** (`scripts/build_dist.ps1`, `demarrer.cmd`,
+  `arreter.cmd`) : compatibles avec l'authentification et le port
+  aléatoire — le port réel est relu depuis `configuration.json` à
+  chaque sonde, toute réponse HTTP (dont 401) signifie « API en vie »,
+  et `PUT /api/shutdown` envoie `X-Api-Key`.
+
 ## Étape 21 — Configuration persistée et clé API (2026-09-28)
 
 - **`DaemonConfig` persistée** (`tribler-core/daemon_config.rs`) :

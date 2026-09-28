@@ -61,7 +61,8 @@ class _ConnectionSectionState extends ConsumerState<ConnectionSection> {
                   controller: _keyController,
                   obscureText: true,
                   decoration: const InputDecoration(
-                    labelText: 'Clé API (optionnel)',
+                    labelText: 'Clé API',
+                    hintText: 'auto : configuration.json du daemon',
                     prefixIcon: Icon(Icons.key_outlined),
                   ),
                 ),
