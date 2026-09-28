@@ -359,13 +359,90 @@ ne sont donc pas « terminées » au sens strict) · `[x]` terminée.
   besoin d'un moteur embarqué réapparaît ; `pause_all`/`resume_all`
   restent utiles au daemon desktop (arrêt rapide, suspension).
 
+## Phase 5b — Parité complète de l'API de contrôle (daemon)
+
+Câblage dans le daemon de tous les endpoints restants de
+`docs/reference_tribler/api_endpoints_complet.md` (daemon uniquement,
+pas d'UI). Décisions du 2026-09-28 : clé API `X-Api-Key`/`?key=`/cookie
+activée en parité Python (loopback compris — `tribler-cli` la lit dans
+`configuration.json`) ; `asyncio/*` adapté au runtime tokio ;
+`identity/*` exclu (ADR à rédiger) ; `GET /api/rss` (items) implémenté.
+
+- [ ] **Étape 21. Configuration persistée et clé API.**
+  `DaemonConfig` serde = arbre `TriblerConfig` (défauts du doc :
+  `api`, `ipv8`, `libtorrent`+`download_defaults`, `tunnel_community`,
+  `rss`, `watch_folder`, `torrent_checker`, `dht_discovery`,
+  `versioning`, `statistics`, `state_dir`) lu/écrit dans
+  `state_dir/configuration.json` ; flags CLI = overrides ;
+  `api/key` générée hex au premier run, `api/http_port_running`
+  réécrit après bind réel. Middleware auth axum (header `X-Api-Key`,
+  `?key=`, cookie `api_key` → 401 `{error:{handled:true}}`) ; pas de
+  chemins exemptés (`/docs`/`/ui` absents). `tribler-cli --api-key` +
+  lecture auto du fichier. `GET /api/settings` = arbre complet ;
+  `POST /api/settings` = merge récursif + persistance disque +
+  application à chaud. `DefaultBodyLimit` aligné à 16 Mio
+  (`MAX_REQUEST_SIZE` Python).
+- [ ] **Étape 22. Réglages par download persistés + PATCH complet.**
+  Migration `tribler-db` v3 (`downloads` : `safe_seeding`,
+  `upload_limit`, `download_limit`, `seeding_ratio`, `auto_managed`,
+  `queue_position`, `completed_dir`, `selected_files`, `trackers`) →
+  DTO complété. `PATCH` : `selected_files` (`Session::update_only_files`
+  rqbit), `state=recheck`/`move_storage` (stop + déplacement + ré-add
+  re-hashé), `upload_limit`/`download_limit` (`ratelimits` rqbit par
+  torrent + session), `seeding_ratio(+_default)`/`seeding_mode`
+  (politique d'arrêt de seed dans `tribler-core`).
+  `queue_position`/`auto_managed`/`file_priority` : sémantique
+  simplifiée documentée (pas d'équivalent rqbit — ADR si substantiel).
+- [ ] **Étape 23. Trackers et flags d'enrichissement du listing.**
+  `PUT …/default_trackers` (`download_defaults/trackers_file`),
+  `DELETE …/trackers`, `PUT …/tracker_force_announce` (via
+  `tracker_comms` ou re-application à la liste persistée — divergence
+  documentée si rqbit ne l'expose pas à chaud). `GET /api/downloads` :
+  `get_peers`, `get_pieces`, `get_availability` selon surface rqbit.
+- [ ] **Étape 24. Topics SSE complets.** Nouvelles variantes
+  `Notification` + émetteurs : `remote_query_results`
+  (`uuid,query,results,peer`), `local_query_results`, `tunnel_removed`,
+  `tribler_shutdown_state` (progression de `stop()`), `low_space`
+  (sonde disque périodique du `saveas`), `tribler_new_version`,
+  `tribler_exception`, `ask_add_download` (`ask_download_settings` +
+  `cli`), `report_config_error`. `events_start.public_key` =
+  `Ipv8Stack::public_key_hex()`.
+- [ ] **Étape 25. `DhtCommunity` dans la stack + `/api/ipv8/dht/*`.**
+  Instancier `DhtCommunity` dans `Ipv8Stack` (`dht_discovery/enabled`,
+  `store_peer` au bootstrap, `step`/`node_maintenance`/
+  `value_maintenance`/`token_maintenance` périodiques). Routes :
+  `dht/statistics`, `dht/values` + `/{key}` GET/PUT,
+  `dht/peers/{mid}`, `dht/buckets` + `/{prefix}/refresh`.
+- [ ] **Étape 26. IPv8 réseau et diagnostics.** `GET /api/ipv8/network`
+  (pairs vérifiés), `POST /api/ipv8/isolation` (`bootstrapnode`/
+  `exitnode`), `GET /api/ipv8/noblockdht/{mid}` (`connect_peer`
+  fire-and-forget), `GET`/`POST /api/ipv8/overlays/statistics`
+  (compteurs par msg_id dans `UdpEndpoint`/dispatch des communities).
+- [ ] **Étape 27. Tunnel avancé.** `GET …/swarms/{ih}/size`
+  (estimation via lookups), `peers/dht` (`Storage` DHT de l'étape 25),
+  `peers/pex` ; `GET …/circuits/test` + `/{cid}/test` : `run_speedtest`
+  dans `TunnelCommunity` (messages speedtest pyipv8, flag
+  `PEER_FLAG_SPEED_TEST`, bornes `request_size`/`response_size`/
+  `test_time_ms`), réponse SSE `speed: {"up","down"} MiB/s`.
+- [ ] **Étape 28. `asyncio/*` adapté à tokio + RSS items + clôture.**
+  `/api/ipv8/asyncio/drift` (dérive des intervalles périodiques,
+  historique 100), `/tasks` (registre des tâches nommées du daemon),
+  `/debug` GET/PUT (`EnvFilter` rechargé à chaud). `GET /api/rss` :
+  table `rss_items` + listing alimenté par le `RssService`. Banc de
+  parité `scripts/api_parity.ps1` (même batterie de requêtes contre
+  `Tribler.exe -s` et le daemon Rust, diff des réponses) ; mise à jour
+  `api_endpoints_complet.md`/`api_rest_mapping.md` ; ADR pour les
+  écarts résiduels (exclusion `identity/*` comprise).
+
 ## Jalon "backend terminé à 100 %"
 
 Toutes les étapes 0 à 18 cochées ; étape 12 reste `[i]` (critère
 « téléchargement via le réseau Tribler existant » ouvert — banc de
 clôture : rqbit → circuit → sortie pyipv8 `EXIT_BT` → seeder). Par
 décision utilisateur du 2026-09-28, l'interface desktop démarre
-avec ce critère ouvert documenté.
+avec ce critère ouvert documenté. Les étapes 21-28 (parité API)
+font partie du périmètre backend et peuvent avancer en parallèle
+de la phase 6.
 
 ## Phase 6 — Interface Flutter desktop
 
@@ -390,6 +467,18 @@ Ajouter ici, au fil de l'avancement, tout écart constaté par rapport au
 plan initial (dépendance qui ne convient pas, étape scindée en deux,
 risque IPv8 sous/sur-estimé, etc.), avec la date.
 
+- 2026-09-28 : phase 5b planifiée (étapes 21-28) — parité complète de
+  l'API de contrôle dans le daemon, d'après l'inventaire
+  `api_endpoints_complet.md`. Constat clé : la `DhtCommunity` de
+  `tribler-ipv8` n'est pas instanciée dans `Ipv8Stack` (pré-requis de
+  tout `/api/ipv8/dht/*` et de `tunnel/peers/dht`) et aucune
+  configuration n'est persistée (`configuration.json` absent → lot 1
+  en fondation). Arbitrages actés : clé API en parité Python même en
+  loopback, `asyncio/*` adapté à tokio, `identity/*` exclu (ADR),
+  items RSS persistés. Constats résiduels à traiter dans les étapes :
+  `file_priority`/`queue_position`/`auto_managed` sans équivalent
+  rqbit, `tracker_force_announce`/`DELETE trackers` selon surface
+  rqbit, `get_pieces`/`get_availability` idem.
 - 2026-09-27 : durcissement des bancs d'interop. `verify_packets.py`
   exige désormais une whitelist de `msg_id` (`--allow-msg-id`) —
   premier run : détection d'un `similarity-request` pyipv8 (msg_id=1)
