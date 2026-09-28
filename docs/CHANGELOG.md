@@ -14,6 +14,12 @@ en haut.
   `dist\state\` (données utilisateur) n'est jamais effacé par le build.
   Vérifié de bout en bout : daemon démarré, API `/api/events/info` OK,
   UI connectée (2 sessions TCP REST+SSE).
+- **Activation IPv8 et bootstrap réel dans `tribler-daemon`** :
+  `Ipv8Config::production()` avec les 20 nœuds officiels `DISPERSY_BOOTSTRAPPER`
+  (TU Delft / Tribler), résolution DNS asynchrone des adresses `dispersy*.tribler.org`,
+  repli automatique sur port éphémère si le port UDP 8090 est occupé,
+  options CLI `--no-ipv8`, `--no-anonymity`, `--ipv8-port`, `--bootstrap`.
+  Binaires release régénérés dans `dist\` et le dossier de bureau.
 
 Première implémentation de l'UI dans `app/` (le brouillon initial est
 remplacé) :
