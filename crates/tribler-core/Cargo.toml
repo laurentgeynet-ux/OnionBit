@@ -24,6 +24,8 @@ rand.workspace = true
 tokio.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
+# Couche `DebugLogLayer` (`/api/ipv8/asyncio/debug`) — subscriber.
+tracing-subscriber.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 hex.workspace = true
@@ -34,5 +36,4 @@ tribler-test-support = { path = "../tribler-test-support" }
 tribler-crypto = { path = "../tribler-crypto" }
 tribler-ipv8 = { path = "../tribler-ipv8" }
 tribler-tunnel = { path = "../tribler-tunnel" }
-tracing-subscriber.workspace = true
 

@@ -173,7 +173,12 @@ async fn rss_discovers_torrent_and_notifies() {
 
     let notifier = Notifier::new();
     let mut rx = notifier.subscribe();
-    let mgr = RssManager::new(notifier, tribler_network_policy::IpPolicy::permissive());
+    let mgr = RssManager::new(
+        notifier,
+        tribler_network_policy::IpPolicy::permissive(),
+        Arc::new(Database::memory().unwrap()),
+        tribler_core::asyncio::TaskRegistry::default(),
+    );
     mgr.update(&[format!("http://127.0.0.1:{port}/feed")]);
 
     let ok = tokio::time::timeout(WAIT, async {

@@ -3,6 +3,46 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Étape 28 — `asyncio/*` tokio, items RSS, banc de parité (2026-09-28)
+
+- **`/api/ipv8/asyncio/*`** (`handlers/asyncio.rs` +
+  `tribler-core/src/asyncio/`) — adaptation tokio documentée en
+  ADR-0006 :
+  - `GET/PUT /drift` : `AsyncioMonitor` (`DriftMeasurementStrategy`)
+    — tache `interval(walker_interval)` mesurant
+    `max(0, reel - attendu)`, historique borne 100 ; 404 `Core drift
+    disabled.` ; `PUT {"enable"}` → 400 `incorrect parameters`
+    (shape Python sans `success`), `Session not initialized.` sans
+    IPv8, corps non-JSON → 500 non geree. `Ipv8Config` porte
+    desormais `walker_interval` (propague depuis
+    `ipv8/walker_interval`, defaut 0,5 s).
+  - `GET /tasks` : `TaskRegistry` (substitut d'`all_tasks()` — tokio
+    n'introspecte pas) ; enregistrements aux points de spawn :
+    `endpoint`, `bootstrap`, `node_/value_/token_maintenance`
+    (`DHTDiscoveryCommunity`), `circuit_watchdog_{hops}` (`Ipv8Stack`),
+    `progress` (`CoreSession`), `check` (`WatchFolderService`),
+    `check_oldest` (`TorrentChecker`), `check <url>` (`RssWatcher`).
+    `running`/`stack` emis `false`/`[]` (pas d'equivalent tokio).
+  - `PUT/GET /debug` : `DebugLogBuffer` (deque 50, `%(message)s`) +
+    `DebugLogLayer` gatee ; `enable` recharge l'`EnvFilter` global
+    (`debug` ↔ directive d'origine) via `reload::Layer` installe dans
+    `init_tracing` ; `slow_callback_duration` stocke (defaut 0,1).
+    `PUT` sans parametre → 400 `{"success": false}`.
+- **`GET /api/rss`** (extension Rust) : migration v5 `rss_items`
+  (`feed_url`, `link`, `title`, `infohash`, `first_seen`) ;
+  `RssManager` persiste chaque entree `.torrent` vue puis ses
+  metadonnees a la resolution ; listing `{items}` tri recent.
+- **`scripts/api_parity.ps1`** : banc de parite — meme batterie de
+  GET (24 routes) contre `Tribler.exe -s` et le daemon Rust, diff des
+  codes HTTP et des shapes JSON (cles:type de premier niveau) ;
+  `-FailOnDiff` pour un exit code. Les diffs attendus de `/tasks`
+  sont documentes en ADR-0006.
+- **ADR-0006** : divergences residuelles actees (exclusion
+  `identity/*`, introspection tokio limitee, double format
+  speed-test 21/22 u32 + 19/20 u16, extension `GET /api/rss`,
+  ecarts de valeurs `eta`/`num_seeds`/priorites, quirks de query
+  params conserves).
+
 ## Étape 27 — Tunnel avancé : swarm size, peers dht/pex, speed-test SSE (2026-09-28)
 
 - **Speed-test de circuits** (`tribler-tunnel/src/speedtest.rs` +

@@ -374,6 +374,7 @@ Python : `restapi/statistics_endpoint.py` · Rust : `handlers/statistics.rs`
 | Méthode | Route | Description | Paramètres | Rust |
 | :--- | :--- | :--- | :--- | :--- |
 | PUT | `/api/rss` | Remplace la liste des flux surveillés (`rss/urls` persisté) | corps `{urls*: str[]}` | ✅ |
+| GET | `/api/rss` | **Extension Rust** — items découverts persistés (`rss_items`) | — | ✅ |
 
 ### `VersioningEndpoint` — `core/versioning/restapi/versioning_endpoint.py` → `handlers/versioning.rs`
 
@@ -400,15 +401,20 @@ Python : `restapi/statistics_endpoint.py` · Rust : `handlers/statistics.rs`
 `IPv8RootEndpoint` (`restapi/ipv8_endpoint.py`) monte `pyipv8/ipv8/REST/root_endpoint.py`
 qui enregistre 8 sous-endpoints. Rust : `handlers/ipv8.rs`.
 
-### `/api/ipv8/asyncio` — `REST/asyncio_endpoint.py`
+### `/api/ipv8/asyncio` — `REST/asyncio_endpoint.py` → `handlers/asyncio.rs`
+
+Adapté à tokio (cf. ADR-0006) : `DriftMeasurementStrategy` → tache
+`interval(walker_interval)` ; `all_tasks()` → `TaskRegistry`
+(`tasks.rs`) ; `DequeLogHandler` → `DebugLogBuffer` +
+`EnvFilter` rechargé à chaud.
 
 | Méthode | Route | Description | Paramètres | Rust |
 | :--- | :--- | :--- | :--- | :--- |
-| GET | `/drift` | Mesures de dérive du tick asyncio (`{measurements:[{timestamp,drift}]}`, historique 100) | — | ❌ |
-| PUT | `/drift` | Active/désactive la mesure de dérive | `enable*` bool | ❌ |
-| GET | `/tasks` | Toutes les tâches asyncio (name, running, stack, taskmanager, start_time, interval) | — | ❌ |
-| PUT | `/debug` | Options debug asyncio | `enable` bool ; `slow_callback_duration` int s | ❌ |
-| GET | `/debug` | Messages du log asyncio (deque 50) + état debug | — | ❌ |
+| GET | `/drift` | Mesures de dérive du tick (`{measurements:[{timestamp,drift}]}`, historique 100) ; 404 `Core drift disabled.` | — | ✅ |
+| PUT | `/drift` | Active/désactive la mesure de dérive ; `Session not initialized.` sans IPv8 | `enable*` bool | ✅ |
+| GET | `/tasks` | Tâches nommées du daemon (name, running, stack, taskmanager, start_time, interval) ; `running`/`stack` non introspectés en tokio | — | ✅ |
+| PUT | `/debug` | Options debug (`enable` → capture + filtre `debug` ; `slow_callback_duration`) | `enable` bool ; `slow_callback_duration` int s | ✅ |
+| GET | `/debug` | Messages capturés (deque 50) + état debug | — | ✅ |
 
 ### `/api/ipv8/dht` — `REST/dht_endpoint.py`
 
@@ -493,19 +499,14 @@ qui enregistre 8 sous-endpoints. Rust : `handlers/ipv8.rs`.
 
 ### Routes Python non encore portées dans `tribler-api` (récapitulatif ❌)
 
-- `GET /api/events/info`
-- `GET /api/downloads/clierrors`
-- `PUT /api/downloads/{ih}/default_trackers`, `DELETE /api/downloads/{ih}/trackers`,
-  `PUT /api/downloads/{ih}/tracker_force_announce`
-- IPv8 : tout `asyncio/*`, `identity/*`
+- IPv8 : `identity/*` (exclusion actée — cf. ADR-0006)
 - Écarts de signature : `PUT /api/statistics/dirspace` (Rust = GET `?path=`),
   `?hop=` libtorrent (Rust = `?session=`).
 - Écarts de type/valeur dans `GET /api/downloads` : `eta` est une chaîne
   formatée (`"3m 20s"`) alors que Python émet un `Integer`/`float` de
-  secondes ; `num_seeds`/`num_connected_seeds` fixés à 0 (pas de scrape
-  intégré au listing) ; `trackers` fixé à `[]` ; `safe_seeding` fixé à
-  `false` (le drapeau n'est pas persisté par download — la condition
-  `anon_hops>0 ⇒ safe_seeding` est en revanche appliquée au `PUT`).
+  secondes ; `num_seeds`/`num_connected_seeds` proviennent du scrape
+  du torrent checker (pas de scrape synchrone dans le listing) ;
+  cf. ADR-0006 pour la liste complète des divergences résiduelles.
 
 ---
 

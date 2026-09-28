@@ -99,6 +99,13 @@ Convention générale :
 | `GET /api/files/create?path=` | idem | ✅ | `create_dir_all` |
 | **RSS** (`rss_endpoint.py`) | | | |
 | `PUT /api/rss` | idem | ✅ | Remplace la liste des flux (`{"urls": [...]}`) |
+| `GET /api/rss` | — | ✅ | **Extension Rust** : items `rss_items` persistés par le `RssManager` (Python n'a que `PUT`) |
+| **Asyncio** (`asyncio_endpoint.py`, adapté tokio — ADR-0006) | | | |
+| `GET /api/ipv8/asyncio/drift` | idem | ✅ | Historique `{timestamp, drift}` (100) ; 404 `Core drift disabled.` |
+| `PUT /api/ipv8/asyncio/drift` | idem | ✅ | `{"enable": bool}` ; `Session not initialized.` sans IPv8 |
+| `GET /api/ipv8/asyncio/tasks` | idem | ✅ | `TaskRegistry` ; `running`/`stack` non introspectés (`false`/`[]`) |
+| `PUT /api/ipv8/asyncio/debug` | idem | ✅ | `enable` → capture `tracing` + `EnvFilter` `debug` à chaud |
+| `GET /api/ipv8/asyncio/debug` | idem | ✅ | `{messages, enable, slow_callback_duration}` |
 | **Versioning** (`versioning_endpoint.py`) | | | |
 | `GET /api/versioning/versions` | idem | ✅ | Sous-répertoires `v*` de `state_dir` |
 | `GET /api/versioning/versions/current` | idem | ✅ | Version du crate |
@@ -156,4 +163,4 @@ Convention générale :
 | `/api/trustview`, `bandwidth` | ⛔ | community TrustChain absente de la V1 |
 | `/api/downloads/{ih}/peerdna` | ⏳ | analyse d'identité de pair — non implémenté |
 | `channels` (CRUD channels) | ⏳ | la base `channel_node` est prête ; l'édition de channels est une fonctionnalité ultérieure |
-| `GET /api/rss` (listing des items) | ⏳ | le `RssManager` ne conserve pas les items en base — à faire si l'UI en a besoin |
+| `identity/*` | ⛔ | exclusion actée (cf. ADR-0006 — pas d'identités/pseudonymes dans le périmètre V1) |

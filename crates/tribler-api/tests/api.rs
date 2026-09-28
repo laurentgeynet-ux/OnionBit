@@ -2707,3 +2707,238 @@ async fn tunnel_speed_test_validations() {
     }
     srv.session.stop().await;
 }
+
+/// `/api/ipv8/asyncio/drift` : 404 tant que la mesure n'est pas
+/// activee, `enable` via PUT, 400 `incorrect parameters`, 200
+/// `Session not initialized.` sans stack IPv8.
+#[tokio::test]
+async fn asyncio_drift_semantique() {
+    let srv = spawn_server_ipv8().await;
+    // Mesure desactivee → 404 `Core drift disabled.` (Python).
+    let resp = srv
+        .client
+        .get(srv.url("/api/ipv8/asyncio/drift"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 404);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["success"], false);
+    assert_eq!(body["error"], "Core drift disabled.");
+
+    // `enable` absent → 400 `{"error": "incorrect parameters"}`
+    // (sans cle `success`, shape Python exacte).
+    let resp = srv
+        .client
+        .put(srv.url("/api/ipv8/asyncio/drift"))
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 400);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "incorrect parameters");
+    assert!(body.get("success").is_none());
+
+    // Corps non-JSON → `request.json()` leve → 500 non geree.
+    let resp = srv
+        .client
+        .put(srv.url("/api/ipv8/asyncio/drift"))
+        .body("pas du json")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 500);
+
+    // Activation puis lecture de l'historique.
+    let resp = srv
+        .client
+        .put(srv.url("/api/ipv8/asyncio/drift"))
+        .json(&serde_json::json!({"enable": true}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    assert_eq!(
+        resp.json::<serde_json::Value>().await.unwrap()["success"],
+        true
+    );
+    tokio::time::sleep(std::time::Duration::from_millis(600)).await;
+    let resp = srv
+        .client
+        .get(srv.url("/api/ipv8/asyncio/drift"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let measurements = body["measurements"].as_array().unwrap();
+    assert!(!measurements.is_empty());
+    assert!(measurements[0]["timestamp"].is_f64());
+    assert!(measurements[0]["drift"].is_f64());
+
+    // Desactivation → de nouveau 404.
+    let resp = srv
+        .client
+        .put(srv.url("/api/ipv8/asyncio/drift"))
+        .json(&serde_json::json!({"enable": false}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.json::<serde_json::Value>().await.unwrap()["success"],
+        true
+    );
+    let resp = srv
+        .client
+        .get(srv.url("/api/ipv8/asyncio/drift"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 404);
+    srv.session.stop().await;
+}
+
+/// `PUT /drift {"enable"}` sans stack IPv8 → `Session not initialized.`
+/// (code 200 — `enable()` retourne `false` en Python).
+#[tokio::test]
+async fn asyncio_drift_sans_ipv8() {
+    let srv = spawn_server().await;
+    let resp = srv
+        .client
+        .put(srv.url("/api/ipv8/asyncio/drift"))
+        .json(&serde_json::json!({"enable": true}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["success"], false);
+    assert_eq!(body["error"], "Session not initialized.");
+    srv.session.stop().await;
+}
+
+/// `/api/ipv8/asyncio/tasks` : shape `AsyncioTask` — `name`,
+/// `running`, `stack` (+ `taskmanager`/`start_time`/`interval` pour
+/// les taches `register_task`).
+#[tokio::test]
+async fn asyncio_tasks_shape() {
+    let srv = spawn_server_ipv8().await;
+    let resp = srv
+        .client
+        .get(srv.url("/api/ipv8/asyncio/tasks"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let tasks = body["tasks"].as_array().unwrap();
+    // La boucle `progress` de la session est toujours enregistree.
+    let progress = tasks.iter().find(|t| t["name"] == "progress").unwrap();
+    assert_eq!(progress["taskmanager"], "CoreSession");
+    assert!(progress["start_time"].is_f64());
+    assert!(progress["interval"].is_f64());
+    assert_eq!(progress["running"], false);
+    assert_eq!(progress["stack"], serde_json::json!([]));
+    // IPv8 actif → taches de maintenance DHT enregistrees.
+    assert!(tasks
+        .iter()
+        .any(|t| t["name"] == "node_maintenance" && t["taskmanager"] == "DHTDiscoveryCommunity"));
+    srv.session.stop().await;
+}
+
+/// `/api/ipv8/asyncio/debug` : PUT `enable`/`slow_callback_duration`,
+/// GET renvoie `messages`/`enable`/`slow_callback_duration`.
+#[tokio::test]
+async fn asyncio_debug_semantique() {
+    let srv = spawn_server().await;
+    // Etat initial : debug off, `slow_callback_duration` 0.1 asyncio.
+    let resp = srv
+        .client
+        .get(srv.url("/api/ipv8/asyncio/debug"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["enable"], false);
+    assert_eq!(body["slow_callback_duration"], 0.1);
+    assert_eq!(body["messages"], serde_json::json!([]));
+
+    // Aucun parametre → 400 `{"success": false, ...}`.
+    let resp = srv
+        .client
+        .put(srv.url("/api/ipv8/asyncio/debug"))
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 400);
+    assert_eq!(
+        resp.json::<serde_json::Value>().await.unwrap()["success"],
+        false
+    );
+
+    // `enable` + `slow_callback_duration` → `{"success": true}`.
+    let resp = srv
+        .client
+        .put(srv.url("/api/ipv8/asyncio/debug"))
+        .json(&serde_json::json!({"enable": true, "slow_callback_duration": 0.5}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    assert_eq!(
+        resp.json::<serde_json::Value>().await.unwrap()["success"],
+        true
+    );
+    let resp = srv
+        .client
+        .get(srv.url("/api/ipv8/asyncio/debug"))
+        .send()
+        .await
+        .unwrap();
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["enable"], true);
+    assert_eq!(body["slow_callback_duration"], 0.5);
+    srv.session.stop().await;
+}
+
+/// `GET /api/rss` : listing des items persistes (`rss_items`) —
+/// extension Rust documentee (Python n'expose que `PUT`).
+#[tokio::test]
+async fn rss_list_items() {
+    let srv = spawn_server().await;
+    let resp = srv.client.get(srv.url("/api/rss")).send().await.unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["items"], serde_json::json!([]));
+
+    // Injection directe (le fetch reel est couvert par les tests
+    // loopback du service RSS dans tribler-core).
+    srv.session
+        .db()
+        .insert_rss_item("http://feed.example/rss", "http://t/1.torrent", 1000)
+        .unwrap();
+    srv.session
+        .db()
+        .set_rss_item_metadata(
+            "http://feed.example/rss",
+            "http://t/1.torrent",
+            "Titre",
+            "0123456789abcdef0123456789abcdef01234567",
+        )
+        .unwrap();
+    let resp = srv.client.get(srv.url("/api/rss")).send().await.unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let items = body["items"].as_array().unwrap();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["feed_url"], "http://feed.example/rss");
+    assert_eq!(items[0]["title"], "Titre");
+    assert_eq!(
+        items[0]["infohash"],
+        "0123456789abcdef0123456789abcdef01234567"
+    );
+    srv.session.stop().await;
+}

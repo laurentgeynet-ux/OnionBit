@@ -21,10 +21,12 @@ pub mod health;
 pub mod migrations;
 pub mod misc;
 pub mod models;
+pub mod rss;
 
 pub use db::Database;
 pub use error::{DbError, Result};
 pub use models::{ChannelNodeRow, DownloadRow, TorrentStateRow, TrackerStateRow};
+pub use rss::RssItemRow;
 
 #[cfg(test)]
 mod tests {

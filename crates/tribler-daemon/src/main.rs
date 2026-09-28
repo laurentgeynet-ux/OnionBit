@@ -69,7 +69,12 @@ use tracing_subscriber::util::SubscriberInitExt;
 /// Ecrit a la fois sur stdout et dans le fichier tournant `state_dir/logs/tribler.log`
 /// (exploite par l'endpoint `/api/logging` et l'onglet Diagnostic de l'UI).
 fn init_tracing(state_dir: &std::path::Path) {
-    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    // Directive d'origine (RUST_LOG ou `info`) — `PUT
+    // /api/ipv8/asyncio/debug` recharge le filtre a chaud :
+    // `enable` → `debug`, `disable` → directive d'origine.
+    let default_directive = std::env::var("RUST_LOG").unwrap_or_else(|_| "info".to_string());
+    let filter = EnvFilter::new(&default_directive);
+    let (filter, filter_reload) = tracing_subscriber::reload::Layer::new(filter);
     let logs_dir = state_dir.join("logs");
     let _ = std::fs::create_dir_all(&logs_dir);
     let file_appender = tracing_appender::rolling::daily(&logs_dir, "tribler.log");
@@ -86,7 +91,21 @@ fn init_tracing(state_dir: &std::path::Path) {
         .with(filter)
         .with(stdout_layer)
         .with(file_layer)
+        .with(tribler_core::asyncio::DebugLogLayer)
         .init();
+
+    // Pont `PUT /debug` → `EnvFilter` : le hook vit dans
+    // `tribler-core` (la couche REST ne depend pas du daemon).
+    tribler_core::asyncio::set_filter_reload(move |enable| {
+        let directive = if enable {
+            "debug".to_string()
+        } else {
+            default_directive.clone()
+        };
+        if let Err(e) = filter_reload.modify(|f| *f = EnvFilter::new(directive)) {
+            tracing::warn!(error = %e, "rechargement du filtre de log impossible");
+        }
+    });
 }
 
 #[tokio::main]

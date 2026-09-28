@@ -97,6 +97,10 @@ pub struct Ipv8Config {
     /// Cree la `DHTDiscoveryCommunity` (`dht_discovery/enabled`
     /// Python — precondition de `DHTDiscoveryComponent`).
     pub enable_dht: bool,
+    /// `walker_interval` Python (s) — cadence des strategies de
+    /// decouverte ; sert de reference a `DriftMeasurementStrategy`
+    /// (`/api/ipv8/asyncio/drift`).
+    pub walker_interval: f64,
 }
 
 impl Ipv8Config {
@@ -116,6 +120,7 @@ impl Ipv8Config {
             peer_flags: tribler_network_policy::exit_policy::PEER_FLAG_RELAY,
             tribler_tunnel_community: true,
             enable_dht: true,
+            walker_interval: DEFAULT_WALKER_INTERVAL,
         }
     }
 }
@@ -133,6 +138,7 @@ impl Default for Ipv8Config {
             // `tribler_config` — la community n'est creee que si
             // `enabled` est vrai de toute facon.
             enable_dht: true,
+            walker_interval: DEFAULT_WALKER_INTERVAL,
         }
     }
 }
@@ -168,6 +174,9 @@ const DHT_VALUE_MAINT_INTERVAL: std::time::Duration = std::time::Duration::from_
 /// `register_task("token_maintenance", interval=300)` Python.
 const DHT_TOKEN_MAINT_INTERVAL: std::time::Duration = std::time::Duration::from_secs(300);
 
+/// `walker_interval` par defaut (`ipv8.walker_interval` Tribler : 0,5 s).
+pub const DEFAULT_WALKER_INTERVAL: f64 = 0.5;
+
 /// Tache de maintenance DHT (`PingChurn.take_step` +
 /// `node_maintenance`/`value_maintenance`/`token_maintenance` +
 /// propagation de `my_estimated_wan` depuis la discovery, car Python
@@ -175,7 +184,26 @@ const DHT_TOKEN_MAINT_INTERVAL: std::time::Duration = std::time::Duration::from_
 fn spawn_dht_maintenance(
     dht: Arc<DhtCommunity>,
     discovery: Arc<DiscoveryCommunity>,
+    tasks: crate::asyncio::TaskRegistry,
 ) -> tokio::sync::watch::Sender<bool> {
+    // `register_task(...)` de `DHTCommunity.unload` Python — les
+    // trois taches partagent la meme boucle ici mais restent
+    // declarees separement dans le registre (`/asyncio/tasks`).
+    tasks.register(
+        Some("DHTDiscoveryCommunity"),
+        "node_maintenance",
+        Some(DHT_NODE_MAINT_INTERVAL.as_secs_f64()),
+    );
+    tasks.register(
+        Some("DHTDiscoveryCommunity"),
+        "value_maintenance",
+        Some(DHT_VALUE_MAINT_INTERVAL.as_secs_f64()),
+    );
+    tasks.register(
+        Some("DHTDiscoveryCommunity"),
+        "token_maintenance",
+        Some(DHT_TOKEN_MAINT_INTERVAL.as_secs_f64()),
+    );
     let (tx, mut rx) = tokio::sync::watch::channel(false);
     tokio::spawn(async move {
         // Premier `token_maintenance` immediat (community.py Python :
@@ -611,6 +639,8 @@ pub struct Ipv8Stack {
     engine_config: EngineConfig,
     /// Repertoire de telechargement par defaut.
     downloads_dir: PathBuf,
+    /// Registre partage des taches nommees (`/api/ipv8/asyncio/tasks`).
+    tasks: crate::asyncio::TaskRegistry,
 }
 
 impl Ipv8Stack {
@@ -624,6 +654,7 @@ impl Ipv8Stack {
         engine_config: &EngineConfig,
         db: Arc<Database>,
         notifier: crate::notifier::Notifier,
+        tasks: crate::asyncio::TaskRegistry,
     ) -> Result<Arc<Self>> {
         let key = load_or_create_key(&state_dir.join(IPV8_KEY_FILE))?;
         let endpoint = match UdpEndpoint::bind(&config.listen_addr).await {
@@ -759,7 +790,9 @@ impl Ipv8Stack {
             endpoint.enable_community_statistics(prefix, true).await;
         }
 
-        // Tache de reception de l'endpoint (dispatch prefixe).
+        // Tache de reception de l'endpoint (dispatch prefixe) —
+        // `ensure_future(endpoint.run())` Python (tache anonyme).
+        tasks.register(None, "endpoint", None);
         let ep = endpoint.clone();
         tokio::spawn(async move {
             if let Err(e) = ep.run().await {
@@ -770,11 +803,13 @@ impl Ipv8Stack {
         // Maintenance DHT en tache de fond (arret via `stop`).
         let dht_maintenance_stop = dht
             .clone()
-            .map(|d| spawn_dht_maintenance(d, discovery.clone()));
+            .map(|d| spawn_dht_maintenance(d, discovery.clone(), tasks.clone()));
 
         // Bootstrap discovery en tache de fond (resolution DNS + IP).
+        // `register_anonymous_task("bootstrap", ...)` Python.
         let bootstrap_peers_config = config.bootstrap_peers.clone();
         if !bootstrap_peers_config.is_empty() {
+            tasks.register(None, "bootstrap", None);
             let d = discovery.clone();
             let dht = dht.clone();
             tokio::spawn(async move {
@@ -822,6 +857,7 @@ impl Ipv8Stack {
             anon_lanes: Mutex::new(HashMap::new()),
             engine_config: engine_config.clone(),
             downloads_dir: downloads_dir.to_path_buf(),
+            tasks,
         }))
     }
 
@@ -951,6 +987,11 @@ impl Ipv8Stack {
         cfg.listen_port = None;
         cfg.output_dir = self.downloads_dir.join(format!("anon{hops}"));
         let engine = BtEngine::start(cfg).await?;
+        self.tasks.register(
+            Some("Ipv8Stack"),
+            &format!("circuit_watchdog_{hops}"),
+            Some(CIRCUIT_PROBE_INTERVAL.as_secs_f64()),
+        );
         let circuit_watchdog_stop = spawn_circuit_watchdog(
             tunnel.clone(),
             hops,

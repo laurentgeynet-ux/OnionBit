@@ -448,7 +448,7 @@ activée en parité Python (loopback compris — `tribler-cli` la lit dans
   `speed: {"up","down"}` MiB/s, validation `goal_hops`/`test_time_ms`,
   circuit `READY` + `PEER_FLAG_SPEED_TEST` sur `DATA`, suppression
   du circuit de test après 5 s de `remove_tunnel_delay`).
-- [ ] **Étape 28. `asyncio/*` adapté à tokio + RSS items + clôture.**
+- [x] **Étape 28. `asyncio/*` adapté à tokio + RSS items + clôture.**
   `/api/ipv8/asyncio/drift` (dérive des intervalles périodiques,
   historique 100), `/tasks` (registre des tâches nommées du daemon),
   `/debug` GET/PUT (`EnvFilter` rechargé à chaud). `GET /api/rss` :

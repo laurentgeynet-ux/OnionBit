@@ -10,8 +10,10 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use tribler_db::Database;
 use tribler_network_policy::IpPolicy;
 
+use crate::asyncio::tasks::{now_secs, TaskRegistry};
 use crate::notifier::{Notification, Notifier};
 
 /// Recheck minimum entre deux GET (defaut 120 s cote Python quand le
@@ -34,6 +36,10 @@ struct RssWatcher {
 pub struct RssManager {
     notifier: Notifier,
     ip_policy: IpPolicy,
+    /// Persistance des items (`rss_items` — extension `GET /api/rss`).
+    db: Arc<Database>,
+    /// Registre de taches (`/api/ipv8/asyncio/tasks`).
+    tasks: TaskRegistry,
     /// `session` pour persister les torrents decouverts (optionnel :
     /// le Python ne telecharge pas, il ingere les metadonnees —
     /// ici on notifie + persiste via le canal `TorrentMetadataCreated`
@@ -53,11 +59,18 @@ impl std::fmt::Debug for RssManager {
 
 impl RssManager {
     /// Cree le gestionnaire (les watchers demarrent via `update`/`start`).
-    pub fn new(notifier: Notifier, ip_policy: IpPolicy) -> Arc<Self> {
+    pub fn new(
+        notifier: Notifier,
+        ip_policy: IpPolicy,
+        db: Arc<Database>,
+        tasks: TaskRegistry,
+    ) -> Arc<Self> {
         let (stop, _) = tokio::sync::watch::channel(false);
         Arc::new(Self {
             notifier,
             ip_policy,
+            db,
+            tasks,
             watchers: Mutex::new(HashMap::new()),
             stop,
         })
@@ -84,6 +97,12 @@ impl RssManager {
                 next_check: Mutex::new(tokio::time::Instant::now()),
             });
             watchers.insert(url.to_string(), w.clone());
+            // Tache periodique du watcher — `register_task` Python.
+            self.tasks.register(
+                Some("RssWatcher"),
+                &format!("check {url}"),
+                Some(DEFAULT_RECHECK.as_secs_f64()),
+            );
             let mgr = self.clone();
             let mut stop_rx = self.stop.subscribe();
             tokio::spawn(async move {
@@ -167,14 +186,17 @@ impl RssManager {
             new_entries
         };
         for url in new_entries {
-            self.resolve(&url).await;
+            // Extension `GET /api/rss` : persiste l'entree vue
+            // (`first_seen` conserve la premiere observation).
+            let _ = self.db.insert_rss_item(&w.url, &url, now_secs() as i64);
+            self.resolve(&w.url, &url).await;
         }
     }
 
     /// `resolve` : telecharge le `.torrent` et notifie les
     /// metadonnees (le Python insere dans le MetadataStore — ici la
     /// notification `TorrentMetadataCreated` porte titre + infohash).
-    async fn resolve(&self, url: &str) {
+    async fn resolve(&self, feed_url: &str, url: &str) {
         let Ok(resp) = super::fetch_checked(url, &self.ip_policy).await else {
             tracing::warn!(url, "rss: telechargement du .torrent refuse");
             return;
@@ -186,8 +208,12 @@ impl RssManager {
             tracing::warn!(url, "rss: reponse n'est pas un .torrent valide");
             return;
         };
+        let infohash = tribler_crypto::hash::to_hex(&meta.info_hash);
+        let _ = self
+            .db
+            .set_rss_item_metadata(feed_url, url, &meta.name, &infohash);
         self.notifier.notify(Notification::TorrentMetadataCreated {
-            infohash: tribler_crypto::hash::to_hex(&meta.info_hash),
+            infohash,
             title: meta.name.clone(),
         });
     }

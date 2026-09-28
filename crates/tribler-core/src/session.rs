@@ -96,6 +96,9 @@ struct Inner {
     /// (`Download.LAST_TRACKER_FILE_SYNC` Python — TTL
     /// [`crate::trackers::TRACKER_SYNC_TTL_SECS`]).
     last_tracker_sync: std::sync::Mutex<Option<std::time::Instant>>,
+    /// Etat de `/api/ipv8/asyncio/*` : derive des ticks, registre des
+    /// taches nommees (`all_tasks()`), buffer du debug log.
+    asyncio: crate::asyncio::AsyncioMonitor,
 }
 
 impl std::fmt::Debug for CoreSession {
@@ -121,7 +124,8 @@ impl CoreSession {
         };
         let engine = BtEngine::start(config.engine.clone()).await?;
         let db = Arc::new(db);
-        let ipv8 = start_ipv8(&config, db.clone(), notifier.clone()).await?;
+        let asyncio = crate::asyncio::AsyncioMonitor::new(config.ipv8.walker_interval);
+        let ipv8 = start_ipv8(&config, db.clone(), notifier.clone(), asyncio.tasks.clone()).await?;
         let services_config = config.clone();
         let session = Self {
             inner: Arc::new(Inner {
@@ -133,6 +137,7 @@ impl CoreSession {
                 services: std::sync::Mutex::new(Services::default()),
                 ipv8,
                 last_tracker_sync: std::sync::Mutex::new(None),
+                asyncio,
             }),
         };
         session.start_services(&services_config).await;
@@ -148,7 +153,8 @@ impl CoreSession {
         let db = Database::memory()?;
         let engine = BtEngine::start(config.engine.clone()).await?;
         let db = Arc::new(db);
-        let ipv8 = start_ipv8(&config, db.clone(), notifier.clone()).await?;
+        let asyncio = crate::asyncio::AsyncioMonitor::new(config.ipv8.walker_interval);
+        let ipv8 = start_ipv8(&config, db.clone(), notifier.clone(), asyncio.tasks.clone()).await?;
         let services_config = config.clone();
         let session = Self {
             inner: Arc::new(Inner {
@@ -160,6 +166,7 @@ impl CoreSession {
                 services: std::sync::Mutex::new(Services::default()),
                 ipv8,
                 last_tracker_sync: std::sync::Mutex::new(None),
+                asyncio,
             }),
         };
         session.start_services(&services_config).await;
@@ -276,6 +283,11 @@ impl CoreSession {
     fn spawn_progress_loop(&self) {
         let session = self.clone();
         let interval = std::time::Duration::from_millis(self.inner.config.progress_interval_ms);
+        self.inner.asyncio.tasks.register(
+            Some("CoreSession"),
+            "progress",
+            Some(interval.as_secs_f64()),
+        );
         tokio::spawn(async move {
             let mut finished: std::collections::HashSet<String> = std::collections::HashSet::new();
             let mut tick = tokio::time::interval(interval);
@@ -1227,12 +1239,19 @@ impl CoreSession {
                 std::time::Duration::from_millis(config.watch_folder_interval_ms),
             );
             svc.start();
+            self.inner.asyncio.tasks.register(
+                Some("WatchFolderService"),
+                "check",
+                Some(config.watch_folder_interval_ms as f64 / 1000.0),
+            );
             services.watch_folder = Some(svc);
         }
         if !config.rss_urls.is_empty() {
             let mgr = crate::services::rss::RssManager::new(
                 self.inner.notifier.clone(),
                 config.ip_policy.clone(),
+                self.inner.db.clone(),
+                self.inner.asyncio.tasks.clone(),
             );
             mgr.update(&config.rss_urls);
             services.rss = Some(mgr);
@@ -1248,6 +1267,11 @@ impl CoreSession {
                 Ok(checker) => {
                     let interval =
                         std::time::Duration::from_millis(config.torrent_checker_interval_ms);
+                    self.inner.asyncio.tasks.register(
+                        Some("TorrentChecker"),
+                        "check_oldest",
+                        Some(interval.as_secs_f64()),
+                    );
                     let checker = Arc::new(checker);
                     let (stop_tx, mut stop_rx) = tokio::sync::watch::channel(false);
                     let c = checker.clone();
@@ -1286,6 +1310,11 @@ impl CoreSession {
     /// false` — equivalent de `session.ipv8` conditionnel Python).
     pub fn ipv8(&self) -> Option<Arc<crate::ipv8_stack::Ipv8Stack>> {
         self.inner.ipv8.clone()
+    }
+
+    /// Moniteur `/api/ipv8/asyncio/*` (drift, taches, debug).
+    pub fn asyncio(&self) -> &crate::asyncio::AsyncioMonitor {
+        &self.inner.asyncio
     }
 
     /// `DHTDiscoveryCommunity` (`None` si IPv8 ou `dht_discovery` est
@@ -1340,6 +1369,8 @@ impl CoreSession {
             let mgr = crate::services::rss::RssManager::new(
                 self.inner.notifier.clone(),
                 config.ip_policy.clone(),
+                self.inner.db.clone(),
+                self.inner.asyncio.tasks.clone(),
             );
             mgr.update(&config.rss_urls);
             services.rss = Some(mgr);
@@ -1482,6 +1513,7 @@ async fn start_ipv8(
     config: &CoreConfig,
     db: Arc<Database>,
     notifier: Notifier,
+    tasks: crate::asyncio::TaskRegistry,
 ) -> Result<Option<Arc<crate::ipv8_stack::Ipv8Stack>>> {
     if !config.ipv8.enabled {
         return Ok(None);
@@ -1493,6 +1525,7 @@ async fn start_ipv8(
         &config.engine,
         db,
         notifier,
+        tasks,
     )
     .await?;
     Ok(Some(stack))

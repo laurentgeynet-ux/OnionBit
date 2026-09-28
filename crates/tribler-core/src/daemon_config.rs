@@ -646,6 +646,7 @@ impl DaemonConfig {
             peer_flags,
             tribler_tunnel_community: true,
             enable_dht: self.dht_discovery.enabled,
+            walker_interval: self.ipv8.walker_interval,
         };
 
         crate::CoreConfig {

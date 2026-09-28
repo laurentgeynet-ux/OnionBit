@@ -170,8 +170,20 @@ pub fn build(state: AppState) -> Router {
         .route("/api/files/browse", get(files::browse))
         .route("/api/files/list", get(files::list))
         .route("/api/files/create", get(files::create))
+        // -- Asyncio (asyncio_endpoint.py, pyipv8) ----------------------
+        .route(
+            "/api/ipv8/asyncio/drift",
+            get(asyncio::get_drift).put(asyncio::set_drift),
+        )
+        .route("/api/ipv8/asyncio/tasks", get(asyncio::get_tasks))
+        .route(
+            "/api/ipv8/asyncio/debug",
+            get(asyncio::get_debug).put(asyncio::set_debug),
+        )
         // -- RSS --------------------------------------------------------
-        .route("/api/rss", put(rss::update_feeds))
+        // `GET` = extension Rust (listing `rss_items`) — Python n'a
+        // que `PUT` (cf. ADR-0006).
+        .route("/api/rss", put(rss::update_feeds).get(rss::list_items))
         // -- Versioning / logging ---------------------------------------
         .route("/api/versioning/versions", get(versioning::get_versions))
         .route(

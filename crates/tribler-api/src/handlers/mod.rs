@@ -1,5 +1,6 @@
 //! Handlers des endpoints.
 
+pub mod asyncio;
 pub mod createtorrent;
 pub mod dht;
 pub mod downloads;

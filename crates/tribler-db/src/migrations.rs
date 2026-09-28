@@ -11,7 +11,7 @@
 //! semantique du schema, pas l'interoperabilite binaire).
 
 /// Version courante du schema de ce crate.
-pub const SCHEMA_VERSION: i64 = 4;
+pub const SCHEMA_VERSION: i64 = 5;
 
 /// Script SQL de chaque migration, dans l'ordre (index 0 = v1).
 pub const MIGRATIONS: &[&str] = &[
@@ -138,6 +138,21 @@ ALTER TABLE downloads ADD COLUMN time_finished INTEGER NOT NULL DEFAULT 0;
     // modification de `tdef.atp.trackers` Python).
     "
 ALTER TABLE downloads ADD COLUMN removed_trackers TEXT;
+",
+    // v5 : items RSS decouverts par les watchers (`GET /api/rss` —
+    // extension Rust : Tribler Python ne persiste que `rss/urls` et
+    // `previous_entries` en memoire). `link` = URL `.torrent` de
+    // l'entree ; `title`/`infohash` renseignes quand la resolution
+    // a produit des metadonnees.
+    "
+CREATE TABLE rss_items (
+    feed_url   TEXT NOT NULL,
+    link       TEXT NOT NULL,
+    title      TEXT,
+    infohash   TEXT,
+    first_seen INTEGER NOT NULL,                -- secondes Unix
+    PRIMARY KEY (feed_url, link)
+);
 ",
 ];
 
