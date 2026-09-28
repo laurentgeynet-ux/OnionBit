@@ -25,13 +25,15 @@ Convention générale :
 | `GET /api/downloads/{ih}/files` | `GET /api/downloads/{ih}/files` | ✅ | index, name, size, progress par fichier |
 | `GET /api/downloads/{ih}/stream/{fileindex}` | idem | ✅ | flux HTTP chunked avec `start` (seek) ; borné par le buffer rqbit |
 | `GET /api/events` | `GET /api/events` | ✅ | **SSE** : trames `event: <topic>\ndata: <json>\n\n`, message initial `events_start` |
+| `GET /api/events/info` | `GET /api/events/info` | ✅ | `{"public_key", "version", "sessions"}` — `sessions` = nombre de flux SSE ouverts (compteur réel, +1/−1 à la connexion/déconnexion) |
+| `GET /api/downloads/clierrors` | `GET /api/downloads/clierrors` | ✅ | File `unhandled_cli_log` : erreurs de `PUT /api/downloads` avec `cli:true`, insertions en tête bornée à 100 ; `GET` vide la file (`{"errors": [...]}`) ; le champ `clierrors` de `GET /api/downloads` = longueur de la file |
 | **Settings / shutdown / stats** | | | |
 | `GET /api/settings` | `GET /api/settings` | ✅ | Arbre `ipv8`/`tunnel_community`/`libtorrent`/`watch_folder`/`rss`/`torrent_checker`/`api` ; reflète les overrides à chaud |
 | `POST /api/settings` | `POST /api/settings` | ✅ | Application à chaud : `rss.urls`, `watch_folder.enabled`/`directory` ; le reste accepté (redémarrage requis) |
 | `PUT /api/shutdown` | `PUT /api/shutdown` | ✅ | Réponse immédiate, arrêt en tâche de fond |
 | `GET /api/statistics/tribler` | idem | ✅ | `db_size`, `num_torrents`, `num_channels`, `peers`, `libtorrent.sessions` (lanes anonymes) |
 | `GET /api/statistics/ipv8` | idem | ✅ | `total_up`/`total_down` de l'endpoint UDP |
-| `GET /api/statistics/dirspace?path=` | `GET` | ✅ | `fs2` `total`/`free`/`used` |
+| `PUT /api/statistics/dirspace` (`{"directory"}`) | `PUT` | ✅ | `{"statistics": {total, used, free}}` du premier ancêtre existant du chemin (404 "No stats for directory!"), fidèle à `get_dirspace_stats` Python ; `GET ?path=` conservé en confort (même réponse) |
 | **Metadata** (`database_endpoint.py`) | | | |
 | `GET /api/metadata/torrents/{ih}/health` | idem | ✅ | `refresh=1` déclenche un scrape immédiat via le torrent checker |
 | `GET /api/metadata/torrents/popular` | idem | ✅ | Tri par seeders desc depuis `channel_node`+`torrent_state` |
@@ -81,11 +83,14 @@ Convention générale :
 | :--- | :--- | :--- |
 | `name`, `progress`, `infohash`, `size`, `speed_down`, `speed_up` | identiques | — |
 | `status` / `status_code` | identiques | codes `DownloadStatus` Python conservés (0..11) ; mapping : `Initializing`→`METADATA`/`WAITING_FOR_HASHCHECK`, `Checking`→`HASHCHECKING`, `Downloading`→`DOWNLOADING`, `Seeding`→`SEEDING`, `Paused/Stopped`→`STOPPED`, `Error`→`STOPPED_ON_ERROR` |
-| `eta` | `eta` | Rust émet une chaîne formatée (`"3m 20s"`) ou `""`, Python un float de secondes — à harmoniser à l'étape 15 si besoin |
-| `num_peers`, `num_connected_peers` | `peers_live` (librqbit `AggregatePeerStats`) | librqbit ne distingue pas seeds/leechers connectés |
-| `num_seeds`, `num_connected_seeds` | 0 | nécessite le scraping de trackers (étape 14, `torrent_checker`) |
+| `eta` | `eta` | float de secondes, formule `get_eta()` Python : `(1-progress)*size/max(download_rate,1e-6)` (0.0 sans taille connue) |
+| `num_peers` | `max(peers_live, leechers scrapés)` | `num_peers` Python = `max(lt, scraped)` ; librqbit n'expose pas le compteur swarm lt → scrape `torrent_state` comme borne |
+| `num_connected_peers` | `peers_live` (librqbit `AggregatePeerStats`) | pairs connectés, fidèle au sens Python |
+| `num_seeds` | `torrent_state.seeders` (scrape) | Python = `max(lt, scraped)` ; sans compteur lt on retient le scrape du torrent checker |
+| `num_connected_seeds` | 0 | librqbit ne distingue pas seeds/leechers connectés — divergence documentée |
 | `all_time_upload/download/ratio` | cumuls librqbit | ratio = upload/download (0 si download=0) |
-| `trackers`, `hops`, `anon_download`, `safe_seeding`, `upload_limit`, `download_limit`, `seeding_ratio`, `destination`, `completed_dir`, `total_pieces`, `error`, `time_added`, `time_finished`, `queue_position`, `auto_managed`, `user_stopped`, `streamable` | émis avec valeurs par défaut | champs présents pour compatibilité clients ; remplis au fil des étapes (tunnels=12, services=14) |
+| `hops`, `anon_download` | remplis | `hops` = sauts de la lane anonyme du téléchargement (`anon_hops_map` de la session) ; `anon_download` = `hops > 0` — testé |
+| `trackers`, `safe_seeding`, `upload_limit`, `download_limit`, `seeding_ratio`, `destination`, `completed_dir`, `total_pieces`, `error`, `time_added`, `time_finished`, `queue_position`, `auto_managed`, `user_stopped`, `streamable` | émis avec valeurs par défaut | champs présents pour compatibilité clients ; remplis au fil des étapes |
 
 ## Topics d'événements SSE
 

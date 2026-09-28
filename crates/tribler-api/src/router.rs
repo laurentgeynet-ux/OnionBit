@@ -45,8 +45,10 @@ pub fn build(state: AppState) -> Router {
             "/api/downloads/{infohash}/stream/{fileindex}",
             get(downloads_extra::stream_file),
         )
+        .route("/api/downloads/clierrors", get(downloads::get_cli_errors))
         // -- Evenements SSE (events_endpoint.py) ------------------------
         .route("/api/events", get(events::get_events))
+        .route("/api/events/info", get(events::get_events_info))
         // -- Settings / shutdown / statistiques -------------------------
         .route("/api/settings", get(settings::get_settings))
         .route("/api/settings", post(settings::update_settings))
@@ -58,7 +60,7 @@ pub fn build(state: AppState) -> Router {
         .route("/api/statistics/ipv8", get(statistics::get_ipv8_stats))
         .route(
             "/api/statistics/dirspace",
-            get(statistics::get_dirspace_stats),
+            get(statistics::get_dirspace_stats).put(statistics::put_dirspace_stats),
         )
         // -- Metadata / recherche (database_endpoint.py) ----------------
         .route(

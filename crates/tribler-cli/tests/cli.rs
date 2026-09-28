@@ -21,9 +21,7 @@ async fn spawn_api() -> (String, CoreSession, tempfile::TempDir) {
         CoreSession::start_offline(CoreConfig::offline(dir.path().into()), Notifier::new())
             .await
             .unwrap();
-    let app = build(AppState {
-        session: session.clone(),
-    });
+    let app = build(AppState::new(session.clone()));
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr: SocketAddr = listener.local_addr().unwrap();
     tokio::spawn(async move {

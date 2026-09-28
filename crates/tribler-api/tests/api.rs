@@ -52,9 +52,7 @@ async fn spawn_server() -> TestServer {
         CoreSession::start_offline(CoreConfig::offline(dir.path().into()), Notifier::new())
             .await
             .unwrap();
-    let app = build(AppState {
-        session: session.clone(),
-    });
+    let app = build(AppState::new(session.clone()));
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move {
@@ -458,7 +456,7 @@ async fn statistics_endpoints() {
         .unwrap();
     assert_eq!(resp.status(), 200);
     let body: serde_json::Value = resp.json().await.unwrap();
-    assert!(body["dirspace"]["free"].as_u64().unwrap() > 0);
+    assert!(body["statistics"]["free"].as_u64().unwrap() > 0);
     srv.session.stop().await;
 }
 
@@ -863,6 +861,179 @@ async fn versioning_et_logging() {
         .await
         .unwrap();
     assert_eq!(resp.status(), 200);
+    srv.session.stop().await;
+}
+
+#[tokio::test]
+async fn events_info_et_dirspace_contrat_python() {
+    let srv = spawn_server().await;
+
+    // GET /api/events/info : kwargs du message initial Python.
+    let resp = srv
+        .client
+        .get(srv.url("/api/events/info"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert!(body["version"].is_string());
+    assert!(body["public_key"].is_string());
+    assert!(body["sessions"].is_string()); // str cote Python
+
+    // PUT /api/statistics/dirspace {"directory"} : reponse
+    // {"statistics": {total, used, free}} (contrat Python).
+    let resp = srv
+        .client
+        .put(srv.url("/api/statistics/dirspace"))
+        .json(&serde_json::json!({"directory": "."}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert!(body["statistics"]["total"].as_u64().unwrap() > 0);
+    assert!(body["statistics"].get("free").is_some());
+
+    // Chemin inexistant profond : le Python remonte au premier
+    // ancetre existant -> les stats du disque sont retournees.
+    let resp = srv
+        .client
+        .put(srv.url("/api/statistics/dirspace"))
+        .json(&serde_json::json!({"directory": "./nonexistent-dir-xyz/deep"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    assert!(resp.json::<serde_json::Value>().await.unwrap()["statistics"]["total"].is_u64());
+
+    // GET ?path= reste disponible (confort, meme reponse).
+    let resp = srv
+        .client
+        .get(srv.url("/api/statistics/dirspace?path=."))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    assert!(resp.json::<serde_json::Value>().await.unwrap()["statistics"]["total"].is_u64());
+
+    srv.session.stop().await;
+}
+
+#[tokio::test]
+async fn clierrors_journalise_puis_vide() {
+    let srv = spawn_server().await;
+
+    // Echec d'ajout avec cli=true : l'erreur entre dans la file.
+    let resp = srv
+        .client
+        .put(srv.url("/api/downloads"))
+        .json(&serde_json::json!({"cli": true}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 400);
+
+    // La file est visible dans le champ `clierrors` de la liste.
+    let body: serde_json::Value = srv
+        .client
+        .get(srv.url("/api/downloads"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(body["clierrors"], 1);
+
+    // GET /api/downloads/clierrors : retourne et vide la file.
+    let body: serde_json::Value = srv
+        .client
+        .get(srv.url("/api/downloads/clierrors"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(body["errors"].as_array().unwrap().len(), 1);
+    assert_eq!(body["errors"][0], "uri parameter missing");
+
+    // Videe : compteur a 0, drain suivant vide.
+    let body: serde_json::Value = srv
+        .client
+        .get(srv.url("/api/downloads"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(body["clierrors"], 0);
+    let body: serde_json::Value = srv
+        .client
+        .get(srv.url("/api/downloads/clierrors"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(body["errors"].as_array().unwrap().len(), 0);
+
+    // Sans `cli`, une erreur n'entre pas dans la file.
+    let resp = srv
+        .client
+        .put(srv.url("/api/downloads"))
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 400);
+    let body: serde_json::Value = srv
+        .client
+        .get(srv.url("/api/downloads"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(body["clierrors"], 0);
+
+    srv.session.stop().await;
+}
+
+#[tokio::test]
+async fn downloads_eta_est_un_nombre() {
+    // Contrat Python : `eta` est un float de secondes (pas une
+    // chaine formatee).
+    let srv = spawn_server().await;
+    let dir = srv._dir.path().join("dl");
+    std::fs::create_dir_all(&dir).unwrap();
+    let bytes = tribler_test_support::test_torrent_bytes("eta-test", 16 * 1024);
+    let tp = dir.join("t.torrent");
+    std::fs::write(&tp, &bytes).unwrap();
+    let resp = srv
+        .client
+        .put(srv.url("/api/downloads"))
+        .json(&serde_json::json!({"torrent": tp.display().to_string()}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = srv
+        .client
+        .get(srv.url("/api/downloads"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(body["downloads"][0]["eta"].is_f64() || body["downloads"][0]["eta"].is_u64());
+    assert_eq!(body["downloads"][0]["hops"], 0);
+    assert_eq!(body["downloads"][0]["anon_download"], false);
     srv.session.stop().await;
 }
 

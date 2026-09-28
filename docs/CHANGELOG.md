@@ -3,6 +3,40 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Arbitrage étape 12 + contrat API downloads/events (2026-09-27)
+
+- **Étape 12 repasse `[i]`** : les preuves existantes couvrent
+  l'interopérabilité *protocolaire* (pyipv8 + Tribler 8.4.3 relais),
+  mais pas littéralement « téléchargement via le réseau Tribler
+  existant » — critère conservé ouvert ; le bloquant documenté est
+  l'absence de sortie Tribler (`exitnode_enabled` non exposable).
+  Banc de clôture retenu : rqbit → circuit → sortie pyipv8
+  (`EXIT_BT`) → seeder.
+- **`eta`** : chaîne formatée → **float de secondes**, formule
+  `get_eta()` Python `(1-progress)*size/max(download_rate,1e-6)`.
+- **`num_seeds`/`num_peers`** : remplis depuis le scrape
+  `torrent_state` du torrent checker (`max(scraped, connectés)`),
+  au lieu de `0` constant. `num_connected_seeds` reste 0 —
+  librqbit ne distingue pas seeds/leechers connectés (divergence
+  documentée).
+- **`PUT /api/statistics/dirspace`** : route Python exacte
+  (corps `{"directory"}`, réponse `{"statistics": {…}}`, remontée
+  au premier ancêtre existant, 404 sinon) ; le `GET ?path=` reste
+  en confort avec la même forme de réponse.
+- **`GET /api/events/info`** : implémenté (`{"public_key",
+  "version", "sessions"}`) avec compteur réel de flux SSE ouverts
+  (+1/−1 à la connexion/déconnexion), partagé avec le message
+  `events_start`.
+- **`GET /api/downloads/clierrors`** : implémenté — file
+  `unhandled_cli_log` fidèle (insertions en tête, borne 100,
+  drainée par le GET), alimentée par les erreurs de
+  `PUT /api/downloads` quand `cli:true` ; champ `clierrors` de
+  `GET /api/downloads` = longueur de la file.
+- `hops`/`anon_download` : déjà remplis (étape 15) — désormais
+  couverts par un test de contrat.
+- Tests : `events_info_et_dirspace_contrat_python`,
+  `clierrors_journalise_puis_vide`, `downloads_eta_est_un_nombre`.
+
 ## Durcissement des bancs d'interop (2026-09-27)
 
 Les bancs produisent des journaux partagés : on retire ce qui n'a pas

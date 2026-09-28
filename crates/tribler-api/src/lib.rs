@@ -33,7 +33,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let _app = build(AppState { session });
+        let _app = build(AppState::new(session));
         // Pas d'assertion reseau ici : les tests HTTP complets sont
         // dans tests/ (a venir avec tribler-daemon).
     }

@@ -15,6 +15,7 @@ use std::convert::Infallible;
 
 use axum::extract::State;
 use axum::response::sse::{Event, KeepAlive, Sse};
+use axum::Json;
 use futures_util::stream::{self, Stream};
 use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 use tokio_stream::wrappers::BroadcastStream;
@@ -71,11 +72,26 @@ fn notification_to_event(n: &Notification) -> Option<(String, serde_json::Value)
     Some((topic, kwargs))
 }
 
+/// Garde-compteur : +1 a la connexion SSE, -1 quand le flux est
+/// droppe (equivalent de la liste `events_responses` Python).
+struct SessionGuard(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+
+impl Drop for SessionGuard {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
 /// `GET /api/events` — ouvre le flux d'evenements SSE.
 pub async fn get_events(
     State(state): State<AppState>,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
     let rx = state.session.notifier().subscribe();
+    let sessions = state
+        .sse_sessions
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        + 1;
+    let guard = SessionGuard(state.sse_sessions.clone());
 
     // Message initial (equivalent de `initial_message()` Python).
     let initial = stream::once(async move {
@@ -84,7 +100,7 @@ pub async fn get_events(
                 serde_json::json!({
                     "public_key": "",
                     "version": API_VERSION,
-                    "sessions": "1",
+                    "sessions": sessions.to_string(),
                 })
                 .to_string(),
             ),
@@ -98,5 +114,24 @@ pub async fn get_events(
         Err(BroadcastStreamRecvError::Lagged(_)) => None,
     });
 
-    Sse::new(initial.chain(events)).keep_alive(KeepAlive::default())
+    // Le garde est capture dans la closure : il vit tant que le flux
+    // vit, et est droppe quand le client se deconnecte.
+    let stream = initial.chain(events).map(move |ev| {
+        let _ = &guard;
+        ev
+    });
+    Sse::new(stream).keep_alive(KeepAlive::default())
+}
+
+/// `GET /api/events/info` — info generale de l'endpoint
+/// (`get_info` Python : retourne les `kwargs` du message initial).
+pub async fn get_events_info(State(state): State<AppState>) -> Json<serde_json::Value> {
+    Json(serde_json::json!({
+        "public_key": "",
+        "version": API_VERSION,
+        "sessions": state
+            .sse_sessions
+            .load(std::sync::atomic::Ordering::Relaxed)
+            .to_string(),
+    }))
 }

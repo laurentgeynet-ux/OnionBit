@@ -42,15 +42,38 @@ pub async fn get_downloads(
             let hops = hops_map.get(&s.info_hash).copied().unwrap_or(0);
             info.hops = hops;
             info.anon_download = hops > 0;
+            // Sante scrapee par le torrent checker (`num_seeds`/
+            // `num_peers` = max(lt, scraped) en Python ; librqbit
+            // n'expose pas les compteurs swarm lt — on retient le
+            // scrape, coherent avec `metadata/torrents/.../health`).
+            if let Some(ih) = tribler_crypto::hash::from_hex(&s.info_hash) {
+                if let Ok(Some(ts)) = state
+                    .session
+                    .db()
+                    .with(|c| tribler_db::health::get_torrent_state(c, &ih))
+                {
+                    info.num_seeds = ts.seeders.max(0) as u32;
+                    info.num_peers = info.num_peers.max(ts.leechers.max(0) as u32);
+                }
+            }
             info
         })
         .collect();
     Json(serde_json::json!({
         "downloads": downloads,
-        // `checkpoints`/`clierrors` : champs Python, emis pour compat.
+        // `checkpoints` : champ Python emis pour compat. `clierrors`
+        // = taille de la file d'erreurs CLI non lues (comme Python).
         "checkpoints": { "total": downloads.len(), "loaded": downloads.len(), "all_loaded": true },
-        "clierrors": 0,
+        "clierrors": state.unhandled_cli.lock().unwrap().len(),
     }))
+}
+
+/// `GET /api/downloads/clierrors` — vide la file des erreurs CLI
+/// (`get_unhandled_cli` Python : `{"errors": [...]}`, drain).
+pub async fn get_cli_errors(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let mut log = state.unhandled_cli.lock().unwrap();
+    let errors: Vec<String> = log.drain(..).collect();
+    Json(serde_json::json!({ "errors": errors }))
 }
 
 /// Query params acceptes par `GET /api/downloads`.
@@ -84,6 +107,18 @@ pub struct AddDownloadRequest {
     pub safe_seeding: Option<bool>,
     /// Demarrer en pause.
     pub paused: Option<bool>,
+    /// Requete emise depuis un CLI : les erreurs sont journalisees
+    /// dans la file `clierrors` (parametre `cli` Python).
+    pub cli: Option<bool>,
+}
+
+/// Enregistre l'erreur dans la file CLI si `cli` est vrai, comme
+/// `_add_err` Python, puis la retourne au client.
+fn add_err(state: &AppState, msg: String, cli: bool) -> ApiError {
+    if cli {
+        state.push_cli_error(msg.clone());
+    }
+    ApiError::bad_request(msg)
 }
 
 /// `PUT /api/downloads` — ajoute un telechargement.
@@ -94,10 +129,13 @@ pub async fn add_download(
     State(state): State<AppState>,
     Json(req): Json<AddDownloadRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    let cli = req.cli.unwrap_or(false);
     let hops = req.anon_hops.unwrap_or(0);
     if hops > 0 && !req.safe_seeding.unwrap_or(false) {
-        return Err(ApiError::bad_request(
-            "Cannot set anonymous download without safe seeding enabled",
+        return Err(add_err(
+            &state,
+            "Cannot set anonymous download without safe seeding enabled".into(),
+            cli,
         ));
     }
     let paused = req.paused.unwrap_or(false);
@@ -106,17 +144,17 @@ pub async fn add_download(
             .session
             .add_download_anon(uri, paused, hops)
             .await
-            .map_err(invalid_state_as_bad_request)?
+            .map_err(|e| add_err(&state, e.to_string(), cli))?
     } else if let Some(path) = &req.torrent {
         let bytes = std::fs::read(path)
-            .map_err(|e| ApiError::bad_request(format!("lecture du .torrent: {e}")))?;
+            .map_err(|e| add_err(&state, format!("lecture du .torrent: {e}"), cli))?;
         state
             .session
             .add_torrent_bytes_anon(bytes, paused, hops)
             .await
-            .map_err(invalid_state_as_bad_request)?
+            .map_err(|e| add_err(&state, e.to_string(), cli))?
     } else {
-        return Err(ApiError::bad_request("missing uri or torrent"));
+        return Err(add_err(&state, "uri parameter missing".into(), cli));
     };
     Ok(Json(serde_json::json!({
         "started": true,

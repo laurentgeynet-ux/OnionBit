@@ -79,8 +79,8 @@ pub async fn get_ipv8_stats(State(state): State<AppState>) -> Json<serde_json::V
     Json(serde_json::json!({ "ipv8_statistics": stats }))
 }
 
-/// `PUT /api/statistics/dirspace?path=...` — espace disque du
-/// repertoire (`shutil.disk_usage` Python).
+/// `GET /api/statistics/dirspace?path=...` — variante de confort de
+/// la route Python (voir `put_dirspace_stats`).
 #[derive(Debug, Deserialize)]
 pub struct DirspaceQuery {
     /// Repertoire a mesurer.
@@ -90,23 +90,54 @@ pub struct DirspaceQuery {
 pub async fn get_dirspace_stats(
     Query(q): Query<DirspaceQuery>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let path = q
-        .path
-        .filter(|p| !p.is_empty())
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
-    let total = fs2::total_space(&path).map_err(|e| {
-        ApiError::bad_request(format!("impossible de mesurer {}: {e}", path.display()))
-    })?;
-    let free = fs2::free_space(&path).map_err(|e| {
-        ApiError::bad_request(format!("impossible de mesurer {}: {e}", path.display()))
-    })?;
-    Ok(Json(serde_json::json!({
-        "dirspace": {
-            "path": path.display().to_string(),
-            "total": total,
-            "used": total.saturating_sub(free),
-            "free": free,
+    dirspace_response(
+        q.path
+            .filter(|p| !p.is_empty())
+            .map(std::path::PathBuf::from),
+    )
+}
+
+/// Corps de `PUT /api/statistics/dirspace` (`DirspaceStatsRequestBody`
+/// Python : `{"directory": "..."}` — sans `directory`, le Python
+/// retombe sur `libtorrent/download_defaults/saveas`).
+#[derive(Debug, Deserialize)]
+pub struct DirspaceBody {
+    /// Repertoire a mesurer.
+    pub directory: Option<String>,
+}
+
+/// `PUT /api/statistics/dirspace` — route Python exacte
+/// (`web.put("/dirspace", ...)` dans `statistics_endpoint.py`) :
+/// `{"statistics": {"total","used","free"}}` du premier ancetre
+/// existant du repertoire demande.
+pub async fn put_dirspace_stats(
+    axum::Json(body): axum::Json<DirspaceBody>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    dirspace_response(
+        body.directory
+            .filter(|d| !d.is_empty())
+            .map(std::path::PathBuf::from),
+    )
+}
+
+/// Fidele a `get_dirspace_stats` Python : `shutil.disk_usage` sur le
+/// premier ancetre existant du chemin (404 "No stats for directory!"
+/// si aucun n'existe).
+fn dirspace_response(dir: Option<std::path::PathBuf>) -> Result<Json<serde_json::Value>, ApiError> {
+    let dir = dir.unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+    let mut path = Some(dir.as_path());
+    while let Some(p) = path {
+        if let Ok(total) = fs2::total_space(p) {
+            let free = fs2::free_space(p).unwrap_or(0);
+            return Ok(Json(serde_json::json!({
+                "statistics": {
+                    "total": total,
+                    "used": total.saturating_sub(free),
+                    "free": free,
+                }
+            })));
         }
-    })))
+        path = p.parent();
+    }
+    Err(ApiError::not_found("No stats for directory!"))
 }

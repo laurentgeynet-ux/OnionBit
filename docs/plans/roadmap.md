@@ -156,7 +156,7 @@ ne sont donc pas « terminées » au sens strict) · `[x]` terminée.
   mise à jour d'un pair connu (objet partagé Python). Observables
   ajoutés : `intro_request_count`/`intro_response_count`/
   `puncture_count` + `send_puncture_request` publique.
-- [x] **Étape 12. TunnelCommunity : circuits et hidden seeding.**
+- [i] **Étape 12. TunnelCommunity : circuits et hidden seeding.**
   `tribler-tunnel` : construction de circuits en onion routing (1/2/3
   sauts), chiffrement ChaCha20-Poly1305 par saut (`tribler-crypto`), hidden
   seeding, proxy SOCKS5 local. Jalon : téléchargement anonyme réel via
@@ -247,9 +247,15 @@ ne sont donc pas « terminées » au sens strict) · `[x]` terminée.
   `create`/`created` puis circuit **2 sauts Rust → Tribler (relais)
   → Rust (sortie)** avec echo uTP de bout en bout (Tribler ne sort
   pas : `exitnode_enabled` non exposable — relais seul, par
-  conception). **Reste** : rien de bloquant documente — l'etape est
-  validee au niveau protocole (RQBIT reel via circuits e2e Rust +
-  relais via le vrai client Tribler).
+  conception). **Arbitrage du jalon** : ces preuves valident
+  l'interoperabilite **protocolaire** avec le client Tribler reel,
+  mais pas litteralement « telechargement via le reseau Tribler
+  existant » — ce critere reste **ouvert**. Le seul element bloquant
+  est l'absence d'une sortie Tribler reelle (`exitnode_enabled` non
+  exposable par configuration) : le telechargement anonyme complet
+  n'est prouve qu'en Rust↔Rust (`anon_download`) ; le banc retenu
+  pour clore le critere est rqbit → circuit → sortie pyipv8
+  (`EXIT_BT`) → seeder, sans attendre un essaim Tribler deploye.
 - [x] **Étape 13. Politiques de sécurité réseau et kill switch.**
   `tribler-network-policy` : crate de politiques pures sans dépendance
   vers `tribler-ipv8`/`tribler-bittorrent` — `address_policy::IpPolicy`

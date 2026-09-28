@@ -57,9 +57,8 @@ pub struct DownloadInfo {
     pub status_code: i32,
     /// Taille totale.
     pub size: u64,
-    /// ETA formatee (`"3m 20s"`) — chaine, contrairement au float
-    /// Python (cf. mapping doc).
-    pub eta: String,
+    /// ETA en secondes (float, comme `download_state.get_eta()`).
+    pub eta: f64,
     /// Pairs connectes (leechers + seeds confondus cote librqbit).
     pub num_peers: u32,
     /// Seeds connus (0 si trackers non scrapes).
@@ -123,6 +122,14 @@ impl DownloadInfo {
             .as_deref()
             .map(|n| video_exts.iter().any(|e| n.ends_with(e)))
             .unwrap_or(false);
+        // Fidele a `DownloadState.get_eta()` Python :
+        // `(1 - progress) * total_size / max(download_rate, 1e-6)`
+        // (0.0 sans taille connue ; progress=1 -> 0).
+        let eta = if s.total_bytes == 0 {
+            0.0
+        } else {
+            (1.0 - s.progress()) * s.total_bytes as f64 / (s.download_speed as f64).max(0.000001)
+        };
         Self {
             name: s.name.clone().unwrap_or_default(),
             progress: s.progress(),
@@ -132,7 +139,7 @@ impl DownloadInfo {
             status: name,
             status_code: code.0,
             size: s.total_bytes,
-            eta: s.eta_human.clone().unwrap_or_default(),
+            eta,
             num_peers: s.peers_live,
             num_seeds: 0,
             num_connected_peers: s.peers_live,

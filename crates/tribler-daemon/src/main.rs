@@ -102,9 +102,7 @@ async fn main() -> ExitCode {
         }
     };
 
-    let app = build(AppState {
-        session: session.clone(),
-    });
+    let app = build(AppState::new(session.clone()));
 
     // Arret propre : Ctrl-C -> session.stop() -> fin du serveur.
     let shutdown = async move {
