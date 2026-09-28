@@ -3,6 +3,36 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Correctif : `TunnelCommunityConfig.min_circuits` jamais branché (2026-09-28)
+
+Suite des deux correctifs précédents (timeout de saut + rattrapage
+`exit_flags`) : le kill switch se désarme bien et le SOCKS5 accepte la
+connexion HTTP, mais les requêtes tracker finissent en `timeout
+http-response` en boucle — la seule lane construite ne dispose que
+d'**un seul** circuit `READY`, et si son dernier saut annonce
+`EXIT_HTTP` sans le servir réellement (pair instable ou mensonger du
+réseau public IPv8), il n'existe aucune alternative : le watchdog ne
+retente jamais tant qu'un circuit `READY` existe (peu importe s'il
+est réellement fonctionnel).
+
+Cause : `TunnelCommunityConfig.min_circuits` (défaut `3`, section
+`tunnel_community` du fichier de config) existait dans
+`docs/reference_tribler` mais n'était **jamais lu** — `spawn_
+circuit_watchdog` (`tribler-core/src/ipv8_stack.rs`) appelait
+`build_circuits_if_needed(hops, 1)` en dur, donc une seule lane par
+`hops` ne maintenait jamais plus d'un circuit, quelle que soit la
+config.
+
+- `Ipv8Config::min_circuits` (nouveau champ, défaut `DEFAULT_MIN_
+  CIRCUITS = 3`) : branché depuis `DaemonConfig::tunnel_community.
+  min_circuits` (`daemon_config.rs`), stocké sur `Ipv8Stack` et
+  transmis à `spawn_circuit_watchdog`, qui l'utilise désormais à la
+  place du `1` en dur pour les deux appels à `build_circuits_if_
+  needed`. `select_http_circuit` (SOCKS5) tire déjà au hasard parmi
+  tous les circuits `READY` portant `EXIT_HTTP` (`usable.shuffle`) :
+  avec plusieurs circuits en parallèle, un exit défaillant n'empêche
+  plus la lane de fonctionner.
+
 ## Correctif : `exit_flags` jamais rattrapé après une introduction tardive (2026-09-28)
 
 Suite du correctif du timeout de saut : une fois celui-ci en place, un

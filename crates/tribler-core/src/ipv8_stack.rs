@@ -101,6 +101,14 @@ pub struct Ipv8Config {
     /// decouverte ; sert de reference a `DriftMeasurementStrategy`
     /// (`/api/ipv8/asyncio/drift`).
     pub walker_interval: f64,
+    /// `TunnelSettings.min_circuits` Python : nombre de circuits
+    /// `READY` (ou en cours) maintenus par lane anonyme. Redondance
+    /// necessaire — un unique circuit dont le dernier saut annonce
+    /// `EXIT_HTTP` sans le servir reellement (pair instable ou
+    /// mensonger du reseau public) bloque la lane pour toujours
+    /// (`aucun circuit HTTP pret`/timeouts) puisque le watchdog ne
+    /// retente jamais tant qu'un circuit `READY` existe.
+    pub min_circuits: u32,
 }
 
 impl Ipv8Config {
@@ -121,6 +129,7 @@ impl Ipv8Config {
             tribler_tunnel_community: true,
             enable_dht: true,
             walker_interval: DEFAULT_WALKER_INTERVAL,
+            min_circuits: DEFAULT_MIN_CIRCUITS,
         }
     }
 }
@@ -139,6 +148,7 @@ impl Default for Ipv8Config {
             // `enabled` est vrai de toute facon.
             enable_dht: true,
             walker_interval: DEFAULT_WALKER_INTERVAL,
+            min_circuits: DEFAULT_MIN_CIRCUITS,
         }
     }
 }
@@ -176,6 +186,9 @@ const DHT_TOKEN_MAINT_INTERVAL: std::time::Duration = std::time::Duration::from_
 
 /// `walker_interval` par defaut (`ipv8.walker_interval` Tribler : 0,5 s).
 pub const DEFAULT_WALKER_INTERVAL: f64 = 0.5;
+/// `TunnelSettings.min_circuits` par defaut (pyipv8/Tribler et
+/// `TunnelCommunityConfig::default()`).
+pub const DEFAULT_MIN_CIRCUITS: u32 = 3;
 
 /// Tache de maintenance DHT (`PingChurn.take_step` +
 /// `node_maintenance`/`value_maintenance`/`token_maintenance` +
@@ -255,6 +268,7 @@ fn spawn_circuit_watchdog(
     tunnel: Arc<TunnelCommunity>,
     hops: usize,
     ks: Arc<tribler_network_policy::kill_switch::KillSwitch>,
+    min_circuits: usize,
 ) -> Arc<tokio::sync::watch::Sender<bool>> {
     // Fail-closed des la creation de la lane (avant tout circuit).
     ks.engage_scoped("circuits", format!("aucun circuit READY a {hops} sauts"));
@@ -263,8 +277,14 @@ fn spawn_circuit_watchdog(
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(CIRCUIT_PROBE_INTERVAL);
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-        // Tentative immediate de construction de circuit
-        let _ = tunnel.build_circuits_if_needed(hops, 1).await;
+        // Tentative immediate de construction de circuit(s). Plusieurs
+        // circuits en parallele (`min_circuits`, `TunnelSettings`
+        // pyipv8) sont necessaires : un unique circuit dont le
+        // dernier saut annonce `EXIT_HTTP` sans le servir reellement
+        // (pair instable/mensonger du reseau public) bloque
+        // definitivement la lane sinon, faute d'alternative pour le
+        // selecteur SOCKS5 (`select_http_circuit`).
+        let _ = tunnel.build_circuits_if_needed(hops, min_circuits).await;
         // Premier tick immediat : absorbe (l'evaluation initiale est
         // deja faite ci-dessus).
         tick.tick().await;
@@ -273,7 +293,7 @@ fn spawn_circuit_watchdog(
                 _ = stop_rx.changed() => break,
                 _ = changes.changed() => {}
                 _ = tick.tick() => {
-                    let _ = tunnel.build_circuits_if_needed(hops, 1).await;
+                    let _ = tunnel.build_circuits_if_needed(hops, min_circuits).await;
                 }
             }
             if tunnel.ready_circuits_of_hops(hops).is_empty() {
@@ -641,6 +661,8 @@ pub struct Ipv8Stack {
     downloads_dir: PathBuf,
     /// Registre partage des taches nommees (`/api/ipv8/asyncio/tasks`).
     tasks: crate::asyncio::TaskRegistry,
+    /// `TunnelSettings.min_circuits` (cf. `Ipv8Config::min_circuits`).
+    min_circuits: usize,
 }
 
 impl Ipv8Stack {
@@ -858,6 +880,7 @@ impl Ipv8Stack {
             engine_config: engine_config.clone(),
             downloads_dir: downloads_dir.to_path_buf(),
             tasks,
+            min_circuits: config.min_circuits.max(1) as usize,
         }))
     }
 
@@ -998,6 +1021,7 @@ impl Ipv8Stack {
             engine
                 .kill_switch()
                 .expect("kill switch absent avec proxy configure"),
+            self.min_circuits,
         );
         let lane = AnonLane {
             socks_addr,

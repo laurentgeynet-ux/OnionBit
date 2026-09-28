@@ -652,6 +652,7 @@ impl DaemonConfig {
             tribler_tunnel_community: true,
             enable_dht: self.dht_discovery.enabled,
             walker_interval: self.ipv8.walker_interval,
+            min_circuits: self.tunnel_community.min_circuits,
         };
 
         crate::CoreConfig {
