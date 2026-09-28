@@ -19,6 +19,7 @@ mod autostart;
 mod console;
 mod https;
 mod instance;
+mod logs;
 mod shutdown;
 mod tray;
 
@@ -93,10 +94,11 @@ use tracing_subscriber::util::SubscriberInitExt;
 
 /// Initialise le logging `tracing` (fmt, filtre `RUST_LOG`, info par
 /// defaut — cf. AGENTS.md "Niveaux de log").
-/// Ecrit dans le fichier tournant `state_dir/logs/tribler.log`
-/// (exploite par l'endpoint `/api/logging` et l'onglet Diagnostic de
-/// l'UI) et sur stdout quand une console est disponible (`--console`
-/// ou redirection du lanceur).
+/// Ecrit dans `state_dir/logs/tribler.log` — fichier du run courant,
+/// le precedent est archive en `tribler.log.N` (cf. `logs::rotate`,
+/// `logging/max_files`) ; exploite par l'endpoint `/api/logging` et
+/// l'onglet Diagnostic de l'UI — et sur stdout quand une console est
+/// disponible (`--console` ou redirection du lanceur).
 fn init_tracing(state_dir: &std::path::Path, daemon_config: &DaemonConfig) {
     // Directive d'origine (RUST_LOG ou `info`) — `PUT
     // /api/ipv8/asyncio/debug` recharge le filtre a chaud :
@@ -119,7 +121,12 @@ fn init_tracing(state_dir: &std::path::Path, daemon_config: &DaemonConfig) {
     let (filter, filter_reload) = tracing_subscriber::reload::Layer::new(filter);
     let logs_dir = state_dir.join("logs");
     let _ = std::fs::create_dir_all(&logs_dir);
-    let file_appender = tracing_appender::rolling::daily(&logs_dir, "tribler.log");
+    // Un fichier par run : `tribler.log` = run courant, le precedent
+    // est archive (`tribler.log.1`…) selon `logging/max_files` — plus
+    // lisible que la rotation quotidienne qui concatene tous les runs
+    // du jour dans le meme fichier.
+    logs::rotate(&logs_dir, daemon_config.logging.max_files);
+    let file_appender = tracing_appender::rolling::never(&logs_dir, "tribler.log");
     let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
     Box::leak(Box::new(guard));
 

@@ -3,6 +3,24 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Logs : un fichier par run + horodatage local (2026-09-29)
+
+- **Rotation par run** : `rolling::daily` concaténait tous les runs du
+  jour dans `tribler.log.YYYY-MM-DD`. Désormais `rolling::never` écrit
+  `tribler.log` (run courant uniquement) ; au démarrage, le fichier
+  précédent est archivé `tribler.log` → `.1`, `.N` → `.N+1`
+  (`crates/tribler-daemon/src/logs.rs`). `/api/logging` reste
+  compatible (filtre préfixe `tribler.log.`).
+- **`logging/max_files`** (nouvelle section `configuration.json`,
+  extension propre au portage, défaut 5) : nombre d'archives
+  conservées. Les anciens fichiers datés `tribler.log.YYYY-MM-DD` ont
+  leur propre rétention `max_files` triée par récence — transition en
+  douceur.
+- **Heure locale** : le formatteur `fmt` par défaut écrivait en UTC
+  (décalage constaté) — `LocalTime::rfc_3339` (feature
+  `tracing-subscriber/local-time`) produit `…T14:32:01+02:00`, repli
+  UTC si l'offset local est indéterminable.
+
 ## Application à chaud des réglages (`POST /api/settings`) (2026-09-29)
 
 Audit du chemin « changement dans l'UI → effet » : la persistance était

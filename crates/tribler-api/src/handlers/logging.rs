@@ -24,9 +24,9 @@ const READ_TAIL: u64 = 1_048_576;
 pub async fn get_logs(State(state): State<AppState>, Query(q): Query<LogsQuery>) -> String {
     let max_lines = q.max_lines.unwrap_or(200);
     let logs_dir = state.session.config().state_dir.join("logs");
-    // `tracing_appender::rolling::daily` suffixe la date : les
-    // fichiers s'appellent `tribler.log` ou `tribler.log.YYYY-MM-DD`
-    // (l'extension est alors la date, pas `log`).
+    // `rolling::never` ecrit `tribler.log` (run courant) ; les archives
+    // sont `tribler.log.N` (rotation par run) ou
+    // `tribler.log.YYYY-MM-DD` (ancienne rotation quotidienne).
     let mut candidates: Vec<_> = std::fs::read_dir(&logs_dir)
         .map(|rd| {
             rd.flatten()

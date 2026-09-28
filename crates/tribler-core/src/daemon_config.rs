@@ -449,6 +449,23 @@ impl Default for WatchFolderConfig {
     }
 }
 
+/// Section `logging` — rétention des fichiers de log (extension
+/// propre au portage, absente de `TriblerConfig` Python).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LoggingConfig {
+    /// Nombre de fichiers de run precedent conserves en plus du
+    /// `tribler.log` courant (`tribler.log.1` … `.N` ; `0` = un seul
+    /// fichier ecrase a chaque demarrage).
+    pub max_files: usize,
+}
+
+impl Default for LoggingConfig {
+    fn default() -> Self {
+        Self { max_files: 5 }
+    }
+}
+
 /// Arbre complet de `configuration.json` (équivalent `TriblerConfig`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -483,6 +500,8 @@ pub struct DaemonConfig {
     /// (extension propre au portage, absente de `TriblerConfig` Python ;
     /// `enabled=false` = `--no-tray`).
     pub tray: EnabledSection,
+    /// Section `logging` — rétention des fichiers de log.
+    pub logging: LoggingConfig,
     /// Mode sans GUI.
     pub headless: bool,
     /// Démarrage minimisé (UI — inerte en daemon).
@@ -520,6 +539,7 @@ impl Default for DaemonConfig {
             versioning: VersioningConfig::default(),
             watch_folder: WatchFolderConfig::default(),
             tray: EnabledSection::enabled(),
+            logging: LoggingConfig::default(),
             headless: false,
             start_minimized: false,
             statistics: false,
