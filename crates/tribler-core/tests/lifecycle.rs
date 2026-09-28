@@ -62,3 +62,37 @@ async fn download_supprime_n_est_pas_restaure() {
     assert!(session.downloads().is_empty(), "download supprime restaure");
     session.stop().await;
 }
+
+/// `pause_all`/`resume_all` : tous les telechargements d'une session
+/// basculent ensemble (suspension mobile / arret rapide — etape 19).
+#[tokio::test]
+async fn pause_all_resume_all_basculent_tous_les_telechargements() {
+    let dir = tempfile::tempdir().unwrap();
+    let cfg = CoreConfig::offline(dir.path().to_path_buf());
+    let session = CoreSession::start(cfg, Notifier::new())
+        .await
+        .expect("start");
+
+    let a = session
+        .add_torrent_bytes(tribler_test_support::test_torrent_bytes("a.bin", 42), false)
+        .await
+        .unwrap();
+    let b = session
+        .add_torrent_bytes(tribler_test_support::test_torrent_bytes("b.bin", 42), true)
+        .await
+        .unwrap();
+    assert!(!a.is_paused());
+    assert!(b.is_paused());
+
+    let errors = session.pause_all().await;
+    assert!(errors.is_empty(), "pause_all : {errors:?}");
+    assert!(a.is_paused());
+    assert!(b.is_paused());
+
+    let errors = session.resume_all().await;
+    assert!(errors.is_empty(), "resume_all : {errors:?}");
+    assert!(!a.is_paused());
+    assert!(!b.is_paused());
+
+    session.stop().await;
+}

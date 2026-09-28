@@ -44,8 +44,8 @@ tribler-core / tribler-daemon(mode embedded)
 
 | Changement | Effort | Note |
 | :--- | :--- | :--- |
-| `tribler-mobile` crate façade FFI (UniFFI ou `cbindgen`) | moyen | expose `CoreSession` + `Notification` en callbacks |
-| `CoreSession::pause_all`/`resume_all` | faible | pour la suspension iOS/Doze |
+| `tribler-mobile` crate façade FFI (UniFFI ou `cbindgen`) | moyen | expose `CoreSession` + `Notification` en callbacks — contrat figé dans `docs/plans/mobile_ffi_surface.md` |
+| `CoreSession::pause_all`/`resume_all` | **fait** | implémentés (tous moteurs, erreurs collectées, kill switch respecté) — test `lifecycle::pause_all_resume_all` |
 | Callbacks FFI pour `Notifier` (au lieu de SSE) | faible | même bus d'événements |
 | `state_dir` mobile (`getFilesDir`/`NSDocumentDirectory`) | trivial | paramètre de config |
 | `ipv8` offline par défaut sur mobile | trivial | `Ipv8Config::enabled = false` |
@@ -62,7 +62,9 @@ tribler-core / tribler-daemon(mode embedded)
 
 - [ ] `cargo-ndk` + NDK installé ; `aarch64-linux-android` target
 - [ ] macOS + Xcode pour `aarch64-apple-ios` (cross impossible depuis Windows)
-- [ ] façade FFI `tribler-mobile` créée et testée sur loopback
+- [ ] façade FFI `tribler-mobile` créée et testée sur loopback —
+  surface figée dans `mobile_ffi_surface.md` (fonctions plates JSON,
+  callback notifications, règles suspension/arrêt)
 - [ ] app hôte minimale (Android foreground-service / iOS BGTask)
 
 ## Verdict

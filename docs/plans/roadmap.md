@@ -345,8 +345,11 @@ ne sont donc pas « terminées » au sens strict) · `[x]` terminée.
   d'exécution documenté (`docs/plans/mobile_execution_model.md`) :
   pas de daemon permanent possible — façade FFI `tribler-mobile` +
   service de premier plan ; adaptations requises listées
-  (`pause_all`/`resume_all`, callbacks FFI du `Notifier`,
-  anonymat off par défaut, pas de seeding continu ni d'exit node).
+  (`pause_all`/`resume_all` — **implémentés** —, callbacks FFI du
+  `Notifier`, anonymat off par défaut, pas de seeding continu ni
+  d'exit node). Surface FFI figée dans
+  `docs/plans/mobile_ffi_surface.md` (fonctions plates JSON,
+  callback notifications, règles suspension/arrêt/reprise).
 - [ ] **Étape 19. Builds mobiles.** Android puis iOS — bloqué sur
   l'étape 18 (façade `tribler-mobile` à créer) et les toolchains
   (cargo-ndk/NDK pour Android ; macOS+Xcode obligatoire pour iOS).

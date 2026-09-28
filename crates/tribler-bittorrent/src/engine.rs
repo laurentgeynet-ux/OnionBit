@@ -274,6 +274,43 @@ impl BtEngine {
             .map_err(|e| BtError::Engine(e.to_string()))
     }
 
+    /// Met en pause tous les telechargements (suspension mobile /
+    /// arret rapide). Les pauses unitaires qui echouent sont
+    /// collectees, pas fatales.
+    pub async fn pause_all(&self) -> Vec<String> {
+        let ids: Vec<String> = self
+            .session
+            .with_torrents(|it| it.map(|(id, _)| id.to_string()).collect());
+        let mut errors = Vec::new();
+        for id in ids {
+            if let Err(e) = self.pause(&id).await {
+                errors.push(format!("{id}: {e}"));
+            }
+        }
+        errors
+    }
+
+    /// Reprend tous les telechargements en pause. Respecte le kill
+    /// switch : engage, aucune reprise n'est tente et la raison est
+    /// retournee comme erreur unique.
+    pub async fn resume_all(&self) -> Vec<String> {
+        if let Some(ks) = &self.kill_switch {
+            if let Err(e) = ks.guard() {
+                return vec![e.to_string()];
+            }
+        }
+        let ids: Vec<String> = self
+            .session
+            .with_torrents(|it| it.map(|(id, _)| id.to_string()).collect());
+        let mut errors = Vec::new();
+        for id in ids {
+            if let Err(e) = self.resume(&id).await {
+                errors.push(format!("{id}: {e}"));
+            }
+        }
+        errors
+    }
+
     /// Supprime un telechargement de la session.
     ///
     /// `delete_files` efface aussi les donnees sur disque — ne doit etre

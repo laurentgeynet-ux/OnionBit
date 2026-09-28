@@ -476,6 +476,28 @@ impl CoreSession {
         Ok(())
     }
 
+    /// Met en pause tous les telechargements de tous les moteurs
+    /// (principal + lanes anonymes) — suspension mobile (Doze/iOS)
+    /// et arret rapide. Retourne les erreurs unitaires (non fatales).
+    pub async fn pause_all(&self) -> Vec<String> {
+        let mut errors = Vec::new();
+        for e in self.all_engines() {
+            errors.extend(e.pause_all().await);
+        }
+        errors
+    }
+
+    /// Reprend tous les telechargements en pause. Les lanes dont le
+    /// kill switch est engage ne reprennent pas — leur erreur est
+    /// collectee, les autres moteurs reprennent normalement.
+    pub async fn resume_all(&self) -> Vec<String> {
+        let mut errors = Vec::new();
+        for e in self.all_engines() {
+            errors.extend(e.resume_all().await);
+        }
+        errors
+    }
+
     /// Supprime un telechargement (optionnellement ses fichiers).
     pub async fn remove(&self, id_or_hash: &str, delete_files: bool) -> Result<()> {
         let engine = self

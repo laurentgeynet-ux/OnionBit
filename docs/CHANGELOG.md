@@ -3,6 +3,26 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Préparation étape 19 — façade FFI mobile (2026-09-28)
+
+L'étape 19 (builds mobiles) n'est **pas** démarrée — ce jalon fige
+son contrat d'entrée, conformément à l'ordre d'audit :
+
+- `docs/plans/mobile_ffi_surface.md` : surface FFI minimale —
+  fonctions plates à payloads JSON (`tribler_start`/`stop`,
+  `pause_all`/`resume_all`, `add_download`, `list_downloads`,
+  `download_action`, `set_event_callback`, `free_string`), règles de
+  propriété mémoire et de threading du callback notifications
+  (topics identiques aux trames SSE), règles de cycle de vie
+  (suspension → `pause_all` ; kill → `stop` borné ~2 s), codes
+  d'erreur, choix de binding (UniFFI/JNI Android, cbindgen iOS).
+- `CoreSession::pause_all`/`resume_all` + `BtEngine::pause_all`/
+  `resume_all` : implémentés — itèrent tous les moteurs (principal +
+  lanes anonymes), erreurs unitaires collectées non fatales, kill
+  switch respecté par lane. Test
+  `lifecycle::pause_all_resume_all_basculent_tous_les_telechargements`.
+- `AppState::new(session)` factorisé (constructeur unique).
+
 ## Arbitrage étape 12 + contrat API downloads/events (2026-09-27)
 
 - **Étape 12 repasse `[i]`** : les preuves existantes couvrent
