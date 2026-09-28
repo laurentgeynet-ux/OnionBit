@@ -13,8 +13,8 @@ import 'app_config.dart';
 import 'daemon_api_resolver_native.dart' as resolver;
 
 /// Durée max d'attente du démarrage du daemon (premier run : migration
-/// SQLite + génération de la clé API + bind ; le Tribler Python vise
-/// la même fenêtre dans `demarrer.ps1`).
+/// SQLite + génération de la clé API + bind — même fenêtre que
+/// l'ancien lanceur `demarrer.ps1`).
 const _kStartupTimeout = Duration(seconds: 30);
 const _kPollInterval = Duration(milliseconds: 500);
 /// Timeout d'une sonde HTTP — un daemon vivant répond immédiatement
@@ -82,7 +82,8 @@ File? _daemonExe() {
 }
 
 /// Toute réponse HTTP — y compris 401 sans clé — prouve que l'API est
-/// en vie (même logique que `Test-ApiAlive` de `demarrer.ps1`).
+/// en vie (même logique que le `Test-ApiAlive` de l'ancien
+/// `demarrer.ps1`).
 /// Publique pour les tests (`daemon_launcher_test.dart`).
 Future<bool> isDaemonApiAlive(AppConfig config) async {
   final client = HttpClient()..connectionTimeout = _kProbeTimeout;

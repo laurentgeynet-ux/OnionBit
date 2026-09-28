@@ -44,12 +44,16 @@ try {
     }
 
     Write-Host "== cargo build --profile $Profile --target $Target ==" -ForegroundColor Cyan
-    cargo build --profile $Profile -p tribler-daemon -p tribler-cli --target $Target
+    # cargo n'a pas de profil « debug » : c'est « dev » (mais la sortie
+    # reste sous target\<target>\debug).
+    $cargoProfile = if ($Profile -eq "release") { "release" } else { "dev" }
+    cargo build --profile $cargoProfile -p tribler-daemon -p tribler-cli --target $Target
 
     $out = Join-Path $root "dist\$Target"
     New-Item -ItemType Directory -Force -Path $out | Out-Null
     $suffix = if ($Target -like "*windows*") { ".exe" } else { "" }
-    $src = Join-Path $root "target\$Target\$Profile"
+    $srcDir = if ($Profile -eq "release") { "release" } else { "debug" }
+    $src = Join-Path $root "target\$Target\$srcDir"
     foreach ($bin in @("tribler-daemon", "tribler-cli")) {
         Copy-Item "$src\$bin$suffix" -Destination $out -Force
     }

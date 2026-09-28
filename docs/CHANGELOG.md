@@ -3,6 +3,14 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Suppression des lanceurs `demarrer`/`arreter` (2026-09-28)
+
+Devenus inutiles : `tribler_ui.exe` lance le daemon elle-même
+(`daemon_launcher`) et l'arrêt se fait via « Quitter » du systray ou
+`PUT /api/shutdown` (qui termine réellement le processus depuis
+l'étape 29). `build_dist.ps1` ne les génère plus et nettoie les restes
+des builds précédents dans `dist\`.
+
 ## UI : lancement automatique du daemon (2026-09-28)
 
 Décision V1 de `flutter_architecture.md` implémentée : plus besoin de

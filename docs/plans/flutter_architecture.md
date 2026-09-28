@@ -186,7 +186,9 @@ repository) → `presentation/` (pages, providers, widgets).
   **Implémenté** (2026-09-28) : `daemon_launcher` lance
   `tribler-daemon[.exe]` voisin de l'exe détaché si l'API ne répond
   pas, sonde jusqu'à 30 s ; `TRIBLER_DAEMON_EXE` surcharge le chemin
-  en dev. `demarrer.cmd` devient un simple raccourci d'appoint.
+  en dev. `demarrer.cmd`/`arreter.cmd` supprimés (2026-09-28) —
+  l'UI suffit pour lancer, le systray ou `PUT /api/shutdown` pour
+  arrêter.
 
 ## Stratégie de tests
 
