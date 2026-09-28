@@ -84,9 +84,11 @@ class _DownloadsPageState extends ConsumerState<DownloadsPage> {
                       : null,
                 );
               }
-              return compact
-                  ? _CompactList(downloads: visible)
-                  : _DesktopTable(downloads: visible, selection: selection);
+              return _DownloadsContextMenu(
+                child: compact
+                    ? _CompactList(downloads: visible)
+                    : _DesktopTable(downloads: visible, selection: selection),
+              );
             },
           ),
         ),
@@ -376,7 +378,7 @@ class _DownloadRow extends ConsumerWidget {
       child: InkWell(
         onTap: () => sel.selectOnly(d.infohash),
         onSecondaryTapUp: (details) =>
-            _showDownloadContextMenu(context, ref, details.globalPosition, d),
+            _DownloadsContextMenu.show(context, details.globalPosition, d),
         child: Padding(
           padding: const EdgeInsets.symmetric(
             horizontal: AppSpacing.sm,
@@ -448,238 +450,210 @@ class _DownloadRow extends ConsumerWidget {
   }
 }
 
-/// Ligne d'entrée de menu contextuel (icône + libellé).
-class _MenuRow extends StatelessWidget {
-  const _MenuRow({required this.icon, required this.label});
+/// Menu contextuel d'un téléchargement (`MenuAnchor` Material 3 +
+/// sous-menus `SubmenuButton`) — le clic droit / appui long ouvre le
+/// menu au curseur. « File d'attente » et « Anonymat » sont des
+/// sous-menus : le menu plat devenait plus haut que la fenêtre et
+/// rendait les entrées basses (sauts, suppression) difficiles à
+/// atteindre.
+class _DownloadsContextMenu extends ConsumerStatefulWidget {
+  const _DownloadsContextMenu({required this.child});
 
-  final IconData icon;
-  final String label;
+  final Widget child;
+
+  /// Ouvre le menu de `d` à `position` (coordonnées globales).
+  static void show(BuildContext context, Offset position, Download d) {
+    context
+        .findAncestorStateOfType<_DownloadsContextMenuState>()
+        ?._open(position, d);
+  }
 
   @override
-  Widget build(BuildContext context) => Row(
-    children: [
-      Icon(icon, size: 18),
-      const SizedBox(width: AppSpacing.sm),
-      Text(label),
-    ],
-  );
+  ConsumerState<_DownloadsContextMenu> createState() =>
+      _DownloadsContextMenuState();
 }
 
-/// Affiche le menu contextuel pour un téléchargement (Pause/Resume, dossier, sauts, copier, supprimer).
-Future<void> _showDownloadContextMenu(
-  BuildContext context,
-  WidgetRef ref,
-  Offset position,
-  Download d,
-) async {
-  final notifier = ref.read(downloadsProvider.notifier);
-  final magnetUri =
-      'magnet:?xt=urn:btih:${d.infohash}&dn=${Uri.encodeComponent(d.name.isEmpty ? d.infohash : d.name)}';
+class _DownloadsContextMenuState extends ConsumerState<_DownloadsContextMenu> {
+  final MenuController _controller = MenuController();
+  Download? _target;
 
-  final value = await showMenu<String>(
-    context: context,
-    position: RelativeRect.fromLTRB(
-      position.dx,
-      position.dy,
-      position.dx + 1,
-      position.dy + 1,
-    ),
-    items: [
-      PopupMenuItem(
-        value: d.isPaused ? 'resume' : 'pause',
-        child: Row(
-          children: [
-            Icon(d.isPaused ? Icons.play_arrow : Icons.pause, size: 18),
-            const SizedBox(width: AppSpacing.sm),
-            Text(d.isPaused ? 'Reprendre' : 'Mettre en pause'),
-          ],
+  void _open(Offset position, Download d) {
+    setState(() => _target = d);
+    // Ouvre après le rebuild : `menuChildren` reflète alors le
+    // téléchargement visé (MenuAnchor évalue les enfants à l'ouverture).
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _controller.open(position: position);
+    });
+  }
+
+  /// Exécute une action et rapporte l'erreur en snackbar.
+  void _act(String label, Future<void> future) {
+    future.catchError((Object e) {
+      if (mounted) showDownloadError(context, label, e);
+      return null;
+    });
+  }
+
+  void _toast(String message) {
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final d = _target;
+    return MenuAnchor(
+      controller: _controller,
+      menuChildren: d == null ? const [] : _items(d),
+      child: widget.child,
+    );
+  }
+
+  List<Widget> _items(Download d) {
+    final notifier = ref.read(downloadsProvider.notifier);
+    final magnetUri =
+        'magnet:?xt=urn:btih:${d.infohash}&dn=${Uri.encodeComponent(d.name.isEmpty ? d.infohash : d.name)}';
+
+    MenuItemButton item(IconData icon, String label, void Function() onTap) =>
+        MenuItemButton(
+          leadingIcon: Icon(icon, size: 18),
+          onPressed: onTap,
+          child: Text(label),
+        );
+
+    return [
+      item(
+        d.isPaused ? Icons.play_arrow : Icons.pause,
+        d.isPaused ? 'Reprendre' : 'Mettre en pause',
+        () => _act(
+          d.isPaused ? 'reprise' : 'pause',
+          d.isPaused
+              ? notifier.resume(d.infohash)
+              : notifier.pause(d.infohash),
         ),
       ),
       if (d.destination.isNotEmpty)
-        const PopupMenuItem(
-          value: 'open_folder',
-          child: Row(
-            children: [
-              Icon(Icons.folder_open, size: 18),
-              SizedBox(width: AppSpacing.sm),
-              Text('Ouvrir le dossier'),
-            ],
-          ),
+        item(
+          Icons.folder_open,
+          'Ouvrir le dossier',
+          () => openPath(d.destination),
         ),
-      const PopupMenuDivider(),
-      // — File d'attente (queue_position / auto_managed) —
-      PopupMenuItem(
-        enabled: false,
-        child: Text(
-          'File d\'attente${d.queuePosition >= 0 ? ' — position ${d.queuePosition}' : ''}',
-          style: Theme.of(context).textTheme.labelSmall,
-        ),
-      ),
-      PopupMenuItem(
-        value: 'auto_managed',
-        child: Row(
-          children: [
-            Icon(
-              d.autoManaged ? Icons.check_box : Icons.check_box_outline_blank,
+      const Divider(height: 1),
+      SubmenuButton(
+        leadingIcon: const Icon(Icons.format_list_numbered, size: 18),
+        menuChildren: [
+          MenuItemButton(
+            leadingIcon: Icon(
+              d.autoManaged
+                  ? Icons.check_box
+                  : Icons.check_box_outline_blank,
               size: 18,
             ),
-            const SizedBox(width: AppSpacing.sm),
-            const Text('Gestion automatique (file)'),
-          ],
+            onPressed: () => _act(
+              'file d\'attente',
+              notifier.setAutoManaged(d.infohash, !d.autoManaged),
+            ),
+            child: const Text('Gestion automatique'),
+          ),
+          const Divider(height: 1),
+          item(
+            Icons.vertical_align_top,
+            'Tout en haut',
+            () => _act(
+              'file d\'attente',
+              notifier.moveInQueue(d.infohash, QueueOp.top),
+            ),
+          ),
+          item(
+            Icons.keyboard_arrow_up,
+            'Monter',
+            () => _act(
+              'file d\'attente',
+              notifier.moveInQueue(d.infohash, QueueOp.up),
+            ),
+          ),
+          item(
+            Icons.keyboard_arrow_down,
+            'Descendre',
+            () => _act(
+              'file d\'attente',
+              notifier.moveInQueue(d.infohash, QueueOp.down),
+            ),
+          ),
+          item(
+            Icons.vertical_align_bottom,
+            'Tout en bas',
+            () => _act(
+              'file d\'attente',
+              notifier.moveInQueue(d.infohash, QueueOp.bottom),
+            ),
+          ),
+        ],
+        child: Text(
+          'File d\'attente${d.queuePosition >= 0 ? ' — position ${d.queuePosition}' : ''}',
         ),
       ),
-      const PopupMenuItem(value: 'queue_top', child: _MenuRow(icon: Icons.vertical_align_top, label: 'Tout en haut')),
-      const PopupMenuItem(value: 'queue_up', child: _MenuRow(icon: Icons.keyboard_arrow_up, label: 'Monter')),
-      const PopupMenuItem(value: 'queue_down', child: _MenuRow(icon: Icons.keyboard_arrow_down, label: 'Descendre')),
-      const PopupMenuItem(value: 'queue_bottom', child: _MenuRow(icon: Icons.vertical_align_bottom, label: 'Tout en bas')),
-      const PopupMenuDivider(),
-      // — Réglages individuels —
-      const PopupMenuItem(
-        value: 'rate_limits',
-        child: _MenuRow(icon: Icons.speed, label: 'Limites de débit…'),
-      ),
-      const PopupMenuItem(
-        value: 'seeding_ratio',
-        child: _MenuRow(icon: Icons.balance, label: 'Ratio de seed…'),
-      ),
-      const PopupMenuItem(
-        value: 'recheck',
-        child: _MenuRow(icon: Icons.fact_check_outlined, label: 'Revérifier les données'),
-      ),
-      const PopupMenuItem(
-        value: 'move_storage',
-        child: _MenuRow(icon: Icons.drive_file_move_outlined, label: 'Déplacer le dossier…'),
-      ),
-      const PopupMenuDivider(),
-      PopupMenuItem(
-        value: 'anon_0',
-        child: Row(
-          children: [
-            Icon(d.hops == 0 ? Icons.check : Icons.public, size: 18),
-            const SizedBox(width: AppSpacing.sm),
-            const Text('Anonymat : Direct (0 saut)'),
-          ],
+      SubmenuButton(
+        leadingIcon: const Icon(Icons.shield_outlined, size: 18),
+        menuChildren: [
+          for (final h in const [0, 1, 2, 3])
+            MenuItemButton(
+              leadingIcon: Icon(
+                d.hops == h ? Icons.check : Icons.shield_outlined,
+                size: 18,
+              ),
+              onPressed: () =>
+                  _act('anonymat', notifier.setAnonHops(d.infohash, h)),
+              child: Text(
+                h == 0 ? 'Direct (0 saut)' : '$h saut${h > 1 ? 's' : ''}',
+              ),
+            ),
+        ],
+        child: Text(
+          'Anonymat : ${d.hops == 0 ? 'direct' : '${d.hops} saut${d.hops > 1 ? 's' : ''}'}',
         ),
       ),
-      PopupMenuItem(
-        value: 'anon_1',
-        child: Row(
-          children: [
-            Icon(d.hops == 1 ? Icons.check : Icons.shield_outlined, size: 18),
-            const SizedBox(width: AppSpacing.sm),
-            const Text('Anonymat : 1 saut'),
-          ],
+      const Divider(height: 1),
+      item(
+        Icons.speed,
+        'Limites de débit…',
+        () => showRateLimitsDialog(context, d),
+      ),
+      item(Icons.balance, 'Ratio de seed…', () => showSeedingRatioDialog(context, d)),
+      item(
+        Icons.fact_check_outlined,
+        'Revérifier les données',
+        () => _act('revérification', notifier.recheck(d.infohash)),
+      ),
+      item(
+        Icons.drive_file_move_outlined,
+        'Déplacer le dossier…',
+        () => showMoveStorageDialog(context, d),
+      ),
+      const Divider(height: 1),
+      item(Icons.link, 'Copier le lien magnet', () {
+        Clipboard.setData(ClipboardData(text: magnetUri));
+        _toast('Lien magnet copié');
+      }),
+      item(Icons.copy, 'Copier l\'info-hash', () {
+        Clipboard.setData(ClipboardData(text: d.infohash));
+        _toast('Info-hash copié');
+      }),
+      const Divider(height: 1),
+      MenuItemButton(
+        leadingIcon: Icon(
+          Icons.delete_outline,
+          size: 18,
+          color: Theme.of(context).colorScheme.error,
+        ),
+        onPressed: () => _act('suppression', notifier.remove(d.infohash)),
+        child: Text(
+          'Supprimer',
+          style: TextStyle(color: Theme.of(context).colorScheme.error),
         ),
       ),
-      PopupMenuItem(
-        value: 'anon_2',
-        child: Row(
-          children: [
-            Icon(d.hops == 2 ? Icons.check : Icons.shield_outlined, size: 18),
-            const SizedBox(width: AppSpacing.sm),
-            const Text('Anonymat : 2 sauts'),
-          ],
-        ),
-      ),
-      PopupMenuItem(
-        value: 'anon_3',
-        child: Row(
-          children: [
-            Icon(d.hops == 3 ? Icons.check : Icons.shield_outlined, size: 18),
-            const SizedBox(width: AppSpacing.sm),
-            const Text('Anonymat : 3 sauts'),
-          ],
-        ),
-      ),
-      const PopupMenuDivider(),
-      const PopupMenuItem(
-        value: 'copy_magnet',
-        child: Row(
-          children: [
-            Icon(Icons.link, size: 18),
-            SizedBox(width: AppSpacing.sm),
-            Text('Copier le lien magnet'),
-          ],
-        ),
-      ),
-      const PopupMenuItem(
-        value: 'copy_infohash',
-        child: Row(
-          children: [
-            Icon(Icons.copy, size: 18),
-            SizedBox(width: AppSpacing.sm),
-            Text('Copier l\'info-hash'),
-          ],
-        ),
-      ),
-      const PopupMenuDivider(),
-      const PopupMenuItem(
-        value: 'delete',
-        child: Row(
-          children: [
-            Icon(Icons.delete_outline, size: 18, color: Colors.red),
-            SizedBox(width: AppSpacing.sm),
-            Text('Supprimer', style: TextStyle(color: Colors.red)),
-          ],
-        ),
-      ),
-    ],
-  );
-
-  if (value == null) return;
-  switch (value) {
-    case 'resume':
-      await notifier.resume(d.infohash);
-    case 'pause':
-      await notifier.pause(d.infohash);
-    case 'open_folder':
-      await openPath(d.destination);
-    case 'auto_managed':
-      await notifier.setAutoManaged(d.infohash, !d.autoManaged);
-    case 'queue_up':
-      await notifier.moveInQueue(d.infohash, QueueOp.up);
-    case 'queue_down':
-      await notifier.moveInQueue(d.infohash, QueueOp.down);
-    case 'queue_top':
-      await notifier.moveInQueue(d.infohash, QueueOp.top);
-    case 'queue_bottom':
-      await notifier.moveInQueue(d.infohash, QueueOp.bottom);
-    case 'rate_limits':
-      if (context.mounted) await showRateLimitsDialog(context, d);
-    case 'seeding_ratio':
-      if (context.mounted) await showSeedingRatioDialog(context, d);
-    case 'recheck':
-      try {
-        await notifier.recheck(d.infohash);
-      } catch (e) {
-        if (context.mounted) showDownloadError(context, 'revérification', e);
-      }
-    case 'move_storage':
-      if (context.mounted) await showMoveStorageDialog(context, d);
-    case 'anon_0':
-      await notifier.setAnonHops(d.infohash, 0);
-    case 'anon_1':
-      await notifier.setAnonHops(d.infohash, 1);
-    case 'anon_2':
-      await notifier.setAnonHops(d.infohash, 2);
-    case 'anon_3':
-      await notifier.setAnonHops(d.infohash, 3);
-    case 'copy_magnet':
-      Clipboard.setData(ClipboardData(text: magnetUri));
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Lien magnet copié')),
-        );
-      }
-    case 'copy_infohash':
-      Clipboard.setData(ClipboardData(text: d.infohash));
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Info-hash copié')),
-        );
-      }
-    case 'delete':
-      await notifier.remove(d.infohash);
+    ];
   }
 }
 
@@ -719,7 +693,7 @@ class _CompactList extends ConsumerWidget {
             final pos = box != null
                 ? box.localToGlobal(Offset.zero)
                 : Offset.zero;
-            _showDownloadContextMenu(context, ref, pos + const Offset(50, 50), d);
+            _DownloadsContextMenu.show(context, pos + const Offset(50, 50), d);
           },
           onTap: () => showModalBottomSheet(
             context: context,
