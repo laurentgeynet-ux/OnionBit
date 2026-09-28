@@ -11,6 +11,7 @@
 //! watch_folder) : ajoutes a l'etape 14 du roadmap.
 
 pub mod config;
+pub mod daemon_config;
 pub mod error;
 pub mod ipv8_stack;
 pub mod notifier;
@@ -18,6 +19,7 @@ pub mod services;
 pub mod session;
 
 pub use config::CoreConfig;
+pub use daemon_config::{DaemonConfig, CONFIG_FILENAME};
 pub use error::{CoreError, Result};
 pub use ipv8_stack::{Ipv8Config, Ipv8Stack};
 pub use notifier::{Notification, Notifier};

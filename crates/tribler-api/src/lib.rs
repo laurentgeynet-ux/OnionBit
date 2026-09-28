@@ -9,6 +9,7 @@
 //! l'API Python est documente dans
 //! `docs/reference_tribler/api_rest_mapping.md`.
 
+mod auth;
 pub mod dto;
 pub mod error;
 pub mod handlers;

@@ -46,6 +46,18 @@ impl ApiError {
         }
     }
 
+    /// 401 — cle API absente ou invalide (`ApiKeyMiddleware` Python :
+    /// `{"error": {"handled": true, "message": "Unauthorized access"}}`).
+    pub fn unauthorized() -> Self {
+        Self {
+            status: StatusCode::UNAUTHORIZED,
+            body: ApiErrorBody {
+                handled: true,
+                message: "Unauthorized access".into(),
+            },
+        }
+    }
+
     /// 500 — erreur interne.
     pub fn internal(message: impl Into<String>) -> Self {
         Self {

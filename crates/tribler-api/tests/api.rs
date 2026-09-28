@@ -1087,6 +1087,199 @@ async fn downloads_eta_est_un_nombre() {
     srv.session.stop().await;
 }
 
+// ============================================================================
+// Etape 21 — cle API (ApiKeyMiddleware) + configuration.json persistee
+// ============================================================================
+
+/// Serveur de test dont l'etat est personnalise (cle API, config
+/// daemon).
+async fn spawn_server_with(state_fn: impl FnOnce(CoreSession) -> AppState) -> TestServer {
+    let dir = tempfile::tempdir().unwrap();
+    let session =
+        CoreSession::start_offline(CoreConfig::offline(dir.path().into()), Notifier::new())
+            .await
+            .unwrap();
+    let app = build(state_fn(session.clone()));
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    TestServer {
+        addr,
+        session,
+        client: reqwest::Client::new(),
+        _dir: dir,
+    }
+}
+
+#[tokio::test]
+async fn auth_cle_api_header_query_cookie() {
+    let srv = spawn_server_with(|s| AppState::new(s).with_api_key("cle-de-test")).await;
+
+    // Sans cle -> 401 au format Tribler.
+    let resp = srv
+        .client
+        .get(srv.url("/api/downloads"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 401);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["error"]["handled"], true);
+    assert_eq!(body["error"]["message"], "Unauthorized access");
+
+    // Mauvaise cle -> 401.
+    let resp = srv
+        .client
+        .get(srv.url("/api/downloads"))
+        .header("x-api-key", "mauvaise")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 401);
+
+    // Route inconnue non authentifiee -> 401 (le middleware precede
+    // le routage, comme en Python).
+    let resp = srv
+        .client
+        .get(srv.url("/api/inconnu"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 401);
+
+    // En-tete `X-Api-Key`.
+    let resp = srv
+        .client
+        .get(srv.url("/api/downloads"))
+        .header("X-Api-Key", "cle-de-test")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    // Query `?key=`.
+    let resp = srv
+        .client
+        .get(srv.url("/api/downloads?key=cle-de-test"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    // Cookie `api_key`.
+    let resp = srv
+        .client
+        .get(srv.url("/api/downloads"))
+        .header("cookie", "api_key=cle-de-test; autre=1")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    srv.session.stop().await;
+}
+
+#[tokio::test]
+async fn settings_post_merge_et_persiste_configuration_json() {
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("configuration.json");
+    let session =
+        CoreSession::start_offline(CoreConfig::offline(dir.path().into()), Notifier::new())
+            .await
+            .unwrap();
+    let mut dcfg = tribler_core::DaemonConfig::default();
+    dcfg.ensure_api_key();
+    let key = dcfg.api.key.clone();
+    let srv = {
+        let app = build(
+            AppState::new(session.clone()).with_daemon_config(dcfg, Some(config_path.clone())),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        TestServer {
+            addr,
+            session,
+            client: reqwest::Client::new(),
+            _dir: dir,
+        }
+    };
+
+    // GET : arbre complet + cle API visible (comme `config.configuration`).
+    let resp = srv
+        .client
+        .get(srv.url("/api/settings"))
+        .header("x-api-key", &key)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["settings"]["api"]["key"], key);
+    // Les sections par defaut Python sont presentes.
+    for section in [
+        "ipv8",
+        "libtorrent",
+        "tunnel_community",
+        "rss",
+        "watch_folder",
+        "torrent_checker",
+        "versioning",
+    ] {
+        assert!(body["settings"][section].is_object(), "section {section}");
+    }
+
+    // POST au format Python : l'arbre directement (sans enveloppe
+    // "settings"), merge recursif.
+    let resp = srv
+        .client
+        .post(srv.url("/api/settings"))
+        .header("x-api-key", &key)
+        .json(&serde_json::json!({
+            "rss": { "urls": ["http://127.0.0.1:9/feed"] },
+            "section_inconnue": { "x": 1 }
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    // Le fichier est ecrit et relectible ; la cle inconnue est
+    // conservee (semantique du dict Python).
+    let stored = tribler_core::DaemonConfig::load(&config_path);
+    assert_eq!(stored.rss.urls, vec!["http://127.0.0.1:9/feed".to_string()]);
+    assert_eq!(
+        stored.extra.get("section_inconnue").unwrap()["x"],
+        serde_json::json!(1)
+    );
+    // La cle API est inchangee par le merge.
+    assert_eq!(stored.api.key, key);
+
+    // Le GET reflete la valeur persistee.
+    let resp = srv
+        .client
+        .get(srv.url("/api/settings"))
+        .header("x-api-key", &key)
+        .send()
+        .await
+        .unwrap();
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(
+        body["settings"]["rss"]["urls"],
+        serde_json::json!(["http://127.0.0.1:9/feed"])
+    );
+    assert_eq!(
+        body["settings"]["section_inconnue"]["x"],
+        serde_json::json!(1)
+    );
+
+    srv.session.stop().await;
+}
+
 #[tokio::test]
 async fn shutdown_endpoint_demande_l_arret() {
     let srv = spawn_server().await;

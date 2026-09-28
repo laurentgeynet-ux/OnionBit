@@ -80,7 +80,13 @@ impl CoreSession {
     /// publication de progression.
     pub async fn start(config: CoreConfig, notifier: Notifier) -> Result<Self> {
         std::fs::create_dir_all(&config.state_dir)?;
-        let db = Database::open(&config.db_path())?;
+        // `memory_db` (`db_filename = ":memory:"`) → base volatile,
+        // comme `Database::memory()` des tests.
+        let db = if config.db_filename == ":memory:" {
+            Database::memory()?
+        } else {
+            Database::open(&config.db_path())?
+        };
         let engine = BtEngine::start(config.engine.clone()).await?;
         let db = Arc::new(db);
         let ipv8 = start_ipv8(&config, db.clone()).await?;

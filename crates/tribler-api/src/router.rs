@@ -11,8 +11,9 @@ use axum::Router;
 use crate::handlers::*;
 use crate::state::AppState;
 
-/// Limite de taille du corps HTTP (20 Mo) pour accepter les fichiers .torrent volumineux.
-const MAX_BODY_LIMIT_BYTES: usize = 20 * 1024 * 1024;
+/// Limite de taille du corps HTTP : `MAX_REQUEST_SIZE` Python =
+/// `16 * 1024**2` (`rest_endpoint.py`).
+const MAX_BODY_LIMIT_BYTES: usize = 16 * 1024 * 1024;
 
 /// Construit le routeur complet de l'API (parite
 /// `tribler.core.restapi` autant que le backend le permet).
@@ -155,5 +156,12 @@ pub fn build(state: AppState) -> Router {
             get(versioning::is_upgrading),
         )
         .route("/api/logging", get(logging::get_logs))
+        // `ApiKeyMiddleware` Python : s'applique a toutes les routes
+        // (y compris les 404 — une requete non authentifiee vers un
+        // chemin inconnu recoit 401, pas 404).
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            crate::auth::api_key_auth,
+        ))
         .with_state(state)
 }

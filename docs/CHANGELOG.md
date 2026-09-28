@@ -3,6 +3,37 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Étape 21 — Configuration persistée et clé API (2026-09-28)
+
+- **`DaemonConfig` persistée** (`tribler-core/daemon_config.rs`) :
+  arbre `TriblerConfig` serde (`api`, `ipv8`, `libtorrent` +
+  `download_defaults`, `tunnel_community`, `rss`, `watch_folder`,
+  `torrent_checker`, `dht_discovery`, `versioning`, `statistics`,
+  `state_dir`) lu/écrit dans `state_dir/configuration.json`.
+  Clés inconnues conservées au merge (compat ascendante). `api/key`
+  générée hex (32 car.) au premier démarrage ; `api/http_port_running`
+  réécrit après le bind réel (port `0` = aléatoire, comme Python).
+- **Authentification par clé API** (`tribler-api/auth.rs`) : middleware
+  axum strictement équivalent à `ApiKeyMiddleware` Python — clé lue dans
+  `X-Api-Key`, puis `?key=`, puis le cookie `api_key`, même en loopback ;
+  rejet `401 {"error": {"handled": true, "message": "Unauthorized
+  access"}}`. `DefaultBodyLimit` aligné à 16 Mio (`MAX_REQUEST_SIZE`).
+- **`/api/settings` adossé au fichier** (`tribler-api/handlers/settings.rs`) :
+  `GET` rend l'arbre persisté complet ; `POST` merge récursivement le JSON,
+  réécrit `configuration.json` (équivalent `config.write()`) et applique à
+  chaud les clés connues (`rss`, `watch_folder`, `libtorrent`,
+  `tunnel_community`, `api`, `ipv8`) via `apply_service_settings`.
+- **`tribler-daemon`** : charge `configuration.json`, applique les
+  overrides CLI (`--api`, `--ipv8-port`, `--bootstrap`, …), publie le
+  port réel dans `api/http_port_running` et la clé dans l'`AppState`.
+- **`tribler-cli`** : options `--api-key` et `--state-dir` ; découverte
+  automatique de la clé et du port dans `state_dir/configuration.json`
+  (défaut `.tribler`) quand rien n'est passé explicitement.
+- **Tests** : auth 401/en-tête/query/cookie, round-trip de settings
+  persistés (`tribler-api/tests/api.rs`), e2e daemon avec clé générée +
+  `http_port_running` (`tribler-daemon/tests/daemon.rs`), découverte de
+  clé CLI (`tribler-cli/tests/cli.rs`).
+
 ## Correctif — Parité `/api/libtorrent` (`hop`), création proactive de circuits & garde d'ajout (2026-09-28)
 
 - **Parité protocolaire `/api/libtorrent`** :

@@ -1,12 +1,12 @@
 //! `tribler-daemon` — binaire principal du daemon Tribler-Rust-Torrent.
 //!
-//! Point d'entree du processus : charge la configuration, initialise le
-//! logging (`tracing`), assemble `tribler-core` (session + moteur
-//! BitTorrent + base) puis demarre `tribler-api` pour exposer le plan de
-//! controle local sur `127.0.0.1`. Aucun client (CLI ou future UI
-//! Flutter) ne parle a autre chose qu'a `tribler-api`.
-//!
-//! Etat : etape 8 — BitTorrent + API + DB, sans IPv8 (etapes 9-12).
+//! Point d'entree du processus : charge la configuration persistee
+//! (`state_dir/configuration.json`, equivalent `TriblerConfig`
+//! Python — les flags CLI sont des overrides), initialise le logging
+//! (`tracing`), assemble `tribler-core` (session + moteur BitTorrent +
+//! base) puis demarre `tribler-api` pour exposer le plan de controle
+//! local sur `127.0.0.1` derriere la cle API. Aucun client (CLI ou
+//! future UI Flutter) ne parle a autre chose qu'a `tribler-api`.
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -16,12 +16,7 @@ use clap::Parser;
 use tracing_subscriber::EnvFilter;
 
 use tribler_api::{build, AppState};
-use tribler_core::{CoreConfig, CoreSession, Notifier};
-
-/// Adresse d'ecoute par defaut du plan de controle (loopback
-/// uniquement — l'API n'est jamais exposee sur le reseau local).
-/// Correspond a `DEFAULT_API` de `tribler-cli`.
-const DEFAULT_LISTEN: &str = "127.0.0.1:8085";
+use tribler_core::{CoreConfig, CoreSession, DaemonConfig, Notifier, CONFIG_FILENAME};
 
 /// Repertoire d'etat par defaut (relatif au dossier courant).
 const DEFAULT_STATE_DIR: &str = ".tribler";
@@ -29,16 +24,19 @@ const DEFAULT_STATE_DIR: &str = ".tribler";
 #[derive(Parser)]
 #[command(name = "tribler-daemon", about = "Daemon Tribler-Rust-Torrent")]
 struct Args {
-    /// Adresse d'ecoute de l'API REST/SSE (loopback par defaut).
-    #[arg(long, default_value = DEFAULT_LISTEN)]
-    listen: String,
+    /// Adresse d'ecoute de l'API REST/SSE (loopback uniquement).
+    /// Par defaut : `api/http_host` + `api/http_port` de
+    /// `configuration.json` (port 0 = aleatoire, comme Python — le
+    /// port reel est publie dans `api/http_port_running`).
+    #[arg(long)]
+    listen: Option<String>,
 
-    /// Repertoire d'etat (base SQLite, telechargements).
+    /// Repertoire d'etat (base SQLite, telechargements, configuration.json).
     #[arg(long, default_value = DEFAULT_STATE_DIR)]
     state_dir: PathBuf,
 
     /// Mode offline (tests) : desactive DHT/trackers/ecoute de pairs et la stack IPv8 —
-    /// aucun trafic sortant.
+    /// aucun trafic sortant. La cle API du fichier de configuration reste exigee.
     #[arg(long)]
     offline: bool,
 
@@ -52,12 +50,13 @@ struct Args {
     #[arg(long)]
     no_anonymity: bool,
 
-    /// Port d'ecoute UDP pour la stack IPv8 (defaut 8090, 0 = dynamique).
-    #[arg(long, default_value_t = tribler_core::ipv8_stack::DEFAULT_IPV8_PORT)]
-    ipv8_port: u16,
+    /// Port d'ecoute UDP pour la stack IPv8 (override de
+    /// `ipv8/interfaces[UDPIPv4].port` ; 0 = dynamique).
+    #[arg(long)]
+    ipv8_port: Option<u16>,
 
     /// Pair d'amorcage IPv8 supplementaire au format `ip:port` ou `host:port`
-    /// (repetable, s'ajoute aux noeuds bootstrap par defaut).
+    /// (repetable, s'ajoute aux noeuds bootstrap de la configuration).
     #[arg(long = "bootstrap")]
     bootstrap_peers: Vec<String>,
 }
@@ -95,39 +94,58 @@ async fn main() -> ExitCode {
     let args = Args::parse();
     init_tracing(&args.state_dir);
 
-    let listen: SocketAddr = match args.listen.parse() {
+    // Configuration persistee (`configuration.json`, equivalent de
+    // `TriblerConfigManager` : absent ou corrompu -> defauts ; la cle
+    // API est generee au premier run et le fichier normalise).
+    let config_path = args.state_dir.join(CONFIG_FILENAME);
+    let mut daemon_config = DaemonConfig::load(&config_path);
+    if !config_path.exists() {
+        if let Err(e) = daemon_config.write(&config_path) {
+            tracing::warn!(error = %e, "ecriture initiale de configuration.json impossible");
+        }
+    }
+
+    // Adresse d'ecoute : --listen > api/http_host+http_port du fichier.
+    let listen_str = args.listen.clone().unwrap_or_else(|| {
+        format!(
+            "{}:{}",
+            daemon_config.api.http_host, daemon_config.api.http_port
+        )
+    });
+    let listen: SocketAddr = match listen_str.parse() {
         Ok(a) => a,
         Err(e) => {
-            tracing::error!(error = %e, listen = %args.listen, "adresse --listen invalide");
+            tracing::error!(error = %e, listen = %listen_str, "adresse d'ecoute invalide");
             return ExitCode::FAILURE;
         }
     };
     if !listen.ip().is_loopback() {
         tracing::error!(
             listen = %listen,
-            "--listen doit etre une adresse loopback (127.0.0.1 ou ::1) : \
+            "l'ecoute doit etre une adresse loopback (127.0.0.1 ou ::1) : \
              l'API de controle ne doit jamais etre exposee sur le reseau"
         );
         return ExitCode::FAILURE;
     }
 
+    // CoreConfig : l'arbre persiste + overrides CLI (--offline isole
+    // completement, comme avant).
     let config = if args.offline {
-        CoreConfig::offline(args.state_dir)
+        CoreConfig::offline(args.state_dir.clone())
     } else {
-        let mut cfg = CoreConfig {
-            state_dir: args.state_dir.clone(),
-            downloads_dir: args.state_dir.join("downloads"),
-            ..Default::default()
-        };
-        if !args.no_ipv8 {
-            let mut ipv8 = tribler_core::Ipv8Config::production();
-            ipv8.listen_addr = format!("0.0.0.0:{}", args.ipv8_port);
-            ipv8.enable_anonymity = !args.no_anonymity;
-            if !args.bootstrap_peers.is_empty() {
-                ipv8.bootstrap_peers.extend(args.bootstrap_peers);
-            }
-            cfg.ipv8 = ipv8;
+        let mut cfg = daemon_config.to_core_config(&args.state_dir);
+        if args.no_ipv8 {
+            cfg.ipv8.enabled = false;
         }
+        if args.no_anonymity {
+            cfg.ipv8.enable_anonymity = false;
+        }
+        if let Some(port) = args.ipv8_port {
+            cfg.ipv8.listen_addr = format!("0.0.0.0:{port}");
+        }
+        cfg.ipv8
+            .bootstrap_peers
+            .extend(args.bootstrap_peers.clone());
         cfg
     };
 
@@ -138,6 +156,17 @@ async fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+
+    if !daemon_config.api.http_enabled {
+        // api/http_enabled=false : le daemon tourne sans plan de
+        // controle HTTP (comme Tribler sans REST manager).
+        tracing::warn!("api/http_enabled=false : l'API de controle n'est pas exposee");
+        let _ = tokio::signal::ctrl_c().await;
+        session.stop().await;
+        tracing::info!("daemon arrete proprement");
+        return ExitCode::SUCCESS;
+    }
+
     tracing::info!(listen = %listen, "demarrage de l'API de controle");
 
     let listener = match tokio::net::TcpListener::bind(listen).await {
@@ -149,7 +178,17 @@ async fn main() -> ExitCode {
         }
     };
 
-    let app = build(AppState::new(session.clone()));
+    // Publie le port reel (`api/http_port_running`, lu par les clients
+    // comme tribler-cli — Python fait de meme en fin de demarrage).
+    if let Ok(addr) = listener.local_addr() {
+        daemon_config.api.http_port_running = addr.port();
+        if let Err(e) = daemon_config.write(&config_path) {
+            tracing::warn!(error = %e, "reecriture de configuration.json impossible");
+        }
+    }
+
+    let app =
+        build(AppState::new(session.clone()).with_daemon_config(daemon_config, Some(config_path)));
 
     // Arret propre : Ctrl-C -> session.stop() -> fin du serveur.
     let shutdown = async move {

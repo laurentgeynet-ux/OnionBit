@@ -10,6 +10,17 @@ Convention générale :
 - Erreurs au format `{"error": {"handled": bool, "message": str}}`
   (identique à `rest_manager.py`).
 - Bind `127.0.0.1` uniquement (API de controle locale).
+- **Authentification par clé API** (identique à `ApiKeyMiddleware` de
+  `rest_manager.py`) : chaque requête doit présenter la clé via, par ordre
+  de priorité, l'en-tête `X-Api-Key`, le paramètre de requête `?key=` ou le
+  cookie `api_key` — même en loopback. Réponse en cas d'échec :
+  `401 {"error": {"handled": true, "message": "Unauthorized access"}}`.
+  La clé est générée hex (32 caractères) au premier démarrage et persistée
+  dans `state_dir/configuration.json` (`api/key`). Aucune route n'est
+  exemptée (`/docs` et `/ui` n'existent pas côté Rust).
+- Corps de requête maximal : **16 Mio** (`MAX_REQUEST_SIZE` Python).
+- Configuration persistée : `state_dir/configuration.json` (arbre
+  `TriblerConfig`), `api/http_port_running` réécrit après le bind réel.
 
 ## Endpoints implémentés
 
@@ -28,8 +39,8 @@ Convention générale :
 | `GET /api/events/info` | `GET /api/events/info` | ✅ | `{"public_key", "version", "sessions"}` — `sessions` = nombre de flux SSE ouverts (compteur réel, +1/−1 à la connexion/déconnexion) |
 | `GET /api/downloads/clierrors` | `GET /api/downloads/clierrors` | ✅ | File `unhandled_cli_log` : erreurs de `PUT /api/downloads` avec `cli:true`, insertions en tête bornée à 100 ; `GET` vide la file (`{"errors": [...]}`) ; le champ `clierrors` de `GET /api/downloads` = longueur de la file |
 | **Settings / shutdown / stats** | | | |
-| `GET /api/settings` | `GET /api/settings` | ✅ | Arbre `ipv8`/`tunnel_community`/`libtorrent`/`watch_folder`/`rss`/`torrent_checker`/`api` ; reflète les overrides à chaud |
-| `POST /api/settings` | `POST /api/settings` | ✅ | Application à chaud : `rss.urls`, `watch_folder.enabled`/`directory` ; le reste accepté (redémarrage requis) |
+| `GET /api/settings` | `GET /api/settings` | ✅ | Arbre `TriblerConfig` complet lu depuis `configuration.json` persisté ; reflète les overrides à chaud et les réglages inconnus tels qu'écrits |
+| `POST /api/settings` | `POST /api/settings` | ✅ | Merge récursif dans la config persistée + réécriture de `configuration.json` (comme `config.write()` Python) ; application à chaud : `rss.urls`, `watch_folder.*`, `libtorrent.*`, `tunnel_community.min/max_circuits`, `api.*`, `ipv8.*` ; le reste est persisté (effet au redémarrage) |
 | `PUT /api/shutdown` | `PUT /api/shutdown` | ✅ | Réponse immédiate, arrêt en tâche de fond |
 | `GET /api/statistics/tribler` | idem | ✅ | `db_size`, `num_torrents`, `num_channels`, `peers`, `libtorrent.sessions` (lanes anonymes) |
 | `GET /api/statistics/ipv8` | idem | ✅ | `total_up`/`total_down` de l'endpoint UDP |

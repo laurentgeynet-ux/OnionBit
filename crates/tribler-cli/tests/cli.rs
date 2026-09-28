@@ -34,10 +34,16 @@ async fn spawn_api() -> (String, CoreSession, tempfile::TempDir) {
 /// `std::process::Command` bloquerait le runtime mono-thread du test
 /// et empecherait le serveur de repondre).
 async fn run_cli(api: &str, args: &[&str]) -> std::process::Output {
+    let mut full = vec!["--api".to_string(), api.to_string()];
+    full.extend(args.iter().map(|s| s.to_string()));
+    run_cli_args(&full).await
+}
+
+/// Execute `tribler-cli` avec des arguments bruts (sans `--api`
+/// injecte — pour tester la decouverte via `configuration.json`).
+async fn run_cli_args(args: &[String]) -> std::process::Output {
     let bin = env!("CARGO_BIN_EXE_tribler-cli");
     tokio::process::Command::new(bin)
-        .arg("--api")
-        .arg(api)
         .args(args)
         .output()
         .await
@@ -102,6 +108,72 @@ async fn cli_status_list_add_remove_loopback() {
     let out = run_cli("http://127.0.0.1:1", &["status"]).await;
     assert!(!out.status.success());
     assert!(String::from_utf8_lossy(&out.stderr).contains("injoignable"));
+
+    session.stop().await;
+}
+
+/// Etape 21 : le daemon exige une cle API — le CLI l'envoie via
+/// `--api-key` ou la lit dans `<state-dir>/configuration.json`
+/// (avec `http_port_running` pour trouver l'URL).
+#[tokio::test]
+async fn cli_cle_api_explicite_et_decouverte_state_dir() {
+    // Serveur avec cle API activee.
+    let dir = tempfile::tempdir().unwrap();
+    let session =
+        CoreSession::start_offline(CoreConfig::offline(dir.path().into()), Notifier::new())
+            .await
+            .unwrap();
+    let app = build(AppState::new(session.clone()).with_api_key("cle-cli-test"));
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr: SocketAddr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let api = format!("http://{addr}");
+
+    // Sans cle : 401 en erreur propre.
+    let out = run_cli(&api, &["status"]).await;
+    assert!(!out.status.success());
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("401"),
+        "stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    // --api-key explicite.
+    let out = run_cli(&api, &["--api-key", "cle-cli-test", "status"]).await;
+    assert!(
+        out.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    // Decouverte via --state-dir : configuration.json fournit la cle
+    // ET le port (comme api/http_port_running Python).
+    let state_dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        state_dir.path().join("configuration.json"),
+        serde_json::json!({
+            "api": {
+                "key": "cle-cli-test",
+                "http_host": "127.0.0.1",
+                "http_port_running": addr.port()
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let out = run_cli_args(&[
+        "--state-dir".into(),
+        state_dir.path().display().to_string(),
+        "status".into(),
+    ])
+    .await;
+    assert!(
+        out.status.success(),
+        "decouverte via configuration.json — stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 
     session.stop().await;
 }

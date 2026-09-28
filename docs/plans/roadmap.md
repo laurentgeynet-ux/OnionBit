@@ -368,7 +368,7 @@ activée en parité Python (loopback compris — `tribler-cli` la lit dans
 `configuration.json`) ; `asyncio/*` adapté au runtime tokio ;
 `identity/*` exclu (ADR à rédiger) ; `GET /api/rss` (items) implémenté.
 
-- [ ] **Étape 21. Configuration persistée et clé API.**
+- [x] **Étape 21. Configuration persistée et clé API.**
   `DaemonConfig` serde = arbre `TriblerConfig` (défauts du doc :
   `api`, `ipv8`, `libtorrent`+`download_defaults`, `tunnel_community`,
   `rss`, `watch_folder`, `torrent_checker`, `dht_discovery`,
