@@ -52,7 +52,7 @@ redémarrage) — parité `set_session_limits` Python + services :
 | `libtorrent/check_after_complete` | `force_recheck` libtorrent | `session.recheck` rqbit sur transition vers `Seeding` |
 | `libtorrent/active_*` (file) | gestionnaire interne libtorrent | queue manager `tribler-core` (`enforce_queue_limits`) : seuls les torrents `auto_managed` comptent, pause/reprise par `queue_position` |
 | `tray_icon_color` | recoloration de l'icône `.ico` | carré plein recoloré `#RRGGBB` (la ressource `.ico` n'est pas recolorable) |
-| `start_minimized` | l'UI ne s'ouvre pas | `tribler_ui.exe` livré à côté du daemon non lancé |
+| `start_minimized` | l'UI ne s'ouvre pas (même processus que le core) | inerte : le daemon ne lance jamais l'UI (c'est `tribler_ui.exe` qui démarre le daemon) |
 
 ## Mapping direct (récapitulatif)
 
@@ -78,7 +78,9 @@ redémarrage) — parité `set_session_limits` Python + services :
   `ContentDiscoveryCommunity`.
 - `database/enabled=false` → `db_filename=":memory:"`.
 - `versioning/enabled=false` → routes `/api/versioning/*` absentes (404).
-- `headless` → pas de systray ; `start_minimized` → UI non lancée.
+- `headless` → pas de systray ; `start_minimized` → inerte côté daemon
+  (le daemon ne lance jamais l'UI ; la clé reste lue/conservée pour la
+  future UI, qui l'appliquera à sa propre fenêtre).
 - `download_defaults/torrent_folder` → backup `<name> [<ih>].torrent`.
 - `channel_download`/`add_download_to_channel` → colonnes DB v6,
   propagées par téléchargement.

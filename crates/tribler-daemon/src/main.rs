@@ -196,17 +196,12 @@ fn spawn_tray(
         .as_ref()
         .map(|d| d.join("tribler_ui.exe"))
         .filter(|p| p.exists());
-    // `start_minimized` Python : `run_tribler` n'ouvre l'UI qu'au
-    // demarrage non minimise. Equivalent daemon : lancer
-    // `tribler_ui.exe` quand il est livre a cote du daemon.
-    if !daemon_config.start_minimized {
-        if let Some(exe) = &ui_exe {
-            match std::process::Command::new(exe).spawn() {
-                Ok(_) => tracing::info!("interface tribler_ui lancee au demarrage"),
-                Err(e) => tracing::warn!(error = %e, "lancement de tribler_ui impossible"),
-            }
-        }
-    }
+    // `start_minimized` Python ne s'applique pas ici : chez Tribler le
+    // core et l'UI sont le MEME processus (`run_tribler`), la cle ne
+    // regit que l'etat de la fenetre. Ici le daemon ne lance jamais
+    // l'UI — c'est `tribler_ui.exe` qui demarre le daemon
+    // (`daemon_launcher`), et le menu « Ouvrir Tribler » du tray reste
+    // le seul chemin daemon → UI (action utilisateur explicite).
     // La cle Run doit survivre au repertoire courant : chemins absolus.
     let autostart_cmd = match (
         std::env::current_exe(),

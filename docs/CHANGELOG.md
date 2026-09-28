@@ -83,10 +83,11 @@ les flags daemon/UI et les attributs de canal par téléchargement.
   `recolor_tray_icon` Python ; la ressource `.ico` ne peut pas être
   recolorée, le carré coloré prend donc le pas). Couleur invalide =
   warn + défaut.
-- **`start_minimized`** : `run_tribler` Python n'ouvre l'UI qu'au
-  démarrage non minimisé — équivalent : `tribler_ui.exe` livré à côté
-  du daemon n'est lancé que si `start_minimized=false` (et
-  `headless=false`).
+- **`start_minimized`** : lue mais **inerte** côté daemon — chez
+  Tribler core et UI sont le même processus (`run_tribler`), la clé ne
+  régit que l'état de la fenêtre. Ici le daemon ne lance jamais l'UI :
+  c'est `tribler_ui.exe` qui démarre le daemon (`daemon_launcher`),
+  sinon UI lancée → daemon → UI, boucle.
 - **`database.enabled=false`** : `db_filename` bascule sur
   `":memory:"` (mode dégradé sans persistance, même repli que
   `--memory-db`).
