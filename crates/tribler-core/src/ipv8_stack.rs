@@ -109,6 +109,22 @@ pub struct Ipv8Config {
     /// (`aucun circuit HTTP pret`/timeouts) puisque le watchdog ne
     /// retente jamais tant qu'un circuit `READY` existe.
     pub min_circuits: u32,
+    /// `TunnelSettings.max_circuits` Python : borne haute de la cible
+    /// du watchdog (`circuits_needed[hops] = clamp(downloads actifs,
+    /// min_circuits, max_circuits)` — `monitor_downloads` de
+    /// `TriblerTunnelCommunity`).
+    pub max_circuits: u32,
+    /// `libtorrent/socks_listen_ports` Python : ports des proxys
+    /// SOCKS5 anonymes, index `[hops-1]` (0 = port ephemere attribue
+    /// par l'OS, defaut Tribler `[0]*5`).
+    pub socks_listen_ports: Vec<u16>,
+    /// `content_discovery_community/enabled` Python : cree la
+    /// `ContentDiscoveryCommunity` (recherche distante, select).
+    pub enable_content_discovery: bool,
+    /// `ipv8/interfaces[UDPIPv6]` Python (`ip:port`, ex. `"[::]:8091"`)
+    /// — socket UDP secondaire partageant les memes communities
+    /// (`DispatcherEndpoint` pyipv8). `None` = IPv4 seul.
+    pub listen_addr_v6: Option<String>,
 }
 
 impl Ipv8Config {
@@ -130,6 +146,10 @@ impl Ipv8Config {
             enable_dht: true,
             walker_interval: DEFAULT_WALKER_INTERVAL,
             min_circuits: DEFAULT_MIN_CIRCUITS,
+            max_circuits: DEFAULT_MAX_CIRCUITS,
+            socks_listen_ports: vec![0; MAX_ANON_HOPS],
+            enable_content_discovery: true,
+            listen_addr_v6: Some(format!("[::]:{}", DEFAULT_IPV8_PORT + 1)),
         }
     }
 }
@@ -149,6 +169,10 @@ impl Default for Ipv8Config {
             enable_dht: true,
             walker_interval: DEFAULT_WALKER_INTERVAL,
             min_circuits: DEFAULT_MIN_CIRCUITS,
+            max_circuits: DEFAULT_MAX_CIRCUITS,
+            socks_listen_ports: vec![0; MAX_ANON_HOPS],
+            enable_content_discovery: true,
+            listen_addr_v6: None,
         }
     }
 }
@@ -189,6 +213,10 @@ pub const DEFAULT_WALKER_INTERVAL: f64 = 0.5;
 /// `TunnelSettings.min_circuits` par defaut (pyipv8/Tribler et
 /// `TunnelCommunityConfig::default()`).
 pub const DEFAULT_MIN_CIRCUITS: u32 = 3;
+
+/// `TunnelSettings.max_circuits` pyipv8 (`tribler_config`
+/// `tunnel_community/max_circuits`).
+pub const DEFAULT_MAX_CIRCUITS: u32 = 8;
 
 /// Tache de maintenance DHT (`PingChurn.take_step` +
 /// `node_maintenance`/`value_maintenance`/`token_maintenance` +
@@ -269,12 +297,35 @@ fn spawn_circuit_watchdog(
     hops: usize,
     ks: Arc<tribler_network_policy::kill_switch::KillSwitch>,
     min_circuits: usize,
+    max_circuits: usize,
+    engine: BtEngine,
 ) -> Arc<tokio::sync::watch::Sender<bool>> {
     // Fail-closed des la creation de la lane (avant tout circuit).
     ks.engage_scoped("circuits", format!("aucun circuit READY a {hops} sauts"));
     let (stop_tx, mut stop_rx) = tokio::sync::watch::channel(false);
     let mut changes = tunnel.watch_circuits();
     tokio::spawn(async move {
+        // `monitor_downloads` de `TriblerTunnelCommunity` :
+        // `circuits_needed[hops] = clamp(downloads actifs,
+        // min_circuits, max_circuits)`. Ecart assumé : la lane garde
+        // `min_circuits` en veille meme sans telechargement actif
+        // (Python ne demande des circuits qu'aux hops utilises) — un
+        // premier `add` n'attend pas la construction a froid.
+        let circuits_needed = |engine: &BtEngine| {
+            let actifs = engine
+                .list()
+                .iter()
+                .filter(|d| {
+                    matches!(
+                        d.state,
+                        tribler_bittorrent::DownloadState::Downloading
+                            | tribler_bittorrent::DownloadState::Seeding
+                            | tribler_bittorrent::DownloadState::Initializing
+                    )
+                })
+                .count();
+            actifs.clamp(min_circuits, max_circuits)
+        };
         let mut tick = tokio::time::interval(CIRCUIT_PROBE_INTERVAL);
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         // Tentative immediate de construction de circuit(s). Plusieurs
@@ -284,7 +335,9 @@ fn spawn_circuit_watchdog(
         // (pair instable/mensonger du reseau public) bloque
         // definitivement la lane sinon, faute d'alternative pour le
         // selecteur SOCKS5 (`select_http_circuit`).
-        let _ = tunnel.build_circuits_if_needed(hops, min_circuits).await;
+        let _ = tunnel
+            .build_circuits_if_needed(hops, circuits_needed(&engine))
+            .await;
         // Premier tick immediat : absorbe (l'evaluation initiale est
         // deja faite ci-dessus).
         tick.tick().await;
@@ -293,7 +346,9 @@ fn spawn_circuit_watchdog(
                 _ = stop_rx.changed() => break,
                 _ = changes.changed() => {}
                 _ = tick.tick() => {
-                    let _ = tunnel.build_circuits_if_needed(hops, min_circuits).await;
+                    let _ = tunnel
+                        .build_circuits_if_needed(hops, circuits_needed(&engine))
+                        .await;
                 }
             }
             if tunnel.ready_circuits_of_hops(hops).is_empty() {
@@ -641,8 +696,9 @@ pub struct Ipv8Stack {
     pub network: Arc<Network>,
     /// Community de decouverte de pairs.
     pub discovery: Arc<DiscoveryCommunity>,
-    /// Community de decouverte de contenu.
-    pub content_discovery: Arc<ContentDiscoveryCommunity>,
+    /// Community de decouverte de contenu (`None` si
+    /// `content_discovery_community/enabled = false`).
+    pub content_discovery: Option<Arc<ContentDiscoveryCommunity>>,
     /// `TunnelCommunity` (presente si `enable_anonymity`).
     pub tunnel: Option<Arc<TunnelCommunity>>,
     /// `DHTDiscoveryCommunity` (presente si `enable_dht` —
@@ -663,6 +719,11 @@ pub struct Ipv8Stack {
     tasks: crate::asyncio::TaskRegistry,
     /// `TunnelSettings.min_circuits` (cf. `Ipv8Config::min_circuits`).
     min_circuits: usize,
+    /// `TunnelSettings.max_circuits` (borne haute de la cible du
+    /// watchdog — `monitor_downloads` Python).
+    max_circuits: usize,
+    /// `libtorrent/socks_listen_ports` (ports SOCKS5 par lane).
+    socks_listen_ports: Vec<u16>,
 }
 
 impl Ipv8Stack {
@@ -679,8 +740,36 @@ impl Ipv8Stack {
         tasks: crate::asyncio::TaskRegistry,
     ) -> Result<Arc<Self>> {
         let key = load_or_create_key(&state_dir.join(IPV8_KEY_FILE))?;
-        let endpoint = match UdpEndpoint::bind(&config.listen_addr).await {
+        // `ipv8/interfaces` pyipv8 : `UDPIPv4` obligatoire, `UDPIPv6`
+        // optionnel (socket secondaire du meme endpoint, partage des
+        // listeners — `DispatcherEndpoint`).
+        let bind_v6 = config.listen_addr_v6.as_deref();
+        let endpoint = match UdpEndpoint::bind_dual(&config.listen_addr, bind_v6).await {
             Ok(ep) => ep,
+            Err(e) if bind_v6.is_some() => {
+                tracing::warn!(
+                    error = %e,
+                    listen_v6 = %bind_v6.unwrap_or_default(),
+                    "bind UDP IPv8 v6 echoue, repli IPv4 seul"
+                );
+                match UdpEndpoint::bind(&config.listen_addr).await {
+                    Ok(ep) => ep,
+                    Err(e) => {
+                        if config.listen_addr != "0.0.0.0:0" {
+                            tracing::warn!(
+                                error = %e,
+                                listen = %config.listen_addr,
+                                "bind UDP IPv8 echoue sur l'adresse configuree, repli sur 0.0.0.0:0 (port ephemere)"
+                            );
+                            UdpEndpoint::bind("0.0.0.0:0").await.map_err(|e2| {
+                                CoreError::State(format!("bind ipv8 port ephemere: {e2}"))
+                            })?
+                        } else {
+                            return Err(CoreError::State(format!("bind ipv8: {e}")));
+                        }
+                    }
+                }
+            }
             Err(e) => {
                 if config.listen_addr != "0.0.0.0:0" {
                     tracing::warn!(
@@ -711,15 +800,24 @@ impl Ipv8Stack {
             )),
         )
         .await;
-        let provider = Arc::new(SessionContentProvider { db });
-        let content_discovery = ContentDiscoveryCommunity::new(
-            key.clone(),
-            network.clone(),
-            endpoint.clone(),
-            provider,
-            None,
-        )
-        .await;
+        // `ContentDiscoveryComponent` Python : cree seulement si
+        // `content_discovery_community/enabled` (la recherche distante
+        // et `/api/search` retournent alors 503-vide cote REST).
+        let content_discovery = if config.enable_content_discovery {
+            let provider = Arc::new(SessionContentProvider { db });
+            Some(
+                ContentDiscoveryCommunity::new(
+                    key.clone(),
+                    network.clone(),
+                    endpoint.clone(),
+                    provider,
+                    None,
+                )
+                .await,
+            )
+        } else {
+            None
+        };
         let dht = if config.enable_dht {
             // `DHTDiscoveryCommunity` Python : `my_estimated_wan`
             // commence non-specifie et est appris par introduction ;
@@ -794,10 +892,14 @@ impl Ipv8Stack {
         // de `session.py` : Tribler active le suivi des stats pour
         // toutes les communities des le demarrage.
         let stats_prefixes = {
-            let mut v = vec![
-                tribler_ipv8::prefix_of(&tribler_ipv8::discovery::DISCOVERY_COMMUNITY_ID),
-                tribler_ipv8::prefix_of(&tribler_ipv8::CONTENT_DISCOVERY_COMMUNITY_ID),
-            ];
+            let mut v = vec![tribler_ipv8::prefix_of(
+                &tribler_ipv8::discovery::DISCOVERY_COMMUNITY_ID,
+            )];
+            if content_discovery.is_some() {
+                v.push(tribler_ipv8::prefix_of(
+                    &tribler_ipv8::CONTENT_DISCOVERY_COMMUNITY_ID,
+                ));
+            }
             if let Some(t) = &tunnel {
                 v.push(tribler_ipv8::prefix_of(&t.community_id()));
             }
@@ -881,6 +983,8 @@ impl Ipv8Stack {
             downloads_dir: downloads_dir.to_path_buf(),
             tasks,
             min_circuits: config.min_circuits.max(1) as usize,
+            max_circuits: config.max_circuits.max(1) as usize,
+            socks_listen_ports: config.socks_listen_ports.clone(),
         }))
     }
 
@@ -894,10 +998,10 @@ impl Ipv8Stack {
     /// (`DiscoveryCommunity` config, puis launchers : content, DHT,
     /// tunnel).
     pub fn overlays_info(&self) -> Vec<tribler_ipv8::OverlayInfo> {
-        let mut out = vec![
-            self.discovery.overlay_info(false),
-            self.content_discovery.overlay_info(false),
-        ];
+        let mut out = vec![self.discovery.overlay_info(false)];
+        if let Some(c) = &self.content_discovery {
+            out.push(c.overlay_info(false));
+        }
         if let Some(d) = &self.dht {
             // `DHTDiscoveryCommunity` a son propre `Network` →
             // `is_isolated` vrai (calcule dans `overlay_info`).
@@ -944,7 +1048,9 @@ impl Ipv8Stack {
         // tunnel partagent `self.network` ; le DHT a le sien.
         self.network.add_blacklist(addr.clone());
         let _ = self.discovery.walk_to(addr).await;
-        let _ = self.content_discovery.walk_to(addr).await;
+        if let Some(c) = &self.content_discovery {
+            let _ = c.walk_to(addr).await;
+        }
         if let Some(d) = &self.dht {
             d.network().add_blacklist(addr.clone());
             let _ = d.walk_to(addr).await;
@@ -998,10 +1104,27 @@ impl Ipv8Stack {
             .clone()
             .ok_or_else(|| CoreError::State("anonymat non active".into()))?;
         let socks = Socks5Server::new(tunnel.clone(), hops);
-        let socks_addr = socks
-            .listen("127.0.0.1:0")
-            .await
-            .map_err(|e| CoreError::State(format!("socks5 bind: {e}")))?;
+        // `libtorrent/socks_listen_ports[hops-1]` Tribler : port
+        // configure par lane (0 = ephemere). Port configure deja pris
+        // -> repli ephemere (comme `Failed to start SOCKS5 servers` +
+        // poursuite cote Python, au niveau lane).
+        let want_port = self.socks_listen_ports.get(hops - 1).copied().unwrap_or(0);
+        let socks_addr = match socks.listen(&format!("127.0.0.1:{want_port}")).await {
+            Ok(a) => a,
+            Err(e) if want_port != 0 => {
+                tracing::warn!(
+                    error = %e,
+                    hops,
+                    port = want_port,
+                    "port SOCKS5 anonyme configure indisponible, repli sur port ephemere"
+                );
+                socks
+                    .listen("127.0.0.1:0")
+                    .await
+                    .map_err(|e2| CoreError::State(format!("socks5 bind: {e2}")))?
+            }
+            Err(e) => return Err(CoreError::State(format!("socks5 bind: {e}"))),
+        };
         let mut cfg = self.engine_config.clone();
         cfg.socks5_proxy = Some(format!("socks5://{socks_addr}"));
         cfg.utp_only = true;
@@ -1022,6 +1145,8 @@ impl Ipv8Stack {
                 .kill_switch()
                 .expect("kill switch absent avec proxy configure"),
             self.min_circuits,
+            self.max_circuits,
+            engine.clone(),
         );
         let lane = AnonLane {
             socks_addr,

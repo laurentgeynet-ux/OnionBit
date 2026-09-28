@@ -96,11 +96,24 @@ use tracing_subscriber::util::SubscriberInitExt;
 /// (exploite par l'endpoint `/api/logging` et l'onglet Diagnostic de
 /// l'UI) et sur stdout quand une console est disponible (`--console`
 /// ou redirection du lanceur).
-fn init_tracing(state_dir: &std::path::Path) {
+fn init_tracing(state_dir: &std::path::Path, daemon_config: &DaemonConfig) {
     // Directive d'origine (RUST_LOG ou `info`) — `PUT
     // /api/ipv8/asyncio/debug` recharge le filtre a chaud :
     // `enable` → `debug`, `disable` → directive d'origine.
-    let default_directive = std::env::var("RUST_LOG").unwrap_or_else(|_| "info".to_string());
+    // `ipv8/logger_level` Tribler : niveau du logger `ipv8` Python —
+    // applique aux crates overlay (`tribler_ipv8`, `tribler_tunnel`)
+    // en plus du niveau global.
+    let mut default_directive = std::env::var("RUST_LOG").unwrap_or_else(|_| "info".to_string());
+    let ipv8_level = daemon_config.ipv8.logger_level.trim();
+    let mut invalid_level = false;
+    match ipv8_level.parse::<tracing::level_filters::LevelFilter>() {
+        Ok(lvl) if !ipv8_level.eq_ignore_ascii_case("INFO") => {
+            default_directive =
+                format!("{default_directive},tribler_ipv8={lvl},tribler_tunnel={lvl}");
+        }
+        Ok(_) => {}
+        Err(_) => invalid_level = true,
+    }
     let filter = EnvFilter::new(&default_directive);
     let (filter, filter_reload) = tracing_subscriber::reload::Layer::new(filter);
     let logs_dir = state_dir.join("logs");
@@ -125,6 +138,9 @@ fn init_tracing(state_dir: &std::path::Path) {
         registry.with(stdout_layer).init();
     } else {
         registry.init();
+    }
+    if invalid_level {
+        tracing::warn!(ipv8_level, "ipv8/logger_level invalide (ignore)");
     }
 
     // Pont `PUT /debug` → `EnvFilter` : le hook vit dans
@@ -204,7 +220,25 @@ async fn main() -> ExitCode {
     if args.console {
         console::attach();
     }
-    init_tracing(&args.state_dir);
+
+    // Configuration persistee (`configuration.json`, equivalent de
+    // `TriblerConfigManager` : absent ou corrompu -> defauts ; la cle
+    // API est generee au premier run et le fichier normalise). Chargee
+    // AVANT `init_tracing` pour que `ipv8/logger_level` fasse partie
+    // de la directive de base.
+    let config_path = args.state_dir.join(CONFIG_FILENAME);
+    // `load_report` remonte l'erreur de parse pour la notifier en
+    // `report_config_error` une fois la session (et son bus) creee.
+    let (mut daemon_config, config_error) = DaemonConfig::load_report(&config_path);
+    init_tracing(&args.state_dir, &daemon_config);
+    if config_error.is_some() {
+        // Le warn interne de `load_report` a ete emis avant
+        // l'installation du subscriber : on le rejoue ici.
+        tracing::warn!(
+            path = %config_path.display(),
+            "configuration.json corrompu, repli sur les valeurs par defaut"
+        );
+    }
 
     // Instance unique par state_dir : un second lancement (double-clic
     // sur demarrer.cmd, autostart + demarrage manuel) n'ajoute ni
@@ -219,14 +253,6 @@ async fn main() -> ExitCode {
             return ExitCode::SUCCESS;
         }
     };
-
-    // Configuration persistee (`configuration.json`, equivalent de
-    // `TriblerConfigManager` : absent ou corrompu -> defauts ; la cle
-    // API est generee au premier run et le fichier normalise).
-    let config_path = args.state_dir.join(CONFIG_FILENAME);
-    // `load_report` remonte l'erreur de parse pour la notifier en
-    // `report_config_error` une fois la session (et son bus) creee.
-    let (mut daemon_config, config_error) = DaemonConfig::load_report(&config_path);
     if !config_path.exists() {
         if let Err(e) = daemon_config.write(&config_path) {
             tracing::warn!(error = %e, "ecriture initiale de configuration.json impossible");

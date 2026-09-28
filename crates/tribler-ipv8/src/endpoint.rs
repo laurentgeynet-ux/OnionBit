@@ -121,6 +121,11 @@ fn now_secs() -> f64 {
 /// correspondants.
 pub struct UdpEndpoint {
     socket: Arc<UdpSocket>,
+    /// Socket IPv6 secondaire (`DispatcherEndpoint` pyipv8 : les
+    /// interfaces `UDPIPv4` et `UDPIPv6` partagent les memes
+    /// listeners ; l'envoi choisit le socket selon la famille de
+    /// l'adresse — un pair joint en v6 recoit sa reponse en v6).
+    socket_v6: Option<Arc<UdpSocket>>,
     /// Listeners par prefixe de 22 octets (paquets `Packet` decodes).
     listeners: Mutex<HashMap<[u8; PREFIX_LEN], PacketHandler>>,
     /// Listeners "bruts" par prefixe (datagrammes non interpretes :
@@ -147,6 +152,7 @@ impl UdpEndpoint {
         let socket = UdpSocket::bind(bind).await?;
         Ok(Arc::new(Self {
             socket: Arc::new(socket),
+            socket_v6: None,
             listeners: Mutex::new(HashMap::new()),
             raw_listeners: Mutex::new(HashMap::new()),
             tap: Mutex::new(None),
@@ -245,9 +251,36 @@ impl UdpEndpoint {
         }
     }
 
+    /// `bind` + socket IPv6 secondaire (`ipv8/interfaces[UDPIPv6]`
+    /// pyipv8 — meme keypair, memes listeners, envoi route par
+    /// famille d'adresse). Erreur de bind v6 propagee ; l'appelant
+    /// decide du repli IPv4-seul.
+    pub async fn bind_dual(bind: &str, bind_v6: Option<&str>) -> Result<Arc<Self>, Ipv8Error> {
+        let socket = UdpSocket::bind(bind).await?;
+        let socket_v6 = match bind_v6 {
+            Some(addr) => Some(Arc::new(UdpSocket::bind(addr).await?)),
+            None => None,
+        };
+        Ok(Arc::new(Self {
+            socket: Arc::new(socket),
+            socket_v6,
+            listeners: Mutex::new(HashMap::new()),
+            raw_listeners: Mutex::new(HashMap::new()),
+            tap: Mutex::new(None),
+            bytes_up: std::sync::atomic::AtomicU64::new(0),
+            bytes_down: std::sync::atomic::AtomicU64::new(0),
+            statistics: Mutex::new(HashMap::new()),
+        }))
+    }
+
     /// Adresse locale du socket.
     pub fn local_addr(&self) -> Result<SocketAddr, Ipv8Error> {
         Ok(self.socket.local_addr()?)
+    }
+
+    /// Adresse locale du socket IPv6 secondaire (`None` si non lie).
+    pub fn local_addr_v6(&self) -> Option<Result<SocketAddr, Ipv8Error>> {
+        self.socket_v6.as_ref().map(|s| Ok(s.local_addr()?))
     }
 
     /// Enregistre un listener pour un prefixe de community.
@@ -280,7 +313,18 @@ impl UdpEndpoint {
     pub async fn send_to(&self, addr: &UdpAddress, data: &[u8]) -> Result<(), Ipv8Error> {
         match addr.to_socket_addr() {
             Some(sa) => {
-                self.socket.send_to(data, sa).await?;
+                // `DispatcherEndpoint.send` pyipv8 : famille d'adresse
+                // -> interface. Sans socket v6, un envoi v6 est un
+                // no-op (comme un domaine non resolu).
+                let socket = if sa.is_ipv6() {
+                    match &self.socket_v6 {
+                        Some(s) => s.clone(),
+                        None => return Ok(()),
+                    }
+                } else {
+                    self.socket.clone()
+                };
+                socket.send_to(data, sa).await?;
                 self.bytes_up
                     .fetch_add(data.len() as u64, std::sync::atomic::Ordering::Relaxed);
                 // `StatisticsEndpoint.send` : le msg_id suit le
@@ -312,9 +356,26 @@ impl UdpEndpoint {
     /// ICMP « port injoignable » revient d'un envoi vers un pair mort)
     /// ne doivent **pas** tuer la boucle — le socket reste utilisable.
     pub async fn run(self: &Arc<Self>) -> Result<(), Ipv8Error> {
+        // Socket IPv6 secondaire : sa boucle de reception partage les
+        // memes listeners (`DispatcherEndpoint` pyipv8 — la reception
+        // est accrochee directement au sous-endpoint).
+        let v6_task = self.socket_v6.clone().map(|sock| {
+            let me = self.clone();
+            tokio::spawn(async move { me.recv_loop(sock).await })
+        });
+        self.recv_loop(self.socket.clone()).await;
+        if let Some(t) = v6_task {
+            t.abort();
+        }
+        Ok(())
+    }
+
+    /// Boucle de reception d'un socket : dispatch par prefixe vers
+    /// les listeners (partagee entre v4 et v6).
+    async fn recv_loop(self: &Arc<Self>, socket: Arc<UdpSocket>) {
         let mut buf = vec![0u8; MAX_DGRAM];
         loop {
-            let (n, src) = match self.socket.recv_from(&mut buf).await {
+            let (n, src) = match socket.recv_from(&mut buf).await {
                 Ok(r) => r,
                 Err(e) => {
                     tracing::warn!(error = %e, "recv_from en erreur — ecoute poursuivie");

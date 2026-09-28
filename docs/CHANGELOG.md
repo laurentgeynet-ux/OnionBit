@@ -3,6 +3,43 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Câblage de la configuration (lot 1) : tunnels, IPv6, SOCKS5, logs (2026-09-28)
+
+Premier lot du câblage des champs de `configuration.json` déclarés mais
+jamais lus (audit complet : ~40 champs concernés).
+
+- **`tunnel_community/max_circuits`** : `Ipv8Config::max_circuits`
+  (défaut `DEFAULT_MAX_CIRCUITS = 8`, pyipv8 `TunnelSettings`). Le
+  watchdog de lane applique désormais la formule de
+  `TriblerTunnelCommunity.monitor_downloads` : `circuits_needed =
+  clamp(telechargements actifs de la lane, min_circuits, max_circuits)`
+  au lieu de `min_circuits` fixe. Écart assumé : une lane existante
+  garde `min_circuits` en veille même sans téléchargement actif
+  (Python ne demande des circuits qu'aux hops utilisés) — un premier
+  `add` n'attend pas la construction à froid.
+- **`libtorrent/socks_listen_ports`** : `Ipv8Config::socks_listen_ports`,
+  port SOCKS5 par lane (`ports[hops-1]`, `0` = éphémère, repli
+  éphémère avec warn si le port configuré est pris — parité avec la
+  poursuite Python après `Failed to start SOCKS5 servers`).
+- **`content_discovery_community/enabled`** :
+  `Ipv8Config::enable_content_discovery` gate la création de
+  `ContentDiscoveryCommunity` ; `Ipv8Stack.content_discovery` devient
+  `Option` ; `/api/search` distant et `add_bootstrap_node` s'en
+  accommodent.
+- **`ipv8/interfaces[UDPIPv6]`** : `Ipv8Config::listen_addr_v6` →
+  `UdpEndpoint::bind_dual` (socket IPv6 secondaire partageant les
+  mêmes listeners, envoi routé par famille d'adresse — équivalent du
+  `DispatcherEndpoint` pyipv8). Repli IPv4-seul avec warn si le bind
+  v6 échoue. Test `endpoint_dual_stack_envoie_et_recoit_en_v6`.
+- **`ipv8/logger_level`** : chargé avant `init_tracing`, injecté comme
+  directive `tribler_ipv8=LVL,tribler_tunnel=LVL` dans le `EnvFilter`
+  de base (les niveaux hors `INFO` seulement ; valeur invalide =
+  warn + ignorée).
+- **`statistics`** et **`ipv8/interfaces[].worker_threads`** :
+  documentés comme volontairement non lus — la clé `statistics` est
+  inerte dans Tribler 8.x lui-même (ne subsiste que via
+  `upgrade_script`), et `worker_threads` n'a pas d'équivalent Tokio.
+
 ## Correctif : `TunnelCommunityConfig.min_circuits` jamais branché (2026-09-28)
 
 Suite des deux correctifs précédents (timeout de saut + rattrapage

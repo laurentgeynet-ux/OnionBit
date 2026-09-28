@@ -89,7 +89,10 @@ pub struct Ipv8Interface {
     pub ip: String,
     /// Port UDP.
     pub port: u16,
-    /// Threads de traitement (optionnel pyipv8).
+    /// Threads de traitement (optionnel pyipv8 — sans equivalent
+    /// Tokio : le runtime gere les workers ; conserve pour
+    /// compatibilite du fichier, non lu — comme chez pyipv8 quand
+    /// non configure).
     pub worker_threads: Option<u32>,
 }
 
@@ -484,7 +487,10 @@ pub struct DaemonConfig {
     pub headless: bool,
     /// Démarrage minimisé (UI — inerte en daemon).
     pub start_minimized: bool,
-    /// Stats IPv8 détaillées.
+    /// Stats IPv8 détaillées (`statistics` Python — cle legacy :
+    /// Tribler 8.x ne la lit plus non plus, elle n'est conservee que
+    /// par `upgrade_script` ; les stats par community sont activees
+    /// inconditionnellement au demarrage, comme Python).
     pub statistics: bool,
     /// Base en mémoire (`:memory:`).
     pub memory_db: bool,
@@ -628,6 +634,14 @@ impl DaemonConfig {
             .iter()
             .find(|i| i.interface == "UDPIPv4")
             .or_else(|| self.ipv8.interfaces.first());
+        // `ipv8/interfaces[UDPIPv6]` pyipv8 : socket UDP secondaire
+        // du meme endpoint ("" ou absent = IPv4 seul).
+        let listen_v6 = self
+            .ipv8
+            .interfaces
+            .iter()
+            .find(|i| i.interface == "UDPIPv6" && !i.ip.is_empty())
+            .map(|i| format!("{}:{}", i.ip, i.port));
         let mut peer_flags = flags::PEER_FLAG_RELAY;
         if self.tunnel_community.exitnode_enabled {
             peer_flags |=
@@ -653,6 +667,10 @@ impl DaemonConfig {
             enable_dht: self.dht_discovery.enabled,
             walker_interval: self.ipv8.walker_interval,
             min_circuits: self.tunnel_community.min_circuits,
+            max_circuits: self.tunnel_community.max_circuits,
+            socks_listen_ports: self.libtorrent.socks_listen_ports.clone(),
+            enable_content_discovery: self.content_discovery_community.enabled,
+            listen_addr_v6: listen_v6,
         };
 
         crate::CoreConfig {
@@ -720,6 +738,10 @@ impl DaemonConfig {
         self.torrent_checker.enabled = core.enable_torrent_checker;
         self.ipv8.enabled = core.ipv8.enabled;
         self.tunnel_community.enabled = core.ipv8.enable_anonymity;
+        self.tunnel_community.min_circuits = core.ipv8.min_circuits;
+        self.tunnel_community.max_circuits = core.ipv8.max_circuits;
+        self.libtorrent.socks_listen_ports = core.ipv8.socks_listen_ports.clone();
         self.dht_discovery.enabled = core.ipv8.enable_dht;
+        self.content_discovery_community.enabled = core.ipv8.enable_content_discovery;
     }
 }

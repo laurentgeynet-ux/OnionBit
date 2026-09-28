@@ -148,6 +148,46 @@ mod tests {
         ));
     }
 
+    #[tokio::test]
+    async fn endpoint_dual_stack_envoie_et_recoit_en_v6() {
+        // `DispatcherEndpoint` pyipv8 : le socket v6 partage les
+        // listeners v4, l'envoi choisit le socket par famille.
+        let Ok(ep) = UdpEndpoint::bind_dual("127.0.0.1:0", Some("[::1]:0")).await else {
+            // Pas de pile IPv6 sur cette machine : test inapplicable.
+            return;
+        };
+        let v6 = ep.local_addr_v6().unwrap().unwrap();
+        assert!(v6.is_ipv6());
+
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<usize>(1);
+        let mut prefix = [0xEEu8; PREFIX_LEN];
+        prefix[0] = 0; // prefixe arbitraire hors communities reelles
+        ep.add_raw_prefix_listener(
+            prefix,
+            std::sync::Arc::new(move |_src, data| {
+                let _ = tx.try_send(data.len());
+                Ok(())
+            }),
+        )
+        .await;
+        let run = tokio::spawn({
+            let ep = ep.clone();
+            async move {
+                let _ = ep.run().await;
+            }
+        });
+
+        let mut data = Vec::from(&prefix[..]);
+        data.extend_from_slice(b"ping-v6");
+        ep.send_to(&UdpAddress::from(v6), &data).await.unwrap();
+        let got = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv()).await;
+        assert_eq!(
+            got.expect("aucun datagramme v6 recu"),
+            Some(data.len())
+        );
+        run.abort();
+    }
+
     #[test]
     fn paquet_prefixe_etranger_rejete() {
         let key = tribler_crypto::ipv8::keys::LibNaClSecretKey::generate();

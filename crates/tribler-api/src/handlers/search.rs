@@ -76,13 +76,17 @@ pub async fn remote_search(
                         peer: mid.clone(),
                     });
                 });
-            if stack
-                .content_discovery
-                .send_remote_select_cb(addr, body.clone(), cb)
-                .await
-                .is_ok()
-            {
-                queried.push(hex::encode(peer.mid));
+            // `content_discovery_community/enabled=false` : pas de
+            // community -> pas de select (la recherche locale REST
+            // reste disponible via les autres endpoints).
+            if let Some(cd) = &stack.content_discovery {
+                if cd
+                    .send_remote_select_cb(addr, body.clone(), cb)
+                    .await
+                    .is_ok()
+                {
+                    queried.push(hex::encode(peer.mid));
+                }
             }
         }
     }
