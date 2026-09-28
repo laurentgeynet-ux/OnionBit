@@ -2942,3 +2942,49 @@ async fn rss_list_items() {
     );
     srv.session.stop().await;
 }
+
+#[tokio::test]
+async fn tracker_lists_follow_trackerstatusdict_shape() {
+    let srv = spawn_server().await;
+    let ih0 = add_paused(&srv).await;
+    // Shape `TrackerStatusDict` Python (`{url, peers, seeds, leeches,
+    // status}`) identique sur `downloads[].trackers` et
+    // `GET /downloads/{ih}/trackers` (`tracker_info`), avec les
+    // pseudo-entrees `[DHT]`/`[PeX]` en queue.
+    let body: serde_json::Value = srv
+        .client
+        .get(srv.url("/api/downloads"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let downloads = body["downloads"].as_array().unwrap();
+    let dl = downloads
+        .iter()
+        .find(|d| d["infohash"].as_str() == Some(ih0.as_str()))
+        .unwrap();
+    let ih = ih0;
+    let in_list = dl["trackers"].as_array().unwrap().clone();
+
+    let dedicated: serde_json::Value = srv
+        .client
+        .get(srv.url(&format!("/api/downloads/{ih}/trackers")))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let trackers = dedicated["tracker_info"].as_array().unwrap();
+    assert_eq!(&in_list, trackers);
+    for t in trackers {
+        for k in ["url", "peers", "seeds", "leeches", "status"] {
+            assert!(t.get(k).is_some(), "cle absente : {k} ({t})");
+        }
+    }
+    let urls: Vec<&str> = trackers.iter().filter_map(|t| t["url"].as_str()).collect();
+    assert_eq!(&urls[urls.len() - 2..], &["[DHT]", "[PeX]"]);
+    srv.session.stop().await;
+}

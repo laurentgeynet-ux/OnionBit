@@ -307,13 +307,33 @@ pub struct SwarmInfo {
     pub seeder: bool,
 }
 
-/// Pair tunnel connu + flags de service (`/api/ipv8/tunnel/peers`).
+/// Pair tunnel connu (`/api/ipv8/tunnel/peers`) — shape de
+/// `get_peers` pyipv8 : `{ip, port, mid, is_key_compatible, flags}`
+/// avec `flags` = LISTE des `PEER_FLAG_*` (set Python), pas le
+/// bitmask agrege.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct TunnelPeerInfo {
-    /// Cle publique binaire (hex).
-    pub public_key: String,
-    /// Flags de service annonces (`PEER_FLAG_*`).
-    pub flags: i32,
+    /// Adresse IP du pair.
+    pub ip: String,
+    /// Port UDP du pair.
+    pub port: u16,
+    /// `peer.mid` hex (SHA-1 de la cle publique).
+    pub mid: String,
+    /// Cle compatible avec notre crypto (LibNaCL).
+    pub is_key_compatible: bool,
+    /// Flags de service annonces, un bit par element.
+    pub flags: Vec<i32>,
+}
+
+/// `mask -> Vec<flag>` : expansion du bitmask interne en liste de
+/// valeurs (`candidates` Python stocke un set d'entiers).
+fn flags_to_list(mask: i32) -> Vec<i32> {
+    (0..32)
+        .filter_map(|b| {
+            let flag = 1i32.checked_shl(b)?;
+            (mask & flag != 0).then_some(flag)
+        })
+        .collect()
 }
 
 impl TunnelCommunity {
@@ -548,16 +568,25 @@ impl TunnelCommunity {
     }
 
     /// Pairs tunnel connus avec leurs flags de service pour
-    /// `/api/ipv8/tunnel/peers` (`get_peers` pyipv8).
+    /// `/api/ipv8/tunnel/peers` (`get_peers` pyipv8 : iteration sur
+    /// `candidates` — les pairs sans objet `Peer` resolvable sont
+    /// omis, comme un candidat inconnu du `Network`).
     pub fn tunnel_peers_info(&self) -> Vec<TunnelPeerInfo> {
-        self.inner
-            .lock()
-            .unwrap()
-            .flag_registry
+        let registry = self.inner.lock().unwrap().flag_registry.clone();
+        registry
             .iter()
-            .map(|(pk, flags)| TunnelPeerInfo {
-                public_key: hex::encode(pk),
-                flags: *flags,
+            .filter_map(|(pk, mask)| {
+                let peer = self.network.get_by_key(pk)?;
+                let (ip, port) = tribler_ipv8::overlays::addr_parts(peer.address.as_ref());
+                Some(TunnelPeerInfo {
+                    ip,
+                    port,
+                    mid: hex::encode(peer.mid),
+                    // `crypto.is_key_compatible` Python : vrai pour les
+                    // cles LibNaCL (tous nos pairs).
+                    is_key_compatible: pk.starts_with(b"LibNaCLPK:"),
+                    flags: flags_to_list(*mask),
+                })
             })
             .collect()
     }

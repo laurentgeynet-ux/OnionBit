@@ -78,8 +78,9 @@ class RestDownloadsRepository implements DownloadsRepository {
           name: (f['name'] as String?) ?? '',
           size: (f['size'] as num?)?.toInt() ?? 0,
           included: f['included'] != false,
-          priority: (f['priority'] as num?)?.toInt() ?? 0,
-          progress: (f['progress'] as num?)?.toInt() ?? 0,
+          // `progress` est une fraction 0..1 (comme Python), pas des
+          // octets.
+          progress: (f['progress'] as num?)?.toDouble() ?? 0,
         ),
     ];
   }
@@ -93,8 +94,10 @@ class RestDownloadsRepository implements DownloadsRepository {
       for (final t in items.whereType<Map<String, dynamic>>())
         DownloadTracker(
           url: (t['url'] as String?) ?? '',
-          status: (t['status'] as String?) ?? 'Actif',
-          peers: (t['peers'] as num?)?.toInt() ?? 0,
+          status: (t['status'] as String?) ?? 'Not contacted yet',
+          peers: (t['peers'] as num?)?.toInt() ?? -1,
+          seeds: (t['seeds'] as num?)?.toInt() ?? -1,
+          leeches: (t['leeches'] as num?)?.toInt() ?? -1,
         ),
     ];
   }

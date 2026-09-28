@@ -5,7 +5,6 @@ class DownloadFile {
     required this.name,
     required this.size,
     required this.included,
-    required this.priority,
     required this.progress,
   });
 
@@ -13,10 +12,10 @@ class DownloadFile {
   final String name;
   final int size;
   final bool included;
-  final int priority;
 
-  /// Octets déjà téléchargés du fichier.
-  final int progress;
+  /// Fraction téléchargée `[0.0, 1.0]` — conforme au `progress` Python
+  /// (`files_completion`), pas des octets.
+  final double progress;
 
-  double get fraction => size <= 0 ? 0 : (progress / size).clamp(0.0, 1.0);
+  double get fraction => progress.clamp(0.0, 1.0);
 }

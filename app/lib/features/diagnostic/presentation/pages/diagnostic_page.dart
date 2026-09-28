@@ -231,11 +231,12 @@ class _PeersTab extends ConsumerWidget {
         dense: true,
         leading: const Icon(Icons.person_outline, size: 20),
         title: Text(
-          p.publicKey,
+          p.mid,
           overflow: TextOverflow.ellipsis,
           style: const TextStyle(fontFamily: 'monospace'),
         ),
-        trailing: Text('flags ${p.flags}'),
+        subtitle: Text('${p.ip}:${p.port}'),
+        trailing: Text('flags ${p.flags.join(',')}'),
       ),
     );
   }

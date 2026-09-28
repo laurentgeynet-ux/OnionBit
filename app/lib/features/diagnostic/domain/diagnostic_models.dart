@@ -75,10 +75,22 @@ class SwarmInfo {
 }
 
 class TunnelPeerInfo {
-  const TunnelPeerInfo({required this.publicKey, required this.flags});
+  const TunnelPeerInfo({
+    required this.ip,
+    required this.port,
+    required this.mid,
+    required this.isKeyCompatible,
+    required this.flags,
+  });
 
-  final String publicKey;
-  final int flags;
+  final String ip;
+  final int port;
+  final String mid;
+  final bool isKeyCompatible;
+
+  /// `PEER_FLAG_*` annoncés — liste d'entiers (set Python), pas un
+  /// bitmask.
+  final List<int> flags;
 }
 
 /// État de la lane anonyme pour la barre d'état — « honnête » :

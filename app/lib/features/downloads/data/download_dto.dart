@@ -33,8 +33,10 @@ extension DownloadJson on Map<String, dynamic> {
         if (t is Map<String, dynamic>)
           DownloadTracker(
             url: '${t['url'] ?? ''}',
-            status: '${t['status'] ?? ''}',
-            peers: (t['peers'] as num?)?.toInt() ?? 0,
+            status: '${t['status'] ?? 'Not contacted yet'}',
+            peers: (t['peers'] as num?)?.toInt() ?? -1,
+            seeds: (t['seeds'] as num?)?.toInt() ?? -1,
+            leeches: (t['leeches'] as num?)?.toInt() ?? -1,
           ),
     ],
   );

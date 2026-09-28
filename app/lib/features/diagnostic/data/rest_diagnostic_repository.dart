@@ -78,8 +78,14 @@ class RestDiagnosticRepository implements DiagnosticRepository {
   Future<List<TunnelPeerInfo>> tunnelPeers() async => [
     for (final p in _list(await _api.get('/ipv8/tunnel/peers'), 'peers'))
       TunnelPeerInfo(
-        publicKey: '${p['public_key'] ?? ''}',
-        flags: (p['flags'] as num?)?.toInt() ?? 0,
+        ip: '${p['ip'] ?? ''}',
+        port: (p['port'] as num?)?.toInt() ?? 0,
+        mid: '${p['mid'] ?? ''}',
+        isKeyCompatible: p['is_key_compatible'] == true,
+        flags: [
+          for (final f in (p['flags'] as List?) ?? const [])
+            (f as num?)?.toInt() ?? 0,
+        ],
       ),
   ];
 

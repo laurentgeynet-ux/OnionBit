@@ -335,10 +335,18 @@ class _TrackersTab extends ConsumerWidget {
                         style: TextStyle(
                           color: t.status.toLowerCase().contains('error')
                               ? Colors.red
-                              : Colors.green,
+                              : t.status == 'Working'
+                              ? Colors.green
+                              : null,
                         ),
                       ),
-                      trailing: Text('${t.peers} pair(s) découverts'),
+                      // `-1` = tracker pas encore scrapé (convention
+                      // `TrackerStatusDict` Python).
+                      trailing: Text(
+                        t.peers < 0
+                            ? '—'
+                            : 'P ${t.peers} · S ${t.seeds} · L ${t.leeches}',
+                      ),
                     );
                   },
                 ),

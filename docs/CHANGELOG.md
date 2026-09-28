@@ -3,6 +3,33 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Conformité des noms API↔UI (2026-09-28)
+
+Audit et alignement des noms divergents entre le contrat Python, les
+DTO Rust et les modèles Dart — un seul nom canonique à chaque étage :
+
+- `GET /api/ipv8/tunnel/peers` : shape `{ip, port, mid,
+  is_key_compatible, flags[]}` Python (`flags` en liste d'entiers
+  `PEER_FLAG_*`, plus `public_key`/bitmask à la frontière API) ;
+  `TunnelPeerInfo` Dart mis à jour (modèle + repository + page
+  diagnostic).
+- Trackers : helper partagé `trackers_json` émettant le
+  `TrackerStatusDict` complet (`url`, `peers`, `seeds`, `leeches`,
+  `status`, `-1`/`"Not contacted yet"` avant scrape) + pseudo-entrées
+  `[DHT]`/`[PeX]`, utilisé par `downloads[].trackers` **et**
+  `GET /downloads/{ih}/trackers` ; `DownloadTracker` Dart reflète les
+  5 clés (affichage `—` tant que non scrapé).
+- `GET /downloads/{ih}/files` : `progress` = fraction 0..1 (était lu
+  en octets côté Dart), `priority` retiré du modèle (non émis par
+  Python), `included` calculé depuis `selected_files` au lieu de
+  `true` en dur.
+- Overlays : `overlay_name` + `peers` liste (déjà corrigé dans
+  `5b1cd9c`, rappelé ici).
+- Test `tracker_lists_follow_trackerstatusdict_shape` fige la shape
+  sur les deux endpoints.
+- `flutter analyze` propre, 8/8 tests ; `cargo clippy -D warnings` +
+  `fmt` propres, 54/54 tests `tribler-api`.
+
 ## Étape 20 (avancement) — intégration UI↔daemon validée en live (2026-09-28)
 
 - Inventaire des routes consommées par `app/` : 11 endpoints REST +

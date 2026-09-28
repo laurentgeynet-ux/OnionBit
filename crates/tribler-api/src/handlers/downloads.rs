@@ -79,11 +79,10 @@ pub async fn get_downloads(
             info.anon_download = info.hops > 0;
             if let Some(dl) = &dl {
                 info.destination = dl.output_folder().display().to_string();
-                info.trackers = dl
-                    .trackers()
-                    .into_iter()
-                    .map(|u| serde_json::json!({ "url": u, "status": "Actif", "peers": 0 }))
-                    .collect();
+                info.trackers = crate::handlers::downloads_extra::trackers_json(
+                    dl.trackers(),
+                    state.session.engine().config().enable_dht,
+                );
                 if let Some(n) = dl.total_pieces() {
                     info.total_pieces = n as usize;
                 }

@@ -128,19 +128,54 @@ pub async fn tracker_force_announce(
     Ok(Json(serde_json::json!({ "forced": true })))
 }
 
+/// `TrackerStatusDict` Python : `{url, peers, seeds, leeches,
+/// status}` — valeurs par defaut de `get_tracker_status` tant que le
+/// tracker n'a pas ete scrape (`peers=-1`, `"Not contacted yet"`).
+fn tracker_status_json(url: String) -> serde_json::Value {
+    serde_json::json!({
+        "url": url,
+        "peers": -1,
+        "seeds": -1,
+        "leeches": -1,
+        "status": "Not contacted yet",
+    })
+}
+
+/// Liste `tracker_info` complete : trackers reels + pseudo-entrees
+/// `[DHT]`/`[PeX]` ajoutees par `get_tracker_status` Python.
+/// `dht_running` pilote le statut `[DHT]` (`Working`/`Disabled`) ;
+/// librqbit n'expose pas les compteurs de pairs par source (`0`).
+pub(crate) fn trackers_json(urls: Vec<String>, dht_running: bool) -> Vec<serde_json::Value> {
+    let mut out: Vec<_> = urls.into_iter().map(tracker_status_json).collect();
+    out.push(serde_json::json!({
+        "url": "[DHT]",
+        "peers": 0,
+        "seeds": -1,
+        "leeches": -1,
+        "status": if dht_running { "Working" } else { "Disabled" },
+    }));
+    out.push(serde_json::json!({
+        "url": "[PeX]",
+        "peers": 0,
+        "seeds": -1,
+        "leeches": -1,
+        "status": "Working",
+    }));
+    out
+}
+
 /// `GET /api/downloads/{ih}/trackers` — trackers du torrent
-/// (`announce`/`announce-list` + ajouts a chaud).
+/// (`announce`/`announce-list` + ajouts a chaud). Extension Rust :
+/// Python n'expose pas ce GET ; le shape suit `tracker_info`.
 pub async fn get_trackers(
     State(state): State<AppState>,
     Path(infohash): Path<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let dl = find(&state, &infohash)?;
-    let trackers: Vec<_> = dl
-        .trackers()
-        .into_iter()
-        .map(|url| serde_json::json!({ "url": url }))
-        .collect();
-    Ok(Json(serde_json::json!({ "tracker_info": trackers })))
+    let dht = state.session.engine().config().enable_dht;
+    Ok(Json(
+        serde_json::json!({ "tracker_info": trackers_json(dl.trackers(), dht) }),
+    ))
 }
 
 /// `GET /api/downloads/{ih}/files` — fichiers du torrent avec
@@ -150,6 +185,7 @@ pub async fn get_download_files(
     Path(infohash): Path<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let dl = find(&state, &infohash)?;
+    let selected = dl.only_files();
     let files: Vec<_> = dl
         .files()
         .ok_or_else(|| ApiError::not_found("metainfo non disponible (magnet non resolu)"))?
@@ -159,7 +195,11 @@ pub async fn get_download_files(
                 "index": f.index,
                 "name": f.name,
                 "size": f.length,
-                "included": true,
+                // Python : `file_index in selected_files` (tous si
+                // aucune selection).
+                "included": selected
+                    .as_ref()
+                    .is_none_or(|sel| sel.contains(&f.index)),
                 "progress": f.progress,
             })
         })
