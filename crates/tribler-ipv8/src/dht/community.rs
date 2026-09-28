@@ -2017,6 +2017,37 @@ impl DhtCommunity {
     pub fn network(&self) -> &Network {
         &self.network
     }
+
+    /// `OverlaySchema` : instantane REST de la community
+    /// (`GET /api/ipv8/overlays`). `Network` propre → `is_isolated`
+    /// vrai comme `DHTDiscoveryCommunity` pyipv8.
+    pub fn overlay_info(&self) -> crate::overlays::OverlayInfo {
+        use crate::overlays::{
+            dht_msg_name, overlay_peer, OverlayInfo, OverlayStrategy, DEFAULT_MAX_PEERS,
+        };
+        OverlayInfo {
+            community_id: DHT_COMMUNITY_ID,
+            my_peer_hex: hex::encode(self.key.public_key().to_bin()),
+            global_time: Self::gtime(),
+            peers: self
+                .network
+                .peers_for_service(&DHT_COMMUNITY_ID)
+                .iter()
+                .map(overlay_peer)
+                .collect(),
+            overlay_name: "DHTDiscoveryCommunity",
+            max_peers: DEFAULT_MAX_PEERS,
+            is_isolated: true,
+            my_estimated_wan: self.my_wan(),
+            my_estimated_lan: self.my_lan(),
+            // `BaseLauncher.get_walk_strategies` Tribler.
+            strategies: vec![OverlayStrategy {
+                name: "RandomWalk",
+                target_peers: 20,
+            }],
+            decode: dht_msg_name,
+        }
+    }
 }
 
 /// Resultat de `find` : noeuds visites ou valeurs post-traitees.

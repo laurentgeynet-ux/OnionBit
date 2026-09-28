@@ -128,6 +128,13 @@ pub fn build(state: AppState) -> Router {
         )
         // -- IPv8 / tunnel (ipv8_endpoint.py) ---------------------------
         .route("/api/ipv8/overlays", get(ipv8::get_overlays))
+        .route(
+            "/api/ipv8/overlays/statistics",
+            get(ipv8::get_overlay_statistics).post(ipv8::post_overlay_statistics),
+        )
+        .route("/api/ipv8/network", get(ipv8::get_network))
+        .route("/api/ipv8/isolation", post(ipv8::post_isolation))
+        .route("/api/ipv8/noblockdht/{mid}", get(ipv8::get_noblock_dht))
         .route("/api/ipv8/tunnel/settings", get(ipv8::get_tunnel_settings))
         .route("/api/ipv8/tunnel/circuits", get(ipv8::get_tunnel_circuits))
         .route("/api/ipv8/tunnel/relays", get(ipv8::get_tunnel_relays))

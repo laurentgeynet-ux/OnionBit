@@ -47,6 +47,75 @@ pub type TapEvent = (TapDir, SocketAddr, Vec<u8>);
 
 /// Endpoint UDP : dispatch par prefixe (community_id + version).
 ///
+/// `NetworkStat` pyipv8 (`to_dict`) : compteurs d'un `msg_id` d'un
+/// prefixe de community active.
+#[derive(Debug, Clone, Default)]
+pub struct NetworkStat {
+    /// `msg_id`.
+    pub identifier: u8,
+    /// Messages envoyes.
+    pub num_up: u64,
+    /// Messages recus.
+    pub num_down: u64,
+    /// Octets envoyes.
+    pub bytes_up: u64,
+    /// Octets recus.
+    pub bytes_down: u64,
+    /// Premier envoi (epoch sec, 0 si jamais).
+    pub first_measured_up: f64,
+    /// Premiere reception.
+    pub first_measured_down: f64,
+    /// Dernier envoi.
+    pub last_measured_up: f64,
+    /// Derniere reception.
+    pub last_measured_down: f64,
+}
+
+impl NetworkStat {
+    /// `add_sent_stat`.
+    fn sent(&mut self, ts: f64, bytes: usize) {
+        self.num_up += 1;
+        self.bytes_up += bytes as u64;
+        self.last_measured_up = ts;
+        if self.first_measured_up == 0.0 {
+            self.first_measured_up = ts;
+        }
+    }
+
+    /// `add_received_stat`.
+    fn received(&mut self, ts: f64, bytes: usize) {
+        self.num_down += 1;
+        self.bytes_down += bytes as u64;
+        self.last_measured_down = ts;
+        if self.first_measured_down == 0.0 {
+            self.first_measured_down = ts;
+        }
+    }
+}
+
+/// `get_aggregate_statistics(prefix)` pyipv8.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct AggregateStats {
+    /// Messages envoyes.
+    pub num_up: u64,
+    /// Messages recus.
+    pub num_down: u64,
+    /// Octets envoyes.
+    pub bytes_up: u64,
+    /// Octets recus.
+    pub bytes_down: u64,
+    /// `last_measured - first_measured` (0 si inconnu).
+    pub diff_time: f64,
+}
+
+/// Secondes epoch flottantes (timestamps `NetworkStat` Python).
+fn now_secs() -> f64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs_f64())
+        .unwrap_or(0.0)
+}
+
 /// Equivalent de `endpoint.add_prefix_listener` : chaque community
 /// enregistre son prefixe de 22 octets et recoit les datagrammes
 /// correspondants.
@@ -65,6 +134,10 @@ pub struct UdpEndpoint {
     bytes_up: std::sync::atomic::AtomicU64,
     /// Octets recus (`IPv8StatsEndpoint.bytes_down` Python).
     bytes_down: std::sync::atomic::AtomicU64,
+    /// `StatisticsEndpoint.statistics` : prefixes actives ->
+    /// `msg_id` -> compteurs. Un prefixe absent n'est pas compte
+    /// (`enable_community_statistics` Python).
+    statistics: Mutex<HashMap<[u8; PREFIX_LEN], HashMap<u8, NetworkStat>>>,
 }
 
 impl UdpEndpoint {
@@ -79,6 +152,7 @@ impl UdpEndpoint {
             tap: Mutex::new(None),
             bytes_up: std::sync::atomic::AtomicU64::new(0),
             bytes_down: std::sync::atomic::AtomicU64::new(0),
+            statistics: Mutex::new(HashMap::new()),
         }))
     }
 
@@ -86,6 +160,89 @@ impl UdpEndpoint {
     pub fn bytes_counters(&self) -> (u64, u64) {
         use std::sync::atomic::Ordering::Relaxed;
         (self.bytes_up.load(Relaxed), self.bytes_down.load(Relaxed))
+    }
+
+    /// `enable_community_statistics` pyipv8 : active/desactive le
+    /// comptage par `msg_id` pour un prefixe de community.
+    pub async fn enable_community_statistics(&self, prefix: [u8; PREFIX_LEN], enabled: bool) {
+        let mut stats = self.statistics.lock().await;
+        if enabled {
+            stats.entry(prefix).or_default();
+        } else {
+            stats.remove(&prefix);
+        }
+    }
+
+    /// `get_statistics(prefix)` pyipv8 : compteurs par `msg_id`
+    /// (map vide si le prefixe n'est pas suivi).
+    pub async fn get_statistics(&self, prefix: &[u8; PREFIX_LEN]) -> HashMap<u8, NetworkStat> {
+        self.statistics
+            .lock()
+            .await
+            .get(prefix)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// `get_aggregate_statistics(prefix)` pyipv8 : somme des
+    /// compteurs du prefixe (zeros si non suivi).
+    pub async fn get_aggregate_statistics(&self, prefix: &[u8; PREFIX_LEN]) -> AggregateStats {
+        let stats = self.statistics.lock().await;
+        let mut agg = AggregateStats::default();
+        let Some(per_msg) = stats.get(prefix) else {
+            return agg;
+        };
+        // `min_positive` Python : le plus petit timestamp non nul.
+        fn min_positive(a: f64, b: f64) -> f64 {
+            if b == 0.0 {
+                a
+            } else if a == 0.0 || b < a {
+                b
+            } else {
+                a
+            }
+        }
+        let mut first_ts = 0.0_f64;
+        let mut last_ts = 0.0_f64;
+        for s in per_msg.values() {
+            agg.num_up += s.num_up;
+            agg.num_down += s.num_down;
+            agg.bytes_up += s.bytes_up;
+            agg.bytes_down += s.bytes_down;
+            first_ts = min_positive(
+                first_ts,
+                min_positive(s.first_measured_up, s.first_measured_down),
+            );
+            last_ts = last_ts.max(s.last_measured_up).max(s.last_measured_down);
+        }
+        agg.diff_time = last_ts - first_ts;
+        agg
+    }
+
+    /// `add_sent_stat` pyipv8 (interne : prefixe deja extrait).
+    async fn add_sent_stat(&self, prefix: &[u8; PREFIX_LEN], msg_id: u8, bytes: usize) {
+        if let Some(per_msg) = self.statistics.lock().await.get_mut(prefix) {
+            per_msg
+                .entry(msg_id)
+                .or_insert_with(|| NetworkStat {
+                    identifier: msg_id,
+                    ..NetworkStat::default()
+                })
+                .sent(now_secs(), bytes);
+        }
+    }
+
+    /// `add_received_stat` pyipv8 (interne).
+    async fn add_received_stat(&self, prefix: &[u8; PREFIX_LEN], msg_id: u8, bytes: usize) {
+        if let Some(per_msg) = self.statistics.lock().await.get_mut(prefix) {
+            per_msg
+                .entry(msg_id)
+                .or_insert_with(|| NetworkStat {
+                    identifier: msg_id,
+                    ..NetworkStat::default()
+                })
+                .received(now_secs(), bytes);
+        }
     }
 
     /// Adresse locale du socket.
@@ -126,6 +283,14 @@ impl UdpEndpoint {
                 self.socket.send_to(data, sa).await?;
                 self.bytes_up
                     .fetch_add(data.len() as u64, std::sync::atomic::Ordering::Relaxed);
+                // `StatisticsEndpoint.send` : le msg_id suit le
+                // prefixe de 22 octets (paquet IPv8 = >= 23 octets).
+                if data.len() > PREFIX_LEN {
+                    let mut prefix = [0u8; PREFIX_LEN];
+                    prefix.copy_from_slice(&data[..PREFIX_LEN]);
+                    self.add_sent_stat(&prefix, data[PREFIX_LEN], data.len())
+                        .await;
+                }
                 if let Some(t) = self.tap.lock().await.as_ref() {
                     let _ = t.send((TapDir::Tx, sa, data.to_vec()));
                 }
@@ -170,6 +335,11 @@ impl UdpEndpoint {
             }
             let mut prefix = [0u8; PREFIX_LEN];
             prefix.copy_from_slice(&data[..PREFIX_LEN]);
+            // `StatisticsEndpoint.on_packet` : compte la reception si
+            // le prefixe est suivi (avant tout dispatch).
+            if data.len() > PREFIX_LEN {
+                self.add_received_stat(&prefix, data[PREFIX_LEN], n).await;
+            }
             let raw_handler = { self.raw_listeners.lock().await.get(&prefix).cloned() };
             if let Some(h) = raw_handler {
                 if let Err(e) = h(src, data) {

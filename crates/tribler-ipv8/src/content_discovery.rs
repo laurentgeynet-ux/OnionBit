@@ -23,6 +23,7 @@ use crate::address::UdpAddress;
 use crate::endpoint::UdpEndpoint;
 use crate::error::Ipv8Error;
 use crate::packet::{prefix_of, Packet};
+use crate::payloads::Payload;
 use crate::peer::{Network, Peer};
 use crate::serializer::{Reader, Writer};
 use crate::CommunityId;
@@ -298,6 +299,78 @@ impl ContentDiscoveryCommunity {
     /// `dist` (`ez_send` pyipv8) mais en recoivent via les intros.
     fn update_global_time(&self, t: u64) {
         self.global_time.fetch_max(t, Ordering::Relaxed);
+    }
+
+    /// `claim_global_time` : incremente et retourne l'horodatage.
+    fn claim_global_time(&self) -> u64 {
+        self.global_time
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            + 1
+    }
+
+    /// Annuaire reseau partage.
+    pub fn network(&self) -> &Arc<Network> {
+        &self.network
+    }
+
+    /// `overlay.walk_to` (`Community.walk_to` →
+    /// `create_introduction_request` sous le prefixe de la community) —
+    /// utilise par `/api/ipv8/isolation` "bootstrapnode".
+    pub async fn walk_to(&self, addr: &UdpAddress) -> Result<(), Ipv8Error> {
+        let mut w = Writer::new();
+        crate::payloads::IntroductionRequest {
+            destination_address: addr.clone(),
+            source_lan_address: UdpAddress::unspecified(),
+            source_wan_address: UdpAddress::unspecified(),
+            advice: false,
+            supports_new_style: true,
+            connection_type: crate::payloads::ConnectionType::Unknown,
+            identifier: rand::random::<u16>(),
+            extra_bytes: Vec::new(),
+        }
+        .pack(&mut w)?;
+        // `sign_auto` : les intros portent le layout `dist`.
+        let pkt = Packet::sign_auto(
+            &CONTENT_DISCOVERY_COMMUNITY_ID,
+            crate::payloads::msg::INTRODUCTION_REQUEST,
+            &self.key,
+            self.claim_global_time() % 65536,
+            &w.into_bytes(),
+        );
+        self.endpoint.send_to(addr, &pkt).await
+    }
+
+    /// `OverlaySchema` : instantane REST de la community
+    /// (`GET /api/ipv8/overlays`).
+    pub fn overlay_info(&self, is_isolated: bool) -> crate::overlays::OverlayInfo {
+        use crate::overlays::{
+            content_discovery_msg_name, overlay_peer, OverlayInfo, OverlayStrategy,
+            DEFAULT_MAX_PEERS,
+        };
+        OverlayInfo {
+            community_id: CONTENT_DISCOVERY_COMMUNITY_ID,
+            my_peer_hex: hex::encode(self.key.public_key().to_bin()),
+            global_time: self.global_time.load(std::sync::atomic::Ordering::Relaxed),
+            peers: self
+                .network
+                .peers_for_service(&CONTENT_DISCOVERY_COMMUNITY_ID)
+                .iter()
+                .map(overlay_peer)
+                .collect(),
+            overlay_name: "ContentDiscoveryCommunity",
+            max_peers: DEFAULT_MAX_PEERS,
+            is_isolated,
+            // La community ne suit pas `my_estimated_*` (le Python les
+            // estime par listener ; on rapporte 0.0.0.0:0).
+            my_estimated_wan: UdpAddress::unspecified(),
+            my_estimated_lan: UdpAddress::unspecified(),
+            // `BaseLauncher.get_walk_strategies` Tribler.
+            strategies: vec![OverlayStrategy {
+                name: "RandomWalk",
+                target_peers: 20,
+            }],
+            decode: content_discovery_msg_name,
+        }
     }
 
     /// Serialise + signe + envoie un payload.

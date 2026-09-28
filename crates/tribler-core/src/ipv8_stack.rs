@@ -737,6 +737,28 @@ impl Ipv8Stack {
             });
         }
 
+        // `enable_overlay_statistics(enable=True, all_overlays=True)`
+        // de `session.py` : Tribler active le suivi des stats pour
+        // toutes les communities des le demarrage.
+        let stats_prefixes = {
+            let mut v = vec![
+                tribler_ipv8::prefix_of(&tribler_ipv8::discovery::DISCOVERY_COMMUNITY_ID),
+                tribler_ipv8::prefix_of(&tribler_ipv8::CONTENT_DISCOVERY_COMMUNITY_ID),
+            ];
+            if let Some(t) = &tunnel {
+                v.push(tribler_ipv8::prefix_of(&t.community_id()));
+            }
+            if dht.is_some() {
+                v.push(tribler_ipv8::prefix_of(
+                    &tribler_ipv8::dht::DHT_COMMUNITY_ID,
+                ));
+            }
+            v
+        };
+        for prefix in stats_prefixes {
+            endpoint.enable_community_statistics(prefix, true).await;
+        }
+
         // Tache de reception de l'endpoint (dispatch prefixe).
         let ep = endpoint.clone();
         tokio::spawn(async move {
@@ -806,6 +828,93 @@ impl Ipv8Stack {
     /// Cle publique IPv8 (hex, affichage API).
     pub fn public_key_hex(&self) -> String {
         hex::encode(self.key.public_key().to_bin())
+    }
+
+    /// `session.overlays` : instantanes `OverlaySchema` de toutes les
+    /// communities chargees, dans l'ordre de chargement Python
+    /// (`DiscoveryCommunity` config, puis launchers : content, DHT,
+    /// tunnel).
+    pub fn overlays_info(&self) -> Vec<tribler_ipv8::OverlayInfo> {
+        let mut out = vec![
+            self.discovery.overlay_info(false),
+            self.content_discovery.overlay_info(false),
+        ];
+        if let Some(d) = &self.dht {
+            // `DHTDiscoveryCommunity` a son propre `Network` →
+            // `is_isolated` vrai (calcule dans `overlay_info`).
+            out.push(d.overlay_info());
+        }
+        if let Some(t) = &self.tunnel {
+            out.push(t.overlay_info(false));
+        }
+        out
+    }
+
+    /// `enable_overlay_statistics` de `OverlaysEndpoint` : active ou
+    /// desactive le comptage pour tous les overlays (`all`) ou celui
+    /// nomme `overlay_name` (`__class__.__name__`).
+    pub async fn enable_overlay_statistics(
+        &self,
+        enable: bool,
+        overlay_name: Option<&str>,
+        all: bool,
+    ) {
+        for info in self.overlays_info() {
+            if all || Some(info.overlay_name) == overlay_name {
+                self.endpoint
+                    .enable_community_statistics(info.prefix(), enable)
+                    .await;
+            }
+        }
+    }
+
+    /// `IsolationEndpoint.add_exit_node` : `walk_to` sur les overlays
+    /// tunnel (seule `TunnelCommunity` en Python).
+    pub async fn walk_exit_nodes(&self, addr: &UdpAddress) {
+        if let Some(t) = &self.tunnel {
+            let _ = t.walk_to(addr).await;
+        }
+    }
+
+    /// `IsolationEndpoint.add_bootstrap_server` : blacklist reseau
+    /// (globale + chaque overlay) puis `walk_to`, et ajout de
+    /// l'adresse aux `DispersyBootstrapper.ip_addresses` (chez nous :
+    /// le pool de bootstrap de la discovery).
+    pub async fn add_bootstrap_node(&self, addr: &UdpAddress) {
+        // `session.network.blacklist.append` — discovery/content/
+        // tunnel partagent `self.network` ; le DHT a le sien.
+        self.network.add_blacklist(addr.clone());
+        let _ = self.discovery.walk_to(addr).await;
+        let _ = self.content_discovery.walk_to(addr).await;
+        if let Some(d) = &self.dht {
+            d.network().add_blacklist(addr.clone());
+            let _ = d.walk_to(addr).await;
+        }
+        if let Some(t) = &self.tunnel {
+            let _ = t.walk_to(addr).await;
+        }
+        // `bootstrapper.ip_addresses.append` (overlay Community).
+        self.discovery.add_bootstrapper(addr.clone());
+    }
+
+    /// `NoBlockDHTEndpoint` : lance `DHTDiscoveryCommunity.connect_peer`
+    /// en tache de fond et retourne immediatement. `false` si la
+    /// community DHT n'est pas chargee (`dht is None` → 404 Python).
+    pub fn connect_peer_noblock(&self, mid: [u8; 20]) -> bool {
+        let Some(dht) = &self.dht else {
+            return false;
+        };
+        let dht = dht.clone();
+        tokio::spawn(async move {
+            match dht.connect_peer(&mid, None).await {
+                Ok(_) => tracing::debug!(mid = %hex::encode(mid), "dht connect-peer ok"),
+                // `DHTError` Python : loggee, pas propagee au REST.
+                Err(e) => {
+                    tracing::debug!(error = %e, mid = %hex::encode(mid), "dht connect-peer echoue")
+                }
+            }
+        });
+        true
     }
 
     /// Moteur anonyme pour `hops` sauts (1..=3) : cree la lane a la

@@ -49,10 +49,7 @@ const REBOOTSTRAP_CHANCE: f64 = 0.05;
 
 /// Adresse "non definie" (`0.0.0.0:0`).
 fn unspecified() -> UdpAddress {
-    UdpAddress::Ipv4(std::net::SocketAddrV4::new(
-        std::net::Ipv4Addr::UNSPECIFIED,
-        0,
-    ))
+    UdpAddress::unspecified()
 }
 
 /// `true` si l'IPv4 est dans un sous-reseau LAN prive
@@ -89,6 +86,10 @@ pub struct DiscoveryCommunity {
     my_estimated_lan: Mutex<UdpAddress>,
     /// Requetes d'introduction en attente (identifier -> instant).
     pending_intro: Mutex<std::collections::HashMap<u16, (UdpAddress, Instant)>>,
+    /// Adresses ajoutees dynamiquement au bootstrap
+    /// (`DispersyBootstrapper.ip_addresses.append` — endpoint REST
+    /// `/api/ipv8/isolation` "bootstrapnode").
+    extra_bootstrap: Mutex<Vec<UdpAddress>>,
     /// Observables de decode (equivalents des hooks pyipv8
     /// `introduction_request/response_callback` et `on_puncture`) —
     /// utilises par les tests et le banc d'interop.
@@ -118,6 +119,7 @@ impl DiscoveryCommunity {
             my_estimated_wan: Mutex::new(unspecified()),
             my_estimated_lan: Mutex::new(my_lan),
             pending_intro: Mutex::new(std::collections::HashMap::new()),
+            extra_bootstrap: Mutex::new(Vec::new()),
             intro_requests_seen: std::sync::atomic::AtomicUsize::new(0),
             intro_responses_seen: std::sync::atomic::AtomicUsize::new(0),
             punctures_seen: std::sync::atomic::AtomicUsize::new(0),
@@ -159,6 +161,67 @@ impl DiscoveryCommunity {
     /// `my_estimated_lan`.
     pub fn my_estimated_lan(&self) -> UdpAddress {
         self.my_estimated_lan.lock().unwrap().clone()
+    }
+
+    /// `overlay.walk_to(address)` (`RandomWalk.walk_to` →
+    /// introduction-request vers une adresse explicite).
+    pub async fn walk_to(&self, addr: &UdpAddress) -> Result<(), Ipv8Error> {
+        self.send_introduction_request(addr).await.map(|_| ())
+    }
+
+    /// `bootstrapper.ip_addresses.append(...)` : ajoute une adresse
+    /// au pool de bootstrap (consultee par `step`/`run`).
+    pub fn add_bootstrapper(&self, addr: UdpAddress) {
+        self.extra_bootstrap.lock().unwrap().push(addr);
+    }
+
+    /// Pool de bootstrap effectif : liste initiale + ajouts
+    /// dynamiques (`extra_bootstrap`).
+    fn merged_bootstrap(&self, bootstrap: &[UdpAddress]) -> Vec<UdpAddress> {
+        let mut v = bootstrap.to_vec();
+        v.extend(self.extra_bootstrap.lock().unwrap().iter().cloned());
+        v
+    }
+
+    /// `OverlaySchema` : instantane REST de la community
+    /// (`GET /api/ipv8/overlays`).
+    pub fn overlay_info(&self, is_isolated: bool) -> crate::overlays::OverlayInfo {
+        use crate::overlays::{
+            discovery_msg_name, overlay_peer, OverlayInfo, OverlayStrategy, DEFAULT_MAX_PEERS,
+        };
+        OverlayInfo {
+            community_id: DISCOVERY_COMMUNITY_ID,
+            my_peer_hex: hex::encode(self.key.public_key().to_bin()),
+            global_time: self.global_time(),
+            peers: self
+                .network
+                .peers_for_service(&DISCOVERY_COMMUNITY_ID)
+                .iter()
+                .map(overlay_peer)
+                .collect(),
+            overlay_name: "DiscoveryCommunity",
+            max_peers: DEFAULT_MAX_PEERS,
+            is_isolated,
+            my_estimated_wan: self.my_estimated_wan(),
+            my_estimated_lan: self.my_estimated_lan(),
+            // Configuration `ipv8_default_config` pyipv8 pour
+            // `DiscoveryCommunity`.
+            strategies: vec![
+                OverlayStrategy {
+                    name: "RandomWalk",
+                    target_peers: 20,
+                },
+                OverlayStrategy {
+                    name: "RandomChurn",
+                    target_peers: -1,
+                },
+                OverlayStrategy {
+                    name: "PeriodicSimilarity",
+                    target_peers: -1,
+                },
+            ],
+            decode: discovery_msg_name,
+        }
     }
 
     /// Serialise + signe + envoie un payload (global_time mod 65536
@@ -654,6 +717,7 @@ impl DiscoveryCommunity {
     pub async fn get_new_introduction(&self, bootstrap: &[UdpAddress]) -> Result<(), Ipv8Error> {
         // `ThreadRng` n'est pas `Send` : tout le tirage est fait dans
         // des blocs separes, jamais a travers un `.await`.
+        let bootstrap = self.merged_bootstrap(bootstrap);
         let available = self.network.peers_for_service(&DISCOVERY_COMMUNITY_ID);
         if !available.is_empty() {
             // Petit hasard de reparation d'un reseau partitionne.

@@ -851,14 +851,28 @@ async fn libtorrent_settings_et_session() {
 #[tokio::test]
 async fn ipv8_et_search_sans_stack_retournent_erreur() {
     let srv = spawn_server().await;
-    // Stack IPv8 desactivee en config offline.
-    for path in [
-        "/api/ipv8/overlays",
-        "/api/ipv8/tunnel/circuits",
-        "/api/ipv8/tunnel/settings",
+    // Stack IPv8 desactivee en config offline — comme `session is
+    // None` / `tunnels is None` Python, les GET repondent 200 avec
+    // des collections vides.
+    for (path, key) in [
+        ("/api/ipv8/overlays", "overlays"),
+        ("/api/ipv8/tunnel/circuits", "circuits"),
+        ("/api/ipv8/tunnel/settings", "settings"),
+        ("/api/ipv8/tunnel/relays", "relays"),
+        ("/api/ipv8/tunnel/exits", "exits"),
+        ("/api/ipv8/tunnel/swarms", "swarms"),
+        ("/api/ipv8/tunnel/peers", "peers"),
+        ("/api/ipv8/network", "peers"),
+        ("/api/ipv8/overlays/statistics", "statistics"),
     ] {
         let resp = srv.client.get(srv.url(path)).send().await.unwrap();
-        assert_eq!(resp.status(), 400, "{path}");
+        assert_eq!(resp.status(), 200, "{path}");
+        let body: serde_json::Value = resp.json().await.unwrap();
+        assert!(
+            body[key].as_array().map(|a| a.is_empty()).unwrap_or(false)
+                || body[key].as_object().map(|o| o.is_empty()).unwrap_or(false),
+            "{path} -> {body}"
+        );
     }
     let resp = srv
         .client
@@ -2087,5 +2101,352 @@ async fn dht_routes_avec_community() {
         resp.json::<serde_json::Value>().await.unwrap()["error"]["handled"],
         false
     );
+    srv.session.stop().await;
+}
+
+// -------------------------------------------------------------------
+// Etape 26 — /api/ipv8/network, /isolation, /noblockdht,
+//            /api/ipv8/overlays[/statistics]
+// -------------------------------------------------------------------
+
+/// `GET /api/ipv8/overlays` avec stack : `OverlaySchema` pyipv8
+/// (id hex, my_peer, global_time, peers, overlay_name, statistics,
+/// max_peers, is_isolated, my_estimated_*, strategies).
+#[tokio::test]
+async fn ipv8_overlays_shape_python() {
+    let srv = spawn_server_ipv8().await;
+    let resp = srv
+        .client
+        .get(srv.url("/api/ipv8/overlays"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let overlays = body["overlays"].as_array().unwrap();
+    // Discovery + ContentDiscovery + DHTDiscovery (enable_dht) —
+    // pas de tunnel (enable_anonymity=false en config offline).
+    let names: Vec<&str> = overlays
+        .iter()
+        .map(|o| o["overlay_name"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        names,
+        vec![
+            "DiscoveryCommunity",
+            "ContentDiscoveryCommunity",
+            "DHTDiscoveryCommunity"
+        ]
+    );
+    for o in overlays {
+        assert_eq!(o["id"].as_str().unwrap().len(), 40, "community_id hex");
+        assert!(o["my_peer"].as_str().unwrap().len() >= 64, "pubkey hex");
+        assert!(o["global_time"].is_u64());
+        assert!(o["peers"].is_array());
+        assert_eq!(o["max_peers"], 30);
+        assert!(o["statistics"]["num_up"].is_u64());
+        assert!(o["statistics"]["diff_time"].is_f64() || o["statistics"]["diff_time"].is_i64());
+        assert!(o["my_estimated_wan"]["ip"].is_string());
+        assert!(o["my_estimated_wan"]["port"].is_u64());
+        assert!(!o["strategies"].as_array().unwrap().is_empty());
+    }
+    // `is_isolated` : vrai uniquement pour le DHT (Network propre).
+    let by_name = |n: &str| overlays.iter().find(|o| o["overlay_name"] == n).unwrap();
+    assert_eq!(by_name("DHTDiscoveryCommunity")["is_isolated"], true);
+    assert_eq!(by_name("DiscoveryCommunity")["is_isolated"], false);
+    assert_eq!(
+        by_name("DiscoveryCommunity")["strategies"]
+            .as_array()
+            .unwrap()
+            .len(),
+        3,
+        "RandomWalk + RandomChurn + PeriodicSimilarity"
+    );
+    srv.session.stop().await;
+}
+
+/// `GET /api/ipv8/network` : `{"peers": {b64(mid): {...}}}` vide
+/// avec stack (aucun pair sur loopback isole).
+#[tokio::test]
+async fn ipv8_network_pairs_vides_avec_stack() {
+    let srv = spawn_server_ipv8().await;
+    let resp = srv
+        .client
+        .get(srv.url("/api/ipv8/network"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    assert_eq!(
+        resp.json::<serde_json::Value>().await.unwrap()["peers"],
+        serde_json::json!({})
+    );
+    srv.session.stop().await;
+}
+
+/// `POST /api/ipv8/isolation` : validations 400 puis `success`.
+#[tokio::test]
+async fn ipv8_isolation_semantique_python() {
+    let srv = spawn_server_ipv8().await;
+
+    // Corps vide/non-objet → "ip" and "port" are required (400).
+    let resp = srv
+        .client
+        .post(srv.url("/api/ipv8/isolation"))
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 400);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["success"], false);
+    assert_eq!(body["error"], "Parameters \"ip\" and \"port\" are required");
+
+    // ip+port sans mode → 400 "exitnode" or "bootstrapnode".
+    let resp = srv
+        .client
+        .post(srv.url("/api/ipv8/isolation"))
+        .json(&serde_json::json!({"ip": "1.2.3.4", "port": 4242}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 400);
+    assert_eq!(
+        resp.json::<serde_json::Value>().await.unwrap()["error"],
+        "Parameter \"exitnode\" or \"bootstrapnode\" is required"
+    );
+
+    // bootstrapnode : blacklist + walk + bootstrapper → success.
+    let resp = srv
+        .client
+        .post(srv.url("/api/ipv8/isolation"))
+        .json(&serde_json::json!({"ip": "1.2.3.4", "port": 4242, "bootstrapnode": true}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    assert_eq!(
+        resp.json::<serde_json::Value>().await.unwrap()["success"],
+        true
+    );
+
+    // exitnode (pas de tunnel → walk no-op) → success.
+    let resp = srv
+        .client
+        .post(srv.url("/api/ipv8/isolation"))
+        .json(&serde_json::json!({"ip": "1.2.3.4", "port": 4242, "exitnode": true}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    assert_eq!(
+        resp.json::<serde_json::Value>().await.unwrap()["success"],
+        true
+    );
+
+    // Corps non-JSON → exception `request.json()` → 500.
+    let resp = srv
+        .client
+        .post(srv.url("/api/ipv8/isolation"))
+        .body("pas du json")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 500);
+    srv.session.stop().await;
+}
+
+/// `POST /api/ipv8/isolation` sans stack : Python leve
+/// `AttributeError` sur `self.session.network` → 500 `handled:false`.
+#[tokio::test]
+async fn ipv8_isolation_sans_stack() {
+    let srv = spawn_server().await;
+    let resp = srv
+        .client
+        .post(srv.url("/api/ipv8/isolation"))
+        .json(&serde_json::json!({"ip": "1.2.3.4", "port": 42, "bootstrapnode": true}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 500);
+    assert_eq!(
+        resp.json::<serde_json::Value>().await.unwrap()["error"]["handled"],
+        false
+    );
+    srv.session.stop().await;
+}
+
+/// `GET/POST /api/ipv8/overlays/statistics` : activation, erreurs
+/// 400/412, stats auto-activees au demarrage (session.py).
+#[tokio::test]
+async fn ipv8_overlay_statistics_semantique() {
+    let srv = spawn_server_ipv8().await;
+
+    // GET : chaque overlay present (notre endpoint est toujours un
+    // `StatisticsEndpoint`), maps par msg_id vides sans trafic.
+    let resp = srv
+        .client
+        .get(srv.url("/api/ipv8/overlays/statistics"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let stats = body["statistics"].as_array().unwrap();
+    let names: Vec<&str> = stats
+        .iter()
+        .flat_map(|o| o.as_object().unwrap().keys().map(|k| k.as_str()))
+        .collect();
+    assert!(names.contains(&"DiscoveryCommunity"));
+    assert!(names.contains(&"DHTDiscoveryCommunity"));
+
+    // POST sans `enable` → 400.
+    let resp = srv
+        .client
+        .post(srv.url("/api/ipv8/overlays/statistics"))
+        .json(&serde_json::json!({"all": true}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 400);
+    assert_eq!(
+        resp.json::<serde_json::Value>().await.unwrap()["error"],
+        "Parameter \"enable\" is required"
+    );
+
+    // POST `enable` sans `all`/`overlay_name` → 412.
+    let resp = srv
+        .client
+        .post(srv.url("/api/ipv8/overlays/statistics"))
+        .json(&serde_json::json!({"enable": true}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 412);
+    assert_eq!(
+        resp.json::<serde_json::Value>().await.unwrap()["error"],
+        "Parameter \"all\" or \"overlay_name\" is required"
+    );
+
+    // Desactivation globale → GET rend des maps vides, agregat = 0.
+    let resp = srv
+        .client
+        .post(srv.url("/api/ipv8/overlays/statistics"))
+        .json(&serde_json::json!({"enable": false, "all": true}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    assert_eq!(
+        resp.json::<serde_json::Value>().await.unwrap()["success"],
+        true
+    );
+    let body: serde_json::Value = srv
+        .client
+        .get(srv.url("/api/ipv8/overlays/statistics"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    for entry in body["statistics"].as_array().unwrap() {
+        for per_msg in entry.as_object().unwrap().values() {
+            assert!(per_msg.as_object().unwrap().is_empty());
+        }
+    }
+    let body: serde_json::Value = srv
+        .client
+        .get(srv.url("/api/ipv8/overlays"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    for o in body["overlays"].as_array().unwrap() {
+        assert_eq!(o["statistics"]["num_up"], 0);
+        assert_eq!(o["statistics"]["num_down"], 0);
+    }
+
+    // Re-activation par nom d'overlay.
+    let resp = srv
+        .client
+        .post(srv.url("/api/ipv8/overlays/statistics"))
+        .json(&serde_json::json!({"enable": true, "overlay_name": "DiscoveryCommunity"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    assert_eq!(
+        resp.json::<serde_json::Value>().await.unwrap()["success"],
+        true
+    );
+    srv.session.stop().await;
+}
+
+/// POST statistics sans stack → 412 `IPv8 is not running`.
+#[tokio::test]
+async fn ipv8_overlay_statistics_sans_stack() {
+    let srv = spawn_server().await;
+    let resp = srv
+        .client
+        .post(srv.url("/api/ipv8/overlays/statistics"))
+        .json(&serde_json::json!({"enable": true, "all": true}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 412);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["success"], false);
+    assert_eq!(body["error"], "IPv8 is not running");
+    srv.session.stop().await;
+}
+
+/// `GET /api/ipv8/noblockdht/{mid}` : mid valide → `{"success":
+/// true}` immediat ; hex invalide → 500 ; DHT absent → 404 sans
+/// cle `success`.
+#[tokio::test]
+async fn ipv8_noblockdht_semantique() {
+    let srv = spawn_server_ipv8().await;
+    // mid valide : tache spawn, reponse immediate.
+    let resp = srv
+        .client
+        .get(srv.url("/api/ipv8/noblockdht/0123456789abcdef0123456789abcdef01234567"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    assert_eq!(
+        resp.json::<serde_json::Value>().await.unwrap()["success"],
+        true
+    );
+
+    // hex invalide → `unhexlify` → 500 `handled:false`.
+    let resp = srv
+        .client
+        .get(srv.url("/api/ipv8/noblockdht/zz"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 500);
+    assert_eq!(
+        resp.json::<serde_json::Value>().await.unwrap()["error"]["handled"],
+        false
+    );
+    srv.session.stop().await;
+
+    // Sans stack IPv8 → 404 `{"error": "DHT community not found"}`.
+    let srv = spawn_server().await;
+    let resp = srv
+        .client
+        .get(srv.url("/api/ipv8/noblockdht/0123456789abcdef0123456789abcdef01234567"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 404);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "DHT community not found");
+    assert!(body.get("success").is_none());
     srv.session.stop().await;
 }

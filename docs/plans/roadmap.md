@@ -416,11 +416,22 @@ activée en parité Python (loopback compris — `tribler-cli` la lit dans
   7 routes au comportement pyipv8 (404 community absente, 200
   `{"buckets":[]}`, 400 `no such bucket`, PUT `{"value"}` 400/500,
   `distance` en décimale 160 bits).
-- [ ] **Étape 26. IPv8 réseau et diagnostics.** `GET /api/ipv8/network`
-  (pairs vérifiés), `POST /api/ipv8/isolation` (`bootstrapnode`/
-  `exitnode`), `GET /api/ipv8/noblockdht/{mid}` (`connect_peer`
-  fire-and-forget), `GET`/`POST /api/ipv8/overlays/statistics`
-  (compteurs par msg_id dans `UdpEndpoint`/dispatch des communities).
+- [x] **Étape 26. IPv8 réseau et diagnostics.** `GET /api/ipv8/network`
+  (pairs vérifiés, `{b64(mid): {ip, port, public_key, services}}`),
+  `POST /api/ipv8/isolation` (`bootstrapnode` → blacklist globale +
+  par overlay + `walk_to` + `DispersyBootstrapper.ip_addresses` ;
+  `exitnode` → `walk_to` tunnel ; `exitnode` prioritaire si les deux),
+  `GET /api/ipv8/noblockdht/{mid}` (`connect_peer` fire-and-forget,
+  404 sans community, 500 sur hex invalide), `GET`/`POST
+  `/api/ipv8/overlays/statistics` (`StatisticsEndpoint` :
+  `NetworkStat` par prefixe/`msg_id` rx+tx avec timestamps,
+  agregat `diff_time`, decode_map par community + `:unknown`,
+  stats auto-activees au demarrage comme `session.py`, POST 400/412),
+  `GET /api/ipv8/overlays` reecrit au `OverlaySchema` complet
+  (`my_peer`, `global_time`, `max_peers`, `is_isolated`,
+  `my_estimated_*`, `strategies` RandomWalk/RandomChurn/
+  PeriodicSimilarity) ; handlers tunnel alignes Python (collections
+  vides en 200 quand `tunnels is None`).
 - [ ] **Étape 27. Tunnel avancé.** `GET …/swarms/{ih}/size`
   (estimation via lookups), `peers/dht` (`Storage` DHT de l'étape 25),
   `peers/pex` ; `GET …/circuits/test` + `/{cid}/test` : `run_speedtest`

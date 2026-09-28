@@ -3,6 +3,65 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Étape 26 — IPv8 réseau, isolation, noblockdht, overlays/statistics (2026-09-28)
+
+- **`StatisticsEndpoint`** (`tribler-ipv8/src/endpoint.rs`) :
+  `UdpEndpoint` porte désormais les compteurs Python — agregat
+  atomique (`total_up`/`total_down`) + `NetworkStat` par
+  `(prefixe community, msg_id)` (`num_up/down`, `bytes_up/down`,
+  `first/last_measured_up/down` en `f64` epoch) comptés dans
+  `send_to` (tx) et `run` (rx) ; activation par prefixe
+  (`enable_community_statistics`) comme `endpoint.enable_community_statistics`.
+- **`GET /api/ipv8/network`** : `{b64(mid): {ip, port, public_key
+  (b64), services: [b64]}}` sur `Network.all_verified_peers()` ;
+  `services_for_peer` ajouté à `Peer`.
+- **`GET /api/ipv8/overlays`** réécrit au `OverlaySchema` complet :
+  `id`, `overlay_name`, `my_peer` (b64 pub), `global_time` (claim
+  lamport), `peers` (`{ip, port, mid b64, public_key b64, flags?}`),
+  `statistics` (agregat `NetworkStat`), `max_peers` (30),
+  `is_isolated` (reseau propre ≠ `Network` partagé — vrai pour le
+  DHT comme en Python), `my_estimated_wan/lan`, `strategies`
+  (`RandomWalk`/`RandomChurn`/`PeriodicSimilarity` selon la config
+  IPv8 Tribler). Module `overlays.rs` : `OverlayInfo` + decode_map
+  par community (`decode_message_name` → `"id:handler"` /
+  `"id:unknown"`).
+- **`POST /api/ipv8/isolation`** : `ip*`/`port*` + `bootstrapnode`
+  ou `exitnode` (400 `missing parameters` sinon ; `exitnode`
+  prioritaire si les deux, comme Python). `bootstrapnode` :
+  blacklist globale du `Network` partagé + blacklist par overlay +
+  `extra_bootstrap` du community + `walk_to` immédiat +
+  `DispersyBootstrapper.ip_addresses` ; `exitnode` : `walk_to`
+  du tunnel.
+- **`GET /api/ipv8/noblockdht/{mid}`** : `connect_peer(mid, peer=
+  adresse)` fire-and-forget → `{"success": true}` ; 404
+  `{"success":false,"error":"DHT community not found"}` sans
+  community, 500 `{"error":{"handled":false}}` sur hex invalide
+  (`unhexlify` non géré en Python).
+- **`GET /api/ipv8/overlays/statistics`** : `{"statistics":
+  [{OverlayClassName: {...}}, {"discovery": agregat}, ...]}` —
+  agrégats avec `diff_time = now - first_measured_up`, `{}` sans
+  stack. **`POST .../statistics`** : `enable*` requis (400
+  `enable flag missing` ), `all` ou `overlay_name` requis (412),
+  412 `statistics are not enabled` si l'`UdpEndpoint` n'a pas le
+  stockage actif — stats auto-activées au démarrage pour tous les
+  overlays comme `session.py` (`enable_statistics`).
+- **Alignement tunnel** : `circuits`/`relays`/`exits`/`swarms`/
+  `peers` renvoient les collections **vides en 200** quand le
+  tunnel n'est pas chargé (`tunnels is None` → `[]` en Python),
+  au lieu d'un 400 générique.
+- **Communities** : `DiscoveryCommunity` gagne `extra_bootstrap`,
+  `add_bootstrapper`, `walk_to`, `overlay_info` ; `DhtCommunity`/
+  `ContentDiscoveryCommunity`/`TunnelCommunity` gagnent
+  `overlay_info`/`walk_to`/`network`/`claim_global_time` selon
+  besoin. Aucune dépendance `tribler-ipv8`→`tribler-tunnel` : la
+  decode_map du tunnel vit dans `tribler-tunnel` et est injectée
+  dans `OverlayInfo`.
+- **Tests** : `endpoint_statistics_par_message` (comptage rx/tx par
+  msg_id) + 8 tests REST étape 26 (`network` vide, shapes overlays,
+  isolation bootstrapnode/exitnode/400, noblockdht 404/success/500,
+  statistics GET/POST 400/412/toggle, collections tunnel vides
+  sans stack).
+
 ## Étape 25 — `DhtCommunity` dans la stack + `/api/ipv8/dht/*` (2026-09-28)
 
 - **Stack** : `Ipv8Stack.dht: Option<Arc<DhtCommunity>>` créé si

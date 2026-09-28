@@ -221,6 +221,17 @@ impl Network {
         }
     }
 
+    /// `get_services_for_peer` : services (`community_id`) annonces
+    /// par un pair (cle = `public_key_bin`).
+    pub fn services_for_peer(&self, public_key_bin: &[u8]) -> Vec<CommunityId> {
+        self.services
+            .lock()
+            .unwrap()
+            .get(public_key_bin)
+            .cloned()
+            .unwrap_or_default()
+    }
+
     /// `get_peers_for_service`.
     pub fn peers_for_service(&self, service: &CommunityId) -> Vec<Peer> {
         let svcs = self.services.lock().unwrap();

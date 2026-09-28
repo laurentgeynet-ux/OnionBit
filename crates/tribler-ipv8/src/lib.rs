@@ -34,6 +34,7 @@ pub mod dht;
 pub mod discovery;
 pub mod endpoint;
 pub mod error;
+pub mod overlays;
 pub mod packet;
 pub mod payloads;
 pub mod peer;
@@ -43,8 +44,9 @@ pub use address::UdpAddress;
 pub use content_discovery::CONTENT_DISCOVERY_COMMUNITY_ID;
 pub use dht::{DhtCommunity, DHT_COMMUNITY_ID};
 pub use discovery::{DiscoveryCommunity, DISCOVERY_COMMUNITY_ID};
-pub use endpoint::UdpEndpoint;
+pub use endpoint::{AggregateStats, NetworkStat, UdpEndpoint};
 pub use error::Ipv8Error;
+pub use overlays::{OverlayInfo, OverlayPeer, OverlayStrategy};
 pub use packet::{prefix_of, Packet, PREFIX_LEN, PROTOCOL_VERSION};
 pub use peer::{Network, Peer};
 

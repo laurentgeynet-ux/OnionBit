@@ -1370,6 +1370,67 @@ impl TunnelCommunity {
             .unwrap_or(0)
     }
 
+    /// `community_id` (prefixe reseau de la community).
+    pub fn community_id(&self) -> tribler_ipv8::CommunityId {
+        self.community_id
+    }
+
+    /// `overlay.walk_to` (`Community.walk_to` → introduction-request
+    /// sur le prefixe tunnel) — `/api/ipv8/isolation` "exitnode".
+    pub async fn walk_to(&self, addr: &UdpAddress) -> Result<(), Ipv8Error> {
+        self.send_introduction_request(addr).await
+    }
+
+    /// Annuaire reseau partage.
+    pub fn network(&self) -> &Arc<Network> {
+        &self.network
+    }
+
+    /// `decode_map` `HiddenTunnelCommunity` pyipv8 : cellules (0),
+    /// destroy (8) et messages e2e/signales (13/17/18) + map de base.
+    fn tunnel_msg_name(msg_id: u8) -> Option<&'static str> {
+        match msg_id {
+            0 => Some("on_cell"),
+            8 => Some("on_destroy"),
+            13 => Some("on_create_e2e"),
+            17 => Some("on_peers_request"),
+            18 => Some("on_peers_response"),
+            _ => tribler_ipv8::overlays::base_community_msg_name(msg_id),
+        }
+    }
+
+    /// `OverlaySchema` : instantane REST de la community
+    /// (`GET /api/ipv8/overlays`) — `TriblerTunnelCommunity`.
+    pub fn overlay_info(&self, is_isolated: bool) -> tribler_ipv8::overlays::OverlayInfo {
+        use tribler_ipv8::overlays::{
+            overlay_peer, OverlayInfo, OverlayStrategy, DEFAULT_MAX_PEERS,
+        };
+        OverlayInfo {
+            community_id: self.community_id,
+            my_peer_hex: hex::encode(self.key.public_key().to_bin()),
+            global_time: self.global_time.load(std::sync::atomic::Ordering::Relaxed),
+            peers: self
+                .network
+                .peers_for_service(&self.community_id)
+                .iter()
+                .map(overlay_peer)
+                .collect(),
+            overlay_name: "TriblerTunnelCommunity",
+            max_peers: DEFAULT_MAX_PEERS,
+            is_isolated,
+            // `my_estimated_*` non suivis par cette community
+            // (`DiscoveryCommunity` estime ; repli 0.0.0.0:0).
+            my_estimated_wan: UdpAddress::unspecified(),
+            my_estimated_lan: UdpAddress::unspecified(),
+            // `BaseLauncher.get_walk_strategies` Tribler.
+            strategies: vec![OverlayStrategy {
+                name: "RandomWalk",
+                target_peers: 20,
+            }],
+            decode: Self::tunnel_msg_name,
+        }
+    }
+
     /// `create_introduction_request` : requete signee sur le prefixe
     /// tunnel avec `extra_bytes` = nos `peer_flags` (`>H` — packer
     /// `Flags`). A utiliser pour decouvrir les flags d'un pair

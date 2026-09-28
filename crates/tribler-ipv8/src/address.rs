@@ -16,6 +16,12 @@ pub enum UdpAddress {
 }
 
 impl UdpAddress {
+    /// Adresse non definie `0.0.0.0:0` (placeholder des messages
+    /// d'introduction quand l'estimation n'est pas encore connue).
+    pub fn unspecified() -> Self {
+        Self::Ipv4(SocketAddrV4::new(std::net::Ipv4Addr::UNSPECIFIED, 0))
+    }
+
     /// Convertit en `SocketAddr` si l'adresse est numerique.
     pub fn to_socket_addr(&self) -> Option<SocketAddr> {
         match self {

@@ -68,7 +68,12 @@ Convention générale :
 | `GET /api/libtorrent/settings?session=` | idem | ✅ | Sous-ensemble `EngineConfig` avec noms `lt::settings_pack` équivalents |
 | `GET /api/libtorrent/session?session=` | idem | ✅ | `hop` 0 = moteur principal, 1..=3 = lanes anonymes |
 | **IPv8** (`ipv8_endpoint.py`) | | | |
-| `GET /api/ipv8/overlays` | idem | ✅ | Discovery + content-discovery + tunnel (pairs par community) |
+| `GET /api/ipv8/overlays` | idem | ✅ | `OverlaySchema` complet (`id`, `my_peer` b64, `global_time`, `peers`, `overlay_name`, `statistics`, `max_peers`, `is_isolated`, `my_estimated_wan/lan`, `strategies`) |
+| `GET /api/ipv8/network` | idem | ✅ | `{b64(mid): {ip, port, public_key, services[b64]}}` sur tous les `verified_peers` du `Network` partagé |
+| `POST /api/ipv8/isolation` | idem | ✅ | `ip*`/`port*` + `bootstrapnode`|`exitnode` (400 sinon) ; bootstrap → blacklist `Network` + `extra_bootstrap` du community + `walk_to` ; exitnode prioritaire |
+| `GET /api/ipv8/noblockdht/{mid}` | idem | ✅ | `connect_peer(mid, peer=adr)` fire-and-forget → `{"success":true}` ; 404 `DHT community not found`, 500 sur hex invalide |
+| `GET /api/ipv8/overlays/statistics` | idem | ✅ | `[{OverlayClassName: {"id:handler": NetworkStat.to_dict()}}, agregat {"num_up/down","bytes_up/down","diff_time"}]` ; `{}` sans stack ; decode_map par community + `:unknown` |
+| `POST /api/ipv8/overlays/statistics` | idem | ✅ | `enable*` ; `all`|`overlay_name` ; 400 si `enable` absent, 412 `statistics are not enabled`/`overlay not found` ; auto-activé au démarrage (`session.py` Tribler) |
 | `GET /api/ipv8/tunnel/settings` | idem | ✅ | `peer_flags`, `circuits`, `community_id` |
 | `GET /api/ipv8/tunnel/circuits` | idem | ✅ | Circuits connus (`circuits_info`) |
 | `GET /api/ipv8/tunnel/relays` | idem | ✅ | Relais actifs |

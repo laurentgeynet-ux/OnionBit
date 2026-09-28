@@ -181,3 +181,101 @@ async fn puncture_request_provoque_puncture() {
     // Le prefixe est bien celui de la discovery community.
     assert_eq!(&buf[..22], &prefix_of(&DISCOVERY_COMMUNITY_ID));
 }
+
+/// Etape 26 — `StatisticsEndpoint` : compteurs par prefixe/`msg_id`
+/// (rx + tx), `enable_community_statistics`, agregat `diff_time`.
+#[tokio::test(flavor = "multi_thread")]
+async fn endpoint_statistics_par_message() {
+    let (_ca, _net_a, ep_a, addr_a) = node().await;
+    let (_cb, _net_b, ep_b, _addr_b) = node().await;
+
+    let prefix = prefix_of(&DISCOVERY_COMMUNITY_ID);
+    ep_a.enable_community_statistics(prefix, true).await;
+    ep_b.enable_community_statistics(prefix, true).await;
+
+    // Prefixe non suivi -> aucun comptage sur l'endpoint C.
+    let ep_c = UdpEndpoint::bind("127.0.0.1:0").await.unwrap();
+    let ep_c2 = ep_c.clone();
+    tokio::spawn(async move {
+        let _ = ep_c2.run().await;
+    });
+
+    // A -> B : ping signe (msg 3). Le handler peut echouer — seuls
+    // les compteurs de l'endpoint comptent ici.
+    let mut w = Writer::new();
+    w.u16(42);
+    let key_a = LibNaClSecretKey::generate();
+    let pkt = Packet::sign(
+        &DISCOVERY_COMMUNITY_ID,
+        tribler_ipv8::payloads::msg::PING,
+        &key_a,
+        1,
+        &w.into_bytes(),
+    );
+    ep_a.send_to(&addr_a, &pkt) // self-send : compte tx sur A
+        .await
+        .unwrap();
+    let ep_b_addr = {
+        // B ecoute deja via sa community ; on lui envoie le meme paquet.
+        _net_b.is_empty(); // silence le warning unused sur le tuple
+        ep_b.local_addr().unwrap()
+    };
+    ep_a.send_to(&UdpAddress::from(ep_b_addr), &pkt)
+        .await
+        .unwrap();
+
+    // tx sur A : 2 paquets msg 3.
+    assert!(
+        wait_for(|| {
+            let ep = ep_a.clone();
+            tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current().block_on(async {
+                    ep.get_statistics(&prefix)
+                        .await
+                        .get(&3)
+                        .map(|s| s.num_up >= 2)
+                        .unwrap_or(false)
+                })
+            })
+        })
+        .await,
+        "tx non compte sur A"
+    );
+    // rx sur A (self-send) et B : au moins 1 paquet msg 3.
+    assert!(
+        wait_for(|| {
+            let ep = ep_b.clone();
+            tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current().block_on(async {
+                    ep.get_statistics(&prefix)
+                        .await
+                        .get(&3)
+                        .map(|s| s.num_down >= 1)
+                        .unwrap_or(false)
+                })
+            })
+        })
+        .await,
+        "rx non compte sur B"
+    );
+    // Timestamps renseignes.
+    let s3 = ep_a.get_statistics(&prefix).await;
+    let st = s3.get(&3).unwrap();
+    assert!(st.first_measured_up > 0.0 && st.last_measured_up >= st.first_measured_up);
+    assert!(st.num_up >= 2 && st.bytes_up >= 2 * pkt.len() as u64);
+
+    // Agregat : somme sur les msg_id + diff_time >= 0.
+    let agg = ep_a.get_aggregate_statistics(&prefix).await;
+    assert!(agg.num_up >= 2 && agg.bytes_up >= 2 * pkt.len() as u64);
+    assert!(agg.diff_time >= 0.0);
+
+    // Prefixe non suivi (C) : rien.
+    let none = ep_c.get_statistics(&prefix).await;
+    assert!(none.is_empty(), "prefixe non suivi ne doit pas compter");
+
+    // Desactivation : l'entree est retiree (`statistics.pop` Python).
+    ep_a.enable_community_statistics(prefix, false).await;
+    assert!(ep_a.get_statistics(&prefix).await.is_empty());
+    let agg = ep_a.get_aggregate_statistics(&prefix).await;
+    assert_eq!(agg.num_up, 0);
+}

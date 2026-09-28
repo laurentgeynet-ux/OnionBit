@@ -414,13 +414,13 @@ qui enregistre 8 sous-endpoints. Rust : `handlers/ipv8.rs`.
 
 | Méthode | Route | Description | Paramètres | Rust |
 | :--- | :--- | :--- | :--- | :--- |
-| GET | `/dht/statistics` | Stats DHT : peer_id, node_id, routing_table_size/buckets, num_keys_in_store, num_tokens, store peers | — | ❌ |
-| GET | `/dht/values` | Valeurs stockées localement (par interface) | — | ❌ |
-| GET | `/dht/values/{key}` | Lookup de valeurs + debug crawl (`requests,responses,time`) | `key` hex | ❌ |
-| PUT | `/dht/values/{key}` | Stocke une valeur signée | `value*` hex | ❌ |
-| GET | `/dht/peers/{mid}` | connect_peer par mid (sha1 pubkey) | `mid` hex | ❌ |
-| GET | `/dht/buckets` | Buckets de la routing table (prefix, peers, distance, failed, last_contact) | — | ❌ |
-| GET | `/dht/buckets/{prefix}/refresh` | Rafraîchit un bucket | `prefix` `\w*` | ❌ |
+| GET | `/dht/statistics` | Stats DHT : peer_id, node_id, routing_table_size/buckets, num_keys_in_store, num_tokens, store peers | — | ✅ |
+| GET | `/dht/values` | Valeurs stockées localement (par interface) | — | ✅ |
+| GET | `/dht/values/{key}` | Lookup de valeurs + debug crawl (`requests,responses,time`) | `key` hex | ✅ |
+| PUT | `/dht/values/{key}` | Stocke une valeur signée | `value*` hex | ✅ |
+| GET | `/dht/peers/{mid}` | connect_peer par mid (sha1 pubkey) | `mid` hex | ✅ |
+| GET | `/dht/buckets` | Buckets de la routing table (prefix, peers, distance, failed, last_contact) | — | ✅ (`distance` en décimale exacte, chaîne) |
+| GET | `/dht/buckets/{prefix}/refresh` | Rafraîchit un bucket | `prefix` `\w*` | ✅ |
 
 ### `/api/ipv8/identity` — `REST/identity_endpoint.py` (self-sovereign identity)
 
@@ -442,27 +442,27 @@ qui enregistre 8 sous-endpoints. Rust : `handlers/ipv8.rs`.
 
 | Méthode | Route | Description | Paramètres | Rust |
 | :--- | :--- | :--- | :--- | :--- |
-| POST | `/isolation` | Injecte une adresse : pair bootstrap (blacklisté du walk) ou exit node | `ip*` str ; `port*` int ; `bootstrapnode` bool ; `exitnode` bool (l'un des deux requis) | ❌ |
+| POST | `/isolation` | Injecte une adresse : pair bootstrap (blacklisté du walk) ou exit node | `ip*` str ; `port*` int ; `bootstrapnode` bool ; `exitnode` bool (l'un des deux requis) | ✅ |
 
 ### `/api/ipv8/network` — `REST/network_endpoint.py`
 
 | Méthode | Route | Description | Rust |
 | :--- | :--- | :--- | :--- |
-| GET | `/network` | Pairs vérifiés connus `{mid b64: {ip, port, public_key, services}}` | ❌ |
+| GET | `/network` | Pairs vérifiés connus `{mid b64: {ip, port, public_key, services}}` | ✅ |
 
 ### `/api/ipv8/noblockdht` — `REST/noblock_dht_endpoint.py`
 
 | Méthode | Route | Description | Rust |
 | :--- | :--- | :--- | :--- |
-| GET | `/noblockdht/{mid}` | `connect_peer` non bloquant (fire-and-forget) | ❌ |
+| GET | `/noblockdht/{mid}` | `connect_peer` non bloquant (fire-and-forget) | ✅ |
 
 ### `/api/ipv8/overlays` — `REST/overlays_endpoint.py` → `handlers/ipv8.rs`
 
 | Méthode | Route | Description | Paramètres | Rust |
 | :--- | :--- | :--- | :--- | :--- |
-| GET | `/overlays` | Toutes les communautés chargées (id, my_peer, peers, strategies, max_peers, is_isolated, wan/lan estimés, stats) | — | ✅ (sous-ensemble) |
-| GET | `/overlays/statistics` | Stats réseau par overlay (par msg_id → `num_up/down, bytes_up/down, diff_time`) | — | ❌ |
-| POST | `/overlays/statistics` | Active/désactive les stats par overlay | `enable*` bool ; `all` bool ; `overlay_name` str | ❌ |
+| GET | `/overlays` | Toutes les communautés chargées (id, my_peer, peers, strategies, max_peers, is_isolated, wan/lan estimés, stats) | — | ✅ |
+| GET | `/overlays/statistics` | Stats réseau par overlay (`"id:handler"` → `NetworkStat.to_dict()`) | — | ✅ |
+| POST | `/overlays/statistics` | Active/désactive les stats par overlay | `enable*` bool ; `all` bool ; `overlay_name` str | ✅ |
 
 ### `/api/ipv8/tunnel` — `REST/tunnel_endpoint.py` → `handlers/ipv8.rs`
 
@@ -497,9 +497,8 @@ qui enregistre 8 sous-endpoints. Rust : `handlers/ipv8.rs`.
 - `GET /api/downloads/clierrors`
 - `PUT /api/downloads/{ih}/default_trackers`, `DELETE /api/downloads/{ih}/trackers`,
   `PUT /api/downloads/{ih}/tracker_force_announce`
-- IPv8 : tout `asyncio/*`, `dht/*`, `identity/*`, `isolation`, `network`, `noblockdht/*`,
-  `overlays/statistics`, `tunnel/circuits/*/test`, `tunnel/swarms/{ih}/size`,
-  `tunnel/peers/dht`, `tunnel/peers/pex`
+- IPv8 : tout `asyncio/*`, `identity/*`, `tunnel/circuits/*/test`,
+  `tunnel/swarms/{ih}/size`, `tunnel/peers/dht`, `tunnel/peers/pex`
 - Écarts de signature : `PUT /api/statistics/dirspace` (Rust = GET `?path=`),
   `?hop=` libtorrent (Rust = `?session=`).
 - Écarts de type/valeur dans `GET /api/downloads` : `eta` est une chaîne
