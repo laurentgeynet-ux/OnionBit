@@ -42,6 +42,34 @@ pub const MAX_ANON_HOPS: usize = 3;
 /// `max_response_size` Python).
 const SELECT_MAX_RESPONSE: usize = 1_000_000;
 
+/// Port d'ecoute UDP IPv8 par defaut (fidele a `pyipv8` : 8090).
+pub const DEFAULT_IPV8_PORT: u16 = 8090;
+
+/// Noeuds d'amorcage IPv8 officiels (Dispersy / TU Delft),
+/// fideles a `DISPERSY_BOOTSTRAPPER` de `pyipv8.ipv8.configuration`.
+pub const DEFAULT_BOOTSTRAP_PEERS: &[&str] = &[
+    "130.161.119.206:6421",
+    "130.161.119.206:6422",
+    "131.180.27.155:6423",
+    "131.180.27.156:6424",
+    "131.180.27.161:6427",
+    "131.180.27.161:6521",
+    "131.180.27.161:6522",
+    "131.180.27.162:6523",
+    "131.180.27.162:6524",
+    "130.161.119.215:6525",
+    "130.161.119.215:6526",
+    "130.161.119.201:6527",
+    "130.161.119.201:6528",
+    "dispersy1.tribler.org:6421",
+    "dispersy1.st.tudelft.nl:6421",
+    "dispersy2.tribler.org:6422",
+    "dispersy2.st.tudelft.nl:6422",
+    "dispersy3.tribler.org:6423",
+    "dispersy3.st.tudelft.nl:6423",
+    "dispersy4.tribler.org:6424",
+];
+
 /// Configuration de la stack IPv8 de session.
 ///
 /// `enabled = false` (defaut) : session sans overlay — identique a
@@ -65,6 +93,26 @@ pub struct Ipv8Config {
     /// Utilise le `community_id` de `TriblerTunnelCommunity` au lieu
     /// du `pyipv8` (interop avec les clients Tribler installes).
     pub tribler_tunnel_community: bool,
+}
+
+impl Ipv8Config {
+    /// Configuration pour une session connectee au reseau reel :
+    /// IPv8 actif sur le port configure (ou 8090 par defaut),
+    /// noeuds d'amorcage officiels, tunnels actifs avec l'identifiant
+    /// de communaute Tribler officiel.
+    pub fn production() -> Self {
+        Self {
+            enabled: true,
+            listen_addr: format!("0.0.0.0:{DEFAULT_IPV8_PORT}"),
+            bootstrap_peers: DEFAULT_BOOTSTRAP_PEERS
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
+            enable_anonymity: true,
+            peer_flags: tribler_network_policy::exit_policy::PEER_FLAG_RELAY,
+            tribler_tunnel_community: true,
+        }
+    }
 }
 
 impl Default for Ipv8Config {
@@ -452,9 +500,23 @@ impl Ipv8Stack {
         db: Arc<Database>,
     ) -> Result<Arc<Self>> {
         let key = load_or_create_key(&state_dir.join(IPV8_KEY_FILE))?;
-        let endpoint = UdpEndpoint::bind(&config.listen_addr)
-            .await
-            .map_err(|e| CoreError::State(format!("bind ipv8: {e}")))?;
+        let endpoint = match UdpEndpoint::bind(&config.listen_addr).await {
+            Ok(ep) => ep,
+            Err(e) => {
+                if config.listen_addr != "0.0.0.0:0" {
+                    tracing::warn!(
+                        error = %e,
+                        listen = %config.listen_addr,
+                        "bind UDP IPv8 echoue sur l'adresse configuree, repli sur 0.0.0.0:0 (port ephemere)"
+                    );
+                    UdpEndpoint::bind("0.0.0.0:0")
+                        .await
+                        .map_err(|e2| CoreError::State(format!("bind ipv8 port ephemere: {e2}")))?
+                } else {
+                    return Err(CoreError::State(format!("bind ipv8: {e}")));
+                }
+            }
+        };
         let endpoint: Arc<UdpEndpoint> = endpoint;
         let network = Arc::new(Network::default());
         let discovery = DiscoveryCommunity::new(
@@ -507,17 +569,32 @@ impl Ipv8Stack {
             }
         });
 
-        // Bootstrap discovery en tache de fond.
-        let peers: Vec<UdpAddress> = config
-            .bootstrap_peers
-            .iter()
-            .filter_map(|p| p.parse::<SocketAddr>().ok())
-            .map(UdpAddress::from)
-            .collect();
-        if !peers.is_empty() {
+        // Bootstrap discovery en tache de fond (resolution DNS + IP).
+        let bootstrap_peers_config = config.bootstrap_peers.clone();
+        if !bootstrap_peers_config.is_empty() {
             let d = discovery.clone();
             tokio::spawn(async move {
-                d.run(peers).await;
+                let mut peers = Vec::new();
+                for peer_str in &bootstrap_peers_config {
+                    if let Ok(sa) = peer_str.parse::<SocketAddr>() {
+                        peers.push(UdpAddress::from(sa));
+                    } else if let Ok(mut resolved) =
+                        tokio::net::lookup_host(peer_str.as_str()).await
+                    {
+                        if let Some(sa) = resolved.next() {
+                            peers.push(UdpAddress::from(sa));
+                        }
+                    }
+                }
+                if !peers.is_empty() {
+                    tracing::info!(
+                        count = peers.len(),
+                        "bootstrap IPv8 demarre vers les noeuds d'amorcage"
+                    );
+                    d.run(peers).await;
+                } else {
+                    tracing::warn!("aucun pair de bootstrap n'a pu etre resolu pour IPv8");
+                }
             });
         }
 

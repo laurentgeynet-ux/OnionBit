@@ -37,10 +37,29 @@ struct Args {
     #[arg(long, default_value = DEFAULT_STATE_DIR)]
     state_dir: PathBuf,
 
-    /// Mode offline (tests) : desactive DHT/trackers/ecoute de pairs —
+    /// Mode offline (tests) : desactive DHT/trackers/ecoute de pairs et la stack IPv8 —
     /// aucun trafic sortant.
     #[arg(long)]
     offline: bool,
+
+    /// Desactive la stack IPv8 (pas d'overlay, pas de recherche distante) —
+    /// equivalent de `ipv8.enabled = false` cote Tribler. Ignore en mode --offline.
+    #[arg(long)]
+    no_ipv8: bool,
+
+    /// Desactive la TunnelCommunity : les telechargements avec `anon_hops > 0`
+    /// seront refuses, la recherche distante reste active. Ignore en mode --offline.
+    #[arg(long)]
+    no_anonymity: bool,
+
+    /// Port d'ecoute UDP pour la stack IPv8 (defaut 8090, 0 = dynamique).
+    #[arg(long, default_value_t = tribler_core::ipv8_stack::DEFAULT_IPV8_PORT)]
+    ipv8_port: u16,
+
+    /// Pair d'amorcage IPv8 supplementaire au format `ip:port` ou `host:port`
+    /// (repetable, s'ajoute aux noeuds bootstrap par defaut).
+    #[arg(long = "bootstrap")]
+    bootstrap_peers: Vec<String>,
 }
 
 /// Initialise le logging `tracing` (fmt, filtre `RUST_LOG`, info par
@@ -77,11 +96,21 @@ async fn main() -> ExitCode {
     let config = if args.offline {
         CoreConfig::offline(args.state_dir)
     } else {
-        CoreConfig {
+        let mut cfg = CoreConfig {
             state_dir: args.state_dir.clone(),
             downloads_dir: args.state_dir.join("downloads"),
             ..Default::default()
+        };
+        if !args.no_ipv8 {
+            let mut ipv8 = tribler_core::Ipv8Config::production();
+            ipv8.listen_addr = format!("0.0.0.0:{}", args.ipv8_port);
+            ipv8.enable_anonymity = !args.no_anonymity;
+            if !args.bootstrap_peers.is_empty() {
+                ipv8.bootstrap_peers.extend(args.bootstrap_peers);
+            }
+            cfg.ipv8 = ipv8;
         }
+        cfg
     };
 
     let session = match CoreSession::start(config, Notifier::new()).await {

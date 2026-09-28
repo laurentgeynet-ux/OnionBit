@@ -146,7 +146,7 @@ try {
     $apiUp = $false
     while ((Get-Date) -lt $deadline -and -not $apiUp) {
         try {
-            $r = Invoke-RestMethod -Uri "http://127.0.0.1:$apiPort/api/ipv8/overlays" `
+            $null = Invoke-RestMethod -Uri "http://127.0.0.1:$apiPort/api/ipv8/overlays" `
                 -Headers @{ "X-Api-Key" = $apiKey } -TimeoutSec 3
             $apiUp = $true
         } catch {
