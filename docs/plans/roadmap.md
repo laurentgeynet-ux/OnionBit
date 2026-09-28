@@ -369,11 +369,18 @@ avec ce critère ouvert documenté.
 
 ## Phase 6 — Interface Flutter desktop
 
-- [ ] **Étape 20. Plan d'architecture Flutter** — `docs/plans/
-  flutter_architecture.md`, patterns de `C:\Emule-Sion-UI-UX\app`,
-  consommant exclusivement `tribler-api` (REST + SSE). Cible
-  immédiate : **Windows desktop** ; Linux/macOS ensuite ; le mobile
-  distant reprendra la même base (étape 19 remplacée).
+- [i] **Étape 20. Plan d'architecture Flutter + coquille
+  implémentée** — `docs/plans/flutter_architecture.md`, patterns de
+  `C:\Emule-Sion-UI-UX\app`, consommant exclusivement `tribler-api`
+  (REST + SSE). Cible immédiate : **Windows desktop** ; Linux/macOS
+  ensuite ; le mobile distant reprendra la même base (étape 19
+  remplacée). Première passe livrée dans `app/` : thème eMule (seed
+  `0xFF2F6FED`, accents, jour/nuit/auto persistés), shell responsive
+  (sidebar Tribler ≥ 600 dp / `NavigationBar` en dessous), features
+  downloads + search + settings + diagnostic. `flutter analyze`
+  propre, 8 tests verts, `flutter build web` et `flutter build
+  windows` OK. **Reste** : validation visuelle manuelle (rendu réel
+  contre le daemon) avant de cocher `[x]`.
 
 ---
 

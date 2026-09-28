@@ -38,6 +38,85 @@ core/api/
 Le `reconnect_policy.dart` de l'app de référence est réutilisable tel
 quel (SSE déconnecté → même politique de recul).
 
+## Thème et présentation
+
+Décisions arrêtées le 2026-09-28.
+
+### Thème — repris de `C:\Emule-Sion-UI-UX\app`, inchangé
+
+Copie adaptée de `core/theme/app_theme.dart` + `theme_settings.dart` de
+la référence : Material 3 via `ColorScheme.fromSeed`, seed bleu
+`0xFF2F6FED` par défaut (la même palette `kAccentChoices` d'accents
+utilisateur), `ThemeSettingsNotifier` persisté par
+`shared_preferences` (seed + `ThemeMode` jour/nuit/**auto** —
+`system` par défaut), tokens `AppSpacing`/`AppRadii`, cartes sans
+élévation. Le `app_theme.dart` actuel (violet Tribler `0xFF8A2BE2`)
+est à remplacer par cette version.
+
+### Menus — sidebar fixe type Tribler (pas le `NavigationRail` de la référence)
+
+La référence utilise `AdaptiveScaffold` (rail étroit / `NavigationBar`
+bas en compact). Pour Tribler-Rust, l'utilisateur retient la
+**présentation Tribler** : une vraie colonne latérale ~200 px avec
+groupes dépliables, dérivée du pattern `AdaptiveScaffold` mais avec un
+widget sidebar custom. En fenêtre très étroite (et pour le futur
+pilotage mobile), repli sur `NavigationBar` bas — destinations
+primaires seulement.
+
+```text
+┌──────────────────────────────────────────────────────────────────┐
+│  Tribler-Rust   [🔍 Rechercher du contenu…]           ⚙  ─ □ ✕ │
+├───────────────┬──────────────────────────────────────────────────┤
+│ ＋ Ajouter     │  [Actions sélection : ▶ ⏸ 🗑]       [Filtrer…] │
+│               │ ┌──────────────────────────────────────────────┐ │
+│ Téléchargements│ │ Table : Nom, Taille, Progression, État,     │ │
+│  ▾ Tous       │ │ ↓, ↑, ETA, Pairs, Anonymat (🛡)              │ │
+│    En cours   │ └──────────────────────────────────────────────┘ │
+│    Terminés   │ ┌──────────────────────────────────────────────┐ │
+│    Actifs     │ │ Détails │ Fichiers │ Trackers │ Pairs        │ │
+│    Inactifs   │ └──────────────────────────────────────────────┘ │
+│  Rechercher   │                                                  │
+│  Réglages     │                                                  │
+│  Diagnostic   │  (overlays IPv8, circuits/relais/sorties,        │
+│               │   swarms cachés, journaux, clierrors)            │
+├───────────────┴──────────────────────────────────────────────────┤
+│ ● Daemon connecté   ↓ xxx o/s (total)  ↑ xxx o/s (total)         │
+│                    🛡 Lane anonyme : N circuits prêts / attente   │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+Points d'ergonomie retenus :
+
+- **Anonymat honnête** : icône bouclier par téléchargement (plein =
+  circuit prêt et trafic ; creux/orange = `anon_hops>0` mais aucun
+  circuit `READY` → « en attente » ; absent = direct). La barre
+  d'état agrège l'état de la lane via `/api/ipv8/tunnel/circuits` —
+  jamais « connecté » sur la seule joignabilité du proxy SOCKS5.
+- **Colonnes par défaut réduites** (Tribler en montre 16) :
+  `Ratio`, `Last down/up`, `Added on`, `Completed on`, `Hops`
+  réactivables par clic droit sur l'en-tête.
+- **`Rechercher`** (pas « Découvrir ») : la page de recherche affiche
+  les torrents **populaires** (`/api/metadata/torrents/popular`)
+  comme contenu initial — l'écran n'est jamais vide. À la frappe
+  (debounce ~300 ms), les résultats remplacent la liste : locaux
+  (`search/local`) immédiats ; la recherche distante
+  (`PUT /api/search/remote`) est lancée en parallèle avec indicateur
+  « recherche en cours sur N pairs ». **Écart constaté
+  (2026-09-28)** : le backend Rust intègre les `SelectResponse`
+  directement dans `channel_node` **sans** pousser
+  `remote_query_results` (contrairement à Python) — l'UI re-sonde
+  donc `search/local` pendant la fenêtre de recherche (~10 s) et
+  marque « réseau » les nouvelles entrées. Champ vidé → retour à la
+  liste populaire. État vide propre prévu quand le daemon ne connaît
+  encore aucun torrent (réseau non découvert).
+- **Dialogue « Ajouter »** : champ magnet/URI ou fichier `.torrent`,
+  aperçu `/api/torrentinfo`, destination, choix binaire
+  « Direct / Anonyme (n sauts) » — `safe_seeding` coché
+  automatiquement si anonyme (invariant déjà imposé par le backend).
+- **Diagnostic** = tout ce qui est « interne » (pas d'écran dédié
+  dans le parcours principal) : overlays, circuits, relais, sorties,
+  swarms, journaux.
+
 ## Arborescence `lib/`
 
 ```
@@ -67,6 +146,12 @@ lib/
     logs/                  — /api/logging + clierrors
     files/                 — navigateur /api/files + createtorrent
 ```
+
+**Implémenté (première passe, 2026-09-28)** : `downloads`, `search`,
+`settings`, `diagnostic` (fusion de `network` + `logs` : onglets
+overlays/circuits/relais/sorties/swarms/pairs/journaux).
+`dashboard`/`channels`/`files`/`createtorrent` restent à faire ou à
+abandonner — la barre d'état couvre déjà les stats globales.
 
 Chaque feature suit le découpage de la référence :
 `data/` (DTO + repository impl) → `domain/` (entités + interface

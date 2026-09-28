@@ -3,6 +3,47 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Étape 20 (partie 1) — coquille Flutter responsive + 4 features (2026-09-28)
+
+Première implémentation de l'UI dans `app/` (le brouillon initial est
+remplacé) :
+
+- **Thème repris de l'app eMule de référence** : Material 3, seed
+  `0xFF2F6FED`, palette d'accents identique, mode clair/sombre/auto
+  (`ThemeMode.system` par défaut), persisté via `shared_preferences`,
+  tokens `AppSpacing`/`AppRadii`.
+- **Shell responsive** : sidebar fixe ~216 px type Tribler (bouton
+  « Ajouter », sous-filtres Téléchargements avec compteurs,
+  Rechercher, Réglages, Diagnostic) au-delà de 600 dp, `NavigationBar`
+  compacte en dessous ; barre de recherche globale (debounce 300 ms,
+  navigue vers `/search`) ; barre d'état (connexion daemon SSE,
+  état honnête de la lane anonyme via les circuits `READY`, débits
+  globaux).
+- **Downloads** : poll 2 s + invalidation SSE (`download_state_changed`,
+  `torrent_finished`), table desktop (Nom/Taille/Progression/État/
+  ↓/↑/ETA/Pairs/Anonymat) + liste compacte avec bottom sheet,
+  panneau de détail à onglets (Détails/Fichiers/Trackers/Pairs),
+  multi-sélection avec barre d'actions pause/reprendre/supprimer,
+  dialogue d'ajout (magnet/URI ou `.torrent`, aperçu `torrentinfo`,
+  destination, Direct/Anonyme 1-3 sauts, `safe_seeding` auto).
+- **Rechercher** : torrents populaires en contenu initial, résultats
+  locaux immédiats à la frappe ; recherche distante lancée en
+  parallèle — **écart constaté** : le backend intègre les réponses
+  dans `channel_node` sans pousser `remote_query_results`, l'UI
+  re-sonde donc `search/local` pendant ~10 s et marque « réseau »
+  les nouvelles entrées.
+- **Réglages** : apparence (accent + mode), connexion daemon
+  (URL/clé persistées), état du daemon + arrêt (`/api/shutdown`).
+- **Diagnostic** : onglets overlays/circuits/relais/sorties/swarms/
+  pairs/journaux (`/api/ipv8/*`, `/api/logging` en texte brut).
+- **Web-safe** : `window_manager` isolé derrière un import
+  conditionnel (`desktop_shell.dart`/`_native`/`_stub`) ; `web/`
+  généré, `flutter build web` et `flutter build windows` OK.
+- Validation : `dart format`, `flutter analyze` propre, 8 tests
+  (formateurs, parseur SSE, smoke test du shell avec providers
+  surchargés). La validation visuelle contre un daemon réel reste à
+  faire → l'étape 20 est marquée `[i]` dans la roadmap.
+
 ## Changement de plan : mobile = pilotage distant, desktop d'abord (2026-09-28)
 
 Décision utilisateur : Android/iOS seront une **interface de pilotage
