@@ -98,7 +98,9 @@ async fn main() -> ExitCode {
     // `TriblerConfigManager` : absent ou corrompu -> defauts ; la cle
     // API est generee au premier run et le fichier normalise).
     let config_path = args.state_dir.join(CONFIG_FILENAME);
-    let mut daemon_config = DaemonConfig::load(&config_path);
+    // `load_report` remonte l'erreur de parse pour la notifier en
+    // `report_config_error` une fois la session (et son bus) creee.
+    let (mut daemon_config, config_error) = DaemonConfig::load_report(&config_path);
     if !config_path.exists() {
         if let Err(e) = daemon_config.write(&config_path) {
             tracing::warn!(error = %e, "ecriture initiale de configuration.json impossible");
@@ -156,6 +158,15 @@ async fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+
+    // `report_config_error` Python : une config corrompue est signalee
+    // au GUI (les clients SSE connectes apres le demarrage ne la
+    // reverront pas — meme comportement que le Notifier Python).
+    if let Some(err) = config_error {
+        session
+            .notifier()
+            .notify(tribler_core::Notification::ReportConfigError { error: err });
+    }
 
     if !daemon_config.api.http_enabled {
         // api/http_enabled=false : le daemon tourne sans plan de

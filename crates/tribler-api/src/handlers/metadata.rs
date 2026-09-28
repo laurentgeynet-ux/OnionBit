@@ -248,6 +248,16 @@ pub async fn local_search(
         }
     }
 
+    // `local_query_results` Python (`database_endpoint.local_search` :
+    // notification des resultats apres la recherche FTS).
+    state
+        .session
+        .notifier()
+        .notify(tribler_core::Notification::LocalQueryResults {
+            query: fts.clone(),
+            results: results.clone(),
+        });
+
     Ok(Json(serde_json::json!({
         "results": results,
         "first": 0,

@@ -28,17 +28,45 @@ use crate::state::AppState;
 /// Version emise dans le message `events_start`.
 const API_VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// `DownloadState` → nom `DownloadStatus` Python (enum
+/// `download_state.py`, suffixe `.name` emis dans `status`).
+fn py_status(state: &tribler_bittorrent::DownloadState) -> &'static str {
+    use tribler_bittorrent::DownloadState as S;
+    match state {
+        S::Initializing => "METADATA",
+        S::Checking => "HASHCHECKING",
+        S::Downloading => "DOWNLOADING",
+        S::Seeding => "SEEDING",
+        S::Paused | S::Stopped => "STOPPED",
+        S::Error => "STOPPED_ON_ERROR",
+    }
+}
+
 /// Convertit une notification interne en `(topic, kwargs json)` au
 /// format Python (`Notification.<name>`).
 ///
-/// Les noms de topics suivent `tribler.core.notifier.Notification`.
-fn notification_to_event(n: &Notification) -> Option<(String, serde_json::Value)> {
+/// Les noms de topics suivent `tribler.core.notifier.Notification` ;
+/// `download_state_changed` est une extension locale (le GUI Tribler
+/// consomme `torrent_status_changed`, pas de topic de progression).
+fn notification_to_event(
+    n: &Notification,
+    public_key: &str,
+) -> Option<(String, serde_json::Value)> {
     let (topic, kwargs) = match n {
         Notification::SessionStarted => (
             "events_start".to_string(),
-            serde_json::json!({"public_key": "", "version": API_VERSION, "sessions": "1"}),
+            serde_json::json!({"public_key": public_key, "version": API_VERSION, "sessions": "1"}),
         ),
-        Notification::SessionStopping => ("tribler_shutdown_started".into(), serde_json::json!({})),
+        Notification::SessionStopping | Notification::ShutdownState { .. } => {
+            let state = match n {
+                Notification::ShutdownState { state } => state.clone(),
+                _ => "Shutting down.".to_string(),
+            };
+            (
+                "tribler_shutdown_state".into(),
+                serde_json::json!({"state": state}),
+            )
+        }
         Notification::DownloadProgress(s) => (
             "download_state_changed".into(),
             serde_json::to_value(crate::dto::DownloadInfo::from_stats(s)).ok()?,
@@ -48,8 +76,8 @@ fn notification_to_event(n: &Notification) -> Option<(String, serde_json::Value)
             serde_json::json!({"infohash": infohash, "name": name, "hidden": false}),
         ),
         Notification::DownloadStateChanged { infohash, state } => (
-            "download_state_changed".into(),
-            serde_json::json!({"infohash": infohash, "status": format!("{state:?}")}),
+            "torrent_status_changed".into(),
+            serde_json::json!({"infohash": infohash, "status": py_status(state)}),
         ),
         Notification::TorrentMetadataCreated { infohash, title } => (
             "new_torrent_metadata_created".into(),
@@ -67,6 +95,61 @@ fn notification_to_event(n: &Notification) -> Option<(String, serde_json::Value)
                 "seeders": seeders,
                 "leechers": leechers,
             }),
+        ),
+        Notification::RemoteQueryResults {
+            query,
+            results,
+            uuid,
+            peer,
+        } => (
+            "remote_query_results".into(),
+            serde_json::json!({
+                "query": query,
+                "results": results,
+                "uuid": uuid,
+                "peer": peer,
+            }),
+        ),
+        Notification::LocalQueryResults { query, results } => (
+            "local_query_results".into(),
+            serde_json::json!({"query": query, "results": results}),
+        ),
+        Notification::TunnelRemoved {
+            circuit_id,
+            circuit_class,
+            bytes_up,
+            bytes_down,
+            uptime_secs,
+            additional_info,
+        } => (
+            "tunnel_removed".into(),
+            serde_json::json!({
+                "circuit_id": circuit_id,
+                "circuit_class": circuit_class,
+                "bytes_up": bytes_up,
+                "bytes_down": bytes_down,
+                "uptime": uptime_secs,
+                "additional_info": additional_info,
+            }),
+        ),
+        Notification::LowSpace { disk_usage_data } => (
+            "low_space".into(),
+            serde_json::json!({"disk_usage_data": disk_usage_data}),
+        ),
+        Notification::TriblerException { error } => (
+            "tribler_exception".into(),
+            serde_json::json!({"error": error, "traceback": ""}),
+        ),
+        Notification::ReportConfigError { error } => (
+            "report_config_error".into(),
+            serde_json::json!({"error": error}),
+        ),
+        Notification::AskAddDownload { uri } => {
+            ("ask_add_download".into(), serde_json::json!({"uri": uri}))
+        }
+        Notification::TriblerNewVersion { version } => (
+            "tribler_new_version".into(),
+            serde_json::json!({"version": version}),
         ),
     };
     Some((topic, kwargs))
@@ -92,13 +175,16 @@ pub async fn get_events(
         .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         + 1;
     let guard = SessionGuard(state.sse_sessions.clone());
+    // `public_key` Python : cle publique du noeud IPv8 de la session.
+    let public_key = state.session.public_key_hex();
 
     // Message initial (equivalent de `initial_message()` Python).
+    let pk = public_key.clone();
     let initial = stream::once(async move {
         Ok::<_, Infallible>(
             Event::default().event("events_start").data(
                 serde_json::json!({
-                    "public_key": "",
+                    "public_key": pk,
                     "version": API_VERSION,
                     "sessions": sessions.to_string(),
                 })
@@ -107,8 +193,8 @@ pub async fn get_events(
         )
     });
 
-    let events = BroadcastStream::new(rx).filter_map(|msg| match msg {
-        Ok(n) => notification_to_event(&n)
+    let events = BroadcastStream::new(rx).filter_map(move |msg| match msg {
+        Ok(n) => notification_to_event(&n, &public_key)
             .map(|(topic, kwargs)| Ok(Event::default().event(topic).data(kwargs.to_string()))),
         // Abonne lent : on saute les evenements perdus (lag).
         Err(BroadcastStreamRecvError::Lagged(_)) => None,
@@ -127,7 +213,7 @@ pub async fn get_events(
 /// (`get_info` Python : retourne les `kwargs` du message initial).
 pub async fn get_events_info(State(state): State<AppState>) -> Json<serde_json::Value> {
     Json(serde_json::json!({
-        "public_key": "",
+        "public_key": state.session.public_key_hex(),
         "version": API_VERSION,
         "sessions": state
             .sse_sessions

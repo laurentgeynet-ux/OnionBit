@@ -358,27 +358,38 @@ impl ContentProvider for SessionContentProvider {
     }
 
     /// `process_compressed_mdblob` : decompresse LZ4, parse les
-    /// entrees et les insere dans `channel_node`.
-    fn process_select_response(&self, blob: &[u8]) {
+    /// entrees et les insere dans `channel_node`. Retourne les
+    /// `to_simple_dict()` des objets NOUVEAUX (`ObjState.NEW_OBJECT` —
+    /// la dedup `(public_key, id_)` de `channel::insert` fait foi).
+    fn process_select_response(&self, blob: &[u8]) -> Vec<serde_json::Value> {
         use std::io::Read;
         let mut data = Vec::new();
         if lz4_flex::frame::FrameDecoder::new(blob)
             .read_to_end(&mut data)
             .is_err()
         {
-            return;
+            return Vec::new();
         }
         let Ok(entries) = tribler_format::mdblob::parse_blob(&data) else {
-            return;
+            return Vec::new();
         };
-        let _ = self.db.with(|conn| {
-            for e in &entries {
-                if let Some(row) = entry_to_row(e) {
-                    let _ = tribler_db::channel::insert(conn, &row);
+        self.db
+            .with(|conn| {
+                let mut results = Vec::new();
+                for e in &entries {
+                    let Some(row) = entry_to_row(e) else {
+                        continue;
+                    };
+                    if tribler_db::channel::insert(conn, &row)?.is_none() {
+                        // `DUPLICATE_OBJECT` : exclu des `results`
+                        // (comme `notify_gui` Python).
+                        continue;
+                    }
+                    results.push(simple_dict(conn, &row)?);
                 }
-            }
-            Ok(())
-        });
+                Ok(results)
+            })
+            .unwrap_or_default()
     }
 
     /// `(version, plateforme)` pour `VersionResponse`.
@@ -419,6 +430,47 @@ fn entry_to_row(
         health_rowid: None,
         tag_processor_version: 0,
     })
+}
+
+/// `TorrentMetadata.to_simple_dict()` Python : la forme JSON envoyee
+/// dans `remote_query_results.results`/`local_query_results.results`.
+fn simple_dict(
+    conn: &rusqlite::Connection,
+    row: &tribler_db::models::ChannelNodeRow,
+) -> rusqlite::Result<serde_json::Value> {
+    let (seeders, leechers, last_check) = conn
+        .query_row(
+            "SELECT seeders, leechers, last_check FROM torrent_state
+             WHERE infohash = ?1",
+            rusqlite::params![&row.infohash],
+            |r| {
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, i64>(1)?,
+                    r.get::<_, i64>(2)?,
+                ))
+            },
+        )
+        .unwrap_or((0, 0, 0));
+    Ok(serde_json::json!({
+        "name": row.title,
+        "category": row.tags,
+        "infohash": hex::encode(&row.infohash),
+        "size": row.size,
+        "num_seeders": seeders,
+        "num_leechers": leechers,
+        "last_tracker_check": last_check,
+        "created": row.torrent_date,
+        "tag_processor_version": row.tag_processor_version,
+        "type": row.metadata_type,
+        "id": row.id_,
+        "origin_id": row.origin_id,
+        "public_key": hex::encode(&row.public_key),
+        "status": row.status,
+        // `tracker_info_list` Python : vide cote metadonnees distantes
+        // (`tracker_info` est deprecie en 8.x).
+        "trackers": [],
+    }))
 }
 
 /// Secondes Unix courantes.
@@ -495,13 +547,15 @@ pub struct Ipv8Stack {
 
 impl Ipv8Stack {
     /// Cree et demarre la stack : endpoint, communities, discovery
-    /// bootstrap (tache de fond).
+    /// bootstrap (tache de fond). `notifier` recoit le relais
+    /// `circuit_removed` -> `tunnel_removed`.
     pub async fn start(
         config: &Ipv8Config,
         state_dir: &Path,
         downloads_dir: &Path,
         engine_config: &EngineConfig,
         db: Arc<Database>,
+        notifier: crate::notifier::Notifier,
     ) -> Result<Arc<Self>> {
         let key = load_or_create_key(&state_dir.join(IPV8_KEY_FILE))?;
         let endpoint = match UdpEndpoint::bind(&config.listen_addr).await {
@@ -564,6 +618,30 @@ impl Ipv8Stack {
         } else {
             None
         };
+
+        // Relais `circuit_removed` -> `Notification::TunnelRemoved`
+        // (tribler-tunnel ne depend pas de tribler-core : pont par
+        // canal broadcast, equivalent du Notifier partage Python).
+        if let Some(t) = &tunnel {
+            let mut rx = t.watch_circuit_removed();
+            let notifier = notifier.clone();
+            tokio::spawn(async move {
+                loop {
+                    match rx.recv().await {
+                        Ok(ev) => notifier.notify(crate::notifier::Notification::TunnelRemoved {
+                            circuit_id: ev.circuit_id,
+                            circuit_class: ev.circuit_class.to_string(),
+                            bytes_up: ev.bytes_up,
+                            bytes_down: ev.bytes_down,
+                            uptime_secs: ev.uptime_secs,
+                            additional_info: ev.additional_info,
+                        }),
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                    }
+                }
+            });
+        }
 
         // Tache de reception de l'endpoint (dispatch prefixe).
         let ep = endpoint.clone();

@@ -15,6 +15,11 @@ use crate::config::CoreConfig;
 use crate::error::{CoreError, Result};
 use crate::notifier::{Notification, Notifier};
 
+/// Seuil d'espace libre declenchant `low_space` (1 Gio) — le topic
+/// n'est plus emis par Tribler 8.x ; cette sonde d'ajout le re-active
+/// cote daemon (format `disk_usage_data` identique).
+const LOW_SPACE_THRESHOLD_BYTES: u64 = 1024 * 1024 * 1024;
+
 /// Unite de temps des timestamps persistants : secondes Unix.
 fn now_unix() -> i64 {
     std::time::SystemTime::now()
@@ -116,7 +121,7 @@ impl CoreSession {
         };
         let engine = BtEngine::start(config.engine.clone()).await?;
         let db = Arc::new(db);
-        let ipv8 = start_ipv8(&config, db.clone()).await?;
+        let ipv8 = start_ipv8(&config, db.clone(), notifier.clone()).await?;
         let services_config = config.clone();
         let session = Self {
             inner: Arc::new(Inner {
@@ -143,7 +148,7 @@ impl CoreSession {
         let db = Database::memory()?;
         let engine = BtEngine::start(config.engine.clone()).await?;
         let db = Arc::new(db);
-        let ipv8 = start_ipv8(&config, db.clone()).await?;
+        let ipv8 = start_ipv8(&config, db.clone(), notifier.clone()).await?;
         let services_config = config.clone();
         let session = Self {
             inner: Arc::new(Inner {
@@ -202,6 +207,11 @@ impl CoreSession {
                         error = %e,
                         "restauration d'un telechargement echouee"
                     );
+                    // `on_tribler_exception` Python : les erreurs de
+                    // restauration sont remontees au GUI.
+                    self.inner.notifier.notify(Notification::TriblerException {
+                        error: format!("restore {}: {e}", hex::encode(&row.infohash)),
+                    });
                 }
             }
         }
@@ -429,6 +439,7 @@ impl CoreSession {
         if anon_hops == 0 {
             self.check_uri_policy(uri).await?;
         }
+        self.check_low_space();
         let engine = self.engine_for(anon_hops).await?;
         // Trackers par defaut (`trackers_file`) : ajoutes a chaque
         // nouveau telechargement, comme le post-handle
@@ -647,6 +658,7 @@ impl CoreSession {
     ) -> Result<Download> {
         // Parsing borne en amont pour extraire l'info-hash a persister.
         let meta = tribler_format::torrent::TorrentMeta::parse(&bytes)?;
+        self.check_low_space();
         let engine = self.engine_for(anon_hops).await?;
         // Pas de trackers par defaut sur un torrent prive (condition
         // `not torrent_info.priv()` du `_post_handle_events` Python).
@@ -1346,10 +1358,54 @@ impl CoreSession {
         }
     }
 
+    /// Sonde `low_space` : emet `Notification::LowSpace` quand
+    /// l'espace libre du dossier de telechargement passe sous le seuil
+    /// [`LOW_SPACE_THRESHOLD_BYTES`]. `disk_usage_data` reprend le
+    /// format `shutil.disk_usage` du `statistics_endpoint` Python
+    /// (`total`/`used`/`free` — Tribler 8.x ne re-emet plus ce topic,
+    /// la sonde est une extension du daemon documentee).
+    pub fn check_low_space(&self) {
+        let dir = &self.inner.config.downloads_dir;
+        let Ok(total) = fs2::total_space(dir) else {
+            return;
+        };
+        let Ok(free) = fs2::available_space(dir) else {
+            return;
+        };
+        if free < LOW_SPACE_THRESHOLD_BYTES {
+            self.inner.notifier.notify(Notification::LowSpace {
+                disk_usage_data: serde_json::json!({
+                    "total": total,
+                    "used": total.saturating_sub(free),
+                    "free": free,
+                }),
+            });
+        }
+    }
+
+    /// Cle publique IPv8 de la session (hex) — `events_start` /
+    /// `/api/events/info` ; vide si IPv8 est desactive.
+    pub fn public_key_hex(&self) -> String {
+        self.inner
+            .ipv8
+            .as_ref()
+            .map(|s| s.public_key_hex())
+            .unwrap_or_default()
+    }
+
+    /// `tribler_shutdown_state` : etape de la sequence d'arret
+    /// (messages de `Session.shutdown()` Python).
+    fn shutdown_state(&self, state: &str) {
+        self.inner.notifier.notify(Notification::ShutdownState {
+            state: state.to_string(),
+        });
+    }
+
     /// Arret propre : services, moteur puis notification.
     pub async fn stop(&self) {
         self.inner.notifier.notify(Notification::SessionStopping);
         let services = std::mem::take(&mut *self.inner.services.lock().unwrap());
+        self.shutdown_state("Shutting down torrent checker.");
         if let Some(w) = &services.watch_folder {
             w.stop();
         }
@@ -1359,11 +1415,17 @@ impl CoreSession {
         if let Some(tx) = &services.checker_stop {
             let _ = tx.send(true);
         }
-        // Arret des lanes anonymes puis de la stack IPv8.
+        // Arret des lanes anonymes puis de la stack IPv8 (overlays +
+        // interface SOCKS5 locale des lanes).
+        self.shutdown_state("Shutting down IPv8 peer-to-peer overlays.");
         if let Some(stack) = &self.inner.ipv8 {
             stack.stop().await;
         }
+        self.shutdown_state("Shutting down download manager.");
         self.inner.engine.stop().await;
+        self.shutdown_state("Shutting down local SOCKS5 interface.");
+        self.shutdown_state("Shutting down metadata database.");
+        self.shutdown_state("Shutting down GUI connection. Going dark.");
     }
 }
 
@@ -1412,6 +1474,7 @@ fn copy_recursive(from: &Path, to: &Path) -> std::io::Result<()> {
 async fn start_ipv8(
     config: &CoreConfig,
     db: Arc<Database>,
+    notifier: Notifier,
 ) -> Result<Option<Arc<crate::ipv8_stack::Ipv8Stack>>> {
     if !config.ipv8.enabled {
         return Ok(None);
@@ -1422,6 +1485,7 @@ async fn start_ipv8(
         &config.downloads_dir,
         &config.engine,
         db,
+        notifier,
     )
     .await?;
     Ok(Some(stack))

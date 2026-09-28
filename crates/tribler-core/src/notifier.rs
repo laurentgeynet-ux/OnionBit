@@ -60,6 +60,78 @@ pub enum Notification {
     SessionStarted,
     /// Le daemon s'arrete.
     SessionStopping,
+    /// `tribler_shutdown_state` : progression de la sequence d'arret
+    /// (messages `Shutting down ...` de `Session.shutdown()` Python).
+    ShutdownState {
+        /// Message de phase.
+        state: String,
+    },
+    /// `remote_query_results` : resultats d'un `remote_select`
+    /// (`send_search_request` -> `processing_callback` Python).
+    RemoteQueryResults {
+        /// Texte de recherche (`txt_filter`).
+        query: String,
+        /// `to_simple_dict()` des objets nouveaux.
+        results: Vec<serde_json::Value>,
+        /// UUID de la requete (`request_uuid`).
+        uuid: String,
+        /// Pair repondant (`hexlify(peer.mid)`).
+        peer: String,
+    },
+    /// `local_query_results` : resultats de la recherche locale
+    /// (`local_search` du `database_endpoint` Python).
+    LocalQueryResults {
+        /// Texte de recherche (`fts_text`).
+        query: String,
+        /// `to_simple_dict()` des resultats.
+        results: Vec<serde_json::Value>,
+    },
+    /// `tunnel_removed` : objet de routage tunnel detruit
+    /// (`Notification.circuit_removed` pyipv8).
+    TunnelRemoved {
+        /// `circuit_id` de l'objet.
+        circuit_id: u32,
+        /// Classe (`"Circuit"`, `"RelayRoute"`, `"TunnelExitSocket"`).
+        circuit_class: String,
+        /// Octets montants.
+        bytes_up: u64,
+        /// Octets descendants.
+        bytes_down: u64,
+        /// Duree de vie en secondes.
+        uptime_secs: f64,
+        /// Contexte (`additional_info` Python).
+        additional_info: String,
+    },
+    /// `low_space` : espace disque faible sur le dossier de
+    /// telechargement (`disk_usage_data` = `total/used/free`).
+    LowSpace {
+        /// `{"total": .., "used": .., "free": ..}` (mirroir
+        /// `shutil.disk_usage` du `statistics_endpoint` Python).
+        disk_usage_data: serde_json::Value,
+    },
+    /// `tribler_exception` : exception non rattrapee remontee au GUI
+    /// (`on_tribler_exception` Python — traceback formate).
+    TriblerException {
+        /// Texte d'erreur (type + message Python).
+        error: String,
+    },
+    /// `report_config_error` : erreur de configuration detectee au
+    /// demarrage ou a la relecture.
+    ReportConfigError {
+        /// Texte d'erreur.
+        error: String,
+    },
+    /// `ask_add_download` : `ask_download_settings` actif — le GUI
+    /// doit ouvrir la boite de reglages au lieu d'ajouter.
+    AskAddDownload {
+        /// URI demandee.
+        uri: String,
+    },
+    /// `tribler_new_version` : une version plus recente existe.
+    TriblerNewVersion {
+        /// Chaine de version distante.
+        version: String,
+    },
 }
 
 /// Bus de notifications. `Clone` : chaque service detient un

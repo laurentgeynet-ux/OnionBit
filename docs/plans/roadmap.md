@@ -400,7 +400,7 @@ activée en parité Python (loopback compris — `tribler-cli` la lit dans
   documentée si rqbit ne l'expose pas à chaud). Les flags
   `get_peers`/`get_pieces`/`get_availability` de `GET /api/downloads`
   ont été livrés avec l'étape 22.
-- [ ] **Étape 24. Topics SSE complets.** Nouvelles variantes
+- [x] **Étape 24. Topics SSE complets.** Nouvelles variantes
   `Notification` + émetteurs : `remote_query_results`
   (`uuid,query,results,peer`), `local_query_results`, `tunnel_removed`,
   `tribler_shutdown_state` (progression de `stop()`), `low_space`

@@ -113,11 +113,21 @@ Convention générale :
 
 | Topic Python | Émis par Rust | Notes |
 | :--- | :--- | :--- |
-| `events_start` | ✅ | message initial à la connexion (`public_key`, `version`, `sessions`) |
-| `tribler_shutdown_started` | ✅ | `Notification::SessionStopping` |
-| `download_state_changed` | ✅ | `Notification::DownloadProgress` + `DownloadStateChanged` |
+| `events_start` | ✅ | message initial à la connexion — `public_key` = vraie clé IPv8 de la session (`""` si IPv8 désactivé), `version`, `sessions` |
+| `tribler_shutdown_state` | ✅ | `Session::stop()` émet les phases Python (`Shutting down torrent checker.` … `Going dark.`) |
+| `torrent_status_changed` | ✅ | `Notification::DownloadStateChanged` — `status` = nom `DownloadStatus` (`DOWNLOADING`, `SEEDING`, `STOPPED`, `STOPPED_ON_ERROR`, `HASHCHECKING`, `METADATA`) |
+| `download_state_changed` | ✅ (extension) | `Notification::DownloadProgress` — payload `DownloadInfo` complet ; n'existe pas en Python 8.x |
 | `torrent_finished` | ✅ | `Notification::DownloadFinished` |
 | `new_torrent_metadata_created` | ✅ | `Notification::TorrentMetadataCreated` |
+| `torrent_health_updated` | ✅ | `Notification::TorrentHealthUpdated` |
+| `remote_query_results` | ✅ | `processing_callback` du `remote_select` — `results` = objets `NEW` uniquement, `uuid` = `request_uuid`, `peer` = `hexlify(mid)` |
+| `local_query_results` | ✅ | émis par `GET /api/metadata/search/local` (`query`, `results`) |
+| `tunnel_removed` | ✅ | relais `circuit_removed` de `TunnelCommunity` (`circuit_id`, `circuit_class`, `bytes_*`, `uptime`, `additional_info`) |
+| `low_space` | ✅ | sonde `fs2` à l'ajout de téléchargement — seuil 1 Gio ; `disk_usage_data` = `{total, used, free}` (le topic est mort dans Tribler 8.x — réactivé côté daemon) |
+| `tribler_exception` | ✅ | erreurs de restauration des downloads ; `{"error", "traceback"}` (traceback vide — pas d'équivalent Python) |
+| `report_config_error` | ✅ | `configuration.json` corrompu au démarrage (`DaemonConfig::load_report`) |
+| `ask_add_download` | ✅ | `PUT /api/downloads` avec `cli` + `libtorrent/ask_download_settings` → `{"started": false}` + notification |
+| `tribler_new_version` | ⏸️ | variante + mapping prêts ; pas d'émetteur (mort dans Tribler 8.x aussi) |
 
 ## Endpoints Python non couverts (écart assumé ou en suspens)
 

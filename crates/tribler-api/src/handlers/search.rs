@@ -62,15 +62,27 @@ pub async fn remote_search(
     let mut queried = Vec::new();
     for peer in peers.iter().take(SEARCH_MAX_PEERS) {
         if let Some(addr) = &peer.address {
+            // `notify_gui` Python (`send_search_request`) : chaque
+            // reponse du pair notifie `remote_query_results` avec le
+            // kwargs d'origine, l'uuid de la requete et le mid du pair.
+            let notifier = state.session.notifier().clone();
+            let (uuid_c, query_c, mid) = (uuid.clone(), query.clone(), hex::encode(peer.mid));
+            let cb: tribler_ipv8::content_discovery::SelectCallback =
+                std::sync::Arc::new(move |results| {
+                    notifier.notify(tribler_core::Notification::RemoteQueryResults {
+                        query: query_c.clone(),
+                        results,
+                        uuid: uuid_c.clone(),
+                        peer: mid.clone(),
+                    });
+                });
             if stack
                 .content_discovery
-                .send_remote_select(addr, body.clone())
+                .send_remote_select_cb(addr, body.clone(), cb)
                 .await
                 .is_ok()
             {
-                queried.push(hex::encode(
-                    &peer.public_key_bin[..20.min(peer.public_key_bin.len())],
-                ));
+                queried.push(hex::encode(peer.mid));
             }
         }
     }

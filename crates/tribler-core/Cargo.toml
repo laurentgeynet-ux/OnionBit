@@ -18,6 +18,7 @@ rusqlite.workspace = true
 lz4_flex.workspace = true
 url.workspace = true
 reqwest.workspace = true
+fs2.workspace = true
 bytes.workspace = true
 rand.workspace = true
 tokio.workspace = true

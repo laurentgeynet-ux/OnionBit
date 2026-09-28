@@ -55,6 +55,9 @@ const DATA_CHANNEL_CAP: usize = 512;
 const CANDIDATES_IN_RESPONSE: usize = 4;
 /// Capacite du canal broadcast `e2e_ready`.
 const E2E_CHANNEL_CAP: usize = 64;
+/// Capacite du canal `circuit_removed` (`Notification.circuit_removed`
+/// pyipv8 — relaye en topic SSE `tunnel_removed` par `tribler-core`).
+const CIRCUIT_REMOVED_CHANNEL_CAP: usize = 64;
 /// Capacite du canal de chunks `http-response` par requete en cours.
 const HTTP_REQUEST_PARTS_CAP: usize = 64;
 
@@ -144,6 +147,9 @@ pub(crate) struct ExitState {
     /// `http_requests` (`exit.rs`) : borne de requetes HTTP
     /// simultanees par circuit de sortie.
     pub(crate) http_permits: Arc<tokio::sync::Semaphore>,
+    /// `creation_time` (`RoutingObject` Python) — sert a l'`uptime`
+    /// du topic `tunnel_removed`.
+    pub(crate) creation_time: std::time::Instant,
 }
 
 /// `CreateRequestCache` Python (extend en attente d'un `created`).
@@ -200,6 +206,29 @@ pub struct TunnelCommunity {
     /// watchdogs de lanes anonymes de reagir a la perte d'un circuit
     /// sans attendre leur intervalle de sondage.
     pub(crate) circuits_changed_tx: tokio::sync::watch::Sender<u64>,
+    /// `Notification.circuit_removed` pyipv8 : detail de chaque objet
+    /// de routage detruit (circuit, relais, socket de sortie) —
+    /// relaye vers le bus `tribler-core` sans dependance inverse.
+    pub(crate) circuit_removed_tx: tokio::sync::broadcast::Sender<CircuitRemovedEvent>,
+}
+
+/// Detail d'un objet de routage detruit (`circuit_removed` pyipv8) —
+/// champs du topic SSE `tunnel_removed` cote GUI Tribler.
+#[derive(Debug, Clone)]
+pub struct CircuitRemovedEvent {
+    /// `circuit_id` de l'objet detruit.
+    pub circuit_id: u32,
+    /// Nom de classe Python (`"Circuit"`, `"RelayRoute"`,
+    /// `"TunnelExitSocket"`).
+    pub circuit_class: &'static str,
+    /// Octets montants cumules.
+    pub bytes_up: u64,
+    /// Octets descendants cumules.
+    pub bytes_down: u64,
+    /// Secondes depuis la creation (`uptime` Python).
+    pub uptime_secs: f64,
+    /// Contexte de destruction (`additional_info` Python).
+    pub additional_info: String,
 }
 
 /// Instantane d'un circuit (endpoint `/api/ipv8/tunnel/circuits`).
@@ -295,6 +324,7 @@ impl TunnelCommunity {
         let (data_tx, _) = tokio::sync::broadcast::channel(DATA_CHANNEL_CAP);
         let (e2e_ready_tx, _) = tokio::sync::broadcast::channel(E2E_CHANNEL_CAP);
         let (circuits_changed_tx, _) = tokio::sync::watch::channel(0u64);
+        let (circuit_removed_tx, _) = tokio::sync::broadcast::channel(CIRCUIT_REMOVED_CHANNEL_CAP);
         let community = Arc::new(Self {
             community_id,
             key,
@@ -325,6 +355,7 @@ impl TunnelCommunity {
             data_tx,
             e2e_ready_tx,
             circuits_changed_tx,
+            circuit_removed_tx,
         });
         let weak = Arc::downgrade(&community);
         endpoint
@@ -1610,6 +1641,7 @@ impl TunnelCommunity {
                     http_permits: Arc::new(tokio::sync::Semaphore::new(
                         crate::http_tunnel::MAX_HTTP_REQUESTS_PER_CIRCUIT,
                     )),
+                    creation_time: std::time::Instant::now(),
                 },
             );
         }
@@ -2120,15 +2152,59 @@ impl TunnelCommunity {
     }
 
     /// `on_destroy` : nettoie circuit/relais/sortie concernes.
+    /// `watch_circuit_removed` : abonnement au canal
+    /// `circuit_removed` (relaye en `tunnel_removed` cote SSE par
+    /// `tribler-core`, sans dependance tunnel -> core).
+    pub fn watch_circuit_removed(&self) -> tokio::sync::broadcast::Receiver<CircuitRemovedEvent> {
+        self.circuit_removed_tx.subscribe()
+    }
+
+    /// `remove_circuit`/`remove_relay`/`remove_exit_socket` pyipv8 :
+    /// emet `circuit_removed` avec les stats de l'objet detruit.
+    fn emit_circuit_removed(&self, ev: CircuitRemovedEvent) {
+        // send() n'echoue que sans abonnes — non bloquant par design.
+        let _ = self.circuit_removed_tx.send(ev);
+    }
+
     fn on_destroy(&self, _src: SocketAddr, circuit_id: u32, reason: u16) {
+        let mut events = Vec::new();
         let mut inner = self.inner.lock().unwrap();
         if let Some(route) = inner.relays.remove(&circuit_id) {
             inner.relays.remove(&route.base.circuit_id);
+            events.push(CircuitRemovedEvent {
+                circuit_id: route.base.circuit_id,
+                circuit_class: "RelayRoute",
+                bytes_up: route.base.bytes_up,
+                bytes_down: route.base.bytes_down,
+                uptime_secs: route.base.creation_time.elapsed().as_secs_f64(),
+                additional_info: format!("got destroy, reason {reason}"),
+            });
         }
-        inner.exit_sockets.remove(&circuit_id);
-        inner.circuits.remove(&circuit_id);
+        if let Some(exit) = inner.exit_sockets.remove(&circuit_id) {
+            events.push(CircuitRemovedEvent {
+                circuit_id,
+                circuit_class: "TunnelExitSocket",
+                bytes_up: 0,
+                bytes_down: 0,
+                uptime_secs: exit.creation_time.elapsed().as_secs_f64(),
+                additional_info: format!("got destroy, reason {reason}"),
+            });
+        }
+        if let Some(circuit) = inner.circuits.remove(&circuit_id) {
+            events.push(CircuitRemovedEvent {
+                circuit_id,
+                circuit_class: "Circuit",
+                bytes_up: circuit.base.bytes_up,
+                bytes_down: circuit.base.bytes_down,
+                uptime_secs: circuit.base.creation_time.elapsed().as_secs_f64(),
+                additional_info: format!("got destroy, reason {reason}"),
+            });
+        }
         drop(inner);
         self.notify_circuits_changed();
+        for ev in events {
+            self.emit_circuit_removed(ev);
+        }
         tracing::debug!(circuit_id, reason, "objet de routage detruit");
     }
 

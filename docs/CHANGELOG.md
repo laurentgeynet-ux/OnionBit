@@ -3,6 +3,45 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Étape 24 — Topics SSE complets + vraie `public_key` (2026-09-28)
+
+- **`public_key` réelle** : `events_start` et `/api/events/info`
+  rapportent `Ipv8Stack::public_key_hex()` via `CoreSession` (`""` si
+  IPv8 désactivé) — fin du placeholder.
+- **Nouveaux topics** (format `Notification` Python, `data:` JSON) :
+  `remote_query_results`, `local_query_results`, `tunnel_removed`,
+  `tribler_shutdown_state`, `low_space`, `tribler_exception`,
+  `report_config_error`, `ask_add_download`, `tribler_new_version`
+  (variante prête, pas d'émetteur — mort en Python 8.x aussi).
+- **`remote_query_results`** : `pending_selects` de
+  `ContentDiscoveryCommunity` porte désormais un `SelectRequest`
+  complet (adresse du pair, `packets_limit` = 10, `peer_responded`,
+  `processing_callback`) — un pair muet à l'expiration est retiré du
+  réseau comme `_on_query_timeout`. `process_select_response`
+  retourne les `to_simple_dict()` des objets `NEW` (dedup
+  `(public_key, id_)` = `DUPLICATE_OBJECT` exclu, comme `notify_gui`).
+- **`tunnel_removed`** : `TunnelCommunity` émet `circuit_removed`
+  (`Circuit`/`RelayRoute`/`TunnelExitSocket` + stats + uptime +
+  raison) sur un canal broadcast ; `Ipv8Stack` le relaie au
+  `Notifier` sans dépendance tunnel→core.
+- **`tribler_shutdown_state`** : `stop()` émet les phases Python
+  (checker → overlays IPv8 → download manager → SOCKS5 → base → GUI
+  « Going dark. »).
+- **`low_space`** : sonde `fs2` à l'ajout (`downloads_dir`, seuil
+  1 Gio) — le topic est mort en Python 8.x ; extension documentée.
+- **`report_config_error`** : `DaemonConfig::load_report` remonte
+  l'erreur de parse ; le daemon la notifie après démarrage.
+- **`ask_add_download`** : `PUT /api/downloads` avec `cli` +
+  `libtorrent/ask_download_settings` → `{"started": false}` + notif.
+- **`local_query_results`** : émis par `GET
+  /api/metadata/search/local`.
+- **Correctif de fidélité** : `DownloadStateChanged` →
+  `torrent_status_changed` (nom `DownloadStatus` Python) ;
+  `download_state_changed` reste une extension de progression.
+- **Tests** : sérialisation SSE des 9 nouveaux topics,
+  `torrent_status_changed`, `local_query_results`,
+  `ask_add_download`, callback `remote_select` (ipv8).
+
 ## Étape 23 — Trackers par download (2026-09-28)
 
 - **Routes** : `PUT /api/downloads/{ih}/trackers` (`{"added": true}`),

@@ -69,6 +69,34 @@ const HEALTH_PAYLOAD_BUDGET: usize = 1200;
 /// TTL d'une requete `remote_select` en attente de reponse.
 const SELECT_REQUEST_TTL: Duration = Duration::from_secs(30);
 
+/// `SelectRequest.packets_limit` (cache.py) : nombre maximal de
+/// paquets `SelectResponse` acceptes pour une requete (anti-spam).
+const SELECT_RESPONSE_PACKETS_LIMIT: u8 = 10;
+
+/// `processing_callback` Python : appelee avec les `to_simple_dict()`
+/// des objets NOUVEAUX (`ObjState.NEW_OBJECT`) de chaque paquet de
+/// reponse — relayee en `remote_query_results` par l'appelant.
+pub type SelectCallback = Arc<dyn Fn(Vec<serde_json::Value>) + Send + Sync>;
+
+/// `SelectRequest` (cache.py) : contexte d'un `remote_select` sortant.
+struct PendingSelect {
+    /// Pair interroge (adresse) — la reponse est acceptee uniquement
+    /// depuis cette source (role de `hexlify(peer.mid)` dans le
+    /// `RequestCache` Python ; l'id est deja unique par processus).
+    peer_addr: UdpAddress,
+    /// Instant d'emission (TTL `SELECT_REQUEST_TTL`).
+    sent_at: Instant,
+    /// `packets_limit` Python.
+    packets_limit: u8,
+    /// `peer_responded` Python : au moins un paquet recu — a
+    /// l'expiration, un pair muet est retire du reseau
+    /// (`_on_query_timeout` -> `network.remove_peer`).
+    peer_responded: bool,
+    /// `processing_callback` (`None` pour les selects internes de
+    /// resolution de santes — pas de notification GUI).
+    callback: Option<SelectCallback>,
+}
+
 /// `HealthInfo` filaire (`HealthFormat` : `20s, I, I, Q, varlenHutf8`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HealthInfo {
@@ -196,8 +224,10 @@ pub trait ContentProvider: Send + Sync {
     /// distant — JSON de parametres -> blob de resultat.
     fn remote_select(&self, json: &[u8]) -> Vec<u8>;
     /// `process_compressed_mdblob` cote requeteur : integre une
-    /// reponse select (blob opaque).
-    fn process_select_response(&self, blob: &[u8]);
+    /// reponse select (blob opaque) ; retourne les `to_simple_dict()`
+    /// des objets NOUVEAUX (`ObjState.NEW_OBJECT` Python) pour la
+    /// notification `remote_query_results`.
+    fn process_select_response(&self, blob: &[u8]) -> Vec<serde_json::Value>;
     /// `(version, platform)` locales pour `VersionResponse`.
     fn version_info(&self) -> (String, String);
 }
@@ -216,8 +246,9 @@ pub struct ContentDiscoveryCommunity {
     select_ids: AtomicU32,
     /// Horloge de Lamport (paquets signes).
     global_time: AtomicU64,
-    /// Requetes select emises en attente (id -> instant).
-    pending_selects: Mutex<std::collections::HashMap<u32, Instant>>,
+    /// Requetes select emises en attente (`RequestCache` Python :
+    /// id unique -> contexte `SelectRequest`).
+    pending_selects: Mutex<std::collections::HashMap<u32, PendingSelect>>,
 }
 
 impl ContentDiscoveryCommunity {
@@ -332,12 +363,23 @@ impl ContentDiscoveryCommunity {
                 )
                 .await;
         }
-        // Purge des requetes select expirees.
+        // `_on_query_timeout` Python : a l'expiration, un pair qui
+        // n'a jamais repondu est retire du reseau (`remove_peer`).
         let now = Instant::now();
-        self.pending_selects
-            .lock()
-            .unwrap()
-            .retain(|_, t| now.duration_since(*t) < SELECT_REQUEST_TTL);
+        let expired: Vec<PendingSelect> = {
+            let mut pend = self.pending_selects.lock().unwrap();
+            let ids: Vec<u32> = pend
+                .iter()
+                .filter(|(_, r)| now.duration_since(r.sent_at) >= SELECT_REQUEST_TTL)
+                .map(|(id, _)| *id)
+                .collect();
+            ids.iter().filter_map(|id| pend.remove(id)).collect()
+        };
+        for req in expired {
+            if !req.peer_responded {
+                self.network.remove_by_address(&req.peer_addr);
+            }
+        }
     }
 
     /// `send_remote_select` : demande `json` de parametres au pair ;
@@ -347,11 +389,38 @@ impl ContentDiscoveryCommunity {
         peer: &UdpAddress,
         json: Vec<u8>,
     ) -> Result<u32, Ipv8Error> {
+        self.send_select(peer, json, None).await
+    }
+
+    /// `send_remote_select` avec `processing_callback` — le callback
+    /// recoit les objets nouveaux de chaque paquet de reponse
+    /// (`send_search_request` -> `remote_query_results` Python).
+    pub async fn send_remote_select_cb(
+        &self,
+        peer: &UdpAddress,
+        json: Vec<u8>,
+        callback: SelectCallback,
+    ) -> Result<u32, Ipv8Error> {
+        self.send_select(peer, json, Some(callback)).await
+    }
+
+    async fn send_select(
+        &self,
+        peer: &UdpAddress,
+        json: Vec<u8>,
+        callback: Option<SelectCallback>,
+    ) -> Result<u32, Ipv8Error> {
         let id = self.select_ids.fetch_add(1, Ordering::Relaxed);
-        self.pending_selects
-            .lock()
-            .unwrap()
-            .insert(id, Instant::now());
+        self.pending_selects.lock().unwrap().insert(
+            id,
+            PendingSelect {
+                peer_addr: peer.clone(),
+                sent_at: Instant::now(),
+                packets_limit: SELECT_RESPONSE_PACKETS_LIMIT,
+                peer_responded: false,
+                callback,
+            },
+        );
         self.send_payload(peer, &RemoteSelect { id, json }).await?;
         Ok(id)
     }
@@ -438,8 +507,29 @@ impl ContentDiscoveryCommunity {
             }
             msg::SELECT_RESPONSE => {
                 let p = SelectResponse::unpack(&mut r)?;
-                if self.pending_selects.lock().unwrap().remove(&p.id).is_some() {
-                    self.provider.process_select_response(&p.blob);
+                // `request_cache.get(mid, id)` Python : l'id est
+                // unique par processus ; on verifie la source.
+                let callback = {
+                    let mut pend = self.pending_selects.lock().unwrap();
+                    match pend.get_mut(&p.id) {
+                        Some(req) if req.peer_addr == src_addr => {
+                            req.peer_responded = true;
+                            req.packets_limit -= 1;
+                            let cb = req.callback.clone();
+                            if req.packets_limit == 0 {
+                                pend.remove(&p.id);
+                            }
+                            Some(cb)
+                        }
+                        _ => None,
+                    }
+                };
+                let Some(callback) = callback else {
+                    return Ok(());
+                };
+                let results = self.provider.process_select_response(&p.blob);
+                if let Some(cb) = callback {
+                    cb(results);
                 }
             }
             _ => {}

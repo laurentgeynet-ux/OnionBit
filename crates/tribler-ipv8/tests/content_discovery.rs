@@ -45,8 +45,9 @@ impl ContentProvider for MockProvider {
         self.selects.lock().unwrap().push(json.to_vec());
         self.select_blob.clone()
     }
-    fn process_select_response(&self, blob: &[u8]) {
+    fn process_select_response(&self, blob: &[u8]) -> Vec<serde_json::Value> {
         self.responses.lock().unwrap().push(blob.to_vec());
+        Vec::new()
     }
     fn version_info(&self) -> (String, String) {
         ("8.4.3-rust".into(), "test".into())
@@ -166,6 +167,44 @@ async fn remote_select_roundtrip() {
     let _ = id;
 }
 
+/// `processing_callback` (`send_search_request` Python) : appelee
+/// avec les objets nouveaux de la reponse — base de
+/// `remote_query_results`.
+#[tokio::test(flavor = "multi_thread")]
+async fn remote_select_callback_invoked() {
+    let pa = Arc::new(MockProvider {
+        healths: vec![],
+        received: Mutex::new(vec![]),
+        selects: Mutex::new(vec![]),
+        responses: Mutex::new(vec![]),
+        select_blob: vec![],
+    });
+    let pb = Arc::new(MockProvider {
+        healths: vec![],
+        received: Mutex::new(vec![]),
+        selects: Mutex::new(vec![]),
+        responses: Mutex::new(vec![]),
+        select_blob: b"payload".to_vec(),
+    });
+    let (ca, _na, _aa) = node(pa.clone() as Arc<dyn ContentProvider>).await;
+    let (_cb, _nb, addr_b) = node(pb.clone() as Arc<dyn ContentProvider>).await;
+
+    let called = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let called_c = called.clone();
+    ca.send_remote_select_cb(
+        &addr_b,
+        b"{\"txt_filter\":\"x\"}".to_vec(),
+        Arc::new(move |results| {
+            assert!(results.is_empty());
+            called_c.store(true, std::sync::atomic::Ordering::SeqCst);
+        }),
+    )
+    .await
+    .unwrap();
+    let ok = wait_for(|| called.load(std::sync::atomic::Ordering::SeqCst)).await;
+    assert!(ok, "processing_callback non invoque");
+}
+
 /// Version request (101) -> response (102) : le pair distant repond
 /// avec ses chaines (verifie via le provider de B sollicite).
 #[tokio::test(flavor = "multi_thread")]
@@ -183,7 +222,9 @@ async fn version_request_answered() {
         fn remote_select(&self, _j: &[u8]) -> Vec<u8> {
             vec![]
         }
-        fn process_select_response(&self, _b: &[u8]) {}
+        fn process_select_response(&self, _b: &[u8]) -> Vec<serde_json::Value> {
+            Vec::new()
+        }
         fn version_info(&self) -> (String, String) {
             *self.calls.lock().unwrap() += 1;
             ("8.4.3-rust".into(), "win64".into())

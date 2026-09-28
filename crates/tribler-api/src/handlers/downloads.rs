@@ -399,6 +399,27 @@ pub async fn add_download(
         ));
     }
 
+    // `ask_download_settings` Python : `uri` + `cli` + option active ->
+    // `ask_add_download` au GUI au lieu d'ajouter directement.
+    if let Some(uri) = &uri {
+        let ask = state
+            .daemon_config
+            .lock()
+            .unwrap()
+            .libtorrent
+            .ask_download_settings;
+        if cli && ask {
+            state
+                .session
+                .notifier()
+                .notify(tribler_core::Notification::AskAddDownload { uri: uri.clone() });
+            return Ok(Json(serde_json::json!({
+                "started": false,
+                "infohash": "",
+            })));
+        }
+    }
+
     let dl = if let Some(uri) = &uri {
         state
             .session

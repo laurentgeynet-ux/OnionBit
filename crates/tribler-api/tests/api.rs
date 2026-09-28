@@ -41,6 +41,7 @@ fn test_torrent_bytes() -> Vec<u8> {
 struct TestServer {
     addr: SocketAddr,
     session: CoreSession,
+    state: AppState,
     client: reqwest::Client,
     /// Garde le repertoire temporaire vivant.
     _dir: tempfile::TempDir,
@@ -52,7 +53,8 @@ async fn spawn_server() -> TestServer {
         CoreSession::start_offline(CoreConfig::offline(dir.path().into()), Notifier::new())
             .await
             .unwrap();
-    let app = build(AppState::new(session.clone()));
+    let state = AppState::new(session.clone());
+    let app = build(state.clone());
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move {
@@ -61,6 +63,7 @@ async fn spawn_server() -> TestServer {
     TestServer {
         addr,
         session,
+        state,
         client: reqwest::Client::new(),
         _dir: dir,
     }
@@ -1187,7 +1190,8 @@ async fn spawn_server_with(state_fn: impl FnOnce(CoreSession) -> AppState) -> Te
         CoreSession::start_offline(CoreConfig::offline(dir.path().into()), Notifier::new())
             .await
             .unwrap();
-    let app = build(state_fn(session.clone()));
+    let state = state_fn(session.clone());
+    let app = build(state.clone());
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move {
@@ -1196,6 +1200,7 @@ async fn spawn_server_with(state_fn: impl FnOnce(CoreSession) -> AppState) -> Te
     TestServer {
         addr,
         session,
+        state,
         client: reqwest::Client::new(),
         _dir: dir,
     }
@@ -1281,9 +1286,9 @@ async fn settings_post_merge_et_persiste_configuration_json() {
     dcfg.ensure_api_key();
     let key = dcfg.api.key.clone();
     let srv = {
-        let app = build(
-            AppState::new(session.clone()).with_daemon_config(dcfg, Some(config_path.clone())),
-        );
+        let state =
+            AppState::new(session.clone()).with_daemon_config(dcfg, Some(config_path.clone()));
+        let app = build(state.clone());
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move {
@@ -1292,6 +1297,7 @@ async fn settings_post_merge_et_persiste_configuration_json() {
         TestServer {
             addr,
             session,
+            state,
             client: reqwest::Client::new(),
             _dir: dir,
         }
@@ -1650,5 +1656,204 @@ async fn get_downloads_flags_peers_pieces_availability() {
     assert!(d["availability"].is_number());
     assert!(d["total_pieces"].as_u64().unwrap() >= 1);
 
+    srv.session.stop().await;
+}
+
+// ============================================================================
+// Etape 24 — topics SSE complets
+// ============================================================================
+
+/// Tous les topics du `Notification` Python ajoutes a l'etape 24 sont
+/// serialises en trames `event: <topic>\ndata: <json>\n\n`.
+#[tokio::test]
+async fn events_sse_topics_etape24() {
+    use tribler_core::Notification;
+    let srv = spawn_server().await;
+    let mut resp = srv.client.get(srv.url("/api/events")).send().await.unwrap();
+    assert_eq!(resp.status(), 200);
+    let mut buf = String::new();
+    read_until(&mut buf, &mut resp, "events_start").await;
+
+    let cases: Vec<(Notification, &str, Vec<&str>)> = vec![
+        (
+            Notification::ShutdownState {
+                state: "Shutting down torrent checker.".into(),
+            },
+            "tribler_shutdown_state",
+            vec!["state"],
+        ),
+        (
+            Notification::RemoteQueryResults {
+                query: "ubuntu".into(),
+                results: vec![serde_json::json!({"name": "ubuntu.iso"})],
+                uuid: "req-1".into(),
+                peer: "aabb".into(),
+            },
+            "remote_query_results",
+            vec!["query", "results", "uuid", "peer"],
+        ),
+        (
+            Notification::LocalQueryResults {
+                query: "debian".into(),
+                results: vec![],
+            },
+            "local_query_results",
+            vec!["query", "results"],
+        ),
+        (
+            Notification::TunnelRemoved {
+                circuit_id: 42,
+                circuit_class: "Circuit".into(),
+                bytes_up: 10,
+                bytes_down: 20,
+                uptime_secs: 3.5,
+                additional_info: "got destroy".into(),
+            },
+            "tunnel_removed",
+            vec![
+                "circuit_id",
+                "circuit_class",
+                "bytes_up",
+                "bytes_down",
+                "uptime",
+                "additional_info",
+            ],
+        ),
+        (
+            Notification::LowSpace {
+                disk_usage_data: serde_json::json!({"total": 100, "used": 90, "free": 10}),
+            },
+            "low_space",
+            vec!["disk_usage_data"],
+        ),
+        (
+            Notification::TriblerException {
+                error: "boom".into(),
+            },
+            "tribler_exception",
+            vec!["error", "traceback"],
+        ),
+        (
+            Notification::ReportConfigError {
+                error: "bad json".into(),
+            },
+            "report_config_error",
+            vec!["error"],
+        ),
+        (
+            Notification::AskAddDownload {
+                uri: "magnet:?xt=urn:btih:aa".into(),
+            },
+            "ask_add_download",
+            vec!["uri"],
+        ),
+        (
+            Notification::TriblerNewVersion {
+                version: "9.9.9".into(),
+            },
+            "tribler_new_version",
+            vec!["version"],
+        ),
+    ];
+    for (n, topic, keys) in cases {
+        srv.session.notifier().notify(n);
+        read_until(&mut buf, &mut resp, &format!("event: {topic}")).await;
+        let marker = format!("event: {topic}\ndata: ");
+        let pos = buf.rfind(&marker).unwrap();
+        let data: serde_json::Value =
+            serde_json::from_str(buf[pos + marker.len()..].lines().next().unwrap()).unwrap();
+        for k in keys {
+            assert!(data.get(k).is_some(), "{topic} sans cle {k} : {data}");
+        }
+        buf.clear();
+    }
+    srv.session.stop().await;
+}
+
+/// `DownloadStateChanged` est traduit en `torrent_status_changed`
+/// (nom `DownloadStatus` Python), pas en `download_state_changed`.
+#[tokio::test]
+async fn events_sse_torrent_status_changed() {
+    use tribler_core::Notification;
+    let srv = spawn_server().await;
+    let mut resp = srv.client.get(srv.url("/api/events")).send().await.unwrap();
+    let mut buf = String::new();
+    read_until(&mut buf, &mut resp, "events_start").await;
+    buf.clear();
+    srv.session
+        .notifier()
+        .notify(Notification::DownloadStateChanged {
+            infohash: "aa".repeat(20),
+            state: tribler_bittorrent::DownloadState::Downloading,
+        });
+    read_until(&mut buf, &mut resp, "event: torrent_status_changed").await;
+    let pos = buf.rfind("data: ").unwrap();
+    let data: serde_json::Value =
+        serde_json::from_str(buf[pos + 6..].lines().next().unwrap()).unwrap();
+    assert_eq!(data["status"], "DOWNLOADING");
+    srv.session.stop().await;
+}
+
+/// `local_search` notifie `local_query_results` avec la requete et
+/// les resultats (comme `database_endpoint.py`).
+#[tokio::test]
+async fn local_search_notifie_local_query_results() {
+    let srv = spawn_server().await;
+    let mut rx = srv.session.notifier().subscribe();
+    let resp = srv
+        .client
+        .get(srv.url("/api/metadata/search/local?fts_text=ubuntu"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let n = tokio::time::timeout(IO_TIMEOUT, async {
+        loop {
+            if let Ok(tribler_core::Notification::LocalQueryResults { query, .. }) = rx.recv().await
+            {
+                break query;
+            }
+        }
+    })
+    .await
+    .expect("local_query_results non recu");
+    assert_eq!(n, "ubuntu");
+    srv.session.stop().await;
+}
+
+/// `PUT /api/downloads` avec `cli` + `ask_download_settings` : le
+/// daemon notifie `ask_add_download` et ne demarre rien.
+#[tokio::test]
+async fn put_download_ask_add_download() {
+    let srv = spawn_server().await;
+    srv.state
+        .daemon_config
+        .lock()
+        .unwrap()
+        .libtorrent
+        .ask_download_settings = true;
+    let mut rx = srv.session.notifier().subscribe();
+    let uri = "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567";
+    let resp = srv
+        .client
+        .put(srv.url("/api/downloads"))
+        .json(&serde_json::json!({"uri": uri, "cli": true}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["started"], false);
+    assert_eq!(body["infohash"], "");
+    let got = tokio::time::timeout(IO_TIMEOUT, async {
+        loop {
+            if let Ok(tribler_core::Notification::AskAddDownload { uri: u }) = rx.recv().await {
+                break u;
+            }
+        }
+    })
+    .await
+    .expect("ask_add_download non recu");
+    assert_eq!(got, uri);
     srv.session.stop().await;
 }

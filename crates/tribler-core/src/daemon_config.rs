@@ -525,19 +525,30 @@ impl DaemonConfig {
     /// (`Failed to load stored configuration. Falling back to
     /// defaults!` Python). La clé API est générée si absente.
     pub fn load(path: &Path) -> Self {
-        let mut cfg = match std::fs::read_to_string(path) {
-            Ok(text) => serde_json::from_str(&text).unwrap_or_else(|e| {
-                tracing::warn!(
-                    error = %e,
-                    path = %path.display(),
-                    "configuration.json corrompu, repli sur les valeurs par défaut"
-                );
-                Self::default()
-            }),
-            Err(_) => Self::default(),
+        Self::load_report(path).0
+    }
+
+    /// `load` + remontée de l'erreur de parse (`report_config_error`
+    /// Python — le daemon peut la notifier sur le bus d'evenements).
+    /// Retourne `(config, Some(erreur))` si le fichier existait mais
+    /// n'etait pas un JSON valide.
+    pub fn load_report(path: &Path) -> (Self, Option<String>) {
+        let (mut cfg, error) = match std::fs::read_to_string(path) {
+            Ok(text) => match serde_json::from_str(&text) {
+                Ok(cfg) => (cfg, None),
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        path = %path.display(),
+                        "configuration.json corrompu, repli sur les valeurs par défaut"
+                    );
+                    (Self::default(), Some(e.to_string()))
+                }
+            },
+            Err(_) => (Self::default(), None),
         };
         cfg.ensure_api_key();
-        cfg
+        (cfg, error)
     }
 
     /// Réécrit le fichier de configuration (`config.write()` Python).
