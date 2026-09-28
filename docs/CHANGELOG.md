@@ -13,11 +13,12 @@ en haut.
   les préférences. Un réglage utilisateur vers un daemon distant
   (non-loopback) reste prioritaire. Conditional import : stub `null`
   sur web.
-- **Lanceurs `dist/`** (`scripts/build_dist.ps1`, `demarrer.cmd`,
-  `arreter.cmd`) : compatibles avec l'authentification et le port
-  aléatoire — le port réel est relu depuis `configuration.json` à
-  chaque sonde, toute réponse HTTP (dont 401) signifie « API en vie »,
-  et `PUT /api/shutdown` envoie `X-Api-Key`.
+- **Lanceurs `dist/`** (`scripts/build_dist.ps1`) : refondus en
+  `demarrer.ps1`/`arreter.ps1` + wrappers `.cmd` minimalistes — la
+  syntaxe `for /f` + quoting emboîté de cmd ne supporte pas la lecture
+  de `configuration.json`. Le port réel est relu à chaque sonde,
+  toute réponse HTTP (dont 401) signifie « API en vie », et
+  `PUT /api/shutdown` envoie `X-Api-Key`.
 
 ## Étape 21 — Configuration persistée et clé API (2026-09-28)
 
