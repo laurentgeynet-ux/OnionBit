@@ -45,29 +45,37 @@ class StatusBar extends ConsumerWidget {
             style: small,
           ),
           const SizedBox(width: AppSpacing.lg),
-          Icon(
-            Icons.shield_outlined,
-            size: 14,
-            color: switch (lane?.state) {
-              AnonLaneState.ready => Colors.green,
-              AnonLaneState.waiting => scheme.tertiary,
-              _ => scheme.outline,
-            },
-          ),
-          const SizedBox(width: AppSpacing.xs),
-          Flexible(
-            child: Text(
-              switch (lane?.state) {
-                AnonLaneState.ready =>
-                  'Anonyme : ${lane!.readyCircuits} circuit(s) prêt(s)',
-                AnonLaneState.waiting => 'Anonyme : en attente de circuit',
-                AnonLaneState.disabled => 'Anonyme : désactivé',
-                null => 'Anonyme : …',
-              },
-              style: small,
-              overflow: TextOverflow.ellipsis,
+          Expanded(
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.shield_outlined,
+                  size: 14,
+                  color: switch (lane?.state) {
+                    AnonLaneState.ready => Colors.green,
+                    AnonLaneState.waiting => scheme.tertiary,
+                    _ => scheme.outline,
+                  },
+                ),
+                const SizedBox(width: AppSpacing.xs),
+                Flexible(
+                  child: Text(
+                    switch (lane?.state) {
+                      AnonLaneState.ready =>
+                        'Anonyme : ${lane!.readyCircuits} circuit(s) prêt(s)',
+                      AnonLaneState.waiting => 'Anonyme : en attente de circuit',
+                      AnonLaneState.disabled => 'Anonyme : désactivé',
+                      null => 'Anonyme : …',
+                    },
+                    style: small,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
             ),
           ),
+          const SizedBox(width: AppSpacing.md),
           Text('↓ ${ByteFormatter.formatRate(speeds.down)}', style: small),
           const SizedBox(width: AppSpacing.md),
           Text('↑ ${ByteFormatter.formatRate(speeds.up)}', style: small),
