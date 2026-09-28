@@ -3,6 +3,35 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Correctif : `exit_flags` jamais rattrapé après une introduction tardive (2026-09-28)
+
+Suite du correctif du timeout de saut : une fois celui-ci en place, un
+circuit `READY` à 3 sauts se forme bien (kill switch `circuits`
+désarmé), mais `aucun circuit HTTP pret` persistait quand même — le
+SOCKS5 (`select_http_circuit`) filtre les circuits `READY` par
+`exit_flags & PEER_FLAG_EXIT_HTTP`.
+
+Cause : `TunnelCommunity::ours_on_created_extended` fige
+`circuit.exit_flags` **une seule fois**, au moment où le dernier saut
+répond au `create`/`extend`, en lisant `flag_registry` (rempli par
+`register_tunnel_peer` à la réception d'une introduction directe
+signée sur le préfixe tunnel). Si ce pair de sortie — appris via la
+liste de candidats du saut précédent — n'a pas encore été introduit
+directement à cet instant (`flag_registry` ne le connaît pas encore),
+`exit_flags` reste `0` **pour toujours** : le circuit est bien
+`READY` mais invisible du sélecteur SOCKS5 HTTP.
+
+- `TunnelCommunity::register_tunnel_peer` (`crates/tribler-tunnel/src/
+  community.rs`) : en plus d'alimenter `flag_registry`, parcourt
+  désormais les circuits dont le dernier saut correspond à ce pair et
+  rattrape leur `exit_flags` (+ `notify_circuits_changed`).
+- Test de régression `circuit_exit_flags_mis_a_jour_apres_introduction_
+  tardive` (`tests/circuits_loopback.rs`) : construit un circuit 1
+  saut, vérifie qu'aucun circuit HTTP n'est trouvé avant introduction,
+  injecte une `IntroductionResponse` signée après coup via
+  `on_raw_datagram`, vérifie que le circuit devient utilisable —
+  échoue sans le correctif (`left: [] right: [circuit_id]`).
+
 ## Correctif : circuits anonymes bloqués indéfiniment en `EXTENDING` (2026-09-28)
 
 Bug historique : un téléchargement en `hops` 1/2/3 ne démarrait jamais

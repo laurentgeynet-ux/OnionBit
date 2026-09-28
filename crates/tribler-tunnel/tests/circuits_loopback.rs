@@ -10,7 +10,10 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tribler_crypto::ipv8::keys::LibNaClSecretKey;
 use tribler_ipv8::endpoint::UdpEndpoint;
+use tribler_ipv8::packet::Packet;
+use tribler_ipv8::payloads::{ConnectionType, IntroductionResponse, Payload as Ipv8Payload};
 use tribler_ipv8::peer::{Network, Peer};
+use tribler_ipv8::serializer::Writer;
 use tribler_ipv8::UdpAddress;
 use tribler_tunnel::community::TunnelCommunity;
 use tribler_tunnel::routing::{
@@ -127,6 +130,66 @@ async fn tunnel_circuit_1_hop_becomes_ready() {
     let nodes = [a, b];
     let (cid, _) = build_circuit(&nodes, 1).await;
     assert_eq!(nodes[0].tunnel.ready_circuits(), vec![cid]);
+}
+
+/// Regression : le dernier saut d'un circuit peut devenir `READY`
+/// **avant** que ses flags de service (`PEER_FLAG_EXIT_HTTP` etc.)
+/// ne soient appris via une introduction directe — le pair de sortie
+/// est souvent connu via la liste de candidats d'un relais avant
+/// tout `walk` IPv8 avec lui. `exit_flags` doit donc etre rattrape
+/// quand l'introduction arrive tardivement, sinon le circuit reste
+/// invisible du selecteur SOCKS5 HTTP pour toujours (`aucun circuit
+/// HTTP pret`).
+#[tokio::test]
+async fn circuit_exit_flags_mis_a_jour_apres_introduction_tardive() {
+    let a = make_node().await;
+    let b = make_node().await;
+    let nodes = [a, b];
+    let (cid, _) = build_circuit(&nodes, 1).await;
+
+    // Flags de B pas encore appris : aucun circuit HTTP utilisable.
+    assert!(nodes[0]
+        .tunnel
+        .ready_circuits_of_hops_flags(1, PEER_FLAG_EXIT_HTTP)
+        .is_empty());
+
+    // B annonce ses flags via une introduction-response signee,
+    // recue APRES coup.
+    let unspecified = || UdpAddress::from("0.0.0.0:0".parse::<SocketAddr>().unwrap());
+    let mut w = Writer::new();
+    IntroductionResponse {
+        destination_address: UdpAddress::from(nodes[0].addr),
+        source_lan_address: UdpAddress::from(nodes[1].addr),
+        source_wan_address: UdpAddress::from(nodes[1].addr),
+        lan_introduction_address: unspecified(),
+        wan_introduction_address: unspecified(),
+        connection_type: ConnectionType::Unknown,
+        supports_new_style: true,
+        intro_supports_new_style: false,
+        peer_limit_reached: false,
+        identifier: 1,
+        extra_bytes: ((PEER_FLAG_RELAY | PEER_FLAG_EXIT_HTTP) as u16)
+            .to_be_bytes()
+            .to_vec(),
+    }
+    .pack(&mut w)
+    .unwrap();
+    let pkt = Packet::sign_auto(
+        &TUNNEL_COMMUNITY_ID,
+        IntroductionResponse::MSG_ID,
+        &nodes[1].key,
+        1,
+        &w.into_bytes(),
+    );
+    nodes[0].tunnel.on_raw_datagram(nodes[1].addr, &pkt);
+
+    assert_eq!(
+        nodes[0]
+            .tunnel
+            .ready_circuits_of_hops_flags(1, PEER_FLAG_EXIT_HTTP),
+        vec![cid],
+        "exit_flags pas rattrape apres l'introduction tardive"
+    );
 }
 
 #[tokio::test]

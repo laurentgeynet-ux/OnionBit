@@ -1682,18 +1682,44 @@ impl TunnelCommunity {
 
     /// `candidates[peer] = flags` : enregistre le pair + ses flags
     /// appris par une introduction signee sur le prefixe tunnel.
-    fn register_tunnel_peer(&self, public_key_bin: &[u8], src: SocketAddr, flags: i32) {
+    ///
+    /// `circuit.exit_flags` (pyipv8) est figé au moment ou le dernier
+    /// saut repond au `create`/`extend` (`ours_on_created_extended`) :
+    /// si l'introduction directe de ce pair (donc ses flags) n'est
+    /// apprise qu'apres coup — cas frequent, le pair de sortie est
+    /// souvent connu via la liste de candidats du saut precedent
+    /// avant tout `walk` IPv8 direct — le circuit restait `READY`
+    /// avec `exit_flags=0` pour toujours, invisible du selecteur
+    /// SOCKS5 HTTP (`aucun circuit HTTP pret`). On rattrape donc les
+    /// circuits deja construits dont le dernier saut correspond.
+    fn register_tunnel_peer(self: &Arc<Self>, public_key_bin: &[u8], src: SocketAddr, flags: i32) {
         let Some(peer) = Peer::new(public_key_bin.to_vec(), Some(UdpAddress::from(src))) else {
             return;
         };
         self.network.add_verified(peer.clone());
         self.network
             .discover_service(&peer.public_key_bin, self.community_id);
-        self.inner
-            .lock()
-            .unwrap()
-            .flag_registry
-            .insert(peer.public_key_bin.clone(), flags);
+        let mut updated = false;
+        {
+            let mut inner = self.inner.lock().unwrap();
+            inner
+                .flag_registry
+                .insert(peer.public_key_bin.clone(), flags);
+            for circuit in inner.circuits.values_mut() {
+                if circuit
+                    .hops
+                    .last()
+                    .is_some_and(|h| h.public_key_bin == peer.public_key_bin)
+                    && circuit.exit_flags != flags
+                {
+                    circuit.exit_flags = flags;
+                    updated = true;
+                }
+            }
+        }
+        if updated {
+            self.notify_circuits_changed();
+        }
     }
 
     /// `get_candidates(*flags)` : pairs connus portant `flag`
@@ -1895,7 +1921,12 @@ impl TunnelCommunity {
 
     /// `introduction_response_callback` : enregistre les flags de
     /// l'emetteur de la reponse.
-    fn on_introduction_response(&self, src: SocketAddr, public_key_bin: &[u8], extra_bytes: &[u8]) {
+    fn on_introduction_response(
+        self: &Arc<Self>,
+        src: SocketAddr,
+        public_key_bin: &[u8],
+        extra_bytes: &[u8],
+    ) {
         let flags = Self::extract_peer_flags(extra_bytes);
         self.register_tunnel_peer(public_key_bin, src, flags);
     }
