@@ -40,14 +40,26 @@ fn zero_address() -> UdpAddress {
 /// loopback. Retourne l'adresse a donner au moteur comme "adresse du
 /// pair cache".
 pub async fn dial(tunnel: Arc<TunnelCommunity>, circuit_id: u32) -> Result<SocketAddr, Ipv8Error> {
-    let socket = Arc::new(UdpSocket::bind("127.0.0.1:0").await?);
-    let local = socket.local_addr()?;
     // Destination filaire : l'IPv4 factice encodant le circuit
     // (`select_circuit` des tunnels Rust).
     let dest = UdpAddress::from(SocketAddr::V4(std::net::SocketAddrV4::new(
         circuit_id_to_ip(circuit_id),
         CIRCUIT_ID_PORT,
     )));
+    dial_to(tunnel, circuit_id, dest).await
+}
+
+/// `dial_to` : meme pont que `dial` mais avec une destination filaire
+/// explicite — pour un circuit `DATA` ordinaire, `dest` est la socket
+/// reelle du service (ex. l'ecoute uTP du seeder) vers laquelle le
+/// noeud de sortie relaie les datagrammes.
+pub async fn dial_to(
+    tunnel: Arc<TunnelCommunity>,
+    circuit_id: u32,
+    dest: UdpAddress,
+) -> Result<SocketAddr, Ipv8Error> {
+    let socket = Arc::new(UdpSocket::bind("127.0.0.1:0").await?);
+    let local = socket.local_addr()?;
     // Client appris au premier datagramme (socket uTP unique du
     // moteur) — partage entre les deux taches.
     let client = Arc::new(std::sync::Mutex::new(None::<SocketAddr>));

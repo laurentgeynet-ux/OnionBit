@@ -156,7 +156,7 @@ ne sont donc pas « terminées » au sens strict) · `[x]` terminée.
   mise à jour d'un pair connu (objet partagé Python). Observables
   ajoutés : `intro_request_count`/`intro_response_count`/
   `puncture_count` + `send_puncture_request` publique.
-- [i] **Étape 12. TunnelCommunity : circuits et hidden seeding.**
+- [x] **Étape 12. TunnelCommunity : circuits et hidden seeding.**
   `tribler-tunnel` : construction de circuits en onion routing (1/2/3
   sauts), chiffrement ChaCha20-Poly1305 par saut (`tribler-crypto`), hidden
   seeding, proxy SOCKS5 local. Jalon : téléchargement anonyme réel via
@@ -247,15 +247,20 @@ ne sont donc pas « terminées » au sens strict) · `[x]` terminée.
   `create`/`created` puis circuit **2 sauts Rust → Tribler (relais)
   → Rust (sortie)** avec echo uTP de bout en bout (Tribler ne sort
   pas : `exitnode_enabled` non exposable — relais seul, par
-  conception). **Arbitrage du jalon** : ces preuves valident
-  l'interoperabilite **protocolaire** avec le client Tribler reel,
-  mais pas litteralement « telechargement via le reseau Tribler
-  existant » — ce critere reste **ouvert**. Le seul element bloquant
-  est l'absence d'une sortie Tribler reelle (`exitnode_enabled` non
-  exposable par configuration) : le telechargement anonyme complet
-  n'est prouve qu'en Rust↔Rust (`anon_download`) ; le banc retenu
-  pour clore le critere est rqbit → circuit → sortie pyipv8
-  (`EXIT_BT`) → seeder, sans attendre un essaim Tribler deploye.
+  conception). **Critere clos — banc retenu** : le seul element
+  bloquant etait l'absence d'une sortie Tribler reelle
+  (`exitnode_enabled` non exposable par configuration du client
+  installe) ; le banc `scripts/interop_exit_download.ps1` +
+  `examples/exit_download_interop.rs` (tribler-bittorrent) valide le
+  scenario retenu — telechargement rqbit **reel** (200 Ko, uTP) a
+  travers un circuit a 2 sauts dont le dernier saut est le vrai
+  `TunnelCommunity` pyipv8 en sortie (`PEER_FLAG_EXIT_BT`,
+  `scripts/interop/py_tunnel_node.py`, `--echo-port` devenu
+  optionnel) : downloader → relais Rust → sortie pyipv8 → socket
+  uTP du seeder, contenu verifie octet a octet. `udp_relay::dial_to`
+  ajoute la variante a destination filaire explicite (adresse reelle
+  du seeder, au lieu de l'IPv4 factice des circuits e2e).
+  `INTEROP EXIT DOWNLOAD OK`.
 - [x] **Étape 13. Politiques de sécurité réseau et kill switch.**
   `tribler-network-policy` : crate de politiques pures sans dépendance
   vers `tribler-ipv8`/`tribler-bittorrent` — `address_policy::IpPolicy`

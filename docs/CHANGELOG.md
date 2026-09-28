@@ -3,6 +3,21 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Étape 12 (clôture) — téléchargement réel via sortie pyipv8 (2026-09-28)
+
+- **`scripts/interop_exit_download.ps1`** +
+  `crates/tribler-bittorrent/examples/exit_download_interop.rs` :
+  critère final de l'étape 12 validé — rqbit downloader → circuit 2
+  sauts → **sortie pyipv8 réelle** (`PEER_FLAG_EXIT_BT`) → socket uTP
+  du seeder rqbit, 200 Ko téléchargés et vérifiés octet à octet
+  (`INTEROP EXIT DOWNLOAD OK`). `--hops 1` permet le circuit direct.
+- **`udp_relay::dial_to`** (`tribler-tunnel`) : variante de `dial` à
+  destination filaire explicite (les cellules `data` ciblent la
+  socket uTP réelle du seeder ; `dial` conserve l'IPv4 factice des
+  circuits e2e liés).
+- **`py_tunnel_node.py`** : `--echo-port` optionnel — le noeud peut
+  servir de pur relais/exit vers une vraie destination UDP.
+
 ## Validation parité réelle — `api_parity_run.ps1` (2026-09-28)
 
 - **`scripts/api_parity_run.ps1`** : orchestrateur du banc — états

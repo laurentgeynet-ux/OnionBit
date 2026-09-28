@@ -7,7 +7,9 @@ Le noeud ecrit sa cle publique (`key_to_bin()` hex) et son port dans
 circuit. Chaque datagramme brut (RX/TX) est journalise en hex.
 
 Usage :
-    py_tunnel_node.py --port P --echo-port E --keyfile F --log L --duration S
+    py_tunnel_node.py --port P --keyfile F --log L [--echo-port E] [--duration S]
+Sans `--echo-port`, le noeud est un pur relais/exit (destination de
+sortie = une vraie socket UDP externe, ex. l'ecoute uTP d'un seeder).
 Prerequis : PYTHONPATH=<...>/pyipv8 et le venv interop.
 """
 
@@ -71,7 +73,7 @@ class EchoProtocol(asyncio.DatagramProtocol):
 async def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, required=True)
-    parser.add_argument("--echo-port", type=int, required=True)
+    parser.add_argument("--echo-port", type=int, default=None)
     parser.add_argument("--keyfile", required=True)
     parser.add_argument("--log", required=True)
     parser.add_argument("--duration", type=float, default=10.0)
@@ -96,11 +98,12 @@ async def main() -> int:
         with open(args.keyfile, "w", encoding="ascii") as kf:
             kf.write(f"{key.pub().key_to_bin().hex()} {args.port}\n")
 
-        loop = asyncio.get_running_loop()
-        await loop.create_datagram_endpoint(
-            lambda: EchoProtocol(log),
-            local_addr=("127.0.0.1", args.echo_port),
-        )
+        if args.echo_port is not None:
+            loop = asyncio.get_running_loop()
+            await loop.create_datagram_endpoint(
+                lambda: EchoProtocol(log),
+                local_addr=("127.0.0.1", args.echo_port),
+            )
 
         sys.stderr.write(
             f"python tunnel node pret port={args.port} echo={args.echo_port}\n"
