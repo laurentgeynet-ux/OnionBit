@@ -2988,3 +2988,29 @@ async fn tracker_lists_follow_trackerstatusdict_shape() {
     assert_eq!(&urls[urls.len() - 2..], &["[DHT]", "[PeX]"]);
     srv.session.stop().await;
 }
+
+#[tokio::test]
+async fn logging_trouve_le_journal_rolle_par_date() {
+    let srv = spawn_server().await;
+    // `tracing_appender::rolling::daily` produit `tribler.log.YYYY-MM-DD`
+    // (l'extension est la date) — regression : le filtre ne matchait
+    // que `*.log` et l'onglet Journaux restait vide.
+    let logs_dir = srv.session.config().state_dir.join("logs");
+    std::fs::create_dir_all(&logs_dir).unwrap();
+    std::fs::write(
+        logs_dir.join("tribler.log.2026-09-28"),
+        "ligne ancienne\nligne recente\n",
+    )
+    .unwrap();
+
+    let resp = srv
+        .client
+        .get(srv.url("/api/logging?max_lines=1"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let text = resp.text().await.unwrap();
+    assert_eq!(text.trim(), "ligne recente");
+    srv.session.stop().await;
+}

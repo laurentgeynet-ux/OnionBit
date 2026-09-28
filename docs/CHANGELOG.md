@@ -3,6 +3,15 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Fix `/api/logging` : journal vide dans l'UI (2026-09-28)
+
+- `tracing_appender::rolling::daily` produit
+  `tribler.log.YYYY-MM-DD` — l'extension est la **date**, pas `log`.
+  Le handler filtrait `extension == "log"` → aucun candidat →
+  l'onglet Journaux affichait « Journal vide » malgré un fichier
+  alimenté. Filtre corrigé sur le préfixe `tribler.log`.
+- Test `logging_trouve_le_journal_rolle_par_date` fige le nom réel.
+
 ## Suivi des pairs et observabilité live (2026-09-28)
 
 - `exit_flags` des circuits désormais rempli depuis le
