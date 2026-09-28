@@ -270,6 +270,13 @@ pub struct CircuitInfo {
     pub exit_flags: i32,
     /// Info-hash associe (swarms), hex.
     pub info_hash: Option<String>,
+    /// `verified_hops` : mid hex de chaque saut verifie.
+    pub verified_hops: Vec<String>,
+    /// `unverified_hop` : mid hex du saut en cours d'ajout (`""`
+    /// sinon).
+    pub unverified_hop: String,
+    /// `creation_time` epoch secondes.
+    pub creation_time: u64,
 }
 
 /// Instantane d'un relais (`/api/ipv8/tunnel/relays`).
@@ -493,11 +500,27 @@ impl TunnelCommunity {
                 goal_hops: c.goal_hops,
                 actual_hops: c.hops.len(),
                 ctype: c.ctype.clone(),
-                state: c.state().to_string(),
+                // Python : `f"{state} ({closing_info})"` si fermeture.
+                state: match c.closing_info() {
+                    Some(info) => format!("{} ({info})", c.state()),
+                    None => c.state().to_string(),
+                },
                 bytes_up: c.base.bytes_up,
                 bytes_down: c.base.bytes_down,
                 exit_flags: c.exit_flags,
                 info_hash: c.info_hash.map(hex::encode),
+                // `hexlify(hop.mid)` — mid = SHA-1 de la cle publique.
+                verified_hops: c
+                    .hops
+                    .iter()
+                    .map(|h| hex::encode(tribler_crypto::hash::ipv8_mid(&h.public_key_bin)))
+                    .collect(),
+                unverified_hop: c
+                    .unverified_hop
+                    .as_ref()
+                    .map(|h| hex::encode(tribler_crypto::hash::ipv8_mid(&h.public_key_bin)))
+                    .unwrap_or_default(),
+                creation_time: c.base.creation_epoch,
             })
             .collect()
     }

@@ -144,9 +144,29 @@ class _CircuitsTab extends ConsumerWidget {
           color: c.ready ? Colors.green : Theme.of(context).colorScheme.outline,
         ),
         title: Text('#${c.id} · ${c.type}'),
-        subtitle: Text(
-          '${c.actualHops}/${c.goalHops} sauts · ${c.state}'
-          '${c.infoHash != null ? ' · ${c.infoHash}' : ''}',
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '${c.actualHops}/${c.goalHops} sauts · ${c.state}'
+              '${c.infoHash != null ? ' · ${c.infoHash}' : ''}',
+            ),
+            // Route réellement prise : mid hex de chaque saut, dans
+            // l'ordre (+ saut en cours d'ajout suffixé « … »).
+            if (c.verifiedHops.isNotEmpty)
+              Text(
+                'route : ${[
+                  for (final h in c.verifiedHops)
+                    h.length > 8 ? h.substring(0, 8) : h,
+                  if (c.unverifiedHop.isNotEmpty)
+                    '${c.unverifiedHop.substring(0, c.unverifiedHop.length.clamp(0, 8))}…',
+                ].join(' → ')}',
+                style: const TextStyle(
+                  fontFamily: 'monospace',
+                  fontSize: 11,
+                ),
+              ),
+          ],
         ),
         trailing: Text(
           '↑${ByteFormatter.format(c.bytesUp)} '

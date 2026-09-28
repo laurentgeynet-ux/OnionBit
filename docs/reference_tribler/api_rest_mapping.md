@@ -75,7 +75,7 @@ Convention générale :
 | `GET /api/ipv8/overlays/statistics` | idem | ✅ | `[{OverlayClassName: {"id:handler": NetworkStat.to_dict()}}, agregat {"num_up/down","bytes_up/down","diff_time"}]` ; `{}` sans stack ; decode_map par community + `:unknown` |
 | `POST /api/ipv8/overlays/statistics` | idem | ✅ | `enable*` ; `all`|`overlay_name` ; 400 si `enable` absent, 412 `statistics are not enabled`/`overlay not found` ; auto-activé au démarrage (`session.py` Tribler) |
 | `GET /api/ipv8/tunnel/settings` | idem | ✅ | `peer_flags`, `circuits`, `community_id` |
-| `GET /api/ipv8/tunnel/circuits` | idem | ✅ | Circuits connus (`circuits_info`) |
+| `GET /api/ipv8/tunnel/circuits` | idem | ✅ | `circuit_to_dict` complet : `circuit_id`, `goal_hops`, `actual_hops`, `verified_hops` (mid hex de chaque saut, ordre de la route), `unverified_hop`, `type`, `state` (`CLOSING (info)` comme Python), `bytes_up/down`, `creation_time` (epoch), `exit_flags`, `info_hash` |
 | `GET /api/ipv8/tunnel/relays` | idem | ✅ | Relais actifs |
 | `GET /api/ipv8/tunnel/exits` | idem | ✅ | Sockets de sortie |
 | `GET /api/ipv8/tunnel/swarms` | idem | ✅ | Swarms hidden services |

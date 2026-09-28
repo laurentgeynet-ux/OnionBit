@@ -3,6 +3,25 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Observabilité des circuits anonymes (2026-09-28)
+
+Suivi complet d'un téléchargement anonyme (1-3 sauts) :
+
+- `GET /api/ipv8/tunnel/circuits` aligné sur `circuit_to_dict`
+  pyipv8 : ajout de `verified_hops` (mid hex de chaque saut, dans
+  l'ordre — la route réellement prise), `unverified_hop`,
+  `creation_time` (epoch, `RoutingObject.creation_epoch`), et `state`
+  rendu `"CLOSING (raison)"` comme Python.
+- Onglet Diagnostic → Circuits : la route s'affiche sous chaque
+  circuit (`route : <mid8> → <mid8> → <mid8>…`).
+- Rappel d'exploitation : `PUT /api/ipv8/asyncio/debug
+  {"enable": true}` bascule le `EnvFilter` à `debug` à chaud — le
+  journal `state/logs/tribler.log` (et l'onglet Journaux, via
+  `GET /api/logging`) montre alors create/extend/created/destroy,
+  e2e et rejets de sortie, sans redémarrage.
+- Test `circuit_info_expose_route_et_creation` (loopback, circuit
+  réel 2 sauts) fige la shape.
+
 ## Conformité des noms API↔UI (2026-09-28)
 
 Audit et alignement des noms divergents entre le contrat Python, les

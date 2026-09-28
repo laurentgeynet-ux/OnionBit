@@ -24,6 +24,9 @@ class CircuitInfo {
     required this.bytesDown,
     required this.exitFlags,
     required this.infoHash,
+    required this.verifiedHops,
+    required this.unverifiedHop,
+    required this.creationTime,
   });
 
   final int id;
@@ -35,6 +38,16 @@ class CircuitInfo {
   final int bytesDown;
   final int exitFlags;
   final String? infoHash;
+
+  /// `verified_hops` : mid hex de chaque saut vérifié, dans l'ordre
+  /// du circuit (la route réellement prise).
+  final List<String> verifiedHops;
+
+  /// `unverified_hop` : mid hex du saut en cours d'ajout (`''` sinon).
+  final String unverifiedHop;
+
+  /// `creation_time` (epoch secondes).
+  final int creationTime;
 
   bool get ready => state == 'READY';
 }

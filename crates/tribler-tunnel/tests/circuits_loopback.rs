@@ -139,6 +139,31 @@ async fn tunnel_circuit_2_hops_becomes_ready() {
     assert_eq!(ready.len(), 1);
 }
 
+/// `circuit_to_dict` pyipv8 : `verified_hops` = mid hex de chaque
+/// saut (dans l'ordre), `unverified_hop` vide une fois READY,
+/// `creation_time` epoch.
+#[tokio::test]
+async fn circuit_info_expose_route_et_creation() {
+    let nodes = [make_node().await, make_node().await, make_node().await];
+    let (cid, _) = build_circuit(&nodes, 2).await;
+
+    let infos = nodes[0].tunnel.circuits_info();
+    let c = infos.iter().find(|c| c.circuit_id == cid).unwrap();
+    assert_eq!(c.verified_hops.len(), 2);
+    // mid = SHA-1 hex de la cle publique de chaque hop, dans l'ordre.
+    let mids: Vec<String> = nodes[1..]
+        .iter()
+        .map(|n| hex::encode(tribler_crypto::hash::ipv8_mid(&n.key.public_key().to_bin())))
+        .collect();
+    assert_eq!(c.verified_hops, mids);
+    assert!(c.unverified_hop.is_empty());
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    assert!(c.creation_time > 0 && c.creation_time <= now);
+}
+
 #[tokio::test]
 async fn tunnel_data_exits_1_hop() {
     let a = make_node().await;

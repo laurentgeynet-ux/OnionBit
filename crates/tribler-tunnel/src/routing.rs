@@ -109,6 +109,9 @@ pub struct RoutingObject {
     pub bytes_down: u64,
     /// `creation_time`.
     pub creation_time: Instant,
+    /// `creation_time` en epoch secondes (`time.time()` Python —
+    /// `Instant` ne se serialise pas en date absolue).
+    pub creation_epoch: u64,
 }
 
 impl RoutingObject {
@@ -122,6 +125,7 @@ impl RoutingObject {
             bytes_up: 0,
             bytes_down: 0,
             creation_time: now,
+            creation_epoch: crate::pex::epoch_secs(),
         }
     }
 
@@ -236,6 +240,11 @@ impl Circuit {
     /// `close`.
     pub fn close(&mut self, info: &str) {
         self.closing = Some(info.to_string());
+    }
+
+    /// `closing_info` Python (raison de fermeture, `None` sinon).
+    pub fn closing_info(&self) -> Option<&str> {
+        self.closing.as_deref()
     }
 
     /// `ready` : circuit utilisable (pret et pas en fermeture).

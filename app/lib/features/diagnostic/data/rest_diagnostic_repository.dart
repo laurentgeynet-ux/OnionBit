@@ -40,6 +40,12 @@ class RestDiagnosticRepository implements DiagnosticRepository {
         bytesDown: (c['bytes_down'] as num?)?.toInt() ?? 0,
         exitFlags: (c['exit_flags'] as num?)?.toInt() ?? 0,
         infoHash: c['info_hash'] as String?,
+        verifiedHops: [
+          for (final h in (c['verified_hops'] as List?) ?? const [])
+            '$h',
+        ],
+        unverifiedHop: '${c['unverified_hop'] ?? ''}',
+        creationTime: (c['creation_time'] as num?)?.toInt() ?? 0,
       ),
   ];
 
