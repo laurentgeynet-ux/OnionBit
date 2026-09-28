@@ -89,6 +89,22 @@ impl MagnetLink {
     }
 }
 
+/// Reconstruit un lien magnet sans aucun parametre `tr` (les autres
+/// parametres — `xt`, `dn`, `ws`, `x.pe`, inconnus — sont recopies
+/// verbatim). librqbit fusionne `magnet.trackers` avec
+/// `AddTorrentOptions::trackers` : retirer les `tr` de l'URI est le
+/// seul moyen de supprimer durablement un tracker de la source.
+pub fn strip_trackers(uri: &str) -> String {
+    let Some(query) = uri.strip_prefix(MAGNET_PREFIX) else {
+        return uri.to_string();
+    };
+    let kept: Vec<&str> = query
+        .split('&')
+        .filter(|p| p.split('=').next() != Some("tr"))
+        .collect();
+    format!("{MAGNET_PREFIX}{}", kept.join("&"))
+}
+
 /// Decode `urn:btih:` : 40 caracteres hex ou 32 caracteres base32.
 fn parse_btih(s: &str) -> Result<InfoHashV1> {
     match s.len() {

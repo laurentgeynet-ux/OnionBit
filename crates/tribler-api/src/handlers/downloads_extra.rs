@@ -11,11 +11,13 @@ use serde::Deserialize;
 use crate::error::ApiError;
 use crate::state::AppState;
 
-/// Recherche le download courant.
+/// Recherche le download courant — lookup strict par info-hash hex
+/// (`unhexlify` Python ; un hash tout-chiffres comme `"00..0"` n'est
+/// jamais interprete comme un id interne).
 fn find(state: &AppState, infohash: &str) -> Result<tribler_bittorrent::Download, ApiError> {
     state
         .session
-        .find_download(infohash)
+        .find_download_hex(infohash)
         .ok_or_else(|| ApiError::not_found(format!("download {infohash} inconnu")))
 }
 
@@ -38,25 +40,92 @@ pub async fn get_download_torrent(
         .map_err(|e| ApiError::internal(e.to_string()))
 }
 
-/// `PUT /api/downloads/{ih}/trackers` — ajoute un tracker au torrent.
+/// Corps des requetes tracker (`url` obligatoire — message Python
+/// `"url parameter missing"` sur 400).
 #[derive(Debug, Deserialize)]
-pub struct AddTrackerRequest {
+pub struct TrackerRequest {
     /// URL du tracker.
     pub url: Option<String>,
 }
 
+/// `PUT /api/downloads/{ih}/trackers` — ajoute un tracker au torrent.
+/// Persiste dans `extra_trackers` (rejoue au re-add ; rqbit ne
+/// reannonce pas un tracker ajoute a chaud — ecart documente).
 pub async fn add_tracker(
     State(state): State<AppState>,
     Path(infohash): Path<String>,
-    Json(req): Json<AddTrackerRequest>,
+    Json(req): Json<TrackerRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    // 404 avant la validation du corps, comme `add_tracker` Python.
+    find(&state, &infohash)?;
     let url = req
         .url
         .filter(|u| !u.is_empty())
         .ok_or_else(|| ApiError::bad_request("url parameter missing"))?;
-    let dl = find(&state, &infohash)?;
-    dl.add_tracker(&url);
-    Ok(Json(serde_json::json!({ "modified": true })))
+    state
+        .session
+        .add_tracker(&infohash, &url)
+        .await
+        .map_err(|e| ApiError::internal_handled(e.to_string()))?;
+    Ok(Json(serde_json::json!({ "added": true })))
+}
+
+/// `PUT /api/downloads/{ih}/default_trackers` — ajoute les trackers
+/// de `download_defaults/trackers_file` au torrent.
+pub async fn add_default_trackers(
+    State(state): State<AppState>,
+    Path(infohash): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    find(&state, &infohash)?;
+    state
+        .session
+        .add_default_trackers(&infohash)
+        .await
+        .map_err(|e| ApiError::internal_handled(e.to_string()))?;
+    Ok(Json(serde_json::json!({ "added": true })))
+}
+
+/// `DELETE /api/downloads/{ih}/trackers` — retire un tracker
+/// (persiste ; effectif au prochain re-add, rqbit n'expose pas
+/// `replace_trackers` a chaud — ecart documente).
+pub async fn remove_tracker(
+    State(state): State<AppState>,
+    Path(infohash): Path<String>,
+    Json(req): Json<TrackerRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    find(&state, &infohash)?;
+    let url = req
+        .url
+        .filter(|u| !u.is_empty())
+        .ok_or_else(|| ApiError::bad_request("url parameter missing"))?;
+    state
+        .session
+        .remove_tracker(&infohash, &url)
+        .await
+        .map_err(|e| ApiError::internal_handled(e.to_string()))?;
+    Ok(Json(serde_json::json!({ "removed": true })))
+}
+
+/// `PUT /api/downloads/{ih}/tracker_force_announce` — force une
+/// re-annonce. `{"forced": true}` est rendu meme si l'URL ne correspond
+/// a aucun tracker (comportement Python : la boucle ne trouve rien et
+/// repond quand meme `forced: true`).
+pub async fn tracker_force_announce(
+    State(state): State<AppState>,
+    Path(infohash): Path<String>,
+    Json(req): Json<TrackerRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    find(&state, &infohash)?;
+    let _url = req
+        .url
+        .filter(|u| !u.is_empty())
+        .ok_or_else(|| ApiError::bad_request("url parameter missing"))?;
+    state
+        .session
+        .force_announce(&infohash)
+        .await
+        .map_err(|e| ApiError::internal_handled(e.to_string()))?;
+    Ok(Json(serde_json::json!({ "forced": true })))
 }
 
 /// `GET /api/downloads/{ih}/trackers` — trackers du torrent

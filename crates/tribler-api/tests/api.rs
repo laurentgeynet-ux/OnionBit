@@ -680,7 +680,7 @@ async fn downloads_sous_endpoints() {
     assert_eq!(resp.status(), 200);
     assert_eq!(resp.headers()["content-type"], "application/x-bittorrent");
 
-    // PUT + GET /trackers.
+    // PUT + GET /trackers (reponse Python : `{"added": true}`).
     let resp = srv
         .client
         .put(srv.url(&format!("/api/downloads/{ih}/trackers")))
@@ -689,6 +689,10 @@ async fn downloads_sous_endpoints() {
         .await
         .unwrap();
     assert_eq!(resp.status(), 200);
+    assert_eq!(
+        resp.json::<serde_json::Value>().await.unwrap()["added"],
+        true
+    );
     let resp = srv
         .client
         .get(srv.url(&format!("/api/downloads/{ih}/trackers")))
@@ -701,6 +705,83 @@ async fn downloads_sous_endpoints() {
         .unwrap()
         .iter()
         .any(|t| t["url"] == "udp://127.0.0.1:6969/announce"));
+
+    // DELETE /trackers : le tracker ajoute a chaud disparait du listing.
+    let resp = srv
+        .client
+        .delete(srv.url(&format!("/api/downloads/{ih}/trackers")))
+        .json(&serde_json::json!({"url": "udp://127.0.0.1:6969/announce"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    assert_eq!(
+        resp.json::<serde_json::Value>().await.unwrap()["removed"],
+        true
+    );
+    let resp = srv
+        .client
+        .get(srv.url(&format!("/api/downloads/{ih}/trackers")))
+        .send()
+        .await
+        .unwrap();
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert!(!body["tracker_info"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|t| t["url"] == "udp://127.0.0.1:6969/announce"));
+
+    // DELETE sans url -> 400 "url parameter missing" (message Python).
+    let resp = srv
+        .client
+        .delete(srv.url(&format!("/api/downloads/{ih}/trackers")))
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 400);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["error"]["message"], "url parameter missing");
+
+    // PUT /default_trackers : no-op accepte sans fichier configure
+    // (reponse Python `{"added": true}`).
+    let resp = srv
+        .client
+        .put(srv.url(&format!("/api/downloads/{ih}/default_trackers")))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    assert_eq!(
+        resp.json::<serde_json::Value>().await.unwrap()["added"],
+        true
+    );
+
+    // PUT /tracker_force_announce : `forced: true` meme pour une URL
+    // inconnue (comportement Python).
+    let resp = srv
+        .client
+        .put(srv.url(&format!("/api/downloads/{ih}/tracker_force_announce")))
+        .json(&serde_json::json!({"url": "udp://inconnu.local:1/announce"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    assert_eq!(
+        resp.json::<serde_json::Value>().await.unwrap()["forced"],
+        true
+    );
+
+    // 404 avant validation du corps sur un infohash inconnu.
+    let resp = srv
+        .client
+        .delete(srv.url("/api/downloads/0000000000000000000000000000000000000000/trackers"))
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 404);
 
     // Stream du fichier (42 octets factices — le flux s'ouvre meme
     // si les pieces ne sont pas encore la : lecture bornée cote test

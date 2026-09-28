@@ -393,7 +393,7 @@ activée en parité Python (loopback compris — `tribler-cli` la lit dans
   (politique d'arrêt de seed dans `tribler-core`).
   `queue_position`/`auto_managed`/`file_priority` : sémantique
   simplifiée documentée (pas d'équivalent rqbit — ADR si substantiel).
-- [ ] **Étape 23. Trackers et flags d'enrichissement du listing.**
+- [x] **Étape 23. Trackers et flags d'enrichissement du listing.**
   `PUT …/default_trackers` (`download_defaults/trackers_file`),
   `DELETE …/trackers`, `PUT …/tracker_force_announce` (via
   `tracker_comms` ou re-application à la liste persistée — divergence

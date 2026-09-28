@@ -667,6 +667,7 @@ impl DaemonConfig {
                 auto_managed: dd.auto_managed,
                 completed_dir: dd.completed_dir.clone(),
                 trackers_file: dd.trackers_file.clone(),
+                trackers_file_sync_url: dd.trackers_file_sync_url.clone(),
             },
             ..Default::default()
         }

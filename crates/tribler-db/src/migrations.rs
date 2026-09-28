@@ -11,7 +11,7 @@
 //! semantique du schema, pas l'interoperabilite binaire).
 
 /// Version courante du schema de ce crate.
-pub const SCHEMA_VERSION: i64 = 3;
+pub const SCHEMA_VERSION: i64 = 4;
 
 /// Script SQL de chaque migration, dans l'ordre (index 0 = v1).
 pub const MIGRATIONS: &[&str] = &[
@@ -129,6 +129,15 @@ ALTER TABLE downloads ADD COLUMN selected_files TEXT;
 ALTER TABLE downloads ADD COLUMN file_priorities TEXT;
 ALTER TABLE downloads ADD COLUMN extra_trackers TEXT;
 ALTER TABLE downloads ADD COLUMN time_finished INTEGER NOT NULL DEFAULT 0;
+",
+    // v4 : trackers retires par `DELETE .../trackers` (une URL par
+    // ligne). librqbit fusionne toujours les trackers de la source
+    // (announce/magnet `tr`) avec `AddTorrentOptions::trackers` —
+    // pour honorer le retrait au re-add, la session filtre les
+    // trackers de la source par cette liste (equivalent de la
+    // modification de `tdef.atp.trackers` Python).
+    "
+ALTER TABLE downloads ADD COLUMN removed_trackers TEXT;
 ",
 ];
 

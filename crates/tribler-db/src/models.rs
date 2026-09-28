@@ -133,6 +133,10 @@ pub struct DownloadRow {
     /// Trackers ajoutes a chaud (`PUT .../trackers` ; rejoues au
     /// re-add, une URL par ligne en base).
     pub extra_trackers: Vec<String>,
+    /// Trackers retires a chaud (`DELETE .../trackers` ; filtres des
+    /// trackers de la source au re-add — librqbit ne permet pas le
+    /// retrait sur un torrent actif, une URL par ligne en base).
+    pub removed_trackers: Vec<String>,
     /// Timestamp de completion (`atp.completed_time` Python ; 0 si
     /// pas termine).
     pub time_finished: i64,

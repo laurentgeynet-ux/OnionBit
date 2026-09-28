@@ -85,9 +85,10 @@ fn base_plus_recente_que_le_crate_refusee() {
     assert!(res.is_err(), "base v{} acceptee", SCHEMA_VERSION + 1);
 }
 
-/// Migration v3 : les colonnes de reglages par telechargement sont
+/// Migrations v3+v4 : les colonnes de reglages par telechargement sont
 /// ajoutees a `downloads` sans perdre les lignes v2, puis lues via
-/// la couche modele (round-trip complet des reglages).
+/// la couche modele (round-trip complet des reglages, trackers
+/// ajoutes/retires compris).
 #[test]
 fn migration_v3_reglages_par_download_roundtrip() {
     let dir = tempfile::tempdir().unwrap();
@@ -112,6 +113,7 @@ fn migration_v3_reglages_par_download_roundtrip() {
         assert!(!row.safe_seeding && !row.auto_managed && !row.user_stopped);
         assert_eq!(row.seeding_ratio, None);
         assert!(row.selected_files.is_none());
+        assert!(row.removed_trackers.is_empty());
 
         // Ecriture des reglages puis relecture (round-trip).
         tribler_db::downloads::upsert(
@@ -128,6 +130,7 @@ fn migration_v3_reglages_par_download_roundtrip() {
                 selected_files: Some(vec![0, 2]),
                 file_priorities: Some(vec![4, 7]),
                 extra_trackers: vec!["udp://t.local:80".into()],
+                removed_trackers: vec!["udp://dead.local:9".into()],
                 ..row
             },
         )?;
@@ -140,6 +143,7 @@ fn migration_v3_reglages_par_download_roundtrip() {
         assert_eq!(row.selected_files.as_deref(), Some(&[0, 2][..]));
         assert_eq!(row.file_priorities.as_deref(), Some(&[4, 7][..]));
         assert_eq!(row.extra_trackers, vec!["udp://t.local:80".to_string()]);
+        assert_eq!(row.removed_trackers, vec!["udp://dead.local:9".to_string()]);
         Ok(())
     })
     .unwrap();

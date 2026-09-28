@@ -202,6 +202,75 @@ impl TorrentMeta {
     pub fn info_hash_hex(&self) -> String {
         hash::to_hex(&self.info_hash)
     }
+
+    /// URLs de trackers du torrent : `announce` puis chaque tier de
+    /// `announce-list` aplati, dedoublonne en conservant l'ordre —
+    /// equivalent de `tdef.atp.trackers` Python.
+    pub fn tracker_urls(&self) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        if let Some(a) = &self.announce {
+            out.push(a.clone());
+        }
+        for tier in &self.announce_list {
+            for url in tier {
+                if !out.iter().any(|u| u == url) {
+                    out.push(url.clone());
+                }
+            }
+        }
+        out
+    }
+}
+
+/// Retire `announce` et `announce-list` d'un fichier `.torrent` brut.
+///
+/// Chirurgical : les entrees du dictionnaire racine sont localisees par
+/// leurs spans d'octets et decoupees — le sous-arbre `info` est recopie
+/// **verbatim** (l'info-hash est preserve meme si l'encodage source
+/// n'est pas canonique). Equivalent de vider `tdef.atp.trackers` avant
+/// re-add : librqbit fusionne toujours les trackers de la source avec
+/// ceux de `AddTorrentOptions::trackers`, il faut donc les retirer de
+/// la source pour qu'une suppression persiste.
+pub fn strip_trackers(data: &[u8]) -> Result<Vec<u8>> {
+    if data.first() != Some(&b'd') {
+        return Err(FormatError::BadBencode {
+            offset: 0,
+            reason: "un .torrent doit commencer par un dictionnaire".into(),
+        });
+    }
+    let mut spans_to_cut: Vec<(usize, usize)> = Vec::new();
+    let mut pos = 1;
+    while pos < data.len() && data[pos] != b'e' {
+        let entry_start = pos;
+        let key = parser::decode_at(data, pos, 1)?;
+        let key_bytes = key
+            .value
+            .as_bytes()
+            .ok_or(FormatError::BadBencode {
+                offset: pos,
+                reason: "cle de dictionnaire non-binaire".into(),
+            })?
+            .to_vec();
+        let val = parser::decode_at(data, key.end, 1)?;
+        pos = val.end;
+        if key_bytes == b"announce" || key_bytes == b"announce-list" {
+            spans_to_cut.push((entry_start, val.end));
+        }
+    }
+    if pos >= data.len() {
+        return Err(FormatError::Truncated { offset: pos });
+    }
+    if spans_to_cut.is_empty() {
+        return Ok(data.to_vec());
+    }
+    let mut out = Vec::with_capacity(data.len());
+    let mut cursor = 0;
+    for (start, end) in spans_to_cut {
+        out.extend_from_slice(&data[cursor..start]);
+        cursor = end;
+    }
+    out.extend_from_slice(&data[cursor..]);
+    Ok(out)
 }
 
 /// Extrait le sous-arbre "file tree" d'un torrent v2 en liste de fichiers.

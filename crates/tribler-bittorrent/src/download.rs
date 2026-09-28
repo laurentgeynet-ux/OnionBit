@@ -302,6 +302,15 @@ impl Download {
         }
     }
 
+    /// Retire un tracker ajoute a chaud (no-op s'il vient de la
+    /// source `.torrent`/magnet — ceux-ci sont filtres a la
+    /// recreation par `removed_trackers`, cf. `tribler-core`).
+    pub fn remove_extra_tracker(&self, url: &str) {
+        if let Ok(mut extra) = self.extra_trackers.lock() {
+            extra.retain(|e| e != url);
+        }
+    }
+
     /// Octets du `.torrent` source (metadonnees resolues).
     pub fn torrent_bytes(&self) -> Option<bytes::Bytes> {
         self.inner

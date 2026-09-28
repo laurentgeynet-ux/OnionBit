@@ -3,6 +3,33 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Étape 23 — Trackers par download (2026-09-28)
+
+- **Routes** : `PUT /api/downloads/{ih}/trackers` (`{"added": true}`),
+  `DELETE …/trackers` (`{"removed": true}`), `PUT …/default_trackers`
+  (`{"added": true}`), `PUT …/tracker_force_announce`
+  (`{"forced": true}` — rendu même pour une URL inconnue, quirk Python).
+  404 avant validation du corps ; `url` absent → 400
+  `"url parameter missing"` ; erreurs moteur → 500 `handled`.
+- **`removed_trackers` (migration v4)** : comme `tdef.atp.trackers`
+  Python, le retrait survit aux re-adds — la source est réécrite sans
+  ses trackers (`tribler_format::torrent::strip_trackers` chirurgical,
+  infohash préservé ; `magnet::strip_trackers` retire les `tr`) et
+  l'ensemble effectif `(source ∪ extra) ∖ removed` est passé à
+  `opts.trackers` (librqbit fusionne toujours source + options).
+- **Trackers par défaut** : `download_defaults/trackers_file` lu au
+  format uTorrent (lignes non vides) et synchronisé depuis
+  `trackers_file_sync_url` avec le TTL Python d'une heure
+  (`sync_default_trackers_file`) — URL validée par la politique
+  anti-SSRF. Appliqués à chaque ajout (sauf torrent `private`) et à la
+  demande via la route, persistés dans `extra_trackers`.
+- **Divergences rqbit consignées** : pas d'annonce à chaud pour un
+  tracker ajouté/retiré (effectif au re-add) ; `force_announce`
+  réannonce tous les trackers (pause+unpause).
+- **Correctif** : `parse_id_or_hash` lisait un infohash tout-chiffres
+  (`"00..0"`) comme un id interne — le lookup API est désormais strict
+  hex (`find_download_hex`/`get_by_hash`, hex-40 prioritaire).
+
 ## Étape 22 — Réglages par download persistés + PATCH complet (2026-09-28)
 
 - **Migration `tribler-db` v3** : colonnes `downloads` —

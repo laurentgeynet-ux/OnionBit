@@ -67,6 +67,14 @@ struct ServiceOverrides {
     download_dir: Option<std::path::PathBuf>,
 }
 
+/// Parametres initiaux communs de `persist`/`persist_torrent`.
+struct PersistParams {
+    paused: bool,
+    anon_hops: u32,
+    safe_seeding: bool,
+    extra_trackers: Vec<String>,
+}
+
 struct Inner {
     config: CoreConfig,
     /// Sous-ensemble de reglages mutables a chaud (`POST /api/settings`) :
@@ -79,6 +87,10 @@ struct Inner {
     /// Stack IPv8 (discovery, content discovery, tunnel, lanes
     /// anonymes) — `Some` si `config.ipv8.enabled`.
     ipv8: Option<Arc<crate::ipv8_stack::Ipv8Stack>>,
+    /// Dernier fetch de `trackers_file_sync_url`
+    /// (`Download.LAST_TRACKER_FILE_SYNC` Python — TTL
+    /// [`crate::trackers::TRACKER_SYNC_TTL_SECS`]).
+    last_tracker_sync: std::sync::Mutex<Option<std::time::Instant>>,
 }
 
 impl std::fmt::Debug for CoreSession {
@@ -115,6 +127,7 @@ impl CoreSession {
                 notifier,
                 services: std::sync::Mutex::new(Services::default()),
                 ipv8,
+                last_tracker_sync: std::sync::Mutex::new(None),
             }),
         };
         session.start_services(&services_config).await;
@@ -141,6 +154,7 @@ impl CoreSession {
                 notifier,
                 services: std::sync::Mutex::new(Services::default()),
                 ipv8,
+                last_tracker_sync: std::sync::Mutex::new(None),
             }),
         };
         session.start_services(&services_config).await;
@@ -206,20 +220,24 @@ impl CoreSession {
                 .selected_files
                 .as_ref()
                 .map(|l| l.iter().map(|&i| i as usize).collect()),
-            trackers: row.extra_trackers.clone(),
+            trackers: crate::trackers::effective_trackers(row),
             upload_limit_bps: u64::try_from(row.upload_limit).ok().filter(|&v| v > 0),
             download_limit_bps: u64::try_from(row.download_limit).ok().filter(|&v| v > 0),
         }
     }
 
     /// Recree le telechargement decrit par `row` sur `engine`
-    /// (`.torrent` persiste en priorite, `source_uri` sinon).
+    /// (`.torrent` persiste en priorite, `source_uri` sinon). Les
+    /// `removed_trackers` sont appliques a la source elle-meme —
+    /// librqbit refusionne les trackers de la source avec
+    /// `opts.trackers` : seule une source purgee les honore.
     async fn readd_row(&self, engine: &BtEngine, row: &DownloadRow) -> Result<Download> {
         let opts = Self::row_add_options(row);
-        Ok(if let Some(bytes) = &row.torrent_data {
-            engine.add_torrent_bytes_opts(bytes.clone(), &opts).await?
+        let (torrent_data, source_uri) = crate::trackers::effective_source(row);
+        Ok(if let Some(bytes) = torrent_data {
+            engine.add_torrent_bytes_opts(bytes, &opts).await?
         } else {
-            engine.add_uri_opts(&row.source_uri, &opts).await?
+            engine.add_uri_opts(&source_uri, &opts).await?
         })
     }
 
@@ -327,6 +345,15 @@ impl CoreSession {
         self.all_engines().iter().find_map(|e| e.get(id_or_hash))
     }
 
+    /// Lookup strict par info-hash hex (`unhexlify` Python) — toutes
+    /// les routes `/api/downloads/{ih}` doivent l'utiliser : un hash
+    /// tout-chiffres comme `"00..0"` ne doit jamais etre interprete
+    /// comme l'id interne 0 (`parse_id_or_hash` le ferait).
+    pub fn find_download_hex(&self, hex: &str) -> Option<Download> {
+        let ih = tribler_crypto::hash::from_hex(hex)?;
+        self.all_engines().iter().find_map(|e| e.get_by_hash(&ih))
+    }
+
     /// Politique d'arret de seed — `download_defaults/seeding_mode`
     /// global plus `seeding_ratio` individuel (`DownloadConfig`).
     /// Appelee a chaque tick pour les telechargements termines :
@@ -403,37 +430,177 @@ impl CoreSession {
             self.check_uri_policy(uri).await?;
         }
         let engine = self.engine_for(anon_hops).await?;
+        // Trackers par defaut (`trackers_file`) : ajoutes a chaque
+        // nouveau telechargement, comme le post-handle
+        // `ADD_DEFAULT_TRACKERS` Python — et persistes dans
+        // `extra_trackers` pour survivre aux re-adds.
+        let trackers = self.default_trackers().await;
         let dl = engine
             .add_uri_opts(
                 uri,
                 &AddDownloadOptions {
                     paused,
-                    trackers: self.default_trackers(),
+                    trackers: trackers.clone(),
                     ..Default::default()
                 },
             )
             .await?;
-        self.persist(&dl, uri, paused, anon_hops, safe_seeding)?;
+        self.persist(
+            &dl,
+            uri,
+            PersistParams {
+                paused,
+                anon_hops,
+                safe_seeding,
+                extra_trackers: trackers,
+            },
+        )?;
         Ok(dl)
     }
 
     /// Trackers du `download_defaults/trackers_file` (relatif a
     /// `state_dir`), ajoutes a chaque nouveau telechargement comme
-    /// `add_default_trackers` Python.
-    fn default_trackers(&self) -> Vec<String> {
-        let file = &self.inner.config.download_defaults.trackers_file;
-        if file.is_empty() {
+    /// le post-handle `ADD_DEFAULT_TRACKERS` Python. Synchronise
+    /// d'abord le fichier depuis `trackers_file_sync_url` si configure
+    /// (`sync_default_trackers_file` : un fetch par heure maximum).
+    async fn default_trackers(&self) -> Vec<String> {
+        let dd = &self.inner.config.download_defaults;
+        let Some(path) =
+            crate::trackers::trackers_file_path(&self.inner.config.state_dir, &dd.trackers_file)
+        else {
             return Vec::new();
+        };
+        if !dd.trackers_file_sync_url.is_empty() {
+            self.sync_trackers_file(&dd.trackers_file_sync_url, &path)
+                .await;
         }
-        let path = self.inner.config.state_dir.join(file);
-        std::fs::read_to_string(path)
-            .map(|s| {
-                s.lines()
-                    .map(|l| l.trim().to_string())
-                    .filter(|l| !l.is_empty())
-                    .collect()
-            })
+        std::fs::read_to_string(&path)
+            .map(|s| crate::trackers::parse_trackers_file(&s))
             .unwrap_or_default()
+    }
+
+    /// `sync_default_trackers_file` Python : reecrit `trackers_file`
+    /// avec le contenu de `trackers_file_sync_url`, au plus une fois
+    /// par [`crate::trackers::TRACKER_SYNC_TTL_SECS`]. Les erreurs
+    /// sont loggees puis ignorees — le fichier precedent reste en
+    /// vigueur, comme Python.
+    async fn sync_trackers_file(&self, sync_url: &str, path: &std::path::Path) {
+        let recent = self
+            .inner
+            .last_tracker_sync
+            .lock()
+            .ok()
+            .and_then(|g| *g)
+            .is_some_and(|t| t.elapsed().as_secs() < crate::trackers::TRACKER_SYNC_TTL_SECS);
+        if recent {
+            return;
+        }
+        // Anti-SSRF : la cible est validee par la meme politique IP
+        // que les URI de telechargement ajoutees via l'API.
+        if let Err(e) = self.check_uri_policy(sync_url).await {
+            tracing::warn!(error = %e, "synchronisation trackers_file refusee");
+            return;
+        }
+        match reqwest::get(sync_url).await {
+            Ok(resp) => match resp.bytes().await {
+                Ok(body) => {
+                    if let Err(e) = std::fs::write(path, &body) {
+                        tracing::warn!(error = %e, "ecriture de trackers_file impossible");
+                    }
+                    if let Ok(mut g) = self.inner.last_tracker_sync.lock() {
+                        *g = Some(std::time::Instant::now());
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "synchronisation trackers_file : corps illisible")
+                }
+            },
+            Err(e) => tracing::warn!(error = %e, "synchronisation trackers_file echouee"),
+        }
+    }
+
+    /// `add_tracker` Python (`PUT /downloads/{ih}/trackers`) : ajoute
+    /// l'URL a l'overlay du telechargement actif et la persiste dans
+    /// `extra_trackers` (rejouee au re-add — rqbit ne reannonce pas un
+    /// tracker ajoute a chaud, divergence documentee).
+    pub async fn add_tracker(&self, id_or_hash: &str, url: &str) -> Result<()> {
+        let dl = self
+            .find_download(id_or_hash)
+            .ok_or(CoreError::InvalidState("telechargement inconnu"))?;
+        dl.add_tracker(url);
+        let ih = dl.info_hash();
+        self.update_download_row(&ih, |r| {
+            r.removed_trackers.retain(|u| u != url);
+            if !r.extra_trackers.iter().any(|u| u == url) {
+                r.extra_trackers.push(url.to_string());
+            }
+        })?;
+        Ok(())
+    }
+
+    /// `remove_tracker` Python (`DELETE /downloads/{ih}/trackers`) :
+    /// retire l'URL des trackers effectifs — d'`extra_trackers` si
+    /// c'est un ajout a chaud, sinon enregistree dans
+    /// `removed_trackers` (filtree de la source au re-add). Le torrent
+    /// actif continue d'annoncer jusqu'a sa recreation : librqbit
+    /// n'expose pas `replace_trackers` (divergence documentee).
+    /// Une URL inconnue est un no-op, comme `replace_trackers` Python.
+    pub async fn remove_tracker(&self, id_or_hash: &str, url: &str) -> Result<()> {
+        let dl = self
+            .find_download(id_or_hash)
+            .ok_or(CoreError::InvalidState("telechargement inconnu"))?;
+        dl.remove_extra_tracker(url);
+        let ih = dl.info_hash();
+        let known = self
+            .row_of(&ih)?
+            .map(|r| crate::trackers::source_trackers(&r))
+            .unwrap_or_default();
+        self.update_download_row(&ih, |r| {
+            if let Some(i) = r.extra_trackers.iter().position(|u| u == url) {
+                r.extra_trackers.remove(i);
+            } else if known.iter().any(|u| u == url) && !r.removed_trackers.iter().any(|u| u == url)
+            {
+                r.removed_trackers.push(url.to_string());
+            }
+        })?;
+        Ok(())
+    }
+
+    /// `add_default_trackers` Python (`PUT /downloads/{ih}/default_trackers`
+    /// et post-handle auto a l'ajout) : ajoute les trackers du fichier
+    /// configure a l'overlay et a la persistance.
+    pub async fn add_default_trackers(&self, id_or_hash: &str) -> Result<()> {
+        let dl = self
+            .find_download(id_or_hash)
+            .ok_or(CoreError::InvalidState("telechargement inconnu"))?;
+        let defaults = self.default_trackers().await;
+        if defaults.is_empty() {
+            return Ok(());
+        }
+        for url in &defaults {
+            dl.add_tracker(url);
+        }
+        let ih = dl.info_hash();
+        self.update_download_row(&ih, |r| {
+            for url in &defaults {
+                r.removed_trackers.retain(|u| u != url);
+                if !r.extra_trackers.iter().any(|u| u == url) {
+                    r.extra_trackers.push(url.clone());
+                }
+            }
+        })?;
+        Ok(())
+    }
+
+    /// `tracker_force_announce` Python (`PUT .../tracker_force_announce`)
+    /// : force une re-annonce. Notre implementation reannonce tous les
+    /// trackers (pause+unpause rqbit — superset du
+    /// `force_reannounce(0, i)` cible ; ecart documente).
+    pub async fn force_announce(&self, id_or_hash: &str) -> Result<()> {
+        let engine = self
+            .owner_engine(id_or_hash)
+            .ok_or(CoreError::InvalidState("telechargement inconnu"))?;
+        Ok(engine.force_announce(id_or_hash).await?)
     }
 
     /// Anti-SSRF : une URI `http(s)` (fournie par un tiers via
@@ -481,17 +648,34 @@ impl CoreSession {
         // Parsing borne en amont pour extraire l'info-hash a persister.
         let meta = tribler_format::torrent::TorrentMeta::parse(&bytes)?;
         let engine = self.engine_for(anon_hops).await?;
+        // Pas de trackers par defaut sur un torrent prive (condition
+        // `not torrent_info.priv()` du `_post_handle_events` Python).
+        let trackers = if meta.private {
+            Vec::new()
+        } else {
+            self.default_trackers().await
+        };
         let dl = engine
             .add_torrent_bytes_opts(
                 bytes.clone(),
                 &AddDownloadOptions {
                     paused,
-                    trackers: self.default_trackers(),
+                    trackers: trackers.clone(),
                     ..Default::default()
                 },
             )
             .await?;
-        self.persist_torrent(&dl, bytes, &meta, paused, anon_hops, safe_seeding)?;
+        self.persist_torrent(
+            &dl,
+            bytes,
+            &meta,
+            PersistParams {
+                paused,
+                anon_hops,
+                safe_seeding,
+                extra_trackers: trackers,
+            },
+        )?;
         Ok(dl)
     }
 
@@ -513,14 +697,7 @@ impl CoreSession {
         })
     }
 
-    fn persist(
-        &self,
-        dl: &Download,
-        uri: &str,
-        paused: bool,
-        anon_hops: u32,
-        safe_seeding: bool,
-    ) -> Result<()> {
+    fn persist(&self, dl: &Download, uri: &str, p: PersistParams) -> Result<()> {
         self.inner.db.with(|c| {
             tribler_db::downloads::upsert(
                 c,
@@ -530,9 +707,10 @@ impl CoreSession {
                     source_uri: uri.to_string(),
                     output_dir: dl.output_folder().display().to_string(),
                     added_on: now_unix(),
-                    paused,
-                    anon_hops: anon_hops as i64,
-                    ..self.settings_defaults(c, safe_seeding)?
+                    paused: p.paused,
+                    anon_hops: i64::from(p.anon_hops),
+                    extra_trackers: p.extra_trackers,
+                    ..self.settings_defaults(c, p.safe_seeding)?
                 },
             )
         })?;
@@ -547,9 +725,7 @@ impl CoreSession {
         dl: &Download,
         bytes: Vec<u8>,
         meta: &tribler_format::torrent::TorrentMeta,
-        paused: bool,
-        anon_hops: u32,
-        safe_seeding: bool,
+        p: PersistParams,
     ) -> Result<()> {
         self.inner.db.with(|c| {
             tribler_db::downloads::upsert(
@@ -564,9 +740,10 @@ impl CoreSession {
                     torrent_data: Some(bytes),
                     output_dir: dl.output_folder().display().to_string(),
                     added_on: now_unix(),
-                    paused,
-                    anon_hops: anon_hops as i64,
-                    ..self.settings_defaults(c, safe_seeding)?
+                    paused: p.paused,
+                    anon_hops: i64::from(p.anon_hops),
+                    extra_trackers: p.extra_trackers,
+                    ..self.settings_defaults(c, p.safe_seeding)?
                 },
             )
         })?;

@@ -41,7 +41,15 @@ pub fn build(state: AppState) -> Router {
         )
         .route(
             "/api/downloads/{infohash}/trackers",
-            put(downloads_extra::add_tracker),
+            put(downloads_extra::add_tracker).delete(downloads_extra::remove_tracker),
+        )
+        .route(
+            "/api/downloads/{infohash}/default_trackers",
+            put(downloads_extra::add_default_trackers),
+        )
+        .route(
+            "/api/downloads/{infohash}/tracker_force_announce",
+            put(downloads_extra::tracker_force_announce),
         )
         .route(
             "/api/downloads/{infohash}/files",

@@ -41,6 +41,9 @@ pub struct DownloadDefaults {
     /// Fichier de trackers par defaut (`trackers_file` — relatif a
     /// `state_dir`, vide = aucun).
     pub trackers_file: String,
+    /// URL de synchronisation du fichier de trackers
+    /// (`trackers_file_sync_url` Python — vide = desactivee).
+    pub trackers_file_sync_url: String,
 }
 
 impl Default for DownloadDefaults {
@@ -56,6 +59,7 @@ impl Default for DownloadDefaults {
             auto_managed: false,
             completed_dir: String::new(),
             trackers_file: String::new(),
+            trackers_file_sync_url: String::new(),
         }
     }
 }

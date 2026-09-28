@@ -13,7 +13,7 @@ const COLS: &str = "rowid, infohash, name, source_uri, torrent_data,
                     safe_seeding, user_stopped, upload_limit, download_limit,
                     seeding_ratio, auto_managed, queue_position, completed_dir,
                     selected_files, file_priorities, extra_trackers,
-                    time_finished";
+                    removed_trackers, time_finished";
 
 /// Encode une liste d'entiers en CSV (`"0,2,3,"` — format du champ
 /// `download_defaults/files` des checkpoints Python).
@@ -50,6 +50,7 @@ fn from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<DownloadRow> {
     let selected_files: Option<String> = r.get("selected_files")?;
     let file_priorities: Option<String> = r.get("file_priorities")?;
     let extra_trackers: Option<String> = r.get("extra_trackers")?;
+    let removed_trackers: Option<String> = r.get("removed_trackers")?;
     Ok(DownloadRow {
         rowid: r.get("rowid")?,
         infohash: r.get("infohash")?,
@@ -72,6 +73,9 @@ fn from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<DownloadRow> {
         selected_files: selected_files.map(|s| decode_csv(&s)),
         file_priorities: file_priorities.map(|s| decode_csv(&s)),
         extra_trackers: extra_trackers.map(|s| decode_urls(&s)).unwrap_or_default(),
+        removed_trackers: removed_trackers
+            .map(|s| decode_urls(&s))
+            .unwrap_or_default(),
         time_finished: r.get("time_finished")?,
     })
 }
@@ -91,8 +95,9 @@ pub fn upsert(conn: &Connection, row: &DownloadRow) -> Result<i64> {
             added_on, paused, finished, anon_hops,
             safe_seeding, user_stopped, upload_limit, download_limit,
             seeding_ratio, auto_managed, queue_position, completed_dir,
-            selected_files, file_priorities, extra_trackers, time_finished
-         ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21)
+            selected_files, file_priorities, extra_trackers,
+            removed_trackers, time_finished
+         ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22)
          ON CONFLICT(infohash) DO UPDATE SET
             name = excluded.name,
             torrent_data = excluded.torrent_data,
@@ -112,6 +117,7 @@ pub fn upsert(conn: &Connection, row: &DownloadRow) -> Result<i64> {
             selected_files = excluded.selected_files,
             file_priorities = excluded.file_priorities,
             extra_trackers = excluded.extra_trackers,
+            removed_trackers = excluded.removed_trackers,
             time_finished = excluded.time_finished",
         params![
             row.infohash,
@@ -134,6 +140,7 @@ pub fn upsert(conn: &Connection, row: &DownloadRow) -> Result<i64> {
             row.selected_files.as_deref().map(encode_csv),
             row.file_priorities.as_deref().map(encode_csv),
             (!row.extra_trackers.is_empty()).then(|| encode_urls(&row.extra_trackers)),
+            (!row.removed_trackers.is_empty()).then(|| encode_urls(&row.removed_trackers)),
             row.time_finished,
         ],
     )?;

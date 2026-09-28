@@ -17,6 +17,7 @@ pub mod ipv8_stack;
 pub mod notifier;
 pub mod services;
 pub mod session;
+pub mod trackers;
 
 pub use config::CoreConfig;
 pub use daemon_config::{DaemonConfig, CONFIG_FILENAME};

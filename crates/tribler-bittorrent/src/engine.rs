@@ -266,9 +266,24 @@ impl BtEngine {
     }
 
     /// Recupere un telechargement par id interne ou info-hash hex.
+    ///
+    /// Attention : une chaine **numerique** est un id interne — pour la
+    /// couche API (lookup strict par info-hash comme `unhexlify`
+    /// Python), preferer [`Self::get_by_hash`].
     pub fn get(&self, id_or_hash: &str) -> Option<Download> {
         let key = parse_id_or_hash(id_or_hash)?;
         self.session.get(key).map(|inner| self.wrap(inner))
+    }
+
+    /// Recupere un telechargement par info-hash **v1 brut** (20 octets)
+    /// — lookup strict equivalent a `unhexlify(match_info["infohash"])`
+    /// Python : jamais d'interpretation numerique (un infohash
+    /// `"00..0"` tout-chiffres serait sinon pris pour l'id 0).
+    pub fn get_by_hash(&self, infohash: &[u8]) -> Option<Download> {
+        let id: [u8; 20] = infohash.try_into().ok()?;
+        self.session
+            .get(TorrentIdOrHash::Hash(librqbit_core::hash_id::Id20::new(id)))
+            .map(|inner| self.wrap(inner))
     }
 
     /// Met en pause un telechargement.
@@ -499,16 +514,20 @@ pub struct DownloadPeer {
     pub incoming: bool,
 }
 
-/// Parse `id_or_hash` : id numerique (`usize`) ou info-hash hex 40c.
+/// Parse `id_or_hash` : info-hash hex 40 caracteres en priorite (une
+/// chaine tout-chiffres de 40c est un info-hash legitime — la lire
+/// comme un id interne resoudrait le mauvais torrent, ex. `"00..0"`),
+/// puis id numerique interne (`usize`) en repli.
 fn parse_id_or_hash(s: &str) -> Option<TorrentIdOrHash> {
+    if s.len() == 40 {
+        if let Ok(bytes) = hex::decode(s) {
+            let mut id = [0u8; 20];
+            id.copy_from_slice(&bytes);
+            return Some(TorrentIdOrHash::Hash(librqbit_core::hash_id::Id20::new(id)));
+        }
+    }
     if let Ok(id) = s.parse::<usize>() {
         return Some(TorrentIdOrHash::Id(id));
-    }
-    if s.len() == 40 {
-        let bytes = hex::decode(s).ok()?;
-        let mut id = [0u8; 20];
-        id.copy_from_slice(&bytes);
-        return Some(TorrentIdOrHash::Hash(librqbit_core::hash_id::Id20::new(id)));
     }
     None
 }

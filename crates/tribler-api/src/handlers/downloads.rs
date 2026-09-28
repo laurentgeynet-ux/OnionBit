@@ -539,7 +539,7 @@ pub async fn update_download(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let dl = state
         .session
-        .find_download(&infohash)
+        .find_download_hex(&infohash)
         .ok_or_else(|| ApiError::not_found(format!("this download does not exist: {infohash}")))?;
     let ih_hex = dl.info_hash_hex();
 
