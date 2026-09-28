@@ -3,6 +3,24 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Changement de plan : mobile = pilotage distant, desktop d'abord (2026-09-28)
+
+Décision utilisateur : Android/iOS seront une **interface de pilotage
+à distance** (REST+SSE vers un daemon desktop), pas un portage du
+daemon — l'étape 19 (builds mobiles) est remplacée, la façade FFI
+`tribler-mobile` devient inutile (le document de surface reste en
+référence). La prochaine phase est l'interface **Windows desktop**.
+
+- `docs/plans/flutter_architecture.md` : plan d'architecture de
+  l'étape 20 — stack Flutter 3.47/Riverpod 3/go_router, arborescence
+  `core/`+`features/` en `data/domain/presentation` (pattern
+  `C:\Emule-Sion-UI-UX\app`), `ApiClient` REST+SSE maison (le
+  `RpcClient` WebSocket de la référence devient un client
+  `text/event-stream`), correspondance features↔endpoints, cycle de
+  vie window/tray, stratégie de tests, sous-étapes.
+- `CoreSession::pause_all`/`resume_all` restent (utiles au daemon
+  desktop : arrêt rapide).
+
 ## Préparation étape 19 — façade FFI mobile (2026-09-28)
 
 L'étape 19 (builds mobiles) n'est **pas** démarrée — ce jalon fige

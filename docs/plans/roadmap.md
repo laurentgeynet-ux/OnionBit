@@ -350,22 +350,30 @@ ne sont donc pas « terminées » au sens strict) · `[x]` terminée.
   d'exit node). Surface FFI figée dans
   `docs/plans/mobile_ffi_surface.md` (fonctions plates JSON,
   callback notifications, règles suspension/arrêt/reprise).
-- [ ] **Étape 19. Builds mobiles.** Android puis iOS — bloqué sur
-  l'étape 18 (façade `tribler-mobile` à créer) et les toolchains
-  (cargo-ndk/NDK pour Android ; macOS+Xcode obligatoire pour iOS).
+- [ ] **Étape 19 — remplacée (2026-09-28).** Pas de daemon mobile :
+  Android/iOS seront une **interface de pilotage à distance**
+  (consommant `tribler-api` REST+SSE sur un daemon desktop),
+  développée après l'interface desktop. La façade FFI
+  `tribler-mobile` et ses builds ne sont plus nécessaires — le
+  document `mobile_ffi_surface.md` reste comme référence si le
+  besoin d'un moteur embarqué réapparaît ; `pause_all`/`resume_all`
+  restent utiles au daemon desktop (arrêt rapide, suspension).
 
 ## Jalon "backend terminé à 100 %"
 
-Toutes les étapes 0 à 19 doivent être cochées et validées selon les
-critères de `docs/plans/plan_faisabilite.md` §8 avant de passer à la
-phase suivante.
+Toutes les étapes 0 à 18 cochées ; étape 12 reste `[i]` (critère
+« téléchargement via le réseau Tribler existant » ouvert — banc de
+clôture : rqbit → circuit → sortie pyipv8 `EXIT_BT` → seeder). Par
+décision utilisateur du 2026-09-28, l'interface desktop démarre
+avec ce critère ouvert documenté.
 
-## Phase 6 — Interface Flutter (ne démarre qu'après le jalon ci-dessus)
+## Phase 6 — Interface Flutter desktop
 
-- [ ] **Étape 20.** Plan d'architecture Flutter dédié (nouveau document),
-  réutilisant les patterns de style de `C:\Emule-Sion-UI-UX\app`, ciblant
-  Windows/Linux/macOS/Android/iOS/Web, consommant exclusivement
-  `tribler-api`.
+- [ ] **Étape 20. Plan d'architecture Flutter** — `docs/plans/
+  flutter_architecture.md`, patterns de `C:\Emule-Sion-UI-UX\app`,
+  consommant exclusivement `tribler-api` (REST + SSE). Cible
+  immédiate : **Windows desktop** ; Linux/macOS ensuite ; le mobile
+  distant reprendra la même base (étape 19 remplacée).
 
 ---
 
