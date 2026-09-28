@@ -70,6 +70,14 @@ struct ServiceOverrides {
     watch_folder_dir: Option<Option<std::path::PathBuf>>,
     /// Dossier de telechargement par defaut (`Some` = remplace `config.engine.output_dir`).
     download_dir: Option<std::path::PathBuf>,
+    /// Bornes de la file (`Some` = remplace `config.queue`) —
+    /// `set_session_limits` Python applique aussi les `active_*` a
+    /// chaud.
+    queue: Option<crate::config::QueueLimits>,
+    /// Limites de debit de session (`Some` = remplace
+    /// `config.engine.max_*_bps`) — appliquees a chaud via
+    /// `Session::ratelimits` rqbit.
+    rate_limits: Option<(Option<u64>, Option<u64>)>,
 }
 
 /// Parametres initiaux communs de `persist`/`persist_torrent`.
@@ -524,7 +532,11 @@ impl CoreSession {
     /// ; si l'utilisateur pause ou reprend un torrent mis en file, la
     /// ligne reprend la main et l'entree est purgee de `queue_paused`.
     async fn enforce_queue_limits(&self, queue_paused: &mut std::collections::HashSet<String>) {
-        let q = &self.inner.config.queue;
+        // Config effective : les `active_*` modifies par
+        // `POST /api/settings` s'appliquent des le tick suivant
+        // (`set_session_limits` Python).
+        let effective = self.effective_config();
+        let q = &effective.queue;
         if q.disabled() {
             queue_paused.clear();
             return;
@@ -683,17 +695,21 @@ impl CoreSession {
     /// `ipv8.enable_anonymity`), et le persiste.
     pub async fn add_download(&self, uri: &str, paused: bool) -> Result<Download> {
         let safe = self.inner.config.download_defaults.safeseeding_enabled;
-        self.add_download_anon(uri, paused, 0, safe).await
+        self.add_download_anon(uri, paused, 0, safe, None).await
     }
 
     /// `add_download` avec choix du nombre de sauts anonymes et du
     /// flag `safe_seeding` (persiste dans la ligne `downloads`).
+    /// `destination` = parametre `destination` de `PUT /api/downloads`
+    /// (`set_dest_dir` Python) ; `None` = `saveas` effectif
+    /// (override `POST /api/settings` puis dossier de session).
     pub async fn add_download_anon(
         &self,
         uri: &str,
         paused: bool,
         anon_hops: u32,
         safe_seeding: bool,
+        destination: Option<std::path::PathBuf>,
     ) -> Result<Download> {
         if anon_hops == 0 {
             self.check_uri_policy(uri).await?;
@@ -710,6 +726,7 @@ impl CoreSession {
                 uri,
                 &AddDownloadOptions {
                     paused,
+                    output_folder: self.effective_output_dir(destination),
                     trackers: trackers.clone(),
                     ..Default::default()
                 },
@@ -903,17 +920,20 @@ impl CoreSession {
     /// Ajoute un telechargement depuis les octets d'un `.torrent`.
     pub async fn add_torrent_bytes(&self, bytes: Vec<u8>, paused: bool) -> Result<Download> {
         let safe = self.inner.config.download_defaults.safeseeding_enabled;
-        self.add_torrent_bytes_anon(bytes, paused, 0, safe).await
+        self.add_torrent_bytes_anon(bytes, paused, 0, safe, None)
+            .await
     }
 
     /// `add_torrent_bytes` avec choix du nombre de sauts anonymes et
-    /// du flag `safe_seeding` persiste.
+    /// du flag `safe_seeding` persiste. `destination` : voir
+    /// [`Session::add_download_anon`].
     pub async fn add_torrent_bytes_anon(
         &self,
         bytes: Vec<u8>,
         paused: bool,
         anon_hops: u32,
         safe_seeding: bool,
+        destination: Option<std::path::PathBuf>,
     ) -> Result<Download> {
         // Parsing borne en amont pour extraire l'info-hash a persister.
         let meta = tribler_format::torrent::TorrentMeta::parse(&bytes)?;
@@ -931,6 +951,7 @@ impl CoreSession {
                 bytes.clone(),
                 &AddDownloadOptions {
                     paused,
+                    output_folder: self.effective_output_dir(destination),
                     trackers: trackers.clone(),
                     ..Default::default()
                 },
@@ -948,6 +969,24 @@ impl CoreSession {
             },
         )?;
         Ok(dl)
+    }
+
+    /// Dossier de sortie d'un nouveau telechargement : `destination`
+    /// explicite (`PUT /api/downloads`), sinon le `saveas` effectif
+    /// (override `POST /api/settings`), sinon `None` = dossier de
+    /// l'engine (par lane). Python : `DownloadConfig.destination`
+    /// defaut = `libtorrent/download_defaults/saveas`.
+    fn effective_output_dir(
+        &self,
+        destination: Option<std::path::PathBuf>,
+    ) -> Option<std::path::PathBuf> {
+        destination.or_else(|| {
+            self.inner
+                .overrides
+                .read()
+                .ok()
+                .and_then(|ov| ov.download_dir.clone())
+        })
     }
 
     /// Reglages initiaux d'une ligne `downloads` : defauts de
@@ -1597,6 +1636,13 @@ impl CoreSession {
         if let Some(dir) = &ov.download_dir {
             cfg.engine.output_dir = dir.clone();
         }
+        if let Some(q) = &ov.queue {
+            cfg.queue = q.clone();
+        }
+        if let Some((up, down)) = ov.rate_limits {
+            cfg.engine.max_upload_bps = up;
+            cfg.engine.max_download_bps = down;
+        }
         cfg
     }
 
@@ -1609,7 +1655,17 @@ impl CoreSession {
             rss_urls: Some(config.rss_urls.clone()),
             watch_folder_dir: Some(config.watch_folder_dir.clone()),
             download_dir: Some(config.engine.output_dir.clone()),
+            queue: Some(config.queue.clone()),
+            rate_limits: Some((config.engine.max_upload_bps, config.engine.max_download_bps)),
         };
+        // `set_session_limits` Python : les bornes de debit de
+        // session s'appliquent a chaud sur toutes les lanes
+        // (`Session::ratelimits` rqbit est mutable). La file
+        // (`active_*`) est relue par `enforce_queue_limits` au tick
+        // suivant via `effective_config`.
+        for engine in self.all_engines() {
+            engine.set_ratelimits(config.engine.max_upload_bps, config.engine.max_download_bps);
+        }
         let mut services = self.inner.services.lock().unwrap();
         // RSS : mise a jour du manager existant ou creation.
         if let Some(rss) = &services.rss {

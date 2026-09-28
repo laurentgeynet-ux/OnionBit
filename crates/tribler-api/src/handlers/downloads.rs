@@ -359,7 +359,13 @@ pub async fn add_download(
 
         let dl = state
             .session
-            .add_torrent_bytes_anon(body.to_vec(), paused, hops, safe_seeding)
+            .add_torrent_bytes_anon(
+                body.to_vec(),
+                paused,
+                hops,
+                safe_seeding,
+                query.destination.as_deref().map(std::path::PathBuf::from),
+            )
             .await
             .map_err(|e| match &e {
                 tribler_core::CoreError::Format(_) => {
@@ -389,6 +395,10 @@ pub async fn add_download(
     let paused = req.paused.or(query.paused).unwrap_or(false);
     let uri = req.uri.or(query.uri);
     let torrent = req.torrent.or(query.torrent);
+    let destination = req
+        .destination
+        .or(query.destination)
+        .map(std::path::PathBuf::from);
 
     if hops > 0 && !safe_seeding {
         return Err(add_err(
@@ -422,7 +432,7 @@ pub async fn add_download(
     let dl = if let Some(uri) = &uri {
         state
             .session
-            .add_download_anon(uri, paused, hops, safe_seeding)
+            .add_download_anon(uri, paused, hops, safe_seeding, destination.clone())
             .await
             .map_err(|e| add_err(&state, e.to_string(), cli))?
     } else if let Some(path) = &torrent {
@@ -430,7 +440,7 @@ pub async fn add_download(
             .map_err(|e| add_err(&state, format!("lecture du .torrent: {e}"), cli))?;
         state
             .session
-            .add_torrent_bytes_anon(bytes, paused, hops, safe_seeding)
+            .add_torrent_bytes_anon(bytes, paused, hops, safe_seeding, destination)
             .await
             .map_err(|e| add_err(&state, e.to_string(), cli))?
     } else {

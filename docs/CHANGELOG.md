@@ -3,6 +3,37 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Application à chaud des réglages (`POST /api/settings`) (2026-09-29)
+
+Audit du chemin « changement dans l'UI → effet » : la persistance était
+complète (merge récursif → `configuration.json`) mais le sous-ensemble
+appliqué à chaud était limité à RSS + watch folder. Comblé sur la
+parité `set_session_limits` Python :
+
+- **`libtorrent/max_download_rate`/`max_upload_rate`** : appliqués à
+  chaud sur toutes les lanes via `Session::ratelimits` rqbit
+  (`set_upload_bps`/`set_download_bps`) — comme
+  `set_session_limits()` Python sur les `ltsessions` vivantes.
+- **`libtorrent/active_downloads`/`active_seeds`/`active_limit`** :
+  `enforce_queue_limits` lit désormais la config effective (override
+  `ServiceOverrides.queue`) — une baisse de borne pause l'excédent au
+  tick suivant, une hausse relève la file, sans redémarrage.
+- **`libtorrent/download_defaults/saveas`** : l'override n'était que
+  cosmétique (reflété dans `GET /api/settings` mais ignoré des
+  nouveaux ajouts) — les `add_download`/`add_torrent_bytes` utilisent
+  maintenant le dossier effectif (`effective_output_dir`), comme
+  `DownloadConfig.destination` Python relu à chaque ajout.
+- **`destination` (`PUT /api/downloads`)** : champ parsé puis jeté —
+  correctif : passé à `AddDownloadOptions.output_folder` et persisté
+  dans `downloads.output_dir` (prioritaire sur `saveas`, comme
+  `set_dest_dir` Python).
+- Reste restart-only (parité Python) : `ipv8`, `tunnel_community`,
+  ports/adresses d'écoute, `api/*`, tray — ces réglages ne sont pas
+  re-appliqués à chaud même chez Tribler.
+- Test `apply_service_settings_applique_les_bornes_a_chaud` : queue
+  resserrée à chaud → pause de l'excédent, `ratelimits` du moteur,
+  `saveas` → `output_folder` du nouvel ajout.
+
 ## Câblage de la configuration (lot API HTTPS) : second listener TLS (2026-09-29)
 
 Quatrième et dernier lot du câblage des champs `configuration.json`

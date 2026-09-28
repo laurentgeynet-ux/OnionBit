@@ -105,7 +105,7 @@ pub async fn get_torrent_info(
         // Resolution des metadonnees par le moteur (magnet -> DHT).
         let dl = state
             .session
-            .add_download_anon(&uri, true, 0, false)
+            .add_download_anon(&uri, true, 0, false, None)
             .await
             .map_err(|e| ApiError::internal(e.to_string()))?;
         dl.wait_initialized()

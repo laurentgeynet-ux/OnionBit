@@ -25,6 +25,23 @@ log (`warn`/`debug`) plutôt que de les ignorer silencieusement.
 | `ipv8/statistics` | `false` | inerte : clé morte dans Tribler 8.x même (résidu pyipv8 `StatisticsIPv8`). |
 | `recommender` / `rendezvous` | `enabled=false` | composants Python non portés — `warn` si `enabled=true` (implémentation = roadmap). |
 
+## Application à chaud (`POST /api/settings`)
+
+Tout champ modifié est **persisté** immédiatement dans
+`configuration.json` (merge récursif + `config.write()`, clés
+inconnues préservées via `extra`). Appliqué **à chaud** (sans
+redémarrage) — parité `set_session_limits` Python + services :
+
+| Champ | Application à chaud |
+| :--- | :--- |
+| `rss/urls` | `RssManager::update` |
+| `watch_folder/dir` | redémarrage du service |
+| `libtorrent/download_defaults/saveas` | dossier des **nouveaux** ajouts (`effective_output_dir`) |
+| `libtorrent/max_download_rate`/`max_upload_rate` | `Session::ratelimits` rqbit sur toutes les lanes |
+| `libtorrent/active_downloads`/`active_seeds`/`active_limit` | relus par `enforce_queue_limits` au tick suivant |
+| `destination` (`PUT /api/downloads`) | `AddDownloadOptions.output_folder`, persisté en `downloads.output_dir` |
+| tout le reste | restart-only — comme Python (seul `set_session_limits` est à chaud chez Tribler) |
+
 ## Écarts de comportement assumés
 
 | Domaine | Python Tribler | Portage Rust |
