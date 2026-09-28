@@ -62,20 +62,38 @@ struct Args {
     bootstrap_peers: Vec<String>,
 }
 
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
+
 /// Initialise le logging `tracing` (fmt, filtre `RUST_LOG`, info par
 /// defaut — cf. AGENTS.md "Niveaux de log").
-fn init_tracing() {
+/// Ecrit a la fois sur stdout et dans le fichier tournant `state_dir/logs/tribler.log`
+/// (exploite par l'endpoint `/api/logging` et l'onglet Diagnostic de l'UI).
+fn init_tracing(state_dir: &std::path::Path) {
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
-    tracing_subscriber::fmt()
-        .with_env_filter(filter)
+    let logs_dir = state_dir.join("logs");
+    let _ = std::fs::create_dir_all(&logs_dir);
+    let file_appender = tracing_appender::rolling::daily(&logs_dir, "tribler.log");
+    let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
+    Box::leak(Box::new(guard));
+
+    let stdout_layer = tracing_subscriber::fmt::layer().with_target(false);
+    let file_layer = tracing_subscriber::fmt::layer()
+        .with_ansi(false)
         .with_target(false)
+        .with_writer(non_blocking);
+
+    tracing_subscriber::registry()
+        .with(filter)
+        .with(stdout_layer)
+        .with(file_layer)
         .init();
 }
 
 #[tokio::main]
 async fn main() -> ExitCode {
-    init_tracing();
     let args = Args::parse();
+    init_tracing(&args.state_dir);
 
     let listen: SocketAddr = match args.listen.parse() {
         Ok(a) => a,

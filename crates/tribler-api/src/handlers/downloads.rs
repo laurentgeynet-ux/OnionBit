@@ -42,11 +42,29 @@ pub async fn get_downloads(
             let hops = hops_map.get(&s.info_hash).copied().unwrap_or(0);
             info.hops = hops;
             info.anon_download = hops > 0;
+            if let Some(dl) = state.session.find_download(&s.info_hash) {
+                info.destination = dl.output_folder().display().to_string();
+                info.trackers = dl
+                    .trackers()
+                    .into_iter()
+                    .map(|u| serde_json::json!({ "url": u, "status": "Actif", "peers": 0 }))
+                    .collect();
+            }
             // Sante scrapee par le torrent checker (`num_seeds`/
             // `num_peers` = max(lt, scraped) en Python ; librqbit
             // n'expose pas les compteurs swarm lt — on retient le
             // scrape, coherent avec `metadata/torrents/.../health`).
             if let Some(ih) = tribler_crypto::hash::from_hex(&s.info_hash) {
+                if let Ok(Some(row)) = state
+                    .session
+                    .db()
+                    .with(|c| tribler_db::downloads::get(c, &ih))
+                {
+                    if info.destination.is_empty() {
+                        info.destination = row.output_dir;
+                    }
+                    info.time_added = row.added_on;
+                }
                 if let Ok(Some(ts)) = state
                     .session
                     .db()

@@ -14,5 +14,9 @@ class RestSettingsRepository implements SettingsRepository {
       const {};
 
   @override
+  Future<void> update(Map<String, dynamic> settings) =>
+      _api.post('/settings', body: {'settings': settings});
+
+  @override
   Future<void> shutdown() => _api.put('/shutdown');
 }

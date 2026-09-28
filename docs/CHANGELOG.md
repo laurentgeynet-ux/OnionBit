@@ -3,6 +3,29 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Étape 20 (partie 2) — Câblage complet de l'interface Flutter et du backend (2026-09-28)
+
+- **Câblage des Trackers et Swarm** :
+  - `GET /api/downloads/{ih}/trackers` et `PUT /api/downloads/{ih}/trackers` exposés dans `DownloadsRepository`, `RestDownloadsRepository` et `downloadTrackersProvider`.
+  - Panneau de détail : onglet « Trackers » affichant les trackers réels avec leur statut et le nombre de pairs découverts, et dialogue d'ajout de tracker en direct.
+  - Onglet « Pairs » affichant les statistiques de l'essaim (seeders, leechers, total pairs, débits instantanés, mode réseau direct/tunnel).
+- **Actions sur les Téléchargements & Menu contextuel** :
+  - Menu contextuel complet (clic droit sur bureau ou appui long sur compact) : Reprendre / Pause, Ouvrir le dossier dans l'explorateur natif, Sélecteur de niveau d'anonymat (0 à 3 sauts), Copier le lien magnet, Copier l'info-hash, Supprimer.
+  - Onglet « Détails » enrichi de boutons d'action rapide (Ouvrir le dossier, Copier le lien magnet, Copier l'info-hash).
+  - Onglet « Fichiers » avec bouton d'ouverture directe de l'emplacement de chaque fichier individuel (`openPath`).
+  - Dialogue d'ajout : sélecteur de dossier natif (`getDirectoryPath`) et transmission effective du dossier de destination personnalisé en mode magnet comme en upload `.torrent` brut.
+- **Indexation locale & Recherche / Découverte** :
+  - `tribler-core` : indexation automatique dans `channel_node` (`metadata_type = 300`) des téléchargements ajoutés et restaurés.
+  - `tribler-api` : enrichissement dynamique des endpoints `/api/metadata/torrents/popular` et `/api/metadata/torrents/local_search` pour inclure immédiatement les torrents actifs de la session.
+- **Réglages & Préférences** :
+  - Section « Téléchargements par défaut » dans la page Réglages avec sélection et enregistrement du répertoire par défaut via `POST /api/settings`.
+  - Backend : prise en compte à chaud de `download_defaults.saveas` dans `ServiceOverrides`, `effective_config` et application immédiate.
+- **Journaux et Diagnostique** :
+  - Configuration de `tracing_appender` dans `tribler-daemon` écrivant dans `<state_dir>/logs/tribler.log` (rotation quotidienne) en plus de stdout, rendant l'onglet « Journaux » fonctionnel.
+- **Layout & Polissage UI** :
+  - Correction de l'espacement et des débordements de texte dans la barre d'état et le badge de statut des téléchargements.
+  - Packaging complet de `dist\` et synchronisation avec le dossier de test Bureau.
+
 ## Étape 20 (partie 1) — coquille Flutter + packaging `dist/` (2026-09-28)
 
 - `scripts/build_dist.ps1` : assemble un dossier **portable** `dist\`

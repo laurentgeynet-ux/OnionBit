@@ -48,6 +48,8 @@ struct ServiceOverrides {
     rss_urls: Option<Vec<String>>,
     /// Repertoire surveille (`Some` = remplace `config.watch_folder_dir`).
     watch_folder_dir: Option<Option<std::path::PathBuf>>,
+    /// Dossier de telechargement par defaut (`Some` = remplace `config.engine.output_dir`).
+    download_dir: Option<std::path::PathBuf>,
 }
 
 struct Inner {
@@ -158,6 +160,9 @@ impl CoreSession {
                         infohash = %dl.info_hash_hex(),
                         "telechargement restaure"
                     );
+                    if let Some(name) = dl.name() {
+                        self.index_channel_node(&dl.info_hash(), &name, dl.stats().total_bytes);
+                    }
                     if row.paused {
                         let _ = engine.pause(&dl.id().to_string()).await;
                     }
@@ -342,6 +347,9 @@ impl CoreSession {
                 },
             )
         })?;
+        if let Some(name) = dl.name() {
+            self.index_channel_node(&dl.info_hash(), &name, dl.stats().total_bytes);
+        }
         Ok(())
     }
 
@@ -372,7 +380,37 @@ impl CoreSession {
                 },
             )
         })?;
+        self.index_channel_node(&meta.info_hash, &meta.name, meta.total_size);
         Ok(())
+    }
+
+    /// Indexe les metadonnees du torrent dans `channel_node` pour alimenter
+    /// les recherches locales (`/api/metadata/search/local`) et populaires.
+    fn index_channel_node(&self, infohash: &[u8], name: &str, size: u64) {
+        let _ = self.inner.db.with(|c| {
+            if let Ok(Some(_)) = tribler_db::channel::get_by_infohash(c, infohash) {
+                return Ok(());
+            }
+            let row = tribler_db::models::ChannelNodeRow {
+                infohash: infohash.to_vec(),
+                size: size as i64,
+                torrent_date: now_unix(),
+                title: name.to_string(),
+                metadata_type: 300, // Torrent regular
+                status: 1,          // COMMITTED
+                origin_id: 0,
+                public_key: vec![0u8; 64],
+                id_: now_unix()
+                    .wrapping_mul(1000)
+                    .wrapping_add(rand::random::<i16>() as i64)
+                    .abs(),
+                timestamp: now_unix() * 1000,
+                added_on: now_unix(),
+                ..Default::default()
+            };
+            let _ = tribler_db::channel::insert(c, &row);
+            Ok(())
+        });
     }
 
     /// `update_hops` Python (`DownloadManager.update_hops`) : retire le
@@ -623,18 +661,21 @@ impl CoreSession {
         if let Some(dir) = &ov.watch_folder_dir {
             cfg.watch_folder_dir = dir.clone();
         }
+        if let Some(dir) = &ov.download_dir {
+            cfg.engine.output_dir = dir.clone();
+        }
         cfg
     }
 
     /// Reconfigure les services a chaud (`POST /api/settings`) :
-    /// URLs RSS et watch folder. Les autres champs de config sont
-    /// consultables via `config()` mais non mutables a chaud.
+    /// URLs RSS, watch folder et dossier par defaut des telechargements.
     pub fn apply_service_settings(&self, config: &CoreConfig) {
         // Memorise le sous-ensemble applique pour que `effective_config()`
         // (et `GET /api/settings`) reflete le reglage courant.
         *self.inner.overrides.write().unwrap() = ServiceOverrides {
             rss_urls: Some(config.rss_urls.clone()),
             watch_folder_dir: Some(config.watch_folder_dir.clone()),
+            download_dir: Some(config.engine.output_dir.clone()),
         };
         let mut services = self.inner.services.lock().unwrap();
         // RSS : mise a jour du manager existant ou creation.

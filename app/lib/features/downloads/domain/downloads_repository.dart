@@ -1,5 +1,6 @@
 import 'download.dart';
 import 'download_file.dart';
+import 'download_tracker.dart';
 
 /// Contrat du dépôt downloads (`GET/PUT/PATCH/DELETE /api/downloads`).
 abstract interface class DownloadsRepository {
@@ -23,6 +24,7 @@ abstract interface class DownloadsRepository {
   /// fichier côté client).
   Future<String> addTorrentBytes(
     List<int> bytes, {
+    String? destination,
     int anonHops = 0,
     bool safeSeeding = false,
     bool paused = false,
@@ -30,6 +32,12 @@ abstract interface class DownloadsRepository {
 
   /// Fichiers du téléchargement (`GET /{ih}/files`).
   Future<List<DownloadFile>> files(String infohash);
+
+  /// Trackers du téléchargement (`GET /{ih}/trackers`).
+  Future<List<DownloadTracker>> trackers(String infohash);
+
+  /// Ajoute un tracker à chaud (`PUT /{ih}/trackers`).
+  Future<void> addTracker(String infohash, String url);
 
   Future<void> pause(String infohash);
   Future<void> resume(String infohash);
@@ -40,3 +48,4 @@ abstract interface class DownloadsRepository {
 
   Future<void> remove(String infohash, {bool deleteFiles = false});
 }
+

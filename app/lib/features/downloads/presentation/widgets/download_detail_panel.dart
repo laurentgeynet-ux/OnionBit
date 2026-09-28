@@ -2,11 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../core/platform/desktop_shell.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../core/utils/byte_formatter.dart';
 import '../../../../core/widgets/empty_state.dart';
 import '../../../../core/widgets/error_state.dart';
 import '../../domain/download.dart';
+import '../../domain/download_tracker.dart';
 import '../providers/downloads_providers.dart';
 
 /// Panneau de détail sous la liste (onglets Détails/Fichiers/Trackers/
@@ -36,9 +38,9 @@ class DownloadDetailPanel extends ConsumerWidget {
             child: TabBarView(
               children: [
                 _DetailsTab(download: download),
-                _FilesTab(infohash: download.infohash),
+                _FilesTab(download: download),
                 _TrackersTab(download: download),
-                const _PeersTab(),
+                _PeersTab(download: download),
               ],
             ),
           ),
@@ -56,12 +58,48 @@ class _DetailsTab extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final d = download;
+    final magnetUri =
+        'magnet:?xt=urn:btih:${d.infohash}&dn=${Uri.encodeComponent(d.name.isEmpty ? d.infohash : d.name)}';
+
     return ListView(
       padding: const EdgeInsets.all(AppSpacing.md),
       children: [
         LinearProgressIndicator(value: d.progress.clamp(0.0, 1.0)),
         const SizedBox(height: AppSpacing.md),
-        _row(context, 'Nom', d.name),
+        Wrap(
+          spacing: AppSpacing.sm,
+          runSpacing: AppSpacing.xs,
+          children: [
+            if (d.destination.isNotEmpty)
+              OutlinedButton.icon(
+                icon: const Icon(Icons.folder_open, size: 16),
+                label: const Text('Ouvrir le dossier'),
+                onPressed: () => openPath(d.destination),
+              ),
+            OutlinedButton.icon(
+              icon: const Icon(Icons.link, size: 16),
+              label: const Text('Copier le lien magnet'),
+              onPressed: () {
+                Clipboard.setData(ClipboardData(text: magnetUri));
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Lien magnet copié dans le presse-papier')),
+                );
+              },
+            ),
+            OutlinedButton.icon(
+              icon: const Icon(Icons.copy, size: 16),
+              label: const Text('Copier l\'info-hash'),
+              onPressed: () {
+                Clipboard.setData(ClipboardData(text: d.infohash));
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Info-hash copié dans le presse-papier')),
+                );
+              },
+            ),
+          ],
+        ),
+        const SizedBox(height: AppSpacing.md),
+        _row(context, 'Nom', d.name.isEmpty ? '(sans nom)' : d.name),
         _row(context, 'Statut', d.status),
         _row(context, 'Taille', ByteFormatter.format(d.size)),
         _row(context, 'Santé', '${d.numSeeds} seeders, ${d.numPeers} leechers'),
@@ -87,12 +125,6 @@ class _DetailsTab extends StatelessWidget {
                 style: Theme.of(context).textTheme.bodySmall
                     ?.copyWith(fontFamily: 'monospace'),
               ),
-            ),
-            IconButton(
-              tooltip: 'Copier l\'info-hash',
-              icon: const Icon(Icons.copy, size: 18),
-              onPressed: () =>
-                  Clipboard.setData(ClipboardData(text: d.infohash)),
             ),
           ],
         ),
@@ -124,20 +156,20 @@ class _DetailsTab extends StatelessWidget {
 }
 
 class _FilesTab extends ConsumerWidget {
-  const _FilesTab({required this.infohash});
+  const _FilesTab({required this.download});
 
-  final String infohash;
+  final Download download;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final files = ref.watch(downloadFilesProvider(infohash));
+    final files = ref.watch(downloadFilesProvider(download.infohash));
     return files.when(
       loading: () => const Center(child: CircularProgressIndicator()),
       error: (e, _) => ErrorState(
         message: '$e',
-        onRetry: () => ref.invalidate(downloadFilesProvider(infohash)),
+        onRetry: () => ref.invalidate(downloadFilesProvider(download.infohash)),
       ),
-      data: (files) => files.isEmpty
+      data: (fileList) => fileList.isEmpty
           ? const EmptyState(
               icon: Icons.folder_open,
               title: 'Aucun fichier listé',
@@ -145,18 +177,34 @@ class _FilesTab extends ConsumerWidget {
             )
           : ListView.builder(
               padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
-              itemCount: files.length,
+              itemCount: fileList.length,
               itemBuilder: (context, i) {
-                final f = files[i];
+                final f = fileList[i];
+                final filePath = download.destination.isNotEmpty
+                    ? '${download.destination}/${f.name}'
+                    : f.name;
                 return ListTile(
                   dense: true,
                   contentPadding: EdgeInsets.zero,
                   title: Text(f.name, overflow: TextOverflow.ellipsis),
                   subtitle: LinearProgressIndicator(value: f.fraction),
-                  trailing: Text(
-                    '${(f.fraction * 100).toStringAsFixed(0)} % · '
-                    '${ByteFormatter.format(f.size)}',
-                    style: Theme.of(context).textTheme.bodySmall,
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        '${(f.fraction * 100).toStringAsFixed(0)} % · '
+                        '${ByteFormatter.format(f.size)}',
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                      if (download.destination.isNotEmpty) ...[
+                        const SizedBox(width: AppSpacing.xs),
+                        IconButton(
+                          icon: const Icon(Icons.folder_open, size: 18),
+                          tooltip: 'Ouvrir l\'emplacement',
+                          onPressed: () => openPath(filePath),
+                        ),
+                      ],
+                    ],
                   ),
                 );
               },
@@ -165,47 +213,191 @@ class _FilesTab extends ConsumerWidget {
   }
 }
 
-class _TrackersTab extends StatelessWidget {
+class _TrackersTab extends ConsumerWidget {
   const _TrackersTab({required this.download});
 
   final Download download;
 
-  @override
-  Widget build(BuildContext context) {
-    final trackers = download.trackers;
-    if (trackers.isEmpty) {
-      return const EmptyState(
-        icon: Icons.track_changes,
-        title: 'Aucun tracker exposé',
-        message: 'Le champ `trackers` est vide côté API Rust pour le moment.',
-      );
-    }
-    return ListView(
-      padding: const EdgeInsets.all(AppSpacing.md),
-      children: [
-        for (final t in trackers)
-          ListTile(
-            dense: true,
-            title: Text(t.url),
-            subtitle: Text(t.status),
-            trailing: Text('${t.peers} pairs'),
+  Future<void> _addTrackerDialog(BuildContext context, WidgetRef ref) async {
+    final controller = TextEditingController();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Ajouter un tracker'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(
+            labelText: 'URL du tracker',
+            hintText: 'udp://tracker.example.com:6969/announce',
+            prefixIcon: Icon(Icons.track_changes),
           ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Annuler'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Ajouter'),
+          ),
+        ],
+      ),
+    );
+    if (ok == true && controller.text.trim().isNotEmpty) {
+      final url = controller.text.trim();
+      try {
+        await ref
+            .read(downloadsProvider.notifier)
+            .addTracker(download.infohash, url);
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Tracker ajouté : $url')),
+          );
+        }
+      } catch (e) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Erreur ajout tracker : $e')),
+          );
+        }
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final trackersAsync = ref.watch(downloadTrackersProvider(download.infohash));
+
+    return trackersAsync.when(
+      loading: () => const Center(child: CircularProgressIndicator()),
+      error: (_, _) => _buildTrackersList(context, ref, download.trackers),
+      data: (trackers) => _buildTrackersList(
+        context,
+        ref,
+        trackers.isNotEmpty ? trackers : download.trackers,
+      ),
+    );
+  }
+
+  Widget _buildTrackersList(
+    BuildContext context,
+    WidgetRef ref,
+    List<DownloadTracker> trackers,
+  ) {
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.md,
+            vertical: AppSpacing.xs,
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                '${trackers.length} tracker(s)',
+                style: Theme.of(context).textTheme.titleSmall,
+              ),
+              FilledButton.tonalIcon(
+                icon: const Icon(Icons.add, size: 16),
+                label: const Text('Ajouter un tracker'),
+                onPressed: () => _addTrackerDialog(context, ref),
+              ),
+            ],
+          ),
+        ),
+        const Divider(height: 1),
+        Expanded(
+          child: trackers.isEmpty
+              ? EmptyState(
+                  icon: Icons.track_changes,
+                  title: 'Aucun tracker actif',
+                  message: 'Vous pouvez ajouter des trackers pour améliorer les sources.',
+                  action: FilledButton.icon(
+                    icon: const Icon(Icons.add),
+                    label: const Text('Ajouter un tracker'),
+                    onPressed: () => _addTrackerDialog(context, ref),
+                  ),
+                )
+              : ListView.builder(
+                  padding: const EdgeInsets.all(AppSpacing.md),
+                  itemCount: trackers.length,
+                  itemBuilder: (context, i) {
+                    final t = trackers[i];
+                    return ListTile(
+                      dense: true,
+                      leading: const Icon(Icons.sensors, size: 20),
+                      title: SelectableText(t.url),
+                      subtitle: Text(
+                        'Statut : ${t.status}',
+                        style: TextStyle(
+                          color: t.status.toLowerCase().contains('error')
+                              ? Colors.red
+                              : Colors.green,
+                        ),
+                      ),
+                      trailing: Text('${t.peers} pair(s) découverts'),
+                    );
+                  },
+                ),
+        ),
       ],
     );
   }
 }
 
 class _PeersTab extends StatelessWidget {
-  const _PeersTab();
+  const _PeersTab({required this.download});
+
+  final Download download;
 
   @override
   Widget build(BuildContext context) {
-    return const EmptyState(
-      icon: Icons.people_outline,
-      title: 'Pairs non exposés',
-      message:
-          'L\'API Rust accepte `get_peers` mais l\'ignore pour '
-          'l\'instant (écart connu, cf. api_rest_mapping.md).',
+    final d = download;
+    final theme = Theme.of(context);
+
+    return ListView(
+      padding: const EdgeInsets.all(AppSpacing.md),
+      children: [
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(AppSpacing.md),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Statistiques de l\'essaim (Swarm)', style: theme.textTheme.titleMedium),
+                const SizedBox(height: AppSpacing.sm),
+                _statRow('Seeders connectés', '${d.numSeeds}'),
+                _statRow('Leechers connectés', '${d.numPeers}'),
+                _statRow('Total pairs connectés', '${d.numConnectedPeers}'),
+                _statRow('Débit descendant actuel', ByteFormatter.formatRate(d.speedDown)),
+                _statRow('Débit montant actuel', ByteFormatter.formatRate(d.speedUp)),
+                _statRow(
+                  'Mode réseau',
+                  d.anonDownload
+                      ? 'Tunnel anonyme IPv8 (${d.hops} saut(s))'
+                      : 'Connexion directe BitTorrent',
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _statRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(label),
+          Text(value, style: const TextStyle(fontWeight: FontWeight.bold)),
+        ],
+      ),
     );
   }
 }

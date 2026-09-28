@@ -7,6 +7,7 @@ import '../../../../core/di/providers.dart';
 import '../../data/rest_downloads_repository.dart';
 import '../../domain/download.dart';
 import '../../domain/download_file.dart';
+import '../../domain/download_tracker.dart';
 import '../../domain/downloads_repository.dart';
 
 /// Intervalle de rafraîchissement de la liste (comme la GUI Tribler,
@@ -64,6 +65,10 @@ class DownloadsNotifier extends AsyncNotifier<List<Download>> {
       _run((r) => r.remove(infohash, deleteFiles: deleteFiles));
   Future<void> setAnonHops(String infohash, int hops) =>
       _run((r) => r.setAnonHops(infohash, hops));
+  Future<void> addTracker(String infohash, String url) async {
+    await ref.read(downloadsRepositoryProvider).addTracker(infohash, url);
+    ref.invalidate(downloadTrackersProvider(infohash));
+  }
 }
 
 /// Sélection courante (infohashes) — multi-sélection par cases.
@@ -102,3 +107,11 @@ final downloadFilesProvider = FutureProvider.autoDispose
     .family<List<DownloadFile>, String>(
       (ref, infohash) => ref.watch(downloadsRepositoryProvider).files(infohash),
     );
+
+/// Trackers du téléchargement sélectionné (onglet « Trackers »).
+final downloadTrackersProvider = FutureProvider.autoDispose
+    .family<List<DownloadTracker>, String>(
+      (ref, infohash) =>
+          ref.watch(downloadsRepositoryProvider).trackers(infohash),
+    );
+

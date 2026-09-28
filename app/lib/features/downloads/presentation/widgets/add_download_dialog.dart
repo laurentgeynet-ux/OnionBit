@@ -66,6 +66,9 @@ class _AddDownloadDialogState extends ConsumerState<AddDownloadDialog> {
       if (_file != null) {
         await repo.addTorrentBytes(
           await _file!.readAsBytes(),
+          destination: _destController.text.trim().isEmpty
+              ? null
+              : _destController.text.trim(),
           anonHops: _hops,
           safeSeeding: _hops > 0,
           paused: _paused,
@@ -159,9 +162,19 @@ class _AddDownloadDialogState extends ConsumerState<AddDownloadDialog> {
             const SizedBox(height: AppSpacing.md),
             TextField(
               controller: _destController,
-              decoration: const InputDecoration(
+              decoration: InputDecoration(
                 labelText: 'Dossier de destination (optionnel)',
-                prefixIcon: Icon(Icons.folder_outlined),
+                prefixIcon: const Icon(Icons.folder_outlined),
+                suffixIcon: IconButton(
+                  tooltip: 'Parcourir…',
+                  icon: const Icon(Icons.folder_open),
+                  onPressed: () async {
+                    final dir = await getDirectoryPath();
+                    if (dir != null) {
+                      setState(() => _destController.text = dir);
+                    }
+                  },
+                ),
               ),
             ),
             CheckboxListTile(

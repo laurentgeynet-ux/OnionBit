@@ -2,3 +2,5 @@
 library;
 
 Future<void> initDesktopShell() async {}
+
+Future<void> openPath(String path) async {}

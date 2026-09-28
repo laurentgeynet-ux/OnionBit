@@ -85,6 +85,16 @@ pub async fn update_settings(
             .map(std::path::PathBuf::from);
         cfg.watch_folder_dir = if enabled { dir } else { None };
     }
+    if let Some(saveas) = settings
+        .get("libtorrent")
+        .and_then(|lt| lt.get("download_defaults"))
+        .or_else(|| settings.get("download_defaults"))
+        .and_then(|dd| dd.get("saveas"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+    {
+        cfg.engine.output_dir = std::path::PathBuf::from(saveas);
+    }
 
     state.session.apply_service_settings(&cfg);
     Ok(Json(serde_json::json!({ "modified": true })))

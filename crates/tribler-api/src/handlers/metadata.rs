@@ -139,6 +139,33 @@ pub async fn get_popular_torrents(
         })?;
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
     })?;
+
+    // Inclut les telechargements de la session courante si non encore dans channel_node.
+    let mut rows = rows;
+    for dl in state.session.downloads() {
+        let name = dl.name.clone().unwrap_or_default();
+        if !name.is_empty()
+            && !rows
+                .iter()
+                .any(|r| r.get("infohash").and_then(|v| v.as_str()) == Some(&dl.info_hash))
+        {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            rows.push(serde_json::json!({
+                "infohash": dl.info_hash,
+                "name": name,
+                "length": dl.total_bytes,
+                "size": dl.total_bytes,
+                "updated": now,
+                "num_seeders": 1,
+                "num_leechers": dl.peers_live,
+                "last_tracker_check": null,
+            }));
+        }
+    }
+
     Ok(Json(serde_json::json!({ "results": rows })))
 }
 
@@ -192,7 +219,35 @@ pub async fn local_search(
             q.limit.unwrap_or(LIST_LIMIT).min(LIST_LIMIT),
         )
     })?;
-    let results: Vec<_> = rows.iter().map(row_json).collect();
+    let mut results: Vec<_> = rows.iter().map(row_json).collect();
+
+    // Inclut egalement les telechargements de la session courante correspondant au filtre.
+    let fts_lower = fts.to_ascii_lowercase();
+    for dl in state.session.downloads() {
+        let name = dl.name.clone().unwrap_or_default();
+        if (name.to_ascii_lowercase().contains(&fts_lower)
+            || dl.info_hash.eq_ignore_ascii_case(&fts))
+            && !results
+                .iter()
+                .any(|r| r.get("infohash").and_then(|v| v.as_str()) == Some(&dl.info_hash))
+        {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            results.push(serde_json::json!({
+                "infohash": dl.info_hash,
+                "name": name,
+                "length": dl.total_bytes,
+                "size": dl.total_bytes,
+                "updated": now,
+                "num_seeders": 1,
+                "num_leechers": dl.peers_live,
+                "last_tracker_check": null,
+            }));
+        }
+    }
+
     Ok(Json(serde_json::json!({
         "results": results,
         "first": 0,

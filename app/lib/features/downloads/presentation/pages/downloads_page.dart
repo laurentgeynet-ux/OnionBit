@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../../core/layout/breakpoints.dart';
+import '../../../../core/platform/desktop_shell.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../core/utils/byte_formatter.dart';
 import '../../../../core/utils/duration_formatter.dart';
@@ -371,6 +373,8 @@ class _DownloadRow extends ConsumerWidget {
       color: selected ? scheme.secondaryContainer : null,
       child: InkWell(
         onTap: () => sel.selectOnly(d.infohash),
+        onSecondaryTapUp: (details) =>
+            _showDownloadContextMenu(context, ref, details.globalPosition, d),
         child: Padding(
           padding: const EdgeInsets.symmetric(
             horizontal: AppSpacing.sm,
@@ -442,6 +446,158 @@ class _DownloadRow extends ConsumerWidget {
   }
 }
 
+/// Affiche le menu contextuel pour un téléchargement (Pause/Resume, dossier, sauts, copier, supprimer).
+Future<void> _showDownloadContextMenu(
+  BuildContext context,
+  WidgetRef ref,
+  Offset position,
+  Download d,
+) async {
+  final notifier = ref.read(downloadsProvider.notifier);
+  final magnetUri =
+      'magnet:?xt=urn:btih:${d.infohash}&dn=${Uri.encodeComponent(d.name.isEmpty ? d.infohash : d.name)}';
+
+  final value = await showMenu<String>(
+    context: context,
+    position: RelativeRect.fromLTRB(
+      position.dx,
+      position.dy,
+      position.dx + 1,
+      position.dy + 1,
+    ),
+    items: [
+      PopupMenuItem(
+        value: d.isPaused ? 'resume' : 'pause',
+        child: Row(
+          children: [
+            Icon(d.isPaused ? Icons.play_arrow : Icons.pause, size: 18),
+            const SizedBox(width: AppSpacing.sm),
+            Text(d.isPaused ? 'Reprendre' : 'Mettre en pause'),
+          ],
+        ),
+      ),
+      if (d.destination.isNotEmpty)
+        const PopupMenuItem(
+          value: 'open_folder',
+          child: Row(
+            children: [
+              Icon(Icons.folder_open, size: 18),
+              SizedBox(width: AppSpacing.sm),
+              Text('Ouvrir le dossier'),
+            ],
+          ),
+        ),
+      const PopupMenuDivider(),
+      PopupMenuItem(
+        value: 'anon_0',
+        child: Row(
+          children: [
+            Icon(d.hops == 0 ? Icons.check : Icons.public, size: 18),
+            const SizedBox(width: AppSpacing.sm),
+            const Text('Anonymat : Direct (0 saut)'),
+          ],
+        ),
+      ),
+      PopupMenuItem(
+        value: 'anon_1',
+        child: Row(
+          children: [
+            Icon(d.hops == 1 ? Icons.check : Icons.shield_outlined, size: 18),
+            const SizedBox(width: AppSpacing.sm),
+            const Text('Anonymat : 1 saut'),
+          ],
+        ),
+      ),
+      PopupMenuItem(
+        value: 'anon_2',
+        child: Row(
+          children: [
+            Icon(d.hops == 2 ? Icons.check : Icons.shield_outlined, size: 18),
+            const SizedBox(width: AppSpacing.sm),
+            const Text('Anonymat : 2 sauts'),
+          ],
+        ),
+      ),
+      PopupMenuItem(
+        value: 'anon_3',
+        child: Row(
+          children: [
+            Icon(d.hops == 3 ? Icons.check : Icons.shield_outlined, size: 18),
+            const SizedBox(width: AppSpacing.sm),
+            const Text('Anonymat : 3 sauts'),
+          ],
+        ),
+      ),
+      const PopupMenuDivider(),
+      const PopupMenuItem(
+        value: 'copy_magnet',
+        child: Row(
+          children: [
+            Icon(Icons.link, size: 18),
+            SizedBox(width: AppSpacing.sm),
+            Text('Copier le lien magnet'),
+          ],
+        ),
+      ),
+      const PopupMenuItem(
+        value: 'copy_infohash',
+        child: Row(
+          children: [
+            Icon(Icons.copy, size: 18),
+            SizedBox(width: AppSpacing.sm),
+            Text('Copier l\'info-hash'),
+          ],
+        ),
+      ),
+      const PopupMenuDivider(),
+      const PopupMenuItem(
+        value: 'delete',
+        child: Row(
+          children: [
+            Icon(Icons.delete_outline, size: 18, color: Colors.red),
+            SizedBox(width: AppSpacing.sm),
+            Text('Supprimer', style: TextStyle(color: Colors.red)),
+          ],
+        ),
+      ),
+    ],
+  );
+
+  if (value == null) return;
+  switch (value) {
+    case 'resume':
+      await notifier.resume(d.infohash);
+    case 'pause':
+      await notifier.pause(d.infohash);
+    case 'open_folder':
+      await openPath(d.destination);
+    case 'anon_0':
+      await notifier.setAnonHops(d.infohash, 0);
+    case 'anon_1':
+      await notifier.setAnonHops(d.infohash, 1);
+    case 'anon_2':
+      await notifier.setAnonHops(d.infohash, 2);
+    case 'anon_3':
+      await notifier.setAnonHops(d.infohash, 3);
+    case 'copy_magnet':
+      Clipboard.setData(ClipboardData(text: magnetUri));
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Lien magnet copié')),
+        );
+      }
+    case 'copy_infohash':
+      Clipboard.setData(ClipboardData(text: d.infohash));
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Info-hash copié')),
+        );
+      }
+    case 'delete':
+      await notifier.remove(d.infohash);
+  }
+}
+
 /// Liste compacte : ListTiles + détail en bottom sheet au tap.
 class _CompactList extends ConsumerWidget {
   const _CompactList({required this.downloads});
@@ -473,6 +629,13 @@ class _CompactList extends ConsumerWidget {
             ],
           ),
           trailing: DownloadStatusChip(download: d),
+          onLongPress: () {
+            final box = context.findRenderObject() as RenderBox?;
+            final pos = box != null
+                ? box.localToGlobal(Offset.zero)
+                : Offset.zero;
+            _showDownloadContextMenu(context, ref, pos + const Offset(50, 50), d);
+          },
           onTap: () => showModalBottomSheet(
             context: context,
             isScrollControlled: true,

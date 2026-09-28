@@ -1,6 +1,7 @@
 import '../../../core/api/api_client.dart';
 import '../domain/download.dart';
 import '../domain/download_file.dart';
+import '../domain/download_tracker.dart';
 import '../domain/downloads_repository.dart';
 import 'download_dto.dart';
 
@@ -46,6 +47,7 @@ class RestDownloadsRepository implements DownloadsRepository {
   @override
   Future<String> addTorrentBytes(
     List<int> bytes, {
+    String? destination,
     int anonHops = 0,
     bool safeSeeding = false,
     bool paused = false,
@@ -54,6 +56,8 @@ class RestDownloadsRepository implements DownloadsRepository {
       '/downloads',
       bytes,
       query: {
+        if (destination != null && destination.isNotEmpty)
+          'destination': destination,
         if (anonHops > 0) 'anon_hops': '$anonHops',
         'safe_seeding': '$safeSeeding',
         'paused': '$paused',
@@ -79,6 +83,25 @@ class RestDownloadsRepository implements DownloadsRepository {
         ),
     ];
   }
+
+  @override
+  Future<List<DownloadTracker>> trackers(String infohash) async {
+    final resp =
+        await _api.get('/downloads/$infohash/trackers') as Map<String, dynamic>;
+    final items = resp['tracker_info'] as List<dynamic>? ?? const [];
+    return [
+      for (final t in items.whereType<Map<String, dynamic>>())
+        DownloadTracker(
+          url: (t['url'] as String?) ?? '',
+          status: (t['status'] as String?) ?? 'Actif',
+          peers: (t['peers'] as num?)?.toInt() ?? 0,
+        ),
+    ];
+  }
+
+  @override
+  Future<void> addTracker(String infohash, String url) =>
+      _api.put('/downloads/$infohash/trackers', body: {'url': url});
 
   @override
   Future<void> pause(String infohash) =>

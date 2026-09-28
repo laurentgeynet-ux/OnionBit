@@ -26,3 +26,18 @@ Future<void> initDesktopShell() async {
     await windowManager.focus();
   });
 }
+
+/// Ouvre un chemin de dossier ou fichier dans l'explorateur natif du système.
+Future<void> openPath(String path) async {
+  try {
+    if (Platform.isWindows) {
+      await Process.run('explorer.exe', [path]);
+    } else if (Platform.isMacOS) {
+      await Process.run('open', [path]);
+    } else if (Platform.isLinux) {
+      await Process.run('xdg-open', [path]);
+    }
+  } catch (_) {
+    // Échec silencieux si le chemin n'existe pas ou shell indisponible
+  }
+}

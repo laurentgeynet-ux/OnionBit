@@ -11,3 +11,6 @@ import 'desktop_shell_stub.dart'
 
 /// Initialise le shell desktop (fenêtre). No-op sur web/mobile.
 Future<void> initDesktopShell() => impl.initDesktopShell();
+
+/// Ouvre un chemin dans l'explorateur de fichiers natif.
+Future<void> openPath(String path) => impl.openPath(path);
