@@ -107,6 +107,44 @@ async fn put_downloads_sans_uri_ou_torrent_retourne_400() {
 }
 
 #[tokio::test]
+async fn put_downloads_binaire_torrent_avec_query_params() {
+    let srv = spawn_server().await;
+
+    let torrent_data = test_torrent_bytes();
+
+    // PUT /api/downloads?safe_seeding=false&paused=false avec corps binaire applications/x-bittorrent
+    let resp = srv
+        .client
+        .put(srv.url("/api/downloads?safe_seeding=false&paused=false"))
+        .header("Content-Type", "applications/x-bittorrent")
+        .body(torrent_data)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["started"], true);
+    let infohash = body["infohash"].as_str().unwrap().to_string();
+    assert_eq!(infohash.len(), 40);
+
+    // Verifie la presence dans la liste des telechargements
+    let resp = srv
+        .client
+        .get(srv.url(&format!("/api/downloads?infohash={infohash}")))
+        .send()
+        .await
+        .unwrap();
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let downloads = body["downloads"].as_array().unwrap();
+    assert_eq!(downloads.len(), 1);
+    assert_eq!(downloads[0]["infohash"], infohash);
+    assert_eq!(downloads[0]["name"], "api-test.bin");
+
+    srv.session.stop().await;
+}
+
+#[tokio::test]
 async fn cycle_complet_ajout_pause_resume_suppression() {
     let srv = spawn_server().await;
 

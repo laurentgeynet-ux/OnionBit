@@ -4,16 +4,21 @@
 //! ne doit etre expose que sur `127.0.0.1` (API de controle locale) —
 //! voir `tribler-network-policy`.
 
+use axum::extract::DefaultBodyLimit;
 use axum::routing::{delete, get, patch, post, put};
 use axum::Router;
 
 use crate::handlers::*;
 use crate::state::AppState;
 
+/// Limite de taille du corps HTTP (20 Mo) pour accepter les fichiers .torrent volumineux.
+const MAX_BODY_LIMIT_BYTES: usize = 20 * 1024 * 1024;
+
 /// Construit le routeur complet de l'API (parite
 /// `tribler.core.restapi` autant que le backend le permet).
 pub fn build(state: AppState) -> Router {
     Router::new()
+        .layer(DefaultBodyLimit::max(MAX_BODY_LIMIT_BYTES))
         // -- Downloads (downloads_endpoint.py) -------------------------
         .route("/api/downloads", get(downloads::get_downloads))
         .route("/api/downloads", put(downloads::add_download))
