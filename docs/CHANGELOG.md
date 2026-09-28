@@ -3,6 +3,23 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Étape 20 (avancement) — intégration UI↔daemon validée en live (2026-09-28)
+
+- Inventaire des routes consommées par `app/` : 11 endpoints REST +
+  SSE `/api/events` — tous présents dans le routeur et répondent 200
+  contre `tribler-daemon` réel (offline) : `downloads`, `settings`,
+  `ipv8/overlays`, `tunnel/{circuits,relays,exits,swarms,peers}`,
+  `metadata/{torrents/popular,search/local}`, `logging`,
+  `events/info`.
+- Flux SSE vérifié : `events_start` reçu avec `public_key`/`sessions`/
+  `version`.
+- Chaîne de connexion conforme : `daemon_api_resolver_native.dart` et
+  `dist/demarrer.ps1` lisent `api.key` + `api.http_port_running` de
+  `configuration.json` — le daemon les écrit comme attendu (port
+  réel publié à chaque démarrage, `http_port=0` restant aléatoire).
+- `flutter analyze` propre, 8 tests verts. Reste la validation
+  visuelle manuelle du rendu avant de cocher l'étape.
+
 ## Étape 12 (clôture) — téléchargement réel via sortie pyipv8 (2026-09-28)
 
 - **`scripts/interop_exit_download.ps1`** +

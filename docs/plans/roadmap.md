@@ -485,8 +485,15 @@ de la phase 6.
   (sidebar Tribler ≥ 600 dp / `NavigationBar` en dessous), features
   downloads + search + settings + diagnostic. `flutter analyze`
   propre, 8 tests verts, `flutter build web` et `flutter build
-  windows` OK. **Reste** : validation visuelle manuelle (rendu réel
-  contre le daemon) avant de cocher `[x]`.
+  windows` OK. **Intégration API validée en live** (2026-09-28) :
+  les 11 endpoints REST consommés par l'UI (`downloads`, `settings`,
+  `ipv8/overlays`, `tunnel/{circuits,relays,exits,swarms,peers}`,
+  `metadata/{popular,search/local}`, `logging`, `events`) répondent
+  200 contre le daemon réel, SSE `events_start` reçu, et la
+  résolution clé/port depuis `configuration.json` est conforme à ce
+  que le resolver (`daemon_api_resolver_native.dart`) et
+  `dist/demarrer.ps1` attendent. **Reste** : validation visuelle
+  manuelle (rendu réel contre le daemon) avant de cocher `[x]`.
 
 ---
 
