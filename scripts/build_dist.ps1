@@ -1,4 +1,4 @@
-# build_dist.ps1 — Assemble `dist\` : daemon + CLI + UI Windows + lanceur.
+# build_dist.ps1 - Assemble `dist\` : daemon + CLI + UI Windows + lanceur.
 #
 # Usage :
 #   powershell -NoProfile -ExecutionPolicy RemoteSigned -File scripts\build_dist.ps1
@@ -7,14 +7,14 @@
 #
 # Produit `dist\` a la racine du depot (dossier portable, deja ignore par
 # git) :
-#   tribler-daemon.exe, tribler-cli.exe   — backend Rust (plan de controle)
-#   tribler_ui.exe + *.dll + data\        — interface Flutter Windows
-#   demarrer.cmd                          — lance daemon puis UI
-#   arreter.cmd                           — PUT /api/shutdown + filet taskkill
-#   build-manifest.json                   — version, commit, rustc, date UTC
+#   tribler-daemon.exe, tribler-cli.exe   - backend Rust (plan de controle)
+#   tribler_ui.exe + *.dll + data\        - interface Flutter Windows
+#   demarrer.cmd                          - lance daemon puis UI
+#   arreter.cmd                           - PUT /api/shutdown + filet taskkill
+#   build-manifest.json                   - version, commit, rustc, date UTC
 #
 # `dist\state\` est cree par demarrer.cmd (--state-dir) et n'est JAMAIS
-# efface par ce script — c'est la donnee utilisateur (base SQLite +
+# efface par ce script - c'est la donnee utilisateur (base SQLite +
 # telechargements). Seuls les artefacts de build connus sont rafraichis.
 
 param(
@@ -91,7 +91,7 @@ if errorlevel 1 pause
     $demarrerPs1 = @'
 # demarrer.ps1 -- lance tribler-daemon puis tribler_ui.
 # Le port API reel (api/http_port_running) et la cle (api/key) vivent
-# dans state\configuration.json — relus a chaque sonde car le port
+# dans state\configuration.json - relus a chaque sonde car le port
 # demande peut etre 0 = aleatoire (parite Python). Toute reponse HTTP,
 # y compris 401, signifie "API en vie".
 $dist = Split-Path -Parent $MyInvocation.MyCommand.Path

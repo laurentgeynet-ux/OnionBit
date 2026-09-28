@@ -18,9 +18,12 @@ class RestDiagnosticRepository implements DiagnosticRepository {
   Future<List<OverlayInfo>> overlays() async => [
     for (final o in _list(await _api.get('/ipv8/overlays'), 'overlays'))
       OverlayInfo(
-        name: '${o['name'] ?? ''}',
+        // `overlay_name`/`peers` : clés réelles de `get_overlays`
+        // pyipv8 — `peers` est la LISTE des pairs ({ip, port,
+        // public_key}), pas un compteur.
+        name: '${o['overlay_name'] ?? ''}',
         id: '${o['id'] ?? ''}',
-        peers: (o['peers'] as num?)?.toInt() ?? 0,
+        peers: (o['peers'] as List?)?.length ?? 0,
       ),
   ];
 
