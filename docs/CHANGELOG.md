@@ -3,7 +3,17 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
-## Étape 20 (partie 1) — coquille Flutter responsive + 4 features (2026-09-28)
+## Étape 20 (partie 1) — coquille Flutter + packaging `dist/` (2026-09-28)
+
+- `scripts/build_dist.ps1` : assemble un dossier **portable** `dist\`
+  (daemon + CLI release, UI Flutter Windows release, `demarrer.cmd`,
+  `arreter.cmd`, `build-manifest.json`). Le lanceur démarre le daemon
+  (console minimisée, `--state-dir %~dp0state`), attend l'API
+  `127.0.0.1:8085` (30 s max), puis ouvre `tribler_ui.exe`.
+  `arreter.cmd` fait `PUT /api/shutdown` puis `taskkill` en filet.
+  `dist\state\` (données utilisateur) n'est jamais effacé par le build.
+  Vérifié de bout en bout : daemon démarré, API `/api/events/info` OK,
+  UI connectée (2 sessions TCP REST+SSE).
 
 Première implémentation de l'UI dans `app/` (le brouillon initial est
 remplacé) :
