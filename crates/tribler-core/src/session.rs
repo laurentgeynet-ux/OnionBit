@@ -298,6 +298,7 @@ impl CoreSession {
             let mut finished: std::collections::HashSet<String> = std::collections::HashSet::new();
             let mut queue_paused: std::collections::HashSet<String> =
                 std::collections::HashSet::new();
+            let mut backed_up: std::collections::HashSet<String> = std::collections::HashSet::new();
             let mut tick = tokio::time::interval(interval);
             tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
@@ -319,6 +320,23 @@ impl CoreSession {
                                 .inner
                                 .db
                                 .with(|c| tribler_db::downloads::set_finished(c, &ih, true));
+                            // `add_download_to_channel` Python : les
+                            // canaux ne sont pas portes — l'attribut
+                            // persiste en base et le manque est trace.
+                            let channel = session
+                                .inner
+                                .db
+                                .with(|c| tribler_db::downloads::get(c, &ih))
+                                .ok()
+                                .flatten()
+                                .map(|r| r.add_download_to_channel)
+                                .unwrap_or(false);
+                            if channel {
+                                tracing::debug!(
+                                    infohash = %stats.info_hash,
+                                    "add_download_to_channel : les canaux ne sont pas implementes"
+                                );
+                            }
                         }
                         // `libtorrent/check_after_complete` Python :
                         // reverification des pieces a la fin
@@ -339,6 +357,20 @@ impl CoreSession {
                         }
                     }
                     session.enforce_seeding_policy(&stats);
+                    // `download_defaults/torrent_folder` Python
+                    // (`PostHandleOp.WRITE_BACKUP_TORRENT`) : sauvegarde
+                    // du .torrent des que le metainfo est connu.
+                    if !session
+                        .inner
+                        .config
+                        .download_defaults
+                        .torrent_folder
+                        .is_empty()
+                        && !backed_up.contains(&stats.info_hash)
+                        && session.backup_torrent_file(&stats.info_hash)
+                    {
+                        backed_up.insert(stats.info_hash.clone());
+                    }
                     session
                         .inner
                         .notifier
@@ -347,6 +379,31 @@ impl CoreSession {
                 session.enforce_queue_limits(&mut queue_paused).await;
             }
         });
+    }
+
+    /// `write_backup_torrent_file` Python : ecrit
+    /// `<name> [<infohash hex>].torrent` dans
+    /// `download_defaults/torrent_folder` quand le metainfo est connu.
+    /// Retourne `false` quand le metainfo n'est pas encore la (magnet
+    /// non resolu — a reessayer au prochain tick) ou `true` sinon.
+    fn backup_torrent_file(&self, ih_hex: &str) -> bool {
+        let folder = &self.inner.config.download_defaults.torrent_folder;
+        let Some(dl) = self.find_download_hex(ih_hex) else {
+            return true; // disparu entre-temps — ne pas reessayer
+        };
+        let Some(bytes) = dl.torrent_bytes() else {
+            return false; // metainfo pas encore arrive (magnet)
+        };
+        let name = dl
+            .name()
+            .unwrap_or_else(|| ih_hex.to_string())
+            .replace(['/', '\\'], "_");
+        let path = Path::new(folder).join(format!("{name} [{ih_hex}].torrent"));
+        if let Err(e) = std::fs::create_dir_all(folder).and_then(|_| std::fs::write(&path, &bytes))
+        {
+            tracing::warn!(error = %e, path = %path.display(), "sauvegarde .torrent impossible");
+        }
+        true
     }
 
     /// Acces au bus d'evenements.
@@ -907,6 +964,8 @@ impl CoreSession {
             auto_managed: dd.auto_managed,
             queue_position: tribler_db::downloads::next_queue_position(c)?,
             completed_dir: (!dd.completed_dir.is_empty()).then(|| dd.completed_dir.clone()),
+            channel_download: dd.channel_download,
+            add_download_to_channel: dd.add_download_to_channel,
             ..Default::default()
         })
     }

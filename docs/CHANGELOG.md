@@ -3,6 +3,49 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Câblage de la configuration (lot daemon/flags) : headless, tray, DB, versioning, canaux (2026-09-29)
+
+Troisième lot du câblage des champs `configuration.json` non lus :
+les flags daemon/UI et les attributs de canal par téléchargement.
+
+- **`headless`** : force l'absence de systray comme `--no-tray`
+  (`spawn_tray`).
+- **`tray_icon_color`** : `#RRGGBB` parsé vers `TrayOptions.icon_color`
+  — quand défini, l'icône systray est un carré recoloré (équivalent du
+  `recolor_tray_icon` Python ; la ressource `.ico` ne peut pas être
+  recolorée, le carré coloré prend donc le pas). Couleur invalide =
+  warn + défaut.
+- **`start_minimized`** : `run_tribler` Python n'ouvre l'UI qu'au
+  démarrage non minimisé — équivalent : `tribler_ui.exe` livré à côté
+  du daemon n'est lancé que si `start_minimized=false` (et
+  `headless=false`).
+- **`database.enabled=false`** : `db_filename` bascule sur
+  `":memory:"` (mode dégradé sans persistance, même repli que
+  `--memory-db`).
+- **`versioning.enabled=false`** : les six routes `/api/versioning/*`
+  répondent 404 — Python n'enregistre tout simplement pas l'endpoint.
+  `versioning/allow_pre` : tracé en `debug` (filtrera les
+  pré-versions quand la vérification distante existera — aucun trafic
+  implicite aujourd'hui).
+- **`recommender` / `rendezvous` `enabled=true`** : lu et `warn` au
+  démarrage — composants Python non portés (implémentation = roadmap),
+  plus silencieusement ignorés.
+- **`libtorrent/download_defaults/torrent_folder`** :
+  `DownloadDefaults.torrent_folder` — la boucle de progression écrit
+  `<name> [<infohash>].torrent` dès que le metainfo est connu
+  (`PostHandleOp.WRITE_BACKUP_TORRENT` / `write_backup_torrent_file`
+  Python ; une fois par téléchargement par session).
+- **`channel_download` / `add_download_to_channel`** : migration
+  `tribler-db` v6 (`downloads.channel_download`,
+  `downloads.add_download_to_channel`), propagées depuis
+  `download_defaults` à l'insertion et persistantes par
+  téléchargement comme les champs `DownloadConfig` Python —
+  `add_download_to_channel` trace en `debug` à la complétion (canaux
+  non portés).
+- **`ui`** : déjà fonctionnelle — arbre `serde_json::Value`
+  préservé tel quel par `GET`/`POST /api/settings` (consommée par la
+  future UI Flutter, rien à brancher côté daemon).
+
 ## Câblage de la configuration (lot libtorrent) : file d'attente, mmap, DHT, `.parts` (2026-09-29)
 
 Deuxième lot du câblage des champs `configuration.json` non lus :

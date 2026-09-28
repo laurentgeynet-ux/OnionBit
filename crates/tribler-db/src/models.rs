@@ -140,4 +140,11 @@ pub struct DownloadRow {
     /// Timestamp de completion (`atp.completed_time` Python ; 0 si
     /// pas termine).
     pub time_finished: i64,
+    /// Marqueur de telechargement de canal (`channel_download` du
+    /// `DownloadConfig` Python — persiste pour la future passe canaux ;
+    /// les canaux ne sont pas encore portes).
+    pub channel_download: bool,
+    /// Ajouter le telechargement termine au canal de l'utilisateur
+    /// (`add_download_to_channel` Python — meme reserve).
+    pub add_download_to_channel: bool,
 }

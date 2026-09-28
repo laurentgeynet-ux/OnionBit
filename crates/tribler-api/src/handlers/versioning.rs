@@ -11,9 +11,27 @@ use axum::Json;
 use crate::error::ApiError;
 use crate::state::AppState;
 
+/// `versioning/enabled` Python : la section desactivee n'enregistre
+/// pas l'endpoint du tout — 404 comme une route absente.
+fn gate(state: &AppState) -> Result<(), ApiError> {
+    let enabled = state
+        .daemon_config
+        .lock()
+        .map(|c| c.versioning.enabled)
+        .unwrap_or(true);
+    if enabled {
+        Ok(())
+    } else {
+        Err(ApiError::not_found("versioning desactive"))
+    }
+}
+
 /// `GET /api/versioning/versions` — sous-repertoires de version dans
 /// `state_dir` (`get_versions` Python : `v8.x` presents).
-pub async fn get_versions(State(state): State<AppState>) -> Json<serde_json::Value> {
+pub async fn get_versions(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    gate(&state)?;
     let mut versions = Vec::new();
     if let Ok(entries) = std::fs::read_dir(&state.session.config().state_dir) {
         for e in entries.flatten() {
@@ -23,23 +41,36 @@ pub async fn get_versions(State(state): State<AppState>) -> Json<serde_json::Val
             }
         }
     }
-    Json(serde_json::json!({
+    Ok(Json(serde_json::json!({
         "versions": versions,
         "current": format!("v{}", env!("CARGO_PKG_VERSION")),
-    }))
+    })))
 }
 
 /// `GET /api/versioning/versions/current` — version courante
 /// (`"git"` si non packagee, comme Python).
-pub async fn get_current_version() -> Json<serde_json::Value> {
-    Json(serde_json::json!({ "version": env!("CARGO_PKG_VERSION") }))
+pub async fn get_current_version(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    gate(&state)?;
+    Ok(Json(
+        serde_json::json!({ "version": env!("CARGO_PKG_VERSION") }),
+    ))
 }
 
 /// `GET /api/versioning/versions/check` — sonde de mise a jour.
 /// Pas de requete reseau : `has_version` est toujours `false`
 /// (comportement documente, pas de trafic implicite).
-pub async fn check_version() -> Json<serde_json::Value> {
-    Json(serde_json::json!({ "new_version": "", "has_version": false }))
+/// `versioning/allow_pre` filtrera les pre-versions quand la
+/// verification distante sera implementee (rien a filtrer pour
+/// l'instant).
+pub async fn check_version(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    gate(&state)?;
+    Ok(Json(
+        serde_json::json!({ "new_version": "", "has_version": false }),
+    ))
 }
 
 /// `DELETE /api/versioning/versions/{version}` — suppression d'un
@@ -48,6 +79,7 @@ pub async fn remove_version(
     State(state): State<AppState>,
     Path(version): Path<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    gate(&state)?;
     if version == format!("v{}", env!("CARGO_PKG_VERSION")) {
         return Err(ApiError::bad_request(
             "impossible de supprimer la version courante",
@@ -71,16 +103,25 @@ pub async fn remove_version(
 
 /// `POST /api/versioning/upgrade` — pas de migration disponible
 /// (`perform_upgrade` Python repond `{"started": bool}`).
-pub async fn perform_upgrade() -> Json<serde_json::Value> {
-    Json(serde_json::json!({ "started": false }))
+pub async fn perform_upgrade(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    gate(&state)?;
+    Ok(Json(serde_json::json!({ "started": false })))
 }
 
 /// `GET /api/versioning/upgrade/available` — rien a migrer.
-pub async fn can_upgrade() -> Json<serde_json::Value> {
-    Json(serde_json::json!({ "can_upgrade": false }))
+pub async fn can_upgrade(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    gate(&state)?;
+    Ok(Json(serde_json::json!({ "can_upgrade": false })))
 }
 
 /// `GET /api/versioning/upgrade/working` — pas de migration en cours.
-pub async fn is_upgrading() -> Json<serde_json::Value> {
-    Json(serde_json::json!({ "working": false }))
+pub async fn is_upgrading(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    gate(&state)?;
+    Ok(Json(serde_json::json!({ "working": false })))
 }

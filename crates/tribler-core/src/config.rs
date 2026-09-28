@@ -44,6 +44,18 @@ pub struct DownloadDefaults {
     /// URL de synchronisation du fichier de trackers
     /// (`trackers_file_sync_url` Python — vide = desactivee).
     pub trackers_file_sync_url: String,
+    /// Dossier de sauvegarde des `.torrent` ajoutes
+    /// (`download_defaults/torrent_folder` Python —
+    /// `write_backup_torrent_file` : `<name> [<infohash>].torrent`
+    /// ecrit quand le metainfo est connu ; vide = desactive).
+    pub torrent_folder: String,
+    /// Marqueur de telechargement de canal (`channel_download`
+    /// Python — persiste par telechargement, comportement canal
+    /// non porte).
+    pub channel_download: bool,
+    /// Ajout du telechargement au canal a completion
+    /// (`add_download_to_channel` Python — meme reserve).
+    pub add_download_to_channel: bool,
 }
 
 impl Default for DownloadDefaults {
@@ -60,6 +72,9 @@ impl Default for DownloadDefaults {
             completed_dir: String::new(),
             trackers_file: String::new(),
             trackers_file_sync_url: String::new(),
+            torrent_folder: String::new(),
+            channel_download: false,
+            add_download_to_channel: false,
         }
     }
 }

@@ -710,6 +710,25 @@ impl DaemonConfig {
         if self.libtorrent.max_concurrent_http_announces != 50 {
             tracing::debug!("libtorrent/max_concurrent_http_announces : non expose par librqbit");
         }
+        // Composants Python non portes : `enabled` est lu et trace
+        // plutot que silencieusement ignore (implementation = roadmap).
+        for (name, enabled) in [
+            ("recommender", self.recommender.enabled),
+            ("rendezvous", self.rendezvous.enabled),
+        ] {
+            if enabled {
+                tracing::warn!("composant {name} active dans la config mais non encore implemente");
+            }
+        }
+        // `versioning/allow_pre` filtre les pre-versions rapportees
+        // par la verification distante — inexistante pour l'instant
+        // (`/api/versioning/versions/check` repond toujours sans mise
+        // a jour ; `enabled` est gate dans les handlers REST).
+        if self.versioning.allow_pre {
+            tracing::debug!(
+                "versioning/allow_pre : sans effet tant qu'aucune verification distante n'existe"
+            );
+        }
 
         let listen = self
             .ipv8
@@ -759,7 +778,10 @@ impl DaemonConfig {
         crate::CoreConfig {
             state_dir: state_dir.to_path_buf(),
             downloads_dir,
-            db_filename: if self.memory_db {
+            // `database.enabled` Python : sans composant DB, Tribler
+            // degrade a un fonctionnement sans persistance — base en
+            // memoire (meme repli que `--memory-db`).
+            db_filename: if self.memory_db || !self.database.enabled {
                 ":memory:".into()
             } else {
                 "tribler.db".into()
@@ -794,6 +816,9 @@ impl DaemonConfig {
                 completed_dir: dd.completed_dir.clone(),
                 trackers_file: dd.trackers_file.clone(),
                 trackers_file_sync_url: dd.trackers_file_sync_url.clone(),
+                torrent_folder: dd.torrent_folder.clone(),
+                channel_download: dd.channel_download,
+                add_download_to_channel: dd.add_download_to_channel,
             },
             ..Default::default()
         }

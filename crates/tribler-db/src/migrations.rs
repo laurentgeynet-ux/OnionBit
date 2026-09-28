@@ -11,7 +11,7 @@
 //! semantique du schema, pas l'interoperabilite binaire).
 
 /// Version courante du schema de ce crate.
-pub const SCHEMA_VERSION: i64 = 5;
+pub const SCHEMA_VERSION: i64 = 6;
 
 /// Script SQL de chaque migration, dans l'ordre (index 0 = v1).
 pub const MIGRATIONS: &[&str] = &[
@@ -153,6 +153,13 @@ CREATE TABLE rss_items (
     first_seen INTEGER NOT NULL,                -- secondes Unix
     PRIMARY KEY (feed_url, link)
 );
+",
+    // v6 : attributs de canal du `DownloadConfig` Python
+    // (`channel_download` / `add_download_to_channel`) — conserves
+    // par telechargement en attente du portage des canaux.
+    "
+ALTER TABLE downloads ADD COLUMN channel_download INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE downloads ADD COLUMN add_download_to_channel INTEGER NOT NULL DEFAULT 0;
 ",
 ];
 

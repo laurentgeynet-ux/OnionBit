@@ -184,7 +184,8 @@ fn spawn_tray(
     tooltip: String,
     signal: &ShutdownSignal,
 ) -> Option<tray::TrayHandle> {
-    if args.no_tray || !daemon_config.tray.enabled {
+    // `headless` Python force l'absence de tray comme `--no-tray`.
+    if args.no_tray || daemon_config.headless || !daemon_config.tray.enabled {
         return None;
     }
     let exe_dir = std::env::current_exe()
@@ -194,6 +195,17 @@ fn spawn_tray(
         .as_ref()
         .map(|d| d.join("tribler_ui.exe"))
         .filter(|p| p.exists());
+    // `start_minimized` Python : `run_tribler` n'ouvre l'UI qu'au
+    // demarrage non minimise. Equivalent daemon : lancer
+    // `tribler_ui.exe` quand il est livre a cote du daemon.
+    if !daemon_config.start_minimized {
+        if let Some(exe) = &ui_exe {
+            match std::process::Command::new(exe).spawn() {
+                Ok(_) => tracing::info!("interface tribler_ui lancee au demarrage"),
+                Err(e) => tracing::warn!(error = %e, "lancement de tribler_ui impossible"),
+            }
+        }
+    }
     // La cle Run doit survivre au repertoire courant : chemins absolus.
     let autostart_cmd = match (
         std::env::current_exe(),
@@ -209,8 +221,28 @@ fn spawn_tray(
         logs_dir: args.state_dir.join("logs"),
         ui_exe,
         autostart_cmd,
+        icon_color: parse_tray_icon_color(&daemon_config.tray_icon_color),
         shutdown: signal.clone(),
     })
+}
+
+/// `tray_icon_color` Python : `#RRGGBB` (l'UI ecrit `#E82901`).
+/// Vide = `None` ; invalide = warn + `None`.
+fn parse_tray_icon_color(s: &str) -> Option<[u8; 3]> {
+    if s.is_empty() {
+        return None;
+    }
+    let hex = s.strip_prefix('#').unwrap_or(s);
+    let parsed = (hex.len() == 6)
+        .then(|| u32::from_str_radix(hex, 16))
+        .and_then(Result::ok);
+    match parsed {
+        Some(rgb) => Some([(rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8]),
+        None => {
+            tracing::warn!(tray_icon_color = %s, "couleur tray invalide (attendu #RRGGBB)");
+            None
+        }
+    }
 }
 
 #[tokio::main]
