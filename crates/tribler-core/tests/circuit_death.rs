@@ -364,3 +364,27 @@ async fn circuit_detruit_bloque_la_lane_sans_fuite() {
 
     session.stop().await;
 }
+
+#[tokio::test]
+async fn anon_engine_demarre_proprement_avec_dht_active_sur_session() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut cfg = CoreConfig::offline(dir.path().to_path_buf());
+    cfg.engine.enable_dht = true;
+    cfg.ipv8.enabled = true;
+    cfg.ipv8.enable_anonymity = true;
+    cfg.ipv8.listen_addr = "127.0.0.1:0".into();
+    let session = CoreSession::start(cfg, Notifier::new())
+        .await
+        .expect("start session");
+    let stack = session.ipv8().expect("stack ipv8");
+    // Les lanes anonymes 1, 2 et 3 doivent pouvoir demarrer sans conflit de DHT ni de port
+    for hops in 1..=3 {
+        let engine = stack.anon_engine(hops).await;
+        assert!(
+            engine.is_ok(),
+            "echec anon_engine({hops}): {:?}",
+            engine.err()
+        );
+    }
+    session.stop().await;
+}

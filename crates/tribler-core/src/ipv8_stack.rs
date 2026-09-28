@@ -645,6 +645,9 @@ impl Ipv8Stack {
         let mut cfg = self.engine_config.clone();
         cfg.socks5_proxy = Some(format!("socks5://{socks_addr}"));
         cfg.utp_only = true;
+        cfg.enable_dht = false;
+        cfg.disable_lsd = true;
+        cfg.listen_port = None;
         cfg.output_dir = self.downloads_dir.join(format!("anon{hops}"));
         let engine = BtEngine::start(cfg).await?;
         let circuit_watchdog_stop = spawn_circuit_watchdog(

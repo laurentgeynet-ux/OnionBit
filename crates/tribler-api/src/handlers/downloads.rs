@@ -274,7 +274,12 @@ pub async fn add_download(
             .session
             .add_torrent_bytes_anon(body.to_vec(), paused, hops)
             .await
-            .map_err(|e| add_err(&state, format!("corrupt torrent file ({e})"), cli))?;
+            .map_err(|e| match &e {
+                tribler_core::CoreError::Format(_) => {
+                    add_err(&state, "corrupt torrent file".into(), cli)
+                }
+                _ => add_err(&state, e.to_string(), cli),
+            })?;
 
         return Ok(Json(serde_json::json!({
             "started": true,

@@ -3,6 +3,17 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Correctif — Initialisation des lanes anonymes (sauts 1, 2, 3) & persistance DHT (2026-09-28)
+
+- **Correction du conflit DHT sur les lanes anonymes** :
+  - `tribler-bittorrent/config.rs` : configuration de `librqbit::DhtSessionConfig` avec `persistence: None` pour la DHT en mémoire éphémère (évite le verrouillage concurrent de `dht.json` et les collisions de port persistant sur Windows `WSAEADDRINUSE 10048`).
+  - `tribler-core/ipv8_stack.rs` : isolation stricte des moteurs BitTorrent anonymes créés par `anon_engine(hops)` : désactivation explicite de la DHT mainline (`enable_dht = false`), de la découverte locale (`disable_lsd = true`) et du port d'écoute direct (`listen_port = None`). Un téléchargement anonyme ne doit jamais émettre de paquets UDP DHT/LSD hors du circuit SOCKS5.
+- **Précision des messages d'erreur API** :
+  - `tribler-api/handlers/downloads.rs` : distinction des erreurs réelles de parsing de fichier (`CoreError::Format(_) -> "corrupt torrent file"`) par rapport aux erreurs d'état du moteur ou de réseau, évitant de masquer les erreurs d'infrastructure sous un faux message de fichier corrompu.
+- **Tests & Packaging** :
+  - Ajout d'un test de non-régression dans `crates/tribler-core/tests/circuit_death.rs` (`anon_engine_demarre_proprement_avec_dht_active_sur_session`) validant que les 3 lanes anonymes s'initialisent correctement même quand la DHT est active sur la session principale.
+  - Reconstruction release complète via `scripts/build_dist.ps1 -SkipCheck` et synchronisation vers `C:\Users\Lou\Desktop\Tribler-Rust-Torrent`.
+
 ## Étape 20 (partie 2) — Câblage complet de l'interface Flutter et du backend (2026-09-28)
 
 - **Câblage des Trackers et Swarm** :

@@ -101,8 +101,17 @@ impl EngineConfig {
             None
         };
 
+        let dht = if self.enable_dht {
+            Some(librqbit::DhtSessionConfig {
+                persistence: None,
+                ..Default::default()
+            })
+        } else {
+            None
+        };
+
         librqbit::SessionOptions {
-            dht: self.enable_dht.then(librqbit::DhtSessionConfig::default),
+            dht,
             disable_trackers: self.disable_trackers,
             disable_local_service_discovery: self.disable_lsd,
             ipv4_only: self.ipv4_only,
