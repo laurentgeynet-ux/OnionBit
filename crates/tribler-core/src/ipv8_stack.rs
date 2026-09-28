@@ -173,6 +173,8 @@ fn spawn_circuit_watchdog(
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(CIRCUIT_PROBE_INTERVAL);
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        // Tentative immediate de construction de circuit
+        let _ = tunnel.build_circuits_if_needed(hops, 1).await;
         // Premier tick immediat : absorbe (l'evaluation initiale est
         // deja faite ci-dessus).
         tick.tick().await;
@@ -180,7 +182,9 @@ fn spawn_circuit_watchdog(
             tokio::select! {
                 _ = stop_rx.changed() => break,
                 _ = changes.changed() => {}
-                _ = tick.tick() => {}
+                _ = tick.tick() => {
+                    let _ = tunnel.build_circuits_if_needed(hops, 1).await;
+                }
             }
             if tunnel.ready_circuits_of_hops(hops).is_empty() {
                 ks.engage_scoped("circuits", format!("aucun circuit READY a {hops} sauts"));

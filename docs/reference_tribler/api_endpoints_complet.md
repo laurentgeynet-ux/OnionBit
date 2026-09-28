@@ -115,8 +115,8 @@ Python : `core/libtorrent/restapi/libtorrent_endpoint.py` · Rust : `handlers/li
 
 | Méthode | Route | Description | Paramètres | Rust |
 | :--- | :--- | :--- | :--- | :--- |
-| GET | `/api/libtorrent/settings` | Réglages `lt::settings_pack` de la session pour `hop` (0 = session claire, 1..3 = sessions anonymisées) | `hop` int `"0"` | ⚠️ le paramètre s'appelle `session` côté Rust (écart à corriger ou assumer) |
-| GET | `/api/libtorrent/session` | Compteurs de stats de la session (`session_stats` : `net.recv_bytes`, `dht.*`, …) | `hop` int `"0"` | ⚠️ idem (`session`) |
+| GET | `/api/libtorrent/settings` | Réglages `lt::settings_pack` de la session pour `hop` (0 = session claire, 1..3 = sessions anonymisées) | `hop` int `"0"` | ✅ (paramètre `hop`, alias `session` supporté) |
+| GET | `/api/libtorrent/session` | Compteurs de stats de la session (`session_stats` : `net.recv_bytes`, `dht.*`, …) | `hop` int `"0"` | ✅ (paramètre `hop`, alias `session` supporté) |
 
 ---
 

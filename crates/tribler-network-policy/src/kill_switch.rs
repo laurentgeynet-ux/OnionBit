@@ -94,6 +94,34 @@ impl KillSwitch {
         }
         Ok(())
     }
+
+    /// Garde-fou lors de l'ajout d'un téléchargement : bloque si le proxy
+    /// SOCKS5 local lui-même est inaccessible ou si un arrêt d'urgence explicite
+    /// a été déclenché, mais n'empêche pas l'enregistrement d'un téléchargement
+    /// en attente de circuits ("le téléchargement attendra").
+    pub fn guard_add(&self) -> Result<()> {
+        let scopes = self.scopes.lock().unwrap();
+        for (scope, reason) in scopes.iter() {
+            if scope != "circuits" {
+                return Err(PolicyError::KillSwitchEngaged(format!("{scope}: {reason}")));
+            }
+        }
+        Ok(())
+    }
+
+    /// `true` si la portée `scope` est engagée.
+    pub fn is_scope_engaged(&self, scope: &str) -> bool {
+        self.scopes.lock().unwrap().contains_key(scope)
+    }
+
+    /// Garde-fou ciblé sur une portée : `Err(KillSwitchEngaged)` si `scope` est engagée.
+    pub fn guard_scope(&self, scope: &str) -> Result<()> {
+        let scopes = self.scopes.lock().unwrap();
+        if let Some(reason) = scopes.get(scope) {
+            return Err(PolicyError::KillSwitchEngaged(format!("{scope}: {reason}")));
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]

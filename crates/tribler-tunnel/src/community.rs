@@ -555,6 +555,66 @@ impl TunnelCommunity {
         }
     }
 
+    /// Tente de construire des circuits pour `hops` sauts si le nombre
+    /// de circuits prets ou en cours est inferieur a `min_circuits`.
+    pub async fn build_circuits_if_needed(
+        self: &Arc<Self>,
+        hops: usize,
+        min_circuits: usize,
+    ) -> Result<(), Ipv8Error> {
+        if hops == 0 || hops > 3 {
+            return Ok(());
+        }
+        let (ready, pending) = {
+            let inner = self.inner.lock().unwrap();
+            let ready = inner
+                .circuits
+                .values()
+                .filter(|c| c.state() == CIRCUIT_STATE_READY && c.goal_hops == hops)
+                .count();
+            let pending = inner
+                .circuits
+                .values()
+                .filter(|c| c.state() != CIRCUIT_STATE_READY && c.goal_hops == hops)
+                .count();
+            (ready, pending)
+        };
+        if ready + pending >= min_circuits {
+            return Ok(());
+        }
+        // Choix du premier hop :
+        // Pour 1 saut : on prefere un pair annoncant EXIT_BT
+        // Pour 2 ou 3 sauts : on prefere un pair RELAY
+        let first_hop = if hops == 1 {
+            let exits = self.get_candidates(crate::routing::PEER_FLAG_EXIT_BT);
+            exits.into_iter().next().or_else(|| {
+                self.network
+                    .peers_for_service(&self.community_id)
+                    .into_iter()
+                    .next()
+            })
+        } else {
+            let relays = self.get_candidates(crate::routing::PEER_FLAG_RELAY);
+            relays.into_iter().next().or_else(|| {
+                let exits = self.get_candidates(crate::routing::PEER_FLAG_EXIT_BT);
+                exits.into_iter().next().or_else(|| {
+                    self.network
+                        .peers_for_service(&self.community_id)
+                        .into_iter()
+                        .next()
+                })
+            })
+        };
+
+        let first_hop = first_hop.or_else(|| self.network.all_verified_peers().into_iter().next());
+
+        if let Some(peer) = first_hop {
+            tracing::info!(hops, peer = ?peer.address, "tentative de creation proactive de circuit");
+            let _ = self.create_circuit(hops, &peer).await?;
+        }
+        Ok(())
+    }
+
     /// `_generate_circuit_id` Python (aleatoire, sans collision avec
     /// circuits/relays/exits connus).
     fn gen_circuit_id(&self) -> u32 {

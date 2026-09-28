@@ -3,6 +3,22 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Correctif — Parité `/api/libtorrent` (`hop`), création proactive de circuits & garde d'ajout (2026-09-28)
+
+- **Parité protocolaire `/api/libtorrent`** :
+  - `tribler-api/handlers/libtorrent.rs` : support du paramètre de requête `?hop={0..3}` pour `/api/libtorrent/settings` et `/api/libtorrent/session` en stricte conformité avec Python Tribler (`libtorrent_endpoint.py`), tout en conservant `session` en alias pour la rétro-compatibilité.
+  - Mise à jour de `docs/reference_tribler/api_endpoints_complet.md` (section 5 validée ✅).
+  - Tests automatisés dans `tribler-api/tests/api.rs`.
+- **Ajout de téléchargements anonymes (1, 2, 3 sauts)** :
+  - `tribler-network-policy/kill_switch.rs` : ajout de `guard_add(&self)` qui n'interdit l'ajout qu'en cas de panne critique du proxy SOCKS5 local ou d'arrêt d'urgence manuel, sans bloquer l'ingestion tant que les circuits overlay sont en cours d'établissement.
+  - `tribler-bittorrent/engine.rs` : utilisation de `guard_add` lors de l'ajout d'un torrent. Le flux réseau SOCKS5 rejette silencieusement les paquets UDP tant qu'aucun circuit n'est prêt (zéro fuite IP garantie), permettant au téléchargement de patienter et de démarrer dès que le circuit est fonctionnel.
+- **Construction proactive des circuits dans `TunnelCommunity`** :
+  - `tribler-ipv8/peer.rs` : exposition de `all_verified_peers()` dans `Network`.
+  - `tribler-tunnel/community.rs` : implémentation de `build_circuits_if_needed(hops, min_circuits)` qui choisit des pairs vérifiés (priorité aux drapeaux de sortie BitTorrent `PEER_FLAG_EXIT_BT` à 1 saut, relais `PEER_FLAG_RELAY` à 2+ sauts, ou pairs vérifiés) et déclenche `create_circuit`.
+  - `tribler-core/ipv8_stack.rs` : appel proactif de `build_circuits_if_needed` dès le démarrage des lanes anonymes et à chaque cycle (5s) du watchdog.
+- **Packaging & Déploiement** :
+  - Binaires release `tribler-daemon.exe` et `tribler-cli.exe` recompilés et déployés dans `dist/` et `C:\Users\Lou\Desktop\Tribler-Rust-Torrent`.
+
 ## Correctif — Initialisation des lanes anonymes (sauts 1, 2, 3) & persistance DHT (2026-09-28)
 
 - **Correction du conflit DHT sur les lanes anonymes** :

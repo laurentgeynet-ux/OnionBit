@@ -233,6 +233,11 @@ impl Network {
         keys.iter().filter_map(|k| self.get_by_key(k)).collect()
     }
 
+    /// Liste de tous les pairs vérifiés connus.
+    pub fn all_verified_peers(&self) -> Vec<Peer> {
+        self.by_key.lock().unwrap().values().cloned().collect()
+    }
+
     /// `discover_address` : un pair nous a introduit une adresse.
     /// Si l'adresse est blacklistee : le pair est quand meme verifie
     /// (comportement Python).

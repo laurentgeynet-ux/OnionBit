@@ -203,7 +203,7 @@ impl BtEngine {
 
     async fn add(&self, add: AddTorrent<'_>, opts: Option<AddTorrentOptions>) -> Result<Download> {
         if let Some(ks) = &self.kill_switch {
-            ks.guard()?;
+            ks.guard_add()?;
         }
         let response = self
             .session

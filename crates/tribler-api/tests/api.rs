@@ -713,6 +713,7 @@ async fn downloads_sous_endpoints() {
 #[tokio::test]
 async fn libtorrent_settings_et_session() {
     let srv = spawn_server().await;
+    // Test avec ?session=0 (compatibilite)
     let resp = srv
         .client
         .get(srv.url("/api/libtorrent/settings?session=0"))
@@ -724,9 +725,20 @@ async fn libtorrent_settings_et_session() {
     assert_eq!(body["hop"], 0);
     assert!(body["settings"]["enable_dht"].is_boolean());
 
+    // Test avec ?hop=0 (parite Python)
     let resp = srv
         .client
-        .get(srv.url("/api/libtorrent/session?session=0"))
+        .get(srv.url("/api/libtorrent/settings?hop=0"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["hop"], 0);
+
+    let resp = srv
+        .client
+        .get(srv.url("/api/libtorrent/session?hop=0"))
         .send()
         .await
         .unwrap();
@@ -734,10 +746,10 @@ async fn libtorrent_settings_et_session() {
     let body: serde_json::Value = resp.json().await.unwrap();
     assert!(body["session"]["torrents"].is_number());
 
-    // Lane anonyme inexistante (pas de stack ipv8) -> 404.
+    // Lane anonyme inexistante (pas de stack ipv8) -> 404 avec ?hop=2 ou ?session=2.
     let resp = srv
         .client
-        .get(srv.url("/api/libtorrent/session?session=2"))
+        .get(srv.url("/api/libtorrent/session?hop=2"))
         .send()
         .await
         .unwrap();

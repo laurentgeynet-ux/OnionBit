@@ -12,24 +12,33 @@ use serde::Deserialize;
 use crate::error::ApiError;
 use crate::state::AppState;
 
-/// `GET /api/libtorrent/settings?session={hops}` — reglages d'une
+/// `GET /api/libtorrent/settings?hop={hops}` — reglages d'une
 /// session moteur (`get_libtorrent_settings` Python : dict plat de
 /// `lt::settings_pack` ; on rend les equivalents rqbit).
+/// Accepte `hop` (parite Python) et `session` (retro-compatibilite).
 #[derive(Debug, Deserialize)]
 pub struct SessionQuery {
-    /// Session : `0` = principale, `1..=3` = lane anonyme.
+    /// Saut : `0` = principale, `1..=3` = lane anonyme.
+    pub hop: Option<String>,
+    /// Alias conserve pour compatibilite.
     pub session: Option<String>,
+}
+
+impl SessionQuery {
+    pub fn hops(&self) -> usize {
+        self.hop
+            .as_deref()
+            .or(self.session.as_deref())
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0)
+    }
 }
 
 pub async fn get_libtorrent_settings(
     State(state): State<AppState>,
     Query(q): Query<SessionQuery>,
 ) -> Json<serde_json::Value> {
-    let hops: usize = q
-        .session
-        .as_deref()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(0);
+    let hops = q.hops();
     let cfg = state.session.config();
     let engine_cfg = if hops == 0 {
         cfg.engine.clone()
@@ -66,17 +75,14 @@ pub async fn get_libtorrent_settings(
     }))
 }
 
-/// `GET /api/libtorrent/session?session={hops}` — etat d'une session
+/// `GET /api/libtorrent/session?hop={hops}` — etat d'une session
 /// (`get_libtorrent_session_info` : flags `hopX_enabled` + stats).
+/// Accepte `hop` (parite Python) et `session` (retro-compatibilite).
 pub async fn get_libtorrent_session_info(
     State(state): State<AppState>,
     Query(q): Query<SessionQuery>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let hops: usize = q
-        .session
-        .as_deref()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(0);
+    let hops = q.hops();
     let engine = if hops == 0 {
         state.session.engine().clone()
     } else {
