@@ -2218,6 +2218,10 @@ impl TunnelCommunity {
 
         let (goal, hops_done, become_exit) = {
             let mut inner = self.inner.lock().unwrap();
+            // `circuit.exit_flags` pyipv8 : flags annonces du dernier
+            // saut verifie (0 si le pair n'a rien publie) — lu avant
+            // l'emprunt mutable de `circuits`.
+            let flags = inner.flag_registry.get(&hop_pk_bin).copied().unwrap_or(0);
             let Some(circuit) = inner.circuits.get_mut(&circuit_id) else {
                 return;
             };
@@ -2226,6 +2230,7 @@ impl TunnelCommunity {
                 address: hop_addr,
                 session_keys,
             });
+            circuit.exit_flags = flags;
             let goal = circuit.goal_hops;
             let done = circuit.hops.len();
             (goal, done, goal.saturating_sub(1) == done)

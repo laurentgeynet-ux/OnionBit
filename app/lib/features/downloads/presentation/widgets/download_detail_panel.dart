@@ -392,6 +392,43 @@ class _PeersTab extends StatelessWidget {
             ),
           ),
         ),
+        if (d.peers.isNotEmpty) ...[
+          const SizedBox(height: AppSpacing.md),
+          Text(
+            '${d.peers.length} pair(s) connecté(s)',
+            style: theme.textTheme.titleMedium,
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          for (final p in d.peers)
+            Card(
+              margin: const EdgeInsets.only(bottom: AppSpacing.xs),
+              child: ListTile(
+                dense: true,
+                leading: Icon(
+                  p.direction == 'L' ? Icons.south_west : Icons.north_east,
+                  size: 18,
+                ),
+                title: Text('${p.ip}:${p.port}'),
+                subtitle: Text(
+                  [
+                    if (p.extendedVersion.isNotEmpty) p.extendedVersion,
+                    if (p.connectionType.isNotEmpty) p.connectionType,
+                  ].join(' · '),
+                ),
+                trailing: Text(
+                  '↓${ByteFormatter.format(p.dtotal)} '
+                  '↑${ByteFormatter.format(p.utotal)}',
+                ),
+              ),
+            ),
+        ] else if (d.isActive) ...[
+          const SizedBox(height: AppSpacing.md),
+          const EmptyState(
+            icon: Icons.people_outline,
+            title: 'Aucun pair connecté',
+            message: 'Le client recherche des pairs via trackers et DHT.',
+          ),
+        ],
       ],
     );
   }

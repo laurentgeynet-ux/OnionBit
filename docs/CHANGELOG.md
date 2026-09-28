@@ -3,6 +3,24 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Suivi des pairs et observabilité live (2026-09-28)
+
+- `exit_flags` des circuits désormais rempli depuis le
+  `flag_registry` à chaque saut vérifié (était toujours 0 →
+  `ready_circuits_of_hops_flags`/`select_circuit` HTTP et l'affichage
+  des capacités de sortie ne fonctionnaient pas).
+- `GET /api/downloads?get_peers=1` consommé par l'UI : nouvelle
+  entité `DownloadPeer` (`ip`, `port`, `extended_version`,
+  `direction`, `downrate`/`uprate`, `dtotal`/`utotal`,
+  `connection_type`) et liste des pairs connectés dans l'onglet
+  « Pairs » du panneau détail.
+- Onglets Diagnostic en **polling 2 s** (`tickProvider`) au lieu
+  d'instantanés figés : compteurs de circuits/relais/sorties et
+  journal se mettent à jour en continu.
+- Onglet Journaux : interrupteur **Debug** relié à
+  `PUT /api/ipv8/asyncio/debug` — bascule le journal en `debug` à
+  chaud pour suivre create/extend/destroy/e2e sans redémarrage.
+
 ## Observabilité des circuits anonymes (2026-09-28)
 
 Suivi complet d'un téléchargement anonyme (1-3 sauts) :

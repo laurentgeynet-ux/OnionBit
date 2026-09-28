@@ -11,4 +11,12 @@ abstract interface class DiagnosticRepository {
 
   /// Journal du daemon — réponse texte brut (`/api/logging`).
   Future<String> logs({int maxLines = 200});
+
+  /// Mode debug du journal (`GET /api/ipv8/asyncio/debug` →
+  /// `enable`) : à `true`, le daemon journalise les événements de
+  /// cellules (create/extend/created/destroy, e2e, sorties).
+  Future<bool> debugEnabled();
+
+  /// Bascule le mode debug (`PUT /api/ipv8/asyncio/debug`).
+  Future<void> setDebug(bool enable);
 }

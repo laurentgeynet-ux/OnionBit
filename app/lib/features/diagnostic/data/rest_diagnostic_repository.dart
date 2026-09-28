@@ -98,4 +98,15 @@ class RestDiagnosticRepository implements DiagnosticRepository {
   @override
   Future<String> logs({int maxLines = 200}) =>
       _api.getText('/logging', query: {'max_lines': '$maxLines'});
+
+  @override
+  Future<bool> debugEnabled() async {
+    final resp =
+        await _api.get('/ipv8/asyncio/debug') as Map<String, dynamic>;
+    return resp['enable'] == true;
+  }
+
+  @override
+  Future<void> setDebug(bool enable) =>
+      _api.put('/ipv8/asyncio/debug', body: {'enable': enable});
 }

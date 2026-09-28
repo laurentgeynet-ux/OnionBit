@@ -13,7 +13,11 @@ class RestDownloadsRepository implements DownloadsRepository {
 
   @override
   Future<List<Download>> list() async {
-    final resp = await _api.get('/downloads') as Map<String, dynamic>;
+    // `get_peers=1` : la GUI Python poll ce flag pour la liste de
+    // pairs de chaque download (onglet Pairs du panneau détail).
+    final resp =
+        await _api.get('/downloads', query: {'get_peers': '1'})
+            as Map<String, dynamic>;
     final items = resp['downloads'] as List<dynamic>? ?? const [];
     return items
         .whereType<Map<String, dynamic>>()

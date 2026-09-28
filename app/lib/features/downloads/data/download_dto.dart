@@ -1,4 +1,5 @@
 import '../domain/download.dart';
+import '../domain/download_peer.dart';
 import '../domain/download_tracker.dart';
 
 /// Extension de parsing du dict `info` (format Python, voir
@@ -37,6 +38,21 @@ extension DownloadJson on Map<String, dynamic> {
             peers: (t['peers'] as num?)?.toInt() ?? -1,
             seeds: (t['seeds'] as num?)?.toInt() ?? -1,
             leeches: (t['leeches'] as num?)?.toInt() ?? -1,
+          ),
+    ],
+    peers: [
+      for (final p in (this['peers'] as List?) ?? const [])
+        if (p is Map<String, dynamic>)
+          DownloadPeer(
+            ip: '${p['ip'] ?? ''}',
+            port: (p['port'] as num?)?.toInt() ?? 0,
+            extendedVersion: '${p['extended_version'] ?? ''}',
+            direction: '${p['direction'] ?? ''}',
+            downrate: (p['downrate'] as num?)?.toInt() ?? 0,
+            uprate: (p['uprate'] as num?)?.toInt() ?? 0,
+            dtotal: (p['dtotal'] as num?)?.toInt() ?? 0,
+            utotal: (p['utotal'] as num?)?.toInt() ?? 0,
+            connectionType: '${p['connection_type'] ?? ''}',
           ),
     ],
   );

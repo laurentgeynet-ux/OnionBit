@@ -1,3 +1,4 @@
+import 'download_peer.dart';
 import 'download_tracker.dart';
 
 /// Entité métier `Download` — miroir de `DownloadInfo` (DTO de
@@ -26,6 +27,7 @@ class Download {
     required this.destination,
     required this.streamable,
     required this.trackers,
+    required this.peers,
   });
 
   final String infohash;
@@ -52,6 +54,10 @@ class Download {
   final String destination;
   final bool streamable;
   final List<DownloadTracker> trackers;
+
+  /// Pairs connectés (`?get_peers=1`) — vide si la liste n'a pas été
+  /// demandée.
+  final List<DownloadPeer> peers;
 
   bool get isActive => status == 'DOWNLOADING' || status == 'SEEDING';
   bool get isPaused => status == 'STOPPED';

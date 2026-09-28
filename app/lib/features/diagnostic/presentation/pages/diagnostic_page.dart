@@ -268,15 +268,43 @@ class _LogsTab extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final logs = ref.watch(daemonLogsProvider);
+    final debug = ref.watch(debugLogEnabledProvider);
     return Column(
       children: [
-        Align(
-          alignment: Alignment.centerRight,
-          child: IconButton(
-            tooltip: 'Rafraîchir',
-            icon: const Icon(Icons.refresh, size: 18),
-            onPressed: () => ref.invalidate(daemonLogsProvider),
-          ),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.end,
+          children: [
+            // `PUT /api/ipv8/asyncio/debug` : bascule le filtre de log
+            // à `debug` à chaud — rend visibles les événements de
+            // cellules tunnel (create/extend/destroy, e2e, sorties).
+            Tooltip(
+              message:
+                  'Journalise les événements tunnel détaillés '
+                  '(create/extend/destroy, e2e…)',
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text('Debug', style: Theme.of(context).textTheme.bodySmall),
+                  Switch(
+                    value: debug.value ?? false,
+                    onChanged: debug.isLoading
+                        ? null
+                        : (v) async {
+                            await ref
+                                .read(diagnosticRepositoryProvider)
+                                .setDebug(v);
+                            ref.invalidate(debugLogEnabledProvider);
+                          },
+                  ),
+                ],
+              ),
+            ),
+            IconButton(
+              tooltip: 'Rafraîchir',
+              icon: const Icon(Icons.refresh, size: 18),
+              onPressed: () => ref.invalidate(daemonLogsProvider),
+            ),
+          ],
         ),
         Expanded(
           child: logs.when(
