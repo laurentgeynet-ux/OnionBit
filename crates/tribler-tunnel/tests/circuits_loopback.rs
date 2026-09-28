@@ -976,6 +976,73 @@ async fn socks5_connect_http_roundtrip() {
     );
 }
 
+/// SOCKS5 CONNECT vers une cible **HTTPS** : le relais doit rester
+/// transparent (aucun parsing du contenu par l'exit) pour laisser le
+/// client (`reqwest`) negocier sa propre session TLS de bout en bout
+/// a travers le tunnel — c'est le scenario qui echouait
+/// systematiquement avant le passage au relais bidirectionnel en
+/// flux continu (l'ancien mecanisme "une requete, une reponse" ne
+/// pouvait pas relayer un `ClientHello`/`ServerHello` TLS).
+#[tokio::test]
+async fn socks5_connect_https_roundtrip() {
+    let a = make_node().await;
+    let b = make_node_flags(PEER_FLAG_RELAY | PEER_FLAG_EXIT_HTTP).await;
+    let nodes = [a, b];
+    let (cid, _) = build_circuit(&nodes, 1).await;
+    nodes[0]
+        .tunnel
+        .set_circuit_exit_flags(cid, PEER_FLAG_EXIT_HTTP);
+
+    // Faux tracker HTTPS loopback (axum + certificat auto-signe).
+    let certified =
+        rcgen::generate_simple_self_signed(vec!["localhost".into(), "127.0.0.1".into()]).unwrap();
+    let tls_config = axum_server::tls_rustls::RustlsConfig::from_pem(
+        certified.cert.pem().into_bytes(),
+        certified.key_pair.serialize_pem().into_bytes(),
+    )
+    .await
+    .unwrap();
+    let app = axum::Router::new().route(
+        "/announce",
+        axum::routing::get(|| async { "d8:intervali1800e5:peers0:e" }),
+    );
+    let std_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let tracker_addr = std_listener.local_addr().unwrap();
+    std_listener.set_nonblocking(true).unwrap();
+    tokio::spawn(async move {
+        axum_server::from_tcp_rustls(std_listener, tls_config)
+            .unwrap()
+            .serve(app.into_make_service())
+            .await
+            .unwrap();
+    });
+
+    // Proxy SOCKS5 + client reqwest : CONNECT via socks5, TLS de bout
+    // en bout negocie par reqwest lui-meme (cert auto-signe accepte).
+    let socks = Socks5Server::new(nodes[0].tunnel.clone(), 1);
+    let proxy = socks.listen("127.0.0.1:0").await.unwrap();
+    let client = reqwest::Client::builder()
+        .proxy(reqwest::Proxy::all(format!("socks5://{proxy}")).unwrap())
+        .danger_accept_invalid_certs(true)
+        .build()
+        .unwrap();
+    let resp = tokio::time::timeout(
+        TEST_TIMEOUT,
+        client
+            .get(format!(
+                "https://127.0.0.1:{}/announce",
+                tracker_addr.port()
+            ))
+            .send(),
+    )
+    .await
+    .expect("pas de reponse a travers le tunnel HTTPS")
+    .expect("requete HTTPS echouee");
+    assert_eq!(resp.status(), 200);
+    let body = resp.text().await.unwrap();
+    assert_eq!(body, "d8:intervali1800e5:peers0:e");
+}
+
 /// Suivi des flags de service via les introductions sur le prefixe
 /// tunnel : `ExtraIntroductionPayload` piggybacke dans les
 /// `introduction-request`/`response` (`extra_bytes` = bitmask `>H`),

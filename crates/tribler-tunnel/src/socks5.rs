@@ -188,34 +188,59 @@ impl Socks5Server {
         }
     }
 
-    /// `CONNECT` (`socks5.rs` `ipv8-rust-tunnels`) : le client
-    /// SOCKS5 est libtorrent — la requete lue est HTTP brute, relayee
-    /// en cellules `http-request`/`http-response` sur un circuit dont
-    /// la sortie porte `PEER_FLAG_EXIT_HTTP`.
+    /// `CONNECT` (`socks5.rs` `ipv8-rust-tunnels`) : relais TCP
+    /// transparent — le client SOCKS5 (libtorrent/reqwest) negocie
+    /// lui-meme sa propre session TLS de bout en bout quand la cible
+    /// est `https://` ; on ne parse jamais le contenu, on relaie des
+    /// octets opaques dans les deux sens en cellules
+    /// `http-request`/`http-response` (msg 28/29) jusqu'a fermeture.
     async fn handle_connect(&self, mut conn: TcpStream) -> Result<(), Ipv8Error> {
         let target = read_address(&mut conn).await?;
-        // Reponse positive : CONNECT "reussi" cote SOCKS5 (la requete
-        // proprement dite part ensuite en cellules).
+        // Reponse positive : CONNECT "reussi" cote SOCKS5 (le flux
+        // part ensuite en cellules, dans les deux sens).
         let mut rep = vec![SOCKS5_VER, REP_SUCCEEDED, 0, ATYP_IPV4];
         rep.extend_from_slice(&[0; 4]);
         rep.extend_from_slice(&[0; 2]);
         conn.write_all(&rep).await?;
 
-        let mut buf = vec![0u8; crate::http_tunnel::CONNECT_REQUEST_MAX];
+        let mut buf = vec![0u8; crate::http_tunnel::CONNECT_READ_CHUNK];
         let n = conn.read(&mut buf).await?;
         let cid = self.select_http_circuit()?;
-        tracing::trace!(cid, ?target, "socks5: CONNECT -> http-request");
-        let response = self
+        tracing::trace!(cid, ?target, "socks5: CONNECT -> flux http-request");
+        let (sender, mut receiver) = self
             .tunnel
-            .perform_http_request(
-                cid,
-                &target,
-                &buf[..n],
-                crate::http_tunnel::HTTP_RESPONSE_TIMEOUT_MS,
-            )
+            .open_http_stream(cid, &target, &buf[..n])
             .await?;
-        conn.write_all(&response).await?;
-        conn.shutdown().await?;
+
+        let (mut read_half, mut write_half) = conn.into_split();
+        let idle =
+            std::time::Duration::from_millis(crate::http_tunnel::HTTP_STREAM_IDLE_TIMEOUT_MS);
+        // Local -> tunnel : chaque lecture du client part en chunk
+        // supplementaire (meme identifier), dans l'ordre.
+        let uploader = tokio::spawn(async move {
+            let mut buf = vec![0u8; crate::http_tunnel::CONNECT_READ_CHUNK];
+            loop {
+                match tokio::time::timeout(idle, read_half.read(&mut buf)).await {
+                    Ok(Ok(0)) | Err(_) => break,
+                    Ok(Ok(n)) => {
+                        if sender.send(&buf[..n]).await.is_err() {
+                            break;
+                        }
+                    }
+                    Ok(Err(_)) => break,
+                }
+            }
+        });
+        // Tunnel -> local : chaque chunk `http-response` recu est
+        // ecrit immediatement sur la socket du client, jusqu'au
+        // chunk final (`Ok(None)`) ou a une inactivite prolongee.
+        while let Ok(Some(chunk)) = receiver.recv(idle).await {
+            if write_half.write_all(&chunk).await.is_err() {
+                break;
+            }
+        }
+        uploader.abort();
+        let _ = write_half.shutdown().await;
         Ok(())
     }
 

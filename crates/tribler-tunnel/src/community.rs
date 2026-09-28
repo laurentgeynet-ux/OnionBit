@@ -59,9 +59,6 @@ const E2E_CHANNEL_CAP: usize = 64;
 /// Capacite du canal `circuit_removed` (`Notification.circuit_removed`
 /// pyipv8 — relaye en topic SSE `tunnel_removed` par `tribler-core`).
 const CIRCUIT_REMOVED_CHANNEL_CAP: usize = 64;
-/// Capacite du canal de chunks `http-response` par requete en cours.
-const HTTP_REQUEST_PARTS_CAP: usize = 64;
-
 /// `circuit_timeout`/`next_hop_timeout` Python (60 s/10 s) : borne
 /// d'attente `await circuit.ready` du speed-test REST — un circuit
 /// dont le premier hop ne repond pas n'a aucune raison d'etre
@@ -132,8 +129,15 @@ pub(crate) struct Inner {
     /// `LinkRequestCache` : identifier -> attente de `linked-e2e`.
     pub(crate) link_requests: HashMap<u16, LinkRequest>,
     /// Cache `HTTPRequest` (`ipv8-rust-tunnels` `request_cache`) :
-    /// identifier u32 -> canal recevant les chunks `http-response`.
+    /// identifier u32 -> canal recevant les chunks `http-response`
+    /// (cote demandeur, flux CONNECT en cours).
     pub(crate) http_requests: HashMap<u32, tokio::sync::mpsc::Sender<tp::HttpResponse>>,
+    /// Flux `http-request` en cours cote sortie : `(circuit_id,
+    /// identifier)` -> canal vers la tache qui possede la socket TCP
+    /// reelle (chaque nouveau chunk `http-request` du meme identifier
+    /// est ecrit sur la socket deja ouverte, pas une nouvelle
+    /// connexion).
+    pub(crate) http_streams: HashMap<(u32, u32), tokio::sync::mpsc::Sender<Vec<u8>>>,
     /// Abonnes par circuit (`subscribe_circuit_data`) — les relais
     /// UDP du hidden seeding captent les donnees de leurs circuits
     /// e2e avant le canal `data_tx` general (SOCKS5).
@@ -343,6 +347,98 @@ fn flags_to_list(mask: i32) -> Vec<i32> {
         .collect()
 }
 
+/// Moitie "envoi" d'un flux `CONNECT` ([`TunnelCommunity::open_http_stream`]) —
+/// clonable/deplacable independamment de [`HttpStreamReceiver`] pour
+/// alimenter une tache de pompage dediee a chaque sens.
+#[derive(Clone)]
+pub struct HttpStreamSender {
+    tunnel: Arc<TunnelCommunity>,
+    circuit_id: u32,
+    identifier: u32,
+    /// Reenvoye tel quel a chaque chunk suivant (ignore par l'exit
+    /// apres le premier, mais requis par le format de cellule).
+    target: UdpAddress,
+    addr: UdpAddress,
+}
+
+impl HttpStreamSender {
+    /// Envoie un chunk supplementaire (meme flux, meme `identifier`).
+    pub async fn send(&self, chunk: &[u8]) -> Result<(), Ipv8Error> {
+        let p = tp::HttpRequest {
+            circuit_id: self.circuit_id,
+            identifier: self.identifier,
+            target: self.target.clone(),
+            request: chunk.to_vec(),
+        };
+        self.tunnel.send_cell(&self.addr, &p).await.map(|_| ())
+    }
+}
+
+/// Moitie "reception" d'un flux `CONNECT` — possede le canal des
+/// chunks `http-response`. Retire son entree de `http_requests` a la
+/// destruction (evite toute fuite si le CONNECT est abandonne en
+/// cours de route).
+pub struct HttpStreamReceiver {
+    tunnel: Arc<TunnelCommunity>,
+    identifier: u32,
+    rx: tokio::sync::mpsc::Receiver<tp::HttpResponse>,
+    /// `true` une fois le chunk final (`total=1`) recu — `recv` ne
+    /// renvoie plus rien apres.
+    closed: bool,
+}
+
+impl HttpStreamReceiver {
+    /// Attend le prochain chunk de reponse (`Ok(None)` = flux ferme
+    /// proprement par la sortie) ou `timeout` (aucune activite).
+    pub async fn recv(
+        &mut self,
+        timeout: std::time::Duration,
+    ) -> Result<Option<Vec<u8>>, Ipv8Error> {
+        if self.closed {
+            return Ok(None);
+        }
+        match tokio::time::timeout(timeout, self.rx.recv()).await {
+            Ok(Some(chunk)) => {
+                if chunk.total != 0 {
+                    self.closed = true;
+                }
+                if chunk.response.is_empty() && self.closed {
+                    Ok(None)
+                } else {
+                    Ok(Some(chunk.response))
+                }
+            }
+            Ok(None) => {
+                self.closed = true;
+                Ok(None)
+            }
+            Err(_) => Err(Ipv8Error::Malformed("timeout http-response")),
+        }
+    }
+}
+
+impl Drop for HttpStreamReceiver {
+    fn drop(&mut self) {
+        if let Ok(mut inner) = self.tunnel.inner.lock() {
+            inner.http_requests.remove(&self.identifier);
+        }
+    }
+}
+
+/// Contexte de [`TunnelCommunity::run_exit_http_stream`] — regroupe
+/// les parametres pour rester sous la limite clippy
+/// `too_many_arguments`.
+struct ExitHttpStreamCtx {
+    circuit_id: u32,
+    identifier: u32,
+    target: UdpAddress,
+    first_chunk: Vec<u8>,
+    addr: UdpAddress,
+    rx: tokio::sync::mpsc::Receiver<Vec<u8>>,
+    /// Conserve pour son `Drop` (libere le slot `MAX_HTTP_REQUESTS_PER_CIRCUIT`).
+    permit: tokio::sync::OwnedSemaphorePermit,
+}
+
 impl TunnelCommunity {
     /// Cree la community et s'enregistre en listener brut sur le
     /// prefixe tunnel. `peer_flags` : flags de service
@@ -394,6 +490,7 @@ impl TunnelCommunity {
                 e2e_requests: HashMap::new(),
                 link_requests: HashMap::new(),
                 http_requests: HashMap::new(),
+                http_streams: HashMap::new(),
                 data_subscribers: HashMap::new(),
                 flag_registry: HashMap::new(),
             }),
@@ -842,88 +939,75 @@ impl TunnelCommunity {
         self.endpoint.send_to(addr, &wire).await.map(|_| wire.len())
     }
 
-    /// `perform_http_request` (`ipv8-rust-tunnels` `socks5.rs`) :
-    /// envoie une requete HTTP brute en cellule `http-request` sur le
-    /// circuit `circuit_id` et recolle les chunks `http-response`
-    /// (`part`/`total`) jusqu'a la reponse complete.
-    pub async fn perform_http_request(
-        &self,
+    /// Ouvre un flux `CONNECT` sur `circuit_id` : envoie `first_chunk`
+    /// en cellule `http-request` (msg 28) puis retourne
+    /// `(`[`HttpStreamSender`]`, `[`HttpStreamReceiver`]`)` — l'appelant
+    /// pompe les deux sens sur des taches distinctes jusqu'a la
+    /// fermeture du flux distant. Relais transparent : aucune
+    /// hypothese sur le contenu (TLS ou HTTP en clair).
+    pub async fn open_http_stream(
+        self: &Arc<Self>,
         circuit_id: u32,
         target: &UdpAddress,
-        request: &[u8],
-        timeout_ms: u64,
-    ) -> Result<Vec<u8>, Ipv8Error> {
+        first_chunk: &[u8],
+    ) -> Result<(HttpStreamSender, HttpStreamReceiver), Ipv8Error> {
         let identifier = rand::thread_rng().next_u32();
-        let (tx, mut rx) = tokio::sync::mpsc::channel(HTTP_REQUEST_PARTS_CAP);
+        let (tx, rx) = tokio::sync::mpsc::channel(crate::http_tunnel::HTTP_STREAM_QUEUE);
         self.inner
             .lock()
             .unwrap()
             .http_requests
             .insert(identifier, tx);
-        let result = async {
-            let p = tp::HttpRequest {
-                circuit_id,
-                identifier,
-                target: target.clone(),
-                request: request.to_vec(),
-            };
-            let addr = {
-                let inner = self.inner.lock().unwrap();
-                inner
-                    .circuits
-                    .get(&circuit_id)
-                    .and_then(|c| c.first_hop().and_then(|h| h.address.clone()))
-                    .ok_or(Ipv8Error::Malformed("circuit HTTP inconnu"))?
-            };
-            self.send_cell(&addr, &p).await?;
-            // Le `total` est fige au premier chunk recu (les suivants
-            // incoherents sont ignores) et l'assemblage exige la
-            // contiguite 0..total — un trou = timeout, jamais une
-            // reponse partielle silencieuse.
-            let collected =
-                tokio::time::timeout(std::time::Duration::from_millis(timeout_ms), async {
-                    let mut parts: HashMap<u16, Vec<u8>> = HashMap::new();
-                    let mut total: Option<u16> = None;
-                    while let Some(chunk) = rx.recv().await {
-                        let t = *total.get_or_insert(chunk.total);
-                        if chunk.total != t || chunk.part >= t {
-                            continue;
-                        }
-                        parts.insert(chunk.part, chunk.response);
-                        if parts.len() >= t as usize {
-                            break;
-                        }
-                    }
-                    let t = total.unwrap_or(0);
-                    let mut out = Vec::new();
-                    for i in 0..t {
-                        match parts.get(&i) {
-                            Some(d) => out.extend_from_slice(d),
-                            None => {
-                                return Err(Ipv8Error::Malformed("chunk http-response manquant"))
-                            }
-                        }
-                    }
-                    Ok::<Vec<u8>, Ipv8Error>(out)
-                })
-                .await;
-            match collected {
-                Ok(r) => r,
-                Err(_) => Err(Ipv8Error::Malformed("timeout http-response")),
-            }
+        let addr = {
+            let inner = self.inner.lock().unwrap();
+            inner
+                .circuits
+                .get(&circuit_id)
+                .and_then(|c| c.first_hop().and_then(|h| h.address.clone()))
+        };
+        let Some(addr) = addr else {
+            self.inner.lock().unwrap().http_requests.remove(&identifier);
+            return Err(Ipv8Error::Malformed("circuit HTTP inconnu"));
+        };
+        let p = tp::HttpRequest {
+            circuit_id,
+            identifier,
+            target: target.clone(),
+            request: first_chunk.to_vec(),
+        };
+        if let Err(e) = self.send_cell(&addr, &p).await {
+            self.inner.lock().unwrap().http_requests.remove(&identifier);
+            return Err(e);
         }
-        .await;
-        // Retrait sur TOUS les chemins (succes, timeout, erreur
-        // d'envoi) : sinon l'entree `http_requests` fuit.
-        self.inner.lock().unwrap().http_requests.remove(&identifier);
-        result
+        let sender = HttpStreamSender {
+            tunnel: Arc::clone(self),
+            circuit_id,
+            identifier,
+            target: target.clone(),
+            addr,
+        };
+        let receiver = HttpStreamReceiver {
+            tunnel: Arc::clone(self),
+            identifier,
+            rx,
+            closed: false,
+        };
+        Ok((sender, receiver))
     }
 
     /// `on_http_request` (`socket.rs`) : cote sortie — exige
-    /// `PEER_FLAG_EXIT_HTTP`, borne les requetes simultanees par un
-    /// semaphore, execute la requete TCP puis renvoie la reponse
-    /// decoupee en chunks `HTTP_RESPONSE_CHUNK`.
+    /// `PEER_FLAG_EXIT_HTTP`. Premier chunk d'un `identifier` : ouvre
+    /// une connexion TCP reelle vers `target` et lance le relais
+    /// bidirectionnel ; chunks suivants : ecrits sur la connexion deja
+    /// ouverte.
     fn on_http_request(self: &Arc<Self>, circuit_id: u32, p: tp::HttpRequest) {
+        let key = (circuit_id, p.identifier);
+        let existing = self.inner.lock().unwrap().http_streams.get(&key).cloned();
+        if let Some(tx) = existing {
+            // Flux deja ouvert : simple relai vers la socket reelle.
+            let _ = tx.try_send(p.request);
+            return;
+        }
         if self.inner.lock().unwrap().peer_flags & PEER_FLAG_EXIT_HTTP == 0 {
             tracing::debug!(circuit_id, "http-request refuse (EXIT_HTTP inactif)");
             return;
@@ -945,39 +1029,117 @@ impl TunnelCommunity {
                 }
             }
         };
+        let (tx, rx) = tokio::sync::mpsc::channel::<Vec<u8>>(crate::http_tunnel::HTTP_STREAM_QUEUE);
+        self.inner.lock().unwrap().http_streams.insert(key, tx);
         let this = Arc::clone(self);
+        let ctx = ExitHttpStreamCtx {
+            circuit_id,
+            identifier: p.identifier,
+            target: p.target,
+            first_chunk: p.request,
+            addr,
+            rx,
+            permit,
+        };
         tokio::spawn(async move {
-            let result = tokio::time::timeout(
-                std::time::Duration::from_millis(crate::http_tunnel::HTTP_TCP_TIMEOUT_MS),
-                crate::http_tunnel::send_tcp_request(&p.target, &p.request),
-            )
-            .await;
-            let Ok(Ok(response)) = result else {
-                tracing::warn!(circuit_id, "requete TCP de sortie en echec");
-                return;
-            };
-            let total = response
-                .len()
-                .div_ceil(crate::http_tunnel::HTTP_RESPONSE_CHUNK)
-                .max(1) as u16;
-            for (index, chunk) in response
-                .chunks(crate::http_tunnel::HTTP_RESPONSE_CHUNK)
-                .enumerate()
-            {
-                let part = tp::HttpResponse {
-                    circuit_id,
-                    identifier: p.identifier,
-                    part: index as u16,
-                    total,
-                    response: chunk.to_vec(),
-                };
-                if let Err(e) = this.send_cell(&addr, &part).await {
-                    tracing::warn!(circuit_id, error = %e, "envoi http-response en echec");
-                    return;
+            this.clone().run_exit_http_stream(ctx).await;
+            this.inner.lock().unwrap().http_streams.remove(&key);
+        });
+    }
+
+    /// Relais bidirectionnel d'un flux `CONNECT` cote sortie : ouvre
+    /// `target` en TCP reel, ecrit `first_chunk`, puis pompe dans les
+    /// deux sens jusqu'a fermeture ou inactivite
+    /// ([`crate::http_tunnel::HTTP_STREAM_IDLE_TIMEOUT_MS`]). Ne parse
+    /// jamais le contenu (TLS ou HTTP en clair transitent identiques,
+    /// l'exit ne voit que des octets opaques).
+    async fn run_exit_http_stream(self: Arc<Self>, ctx: ExitHttpStreamCtx) {
+        let ExitHttpStreamCtx {
+            circuit_id,
+            identifier,
+            target,
+            first_chunk,
+            addr,
+            mut rx,
+            permit: _permit,
+        } = ctx;
+        let idle =
+            std::time::Duration::from_millis(crate::http_tunnel::HTTP_STREAM_IDLE_TIMEOUT_MS);
+        let connected = tokio::time::timeout(
+            std::time::Duration::from_millis(crate::http_tunnel::HTTP_CONNECT_TIMEOUT_MS),
+            crate::http_tunnel::connect_target(&target),
+        )
+        .await;
+        let close_cell = |part: u16| tp::HttpResponse {
+            circuit_id,
+            identifier,
+            part,
+            total: 1,
+            response: Vec::new(),
+        };
+        let Ok(Ok(stream)) = connected else {
+            tracing::warn!(circuit_id, ?target, "connexion TCP de sortie impossible");
+            let _ = self.send_cell(&addr, &close_cell(0)).await;
+            return;
+        };
+        let (mut read_half, mut write_half) = stream.into_split();
+        if tokio::io::AsyncWriteExt::write_all(&mut write_half, &first_chunk)
+            .await
+            .is_err()
+        {
+            let _ = self.send_cell(&addr, &close_cell(0)).await;
+            return;
+        }
+        // Tache d'ecriture : relaie les chunks `http-request` suivants
+        // (meme identifier) vers la socket reelle, dans l'ordre
+        // d'arrivee.
+        let writer = tokio::spawn(async move {
+            while let Some(chunk) = rx.recv().await {
+                if tokio::io::AsyncWriteExt::write_all(&mut write_half, &chunk)
+                    .await
+                    .is_err()
+                {
+                    break;
                 }
             }
-            drop(permit);
         });
+        // Boucle de lecture : relaie la socket reelle vers des
+        // cellules `http-response` au fil de l'eau (`total=0` = le
+        // flux continue) — jamais d'attente d'une reponse complete.
+        let mut part: u16 = 0;
+        let mut buf = vec![0u8; crate::http_tunnel::HTTP_RESPONSE_CHUNK];
+        loop {
+            let read = tokio::time::timeout(
+                idle,
+                tokio::io::AsyncReadExt::read(&mut read_half, &mut buf),
+            )
+            .await;
+            match read {
+                Ok(Ok(0)) | Err(_) => break,
+                Ok(Ok(n)) => {
+                    let cell = tp::HttpResponse {
+                        circuit_id,
+                        identifier,
+                        part,
+                        total: 0,
+                        response: buf[..n].to_vec(),
+                    };
+                    if let Err(e) = self.send_cell(&addr, &cell).await {
+                        tracing::warn!(circuit_id, error = %e, "envoi http-response en echec");
+                        break;
+                    }
+                    part = part.wrapping_add(1);
+                }
+                Ok(Err(e)) => {
+                    tracing::debug!(circuit_id, error = %e, "lecture de sortie en erreur");
+                    break;
+                }
+            }
+        }
+        // Chunk final : `total=1` signale la fin du flux (le
+        // demandeur ferme sa connexion locale).
+        let _ = self.send_cell(&addr, &close_cell(part)).await;
+        writer.abort();
     }
 
     /// `on_http_response` (`socket.rs`) : cote demandeur — achemine le

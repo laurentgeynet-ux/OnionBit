@@ -3,6 +3,56 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Correctif majeur : SOCKS5 CONNECT relayait mal les trackers HTTPS (2026-09-29)
+
+**Cause racine du blocage des téléchargements anonymes** identifiée
+après investigation des logs verbeux : le circuit `READY` et le
+kill switch désarmé (corrigés précédemment) ne suffisaient pas — les
+annonces tracker échouaient **systématiquement** avec `timeout
+http-response` puis `tls handshake eof`, quel que soit le pair de
+sortie.
+
+- **Cause** : `handle_connect` (SOCKS5 `CONNECT`) et
+  `send_tcp_request` (côté sortie) traitaient le flux comme un
+  échange HTTP en clair **unique** (une requête complète → une
+  réponse complète, avec parsing `Content-Length`/`chunked`). Or les
+  trackers réels sont en **HTTPS** : le client (`reqwest`/`librqbit`)
+  négocie sa propre session TLS de bout en bout à travers le
+  `CONNECT` — le premier octet envoyé est un `ClientHello` binaire,
+  pas une requête HTTP. Le parseur ne pouvait jamais fonctionner ;
+  confirmé par le commit d'origine (`ecb7fff`), qui ne testait que
+  contre un faux tracker HTTP en clair, jamais HTTPS.
+- **Correctif** : les cellules `http-request`/`http-response` (msg
+  28/29, `HTTPRequestPayload`/`HTTPResponsePayload` — inchangées,
+  confirmées identiques dans la référence `ipv8-rust-tunnels`
+  locale) sont désormais réutilisées en **flux continu** plutôt
+  qu'en échange unique :
+  - Côté sortie (`on_http_request`/`run_exit_http_stream`) : ouvre
+    une connexion TCP réelle vers la cible, puis relaie les octets
+    **tels quels**, dans les deux sens, sans jamais les interpréter.
+    `HttpResponse.total` devient un marqueur de fin (`0` = flux en
+    cours, `1` = dernier chunk) plutôt qu'un décompte connu à
+    l'avance (impossible à prédire pour une réponse chiffrée).
+  - Côté demandeur (`socks5.rs::handle_connect`) : deux tâches de
+    pompage (`HttpStreamSender`/`HttpStreamReceiver`,
+    `TunnelCommunity::open_http_stream`) relaient la socket locale
+    et le flux de cellules jusqu'à fermeture ou inactivité prolongée
+    (`HTTP_STREAM_IDLE_TIMEOUT_MS`, 30 s — un aller-retour TLS
+    complet à travers 3 sauts publics dépasse largement les 5 s
+    précédents).
+- **Sécurité inchangée** : le tunnel de circuit (chiffrement en
+  couches par saut) n'est pas modifié — seul le dernier segment
+  (sortie → serveur réel) est concerné, et il était déjà en TCP
+  avant ce correctif. L'exit ne voit jamais le contenu déchiffré
+  (TLS reste de bout en bout entre le client et le vrai serveur) :
+  plus sûr que l'alternative (une sortie qui terminerait le TLS pour
+  le compte du client).
+- **Tests** : `socks5_connect_http_roundtrip` (existant, HTTP en
+  clair) toujours vert ; nouveau `socks5_connect_https_roundtrip`
+  (serveur `axum`+`rcgen` auto-signé, requête `reqwest` via SOCKS5
+  avec négociation TLS réelle de bout en bout) — reproduit et
+  valide le scénario exact qui échouait en production.
+
 ## Logs : un fichier par run + horodatage local (2026-09-29)
 
 - **Rotation par run** : `rolling::daily` concaténait tous les runs du

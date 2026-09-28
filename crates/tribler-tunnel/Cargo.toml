@@ -22,3 +22,7 @@ hex.workspace = true
 [dev-dependencies]
 tempfile.workspace = true
 tracing-subscriber.workspace = true
+axum.workspace = true
+axum-server.workspace = true
+rcgen.workspace = true
+reqwest = { workspace = true, features = ["json", "socks", "rustls"] }

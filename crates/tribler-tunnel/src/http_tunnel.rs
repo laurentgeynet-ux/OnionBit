@@ -1,112 +1,65 @@
-//! Requetes HTTP transportees par les cellules tunnel
+//! Requetes HTTP(S) transportees par les cellules tunnel
 //! (`HTTPRequestPayload` msg 28 / `HTTPResponsePayload` msg 29 —
 //! `tribler/core/tunnel/payload.py`, `ipv8-rust-tunnels`).
 //!
 //! Usage Tribler : annonces de tracker et metadonnees a travers un
-//! circuit — le SOCKS5 CONNECT lit une requete HTTP brute du client,
-//! l'envoie en cellule `http-request` a une sortie portant
-//! `PEER_FLAG_EXIT_HTTP`, puis recolle les chunks `http-response`.
+//! circuit. Le SOCKS5 `CONNECT` (`socks5.rs`) doit fournir un tunnel
+//! TCP **transparent** au client (libtorrent / le client HTTP du
+//! demandeur negocie lui-meme sa propre session TLS de bout en bout
+//! quand la cible est `https://` — le relais ne doit jamais tenter de
+//! parser le flux comme du HTTP en clair, ce qui echouerait
+//! systematiquement des le `ClientHello`).
+//!
+//! Le format de cellule ne porte qu'un `identifier` (pas de
+//! sequencement) : `http-request`/`http-response` sont donc reutilisees
+//! en **flux continu** — chaque lecture cote demandeur (respectivement
+//! cote sortie) part immediatement en cellule, sans attendre une
+//! requete/reponse complete. `HttpResponse.total` est detourne en
+//! marqueur de fin (`0` = le flux continue, `1` = dernier chunk, le
+//! flux reel est ferme) plutot qu'un decompte de chunks connu a
+//! l'avance — la sortie ne peut pas savoir a l'avance la taille d'une
+//! reponse HTTPS (chiffree, taille imprevisible).
 
-use std::io::ErrorKind;
-use std::net::SocketAddr;
-
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
-use tokio::net::TcpStream;
-use tribler_ipv8::address::UdpAddress;
-use tribler_ipv8::error::Ipv8Error;
-
-/// Taille max d'un chunk `http-response` (`socket.rs` : 1400 octets —
-/// sous le MTU UDP pour traverser une cellule).
+/// Taille max d'un chunk `http-request`/`http-response` (`socket.rs` :
+/// 1400 octets — sous le MTU UDP pour traverser une cellule).
 pub const HTTP_RESPONSE_CHUNK: usize = 1400;
 
-/// Requetes HTTP simultanees autorisees par circuit de sortie
-/// (`exit.rs` : semaphore de 5 permis).
+/// Flux HTTP simultanes autorises par circuit de sortie (`exit.rs` :
+/// semaphore de 5 permis) — un flux dure toute la connexion CONNECT,
+/// pas juste un aller-retour.
 pub const MAX_HTTP_REQUESTS_PER_CIRCUIT: usize = 5;
 
-/// Timeout d'une requete TCP de sortie (5 s comme `socket.rs`).
-pub const HTTP_TCP_TIMEOUT_MS: u64 = 5000;
+/// Timeout de la connexion TCP initiale vers la destination (exit).
+pub const HTTP_CONNECT_TIMEOUT_MS: u64 = 10_000;
 
-/// Timeout de la reponse complete cote demandeur (`socks5.rs`).
-pub const HTTP_RESPONSE_TIMEOUT_MS: u64 = 5000;
+/// Inactivite maximale d'un flux CONNECT (ni lecture ni ecriture) cote
+/// sortie avant fermeture forcee — un round-trip TLS complet a travers
+/// 3 sauts sur le reseau public IPv8 peut prendre plusieurs secondes,
+/// largement au-dela d'un aller-retour HTTP unique.
+pub const HTTP_STREAM_IDLE_TIMEOUT_MS: u64 = 30_000;
 
-/// Buffer de lecture de la requete CONNECT (`socks5.rs` : 100 Kio).
-pub const CONNECT_REQUEST_MAX: usize = 100 * 1024;
+/// Capacite du canal de chunks en attente d'ecriture (cote sortie,
+/// requetes qui arrivent plus vite qu'elles ne sont ecrites) et des
+/// chunks de reponse (cote demandeur).
+pub const HTTP_STREAM_QUEUE: usize = 256;
 
-/// `send_tcp_request` (`ipv8-rust-tunnels/src/util.rs`) : envoie les
-/// octets de la requete brute sur TCP et relit la reponse complete
-/// (headers + corps, avec support `Content-Length` et `chunked`).
-/// Retourne les octets filaires complets de la reponse.
-pub async fn send_tcp_request(target: &UdpAddress, request: &[u8]) -> Result<Vec<u8>, Ipv8Error> {
-    let mut stream = match target {
-        UdpAddress::Ipv4(a) => TcpStream::connect(SocketAddr::V4(*a)).await?,
-        UdpAddress::Ipv6(a) => TcpStream::connect(SocketAddr::V6(*a)).await?,
-        UdpAddress::Domain(host, port) => TcpStream::connect((host.as_str(), *port)).await?,
-    };
-    stream.write_all(request).await?;
+/// Buffer de lecture du client SOCKS5 CONNECT avant le premier chunk
+/// (`socks5.rs`).
+pub const CONNECT_READ_CHUNK: usize = 16 * 1024;
 
-    let mut reader = BufReader::new(stream);
-    let mut headers = Vec::new();
-    loop {
-        let mut line = Vec::new();
-        let n = reader.read_until(b'\n', &mut line).await?;
-        headers.extend_from_slice(&line);
-        // Fin des en-tetes : ligne vide (CRLF ou LF seuls).
-        if n < 3 {
-            break;
+/// Ouvre la connexion TCP reelle vers `target` (cote sortie) — aucune
+/// tentative de TLS ni de parsing HTTP : le contenu relaye est opaque,
+/// c'est au demandeur (client HTTP en amont) de negocier sa propre
+/// session TLS de bout en bout a travers le tunnel si necessaire.
+pub async fn connect_target(
+    target: &tribler_ipv8::address::UdpAddress,
+) -> Result<tokio::net::TcpStream, tribler_ipv8::error::Ipv8Error> {
+    use tribler_ipv8::address::UdpAddress;
+    Ok(match target {
+        UdpAddress::Ipv4(a) => tokio::net::TcpStream::connect(std::net::SocketAddr::V4(*a)).await?,
+        UdpAddress::Ipv6(a) => tokio::net::TcpStream::connect(std::net::SocketAddr::V6(*a)).await?,
+        UdpAddress::Domain(host, port) => {
+            tokio::net::TcpStream::connect((host.as_str(), *port)).await?
         }
-    }
-
-    let headers_text = String::from_utf8_lossy(&headers).to_string();
-    let mut chunked = false;
-    let mut content_length = 0usize;
-    for header in headers_text.split('\n') {
-        if let Some(v) = header.strip_prefix("Content-Length:") {
-            content_length = v.trim().parse().unwrap_or(0);
-        }
-        if header.to_ascii_lowercase().contains("chunked") {
-            chunked = true;
-        }
-    }
-
-    if content_length > 0 {
-        let mut body = vec![0u8; content_length];
-        reader.read_exact(&mut body).await?;
-        headers.extend_from_slice(&body);
-        return Ok(headers);
-    }
-
-    let mut remainder = Vec::new();
-    loop {
-        let mut buf = [0u8; 4096];
-        match reader.read(&mut buf).await {
-            Ok(0) => break,
-            Ok(n) => remainder.extend_from_slice(&buf[..n]),
-            Err(e) if e.kind() == ErrorKind::WouldBlock => break,
-            Err(e) => return Err(e.into()),
-        }
-    }
-
-    if !chunked {
-        headers.extend_from_slice(&remainder);
-        return Ok(headers);
-    }
-
-    // Reassemble le corps `chunked` (chunks hexadecimaux, termines
-    // par un chunk de taille 0).
-    let mut body = Vec::new();
-    let mut rest: &[u8] = &remainder;
-    while let Some(pos) = rest.iter().position(|&b| b == b'\n') {
-        let size_str = String::from_utf8_lossy(&rest[..pos]);
-        let Ok(size) = usize::from_str_radix(size_str.trim(), 16) else {
-            break;
-        };
-        rest = &rest[pos + 1..];
-        if size == 0 || rest.len() < size + 2 {
-            break;
-        }
-        body.extend_from_slice(&rest[..size]);
-        rest = &rest[size + 2..]; // chunk + CRLF
-    }
-    headers.extend_from_slice(&body);
-    Ok(headers)
+    })
 }

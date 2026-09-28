@@ -4844,9 +4844,13 @@ dependencies = [
 name = "tribler-tunnel"
 version = "0.1.0"
 dependencies = [
+ "axum",
+ "axum-server",
  "futures-util",
  "hex 0.4.3",
  "rand 0.8.8",
+ "rcgen",
+ "reqwest",
  "serde",
  "tempfile",
  "thiserror 2.0.21",
