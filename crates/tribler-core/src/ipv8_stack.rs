@@ -1140,6 +1140,11 @@ impl Ipv8Stack {
         cfg.socks5_proxy = Some(format!("socks5://{socks_addr}"));
         cfg.utp_only = true;
         cfg.enable_dht = true;
+        // Le bootstrap DHT tunnel ne peut aboutir qu'une fois des
+        // circuits READY — attendre la readiness ici bloquerait le
+        // demarrage de la lane pour rien (le bootstrap retente en
+        // tache de fond).
+        cfg.dht_readiness_timeout_secs = 0;
         cfg.utp_socket = Some(udp_sockets.utp);
         cfg.dht_socket = Some(std::sync::Arc::new(udp_sockets.dht));
         cfg.udp_tracker_socket = Some(std::sync::Arc::new(udp_sockets.tracker));
