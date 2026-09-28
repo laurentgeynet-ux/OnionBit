@@ -284,13 +284,20 @@ async fn put_anon_stack_inactive_retourne_400() {
 }
 
 /// `PATCH anon_hops` doit etre le seul parametre de la requete
-/// (regle Python : 400 sinon).
+/// (regle Python : 400 sinon — verifiee apres le 404, comme
+/// `update_download` Python qui teste d'abord l'existence).
 #[tokio::test]
 async fn patch_anon_hops_combine_retourne_400() {
     let srv = spawn_server().await;
+    let ih = srv
+        .session
+        .add_torrent_bytes(test_torrent_bytes(), true)
+        .await
+        .unwrap()
+        .info_hash_hex();
     let resp = srv
         .client
-        .patch(srv.url("/api/downloads/0000000000000000000000000000000000000000"))
+        .patch(srv.url(&format!("/api/downloads/{ih}")))
         .json(&serde_json::json!({"state": "stop", "anon_hops": 1}))
         .send()
         .await
@@ -1296,4 +1303,271 @@ async fn shutdown_endpoint_demande_l_arret() {
     );
     // L'arret tourne en tache de fond ; petit delai pour qu'il s'applique.
     tokio::time::sleep(Duration::from_millis(200)).await;
+}
+
+// ============================================================================
+// Etape 22 — reglages par download persistes + PATCH complet
+// ============================================================================
+
+/// Ajoute le torrent de test (pause) et retourne son info-hash hex.
+async fn add_paused(srv: &TestServer) -> String {
+    srv.session
+        .add_torrent_bytes(test_torrent_bytes(), true)
+        .await
+        .unwrap()
+        .info_hash_hex()
+}
+
+#[tokio::test]
+async fn patch_download_reglages_persistes() {
+    let srv = spawn_server().await;
+    let ih = add_paused(&srv).await;
+
+    // selected_files / limites / ratio / auto_managed / queue.
+    let resp = srv
+        .client
+        .patch(srv.url(&format!("/api/downloads/{ih}")))
+        .json(&serde_json::json!({
+            "selected_files": [0],
+            "upload_limit": 1024,
+            "download_limit": 2048,
+            "seeding_ratio": 1.5,
+            "auto_managed": true,
+            "queue_position": "queue_top",
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["modified"], true);
+    assert_eq!(body["infohash"], ih);
+
+    // Persistes en base et exposes par le GET.
+    let resp = srv
+        .client
+        .get(srv.url("/api/downloads"))
+        .send()
+        .await
+        .unwrap();
+    let d = &resp.json::<serde_json::Value>().await.unwrap()["downloads"][0];
+    assert_eq!(d["safe_seeding"], true); // defaut `safeseeding_enabled`
+    assert_eq!(d["upload_limit"], 1024);
+    assert_eq!(d["download_limit"], 2048);
+    assert_eq!(d["seeding_ratio"], 1.5);
+    assert_eq!(d["auto_managed"], true);
+    assert_eq!(d["queue_position"], 0);
+
+    // `seeding_ratio_default` : reset au defaut `download_defaults`.
+    let resp = srv
+        .client
+        .patch(srv.url(&format!("/api/downloads/{ih}")))
+        .json(&serde_json::json!({ "seeding_ratio_default": true }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let d = srv
+        .client
+        .get(srv.url("/api/downloads"))
+        .send()
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap()["downloads"][0]
+        .clone();
+    assert_eq!(d["seeding_ratio"], 2.0); // defaut `download_defaults`
+
+    srv.session.stop().await;
+}
+
+#[tokio::test]
+async fn patch_download_validations_python() {
+    let srv = spawn_server().await;
+    let ih = add_paused(&srv).await;
+    let url = srv.url(&format!("/api/downloads/{ih}"));
+    let patch = |body: serde_json::Value| {
+        let (client, url) = (srv.client.clone(), url.clone());
+        async move { client.patch(url).json(&body).send().await.unwrap() }
+    };
+
+    // anon_hops non exclusif -> 400 (meme message Python).
+    let r = patch(serde_json::json!({"anon_hops": 1, "state": "resume"})).await;
+    assert_eq!(r.status(), 400);
+    assert_eq!(
+        r.json::<serde_json::Value>().await.unwrap()["error"]["message"],
+        "anon_hops must be the only parameter in this request"
+    );
+
+    // selected_files hors bornes -> "index out of range".
+    let r = patch(serde_json::json!({"selected_files": [0, 9]})).await;
+    assert_eq!(r.status(), 400);
+    assert_eq!(
+        r.json::<serde_json::Value>().await.unwrap()["error"]["message"],
+        "index out of range"
+    );
+
+    // file_priority : index hors bornes puis priorite hors bornes.
+    let r = patch(serde_json::json!({"file_priority": [5, 1]})).await;
+    assert_eq!(r.status(), 400);
+    let r = patch(serde_json::json!({"file_priority": [0, 8]})).await;
+    assert_eq!(
+        r.json::<serde_json::Value>().await.unwrap()["error"]["message"],
+        "file priority out of range"
+    );
+    // Paire malformee -> 500 handled (unpack Python).
+    let r = patch(serde_json::json!({"file_priority": [0]})).await;
+    assert_eq!(r.status(), 500);
+
+    // auto_managed non booleen -> 400.
+    let r = patch(serde_json::json!({"auto_managed": "oui"})).await;
+    assert_eq!(
+        r.json::<serde_json::Value>().await.unwrap()["error"]["message"],
+        "invalid value for auto_managed"
+    );
+
+    // queue_position invalide -> 400.
+    let r = patch(serde_json::json!({"queue_position": "queue_sideways"})).await;
+    assert_eq!(r.status(), 400);
+
+    // state inconnu -> "unknown state parameter".
+    let r = patch(serde_json::json!({"state": "explode"})).await;
+    assert_eq!(
+        r.json::<serde_json::Value>().await.unwrap()["error"]["message"],
+        "unknown state parameter"
+    );
+
+    // move_storage sans dest_dir -> 500 handled (KeyError Python).
+    let r = patch(serde_json::json!({"state": "move_storage"})).await;
+    assert_eq!(r.status(), 500);
+    assert_eq!(
+        r.json::<serde_json::Value>().await.unwrap()["error"]["handled"],
+        true
+    );
+
+    // move_storage vers un dossier inexistant -> 400.
+    let r = patch(serde_json::json!({
+        "state": "move_storage",
+        "dest_dir": "Z:\\non\\existe\\pas"
+    }))
+    .await;
+    assert_eq!(r.status(), 400);
+
+    // Download inconnu -> 404.
+    let r = srv
+        .client
+        .patch(srv.url("/api/downloads/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"))
+        .json(&serde_json::json!({"state": "resume"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 404);
+
+    srv.session.stop().await;
+}
+
+#[tokio::test]
+async fn patch_download_recheck_stop_resume_move_storage() {
+    let srv = spawn_server().await;
+    let ih = add_paused(&srv).await;
+    let url = srv.url(&format!("/api/downloads/{ih}"));
+    let patch = |body: serde_json::Value| {
+        let (client, url) = (srv.client.clone(), url.clone());
+        async move { client.patch(url).json(&body).send().await.unwrap() }
+    };
+
+    // stop -> paused + user_stopped persistes ; resume -> releves.
+    let r = patch(serde_json::json!({"state": "stop"})).await;
+    assert_eq!(r.status(), 200);
+    let d = srv
+        .client
+        .get(srv.url("/api/downloads"))
+        .send()
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap()["downloads"][0]
+        .clone();
+    assert_eq!(d["user_stopped"], true);
+    let r = patch(serde_json::json!({"state": "resume"})).await;
+    assert_eq!(r.status(), 200);
+
+    // recheck : remove + re-add -> le download reapparait avec ses
+    // reglages (queue_position conservee).
+    let r = patch(serde_json::json!({"state": "recheck"})).await;
+    assert_eq!(r.status(), 200);
+    assert_eq!(
+        r.json::<serde_json::Value>().await.unwrap()["modified"],
+        true
+    );
+    assert!(srv.session.find_download(&ih).is_some());
+
+    // move_storage : no-op (meme dossier) -> modified:false.
+    let dest = srv.session.find_download(&ih).unwrap().output_folder();
+    let r = patch(serde_json::json!({
+        "state": "move_storage",
+        "dest_dir": dest.display().to_string()
+    }))
+    .await;
+    assert_eq!(r.status(), 200);
+    assert_eq!(
+        r.json::<serde_json::Value>().await.unwrap()["modified"],
+        false
+    );
+
+    // move_storage reel : dossier cree -> fichiers deplaces,
+    // output_dir persiste mis a jour.
+    let new_dir = srv._dir.path().join("deplace");
+    std::fs::create_dir_all(&new_dir).unwrap();
+    let r = patch(serde_json::json!({
+        "state": "move_storage",
+        "dest_dir": new_dir.display().to_string()
+    }))
+    .await;
+    assert_eq!(r.status(), 200);
+    assert_eq!(
+        r.json::<serde_json::Value>().await.unwrap()["modified"],
+        true
+    );
+    let dl = srv.session.find_download(&ih).unwrap();
+    assert_eq!(dl.output_folder(), new_dir);
+
+    srv.session.stop().await;
+}
+
+#[tokio::test]
+async fn get_downloads_flags_peers_pieces_availability() {
+    let srv = spawn_server().await;
+    let ih = add_paused(&srv).await;
+    let _ = ih;
+
+    // Sans flag : les cles d'enrichissement sont absentes (Python
+    // n'emet `peers`/`pieces`/`availability` que sur demande).
+    let resp = srv
+        .client
+        .get(srv.url("/api/downloads"))
+        .send()
+        .await
+        .unwrap();
+    let d = resp.json::<serde_json::Value>().await.unwrap()["downloads"][0].clone();
+    assert!(d.get("peers").is_none());
+    assert!(d.get("pieces").is_none());
+    assert!(d.get("availability").is_none());
+
+    // Flags = "1" (exactement, comme `params.get(...) == "1"` Python).
+    let resp = srv
+        .client
+        .get(srv.url("/api/downloads?get_peers=1&get_pieces=1&get_availability=1"))
+        .send()
+        .await
+        .unwrap();
+    let d = resp.json::<serde_json::Value>().await.unwrap()["downloads"][0].clone();
+    assert!(d["peers"].is_array());
+    assert!(d["pieces"].is_string());
+    assert!(d["availability"].is_number());
+    assert!(d["total_pieces"].as_u64().unwrap() >= 1);
+
+    srv.session.stop().await;
 }

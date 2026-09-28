@@ -222,6 +222,25 @@ impl Download {
             .map_err(|e| crate::BtError::Engine(e.to_string()))
     }
 
+    /// Indices des fichiers selectionnes pour le telechargement
+    /// (`None` = tous — `selected_files` Python / `only_files` rqbit).
+    pub fn only_files(&self) -> Option<Vec<usize>> {
+        self.inner.only_files()
+    }
+
+    /// Nombre de fichiers du torrent (metadonnees requises).
+    pub fn file_count(&self) -> Option<usize> {
+        Some(self.inner.metadata.load().as_ref()?.file_infos.len())
+    }
+
+    /// Nombre total de pieces (`tdef.torrent_info.num_pieces()`
+    /// Python — disponible meme en pause, tant que le metainfo est
+    /// resolu).
+    pub fn total_pieces(&self) -> Option<u32> {
+        let md = self.inner.metadata.load();
+        Some(md.as_ref()?.info.lengths().total_pieces())
+    }
+
     /// Fichiers du contenu (metadonnees resolues ; `None` tant qu'un
     /// magnet n'a pas recu son info — comme `download.tdef` Python).
     /// `progress` = fraction d'octets deja presentes (`file_progress`

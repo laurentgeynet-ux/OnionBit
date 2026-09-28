@@ -27,10 +27,10 @@ Convention générale :
 | Python | Rust | Statut | Notes |
 | :--- | :--- | :--- | :--- |
 | **Downloads** (`downloads_endpoint.py`) | | | |
-| `GET /api/downloads` | `GET /api/downloads` | ✅ | `get_peers`/`get_pieces`/`get_availability` acceptés mais ignorés ; `infohash` et `excluded` (filtres) implémentés. Réponse : `{"downloads": [...], "checkpoints": {...}, "clierrors": 0}` |
+| `GET /api/downloads` | `GET /api/downloads` | ✅ | `infohash`/`excluded` (filtres) ; `get_peers` (liste `peers` — sous-ensemble rqbit, autres clés aux défauts), `get_pieces` (bitfield base64 MSB-first), `get_availability` (`float(num_seeds)` scrapé — librqbit ne fusionne pas les bitfields pairs, approximation documentée) ; actifs seulement quand le paramètre vaut `"1"`, comme Python |
 | `PUT /api/downloads` | `PUT /api/downloads` | ✅ | `uri` (magnet/http) et `torrent` (chemin local) ; `destination`, `paused` acceptés ; `anon_hops` routé vers la lane anonyme du stack IPv8 (étape 15) |
 | `DELETE /api/downloads/{infohash}` | `DELETE /api/downloads/{infohash}` | ✅ | `remove_data` supporté |
-| `PATCH /api/downloads/{infohash}` | `PATCH /api/downloads/{infohash}` | ✅ | `state=resume`/`stop` ; `recheck`, `move_storage` → 400 |
+| `PATCH /api/downloads/{infohash}` | `PATCH /api/downloads/{infohash}` | ✅ | Sémantique Python complète : exclusivité `anon_hops` (comptage brut des clés), `selected_files` (`Session::update_only_files`), `file_priority` (persistée 0..=7 — pas d'ordonnancement rqbit), `upload_limit`/`download_limit` (persistées, appliquées au re-add via `initial ratelimits` — pas de mutation à chaud par torrent dans rqbit), `seeding_ratio`/`seeding_ratio_default`, `queue_position` (ordre persisté — librqbit n'a pas de file lt), `auto_managed` (persisté), `state` = `resume`/`stop` (idempotents, `user_stopped` persisté), `recheck` (remove + re-add → revalidation complète), `move_storage` (déplacement disque + re-add ; no-op → `modified:false`, dossier absent → 400, `dest_dir` manquant → 500 `KeyError` handled) |
 | `GET /api/downloads/{ih}/torrent` | `GET /api/downloads/{ih}/torrent` | ✅ | `.torrent` brut, `Content-Type: application/x-bittorrent` |
 | `GET`/`PUT /api/downloads/{ih}/trackers` | idem | ✅ | `PUT {"url"}` ajoute un tracker à chaud (rqbit ne réannonce pas à chaud — effectif à la session suivante) |
 | `GET /api/downloads/{ih}/files` | `GET /api/downloads/{ih}/files` | ✅ | index, name, size, progress par fichier |
@@ -101,7 +101,9 @@ Convention générale :
 | `num_connected_seeds` | 0 | librqbit ne distingue pas seeds/leechers connectés — divergence documentée |
 | `all_time_upload/download/ratio` | cumuls librqbit | ratio = upload/download (0 si download=0) |
 | `hops`, `anon_download` | remplis | `hops` = sauts de la lane anonyme du téléchargement (`anon_hops_map` de la session) ; `anon_download` = `hops > 0` — testé |
-| `trackers`, `safe_seeding`, `upload_limit`, `download_limit`, `seeding_ratio`, `destination`, `completed_dir`, `total_pieces`, `error`, `time_added`, `time_finished`, `queue_position`, `auto_managed`, `user_stopped`, `streamable` | émis avec valeurs par défaut | champs présents pour compatibilité clients ; remplis au fil des étapes |
+| `trackers`, `destination`, `error`, `streamable` | remplis | trackers union `announce`/`announce-list` + ajouts à chaud ; `destination` = `output_folder` effectif |
+| `safe_seeding`, `upload_limit`, `download_limit`, `seeding_ratio`, `completed_dir`, `time_added`, `time_finished`, `queue_position`, `auto_managed`, `user_stopped` | remplis depuis la persistance | Réglages par download checkpointés en base (équivalent `DownloadConfig`/`dlcheckpoints`) ; `seeding_ratio` = individuel ou défaut `download_defaults` ; politique d'arrêt de seed appliquée par la boucle de progression (`seeding_mode`/`seeding_time`) |
+| `total_pieces` | rempli | `info.lengths().total_pieces()` rqbit (métadonnées requises) |
 
 ## Topics d'événements SSE
 

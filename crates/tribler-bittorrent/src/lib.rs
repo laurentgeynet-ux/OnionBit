@@ -16,14 +16,16 @@
 //! local expose par un circuit anonyme (cf. `tribler-network-policy`
 //! pour les garde-fous — loopback uniquement).
 
+pub mod add_options;
 pub mod config;
 pub mod download;
 pub mod engine;
 pub mod error;
 
+pub use add_options::AddDownloadOptions;
 pub use config::EngineConfig;
 pub use download::{Download, DownloadState, DownloadStats};
-pub use engine::BtEngine;
+pub use engine::{BtEngine, DownloadPeer};
 pub use error::{BtError, Result};
 
 #[cfg(test)]

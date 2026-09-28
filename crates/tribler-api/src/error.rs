@@ -68,6 +68,19 @@ impl ApiError {
             },
         }
     }
+
+    /// 500 avec `handled: true` — equivalent de
+    /// `return_handled_exception` Python (ex. `KeyError` sur un
+    /// parametre obligatoire absent du corps JSON).
+    pub fn internal_handled(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            body: ApiErrorBody {
+                handled: true,
+                message: message.into(),
+            },
+        }
+    }
 }
 
 impl IntoResponse for ApiError {

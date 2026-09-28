@@ -3,6 +3,48 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Étape 22 — Réglages par download persistés + PATCH complet (2026-09-28)
+
+- **Migration `tribler-db` v3** : colonnes `downloads` —
+  `safe_seeding`, `upload_limit`, `download_limit`, `seeding_ratio`,
+  `auto_managed`, `queue_position`, `completed_dir`, `selected_files`,
+  `file_priorities`, `extra_trackers`, `time_finished`. Upsert complet,
+  restauration des réglages aux re-add internes (équivalent des
+  `dlcheckpoints`/`DownloadConfig` Python). Tests de migration
+  v1→v3, réouverture idempotente, rejet de schéma futur, round-trip.
+- **`tribler-bittorrent`** : `AddDownloadOptions` (paused, fichiers
+  sélectionnés, dossier, trackers, limites par torrent via
+  `AddTorrentOptions::ratelimits`) ; `update_only_files`, limites de
+  session à chaud, bitfield des pièces en base64 (`api_dump_haves`),
+  stats par pair, `force_announce`, `total_pieces`, fichiers/traqueurs
+  exposés par `Download`.
+- **`tribler-core`** : `DownloadDefaults` dans `CoreConfig` (alimenté
+  par `download_defaults` de `configuration.json`), politique d'arrêt de
+  seed (`seeding_ratio`/`seeding_mode`/`seeding_time`, `safe_seeding`)
+  dans la boucle de progression, `pause`/`resume` idempotents (parité
+  Python), `remove_engine_only` pour les re-add internes, opérations
+  `recheck`/`move_storage`/`set_selected_files`/file_priority/queue/
+  `auto_managed` persistées.
+- **`PATCH /api/downloads/{infohash}`** : sémantique Python complète —
+  404 avant validation, exclusivité `anon_hops`, `resume`/`stop`
+  (`user_stopped` persisté), `recheck` et `move_storage` par
+  remove+re-add (revalidation naturelle, `fastresume` inerte sans
+  persistence rqbit), `dest_dir` manquant → 500 `KeyError` handled,
+  dossier absent → 400, déplacement no-op → `modified:false`,
+  `selected_files` bornés, `file_priority` 0..=7, `queue_position` ∈
+  {up,top,down,bottom} (ordre logique persisté — pas de file rqbit),
+  `auto_managed` booléen, limites/`seeding_ratio` persistés et réappliqués
+  au re-add (rqbit ne mute pas les ratelimits à chaud par torrent).
+- **`GET /api/downloads`** : flags `get_peers` (sous-ensemble rqbit),
+  `get_pieces` (base64 MSB-first), `get_availability` (approximation
+  `float(num_seeds)` — librqbit ne fusionne pas les bitfields pairs) ;
+  actifs seulement quand le paramètre vaut `"1"`, comme Python. DTO
+  rempli depuis la ligne persistée (destination, limites, trackers
+  union announce/announce-list + ajouts, `total_pieces`, `time_finished`).
+- Divergences rqbit consignées dans `api_rest_mapping.md` : ratelimits
+  appliquées au re-add, `file_priority`/`queue_position`/`auto_managed`
+  persistés sans ordonnancement moteur, `availability` approximée.
+
 ## Correctif — Connexion UI après activation de la clé API (2026-09-28)
 
 - **Auto-découverte de la session daemon** (`app/lib/core/config/daemon_api_resolver*.dart`) :

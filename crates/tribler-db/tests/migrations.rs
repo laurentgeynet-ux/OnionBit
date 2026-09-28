@@ -84,3 +84,63 @@ fn base_plus_recente_que_le_crate_refusee() {
     let res = Database::open(&path);
     assert!(res.is_err(), "base v{} acceptee", SCHEMA_VERSION + 1);
 }
+
+/// Migration v3 : les colonnes de reglages par telechargement sont
+/// ajoutees a `downloads` sans perdre les lignes v2, puis lues via
+/// la couche modele (round-trip complet des reglages).
+#[test]
+fn migration_v3_reglages_par_download_roundtrip() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("tribler.db");
+    make_db_at(&path, 2);
+    {
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        conn.execute(
+            "INSERT INTO downloads (infohash, source_uri, output_dir, added_on, paused, anon_hops)
+             VALUES (?1, 'magnet:?xt=urn:btih:bb', 'out', 1700000000, 0, 0)",
+            rusqlite::params![vec![0x22u8; 20]],
+        )
+        .unwrap();
+    }
+
+    let db = Database::open(&path).unwrap();
+    db.with(|c| {
+        // Colonnes v3 presentes avec leurs defauts.
+        let row = tribler_db::downloads::get(c, &[0x22u8; 20])?.unwrap();
+        assert_eq!(row.upload_limit, 0);
+        assert_eq!(row.queue_position, -1);
+        assert!(!row.safe_seeding && !row.auto_managed && !row.user_stopped);
+        assert_eq!(row.seeding_ratio, None);
+        assert!(row.selected_files.is_none());
+
+        // Ecriture des reglages puis relecture (round-trip).
+        tribler_db::downloads::upsert(
+            c,
+            &tribler_db::DownloadRow {
+                safe_seeding: true,
+                user_stopped: true,
+                upload_limit: 1024,
+                download_limit: 2048,
+                seeding_ratio: Some(1.5),
+                auto_managed: true,
+                queue_position: 3,
+                completed_dir: Some("done".into()),
+                selected_files: Some(vec![0, 2]),
+                file_priorities: Some(vec![4, 7]),
+                extra_trackers: vec!["udp://t.local:80".into()],
+                ..row
+            },
+        )?;
+        let row = tribler_db::downloads::get(c, &[0x22u8; 20])?.unwrap();
+        assert_eq!((row.upload_limit, row.download_limit), (1024, 2048));
+        assert_eq!(row.seeding_ratio, Some(1.5));
+        assert_eq!(row.queue_position, 3);
+        assert!(row.safe_seeding && row.auto_managed && row.user_stopped);
+        assert_eq!(row.completed_dir.as_deref(), Some("done"));
+        assert_eq!(row.selected_files.as_deref(), Some(&[0, 2][..]));
+        assert_eq!(row.file_priorities.as_deref(), Some(&[4, 7][..]));
+        assert_eq!(row.extra_trackers, vec!["udp://t.local:80".to_string()]);
+        Ok(())
+    })
+    .unwrap();
+}

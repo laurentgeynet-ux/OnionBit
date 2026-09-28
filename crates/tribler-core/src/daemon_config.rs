@@ -593,6 +593,11 @@ impl DaemonConfig {
             enable_dht: self.libtorrent.dht,
             disable_lsd: !self.libtorrent.lsd,
             listen_port: Some(self.libtorrent.port),
+            // `max_*_rate` Python : 0 = illimite.
+            max_upload_bps: (self.libtorrent.max_upload_rate > 0)
+                .then_some(self.libtorrent.max_upload_rate),
+            max_download_bps: (self.libtorrent.max_download_rate > 0)
+                .then_some(self.libtorrent.max_download_rate),
             ..Default::default()
         };
         // proxy_type 2/3 = SOCKS5 (enum libtorrent). Le proxy guard
@@ -652,6 +657,17 @@ impl DaemonConfig {
             enable_torrent_checker: self.torrent_checker.enabled,
             ipv8,
             engine,
+            download_defaults: crate::config::DownloadDefaults {
+                anonymity_enabled: dd.anonymity_enabled,
+                number_hops: dd.number_hops,
+                safeseeding_enabled: dd.safeseeding_enabled,
+                seeding_mode: dd.seeding_mode.clone(),
+                seeding_ratio: dd.seeding_ratio,
+                seeding_time: dd.seeding_time,
+                auto_managed: dd.auto_managed,
+                completed_dir: dd.completed_dir.clone(),
+                trackers_file: dd.trackers_file.clone(),
+            },
             ..Default::default()
         }
     }
@@ -671,6 +687,8 @@ impl DaemonConfig {
             0
         };
         self.libtorrent.proxy_server = core.engine.socks5_proxy.clone().unwrap_or_default();
+        self.libtorrent.max_upload_rate = core.engine.max_upload_bps.unwrap_or(0);
+        self.libtorrent.max_download_rate = core.engine.max_download_bps.unwrap_or(0);
         self.rss.urls = core.rss_urls.clone();
         self.rss.enabled = !core.rss_urls.is_empty();
         self.watch_folder.enabled = core.watch_folder_dir.is_some();

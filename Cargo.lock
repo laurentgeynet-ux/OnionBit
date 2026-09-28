@@ -3878,6 +3878,7 @@ dependencies = [
 name = "tribler-bittorrent"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "bytes",
  "hex 0.4.3",
  "librqbit",

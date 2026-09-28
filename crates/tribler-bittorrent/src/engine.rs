@@ -201,6 +201,28 @@ impl BtEngine {
         self.add(add, opts).await
     }
 
+    /// Ajoute une URI avec des reglages par telechargement (equivalent
+    /// du `DownloadConfig` applique par `start_download` Python).
+    pub async fn add_uri_opts(
+        &self,
+        uri: &str,
+        opts: &crate::add_options::AddDownloadOptions,
+    ) -> Result<Download> {
+        self.add(AddTorrent::from_url(uri), Some(rqbit_opts(opts)))
+            .await
+    }
+
+    /// Ajoute des octets `.torrent` avec des reglages par
+    /// telechargement.
+    pub async fn add_torrent_bytes_opts(
+        &self,
+        bytes: impl Into<bytes::Bytes>,
+        opts: &crate::add_options::AddDownloadOptions,
+    ) -> Result<Download> {
+        self.add(AddTorrent::from_bytes(bytes), Some(rqbit_opts(opts)))
+            .await
+    }
+
     async fn add(&self, add: AddTorrent<'_>, opts: Option<AddTorrentOptions>) -> Result<Download> {
         if let Some(ks) = &self.kill_switch {
             ks.guard_add()?;
@@ -323,6 +345,158 @@ impl BtEngine {
             .await
             .map_err(|e| BtError::Engine(e.to_string()))
     }
+
+    /// Restreint les fichiers telecharges (`selected_files` de
+    /// `PATCH /downloads/{ih}` — `Session::update_only_files` rqbit,
+    /// valable aussi bien sur un torrent en pause que live).
+    pub async fn update_only_files(
+        &self,
+        id_or_hash: &str,
+        only_files: &std::collections::HashSet<usize>,
+    ) -> Result<()> {
+        let d = self
+            .get(id_or_hash)
+            .ok_or_else(|| BtError::NotFound(id_or_hash.to_string()))?;
+        self.session
+            .update_only_files(&d.inner, only_files)
+            .await
+            .map_err(|e| BtError::Engine(e.to_string()))
+    }
+
+    /// Limites de debit de la session entiere (octets/s, `None` =
+    /// illimite) — `Session::ratelimits` rqbit, modifiable a chaud
+    /// (`libtorrent/max_upload_rate`/`max_download_rate` Tribler).
+    pub fn set_ratelimits(&self, upload_bps: Option<u64>, download_bps: Option<u64>) {
+        let to_nz = |v: Option<u64>| {
+            v.and_then(|v| u32::try_from(v).ok())
+                .and_then(std::num::NonZeroU32::new)
+        };
+        self.session.ratelimits.set_upload_bps(to_nz(upload_bps));
+        self.session
+            .ratelimits
+            .set_download_bps(to_nz(download_bps));
+    }
+
+    /// Limites de session courantes (octets/s).
+    pub fn ratelimits(&self) -> (Option<u64>, Option<u64>) {
+        (
+            self.session
+                .ratelimits
+                .get_upload_bps()
+                .map(|v| v.get() as u64),
+            self.session
+                .ratelimits
+                .get_download_bps()
+                .map(|v| v.get() as u64),
+        )
+    }
+
+    /// Re-annonce aux trackers : librqbit recree ses boucles
+    /// d'annonce au `unpause` — pause + reprise declenche une annonce
+    /// complete (superset du `force_reannounce(url)` Python, qui ne
+    /// vise qu'un tracker ; l'ecart est documente dans le mapping).
+    ///
+    /// Torrent en pause : no-op — l'annonce repartira au resume,
+    /// comme un `force_reannounce` sur un handle inactif en Python.
+    pub async fn force_announce(&self, id_or_hash: &str) -> Result<()> {
+        let d = self
+            .get(id_or_hash)
+            .ok_or_else(|| BtError::NotFound(id_or_hash.to_string()))?;
+        if d.is_paused() {
+            return Ok(());
+        }
+        self.session
+            .pause(&d.inner)
+            .await
+            .map_err(|e| BtError::Engine(e.to_string()))?;
+        self.session
+            .unpause(&d.inner)
+            .await
+            .map_err(|e| BtError::Engine(e.to_string()))
+    }
+
+    /// Bitfield des pieces detenues, base64 MSB-first (meme encodage
+    /// que `download.get_pieces_base64()` Python). `None` tant que le
+    /// torrent n'est pas dans un etat live (equivalent du `""` Python
+    /// sans handle — l'appelant traduit).
+    pub fn have_pieces_base64(&self, id_or_hash: &str) -> Option<String> {
+        let key = parse_id_or_hash(id_or_hash)?;
+        let api = librqbit::Api::new(self.session.clone(), None);
+        let (bf, _len) = api.api_dump_haves(key).ok()?;
+        use base64::Engine as _;
+        Some(base64::engine::general_purpose::STANDARD.encode(bf.as_raw_slice()))
+    }
+
+    /// Stats par pair du torrent (snapshot `per_peer_stats` rqbit) —
+    /// sous-ensemble des champs `peers` de `GET /api/downloads` Python.
+    /// `None` si le torrent n'est pas live (pas de connexions).
+    pub fn peer_stats(&self, id_or_hash: &str) -> Option<Vec<DownloadPeer>> {
+        let d = self.get(id_or_hash)?;
+        let live = d.inner.live()?;
+        let snap = live.per_peer_stats_snapshot(Default::default());
+        Some(
+            snap.peers
+                .iter()
+                .filter_map(|(addr, p)| {
+                    let addr: SocketAddr = addr.parse().ok()?;
+                    Some(DownloadPeer {
+                        ip: addr.ip().to_string(),
+                        port: addr.port(),
+                        state: p.state,
+                        connection_kind: p.conn_kind.map(|k| k.to_string()),
+                        client_name: p.client_name.clone(),
+                        uploaded_bytes: p.counters.uploaded_bytes,
+                        downloaded_bytes: p.counters.fetched_bytes,
+                        incoming: p.counters.incoming_connections > 0,
+                    })
+                })
+                .collect(),
+        )
+    }
+}
+
+/// Traduit les reglages par telechargement en `AddTorrentOptions`
+/// rqbit (`overwrite` force pour reprendre l'existant, comme au
+/// chargement Python des checkpoints).
+fn rqbit_opts(o: &crate::add_options::AddDownloadOptions) -> AddTorrentOptions {
+    let to_nz = |v: Option<u64>| {
+        v.and_then(|v| u32::try_from(v).ok())
+            .and_then(std::num::NonZeroU32::new)
+    };
+    AddTorrentOptions {
+        paused: o.paused,
+        overwrite: true,
+        output_folder: o.output_folder.as_ref().map(|p| p.display().to_string()),
+        only_files: o.only_files.clone(),
+        trackers: (!o.trackers.is_empty()).then(|| o.trackers.clone()),
+        ratelimits: librqbit::limits::LimitsConfig {
+            upload_bps: to_nz(o.upload_limit_bps),
+            download_bps: to_nz(o.download_limit_bps),
+        },
+        ..Default::default()
+    }
+}
+
+/// Stats d'un pair connecte (sous-ensemble du dict `peers` Python —
+/// les champs que librqbit n'expose pas restent aux defauts cote API).
+#[derive(Debug, Clone)]
+pub struct DownloadPeer {
+    /// IP du pair.
+    pub ip: String,
+    /// Port du pair.
+    pub port: u16,
+    /// Etat interne de la connexion (`live`, …).
+    pub state: &'static str,
+    /// Transport (`Tcp`/`Utp`/`Socks`).
+    pub connection_kind: Option<String>,
+    /// Nom du client distant si connu.
+    pub client_name: Option<String>,
+    /// Octets envoyes a ce pair.
+    pub uploaded_bytes: u64,
+    /// Octets recus de ce pair.
+    pub downloaded_bytes: u64,
+    /// Connexion entrante (initiee par le pair).
+    pub incoming: bool,
 }
 
 /// Parse `id_or_hash` : id numerique (`usize`) ou info-hash hex 40c.

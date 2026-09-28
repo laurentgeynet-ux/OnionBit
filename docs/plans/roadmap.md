@@ -382,7 +382,7 @@ activée en parité Python (loopback compris — `tribler-cli` la lit dans
   `POST /api/settings` = merge récursif + persistance disque +
   application à chaud. `DefaultBodyLimit` aligné à 16 Mio
   (`MAX_REQUEST_SIZE` Python).
-- [ ] **Étape 22. Réglages par download persistés + PATCH complet.**
+- [x] **Étape 22. Réglages par download persistés + PATCH complet.**
   Migration `tribler-db` v3 (`downloads` : `safe_seeding`,
   `upload_limit`, `download_limit`, `seeding_ratio`, `auto_managed`,
   `queue_position`, `completed_dir`, `selected_files`, `trackers`) →
@@ -397,8 +397,9 @@ activée en parité Python (loopback compris — `tribler-cli` la lit dans
   `PUT …/default_trackers` (`download_defaults/trackers_file`),
   `DELETE …/trackers`, `PUT …/tracker_force_announce` (via
   `tracker_comms` ou re-application à la liste persistée — divergence
-  documentée si rqbit ne l'expose pas à chaud). `GET /api/downloads` :
-  `get_peers`, `get_pieces`, `get_availability` selon surface rqbit.
+  documentée si rqbit ne l'expose pas à chaud). Les flags
+  `get_peers`/`get_pieces`/`get_availability` de `GET /api/downloads`
+  ont été livrés avec l'étape 22.
 - [ ] **Étape 24. Topics SSE complets.** Nouvelles variantes
   `Notification` + émetteurs : `remote_query_results`
   (`uuid,query,results,peer`), `local_query_results`, `tunnel_removed`,

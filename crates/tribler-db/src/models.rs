@@ -105,4 +105,35 @@ pub struct DownloadRow {
     pub finished: bool,
     /// Nombre de sauts anonymes du tunnel (0 = telechargement direct).
     pub anon_hops: i64,
+    /// Seeding anonyme (`safe_seeding` du DownloadConfig Python).
+    pub safe_seeding: bool,
+    /// Arret demande par l'utilisateur (`user_stopped` Python) —
+    /// distinct de `paused` (etat courant) comme en Python.
+    pub user_stopped: bool,
+    /// Limite d'upload en octets/s (0 = illimite ; Python stocke -1).
+    pub upload_limit: i64,
+    /// Limite de download en octets/s (0 = illimite).
+    pub download_limit: i64,
+    /// Ratio de seed individuel (`None` = defaut global
+    /// `download_defaults/seeding_ratio`, comme `config.get_seeding_ratio`).
+    pub seeding_ratio: Option<f64>,
+    /// File d'attente auto-managee (persiste pour fidelite ; librqbit
+    /// n'a pas de queue — attribut logique).
+    pub auto_managed: bool,
+    /// Position dans la file (-1 = non positionne).
+    pub queue_position: i64,
+    /// Dossier des fichiers termines (`completed_dir` Python).
+    pub completed_dir: Option<String>,
+    /// Fichiers selectionnes (indices ; `None` = tous, CSV en base
+    /// comme `download_defaults/files` Python).
+    pub selected_files: Option<Vec<i64>>,
+    /// Priorites par fichier (indices -> priorite 0..7 ; persiste
+    /// pour reporting — librqbit n'ordonnance pas par priorite).
+    pub file_priorities: Option<Vec<i64>>,
+    /// Trackers ajoutes a chaud (`PUT .../trackers` ; rejoues au
+    /// re-add, une URL par ligne en base).
+    pub extra_trackers: Vec<String>,
+    /// Timestamp de completion (`atp.completed_time` Python ; 0 si
+    /// pas termine).
+    pub time_finished: i64,
 }

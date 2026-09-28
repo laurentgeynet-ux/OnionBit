@@ -5,9 +5,10 @@
 //! coherente, publie les evenements sur le [`Notifier`], et restaure
 //! les telechargements connus au demarrage.
 
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use tribler_bittorrent::{BtEngine, Download, DownloadStats};
+use tribler_bittorrent::{AddDownloadOptions, BtEngine, Download, DownloadStats};
 use tribler_db::{Database, DownloadRow};
 
 use crate::config::CoreConfig;
@@ -20,6 +21,20 @@ fn now_unix() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0)
+}
+
+/// Sens de deplacement dans la file d'attente (`queue_position` du
+/// `PATCH /api/downloads/{ih}` Python).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QueueOp {
+    /// `queue_up` : remonte d'une position.
+    Up,
+    /// `queue_top` : tout en haut.
+    Top,
+    /// `queue_down` : descend d'une position.
+    Down,
+    /// `queue_bottom` : tout en bas.
+    Bottom,
 }
 
 /// Session coeur du daemon.
@@ -133,8 +148,10 @@ impl CoreSession {
         Ok(session)
     }
 
-    /// Reinjecte dans les moteurs les telechargements persistes
-    /// (le moteur anonyme `anon_hops` est choisi selon la colonne DB).
+    /// Reinjecte dans les moteurs les telechargements persistes, avec
+    /// tous leurs reglages (equivalent du `load_checkpoint` Python :
+    /// selection de fichiers, trackers additionnels, limites,
+    /// dossier de sortie et etat pause sont reappliques a l'ajout).
     async fn restore_downloads(&self) {
         let rows = match self.inner.db.with(tribler_db::downloads::list) {
             Ok(r) => r,
@@ -155,12 +172,7 @@ impl CoreSession {
                     continue;
                 }
             };
-            let res = if let Some(data) = &row.torrent_data {
-                engine.add_torrent_bytes(data.clone(), row.paused).await
-            } else {
-                engine.add_uri(&row.source_uri).await
-            };
-            match res {
+            match self.readd_row(&engine, &row).await {
                 Ok(dl) => {
                     tracing::info!(
                         infohash = %dl.info_hash_hex(),
@@ -168,9 +180,6 @@ impl CoreSession {
                     );
                     if let Some(name) = dl.name() {
                         self.index_channel_node(&dl.info_hash(), &name, dl.stats().total_bytes);
-                    }
-                    if row.paused {
-                        let _ = engine.pause(&dl.id().to_string()).await;
                     }
                 }
                 Err(e) => {
@@ -184,6 +193,56 @@ impl CoreSession {
         }
     }
 
+    /// Options rqbit reconstruites depuis la ligne persistee — les
+    /// reglages par telechargement (selection de fichiers, trackers
+    /// ajoutes a chaud, limites, dossier de sortie, pause) sont
+    /// reappliques a chaque (re)creation, comme le `DownloadConfig`
+    /// checkpointe Python.
+    fn row_add_options(row: &DownloadRow) -> AddDownloadOptions {
+        AddDownloadOptions {
+            paused: row.paused,
+            output_folder: (!row.output_dir.is_empty()).then(|| PathBuf::from(&row.output_dir)),
+            only_files: row
+                .selected_files
+                .as_ref()
+                .map(|l| l.iter().map(|&i| i as usize).collect()),
+            trackers: row.extra_trackers.clone(),
+            upload_limit_bps: u64::try_from(row.upload_limit).ok().filter(|&v| v > 0),
+            download_limit_bps: u64::try_from(row.download_limit).ok().filter(|&v| v > 0),
+        }
+    }
+
+    /// Recree le telechargement decrit par `row` sur `engine`
+    /// (`.torrent` persiste en priorite, `source_uri` sinon).
+    async fn readd_row(&self, engine: &BtEngine, row: &DownloadRow) -> Result<Download> {
+        let opts = Self::row_add_options(row);
+        Ok(if let Some(bytes) = &row.torrent_data {
+            engine.add_torrent_bytes_opts(bytes.clone(), &opts).await?
+        } else {
+            engine.add_uri_opts(&row.source_uri, &opts).await?
+        })
+    }
+
+    /// Ligne de persistance d'un telechargement (`None` si inconnue).
+    fn row_of(&self, ih: &[u8]) -> Result<Option<DownloadRow>> {
+        Ok(self.inner.db.with(|c| tribler_db::downloads::get(c, ih))?)
+    }
+
+    /// Lecture-modification-ecriture des reglages persistes d'un
+    /// telechargement (`true` si la ligne existait). Les colonnes
+    /// runtime de la ligne relue sont conservees — `f` ne touche que
+    /// les reglages.
+    pub fn update_download_row(&self, ih: &[u8], f: impl FnOnce(&mut DownloadRow)) -> Result<bool> {
+        Ok(self.inner.db.with(|c| {
+            let Some(mut row) = tribler_db::downloads::get(c, ih)? else {
+                return Ok(false);
+            };
+            f(&mut row);
+            tribler_db::downloads::upsert(c, &row)?;
+            Ok(true)
+        })?)
+    }
+
     /// Boucle periodique : publie `DownloadProgress` pour chaque
     /// telechargement actif et detecte les fins de telechargement.
     fn spawn_progress_loop(&self) {
@@ -195,7 +254,7 @@ impl CoreSession {
             tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
                 tick.tick().await;
-                for stats in session.inner.engine.list() {
+                for stats in session.downloads() {
                     let newly_done = stats.finished && !finished.contains(&stats.info_hash);
                     if newly_done {
                         finished.insert(stats.info_hash.clone());
@@ -214,6 +273,7 @@ impl CoreSession {
                                 .with(|c| tribler_db::downloads::set_finished(c, &ih, true));
                         }
                     }
+                    session.enforce_seeding_policy(&stats);
                     session
                         .inner
                         .notifier
@@ -267,27 +327,113 @@ impl CoreSession {
         self.all_engines().iter().find_map(|e| e.get(id_or_hash))
     }
 
+    /// Politique d'arret de seed — `download_defaults/seeding_mode`
+    /// global plus `seeding_ratio` individuel (`DownloadConfig`).
+    /// Appelee a chaque tick pour les telechargements termines :
+    /// - `never` stoppe le seed a la fin du telechargement ;
+    /// - `ratio` quand upload/download >= la cible (ratio individuel
+    ///   en priorite, sinon le defaut) ;
+    /// - `time` apres `seeding_time` secondes de seed ;
+    /// - `forever` ne stoppe que sur ratio individuel explicite.
+    fn enforce_seeding_policy(&self, stats: &DownloadStats) {
+        if !stats.finished {
+            return;
+        }
+        let Some(ih) = tribler_crypto::hash::from_hex(&stats.info_hash) else {
+            return;
+        };
+        let row = self
+            .inner
+            .db
+            .with(|c| tribler_db::downloads::get(c, &ih))
+            .unwrap_or(None);
+        let Some(row) = row else { return };
+        if row.paused || row.user_stopped {
+            return;
+        }
+        let dd = &self.inner.config.download_defaults;
+        let ratio_target = row
+            .seeding_ratio
+            .filter(|r| *r > 0.0)
+            .or_else(|| (dd.seeding_mode == "ratio").then_some(dd.seeding_ratio));
+        let stop = if let Some(ratio) = ratio_target {
+            stats.total_bytes > 0 && stats.uploaded_bytes as f64 >= ratio * stats.total_bytes as f64
+        } else {
+            match dd.seeding_mode.as_str() {
+                "never" => true,
+                "time" => {
+                    row.time_finished > 0
+                        && now_unix().saturating_sub(row.time_finished) >= dd.seeding_time as i64
+                }
+                _ => false,
+            }
+        };
+        if !stop {
+            return;
+        }
+        if let Some(engine) = self.owner_engine(&stats.info_hash) {
+            let ih_hex = stats.info_hash.clone();
+            tokio::spawn(async move {
+                if let Err(e) = engine.pause(&ih_hex).await {
+                    tracing::warn!(error = %e, "arret de seed automatique impossible");
+                }
+            });
+            let _ = self.update_download_row(&ih, |r| r.paused = true);
+        }
+    }
+
     /// Ajoute un telechargement (magnet ou URI `http(s)`), eventuellement
     /// anonyme (`anon_hops` sauts de tunnel — necessite
     /// `ipv8.enable_anonymity`), et le persiste.
     pub async fn add_download(&self, uri: &str, paused: bool) -> Result<Download> {
-        self.add_download_anon(uri, paused, 0).await
+        let safe = self.inner.config.download_defaults.safeseeding_enabled;
+        self.add_download_anon(uri, paused, 0, safe).await
     }
 
-    /// `add_download` avec choix du nombre de sauts anonymes.
+    /// `add_download` avec choix du nombre de sauts anonymes et du
+    /// flag `safe_seeding` (persiste dans la ligne `downloads`).
     pub async fn add_download_anon(
         &self,
         uri: &str,
         paused: bool,
         anon_hops: u32,
+        safe_seeding: bool,
     ) -> Result<Download> {
         if anon_hops == 0 {
             self.check_uri_policy(uri).await?;
         }
         let engine = self.engine_for(anon_hops).await?;
-        let dl = engine.add_uri(uri).await?;
-        self.persist(&dl, uri, paused, anon_hops)?;
+        let dl = engine
+            .add_uri_opts(
+                uri,
+                &AddDownloadOptions {
+                    paused,
+                    trackers: self.default_trackers(),
+                    ..Default::default()
+                },
+            )
+            .await?;
+        self.persist(&dl, uri, paused, anon_hops, safe_seeding)?;
         Ok(dl)
+    }
+
+    /// Trackers du `download_defaults/trackers_file` (relatif a
+    /// `state_dir`), ajoutes a chaque nouveau telechargement comme
+    /// `add_default_trackers` Python.
+    fn default_trackers(&self) -> Vec<String> {
+        let file = &self.inner.config.download_defaults.trackers_file;
+        if file.is_empty() {
+            return Vec::new();
+        }
+        let path = self.inner.config.state_dir.join(file);
+        std::fs::read_to_string(path)
+            .map(|s| {
+                s.lines()
+                    .map(|l| l.trim().to_string())
+                    .filter(|l| !l.is_empty())
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     /// Anti-SSRF : une URI `http(s)` (fournie par un tiers via
@@ -319,25 +465,62 @@ impl CoreSession {
 
     /// Ajoute un telechargement depuis les octets d'un `.torrent`.
     pub async fn add_torrent_bytes(&self, bytes: Vec<u8>, paused: bool) -> Result<Download> {
-        self.add_torrent_bytes_anon(bytes, paused, 0).await
+        let safe = self.inner.config.download_defaults.safeseeding_enabled;
+        self.add_torrent_bytes_anon(bytes, paused, 0, safe).await
     }
 
-    /// `add_torrent_bytes` avec choix du nombre de sauts anonymes.
+    /// `add_torrent_bytes` avec choix du nombre de sauts anonymes et
+    /// du flag `safe_seeding` persiste.
     pub async fn add_torrent_bytes_anon(
         &self,
         bytes: Vec<u8>,
         paused: bool,
         anon_hops: u32,
+        safe_seeding: bool,
     ) -> Result<Download> {
         // Parsing borne en amont pour extraire l'info-hash a persister.
         let meta = tribler_format::torrent::TorrentMeta::parse(&bytes)?;
         let engine = self.engine_for(anon_hops).await?;
-        let dl = engine.add_torrent_bytes(bytes.clone(), paused).await?;
-        self.persist_torrent(&dl, bytes, &meta, paused, anon_hops)?;
+        let dl = engine
+            .add_torrent_bytes_opts(
+                bytes.clone(),
+                &AddDownloadOptions {
+                    paused,
+                    trackers: self.default_trackers(),
+                    ..Default::default()
+                },
+            )
+            .await?;
+        self.persist_torrent(&dl, bytes, &meta, paused, anon_hops, safe_seeding)?;
         Ok(dl)
     }
 
-    fn persist(&self, dl: &Download, uri: &str, paused: bool, anon_hops: u32) -> Result<()> {
+    /// Reglages initiaux d'une ligne `downloads` : defauts de
+    /// `download_defaults` Python (`auto_managed`, `completed_dir`)
+    /// et position en fin de file (`next_queue_position`).
+    fn settings_defaults(
+        &self,
+        c: &rusqlite::Connection,
+        safe_seeding: bool,
+    ) -> tribler_db::Result<DownloadRow> {
+        let dd = &self.inner.config.download_defaults;
+        Ok(DownloadRow {
+            safe_seeding,
+            auto_managed: dd.auto_managed,
+            queue_position: tribler_db::downloads::next_queue_position(c)?,
+            completed_dir: (!dd.completed_dir.is_empty()).then(|| dd.completed_dir.clone()),
+            ..Default::default()
+        })
+    }
+
+    fn persist(
+        &self,
+        dl: &Download,
+        uri: &str,
+        paused: bool,
+        anon_hops: u32,
+        safe_seeding: bool,
+    ) -> Result<()> {
         self.inner.db.with(|c| {
             tribler_db::downloads::upsert(
                 c,
@@ -349,7 +532,7 @@ impl CoreSession {
                     added_on: now_unix(),
                     paused,
                     anon_hops: anon_hops as i64,
-                    ..Default::default()
+                    ..self.settings_defaults(c, safe_seeding)?
                 },
             )
         })?;
@@ -366,6 +549,7 @@ impl CoreSession {
         meta: &tribler_format::torrent::TorrentMeta,
         paused: bool,
         anon_hops: u32,
+        safe_seeding: bool,
     ) -> Result<()> {
         self.inner.db.with(|c| {
             tribler_db::downloads::upsert(
@@ -382,7 +566,7 @@ impl CoreSession {
                     added_on: now_unix(),
                     paused,
                     anon_hops: anon_hops as i64,
-                    ..Default::default()
+                    ..self.settings_defaults(c, safe_seeding)?
                 },
             )
         })?;
@@ -421,56 +605,71 @@ impl CoreSession {
 
     /// `update_hops` Python (`DownloadManager.update_hops`) : retire le
     /// telechargement de son moteur actuel puis le recree sur le moteur
-    /// a `new_hops` sauts — les donnees sur disque sont conservees et
-    /// le telechargement repart actif (comportement Python identique).
-    ///
-    /// La source de re-creation est, par ordre : les octets du
-    /// `.torrent` persistes en base, sinon la `source_uri` enregistree.
+    /// a `new_hops` sauts — les donnees sur disque ET les reglages
+    /// persistes sont conserves (comme le `checkpoint` Python survive
+    /// a la recreation).
     pub async fn update_hops(&self, id_or_hash: &str, new_hops: u32) -> Result<()> {
         let dl = self
             .find_download(id_or_hash)
             .ok_or(CoreError::InvalidState("telechargement inconnu"))?;
         let ih = dl.info_hash();
-        let row = self.inner.db.with(|c| tribler_db::downloads::get(c, &ih))?;
-        let old_hops = row.as_ref().map(|r| r.anon_hops.max(0) as u32).unwrap_or(0);
-        let bytes = row
-            .as_ref()
-            .and_then(|r| r.torrent_data.clone())
-            .or_else(|| dl.torrent_bytes().map(|b| b.to_vec()));
-        let uri = row
-            .map(|r| r.source_uri)
-            .filter(|u| !u.is_empty())
-            .unwrap_or_else(|| {
-                format!("magnet:?xt=urn:btih:{}", tribler_crypto::hash::to_hex(&ih))
-            });
-        self.remove(id_or_hash, false).await?;
-        let readded = match bytes.clone() {
-            Some(b) => self.add_torrent_bytes_anon(b, false, new_hops).await,
-            None => self.add_download_anon(&uri, false, new_hops).await,
-        };
-        if let Err(e) = readded {
-            // Rollback best-effort sur l'ancien moteur : Python laisse
-            // le download perdu dans ce cas, mais la ligne DB disparait
-            // aussi chez nous — on prefere restaurer l'etat initial.
-            let rollback = match bytes {
-                Some(b) => self.add_torrent_bytes_anon(b, false, old_hops).await,
-                None => self.add_download_anon(&uri, false, old_hops).await,
-            };
-            if let Err(rb) = rollback {
-                tracing::warn!(
-                    infohash = %tribler_crypto::hash::to_hex(&ih),
-                    error = %rb,
-                    "update_hops: rollback impossible — download perdu"
-                );
-            }
-            return Err(e);
+        let mut row = self
+            .row_of(&ih)?
+            .ok_or(CoreError::InvalidState("telechargement inconnu"))?;
+        // Metainfo resolue depuis : la conserver permet les re-adds
+        // ulterieurs hors-ligne (meme source que Python : le .torrent
+        // checkpointe).
+        if row.torrent_data.is_none() {
+            row.torrent_data = dl.torrent_bytes().map(|b| b.to_vec());
         }
-        Ok(())
+        let old_hops = row.anon_hops.max(0) as u32;
+        let old_engine = self.engine_for(old_hops).await?;
+        let new_engine = self.engine_for(new_hops).await?;
+        self.remove_engine_only(id_or_hash, false).await?;
+        row.anon_hops = i64::from(new_hops);
+        match self.readd_row(&new_engine, &row).await {
+            Ok(_) => {
+                self.inner
+                    .db
+                    .with(|c| tribler_db::downloads::upsert(c, &row))?;
+                Ok(())
+            }
+            Err(e) => {
+                // Rollback best-effort sur l'ancien moteur : Python
+                // laisse le download perdu, on prefere restaurer
+                // l'etat initial (ligne DB intacte).
+                row.anon_hops = i64::from(old_hops);
+                if let Err(rb) = self.readd_row(&old_engine, &row).await {
+                    tracing::warn!(
+                        infohash = %tribler_crypto::hash::to_hex(&ih),
+                        error = %rb,
+                        "update_hops: rollback impossible — download perdu"
+                    );
+                }
+                Err(e)
+            }
+        }
     }
 
     /// Liste les telechargements (moteur principal + lanes anonymes).
     pub fn downloads(&self) -> Vec<DownloadStats> {
         self.all_engines().iter().flat_map(|e| e.list()).collect()
+    }
+
+    /// Stats par pair d'un telechargement (tous moteurs — principal
+    /// et lanes anonymes ; `get_peers` de `GET /api/downloads`).
+    pub fn peer_stats(&self, id_or_hash: &str) -> Option<Vec<tribler_bittorrent::DownloadPeer>> {
+        self.all_engines()
+            .iter()
+            .find_map(|e| e.peer_stats(id_or_hash))
+    }
+
+    /// Bitfield base64 MSB-first des pieces detenues (tous moteurs —
+    /// `get_pieces_base64` Python).
+    pub fn have_pieces_base64(&self, id_or_hash: &str) -> Option<String> {
+        self.all_engines()
+            .iter()
+            .find_map(|e| e.have_pieces_base64(id_or_hash))
     }
 
     /// `anon_hops` par info-hash hex, d'apres la persistance DB
@@ -500,22 +699,36 @@ impl CoreSession {
             .find(|e| e.get(id_or_hash).is_some())
     }
 
-    /// Pause / reprise / suppression.
+    /// Pause idempotente (`download.stop()` Python est un no-op sur
+    /// un download deja arrete ; librqbit renvoie une erreur — on
+    /// l'absorbe pour la parite).
     pub async fn pause(&self, id_or_hash: &str) -> Result<()> {
         let engine = self
             .owner_engine(id_or_hash)
             .ok_or(CoreError::InvalidState("telechargement inconnu"))?;
-        engine.pause(id_or_hash).await?;
+        if !engine
+            .get(id_or_hash)
+            .map(|d| d.is_paused())
+            .unwrap_or(false)
+        {
+            engine.pause(id_or_hash).await?;
+        }
         self.notify_state(id_or_hash);
         Ok(())
     }
 
-    /// Reprend un telechargement.
+    /// Reprend un telechargement (idempotent, comme `resume` Python).
     pub async fn resume(&self, id_or_hash: &str) -> Result<()> {
         let engine = self
             .owner_engine(id_or_hash)
             .ok_or(CoreError::InvalidState("telechargement inconnu"))?;
-        engine.resume(id_or_hash).await?;
+        if engine
+            .get(id_or_hash)
+            .map(|d| d.is_paused())
+            .unwrap_or(false)
+        {
+            engine.resume(id_or_hash).await?;
+        }
         self.notify_state(id_or_hash);
         Ok(())
     }
@@ -542,13 +755,21 @@ impl CoreSession {
         errors
     }
 
-    /// Supprime un telechargement (optionnellement ses fichiers).
-    pub async fn remove(&self, id_or_hash: &str, delete_files: bool) -> Result<()> {
+    /// Retire le telechargement de son moteur sans toucher a la ligne
+    /// `downloads` — reserve aux recreations internes (`update_hops`,
+    /// `recheck`, `move_storage`) qui reinjectent la ligne apres.
+    async fn remove_engine_only(&self, id_or_hash: &str, delete_files: bool) -> Result<()> {
         let engine = self
             .owner_engine(id_or_hash)
             .ok_or(CoreError::InvalidState("telechargement inconnu"))?;
-        let infohash = engine.get(id_or_hash).map(|d| d.info_hash_hex());
-        engine.remove(id_or_hash, delete_files).await?;
+        Ok(engine.remove(id_or_hash, delete_files).await?)
+    }
+
+    /// Supprime un telechargement (optionnellement ses fichiers) et
+    /// sa ligne de persistance (`DELETE /api/downloads/{ih}`).
+    pub async fn remove(&self, id_or_hash: &str, delete_files: bool) -> Result<()> {
+        let infohash = self.find_download(id_or_hash).map(|d| d.info_hash_hex());
+        self.remove_engine_only(id_or_hash, delete_files).await?;
         if let Some(h) = infohash {
             if let Some(ih) = tribler_crypto::hash::from_hex(&h) {
                 let _ = self
@@ -572,6 +793,238 @@ impl CoreSession {
                     });
             }
         }
+    }
+
+    /// Ligne persistante + download actif d'un `id_or_hash`
+    /// (couple requis par les operations de reglages du PATCH).
+    fn download_and_row(&self, id_or_hash: &str) -> Result<(Download, DownloadRow)> {
+        let dl = self
+            .find_download(id_or_hash)
+            .ok_or(CoreError::InvalidState("telechargement inconnu"))?;
+        let row = self
+            .row_of(&dl.info_hash())?
+            .ok_or(CoreError::InvalidState("telechargement inconnu"))?;
+        Ok((dl, row))
+    }
+
+    /// `force_recheck` Python : librqbit revérifie les pieces a
+    /// chaque ajout (pas de fastresume persistant — `persistence`
+    /// non configuree) → remove + re-add = revalidation complete.
+    /// Les reglages de la ligne sont preserves.
+    pub async fn recheck(&self, id_or_hash: &str) -> Result<()> {
+        let (dl, mut row) = self.download_and_row(id_or_hash)?;
+        let ih = dl.info_hash();
+        if row.torrent_data.is_none() {
+            row.torrent_data = dl.torrent_bytes().map(|b| b.to_vec());
+        }
+        let engine = self.engine_for(row.anon_hops.max(0) as u32).await?;
+        self.remove_engine_only(id_or_hash, false).await?;
+        self.readd_row(&engine, &row).await?;
+        self.inner
+            .db
+            .with(|c| tribler_db::downloads::upsert(c, &row))?;
+        self.notify_state(&tribler_crypto::hash::to_hex(&ih));
+        Ok(())
+    }
+
+    /// `move_storage` Python : deplace les fichiers vers `dest_dir`
+    /// puis recree le torrent sur ce dossier (rqbit ne peut pas
+    /// reallouer un torrent vivant — remove/move/re-add, le hash-check
+    /// au re-add reconnait les fichiers deplaces).
+    ///
+    /// `completed_dir` (`None` = `dest_dir`, comme Python) est
+    /// applique seulement si le telechargement n'est pas termine ;
+    /// sinon c'est `dest_dir` qui devient le `completed_dir`
+    /// (comportement du handler Python).
+    ///
+    /// Retourne `false` pour le no-op Python (`dest_dir` inchange et
+    /// `completed_dir` identique ou absent).
+    pub async fn move_storage(
+        &self,
+        id_or_hash: &str,
+        dest_dir: &Path,
+        completed_dir: Option<&Path>,
+    ) -> Result<bool> {
+        let (dl, mut row) = self.download_and_row(id_or_hash)?;
+        let current = dl.output_folder();
+        let completed = completed_dir.unwrap_or(dest_dir);
+        let cur_completed = row
+            .completed_dir
+            .as_deref()
+            .map(PathBuf::from)
+            .unwrap_or_default();
+        if dest_dir == current
+            && completed_dir
+                .map(|c| c == cur_completed.as_path())
+                .unwrap_or(true)
+        {
+            return Ok(false);
+        }
+        if !dest_dir.is_dir() || !completed.is_dir() {
+            return Err(CoreError::State(format!(
+                "Target directory ({}) does not exist",
+                dest_dir.display()
+            )));
+        }
+        if row.torrent_data.is_none() {
+            row.torrent_data = dl.torrent_bytes().map(|b| b.to_vec());
+        }
+        let finished = row.finished;
+        let engine = self.engine_for(row.anon_hops.max(0) as u32).await?;
+        // Les handles fichiers doivent etre fermes avant le
+        // deplacement (rename impossible sinon sous Windows).
+        self.remove_engine_only(id_or_hash, false).await?;
+        if let Err(e) = move_dir_contents(&current, dest_dir) {
+            // Rollback best-effort : remettre les entrees deja
+            // deplacees puis re-add a l'ancien emplacement.
+            let _ = move_dir_contents(dest_dir, &current);
+            let _ = self.readd_row(&engine, &row).await;
+            return Err(CoreError::State(format!(
+                "move_storage: {e} (rollback effectue)"
+            )));
+        }
+        row.output_dir = dest_dir.display().to_string();
+        row.completed_dir = Some(
+            if finished { dest_dir } else { completed }
+                .display()
+                .to_string(),
+        );
+        self.readd_row(&engine, &row).await?;
+        self.inner
+            .db
+            .with(|c| tribler_db::downloads::upsert(c, &row))?;
+        Ok(true)
+    }
+
+    /// `set_selected_files` Python : valide les indices puis applique
+    /// `only_files` rqbit et persiste la selection.
+    pub async fn set_selected_files(&self, id_or_hash: &str, files: &[i64]) -> Result<()> {
+        let (dl, _) = self.download_and_row(id_or_hash)?;
+        let count = dl
+            .file_count()
+            .ok_or(CoreError::InvalidState("metainfo non disponible"))? as i64;
+        if files.iter().any(|&i| i < 0 || i >= count) {
+            return Err(CoreError::State("index out of range".into()));
+        }
+        let engine = self
+            .owner_engine(id_or_hash)
+            .ok_or(CoreError::InvalidState("telechargement inconnu"))?;
+        let set: std::collections::HashSet<usize> = files.iter().map(|&i| i as usize).collect();
+        engine.update_only_files(id_or_hash, &set).await?;
+        self.update_download_row(&dl.info_hash(), |r| {
+            r.selected_files = Some(files.to_vec());
+        })?;
+        Ok(())
+    }
+
+    /// `set_file_priority` Python — persistee pour reporting ;
+    /// librqbit n'expose pas d'ordonnancement par priorite de
+    /// fichier (ecart documente dans `api_rest_mapping.md`).
+    pub fn set_file_priority(
+        &self,
+        id_or_hash: &str,
+        file_index: i64,
+        priority: i64,
+    ) -> Result<()> {
+        let (dl, _) = self.download_and_row(id_or_hash)?;
+        let count = dl
+            .file_count()
+            .ok_or(CoreError::InvalidState("metainfo non disponible"))? as i64;
+        if !(0..count).contains(&file_index) {
+            return Err(CoreError::State("index out of range".into()));
+        }
+        if !(0..=7).contains(&priority) {
+            return Err(CoreError::State("file priority out of range".into()));
+        }
+        self.update_download_row(&dl.info_hash(), |r| {
+            // Priorite 4 = normale libtorrent.
+            let mut prios = r
+                .file_priorities
+                .take()
+                .unwrap_or_else(|| vec![4; count as usize]);
+            prios.resize(count as usize, 4);
+            prios[file_index as usize] = priority;
+            r.file_priorities = Some(prios);
+        })?;
+        Ok(())
+    }
+
+    /// Limites de debit par telechargement (octets/s, 0 = illimite),
+    /// persistees et appliquees a la prochaine (re)creation —
+    /// librqbit ne mute pas les limites d'un torrent vivant.
+    pub fn set_rate_limits(
+        &self,
+        id_or_hash: &str,
+        upload: Option<i64>,
+        download: Option<i64>,
+    ) -> Result<()> {
+        let (dl, _) = self.download_and_row(id_or_hash)?;
+        self.update_download_row(&dl.info_hash(), |r| {
+            if let Some(v) = upload {
+                r.upload_limit = v;
+            }
+            if let Some(v) = download {
+                r.download_limit = v;
+            }
+        })?;
+        Ok(())
+    }
+
+    /// `set_seeding_ratio` Python — `None` reinitialise au defaut
+    /// `download_defaults` (`seeding_ratio_default` du PATCH).
+    pub fn set_seeding_ratio(&self, id_or_hash: &str, ratio: Option<f64>) -> Result<()> {
+        let (dl, _) = self.download_and_row(id_or_hash)?;
+        self.update_download_row(&dl.info_hash(), |r| r.seeding_ratio = ratio)?;
+        Ok(())
+    }
+
+    /// `set_auto_managed` Python — persiste (attribut logique ;
+    /// librqbit n'a pas de file d'attente auto-managee).
+    pub fn set_auto_managed(&self, id_or_hash: &str, enabled: bool) -> Result<()> {
+        let (dl, _) = self.download_and_row(id_or_hash)?;
+        self.update_download_row(&dl.info_hash(), |r| r.auto_managed = enabled)?;
+        Ok(())
+    }
+
+    /// `queue_position_{up,top,down,bottom}` Python : reordonne la
+    /// colonne `queue_position` persistee de toutes les lignes
+    /// (ordonnancement logique, expose dans le DTO).
+    pub fn move_in_queue(&self, id_or_hash: &str, op: QueueOp) -> Result<()> {
+        let (dl, _) = self.download_and_row(id_or_hash)?;
+        let ih = dl.info_hash();
+        Ok(self.inner.db.with(|c| {
+            let mut rows = tribler_db::downloads::list(c)?;
+            rows.sort_by_key(|r| r.queue_position);
+            let Some(pos) = rows.iter().position(|r| r.infohash == ih.to_vec()) else {
+                return Ok(());
+            };
+            let last = rows.len().saturating_sub(1);
+            let new_pos = match op {
+                QueueOp::Up => pos.saturating_sub(1),
+                QueueOp::Top => 0,
+                QueueOp::Down => (pos + 1).min(last),
+                QueueOp::Bottom => last,
+            };
+            let row = rows.remove(pos);
+            rows.insert(new_pos, row);
+            for (i, mut r) in rows.into_iter().enumerate() {
+                r.queue_position = i as i64;
+                tribler_db::downloads::upsert(c, &r)?;
+            }
+            Ok(())
+        })?)
+    }
+
+    /// Marque l'intention pause/reprise dans la persistance
+    /// (`user_stopped`/`paused` Python) — appele par le PATCH sur
+    /// `state=stop|resume`.
+    pub fn set_stopped_flag(&self, id_or_hash: &str, stopped: bool) -> Result<()> {
+        let (dl, _) = self.download_and_row(id_or_hash)?;
+        self.update_download_row(&dl.info_hash(), |r| {
+            r.paused = stopped;
+            r.user_stopped = stopped;
+        })?;
+        Ok(())
     }
 
     /// Demarre les services secondaires actives par la
@@ -734,6 +1187,46 @@ impl CoreSession {
             stack.stop().await;
         }
         self.inner.engine.stop().await;
+    }
+}
+
+/// Deplace les entrees de premier niveau de `src` vers `dst`
+/// (`move_storage` : `rename` intra-volume ; copie + suppression en
+/// secours pour les deplacements inter-volumes).
+fn move_dir_contents(src: &Path, dst: &Path) -> std::io::Result<()> {
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let from = entry.path();
+        let to = dst.join(entry.file_name());
+        if to.exists() {
+            // Collision : la destination prevaut — les pieces non
+            // deplacees seront reverifiees au re-add.
+            continue;
+        }
+        if std::fs::rename(&from, &to).is_err() {
+            copy_recursive(&from, &to)?;
+            if from.is_dir() {
+                std::fs::remove_dir_all(&from)?;
+            } else {
+                std::fs::remove_file(&from)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Copie recursive fichier/repertoire (secours inter-volumes de
+/// [`move_dir_contents`]).
+fn copy_recursive(from: &Path, to: &Path) -> std::io::Result<()> {
+    if from.is_dir() {
+        std::fs::create_dir_all(to)?;
+        for entry in std::fs::read_dir(from)? {
+            let entry = entry?;
+            copy_recursive(&entry.path(), &to.join(entry.file_name()))?;
+        }
+        Ok(())
+    } else {
+        std::fs::copy(from, to).map(|_| ())
     }
 }
 

@@ -52,6 +52,13 @@ pub struct EngineConfig {
     /// transportent que de l'UDP — les connexions TCP sortantes et
     /// l'ecoute TCP sont desactivees).
     pub utp_only: bool,
+    /// Limite globale d'upload en octets/s (`None` = illimite ;
+    /// `libtorrent/max_upload_rate` Tribler). Modifiable a chaud via
+    /// `BtEngine::set_ratelimits`.
+    pub max_upload_bps: Option<u64>,
+    /// Limite globale de download en octets/s (`libtorrent/
+    /// max_download_rate` Tribler).
+    pub max_download_bps: Option<u64>,
 }
 
 impl Default for EngineConfig {
@@ -67,6 +74,8 @@ impl Default for EngineConfig {
             socks5_proxy: None,
             fastresume: true,
             utp_only: false,
+            max_upload_bps: None,
+            max_download_bps: None,
         }
     }
 }
@@ -86,6 +95,8 @@ impl EngineConfig {
             socks5_proxy: None,
             fastresume: false,
             utp_only: false,
+            max_upload_bps: None,
+            max_download_bps: None,
         }
     }
 
@@ -112,6 +123,16 @@ impl EngineConfig {
 
         librqbit::SessionOptions {
             dht,
+            ratelimits: librqbit::limits::LimitsConfig {
+                upload_bps: self
+                    .max_upload_bps
+                    .and_then(|v| u32::try_from(v).ok())
+                    .and_then(std::num::NonZeroU32::new),
+                download_bps: self
+                    .max_download_bps
+                    .and_then(|v| u32::try_from(v).ok())
+                    .and_then(std::num::NonZeroU32::new),
+            },
             disable_trackers: self.disable_trackers,
             disable_local_service_discovery: self.disable_lsd,
             ipv4_only: self.ipv4_only,

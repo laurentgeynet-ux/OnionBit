@@ -11,7 +11,7 @@
 //! semantique du schema, pas l'interoperabilite binaire).
 
 /// Version courante du schema de ce crate.
-pub const SCHEMA_VERSION: i64 = 2;
+pub const SCHEMA_VERSION: i64 = 3;
 
 /// Script SQL de chaque migration, dans l'ordre (index 0 = v1).
 pub const MIGRATIONS: &[&str] = &[
@@ -99,6 +99,36 @@ CREATE TABLE downloads (
     // de sauts du tunnel associe au telechargement (0 = non anonyme).
     "
 ALTER TABLE downloads ADD COLUMN anon_hops INTEGER NOT NULL DEFAULT 0;
+",
+    // v3 : reglages par telechargement (equivalent du `DownloadConfig`
+    // checkpointe par Tribler dans `dlcheckpoints/<infohash>.conf`).
+    // - `safe_seeding`, `auto_managed`, `user_stopped` : booleens.
+    // - `upload_limit`/`download_limit` : octets/s (0 = illimite —
+    //   convention Python `-1` ramenee a 0 cote REST).
+    // - `seeding_ratio` : override individuel (NULL = defaut global
+    //   `libtorrent/download_defaults/seeding_ratio`).
+    // - `queue_position` : position persistee (librqbit n'a pas de
+    //   file d'attente — attribut logique ordonnant le listing).
+    // - `completed_dir` : dossier de fichiers termines (deplacement
+    //   post-completion, `move_storage`).
+    // - `selected_files` / `file_priorities` : CSV d'entiers comme le
+    //   champ `files` du checkpoint Python (`"0,2,3,"`).
+    // - `extra_trackers` : URLs ajoutees a chaud (une par ligne) —
+    //   rejouees au re-add.
+    // - `time_finished` : `atp.completed_time` Python.
+    "
+ALTER TABLE downloads ADD COLUMN safe_seeding INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE downloads ADD COLUMN user_stopped INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE downloads ADD COLUMN upload_limit INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE downloads ADD COLUMN download_limit INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE downloads ADD COLUMN seeding_ratio REAL;
+ALTER TABLE downloads ADD COLUMN auto_managed INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE downloads ADD COLUMN queue_position INTEGER NOT NULL DEFAULT -1;
+ALTER TABLE downloads ADD COLUMN completed_dir TEXT;
+ALTER TABLE downloads ADD COLUMN selected_files TEXT;
+ALTER TABLE downloads ADD COLUMN file_priorities TEXT;
+ALTER TABLE downloads ADD COLUMN extra_trackers TEXT;
+ALTER TABLE downloads ADD COLUMN time_finished INTEGER NOT NULL DEFAULT 0;
 ",
 ];
 

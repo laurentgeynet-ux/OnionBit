@@ -23,7 +23,7 @@ pub use daemon_config::{DaemonConfig, CONFIG_FILENAME};
 pub use error::{CoreError, Result};
 pub use ipv8_stack::{Ipv8Config, Ipv8Stack};
 pub use notifier::{Notification, Notifier};
-pub use session::CoreSession;
+pub use session::{CoreSession, QueueOp};
 
 #[cfg(test)]
 mod tests {
