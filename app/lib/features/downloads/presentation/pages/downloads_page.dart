@@ -341,7 +341,7 @@ class _HeaderRow extends StatelessWidget {
           h('Nom', flex: 4),
           h('Taille', width: 80),
           h('Progression', flex: 2),
-          h('État', width: 140),
+          h('État', width: 160),
           h('↓', width: 90),
           h('↑', width: 90),
           h('ETA', width: 80),
@@ -407,7 +407,7 @@ class _DownloadRow extends ConsumerWidget {
                   ),
                 ),
               ),
-              SizedBox(width: 140, child: DownloadStatusChip(download: d)),
+              SizedBox(width: 160, child: DownloadStatusChip(download: d)),
               SizedBox(
                 width: 90,
                 child: Text(
