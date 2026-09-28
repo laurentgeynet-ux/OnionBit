@@ -3,6 +3,26 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## UI : lancement automatique du daemon (2026-09-28)
+
+Décision V1 de `flutter_architecture.md` implémentée : plus besoin de
+`demarrer.cmd`, lancer `tribler_ui.exe` suffit.
+
+- `core/config/daemon_launcher{,_native,_stub}` : au build de
+  `connectionSettingsProvider`, si l'API découverte ne répond pas,
+  `tribler-daemon[.exe]` voisin de l'exécutable est lancé détaché
+  (`--state-dir <exe>/state` — disposition du bundle `dist\`), puis
+  l'API est sondée 30 s (clé et `http_port_running` relus à chaque
+  tentative). Daemon déjà vivant → connexion directe ; binaire absent
+  (`flutter run`, web) → `null` et repli sur les préférences.
+- `TRIBLER_API_KEY` présent = setup externe : jamais de daemon enfant.
+  `TRIBLER_DAEMON_EXE` surcharge le chemin du binaire en dev.
+- Sonde « API vivante » = toute réponse HTTP, même 401 (même logique
+  que `Test-ApiAlive` de `demarrer.ps1`) — testée en loopback
+  (`daemon_launcher_test.dart`).
+- Symétrie avec l'étape 29 : l'UI lance le daemon, l'item « Ouvrir
+  Tribler » du systray lance l'UI.
+
 ## Étape 29 — daemon systray Windows + arrêt unifié (2026-09-28)
 
 Le daemon n'affiche plus de fenêtre console : il vit dans la zone de

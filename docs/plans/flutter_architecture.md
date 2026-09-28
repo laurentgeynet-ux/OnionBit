@@ -183,6 +183,10 @@ repository) → `presentation/` (pages, providers, widgets).
   défaut ; démarrage du daemon embarqué (process enfant) ou connexion
   à un daemon existant — décision V1 : **daemon enfant lancé par
   l'app** avec fallback « se connecter à un daemon existant ».
+  **Implémenté** (2026-09-28) : `daemon_launcher` lance
+  `tribler-daemon[.exe]` voisin de l'exe détaché si l'API ne répond
+  pas, sonde jusqu'à 30 s ; `TRIBLER_DAEMON_EXE` surcharge le chemin
+  en dev. `demarrer.cmd` devient un simple raccourci d'appoint.
 
 ## Stratégie de tests
 

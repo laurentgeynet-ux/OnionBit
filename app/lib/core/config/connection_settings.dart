@@ -2,7 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'app_config.dart';
-import 'daemon_api_resolver.dart';
+import 'daemon_launcher.dart';
 
 /// Connexion au daemon persistée (`shared_preferences`) — URL de base
 /// de `tribler-api` + clé éventuelle. Modifiable dans Réglages, prend
@@ -12,9 +12,10 @@ import 'daemon_api_resolver.dart';
 /// Ordre de résolution (miroir de la session injectée d'eMule-Rust) :
 /// 1. réglage utilisateur pointant hors loopback (daemon distant) —
 ///    toujours respecté tel quel ;
-/// 2. `configuration.json` du daemon local découvert automatiquement
-///    (`daemon_api_resolver`) — source de vérité vivante : clé régénérée
-///    et port aléatoire `http_port_running` se résolvent seuls ;
+/// 2. daemon local garanti vivant puis découvert (`daemon_launcher` :
+///    lance `tribler-daemon` s'il ne tourne pas, relit
+///    `configuration.json` — clé régénérée et port aléatoire
+///    `http_port_running` se résolvent seuls) ;
 /// 3. préférences persistées puis défauts (`127.0.0.1:8085`, sans clé).
 const _kKeyBaseUrl = 'api.baseUrl';
 const _kKeyApiKey = 'api.key';
@@ -37,10 +38,11 @@ class ConnectionSettingsNotifier extends AsyncNotifier<AppConfig> {
       return AppConfig(baseUrl: savedUrl, apiKey: savedKey);
     }
 
-    // 2. Daemon local : `configuration.json` (clé + port réel) prime sur
+    // 2. Daemon local : lancé s'il ne tourne pas (binaire voisin de
+    //    l'exe), puis `configuration.json` (clé + port réel) prime sur
     //    les préférences — auto-cicatrisant si la clé est régénérée ou
     //    le port relancé en aléatoire.
-    final discovered = resolveDaemonApi();
+    final discovered = await ensureDaemonRunning();
     if (discovered != null) return discovered;
 
     // 3. Repli : préférences (loopback) puis défauts.

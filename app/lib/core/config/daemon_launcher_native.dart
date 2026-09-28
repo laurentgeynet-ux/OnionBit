@@ -1,0 +1,104 @@
+/// Lancement du daemon local depuis l'UI (`dart:io`, desktop).
+///
+/// « Daemon enfant lancé par l'app » (décision V1) : `tribler_ui.exe`
+/// démarre `tribler-daemon.exe` si l'API ne répond pas ; si le daemon
+/// tourne déjà (lancé à la main, resté en systray, ou autostart) l'UI
+/// s'y connecte directement — aucun script de lancement requis.
+library;
+
+import 'dart:async';
+import 'dart:io';
+
+import 'app_config.dart';
+import 'daemon_api_resolver_native.dart' as resolver;
+
+/// Durée max d'attente du démarrage du daemon (premier run : migration
+/// SQLite + génération de la clé API + bind ; le Tribler Python vise
+/// la même fenêtre dans `demarrer.ps1`).
+const _kStartupTimeout = Duration(seconds: 30);
+const _kPollInterval = Duration(milliseconds: 500);
+/// Timeout d'une sonde HTTP — un daemon vivant répond immédiatement
+/// en loopback.
+const _kProbeTimeout = Duration(milliseconds: 800);
+
+/// Garantit un daemon local vivant et renvoie sa config de connexion.
+///
+/// 1. `configuration.json` résolu + API vivante → renvoyé tel quel ;
+/// 2. API morte → `tribler-daemon[.exe]` voisin de l'exe lancé détaché
+///    (`--state-dir <exe>/state`), API sondée jusqu'à timeout — port
+///    réel et clé relus à chaque tentative (`http_port=0` possible) ;
+/// 3. binaire absent (`flutter run`, install partielle) → `null`
+///    (connexion manuelle dans « Connexion daemon »).
+///
+/// `TRIBLER_API_KEY` dans l'environnement = setup externe piloté : on
+/// ne lance jamais de daemon enfant. `TRIBLER_DAEMON_EXE` surcharge le
+/// chemin du binaire (boucle de développement).
+Future<AppConfig?> ensureDaemonRunning() async {
+  var config = resolver.resolveDaemonApi();
+  if (config != null && await isDaemonApiAlive(config)) return config;
+  if ((Platform.environment['TRIBLER_API_KEY'] ?? '').trim().isNotEmpty) {
+    return config;
+  }
+
+  final exe = _daemonExe();
+  if (exe == null) return null;
+  final exeDir = exe.parent;
+  final stateDir = Directory('${exeDir.path}${Platform.pathSeparator}state');
+
+  try {
+    // Détaché : le daemon survit à la fermeture de l'UI (il vit dans
+    // sa propre icône systray depuis l'étape 29).
+    await Process.start(
+      exe.path,
+      ['--state-dir', stateDir.path],
+      mode: ProcessStartMode.detached,
+      workingDirectory: exeDir.path,
+    );
+  } on ProcessException {
+    return null;
+  }
+
+  final deadline = DateTime.now().add(_kStartupTimeout);
+  while (DateTime.now().isBefore(deadline)) {
+    await Future<void>.delayed(_kPollInterval);
+    config = resolver.resolveDaemonApi();
+    if (config != null && await isDaemonApiAlive(config)) return config;
+  }
+  return null;
+}
+
+/// `tribler-daemon[.exe]` voisin de l'exécutable de l'UI
+/// (`TRIBLER_DAEMON_EXE` en premier — ex. `target\debug\…` en dev).
+File? _daemonExe() {
+  final override = Platform.environment['TRIBLER_DAEMON_EXE']?.trim();
+  if (override != null && override.isNotEmpty) {
+    final f = File(override);
+    if (f.existsSync()) return f;
+  }
+  final exeDir = File(Platform.resolvedExecutable).parent;
+  final name = Platform.isWindows ? 'tribler-daemon.exe' : 'tribler-daemon';
+  final f = File('${exeDir.path}${Platform.pathSeparator}$name');
+  return f.existsSync() ? f : null;
+}
+
+/// Toute réponse HTTP — y compris 401 sans clé — prouve que l'API est
+/// en vie (même logique que `Test-ApiAlive` de `demarrer.ps1`).
+/// Publique pour les tests (`daemon_launcher_test.dart`).
+Future<bool> isDaemonApiAlive(AppConfig config) async {
+  final client = HttpClient()..connectionTimeout = _kProbeTimeout;
+  try {
+    final request = await client
+        .getUrl(Uri.parse('${config.baseUrl}/api/events/info'))
+        .timeout(_kProbeTimeout);
+    if (config.apiKey.isNotEmpty) {
+      request.headers.set('X-Api-Key', config.apiKey);
+    }
+    final response = await request.close().timeout(_kProbeTimeout);
+    await response.drain<void>();
+    return true;
+  } catch (_) {
+    return false;
+  } finally {
+    client.close();
+  }
+}
