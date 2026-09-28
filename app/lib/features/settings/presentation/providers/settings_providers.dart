@@ -12,3 +12,23 @@ final daemonSettingsProvider =
     FutureProvider.autoDispose<Map<String, dynamic>>(
       (ref) => ref.watch(settingsRepositoryProvider).get(),
     );
+
+/// Espace disque d'un répertoire (`null` = dossier de téléchargement
+/// par défaut) — `{total, used, free}`.
+final dirSpaceProvider = FutureProvider.autoDispose
+    .family<Map<String, int>, String?>(
+      (ref, dir) => ref
+          .watch(settingsRepositoryProvider)
+          .dirSpace(directory: dir),
+    );
+
+/// Items découverts par les flux RSS (`GET /api/rss`).
+final rssItemsProvider =
+    FutureProvider.autoDispose<List<Map<String, dynamic>>>(
+      (ref) => ref.watch(settingsRepositoryProvider).rssItems(),
+    );
+
+/// Versions connues du daemon (`GET /api/versioning/versions`).
+final versionsProvider = FutureProvider.autoDispose<Map<String, dynamic>>(
+  (ref) => ref.watch(settingsRepositoryProvider).versions(),
+);

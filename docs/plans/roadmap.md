@@ -2,9 +2,10 @@
 
 Ce document est la **source de vérité de l'avancement**. Chaque étape est
 cochée quand : implémentée + testée + validée manuellement + documentée +
-commitée (cf. `AGENTS.md`, section "Workflow par étape"). Ne jamais
-démarrer l'UI Flutter (étape 20+) avant que toutes les étapes backend
-soient cochées.
+commitée (cf. `AGENTS.md`, section "Workflow par étape"). La contrainte
+« backend d'abord » est levée (décision du 2026-09-28) : l'UI Flutter
+(`app/`) se développe en parallèle du backend, en consommant
+exclusivement `tribler-api`.
 
 Légende : `[ ]` à faire · `[~]` en cours · `[i]` implémentée et testée en
 loopback, mais **interopérabilité avec un noeud pyipv8 réel non encore
@@ -518,8 +519,23 @@ de la phase 6.
   200 contre le daemon réel, SSE `events_start` reçu, et la
   résolution clé/port depuis `configuration.json` est conforme à ce
   que le resolver (`daemon_api_resolver_native.dart`) et
-  `dist/demarrer.ps1` attendent. **Reste** : validation visuelle
-  manuelle (rendu réel contre le daemon) avant de cocher `[x]`.
+  `dist/demarrer.ps1` attendent. **Seconde passe (2026-09-28)** —
+  toutes les fonctions du daemon exposées dans l'UI : file
+  d'attente par téléchargement (`queue_position` monter/descendre/
+  haut/bas, `auto_managed`), limites de débit individuelles, ratio
+  de seed individuel/défaut, `recheck`, `move_storage`, inclusion
+  et priorité par fichier, trackers (retrait, annonce forcée,
+  trackers par défaut) ; onglets Diagnostic « Statistiques »,
+  « Pairs DHT », « Pairs PEX » et test de vitesse de circuit
+  (flux `speed:` pyipv8) ; sections Réglages « Bande passante »
+  (limites globales), « File d'attente » (`active_*`), « Seed &
+  anonymat par défaut » (mode/ratio/durée/hops/safe seeding),
+  « Tunnels anonymes » (`min/max_circuits`, noeud de sortie),
+  « Réseau » (DHT/UPnP/NAT-PMP/LSD/uTP + proxy), « Automatisation »
+  (watch folder + flux RSS avec items découverts), « Mises à jour »
+  (version + sonde) et indicateur d'espace disque. **Reste** :
+  validation visuelle manuelle (rendu réel contre le daemon) avant
+  de cocher `[x]`.
 
 ---
 

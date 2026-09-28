@@ -90,6 +90,42 @@ class ApiClient {
     null,
   );
 
+  /// `GET` d'une réponse en flux de lignes (`text/event-stream` ou
+  /// texte découpé). Utilisé par le speed test de circuit
+  /// (`speed: {json}` par ligne — format pyipv8, sans `data:` SSE).
+  ///
+  /// En cas d'erreur HTTP, le corps est lu en entier : le endpoint
+  /// tunnel renvoie `{"error": "msg"}` brut (sans enveloppe
+  /// `{"error": {"handled", "message"}}` — forme `Response(dict)` de
+  /// pyipv8).
+  Stream<String> getStreamedLines(
+    String path, {
+    Map<String, String>? query,
+  }) async* {
+    final request = http.Request('GET', _config.apiUri(path, query));
+    request.headers.addAll(_headers);
+    final resp = await _http.send(request);
+    if (resp.statusCode >= 400) {
+      final body = await resp.stream.bytesToString();
+      var message = body;
+      try {
+        final json = jsonDecode(body);
+        if (json is Map) {
+          final err = json['error'];
+          if (err is String) {
+            message = err;
+          } else if (err is Map) {
+            message = '${err['message']}';
+          }
+        }
+      } catch (_) {
+        // Corps non-JSON : message brut.
+      }
+      throw ApiException(resp.statusCode, message);
+    }
+    yield* resp.stream.transform(utf8.decoder).transform(const LineSplitter());
+  }
+
   Future<dynamic> _send(
     Future<http.Response> Function(Uri uri) call,
     String path,

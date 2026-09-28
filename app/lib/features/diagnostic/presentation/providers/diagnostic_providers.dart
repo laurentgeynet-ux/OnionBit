@@ -56,6 +56,30 @@ final tunnelPeersProvider = FutureProvider.autoDispose<List<TunnelPeerInfo>>(
   },
 );
 
+/// Points d'introduction stockés en DHT (swarms cachés).
+final dhtPeersProvider = FutureProvider.autoDispose<List<SwarmPeers>>(
+  (ref) {
+    ref.watch(tickProvider(_kDiagnosticPoll));
+    return ref.watch(diagnosticRepositoryProvider).dhtPeers();
+  },
+);
+
+/// Points d'introduction du store PEX.
+final pexPeersProvider = FutureProvider.autoDispose<List<SwarmPeers>>(
+  (ref) {
+    ref.watch(tickProvider(_kDiagnosticPoll));
+    return ref.watch(diagnosticRepositoryProvider).pexPeers();
+  },
+);
+
+/// Statistiques générales du daemon (`/api/statistics/tribler`).
+final triblerStatsProvider = FutureProvider.autoDispose<TriblerStats>(
+  (ref) {
+    ref.watch(tickProvider(const Duration(seconds: 5)));
+    return ref.watch(diagnosticRepositoryProvider).triblerStats();
+  },
+);
+
 final daemonLogsProvider = FutureProvider.autoDispose<String>(
   (ref) {
     ref.watch(tickProvider(_kDiagnosticPoll));

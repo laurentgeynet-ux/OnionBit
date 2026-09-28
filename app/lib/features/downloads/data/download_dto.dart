@@ -29,6 +29,14 @@ extension DownloadJson on Map<String, dynamic> {
     error: (this['error'] as String?) ?? '',
     destination: (this['destination'] as String?) ?? '',
     streamable: this['streamable'] == true,
+    queuePosition: (this['queue_position'] as num?)?.toInt() ?? -1,
+    autoManaged: this['auto_managed'] == true,
+    userStopped: this['user_stopped'] == true,
+    uploadLimit: (this['upload_limit'] as num?)?.toInt() ?? 0,
+    downloadLimit: (this['download_limit'] as num?)?.toInt() ?? 0,
+    seedingRatio: (this['seeding_ratio'] as num?)?.toDouble() ?? 0,
+    timeAdded: (this['time_added'] as num?)?.toInt() ?? 0,
+    timeFinished: (this['time_finished'] as num?)?.toInt() ?? 0,
     trackers: [
       for (final t in (this['trackers'] as List?) ?? const [])
         if (t is Map<String, dynamic>)

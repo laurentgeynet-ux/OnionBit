@@ -19,4 +19,43 @@ class RestSettingsRepository implements SettingsRepository {
 
   @override
   Future<void> shutdown() => _api.put('/shutdown');
+
+  @override
+  Future<Map<String, int>> dirSpace({String? directory}) async {
+    final resp =
+        await _api.put(
+              '/statistics/dirspace',
+              body: {'directory': ?directory},
+            )
+            as Map<String, dynamic>;
+    final s = resp['statistics'] as Map<String, dynamic>? ?? const {};
+    return {
+      'total': (s['total'] as num?)?.toInt() ?? 0,
+      'used': (s['used'] as num?)?.toInt() ?? 0,
+      'free': (s['free'] as num?)?.toInt() ?? 0,
+    };
+  }
+
+  @override
+  Future<List<Map<String, dynamic>>> rssItems() async {
+    final resp = await _api.get('/rss') as Map<String, dynamic>;
+    return (resp['items'] as List?)
+            ?.whereType<Map<String, dynamic>>()
+            .toList() ??
+        const [];
+  }
+
+  @override
+  Future<void> setRssFeeds(List<String> urls) =>
+      _api.put('/rss', body: {'urls': urls});
+
+  @override
+  Future<Map<String, dynamic>> versions() async =>
+      await _api.get('/versioning/versions') as Map<String, dynamic>? ??
+      const {};
+
+  @override
+  Future<Map<String, dynamic>> checkVersion() async =>
+      await _api.get('/versioning/versions/check') as Map<String, dynamic>? ??
+      const {};
 }

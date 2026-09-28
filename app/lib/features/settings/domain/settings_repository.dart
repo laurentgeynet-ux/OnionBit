@@ -8,5 +8,25 @@ abstract interface class SettingsRepository {
 
   /// Demande l'arrêt du daemon (`PUT /api/shutdown`).
   Future<void> shutdown();
+
+  /// Espace disque du répertoire (`PUT /api/statistics/dirspace` ;
+  /// `null` = dossier de téléchargement par défaut) → `{total, used,
+  /// free}` en octets.
+  Future<Map<String, int>> dirSpace({String? directory});
+
+  /// Items découverts par les watchers RSS (`GET /api/rss`).
+  Future<List<Map<String, dynamic>>> rssItems();
+
+  /// Remplace la liste des flux surveillés (`PUT /api/rss`,
+  /// application à chaud côté daemon).
+  Future<void> setRssFeeds(List<String> urls);
+
+  /// Versions connues du daemon (`GET /api/versioning/versions` →
+  /// `{versions, current}`).
+  Future<Map<String, dynamic>> versions();
+
+  /// Sonde de mise à jour (`GET /api/versioning/versions/check` →
+  /// `{new_version, has_version}`).
+  Future<Map<String, dynamic>> checkVersion();
 }
 

@@ -7,6 +7,7 @@ import '../../../../core/widgets/empty_state.dart';
 import '../../../../core/widgets/error_state.dart';
 import '../../domain/diagnostic_models.dart';
 import '../providers/diagnostic_providers.dart';
+import '../widgets/speed_test_dialog.dart';
 
 /// Page « Diagnostic » — tout ce qui est interne au réseau vit ici
 /// (overlays, circuits, relais, sorties, swarms, pairs, journaux),
@@ -17,31 +18,37 @@ class DiagnosticPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
-      length: 7,
+      length: 10,
       child: Column(
         children: [
           const TabBar(
             isScrollable: true,
             tabAlignment: TabAlignment.start,
             tabs: [
+              Tab(text: 'Statistiques'),
               Tab(text: 'Overlays'),
               Tab(text: 'Circuits'),
               Tab(text: 'Relais'),
               Tab(text: 'Sorties'),
               Tab(text: 'Swarms'),
               Tab(text: 'Pairs'),
+              Tab(text: 'Pairs DHT'),
+              Tab(text: 'Pairs PEX'),
               Tab(text: 'Journaux'),
             ],
           ),
           const Expanded(
             child: TabBarView(
               children: [
+                _StatsTab(),
                 _OverlaysTab(),
                 _CircuitsTab(),
                 _RelaysTab(),
                 _ExitsTab(),
                 _SwarmsTab(),
                 _PeersTab(),
+                _DhtPeersTab(),
+                _PexPeersTab(),
                 _LogsTab(),
               ],
             ),
@@ -60,6 +67,7 @@ class _TabScaffold<T> extends StatelessWidget {
     required this.itemBuilder,
     required this.emptyTitle,
     this.emptyMessage,
+    this.headerActions = const [],
   });
 
   final AsyncValue<List<T>> value;
@@ -68,17 +76,24 @@ class _TabScaffold<T> extends StatelessWidget {
   final String emptyTitle;
   final String? emptyMessage;
 
+  /// Actions supplémentaires dans la ligne d'en-tête (à gauche du
+  /// bouton « Rafraîchir »).
+  final List<Widget> headerActions;
+
   @override
   Widget build(BuildContext context) {
     return Column(
       children: [
-        Align(
-          alignment: Alignment.centerRight,
-          child: IconButton(
-            tooltip: 'Rafraîchir',
-            icon: const Icon(Icons.refresh, size: 18),
-            onPressed: onRetry,
-          ),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.end,
+          children: [
+            ...headerActions,
+            IconButton(
+              tooltip: 'Rafraîchir',
+              icon: const Icon(Icons.refresh, size: 18),
+              onPressed: onRetry,
+            ),
+          ],
         ),
         Expanded(
           child: value.when(
@@ -127,6 +142,14 @@ class _OverlaysTab extends ConsumerWidget {
 class _CircuitsTab extends ConsumerWidget {
   const _CircuitsTab();
 
+  /// `PEER_FLAG_SPEED_TEST` (`exit_policy.rs` = 8) : requis sur un
+  /// circuit `DATA` pour lancer un speed test ; les autres types de
+  /// circuits sont toujours testables (`speed_test_existing_circuit`).
+  static const int _peerFlagSpeedTest = 8;
+
+  bool _testable(CircuitInfo c) =>
+      c.ready && (c.type != 'DATA' || c.exitFlags & _peerFlagSpeedTest != 0);
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     return _TabScaffold<CircuitInfo>(
@@ -136,6 +159,18 @@ class _CircuitsTab extends ConsumerWidget {
       emptyMessage:
           'Les circuits anonymes sont construits quand un '
           'téléchargement en demande.',
+      headerActions: [
+        PopupMenuButton<int>(
+          tooltip: 'Tester un nouveau circuit',
+          icon: const Icon(Icons.speed, size: 18),
+          onSelected: (hops) => SpeedTestDialog.showNewCircuit(context, hops),
+          itemBuilder: (_) => const [
+            PopupMenuItem(value: 1, child: Text('Tester un circuit à 1 saut')),
+            PopupMenuItem(value: 2, child: Text('Tester un circuit à 2 sauts')),
+            PopupMenuItem(value: 3, child: Text('Tester un circuit à 3 sauts')),
+          ],
+        ),
+      ],
       itemBuilder: (c) => ListTile(
         dense: true,
         leading: Icon(
@@ -168,9 +203,21 @@ class _CircuitsTab extends ConsumerWidget {
               ),
           ],
         ),
-        trailing: Text(
-          '↑${ByteFormatter.format(c.bytesUp)} '
-          '↓${ByteFormatter.format(c.bytesDown)}',
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              '↑${ByteFormatter.format(c.bytesUp)} '
+              '↓${ByteFormatter.format(c.bytesDown)}',
+            ),
+            if (_testable(c))
+              IconButton(
+                tooltip: 'Test de vitesse',
+                icon: const Icon(Icons.speed, size: 18),
+                onPressed: () =>
+                    SpeedTestDialog.showForCircuit(context, c.id),
+              ),
+          ],
         ),
       ),
     );
@@ -257,6 +304,149 @@ class _PeersTab extends ConsumerWidget {
         ),
         subtitle: Text('${p.ip}:${p.port}'),
         trailing: Text('flags ${p.flags.join(',')}'),
+      ),
+    );
+  }
+}
+
+/// Liste des points d'introduction groupés par swarm (vues « Pairs
+/// DHT » et « Pairs PEX » — même shape `[{info_hash, peers}]`).
+class _SwarmPeersTab extends ConsumerWidget {
+  const _SwarmPeersTab({required this.provider, required this.emptyTitle});
+
+  final FutureProvider<List<SwarmPeers>> provider;
+  final String emptyTitle;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return _TabScaffold<SwarmPeers>(
+      value: ref.watch(provider),
+      onRetry: () => ref.invalidate(provider),
+      emptyTitle: emptyTitle,
+      emptyMessage:
+          'Apparaît quand des points d\'introduction de swarms '
+          'cachés sont connus.',
+      itemBuilder: (s) => Card(
+        margin: const EdgeInsets.only(bottom: AppSpacing.sm),
+        child: ExpansionTile(
+          dense: true,
+          leading: const Icon(Icons.hub_outlined, size: 20),
+          title: Text(
+            s.infoHash,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+          ),
+          subtitle: Text('${s.peers.length} point(s) d\'introduction'),
+          children: [
+            for (final p in s.peers)
+              ListTile(
+                dense: true,
+                leading: const Icon(Icons.person_pin_outlined, size: 18),
+                title: Text('${p.ip}:${p.port}'),
+                subtitle: Text(
+                  'seeder ${p.seederPk.length > 12 ? '${p.seederPk.substring(0, 12)}…' : p.seederPk}',
+                  style: const TextStyle(fontFamily: 'monospace', fontSize: 11),
+                ),
+                trailing: Text(p.source),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _DhtPeersTab extends StatelessWidget {
+  const _DhtPeersTab();
+
+  @override
+  Widget build(BuildContext context) => _SwarmPeersTab(
+    provider: dhtPeersProvider,
+    emptyTitle: 'Aucun point d\'introduction DHT',
+  );
+}
+
+class _PexPeersTab extends StatelessWidget {
+  const _PexPeersTab();
+
+  @override
+  Widget build(BuildContext context) => _SwarmPeersTab(
+    provider: pexPeersProvider,
+    emptyTitle: 'Aucun point d\'introduction PEX',
+  );
+}
+
+/// Onglet « Statistiques » — compteurs globaux du daemon
+/// (`/api/statistics/tribler` : taille DB, torrents, canaux, pairs,
+/// sessions moteur).
+class _StatsTab extends ConsumerWidget {
+  const _StatsTab();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final stats = ref.watch(triblerStatsProvider);
+    return Column(
+      children: [
+        Align(
+          alignment: Alignment.centerRight,
+          child: IconButton(
+            tooltip: 'Rafraîchir',
+            icon: const Icon(Icons.refresh, size: 18),
+            onPressed: () => ref.invalidate(triblerStatsProvider),
+          ),
+        ),
+        Expanded(
+          child: stats.when(
+            loading: () => const Center(child: CircularProgressIndicator()),
+            error: (e, _) => ErrorState(
+              message: '$e',
+              onRetry: () => ref.invalidate(triblerStatsProvider),
+            ),
+            data: (s) => ListView(
+              padding: const EdgeInsets.all(AppSpacing.md),
+              children: [
+                _stat(context, 'Version du daemon', s.version),
+                _stat(
+                  context,
+                  'Taille de la base',
+                  ByteFormatter.format(s.dbSize),
+                ),
+                _stat(context, 'Torrents connus', '${s.numTorrents}'),
+                _stat(context, 'Canaux', '${s.numChannels}'),
+                _stat(
+                  context,
+                  'Pairs IPv8 découverts',
+                  s.peers < 0 ? '—' : '${s.peers}',
+                ),
+                _stat(
+                  context,
+                  'Sessions moteur (direct + lanes)',
+                  s.sessions < 0 ? '—' : '${s.sessions}',
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _stat(BuildContext context, String label, String value) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              label,
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: theme.colorScheme.outline,
+              ),
+            ),
+          ),
+          Text(value, style: theme.textTheme.titleMedium),
+        ],
       ),
     );
   }

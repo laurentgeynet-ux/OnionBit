@@ -65,8 +65,74 @@ class DownloadsNotifier extends AsyncNotifier<List<Download>> {
       _run((r) => r.remove(infohash, deleteFiles: deleteFiles));
   Future<void> setAnonHops(String infohash, int hops) =>
       _run((r) => r.setAnonHops(infohash, hops));
+  Future<void> moveInQueue(String infohash, QueueOp op) =>
+      _run((r) => r.moveInQueue(infohash, op));
+  Future<void> setAutoManaged(String infohash, bool enabled) =>
+      _run((r) => r.setAutoManaged(infohash, enabled));
+  Future<void> setRateLimits(
+    String infohash, {
+    int? uploadLimit,
+    int? downloadLimit,
+  }) => _run(
+    (r) => r.setRateLimits(
+      infohash,
+      uploadLimit: uploadLimit,
+      downloadLimit: downloadLimit,
+    ),
+  );
+  Future<void> setSeedingRatio(String infohash, double ratio) =>
+      _run((r) => r.setSeedingRatio(infohash, ratio));
+  Future<void> resetSeedingRatio(String infohash) =>
+      _run((r) => r.resetSeedingRatio(infohash));
+  Future<void> recheck(String infohash) => _run((r) => r.recheck(infohash));
+  Future<void> moveStorage(
+    String infohash, {
+    required String destination,
+    String? completedDir,
+  }) => _run(
+    (r) =>
+        r.moveStorage(infohash, destination: destination, completedDir: completedDir),
+  );
+  Future<void> setFilePriority(String infohash, int index, int priority) =>
+      _run((r) => r.setFilePriority(infohash, index, priority));
+
+  Future<void> setFileIncluded(
+    String infohash,
+    int index,
+    bool included,
+    List<DownloadFile> files,
+  ) async {
+    // `selected_files` = liste des indices inclus ; le PATCH remplace
+    // la sélection entière (liste vide = tous inclus).
+    final selected = files
+        .where((f) => f.index == index ? included : f.included)
+        .map((f) => f.index)
+        .toList();
+    final repo = ref.read(downloadsRepositoryProvider);
+    await repo.setSelectedFiles(infohash, selected);
+    ref.invalidate(downloadFilesProvider(infohash));
+    await _refresh();
+  }
+
   Future<void> addTracker(String infohash, String url) async {
     await ref.read(downloadsRepositoryProvider).addTracker(infohash, url);
+    ref.invalidate(downloadTrackersProvider(infohash));
+  }
+
+  Future<void> removeTracker(String infohash, String url) async {
+    await ref.read(downloadsRepositoryProvider).removeTracker(infohash, url);
+    ref.invalidate(downloadTrackersProvider(infohash));
+  }
+
+  Future<void> addDefaultTrackers(String infohash) async {
+    await ref.read(downloadsRepositoryProvider).addDefaultTrackers(infohash);
+    ref.invalidate(downloadTrackersProvider(infohash));
+  }
+
+  Future<void> forceTrackerAnnounce(String infohash, String url) async {
+    await ref
+        .read(downloadsRepositoryProvider)
+        .forceTrackerAnnounce(infohash, url);
     ref.invalidate(downloadTrackersProvider(infohash));
   }
 }

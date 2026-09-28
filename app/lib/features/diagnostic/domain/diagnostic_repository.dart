@@ -9,6 +9,24 @@ abstract interface class DiagnosticRepository {
   Future<List<SwarmInfo>> swarms();
   Future<List<TunnelPeerInfo>> tunnelPeers();
 
+  /// Points d'introduction stockés en DHT, groupés par info-hash
+  /// (`GET /api/ipv8/tunnel/peers/dht`).
+  Future<List<SwarmPeers>> dhtPeers();
+
+  /// Points d'introduction du store PEX (`GET /api/ipv8/tunnel/peers/pex`).
+  Future<List<SwarmPeers>> pexPeers();
+
+  /// Statistiques générales (`GET /api/statistics/tribler`).
+  Future<TriblerStats> triblerStats();
+
+  /// Test de vitesse sur un circuit existant (`READY` + flag
+  /// `PEER_FLAG_SPEED_TEST`) — flux `speed:` pyipv8 en MiB/s.
+  Stream<SpeedSample> speedTestCircuit(int circuitId, {int testTimeMs = 5000});
+
+  /// Test de vitesse sur un circuit `SPEED_TEST` temporaire créé pour
+  /// l'occasion (détruit après le test).
+  Stream<SpeedSample> speedTestNewCircuit(int hops, {int testTimeMs = 5000});
+
   /// Journal du daemon — réponse texte brut (`/api/logging`).
   Future<String> logs({int maxLines = 200});
 

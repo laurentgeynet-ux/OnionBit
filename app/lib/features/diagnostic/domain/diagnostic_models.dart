@@ -106,6 +106,69 @@ class TunnelPeerInfo {
   final List<int> flags;
 }
 
+/// Point d'introduction d'un swarm caché (`IntroductionPoint.to_dict`
+/// pyipv8) — entrées des vues « Pairs DHT » et « Pairs PEX ».
+class IntroPoint {
+  const IntroPoint({
+    required this.ip,
+    required this.port,
+    required this.publicKey,
+    required this.seederPk,
+    required this.source,
+  });
+
+  final String ip;
+  final int port;
+  final String publicKey;
+  final String seederPk;
+
+  /// Origine de la découverte (`dht`, `peer_discovery`/`pex`…).
+  final String source;
+}
+
+/// Points d'introduction regroupés par info-hash de swarm
+/// (`GET /api/ipv8/tunnel/peers/{dht,pex}` → `[{info_hash, peers}]`).
+class SwarmPeers {
+  const SwarmPeers({required this.infoHash, required this.peers});
+
+  final String infoHash;
+  final List<IntroPoint> peers;
+}
+
+/// Statistiques générales du daemon (`GET /api/statistics/tribler` →
+/// `tribler_statistics`).
+class TriblerStats {
+  const TriblerStats({
+    required this.dbSize,
+    required this.numTorrents,
+    required this.numChannels,
+    required this.peers,
+    required this.sessions,
+    required this.version,
+  });
+
+  final int dbSize;
+  final int numTorrents;
+  final int numChannels;
+
+  /// Pairs découverts par la stack IPv8 (`-1` = stack inactive).
+  final int peers;
+
+  /// Nombre de sessions moteur (principale + lanes anonymes ; `-1`
+  /// = stack inactive).
+  final int sessions;
+  final String version;
+}
+
+/// Échantillon de débit d'un speed test de circuit (MiB/s,
+/// `speed: {"up", "down"}` pyipv8).
+class SpeedSample {
+  const SpeedSample({required this.up, required this.down});
+
+  final double up;
+  final double down;
+}
+
 /// État de la lane anonyme pour la barre d'état — « honnête » :
 /// prête = au moins un circuit `READY`, attente = circuits absents,
 /// désactivée = stack IPv8/tunnel inactive (erreur API).

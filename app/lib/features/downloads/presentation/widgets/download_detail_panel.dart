@@ -10,6 +10,7 @@ import '../../../../core/widgets/error_state.dart';
 import '../../domain/download.dart';
 import '../../domain/download_tracker.dart';
 import '../providers/downloads_providers.dart';
+import 'download_actions.dart';
 
 /// Panneau de détail sous la liste (onglets Détails/Fichiers/Trackers/
 /// Pairs — comme la GUI Tribler).
@@ -50,14 +51,23 @@ class DownloadDetailPanel extends ConsumerWidget {
   }
 }
 
-class _DetailsTab extends StatelessWidget {
+class _DetailsTab extends ConsumerWidget {
   const _DetailsTab({required this.download});
 
   final Download download;
 
+  String _date(int epoch) {
+    if (epoch <= 0) return '—';
+    final dt = DateTime.fromMillisecondsSinceEpoch(epoch * 1000);
+    String two(int v) => v.toString().padLeft(2, '0');
+    return '${dt.year}-${two(dt.month)}-${two(dt.day)} '
+        '${two(dt.hour)}:${two(dt.minute)}';
+  }
+
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final d = download;
+    final notifier = ref.read(downloadsProvider.notifier);
     final magnetUri =
         'magnet:?xt=urn:btih:${d.infohash}&dn=${Uri.encodeComponent(d.name.isEmpty ? d.infohash : d.name)}';
 
@@ -96,6 +106,34 @@ class _DetailsTab extends StatelessWidget {
                 );
               },
             ),
+            OutlinedButton.icon(
+              icon: const Icon(Icons.speed, size: 16),
+              label: const Text('Limites…'),
+              onPressed: () => showRateLimitsDialog(context, d),
+            ),
+            OutlinedButton.icon(
+              icon: const Icon(Icons.balance, size: 16),
+              label: const Text('Ratio seed…'),
+              onPressed: () => showSeedingRatioDialog(context, d),
+            ),
+            OutlinedButton.icon(
+              icon: const Icon(Icons.drive_file_move_outlined, size: 16),
+              label: const Text('Déplacer…'),
+              onPressed: () => showMoveStorageDialog(context, d),
+            ),
+            OutlinedButton.icon(
+              icon: const Icon(Icons.fact_check_outlined, size: 16),
+              label: const Text('Revérifier'),
+              onPressed: () async {
+                try {
+                  await notifier.recheck(d.infohash);
+                } catch (e) {
+                  if (context.mounted) {
+                    showDownloadError(context, 'revérification', e);
+                  }
+                }
+              },
+            ),
           ],
         ),
         const SizedBox(height: AppSpacing.md),
@@ -115,6 +153,23 @@ class _DetailsTab extends StatelessWidget {
           'Destination',
           d.destination.isEmpty ? '(défaut daemon)' : d.destination,
         ),
+        _row(
+          context,
+          'File d\'attente',
+          d.autoManaged
+              ? 'automatique${d.queuePosition >= 0 ? ' · position ${d.queuePosition}' : ''}'
+              : d.queuePosition >= 0
+              ? 'manuelle · position ${d.queuePosition}'
+              : 'manuelle',
+        ),
+        _row(context, 'Limites', formatLimits(d)),
+        _row(
+          context,
+          'Ratio de seed',
+          d.seedingRatio > 0 ? d.seedingRatio.toString() : 'défaut',
+        ),
+        _row(context, 'Ajouté le', _date(d.timeAdded)),
+        _row(context, 'Terminé le', _date(d.timeFinished)),
         if (d.error.isNotEmpty) _row(context, 'Erreur', d.error),
         const SizedBox(height: AppSpacing.sm),
         Row(
@@ -186,6 +241,28 @@ class _FilesTab extends ConsumerWidget {
                 return ListTile(
                   dense: true,
                   contentPadding: EdgeInsets.zero,
+                  leading: Tooltip(
+                    message: 'Inclure dans le téléchargement',
+                    child: Checkbox(
+                      value: f.included,
+                      onChanged: (v) async {
+                        try {
+                          await ref
+                              .read(downloadsProvider.notifier)
+                              .setFileIncluded(
+                                download.infohash,
+                                f.index,
+                                v ?? true,
+                                fileList,
+                              );
+                        } catch (e) {
+                          if (context.mounted) {
+                            showDownloadError(context, 'sélection', e);
+                          }
+                        }
+                      },
+                    ),
+                  ),
                   title: Text(f.name, overflow: TextOverflow.ellipsis),
                   subtitle: LinearProgressIndicator(value: f.fraction),
                   trailing: Row(
@@ -196,14 +273,44 @@ class _FilesTab extends ConsumerWidget {
                         '${ByteFormatter.format(f.size)}',
                         style: Theme.of(context).textTheme.bodySmall,
                       ),
-                      if (download.destination.isNotEmpty) ...[
-                        const SizedBox(width: AppSpacing.xs),
+                      PopupMenuButton<int>(
+                        tooltip: 'Priorité du fichier',
+                        icon: const Icon(Icons.low_priority, size: 18),
+                        onSelected: (p) async {
+                          try {
+                            await ref
+                                .read(downloadsProvider.notifier)
+                                .setFilePriority(
+                                  download.infohash,
+                                  f.index,
+                                  p,
+                                );
+                            if (context.mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text('Priorité $p appliquée'),
+                                ),
+                              );
+                            }
+                          } catch (e) {
+                            if (context.mounted) {
+                              showDownloadError(context, 'priorité', e);
+                            }
+                          }
+                        },
+                        itemBuilder: (_) => const [
+                          PopupMenuItem(value: 0, child: Text('Ne pas télécharger')),
+                          PopupMenuItem(value: 1, child: Text('Priorité basse')),
+                          PopupMenuItem(value: 4, child: Text('Normale')),
+                          PopupMenuItem(value: 7, child: Text('Priorité haute')),
+                        ],
+                      ),
+                      if (download.destination.isNotEmpty)
                         IconButton(
                           icon: const Icon(Icons.folder_open, size: 18),
                           tooltip: 'Ouvrir l\'emplacement',
                           onPressed: () => openPath(filePath),
                         ),
-                      ],
                     ],
                   ),
                 );
@@ -281,11 +388,35 @@ class _TrackersTab extends ConsumerWidget {
     );
   }
 
+  Future<void> _runTrackerAction(
+    BuildContext context,
+    WidgetRef ref,
+    String label,
+    Future<void> Function() action,
+  ) async {
+    try {
+      await action();
+      if (context.mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('$label effectué')));
+      }
+    } catch (e) {
+      if (context.mounted) showDownloadError(context, label, e);
+    }
+  }
+
+  /// Les pseudo-entrées `[DHT]`/`[PeX]` ne sont pas de vrais trackers
+  /// (`trackers_json` les ajoute pour l'affichage, comme Python).
+  bool _isPseudoTracker(DownloadTracker t) => t.url.startsWith('[');
+
   Widget _buildTrackersList(
     BuildContext context,
     WidgetRef ref,
     List<DownloadTracker> trackers,
   ) {
+    final notifier = ref.read(downloadsProvider.notifier);
+    final ih = download.infohash;
     return Column(
       children: [
         Padding(
@@ -294,12 +425,23 @@ class _TrackersTab extends ConsumerWidget {
             vertical: AppSpacing.xs,
           ),
           child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text(
                 '${trackers.length} tracker(s)',
                 style: Theme.of(context).textTheme.titleSmall,
               ),
+              const Spacer(),
+              TextButton.icon(
+                icon: const Icon(Icons.playlist_add, size: 16),
+                label: const Text('Trackers par défaut'),
+                onPressed: () => _runTrackerAction(
+                  context,
+                  ref,
+                  'ajout des trackers par défaut',
+                  () => notifier.addDefaultTrackers(ih),
+                ),
+              ),
+              const SizedBox(width: AppSpacing.xs),
               FilledButton.tonalIcon(
                 icon: const Icon(Icons.add, size: 16),
                 label: const Text('Ajouter un tracker'),
@@ -326,6 +468,7 @@ class _TrackersTab extends ConsumerWidget {
                   itemCount: trackers.length,
                   itemBuilder: (context, i) {
                     final t = trackers[i];
+                    final pseudo = _isPseudoTracker(t);
                     return ListTile(
                       dense: true,
                       leading: const Icon(Icons.sensors, size: 20),
@@ -342,10 +485,40 @@ class _TrackersTab extends ConsumerWidget {
                       ),
                       // `-1` = tracker pas encore scrapé (convention
                       // `TrackerStatusDict` Python).
-                      trailing: Text(
-                        t.peers < 0
-                            ? '—'
-                            : 'P ${t.peers} · S ${t.seeds} · L ${t.leeches}',
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            t.peers < 0
+                                ? '—'
+                                : 'P ${t.peers} · S ${t.seeds} · L ${t.leeches}',
+                          ),
+                          if (!pseudo) ...[
+                            IconButton(
+                              icon: const Icon(Icons.campaign, size: 18),
+                              tooltip: 'Forcer une annonce',
+                              onPressed: () => _runTrackerAction(
+                                context,
+                                ref,
+                                'annonce forcée',
+                                () => notifier.forceTrackerAnnounce(ih, t.url),
+                              ),
+                            ),
+                            IconButton(
+                              icon: const Icon(
+                                Icons.remove_circle_outline,
+                                size: 18,
+                              ),
+                              tooltip: 'Retirer ce tracker',
+                              onPressed: () => _runTrackerAction(
+                                context,
+                                ref,
+                                'retrait du tracker',
+                                () => notifier.removeTracker(ih, t.url),
+                              ),
+                            ),
+                          ],
+                        ],
                       ),
                     );
                   },

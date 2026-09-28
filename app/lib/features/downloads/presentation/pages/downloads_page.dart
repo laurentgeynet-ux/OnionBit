@@ -12,8 +12,10 @@ import '../../../../core/widgets/empty_state.dart';
 import '../../../../core/widgets/error_state.dart';
 import '../../domain/download.dart';
 import '../../domain/download_filter.dart';
+import '../../domain/downloads_repository.dart';
 import '../providers/downloads_providers.dart';
 import '../widgets/add_download_dialog.dart';
+import '../widgets/download_actions.dart';
 import '../widgets/download_detail_panel.dart';
 import '../widgets/download_status_chip.dart';
 
@@ -446,6 +448,23 @@ class _DownloadRow extends ConsumerWidget {
   }
 }
 
+/// Ligne d'entrée de menu contextuel (icône + libellé).
+class _MenuRow extends StatelessWidget {
+  const _MenuRow({required this.icon, required this.label});
+
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) => Row(
+    children: [
+      Icon(icon, size: 18),
+      const SizedBox(width: AppSpacing.sm),
+      Text(label),
+    ],
+  );
+}
+
 /// Affiche le menu contextuel pour un téléchargement (Pause/Resume, dossier, sauts, copier, supprimer).
 Future<void> _showDownloadContextMenu(
   BuildContext context,
@@ -487,6 +506,50 @@ Future<void> _showDownloadContextMenu(
             ],
           ),
         ),
+      const PopupMenuDivider(),
+      // — File d'attente (queue_position / auto_managed) —
+      PopupMenuItem(
+        enabled: false,
+        child: Text(
+          'File d\'attente${d.queuePosition >= 0 ? ' — position ${d.queuePosition}' : ''}',
+          style: Theme.of(context).textTheme.labelSmall,
+        ),
+      ),
+      PopupMenuItem(
+        value: 'auto_managed',
+        child: Row(
+          children: [
+            Icon(
+              d.autoManaged ? Icons.check_box : Icons.check_box_outline_blank,
+              size: 18,
+            ),
+            const SizedBox(width: AppSpacing.sm),
+            const Text('Gestion automatique (file)'),
+          ],
+        ),
+      ),
+      const PopupMenuItem(value: 'queue_top', child: _MenuRow(icon: Icons.vertical_align_top, label: 'Tout en haut')),
+      const PopupMenuItem(value: 'queue_up', child: _MenuRow(icon: Icons.keyboard_arrow_up, label: 'Monter')),
+      const PopupMenuItem(value: 'queue_down', child: _MenuRow(icon: Icons.keyboard_arrow_down, label: 'Descendre')),
+      const PopupMenuItem(value: 'queue_bottom', child: _MenuRow(icon: Icons.vertical_align_bottom, label: 'Tout en bas')),
+      const PopupMenuDivider(),
+      // — Réglages individuels —
+      const PopupMenuItem(
+        value: 'rate_limits',
+        child: _MenuRow(icon: Icons.speed, label: 'Limites de débit…'),
+      ),
+      const PopupMenuItem(
+        value: 'seeding_ratio',
+        child: _MenuRow(icon: Icons.balance, label: 'Ratio de seed…'),
+      ),
+      const PopupMenuItem(
+        value: 'recheck',
+        child: _MenuRow(icon: Icons.fact_check_outlined, label: 'Revérifier les données'),
+      ),
+      const PopupMenuItem(
+        value: 'move_storage',
+        child: _MenuRow(icon: Icons.drive_file_move_outlined, label: 'Déplacer le dossier…'),
+      ),
       const PopupMenuDivider(),
       PopupMenuItem(
         value: 'anon_0',
@@ -571,6 +634,28 @@ Future<void> _showDownloadContextMenu(
       await notifier.pause(d.infohash);
     case 'open_folder':
       await openPath(d.destination);
+    case 'auto_managed':
+      await notifier.setAutoManaged(d.infohash, !d.autoManaged);
+    case 'queue_up':
+      await notifier.moveInQueue(d.infohash, QueueOp.up);
+    case 'queue_down':
+      await notifier.moveInQueue(d.infohash, QueueOp.down);
+    case 'queue_top':
+      await notifier.moveInQueue(d.infohash, QueueOp.top);
+    case 'queue_bottom':
+      await notifier.moveInQueue(d.infohash, QueueOp.bottom);
+    case 'rate_limits':
+      if (context.mounted) await showRateLimitsDialog(context, d);
+    case 'seeding_ratio':
+      if (context.mounted) await showSeedingRatioDialog(context, d);
+    case 'recheck':
+      try {
+        await notifier.recheck(d.infohash);
+      } catch (e) {
+        if (context.mounted) showDownloadError(context, 'revérification', e);
+      }
+    case 'move_storage':
+      if (context.mounted) await showMoveStorageDialog(context, d);
     case 'anon_0':
       await notifier.setAnonHops(d.infohash, 0);
     case 'anon_1':

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/theme/app_theme.dart';
+import '../../../../core/utils/byte_formatter.dart';
 import '../providers/settings_providers.dart';
 
 /// Section « Téléchargements & Anonymat » — réglages du dossier par défaut et comportement réseau.
@@ -131,6 +132,8 @@ class _DownloadsSectionState extends ConsumerState<DownloadsSection> {
                         color: theme.colorScheme.outline,
                       ),
                     ),
+                    const SizedBox(height: AppSpacing.sm),
+                    _DiskSpace(directory: _saveasController.text.trim()),
                     const SizedBox(height: AppSpacing.md),
                     Align(
                       alignment: Alignment.centerRight,
@@ -146,6 +149,44 @@ class _DownloadsSectionState extends ConsumerState<DownloadsSection> {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// Ligne « Espace disque » du dossier de destination
+/// (`PUT /api/statistics/dirspace` — le backend mesure le premier
+/// ancêtre existant, comme `shutil.disk_usage` Python).
+class _DiskSpace extends ConsumerWidget {
+  const _DiskSpace({required this.directory});
+
+  final String directory;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final space = ref.watch(
+      dirSpaceProvider(directory.isEmpty ? null : directory),
+    );
+    final style = Theme.of(context).textTheme.bodySmall;
+    return space.when(
+      loading: () => Text('Espace disque : …', style: style),
+      error: (_, _) => Text('Espace disque : indisponible', style: style),
+      data: (s) => Row(
+        children: [
+          Icon(
+            Icons.storage,
+            size: 14,
+            color: Theme.of(context).colorScheme.outline,
+          ),
+          const SizedBox(width: AppSpacing.xs),
+          Expanded(
+            child: Text(
+              'Espace libre : ${ByteFormatter.format(s['free'] ?? 0)} '
+              'sur ${ByteFormatter.format(s['total'] ?? 0)}',
+              style: style,
+            ),
+          ),
+        ],
       ),
     );
   }

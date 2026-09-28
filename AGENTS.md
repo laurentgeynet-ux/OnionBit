@@ -4,9 +4,10 @@
 
 **Tribler-Rust-Torrent** est un portage du daemon **Tribler** (client BitTorrent
 anonymisé, Python/aiohttp, https://github.com/Tribler/tribler) vers un daemon
-**Rust** natif, avec une future interface **Flutter** multiplateforme
-(Windows x64/arm64, Linux, macOS, Android, iOS, Web) qui ne sera démarrée
-qu'une fois le backend validé à 100 % sur ses fonctionnalités clés.
+**Rust** natif, avec une interface **Flutter** multiplateforme
+(Windows x64/arm64, Linux, macOS, Android, iOS, Web) en cours de développement
+dans `app/` — développée en parallèle du backend depuis la décision du
+2026-09-28, et consommant exclusivement `tribler-api`.
 
 - Moteur : **Rust** (workspace Cargo, Tokio async)
 - Moteur BitTorrent : réutilisation de **`librqbit`** (Apache-2.0) — bencode,
@@ -100,11 +101,12 @@ powershell -NoProfile -ExecutionPolicy RemoteSigned -File scripts\verify_all.ps1
 
 ## Règles critiques
 
-1. **Backend d'abord, à 100 %** : aucune ligne d'UI (Flutter) ne doit être
-   écrite avant que les fonctionnalités du daemon prévues dans
-   `docs/plans/roadmap.md` soient validées (tests + vérification manuelle).
-   L'UI réutilisera les patterns de `C:\Emule-Sion-UI-UX\app` (référence de
-   style), mais ce chemin ne doit pas être modifié par ce projet.
+1. **UI Flutter active** : la contrainte « backend d'abord » est levée —
+   l'interface Flutter (`app/`) se développe en parallèle du daemon et
+   consomme exclusivement `tribler-api` (jamais d'accès direct à
+   `tribler-core`). Elle réutilise les patterns de
+   `C:\Emule-Sion-UI-UX\app` (référence de style), mais ce chemin ne doit
+   pas être modifié par ce projet.
 2. **Fidélité protocolaire** : la référence de vérité pour tout ce qui
    touche au protocole IPv8, au format `.torrent`/DHT BitTorrent ou à
    l'API REST est `D:\Projet\Tribler_sources\tribler` (et son sous-module

@@ -150,8 +150,19 @@ lib/
 **Implémenté (première passe, 2026-09-28)** : `downloads`, `search`,
 `settings`, `diagnostic` (fusion de `network` + `logs` : onglets
 overlays/circuits/relais/sorties/swarms/pairs/journaux).
+
+**Seconde passe (2026-09-28)** — toutes les fonctions du daemon :
+file d'attente par téléchargement (queue_position, auto_managed,
+limites individuelles, ratio de seed, recheck, move_storage,
+inclusion/priorité par fichier, gestion complète des trackers) ;
+diagnostic étendu (statistiques globales, points d'introduction
+DHT/PEX, speed test de circuit) ; réglages complets (bande passante,
+file d'attente `active_*`, seeding, tunnels `min/max_circuits` +
+exit node, transports DHT/UPnP/NAT-PMP/LSD/uTP + proxy, watch
+folder, flux RSS avec items, versioning, espace disque).
 `dashboard`/`channels`/`files`/`createtorrent` restent à faire ou à
-abandonner — la barre d'état couvre déjà les stats globales.
+abandonner — la barre d'état et l'onglet Statistiques couvrent déjà
+les compteurs globaux.
 
 Chaque feature suit le découpage de la référence :
 `data/` (DTO + repository impl) → `domain/` (entités + interface

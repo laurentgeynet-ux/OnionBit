@@ -111,6 +111,18 @@ class RestDownloadsRepository implements DownloadsRepository {
       _api.put('/downloads/$infohash/trackers', body: {'url': url});
 
   @override
+  Future<void> removeTracker(String infohash, String url) =>
+      _api.delete('/downloads/$infohash/trackers', body: {'url': url});
+
+  @override
+  Future<void> addDefaultTrackers(String infohash) =>
+      _api.put('/downloads/$infohash/default_trackers');
+
+  @override
+  Future<void> forceTrackerAnnounce(String infohash, String url) =>
+      _api.put('/downloads/$infohash/tracker_force_announce', body: {'url': url});
+
+  @override
   Future<void> pause(String infohash) =>
       _api.patch('/downloads/$infohash', body: {'state': 'stop'});
 
@@ -121,6 +133,59 @@ class RestDownloadsRepository implements DownloadsRepository {
   @override
   Future<void> setAnonHops(String infohash, int hops) =>
       _api.patch('/downloads/$infohash', body: {'anon_hops': hops});
+
+  @override
+  Future<void> moveInQueue(String infohash, QueueOp op) =>
+      _api.patch('/downloads/$infohash', body: {'queue_position': op.wire});
+
+  @override
+  Future<void> setAutoManaged(String infohash, bool enabled) =>
+      _api.patch('/downloads/$infohash', body: {'auto_managed': enabled});
+
+  @override
+  Future<void> setRateLimits(
+    String infohash, {
+    int? uploadLimit,
+    int? downloadLimit,
+  }) =>
+      _api.patch('/downloads/$infohash', body: {
+        'upload_limit': ?uploadLimit,
+        'download_limit': ?downloadLimit,
+      });
+
+  @override
+  Future<void> setSeedingRatio(String infohash, double ratio) =>
+      _api.patch('/downloads/$infohash', body: {'seeding_ratio': ratio});
+
+  @override
+  Future<void> resetSeedingRatio(String infohash) =>
+      _api.patch('/downloads/$infohash', body: {'seeding_ratio_default': true});
+
+  @override
+  Future<void> recheck(String infohash) =>
+      _api.patch('/downloads/$infohash', body: {'state': 'recheck'});
+
+  @override
+  Future<void> moveStorage(
+    String infohash, {
+    required String destination,
+    String? completedDir,
+  }) =>
+      _api.patch('/downloads/$infohash', body: {
+        'state': 'move_storage',
+        'dest_dir': destination,
+        'completed_dir': ?completedDir,
+      });
+
+  @override
+  Future<void> setSelectedFiles(String infohash, List<int> indices) =>
+      _api.patch('/downloads/$infohash', body: {'selected_files': indices});
+
+  @override
+  Future<void> setFilePriority(String infohash, int index, int priority) =>
+      _api.patch('/downloads/$infohash', body: {
+        'file_priority': [index, priority],
+      });
 
   @override
   Future<void> remove(String infohash, {bool deleteFiles = false}) =>

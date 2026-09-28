@@ -20,6 +20,7 @@ chaque étape (cf. `AGENTS.md`, "Workflow par étape").
 | `crates/tribler-cli/` | CLI de pilotage |
 | `crates/tribler-daemon/` | Binaire principal (composition racine) |
 | `crates/tribler-test-support/` | Fixtures/helpers de tests partagés |
+| `app/` | Interface Flutter desktop (Riverpod + go_router, consomme `tribler-api` REST/SSE) |
 | `docs/plans/plan_faisabilite.md` | Analyse de faisabilité, risques, décisions |
 | `docs/plans/roadmap.md` | Plan d'implémentation détaillé (source de vérité de l'avancement) |
 | `docs/architecture/architecture.md` | Vue d'ensemble de la clean architecture |

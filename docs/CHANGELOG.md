@@ -3,6 +3,37 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## UI Flutter — seconde passe : toutes les fonctions du daemon (2026-09-28)
+
+La contrainte « backend d'abord » est levée (décision utilisateur) :
+l'interface `app/` se développe en parallèle du daemon. Exposition
+complète des capacités déjà présentes dans `tribler-api` :
+
+- **File d'attente** : `queue_position` (monter/descendre/haut/bas),
+  `auto_managed`, recheck, `move_storage`, limites de débit et ratio
+  de seed individuels (menu contextuel + panneau de détail) —
+  `PATCH /api/downloads/{ih}`.
+- **Fichiers** : inclusion/exclusion (`selected_files`) et priorité
+  (`file_priority`) par fichier dans l'onglet Fichiers.
+- **Trackers** : retrait (`DELETE /{ih}/trackers`), annonce forcée
+  (`tracker_force_announce`), ajout des trackers par défaut
+  (`default_trackers`).
+- **Diagnostic** : onglets « Statistiques » (`/api/statistics/tribler`),
+  « Pairs DHT » et « Pairs PEX » (`/api/ipv8/tunnel/peers/{dht,pex}`),
+  test de vitesse de circuit (nouveau circuit temporaire ou circuit
+  `READY` + `PEER_FLAG_SPEED_TEST`, flux `speed:` pyipv8 lu via
+  `ApiClient.getStreamedLines`).
+- **Réglages** : bande passante globale (`max_download_rate`/
+  `max_upload_rate`), file d'attente (`active_*` + `auto_managed`
+  par défaut), seeding (mode/ratio/durée, safe seeding, hops
+  par défaut), tunnels (`min/max_circuits`, `exitnode_enabled`),
+  réseau (DHT/UPnP/NAT-PMP/LSD/uTP + proxy sortant), automatisation
+  (watch folder + flux RSS avec application à chaud `PUT /api/rss`
+  et derniers items), versioning (version courante + sonde),
+  espace disque du dossier de destination (`dirspace`).
+
+`flutter analyze` propre, `flutter test` : 10 tests verts.
+
 ## Correctif majeur : SOCKS5 CONNECT relayait mal les trackers HTTPS (2026-09-29)
 
 **Cause racine du blocage des téléchargements anonymes** identifiée

@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import '../../../core/api/api_client.dart';
 import '../domain/diagnostic_models.dart';
 import '../domain/diagnostic_repository.dart';
@@ -94,6 +96,97 @@ class RestDiagnosticRepository implements DiagnosticRepository {
         ],
       ),
   ];
+
+  IntroPoint _introPoint(Map<String, dynamic> p) {
+    final addr = p['address'] as Map<String, dynamic>? ?? const {};
+    return IntroPoint(
+      ip: '${addr['ip'] ?? ''}',
+      port: (addr['port'] as num?)?.toInt() ?? 0,
+      publicKey: '${addr['public_key'] ?? ''}',
+      seederPk: '${p['seeder_pk'] ?? ''}',
+      source: '${p['source'] ?? ''}',
+    );
+  }
+
+  /// Parse `[{info_hash, peers: [IntroductionPoint…]}]` — réponse
+  /// tableau brut (sans enveloppe objet, format pyipv8).
+  List<SwarmPeers> _swarmPeers(dynamic resp) => [
+    for (final g in (resp as List?) ?? const [])
+      if (g is Map<String, dynamic>)
+        SwarmPeers(
+          infoHash: '${g['info_hash'] ?? ''}',
+          peers: [
+            for (final p in (g['peers'] as List?) ?? const [])
+              if (p is Map<String, dynamic>) _introPoint(p),
+          ],
+        ),
+  ];
+
+  @override
+  Future<List<SwarmPeers>> dhtPeers() async =>
+      _swarmPeers(await _api.get('/ipv8/tunnel/peers/dht'));
+
+  @override
+  Future<List<SwarmPeers>> pexPeers() async =>
+      _swarmPeers(await _api.get('/ipv8/tunnel/peers/pex'));
+
+  @override
+  Future<TriblerStats> triblerStats() async {
+    final resp = await _api.get('/statistics/tribler') as Map<String, dynamic>;
+    final s =
+        resp['tribler_statistics'] as Map<String, dynamic>? ?? const {};
+    final lt = s['libtorrent'] as Map<String, dynamic>?;
+    return TriblerStats(
+      dbSize: (s['db_size'] as num?)?.toInt() ?? 0,
+      numTorrents: (s['num_torrents'] as num?)?.toInt() ?? 0,
+      numChannels: (s['num_channels'] as num?)?.toInt() ?? 0,
+      peers: (s['peers'] as num?)?.toInt() ?? -1,
+      sessions: (lt?['sessions'] as List?)?.length ?? -1,
+      version: '${s['endpoint_version'] ?? ''}',
+    );
+  }
+
+  /// Parse le flux `speed: {"up":…,"down":…}` (MiB/s) du speed test
+  /// pyipv8 — une ligne par échantillon ; les lignes illisibles sont
+  /// ignorées.
+  Stream<SpeedSample> _speedSamples(Stream<String> lines) =>
+      lines.expand((l) sync* {
+        if (!l.startsWith('speed:')) return;
+        Object? j;
+        try {
+          j = jsonDecode(l.substring(6).trim());
+        } catch (_) {
+          return;
+        }
+        if (j is Map<String, dynamic>) {
+          yield SpeedSample(
+            up: (j['up'] as num?)?.toDouble() ?? 0,
+            down: (j['down'] as num?)?.toDouble() ?? 0,
+          );
+        }
+      });
+
+  @override
+  Stream<SpeedSample> speedTestCircuit(
+    int circuitId, {
+    int testTimeMs = 5000,
+  }) => _speedSamples(
+    _api.getStreamedLines(
+      '/ipv8/tunnel/circuits/$circuitId/test',
+      query: {'test_time_ms': '$testTimeMs'},
+    ),
+  );
+
+  @override
+  Stream<SpeedSample> speedTestNewCircuit(
+    int hops, {
+    int testTimeMs = 5000,
+  }) => _speedSamples(
+    _api.getStreamedLines(
+      '/ipv8/tunnel/circuits/test',
+      query: {'goal_hops': '$hops', 'test_time_ms': '$testTimeMs'},
+    ),
+  );
 
   @override
   Future<String> logs({int maxLines = 200}) =>
