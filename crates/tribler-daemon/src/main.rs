@@ -123,10 +123,17 @@ fn init_tracing(state_dir: &std::path::Path, daemon_config: &DaemonConfig) {
     let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
     Box::leak(Box::new(guard));
 
-    let stdout_layer = tracing_subscriber::fmt::layer().with_target(false);
+    // Horodatage en heure locale (formatteur `SystemTime` par defaut =
+    // UTC — le decalage devenait confus en lisant tribler.log).
+    // `LocalTime` retombe sur UTC si l'offset local est indeterminable.
+    let timer = tracing_subscriber::fmt::time::LocalTime::rfc_3339();
+    let stdout_layer = tracing_subscriber::fmt::layer()
+        .with_target(false)
+        .with_timer(timer.clone());
     let file_layer = tracing_subscriber::fmt::layer()
         .with_ansi(false)
         .with_target(false)
+        .with_timer(timer)
         .with_writer(non_blocking);
 
     let registry = tracing_subscriber::registry()
