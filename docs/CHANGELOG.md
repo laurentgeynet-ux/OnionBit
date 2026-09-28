@@ -3,6 +3,47 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Étape 25 — `DhtCommunity` dans la stack + `/api/ipv8/dht/*` (2026-09-28)
+
+- **Stack** : `Ipv8Stack.dht: Option<Arc<DhtCommunity>>` créé si
+  `ipv8.enabled` + `dht_discovery/enabled` (precondition du
+  `DHTDiscoveryComponent` Python — notre `DhtCommunity` couvre
+  `DHTCommunity` + `DHTDiscoveryCommunity`). `CoreSession::dht()`
+  = `session.get_overlay(DHTCommunity)`.
+- **Maintenance** : tâche Tokio aux cadences Python — `step`
+  (`PingChurn.take_step` + `ping_all`) à 0,5 s, `node_maintenance`
+  60 s, `value_maintenance` 3600 s, `token_maintenance` 300 s +
+  appel immédiat au démarrage ; arrêt propre via `Ipv8Stack::stop`.
+  `my_estimated_wan/lan` propagés depuis la discovery à chaque tick
+  (même `my_peer` partagé en Python) — `DhtCommunity.my_wan`/
+  `my_lan` sont devenus mutables (`set_my_wan`/`set_my_lan`).
+- **Bootstrap** : `walk_to` vers chaque noeud d'amorcage résolu
+  (intro-requests sous préfixe DHT) avant la marche discovery.
+- **API** (`dht_endpoint.py` pyipv8, 7 routes) : `statistics`
+  (`peer_id`, `num_tokens`, `endpoints[]` par classe d'adresse,
+  `num_peers_in_store`/`num_store_for_me`), `values` (objet indexé
+  par clé hex), `values/{key}` GET (lookup + `debug` : `requests`,
+  `responses`, `responses_with_nodes`, `responses_with_values`,
+  `time`) et PUT (`{"value": "<hex>"}`, `sign=True`,
+  `incorrect parameters` 400), `peers/{mid}` (`connect_peer`),
+  `buckets` + `buckets/{prefix}/refresh`.
+- **Fidélité des erreurs** : 404 `{"success":false,"error":"DHT
+  community not found"}` sauf `buckets` (200 `[]`) et `refresh`
+  (400 `DHT community is not loaded`) ; `unhexlify`/`DHTError` →
+  500 `{"error":{"handled":false}}` (`error_middleware`) ; `refresh`
+  d'un prefixe inconnu → 400 `no such bucket`, d'une `DHTError` →
+  200 `{"success":false,"error":e}`. `find` propage l'erreur de
+  construction du `Crawl` (table vide) comme Python — levée aussi
+  en mode valeurs. Divergence documentée : `distance` en décimale
+  chaîne (int Python 160 bits > u128 JSON).
+- **Accesseurs** `tribler-ipv8` : `stats_snapshot`/`buckets_snapshot`/
+  `stored_values`/`find_values_debug`/`refresh_bucket`,
+  `Node::failed`, `Storage::items_snapshot` — instantanés read-only,
+  aucun mutex interne exposé.
+- **Tests** : `dht_routes_sans_community` (formes d'erreur par
+  route) + `dht_routes_avec_community` (stack IPv8 loopback sans
+  bootstrap, 7 routes exercées).
+
 ## Étape 24 — Topics SSE complets + vraie `public_key` (2026-09-28)
 
 - **`public_key` réelle** : `events_start` et `/api/events/info`

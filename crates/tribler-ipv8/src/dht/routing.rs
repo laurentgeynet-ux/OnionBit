@@ -225,6 +225,11 @@ impl Node {
             && now() - s.last_queries[0] < NODE_LIMIT_INTERVAL
     }
 
+    /// `failed` Python : compteur d'echecs consecutifs.
+    pub fn failed(&self) -> u32 {
+        self.state.lock().unwrap().failed
+    }
+
     /// `status` : BAD / GOOD / UNKNOWN (logique BEP-5).
     pub fn status(&self) -> u8 {
         let s = self.state.lock().unwrap();

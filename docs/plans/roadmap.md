@@ -408,12 +408,14 @@ activée en parité Python (loopback compris — `tribler-cli` la lit dans
   `tribler_exception`, `ask_add_download` (`ask_download_settings` +
   `cli`), `report_config_error`. `events_start.public_key` =
   `Ipv8Stack::public_key_hex()`.
-- [ ] **Étape 25. `DhtCommunity` dans la stack + `/api/ipv8/dht/*`.**
-  Instancier `DhtCommunity` dans `Ipv8Stack` (`dht_discovery/enabled`,
-  `store_peer` au bootstrap, `step`/`node_maintenance`/
-  `value_maintenance`/`token_maintenance` périodiques). Routes :
-  `dht/statistics`, `dht/values` + `/{key}` GET/PUT,
-  `dht/peers/{mid}`, `dht/buckets` + `/{prefix}/refresh`.
+- [x] **Étape 25. `DhtCommunity` dans la stack + `/api/ipv8/dht/*`.**
+  `Ipv8Stack.dht` (`dht_discovery/enabled` → `DHTDiscoveryCommunity`),
+  `walk_to` au bootstrap, maintenance `step`/`node_maintenance`/
+  `value_maintenance`/`token_maintenance` aux cadences Python
+  (0,5 s/60 s/3600 s/300 s) + propagation `my_estimated_wan/lan`.
+  7 routes au comportement pyipv8 (404 community absente, 200
+  `{"buckets":[]}`, 400 `no such bucket`, PUT `{"value"}` 400/500,
+  `distance` en décimale 160 bits).
 - [ ] **Étape 26. IPv8 réseau et diagnostics.** `GET /api/ipv8/network`
   (pairs vérifiés), `POST /api/ipv8/isolation` (`bootstrapnode`/
   `exitnode`), `GET /api/ipv8/noblockdht/{mid}` (`connect_peer`

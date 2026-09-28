@@ -75,6 +75,14 @@ Convention générale :
 | `GET /api/ipv8/tunnel/exits` | idem | ✅ | Sockets de sortie |
 | `GET /api/ipv8/tunnel/swarms` | idem | ✅ | Swarms hidden services |
 | `GET /api/ipv8/tunnel/peers` | idem | ✅ | Pairs tunnel + flags |
+| **DHT** (`dht_endpoint.py`, pyipv8) | | | |
+| `GET /api/ipv8/dht/statistics` | idem | ✅ | `statistics.peer_id`/`num_tokens`/`endpoints[]` + `num_peers_in_store`/`num_store_for_me` (community = `DHTDiscoveryCommunity`, activée par `dht_discovery/enabled`) ; 404 `{"success":false,"error":"DHT community not found"}` sans community |
+| `GET /api/ipv8/dht/values` | idem | ✅ | Objet `{cle_hex: [{endpoint, public_key(b64\|null), key, value}]}` post-`post_process_values` |
+| `GET /api/ipv8/dht/values/{key}` | idem | ✅ | Lookup + `debug` (`requests`/`responses`/`responses_with_nodes`/`responses_with_values`/`time`) ; hex invalide ou `DHTError` → 500 `{"error":{"handled":false}}` (`error_middleware`) |
+| `PUT /api/ipv8/dht/values/{key}` | idem | ✅ | Corps `{"value": "<hex>"}`, `sign=True` ; champ absent → 400 `incorrect parameters` ; DHT sans noeuds → 500 (`DHTError` non gérée, comme Python) |
+| `GET /api/ipv8/dht/peers/{mid}` | idem | ✅ | `connect_peer` → `{"peers": [{"public_key": b64, "address": [ip, port]}]}` ; `DHTError` → 500 |
+| `GET /api/ipv8/dht/buckets` | idem | ✅ | `{"buckets": [{prefix, last_changed, endpoint, peers: [{ip, port, mid, id, failed, last_contact, distance}]}]}` ; 200 + `[]` sans community ; **`distance` rendu en décimale chaîne** (int 160 bits > u128 JSON — divergence de type documentée) |
+| `GET /api/ipv8/dht/buckets/{prefix}/refresh` | idem | ✅ | `find_values` sur id généré du prefixe ; 400 `no such bucket` si absent, 200 `{"success":false,"error":e}` si `DHTError` (comme Python), 400 `DHT community is not loaded` sans community |
 | **Fichiers** (`file_endpoint.py`) | | | |
 | `GET /api/files/browse?path=&files=` | idem | ✅ | `..` en tête, dossiers d'abord ; `/` liste les lecteurs sous Windows |
 | `GET /api/files/list?path=&recursively=` | idem | ✅ | Listing récursif par défaut |

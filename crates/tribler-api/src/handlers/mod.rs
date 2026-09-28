@@ -1,6 +1,7 @@
 //! Handlers des endpoints.
 
 pub mod createtorrent;
+pub mod dht;
 pub mod downloads;
 pub mod downloads_extra;
 pub mod events;

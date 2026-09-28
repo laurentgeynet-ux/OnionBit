@@ -21,6 +21,7 @@ use tribler_db::Database;
 use tribler_ipv8::content_discovery::{
     ContentDiscoveryCommunity, ContentProvider, HealthInfo, HEALTH_REQUEST_POPULAR,
 };
+use tribler_ipv8::dht::DhtCommunity;
 use tribler_ipv8::discovery::DiscoveryCommunity;
 use tribler_ipv8::endpoint::UdpEndpoint;
 use tribler_ipv8::peer::Network;
@@ -93,6 +94,9 @@ pub struct Ipv8Config {
     /// Utilise le `community_id` de `TriblerTunnelCommunity` au lieu
     /// du `pyipv8` (interop avec les clients Tribler installes).
     pub tribler_tunnel_community: bool,
+    /// Cree la `DHTDiscoveryCommunity` (`dht_discovery/enabled`
+    /// Python — precondition de `DHTDiscoveryComponent`).
+    pub enable_dht: bool,
 }
 
 impl Ipv8Config {
@@ -111,6 +115,7 @@ impl Ipv8Config {
             enable_anonymity: true,
             peer_flags: tribler_network_policy::exit_policy::PEER_FLAG_RELAY,
             tribler_tunnel_community: true,
+            enable_dht: true,
         }
     }
 }
@@ -124,6 +129,10 @@ impl Default for Ipv8Config {
             enable_anonymity: false,
             peer_flags: tribler_network_policy::exit_policy::PEER_FLAG_RELAY,
             tribler_tunnel_community: false,
+            // `dht_discovery.enabled` vaut `true` par defaut dans
+            // `tribler_config` — la community n'est creee que si
+            // `enabled` est vrai de toute facon.
+            enable_dht: true,
         }
     }
 }
@@ -147,6 +156,59 @@ struct AnonLane {
 /// [`TunnelCommunity::watch_circuits`], sinon une transition
 /// `READY -> detruit` plus rapide qu'un tick passerait inapercue.
 const CIRCUIT_PROBE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Tick de `PingChurn.take_step` (strategies pyipv8 : toutes les
+/// 0,5 s ; les cadences reelles des pings sont gatees en interne par
+/// `PING_INTERVAL`).
+const DHT_STEP_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
+/// `register_task("node_maintenance", interval=60)` Python.
+const DHT_NODE_MAINT_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
+/// `register_task("value_maintenance", interval=3600)` Python.
+const DHT_VALUE_MAINT_INTERVAL: std::time::Duration = std::time::Duration::from_secs(3600);
+/// `register_task("token_maintenance", interval=300)` Python.
+const DHT_TOKEN_MAINT_INTERVAL: std::time::Duration = std::time::Duration::from_secs(300);
+
+/// Tache de maintenance DHT (`PingChurn.take_step` +
+/// `node_maintenance`/`value_maintenance`/`token_maintenance` +
+/// propagation de `my_estimated_wan` depuis la discovery, car Python
+/// partage le meme `my_peer` entre communautes). Retourne l'arret.
+fn spawn_dht_maintenance(
+    dht: Arc<DhtCommunity>,
+    discovery: Arc<DiscoveryCommunity>,
+) -> tokio::sync::watch::Sender<bool> {
+    let (tx, mut rx) = tokio::sync::watch::channel(false);
+    tokio::spawn(async move {
+        // Premier `token_maintenance` immediat (community.py Python :
+        // appele avant le register_task, au cas ou des requetes
+        // arriveraient avant le premier tick).
+        dht.token_maintenance();
+        let mut step = tokio::time::interval(DHT_STEP_INTERVAL);
+        let mut node = tokio::time::interval(DHT_NODE_MAINT_INTERVAL);
+        let mut value = tokio::time::interval(DHT_VALUE_MAINT_INTERVAL);
+        let mut token = tokio::time::interval(DHT_TOKEN_MAINT_INTERVAL);
+        loop {
+            tokio::select! {
+                _ = rx.changed() => break,
+                _ = step.tick() => dht.step(),
+                _ = node.tick() => dht.node_maintenance().await,
+                _ = value.tick() => dht.value_maintenance(),
+                _ = token.tick() => dht.token_maintenance(),
+            }
+            // `my_peer` Python est partage entre Discovery et DHT :
+            // quand l'introduction apprend notre WAN, le DHT le voit.
+            let wan = discovery.my_estimated_wan();
+            if !wan.is_unspecified() {
+                dht.set_my_wan(wan);
+            }
+            let lan = discovery.my_estimated_lan();
+            if !lan.is_unspecified() {
+                dht.set_my_lan(lan);
+            }
+        }
+        tracing::debug!("maintenance DHT arretee");
+    });
+    tx
+}
 
 /// Watchdog de circuits d'une lane anonyme : la lane est
 /// **indisponible tant qu'aucun circuit `READY` a `hops` sauts
@@ -535,8 +597,14 @@ pub struct Ipv8Stack {
     pub content_discovery: Arc<ContentDiscoveryCommunity>,
     /// `TunnelCommunity` (presente si `enable_anonymity`).
     pub tunnel: Option<Arc<TunnelCommunity>>,
+    /// `DHTDiscoveryCommunity` (presente si `enable_dht` —
+    /// `dht_discovery/enabled` Python). Sert aussi de `DHTCommunity`
+    /// pour les routes `/api/ipv8/dht/*`.
+    pub dht: Option<Arc<DhtCommunity>>,
     /// Cle IPv8 de la session (persistee dans `state_dir`).
     key: LibNaClSecretKey,
+    /// Arret de la tache de maintenance DHT.
+    dht_maintenance_stop: Option<tokio::sync::watch::Sender<bool>>,
     /// Moteurs anonymes par nombre de sauts (1..=3).
     anon_lanes: Mutex<HashMap<usize, AnonLane>>,
     /// Config moteur de base (pour creer les lanes anonymes).
@@ -599,6 +667,32 @@ impl Ipv8Stack {
             None,
         )
         .await;
+        let dht = if config.enable_dht {
+            // `DHTDiscoveryCommunity` Python : `my_estimated_wan`
+            // commence non-specifie et est appris par introduction ;
+            // `my_estimated_lan` = notre adresse d'ecoute.
+            let lan = UdpAddress::Ipv4(std::net::SocketAddrV4::new(
+                std::net::Ipv4Addr::UNSPECIFIED,
+                endpoint
+                    .local_addr()
+                    .map_err(|e| CoreError::State(format!("addr ipv8: {e}")))?
+                    .port(),
+            ));
+            Some(
+                DhtCommunity::new(
+                    key.clone(),
+                    UdpAddress::Ipv4(std::net::SocketAddrV4::new(
+                        std::net::Ipv4Addr::UNSPECIFIED,
+                        0,
+                    )),
+                    lan,
+                    endpoint.clone(),
+                )
+                .await,
+            )
+        } else {
+            None
+        };
         let tunnel = if config.enable_anonymity {
             let community_id = if config.tribler_tunnel_community {
                 TRIBLER_TUNNEL_COMMUNITY_ID
@@ -651,10 +745,16 @@ impl Ipv8Stack {
             }
         });
 
+        // Maintenance DHT en tache de fond (arret via `stop`).
+        let dht_maintenance_stop = dht
+            .clone()
+            .map(|d| spawn_dht_maintenance(d, discovery.clone()));
+
         // Bootstrap discovery en tache de fond (resolution DNS + IP).
         let bootstrap_peers_config = config.bootstrap_peers.clone();
         if !bootstrap_peers_config.is_empty() {
             let d = discovery.clone();
+            let dht = dht.clone();
             tokio::spawn(async move {
                 let mut peers = Vec::new();
                 for peer_str in &bootstrap_peers_config {
@@ -666,6 +766,14 @@ impl Ipv8Stack {
                         if let Some(sa) = resolved.next() {
                             peers.push(UdpAddress::from(sa));
                         }
+                    }
+                }
+                // Intro-requests DHT vers les noeuds d'amorcage : la
+                // marche discovery peuple l'annuaire partage, le DHT
+                // envoie ses propres pings pour remplir ses tables.
+                if let Some(dht) = &dht {
+                    for addr in &peers {
+                        let _ = dht.walk_to(addr).await;
                     }
                 }
                 if !peers.is_empty() {
@@ -686,7 +794,9 @@ impl Ipv8Stack {
             discovery,
             content_discovery,
             tunnel,
+            dht,
             key,
+            dht_maintenance_stop,
             anon_lanes: Mutex::new(HashMap::new()),
             engine_config: engine_config.clone(),
             downloads_dir: downloads_dir.to_path_buf(),
@@ -771,8 +881,12 @@ impl Ipv8Stack {
             .collect()
     }
 
-    /// Arret des moteurs anonymes.
+    /// Arret des moteurs anonymes et de la maintenance DHT
+    /// (`Session.shutdown` Python : les overlay tasks sont annulees).
     pub async fn stop(&self) {
+        if let Some(tx) = &self.dht_maintenance_stop {
+            let _ = tx.send(true);
+        }
         let lanes: Vec<AnonLane> = self
             .anon_lanes
             .lock()

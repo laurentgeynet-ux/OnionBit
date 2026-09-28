@@ -1288,6 +1288,13 @@ impl CoreSession {
         self.inner.ipv8.clone()
     }
 
+    /// `DHTDiscoveryCommunity` (`None` si IPv8 ou `dht_discovery` est
+    /// desactive — `session.get_overlay(DHTCommunity)` Python rend
+    /// alors `None` et le `dht_endpoint` repond 404).
+    pub fn dht(&self) -> Option<Arc<tribler_ipv8::dht::DhtCommunity>> {
+        self.inner.ipv8.as_ref().and_then(|s| s.dht.clone())
+    }
+
     /// Acces a la base de metadonnees (endpoints `/api/metadata`).
     pub fn db(&self) -> &Arc<Database> {
         &self.inner.db

@@ -3849,6 +3849,7 @@ name = "tribler-api"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "base64 0.22.1",
  "fs2",
  "futures-util",
  "hex 0.4.3",

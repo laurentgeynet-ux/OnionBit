@@ -116,6 +116,9 @@ pub enum DhtError {
     /// Valeur trop grande.
     #[error("valeur DHT trop grande")]
     ValueTooLarge,
+    /// Bucket inexistant (`refresh_bucket` -> `"no such bucket"`).
+    #[error("no such bucket")]
+    NoSuchBucket,
     /// Erreur filaire.
     #[error(transparent)]
     Ipv8(#[from] Ipv8Error),
@@ -211,6 +214,136 @@ fn b64encode(data: &[u8]) -> String {
 fn node_repr(node: &Node) -> String {
     let (ip, port) = address_ip_port(&node.address());
     format!("Peer<{ip}:{port}, {}>", b64encode(&node.mid))
+}
+
+/// Nom d'interface de classe d'adresse (`FAST_ADDR_TO_INTERFACE`
+/// pyipv8 : `UDPv4Address -> "UDPIPv4"`, etc. ; `guess_interface`
+/// rend "DNS" pour les adresses domaine).
+fn iface_name(class: AddrClass) -> &'static str {
+    match class {
+        AddrClass::V4 => "UDPIPv4",
+        AddrClass::V6 => "UDPIPv6",
+        AddrClass::Domain => "DNS",
+    }
+}
+
+/// Stats d'une table de routage (un element `endpoints` Python de
+/// `GET /api/ipv8/dht/statistics`).
+#[derive(Debug, Clone)]
+pub struct DhtTableStats {
+    /// Nom d'interface (`UDPIPv4`/`UDPIPv6`/`DNS`).
+    pub endpoint: &'static str,
+    /// `hexlify(calc_node_id(address, mid))`.
+    pub node_id: String,
+    /// Total de noeuds connus.
+    pub routing_table_size: usize,
+    /// Nombre de buckets.
+    pub routing_table_buckets: usize,
+    /// Cles dans le storage de cette classe.
+    pub num_keys_in_store: usize,
+}
+
+/// Instantane `dht_endpoint.get_statistics`.
+#[derive(Debug, Clone)]
+pub struct DhtStats {
+    /// `hexlify(my_peer.mid)`.
+    pub peer_id: String,
+    /// `len(tokens)`.
+    pub num_tokens: usize,
+    /// Une entree par table de routage.
+    pub endpoints: Vec<DhtTableStats>,
+    /// `DHTDiscoveryCommunity.store` : `hex(target)` -> nb de pairs.
+    pub num_peers_in_store: Vec<(String, usize)>,
+    /// `store_for_me`.
+    pub num_store_for_me: Vec<(String, usize)>,
+}
+
+/// Instantane d'un noeud de bucket (`get_buckets` Python).
+#[derive(Debug, Clone)]
+pub struct DhtNodeInfo {
+    /// Adresse IP.
+    pub ip: String,
+    /// Port.
+    pub port: u16,
+    /// `hexlify(peer.mid)`.
+    pub mid: String,
+    /// `hexlify(peer.id)` (`None` pour les adresses non-DHT).
+    pub id: Option<String>,
+    /// Compteur d'echecs.
+    pub failed: u32,
+    /// `last_contact`.
+    pub last_contact: f64,
+    /// Distance XOR a notre node_id de cette classe. Python rend
+    /// `int(distance())` sur 160 bits — hors u128, on rend donc la
+    /// decimale exacte en chaine (divergence de type documentee).
+    pub distance: String,
+}
+
+/// Instantane d'un bucket (`get_buckets` Python).
+#[derive(Debug, Clone)]
+pub struct DhtBucketInfo {
+    /// Nom d'interface de la table.
+    pub endpoint: &'static str,
+    /// `prefix_id` binaire.
+    pub prefix: String,
+    /// `last_changed`.
+    pub last_changed: f64,
+    /// Noeuds du bucket.
+    pub peers: Vec<DhtNodeInfo>,
+}
+
+/// Valeur stockee (`get_stored_values` Python — apres
+/// `post_process_values`).
+#[derive(Debug, Clone)]
+pub struct DhtStoredValue {
+    /// Nom d'interface.
+    pub endpoint: &'static str,
+    /// Cle (hex).
+    pub key: String,
+    /// Donnee brute.
+    pub data: Vec<u8>,
+    /// Cle publique du signataire (valeurs signees).
+    pub public_key: Option<Vec<u8>>,
+}
+
+/// Compteurs `debug` de `find_values(key, debug=True)` Python.
+#[derive(Debug, Default)]
+pub struct CrawlDebug {
+    /// Union des `nodes_tried` des crawls.
+    nodes_tried: HashSet<[u8; 20]>,
+    /// Nb total de reponses.
+    pub responses: usize,
+    /// Reponses contenant des `nodes`.
+    pub responses_with_nodes: usize,
+    /// Reponses contenant des `values`.
+    pub responses_with_values: usize,
+}
+
+impl CrawlDebug {
+    /// `len(set().union(*[crawl.nodes_tried]))` Python.
+    pub fn requests(&self) -> usize {
+        self.nodes_tried.len()
+    }
+}
+
+/// Conversion big-endian 160 bits -> decimale (`int(distance())`
+/// Python, qui deborde u128).
+fn big_int_dec(bytes: &[u8; 20]) -> String {
+    // digits[0] = unites (little-endian en base 10).
+    let mut digits = vec![0u8; 1];
+    for &b in bytes.iter() {
+        let mut carry = u32::from(b);
+        for d in digits.iter_mut() {
+            carry += u32::from(*d) * 256;
+            *d = (carry % 10) as u8;
+            carry /= 10;
+        }
+        while carry > 0 {
+            digits.push((carry % 10) as u8);
+            carry /= 10;
+        }
+    }
+    digits.iter().rev().map(|d| (b'0' + d) as char).collect()
 }
 
 /// `Crawl` : etat d'une recherche iterative (`_find` Python).
@@ -351,10 +484,11 @@ pub struct DhtCommunity {
     key: LibNaClSecretKey,
     /// `my_peer.mid`.
     my_mid: [u8; 20],
-    /// `my_estimated_wan` (adresse vue par les pairs).
-    my_wan: UdpAddress,
+    /// `my_estimated_wan` (adresse vue par les pairs — mise a jour
+    /// quand la discovery l'apprend, `set_my_wan`).
+    my_wan: Mutex<UdpAddress>,
     /// `my_estimated_lan`.
-    my_lan: UdpAddress,
+    my_lan: Mutex<UdpAddress>,
     /// `network` propre a la community (le Python instancie un
     /// `Network()` dedie, distinct de celui partage).
     network: Network,
@@ -395,8 +529,8 @@ impl DhtCommunity {
         let community = Arc::new_cyclic(|weak| Self {
             key,
             my_mid,
-            my_wan,
-            my_lan,
+            my_wan: Mutex::new(my_wan),
+            my_lan: Mutex::new(my_lan),
             weak: weak.clone(),
             network: Network::default(),
             endpoint: endpoint.clone(),
@@ -414,6 +548,28 @@ impl DhtCommunity {
             .add_prefix_listener(prefix, Arc::new(move |src, pkt| c.on_packet(src, pkt)))
             .await;
         community
+    }
+
+    /// `my_estimated_wan`.
+    pub fn my_wan(&self) -> UdpAddress {
+        self.my_wan.lock().unwrap().clone()
+    }
+
+    /// `my_estimated_lan`.
+    pub fn my_lan(&self) -> UdpAddress {
+        self.my_lan.lock().unwrap().clone()
+    }
+
+    /// Met a jour l'estimation WAN quand la discovery l'apprend
+    /// (`my_estimated_wan` Python est mutable a la reception des
+    /// introduction-responses).
+    pub fn set_my_wan(&self, wan: UdpAddress) {
+        *self.my_wan.lock().unwrap() = wan;
+    }
+
+    /// Met a jour l'estimation LAN.
+    pub fn set_my_lan(&self, lan: UdpAddress) {
+        *self.my_lan.lock().unwrap() = lan;
     }
 
     /// `global_time` (Lamport approxime par l'horloge, comme l'etape 9).
@@ -441,7 +597,7 @@ impl DhtCommunity {
     /// Acces a la table d'une classe donnee (creee si absente).
     fn with_class_table<R>(&self, class: AddrClass, f: impl FnOnce(&mut RoutingTable) -> R) -> R {
         let mut tables = self.routing_tables.lock().unwrap();
-        let my_id = calc_node_id(&self.my_wan, &self.my_mid).unwrap_or(self.my_mid);
+        let my_id = calc_node_id(&self.my_wan(), &self.my_mid).unwrap_or(self.my_mid);
         let rt = tables
             .entry(class)
             .or_insert_with(|| RoutingTable::new(my_id));
@@ -478,7 +634,7 @@ impl DhtCommunity {
     /// le ping (mesure RTT) — sauf si notre WAN est inconnu ou si la
     /// source est blacklistee (non implemente : pas de blacklist ici).
     fn on_node_discovered(&self, public_key_bin: Vec<u8>, address: UdpAddress) {
-        if self.my_wan.is_unspecified() {
+        if self.my_wan().is_unspecified() {
             return;
         }
         let mid = sha1(&public_key_bin);
@@ -684,7 +840,7 @@ impl DhtCommunity {
             .map(|id| distance(&id, key))
             .max()
             .unwrap_or([0xff; 20]);
-        let my_id = calc_node_id(&self.my_wan, &self.my_mid).unwrap_or(self.my_mid);
+        let my_id = calc_node_id(&self.my_wan(), &self.my_mid).unwrap_or(self.my_mid);
         if nodes.len() < TARGET_NODES || distance(&my_id, key) < largest {
             for v in values.iter().rev() {
                 self.add_value(key, v, &nodes[0].address(), MAX_ENTRY_AGE);
@@ -752,7 +908,7 @@ impl DhtCommunity {
         let mut w = Writer::new();
         payloads::FindRequest {
             identifier: id,
-            lan_address: self.my_lan.clone(),
+            lan_address: self.my_lan(),
             target: *target,
             offset,
             force_nodes,
@@ -839,6 +995,17 @@ impl DhtCommunity {
         force_nodes: bool,
         offset: u32,
     ) -> Result<FindOutcome, DhtError> {
+        Ok(self.find_inner(target, force_nodes, offset).await?.0)
+    }
+
+    /// `find` + accumulation des compteurs `debug` (`debug=True` du
+    /// `dht_endpoint` : `nodes_tried`/`responses` par crawl).
+    async fn find_inner(
+        self: &Arc<Self>,
+        target: &[u8; 20],
+        force_nodes: bool,
+        offset: u32,
+    ) -> Result<(FindOutcome, CrawlDebug), DhtError> {
         let classes: Vec<AddrClass> = self
             .routing_tables
             .lock()
@@ -848,7 +1015,7 @@ impl DhtCommunity {
             .collect();
         let mut all_nodes = Vec::new();
         let mut all_values = Vec::new();
-        let mut last_err = None;
+        let mut debug = CrawlDebug::default();
         for class in classes {
             // Construction du crawl : lecture seule de la table.
             let mut crawl = {
@@ -857,15 +1024,25 @@ impl DhtCommunity {
                     Some(rt) => rt,
                     None => continue,
                 };
-                match Crawl::new(*target, rt, force_nodes) {
-                    Ok(c) => c,
-                    Err(e) => {
-                        last_err = Some(e);
-                        continue;
-                    }
-                }
+                // `Crawl(target, rt)` Python leve `DHTError` a la
+                // construction si la table n'a aucun noeud a crawler —
+                // `find` propagate immediatement (pas de fusion
+                // partielle) pour les modes noeuds ET valeurs.
+                Crawl::new(*target, rt, force_nodes)?
             };
             self.find_crawl(&mut crawl, offset).await;
+            debug.nodes_tried.extend(crawl.nodes_tried.iter().copied());
+            debug.responses += crawl.responses.len();
+            debug.responses_with_nodes += crawl
+                .responses
+                .iter()
+                .filter(|(_, (_, nodes))| !nodes.is_empty())
+                .count();
+            debug.responses_with_values += crawl
+                .responses
+                .iter()
+                .filter(|(_, (values, _))| !values.is_empty())
+                .count();
 
             if force_nodes {
                 let nodes = self.with_class_table(class, |rt| crawl.nodes(rt));
@@ -882,16 +1059,149 @@ impl DhtCommunity {
                 all_values.extend(values);
             }
         }
-        if force_nodes {
-            if all_nodes.is_empty() {
-                if let Some(e) = last_err {
-                    return Err(e);
+        let outcome = if force_nodes {
+            FindOutcome::Nodes(all_nodes)
+        } else {
+            FindOutcome::Values(self.post_process_values(all_values))
+        };
+        Ok((outcome, debug))
+    }
+
+    /// `find_values(key, debug=True)` : valeurs post-traitees +
+    /// compteurs de crawl (`dht_endpoint.get_values`).
+    pub async fn find_values_debug(
+        self: &Arc<Self>,
+        target: &[u8; 20],
+        offset: u32,
+    ) -> Result<(Vec<DhtValue>, CrawlDebug), DhtError> {
+        match self.find_inner(target, false, offset).await? {
+            (FindOutcome::Values(v), debug) => Ok((v, debug)),
+            (FindOutcome::Nodes(_), _) => unreachable!(),
+        }
+    }
+
+    /// `refresh_bucket` du `dht_endpoint` : `find_values` sur un id
+    /// genere dans le prefixe, pour chaque table de routage.
+    /// `Err(NoSuchBucket)` si aucun bucket ne couvre ce prefixe ;
+    /// `Err(e)` si tous les rafraichissements ont echoue (le Python
+    /// renvoie alors `{"success": false, "error": e}` en 200).
+    pub async fn refresh_bucket(self: &Arc<Self>, prefix: &str) -> Result<(), DhtError> {
+        let targets: Vec<[u8; 20]> = {
+            let tables = self.routing_tables.lock().unwrap();
+            tables
+                .values()
+                .flat_map(|rt| rt.buckets())
+                .filter(|b| b.prefix_id == prefix)
+                .map(|b| b.generate_id())
+                .collect()
+        };
+        if targets.is_empty() {
+            return Err(DhtError::NoSuchBucket);
+        }
+        let mut ok = false;
+        let mut last_err = None;
+        for t in targets {
+            match self.find_values(&t, 0).await {
+                Ok(_) => ok = true,
+                Err(e) => last_err = Some(e),
+            }
+        }
+        if !ok {
+            return Err(last_err.unwrap_or(DhtError::NoSuchBucket));
+        }
+        Ok(())
+    }
+
+    /// `dht_endpoint.get_statistics` : instantane des stats.
+    pub fn stats_snapshot(&self) -> DhtStats {
+        let my_wan = self.my_wan();
+        let endpoints = {
+            let tables = self.routing_tables.lock().unwrap();
+            let storages = self.storages.lock().unwrap();
+            tables
+                .iter()
+                .map(|(class, rt)| {
+                    let buckets: Vec<_> = rt.buckets().collect();
+                    DhtTableStats {
+                        endpoint: iface_name(*class),
+                        node_id: calc_node_id(&my_wan, &self.my_mid)
+                            .map(hex::encode)
+                            .unwrap_or_default(),
+                        routing_table_size: buckets.iter().map(|b| b.nodes.len()).sum(),
+                        routing_table_buckets: buckets.len(),
+                        num_keys_in_store: storages.get(class).map(|s| s.len()).unwrap_or(0),
+                    }
+                })
+                .collect()
+        };
+        let to_hex_map = |m: &HashMap<[u8; 20], Vec<Arc<Node>>>| -> Vec<(String, usize)> {
+            m.iter().map(|(k, v)| (hex::encode(k), v.len())).collect()
+        };
+        DhtStats {
+            peer_id: hex::encode(self.my_mid),
+            num_tokens: self.tokens.lock().unwrap().len(),
+            endpoints,
+            num_peers_in_store: to_hex_map(&self.store.lock().unwrap()),
+            num_store_for_me: to_hex_map(&self.store_for_me.lock().unwrap()),
+        }
+    }
+
+    /// `dht_endpoint.get_buckets` : instantane des buckets.
+    pub fn buckets_snapshot(&self) -> Vec<DhtBucketInfo> {
+        let my_wan = self.my_wan();
+        let tables = self.routing_tables.lock().unwrap();
+        tables
+            .iter()
+            .flat_map(|(class, rt)| {
+                let my_id = calc_node_id(&my_wan, &self.my_mid).unwrap_or(self.my_mid);
+                rt.buckets()
+                    .map(|b| DhtBucketInfo {
+                        endpoint: iface_name(*class),
+                        prefix: b.prefix_id.clone(),
+                        last_changed: b.last_changed,
+                        peers: b
+                            .nodes
+                            .values()
+                            .map(|n| {
+                                let (ip, port) = address_ip_port(&n.address());
+                                DhtNodeInfo {
+                                    ip,
+                                    port,
+                                    mid: hex::encode(n.mid),
+                                    id: n.id().map(hex::encode),
+                                    failed: n.failed(),
+                                    last_contact: n.last_contact(),
+                                    distance: n
+                                        .id()
+                                        .map(|id| big_int_dec(&distance(&id, &my_id)))
+                                        .unwrap_or_default(),
+                                }
+                            })
+                            .collect(),
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect()
+    }
+
+    /// `dht_endpoint.get_stored_values` : valeurs post-traitees
+    /// stockees localement, par classe d'adresse.
+    pub fn stored_values(&self) -> Vec<DhtStoredValue> {
+        let storages = self.storages.lock().unwrap();
+        let mut out = Vec::new();
+        for (class, st) in storages.iter() {
+            for (key, raw) in st.items_snapshot() {
+                for (data, public_key) in self.post_process_values(raw) {
+                    out.push(DhtStoredValue {
+                        endpoint: iface_name(*class),
+                        key: hex::encode(&key),
+                        data,
+                        public_key,
+                    });
                 }
             }
-            Ok(FindOutcome::Nodes(all_nodes))
-        } else {
-            Ok(FindOutcome::Values(self.post_process_values(all_values)))
         }
+        out
     }
 
     /// `post_process_values` : deserialise, deduplique ; pour les
@@ -1070,6 +1380,7 @@ impl DhtCommunity {
         key: &[u8; 20],
         nodes: &[Arc<Node>],
     ) -> Result<Vec<Arc<Node>>, DhtError> {
+        // `"No nodes found for connecting to peer"` Python.
         if nodes.is_empty() {
             return Err(DhtError::NoNodes("pas de noeud pour connect-peer"));
         }
@@ -1084,7 +1395,7 @@ impl DhtCommunity {
                 let mut w = Writer::new();
                 payloads::ConnectPeerRequest {
                     identifier: id,
-                    lan_address: c.my_lan.clone(),
+                    lan_address: c.my_lan(),
                     target: key,
                 }
                 .pack(&mut w)?;
@@ -1131,8 +1442,8 @@ impl DhtCommunity {
         // bootstrap Tribler sont IPv4.
         crate::payloads::IntroductionRequest {
             destination_address: addr.clone(),
-            source_lan_address: self.my_lan.clone(),
-            source_wan_address: self.my_wan.clone(),
+            source_lan_address: self.my_lan(),
+            source_wan_address: self.my_wan(),
             advice: false,
             supports_new_style: true,
             connection_type: crate::payloads::ConnectionType::Unknown,
@@ -1196,7 +1507,7 @@ impl DhtCommunity {
                 }
                 // Age reduit selon le nombre de noeuds plus proches
                 // (protection anti-surcaching, cf. Python).
-                let my_id = calc_node_id(&self.my_wan, &self.my_mid).unwrap_or(self.my_mid);
+                let my_id = calc_node_id(&self.my_wan(), &self.my_mid).unwrap_or(self.my_mid);
                 let num_closer = self.with_routing_table(&src_addr, |rt| {
                     rt.closest_nodes(&p.target, 20, None)
                         .iter()
@@ -1412,8 +1723,8 @@ impl DhtCommunity {
                     let _ =
                         crate::payloads::IntroductionResponse {
                             destination_address: p.source_wan_address,
-                            source_lan_address: self.my_lan.clone(),
-                            source_wan_address: self.my_wan.clone(),
+                            source_lan_address: self.my_lan(),
+                            source_wan_address: self.my_wan(),
                             lan_introduction_address: UdpAddress::Ipv4(
                                 std::net::SocketAddrV4::new(std::net::Ipv4Addr::UNSPECIFIED, 0),
                             ),
@@ -1527,14 +1838,14 @@ impl DhtCommunity {
         // `target` (destinataire du puncture) = lan_walker si le WAN du
         // demandeur partage notre IP WAN ; sinon wan_walker. Le payload
         // contient toujours (my_lan, wan_walker) — cf. `on_puncture_request`.
-        let target = if address_ip_port(&wan_walker).0 == address_ip_port(&self.my_wan).0 {
+        let target = if address_ip_port(&wan_walker).0 == address_ip_port(&self.my_wan()).0 {
             lan_walker
         } else {
             wan_walker.clone()
         };
         let ep = self.endpoint.clone();
         let key = self.key.clone();
-        let my_lan = self.my_lan.clone();
+        let my_lan = self.my_lan();
         tokio::spawn(async move {
             let mut w = Writer::new();
             let msg_id = if new_style {

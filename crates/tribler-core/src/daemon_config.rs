@@ -645,6 +645,7 @@ impl DaemonConfig {
             enable_anonymity: self.tunnel_community.enabled,
             peer_flags,
             tribler_tunnel_community: true,
+            enable_dht: self.dht_discovery.enabled,
         };
 
         crate::CoreConfig {
@@ -712,5 +713,6 @@ impl DaemonConfig {
         self.torrent_checker.enabled = core.enable_torrent_checker;
         self.ipv8.enabled = core.ipv8.enabled;
         self.tunnel_community.enabled = core.ipv8.enable_anonymity;
+        self.dht_discovery.enabled = core.ipv8.enable_dht;
     }
 }

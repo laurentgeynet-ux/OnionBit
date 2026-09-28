@@ -111,6 +111,23 @@ impl Storage {
         self.items.retain(|_, vs| !vs.is_empty());
     }
 
+    /// Instantane des donnees brutes non expirees par cle —
+    /// `storage.items` de `get_stored_values` Python.
+    pub fn items_snapshot(&self) -> Vec<(Vec<u8>, Vec<Vec<u8>>)> {
+        self.items
+            .iter()
+            .map(|(k, vs)| {
+                (
+                    k.clone(),
+                    vs.iter()
+                        .filter(|v| !v.expired())
+                        .map(|v| v.data.clone())
+                        .collect(),
+                )
+            })
+            .collect()
+    }
+
     /// Nombre de cles stockees.
     pub fn len(&self) -> usize {
         self.items.len()

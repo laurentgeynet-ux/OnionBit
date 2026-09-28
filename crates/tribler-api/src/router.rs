@@ -134,6 +134,17 @@ pub fn build(state: AppState) -> Router {
         .route("/api/ipv8/tunnel/exits", get(ipv8::get_tunnel_exits))
         .route("/api/ipv8/tunnel/swarms", get(ipv8::get_tunnel_swarms))
         .route("/api/ipv8/tunnel/peers", get(ipv8::get_tunnel_peers))
+        // -- DHT IPv8 (dht_endpoint.py, pyipv8) -------------------------
+        .route("/api/ipv8/dht/statistics", get(dht::get_statistics))
+        .route("/api/ipv8/dht/values", get(dht::get_stored_values))
+        .route("/api/ipv8/dht/values/{key}", get(dht::get_values))
+        .route("/api/ipv8/dht/values/{key}", put(dht::put_value))
+        .route("/api/ipv8/dht/peers/{mid}", get(dht::get_peer))
+        .route("/api/ipv8/dht/buckets", get(dht::get_buckets))
+        .route(
+            "/api/ipv8/dht/buckets/{prefix}/refresh",
+            get(dht::refresh_bucket),
+        )
         // -- Navigateur de fichiers (file_endpoint.py) ------------------
         .route("/api/files/browse", get(files::browse))
         .route("/api/files/list", get(files::list))

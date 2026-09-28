@@ -27,6 +27,7 @@ rusqlite.workspace = true
 uuid.workspace = true
 tokio-stream = { version = "0.1", features = ["sync"] }
 hex.workspace = true
+base64.workspace = true
 
 [dev-dependencies]
 tribler-test-support = { path = "../tribler-test-support" }

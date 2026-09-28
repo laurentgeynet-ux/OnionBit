@@ -1857,3 +1857,235 @@ async fn put_download_ask_add_download() {
     assert_eq!(got, uri);
     srv.session.stop().await;
 }
+
+/// Serveur de test avec la stack IPv8 **active** (UDP loopback
+/// ephemere, aucun bootstrap — zero trafic sortant) : permet de
+/// couvrir les routes `/api/ipv8/dht/*` en presence de la community.
+async fn spawn_server_ipv8() -> TestServer {
+    let dir = tempfile::tempdir().unwrap();
+    let mut cfg = CoreConfig::offline(dir.path().into());
+    cfg.ipv8.enabled = true;
+    cfg.ipv8.listen_addr = "0.0.0.0:0".into();
+    cfg.ipv8.bootstrap_peers = Vec::new();
+    cfg.ipv8.enable_dht = true;
+    let session = CoreSession::start_offline(cfg, Notifier::new())
+        .await
+        .unwrap();
+    let state = AppState::new(session.clone());
+    let app = build(state.clone());
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    TestServer {
+        addr,
+        session,
+        state,
+        client: reqwest::Client::new(),
+        _dir: dir,
+    }
+}
+
+/// Sans community DHT (`dht_discovery/enabled=false` ou IPv8 off),
+/// le `dht_endpoint` Python repond 404 `{"success": false, "error":
+/// "DHT community not found"}` — sauf `buckets` (200, liste vide) et
+/// `refresh` (400 "is not loaded").
+#[tokio::test]
+async fn dht_routes_sans_community() {
+    let srv = spawn_server().await;
+    for path in [
+        "/api/ipv8/dht/statistics",
+        "/api/ipv8/dht/values",
+        "/api/ipv8/dht/values/0123456789abcdef0123456789abcdef01234567",
+        "/api/ipv8/dht/peers/0123456789abcdef0123456789abcdef01234567",
+    ] {
+        let resp = srv.client.get(srv.url(path)).send().await.unwrap();
+        assert_eq!(resp.status(), 404, "{path}");
+        let body: serde_json::Value = resp.json().await.unwrap();
+        assert_eq!(body["success"], false, "{path}");
+        assert_eq!(body["error"], "DHT community not found", "{path}");
+    }
+    // PUT values/{key} : meme 404.
+    let resp = srv
+        .client
+        .put(srv.url("/api/ipv8/dht/values/0123456789abcdef0123456789abcdef01234567"))
+        .json(&serde_json::json!({"value": "aabb"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 404);
+    assert_eq!(
+        resp.json::<serde_json::Value>().await.unwrap()["success"],
+        false
+    );
+    // `buckets` : 200 + liste vide (le endpoint n'echoue pas).
+    let resp = srv
+        .client
+        .get(srv.url("/api/ipv8/dht/buckets"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    assert_eq!(
+        resp.json::<serde_json::Value>().await.unwrap()["buckets"],
+        serde_json::json!([])
+    );
+    // `refresh` : 400 "is not loaded".
+    let resp = srv
+        .client
+        .get(srv.url("/api/ipv8/dht/buckets/0/refresh"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 400);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["success"], false);
+    assert_eq!(body["error"], "DHT community is not loaded");
+    srv.session.stop().await;
+}
+
+/// Avec `dht_discovery/enabled` : la community repond aux 7 routes
+/// avec les formes Python (`statistics.peer_id`, `buckets`, `debug`
+/// du lookup, `success` du PUT/refresh).
+#[tokio::test]
+async fn dht_routes_avec_community() {
+    let srv = spawn_server_ipv8().await;
+    assert!(srv.session.dht().is_some(), "dht_discovery active");
+
+    // `statistics` : structure `{"statistics": {...}}`.
+    let resp = srv
+        .client
+        .get(srv.url("/api/ipv8/dht/statistics"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let stats = &body["statistics"];
+    assert_eq!(stats["peer_id"].as_str().unwrap().len(), 40, "mid hex");
+    assert!(stats["num_tokens"].is_number());
+    assert!(stats["endpoints"].is_array());
+    // `DHTDiscoveryCommunity` : compteurs store/store_for_me.
+    assert!(stats["num_peers_in_store"].is_object());
+    assert!(stats["num_store_for_me"].is_object());
+
+    // `values` (stockees localement) : objet indexe par cle hex.
+    let resp = srv
+        .client
+        .get(srv.url("/api/ipv8/dht/values"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    assert!(resp.json::<serde_json::Value>().await.unwrap().is_object());
+
+    // `values/{key}` : aucune table de routage encore -> `find_values`
+    // iterer sur zero classes rend `([], [])` Python -> 200 vide.
+    let resp = srv
+        .client
+        .get(srv.url("/api/ipv8/dht/values/0123456789abcdef0123456789abcdef01234567"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["values"], serde_json::json!([]));
+    let debug = &body["debug"];
+    assert_eq!(debug["requests"], 0);
+    assert_eq!(debug["responses"], 0);
+    assert!(debug["time"].is_number());
+
+    // `values/{key}` avec hex invalide : `unhexlify` Python → 500.
+    let resp = srv
+        .client
+        .get(srv.url("/api/ipv8/dht/values/pas_du_hex!"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 500);
+    assert_eq!(
+        resp.json::<serde_json::Value>().await.unwrap()["error"]["handled"],
+        false
+    );
+
+    // `PUT` sans champ `value` : 400 `incorrect parameters`.
+    let resp = srv
+        .client
+        .put(srv.url("/api/ipv8/dht/values/0123456789abcdef0123456789abcdef01234567"))
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 400);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["success"], false);
+    assert_eq!(body["error"], "incorrect parameters");
+
+    // `PUT` avec `value` : `store_on_nodes` leve `DHTError` quand
+    // aucun noeud n'est connu ("No nodes found for storing the
+    // key-value pairs" Python) -> 500 non geree.
+    let resp = srv
+        .client
+        .put(srv.url("/api/ipv8/dht/values/0123456789abcdef0123456789abcdef01234567"))
+        .json(&serde_json::json!({"value": "aabb"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 500);
+    assert_eq!(
+        resp.json::<serde_json::Value>().await.unwrap()["error"]["handled"],
+        false
+    );
+
+    // `buckets` : 200 + liste (vide tant qu'aucun pair n'est appris).
+    let resp = srv
+        .client
+        .get(srv.url("/api/ipv8/dht/buckets"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    assert!(resp.json::<serde_json::Value>().await.unwrap()["buckets"].is_array());
+
+    // `refresh` d'un prefixe inexistant : 400 `no such bucket`.
+    let resp = srv
+        .client
+        .get(srv.url("/api/ipv8/dht/buckets/0101/refresh"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 400);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["success"], false);
+    assert_eq!(body["error"], "no such bucket");
+
+    // `peers/{mid}` : `connect_peer` leve `DHTError` ("No nodes
+    // found for connecting to peer" / "Failed to connect peer") sur
+    // une table vide -> 500 `{"error": {"handled": false}}`.
+    let resp = srv
+        .client
+        .get(srv.url("/api/ipv8/dht/peers/0123456789abcdef0123456789abcdef01234567"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 500);
+    assert_eq!(
+        resp.json::<serde_json::Value>().await.unwrap()["error"]["handled"],
+        false
+    );
+
+    // `peers/{mid}` avec hex invalide : `unhexlify` -> 500.
+    let resp = srv
+        .client
+        .get(srv.url("/api/ipv8/dht/peers/zz"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 500);
+    assert_eq!(
+        resp.json::<serde_json::Value>().await.unwrap()["error"]["handled"],
+        false
+    );
+    srv.session.stop().await;
+}
