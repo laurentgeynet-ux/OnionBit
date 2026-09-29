@@ -41,9 +41,17 @@ class RestSearchRepository implements SearchRepository {
   ];
 
   @override
-  Future<List<TorrentResult>> searchLocal(String query) async => [
+  Future<List<TorrentResult>> searchLocal(
+    String query, {
+    String? sortBy,
+    bool sortDesc = true,
+  }) async => [
     for (final j in _results(
-      await _api.get('/metadata/search/local', query: {'fts_text': query}),
+      await _api.get('/metadata/search/local', query: {
+        'fts_text': query,
+        'sort_by': ?sortBy,
+        'sort_desc': '$sortDesc',
+      }),
     ))
       _parse(j, TorrentSource.local),
   ];
@@ -58,5 +66,25 @@ class RestSearchRepository implements SearchRepository {
       requestUuid: '${resp['request_uuid'] ?? ''}',
       peers: [for (final p in (resp['peers'] as List?) ?? const []) '$p'],
     );
+  }
+
+  @override
+  Future<List<String>> completions(String query) async {
+    try {
+      final resp = await _api.get(
+        '/metadata/search/completions',
+        query: {'q': query},
+      );
+      return [
+        for (final c
+            in ((resp as Map<String, dynamic>)['completions'] as List?) ??
+                const [])
+          '$c',
+      ];
+    } catch (_) {
+      // L'autocomplétion est un confort : une erreur réseau ne doit
+      // jamais casser la frappe.
+      return const [];
+    }
   }
 }

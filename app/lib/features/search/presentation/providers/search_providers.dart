@@ -12,6 +12,42 @@ final searchRepositoryProvider = Provider<SearchRepository>(
   (ref) => RestSearchRepository(ref.watch(apiClientProvider)),
 );
 
+/// Tri de la recherche locale — colonnes `sort_by` du backend
+/// (`json2pony_columns` : `HEALTH` = seeders/leechers joints,
+/// `null` = pertinence FTS `search_rank`).
+enum SearchSort {
+  /// Pertinence (`search_rank` — titre × santé × fraîcheur).
+  relevance(null),
+
+  /// Santé du swarm (`HEALTH` — seeders puis leechers décroissants).
+  health('HEALTH'),
+
+  /// Titre alphabétique (`name` → `title COLLATE NOCASE`).
+  name('name'),
+
+  /// Taille du contenu (`size`).
+  size('size'),
+
+  /// Date du torrent (`date` → `torrent_date`).
+  date('date');
+
+  const SearchSort(this.param);
+
+  /// Valeur du paramètre REST `sort_by` (`null` = tri par défaut).
+  final String? param;
+}
+
+final searchSortProvider = NotifierProvider<SearchSortNotifier, SearchSort>(
+  SearchSortNotifier.new,
+);
+
+class SearchSortNotifier extends Notifier<SearchSort> {
+  @override
+  SearchSort build() => SearchSort.relevance;
+
+  void set(SearchSort sort) => state = sort;
+}
+
 /// Résultats « de base » : populaires quand la requête est vide,
 /// recherche locale sinon. La recherche distante est lancée ici, ses
 /// résultats arrivent dans [remoteResultsProvider] via SSE.
@@ -24,10 +60,11 @@ class SearchResultsNotifier extends AsyncNotifier<List<TorrentResult>> {
   @override
   Future<List<TorrentResult>> build() async {
     final query = ref.watch(searchQueryProvider);
+    final sort = ref.watch(searchSortProvider);
     final repo = ref.watch(searchRepositoryProvider);
     if (query.isEmpty) return repo.popular();
     unawaited(_launchRemote(query));
-    return repo.searchLocal(query);
+    return repo.searchLocal(query, sortBy: sort.param);
   }
 
   Future<void> _launchRemote(String query) async {

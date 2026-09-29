@@ -19,6 +19,7 @@ class SearchPage extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final query = ref.watch(searchQueryProvider);
+    final sort = ref.watch(searchSortProvider);
     final local = ref.watch(searchResultsProvider);
     final remote = ref.watch(remoteResultsProvider);
 
@@ -67,6 +68,21 @@ class SearchPage extends ConsumerWidget {
                     ),
                   ],
                 ),
+              PopupMenuButton<SearchSort>(
+                tooltip: 'Trier les résultats',
+                icon: const Icon(Icons.sort, size: 20),
+                initialValue: sort,
+                onSelected: (s) =>
+                    ref.read(searchSortProvider.notifier).set(s),
+                itemBuilder: (context) => [
+                  for (final s in SearchSort.values)
+                    CheckedPopupMenuItem(
+                      value: s,
+                      checked: s == sort,
+                      child: Text(_sortLabel(s)),
+                    ),
+                ],
+              ),
             ],
           ),
         ),
@@ -102,6 +118,14 @@ class SearchPage extends ConsumerWidget {
     );
   }
 }
+
+String _sortLabel(SearchSort s) => switch (s) {
+  SearchSort.relevance => 'Pertinence',
+  SearchSort.health => 'Santé (seeders)',
+  SearchSort.name => 'Nom',
+  SearchSort.size => 'Taille',
+  SearchSort.date => 'Date',
+};
 
 class _ResultTile extends StatelessWidget {
   const _ResultTile({required this.result});

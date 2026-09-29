@@ -18,9 +18,19 @@ abstract interface class SearchRepository {
   /// recherche quand la requête est vide).
   Future<List<TorrentResult>> popular({int limit = 50});
 
-  /// Recherche FTS locale dans `metadata.db`.
-  Future<List<TorrentResult>> searchLocal(String query);
+  /// Recherche FTS locale dans `metadata.db`. `sortBy`/`sortDesc`
+  /// suivent `sort_by`/`sort_desc` du backend (`HEALTH`, `name`,
+  /// `size`, `date`…, `null` = tri de pertinence FTS).
+  Future<List<TorrentResult>> searchLocal(
+    String query, {
+    String? sortBy,
+    bool sortDesc = true,
+  });
 
   /// Diffuse la requête aux pairs — réponses poussées via SSE.
   Future<RemoteQuery> searchRemote(String query);
+
+  /// Suggestions d'autocomplétion (`GET /metadata/search/completions`
+  /// — FTS préfixe + continuation de mot, comme le GUI Tribler).
+  Future<List<String>> completions(String query);
 }
