@@ -70,5 +70,8 @@ fn configure(conn: &Connection) -> Result<()> {
     // WAL n'a de sens que pour une base fichier ; en memoire c'est un
     // no-op controle par rusqlite.
     let _ = conn.pragma_update(None, "journal_mode", "WAL");
+    // `search_rank` Python : fonction de ranking appelee depuis le
+    // SQL (`get_entries_query`, tri de pertinence des `txt_filter`).
+    crate::ranks::register_search_rank(conn)?;
     Ok(())
 }

@@ -11,7 +11,7 @@
 //! semantique du schema, pas l'interoperabilite binaire).
 
 /// Version courante du schema de ce crate.
-pub const SCHEMA_VERSION: i64 = 6;
+pub const SCHEMA_VERSION: i64 = 7;
 
 /// Script SQL de chaque migration, dans l'ordre (index 0 = v1).
 pub const MIGRATIONS: &[&str] = &[
@@ -160,6 +160,31 @@ CREATE TABLE rss_items (
     "
 ALTER TABLE downloads ADD COLUMN channel_download INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE downloads ADD COLUMN add_download_to_channel INTEGER NOT NULL DEFAULT 0;
+",
+    // v7 : index de recherche plein-texte `FtsIndex` — port verbatim
+    // de `sql_create_fts_table`/triggers de `store.py` (FTS5 sur le
+    // titre de `channel_node`, tokenizer porter/unicode61, prefixes
+    // 2..5 pour l'auto-completion). `content='channel_node'` fait de
+    // la table un index externe alimente par les triggers ; le
+    // `INSERT ... VALUES('rebuild')` backfill les lignes existantes.
+    "
+CREATE VIRTUAL TABLE IF NOT EXISTS FtsIndex USING FTS5
+    (title, content='channel_node',
+     prefix = '2 3 4 5',
+     tokenize='porter unicode61 remove_diacritics 1');
+CREATE TRIGGER IF NOT EXISTS fts_ai AFTER INSERT ON channel_node
+BEGIN
+    INSERT INTO FtsIndex(rowid, title) VALUES (new.rowid, new.title);
+END;
+CREATE TRIGGER IF NOT EXISTS fts_ad AFTER DELETE ON channel_node
+BEGIN
+    DELETE FROM FtsIndex WHERE rowid = old.rowid;
+END;
+CREATE TRIGGER IF NOT EXISTS fts_au AFTER UPDATE ON channel_node BEGIN
+    DELETE FROM FtsIndex WHERE rowid = old.rowid;
+    INSERT INTO FtsIndex(rowid, title) VALUES (new.rowid, new.title);
+END;
+INSERT INTO FtsIndex(FtsIndex) VALUES('rebuild');
 ",
 ];
 

@@ -21,6 +21,7 @@ pub mod health;
 pub mod migrations;
 pub mod misc;
 pub mod models;
+pub mod ranks;
 pub mod rss;
 
 pub use db::Database;

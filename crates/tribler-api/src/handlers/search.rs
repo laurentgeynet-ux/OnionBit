@@ -55,6 +55,7 @@ fn parse_bool_flag(v: Option<bool>) -> bool {
 
 pub async fn remote_search(
     State(state): State<AppState>,
+    axum::extract::RawQuery(raw): axum::extract::RawQuery,
     Query(q): Query<RemoteSearchQuery>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let mut query_text = q
@@ -99,8 +100,14 @@ pub async fn remote_search(
     if let Some(v) = q.max_rowid {
         json["max_rowid"] = serde_json::json!(v);
     }
+    // `parameters.getall("tags")` Python : occurrences repetees
+    // `?tags=a&tags=b` + forme CSV acceptee.
+    let mut tags = super::metadata::repeated_tags(raw.as_deref());
     if let Some(v) = &q.tags {
-        json["tags"] = serde_json::json!(v.split(',').map(str::trim).collect::<Vec<_>>());
+        tags.extend(v.split(',').map(str::trim).map(String::from));
+    }
+    if !tags.is_empty() {
+        json["tags"] = serde_json::json!(tags);
     }
     let body = serde_json::to_vec(&json).map_err(|e| ApiError::internal(e.to_string()))?;
 

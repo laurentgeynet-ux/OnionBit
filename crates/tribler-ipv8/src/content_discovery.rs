@@ -415,7 +415,7 @@ impl ContentDiscoveryCommunity {
             // `BaseLauncher.get_walk_strategies` Tribler.
             strategies: vec![OverlayStrategy {
                 name: "RandomWalk",
-                target_peers: self.settings.walk_target_peers,
+                target_peers: self.settings.walk_target_peers as i32,
             }],
             decode: content_discovery_msg_name,
         }

@@ -7,8 +7,8 @@ use std::time::{Duration, Instant};
 
 use tribler_crypto::ipv8::keys::LibNaClSecretKey;
 use tribler_ipv8::content_discovery::{
-    ContentDiscoveryCommunity, ContentProvider, HealthInfo, CONTENT_DISCOVERY_COMMUNITY_ID,
-    HEALTH_REQUEST_RANDOM,
+    ContentDiscoveryCommunity, ContentDiscoverySettings, ContentProvider, HealthInfo,
+    CONTENT_DISCOVERY_COMMUNITY_ID, HEALTH_REQUEST_RANDOM,
 };
 use tribler_ipv8::discovery::DiscoveryCommunity;
 use tribler_ipv8::endpoint::UdpEndpoint;
@@ -43,9 +43,9 @@ impl ContentProvider for MockProvider {
             .extend(healths.iter().cloned());
         Vec::new()
     }
-    fn remote_select(&self, json: &[u8]) -> Vec<u8> {
+    fn remote_select(&self, json: &[u8]) -> Vec<Vec<u8>> {
         self.selects.lock().unwrap().push(json.to_vec());
-        self.select_blob.clone()
+        vec![self.select_blob.clone()]
     }
     fn process_select_response(&self, blob: &[u8]) -> Vec<serde_json::Value> {
         self.responses.lock().unwrap().push(blob.to_vec());
@@ -83,7 +83,10 @@ async fn node(
         net.clone(),
         ep.clone(),
         provider,
-        Some(Duration::from_secs(3600)),
+        ContentDiscoverySettings {
+            gossip_interval: Duration::from_secs(3600),
+            ..ContentDiscoverySettings::default()
+        },
         discovery,
     )
     .await;
@@ -203,8 +206,9 @@ async fn remote_select_callback_invoked() {
     let called_c = called.clone();
     ca.send_remote_select_cb(
         &addr_b,
+        b"mid-b",
         b"{\"txt_filter\":\"x\"}".to_vec(),
-        Arc::new(move |results| {
+        Arc::new(move |_mid, results| {
             assert!(results.is_empty());
             called_c.store(true, std::sync::atomic::Ordering::SeqCst);
         }),
@@ -272,7 +276,7 @@ async fn version_request_answered() {
         fn process_health(&self, _h: &[HealthInfo]) -> Vec<[u8; 20]> {
             vec![]
         }
-        fn remote_select(&self, _j: &[u8]) -> Vec<u8> {
+        fn remote_select(&self, _j: &[u8]) -> Vec<Vec<u8>> {
             vec![]
         }
         fn process_select_response(&self, _b: &[u8]) -> Vec<serde_json::Value> {

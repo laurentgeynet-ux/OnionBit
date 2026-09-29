@@ -27,9 +27,11 @@ fn row_json(row: &tribler_db::ChannelNodeRow) -> serde_json::Value {
         "length": row.size,
         "size": row.size,
         "category": serde_json::Value::Null,
-        "num_seeders": serde_json::Value::Null,
-        "num_leechers": serde_json::Value::Null,
-        "last_tracker_check": serde_json::Value::Null,
+        // `health.seeders/leechers/last_check` joints (Pony
+        // `TorrentMetadata.to_json`).
+        "num_seeders": row.health_seeders,
+        "num_leechers": row.health_leechers,
+        "last_tracker_check": row.health_last_check,
         "updated": row.torrent_date,
         "status": row.status,
         "id": row.rowid,
@@ -193,50 +195,206 @@ pub async fn get_torrent_health_history(
 }
 
 /// `GET /api/metadata/search/local?fts_text=...` — recherche locale
-/// dans `channel_node` (`local_search` : LIKE sur le titre).
+/// dans `channel_node` (`local_search` : requete augmentee par le
+/// vocabulaire de sous-mots, `query_with_augmenter` Python).
 #[derive(Debug, Deserialize)]
 pub struct SearchQuery {
     /// Texte de recherche (`fts_text` Python, recu tel quel).
     pub fts_text: Option<String>,
     /// Filtre additionnel ajoute au texte (`filter` Python).
     pub filter: Option<String>,
-    /// Filtre sur le type de metadonnee.
+    /// `first` (defaut Python 1).
+    pub first: Option<u64>,
+    /// `last` (defaut Python 50).
+    pub last: Option<u64>,
+    /// `sort_by` (`json2pony_columns` : name/size/created/health/...).
+    pub sort_by: Option<String>,
+    /// `sort_desc` (defaut Python true, `parse_bool` tolere
+    /// `"true"`/`"false"`).
+    pub sort_desc: Option<String>,
+    /// `hide_xxx` (defaut Python false).
+    pub hide_xxx: Option<String>,
+    /// `category` (filtre suffixe de tags).
+    pub category: Option<String>,
+    /// `tags` : valeur CSV (`?tags=a,b`) — les occurrences repetees
+    /// `?tags=a&tags=b` sont fusionnees dans le handler.
+    pub tags: Option<String>,
+    /// `max_rowid` (pagination pushback).
+    pub max_rowid: Option<i64>,
+    /// `channel_pk` hex.
+    pub channel_pk: Option<String>,
+    /// `origin_id`.
+    pub origin_id: Option<i64>,
+    /// `metadata_type` (entier ou CSV d'entiers).
     pub metadata_type: Option<String>,
-    /// Limite de resultats.
-    pub limit: Option<u32>,
+    /// `include_total` Python : renvoie `total` + `max_rowid`.
+    pub include_total: Option<String>,
+    /// Compatibilite avec l'ancien parametre `limit` (borne `last`).
+    pub limit: Option<u64>,
+}
+
+/// `parse_bool` Python (`true`/`1`/`yes`…), defaut `d`.
+fn parse_bool_opt(v: Option<&str>, d: bool) -> bool {
+    match v.map(|s| s.to_ascii_lowercase()) {
+        Some(s) => matches!(s.as_str(), "true" | "1" | "yes" | "on"),
+        None => d,
+    }
+}
+
+/// `fts_text`/`filter` combines du parametre de recherche Python.
+fn combined_fts(q_fts: &Option<String>, q_filter: &Option<String>) -> Option<String> {
+    let mut t = q_fts.clone().unwrap_or_default();
+    if let Some(f) = q_filter {
+        t.push(' ');
+        t.push_str(f);
+    }
+    if t.is_empty() {
+        None
+    } else {
+        Some(t)
+    }
+}
+
+/// Parse `metadata_type` (entier ou liste CSV).
+fn parse_metadata_types(v: &Option<String>) -> Option<Vec<i64>> {
+    v.as_ref().map(|s| {
+        s.split(',')
+            .filter_map(|t| t.trim().parse::<i64>().ok())
+            .collect::<Vec<_>>()
+    })
+}
+
+/// Construit les `SelectParams` partages local/remote a partir des
+/// parametres REST sanitizes (`sanitize_parameters` Python).
+fn build_select_params(q: &SearchQuery, extra_tags: Vec<String>, fts: Option<String>) -> tribler_db::channel::SelectParams {
+    let mut tags = extra_tags;
+    if let Some(csv) = &q.tags {
+        tags.extend(csv.split(',').map(|t| t.trim().to_string()).filter(|t| !t.is_empty()));
+    }
+    let sort_by = q.sort_by.clone();
+    tribler_db::channel::SelectParams {
+        txt_filter: fts
+            .as_deref()
+            .and_then(tribler_core::queries::to_fts_query),
+        terms: fts
+            .as_deref()
+            .map(tribler_core::queries::fts_terms)
+            .unwrap_or_default(),
+        metadata_types: parse_metadata_types(&q.metadata_type),
+        channel_pk: q
+            .channel_pk
+            .as_ref()
+            .and_then(|s| hex::decode(s).ok()),
+        origin_id: q.origin_id,
+        max_rowid: q.max_rowid,
+        hide_xxx: parse_bool_opt(q.hide_xxx.as_deref(), false),
+        sort_by,
+        sort_desc: parse_bool_opt(q.sort_desc.as_deref(), true),
+        category: q.category.clone(),
+        tags,
+        first: q.first.unwrap_or(1).max(1),
+        last: Some(q.last.or(q.limit).unwrap_or(50)),
+        ..Default::default()
+    }
+}
+
+/// Parametres repetes `?tags=a&tags=b` (`parameters.getall` Python) —
+/// `serde_urlencoded` ne les supporte pas : lecture directe de la
+/// query string.
+pub(crate) fn repeated_tags(raw_query: Option<&str>) -> Vec<String> {
+    let Some(query) = raw_query else {
+        return Vec::new();
+    };
+    query
+        .split('&')
+        .filter_map(|kv| kv.split_once('='))
+        .filter(|(k, _)| *k == "tags")
+        .map(|(_, v)| {
+            let v = v.replace('+', " ");
+            percent_decode(&v)
+        })
+        .collect()
+}
+
+/// Decode `%XX` minimal d'une valeur de query string.
+fn percent_decode(v: &str) -> String {
+    let bytes = v.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let Ok(b) = u8::from_str_radix(&v[i + 1..i + 3], 16) {
+                out.push(b);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 pub async fn local_search(
     State(state): State<AppState>,
+    axum::extract::RawQuery(raw): axum::extract::RawQuery,
     Query(q): Query<SearchQuery>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let mut fts = q.fts_text.unwrap_or_default();
-    if let Some(f) = &q.filter {
-        fts.push(' ');
-        fts.push_str(f);
-    }
-    if fts.is_empty() {
+    let Some(fts) = combined_fts(&q.fts_text, &q.filter) else {
         return Err(ApiError::bad_request("fts_text parameter missing"));
-    }
-    // `to_fts_query` Python : mots `\w+` — la correspondance
-    // FTS5 `MATCH "a" "b"` (AND) est approximee par des `LIKE` AND.
-    let terms = tribler_core::queries::fts_terms(&fts);
-    let rows = state.session.db().with(|c| {
-        tribler_db::channel::select_entries(
-            c,
-            &tribler_db::channel::SelectParams {
-                terms,
-                metadata_types: q
-                    .metadata_type
-                    .as_ref()
-                    .and_then(|s| s.parse::<i64>().ok())
-                    .map(|m| vec![m])
-                    .or(Some(vec![300, 400])),
-                limit: q.limit.unwrap_or(LIST_LIMIT).min(LIST_LIMIT) as usize,
-                ..Default::default()
-            },
-        )
+    };
+    let tags = repeated_tags(raw.as_deref());
+    let params = build_select_params(&q, tags, Some(fts.clone()));
+
+    // `query_with_augmenter` Python : l'augmenteur decoupe la requete
+    // en sous-mots appris et rend des rowids (`LIMIT/OFFSET` propres
+    // a l'augmenteur), puis `apply_sort_by_option` trie les entrees.
+    // `query_with_augmenter` Python : `limit = max(1, last-first)`,
+    // `offset = max(1, first)`.
+    let limit = (params.last.unwrap_or(50))
+        .saturating_sub(params.first)
+        .max(1) as usize;
+    let offset = params.first.max(1) as usize;
+    let (aug_sql, aug_params) =
+        state.session.augmenter().augment(&fts, limit, offset);
+    let rowids: Vec<i64> = state.session.db().with(|c| {
+        let mut stmt = c.prepare(&aug_sql)?;
+        let refs: Vec<&dyn rusqlite::ToSql> =
+            aug_params.iter().map(|p| p as &dyn rusqlite::ToSql).collect();
+        let rows = stmt.query_map(rusqlite::params_from_iter(refs), |r| {
+            r.get::<_, i64>(0)
+        })?;
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
     })?;
+
+    let mut p2 = params.clone();
+    p2.txt_filter = None;
+    p2.terms.clear();
+    p2.rowids = rowids;
+    p2.first = 1;
+    p2.last = None;
+    let rows = state
+        .session
+        .db()
+        .with(|c| tribler_db::channel::select_entries(c, &p2))?;
+
+    // `include_total` Python : compte sans pagination via la
+    // branche FTS (`get_total_count`) + `get_max_rowid`.
+    let (total, max_rowid) = if parse_bool_opt(q.include_total.as_deref(), false) {
+        let t = state
+            .session
+            .db()
+            .with(|c| tribler_db::channel::count_entries(c, &params))
+            .unwrap_or(0);
+        let m = state
+            .session
+            .db()
+            .with(tribler_db::channel::max_rowid)
+            .unwrap_or(0);
+        (Some(t), Some(m))
+    } else {
+        (None, None)
+    };
     let mut results: Vec<_> = rows.iter().map(row_json).collect();
 
     // Inclut egalement les telechargements de la session courante correspondant au filtre.
@@ -276,35 +434,45 @@ pub async fn local_search(
             results: results.clone(),
         });
 
-    Ok(Json(serde_json::json!({
+    let mut resp = serde_json::json!({
         "results": results,
-        "first": 0,
-        "last": results.len(),
-        "sort_by": "HEALTH",
-        "sort_desc": true,
-        "txt_filter": fts,
-        "hide_xxx": false,
-    })))
+        "first": params.first,
+        "last": params.last.unwrap_or(50),
+        "sort_by": params.sort_by,
+        "sort_desc": params.sort_desc,
+    });
+    if let (Some(t), Some(m)) = (total, max_rowid) {
+        resp["total"] = serde_json::json!(t);
+        resp["max_rowid"] = serde_json::json!(m);
+    }
+    Ok(Json(resp))
 }
 
-/// `GET /api/metadata/search/completions` — suggestions de titres
-/// (`completions` Python : titres correspondant au prefixe).
+/// `GET /api/metadata/search/completions?q=...` — suggestions de
+/// titres (`completions` Python : `get_auto_complete_terms`, requete
+/// FTS prefixe `"{mots}"*` + continuation regex `\W+`).
+#[derive(Debug, Deserialize)]
+pub struct CompletionsQuery {
+    /// Texte partiel (`q` Python).
+    pub q: Option<String>,
+    /// Limite (non utilisee cote Python — `max_terms` fixe).
+    pub max_terms: Option<usize>,
+}
+
 pub async fn completions(
     State(state): State<AppState>,
-    Query(q): Query<SearchQuery>,
+    Query(q): Query<CompletionsQuery>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let fts = q.fts_text.unwrap_or_default();
-    let rows = state.session.db().with(|c| {
-        let mut stmt = c.prepare(
-            "SELECT DISTINCT title FROM channel_node
-             WHERE title LIKE ?1 AND title != '' LIMIT ?2",
-        )?;
-        let rows = stmt.query_map(rusqlite::params![format!("{fts}%"), LIST_LIMIT], |r| {
-            r.get::<_, String>(0)
-        })?;
-        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
-    })?;
-    Ok(Json(serde_json::json!({ "completions": rows })))
+    // `fts_keyword_search_re.findall` Python.
+    let words = tribler_core::queries::fts_terms(&q.q.unwrap_or_default());
+    let suggestions = state
+        .session
+        .db()
+        .with(|c| {
+            tribler_db::channel::autocomplete_terms(c, &words, q.max_terms.unwrap_or(5).max(1))
+        })
+        .unwrap_or_default();
+    Ok(Json(serde_json::json!({ "completions": suggestions })))
 }
 
 /// `GET /api/metadata/search/vocabulary` — vocabulaire FTS connu

@@ -79,6 +79,14 @@ pub struct ChannelNodeRow {
     pub health_rowid: Option<i64>,
     /// Version du processeur de tags appliquee.
     pub tag_processor_version: i64,
+    /// `health.seeders` Python : sante jointe de `torrent_state`
+    /// (peuplee uniquement par les requetes avec `LEFT JOIN`,
+    /// jamais persistee par `insert`).
+    pub health_seeders: Option<i64>,
+    /// `health.leechers` Python.
+    pub health_leechers: Option<i64>,
+    /// `health.last_check` Python (`last_tracker_check` du JSON).
+    pub health_last_check: Option<i64>,
 }
 
 /// `downloads` : telechargement connu du daemon (persistant entre
