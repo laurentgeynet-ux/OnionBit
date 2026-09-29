@@ -59,7 +59,22 @@ impl Database {
     ///
     /// Log un `warn!` si l'operation (attente du mutex incluse) depasse
     /// [`SLOW_QUERY_WARN`] — diagnostic des acces disque lents.
+    /// `caller` identifie le site appelant (`#[track_caller]`) pour
+    /// savoir quelle operation sature quand des appels s'empilent.
+    #[track_caller]
     pub fn with<R>(&self, f: impl FnOnce(&Connection) -> Result<R>) -> Result<R> {
+        self.with_at(f, "", std::panic::Location::caller())
+    }
+
+    /// [`Database::with`] avec identifiant explicite — utilise par
+    /// [`Database::call`] pour remonter le vrai appelant au lieu de
+    /// `db.rs` (`#[track_caller]` est un no-op sur les `async fn`).
+    fn with_at<R>(
+        &self,
+        f: impl FnOnce(&Connection) -> Result<R>,
+        op: &'static str,
+        caller: &'static std::panic::Location<'static>,
+    ) -> Result<R> {
         let t0 = std::time::Instant::now();
         let conn = self
             .conn
@@ -70,6 +85,8 @@ impl Database {
         if elapsed >= SLOW_QUERY_WARN {
             tracing::warn!(
                 elapsed_ms = elapsed.as_millis() as u64,
+                op,
+                caller = %caller,
                 "operation sqlite lente"
             );
         }
@@ -82,15 +99,20 @@ impl Database {
     /// requetes lourdes (recherche FTS, listes longues). A preferer
     /// dans les handlers axum ; `with` reste acceptable pour les
     /// ecritures courtes hors chemin de requete.
+    /// `op` nomme l'operation (ex. `"metadata.trackers"`) : le warn
+    /// « operation sqlite lente » l'affiche pour identifier les
+    /// requetes qui saturent quand des appels s'empilent.
     pub async fn call<R>(
         self: &std::sync::Arc<Self>,
+        op: &'static str,
         f: impl FnOnce(&Connection) -> Result<R> + Send + 'static,
     ) -> Result<R>
     where
         R: Send + 'static,
     {
+        const CALL_SITE: &std::panic::Location<'static> = std::panic::Location::caller();
         let db = self.clone();
-        tokio::task::spawn_blocking(move || db.with(f))
+        tokio::task::spawn_blocking(move || db.with_at(f, op, CALL_SITE))
             .await
             .map_err(|e| crate::DbError::Corrupt(format!("tache sqlite interrompue: {e}")))?
     }

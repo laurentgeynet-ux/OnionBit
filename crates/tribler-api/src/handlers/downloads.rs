@@ -25,7 +25,7 @@ pub async fn get_downloads(
     let (dl_rows, ts_rows) = state
         .session
         .db()
-        .call(|c| {
+        .call("downloads.list", |c| {
             Ok((
                 tribler_db::downloads::list(c)?,
                 tribler_db::health::list_torrent_states(c)?,

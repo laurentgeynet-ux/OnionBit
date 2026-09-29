@@ -18,6 +18,12 @@ en haut.
   `EngineConfig::runtime_worker_threads` borne le sémaphore
   `block_in_place` de rqbit et le runtime Tokio passe à
   `2 × cœurs` (min 8) pour garder des workers libres.
+- **Diagnostic SQLite affiné** : le warn `operation sqlite lente`
+  porte désormais le nom de l'opération (`op`) — `Database::with`
+  remonte le site appelant via `#[track_caller]`, `Database::call`
+  prend un label explicite sur ses ~16 appelants. Permet d'identifier
+  la file d'attente qui sature quand le disque est pris par un gros
+  torrent multi-fichiers.
 
 ## Étape 12 clôturée : interop tunnel rejouée contre pyipv8 réel (2026-09-29)
 

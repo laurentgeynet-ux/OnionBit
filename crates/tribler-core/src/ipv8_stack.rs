@@ -1122,7 +1122,10 @@ impl Ipv8Stack {
         // hidden seeding reste joignable sans attendre un nouveau
         // `establish-intro` du seeder.
         if let Some(t) = &tunnel {
-            let pex_rows = db.call(tribler_db::pex::list).await.unwrap_or_default();
+            let pex_rows = db
+                .call("ipv8.pex_list", tribler_db::pex::list)
+                .await
+                .unwrap_or_default();
             if !pex_rows.is_empty() {
                 type Grouped = HashMap<
                     [u8; 20],
@@ -1232,7 +1235,9 @@ impl Ipv8Stack {
         let peer_cutoff = now_unix().saturating_sub(config.peer_cache_max_age_secs) as i64;
         let peer_cache_max = config.peer_cache_max;
         let restored = db
-            .call(move |c| tribler_db::peers::list_peers(c, peer_cutoff, peer_cache_max))
+            .call("ipv8.peers_restore", move |c| {
+                tribler_db::peers::list_peers(c, peer_cutoff, peer_cache_max)
+            })
             .await
             .unwrap_or_default();
         let mut warm_addrs: Vec<UdpAddress> = Vec::new();
@@ -1333,7 +1338,7 @@ impl Ipv8Stack {
                         })
                         .collect();
                     let _ = db
-                        .call(move |c| {
+                        .call("ipv8.peers_pex_persist", move |c| {
                             if !rows.is_empty() {
                                 tribler_db::peers::upsert_batch(c, &rows, now)?;
                                 tribler_db::peers::prune(c, cutoff, max)?;

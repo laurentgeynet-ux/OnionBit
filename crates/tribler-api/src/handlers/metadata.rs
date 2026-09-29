@@ -71,7 +71,9 @@ pub async fn get_torrent_health(
             let trackers = state
                 .session
                 .db()
-                .call(move |c| tribler_db::health::trackers_of(c, &ih))
+                .call("metadata.trackers_of", move |c| {
+                    tribler_db::health::trackers_of(c, &ih)
+                })
                 .await
                 .unwrap_or_default();
             for t in &trackers {
@@ -83,7 +85,9 @@ pub async fn get_torrent_health(
     let row = state
         .session
         .db()
-        .call(move |c| tribler_db::health::get_torrent_state(c, &ih))
+        .call("metadata.torrent_state", move |c| {
+            tribler_db::health::get_torrent_state(c, &ih)
+        })
         .await?;
     Ok(Json(match row {
         Some(r) => serde_json::json!({
@@ -122,7 +126,7 @@ pub async fn get_popular_torrents(
     let rows = state
         .session
         .db()
-        .call(move |c| {
+        .call("metadata.popular", move |c| {
             let mut stmt = c.prepare(
                 "SELECT n.infohash, n.title, n.size, n.torrent_date, t.seeders, t.leechers,
                     t.last_check
@@ -185,7 +189,7 @@ pub async fn get_torrent_health_history(
     let rows = state
         .session
         .db()
-        .call(|c| {
+        .call("metadata.health_history", |c| {
             let mut stmt = c.prepare(
                 "SELECT infohash, seeders, leechers, last_check FROM torrent_state
              ORDER BY last_check DESC LIMIT ?1",
@@ -372,7 +376,7 @@ pub async fn local_search(
     let rowids: Vec<i64> = state
         .session
         .db()
-        .call(move |c| {
+        .call("metadata.augment", move |c| {
             let mut stmt = c.prepare(&aug_sql)?;
             let refs: Vec<&dyn rusqlite::ToSql> = aug_params
                 .iter()
@@ -392,7 +396,9 @@ pub async fn local_search(
     let rows = state
         .session
         .db()
-        .call(move |c| tribler_db::channel::select_entries(c, &p2))
+        .call("metadata.select_entries", move |c| {
+            tribler_db::channel::select_entries(c, &p2)
+        })
         .await?;
 
     // `include_total` Python : compte sans pagination via la
@@ -403,7 +409,7 @@ pub async fn local_search(
         state
             .session
             .db()
-            .call(move |c| {
+            .call("metadata.count_entries", move |c| {
                 Ok((
                     tribler_db::channel::count_entries(c, &p3)?,
                     tribler_db::channel::max_rowid(c)?,
@@ -489,7 +495,9 @@ pub async fn completions(
     let suggestions = state
         .session
         .db()
-        .call(move |c| tribler_db::channel::autocomplete_terms(c, &words, max_terms))
+        .call("metadata.completions", move |c| {
+            tribler_db::channel::autocomplete_terms(c, &words, max_terms)
+        })
         .await
         .unwrap_or_default();
     Ok(Json(serde_json::json!({ "completions": suggestions })))
@@ -529,7 +537,7 @@ pub async fn add_tag(
     let exists = state
         .session
         .db()
-        .call(move |c| {
+        .call("metadata.add_tag", move |c| {
             let mut row = match tribler_db::channel::get_by_infohash(c, &ih)? {
                 Some(r) => r,
                 None => return Ok(false),
@@ -579,7 +587,7 @@ pub async fn remove_tag(
     state
         .session
         .db()
-        .call(move |c| {
+        .call("metadata.remove_tag", move |c| {
             if let Some(mut row) = tribler_db::channel::get_by_infohash(c, &ih)? {
                 let tags: Vec<String> = row
                     .tags
@@ -619,7 +627,7 @@ pub async fn update_tags(
     state
         .session
         .db()
-        .call(move |c| {
+        .call("metadata.update_tags", move |c| {
             if let Some(row) = tribler_db::channel::get_by_infohash(c, &ih)? {
                 c.execute(
                     "UPDATE channel_node SET tags = ?1 WHERE rowid = ?2",
