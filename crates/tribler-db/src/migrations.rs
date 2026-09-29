@@ -11,7 +11,7 @@
 //! semantique du schema, pas l'interoperabilite binaire).
 
 /// Version courante du schema de ce crate.
-pub const SCHEMA_VERSION: i64 = 8;
+pub const SCHEMA_VERSION: i64 = 9;
 
 /// Script SQL de chaque migration, dans l'ordre (index 0 = v1).
 pub const MIGRATIONS: &[&str] = &[
@@ -196,6 +196,20 @@ INSERT INTO FtsIndex(FtsIndex) VALUES('rebuild');
 CREATE INDEX idx_channel_node_type_date ON channel_node(metadata_type, torrent_date);
 CREATE INDEX idx_torrent_state_health ON torrent_state(has_data, last_check);
 CREATE INDEX idx_torrent_state_last_check ON torrent_state(last_check);
+",
+    // v9 : cache de pairs IPv8 verifies — recharge dans `Network`
+    // au demarrage pour un bootstrap quasi immediat sans attendre
+    // la resolution DNS des noeuds d'amorcage ni un premier walk.
+    // `address` = "ip:port" numerique ; `last_seen` en secondes Unix
+    // sert a l'expiration (`prune`) et au tri de chargement.
+    "
+CREATE TABLE ipv8_peers (
+    public_key  BLOB PRIMARY KEY,
+    address     TEXT NOT NULL,
+    last_seen   INTEGER NOT NULL,
+    new_style   INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX idx_ipv8_peers_seen ON ipv8_peers(last_seen);
 ",
 ];
 

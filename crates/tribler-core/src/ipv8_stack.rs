@@ -25,7 +25,7 @@ use tribler_ipv8::content_discovery::{
 use tribler_ipv8::dht::DhtCommunity;
 use tribler_ipv8::discovery::DiscoveryCommunity;
 use tribler_ipv8::endpoint::UdpEndpoint;
-use tribler_ipv8::peer::Network;
+use tribler_ipv8::peer::{Network, Peer};
 use tribler_ipv8::UdpAddress;
 use tribler_tunnel::community::TunnelCommunity;
 use tribler_tunnel::hidden_services::lookup_info_hash;
@@ -125,6 +125,15 @@ pub struct Ipv8Config {
     /// — socket UDP secondaire partageant les memes communities
     /// (`DispatcherEndpoint` pyipv8). `None` = IPv4 seul.
     pub listen_addr_v6: Option<String>,
+    /// Extension Rust : nombre max de pairs verifies persistes dans
+    /// `ipv8_peers` (recharges au demarrage pour un bootstrap rapide —
+    /// pyipv8 ne persiste pas son annuaire).
+    pub peer_cache_max: usize,
+    /// Age max d'un pair cache (s) — au-dela il est expire au chargement
+    /// puis supprime par le prune periodique.
+    pub peer_cache_max_age_secs: u64,
+    /// Intervalle du snapshot `Network` -> `ipv8_peers` (s).
+    pub peer_persist_interval_secs: u64,
 }
 
 impl Ipv8Config {
@@ -150,6 +159,9 @@ impl Ipv8Config {
             socks_listen_ports: vec![0; MAX_ANON_HOPS],
             enable_content_discovery: true,
             listen_addr_v6: Some(format!("[::]:{}", DEFAULT_IPV8_PORT + 1)),
+            peer_cache_max: DEFAULT_PEER_CACHE_MAX,
+            peer_cache_max_age_secs: DEFAULT_PEER_CACHE_MAX_AGE_SECS,
+            peer_persist_interval_secs: DEFAULT_PEER_PERSIST_INTERVAL_SECS,
         }
     }
 }
@@ -173,6 +185,9 @@ impl Default for Ipv8Config {
             socks_listen_ports: vec![0; MAX_ANON_HOPS],
             enable_content_discovery: true,
             listen_addr_v6: None,
+            peer_cache_max: DEFAULT_PEER_CACHE_MAX,
+            peer_cache_max_age_secs: DEFAULT_PEER_CACHE_MAX_AGE_SECS,
+            peer_persist_interval_secs: DEFAULT_PEER_PERSIST_INTERVAL_SECS,
         }
     }
 }
@@ -221,6 +236,17 @@ pub const DEFAULT_MIN_CIRCUITS: u32 = 3;
 /// `TunnelSettings.max_circuits` pyipv8 (`tribler_config`
 /// `tunnel_community/max_circuits`).
 pub const DEFAULT_MAX_CIRCUITS: u32 = 8;
+
+/// Taille max du cache de pairs persists (`ipv8_peers`) — extension
+/// Rust : pyipv8 ne persiste pas `Network`, on borne a des centaines
+/// d'entrees, les plus fraichement vues.
+pub const DEFAULT_PEER_CACHE_MAX: usize = 512;
+/// Retention d'un pair cache (7 jours) : au-dela, l'adresse est
+/// vraisemblablement reattribute (NAT dynamique).
+pub const DEFAULT_PEER_CACHE_MAX_AGE_SECS: u64 = 7 * 24 * 3600;
+/// Cadence du snapshot `Network` -> `ipv8_peers` (2 min) — un lot par
+/// intervalle plutot qu'une ecriture par pair decouvert.
+pub const DEFAULT_PEER_PERSIST_INTERVAL_SECS: u64 = 120;
 
 /// Tache de maintenance DHT (`PingChurn.take_step` +
 /// `node_maintenance`/`value_maintenance`/`token_maintenance` +
@@ -646,10 +672,7 @@ impl ContentProvider for SessionContentProvider {
         // titres pour l'apprentissage de l'augmenteur.
         for (infohash, title) in new_titles {
             self.notifier
-                .notify(crate::notifier::Notification::TorrentMetadataCreated {
-                    infohash,
-                    title,
-                });
+                .notify(crate::notifier::Notification::TorrentMetadataCreated { infohash, title });
         }
         results
     }
@@ -821,7 +844,10 @@ fn select_rows(
         max_rowid: query.get("max_rowid").and_then(|v| v.as_i64()),
         hide_xxx: query
             .get("hide_xxx")
-            .and_then(|v| v.as_bool().or_else(|| v.as_str().map(|s| s == "1" || s == "true")))
+            .and_then(|v| {
+                v.as_bool()
+                    .or_else(|| v.as_str().map(|s| s == "1" || s == "true"))
+            })
             .unwrap_or(false),
         sort_by: query
             .get("sort_by")
@@ -896,7 +922,7 @@ pub struct Ipv8Stack {
     /// `lookup_info_hash -> (hops, info_hash reel)` : les circuits
     /// e2e notifies par `e2e_ready` portent l'info-hash de LOOKUP du
     /// swarm, ce mapping retrouve le download correspondant.
-    swarm_lookup: Mutex<HashMap<[u8; 20], (usize, [u8; 20])>>,
+    swarm_lookup: Mutex<SwarmLookupMap>,
     /// Arrets des taches hidden-services (monitor des swarms +
     /// relais `e2e_ready`), creees a la premiere lane anonyme.
     hidden_tasks: Mutex<Vec<tokio::sync::watch::Sender<bool>>>,
@@ -912,6 +938,10 @@ const EXITNODE_CACHE_FILE: &str = "exitnodes.txt";
 /// Cadence de `monitor_hidden_swarms` Python (poll des etats de
 /// telechargement via `DownloadManager` / `get_last_download_states`).
 const SWARM_MONITOR_INTERVAL: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// Mapping `lookup_info_hash -> (hops, info_hash reel)` des swarms
+/// caches (champ `swarm_lookup` de `Ipv8Stack`).
+type SwarmLookupMap = HashMap<[u8; 20], (usize, [u8; 20])>;
 
 impl Ipv8Stack {
     /// Cree et demarre la stack : endpoint, communities, discovery
@@ -995,7 +1025,7 @@ impl Ipv8Stack {
             // (gossip 5 s, max 20 pairs, TTL 10 s, 10 paquets max).
             let cd_settings = tribler_ipv8::content_discovery::ContentDiscoverySettings::default();
             let provider = Arc::new(SessionContentProvider {
-                db,
+                db: db.clone(),
                 notifier: notifier.clone(),
                 remote_queries_in_progress: std::sync::atomic::AtomicUsize::new(0),
                 max_response_size: 100,
@@ -1152,10 +1182,90 @@ impl Ipv8Stack {
             .clone()
             .map(|d| spawn_dht_maintenance(d, discovery.clone(), tasks.clone()));
 
+        // Cache de pairs verifies (`ipv8_peers`) : recharge les plus
+        // frais dans `Network` AVANT le bootstrap — les walks peuvent
+        // viser des pairs connus immediatement, sans attendre la
+        // resolution DNS ni un premier cycle d'introduction.
+        let peer_cutoff = now_unix().saturating_sub(config.peer_cache_max_age_secs) as i64;
+        let peer_cache_max = config.peer_cache_max;
+        let restored = db
+            .call(move |c| tribler_db::peers::list_peers(c, peer_cutoff, peer_cache_max))
+            .await
+            .unwrap_or_default();
+        let mut warm_addrs: Vec<UdpAddress> = Vec::new();
+        for row in &restored {
+            if let Ok(sa) = row.address.parse::<SocketAddr>() {
+                let addr = UdpAddress::from(sa);
+                let mut peer = match Peer::new(row.public_key.clone(), Some(addr.clone())) {
+                    Some(p) => p,
+                    None => continue,
+                };
+                peer.new_style_intro = row.new_style;
+                network.add_verified(peer);
+                warm_addrs.push(addr);
+            }
+        }
+        if !warm_addrs.is_empty() {
+            tracing::info!(
+                restored = warm_addrs.len(),
+                "pairs IPv8 restaures depuis le cache persistant"
+            );
+        }
+
+        // Snapshot periodique `Network` -> `ipv8_peers` : une ecriture
+        // en lot par intervalle plutot qu'un upsert par pair decouvert
+        // (le WAL + `call` gardent la boucle d'evenements fluide).
+        tasks.register(
+            None,
+            "ipv8_peer_cache",
+            Some(config.peer_persist_interval_secs as f64),
+        );
+        {
+            let network = network.clone();
+            let db = db.clone();
+            let interval = std::time::Duration::from_secs(config.peer_persist_interval_secs.max(5));
+            let max = config.peer_cache_max;
+            let max_age = config.peer_cache_max_age_secs;
+            tokio::spawn(async move {
+                loop {
+                    tokio::time::sleep(interval).await;
+                    let now = now_unix() as i64;
+                    let cutoff = now.saturating_sub(max_age as i64);
+                    let rows: Vec<tribler_db::Ipv8PeerRow> = network
+                        .verified_peers()
+                        .iter()
+                        .filter_map(|p| {
+                            let sa = p.address.as_ref()?.to_socket_addr()?;
+                            if sa.ip().is_unspecified() {
+                                return None;
+                            }
+                            Some(tribler_db::Ipv8PeerRow {
+                                public_key: p.public_key_bin.clone(),
+                                address: sa.to_string(),
+                                last_seen: now,
+                                new_style: p.new_style_intro,
+                            })
+                        })
+                        .collect();
+                    if rows.is_empty() {
+                        continue;
+                    }
+                    let _ = db
+                        .call(move |c| {
+                            tribler_db::peers::upsert_batch(c, &rows, now)?;
+                            tribler_db::peers::prune(c, cutoff, max)
+                        })
+                        .await;
+                }
+            });
+        }
+
         // Bootstrap discovery en tache de fond (resolution DNS + IP).
-        // `register_anonymous_task("bootstrap", ...)` Python.
+        // `register_anonymous_task("bootstrap", ...)` Python. Les
+        // adresses du cache sont marchees en plus des noeuds
+        // d'amorcage (le cache seul suffit a amorcer).
         let bootstrap_peers_config = config.bootstrap_peers.clone();
-        if !bootstrap_peers_config.is_empty() {
+        if !bootstrap_peers_config.is_empty() || !warm_addrs.is_empty() {
             tasks.register(None, "bootstrap", None);
             let d = discovery.clone();
             let dht = dht.clone();
@@ -1173,6 +1283,13 @@ impl Ipv8Stack {
                         if let Some(sa) = resolved.next() {
                             peers.push(UdpAddress::from(sa));
                         }
+                    }
+                }
+                // Pairs caches : ajoutes aux cibles de marche (dedup
+                // — un noeud d'amorcage peut aussi etre un pair connu).
+                for a in warm_addrs {
+                    if !peers.contains(&a) {
+                        peers.push(a);
                     }
                 }
                 // Intro-requests DHT vers les noeuds d'amorcage : la
@@ -1585,7 +1702,10 @@ fn save_exitnode_cache(tunnel: &TunnelCommunity, path: &Path) {
         let Some(addr) = peer.address.as_ref().and_then(|a| a.to_socket_addr()) else {
             continue;
         };
-        out.push_str(&format!("{} {addr} {flags}\n", hex::encode(&peer.public_key_bin)));
+        out.push_str(&format!(
+            "{} {addr} {flags}\n",
+            hex::encode(&peer.public_key_bin)
+        ));
     }
     if out.is_empty() {
         return;
@@ -1756,8 +1876,7 @@ fn spawn_e2e_listener(
                 },
             };
             let Some(stack) = stack.upgrade() else { break };
-            let Some((hops, real_ih)) =
-                stack.swarm_lookup.lock().unwrap().get(&lookup).copied()
+            let Some((hops, real_ih)) = stack.swarm_lookup.lock().unwrap().get(&lookup).copied()
             else {
                 continue;
             };
@@ -1778,9 +1897,7 @@ fn spawn_e2e_listener(
                 tribler_tunnel::routing::CIRCUIT_TYPE_RP_DOWNLOADER => {
                     let tunnel = tunnel.clone();
                     tokio::spawn(async move {
-                        if let Ok(addr) =
-                            tribler_tunnel::udp_relay::dial(tunnel, cid).await
-                        {
+                        if let Ok(addr) = tribler_tunnel::udp_relay::dial(tunnel, cid).await {
                             if let Some(dl) = engine.get_by_hash(&real_ih) {
                                 dl.add_peer(addr);
                             }

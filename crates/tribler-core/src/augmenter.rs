@@ -85,9 +85,9 @@ impl Augmenter {
         tokio::spawn(async move {
             loop {
                 match rx.recv().await {
-                    Ok(crate::notifier::Notification::TorrentMetadataCreated {
-                        title, ..
-                    }) => this.consume_title(&title),
+                    Ok(crate::notifier::Notification::TorrentMetadataCreated { title, .. }) => {
+                        this.consume_title(&title)
+                    }
                     Ok(_) => {}
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
@@ -103,8 +103,7 @@ impl Augmenter {
             let mut inner = self.inner.lock().unwrap();
             if !inner.initialized {
                 if let Ok(content) = std::fs::read_to_string(&self.cache_file) {
-                    inner.title_window =
-                        serde_json::from_str(&content).unwrap_or_default();
+                    inner.title_window = serde_json::from_str(&content).unwrap_or_default();
                 }
                 inner.initialized = true;
             }
@@ -219,7 +218,10 @@ impl Augmenter {
             }
             for len in 1..=MAX_PIECE_LEN.min(n - i) {
                 let piece: String = chars[i..i + len].iter().collect();
-                let count = vocab.get(&piece).copied().unwrap_or(if len == 1 { 1 } else { 0 });
+                let count = vocab
+                    .get(&piece)
+                    .copied()
+                    .unwrap_or(if len == 1 { 1 } else { 0 });
                 if count == 0 {
                     continue;
                 }

@@ -199,11 +199,7 @@ impl TunnelUdpSocket {
     /// sur un circuit `DATA` aleatoire (`set_udp_associate_default_
     /// remote` de `TriblerTunnelCommunity`).
     pub fn pin_circuit(&self, target: SocketAddr, cid: u32) {
-        self.inner
-            .dest_circuits
-            .lock()
-            .unwrap()
-            .insert(target, cid);
+        self.inner.dest_circuits.lock().unwrap().insert(target, cid);
     }
 
     /// Injecte un datagramme comme s'il arrivait du circuit (forme
@@ -414,7 +410,8 @@ impl TunnelUdpSockets {
         hops: usize,
         bind_addr: SocketAddr,
     ) -> Result<Self, librqbit_utp::Error> {
-        let utp_transport = TunnelUdpSocket::new(tunnel.clone(), hops, TunnelUdpKind::Utp, bind_addr);
+        let utp_transport =
+            TunnelUdpSocket::new(tunnel.clone(), hops, TunnelUdpKind::Utp, bind_addr);
         let utp = librqbit_utp::UtpSocket::new_with_opts(
             utp_transport.clone(),
             librqbit_utp::DefaultUtpEnvironment {},

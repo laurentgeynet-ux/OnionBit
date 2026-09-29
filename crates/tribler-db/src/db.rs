@@ -13,6 +13,11 @@ use rusqlite::Connection;
 
 use crate::{migrations, Result};
 
+/// Duree au-dela de laquelle une operation SQLite est loggee en
+/// `warn!` — diagnostic perf : les requetes lentes et la contention
+/// du mutex de connexion apparaissent ainsi dans les logs.
+const SLOW_QUERY_WARN: std::time::Duration = std::time::Duration::from_millis(250);
+
 /// Handle de base partageable.
 pub struct Database {
     conn: Mutex<Connection>,
@@ -51,12 +56,24 @@ impl Database {
     }
 
     /// Execute `f` avec la connexion verrouillee.
+    ///
+    /// Log un `warn!` si l'operation (attente du mutex incluse) depasse
+    /// [`SLOW_QUERY_WARN`] — diagnostic des acces disque lents.
     pub fn with<R>(&self, f: impl FnOnce(&Connection) -> Result<R>) -> Result<R> {
+        let t0 = std::time::Instant::now();
         let conn = self
             .conn
             .lock()
             .map_err(|_| crate::DbError::Corrupt("mutex de connexion sqlite empoisonne".into()))?;
-        f(&conn)
+        let out = f(&conn);
+        let elapsed = t0.elapsed();
+        if elapsed >= SLOW_QUERY_WARN {
+            tracing::warn!(
+                elapsed_ms = elapsed.as_millis() as u64,
+                "operation sqlite lente"
+            );
+        }
+        out
     }
 
     /// Version async de [`Database::with`] : le travail SQLite est

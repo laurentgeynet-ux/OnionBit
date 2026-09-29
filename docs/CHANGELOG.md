@@ -3,6 +3,34 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Cache de pairs IPv8 persisté : bootstrap quasi instantané (2026-09-29)
+
+Objectif : réactivité au démarrage — pyipv8 ne persiste pas son
+annuaire `Network`, le graphe se reconstruisait à froid via DNS +
+premier cycle d'introduction (dizaines de secondes avant le premier
+pair vérifié, circuits anonymes et recherche distante indisponibles).
+
+Changements :
+
+- `tribler-db` : **migration v9** — table `ipv8_peers`
+  (`public_key` PK, `address` "ip:port", `last_seen`, `new_style`) +
+  index sur `last_seen` ; module `peers.rs` (`upsert_batch` en une
+  transaction, `list_peers` borné par fraîcheur, `prune` expire +
+  borne la table).
+- `tribler-core/ipv8_stack.rs` : au `start`, les pairs du cache sont
+  rechargés dans `Network::add_verified` et leurs adresses jointes
+  aux cibles de marche du bootstrap (le cache seul suffit à amorcer
+  si la liste de noeuds est vide ou le DNS lent). Tâche
+  `ipv8_peer_cache` : snapshot `Network` -> `ipv8_peers` toutes les
+  `peer_persist_interval_secs` via `db.call` (un lot, pas d'écriture
+  par pair) + prune.
+- Config `Ipv8Config` : `peer_cache_max` (512),
+  `peer_cache_max_age_secs` (7 j — une adresse IP est généralement
+  réattribuée au-delà), `peer_persist_interval_secs` (120).
+- Bonus : lints du nouveau toolchain corrigés au passage
+  (`useless_format`, `manual_flatten`, `type_complexity`,
+  `doc_lazy_continuation`) et `cargo fmt` sur les fichiers concernés.
+
 ## Passe performance : SQLite hors du thread async + index (2026-09-29)
 
 Objectif : fluidité de l'UI Flutter — les requêtes SQLite étaient

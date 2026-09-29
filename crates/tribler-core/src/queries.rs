@@ -19,7 +19,8 @@ pub fn to_fts_query(text: &str) -> Option<String> {
         return None;
     }
     Some(
-        terms.iter()
+        terms
+            .iter()
             .map(|w| format!("\"{w}\""))
             .collect::<Vec<_>>()
             .join(" "),

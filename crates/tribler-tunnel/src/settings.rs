@@ -64,7 +64,6 @@ pub struct TunnelSettings {
     pub max_relay_early: u8,
 
     // -- `TriblerTunnelSettings` (core/tunnel/community.py) ---------
-
     /// `default_hops` Python (0) : sauts par defaut des
     /// telechargements sans `anon_hops` explicite.
     pub default_hops: usize,
@@ -73,7 +72,6 @@ pub struct TunnelSettings {
     pub max_intro_points: usize,
 
     // -- Parametres du `Swarm` Python (`tunnel.py`) ----------------
-
     /// `max_ip_age` Python (180 s) : TTL d'un point d'introduction
     /// dans `swarm.intro_points`.
     pub swarm_max_ip_age: Duration,

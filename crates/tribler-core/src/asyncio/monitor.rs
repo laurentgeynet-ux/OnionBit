@@ -11,6 +11,13 @@ use super::tasks::{now_secs, TaskRegistry};
 /// `deque(maxlen=100)` de `DriftMeasurementStrategy.history`.
 const DRIFT_HISTORY_CAPACITY: usize = 100;
 
+/// Periode de la sonde de lag de l'executor Tokio.
+const LAG_PROBE_PERIOD: Duration = Duration::from_millis(100);
+/// Retard au-dela duquel la sonde log un `warn!` — un tick qui arrive
+/// en retard de cette ampleur signifie qu'une tache bloque l'executor
+/// (typiquement un appel `std::fs` synchrone dans du code async).
+const LAG_WARN_THRESHOLD: Duration = Duration::from_millis(500);
+
 /// Mesure de derive en cours (`self.strategy` Python quand enable).
 struct DriftMeasurement {
     /// `(timestamp, drift)` — drift = `max(0, reel - attendu)`.
@@ -31,6 +38,9 @@ pub struct AsyncioMonitor {
     pub tasks: TaskRegistry,
     /// `self.session.walk_interval` Python (s).
     walker_interval: f64,
+    /// Sonde de lag de l'executor (diagnostic perf — voir
+    /// [`spawn_lag_probe`]). Abordee au `Drop` du moniteur.
+    lag_probe: tokio::task::AbortHandle,
 }
 
 impl std::fmt::Debug for AsyncioMonitor {
@@ -44,11 +54,15 @@ impl std::fmt::Debug for AsyncioMonitor {
 
 impl AsyncioMonitor {
     /// Cree le moniteur (`walker_interval` = tick IPv8, en secondes).
+    ///
+    /// Doit etre appele dans un contexte Tokio : la sonde de lag de
+    /// l'executor demarre immediatement.
     pub fn new(walker_interval: f64) -> Self {
         Self {
             drift: Mutex::new(None),
             tasks: TaskRegistry::default(),
             walker_interval,
+            lag_probe: spawn_lag_probe(LAG_PROBE_PERIOD, LAG_WARN_THRESHOLD),
         }
     }
 
@@ -103,6 +117,38 @@ impl AsyncioMonitor {
             .as_ref()
             .map(|m| m.history.lock().unwrap().iter().copied().collect())
     }
+}
+
+impl Drop for AsyncioMonitor {
+    fn drop(&mut self) {
+        self.lag_probe.abort();
+    }
+}
+
+/// Sonde de lag de l'executor Tokio : tick toutes les `period` et
+/// compare l'instant reel au prevu. Un retard superieur a
+/// `warn_threshold` produit un `warn!` avec la derive mesuree — c'est
+/// le symptome direct d'une tache qui monopolise le runtime (I/O
+/// synchrone, calcul lourd sans yield).
+pub fn spawn_lag_probe(period: Duration, warn_threshold: Duration) -> tokio::task::AbortHandle {
+    let task = tokio::spawn(async move {
+        let mut tick = tokio::time::interval(period);
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let mut expected = std::time::Instant::now();
+        loop {
+            expected += period;
+            tick.tick().await;
+            let lag = expected.elapsed();
+            if lag >= warn_threshold {
+                tracing::warn!(
+                    lag_ms = lag.as_millis() as u64,
+                    "lag executor tokio — tache bloquante suspectee"
+                );
+            }
+            expected = std::time::Instant::now();
+        }
+    });
+    task.abort_handle()
 }
 
 #[cfg(test)]

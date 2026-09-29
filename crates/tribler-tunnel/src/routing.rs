@@ -427,11 +427,9 @@ impl Swarm {
     /// `now` en epoch secondes (`last_seen` Python).
     pub fn remove_old_intro_points(&mut self, max_ip_age: Duration, now_secs: u64) {
         let max = max_ip_age.as_secs();
-        let used: HashSet<IntroductionPoint> =
-            self.connections.values().cloned().collect();
-        self.intro_points.retain(|i| {
-            i.last_seen_secs.saturating_add(max) >= now_secs || used.contains(i)
-        });
+        let used: HashSet<IntroductionPoint> = self.connections.values().cloned().collect();
+        self.intro_points
+            .retain(|i| i.last_seen_secs.saturating_add(max) >= now_secs || used.contains(i));
     }
 
     /// `Swarm.remove_intro_point`.
@@ -460,8 +458,11 @@ impl Swarm {
 
     /// `Swarm.get_num_seeders`.
     pub fn num_seeders(&self) -> usize {
-        let mut pks: HashSet<&[u8]> =
-            self.intro_points.iter().map(|i| i.seeder_pk.as_slice()).collect();
+        let mut pks: HashSet<&[u8]> = self
+            .intro_points
+            .iter()
+            .map(|i| i.seeder_pk.as_slice())
+            .collect();
         pks.extend(self.connections.values().map(|i| i.seeder_pk.as_slice()));
         pks.len()
     }

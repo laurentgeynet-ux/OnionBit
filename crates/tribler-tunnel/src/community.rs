@@ -2223,10 +2223,7 @@ impl TunnelCommunity {
             // de point d'introduction, `max_time` sinon.
             let max_time_for = |cid: u32, ctype: Option<&str>| {
                 if ctype == Some(crate::routing::CIRCUIT_TYPE_IP_SEEDER)
-                    || inner
-                        .intro_point_for
-                        .values()
-                        .any(|(icid, _)| *icid == cid)
+                    || inner.intro_point_for.values().any(|(icid, _)| *icid == cid)
                 {
                     self.settings.max_time_ip
                 } else {
@@ -2280,10 +2277,9 @@ impl TunnelCommunity {
                             .circuits
                             .get(cid)
                             .and_then(|c| c.first_hop().and_then(|h| h.address.clone())),
-                        Target::Relay(cid) => inner
-                            .relays
-                            .get(cid)
-                            .and_then(|r| r.hop.address.clone()),
+                        Target::Relay(cid) => {
+                            inner.relays.get(cid).and_then(|r| r.hop.address.clone())
+                        }
                         Target::Exit(cid) => inner
                             .exit_sockets
                             .get(cid)

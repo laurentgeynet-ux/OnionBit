@@ -1128,11 +1128,7 @@ impl CoreSession {
     /// contenu d'un torrent prive devient seedable par l'essaim
     /// anonyme sans re-telechargement ni fuite de l'URL du tracker.
     /// `anon_hops=None` => `download_defaults/number_hops` (>= 1).
-    pub async fn clone_public(
-        &self,
-        id_or_hash: &str,
-        anon_hops: Option<u32>,
-    ) -> Result<Download> {
+    pub async fn clone_public(&self, id_or_hash: &str, anon_hops: Option<u32>) -> Result<Download> {
         let dl = self
             .find_download(id_or_hash)
             .ok_or(CoreError::InvalidState("telechargement inconnu"))?;
@@ -1158,9 +1154,7 @@ impl CoreSession {
         } else {
             Some(output)
         };
-        let hops = anon_hops.unwrap_or_else(|| {
-            self.download_defaults().number_hops.max(1)
-        });
+        let hops = anon_hops.unwrap_or_else(|| self.download_defaults().number_hops.max(1));
         self.add_torrent_bytes_anon(public, false, hops, hops > 0, destination)
             .await
     }
@@ -1605,10 +1599,28 @@ impl CoreSession {
         // Les handles fichiers doivent etre fermes avant le
         // deplacement (rename impossible sinon sous Windows).
         self.remove_engine_only(id_or_hash, false).await?;
-        if let Err(e) = move_dir_contents(&current, dest_dir) {
+        // `std::fs` bloquant sur de gros volumes : le deplacement est
+        // deporte sur le pool de threads bloquants pour ne pas figer
+        // l'executor (API, tunnels) pendant la copie inter-volumes.
+        let t0 = std::time::Instant::now();
+        let src = current.clone();
+        let dst = dest_dir.to_path_buf();
+        let moved = tokio::task::spawn_blocking(move || move_dir_contents(&src, &dst))
+            .await
+            .unwrap_or_else(|e| Err(std::io::Error::other(format!("deplacement interrompu: {e}"))));
+        let elapsed = t0.elapsed();
+        if elapsed > std::time::Duration::from_millis(500) {
+            tracing::warn!(
+                elapsed_ms = elapsed.as_millis() as u64,
+                "move_storage : deplacement de fichiers lent"
+            );
+        }
+        if let Err(e) = moved {
             // Rollback best-effort : remettre les entrees deja
             // deplacees puis re-add a l'ancien emplacement.
-            let _ = move_dir_contents(dest_dir, &current);
+            let src = dest_dir.to_path_buf();
+            let dst = current.clone();
+            let _ = tokio::task::spawn_blocking(move || move_dir_contents(&src, &dst)).await;
             let _ = self.readd_row(&engine, &row).await;
             return Err(CoreError::State(format!(
                 "move_storage: {e} (rollback effectue)"
@@ -1961,8 +1973,7 @@ impl CoreSession {
         }
         // Watch folder : redemarrage si le repertoire OU l'intervalle
         // change (le tick est fige a la creation du service).
-        let interval =
-            std::time::Duration::from_millis(config.watch_folder_interval_ms);
+        let interval = std::time::Duration::from_millis(config.watch_folder_interval_ms);
         let current = services
             .watch_folder
             .as_ref()

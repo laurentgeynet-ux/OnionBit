@@ -245,13 +245,12 @@ impl SelectParams {
                 // canaux d'abord, puis `search_rank` (UDF
                 // `torrent_rank`), puis fraicheur du health check.
                 args.push(Box::new(self.txt_filter.clone().unwrap_or_default()));
-                format!(
-                    "CASE cn.metadata_type
-                         WHEN 400 THEN 1 WHEN 220 THEN 2 ELSE 3 END,
-                     search_rank(?, cn.title, ts.seeders, ts.leechers,
-                         CAST(strftime('%s','now') AS INTEGER) - cn.torrent_date) DESC,
-                     ts.last_check DESC"
-                )
+                "CASE cn.metadata_type
+                     WHEN 400 THEN 1 WHEN 220 THEN 2 ELSE 3 END,
+                 search_rank(?, cn.title, ts.seeders, ts.leechers,
+                     CAST(strftime('%s','now') AS INTEGER) - cn.torrent_date) DESC,
+                 ts.last_check DESC"
+                    .to_string()
             }
             None => format!("cn.rowid {dir}"),
         }

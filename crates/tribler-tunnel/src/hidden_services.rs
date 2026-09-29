@@ -748,13 +748,12 @@ impl TunnelCommunity {
                 .filter(|(_, s)| {
                     !s.seeding()
                         && s.last_lookup.elapsed() >= self.settings.swarm_lookup_interval
-                        && s.connections.keys().filter(|cid| {
-                            inner
-                                .circuits
-                                .get(cid)
-                                .is_some_and(|c| c.ready() && c.e2e)
-                        })
-                        .count()
+                        && s.connections
+                            .keys()
+                            .filter(|cid| {
+                                inner.circuits.get(cid).is_some_and(|c| c.ready() && c.e2e)
+                            })
+                            .count()
                             < self.settings.swarm_connection_limit
                 })
                 .map(|(ih, _)| *ih)
@@ -774,16 +773,11 @@ impl TunnelCommunity {
             let Some(swarm) = inner.swarms.get_mut(&info_hash) else {
                 return;
             };
-            swarm.remove_old_intro_points(
-                self.settings.swarm_max_ip_age,
-                crate::pex::epoch_secs(),
-            );
+            swarm.remove_old_intro_points(self.settings.swarm_max_ip_age, crate::pex::epoch_secs());
             swarm.last_lookup = Instant::now();
-            let due = swarm.last_dht_response.elapsed()
-                > self.settings.min_dht_lookup_interval
+            let due = swarm.last_dht_response.elapsed() > self.settings.min_dht_lookup_interval
                 || (swarm.intro_points.is_empty()
-                    && swarm.last_dht_response.elapsed()
-                        > self.settings.max_dht_lookup_interval);
+                    && swarm.last_dht_response.elapsed() > self.settings.max_dht_lookup_interval);
             (swarm.hops, swarm.intro_points.clone(), due)
         };
 
@@ -805,11 +799,9 @@ impl TunnelCommunity {
 
         let mut found: Vec<IntroductionPoint> = Vec::new();
         let mut saw_dht = false;
-        for r in results {
-            if let Ok(ips) = r {
-                saw_dht |= ips.iter().any(|i| i.source == PEER_SOURCE_DHT);
-                found.extend(ips);
-            }
+        for ips in results.into_iter().flatten() {
+            saw_dht |= ips.iter().any(|i| i.source == PEER_SOURCE_DHT);
+            found.extend(ips);
         }
         // `add_intro_point` + `create_e2e` vers les seeder_pk non
         // connectes (`do_peer_discovery` Python).

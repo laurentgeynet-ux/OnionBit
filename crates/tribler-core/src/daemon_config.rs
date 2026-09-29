@@ -823,6 +823,9 @@ impl DaemonConfig {
             socks_listen_ports: self.libtorrent.socks_listen_ports.clone(),
             enable_content_discovery: self.content_discovery_community.enabled,
             listen_addr_v6: listen_v6,
+            peer_cache_max: crate::ipv8_stack::DEFAULT_PEER_CACHE_MAX,
+            peer_cache_max_age_secs: crate::ipv8_stack::DEFAULT_PEER_CACHE_MAX_AGE_SECS,
+            peer_persist_interval_secs: crate::ipv8_stack::DEFAULT_PEER_PERSIST_INTERVAL_SECS,
         };
 
         crate::CoreConfig {
