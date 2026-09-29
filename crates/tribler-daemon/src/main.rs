@@ -262,8 +262,28 @@ fn parse_tray_icon_color(s: &str) -> Option<[u8; 3]> {
     }
 }
 
-#[tokio::main]
-async fn main() -> ExitCode {
+/// Minimum de workers Tokio — `block_in_place` de librqbit consomme
+/// des threads workers ; trop peu = l'executor se fige pendant les
+/// checks disque au demarrage (le semaphore rqbit est borne par
+/// `EngineConfig::runtime_worker_threads`, il doit rester de la
+/// marge au-dessus).
+fn tokio_worker_threads() -> usize {
+    let cores = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4);
+    (cores * 2).max(8)
+}
+
+fn main() -> ExitCode {
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(tokio_worker_threads())
+        .enable_all()
+        .build()
+        .expect("runtime tokio");
+    rt.block_on(async_main())
+}
+
+async fn async_main() -> ExitCode {
     let args = Args::parse();
     #[cfg(windows)]
     if args.console {

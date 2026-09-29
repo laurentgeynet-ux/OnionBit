@@ -116,6 +116,16 @@ pub struct EngineConfig {
     /// (`SessionOptions::udp_tracker_socket` — anti-fuite : sans elle,
     /// les annonces UDP tracker partiraient en UDP clair hors tunnel).
     pub udp_tracker_socket: Option<std::sync::Arc<dyn librqbit::DatagramSocket>>,
+    /// Borne du semaphore d'appels bloquants de librqbit
+    /// (`SessionOptions::runtime_worker_threads`) : les I/O disque
+    /// synchrones (hash de pieces, sparse marking, `ensure_file_length`)
+    /// passent par `tokio::task::block_in_place` qui consomme des
+    /// threads workers de l'executor. Sans borne < nb de workers,
+    /// la restauration de gros torrents multi-fichiers peut figer
+    /// l'executor entier (API muette, tunnels geles). Defaut : nb de
+    /// coeurs — les workers Tokio doivent etre plus nombreux (cf.
+    /// `worker_threads` dans `tribler-daemon`).
+    pub runtime_worker_threads: Option<usize>,
 }
 
 impl Default for EngineConfig {
@@ -145,6 +155,7 @@ impl Default for EngineConfig {
             utp_socket: None,
             dht_socket: None,
             udp_tracker_socket: None,
+            runtime_worker_threads: default_runtime_worker_threads(),
         }
     }
 }
@@ -178,6 +189,7 @@ impl EngineConfig {
             utp_socket: None,
             dht_socket: None,
             udp_tracker_socket: None,
+            runtime_worker_threads: default_runtime_worker_threads(),
         }
     }
 
@@ -256,7 +268,22 @@ impl EngineConfig {
                 }),
             connect,
             udp_tracker_socket: self.udp_tracker_socket.clone(),
+            runtime_worker_threads: self.runtime_worker_threads,
             ..Default::default()
         }
     }
+}
+
+/// Borne par defaut du semaphore d'I/O bloquantes de librqbit :
+/// nombre de coeurs physiques/logiques visibles par le process.
+/// Volontairement inferieur au nombre de workers Tokio (2 x coeurs
+/// dans `tribler-daemon`) pour qu'il reste toujours des threads
+/// libres quand tous les slots d'I/O sont occupes.
+fn default_runtime_worker_threads() -> Option<usize> {
+    Some(
+        std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(4)
+            .max(2),
+    )
 }
