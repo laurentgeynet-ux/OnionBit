@@ -20,10 +20,14 @@ use rand::seq::SliceRandom;
 use tribler_crypto::ipv8::keys::LibNaClSecretKey;
 
 use crate::address::UdpAddress;
+use crate::discovery::{same_ip, DiscoveryCommunity};
 use crate::endpoint::UdpEndpoint;
 use crate::error::Ipv8Error;
 use crate::packet::{prefix_of, Packet};
-use crate::payloads::Payload;
+use crate::payloads::{
+    msg as base_msg, ConnectionType, IntroductionRequest, IntroductionResponse,
+    NewIntroductionRequest, NewIntroductionResponse, Payload,
+};
 use crate::peer::{Network, Peer};
 use crate::serializer::{Reader, Writer};
 use crate::CommunityId;
@@ -69,6 +73,10 @@ const HEALTH_PAYLOAD_BUDGET: usize = 1200;
 
 /// TTL d'une requete `remote_select` en attente de reponse.
 const SELECT_REQUEST_TTL: Duration = Duration::from_secs(30);
+
+/// Cible de pairs de la marche aleatoire (`RandomWalk` du launcher
+/// pyipv8 : `target_peers = 20` pour les overlays Tribler).
+const WALK_TARGET_PEERS: usize = 20;
 
 /// `SelectRequest.packets_limit` (cache.py) : nombre maximal de
 /// paquets `SelectResponse` acceptes pour une requete (anti-spam).
@@ -250,6 +258,10 @@ pub struct ContentDiscoveryCommunity {
     /// Requetes select emises en attente (`RequestCache` Python :
     /// id unique -> contexte `SelectRequest`).
     pending_selects: Mutex<std::collections::HashMap<u32, PendingSelect>>,
+    /// La `DiscoveryCommunity` de la meme stack — partagee pour les
+    /// estimations `my_estimated_lan/wan` (un seul endpoint UDP, une
+    /// seule paire d'estimations cote Python `IPv8`).
+    discovery: Arc<DiscoveryCommunity>,
 }
 
 impl ContentDiscoveryCommunity {
@@ -261,6 +273,7 @@ impl ContentDiscoveryCommunity {
         endpoint: Arc<UdpEndpoint>,
         provider: Arc<dyn ContentProvider>,
         gossip_interval: Option<Duration>,
+        discovery: Arc<DiscoveryCommunity>,
     ) -> Arc<Self> {
         let community = Arc::new(Self {
             key,
@@ -270,6 +283,7 @@ impl ContentDiscoveryCommunity {
             select_ids: AtomicU32::new(0),
             global_time: AtomicU64::new(0),
             pending_selects: Mutex::new(std::collections::HashMap::new()),
+            discovery,
         });
         let prefix = prefix_of(&CONTENT_DISCOVERY_COMMUNITY_ID);
         let c = community.clone();
@@ -320,9 +334,11 @@ impl ContentDiscoveryCommunity {
         let mut w = Writer::new();
         crate::payloads::IntroductionRequest {
             destination_address: addr.clone(),
-            source_lan_address: UdpAddress::unspecified(),
-            source_wan_address: UdpAddress::unspecified(),
-            advice: false,
+            source_lan_address: self.discovery.my_estimated_lan(),
+            source_wan_address: self.discovery.my_estimated_wan(),
+            // `advice=True` Python : on demande une introduction a un
+            // pair de la community (pas seulement un accusé).
+            advice: true,
             supports_new_style: true,
             connection_type: crate::payloads::ConnectionType::Unknown,
             identifier: rand::random::<u16>(),
@@ -389,6 +405,275 @@ impl ContentDiscoveryCommunity {
             &w.into_bytes(),
         );
         self.endpoint.send_to(addr, &packet).await
+    }
+
+    /// `RandomWalk.take_step` sous le prefixe de la community : une
+    /// `introduction-request` vers un pair connu de l'overlay (le plus
+    /// souvent — il nous introduit a un pair de son choix), une
+    /// adresse "walkable" introduite sous ce service, un pair verifie
+    /// quelconque (un noeud Tribler porte toutes ses overlays sur le
+    /// meme port UDP) ou, en dernier repli, un noeud de bootstrap.
+    ///
+    /// Sans cette marche l'overlay reste vide : aucun pair ne nous
+    /// connait sous `CONTENT_DISCOVERY_COMMUNITY_ID`, le gossip n'a
+    /// personne a qui parler et `PUT /api/search/remote` n'interroge
+    /// personne.
+    pub async fn step(&self, bootstrap: &[UdpAddress]) -> Result<(), Ipv8Error> {
+        let known = self
+            .network
+            .peers_for_service(&CONTENT_DISCOVERY_COMMUNITY_ID);
+        if known.len() >= WALK_TARGET_PEERS {
+            return Ok(());
+        }
+        let walkable = self
+            .network
+            .get_walkable_addresses(Some(&CONTENT_DISCOVERY_COMMUNITY_ID), false);
+        let target = {
+            let mut rng = rand::thread_rng();
+            if !known.is_empty() && (walkable.is_empty() || rand::random::<f64>() < 0.5) {
+                known.choose(&mut rng).and_then(|p| p.address.clone())
+            } else {
+                walkable.choose(&mut rng).cloned().or_else(|| {
+                    self.network
+                        .verified_peers()
+                        .choose(&mut rng)
+                        .and_then(|p| p.address.clone())
+                        .or_else(|| bootstrap.choose(&mut rng).cloned())
+                })
+            }
+        };
+        if let Some(addr) = target {
+            self.walk_to(&addr).await?;
+        }
+        Ok(())
+    }
+
+    /// Boucle de marche aleatoire (a spawner) — `walker_interval`
+    /// Python (`ipv8.walker_interval`).
+    pub async fn run(self: &Arc<Self>, bootstrap: Vec<UdpAddress>, interval: Duration) {
+        let mut tick = tokio::time::interval(interval);
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        // Premier tick immediat absorbe : la marche est periodique,
+        // le bootstrap discovery vient deja d'emettre ses intros.
+        tick.tick().await;
+        loop {
+            tick.tick().await;
+            if let Err(e) = self.step(&bootstrap).await {
+                tracing::debug!(error = %e, "etape de marche content-discovery echouee");
+            }
+        }
+    }
+
+    /// `on_puncture_request` generique (`Community` pyipv8) : demande
+    /// **non signee** de percer un trou NAT vers `wan_walker` (ou
+    /// `lan_walker` si meme IP WAN que nous) — on repond par un
+    /// `puncture` sous le prefixe de la community.
+    fn on_puncture_request(self: &Arc<Self>, pkt: &Packet) {
+        let mut r = Reader::new(&pkt.payload);
+        let (lan_walker, wan_walker, identifier, new_style) = match pkt.msg_id {
+            base_msg::PUNCTURE_REQUEST => {
+                match crate::payloads::PunctureRequestPayload::unpack(&mut r) {
+                    Ok(p) => (
+                        p.lan_walker_address,
+                        p.wan_walker_address,
+                        p.identifier,
+                        false,
+                    ),
+                    Err(_) => return,
+                }
+            }
+            base_msg::NEW_PUNCTURE_REQUEST => {
+                match crate::payloads::NewPunctureRequestPayload::unpack(&mut r) {
+                    Ok(p) => (
+                        p.lan_walker_address,
+                        p.wan_walker_address,
+                        p.identifier,
+                        true,
+                    ),
+                    Err(_) => return,
+                }
+            }
+            _ => return,
+        };
+        let my_wan = self.discovery.my_estimated_wan();
+        let target = if same_ip(&wan_walker, &my_wan) {
+            lan_walker
+        } else {
+            wan_walker.clone()
+        };
+        let c = self.clone();
+        let my_lan = self.discovery.my_estimated_lan();
+        tokio::spawn(async move {
+            let mut w = Writer::new();
+            let msg_id = if new_style {
+                let _ = w.ip_address(&my_lan);
+                let _ = w.ip_address(&wan_walker);
+                base_msg::NEW_PUNCTURE
+            } else {
+                let _ = w.ipv4(&my_lan);
+                let _ = w.ipv4(&wan_walker);
+                base_msg::PUNCTURE
+            };
+            w.u16(identifier);
+            let pkt = Packet::sign(
+                &CONTENT_DISCOVERY_COMMUNITY_ID,
+                msg_id,
+                &c.key,
+                c.claim_global_time(),
+                &w.into_bytes(),
+            );
+            let _ = c.endpoint.send_to(&target, &pkt).await;
+        });
+    }
+
+    /// `introduction_request_callback` generique : repond au demandeur
+    /// en introduisant un pair connu de la community et notifie le
+    /// pair introduit par `puncture-request` (`create_introduction_
+    /// response` Python — le trou NAT est perce par le puncture).
+    fn on_introduction_request(
+        self: &Arc<Self>,
+        peer: Option<Peer>,
+        src_addr: &UdpAddress,
+        identifier: u16,
+        req_lan: UdpAddress,
+        req_wan: UdpAddress,
+        new_style: bool,
+    ) {
+        let Some(peer) = peer else { return };
+        self.network.add_verified(peer.clone());
+        self.network
+            .discover_service(&peer.public_key_bin, CONTENT_DISCOVERY_COMMUNITY_ID);
+
+        // `get_peer_for_introduction` : un pair de l'overlay, hors
+        // demandeur, avec une adresse connue.
+        let candidates: Vec<Peer> = self
+            .network
+            .peers_for_service(&CONTENT_DISCOVERY_COMMUNITY_ID)
+            .into_iter()
+            .filter(|q| q.public_key_bin != peer.public_key_bin)
+            .filter(|q| q.address.as_ref().is_some_and(|a| !a.is_unspecified()))
+            .collect();
+        let introduction = candidates.choose(&mut rand::thread_rng()).cloned();
+        let (lan_i, wan_i) = match introduction.as_ref().and_then(|p| p.address.clone()) {
+            Some(a) => (a.clone(), a),
+            None => (UdpAddress::unspecified(), UdpAddress::unspecified()),
+        };
+        let c = self.clone();
+        let dst = src_addr.clone();
+        let my_lan = self.discovery.my_estimated_lan();
+        let wan = self.discovery.my_estimated_wan();
+        let my_wan = if wan.is_unspecified() {
+            src_addr.clone()
+        } else {
+            wan
+        };
+        let intro_new_style = introduction
+            .as_ref()
+            .map(|p| p.new_style_intro)
+            .unwrap_or(false);
+        let dest = req_wan.clone();
+        tokio::spawn(async move {
+            let mut w = Writer::new();
+            let res = if new_style {
+                NewIntroductionResponse {
+                    destination_address: dest.clone(),
+                    source_lan_address: my_lan,
+                    source_wan_address: my_wan,
+                    lan_introduction_address: lan_i,
+                    wan_introduction_address: wan_i,
+                    identifier,
+                    intro_supports_new_style: intro_new_style,
+                    extra_bytes: Vec::new(),
+                }
+                .pack(&mut w)
+            } else {
+                IntroductionResponse {
+                    destination_address: dest,
+                    source_lan_address: my_lan,
+                    source_wan_address: my_wan,
+                    lan_introduction_address: lan_i,
+                    wan_introduction_address: wan_i,
+                    connection_type: ConnectionType::Unknown,
+                    supports_new_style: true,
+                    peer_limit_reached: false,
+                    identifier,
+                    intro_supports_new_style: intro_new_style,
+                    extra_bytes: Vec::new(),
+                }
+                .pack(&mut w)
+            };
+            if res.is_ok() {
+                let pkt = Packet::sign(
+                    &CONTENT_DISCOVERY_COMMUNITY_ID,
+                    if new_style {
+                        base_msg::NEW_INTRODUCTION_RESPONSE
+                    } else {
+                        base_msg::INTRODUCTION_RESPONSE
+                    },
+                    &c.key,
+                    c.claim_global_time() % 65536,
+                    &w.into_bytes(),
+                );
+                let _ = c.endpoint.send_to(&dst, &pkt).await;
+            }
+        });
+
+        // `puncture-request` vers le pair introduit (non signee) pour
+        // qu'il perce son NAT vers le demandeur.
+        if let Some(intro) = introduction {
+            if let Some(intro_addr) = intro.address {
+                let c = self.clone();
+                tokio::spawn(async move {
+                    let mut w = Writer::new();
+                    let msg_id = if new_style
+                        || !matches!(req_lan, UdpAddress::Ipv4(_))
+                        || !matches!(req_wan, UdpAddress::Ipv4(_))
+                    {
+                        let _ = w.ip_address(&req_lan);
+                        let _ = w.ip_address(&req_wan);
+                        base_msg::NEW_PUNCTURE_REQUEST
+                    } else {
+                        let _ = w.ipv4(&req_lan);
+                        let _ = w.ipv4(&req_wan);
+                        base_msg::PUNCTURE_REQUEST
+                    };
+                    w.u16(identifier);
+                    let pkt = Packet::pack_unsigned(
+                        &CONTENT_DISCOVERY_COMMUNITY_ID,
+                        msg_id,
+                        c.claim_global_time(),
+                        &w.into_bytes(),
+                    );
+                    let _ = c.endpoint.send_to(&intro_addr, &pkt).await;
+                });
+            }
+        }
+    }
+
+    /// `introduction_response_callback` generique : le repondant
+    /// devient un pair de l'overlay et les adresses introduites
+    /// rejoignent les walkables du service content-discovery.
+    fn on_introduction_response(
+        &self,
+        peer: Option<Peer>,
+        lan_i: UdpAddress,
+        wan_i: UdpAddress,
+        new_style: bool,
+    ) {
+        let Some(peer) = peer else { return };
+        self.network.add_verified(peer.clone());
+        self.network
+            .discover_service(&peer.public_key_bin, CONTENT_DISCOVERY_COMMUNITY_ID);
+        for addr in [lan_i, wan_i] {
+            if !addr.is_unspecified() {
+                self.network.discover_address(
+                    &peer,
+                    addr,
+                    Some(CONTENT_DISCOVERY_COMMUNITY_ID),
+                    new_style,
+                );
+            }
+        }
     }
 
     /// `gossip_random_torrents_health` : envoie nos santes vivantes a
@@ -517,17 +802,74 @@ impl ContentDiscoveryCommunity {
     /// Dispatch par `msg_id`.
     fn on_packet(self: &Arc<Self>, src: SocketAddr, pkt: Packet) -> Result<(), Ipv8Error> {
         if !pkt.signed {
+            // `puncture-request` est le seul message non signe du
+            // protocole de marche (comme `DiscoveryCommunity`).
+            self.on_puncture_request(&pkt);
             return Ok(());
         }
         self.update_global_time(pkt.global_time);
         let src_addr = UdpAddress::from(src);
-        if let Some(p) = Peer::new(pkt.public_key_bin.clone(), Some(src_addr.clone())) {
-            self.network.add_verified(p);
+        let mut peer = Peer::new(pkt.public_key_bin.clone(), Some(src_addr.clone()));
+        if let Some(p) = &peer {
+            self.network.add_verified(p.clone());
             self.network
                 .discover_service(&pkt.public_key_bin, CONTENT_DISCOVERY_COMMUNITY_ID);
         }
         let mut r = Reader::new(&pkt.payload);
         match pkt.msg_id {
+            base_msg::INTRODUCTION_REQUEST => {
+                let p = IntroductionRequest::unpack(&mut r)?;
+                self.on_introduction_request(
+                    peer,
+                    &src_addr,
+                    p.identifier,
+                    p.source_lan_address,
+                    p.source_wan_address,
+                    false,
+                );
+            }
+            base_msg::NEW_INTRODUCTION_REQUEST => {
+                let p = NewIntroductionRequest::unpack(&mut r)?;
+                if let Some(ref mut pr) = peer {
+                    pr.new_style_intro = true;
+                }
+                self.on_introduction_request(
+                    peer,
+                    &src_addr,
+                    p.identifier,
+                    p.source_lan_address,
+                    p.source_wan_address,
+                    true,
+                );
+            }
+            base_msg::INTRODUCTION_RESPONSE => {
+                let p = IntroductionResponse::unpack(&mut r)?;
+                if let Some(ref mut pr) = peer {
+                    pr.new_style_intro = p.supports_new_style;
+                }
+                self.on_introduction_response(
+                    peer,
+                    p.lan_introduction_address,
+                    p.wan_introduction_address,
+                    false,
+                );
+            }
+            base_msg::NEW_INTRODUCTION_RESPONSE => {
+                let p = NewIntroductionResponse::unpack(&mut r)?;
+                if let Some(ref mut pr) = peer {
+                    pr.new_style_intro = true;
+                }
+                self.on_introduction_response(
+                    peer,
+                    p.lan_introduction_address,
+                    p.wan_introduction_address,
+                    true,
+                );
+            }
+            base_msg::PUNCTURE | base_msg::NEW_PUNCTURE => {
+                // `on_puncture` Python : no-op — le trou NAT est
+                // ouvert par la reception meme du paquet.
+            }
             msg::HEALTH_REQUEST => {
                 let req = HealthRequest::unpack(&mut r)?;
                 let c = self.clone();

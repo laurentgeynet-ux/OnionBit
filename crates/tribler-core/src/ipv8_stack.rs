@@ -812,6 +812,7 @@ impl Ipv8Stack {
                     endpoint.clone(),
                     provider,
                     None,
+                    discovery.clone(),
                 )
                 .await,
             )
@@ -936,6 +937,8 @@ impl Ipv8Stack {
             tasks.register(None, "bootstrap", None);
             let d = discovery.clone();
             let dht = dht.clone();
+            let cd = content_discovery.clone();
+            let walker_interval = std::time::Duration::from_secs_f64(config.walker_interval);
             tokio::spawn(async move {
                 let mut peers = Vec::new();
                 for peer_str in &bootstrap_peers_config {
@@ -962,6 +965,18 @@ impl Ipv8Stack {
                         count = peers.len(),
                         "bootstrap IPv8 demarre vers les noeuds d'amorcage"
                     );
+                    // `RandomWalk` par overlay (BaseLauncher Python) :
+                    // la marche content-discovery a ses propres
+                    // introduction-requests sous son prefixe — sans
+                    // elle l'overlay reste vide et la recherche
+                    // distante n'interroge personne.
+                    if let Some(cd) = &cd {
+                        let cd = cd.clone();
+                        let peers = peers.clone();
+                        tokio::spawn(async move {
+                            cd.run(peers, walker_interval).await;
+                        });
+                    }
                     d.run(peers).await;
                 } else {
                     tracing::warn!("aucun pair de bootstrap n'a pu etre resolu pour IPv8");

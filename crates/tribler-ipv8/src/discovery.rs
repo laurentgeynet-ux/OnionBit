@@ -869,7 +869,7 @@ impl From<&NewIntroductionResponse> for IntroResponseFields {
 }
 
 /// `true` si les deux adresses ont la meme IP (peu importe le port).
-fn same_ip(a: &UdpAddress, b: &UdpAddress) -> bool {
+pub(crate) fn same_ip(a: &UdpAddress, b: &UdpAddress) -> bool {
     match (a, b) {
         (UdpAddress::Ipv4(x), UdpAddress::Ipv4(y)) => x.ip() == y.ip(),
         (UdpAddress::Ipv6(x), UdpAddress::Ipv6(y)) => x.ip() == y.ip(),

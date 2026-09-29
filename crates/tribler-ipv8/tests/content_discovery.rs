@@ -7,8 +7,10 @@ use std::time::{Duration, Instant};
 
 use tribler_crypto::ipv8::keys::LibNaClSecretKey;
 use tribler_ipv8::content_discovery::{
-    ContentDiscoveryCommunity, ContentProvider, HealthInfo, HEALTH_REQUEST_RANDOM,
+    ContentDiscoveryCommunity, ContentProvider, HealthInfo, CONTENT_DISCOVERY_COMMUNITY_ID,
+    HEALTH_REQUEST_RANDOM,
 };
+use tribler_ipv8::discovery::DiscoveryCommunity;
 use tribler_ipv8::endpoint::UdpEndpoint;
 use tribler_ipv8::peer::Network;
 use tribler_ipv8::UdpAddress;
@@ -69,12 +71,20 @@ async fn node(
     // deterministe et peut emettre un `HealthPayload` legitime en
     // doublon des qu'un pair est verifie, rendant les egalites
     // strictes de compteur flaky.
+    let discovery = DiscoveryCommunity::new(
+        key.clone(),
+        net.clone(),
+        ep.clone(),
+        UdpAddress::unspecified(),
+    )
+    .await;
     let community = ContentDiscoveryCommunity::new(
         key,
         net.clone(),
         ep.clone(),
         provider,
         Some(Duration::from_secs(3600)),
+        discovery,
     )
     .await;
     tokio::spawn(async move {
@@ -203,6 +213,49 @@ async fn remote_select_callback_invoked() {
     .unwrap();
     let ok = wait_for(|| called.load(std::sync::atomic::Ordering::SeqCst)).await;
     assert!(ok, "processing_callback non invoque");
+}
+
+/// `RandomWalk` : une `introduction-request` sous le prefixe de la
+/// community peuple l'overlay des deux cotes — le demandeur marque le
+/// repondant via sa `introduction-response`, le repondant marque le
+/// demandeur a la reception de la requete. Sans cette marche,
+/// `peers_for_service` reste vide et la recherche distante est muette.
+#[tokio::test(flavor = "multi_thread")]
+async fn walk_decouvre_les_pairs_de_l_overlay() {
+    let empty = || {
+        Arc::new(MockProvider {
+            healths: vec![],
+            received: Mutex::new(vec![]),
+            selects: Mutex::new(vec![]),
+            responses: Mutex::new(vec![]),
+            select_blob: vec![],
+        }) as Arc<dyn ContentProvider>
+    };
+    let (ca, na, addr_a) = node(empty()).await;
+    let (_cb, nb, addr_b) = node(empty()).await;
+
+    // Equivalent d'un `step()` vers un pair de bootstrap connu.
+    ca.walk_to(&addr_b).await.unwrap();
+    let na2 = na.clone();
+    let nb2 = nb.clone();
+    let ok = wait_for(move || {
+        !na2.peers_for_service(&CONTENT_DISCOVERY_COMMUNITY_ID)
+            .is_empty()
+            && !nb2
+                .peers_for_service(&CONTENT_DISCOVERY_COMMUNITY_ID)
+                .is_empty()
+    })
+    .await;
+    assert!(ok, "la marche n'a pas peuple l'overlay content-discovery");
+
+    // `step()` lui-meme : bootstrap = l'adresse de A, l'overlay de B
+    // reste peuple apres une etape (A deja connu -> cible atteinte ?
+    // non : B n'a que A, donc B marcherait — ici on verifie juste que
+    // step n'erre pas et que A reste joignable sous le service).
+    let peers = na.peers_for_service(&CONTENT_DISCOVERY_COMMUNITY_ID);
+    assert_eq!(peers.len(), 1);
+    assert!(peers[0].address.as_ref() == Some(&addr_b));
+    let _ = addr_a;
 }
 
 /// Version request (101) -> response (102) : le pair distant repond

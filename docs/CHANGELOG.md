@@ -3,6 +3,44 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Correctif majeur : l'overlay content-discovery ne marchait jamais (2026-09-29)
+
+Symptôme : la recherche de l'UI ne trouvait rien — `PUT
+/api/search/remote` répondait `"peers": []`.
+
+**Cause racine** : `ContentDiscoveryCommunity` n'avait **pas de
+stratégie `RandomWalk`** alors que chaque overlay pyipv8 en a une
+(cible 20 pairs). Son overlay ne se remplissait que sur paquets
+entrants sous son préfixe — que personne n'émettait puisqu'on ne
+s'annonçait jamais sous ce préfixe. Cercle vicieux : 0 pair →
+gossip sans cible → recherche muette.
+
+- `tribler-ipv8/content_discovery.rs` :
+  - `step()`/`run()` : marche aléatoire périodique
+    (`walker_interval` de la stack) — introduction-request sous le
+    préfixe de la community vers un pair connu de l'overlay, une
+    adresse walkable du service, un pair vérifié quelconque (un
+    noeud Tribler porte toutes ses overlays sur le même port UDP)
+    ou un bootstrapper ; cible 20 pairs (`RandomWalk` du launcher).
+  - Handlers génériques d'overlay qui manquaient : réponse aux
+    `introduction-request` (246/234, ancien+nouveau style) avec
+    introduction d'un pair connu + `puncture-request` non signée
+    vers le pair introduit ; traitement des `introduction-response`
+    (245/233) → `discover_address(service=CD)` ; `puncture-request`
+    (250/232, non signé) → `puncture` ; `puncture` accepté no-op.
+  - `walk_to` : `advice: true` (demande d'introduction, pas un
+    simple accusé) + annonce `my_estimated_lan/wan` réels.
+  - La community reçoit la `DiscoveryCommunity` de la stack pour
+    les estimations WAN/LAN (un seul endpoint = une seule paire
+    d'estimations, comme `IPv8` Python).
+- `tribler-core/ipv8_stack.rs` : la tâche `bootstrap` spawne aussi
+  `ContentDiscoveryCommunity::run` avec les noeuds résolus, à la
+  cadence `walker_interval`.
+- `tribler-ipv8/discovery.rs` : `same_ip` exposé en `pub(crate)`
+  (partage avec la community content-discovery).
+- Test loopback `walk_decouvre_les_pairs_de_l_overlay` : une
+  `introduction-request` peuple `peers_for_service` des deux côtés.
+
 ## Parité : dossier de destination global pour les lanes anonymes (2026-09-29)
 
 Les téléchargements anonymes tombaient par défaut dans
