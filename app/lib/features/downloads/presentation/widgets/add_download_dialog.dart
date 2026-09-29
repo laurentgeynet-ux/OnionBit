@@ -13,15 +13,27 @@ import '../providers/downloads_providers.dart';
 /// d'anonymat binaire+sauts (règle backend : `anon_hops>0` exige
 /// `safe_seeding`, envoyé automatiquement).
 class AddDownloadDialog extends ConsumerStatefulWidget {
-  const AddDownloadDialog({super.key, this.initialUri});
+  const AddDownloadDialog({super.key, this.initialUri, this.initialFilePath});
 
   /// URI pré-remplie (ex. magnet d'un résultat de recherche).
   final String? initialUri;
 
-  static Future<void> show(BuildContext context, {String? initialUri}) =>
+  /// Chemin d'un `.torrent` pré-sélectionné (association de
+  /// fichiers / glisser-déposer). `.magnet` → son URI est lue
+  /// dans le champ magnet.
+  final String? initialFilePath;
+
+  static Future<void> show(
+    BuildContext context, {
+    String? initialUri,
+    String? initialFilePath,
+  }) =>
       showDialog(
         context: context,
-        builder: (_) => AddDownloadDialog(initialUri: initialUri),
+        builder: (_) => AddDownloadDialog(
+          initialUri: initialUri,
+          initialFilePath: initialFilePath,
+        ),
       );
 
   @override
@@ -43,6 +55,23 @@ class _AddDownloadDialogState extends ConsumerState<AddDownloadDialog> {
   bool _paused = false;
   bool _busy = false;
   String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    final path = widget.initialFilePath;
+    if (path != null) {
+      if (path.toLowerCase().endsWith('.magnet')) {
+        // Fichier .magnet : contient l'URI en clair.
+        XFile(path).readAsString().then((uri) {
+          if (mounted) _uriController.text = uri.trim();
+        }).catchError((_) {});
+      } else {
+        _file = XFile(path);
+        _loadPreview(_file!);
+      }
+    }
+  }
 
   @override
   void dispose() {
@@ -80,8 +109,12 @@ class _AddDownloadDialogState extends ConsumerState<AddDownloadDialog> {
       _file = file;
       _preview = null;
     });
-    // Aperçu des trackers pour l'avertissement HTTPS-only — echec
-    // silencieux : le torrent reste ajoutable sans l'alerte.
+    _loadPreview(file);
+  }
+
+  /// Aperçu des trackers pour l'avertissement HTTPS-only — echec
+  /// silencieux : le torrent reste ajoutable sans l'alerte.
+  Future<void> _loadPreview(XFile file) async {
     try {
       final preview = await ref
           .read(downloadsRepositoryProvider)

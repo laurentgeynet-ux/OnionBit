@@ -267,6 +267,13 @@ pub struct AddTorrentOptions {
     /// Sub-folder within session's default output folder. Will error if "output_folder" if also set.
     /// By default, multi-torrent files are downloaded to a sub-folder.
     pub sub_folder: Option<String>,
+    /// Tribler/libtorrent : les torrents multi-fichiers vont dans
+    /// `<output_folder>/<nom du torrent>/`. Quand true, le sous-dossier
+    /// par defaut (`get_default_subfolder_for_torrent`) est ajoute sous
+    /// `output_folder` explicite aussi — sans effet a la restauration
+    /// (le chemin stocke est deja complet, le flag reste a false).
+    #[serde(default)]
+    pub name_subfolder: bool,
     /// Peer connection options, timeouts etc. If not set, session's defaults will be used.
     pub peer_opts: Option<PeerConnectionOptions>,
 
@@ -893,37 +900,50 @@ impl Session {
             if let Some(persistence) = session.persistence.as_ref() {
                 info!("will use {persistence:?} for session persistence");
 
-                let mut ps = persistence.stream_all().await?;
-                let mut added_all = false;
-                let mut futs = FuturesUnordered::new();
+                // Tribler: la restauration se fait en tache de fond
+                // (`load_checkpoint` Python) — sinon `Session::new`
+                // bloque le bind de l'API pendant la validation
+                // checksum initiale de gros fichiers.
+                let persistence = persistence.clone();
+                let this = session.clone();
+                session.spawn(
+                    debug_span!(parent: session.rs(), "session_restore"),
+                    "session_restore",
+                    async move {
+                        let mut ps = persistence.stream_all().await?;
+                        let mut added_all = false;
+                        let mut futs = FuturesUnordered::new();
 
-                while !added_all || !futs.is_empty() {
-                    // NOTE: this closure exists purely to workaround rustfmt screwing up when inlining it.
-                    let add_torrent_span = |info_hash: &Id20| -> tracing::Span {
-                        debug_span!(parent: session.rs(), "add_torrent", info_hash=?info_hash)
-                    };
-                    tokio::select! {
-                        Some(res) = futs.next(), if !futs.is_empty() => {
-                            if let Err(e) = res {
-                                error!("error adding torrent to session: {e:#}");
-                            }
-                        }
-                        st = ps.next(), if !added_all => {
-                            match st {
-                                Some(st) => {
-                                    let (id, st) = st?;
-                                    let span = add_torrent_span(st.info_hash());
-                                    let (add_torrent, mut opts) = st.into_add_torrent()?;
-                                    opts.preferred_id = Some(id);
-                                    let fut = session.add_torrent(add_torrent, Some(opts));
-                                    let fut = fut.instrument(span);
-                                    futs.push(fut);
-                                },
-                                None => added_all = true
+                        while !added_all || !futs.is_empty() {
+                            // NOTE: this closure exists purely to workaround rustfmt screwing up when inlining it.
+                            let add_torrent_span = |info_hash: &Id20| -> tracing::Span {
+                                debug_span!(parent: this.rs(), "add_torrent", info_hash=?info_hash)
+                            };
+                            tokio::select! {
+                                Some(res) = futs.next(), if !futs.is_empty() => {
+                                    if let Err(e) = res {
+                                        error!("error adding torrent to session: {e:#}");
+                                    }
+                                }
+                                st = ps.next(), if !added_all => {
+                                    match st {
+                                        Some(st) => {
+                                            let (id, st) = st?;
+                                            let span = add_torrent_span(st.info_hash());
+                                            let (add_torrent, mut opts) = st.into_add_torrent()?;
+                                            opts.preferred_id = Some(id);
+                                            let fut = this.add_torrent(add_torrent, Some(opts));
+                                            let fut = fut.instrument(span);
+                                            futs.push(fut);
+                                        },
+                                        None => added_all = true
+                                    };
+                                }
                             };
                         }
-                    };
-                }
+                        anyhow::Ok(())
+                    },
+                );
             }
 
             session.start_speed_estimator_updater();
@@ -1315,12 +1335,21 @@ impl Session {
             opts.list_only,
         )?;
 
+        let sub = self
+            .get_default_subfolder_for_torrent(&metadata.info, name.as_deref())?;
         let output_folder = match (opts.output_folder, opts.sub_folder) {
-            (None, None) => self.output_folder.join(
-                self.get_default_subfolder_for_torrent(&metadata.info, name.as_deref())?
-                    .unwrap_or_default(),
-            ),
-            (Some(o), None) => PathBuf::from(o),
+            (None, None) => self.output_folder.join(sub.unwrap_or_default()),
+            // Tribler : `destination`/`saveas` choisi par l'utilisateur —
+            // le dossier <nom du torrent> s'y ajoute quand meme
+            // (multi-fichiers), comme le fait libtorrent.
+            (Some(o), None) => {
+                let o = PathBuf::from(o);
+                if opts.name_subfolder {
+                    o.join(sub.unwrap_or_default())
+                } else {
+                    o
+                }
+            }
             (Some(_), Some(_)) => {
                 bail!("you can't provide both output_folder and sub_folder")
             }

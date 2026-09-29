@@ -3,10 +3,14 @@
 /// dépend de `dart:ffi`, non compilable pour le web.
 library;
 
+import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:window_manager/window_manager.dart';
+
+import '../config/ui_log.dart';
 
 /// Fenêtre utilisable au plus petit en 960×560 (sidebar + table).
 const Size _kMinWindowSize = Size(960, 560);
@@ -14,6 +18,12 @@ const Size _kMinWindowSize = Size(960, 560);
 Future<void> initDesktopShell() async {
   if (!(Platform.isWindows || Platform.isLinux || Platform.isMacOS)) {
     return;
+  }
+  if (Platform.isWindows && kReleaseMode) {
+    // Association `.torrent` → tribler_ui (HKCU, sans droits
+    // admin) : double-clic / « Ouvrir avec » lance l'app avec le
+    // fichier en argv.
+    unawaited(_registerTorrentFileAssoc());
   }
   await windowManager.ensureInitialized();
   const options = WindowOptions(
@@ -25,6 +35,59 @@ Future<void> initDesktopShell() async {
     await windowManager.show();
     await windowManager.focus();
   });
+}
+
+/// Enregistre l'association `.torrent` → cet exécutable dans
+/// HKCU (`reg add`, sans elevation). Idempotent : reecrit a
+/// chaque demarrage pour suivre un deplacement de l'exe.
+Future<void> _registerTorrentFileAssoc() async {
+  final exe = Platform.resolvedExecutable;
+  const progid = 'TriblerRust.torrent';
+  try {
+    for (final args in [
+      ['add', r'HKCU\Software\Classes\.torrent', '/ve', '/d', progid, '/f'],
+      [
+        'add',
+        r'HKCU\Software\Classes\.torrent\OpenWithProgids',
+        '/v',
+        progid,
+        '/t',
+        'REG_SZ',
+        '/d',
+        '',
+        '/f',
+      ],
+      [
+        'add',
+        'HKCU\\Software\\Classes\\$progid',
+        '/ve',
+        '/d',
+        'Tribler torrent',
+        '/f',
+      ],
+      [
+        'add',
+        'HKCU\\Software\\Classes\\$progid\\DefaultIcon',
+        '/ve',
+        '/d',
+        '"$exe",0',
+        '/f',
+      ],
+      [
+        'add',
+        'HKCU\\Software\\Classes\\$progid\\shell\\open\\command',
+        '/ve',
+        '/d',
+        '"$exe" "%1"',
+        '/f',
+      ],
+    ]) {
+      await Process.run('reg', args);
+    }
+    uiLog('association .torrent -> $exe');
+  } catch (e) {
+    uiLog('association .torrent en echec : $e');
+  }
 }
 
 /// Ouvre un chemin de dossier ou fichier dans l'explorateur natif du système.

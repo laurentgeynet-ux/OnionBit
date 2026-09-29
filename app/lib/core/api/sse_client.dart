@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import '../config/app_config.dart';
+import '../config/ui_log.dart';
 
 /// Un événement SSE : `event: <topic>` + `data: <json>`.
 class SseEvent {
@@ -64,6 +65,9 @@ class SseClient {
           if (resp.statusCode != 200) {
             throw ApiSseException(resp.statusCode);
           }
+          if (_attempt > 0) {
+            uiLog('SSE reconnecte apres $_attempt tentative(s)');
+          }
           _attempt = 0;
           _connected.add(true);
           return resp.stream.transform(utf8.decoder);
@@ -87,6 +91,14 @@ class SseClient {
       milliseconds: (500 * (1 << _attempt.clamp(0, 6))).clamp(500, 30000),
     );
     _attempt++;
+    // Journal : les 5 premieres coupures puis 1 sur 10 (le flux peut
+    // osciller longtemps si le daemon est eteint).
+    if (_attempt <= 5 || _attempt % 10 == 0) {
+      uiLog(
+        'SSE coupe (${_config.baseUrl}) — retry dans '
+        '${delay.inMilliseconds} ms (tentative $_attempt)',
+      );
+    }
     _reconnectTimer = Timer(delay, _connect);
   }
 

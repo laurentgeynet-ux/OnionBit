@@ -1,4 +1,5 @@
 import '../../../core/api/api_client.dart';
+import '../../../core/config/ui_log.dart';
 import '../domain/download.dart';
 import '../domain/download_file.dart';
 import '../domain/download_tracker.dart';
@@ -35,18 +36,30 @@ class RestDownloadsRepository implements DownloadsRepository {
     bool safeSeeding = false,
     bool paused = false,
   }) async {
-    final resp = await _api.put(
-      '/downloads',
-      body: {
-        'uri': ?uri,
-        'torrent': ?torrentPath,
-        'destination': ?destination,
-        if (anonHops > 0) 'anon_hops': anonHops,
-        'safe_seeding': safeSeeding,
-        'paused': paused,
-      },
-    ) as Map<String, dynamic>;
-    return (resp['infohash'] as String?) ?? '';
+    final kind = uri != null && uri.startsWith('magnet:')
+        ? 'magnet'
+        : uri != null
+            ? 'uri'
+            : 'torrent';
+    try {
+      final resp = await _api.put(
+        '/downloads',
+        body: {
+          'uri': ?uri,
+          'torrent': ?torrentPath,
+          'destination': ?destination,
+          if (anonHops > 0) 'anon_hops': anonHops,
+          'safe_seeding': safeSeeding,
+          'paused': paused,
+        },
+      ) as Map<String, dynamic>;
+      final infohash = (resp['infohash'] as String?) ?? '';
+      uiLog('ajout $kind accepte infohash=$infohash hops=$anonHops');
+      return infohash;
+    } catch (e) {
+      uiLog('ajout $kind en echec : $e');
+      rethrow;
+    }
   }
 
   @override
@@ -57,18 +70,25 @@ class RestDownloadsRepository implements DownloadsRepository {
     bool safeSeeding = false,
     bool paused = false,
   }) async {
-    final resp = await _api.putTorrent(
-      '/downloads',
-      bytes,
-      query: {
-        if (destination != null && destination.isNotEmpty)
-          'destination': destination,
-        if (anonHops > 0) 'anon_hops': '$anonHops',
-        'safe_seeding': '$safeSeeding',
-        'paused': '$paused',
-      },
-    ) as Map<String, dynamic>;
-    return (resp['infohash'] as String?) ?? '';
+    try {
+      final resp = await _api.putTorrent(
+        '/downloads',
+        bytes,
+        query: {
+          if (destination != null && destination.isNotEmpty)
+            'destination': destination,
+          if (anonHops > 0) 'anon_hops': '$anonHops',
+          'safe_seeding': '$safeSeeding',
+          'paused': '$paused',
+        },
+      ) as Map<String, dynamic>;
+      final infohash = (resp['infohash'] as String?) ?? '';
+      uiLog('ajout .torrent accepte infohash=$infohash hops=$anonHops');
+      return infohash;
+    } catch (e) {
+      uiLog('ajout .torrent en echec : $e');
+      rethrow;
+    }
   }
 
   @override

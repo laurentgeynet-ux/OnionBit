@@ -11,6 +11,7 @@ import 'dart:io';
 
 import 'app_config.dart';
 import 'daemon_api_resolver_native.dart' as resolver;
+import 'ui_log.dart';
 
 /// Durée max d'attente du démarrage du daemon (premier run : migration
 /// SQLite + génération de la clé API + bind — même fenêtre que
@@ -34,20 +35,29 @@ const _kProbeTimeout = Duration(milliseconds: 800);
 /// ne lance jamais de daemon enfant. `TRIBLER_DAEMON_EXE` surcharge le
 /// chemin du binaire (boucle de développement).
 Future<AppConfig?> ensureDaemonRunning() async {
+  final t0 = DateTime.now();
   var config = resolver.resolveDaemonApi();
-  if (config != null && await isDaemonApiAlive(config)) return config;
+  uiLog('resolve -> ${config?.baseUrl ?? "null"}');
+  if (config != null && await isDaemonApiAlive(config)) {
+    uiLog('alive en ${DateTime.now().difference(t0).inMilliseconds} ms');
+    return config;
+  }
   if ((Platform.environment['TRIBLER_API_KEY'] ?? '').trim().isNotEmpty) {
     return config;
   }
 
   final exe = _daemonExe();
-  if (exe == null) return null;
+  if (exe == null) {
+    uiLog('daemon exe introuvable');
+    return null;
+  }
   final exeDir = exe.parent;
   final stateDir = Directory('${exeDir.path}${Platform.pathSeparator}state');
 
   try {
     // Détaché : le daemon survit à la fermeture de l'UI (il vit dans
     // sa propre icône systray depuis l'étape 29).
+    uiLog('spawn ${exe.path} --state-dir ${stateDir.path}');
     await Process.start(
       exe.path,
       ['--state-dir', stateDir.path],
@@ -55,6 +65,7 @@ Future<AppConfig?> ensureDaemonRunning() async {
       workingDirectory: exeDir.path,
     );
   } on ProcessException {
+    uiLog('Process.start echoue');
     return null;
   }
 
@@ -62,8 +73,15 @@ Future<AppConfig?> ensureDaemonRunning() async {
   while (DateTime.now().isBefore(deadline)) {
     await Future<void>.delayed(_kPollInterval);
     config = resolver.resolveDaemonApi();
-    if (config != null && await isDaemonApiAlive(config)) return config;
+    if (config != null && await isDaemonApiAlive(config)) {
+      uiLog(
+        'alive sur ${config.baseUrl} apres spawn '
+        '+${DateTime.now().difference(t0).inMilliseconds} ms',
+      );
+      return config;
+    }
   }
+  uiLog('timeout ${_kStartupTimeout.inSeconds}s sans reponse du daemon');
   return null;
 }
 

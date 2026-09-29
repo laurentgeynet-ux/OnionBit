@@ -21,6 +21,9 @@ class StatusBar extends ConsumerWidget {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final connected = ref.watch(sseConnectedProvider).value ?? false;
+    // Watchdog : re-resolution de l'URL du daemon tant que le SSE est
+    // coupe (port `http_port_running` périmé au redémarrage).
+    ref.watch(connectionWatchdogProvider);
     final speeds = ref.watch(totalSpeedsProvider);
     final lane = ref.watch(anonLaneProvider).value;
     final small = theme.textTheme.bodySmall;

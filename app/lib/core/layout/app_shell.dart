@@ -4,6 +4,8 @@ import 'package:go_router/go_router.dart';
 import '../router/nav_catalog.dart';
 import 'app_sidebar.dart';
 import 'breakpoints.dart';
+import 'drop_zone.dart';
+import 'pending_files_handler.dart';
 import 'status_bar.dart';
 import 'top_bar.dart';
 
@@ -34,13 +36,15 @@ class AppShell extends StatelessWidget {
   Widget build(BuildContext context) {
     final breakpoint = AppBreakpoints.of(MediaQuery.sizeOf(context).width);
 
-    final body = Column(
-      children: [
-        const TopBar(),
-        ?banner,
-        Expanded(child: child),
-        const StatusBar(),
-      ],
+    final body = DropZone(
+      child: Column(
+        children: [
+          const TopBar(),
+          ?banner,
+          Expanded(child: child),
+          const StatusBar(),
+        ],
+      ),
     );
 
     if (breakpoint == AppBreakpoint.compact) {
@@ -49,7 +53,11 @@ class AppShell extends StatelessWidget {
           .indexWhere((d) => currentPath.startsWith(d.path))
           .clamp(0, destinations.length - 1);
       return Scaffold(
-        body: SafeArea(child: body),
+        body: SafeArea(
+          child: Stack(
+            children: [Positioned.fill(child: body), const PendingFilesHandler()],
+          ),
+        ),
         bottomNavigationBar: NavigationBar(
           selectedIndex: selected,
           onDestinationSelected: (i) => context.go(destinations[i].path),
@@ -70,7 +78,13 @@ class AppShell extends StatelessWidget {
         children: [
           AppSidebar(currentPath: currentPath, currentQuery: currentQuery),
           const VerticalDivider(width: 1),
-          Expanded(child: SafeArea(child: body)),
+          Expanded(
+            child: SafeArea(
+              child: Stack(
+                children: [Positioned.fill(child: body), const PendingFilesHandler()],
+              ),
+            ),
+          ),
         ],
       ),
     );

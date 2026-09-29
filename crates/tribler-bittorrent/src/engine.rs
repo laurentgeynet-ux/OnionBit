@@ -80,15 +80,18 @@ impl BtEngine {
         )
         .await
         .map_err(|e| BtError::Engine(e.to_string()))?;
-        // `libtorrent/dht_readiness_timeout` Tribler : attendre que la
-        // DHT soit peuplee avant de declarer la session prete (sans
-        // effet si la DHT est desactivee).
+        // `libtorrent/dht_readiness_timeout` Tribler : l'attente du
+        // peuplement DHT se fait en tache de fond — elle bornait le
+        // demarrage a ~30 s quand la DHT mettait du temps a remonter,
+        // retardant le bind de l'API pour rien (rqbit gere ses
+        // annonces DHT en interne, aucun consommateur n'attend un
+        // etat "dht prete").
         if config.enable_dht && config.dht_readiness_timeout_secs > 0 {
-            Self::wait_dht_ready(
-                &session,
-                Duration::from_secs(config.dht_readiness_timeout_secs),
-            )
-            .await;
+            let timeout = Duration::from_secs(config.dht_readiness_timeout_secs);
+            let session = session.clone();
+            tokio::spawn(async move {
+                Self::wait_dht_ready(&session, timeout).await;
+            });
         }
         let (kill_switch, watchdog_stop) = match proxy_addr {
             Some(addr) => {
@@ -552,6 +555,10 @@ fn rqbit_opts(o: &crate::add_options::AddDownloadOptions) -> AddTorrentOptions {
         paused: o.paused,
         overwrite: true,
         output_folder: o.output_folder.as_ref().map(|p| p.display().to_string()),
+        // Parite libtorrent : les torrents multi-fichiers s'ecrivent
+        // dans <destination>/<nom du torrent>/ — aussi sous une
+        // `destination` explicite (pas seulement le defaut rqbit).
+        name_subfolder: true,
         only_files: o.only_files.clone(),
         trackers: (!o.trackers.is_empty()).then(|| o.trackers.clone()),
         ratelimits: librqbit::limits::LimitsConfig {

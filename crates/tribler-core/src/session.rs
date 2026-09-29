@@ -92,6 +92,24 @@ struct PersistParams {
     extra_trackers: Vec<String>,
 }
 
+/// Ajout magnet en cours de resolution des metadonnees (BEP 9) —
+/// librqbit ne cree le torrent qu'apres `resolve_magnet` ; Python
+/// affiche le download immediatement en etat `METADATA`, on expose
+/// donc l'attente via `pending_downloads()` + `GET /api/downloads`.
+#[derive(Debug, Clone)]
+pub struct PendingDownload {
+    /// Info-hash hex (v1).
+    pub infohash: String,
+    /// Nom d'affichage (`dn` du magnet).
+    pub name: Option<String>,
+    /// Sauts anonymes demandes.
+    pub anon_hops: u32,
+    /// Ajout en pause.
+    pub paused: bool,
+    /// Timestamp d'ajout (secondes Unix).
+    pub added_on: i64,
+}
+
 struct Inner {
     config: CoreConfig,
     /// Sous-ensemble de reglages mutables a chaud (`POST /api/settings`) :
@@ -115,6 +133,9 @@ struct Inner {
     /// l'arret (Ctrl-C, item « Quitter » du systray, `PUT
     /// /api/shutdown` puis le graceful shutdown du serveur).
     stopped: std::sync::atomic::AtomicBool,
+    /// Magnets en cours de resolution BEP 9 (cle : infohash hex) —
+    /// visibles dans `GET /api/downloads` en statut `METADATA`.
+    pending: std::sync::Mutex<std::collections::HashMap<String, PendingDownload>>,
     /// Fin de la restauration des telechargements persistes
     /// (`load_checkpoint` Python — asynchrone) : `false` → `true`
     /// quand la tache de fond a termine ; [`Self::wait_restored`]
@@ -170,6 +191,7 @@ impl CoreSession {
                 ipv8,
                 last_tracker_sync: std::sync::Mutex::new(None),
                 asyncio,
+                pending: std::sync::Mutex::new(std::collections::HashMap::new()),
                 stopped: std::sync::atomic::AtomicBool::new(false),
                 restore_done: tokio::sync::watch::channel(false).0,
                 augmenter: augmenter.clone(),
@@ -222,6 +244,7 @@ impl CoreSession {
                 ipv8,
                 last_tracker_sync: std::sync::Mutex::new(None),
                 asyncio,
+                pending: std::sync::Mutex::new(std::collections::HashMap::new()),
                 stopped: std::sync::atomic::AtomicBool::new(false),
                 // Base memoire : rien a restaurer — restauration
                 // marquee terminee d'emblee.
@@ -805,13 +828,40 @@ impl CoreSession {
             self.check_uri_policy(uri).await?;
         }
         self.check_low_space();
+        // `download_exists` Python : un infohash deja gere (sur
+        // n'importe quelle lane) n'est pas re-ajoute — sinon le
+        // doublon ecrasait la ligne `downloads` partagee (anon_hops,
+        // finished, reglages) du download existant.
+        let magnet = tribler_format::magnet::MagnetLink::parse(uri).ok();
+        if let Some(m) = &magnet {
+            if let Some(existing) = self.find_download_hex(&m.info_hash_hex()) {
+                return Ok(existing);
+            }
+        }
         let engine = self.engine_for(anon_hops).await?;
         // Trackers par defaut (`trackers_file`) : ajoutes a chaque
         // nouveau telechargement, comme le post-handle
         // `ADD_DEFAULT_TRACKERS` Python — et persistes dans
         // `extra_trackers` pour survivre aux re-adds.
         let trackers = self.default_trackers().await;
-        let dl = engine
+        // Etat `METADATA` Python : la resolution BEP 9 d'un magnet
+        // peut durer longtemps (surtout en lane anonyme) — le
+        // download est visible dans `GET /api/downloads` pendant
+        // l'attente au lieu de n'apparaitre qu'une fois resolu.
+        let pending_key = magnet.as_ref().map(|m| m.info_hash_hex());
+        if let Some(k) = &pending_key {
+            self.inner.pending.lock().unwrap().insert(
+                k.clone(),
+                PendingDownload {
+                    infohash: k.clone(),
+                    name: magnet.as_ref().and_then(|m| m.display_name.clone()),
+                    anon_hops,
+                    paused,
+                    added_on: now_unix(),
+                },
+            );
+        }
+        let add_res = engine
             .add_uri_opts(
                 uri,
                 &AddDownloadOptions {
@@ -821,7 +871,11 @@ impl CoreSession {
                     ..Default::default()
                 },
             )
-            .await?;
+            .await;
+        if let Some(k) = &pending_key {
+            self.inner.pending.lock().unwrap().remove(k);
+        }
+        let dl = add_res?;
         self.persist(
             &dl,
             uri,
@@ -1028,6 +1082,13 @@ impl CoreSession {
         // Parsing borne en amont pour extraire l'info-hash a persister.
         let meta = tribler_format::torrent::TorrentMeta::parse(&bytes)?;
         self.check_low_space();
+        // `download_exists` Python : idem magnet — pas de doublon
+        // cross-lane qui ecraserait la ligne persistee de l'existant.
+        if let Some(existing) =
+            self.find_download_hex(&tribler_crypto::hash::to_hex(&meta.info_hash))
+        {
+            return Ok(existing);
+        }
         let engine = self.engine_for(anon_hops).await?;
         // Pas de trackers par defaut sur un torrent prive (condition
         // `not torrent_info.priv()` du `_post_handle_events` Python).
@@ -1270,6 +1331,18 @@ impl CoreSession {
             .find_map(|e| e.have_pieces_base64(id_or_hash))
     }
 
+    /// Magnets en cours de resolution BEP 9 (`METADATA` Python) —
+    /// fusionnes dans `GET /api/downloads` par la couche API.
+    pub fn pending_downloads(&self) -> Vec<PendingDownload> {
+        self.inner
+            .pending
+            .lock()
+            .unwrap()
+            .values()
+            .cloned()
+            .collect()
+    }
+
     /// `anon_hops` par info-hash hex, d'apres la persistance DB
     /// (utilise par `GET /api/downloads` pour `hops`/`anon_download`).
     pub fn anon_hops_map(&self) -> std::collections::HashMap<String, u32> {
@@ -1369,6 +1442,23 @@ impl CoreSession {
         let infohash = self.find_download(id_or_hash).map(|d| d.info_hash_hex());
         self.remove_engine_only(id_or_hash, delete_files).await?;
         if let Some(h) = infohash {
+            // Source importee via le dossier surveille : la retirer
+            // aussi, sinon le prochain scan re-importerait le download.
+            let watch_dir = self
+                .inner
+                .services
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .watch_folder
+                .as_ref()
+                .map(|w| w.directory().to_path_buf());
+            if let Some(dir) = watch_dir {
+                let h2 = h.clone();
+                let _ = tokio::task::spawn_blocking(move || {
+                    crate::services::watch_folder::remove_source(&dir, &h2);
+                })
+                .await;
+            }
             if let Some(ih) = tribler_crypto::hash::from_hex(&h) {
                 let _ = self
                     .inner

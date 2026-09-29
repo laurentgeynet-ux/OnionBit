@@ -125,6 +125,30 @@ pub async fn get_downloads(
             v
         })
         .collect();
+    // Magnets en cours de resolution BEP 9 : le download apparait
+    // immediatement en statut `METADATA` (etat Python), avant meme
+    // que le moteur ait le metainfo — sinon l'ajout semble ignore.
+    let mut downloads: Vec<serde_json::Value> = downloads;
+    for p in state.session.pending_downloads() {
+        if downloads
+            .iter()
+            .any(|d| d.get("infohash").and_then(|v| v.as_str()) == Some(p.infohash.as_str()))
+        {
+            continue;
+        }
+        downloads.push(serde_json::json!({
+            "infohash": p.infohash,
+            "name": p.name.unwrap_or_default(),
+            "progress": 0.0,
+            "status": "METADATA",
+            "status_code": 7,
+            "hops": p.anon_hops,
+            "anon_download": p.anon_hops > 0,
+            "safe_seeding": p.anon_hops > 0,
+            "time_added": p.added_on,
+            "user_stopped": p.paused,
+        }));
+    }
     Json(serde_json::json!({
         "downloads": downloads,
         // `checkpoints` : champ Python emis pour compat. `clierrors`
@@ -436,6 +460,39 @@ pub async fn add_download(
     }
 
     let dl = if let Some(uri) = &uri {
+        if uri.starts_with("magnet:") {
+            // `async_add_torrent` Python rend la main immediatement :
+            // le download apparait en etat "metadonnees" et la
+            // resolution BEP 9 se poursuit en arriere-plan. librqbit
+            // `resolve_magnet` attend les metadonnees DANS l'appel —
+            // on le depporte en tache pour ne pas bloquer le client
+            // (le spinner UI tournait sans fin).
+            let magnet = tribler_format::magnet::MagnetLink::parse(uri)
+                .map_err(|e| add_err(&state, format!("magnet invalide: {e}"), cli))?;
+            let infohash = magnet.info_hash_hex();
+            let name = magnet.display_name.clone().unwrap_or_default();
+            let st = state.clone();
+            let uri = uri.clone();
+            let dest = destination.clone();
+            tokio::spawn(async move {
+                if let Err(e) = st
+                    .session
+                    .add_download_anon(&uri, paused, hops, safe_seeding, dest)
+                    .await
+                {
+                    let msg = e.to_string();
+                    if cli {
+                        st.push_cli_error(msg.clone());
+                    }
+                    tracing::warn!(error = %msg, "ajout magnet en arriere-plan echoue");
+                }
+            });
+            return Ok(Json(serde_json::json!({
+                "started": true,
+                "infohash": infohash,
+                "name": name,
+            })));
+        }
         state
             .session
             .add_download_anon(uri, paused, hops, safe_seeding, destination.clone())

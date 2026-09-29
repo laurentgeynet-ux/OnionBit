@@ -1,5 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../core/config/ui_log.dart';
 import '../../../../core/di/providers.dart';
 import '../../data/rest_diagnostic_repository.dart';
 import '../../domain/diagnostic_models.dart';
@@ -86,6 +87,13 @@ final daemonLogsProvider = FutureProvider.autoDispose<String>(
     return ref.watch(diagnosticRepositoryProvider).logs();
   },
 );
+
+/// Journal UI (`logs/ui.log` — connexion daemon, bascules SSE,
+/// ajouts de téléchargement, recherches distantes…).
+final uiConnectLogProvider = FutureProvider.autoDispose<String>((ref) {
+  ref.watch(tickProvider(_kDiagnosticPoll));
+  return readUiLog();
+});
 
 /// État du mode debug du journal (`GET /api/ipv8/asyncio/debug` →
 /// `enable`) — piloté par l'interrupteur de l'onglet Journaux.

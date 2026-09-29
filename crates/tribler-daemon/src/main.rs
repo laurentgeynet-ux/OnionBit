@@ -239,6 +239,7 @@ fn spawn_tray(
         autostart_cmd,
         icon_color: parse_tray_icon_color(&daemon_config.tray_icon_color),
         shutdown: signal.clone(),
+        tooltip_rx: None,
     })
 }
 
@@ -351,10 +352,24 @@ async fn main() -> ExitCode {
         cfg
     };
 
+    // Source unique d'arret : Ctrl-C, tray « Quitter », /api/shutdown.
+    // Cree avant la session pour que le tray « Quitter » existe meme
+    // pendant le demarrage.
+    let shutdown_signal = ShutdownSignal::new();
+
+    // Icone systray immediate (le GUI Python s'affiche avant que le
+    // core soit pret) — la restauration des telechargements et le
+    // peuplement DHT peuvent prendre ~1 min sur de gros fichiers ; le
+    // tooltip est maj avec le port reel une fois l'API bindée.
+    let tray = spawn_tray(&args, &daemon_config, "Tribler".into(), &shutdown_signal);
+
     let session = match CoreSession::start(config, Notifier::new()).await {
         Ok(s) => s,
         Err(e) => {
             tracing::error!(error = %e, "demarrage de la session impossible");
+            if let Some(t) = tray {
+                t.stop();
+            }
             return ExitCode::FAILURE;
         }
     };
@@ -368,14 +383,10 @@ async fn main() -> ExitCode {
             .notify(tribler_core::Notification::ReportConfigError { error: err });
     }
 
-    // Source unique d'arret : Ctrl-C, tray « Quitter », /api/shutdown.
-    let shutdown_signal = ShutdownSignal::new();
-
     if !daemon_config.api.http_enabled {
         // api/http_enabled=false : le daemon tourne sans plan de
         // controle HTTP (comme Tribler sans REST manager).
         tracing::warn!("api/http_enabled=false : l'API de controle n'est pas exposee");
-        let tray = spawn_tray(&args, &daemon_config, "Tribler".into(), &shutdown_signal);
         wait_shutdown_sources(&shutdown_signal).await;
         tracing::info!("signal d'arret recu, fermeture de la session");
         session.stop().await;
@@ -388,11 +399,34 @@ async fn main() -> ExitCode {
 
     tracing::info!(listen = %listen, "demarrage de l'API de controle");
 
+    // Port configure occupe -> repli ephemere (`http_port_running` est
+    // de toute facon publie ; mieux qu'un echec de demarrage).
     let listener = match tokio::net::TcpListener::bind(listen).await {
         Ok(l) => l,
+        Err(e) if listen.port() != 0 => {
+            tracing::warn!(
+                error = %e,
+                listen = %listen,
+                "port configure indisponible, repli sur un port ephemere"
+            );
+            match tokio::net::TcpListener::bind(format!("{}:0", listen.ip())).await {
+                Ok(l) => l,
+                Err(e2) => {
+                    tracing::error!(error = %e2, "bind impossible");
+                    session.stop().await;
+                    if let Some(t) = tray {
+                        t.stop();
+                    }
+                    return ExitCode::FAILURE;
+                }
+            }
+        }
         Err(e) => {
             tracing::error!(error = %e, listen = %listen, "bind impossible");
             session.stop().await;
+            if let Some(t) = tray {
+                t.stop();
+            }
             return ExitCode::FAILURE;
         }
     };
@@ -440,12 +474,13 @@ async fn main() -> ExitCode {
         tracing::warn!(error = %e, "reecriture de configuration.json impossible");
     }
 
-    let tray = spawn_tray(
-        &args,
-        &daemon_config,
-        format!("Tribler — {listen}"),
-        &shutdown_signal,
-    );
+    // Tooltip du tray : port REEL (http_port=0 => ephemere — afficher
+    // `listen` montrerait `127.0.0.1:0`).
+    if let Some(t) = &tray {
+        if let Ok(addr) = listener.local_addr() {
+            t.set_tooltip(format!("Tribler — {addr}"));
+        }
+    }
 
     // Arret propre : Ctrl-C / tray « Quitter » / PUT /api/shutdown ->
     // session.stop() -> fin du serveur. `stop()` est idempotent : la

@@ -156,3 +156,47 @@ impl WatchFolderService {
         }
     }
 }
+
+/// Supprime le fichier source (`*.torrent` / `*.magnet`) d'un
+/// telechargement dont l'info-hash est `ih_hex` dans le repertoire
+/// surveille — sinon le scan suivant le re-importerait
+/// automatiquement. Bloquant (fs sync) : appeler via
+/// `tokio::task::spawn_blocking`. Ne touche que `dir`.
+pub fn remove_source(dir: &Path, ih_hex: &str) {
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&d) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            let matches = match path.extension().and_then(|e| e.to_str()) {
+                Some("torrent") => std::fs::read(&path)
+                    .ok()
+                    .and_then(|b| tribler_format::torrent::TorrentMeta::parse(&b).ok())
+                    .is_some_and(|m| {
+                        tribler_crypto::hash::to_hex(&m.info_hash).eq_ignore_ascii_case(ih_hex)
+                    }),
+                Some("magnet") => std::fs::read_to_string(&path)
+                    .ok()
+                    .and_then(|s| tribler_format::magnet::MagnetLink::parse(s.trim()).ok())
+                    .is_some_and(|m| m.info_hash_hex().eq_ignore_ascii_case(ih_hex)),
+                _ => false,
+            };
+            if matches {
+                match std::fs::remove_file(&path) {
+                    Ok(()) => {
+                        tracing::info!(path = %path.display(), "watch_folder: source supprimee");
+                    }
+                    Err(e) => {
+                        tracing::warn!(path = %path.display(), error = %e, "watch_folder: source non supprimable");
+                    }
+                }
+            }
+        }
+    }
+}

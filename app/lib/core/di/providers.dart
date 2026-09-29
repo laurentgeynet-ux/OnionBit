@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../api/api_client.dart';
@@ -37,6 +39,27 @@ final daemonEventsProvider = StreamProvider<SseEvent>((ref) {
   return ref.watch(sseClientProvider).events;
 });
 
+/// Watchdog connexion : tant que le flux SSE est coupé, re-résout
+/// l'URL/clé du daemon toutes les 5 s (`configuration.json` peut
+/// pointer un port `http_port_running` périmé si le daemon a
+/// redémarré entre le `build()` et le bind — l'app restait figée sur
+/// le mauvais port avec le backoff SSE jusqu'à 30 s).
+final connectionWatchdogProvider = Provider<void>((ref) {
+  Timer? timer;
+  ref.listen<AsyncValue<bool>>(sseConnectedProvider, (prev, next) {
+    final connected = next.value ?? false;
+    if (connected) {
+      timer?.cancel();
+      timer = null;
+      return;
+    }
+    timer ??= Timer.periodic(const Duration(seconds: 5), (_) {
+      ref.read(connectionSettingsProvider.notifier).rediscover();
+    });
+  });
+  ref.onDispose(() => timer?.cancel());
+});
+
 /// Battement périodique pour les providers à sondage (compteurs de
 /// circuits, statistiques…).
 final tickProvider = StreamProvider.autoDispose.family<int, Duration>(
@@ -54,4 +77,27 @@ class SearchQueryNotifier extends Notifier<String> {
   String build() => '';
 
   void set(String value) => state = value;
+}
+
+/// Fichiers `.torrent`/`.magnet` passés en argv au lancement
+/// (« Ouvrir avec » / association Windows). Surchargé dans
+/// `main()` via `ProviderScope(overrides: …)`.
+final startupFilesProvider = Provider<List<String>>((ref) => const []);
+
+/// File des fichiers à importer : argv de démarrage + glisser-
+/// déposer. Chaque entrée ouvre le dialogue « Ajouter » à tour
+/// de rôle (`PendingFilesHandler` dans `app_shell.dart`).
+final pendingFilesProvider =
+    NotifierProvider<PendingFilesNotifier, List<String>>(
+      PendingFilesNotifier.new,
+    );
+
+class PendingFilesNotifier extends Notifier<List<String>> {
+  @override
+  List<String> build() => List.of(ref.watch(startupFilesProvider));
+
+  void enqueue(Iterable<String> paths) => state = [...state, ...paths];
+
+  /// Retire le premier élément (après fermeture du dialogue).
+  void pop() => state = state.sublist(1);
 }

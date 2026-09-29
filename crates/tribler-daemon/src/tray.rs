@@ -32,6 +32,10 @@ pub struct TrayOptions {
     pub icon_color: Option<[u8; 3]>,
     /// Signal déclenché par « Quitter ».
     pub shutdown: ShutdownSignal,
+    /// Mises à jour de tooltip (ex. port réel une fois l'API bindée —
+    /// l'icône est créée avant `CoreSession::start`, comme le GUI
+    /// Python qui s'affiche avant que le core soit prêt).
+    pub tooltip_rx: Option<std::sync::mpsc::Receiver<String>>,
 }
 
 /// Handle runtime du tray (`None` si désactivé ou échec de création).
@@ -39,6 +43,9 @@ pub struct TrayHandle {
     #[cfg(windows)]
     inner: windows_impl::Inner,
 }
+
+#[cfg(windows)]
+const WM_TRAY: u32 = 0x8000; // WM_APP : reveille la pompe pour les updates.
 
 #[cfg(windows)]
 mod windows_impl {
@@ -62,6 +69,7 @@ mod windows_impl {
 
     pub struct Inner {
         thread_id: u32,
+        tooltip_tx: mpsc::Sender<String>,
         join: std::thread::JoinHandle<()>,
     }
 
@@ -74,12 +82,23 @@ mod windows_impl {
             }
             let _ = self.join.join();
         }
+
+        /// Met à jour le texte de survol (port réel une fois bindé).
+        pub fn set_tooltip(&self, tooltip: String) {
+            if self.tooltip_tx.send(tooltip).is_ok() {
+                unsafe {
+                    let _ = PostThreadMessageW(self.thread_id, super::WM_TRAY, 0, 0);
+                }
+            }
+        }
     }
 
     /// Crée le thread tray. `None` si le thread ou l'icône n'a pas pu
     /// être créée (le daemon continue sans systray).
-    pub fn spawn(opts: TrayOptions) -> Option<Inner> {
+    pub fn spawn(mut opts: TrayOptions) -> Option<Inner> {
         let (tx, rx) = mpsc::channel();
+        let (ttx, trx) = mpsc::channel();
+        opts.tooltip_rx = Some(trx);
         let join = std::thread::Builder::new()
             .name("tray".into())
             .spawn(move || run(opts, tx))
@@ -90,7 +109,11 @@ mod windows_impl {
             .ok()?;
         // Le thread répond Some(tid) si l'icône est créée, None sinon.
         match rx.recv_timeout(Duration::from_secs(10)) {
-            Ok(Some(thread_id)) => Some(Inner { thread_id, join }),
+            Ok(Some(thread_id)) => Some(Inner {
+                thread_id,
+                tooltip_tx: ttx,
+                join,
+            }),
             Ok(None) => {
                 let _ = join.join();
                 None
@@ -132,7 +155,7 @@ mod windows_impl {
             .with_tooltip(&opts.tooltip)
             .with_icon(load_icon(opts.icon_color))
             .build();
-        let _tray = match tray {
+        let tray = match tray {
             Ok(t) => t,
             Err(e) => {
                 tracing::warn!(error = %e, "icône systray impossible à créer");
@@ -144,13 +167,19 @@ mod windows_impl {
         tracing::info!("icône de notification créée");
 
         // Pompe Win32 : les WM_COMMAND du menu arrivent pendant
-        // DispatchMessageW — drainer les MenuEvent juste après.
+        // DispatchMessageW — drainer les MenuEvent et les updates de
+        // tooltip juste après (WM_TRAY reveille la pompe).
         unsafe {
             let mut msg: MSG = std::mem::zeroed();
             while GetMessageW(&mut msg, null_mut(), 0, 0) > 0 {
                 TranslateMessage(&msg);
                 DispatchMessageW(&msg);
                 drain_menu_events(&opts, &open_ui, &autostart_item, &open_logs, &quit);
+                if let Some(rx) = &opts.tooltip_rx {
+                    while let Ok(tip) = rx.try_recv() {
+                        let _ = tray.set_tooltip(Some(&tip));
+                    }
+                }
             }
         }
         tracing::info!("thread systray terminé");
@@ -228,6 +257,12 @@ pub fn spawn(_opts: TrayOptions) -> Option<TrayHandle> {
 }
 
 impl TrayHandle {
+    /// Met à jour le texte de survol (no-op hors Windows).
+    pub fn set_tooltip(&self, tooltip: String) {
+        #[cfg(windows)]
+        self.inner.set_tooltip(tooltip);
+    }
+
     /// Retire l'icône et termine le thread tray.
     pub fn stop(self) {
         #[cfg(windows)]

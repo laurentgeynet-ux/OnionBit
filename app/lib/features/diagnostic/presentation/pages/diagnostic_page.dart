@@ -474,6 +474,7 @@ class _LogsTab extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final logs = ref.watch(daemonLogsProvider);
+    final uiLog = ref.watch(uiConnectLogProvider).value ?? '';
     final debug = ref.watch(debugLogEnabledProvider);
     return Column(
       children: [
@@ -512,6 +513,31 @@ class _LogsTab extends ConsumerWidget {
             ),
           ],
         ),
+        if (uiLog.isNotEmpty)
+          ExpansionTile(
+            dense: true,
+            title: Text(
+              'Journal UI',
+              style: Theme.of(context).textTheme.bodyMedium,
+            ),
+            subtitle: Text(
+              'logs/ui.log — connexion daemon, SSE, ajouts, recherches',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            children: [
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Padding(
+                  padding: const EdgeInsets.all(AppSpacing.md),
+                  child: SelectableText(
+                    uiLog,
+                    style: Theme.of(context).textTheme.bodySmall
+                        ?.copyWith(fontFamily: 'monospace'),
+                  ),
+                ),
+              ),
+            ],
+          ),
         Expanded(
           child: logs.when(
             loading: () => const Center(child: CircularProgressIndicator()),

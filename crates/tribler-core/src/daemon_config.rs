@@ -47,6 +47,10 @@ pub struct ApiConfig {
     /// Hôte d'écoute (loopback uniquement — politique réseau).
     pub http_host: String,
     /// Port demandé (0 = aléatoire, publié dans `http_port_running`).
+    /// Défaut 8085 — l'UI tente ce port d'abord (Python utilise 0 car
+    /// son GUI lit `http_port_running` dans le fichier de config ;
+    /// notre UI découvre le daemon par scan, un port fixe évite le
+    /// scan à chaque démarrage). Si le port est pris, repli éphémère.
     pub http_port: u16,
     /// HTTPS désactivé par défaut (comme Python).
     pub https_enabled: bool,
@@ -68,7 +72,7 @@ impl Default for ApiConfig {
             key: String::new(),
             http_enabled: true,
             http_host: "127.0.0.1".into(),
-            http_port: 0,
+            http_port: 8085,
             https_enabled: false,
             https_host: "127.0.0.1".into(),
             https_port: 0,
@@ -587,6 +591,12 @@ impl DaemonConfig {
             Err(_) => (Self::default(), None),
         };
         cfg.ensure_api_key();
+        // Migration : `http_port=0` (ancien defaut — port ephemere a
+        // chaque demarrage) devient le port fixe 8085 que l'UI tente
+        // en premier ; un port configure explicitement est preserve.
+        if cfg.api.http_port == 0 {
+            cfg.api.http_port = 8085;
+        }
         (cfg, error)
     }
 

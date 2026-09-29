@@ -3,6 +3,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'app_config.dart';
 import 'daemon_launcher.dart';
+import 'ui_log.dart';
 
 /// Connexion au daemon persistée (`shared_preferences`) — URL de base
 /// de `tribler-api` + clé éventuelle. Modifiable dans Réglages, prend
@@ -50,6 +51,25 @@ class ConnectionSettingsNotifier extends AsyncNotifier<AppConfig> {
       baseUrl: savedUrl.isNotEmpty ? savedUrl : const AppConfig().baseUrl,
       apiKey: savedKey,
     );
+  }
+
+  /// Re-résout la connexion locale (relecture de `configuration.json`,
+  /// daemon relancé si mort). Appelé par le watchdog quand le SSE est
+  /// coupé durablement : sans ça, l'app resterait figée sur le port
+  /// `http_port_running` périmé lu au démarrage si le daemon a (re)bindé
+  /// sur un autre port entre-temps.
+  Future<void> rediscover() async {
+    final current = state.value;
+    if (current == null || !_isLoopback(current.baseUrl)) return;
+    final discovered = await ensureDaemonRunning();
+    if (discovered != null &&
+        (discovered.baseUrl != current.baseUrl ||
+            discovered.apiKey != current.apiKey)) {
+      uiLog(
+        'redecouverte : ${current.baseUrl} -> ${discovered.baseUrl}',
+      );
+      state = AsyncData(discovered);
+    }
   }
 
   /// Persiste et applique une nouvelle configuration de connexion.

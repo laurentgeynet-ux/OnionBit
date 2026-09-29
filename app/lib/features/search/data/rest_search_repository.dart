@@ -1,4 +1,5 @@
 import '../../../core/api/api_client.dart';
+import '../../../core/config/ui_log.dart';
 import '../domain/search_repository.dart';
 import '../domain/torrent_result.dart';
 
@@ -58,14 +59,23 @@ class RestSearchRepository implements SearchRepository {
 
   @override
   Future<RemoteQuery> searchRemote(String query) async {
-    final resp = await _api.put(
-      '/search/remote',
-      query: {'fts_text': query},
-    ) as Map<String, dynamic>;
-    return RemoteQuery(
-      requestUuid: '${resp['request_uuid'] ?? ''}',
-      peers: [for (final p in (resp['peers'] as List?) ?? const []) '$p'],
-    );
+    try {
+      final resp = await _api.put(
+        '/search/remote',
+        query: {'fts_text': query},
+      ) as Map<String, dynamic>;
+      uiLog(
+        'recherche distante "$query" -> uuid=${resp['request_uuid']} '
+        'peers=${(resp['peers'] as List?)?.length ?? 0}',
+      );
+      return RemoteQuery(
+        requestUuid: '${resp['request_uuid'] ?? ''}',
+        peers: [for (final p in (resp['peers'] as List?) ?? const []) '$p'],
+      );
+    } catch (e) {
+      uiLog('recherche distante "$query" en echec : $e');
+      rethrow;
+    }
   }
 
   @override
