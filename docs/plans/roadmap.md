@@ -492,13 +492,14 @@ activée en parité Python (loopback compris — `tribler-cli` la lit dans
 
 ## Jalon "backend terminé à 100 %"
 
-Toutes les étapes 0 à 18 cochées ; étape 12 reste `[i]` (critère
-« téléchargement via le réseau Tribler existant » ouvert — banc de
-clôture : rqbit → circuit → sortie pyipv8 `EXIT_BT` → seeder). Par
-décision utilisateur du 2026-09-28, l'interface desktop démarre
-avec ce critère ouvert documenté. Les étapes 21-28 (parité API)
-font partie du périmètre backend et peuvent avancer en parallèle
-de la phase 6.
+Toutes les étapes 0 à 18 cochées, étape 12 comprise : le critère
+« téléchargement via le réseau Tribler existant » est **validé** —
+le banc `scripts/interop_exit_download.ps1` a été rejoué le
+2026-09-29 contre le `TunnelCommunity` pyipv8 réel en sortie
+(`PEER_FLAG_EXIT_BT`) : 200 Ko rqbit/uTP à travers un circuit
+2 sauts, contenu vérifié octet à octet (`INTEROP EXIT DOWNLOAD OK`).
+Restent `[i]` : étape 20 (UI Flutter — validation visuelle) et étape
+29 (systray — validation visuelle).
 
 ## Phase 6 — Interface Flutter desktop
 

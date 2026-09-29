@@ -3,6 +3,16 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Étape 12 clôturée : interop tunnel rejouée contre pyipv8 réel (2026-09-29)
+
+Le banc `scripts/interop_exit_download.ps1` a été exécuté avec
+succès : téléchargement rqbit réel (200 Ko, uTP) à travers un
+circuit à 2 sauts dont le dernier saut est le vrai
+`TunnelCommunity` pyipv8 en sortie (`PEER_FLAG_EXIT_BT`) —
+`INTEROP EXIT DOWNLOAD OK`, contenu vérifié octet à octet. Le jalon
+« backend terminé à 100 % » de `roadmap.md` est mis à jour : plus
+aucune étape backend n'a de critère ouvert.
+
 ## Stores PEX persistés : intro points survivent au redémarrage (2026-09-29)
 
 Le rôle de point d'introduction (`TunnelCommunity.pex` —
