@@ -91,6 +91,10 @@ struct Inner {
     dest_circuits: Mutex<HashMap<SocketAddr, u32>>,
     /// File de datagrammes entrants (forme `kind`).
     incoming: tokio::sync::Mutex<mpsc::Receiver<(Vec<u8>, SocketAddr)>>,
+    /// Producteur de la file entrante — conserve pour
+    /// [`TunnelUdpSocket::inject_incoming`] (trafic e2e hidden
+    /// services pousse directement, sans passer par `data_rx`).
+    in_tx: mpsc::Sender<(Vec<u8>, SocketAddr)>,
     /// File de datagrammes sortants (drainee par la tache d'envoi).
     out_tx: mpsc::Sender<(Vec<u8>, SocketAddr)>,
 }
@@ -132,6 +136,7 @@ impl TunnelUdpSocket {
                 bind_addr,
                 dest_circuits: Mutex::new(HashMap::new()),
                 incoming: tokio::sync::Mutex::new(in_rx),
+                in_tx: in_tx.clone(),
                 out_tx,
             }),
         };
@@ -184,6 +189,31 @@ impl TunnelUdpSocket {
         }
 
         socket
+    }
+
+    /// Epingle `target` sur `cid` — equivalent du pinning
+    /// `select_circuit` mais impose par l'appelant. Cote seeder d'un
+    /// hidden service, l'adresse factice `circuit_id_to_ip(cid):1024`
+    /// du pair distant est epinglee sur le circuit e2e `RP_SEEDER`
+    /// pour que les reponses uTP repartent dans LE circuit lie et non
+    /// sur un circuit `DATA` aleatoire (`set_udp_associate_default_
+    /// remote` de `TriblerTunnelCommunity`).
+    pub fn pin_circuit(&self, target: SocketAddr, cid: u32) {
+        self.inner
+            .dest_circuits
+            .lock()
+            .unwrap()
+            .insert(target, cid);
+    }
+
+    /// Injecte un datagramme comme s'il arrivait du circuit (forme
+    /// `kind` deja verifiee par l'appelant). File pleine : perte UDP.
+    /// Cote seeder, les cellules `data` d'un circuit e2e lie sont
+    /// poussees ici avec l'adresse factice du pair comme `src` —
+    /// role du `serve` de `udp_relay` quand le service est une
+    /// `TunnelUdpSocket` et non une vraie socket UDP.
+    pub fn inject_incoming(&self, data: Vec<u8>, src: SocketAddr) {
+        let _ = self.inner.in_tx.try_send((data, src));
     }
 
     /// Surface de test : circuit epingle pour `target`, si encore
@@ -365,6 +395,10 @@ pub struct TunnelUdpSockets {
     /// Socket uTP prete a injecter dans
     /// `librqbit::ConnectionOptions::utp_socket`.
     pub utp: Arc<librqbit_utp::UtpSocket<TunnelUdpSocket, librqbit_utp::DefaultUtpEnvironment>>,
+    /// Transport uTP sous-jacent (`TunnelUdpSocket`) — expose pour
+    /// [`TunnelUdpSocket::inject_incoming`]/`pin_circuit` cote
+    /// hidden services.
+    pub utp_transport: TunnelUdpSocket,
     /// Socket pour `DhtSessionConfig::socket`.
     pub dht: TunnelUdpSocket,
     /// Socket pour `SessionOptions::udp_tracker_socket`.
@@ -380,13 +414,15 @@ impl TunnelUdpSockets {
         hops: usize,
         bind_addr: SocketAddr,
     ) -> Result<Self, librqbit_utp::Error> {
+        let utp_transport = TunnelUdpSocket::new(tunnel.clone(), hops, TunnelUdpKind::Utp, bind_addr);
         let utp = librqbit_utp::UtpSocket::new_with_opts(
-            TunnelUdpSocket::new(tunnel.clone(), hops, TunnelUdpKind::Utp, bind_addr),
+            utp_transport.clone(),
             librqbit_utp::DefaultUtpEnvironment {},
             librqbit_utp::SocketOpts::default(),
         )?;
         Ok(Self {
             utp,
+            utp_transport,
             dht: TunnelUdpSocket::new(tunnel.clone(), hops, TunnelUdpKind::Dht, bind_addr),
             tracker: TunnelUdpSocket::new(tunnel, hops, TunnelUdpKind::UdpTracker, bind_addr),
         })

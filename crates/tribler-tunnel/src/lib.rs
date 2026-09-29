@@ -29,6 +29,7 @@ pub mod http_tunnel;
 pub mod payload;
 pub(crate) mod pex;
 pub mod routing;
+pub mod settings;
 pub mod socks5;
 pub mod speedtest;
 pub mod tunnel_udp_socket;

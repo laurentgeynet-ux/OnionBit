@@ -13,6 +13,7 @@
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use tribler_bittorrent::{BtEngine, EngineConfig};
@@ -27,7 +28,10 @@ use tribler_ipv8::endpoint::UdpEndpoint;
 use tribler_ipv8::peer::Network;
 use tribler_ipv8::UdpAddress;
 use tribler_tunnel::community::TunnelCommunity;
+use tribler_tunnel::hidden_services::lookup_info_hash;
+use tribler_tunnel::routing::{circuit_id_to_ip, CIRCUIT_ID_PORT};
 use tribler_tunnel::socks5::Socks5Server;
+use tribler_tunnel::tunnel_udp_socket::TunnelUdpSocket;
 use tribler_tunnel::TRIBLER_TUNNEL_COMMUNITY_ID;
 
 use crate::error::{CoreError, Result};
@@ -183,6 +187,10 @@ struct AnonLane {
     socks: Arc<Socks5Server>,
     /// Moteur BitTorrent route via le SOCKS5 (uTP only).
     pub engine: BtEngine,
+    /// Transport uTP tunnelse de la lane — cote seeder d'un hidden
+    /// service, les cellules `data` d'un circuit e2e `RP_SEEDER` lie
+    /// y sont injectees (`inject_incoming` + `pin_circuit`).
+    pub utp_transport: TunnelUdpSocket,
     /// Arret du watchdog de circuits de la lane.
     circuit_watchdog_stop: Arc<tokio::sync::watch::Sender<bool>>,
 }
@@ -292,8 +300,7 @@ fn spawn_circuit_watchdog(
     tunnel: Arc<TunnelCommunity>,
     hops: usize,
     ks: Arc<tribler_network_policy::kill_switch::KillSwitch>,
-    min_circuits: usize,
-    max_circuits: usize,
+    circuit_bounds: Arc<(AtomicUsize, AtomicUsize)>,
     engine: BtEngine,
 ) -> Arc<tokio::sync::watch::Sender<bool>> {
     // Fail-closed des la creation de la lane (avant tout circuit).
@@ -320,7 +327,12 @@ fn spawn_circuit_watchdog(
                     )
                 })
                 .count();
-            actifs.clamp(min_circuits, max_circuits)
+            // Bornes relues a chaud (`POST /api/settings` ->
+            // `set_circuit_bounds`), comme `self.settings` Python.
+            actifs.clamp(
+                circuit_bounds.0.load(Ordering::Relaxed),
+                circuit_bounds.1.load(Ordering::Relaxed).max(1),
+            )
         };
         let mut tick = tokio::time::interval(CIRCUIT_PROBE_INTERVAL);
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -361,6 +373,9 @@ fn spawn_circuit_watchdog(
 /// metadonnees depuis `channel_node`, serialisation `.mdblob` + LZ4.
 struct SessionContentProvider {
     db: Arc<Database>,
+    /// `Notification.torrent_metadata_added` Python : chaque entree
+    /// inseree est notifiee (nourrit l'augmenteur de recherche).
+    notifier: crate::notifier::Notifier,
     /// `remote_queries_in_progress` Python : une seule requete
     /// `txt_filter` distante a la fois (`process_rpc_query_rate_limited`).
     remote_queries_in_progress: std::sync::atomic::AtomicUsize,
@@ -430,12 +445,12 @@ impl SessionContentProvider {
     /// Corps du select distant (cf. `ContentProvider::remote_select`).
     fn remote_select_inner(&self, query: &serde_json::Value) -> Vec<Vec<u8>> {
         // `sanitize_query` : `last` borne a `first + max_response_size`.
-        let first = query.get("first").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+        let first = query.get("first").and_then(|v| v.as_u64()).unwrap_or(0);
         let last = query
             .get("last")
             .and_then(|v| v.as_u64())
-            .map(|v| (v as usize).min(first + self.max_response_size))
-            .unwrap_or(first + self.max_response_size);
+            .map(|v| v.min(first + self.max_response_size as u64))
+            .unwrap_or(first + self.max_response_size as u64);
 
         let rows = self
             .db
@@ -588,42 +603,6 @@ impl ContentProvider for SessionContentProvider {
         }
         result
     }
-        // `sanitize_query` : `last` borne a `first + max_response_size`.
-        let first = query.get("first").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-        let last = query
-            .get("last")
-            .and_then(|v| v.as_u64())
-            .map(|v| (v as usize).min(first + self.max_response_size))
-            .unwrap_or(first + self.max_response_size);
-
-        let rows = self
-            .db
-            .with(|conn| select_rows(conn, query, first, last))
-            .unwrap_or_default();
-
-        // `entries_to_chunk` Python : entrees serialisees groupees
-        // par budget de `maximum_payload_size`, compressees LZ4 par
-        // chunk — chaque chunk part dans un `SelectResponse` separe.
-        let mut chunks: Vec<Vec<u8>> = Vec::new();
-        let mut cur = Vec::new();
-        for row in rows {
-            let Some(entry) = Self::row_to_entry(&row) else {
-                continue;
-            };
-            let Ok(bytes) = tribler_format::mdblob::encode_entry_presigned(&entry) else {
-                continue;
-            };
-            if cur.len() + bytes.len() > self.max_payload_size && !cur.is_empty() {
-                chunks.push(lz4_frame(&cur));
-                cur.clear();
-            }
-            cur.extend_from_slice(&bytes);
-        }
-        if !cur.is_empty() || chunks.is_empty() {
-            chunks.push(lz4_frame(&cur));
-        }
-        chunks
-    }
 
     /// `process_compressed_mdblob` : decompresse LZ4, parse les
     /// entrees et les insere dans `channel_node`. Retourne les
@@ -641,9 +620,11 @@ impl ContentProvider for SessionContentProvider {
         let Ok(entries) = tribler_format::mdblob::parse_blob(&data) else {
             return Vec::new();
         };
-        self.db
+        let (results, new_titles) = self
+            .db
             .with(|conn| {
                 let mut results = Vec::new();
+                let mut new_titles = Vec::new();
                 for e in &entries {
                     let Some(row) = entry_to_row(e) else {
                         continue;
@@ -654,10 +635,23 @@ impl ContentProvider for SessionContentProvider {
                         continue;
                     }
                     results.push(simple_dict(conn, &row)?);
+                    if !row.title.is_empty() {
+                        new_titles.push((hex::encode(&row.infohash), row.title.clone()));
+                    }
                 }
-                Ok(results)
+                Ok((results, new_titles))
             })
-            .unwrap_or_default()
+            .unwrap_or_default();
+        // `torrent_metadata_added` : le notifier consomme aussi les
+        // titres pour l'apprentissage de l'augmenteur.
+        for (infohash, title) in new_titles {
+            self.notifier
+                .notify(crate::notifier::Notification::TorrentMetadataCreated {
+                    infohash,
+                    title,
+                });
+        }
+        results
     }
 
     /// `(version, plateforme)` pour `VersionResponse` —
@@ -708,6 +702,9 @@ fn entry_to_row(
         xxx: 0.0,
         health_rowid: None,
         tag_processor_version: 0,
+        health_seeders: None,
+        health_leechers: None,
+        health_last_check: None,
     })
 }
 
@@ -791,13 +788,19 @@ fn json_metadata_types(query: &serde_json::Value) -> Option<Vec<i64>> {
 fn select_rows(
     conn: &rusqlite::Connection,
     query: &serde_json::Value,
-    first: usize,
-    last: usize,
+    first: u64,
+    last: u64,
 ) -> tribler_db::Result<Vec<tribler_db::models::ChannelNodeRow>> {
+    // `txt_filter` arrive deja formate FTS (`"a" "b"`) : il part en
+    // `FtsIndex MATCH` tel quel ; `terms` sert de repli `LIKE`.
+    let txt = query
+        .get("txt_filter")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
     let params = tribler_db::channel::SelectParams {
-        terms: query
-            .get("txt_filter")
-            .and_then(|v| v.as_str())
+        txt_filter: txt.clone(),
+        terms: txt
+            .as_deref()
             .map(crate::queries::fts_terms)
             .unwrap_or_default(),
         metadata_types: json_metadata_types(query),
@@ -814,17 +817,38 @@ fn select_rows(
             .unwrap_or_default(),
         channel_pk: json_hex_bytes(query, "channel_pk"),
         origin_id: query.get("origin_id").and_then(|v| v.as_i64()),
+        id_: query.get("id").and_then(|v| v.as_i64()),
         max_rowid: query.get("max_rowid").and_then(|v| v.as_i64()),
         hide_xxx: query
             .get("hide_xxx")
             .and_then(|v| v.as_bool().or_else(|| v.as_str().map(|s| s == "1" || s == "true")))
             .unwrap_or(false),
-        limit: last + 1,
+        sort_by: query
+            .get("sort_by")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        sort_desc: query
+            .get("sort_desc")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true),
+        category: query
+            .get("category")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        tags: query
+            .get("tags")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default(),
+        first,
+        last: Some(last),
+        ..Default::default()
     };
-    let mut rows = tribler_db::channel::select_entries(conn, &params)?;
-    let mut sliced: Vec<_> = rows.drain(first.min(rows.len())..).collect();
-    sliced.truncate(last.saturating_sub(first) + 1);
-    Ok(sliced)
+    tribler_db::channel::select_entries(conn, &params)
 }
 
 /// Stack IPv8 de session (endpoint + communities + lanes anonymes).
@@ -858,14 +882,36 @@ pub struct Ipv8Stack {
     state_dir: PathBuf,
     /// Registre partage des taches nommees (`/api/ipv8/asyncio/tasks`).
     tasks: crate::asyncio::TaskRegistry,
-    /// `TunnelSettings.min_circuits` (cf. `Ipv8Config::min_circuits`).
-    min_circuits: usize,
-    /// `TunnelSettings.max_circuits` (borne haute de la cible du
-    /// watchdog — `monitor_downloads` Python).
-    max_circuits: usize,
+    /// Bornes `min_circuits`/`max_circuits` partagees avec les
+    /// watchdogs de lanes : `POST /api/settings` les met a jour a
+    /// chaud (`set_circuit_bounds`) — Python relit `self.settings`
+    /// a chaque tick de `monitor_downloads`.
+    circuit_bounds: Arc<(AtomicUsize, AtomicUsize)>,
     /// `libtorrent/socks_listen_ports` (ports SOCKS5 par lane).
     socks_listen_ports: Vec<u16>,
+    /// `monitor_hidden_swarms` Python : dernier etat connu par
+    /// `(hops, lookup_info_hash)` pour detecter les transitions
+    /// join/leave des swarms caches.
+    swarm_states: Mutex<HashMap<(usize, [u8; 20]), tribler_bittorrent::DownloadState>>,
+    /// `lookup_info_hash -> (hops, info_hash reel)` : les circuits
+    /// e2e notifies par `e2e_ready` portent l'info-hash de LOOKUP du
+    /// swarm, ce mapping retrouve le download correspondant.
+    swarm_lookup: Mutex<HashMap<[u8; 20], (usize, [u8; 20])>>,
+    /// Arrets des taches hidden-services (monitor des swarms +
+    /// relais `e2e_ready`), creees a la premiere lane anonyme.
+    hidden_tasks: Mutex<Vec<tokio::sync::watch::Sender<bool>>>,
+    /// `Weak` auto-reference (les taches hidden-services demarrees
+    /// depuis `anon_engine(&self)` n'ont pas acces a `Arc<Self>`).
+    self_weak: Mutex<std::sync::Weak<Ipv8Stack>>,
 }
+
+/// Fichier de persistance des noeuds de sortie (`exitnode_cache`
+/// Python) dans `state_dir` : lignes `<pubkey_hex> <addr> <flags>`.
+const EXITNODE_CACHE_FILE: &str = "exitnodes.txt";
+
+/// Cadence de `monitor_hidden_swarms` Python (poll des etats de
+/// telechargement via `DownloadManager` / `get_last_download_states`).
+const SWARM_MONITOR_INTERVAL: std::time::Duration = std::time::Duration::from_secs(1);
 
 impl Ipv8Stack {
     /// Cree et demarre la stack : endpoint, communities, discovery
@@ -950,6 +996,7 @@ impl Ipv8Stack {
             let cd_settings = tribler_ipv8::content_discovery::ContentDiscoverySettings::default();
             let provider = Arc::new(SessionContentProvider {
                 db,
+                notifier: notifier.clone(),
                 remote_queries_in_progress: std::sync::atomic::AtomicUsize::new(0),
                 max_response_size: 100,
                 max_payload_size: 1300,
@@ -1004,7 +1051,12 @@ impl Ipv8Stack {
                 key.clone(),
                 network.clone(),
                 endpoint.clone(),
-                config.peer_flags,
+                tribler_tunnel::settings::TunnelSettings {
+                    peer_flags: config.peer_flags,
+                    min_circuits: config.min_circuits.max(1) as usize,
+                    max_circuits: config.max_circuits.max(1) as usize,
+                    ..tribler_tunnel::settings::TunnelSettings::default()
+                },
                 community_id,
             )
             .await;
@@ -1012,6 +1064,24 @@ impl Ipv8Stack {
             // tunnel-community emprunte les estimations WAN/LAN de la
             // discovery pour ses introductions et punctures.
             t.set_discovery(discovery.clone());
+            // `register_task("do_circuits")`/`do_ping`/
+            // `do_peer_discovery` Python : maintenance des circuits
+            // (nettoyage, keepalive, lookups de swarms caches).
+            tasks.register(Some("TriblerTunnelCommunity"), "maintenance", None);
+            let t_maint = t.clone();
+            tokio::spawn(async move {
+                t_maint.run_maintenance().await;
+            });
+            // `load_exit_nodes` Python : reintroduit les noeuds de
+            // sortie connus de la session precedente dans `Network`
+            // puis les re-sollicite (`send_introduction_request`).
+            for (pk, addr, flags) in load_exitnode_cache(&state_dir.join(EXITNODE_CACHE_FILE)) {
+                t.register_exit_peer(&pk, addr, flags);
+                let t = t.clone();
+                tokio::spawn(async move {
+                    let _ = t.send_introduction_request(&UdpAddress::from(addr)).await;
+                });
+            }
             Some(t)
         } else {
             None
@@ -1152,7 +1222,7 @@ impl Ipv8Stack {
             });
         }
 
-        Ok(Arc::new(Self {
+        let stack = Arc::new(Self {
             endpoint,
             network,
             discovery,
@@ -1166,10 +1236,18 @@ impl Ipv8Stack {
             downloads_dir: downloads_dir.to_path_buf(),
             state_dir: state_dir.to_path_buf(),
             tasks,
-            min_circuits: config.min_circuits.max(1) as usize,
-            max_circuits: config.max_circuits.max(1) as usize,
+            circuit_bounds: Arc::new((
+                AtomicUsize::new(config.min_circuits.max(1) as usize),
+                AtomicUsize::new(config.max_circuits.max(1) as usize),
+            )),
             socks_listen_ports: config.socks_listen_ports.clone(),
-        }))
+            swarm_states: Mutex::new(HashMap::new()),
+            swarm_lookup: Mutex::new(HashMap::new()),
+            hidden_tasks: Mutex::new(Vec::new()),
+            self_weak: Mutex::new(std::sync::Weak::new()),
+        });
+        *stack.self_weak.lock().unwrap() = Arc::downgrade(&stack);
+        Ok(stack)
     }
 
     /// Cle publique IPv8 (hex, affichage API).
@@ -1329,6 +1407,7 @@ impl Ipv8Stack {
         // demarrage de la lane pour rien (le bootstrap retente en
         // tache de fond).
         cfg.dht_readiness_timeout_secs = 0;
+        let utp_transport = udp_sockets.utp_transport.clone();
         cfg.utp_socket = Some(udp_sockets.utp);
         cfg.dht_socket = Some(std::sync::Arc::new(udp_sockets.dht));
         cfg.udp_tracker_socket = Some(std::sync::Arc::new(udp_sockets.tracker));
@@ -1355,19 +1434,71 @@ impl Ipv8Stack {
             engine
                 .kill_switch()
                 .expect("kill switch absent avec proxy configure"),
-            self.min_circuits,
-            self.max_circuits,
+            self.circuit_bounds.clone(),
             engine.clone(),
         );
         let lane = AnonLane {
             socks_addr,
             socks,
             engine: engine.clone(),
+            utp_transport,
             circuit_watchdog_stop,
         };
         self.anon_lanes.lock().unwrap().insert(hops, lane);
+        // `monitor_hidden_swarms` + `on_e2e_finished` Python : le
+        // suivi des swarms caches et l'injection des pairs e2e sont
+        // globaux a la stack, demarres a la premiere lane.
+        self.ensure_hidden_tasks(&tunnel);
         tracing::info!(hops, %socks_addr, "lane anonyme creee");
         Ok(engine)
+    }
+
+    /// Demarre (une fois) les taches hidden-services de la stack :
+    /// le poll `monitor_hidden_swarms` et le relais `e2e_ready` ->
+    /// pairs uTP (`on_e2e_finished` Python).
+    fn ensure_hidden_tasks(&self, tunnel: &Arc<TunnelCommunity>) {
+        let mut tasks = self.hidden_tasks.lock().unwrap();
+        if !tasks.is_empty() {
+            return;
+        }
+        let weak = self.self_weak.lock().unwrap().clone();
+        self.tasks.register(
+            Some("TriblerTunnelCommunity"),
+            "monitor_hidden_swarms",
+            Some(SWARM_MONITOR_INTERVAL.as_secs_f64()),
+        );
+        tasks.push(spawn_swarm_monitor(weak.clone(), tunnel.clone()));
+        tasks.push(spawn_e2e_listener(weak, tunnel.clone()));
+    }
+
+    /// Met a jour a chaud les bornes `min_circuits`/`max_circuits`
+    /// partagees avec les watchdogs de lanes (`POST /api/settings` —
+    /// comme `self.settings` relu par `monitor_downloads` Python).
+    pub fn set_circuit_bounds(&self, min_circuits: usize, max_circuits: usize) {
+        self.circuit_bounds
+            .0
+            .store(min_circuits.max(1), Ordering::Relaxed);
+        self.circuit_bounds
+            .1
+            .store(max_circuits.max(1), Ordering::Relaxed);
+    }
+
+    /// Bornes `min_circuits`/`max_circuits` effectives (pour
+    /// `effective_config` / `GET /api/settings`).
+    pub fn circuit_bounds(&self) -> (usize, usize) {
+        (
+            self.circuit_bounds.0.load(Ordering::Relaxed),
+            self.circuit_bounds.1.load(Ordering::Relaxed),
+        )
+    }
+
+    /// Lane anonyme pour `hops` sauts (acces interne au transport).
+    fn anon_lane(&self, hops: usize) -> Option<(BtEngine, TunnelUdpSocket)> {
+        self.anon_lanes
+            .lock()
+            .unwrap()
+            .get(&hops)
+            .map(|l| (l.engine.clone(), l.utp_transport.clone()))
     }
 
     /// Liste des lanes anonymes actives (statistiques API).
@@ -1397,6 +1528,14 @@ impl Ipv8Stack {
         if let Some(tx) = &self.dht_maintenance_stop {
             let _ = tx.send(true);
         }
+        for tx in self.hidden_tasks.lock().unwrap().drain(..) {
+            let _ = tx.send(true);
+        }
+        // `exitnode_cache` Python : persiste les noeuds de sortie
+        // connus (re-pinges au prochain demarrage).
+        if let Some(t) = &self.tunnel {
+            save_exitnode_cache(t, &self.state_dir.join(EXITNODE_CACHE_FILE));
+        }
         let lanes: Vec<AnonLane> = self
             .anon_lanes
             .lock()
@@ -1409,6 +1548,264 @@ impl Ipv8Stack {
             lane.engine.stop().await;
         }
     }
+}
+
+/// `load_exit_nodes` Python : lit `<pubkey_hex> <addr> <flags>` par
+/// ligne. Les entrees invalides sont ignorees (cache best-effort).
+fn load_exitnode_cache(path: &Path) -> Vec<(Vec<u8>, SocketAddr, i32)> {
+    let Ok(content) = std::fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    content
+        .lines()
+        .filter_map(|line| {
+            let mut it = line.split_whitespace();
+            let pk = hex::decode(it.next()?).ok()?;
+            let addr = it.next()?.parse().ok()?;
+            let flags = it.next()?.parse().ok()?;
+            Some((pk, addr, flags))
+        })
+        .collect()
+}
+
+/// `exitnode_cache` Python (`unload` -> `Network.snapshot` filtre
+/// aux exits) : les pairs verifies annoncant un flag de sortie sont
+/// persistes avec leurs flags pour etre re-pinges au redemarrage.
+fn save_exitnode_cache(tunnel: &TunnelCommunity, path: &Path) {
+    use tribler_network_policy::exit_policy::{
+        PEER_FLAG_EXIT_BT, PEER_FLAG_EXIT_HTTP, PEER_FLAG_EXIT_IPV8,
+    };
+    const EXIT_MASK: i32 = PEER_FLAG_EXIT_BT | PEER_FLAG_EXIT_IPV8 | PEER_FLAG_EXIT_HTTP;
+    let mut out = String::new();
+    for peer in tunnel.network().verified_peers() {
+        let flags = tunnel.peer_flags_of(&peer.public_key_bin);
+        if flags & EXIT_MASK == 0 {
+            continue;
+        }
+        let Some(addr) = peer.address.as_ref().and_then(|a| a.to_socket_addr()) else {
+            continue;
+        };
+        out.push_str(&format!("{} {addr} {flags}\n", hex::encode(&peer.public_key_bin)));
+    }
+    if out.is_empty() {
+        return;
+    }
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Err(e) = std::fs::write(path, out) {
+        tracing::warn!(error = %e, "exitnode_cache: ecriture impossible");
+    }
+}
+
+/// `monitor_hidden_swarms` de `TriblerTunnelCommunity` : poll des
+/// etats de telechargement des lanes anonymes — a chaque transition
+/// `join_swarm` (seeder au `Seeding`) / `leave_swarm`, et creation
+/// de points d'introduction (`create_introduction_point` +
+/// `establish-intro`) quand le torrent est complet.
+fn spawn_swarm_monitor(
+    stack: std::sync::Weak<Ipv8Stack>,
+    tunnel: Arc<TunnelCommunity>,
+) -> tokio::sync::watch::Sender<bool> {
+    let (tx, mut rx) = tokio::sync::watch::channel(false);
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(SWARM_MONITOR_INTERVAL);
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            tokio::select! {
+                _ = rx.changed() => break,
+                _ = tick.tick() => {}
+            }
+            let Some(stack) = stack.upgrade() else { break };
+            let mut seen = std::collections::HashSet::new();
+            let lanes: Vec<(usize, BtEngine)> = stack
+                .anon_lanes
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|(h, l)| (*h, l.engine.clone()))
+                .collect();
+            for (hops, engine) in lanes {
+                for stat in engine.list() {
+                    let Ok(raw) = hex::decode(&stat.info_hash) else {
+                        continue;
+                    };
+                    let Ok(real_ih) = <[u8; 20]>::try_from(raw.as_slice()) else {
+                        continue;
+                    };
+                    // `get_lookup_info_hash` : le swarm vit sous
+                    // l'identite SHA1("tribler anonymous download" +
+                    // hex(infohash)) — l'infohash reel reste sur le
+                    // download.
+                    let lookup = lookup_info_hash(&real_ih);
+                    seen.insert((hops, lookup));
+                    stack
+                        .swarm_lookup
+                        .lock()
+                        .unwrap()
+                        .insert(lookup, (hops, real_ih));
+                    let prev = stack
+                        .swarm_states
+                        .lock()
+                        .unwrap()
+                        .insert((hops, lookup), stat.state);
+                    if prev == Some(stat.state) {
+                        continue;
+                    }
+                    use tribler_bittorrent::DownloadState as S;
+                    match stat.state {
+                        S::Downloading | S::Initializing | S::Checking => {
+                            tunnel.join_swarm(lookup, hops, false);
+                        }
+                        S::Seeding => {
+                            // `seeding=True` + `max_intro_points` :
+                            // points d'introduction sur circuits
+                            // `IP_SEEDER` dedies a ce swarm.
+                            tunnel.join_swarm(lookup, hops, true);
+                            ensure_introduction_points(&tunnel, lookup);
+                        }
+                        S::Paused | S::Stopped | S::Error => {
+                            tunnel.leave_swarm(&lookup);
+                        }
+                    }
+                }
+            }
+            // Downloads disparus ou lanes arretees -> `leave_swarm`.
+            let gone: Vec<(usize, [u8; 20])> = stack
+                .swarm_states
+                .lock()
+                .unwrap()
+                .keys()
+                .filter(|k| !seen.contains(k))
+                .copied()
+                .collect();
+            for key in gone {
+                stack.swarm_states.lock().unwrap().remove(&key);
+                stack.swarm_lookup.lock().unwrap().remove(&key.1);
+                tunnel.leave_swarm(&key.1);
+            }
+        }
+    });
+    tx
+}
+
+/// Cree des points d'introduction jusqu'a `max_intro_points`
+/// circuits `IP_SEEDER` prets/en cours pour le swarm (`new_state ==
+/// SEEDING` de `monitor_hidden_swarms`).
+fn ensure_introduction_points(tunnel: &Arc<TunnelCommunity>, lookup: [u8; 20]) {
+    let lookup_hex = hex::encode(lookup);
+    let existing = tunnel
+        .circuits_info()
+        .iter()
+        .filter(|c| {
+            c.ctype == tribler_tunnel::routing::CIRCUIT_TYPE_IP_SEEDER
+                && c.info_hash.as_deref() == Some(lookup_hex.as_str())
+        })
+        .count();
+    let target = tunnel.settings.max_intro_points;
+    for _ in existing..target {
+        let tunnel = tunnel.clone();
+        tokio::spawn(async move {
+            match tunnel.create_introduction_point(lookup, None).await {
+                Ok(cid) => {
+                    let timeout = tunnel.settings.circuit_timeout.as_millis() as u64;
+                    if tunnel.wait_circuit_ready(cid, timeout).await.is_ok() {
+                        match tunnel.send_establish_intro(cid, lookup).await {
+                            Ok(rx) => {
+                                let _ = rx.await;
+                            }
+                            Err(e) => {
+                                tracing::debug!(cid, error = %e, "establish-intro non envoye");
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::debug!(error = %e, "create_introduction_point: pas de circuit IP_SEEDER");
+                }
+            }
+        });
+    }
+}
+
+/// `on_e2e_finished` Python : a la liaison d'un circuit e2e, injecte
+/// le pair dans le download concerne.
+///
+/// - `RP_DOWNLOADER` (on telecharge) : `udp_relay::dial` expose le
+///   circuit en loopback et l'adresse est injectee via
+///   `Download::add_peer` (`dl.add_peer(addr)` Python).
+/// - `RP_SEEDER` (on seede) : l'adresse factice
+///   `circuit_id_to_ip(cid):1024` est epinglee sur le circuit dans le
+///   transport uTP de la lane et les cellules `data` entrantes y
+///   sont injectees — les reponses repartent dans le meme circuit
+///   (`set_udp_associate_default_remote` Python).
+fn spawn_e2e_listener(
+    stack: std::sync::Weak<Ipv8Stack>,
+    tunnel: Arc<TunnelCommunity>,
+) -> tokio::sync::watch::Sender<bool> {
+    let (tx, mut rx) = tokio::sync::watch::channel(false);
+    let mut e2e = tunnel.e2e_ready();
+    tokio::spawn(async move {
+        loop {
+            let (cid, lookup) = tokio::select! {
+                _ = rx.changed() => break,
+                ev = e2e.recv() => match ev {
+                    Ok(v) => v,
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                },
+            };
+            let Some(stack) = stack.upgrade() else { break };
+            let Some((hops, real_ih)) =
+                stack.swarm_lookup.lock().unwrap().get(&lookup).copied()
+            else {
+                continue;
+            };
+            let Some((engine, utp)) = stack.anon_lane(hops) else {
+                continue;
+            };
+            let ctype = stack
+                .tunnel
+                .as_ref()
+                .and_then(|t| {
+                    t.circuits_info()
+                        .into_iter()
+                        .find(|c| c.circuit_id == cid)
+                        .map(|c| c.ctype)
+                })
+                .unwrap_or_default();
+            match ctype.as_str() {
+                tribler_tunnel::routing::CIRCUIT_TYPE_RP_DOWNLOADER => {
+                    let tunnel = tunnel.clone();
+                    tokio::spawn(async move {
+                        if let Ok(addr) =
+                            tribler_tunnel::udp_relay::dial(tunnel, cid).await
+                        {
+                            if let Some(dl) = engine.get_by_hash(&real_ih) {
+                                dl.add_peer(addr);
+                            }
+                        }
+                    });
+                }
+                tribler_tunnel::routing::CIRCUIT_TYPE_RP_SEEDER => {
+                    let fake = SocketAddr::V4(std::net::SocketAddrV4::new(
+                        circuit_id_to_ip(cid),
+                        CIRCUIT_ID_PORT,
+                    ));
+                    utp.pin_circuit(fake, cid);
+                    let mut data_rx = tunnel.subscribe_circuit_data(cid);
+                    let utp = utp.clone();
+                    tokio::spawn(async move {
+                        while let Some(msg) = data_rx.recv().await {
+                            utp.inject_incoming(msg.data, fake);
+                        }
+                    });
+                }
+                _ => {}
+            }
+        }
+    });
+    tx
 }
 
 /// Charge la cle IPv8 depuis `path` ou en cree une nouvelle (format

@@ -44,6 +44,17 @@ const MAX_SEEN_E2E: usize = 64;
 /// Nombre d'essais internes d'attente `READY` (poll 20 ms).
 const READY_POLL_MS: u64 = 20;
 
+/// `TriblerTunnelCommunity.get_lookup_info_hash`
+/// (`core/tunnel/community.py`) : identite publique du swarm cache —
+/// `SHA-1(b"tribler anonymous download" + hexlify(info_hash))`. Le
+/// swarm ne doit JAMAIS etre indexe par l'infohash reel (fuite du
+/// contenu telecharge sur les points d'introduction).
+pub fn lookup_info_hash(info_hash: &[u8; 20]) -> [u8; 20] {
+    let mut data = b"tribler anonymous download".to_vec();
+    data.extend_from_slice(hex::encode(info_hash).as_bytes());
+    tribler_crypto::hash::sha1(&data)
+}
+
 /// `E2ERequestCache` Python : contexte d'un `create-e2e` emis, en
 /// attente du `created-e2e`.
 pub(crate) struct E2ERequest {
@@ -717,6 +728,111 @@ impl TunnelCommunity {
                 })
                 .collect();
             let _ = tx.send(ips);
+        }
+    }
+
+    /// `do_peer_discovery` (`hidden_services.py`) : pour chaque swarm
+    /// non-seede dont le dernier lookup est assez vieux
+    /// (`swarm_lookup_interval`) et qui n'a pas atteint
+    /// `swarm_connection_limit`, interroge les points d'introduction
+    /// connus (PEX) — ou la sortie du circuit en mode DHT
+    /// (`target=None`) si aucun point n'est connu — puis lance
+    /// `create_e2e` vers les points decouverts.
+    pub(crate) async fn do_peer_discovery(self: &Arc<Self>) {
+        // Swarms eligibles (sous verrou, sans await).
+        let work: Vec<[u8; 20]> = {
+            let inner = self.inner.lock().unwrap();
+            inner
+                .swarms
+                .iter()
+                .filter(|(_, s)| {
+                    !s.seeding()
+                        && s.last_lookup.elapsed() >= self.settings.swarm_lookup_interval
+                        && s.connections.keys().filter(|cid| {
+                            inner
+                                .circuits
+                                .get(cid)
+                                .is_some_and(|c| c.ready() && c.e2e)
+                        })
+                        .count()
+                            < self.settings.swarm_connection_limit
+                })
+                .map(|(ih, _)| *ih)
+                .collect()
+        };
+        for info_hash in work {
+            self.swarm_lookup(info_hash).await;
+        }
+    }
+
+    /// `Swarm.lookup` (sans `dht_provider`, les lookups "DHT" sont des
+    /// `peers-request` en cellule vers la sortie — `target=None`) puis
+    /// `create_e2e` vers les `seeder_pk` non connectes.
+    async fn swarm_lookup(self: &Arc<Self>, info_hash: [u8; 20]) {
+        let (hops, targets, dht_lookup_due) = {
+            let mut inner = self.inner.lock().unwrap();
+            let Some(swarm) = inner.swarms.get_mut(&info_hash) else {
+                return;
+            };
+            swarm.remove_old_intro_points(
+                self.settings.swarm_max_ip_age,
+                crate::pex::epoch_secs(),
+            );
+            swarm.last_lookup = Instant::now();
+            let due = swarm.last_dht_response.elapsed()
+                > self.settings.min_dht_lookup_interval
+                || (swarm.intro_points.is_empty()
+                    && swarm.last_dht_response.elapsed()
+                        > self.settings.max_dht_lookup_interval);
+            (swarm.hops, swarm.intro_points.clone(), due)
+        };
+
+        // `gather(return_exceptions=True)` Python : les echecs sont
+        // ignores, seuls les succes alimentent le swarm.
+        let mut requests: Vec<Option<IntroductionPoint>> =
+            targets.iter().cloned().map(Some).collect();
+        // Lookup DHT (via la sortie) si le delai le commande ou si le
+        // swarm ne connait encore aucun point d'introduction.
+        if dht_lookup_due || targets.is_empty() {
+            requests.push(None);
+        }
+        let results = futures_util::future::join_all(requests.iter().map(|ip| {
+            let this = self.clone();
+            let ip = ip.clone();
+            async move { this.send_peers_request(info_hash, ip.as_ref(), hops).await }
+        }))
+        .await;
+
+        let mut found: Vec<IntroductionPoint> = Vec::new();
+        let mut saw_dht = false;
+        for r in results {
+            if let Ok(ips) = r {
+                saw_dht |= ips.iter().any(|i| i.source == PEER_SOURCE_DHT);
+                found.extend(ips);
+            }
+        }
+        // `add_intro_point` + `create_e2e` vers les seeder_pk non
+        // connectes (`do_peer_discovery` Python).
+        let pending: Vec<IntroductionPoint> = {
+            let mut inner = self.inner.lock().unwrap();
+            let Some(swarm) = inner.swarms.get_mut(&info_hash) else {
+                return;
+            };
+            if saw_dht {
+                swarm.last_dht_response = Instant::now();
+            }
+            for ip in found {
+                swarm.add_intro_point(ip);
+            }
+            swarm
+                .intro_points
+                .iter()
+                .filter(|ip| !swarm.has_connection(&ip.seeder_pk))
+                .cloned()
+                .collect()
+        };
+        for ip in pending {
+            let _ = self.create_e2e(info_hash, &ip).await;
         }
     }
 

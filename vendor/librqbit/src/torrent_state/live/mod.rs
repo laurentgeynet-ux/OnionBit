@@ -719,7 +719,11 @@ impl TorrentStateLive {
         let _ = self.have_broadcast_tx.send(index);
     }
 
-    pub(crate) fn add_peer_if_not_seen(&self, addr: SocketAddr) -> crate::Result<bool> {
+    // PATCH tribler : `pub` (etait `pub(crate)`) — le re-ajout de
+    // pairs apres mort d'un circuit tunnel (`readd_bittorrent_peers`
+    // de `TriblerTunnelCommunity`) passe par la couche domaine, pas
+    // par l'API HTTP rqbit.
+    pub fn add_peer_if_not_seen(&self, addr: SocketAddr) -> crate::Result<bool> {
         match self.peers.add_if_not_seen(addr) {
             Some(handle) => handle,
             None => return Ok(false),

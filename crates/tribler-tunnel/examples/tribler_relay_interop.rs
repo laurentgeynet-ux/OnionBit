@@ -120,7 +120,10 @@ async fn main() {
         key_a,
         net_a.clone(),
         ep_a.clone(),
-        PEER_FLAG_RELAY,
+        tribler_tunnel::settings::TunnelSettings {
+            peer_flags: PEER_FLAG_RELAY,
+            ..Default::default()
+        },
         TRIBLER_TUNNEL_COMMUNITY_ID,
     )
     .await;
@@ -128,7 +131,10 @@ async fn main() {
         key_b.clone(),
         net_b.clone(),
         ep_b.clone(),
-        PEER_FLAG_RELAY | PEER_FLAG_EXIT_BT,
+        tribler_tunnel::settings::TunnelSettings {
+            peer_flags: PEER_FLAG_RELAY | PEER_FLAG_EXIT_BT,
+            ..Default::default()
+        },
         TRIBLER_TUNNEL_COMMUNITY_ID,
     )
     .await;

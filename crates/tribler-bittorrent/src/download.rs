@@ -291,6 +291,19 @@ impl Download {
         out
     }
 
+    /// `add_peer` Python (`TriblerTunnelCommunity.on_e2e_finished` /
+    /// `readd_bittorrent_peers`) : injecte une adresse de pair dans le
+    /// torrent vivant — pour les pairs caches, l'adresse est le
+    /// relais loopback de `udp_relay::dial` (ou l'IPv4 factice du
+    /// circuit cote SOCKS5). No-op si le torrent n'est pas `live`.
+    /// Retourne `true` si le pair etait nouveau.
+    pub fn add_peer(&self, addr: std::net::SocketAddr) -> bool {
+        self.inner
+            .live()
+            .and_then(|live| live.add_peer_if_not_seen(addr).ok())
+            .unwrap_or(false)
+    }
+
     /// Enregistre un tracker additionnel (equivalent de
     /// `PUT /downloads/{ih}/trackers` Python ; effectif a la prochaine
     /// session pour rqbit qui ne reannonce pas a chaud).

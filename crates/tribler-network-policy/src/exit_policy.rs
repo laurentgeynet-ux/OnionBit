@@ -18,6 +18,10 @@ pub const PEER_FLAG_SPEED_TEST: i32 = 8;
 /// `PEER_FLAG_EXIT_HTTP` (`ipv8-rust-tunnels` `PeerFlag::ExitHttp`) :
 /// le pair accepte de sortir du trafic HTTP (requetes tracker).
 pub const PEER_FLAG_EXIT_HTTP: i32 = 32768;
+/// `PEER_FLAG_EXIT_BACKUP` (`TriblerTunnelCommunity`,
+/// `core/tunnel/community.py`) : sortie de secours — depriorisee dans
+/// `get_candidates(EXIT_BT)` tant que des sorties non-backup existent.
+pub const PEER_FLAG_EXIT_BACKUP: i32 = 16384;
 
 /// `DataChecker.could_be_utp` : en-tete uTP BEP-29 plausible
 /// (>=20 octets, type 0..4, version 1, extension 0..3).

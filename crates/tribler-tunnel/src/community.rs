@@ -36,19 +36,15 @@ use crate::hidden_services::{E2ERequest, LinkRequest};
 use crate::payload::{self as tp, msg, Cellable};
 use crate::routing::{
     Circuit, Hop, RelayRoute, RoutingObject, Swarm, UnverifiedHop, CIRCUIT_STATE_CLOSING,
-    CIRCUIT_STATE_READY, CIRCUIT_TYPE_DATA, PEER_FLAG_EXIT_BT, PEER_FLAG_EXIT_HTTP,
-    PEER_FLAG_EXIT_IPV8, PEER_FLAG_RELAY,
+    CIRCUIT_STATE_READY, CIRCUIT_TYPE_DATA, PEER_FLAG_EXIT_BACKUP, PEER_FLAG_EXIT_BT,
+    PEER_FLAG_EXIT_HTTP, PEER_FLAG_EXIT_IPV8, PEER_FLAG_RELAY,
 };
+use crate::settings::TunnelSettings;
 use crate::TUNNEL_COMMUNITY_ID;
 
 /// Flags de sortie (tous types confondus) pour le partitionnement
 /// des candidats `created`/`extended`.
 const ANY_EXIT_FLAGS: i32 = PEER_FLAG_EXIT_BT | PEER_FLAG_EXIT_IPV8 | PEER_FLAG_EXIT_HTTP;
-
-/// `max_relay_early` Python (`TunnelSettings.max_relay_early`).
-const MAX_RELAY_EARLY: u8 = 8;
-/// `max_joined_circuits` Python (`TunnelSettings.max_joined_circuits`).
-const DEFAULT_MAX_JOINED_CIRCUITS: usize = 30;
 /// Capacite du canal `data_rx` (cellules `data` livrees au
 /// consommateur — SOCKS5/DHT-over-tunnel).
 const DATA_CHANNEL_CAP: usize = 512;
@@ -62,19 +58,6 @@ const E2E_CHANNEL_CAP: usize = 64;
 const CIRCUIT_REMOVED_CHANNEL_CAP: usize = 64;
 /// Capacite du canal de chunks `http-response` par requete en cours.
 const HTTP_REQUEST_PARTS_CAP: usize = 64;
-
-/// `circuit_timeout`/`next_hop_timeout` Python (60 s/10 s) : borne
-/// d'attente `await circuit.ready` du speed-test REST — un circuit
-/// dont le premier hop ne repond pas n'a aucune raison d'etre
-/// conserve au-dela du premier timeout de saut.
-const CIRCUIT_READY_TIMEOUT_MS: u64 = 10_000;
-/// `circuit_timeout // next_hop_timeout` Python (60 s / 10 s) : nombre
-/// de tentatives `send_initial_create`/`send_extend` par saut avant
-/// abandon du circuit (`RetryRequestCache.max_tries`).
-const CIRCUIT_MAX_TRIES: i32 = 6;
-/// `remove_tunnel_delay` Python (5 s) : delai entre `close()` et le
-/// retrait effectif d'un circuit.
-const REMOVE_TUNNEL_DELAY_MS: u64 = 5_000;
 
 /// Evenement "donnee recue sur un circuit" (livre au consommateur —
 /// equivalent du dispatch `on_data` vers SOCKS5/services internes).
@@ -168,6 +151,11 @@ pub(crate) struct ExitState {
     /// `creation_time` (`RoutingObject` Python) — sert a l'`uptime`
     /// du topic `tunnel_removed`.
     pub(crate) creation_time: std::time::Instant,
+    /// `last_activity` Python (`beat_heart` sur trafic sortant/entrant
+    /// — `do_remove` `"no activity"`).
+    pub(crate) last_activity: std::time::Instant,
+    /// `bytes_up + bytes_down` cumules (`max_traffic` Python).
+    pub(crate) bytes_total: u64,
 }
 
 /// `CreateRequestCache` Python (extend en attente d'un `created`).
@@ -276,6 +264,9 @@ pub struct TunnelCommunity {
     /// pour les introductions et punctures (le `my_peer` Python est
     /// partage entre overlays sur le meme endpoint).
     pub(crate) discovery: Mutex<Option<Arc<tribler_ipv8::discovery::DiscoveryCommunity>>>,
+    /// `TunnelSettings` Python (`self.settings`) : tous les seuils et
+    /// cadences de la community (defauts = valeurs officielles).
+    pub settings: TunnelSettings,
 }
 
 /// Detail d'un objet de routage detruit (`circuit_removed` pyipv8) —
@@ -402,16 +393,27 @@ impl TunnelCommunity {
         endpoint: Arc<UdpEndpoint>,
         peer_flags: i32,
     ) -> Arc<Self> {
-        Self::new_with_id(key, network, endpoint, peer_flags, TUNNEL_COMMUNITY_ID).await
+        Self::new_with_id(
+            key,
+            network,
+            endpoint,
+            TunnelSettings {
+                peer_flags,
+                ..TunnelSettings::default()
+            },
+            TUNNEL_COMMUNITY_ID,
+        )
+        .await
     }
 
     /// `new` avec un `community_id` explicite (ex. prefixe de
-    /// `TriblerTunnelCommunity` pour l'interop Tribler installe).
+    /// `TriblerTunnelCommunity` pour l'interop Tribler installe) et
+    /// les `TunnelSettings` complets (seuils/cadences Python).
     pub async fn new_with_id(
         key: LibNaClSecretKey,
         network: Arc<Network>,
         endpoint: Arc<UdpEndpoint>,
-        peer_flags: i32,
+        settings: TunnelSettings,
         community_id: tribler_ipv8::CommunityId,
     ) -> Arc<Self> {
         let (data_tx, _) = tokio::sync::broadcast::channel(DATA_CHANNEL_CAP);
@@ -432,7 +434,7 @@ impl TunnelCommunity {
                 create_requests: HashMap::new(),
                 created_requests: HashMap::new(),
                 retry_requests: HashMap::new(),
-                peer_flags,
+                peer_flags: settings.peer_flags,
                 intro_point_for: HashMap::new(),
                 pex: HashMap::new(),
                 rendezvous_point_for: HashMap::new(),
@@ -454,6 +456,7 @@ impl TunnelCommunity {
             circuit_removed_tx,
             test_tx,
             discovery: Mutex::new(None),
+            settings,
         });
         let weak = Arc::downgrade(&community);
         endpoint
@@ -832,8 +835,15 @@ impl TunnelCommunity {
         {
             let mut inner = self.inner.lock().unwrap();
             if let Some(circuit) = inner.circuits.get_mut(&circuit_id) {
-                relay_early =
-                    P::MSG_ID == msg::EXTEND || circuit.relay_early_count < MAX_RELAY_EARLY;
+                // Activite sortante + octets (`increase_bytes_sent`/
+                // `beat_heart` Python) — sinon le circuit passe
+                // `is_inactive` malgre le trafic et `do_remove` le
+                // balaye en `"no activity"`, circuits perpetuellement
+                // ouverts/fermes.
+                circuit.base.last_outgoing = std::time::Instant::now();
+                circuit.base.bytes_up += body.len() as u64;
+                relay_early = P::MSG_ID == msg::EXTEND
+                    || circuit.relay_early_count < self.settings.max_relay_early;
                 if relay_early {
                     circuit.relay_early_count += 1;
                 }
@@ -1107,7 +1117,7 @@ impl TunnelCommunity {
             inner.circuits.insert(circuit_id, circuit);
         }
         self.notify_circuits_changed();
-        self.send_initial_create(circuit_id, first_hops, CIRCUIT_MAX_TRIES)
+        self.send_initial_create(circuit_id, first_hops, self.settings.max_tries())
             .await?;
         Ok(circuit_id)
     }
@@ -1172,8 +1182,9 @@ impl TunnelCommunity {
     /// comme "en cours" par `build_circuits_if_needed` pour toujours.
     fn spawn_hop_timeout(self: &Arc<Self>, circuit_id: u32, identifier: u16) {
         let this = self.clone();
+        let timeout = self.settings.next_hop_timeout;
         tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_millis(CIRCUIT_READY_TIMEOUT_MS)).await;
+            tokio::time::sleep(timeout).await;
             let retry = {
                 let inner = this.inner.lock().unwrap();
                 let entry = inner.retry_requests.get(&circuit_id);
@@ -1380,7 +1391,8 @@ impl TunnelCommunity {
     /// (`set(requested) <= set(flags)`).
     pub fn get_candidates_subset(&self, flags: &[i32]) -> Vec<Peer> {
         let inner = self.inner.lock().unwrap();
-        self.network
+        let candidates: Vec<Peer> = self
+            .network
             .peers_for_service(&self.community_id)
             .into_iter()
             .filter(|p| {
@@ -1389,7 +1401,37 @@ impl TunnelCommunity {
                     .get(&p.public_key_bin)
                     .is_some_and(|f| flags.iter().all(|flag| f & flag == *flag))
             })
-            .collect()
+            .collect();
+        self.filter_backup_exits(&inner, candidates, flags)
+    }
+
+    /// `TriblerTunnelCommunity.get_candidates` : quand `EXIT_BT` est
+    /// demande, depriorise les sorties marquees `EXIT_BACKUP` — repli
+    /// sur la liste complete si elles sont toutes backup.
+    fn filter_backup_exits(
+        &self,
+        inner: &Inner,
+        candidates: Vec<Peer>,
+        requested_flags: &[i32],
+    ) -> Vec<Peer> {
+        if !requested_flags.contains(&PEER_FLAG_EXIT_BT) {
+            return candidates;
+        }
+        let preferred: Vec<Peer> = candidates
+            .iter()
+            .filter(|p| {
+                inner
+                    .flag_registry
+                    .get(&p.public_key_bin)
+                    .is_none_or(|f| f & PEER_FLAG_EXIT_BACKUP == 0)
+            })
+            .cloned()
+            .collect();
+        if preferred.is_empty() {
+            candidates
+        } else {
+            preferred
+        }
     }
 
     /// `select_exit` pyipv8 : pair aleatoire portant `exit_flags`, ou
@@ -1514,10 +1556,10 @@ impl TunnelCommunity {
 
     /// `await circuit.ready` pyipv8 : attend que le circuit atteigne
     /// `READY`, soit detruit, ou que `timeout` expire (borne —
-    /// `CIRCUIT_READY_TIMEOUT_MS`, ~`next_hop_timeout`).
+    /// `next_hop_timeout` des settings).
     pub async fn await_circuit_ready(&self, circuit_id: u32) -> bool {
         let mut rx = self.circuits_changed_tx.subscribe();
-        let deadline = std::time::Instant::now() + Duration::from_millis(CIRCUIT_READY_TIMEOUT_MS);
+        let deadline = std::time::Instant::now() + self.settings.next_hop_timeout;
         loop {
             {
                 let inner = self.inner.lock().unwrap();
@@ -1543,6 +1585,17 @@ impl TunnelCommunity {
         let ev = {
             let mut inner = self.inner.lock().unwrap();
             inner.retry_requests.remove(&circuit_id);
+            // `hidden_services.remove_circuit` : un `RP_DOWNLOADER`
+            // retire est detache de son swarm (sans le fermer ici).
+            if let Some(c) = inner.circuits.get(&circuit_id) {
+                if c.ctype == crate::routing::CIRCUIT_TYPE_RP_DOWNLOADER {
+                    if let Some(ih) = c.info_hash {
+                        if let Some(s) = inner.swarms.get_mut(&ih) {
+                            s.remove_connection(circuit_id);
+                        }
+                    }
+                }
+            }
             match inner.circuits.get_mut(&circuit_id) {
                 // "Cannot remove unknown circuit" — warning Python.
                 None => return,
@@ -1563,7 +1616,7 @@ impl TunnelCommunity {
         let this = self.clone();
         let info = additional_info.to_string();
         tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_millis(REMOVE_TUNNEL_DELAY_MS)).await;
+            tokio::time::sleep(this.settings.remove_tunnel_delay).await;
             if this
                 .inner
                 .lock()
@@ -1678,10 +1731,18 @@ impl TunnelCommunity {
             Circuit(Vec<SessionKeys>, Option<(Direction, SessionKeys)>),
         }
         let crypto = {
-            let inner = self.inner.lock().unwrap();
-            if let Some(exit) = inner.exit_sockets.get(&circuit_id) {
+            let mut inner = self.inner.lock().unwrap();
+            if let Some(exit) = inner.exit_sockets.get_mut(&circuit_id) {
+                exit.last_activity = std::time::Instant::now();
                 Crypto::Exit(exit.hop.session_keys.clone())
-            } else if let Some(c) = inner.circuits.get(&circuit_id) {
+            } else if let Some(c) = inner.circuits.get_mut(&circuit_id) {
+                // `beat_heart` + octets sur TOUTE cellule recue de ce
+                // circuit (Python : `circuit.beat_heart()` dans
+                // `on_packet`/`on_data`) — sans ca, un circuit DATA
+                // qui transfere est tout de meme retire `"no
+                // activity"` par `do_remove`.
+                c.base.beat_heart();
+                c.base.bytes_down += data.len() as u64;
                 // Couche e2e (`incoming_crypto` Python : FORWARD sur
                 // RP_DOWNLOADER, BACKWARD sinon, APRES les hops).
                 let hs = c.hs_session_keys.clone().map(|k| {
@@ -1715,7 +1776,7 @@ impl TunnelCommunity {
         };
 
         // Checks de flags post-decrypt (comme `process_cell` Python).
-        cell::check_cell_flags(&decrypted, MAX_RELAY_EARLY)?;
+        cell::check_cell_flags(&decrypted, self.settings.max_relay_early)?;
         let cell = Cell::parse(&decrypted)?;
         self.on_cell_message(src, &cell)
     }
@@ -1734,7 +1795,7 @@ impl TunnelCommunity {
         if parsed.plaintext {
             return Err(Ipv8Error::Malformed("cellule en clair relayee"));
         }
-        if parsed.relay_early && route.relay_early_count >= MAX_RELAY_EARLY {
+        if parsed.relay_early && route.relay_early_count >= self.settings.max_relay_early {
             return Err(Ipv8Error::Malformed("trop de cellules relay_early"));
         }
         let transformed = if route.rendezvous_relay {
@@ -1958,11 +2019,33 @@ impl TunnelCommunity {
         }
     }
 
+    /// Enregistre un pair de sortie restaure du `exitnode_cache`
+    /// (`load_exit_nodes` Python : pairs exit connus reinjectes dans
+    /// `Network` au demarrage, puis re-sollicites par introduction).
+    pub fn register_exit_peer(&self, public_key_bin: &[u8], addr: SocketAddr, flags: i32) {
+        // Meme chemin que `register_tunnel_peer` mais sans le
+        // rattrapage `exit_flags` des circuits existants : au
+        // demarrage (seul appelant du cache) il n'y a encore aucun
+        // circuit.
+        let Some(peer) = Peer::new(public_key_bin.to_vec(), Some(UdpAddress::from(addr))) else {
+            return;
+        };
+        self.network.add_verified(peer.clone());
+        self.network
+            .discover_service(&peer.public_key_bin, self.community_id);
+        self.inner
+            .lock()
+            .unwrap()
+            .flag_registry
+            .insert(peer.public_key_bin, flags);
+    }
+
     /// `get_candidates(*flags)` : pairs connus portant `flag`
     /// (`PEER_FLAG_*`) dans leur bitmask annonce.
     pub fn get_candidates(&self, flag: i32) -> Vec<Peer> {
         let inner = self.inner.lock().unwrap();
-        self.network
+        let candidates: Vec<Peer> = self
+            .network
             .peers_for_service(&self.community_id)
             .into_iter()
             .filter(|p| {
@@ -1971,7 +2054,8 @@ impl TunnelCommunity {
                     .get(&p.public_key_bin)
                     .is_some_and(|f| f & flag != 0)
             })
-            .collect()
+            .collect();
+        self.filter_backup_exits(&inner, candidates, &[flag])
     }
 
     /// Flags annonces par un pair (0 si inconnu).
@@ -2073,6 +2157,237 @@ impl TunnelCommunity {
             if let Err(e) = self.step(&bootstrap).await {
                 tracing::debug!(error = %e, "etape de marche tunnel echouee");
             }
+        }
+    }
+
+    /// `register_task("do_circuits", interval=5)` +
+    /// `register_task("do_ping", interval=PING_INTERVAL)` +
+    /// `register_task("do_peer_discovery", interval=10)` de
+    /// `hidden_services.py` : boucle de maintenance a spawner.
+    ///
+    /// - `do_circuits` Python construit les circuits manquants — chez
+    ///   nous cette demande vient des watchdogs de lanes (data) ; la
+    ///   partie reprise ici est `do_remove` (nettoyage) + la garantie
+    ///   d'un circuit `DATA` par nombre de sauts de swarm.
+    /// - `do_ping` maintient les circuits (keepalive `ping`/`pong`).
+    /// - `do_peer_discovery` : lookups PEX des swarms non-seedes et
+    ///   `create_e2e` vers les points d'introduction connus.
+    pub async fn run_maintenance(self: &Arc<Self>) {
+        let mut circuits_tick = tokio::time::interval(Duration::from_secs(5));
+        let mut ping_tick = tokio::time::interval(self.settings.ping_interval);
+        let mut discovery_tick = tokio::time::interval(Duration::from_secs(10));
+        for t in [&mut circuits_tick, &mut ping_tick, &mut discovery_tick] {
+            t.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        }
+        // Premier tick immediat absorbe (rien a faire au demarrage).
+        circuits_tick.tick().await;
+        ping_tick.tick().await;
+        discovery_tick.tick().await;
+        loop {
+            tokio::select! {
+                _ = circuits_tick.tick() => {
+                    self.do_remove().await;
+                    self.ensure_swarm_data_circuits().await;
+                }
+                _ = ping_tick.tick() => self.do_ping().await,
+                _ = discovery_tick.tick() => self.do_peer_discovery().await,
+            }
+        }
+    }
+
+    /// `do_remove` Python : retire les circuits/relais/sorties
+    /// inactifs (`"no activity"`), trop vieux (`"too old"` via
+    /// `get_max_time`) ou au-dela de `max_traffic` (avec `destroy`),
+    /// et purge le registre de flags des pairs disparus de
+    /// l'annuaire.
+    async fn do_remove(self: &Arc<Self>) {
+        enum Target {
+            Circuit(u32),
+            Relay(u32),
+            Exit(u32),
+        }
+        impl Target {
+            fn cid(&self) -> u32 {
+                match self {
+                    Target::Circuit(c) | Target::Relay(c) | Target::Exit(c) => *c,
+                }
+            }
+        }
+        let max_inactive = self.settings.max_time_inactive;
+        let max_traffic = self.settings.max_traffic;
+        let mut plan: Vec<(Target, &'static str, bool)> = Vec::new();
+        {
+            let mut inner = self.inner.lock().unwrap();
+            // `get_max_time` inline (le verrou est deja pris) :
+            // `max_time_ip` pour `IP_SEEDER` et les sorties servant
+            // de point d'introduction, `max_time` sinon.
+            let max_time_for = |cid: u32, ctype: Option<&str>| {
+                if ctype == Some(crate::routing::CIRCUIT_TYPE_IP_SEEDER)
+                    || inner
+                        .intro_point_for
+                        .values()
+                        .any(|(icid, _)| *icid == cid)
+                {
+                    self.settings.max_time_ip
+                } else {
+                    self.settings.max_time
+                }
+            };
+            for (cid, c) in inner.circuits.iter() {
+                if c.state() == CIRCUIT_STATE_READY && c.base.is_inactive(max_inactive) {
+                    plan.push((Target::Circuit(*cid), "no activity", false));
+                } else if c.base.creation_time.elapsed() > max_time_for(*cid, Some(&c.ctype)) {
+                    plan.push((Target::Circuit(*cid), "too old", false));
+                } else if c.base.bytes_up + c.base.bytes_down > max_traffic {
+                    plan.push((Target::Circuit(*cid), "traffic limit exceeded", true));
+                }
+            }
+            for (cid, r) in inner.relays.iter() {
+                if r.base.is_inactive(max_inactive) {
+                    plan.push((Target::Relay(*cid), "no activity", false));
+                } else if r.base.bytes_up + r.base.bytes_down > max_traffic {
+                    plan.push((Target::Relay(*cid), "traffic limit exceeded", true));
+                }
+            }
+            for (cid, e) in inner.exit_sockets.iter() {
+                if e.last_activity.elapsed() > max_inactive {
+                    plan.push((Target::Exit(*cid), "no activity", false));
+                } else if e.creation_time.elapsed() > max_time_for(*cid, None) {
+                    plan.push((Target::Exit(*cid), "too old", false));
+                } else if e.bytes_total > max_traffic {
+                    plan.push((Target::Exit(*cid), "traffic limit exceeded", true));
+                }
+            }
+            // `do_remove` Python retire aussi les `candidates` absents
+            // de `get_peers()` : equivalent — purge du `flag_registry`
+            // des pairs disparus de l'annuaire.
+            let known: std::collections::HashSet<Vec<u8>> = self
+                .network
+                .peers_for_service(&self.community_id)
+                .iter()
+                .map(|p| p.public_key_bin.clone())
+                .collect();
+            inner.flag_registry.retain(|pk, _| known.contains(pk));
+        }
+
+        for (target, info, destroy) in plan {
+            if destroy {
+                // `destroy=True` Python : prevenir le saut amont.
+                let hop_addr = {
+                    let inner = self.inner.lock().unwrap();
+                    match &target {
+                        Target::Circuit(cid) => inner
+                            .circuits
+                            .get(cid)
+                            .and_then(|c| c.first_hop().and_then(|h| h.address.clone())),
+                        Target::Relay(cid) => inner
+                            .relays
+                            .get(cid)
+                            .and_then(|r| r.hop.address.clone()),
+                        Target::Exit(cid) => inner
+                            .exit_sockets
+                            .get(cid)
+                            .and_then(|e| e.hop.address.clone()),
+                    }
+                };
+                if let Some(addr) = hop_addr {
+                    let _ = self
+                        .send_destroy(&addr, target.cid(), crate::routing::DESTROY_REASON_UNKNOWN)
+                        .await;
+                }
+            }
+            match target {
+                Target::Circuit(cid) => self.remove_circuit(cid, info).await,
+                Target::Relay(cid) => self.remove_relay(cid, info),
+                Target::Exit(cid) => self.remove_exit_socket(cid, info),
+            }
+        }
+    }
+
+    /// `remove_relay` Python (retrait + `circuit_removed`) — le
+    /// pendant entrant est `on_destroy`.
+    fn remove_relay(&self, circuit_id: u32, additional_info: &str) {
+        let ev = {
+            let mut inner = self.inner.lock().unwrap();
+            inner.relays.remove(&circuit_id).map(|route| {
+                // La route correspondante disparait avec
+                // (`relay_from_to` Python : les deux directions
+                // partagent le sort).
+                inner.relays.remove(&route.base.circuit_id);
+                CircuitRemovedEvent {
+                    circuit_id: route.base.circuit_id,
+                    circuit_class: "RelayRoute",
+                    bytes_up: route.base.bytes_up,
+                    bytes_down: route.base.bytes_down,
+                    uptime_secs: route.base.creation_time.elapsed().as_secs_f64(),
+                    additional_info: additional_info.to_string(),
+                }
+            })
+        };
+        if let Some(ev) = ev {
+            self.emit_circuit_removed(ev);
+        }
+    }
+
+    /// `remove_exit_socket` Python (retrait + `circuit_removed` +
+    /// purge intro/rendezvous via `cleanup_exit_socket`).
+    fn remove_exit_socket(&self, circuit_id: u32, additional_info: &str) {
+        let ev = {
+            let mut inner = self.inner.lock().unwrap();
+            inner.exit_sockets.remove(&circuit_id).map(|exit| {
+                cleanup_exit_socket(&mut inner, circuit_id);
+                CircuitRemovedEvent {
+                    circuit_id,
+                    circuit_class: "TunnelExitSocket",
+                    bytes_up: 0,
+                    bytes_down: exit.bytes_total,
+                    uptime_secs: exit.creation_time.elapsed().as_secs_f64(),
+                    additional_info: additional_info.to_string(),
+                }
+            })
+        };
+        if let Some(ev) = ev {
+            self.emit_circuit_removed(ev);
+        }
+    }
+
+    /// `do_ping` (`hidden_services.py`) : ping tous les circuits prets
+    /// sauf `RP_SEEDER` et les `RP_DOWNLOADER` pas encore lies e2e.
+    async fn do_ping(self: &Arc<Self>) {
+        let targets: Vec<u32> = {
+            let inner = self.inner.lock().unwrap();
+            inner
+                .circuits
+                .values()
+                .filter(|c| {
+                    c.state() == CIRCUIT_STATE_READY
+                        && c.ctype != crate::routing::CIRCUIT_TYPE_RP_SEEDER
+                        && !(c.ctype == crate::routing::CIRCUIT_TYPE_RP_DOWNLOADER && !c.e2e)
+                })
+                .map(|c| c.base.circuit_id)
+                .collect()
+        };
+        for cid in targets {
+            let _ = self.send_ping(cid).await;
+        }
+    }
+
+    /// `do_circuits` de `HiddenTunnelCommunity` : au moins un circuit
+    /// `DATA` par nombre de sauts de swarm (communication avec les
+    /// points d'introduction).
+    async fn ensure_swarm_data_circuits(self: &Arc<Self>) {
+        let hop_counts: Vec<usize> = {
+            let inner = self.inner.lock().unwrap();
+            inner
+                .swarms
+                .values()
+                .map(|s| s.hops)
+                .collect::<std::collections::HashSet<_>>()
+                .into_iter()
+                .collect()
+        };
+        for hops in hop_counts {
+            let _ = self.build_circuits_if_needed(hops, 1).await;
         }
     }
 
@@ -2484,7 +2799,7 @@ impl TunnelCommunity {
             inner.relays.len() + inner.exit_sockets.len()
         };
         if self.inner.lock().unwrap().peer_flags == 0
-            || joined >= DEFAULT_MAX_JOINED_CIRCUITS
+            || joined >= self.settings.max_joined_circuits
             || self
                 .inner
                 .lock()
@@ -2582,6 +2897,8 @@ impl TunnelCommunity {
                         crate::http_tunnel::MAX_HTTP_REQUESTS_PER_CIRCUIT,
                     )),
                     creation_time: std::time::Instant::now(),
+                    last_activity: std::time::Instant::now(),
+                    bytes_total: 0,
                 },
             );
         }
@@ -2996,6 +3313,8 @@ impl TunnelCommunity {
             if !exit.enabled {
                 return;
             }
+            exit.last_activity = std::time::Instant::now();
+            exit.bytes_total += p.data.len() as u64;
             exit.socket.clone()
         };
         // `is_allowed` (pyipv8 `DataChecker` + flags de sortie) : la
@@ -3051,13 +3370,15 @@ impl TunnelCommunity {
     /// `org = source UDP reelle` du datagramme (pas de back_map).
     async fn exit_recv_data(&self, circuit_id: u32, src: SocketAddr, data: &[u8]) {
         let upstream_addr = {
-            let inner = self.inner.lock().unwrap();
-            let Some(exit) = inner.exit_sockets.get(&circuit_id) else {
+            let mut inner = self.inner.lock().unwrap();
+            let Some(exit) = inner.exit_sockets.get_mut(&circuit_id) else {
                 return;
             };
             if !exit.enabled {
                 return;
             }
+            exit.last_activity = std::time::Instant::now();
+            exit.bytes_total += data.len() as u64;
             match exit.hop.address.clone() {
                 Some(a) => a,
                 None => return,

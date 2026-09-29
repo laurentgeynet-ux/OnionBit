@@ -12,8 +12,8 @@ use tribler_ipv8::UdpAddress;
 // est `tribler-network-policy::exit_policy` (politique de sortie
 // appliquee dans `exit_data`).
 pub use tribler_network_policy::exit_policy::{
-    PEER_FLAG_EXIT_BT, PEER_FLAG_EXIT_HTTP, PEER_FLAG_EXIT_IPV8, PEER_FLAG_RELAY,
-    PEER_FLAG_SPEED_TEST,
+    PEER_FLAG_EXIT_BACKUP, PEER_FLAG_EXIT_BT, PEER_FLAG_EXIT_HTTP, PEER_FLAG_EXIT_IPV8,
+    PEER_FLAG_RELAY, PEER_FLAG_SPEED_TEST,
 };
 
 /// `PEER_SOURCE_UNKNOWN`.
@@ -67,11 +67,6 @@ pub const DESTROY_REASON_UNKNOWN: u16 = 1;
 pub const DESTROY_REASON_SHUTDOWN: u16 = 2;
 /// `DESTROY_REASON_UNNEEDED`.
 pub const DESTROY_REASON_UNNEEDED: u16 = 4;
-
-/// Inactivite max avant destruction d'un circuit
-/// (`remove_circuit "no activity"` — le Python n'a pas de constante
-/// unique ; TunnelSettings.circuit_timeout ~= 60 s cote tunnels Rust).
-const CIRCUIT_INACTIVITY_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// `Hop` : un saut de circuit.
 #[derive(Debug)]
@@ -134,10 +129,13 @@ impl RoutingObject {
         self.last_incoming = Instant::now();
     }
 
-    /// Inactif depuis plus que `CIRCUIT_INACTIVITY_TIMEOUT`.
-    pub fn is_inactive(&self) -> bool {
-        self.last_incoming.elapsed() > CIRCUIT_INACTIVITY_TIMEOUT
-            && self.last_outgoing.elapsed() > CIRCUIT_INACTIVITY_TIMEOUT
+    /// `last_activity < now - max_time_inactive` Python
+    /// (`do_remove` → `"no activity"`). On suit l'inactif sur les
+    /// DEUX directions (`last_incoming`/`last_outgoing`), plus
+    /// precis que le `last_activity` unique Python.
+    pub fn is_inactive(&self, max_time_inactive: Duration) -> bool {
+        self.last_incoming.elapsed() > max_time_inactive
+            && self.last_outgoing.elapsed() > max_time_inactive
     }
 }
 
@@ -329,6 +327,15 @@ pub struct Swarm {
     pub seeder_sk: Option<tribler_crypto::ipv8::keys::LibNaClSecretKey>,
     /// `connections` : circuit_id e2e -> point d'introduction utilise.
     pub connections: HashMap<u32, IntroductionPoint>,
+    /// `intro_points` : points d'introduction connus du swarm
+    /// (alimente par les lookups PEX/DHT — `add_intro_point`).
+    pub intro_points: Vec<IntroductionPoint>,
+    /// `last_lookup` : instant du dernier lookup du swarm
+    /// (`swarm_lookup_interval` Python).
+    pub last_lookup: Instant,
+    /// `last_dht_response` : derniere reponse DHT (conditionne le choix
+    /// DHT vs PEX dans `lookup` Python — `min_dht_lookup_interval`).
+    pub last_dht_response: Instant,
     /// Retentative idempotente (`RequestCache` a retry de pyipv8, cote
     /// downloader) : etape + horodatage de la requete e2e en cours par
     /// point d'introduction. Une retentative re-expedie le MEME
@@ -376,6 +383,15 @@ impl Swarm {
             hops,
             seeder_sk,
             connections: HashMap::new(),
+            intro_points: Vec::new(),
+            last_lookup: Instant::now(),
+            // `last_dht_response = 0` Python (jamais eu de reponse) :
+            // instant tres ancien pour que la condition
+            // `now - last_dht_response > min_dht_lookup_interval`
+            // declenche un lookup DHT des le premier appel.
+            last_dht_response: Instant::now()
+                .checked_sub(Duration::from_secs(24 * 3600))
+                .unwrap_or_else(Instant::now),
             pending_e2e: HashMap::new(),
             seen_e2e: HashMap::new(),
             in_flight_e2e: HashSet::new(),
@@ -388,5 +404,65 @@ impl Swarm {
     /// Ids des circuits e2e connectes et prets.
     pub fn e2e_circuits(&self) -> Vec<u32> {
         self.connections.keys().copied().collect()
+    }
+
+    /// `Swarm.add_intro_point` : ajoute le point ou rafraichit le
+    /// `last_seen` du point identique deja connu. Retourne le point a
+    /// utiliser (l'ancien si present).
+    pub fn add_intro_point(&mut self, ip: IntroductionPoint) -> &IntroductionPoint {
+        match self.intro_points.iter().position(|i| *i == ip) {
+            Some(idx) => {
+                self.intro_points[idx].last_seen_secs = ip.last_seen_secs;
+                &self.intro_points[idx]
+            }
+            None => {
+                self.intro_points.push(ip);
+                self.intro_points.last().unwrap()
+            }
+        }
+    }
+
+    /// `Swarm.remove_old_intro_points` : evince les points plus vieux
+    /// que `max_ip_age`, sauf ceux utilises par une connexion active.
+    /// `now` en epoch secondes (`last_seen` Python).
+    pub fn remove_old_intro_points(&mut self, max_ip_age: Duration, now_secs: u64) {
+        let max = max_ip_age.as_secs();
+        let used: HashSet<IntroductionPoint> =
+            self.connections.values().cloned().collect();
+        self.intro_points.retain(|i| {
+            i.last_seen_secs.saturating_add(max) >= now_secs || used.contains(i)
+        });
+    }
+
+    /// `Swarm.remove_intro_point`.
+    pub fn remove_intro_point(&mut self, ip: &IntroductionPoint) {
+        self.intro_points.retain(|i| i != ip);
+    }
+
+    /// `Swarm.has_connection` : un circuit connecte via ce `seeder_pk`.
+    pub fn has_connection(&self, seeder_pk: &[u8]) -> bool {
+        self.connections
+            .values()
+            .any(|ip| ip.seeder_pk == seeder_pk)
+    }
+
+    /// `Swarm.remove_connection` : detache le circuit du swarm
+    /// (sans le fermer — `remove_circuit` Python le fait ensuite).
+    pub fn remove_connection(&mut self, circuit_id: u32) -> bool {
+        self.connections.remove(&circuit_id).is_some()
+    }
+
+    /// `Swarm.seeding` Python : on seede dans ce swarm (`seeder_sk`
+    /// present).
+    pub fn seeding(&self) -> bool {
+        self.seeder_sk.is_some()
+    }
+
+    /// `Swarm.get_num_seeders`.
+    pub fn num_seeders(&self) -> usize {
+        let mut pks: HashSet<&[u8]> =
+            self.intro_points.iter().map(|i| i.seeder_pk.as_slice()).collect();
+        pks.extend(self.connections.values().map(|i| i.seeder_pk.as_slice()));
+        pks.len()
     }
 }
