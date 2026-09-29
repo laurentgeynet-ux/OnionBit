@@ -40,6 +40,18 @@ en haut.
   revus a 0 %. Nouveau flag `AddDownloadOptions::output_includes_name`
   (vrai au restore) desactivant `name_subfolder` dans ce cas.
 
+## Fix : init disque des torrents hors du lock de session (2026-09-29)
+
+`add_torrent` (librqbit vendored) executait `create_and_init` —
+boucle synchrone sur chaque fichier (create_dir_all, open, mark
+sparse, set_len, mmap) — sous le write-lock de `self.db`. Au restore,
+chaque torrent multi-fichiers bloquait `with_torrents` (liste API)
+et les autres ajouts pendant des dizaines de secondes, empiles les
+uns derriere les autres. L'init est desormais faite hors du lock
+(concurrence toujours bornee par le semaphore du spawner), la dedup
+`AlreadyManaged` est verifiee en lecture avant l'init puis re-verifiee
+a l'insertion.
+
 ## Étape 12 clôturée : interop tunnel rejouée contre pyipv8 réel (2026-09-29)
 
 Le banc `scripts/interop_exit_download.ps1` a été exécuté avec

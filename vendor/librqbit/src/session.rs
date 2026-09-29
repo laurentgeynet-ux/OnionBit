@@ -1384,53 +1384,74 @@ impl Session {
 
         let _permit = self.spawner.semaphore().acquire_owned().await?;
 
-        let (managed_torrent, metadata) = {
-            let mut g = self.db.write();
-            if let Some((id, handle)) = g.torrents.iter().find_map(|(eid, t)| {
+        let already_managed = |g: &std::collections::HashMap<
+            TorrentId,
+            ManagedTorrentHandle,
+        >| {
+            g.iter().find_map(|(eid, t)| {
                 if t.info_hash() == info_hash || *eid == id {
                     Some((*eid, t.clone()))
                 } else {
                     None
                 }
-            }) {
+            })
+        };
+        if let Some((id, handle)) = already_managed(&self.db.read().torrents) {
+            return Ok(AddTorrentResponse::AlreadyManaged(id, handle));
+        }
+
+        let span = debug_span!(parent: self.rs(), "torrent", id);
+        let peer_opts = self.merge_peer_opts(opts.peer_opts);
+        let metadata = Arc::new(metadata);
+        let minfo = Arc::new(ManagedTorrentShared {
+            id,
+            span,
+            info_hash,
+            trackers: trackers.into_iter().collect(),
+            spawner: self.spawner.clone(),
+            peer_id: self.peer_id,
+            storage_factory,
+            options: ManagedTorrentOptions {
+                force_tracker_interval: opts.force_tracker_interval,
+                peer_connect_timeout: peer_opts.connect_timeout,
+                peer_read_write_timeout: peer_opts.read_write_timeout,
+                allow_overwrite: opts.overwrite,
+                output_folder,
+                ratelimits: opts.ratelimits,
+                initial_peers: opts.initial_peers.clone().unwrap_or_default(),
+                peer_limit: opts.peer_limit.or(self.peer_limit),
+                #[cfg(feature = "disable-upload")]
+                _disable_upload: self._disable_upload,
+            },
+            connector: self.connector.clone(),
+            session: Arc::downgrade(self),
+            magnet_name: name,
+            client_name_and_version: self.client_name_and_version.clone(),
+        });
+
+        // Tribler : `create_and_init` boucle sur TOUS les fichiers
+        // (create_dir_all, open, mark sparse, set_len, mmap) — des
+        // centaines/milliers d'appels synchrones. A l'origine cela
+        // tournait sous le write-lock de `self.db` : toute l'init
+        // disque bloquait `with_torrents` (liste des downloads de
+        // l'API) et les autres add_torrent. -> init hors du lock
+        // (la concurrence reste bornee par `_permit`), la dedup est
+        // re-verifiee au moment de l'insertion.
+        let storage = self
+            .spawner
+            .block_in_place(|| minfo.storage_factory.create_and_init(&minfo, &metadata))?;
+
+        let managed_torrent = {
+            let mut g = self.db.write();
+            if let Some((id, handle)) = already_managed(&g.torrents) {
                 return Ok(AddTorrentResponse::AlreadyManaged(id, handle));
             }
-
-            let span = debug_span!(parent: self.rs(), "torrent", id);
-            let peer_opts = self.merge_peer_opts(opts.peer_opts);
-            let metadata = Arc::new(metadata);
-            let minfo = Arc::new(ManagedTorrentShared {
-                id,
-                span,
-                info_hash,
-                trackers: trackers.into_iter().collect(),
-                spawner: self.spawner.clone(),
-                peer_id: self.peer_id,
-                storage_factory,
-                options: ManagedTorrentOptions {
-                    force_tracker_interval: opts.force_tracker_interval,
-                    peer_connect_timeout: peer_opts.connect_timeout,
-                    peer_read_write_timeout: peer_opts.read_write_timeout,
-                    allow_overwrite: opts.overwrite,
-                    output_folder,
-                    ratelimits: opts.ratelimits,
-                    initial_peers: opts.initial_peers.clone().unwrap_or_default(),
-                    peer_limit: opts.peer_limit.or(self.peer_limit),
-                    #[cfg(feature = "disable-upload")]
-                    _disable_upload: self._disable_upload,
-                },
-                connector: self.connector.clone(),
-                session: Arc::downgrade(self),
-                magnet_name: name,
-                client_name_and_version: self.client_name_and_version.clone(),
-            });
 
             let initializing = Arc::new(TorrentStateInitializing::new(
                 minfo.clone(),
                 metadata.clone(),
                 only_files.clone(),
-                self.spawner
-                    .block_in_place(|| minfo.storage_factory.create_and_init(&minfo, &metadata))?,
+                storage,
                 false,
             ));
             let handle = Arc::new(ManagedTorrent {
@@ -1445,7 +1466,7 @@ impl Session {
             });
 
             g.add_torrent(handle.clone(), id);
-            (handle, metadata)
+            handle
         };
 
         if let Some(p) = self.persistence.as_ref()
