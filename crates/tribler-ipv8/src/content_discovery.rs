@@ -59,33 +59,53 @@ pub const HEALTH_REQUEST_POPULAR: u8 = 1;
 /// `HEALTH_REQUEST_RANDOM` (Python) : echantillon aleatoire.
 pub const HEALTH_REQUEST_RANDOM: u8 = 2;
 
-/// Intervalle de gossip de sante (`random_torrent_interval` Python,
-/// defaut 5 s — resserre pour les tests via le parametre).
-const DEFAULT_GOSSIP_INTERVAL: Duration = Duration::from_secs(5);
+/// `ContentDiscoverySettings` Python : reglages de la community.
+/// Les defauts reproduisent les constantes filaires de
+/// `community.py` (interop Tribler 8.x).
+#[derive(Debug, Clone)]
+pub struct ContentDiscoverySettings {
+    /// `random_torrent_interval` Python (5 s) : periode du gossip de
+    /// santes.
+    pub gossip_interval: Duration,
+    /// `random.sample(peers, min(len(peers), 5))` : nombre de pairs
+    /// interroges en sante par tick.
+    pub gossip_fanout: usize,
+    /// Budget maximal d'une liste `HealthPayload` en octets estimes
+    /// (`<=1200` cote Python — `size += len(tracker) + 38`).
+    pub health_payload_budget: usize,
+    /// `NumberCache.timeout_delay` Python (10 s) : TTL d'un
+    /// `remote_select` en attente de reponse.
+    pub select_ttl: Duration,
+    /// `SelectRequest.packets_limit` (cache.py, 10) : paquets
+    /// `SelectResponse` acceptes par requete (anti-spam).
+    pub select_packets_limit: u8,
+    /// `RandomWalk` du launcher pyipv8 (`target_peers = 20`).
+    pub walk_target_peers: usize,
+    /// `max_query_peers` Python (20) : pairs interroges par
+    /// `send_search_request`.
+    pub max_query_peers: usize,
+}
 
-/// Nombre de pairs auxquels une requete de sante est envoyee par tick
-/// (`random.sample(peers, min(len(peers), 5))` Python).
-const GOSSIP_REQUEST_FANOUT: usize = 5;
+impl Default for ContentDiscoverySettings {
+    /// Defauts = constantes `community.py`.
+    fn default() -> Self {
+        Self {
+            gossip_interval: Duration::from_secs(5),
+            gossip_fanout: 5,
+            health_payload_budget: 1200,
+            select_ttl: Duration::from_secs(10),
+            select_packets_limit: 10,
+            walk_target_peers: 20,
+            max_query_peers: 20,
+        }
+    }
+}
 
-/// Budget maximum d'une liste `HealthPayload` en octets estimes
-/// (`<=1200` cote Python — `size += len(tracker) + 38`).
-const HEALTH_PAYLOAD_BUDGET: usize = 1200;
-
-/// TTL d'une requete `remote_select` en attente de reponse.
-const SELECT_REQUEST_TTL: Duration = Duration::from_secs(30);
-
-/// Cible de pairs de la marche aleatoire (`RandomWalk` du launcher
-/// pyipv8 : `target_peers = 20` pour les overlays Tribler).
-const WALK_TARGET_PEERS: usize = 20;
-
-/// `SelectRequest.packets_limit` (cache.py) : nombre maximal de
-/// paquets `SelectResponse` acceptes pour une requete (anti-spam).
-const SELECT_RESPONSE_PACKETS_LIMIT: u8 = 10;
-
-/// `processing_callback` Python : appelee avec les `to_simple_dict()`
-/// des objets NOUVEAUX (`ObjState.NEW_OBJECT`) de chaque paquet de
-/// reponse — relayee en `remote_query_results` par l'appelant.
-pub type SelectCallback = Arc<dyn Fn(Vec<serde_json::Value>) + Send + Sync>;
+/// `processing_callback` Python : appelee avec le mid du pair
+/// repondant et les `to_simple_dict()` des objets NOUVEAUX
+/// (`ObjState.NEW_OBJECT`) de chaque paquet de reponse — relayee en
+/// `remote_query_results` par l'appelant.
+pub type SelectCallback = Arc<dyn Fn(&[u8], Vec<serde_json::Value>) + Send + Sync>;
 
 /// `SelectRequest` (cache.py) : contexte d'un `remote_select` sortant.
 struct PendingSelect {
@@ -93,7 +113,10 @@ struct PendingSelect {
     /// depuis cette source (role de `hexlify(peer.mid)` dans le
     /// `RequestCache` Python ; l'id est deja unique par processus).
     peer_addr: UdpAddress,
-    /// Instant d'emission (TTL `SELECT_REQUEST_TTL`).
+    /// Mid du pair interroge (`peer.mid` Python — transmis au
+    /// `processing_callback` pour `remote_query_results.peer`).
+    peer_mid: Vec<u8>,
+    /// Instant d'emission (TTL `ContentDiscoverySettings::select_ttl`).
     sent_at: Instant,
     /// `packets_limit` Python.
     packets_limit: u8,
@@ -171,14 +194,15 @@ pub struct HealthPayload {
 }
 
 impl HealthPayload {
-    /// `HealthPayload.create` : tronque la liste au budget estime.
-    pub fn create(response_type: u8, healths: Vec<HealthInfo>) -> Self {
+    /// `HealthPayload.create` : tronque la liste au `budget` estime
+    /// (`ContentDiscoverySettings::health_payload_budget`).
+    pub fn create(response_type: u8, healths: Vec<HealthInfo>, budget: usize) -> Self {
         let mut size = 0usize;
         let torrents = healths
             .into_iter()
             .take_while(|h| {
                 size += h.wire_weight();
-                size <= HEALTH_PAYLOAD_BUDGET
+                size <= budget
             })
             .collect();
         Self {
@@ -229,9 +253,11 @@ pub trait ContentProvider: Send + Sync {
     /// retourne les infohashes nouveaux a resoudre par
     /// `remote_select`.
     fn process_health(&self, healths: &[HealthInfo]) -> Vec<[u8; 20]>;
-    /// `metadata_store.get_entries_threaded` : repond a un select
-    /// distant — JSON de parametres -> blob de resultat.
-    fn remote_select(&self, json: &[u8]) -> Vec<u8>;
+    /// `metadata_store.get_entries_threaded` + `send_db_results` :
+    /// repond a un select distant — JSON de parametres -> chunks de
+    /// resultat (un chunk <= `maximum_payload_size` par
+    /// `SelectResponse`, archive vide si aucun resultat).
+    fn remote_select(&self, json: &[u8]) -> Vec<Vec<u8>>;
     /// `process_compressed_mdblob` cote requeteur : integre une
     /// reponse select (blob opaque) ; retourne les `to_simple_dict()`
     /// des objets NOUVEAUX (`ObjState.NEW_OBJECT` Python) pour la
@@ -262,6 +288,8 @@ pub struct ContentDiscoveryCommunity {
     /// estimations `my_estimated_lan/wan` (un seul endpoint UDP, une
     /// seule paire d'estimations cote Python `IPv8`).
     discovery: Arc<DiscoveryCommunity>,
+    /// `ContentDiscoverySettings` Python.
+    settings: ContentDiscoverySettings,
 }
 
 impl ContentDiscoveryCommunity {
@@ -272,7 +300,7 @@ impl ContentDiscoveryCommunity {
         network: Arc<Network>,
         endpoint: Arc<UdpEndpoint>,
         provider: Arc<dyn ContentProvider>,
-        gossip_interval: Option<Duration>,
+        settings: ContentDiscoverySettings,
         discovery: Arc<DiscoveryCommunity>,
     ) -> Arc<Self> {
         let community = Arc::new(Self {
@@ -284,6 +312,7 @@ impl ContentDiscoveryCommunity {
             global_time: AtomicU64::new(0),
             pending_selects: Mutex::new(std::collections::HashMap::new()),
             discovery,
+            settings,
         });
         let prefix = prefix_of(&CONTENT_DISCOVERY_COMMUNITY_ID);
         let c = community.clone();
@@ -296,8 +325,7 @@ impl ContentDiscoveryCommunity {
             .await;
         let c = community.clone();
         tokio::spawn(async move {
-            let mut tick =
-                tokio::time::interval(gossip_interval.unwrap_or(DEFAULT_GOSSIP_INTERVAL));
+            let mut tick = tokio::time::interval(c.settings.gossip_interval);
             tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             // `tokio::interval` tire un premier tick **immediat** — on
             // l'absorbe : le gossip est periodique, rien a emettre a
@@ -387,7 +415,7 @@ impl ContentDiscoveryCommunity {
             // `BaseLauncher.get_walk_strategies` Tribler.
             strategies: vec![OverlayStrategy {
                 name: "RandomWalk",
-                target_peers: 20,
+                target_peers: self.settings.walk_target_peers,
             }],
             decode: content_discovery_msg_name,
         }
@@ -426,7 +454,7 @@ impl ContentDiscoveryCommunity {
         let known = self
             .network
             .peers_for_service(&CONTENT_DISCOVERY_COMMUNITY_ID);
-        if known.len() >= WALK_TARGET_PEERS {
+        if known.len() >= self.settings.walk_target_peers {
             return Ok(());
         }
         let walkable = self
@@ -696,24 +724,27 @@ impl ContentDiscoveryCommunity {
         }
         // `ThreadRng` n'est pas `Send` : tout le tirage est fait avant
         // le premier `.await`.
+        let fanout = self.settings.gossip_fanout;
         let (chosen_one, targets) = {
             let mut rng = rand::thread_rng();
             (
                 peers.choose(&mut rng).cloned(),
                 peers
-                    .choose_multiple(&mut rng, GOSSIP_REQUEST_FANOUT)
+                    .choose_multiple(&mut rng, fanout)
                     .cloned()
                     .collect::<Vec<_>>(),
             )
         };
         if let Some(p) = chosen_one {
             let healths = self.provider.healths_for(HEALTH_REQUEST_RANDOM);
-            // Coherent avec le handler `HEALTH_REQUEST` : rien a
-            // annoncer -> ne pas emettre de `HealthPayload` vide.
-            if !healths.is_empty() {
-                let payload = HealthPayload::create(HEALTH_REQUEST_RANDOM, healths);
-                let _ = self.send_payload(&p, &payload).await;
-            }
+            // `gossip_random_torrents_health` Python : le payload est
+            // emis meme vide (annonce "rien a offrir").
+            let payload = HealthPayload::create(
+                HEALTH_REQUEST_RANDOM,
+                healths,
+                self.settings.health_payload_budget,
+            );
+            let _ = self.send_payload(&p, &payload).await;
         }
         for p in targets {
             let _ = self
@@ -730,9 +761,10 @@ impl ContentDiscoveryCommunity {
         let now = Instant::now();
         let expired: Vec<PendingSelect> = {
             let mut pend = self.pending_selects.lock().unwrap();
+            let ttl = self.settings.select_ttl;
             let ids: Vec<u32> = pend
                 .iter()
-                .filter(|(_, r)| now.duration_since(r.sent_at) >= SELECT_REQUEST_TTL)
+                .filter(|(_, r)| now.duration_since(r.sent_at) >= ttl)
                 .map(|(id, _)| *id)
                 .collect();
             ids.iter().filter_map(|id| pend.remove(id)).collect()
@@ -744,6 +776,49 @@ impl ContentDiscoveryCommunity {
         }
     }
 
+    /// `ContentDiscoverySettings` actifs (pour les plan de controle
+    /// qui veulent `max_query_peers` etc.).
+    pub fn settings(&self) -> &ContentDiscoverySettings {
+        &self.settings
+    }
+
+    /// `send_search_request` Python : echantillonne
+    /// `settings.max_query_peers` pairs de l'overlay et leur envoie
+    /// le meme `remote_select`. Le `callback` recoit
+    /// `(mid_du_pair_repondant, objets_nouveaux)` pour chaque paquet —
+    /// base de la notification `remote_query_results`.
+    /// Retourne les mids hex des pairs effectivement interroges.
+    pub async fn send_search_request(
+        &self,
+        json: Vec<u8>,
+        callback: SelectCallback,
+    ) -> Vec<String> {
+        // `get_random_peers(max_query_peers)` Python : tirage sans
+        // remise parmi les pairs de l'overlay qui ont une adresse.
+        let mut peers: Vec<Peer> = self
+            .network
+            .peers_for_service(&CONTENT_DISCOVERY_COMMUNITY_ID)
+            .into_iter()
+            .filter(|p| p.address.is_some())
+            .collect();
+        peers = peers
+            .choose_multiple(&mut rand::thread_rng(), self.settings.max_query_peers)
+            .cloned()
+            .collect();
+        let mut queried = Vec::new();
+        for p in &peers {
+            let Some(addr) = &p.address else { continue };
+            if self
+                .send_select(addr, p.mid.to_vec(), json.clone(), Some(callback.clone()))
+                .await
+                .is_ok()
+            {
+                queried.push(hex::encode(p.mid));
+            }
+        }
+        queried
+    }
+
     /// `send_remote_select` : demande `json` de parametres au pair ;
     /// la reponse (msg 202) est absorbee par `process_select_response`.
     pub async fn send_remote_select(
@@ -751,24 +826,28 @@ impl ContentDiscoveryCommunity {
         peer: &UdpAddress,
         json: Vec<u8>,
     ) -> Result<u32, Ipv8Error> {
-        self.send_select(peer, json, None).await
+        self.send_select(peer, Vec::new(), json, None).await
     }
 
     /// `send_remote_select` avec `processing_callback` — le callback
-    /// recoit les objets nouveaux de chaque paquet de reponse
-    /// (`send_search_request` -> `remote_query_results` Python).
+    /// recoit `(mid_du_pair, objets_nouveaux)` pour chaque paquet de
+    /// reponse (`send_search_request` -> `remote_query_results`
+    /// Python).
     pub async fn send_remote_select_cb(
         &self,
         peer: &UdpAddress,
+        peer_mid: &[u8],
         json: Vec<u8>,
         callback: SelectCallback,
     ) -> Result<u32, Ipv8Error> {
-        self.send_select(peer, json, Some(callback)).await
+        self.send_select(peer, peer_mid.to_vec(), json, Some(callback))
+            .await
     }
 
     async fn send_select(
         &self,
         peer: &UdpAddress,
+        peer_mid: Vec<u8>,
         json: Vec<u8>,
         callback: Option<SelectCallback>,
     ) -> Result<u32, Ipv8Error> {
@@ -777,8 +856,9 @@ impl ContentDiscoveryCommunity {
             id,
             PendingSelect {
                 peer_addr: peer.clone(),
+                peer_mid,
                 sent_at: Instant::now(),
-                packets_limit: SELECT_RESPONSE_PACKETS_LIMIT,
+                packets_limit: self.settings.select_packets_limit,
                 peer_responded: false,
                 callback,
             },
@@ -879,11 +959,15 @@ impl ContentDiscoveryCommunity {
                 let req = HealthRequest::unpack(&mut r)?;
                 let c = self.clone();
                 tokio::spawn(async move {
+                    // `on_health_request` Python : repond toujours,
+                    // meme avec une liste vide.
                     let healths = c.provider.healths_for(req.request_type);
-                    if !healths.is_empty() {
-                        let payload = HealthPayload::create(req.request_type, healths);
-                        let _ = c.send_payload(&src_addr, &payload).await;
-                    }
+                    let payload = HealthPayload::create(
+                        req.request_type,
+                        healths,
+                        c.settings.health_payload_budget,
+                    );
+                    let _ = c.send_payload(&src_addr, &payload).await;
                 });
             }
             msg::HEALTH => {
@@ -918,12 +1002,19 @@ impl ContentDiscoveryCommunity {
             }
             msg::REMOTE_SELECT => {
                 let p = RemoteSelect::unpack(&mut r)?;
-                let blob = self.provider.remote_select(&p.json);
+                let chunks = self.provider.remote_select(&p.json);
                 let c = self.clone();
                 tokio::spawn(async move {
-                    let _ = c
-                        .send_payload(&src_addr, &SelectResponse { id: p.id, blob })
-                        .await;
+                    // `send_db_results` Python : un `SelectResponse`
+                    // par chunk (<= `maximum_payload_size`), meme id.
+                    for blob in chunks {
+                        if c.send_payload(&src_addr, &SelectResponse { id: p.id, blob })
+                            .await
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
                 });
             }
             msg::SELECT_RESPONSE => {
@@ -936,27 +1027,28 @@ impl ContentDiscoveryCommunity {
                 );
                 // `request_cache.get(mid, id)` Python : l'id est
                 // unique par processus ; on verifie la source.
-                let callback = {
+                let pending = {
                     let mut pend = self.pending_selects.lock().unwrap();
                     match pend.get_mut(&p.id) {
                         Some(req) if req.peer_addr == src_addr => {
                             req.peer_responded = true;
                             req.packets_limit -= 1;
                             let cb = req.callback.clone();
+                            let mid = req.peer_mid.clone();
                             if req.packets_limit == 0 {
                                 pend.remove(&p.id);
                             }
-                            Some(cb)
+                            Some((mid, cb))
                         }
                         _ => None,
                     }
                 };
-                let Some(callback) = callback else {
+                let Some((mid, callback)) = pending else {
                     return Ok(());
                 };
                 let results = self.provider.process_select_response(&p.blob);
                 if let Some(cb) = callback {
-                    cb(results);
+                    cb(&mid, results);
                 }
             }
             _ => {}

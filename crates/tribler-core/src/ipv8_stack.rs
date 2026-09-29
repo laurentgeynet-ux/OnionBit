@@ -39,10 +39,6 @@ const IPV8_KEY_FILE: &str = "ipv8_keypair.bin";
 /// Nombre de sauts anonymes maximum (`anon_hops` Python : 1..=3).
 pub const MAX_ANON_HOPS: usize = 3;
 
-/// Taille maximale du blob de reponse `remote_select` (borne
-/// `max_response_size` Python).
-const SELECT_MAX_RESPONSE: usize = 1_000_000;
-
 /// Port d'ecoute UDP IPv8 par defaut (fidele a `pyipv8` : 8090).
 pub const DEFAULT_IPV8_PORT: u16 = 8090;
 
@@ -365,7 +361,19 @@ fn spawn_circuit_watchdog(
 /// metadonnees depuis `channel_node`, serialisation `.mdblob` + LZ4.
 struct SessionContentProvider {
     db: Arc<Database>,
+    /// `remote_queries_in_progress` Python : une seule requete
+    /// `txt_filter` distante a la fois (`process_rpc_query_rate_limited`).
+    remote_queries_in_progress: std::sync::atomic::AtomicUsize,
+    /// `max_response_size` Python (100) : entrees max par select.
+    max_response_size: usize,
+    /// `maximum_payload_size` Python (1300) : octets d'entrees max
+    /// par chunk de reponse.
+    max_payload_size: usize,
 }
+
+/// `deprecated_parameters` Python : ces parametres de select sont
+/// rejetes (reponse archive vide).
+const DEPRECATED_SELECT_PARAMS: [&str; 3] = ["subscribed", "attribute_ranges", "complete_channel"];
 
 impl SessionContentProvider {
     /// Convertit une ligne `channel_node` en entree `.mdblob`
@@ -418,6 +426,55 @@ impl SessionContentProvider {
             _ => MetadataEntry::RegularTorrent(torrent),
         })
     }
+
+    /// Corps du select distant (cf. `ContentProvider::remote_select`).
+    fn remote_select_inner(&self, query: &serde_json::Value) -> Vec<Vec<u8>> {
+        // `sanitize_query` : `last` borne a `first + max_response_size`.
+        let first = query.get("first").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+        let last = query
+            .get("last")
+            .and_then(|v| v.as_u64())
+            .map(|v| (v as usize).min(first + self.max_response_size))
+            .unwrap_or(first + self.max_response_size);
+
+        let rows = self
+            .db
+            .with(|conn| select_rows(conn, query, first, last))
+            .unwrap_or_default();
+
+        // `entries_to_chunk` Python : entrees serialisees groupees
+        // par budget de `maximum_payload_size`, compressees LZ4 par
+        // chunk — chaque chunk part dans un `SelectResponse` separe.
+        let mut chunks: Vec<Vec<u8>> = Vec::new();
+        let mut cur = Vec::new();
+        for row in rows {
+            let Some(entry) = Self::row_to_entry(&row) else {
+                continue;
+            };
+            let Ok(bytes) = tribler_format::mdblob::encode_entry_presigned(&entry) else {
+                continue;
+            };
+            if cur.len() + bytes.len() > self.max_payload_size && !cur.is_empty() {
+                chunks.push(lz4_frame(&cur));
+                cur.clear();
+            }
+            cur.extend_from_slice(&bytes);
+        }
+        if !cur.is_empty() || chunks.is_empty() {
+            chunks.push(lz4_frame(&cur));
+        }
+        chunks
+    }
+}
+
+/// `lz4.frame.compress(b"")` Python (`LZ4_EMPTY_ARCHIVE`).
+fn lz4_frame(data: &[u8]) -> Vec<u8> {
+    use std::io::Write;
+    let mut enc = lz4_flex::frame::FrameEncoder::new(Vec::new());
+    if enc.write_all(data).is_err() {
+        return Vec::new();
+    }
+    enc.finish().unwrap_or_default()
 }
 
 impl ContentProvider for SessionContentProvider {
@@ -492,34 +549,80 @@ impl ContentProvider for SessionContentProvider {
             .unwrap_or_default()
     }
 
-    /// Select distant : parametres JSON (`txt_filter`, `infohash_set`,
-    /// `first`/`last`) → entrees `.mdblob` compressees LZ4
-    /// (`entries_to_chunk` + `lz4.frame` cote Python).
-    fn remote_select(&self, json: &[u8]) -> Vec<u8> {
-        let query: serde_json::Value = serde_json::from_slice(json).unwrap_or_default();
+    /// Select distant : parametres JSON (`txt_filter`, `infohash`,
+    /// `infohash_set`, `first`/`last`, `metadata_type`, `channel_pk`,
+    /// `origin_id`, `max_rowid`, `hide_xxx`) → chunks `.mdblob`
+    /// compresses LZ4 (`send_db_results` Python : un `SelectResponse`
+    /// par chunk, archive vide si rien).
+    fn remote_select(&self, json: &[u8]) -> Vec<Vec<u8>> {
+        // `parse_parameters` Python : JSON invalide -> pas de
+        // reponse exploitable (archive vide = `LZ4_EMPTY_ARCHIVE`).
+        let Ok(query) = serde_json::from_slice::<serde_json::Value>(json) else {
+            return vec![lz4_frame(&[])];
+        };
+        // `deprecated_parameters` : rejet (Python renvoie l'archive vide).
+        if DEPRECATED_SELECT_PARAMS
+            .iter()
+            .any(|k| query.get(k).is_some())
+        {
+            tracing::warn!(%query, "remote select avec parametres deprecies");
+            return vec![lz4_frame(&[])];
+        }
+        // `process_rpc_query_rate_limited` : une seule requete
+        // `txt_filter` a la fois, les autres sont ignorees.
+        let rate_limited = query.get("txt_filter").is_some();
+        if rate_limited
+            && self
+                .remote_queries_in_progress
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+                > 0
+        {
+            self.remote_queries_in_progress
+                .fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+            return vec![lz4_frame(&[])];
+        }
+        let result = self.remote_select_inner(&query);
+        if rate_limited {
+            self.remote_queries_in_progress
+                .fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+        }
+        result
+    }
+        // `sanitize_query` : `last` borne a `first + max_response_size`.
+        let first = query.get("first").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+        let last = query
+            .get("last")
+            .and_then(|v| v.as_u64())
+            .map(|v| (v as usize).min(first + self.max_response_size))
+            .unwrap_or(first + self.max_response_size);
+
         let rows = self
             .db
-            .with(|conn| select_rows(conn, &query))
+            .with(|conn| select_rows(conn, query, first, last))
             .unwrap_or_default();
-        let mut blob = Vec::new();
+
+        // `entries_to_chunk` Python : entrees serialisees groupees
+        // par budget de `maximum_payload_size`, compressees LZ4 par
+        // chunk — chaque chunk part dans un `SelectResponse` separe.
+        let mut chunks: Vec<Vec<u8>> = Vec::new();
+        let mut cur = Vec::new();
         for row in rows {
-            if let Some(entry) = Self::row_to_entry(&row) {
-                if let Ok(bytes) = tribler_format::mdblob::encode_entry_presigned(&entry) {
-                    if blob.len() + bytes.len() > SELECT_MAX_RESPONSE {
-                        break;
-                    }
-                    blob.extend_from_slice(&bytes);
-                }
+            let Some(entry) = Self::row_to_entry(&row) else {
+                continue;
+            };
+            let Ok(bytes) = tribler_format::mdblob::encode_entry_presigned(&entry) else {
+                continue;
+            };
+            if cur.len() + bytes.len() > self.max_payload_size && !cur.is_empty() {
+                chunks.push(lz4_frame(&cur));
+                cur.clear();
             }
+            cur.extend_from_slice(&bytes);
         }
-        {
-            use std::io::Write;
-            let mut enc = lz4_flex::frame::FrameEncoder::new(Vec::new());
-            if enc.write_all(&blob).is_err() {
-                return Vec::new();
-            }
-            enc.finish().unwrap_or_default()
+        if !cur.is_empty() || chunks.is_empty() {
+            chunks.push(lz4_frame(&cur));
         }
+        chunks
     }
 
     /// `process_compressed_mdblob` : decompresse LZ4, parse les
@@ -557,9 +660,20 @@ impl ContentProvider for SessionContentProvider {
             .unwrap_or_default()
     }
 
-    /// `(version, plateforme)` pour `VersionResponse`.
+    /// `(version, plateforme)` pour `VersionResponse` —
+    /// `f"Tribler {version}"` + `sys.platform` Python.
     fn version_info(&self) -> (String, String) {
-        (env!("CARGO_PKG_VERSION").to_string(), "Tribler Rust".into())
+        let platform = if cfg!(windows) {
+            "win32"
+        } else if cfg!(target_os = "macos") {
+            "darwin"
+        } else {
+            "linux"
+        };
+        (
+            format!("Tribler {}", env!("CARGO_PKG_VERSION")),
+            platform.into(),
+        )
     }
 }
 
@@ -646,45 +760,70 @@ fn now_unix() -> u64 {
         .unwrap_or(0)
 }
 
+/// Champ binaire hex d'une requete select (`binary_fields` Python :
+/// `infohash`, `channel_pk` arrives en hex).
+fn json_hex_bytes(query: &serde_json::Value, key: &str) -> Option<Vec<u8>> {
+    query
+        .get(key)
+        .and_then(|v| v.as_str())
+        .and_then(|s| hex::decode(s.trim_matches('"')).ok())
+}
+
+/// `metadata_type` Python : accepte entier, chaine ou liste
+/// (`convert_to_json` convertit la chaine en `[int]`).
+fn json_metadata_types(query: &serde_json::Value) -> Option<Vec<i64>> {
+    let v = query.get("metadata_type")?;
+    let one = |v: &serde_json::Value| -> Option<i64> {
+        v.as_i64()
+            .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+    };
+    match v {
+        serde_json::Value::Array(arr) => Some(arr.iter().filter_map(one).collect()),
+        other => one(other).map(|m| vec![m]),
+    }
+}
+
 /// Filtre les lignes `channel_node` selon la requete JSON distante
-/// (`sanitize_query` Python : `infohash_set`, `txt_filter`, `first`,
-/// `last`).
+/// (`get_entries` Python : `txt_filter` FTS -> AND de LIKE,
+/// `infohash`/`infohash_set`, `channel_pk`, `origin_id`,
+/// `metadata_type`, `max_rowid`, `hide_xxx`), puis tranche
+/// `first`..`last` de `sanitize_query`.
 fn select_rows(
     conn: &rusqlite::Connection,
     query: &serde_json::Value,
+    first: usize,
+    last: usize,
 ) -> tribler_db::Result<Vec<tribler_db::models::ChannelNodeRow>> {
-    let first = query.get("first").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-    let last = query
-        .get("last")
-        .and_then(|v| v.as_u64())
-        .map(|v| v as usize);
-    let txt = query
-        .get("txt_filter")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-    let mut rows = if !txt.is_empty() {
-        tribler_db::channel::search_by_title(conn, &format!("%{txt}%"), 200)?
-    } else if let Some(set) = query.get("infohash_set").and_then(|v| v.as_array()) {
-        let mut out = Vec::new();
-        for v in set {
-            if let Some(hex) = v.as_str() {
-                if let Ok(bytes) = hex::decode(hex.trim_matches('"')) {
-                    if let Some(row) = tribler_db::channel::get_by_infohash(conn, &bytes)? {
-                        out.push(row);
-                    }
-                }
-            }
-        }
-        out
-    } else {
-        // Pas de filtre : entrees torrent les plus recentes.
-        tribler_db::channel::search_by_title(conn, "%", 200)?
+    let params = tribler_db::channel::SelectParams {
+        terms: query
+            .get("txt_filter")
+            .and_then(|v| v.as_str())
+            .map(crate::queries::fts_terms)
+            .unwrap_or_default(),
+        metadata_types: json_metadata_types(query),
+        infohash: json_hex_bytes(query, "infohash"),
+        infohash_set: query
+            .get("infohash_set")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str())
+                    .filter_map(|s| hex::decode(s.trim_matches('"')).ok())
+                    .collect()
+            })
+            .unwrap_or_default(),
+        channel_pk: json_hex_bytes(query, "channel_pk"),
+        origin_id: query.get("origin_id").and_then(|v| v.as_i64()),
+        max_rowid: query.get("max_rowid").and_then(|v| v.as_i64()),
+        hide_xxx: query
+            .get("hide_xxx")
+            .and_then(|v| v.as_bool().or_else(|| v.as_str().map(|s| s == "1" || s == "true")))
+            .unwrap_or(false),
+        limit: last + 1,
     };
-    let sliced: Vec<_> = rows.drain(first.min(rows.len())..).collect();
-    let mut sliced = sliced;
-    if let Some(l) = last {
-        sliced.truncate(l.saturating_sub(first) + 1);
-    }
+    let mut rows = tribler_db::channel::select_entries(conn, &params)?;
+    let mut sliced: Vec<_> = rows.drain(first.min(rows.len())..).collect();
+    sliced.truncate(last.saturating_sub(first) + 1);
     Ok(sliced)
 }
 
@@ -715,6 +854,8 @@ pub struct Ipv8Stack {
     engine_config: EngineConfig,
     /// Repertoire de telechargement par defaut.
     downloads_dir: PathBuf,
+    /// `state_dir` (dossiers de persistance fastresume des lanes).
+    state_dir: PathBuf,
     /// Registre partage des taches nommees (`/api/ipv8/asyncio/tasks`).
     tasks: crate::asyncio::TaskRegistry,
     /// `TunnelSettings.min_circuits` (cf. `Ipv8Config::min_circuits`).
@@ -804,14 +945,22 @@ impl Ipv8Stack {
         // `content_discovery_community/enabled` (la recherche distante
         // et `/api/search` retournent alors 503-vide cote REST).
         let content_discovery = if config.enable_content_discovery {
-            let provider = Arc::new(SessionContentProvider { db });
+            // `ContentDiscoverySettings` Python : defauts filaires
+            // (gossip 5 s, max 20 pairs, TTL 10 s, 10 paquets max).
+            let cd_settings = tribler_ipv8::content_discovery::ContentDiscoverySettings::default();
+            let provider = Arc::new(SessionContentProvider {
+                db,
+                remote_queries_in_progress: std::sync::atomic::AtomicUsize::new(0),
+                max_response_size: 100,
+                max_payload_size: 1300,
+            });
             Some(
                 ContentDiscoveryCommunity::new(
                     key.clone(),
                     network.clone(),
                     endpoint.clone(),
                     provider,
-                    None,
+                    cd_settings,
                     discovery.clone(),
                 )
                 .await,
@@ -1015,6 +1164,7 @@ impl Ipv8Stack {
             anon_lanes: Mutex::new(HashMap::new()),
             engine_config: engine_config.clone(),
             downloads_dir: downloads_dir.to_path_buf(),
+            state_dir: state_dir.to_path_buf(),
             tasks,
             min_circuits: config.min_circuits.max(1) as usize,
             max_circuits: config.max_circuits.max(1) as usize,
@@ -1189,6 +1339,10 @@ impl Ipv8Stack {
         // meme dossier par defaut que le moteur principal (sauf
         // `destination` explicite a l'ajout, qui prevaut par download).
         cfg.output_dir = self.downloads_dir.clone();
+        // Fastresume par lane (meme convention que `main`) — un
+        // dossier dedie empeche la restauration croisee des torrents
+        // anonymes sur le moteur en clair.
+        cfg.persistence_dir = Some(self.state_dir.join("rqbit").join(format!("anon{hops}")));
         let engine = BtEngine::start(cfg).await?;
         self.tasks.register(
             Some("Ipv8Stack"),

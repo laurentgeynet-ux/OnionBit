@@ -16,6 +16,7 @@ pub mod daemon_config;
 pub mod error;
 pub mod ipv8_stack;
 pub mod notifier;
+pub mod queries;
 pub mod services;
 pub mod session;
 pub mod trackers;

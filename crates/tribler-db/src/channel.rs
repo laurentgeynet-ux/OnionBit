@@ -144,3 +144,89 @@ pub fn search_by_title(
     let rows = stmt.query_map(params![pattern, limit], from_row)?;
     Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
 }
+
+/// Parametres d'un select distant/local (`get_entries` Python,
+/// `sanitize_query`) pour [`select_entries`].
+#[derive(Debug, Default, Clone)]
+pub struct SelectParams {
+    /// Termes `txt_filter` (FTS `AND` : le titre doit contenir
+    /// CHAQUE terme — approximation `LIKE` de `FtsIndex MATCH`).
+    pub terms: Vec<String>,
+    /// `metadata_type` accepte un entier ou une liste ; `None` =
+    /// tous types.
+    pub metadata_types: Option<Vec<i64>>,
+    /// `infohash` unique (binaire).
+    pub infohash: Option<Vec<u8>>,
+    /// `infohash_set` (binaires).
+    pub infohash_set: Vec<Vec<u8>>,
+    /// `channel_pk` -> colonne `public_key`.
+    pub channel_pk: Option<Vec<u8>>,
+    /// `origin_id` (exige `channel_pk` cote Python — filtre simple ici).
+    pub origin_id: Option<i64>,
+    /// `max_rowid` : exclut les `rowid >=` (pagination pushback).
+    pub max_rowid: Option<i64>,
+    /// `hide_xxx` Python : exclut les entrees marquee xxx
+    /// (`xxx >= 0.5` est le seuil du classifieur Tribler).
+    pub hide_xxx: bool,
+    /// Borne haute SQL (le `first`/`last` est tranche ensuite).
+    pub limit: usize,
+}
+
+/// `MetadataStore.get_entries` Python : `channel_node` filtre par les
+/// parametres d'un select (`txt_filter` -> AND de `LIKE`,
+/// `infohash`/`infohash_set`, `channel_pk`, `origin_id`,
+/// `metadata_type`, `max_rowid`, `hide_xxx`), tri `torrent_date DESC`.
+pub fn select_entries(conn: &Connection, p: &SelectParams) -> Result<Vec<ChannelNodeRow>> {
+    if let Some(ih) = &p.infohash {
+        return Ok(get_by_infohash(conn, ih)?.into_iter().collect());
+    }
+    if !p.infohash_set.is_empty() {
+        let mut out = Vec::new();
+        for ih in &p.infohash_set {
+            if let Some(row) = get_by_infohash(conn, ih)? {
+                out.push(row);
+            }
+        }
+        return Ok(out);
+    }
+
+    let mut sql = format!("SELECT {COLS} FROM channel_node WHERE 1=1");
+    let mut args: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+    for t in &p.terms {
+        sql.push_str(" AND title LIKE ?");
+        args.push(Box::new(format!("%{t}%")));
+    }
+    if let Some(mts) = &p.metadata_types {
+        if !mts.is_empty() {
+            sql.push_str(&format!(
+                " AND metadata_type IN ({})",
+                mts.iter().map(|_| "?").collect::<Vec<_>>().join(",")
+            ));
+            for m in mts {
+                args.push(Box::new(*m));
+            }
+        }
+    }
+    if let Some(pk) = &p.channel_pk {
+        sql.push_str(" AND public_key = ?");
+        args.push(Box::new(pk.clone()));
+    }
+    if let Some(oid) = p.origin_id {
+        sql.push_str(" AND origin_id = ?");
+        args.push(Box::new(oid));
+    }
+    if let Some(mr) = p.max_rowid {
+        sql.push_str(" AND rowid < ?");
+        args.push(Box::new(mr));
+    }
+    if p.hide_xxx {
+        sql.push_str(" AND xxx < 0.5");
+    }
+    sql.push_str(" ORDER BY torrent_date DESC LIMIT ?");
+    args.push(Box::new(p.limit as i64));
+
+    let mut stmt = conn.prepare(&sql)?;
+    let refs: Vec<&dyn rusqlite::ToSql> = args.iter().map(|b| b.as_ref()).collect();
+    let rows = stmt.query_map(rusqlite::params_from_iter(refs), from_row)?;
+    Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+}

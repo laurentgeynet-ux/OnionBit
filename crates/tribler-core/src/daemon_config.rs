@@ -679,6 +679,11 @@ impl DaemonConfig {
             allow_mmap: self.libtorrent.allow_mmap,
             clear_orphaned_parts: self.libtorrent.clear_orphaned_parts,
             dht_readiness_timeout_secs: self.libtorrent.dht_readiness_timeout,
+            // Fastresume rqbit : `session.json` + `<ih>.bitv` par
+            // moteur (equivalent des checkpoints libtorrent). Dossier
+            // dedie par moteur — les lanes anonymes ont le leur
+            // (`anon<N>`, cf. `Ipv8Stack::anon_engine`).
+            persistence_dir: Some(state_dir.join("rqbit").join("main")),
             ..Default::default()
         };
         // proxy_type 2/3 = SOCKS5 (enum libtorrent), 4/5 = HTTP non

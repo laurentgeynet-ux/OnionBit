@@ -1165,7 +1165,26 @@ impl CoreSession {
         let old_hops = row.anon_hops.max(0) as u32;
         let old_engine = self.engine_for(old_hops).await?;
         let new_engine = self.engine_for(new_hops).await?;
+        // Fastresume inter-moteurs : le `.bitv` de rqbit est supprime
+        // du dossier de l'ancienne session au `delete` — on le met de
+        // cote puis on le depose dans le dossier de la nouvelle lane
+        // AVANT le re-add pour court-circuiter le re-hash complet.
+        let ih_hex = tribler_crypto::hash::to_hex(&ih);
+        let bitv = match old_engine.config().persistence_dir.as_ref() {
+            Some(dir) => tokio::fs::read(dir.join(format!("{ih_hex}.bitv")))
+                .await
+                .ok(),
+            None => None,
+        };
         self.remove_engine_only(id_or_hash, false).await?;
+        if let (Some(dir), Some(bits)) = (new_engine.config().persistence_dir.clone(), bitv) {
+            if let Err(e) = tokio::fs::create_dir_all(&dir).await {
+                tracing::warn!(error = %e, "update_hops: dossier fastresume increatable");
+            } else if let Err(e) = tokio::fs::write(dir.join(format!("{ih_hex}.bitv")), &bits).await
+            {
+                tracing::warn!(error = %e, "update_hops: transfert fastresume impossible");
+            }
+        }
         row.anon_hops = i64::from(new_hops);
         match self.readd_row(&new_engine, &row).await {
             Ok(_) => {

@@ -3,6 +3,36 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Fastresume rqbit : plus de re-hash au changement de hops ni au redémarrage (2026-09-29)
+
+Symptôme : changer `anon_hops` en cours de téléchargement (ou
+redémarrer le daemon) relançait une validation complète des pièces —
+long sur les gros fichiers, contrairement aux checkpoints libtorrent
+de Tribler.
+
+**Cause** : `EngineConfig.fastresume` était `true` mais
+`SessionOptions::persistence` restait `None` — rqbit n'active le
+fastresume qu'avec un backend de persistance ; le flag était sans
+effet (`NonPersistentBitVFactory`).
+
+Changements :
+
+- `tribler-bittorrent/config.rs` : nouveau champ `persistence_dir`
+  traduit en `SessionPersistenceConfig::Json` quand `fastresume` est
+  actif ; tests offline inchanges (`None`).
+- `tribler-core/daemon_config.rs` : le moteur principal persiste dans
+  `state_dir/rqbit/main`.
+- `tribler-core/ipv8_stack.rs` : chaque lane anonyme a son dossier
+  `state_dir/rqbit/anon<N>` — un dossier dedie par moteur empeche la
+  restauration croisee des torrents anonymes sur le moteur en clair
+  (rqbit re-ajoute le contenu de `session.json` au demarrage de la
+  session).
+- `tribler-core/session.rs` : `update_hops` met de cote le
+  `<ih>.bitv` de l'ancienne lane (le `delete` rqbit le supprime) et
+  le depose dans le dossier de la nouvelle lane avant le re-add —
+  `validate_fastresume` (verification legere d'un echantillon par
+  fichier) remplace alors le re-hash complet.
+
 ## Correctif majeur : circuits anonymes bloqués sur un premier saut mort + layout filaire par community (2026-09-29)
 
 Symptôme : plus aucun téléchargement anonyme — tous les circuits

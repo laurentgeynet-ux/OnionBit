@@ -65,8 +65,17 @@ pub struct EngineConfig {
     /// proxy distant non verifie — voir `tribler-network-policy`.
     pub socks5_proxy: Option<String>,
     /// Activer le resume rapide (fastresume) : relit l'etat des pieces
-    /// sans rehasher tout le contenu au demarrage.
+    /// sans rehasher tout le contenu au demarrage. Sans effet sans
+    /// `persistence_dir` — le fastresume rqbit exige un backend de
+    /// persistance (le bitfield est ecrit dans `<ih>.bitv` apres le
+    /// check initial).
     pub fastresume: bool,
+    /// Dossier de persistance de session (`SessionPersistenceConfig::
+    /// Json` rqbit : `session.json` + `<ih>.bitv` + `<ih>.torrent`).
+    /// Doit etre distinct par moteur — partager le dossier restaurerait
+    /// les torrents anonymes sur le moteur en clair. `None` = pas de
+    /// persistance (tests offline).
+    pub persistence_dir: Option<PathBuf>,
     /// Mode uTP uniquement (hidden seeding : les tunnels Tribler ne
     /// transportent que de l'UDP — les connexions TCP sortantes et
     /// l'ecoute TCP sont desactivees).
@@ -126,6 +135,7 @@ impl Default for EngineConfig {
             concurrent_init_limit: None,
             socks5_proxy: None,
             fastresume: true,
+            persistence_dir: None,
             utp_only: false,
             max_upload_bps: None,
             max_download_bps: None,
@@ -158,6 +168,7 @@ impl EngineConfig {
             concurrent_init_limit: None,
             socks5_proxy: None,
             fastresume: false,
+            persistence_dir: None,
             utp_only: false,
             max_upload_bps: None,
             max_download_bps: None,
@@ -209,6 +220,15 @@ impl EngineConfig {
             disable_local_service_discovery: self.disable_lsd,
             ipv4_only: self.ipv4_only,
             fastresume: self.fastresume,
+            persistence: if self.fastresume {
+                self.persistence_dir.clone().map(|folder| {
+                    librqbit::SessionPersistenceConfig::Json {
+                        folder: Some(folder),
+                    }
+                })
+            } else {
+                None
+            },
             peer_limit: self.peer_limit,
             concurrent_init_limit: self.concurrent_init_limit,
             default_storage_factory: (self.allow_mmap && !self.utp_only).then(|| {

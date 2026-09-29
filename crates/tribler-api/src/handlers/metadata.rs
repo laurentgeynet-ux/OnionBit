@@ -198,6 +198,8 @@ pub async fn get_torrent_health_history(
 pub struct SearchQuery {
     /// Texte de recherche (`fts_text` Python, recu tel quel).
     pub fts_text: Option<String>,
+    /// Filtre additionnel ajoute au texte (`filter` Python).
+    pub filter: Option<String>,
     /// Filtre sur le type de metadonnee.
     pub metadata_type: Option<String>,
     /// Limite de resultats.
@@ -208,15 +210,31 @@ pub async fn local_search(
     State(state): State<AppState>,
     Query(q): Query<SearchQuery>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let fts = q.fts_text.unwrap_or_default();
+    let mut fts = q.fts_text.unwrap_or_default();
+    if let Some(f) = &q.filter {
+        fts.push(' ');
+        fts.push_str(f);
+    }
     if fts.is_empty() {
         return Err(ApiError::bad_request("fts_text parameter missing"));
     }
+    // `to_fts_query` Python : mots `\w+` — la correspondance
+    // FTS5 `MATCH "a" "b"` (AND) est approximee par des `LIKE` AND.
+    let terms = tribler_core::queries::fts_terms(&fts);
     let rows = state.session.db().with(|c| {
-        tribler_db::channel::search_by_title(
+        tribler_db::channel::select_entries(
             c,
-            &format!("%{}%", fts.replace('%', "\\%")),
-            q.limit.unwrap_or(LIST_LIMIT).min(LIST_LIMIT),
+            &tribler_db::channel::SelectParams {
+                terms,
+                metadata_types: q
+                    .metadata_type
+                    .as_ref()
+                    .and_then(|s| s.parse::<i64>().ok())
+                    .map(|m| vec![m])
+                    .or(Some(vec![300, 400])),
+                limit: q.limit.unwrap_or(LIST_LIMIT).min(LIST_LIMIT) as usize,
+                ..Default::default()
+            },
         )
     })?;
     let mut results: Vec<_> = rows.iter().map(row_json).collect();
