@@ -138,6 +138,14 @@ pub struct Session {
 
     // Limits and throttling
     pub(crate) concurrent_initialize_semaphore: Arc<tokio::sync::Semaphore>,
+    // Tribler : verrou par infohash — serialise les `add_torrent`
+    // concurrents du meme torrent. Necessaire depuis que
+    // `create_and_init` tourne hors du write-lock de `db` : sans lui,
+    // la restauration rqbit (session.json) et celle de Tribler
+    // (tribler.db) passaient toutes deux le check `AlreadyManaged`
+    // avant l'insertion -> une entree dupliquee persistee a chaque
+    // redemarrage.
+    add_locks: parking_lot::Mutex<HashMap<Id20, Arc<tokio::sync::Mutex<()>>>>,
     pub ratelimits: Limits,
 
     pub blocklist: IpRanges,
@@ -838,6 +846,7 @@ impl Session {
                 concurrent_initialize_semaphore: Arc::new(tokio::sync::Semaphore::new(
                     opts.concurrent_init_limit.unwrap_or(3),
                 )),
+                add_locks: parking_lot::Mutex::new(HashMap::new()),
                 udp_tracker_client,
                 ratelimits: Limits::new(opts.ratelimits),
                 ipv4_only: opts.ipv4_only,
@@ -1381,6 +1390,18 @@ impl Session {
             self.next_id
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         };
+
+        // Tribler : on prend le verrou par infohash AVANT le semaphore
+        // (un appelant en attente ne doit pas tenir un permis). Un
+        // `add_torrent` concurrent pour le meme infohash attend ici,
+        // puis tombe sur le check `AlreadyManaged` une fois le premier
+        // insere — impossible de dupliquer quelle que soit la fenetre
+        // entre le check et l'insertion dans `db.torrents`.
+        let hash_lock = {
+            let mut g = self.add_locks.lock();
+            g.entry(info_hash).or_default().clone()
+        };
+        let _add_guard = hash_lock.lock().await;
 
         let _permit = self.spawner.semaphore().acquire_owned().await?;
 

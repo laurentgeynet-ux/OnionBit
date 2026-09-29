@@ -3,6 +3,25 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Fix : dédup in-flight des `add_torrent` — fin des doublons session.json (2026-09-29)
+
+- **Race à l'insertion** : depuis que `create_and_init` tourne hors du
+  write-lock de `Session.db` (cf. entrée précédente), la restauration
+  rqbit (`session.json`) et celle de Tribler (`tribler.db`) appelaient
+  `add_torrent` en parallèle pour le même infohash : les deux passaient
+  le check `AlreadyManaged` avant que l'autre ait inséré → une entrée
+  dupliquée re-persistée à chaque démarrage (7 nouvelles observées au
+  run suivant le fix précédent).
+- **Correctif** : un `Mutex` par infohash (`Session::add_locks`), acquis
+  avant le sémaphore de concurrence, tenu pendant tout l'ajout : un
+  second `add_torrent` du même infohash attend le premier puis retombe
+  sur `AlreadyManaged`. Impossible de dupliquer quelle que soit la
+  fenêtre check→insertion.
+- **Conséquence constatée** : les entrées dupliquées pointaient vers des
+  `output_folder` imbriqués (`Nom\Nom`) vs parents — 5 torrents (DaVinci,
+  Acrobat, AIDA64, Revo, Nintendo64Pal) avaient ~16 Gio de copies en
+  double sur `D:` et des mismatches de pièces à l'échantillonnage.
+
 ## Fix UI : zone de contenu invisible + fluidité executor au restore (2026-09-29)
 
 - **UI vide** : le `Stack` de `AppShell` n'avait qu'un enfant
