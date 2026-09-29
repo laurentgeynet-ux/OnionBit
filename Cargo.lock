@@ -4640,7 +4640,7 @@ dependencies = [
 
 [[package]]
 name = "tribler-api"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "axum",
  "base64 0.22.1",
@@ -4671,7 +4671,7 @@ dependencies = [
 
 [[package]]
 name = "tribler-bittorrent"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "base64 0.22.1",
  "bytes",
@@ -4693,7 +4693,7 @@ dependencies = [
 
 [[package]]
 name = "tribler-cli"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "axum",
  "clap",
@@ -4709,7 +4709,7 @@ dependencies = [
 
 [[package]]
 name = "tribler-core"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "bytes",
  "fs2",
@@ -4738,7 +4738,7 @@ dependencies = [
 
 [[package]]
 name = "tribler-crypto"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "chacha20poly1305",
  "ed25519-dalek",
@@ -4756,7 +4756,7 @@ dependencies = [
 
 [[package]]
 name = "tribler-daemon"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "axum",
  "axum-server",
@@ -4783,7 +4783,7 @@ dependencies = [
 
 [[package]]
 name = "tribler-db"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "rusqlite",
  "tempfile",
@@ -4793,7 +4793,7 @@ dependencies = [
 
 [[package]]
 name = "tribler-format"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "thiserror 2.0.21",
  "tribler-crypto",
@@ -4801,7 +4801,7 @@ dependencies = [
 
 [[package]]
 name = "tribler-ipv8"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "hex 0.4.3",
  "rand 0.8.8",
@@ -4816,7 +4816,7 @@ dependencies = [
 
 [[package]]
 name = "tribler-network-policy"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "thiserror 2.0.21",
  "tracing",
@@ -4824,7 +4824,7 @@ dependencies = [
 
 [[package]]
 name = "tribler-test-support"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "tokio",
  "tribler-format",
@@ -4832,7 +4832,7 @@ dependencies = [
 
 [[package]]
 name = "tribler-tunnel"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "futures-util",
  "hex 0.4.3",
