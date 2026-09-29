@@ -3,6 +3,27 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Stores PEX persistés : intro points survivent au redémarrage (2026-09-29)
+
+Le rôle de point d'introduction (`TunnelCommunity.pex` —
+`PexCommunity` réduite à ses données) était perdu à chaque arrêt :
+les swarms en hidden seeding devenaient injoignables jusqu'à ce que
+le seeder refasse un `establish-intro`.
+
+Changements :
+
+- `tribler-db` : **migration v10** — table `tunnel_pex`
+  (`info_hash`, `own` = annonce propre vs point appris, `peer_key`,
+  `seeder_pk`, `address`, `source`, `last_seen`) ; module `pex.rs`
+  (`replace_all` snapshot transactionnel, `list`, `delete_swarm`).
+- `tribler-tunnel/community.rs` : `pex_dump`/`pex_restore`
+  (extension Rust — le crate reste sans dépendance SQLite ; type
+  public `PexDumpEntry`).
+- `tribler-core/ipv8_stack.rs` : restauration après création du
+  tunnel (les annonces `intro_points_for` sont régénérées avec notre
+  WAN courant) ; la tâche `ipv8_peer_cache` écrit aussi le snapshot
+  PEX dans le même `db.call` — pas d'écriture supplémentaire.
+
 ## Diagnostic perf : sonde de lag de l'executor + timings I/O (2026-09-29)
 
 Objectif : identifier la cause des ralentissements disque rapportés —
