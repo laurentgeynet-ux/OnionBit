@@ -38,6 +38,11 @@ Changements :
   similarity signée + dist).
 - `tribler-ipv8/{content_discovery,dht}`, `tribler-tunnel` :
   enregistrement `WIRE_DEFAULT`.
+- `tribler-ipv8/content_discovery.rs` : `HealthPayload` — les items
+  `[HealthFormat]` sont des `NestedPayload` pyipv8, donc chacun est
+  prefixe de sa longueur `>H` (u16). Sans ce prefixe, le `unpack`
+  desalignait et `varlen_h` exigeait des dizaines de ko — les erreurs
+  « paquet tronque … msg_id=4 » du journal.
 - `tribler-tunnel/community.rs` : port du retry pyipv8 —
   `send_initial_create` reteste les candidats alternatifs du premier
   saut (jusqu'à `circuit_timeout / next_hop_timeout` essais) ;

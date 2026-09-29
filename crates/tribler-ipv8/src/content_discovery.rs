@@ -986,7 +986,13 @@ impl ContentPayload for HealthPayload {
         w.u8(self.response_type);
         w.u8(self.torrents.len() as u8);
         for h in &self.torrents {
-            h.pack(w);
+            // `NestedPayload` : chaque item est prefixe de sa
+            // longueur `>H`.
+            let mut item = Writer::new();
+            h.pack(&mut item);
+            let bytes = item.into_bytes();
+            w.u16(bytes.len() as u16);
+            w.bytes(&bytes);
         }
         Ok(())
     }
@@ -995,7 +1001,9 @@ impl ContentPayload for HealthPayload {
         let count = r.u8()? as usize;
         let mut torrents = Vec::with_capacity(count);
         for _ in 0..count {
-            torrents.push(HealthInfo::unpack(r)?);
+            let size = r.u16()? as usize;
+            let mut item = Reader::new(r.take(size)?);
+            torrents.push(HealthInfo::unpack(&mut item)?);
         }
         // `raw extra_bytes` : ignore (compatibilite ascendante).
         Ok(Self {
