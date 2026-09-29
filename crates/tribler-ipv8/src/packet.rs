@@ -53,6 +53,53 @@ pub const UNSIGNED_MSG_IDS: &[u8] = &[250, 232];
 /// cellules tunnel.
 pub const DIST_MSG_IDS: &[u8] = &[246, 245, 234, 233, 249, 231];
 
+/// Politique de layout filaire d'une community : la presence de
+/// `auth`/`dist` ne depend pas du `msg_id` seul mais de la liste `fmt`
+/// du handler Python (`lazy_wrapper(GlobalTimeDistributionPayload, X)`
+/// = dist ; `lazy_wrapper_unsigned` = non signe). Le meme `msg_id` peut
+/// donc avoir des layouts differents selon la community (ex. `4` =
+/// `Pong` non signe en discovery, `Health` signe sans dist en
+/// content-discovery, cellule `extend` sur le prefixe tunnel).
+#[derive(Debug, Clone, Copy)]
+pub struct WirePolicy {
+    /// `msg_id` non signes (`lazy_wrapper_unsigned`) : le paquet est
+    /// `prefix + msg_id + Q(global_time) + payload`.
+    pub unsigned: &'static [u8],
+    /// `msg_id` signes portant `GlobalTimeDistributionPayload`
+    /// (`Q(global_time)` juste apres l'auth).
+    pub dist: &'static [u8],
+}
+
+impl WirePolicy {
+    /// `true` si le message n'est ni signe ni authentifie.
+    pub fn is_unsigned(&self, msg_id: u8) -> bool {
+        self.unsigned.contains(&msg_id)
+    }
+
+    /// `true` si le message signe porte `GlobalTimeDistributionPayload`.
+    pub fn has_dist(&self, msg_id: u8) -> bool {
+        self.dist.contains(&msg_id)
+    }
+}
+
+/// Politique par defaut : intros/punctures signees avec `dist`,
+/// puncture-requests non signees (commun aux overlays DHT,
+/// content-discovery et tunnel).
+pub const WIRE_DEFAULT: WirePolicy = WirePolicy {
+    unsigned: UNSIGNED_MSG_IDS,
+    dist: DIST_MSG_IDS,
+};
+
+/// `DiscoveryCommunity` pyipv8 : similarity (1/2), introductions et
+/// punctures signes **avec** `dist` (`lazy_wrapper` avec
+/// `GlobalTimeDistributionPayload`) ; ping/pong (3/4) et
+/// puncture-requests non signes **avec** `dist`
+/// (`_ez_pack(..., [dist, payload], False)`).
+pub const WIRE_DISCOVERY: WirePolicy = WirePolicy {
+    unsigned: &[3, 4, 250, 232],
+    dist: &[1, 2, 246, 245, 234, 233, 249, 231],
+};
+
 /// Paquet IPv8 decode (signature deja verifiee si `signed`).
 #[derive(Debug)]
 pub struct Packet {
@@ -157,8 +204,13 @@ impl Packet {
     ///
     /// `expected` peut etre `None` pour accepter n'importe quel prefixe
     /// (dispatcher) ; sinon le paquet est rejete si le prefixe ne
-    /// correspond pas (comme `on_packet` Python).
-    pub fn parse(data: &[u8], expected: Option<&CommunityId>) -> Result<Self, Ipv8Error> {
+    /// correspond pas (comme `on_packet` Python). `policy` est le
+    /// layout filaire de la community destinataire (`WirePolicy`).
+    pub fn parse(
+        data: &[u8],
+        expected: Option<&CommunityId>,
+        policy: &WirePolicy,
+    ) -> Result<Self, Ipv8Error> {
         if data.len() < PREFIX_LEN + 1 {
             return Err(Ipv8Error::Truncated {
                 need: PREFIX_LEN + 1,
@@ -179,7 +231,7 @@ impl Packet {
 
         // Messages historiquement non signes (`lazy_wrapper_unsigned`) :
         // `msg_id + Q(global_time) + payload`, sans auth ni signature.
-        if UNSIGNED_MSG_IDS.contains(&msg_id) {
+        if policy.is_unsigned(msg_id) {
             let mut r = Reader::new(&data[23..]);
             let global_time = r.u64()?;
             let payload = r.raw().to_vec();
@@ -211,11 +263,7 @@ impl Packet {
         // `dist` n'est present que pour les intros/punctures signees
         // (`DIST_MSG_IDS`) ; les autres messages `ez_send` enchainent
         // directement sur le payload applicatif.
-        let global_time = if DIST_MSG_IDS.contains(&msg_id) {
-            r.u64()?
-        } else {
-            0
-        };
+        let global_time = if policy.has_dist(msg_id) { r.u64()? } else { 0 };
         let payload = r.raw().to_vec();
 
         // La signature couvre auth+dist+payload+prefix+msg_id, donc

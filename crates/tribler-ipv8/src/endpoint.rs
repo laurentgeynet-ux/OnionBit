@@ -126,8 +126,10 @@ pub struct UdpEndpoint {
     /// listeners ; l'envoi choisit le socket selon la famille de
     /// l'adresse — un pair joint en v6 recoit sa reponse en v6).
     socket_v6: Option<Arc<UdpSocket>>,
-    /// Listeners par prefixe de 22 octets (paquets `Packet` decodes).
-    listeners: Mutex<HashMap<[u8; PREFIX_LEN], PacketHandler>>,
+    /// Listeners par prefixe de 22 octets (paquets `Packet` decodes) —
+    /// chaque entree emporte la `WirePolicy` de sa community (le layout
+    /// `auth`/`dist` depend du handler Python, pas du `msg_id` seul).
+    listeners: Mutex<HashMap<[u8; PREFIX_LEN], (PacketHandler, crate::packet::WirePolicy)>>,
     /// Listeners "bruts" par prefixe (datagrammes non interpretes :
     /// cellules de tunnel, protocoles hybrides). Dispatch en plus du
     /// `PacketHandler` si les deux sont enregistres.
@@ -283,9 +285,19 @@ impl UdpEndpoint {
         self.socket_v6.as_ref().map(|s| Ok(s.local_addr()?))
     }
 
-    /// Enregistre un listener pour un prefixe de community.
-    pub async fn add_prefix_listener(&self, prefix: [u8; PREFIX_LEN], handler: PacketHandler) {
-        self.listeners.lock().await.insert(prefix, handler);
+    /// Enregistre un listener pour un prefixe de community. `policy`
+    /// decrit le layout filaire de la community (`WirePolicy` — quels
+    /// `msg_id` sont non signes / portent `GlobalTimeDistributionPayload`).
+    pub async fn add_prefix_listener(
+        &self,
+        prefix: [u8; PREFIX_LEN],
+        handler: PacketHandler,
+        policy: crate::packet::WirePolicy,
+    ) {
+        self.listeners
+            .lock()
+            .await
+            .insert(prefix, (handler, policy));
     }
 
     /// Enregistre un listener brut pour un prefixe de community.
@@ -408,8 +420,8 @@ impl UdpEndpoint {
                 }
             }
             let handler = { self.listeners.lock().await.get(&prefix).cloned() };
-            if let Some(h) = handler {
-                match Packet::parse(data, None) {
+            if let Some((h, policy)) = handler {
+                match Packet::parse(data, None, &policy) {
                     Ok(pkt) => {
                         let msg_id = pkt.msg_id;
                         if let Err(e) = h(src, pkt) {

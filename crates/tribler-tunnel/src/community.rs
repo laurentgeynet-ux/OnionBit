@@ -35,9 +35,9 @@ use crate::cell::{self, Cell};
 use crate::hidden_services::{E2ERequest, LinkRequest};
 use crate::payload::{self as tp, msg, Cellable};
 use crate::routing::{
-    Circuit, Hop, RelayRoute, RoutingObject, Swarm, UnverifiedHop, CIRCUIT_STATE_READY,
-    CIRCUIT_TYPE_DATA, PEER_FLAG_EXIT_BT, PEER_FLAG_EXIT_HTTP, PEER_FLAG_EXIT_IPV8,
-    PEER_FLAG_RELAY,
+    Circuit, Hop, RelayRoute, RoutingObject, Swarm, UnverifiedHop, CIRCUIT_STATE_CLOSING,
+    CIRCUIT_STATE_READY, CIRCUIT_TYPE_DATA, PEER_FLAG_EXIT_BT, PEER_FLAG_EXIT_HTTP,
+    PEER_FLAG_EXIT_IPV8, PEER_FLAG_RELAY,
 };
 use crate::TUNNEL_COMMUNITY_ID;
 
@@ -68,6 +68,10 @@ const HTTP_REQUEST_PARTS_CAP: usize = 64;
 /// dont le premier hop ne repond pas n'a aucune raison d'etre
 /// conserve au-dela du premier timeout de saut.
 const CIRCUIT_READY_TIMEOUT_MS: u64 = 10_000;
+/// `circuit_timeout // next_hop_timeout` Python (60 s / 10 s) : nombre
+/// de tentatives `send_initial_create`/`send_extend` par saut avant
+/// abandon du circuit (`RetryRequestCache.max_tries`).
+const CIRCUIT_MAX_TRIES: i32 = 6;
 /// `remove_tunnel_delay` Python (5 s) : delai entre `close()` et le
 /// retrait effectif d'un circuit.
 const REMOVE_TUNNEL_DELAY_MS: u64 = 5_000;
@@ -102,9 +106,9 @@ pub(crate) struct Inner {
     /// `CreatedRequestCache` : circuit_id -> contexte de join en
     /// attente d'un `extend` (conserve apres le premier extend).
     pub(crate) created_requests: HashMap<u32, CreatedRequest>,
-    /// `RetryRequestCache` : circuit_id -> identifier du create/
-    /// extend emis par l'initiateur.
-    pub(crate) retry_requests: HashMap<u32, u16>,
+    /// `RetryRequestCache` : circuit_id -> contexte du create/extend
+    /// en vol (identifier + candidats alternatifs + essais restants).
+    pub(crate) retry_requests: HashMap<u32, RetryEntry>,
     /// Flags de service locaux (`settings.peer_flags` : RELAY par
     /// defaut ; 0 = refuser les `create`).
     pub(crate) peer_flags: i32,
@@ -179,6 +183,30 @@ pub(crate) struct CreateRequest {
     /// `extend_identifier` : identifier du `extend` recu (repercute
     /// dans le `extended`).
     pub(crate) extend_identifier: u16,
+}
+
+/// `RetryRequestCache` Python (`caches.py`) : un create/extend en vol
+/// et les candidats a retenter au prochain `next_hop_timeout`.
+#[derive(Debug)]
+pub(crate) struct RetryEntry {
+    /// `packet_identifier` : identifiant du create/extend emis.
+    pub(crate) identifier: u16,
+    /// Candidats alternatifs (le saut tente en est deja exclu).
+    pub(crate) candidates: RetryCandidates,
+    /// `max_tries` restant (`circuit_timeout // next_hop_timeout` au
+    /// depart, decremente a chaque tentative).
+    pub(crate) max_tries: i32,
+}
+
+/// Alternatives de saut selon la phase en cours.
+#[derive(Debug, Clone)]
+pub(crate) enum RetryCandidates {
+    /// Premiers sauts alternatifs (`send_initial_create` Python).
+    FirstHops(Vec<Peer>),
+    /// Cles publiques des candidats d'extension restants
+    /// (`send_extend` Python — resolus via `request.candidates` ou
+    /// l'annuaire reseau cote dernier hop).
+    ExtendKeys(Vec<Vec<u8>>),
 }
 
 /// `CreatedRequestCache` Python (join en attente d'un `extend`).
@@ -724,35 +752,33 @@ impl TunnelCommunity {
         if ready + pending >= min_circuits {
             return Ok(());
         }
-        // Choix du premier hop :
-        // Pour 1 saut : on prefere un pair annoncant EXIT_BT
-        // Pour 2 ou 3 sauts : on prefere un pair RELAY
-        let first_hop = if hops == 1 {
-            let exits = self.get_candidates(crate::routing::PEER_FLAG_EXIT_BT);
-            exits.into_iter().next().or_else(|| {
-                self.network
-                    .peers_for_service(&self.community_id)
-                    .into_iter()
-                    .next()
-            })
+        // Choix du premier hop : comme `create_circuit` pyipv8, toute
+        // la liste des candidats est transmise a `send_initial_create`
+        // — chaque timeout de saut retente sur le candidat suivant au
+        // lieu de reconverger toujours vers le meme pair.
+        // Pour 1 saut : sorties `EXIT_BT` (aleatoire, `select_exit`).
+        // Pour 2 ou 3 sauts : relays/sorties les moins utilises.
+        let first_hops = if hops == 1 {
+            let mut exits = self.get_candidates(crate::routing::PEER_FLAG_EXIT_BT);
+            if exits.is_empty() {
+                exits = self.network.peers_for_service(&self.community_id);
+            }
+            exits.shuffle(&mut rand::thread_rng());
+            exits
         } else {
-            let relays = self.get_candidates(crate::routing::PEER_FLAG_RELAY);
-            relays.into_iter().next().or_else(|| {
-                let exits = self.get_candidates(crate::routing::PEER_FLAG_EXIT_BT);
-                exits.into_iter().next().or_else(|| {
-                    self.network
-                        .peers_for_service(&self.community_id)
-                        .into_iter()
-                        .next()
-                })
-            })
+            self.first_hop_candidates(CIRCUIT_TYPE_DATA, None)
         };
 
-        let first_hop = first_hop.or_else(|| self.network.all_verified_peers().into_iter().next());
+        let first_hops = if first_hops.is_empty() {
+            self.network.all_verified_peers()
+        } else {
+            first_hops
+        };
 
-        if let Some(peer) = first_hop {
+        if let Some(peer) = first_hops.first() {
             tracing::info!(hops, peer = ?peer.address, "tentative de creation proactive de circuit");
-            let _ = self.create_circuit(hops, &peer).await?;
+            self.create_circuit_inner(hops, first_hops, CIRCUIT_TYPE_DATA, None, None)
+                .await?;
         }
         Ok(())
     }
@@ -1048,25 +1074,83 @@ impl TunnelCommunity {
         } else {
             first_hop.clone()
         };
+        self.create_circuit_inner(
+            goal_hops,
+            vec![effective_first],
+            ctype,
+            required_exit,
+            info_hash,
+        )
+        .await
+    }
+
+    /// Corps commun de `create_circuit` : cree le `Circuit` puis
+    /// `send_initial_create` sur la liste ordonnee de premiers sauts
+    /// possibles (les alternates servent au retry de
+    /// `spawn_hop_timeout`).
+    async fn create_circuit_inner(
+        self: &Arc<Self>,
+        goal_hops: usize,
+        first_hops: Vec<Peer>,
+        ctype: &str,
+        required_exit: Option<Vec<u8>>,
+        info_hash: Option<[u8; 20]>,
+    ) -> Result<u32, Ipv8Error> {
+        if first_hops.is_empty() {
+            return Err(Ipv8Error::Malformed("pas de premier hop disponible"));
+        }
         let circuit_id = self.gen_circuit_id();
-        let (dh_secret, dh_public) = generate_diffie_secret();
-        let identifier = self.next_id();
-        let addr = effective_first
-            .address
-            .clone()
-            .ok_or(Ipv8Error::Malformed("hop sans adresse"))?;
         {
             let mut inner = self.inner.lock().unwrap();
             let mut circuit = Circuit::new(circuit_id, goal_hops, ctype, info_hash);
             circuit.required_exit = required_exit;
+            inner.circuits.insert(circuit_id, circuit);
+        }
+        self.notify_circuits_changed();
+        self.send_initial_create(circuit_id, first_hops, CIRCUIT_MAX_TRIES)
+            .await?;
+        Ok(circuit_id)
+    }
+
+    /// `send_initial_create` pyipv8 : tente le premier hop
+    /// `peers[0]`, enregistre les alternates dans le
+    /// `RetryRequestCache` (`retry_requests`) et envoie le `create`.
+    /// Chaque retry regenere DH + identifier comme le Python
+    /// (`cache.packet_identifier` neuf a chaque tentative).
+    async fn send_initial_create(
+        self: &Arc<Self>,
+        circuit_id: u32,
+        peers: Vec<Peer>,
+        max_tries: i32,
+    ) -> Result<(), Ipv8Error> {
+        let Some(first_hop) = peers.first() else {
+            return Err(Ipv8Error::Malformed("pas de premier hop disponible"));
+        };
+        let addr = first_hop
+            .address
+            .clone()
+            .ok_or(Ipv8Error::Malformed("hop sans adresse"))?;
+        let (dh_secret, dh_public) = generate_diffie_secret();
+        let identifier = self.next_id();
+        {
+            let mut inner = self.inner.lock().unwrap();
+            let Some(circuit) = inner.circuits.get_mut(&circuit_id) else {
+                return Err(Ipv8Error::Malformed("circuit inconnu"));
+            };
             circuit.unverified_hop = Some(UnverifiedHop {
-                public_key_bin: effective_first.public_key_bin.clone(),
+                public_key_bin: first_hop.public_key_bin.clone(),
                 address: Some(addr.clone()),
                 dh_secret,
                 identifier,
             });
-            inner.circuits.insert(circuit_id, circuit);
-            inner.retry_requests.insert(circuit_id, identifier);
+            inner.retry_requests.insert(
+                circuit_id,
+                RetryEntry {
+                    identifier,
+                    candidates: RetryCandidates::FirstHops(peers[1..].to_vec()),
+                    max_tries: max_tries - 1,
+                },
+            );
         }
         self.notify_circuits_changed();
         let create = tp::Create {
@@ -1077,28 +1161,51 @@ impl TunnelCommunity {
         };
         self.send_cell(&addr, &create).await?;
         self.spawn_hop_timeout(circuit_id, identifier);
-        Ok(circuit_id)
+        Ok(())
     }
 
-    /// Purge un circuit dont le saut suivant (`create`/`extend`) n'a
-    /// pas repondu apres `CIRCUIT_READY_TIMEOUT_MS` (`next_hop_timeout`
-    /// Python). Sans ce garde-fou un circuit bloque en `EXTENDING` est
-    /// compte comme "en cours" par `build_circuits_if_needed` pour
-    /// toujours, et aucune nouvelle tentative avec un autre pair n'est
-    /// jamais lancee.
+    /// `RetryRequestCache.on_timeout` Python : a l'expiration du
+    /// `next_hop_timeout`, retente le saut sur le candidat suivant
+    /// (`send_initial_create`/`send_extend` avec les alternates) tant
+    /// que `max_tries` n'est pas epuise — sinon detruit le circuit.
+    /// Sans ce garde-fou un circuit bloque en `EXTENDING` est compte
+    /// comme "en cours" par `build_circuits_if_needed` pour toujours.
     fn spawn_hop_timeout(self: &Arc<Self>, circuit_id: u32, identifier: u16) {
         let this = self.clone();
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(CIRCUIT_READY_TIMEOUT_MS)).await;
-            let still_pending = this
-                .inner
-                .lock()
-                .unwrap()
-                .retry_requests
-                .get(&circuit_id)
-                .copied()
-                == Some(identifier);
-            if still_pending {
+            let retry = {
+                let inner = this.inner.lock().unwrap();
+                let entry = inner.retry_requests.get(&circuit_id);
+                let closing = inner
+                    .circuits
+                    .get(&circuit_id)
+                    .is_some_and(|c| c.state() == CIRCUIT_STATE_CLOSING);
+                if closing {
+                    None
+                } else {
+                    entry
+                        .filter(|e| e.identifier == identifier)
+                        .map(|e| (e.candidates.clone(), e.max_tries))
+                }
+            };
+            let Some((candidates, max_tries)) = retry else {
+                return;
+            };
+            let retried = match candidates {
+                RetryCandidates::FirstHops(peers) if !peers.is_empty() && max_tries >= 1 => {
+                    tracing::debug!(circuit_id, "retry du create sur un premier saut alternatif");
+                    this.send_initial_create(circuit_id, peers, max_tries)
+                        .await
+                        .is_ok()
+                }
+                RetryCandidates::ExtendKeys(keys) if !keys.is_empty() && max_tries >= 1 => {
+                    tracing::debug!(circuit_id, "retry de l'extend sur un candidat alternatif");
+                    this.send_extend(circuit_id, keys, max_tries).await.is_ok()
+                }
+                _ => false,
+            };
+            if !retried {
                 tracing::debug!(
                     circuit_id,
                     identifier,
@@ -1110,50 +1217,145 @@ impl TunnelCommunity {
         });
     }
 
-    /// `send_extend` : envoie un `ExtendPayload` chiffre au premier
-    /// saut du circuit pour ajouter `extend_with`.
+    /// `send_extend` pyipv8 : choisit le candidat suivant (filtre des
+    /// sauts deja employes, de soi-meme et de `required_exit`), pose
+    /// l'`unverified_hop`, enregistre les alternates dans le
+    /// `RetryRequestCache` et envoie l'`ExtendPayload` au premier saut.
+    /// `candidates` = cles publiques proposees par le dernier hop
+    /// (`candidates_enc` du `created`/`extended`). Sans candidat,
+    /// repli sur un pair `EXIT_BT & RELAY` aleatoire (comme Python) ;
+    /// sinon le circuit est detruit ("no candidates to extend").
     async fn send_extend(
         self: &Arc<Self>,
         circuit_id: u32,
-        extend_with: &Peer,
-        candidate_keys: &[Vec<u8>],
+        candidates: Vec<Vec<u8>>,
+        max_tries: i32,
     ) -> Result<(), Ipv8Error> {
-        let (dh_secret, dh_public) = generate_diffie_secret();
-        let identifier = self.next_id();
-        let (first_hop_addr, node_addr) = {
-            let mut inner = self.inner.lock().unwrap();
-            let first = {
-                let Some(c) = inner.circuits.get_mut(&circuit_id) else {
-                    return Err(Ipv8Error::Malformed("circuit inconnu"));
-                };
-                c.unverified_hop = Some(UnverifiedHop {
-                    public_key_bin: extend_with.public_key_bin.clone(),
-                    address: extend_with.address.clone(),
-                    dh_secret,
-                    identifier,
-                });
+        let zero: UdpAddress = UdpAddress::from("0.0.0.0:0".parse::<SocketAddr>().unwrap());
+        let my_pk = self.key.public_key().to_bin();
+        let (become_exit, required_exit, first_hop_addr, exclude) = {
+            let inner = self.inner.lock().unwrap();
+            let Some(c) = inner.circuits.get(&circuit_id) else {
+                return Err(Ipv8Error::Malformed("circuit inconnu"));
+            };
+            let mut exclude: Vec<Vec<u8>> =
+                c.hops.iter().map(|h| h.public_key_bin.clone()).collect();
+            exclude.push(my_pk);
+            if let Some(pk) = &c.required_exit {
+                exclude.push(pk.clone());
+            }
+            (
+                c.goal_hops.saturating_sub(1) == c.hops.len(),
+                c.required_exit.clone(),
                 c.first_hop()
                     .and_then(|h| h.address.clone())
-                    .ok_or(Ipv8Error::Malformed("pas de premier hop"))?
-            };
-            inner.retry_requests.insert(circuit_id, identifier);
-            // `node_addr` : adresse publique du candidat quand elle
-            // n'etait pas dans les candidats proposes (0.0.0.0:0 sinon
-            // — le dernier hop resoudra via `request.candidates`).
-            let node_addr = if candidate_keys.contains(&extend_with.public_key_bin) {
-                UdpAddress::from("0.0.0.0:0".parse::<SocketAddr>().unwrap())
-            } else {
-                extend_with
-                    .address
-                    .clone()
-                    .unwrap_or_else(|| UdpAddress::from("0.0.0.0:0".parse::<SocketAddr>().unwrap()))
-            };
-            (first, node_addr)
+                    .ok_or(Ipv8Error::Malformed("pas de premier hop"))?,
+                exclude,
+            )
         };
+
+        // Choix du prochain saut (`send_extend` Python).
+        let (extend_pk, node_addr, alternates): (Vec<u8>, UdpAddress, Vec<Vec<u8>>) = if become_exit
+        {
+            if let Some(pk) = required_exit {
+                // `required_exit` impose : pas d'alternates.
+                let addr = self
+                    .network
+                    .get_by_key(&pk)
+                    .and_then(|p| p.address)
+                    .unwrap_or_else(|| zero.clone());
+                (pk, addr, Vec::new())
+            } else {
+                (Vec::new(), zero.clone(), Vec::new())
+            }
+        } else {
+            let valid: Vec<Vec<u8>> = candidates
+                .iter()
+                .filter(|k| {
+                    !exclude.contains(k)
+                        && tribler_crypto::ipv8::keys::LibNaClPublicKey::from_bin(k).is_ok()
+                })
+                .cloned()
+                .collect();
+            match valid.split_first() {
+                Some((pk, rest)) => (pk.clone(), zero.clone(), rest.to_vec()),
+                None => (Vec::new(), zero.clone(), Vec::new()),
+            }
+        };
+        let (extend_pk, node_addr, alternates) = if extend_pk.is_empty() {
+            // Plus de candidat : les derniers hops proposent
+            // normalement des pairs deja pounces ; a defaut on tente
+            // une sortie connue (`get_candidates(EXIT_BT, RELAY)`).
+            // `get_candidates(EXIT_BT, RELAY)` Python ; quand le
+            // registre de flags est vide (peers appris sans
+            // `extra_bytes`), repli sur les pairs du service tunnel —
+            // superset permissif, les candidats du `created` restent
+            // prioritaires.
+            let mut choices: Vec<Peer> = self
+                .get_candidates_subset(&[PEER_FLAG_EXIT_BT, PEER_FLAG_RELAY])
+                .into_iter()
+                .filter(|p| !exclude.contains(&p.public_key_bin))
+                .collect();
+            if choices.is_empty() {
+                choices = self
+                    .network
+                    .peers_for_service(&self.community_id)
+                    .into_iter()
+                    .filter(|p| !exclude.contains(&p.public_key_bin))
+                    .collect();
+            }
+            // `thread_rng` n'est pas `Send` — borne a l'expression.
+            let picked = {
+                let mut rng = rand::thread_rng();
+                choices.choose(&mut rng).cloned()
+            };
+            match picked {
+                Some(p) => (
+                    p.public_key_bin.clone(),
+                    p.address.unwrap_or_else(|| zero.clone()),
+                    Vec::new(),
+                ),
+                None => {
+                    self.remove_circuit(circuit_id, "no candidates to extend")
+                        .await;
+                    return Err(Ipv8Error::Malformed("aucun candidat d'extension"));
+                }
+            }
+        } else {
+            (extend_pk, node_addr, alternates)
+        };
+
+        let (dh_secret, dh_public) = generate_diffie_secret();
+        let identifier = self.next_id();
+        let hop_addr = self
+            .network
+            .get_by_key(&extend_pk)
+            .and_then(|p| p.address)
+            .filter(|a| !a.is_unspecified());
+        {
+            let mut inner = self.inner.lock().unwrap();
+            let Some(c) = inner.circuits.get_mut(&circuit_id) else {
+                return Err(Ipv8Error::Malformed("circuit inconnu"));
+            };
+            c.unverified_hop = Some(UnverifiedHop {
+                public_key_bin: extend_pk.clone(),
+                address: hop_addr,
+                dh_secret,
+                identifier,
+            });
+            inner.retry_requests.insert(
+                circuit_id,
+                RetryEntry {
+                    identifier,
+                    candidates: RetryCandidates::ExtendKeys(alternates),
+                    max_tries: max_tries - 1,
+                },
+            );
+        }
         let p = tp::Extend {
             circuit_id,
             identifier,
-            node_public_key: extend_with.public_key_bin.clone(),
+            node_public_key: extend_pk,
             key: dh_public.to_vec(),
             node_addr,
         };
@@ -1241,65 +1443,73 @@ impl TunnelCommunity {
         } else {
             None
         };
-        let required_key = required_exit.as_ref().map(|p| p.public_key_bin.clone());
-        let first_hop = if goal_hops == 1 {
+        let mut required_key = required_exit.as_ref().map(|p| p.public_key_bin.clone());
+        let first_hops = if goal_hops == 1 {
             if required_exit.is_none() {
                 required_exit = self.select_exit(exit_flags, ctype);
+                required_key = required_exit.as_ref().map(|p| p.public_key_bin.clone());
             }
             match required_exit {
-                Some(p) => p,
+                Some(p) => vec![p],
                 // "Could not create circuit, no available exit-nodes".
                 None => return Ok(None),
             }
         } else {
-            // Premier hops des circuits de meme ctype + candidats
-            // RELAY + RELAY&EXIT_BT, tries par frequence d'usage
-            // ascendante (`Counter.most_common().reverse()`), hors
-            // `required_exit`.
-            let mut freq: Vec<(Peer, usize)> = Vec::new();
-            let mut push = |p: Peer| match freq
-                .iter_mut()
-                .find(|(q, _)| q.public_key_bin == p.public_key_bin)
-            {
-                Some((_, n)) => *n += 1,
-                None => freq.push((p, 1)),
-            };
-            {
-                let inner = self.inner.lock().unwrap();
-                for c in inner.circuits.values() {
-                    if c.ctype == ctype {
-                        if let Some(h) = c.first_hop() {
-                            if let Some(p) = Peer::new(h.public_key_bin.clone(), h.address.clone())
-                            {
-                                push(p);
-                            }
+            self.first_hop_candidates(ctype, required_key.as_deref())
+        };
+        if first_hops.is_empty() {
+            // "Could not create circuit, no first hop available".
+            return Ok(None);
+        }
+        self.create_circuit_inner(goal_hops, first_hops, ctype, required_key, None)
+            .await
+            .map(Some)
+    }
+
+    /// `possible_first_hops` de `create_circuit` pyipv8 : premiers hops
+    /// des circuits de meme `ctype` + candidats `RELAY` +
+    /// `RELAY & EXIT_BT`, brasses puis tries par frequence d'usage
+    /// ascendante (`Counter.most_common().reverse()`), `required_exit`
+    /// exclu. Toute la liste est conservee pour le retry alternatif.
+    fn first_hop_candidates(&self, ctype: &str, required_key: Option<&[u8]>) -> Vec<Peer> {
+        let mut freq: Vec<(Peer, usize)> = Vec::new();
+        let mut push = |p: Peer| match freq
+            .iter_mut()
+            .find(|(q, _)| q.public_key_bin == p.public_key_bin)
+        {
+            Some((_, n)) => *n += 1,
+            None => freq.push((p, 1)),
+        };
+        {
+            let inner = self.inner.lock().unwrap();
+            for c in inner.circuits.values() {
+                if c.ctype == ctype {
+                    if let Some(h) = c.first_hop() {
+                        if let Some(p) = Peer::new(h.public_key_bin.clone(), h.address.clone()) {
+                            push(p);
                         }
                     }
                 }
             }
-            for p in self.get_candidates(crate::routing::PEER_FLAG_RELAY) {
-                push(p);
-            }
-            for p in self.get_candidates_subset(&[
-                crate::routing::PEER_FLAG_RELAY,
-                crate::routing::PEER_FLAG_EXIT_BT,
-            ]) {
-                push(p);
-            }
-            let mut possible: Vec<(Peer, usize)> = freq
-                .into_iter()
-                .filter(|(p, _)| Some(&p.public_key_bin) != required_key.as_ref())
-                .collect();
-            possible.sort_by_key(|(_, n)| *n);
-            match possible.into_iter().map(|(p, _)| p).next() {
-                Some(p) => p,
-                // "Could not create circuit, no first hop available".
-                None => return Ok(None),
-            }
-        };
-        self.create_circuit_typed(goal_hops, &first_hop, ctype, required_key, None)
-            .await
-            .map(Some)
+        }
+        for p in self.get_candidates(crate::routing::PEER_FLAG_RELAY) {
+            push(p);
+        }
+        for p in self.get_candidates_subset(&[
+            crate::routing::PEER_FLAG_RELAY,
+            crate::routing::PEER_FLAG_EXIT_BT,
+        ]) {
+            push(p);
+        }
+        let mut possible: Vec<(Peer, usize)> = freq
+            .into_iter()
+            .filter(|(p, _)| Some(p.public_key_bin.as_slice()) != required_key)
+            .collect();
+        possible.shuffle(&mut rand::thread_rng());
+        // Tri stable par frequence ascendante : les sauts deja utilises
+        // passent en dernier, les egalites restent brassées.
+        possible.sort_by_key(|(_, n)| *n);
+        possible.into_iter().map(|(p, _)| p).collect()
     }
 
     /// `await circuit.ready` pyipv8 : attend que le circuit atteigne
@@ -1378,7 +1588,11 @@ impl TunnelCommunity {
             }
             return;
         }
-        match Packet::parse(data, Some(&self.community_id)) {
+        match Packet::parse(
+            data,
+            Some(&self.community_id),
+            &tribler_ipv8::packet::WIRE_DEFAULT,
+        ) {
             Ok(pkt) => {
                 if let Err(e) = self.on_packet(src, pkt) {
                     tracing::debug!(error = %e, "paquet tunnel rejete");
@@ -2405,7 +2619,7 @@ impl TunnelCommunity {
                 .unwrap()
                 .retry_requests
                 .get(&circuit_id)
-                .copied()
+                .map(|e| e.identifier)
         };
         if pending != Some(p.identifier) {
             tracing::debug!("created inattendu circuit {}", circuit_id);
@@ -2491,7 +2705,7 @@ impl TunnelCommunity {
                 .unwrap()
                 .retry_requests
                 .get(&circuit_id)
-                .copied()
+                .map(|e| e.identifier)
         };
         if pending != Some(p.identifier) {
             return Err(Ipv8Error::Malformed("extended inattendu"));
@@ -2583,49 +2797,32 @@ impl TunnelCommunity {
         self.notify_circuits_changed();
 
         if hops_done < goal {
-            // Choix du prochain candidat : sorties si le prochain hop
-            // est le dernier, sinon relays (fallback sorties).
-            let wanted: &[Vec<u8>] = if become_exit || relay_keys.is_empty() {
+            // Choix du prochain candidat (`_ours_on_created_extended`
+            // Python) : sorties si le prochain hop est le dernier,
+            // sinon relays (fallback sorties). La liste complete est
+            // passee a `send_extend` pour le retry sur alternates.
+            let wanted: &[Vec<u8>] = if become_exit {
                 exit_keys
-            } else {
+            } else if !relay_keys.is_empty() {
                 relay_keys
+            } else {
+                exit_keys
             };
-            let required = {
+            // `cache.max_tries if cache else 1` : les essais restants
+            // du cache retry courant alimentent l'extend.
+            let max_tries = {
                 let inner = self.inner.lock().unwrap();
-                inner.circuits.get(&circuit_id).and_then(|c| {
-                    if become_exit {
-                        c.required_exit.clone()
-                    } else {
-                        None
-                    }
-                })
+                inner
+                    .retry_requests
+                    .get(&circuit_id)
+                    .map(|e| e.max_tries)
+                    .unwrap_or(1)
             };
-            let next = required
-                .as_ref()
-                .and_then(|pk| self.network.get_by_key(pk))
-                .or_else(|| wanted.iter().find_map(|pk| self.network.get_by_key(pk)))
-                .or_else(|| {
-                    self.network
-                        .peers_for_service(&self.community_id)
-                        .into_iter()
-                        .find(|q| {
-                            let inner = self.inner.lock().unwrap();
-                            inner
-                                .circuits
-                                .get(&circuit_id)
-                                .map(|c| {
-                                    !c.hops.iter().any(|h| h.public_key_bin == q.public_key_bin)
-                                })
-                                .unwrap_or(false)
-                        })
-                });
-            let cand_list: Vec<Vec<u8>> = cand_keys.clone();
-            if let Some(next_peer) = next {
-                let c = self.clone();
-                tokio::spawn(async move {
-                    let _ = c.send_extend(circuit_id, &next_peer, &cand_list).await;
-                });
-            }
+            let keys: Vec<Vec<u8>> = wanted.to_vec();
+            let c = self.clone();
+            tokio::spawn(async move {
+                let _ = c.send_extend(circuit_id, keys, max_tries).await;
+            });
         } else {
             self.inner
                 .lock()

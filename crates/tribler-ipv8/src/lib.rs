@@ -61,8 +61,9 @@ mod tests {
     #[tokio::test]
     async fn deux_noeuds_se_decouvrent_en_loopback() {
         // Deux endpoints UDP sur 127.0.0.1, deux communities de
-        // decouverte : A envoie un ping a B, B repond pong ; A envoie
-        // une introduction-request, B repond introduction-response.
+        // decouverte : A envoie une introduction-request a B, B repond
+        // introduction-response (les ping/pong sont non signes en
+        // pyipv8 — ils ne peuvent pas verifier un pair).
         // Les deux se marquent mutuellement comme pairs verifies.
         let ep_a = UdpEndpoint::bind("127.0.0.1:0").await.unwrap();
         let ep_b = UdpEndpoint::bind("127.0.0.1:0").await.unwrap();
@@ -88,7 +89,7 @@ mod tests {
         });
 
         let dst = UdpAddress::from(addr_b);
-        ca.send_ping(&dst).await.unwrap();
+        ca.walk_to(&dst).await.unwrap();
 
         // Attend que B ait verifie le pair A (et inversement via le pong).
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
@@ -112,7 +113,7 @@ mod tests {
         let payload = b"payload-de-test";
         // `234` (intro request new-style) porte `dist` comme en pyipv8.
         let raw = Packet::sign(&cid, 234, &key, 42, payload);
-        let pkt = Packet::parse(&raw, Some(&cid)).unwrap();
+        let pkt = Packet::parse(&raw, Some(&cid), &crate::packet::WIRE_DISCOVERY).unwrap();
         assert_eq!(pkt.msg_id, 234);
         assert_eq!(pkt.global_time, 42);
         assert_eq!(pkt.payload, payload);
@@ -125,9 +126,11 @@ mod tests {
         let cid = DISCOVERY_COMMUNITY_ID;
         let payload = b"payload-de-test";
         // Messages `ez_send` (DHT, cellules…) : `auth + payload`, pas de
-        // `GlobalTimeDistributionPayload`.
+        // `GlobalTimeDistributionPayload`. `msg_id` 3 est signe sans
+        // dist hors `DiscoveryCommunity` (en discovery c'est un ping
+        // non signe — cf. `WIRE_DISCOVERY`).
         let raw = Packet::sign_no_dist(&cid, 3, &key, payload);
-        let pkt = Packet::parse(&raw, Some(&cid)).unwrap();
+        let pkt = Packet::parse(&raw, Some(&cid), &crate::packet::WIRE_DEFAULT).unwrap();
         assert_eq!(pkt.msg_id, 3);
         assert_eq!(pkt.global_time, 0);
         assert_eq!(pkt.payload, payload);
@@ -138,12 +141,12 @@ mod tests {
     fn paquet_signature_invalide_rejetee() {
         let key = tribler_crypto::ipv8::keys::LibNaClSecretKey::generate();
         let cid = DISCOVERY_COMMUNITY_ID;
-        let mut raw = Packet::sign(&cid, 3, &key, 42, b"x");
+        let mut raw = Packet::sign(&cid, 2, &key, 42, b"x");
         // Corrompt un octet du payload.
         let n = raw.len();
         raw[n - 70] ^= 0xFF;
         assert!(matches!(
-            Packet::parse(&raw, Some(&cid)),
+            Packet::parse(&raw, Some(&cid), &crate::packet::WIRE_DISCOVERY),
             Err(Ipv8Error::InvalidSignature)
         ));
     }
@@ -190,9 +193,9 @@ mod tests {
         let key = tribler_crypto::ipv8::keys::LibNaClSecretKey::generate();
         let cid = DISCOVERY_COMMUNITY_ID;
         let autre = [0xAAu8; 20];
-        let raw = Packet::sign(&autre, 3, &key, 42, b"x");
-        assert!(Packet::parse(&raw, Some(&cid)).is_err());
+        let raw = Packet::sign(&autre, 2, &key, 42, b"x");
+        assert!(Packet::parse(&raw, Some(&cid), &crate::packet::WIRE_DEFAULT).is_err());
         // Sans filtre de prefixe, le paquet est accepte.
-        assert!(Packet::parse(&raw, None).is_ok());
+        assert!(Packet::parse(&raw, None, &crate::packet::WIRE_DEFAULT).is_ok());
     }
 }

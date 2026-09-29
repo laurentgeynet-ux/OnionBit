@@ -3,6 +3,57 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Correctif majeur : circuits anonymes bloqués sur un premier saut mort + layout filaire par community (2026-09-29)
+
+Symptôme : plus aucun téléchargement anonyme — tous les circuits
+échouaient sur le même premier saut `220.233.67.99:8090` (`timeout du
+saut suivant` → `circuit abandonne` → `aucun circuit pret` pour SOCKS5
+et le DHT), et le journal montrait des erreurs de parsing massives
+(`preference_list non multiple de 20`, `paquet tronque`).
+
+**Cause 1 — aucun retry de construction de circuit.** En pyipv8,
+`RetryRequestCache` reteste les candidats alternatifs à chaque timeout
+(`max_tries = circuit_timeout / next_hop_timeout ≈ 6` pour le create,
+`max_tries` par saut pour l'extend). Le port Rust n'essayait que le
+premier candidat retourné par `select_candidates` (déterministe →
+toujours le même pair injoignable) puis abandonnait le circuit.
+
+**Cause 2 — layout signé/non-signé global au lieu de par community.**
+`DIST_MSG_IDS`/`UNSIGNED_MSG_IDS` étaient des ensembles globaux alors
+qu'en pyipv8 le `lazy_wrapper` de chaque handler décide : discovery
+émet `ping`/`pong` **non signés** avec `dist`, et `similarity`-req/res
+(1/2) signés **avec** dist ; les autres overlays (`ez_send` pur)
+n'ont pas de `dist`. La découverte réelle voyait donc des paquets
+désalignés.
+
+Changements :
+
+- `tribler-ipv8/packet.rs` : `WirePolicy` (`signed` + `dist` par
+  `msg_id`) avec `WIRE_DEFAULT` et `WIRE_DISCOVERY` ; `Packet::parse`
+  prend la policy en paramètre.
+- `tribler-ipv8/endpoint.rs` : la policy est stockée par listener de
+  préfixe (`add_prefix_listener_with_policy`).
+- `tribler-ipv8/discovery.rs` : enregistrement sous `WIRE_DISCOVERY`,
+  `send_payload` aligné sur pyipv8 (ping/pong non signés + dist,
+  similarity signée + dist).
+- `tribler-ipv8/{content_discovery,dht}`, `tribler-tunnel` :
+  enregistrement `WIRE_DEFAULT`.
+- `tribler-tunnel/community.rs` : port du retry pyipv8 —
+  `send_initial_create` reteste les candidats alternatifs du premier
+  saut (jusqu'à `circuit_timeout / next_hop_timeout` essais) ;
+  `send_extend` reteste les candidats de relais/sortie de la liste
+  `created` (repli `get_candidates(EXIT_BT, RELAY)` élargi aux pairs du
+  service quand le registre de flags est vide) ; le premier saut d'un
+  circuit multi-sauts exclut la sortie requise comme en Python.
+
+Tests : fixtures de test corrigées (ping non signé ⇒ les tests de
+découverte passent par `introduction-request`, le vrai chemin signé) ;
+tous les tests `tribler-ipv8`/`tribler-tunnel` + workspace verts.
+`cargo check`/`clippy -D warnings`/`fmt --check` propres. Les tests
+`tribler-daemon`/`tribler-cli` n'ont pas pu être relancés : le binaire
+`target\debug\tribler-daemon.exe` était verrouillé par une instance en
+cours d'exécution (compilation vérifiée via `cargo check`).
+
 ## Correctif majeur : les overlays DHT et tunnel ne marchaient jamais non plus (2026-09-29)
 
 Suite de l'audit « pas de trou ailleurs » : en Python, **toutes** les

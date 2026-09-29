@@ -288,7 +288,11 @@ impl ContentDiscoveryCommunity {
         let prefix = prefix_of(&CONTENT_DISCOVERY_COMMUNITY_ID);
         let c = community.clone();
         endpoint
-            .add_prefix_listener(prefix, Arc::new(move |src, pkt| c.on_packet(src, pkt)))
+            .add_prefix_listener(
+                prefix,
+                Arc::new(move |src, pkt| c.on_packet(src, pkt)),
+                crate::packet::WIRE_DEFAULT,
+            )
             .await;
         let c = community.clone();
         tokio::spawn(async move {

@@ -101,9 +101,10 @@ async fn walkable_addresses_via_introduction() {
     let (_cb, net_b, _epb, addr_b) = node().await;
     let (cc, net_c, _epc, addr_c) = node().await;
 
-    // B connait deja C : C envoie un ping a B (signature requise pour
-    // etre enregistre comme pair verifie + service discovery).
-    cc.send_ping(&addr_b).await.unwrap();
+    // B connait deja C : C envoie une introduction-request a B (les
+    // ping/pong sont non signes en pyipv8 — ils ne peuvent pas
+    // enregistrer un pair verifie).
+    cc.send_introduction_request(&addr_b).await.unwrap();
     assert!(
         wait_for(|| net_b.peers_for_service(&DISCOVERY_COMMUNITY_ID).len() == 1).await,
         "B n'a pas enregistre C"
@@ -171,7 +172,7 @@ async fn puncture_request_provoque_puncture() {
         .await
         .expect("pas de puncture recu")
         .unwrap();
-    let parsed = Packet::parse(&buf[..n], None).unwrap();
+    let parsed = Packet::parse(&buf[..n], None, &tribler_ipv8::packet::WIRE_DISCOVERY).unwrap();
     assert_eq!(
         parsed.msg_id,
         tribler_ipv8::payloads::msg::PUNCTURE,

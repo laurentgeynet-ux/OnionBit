@@ -127,7 +127,11 @@ impl DiscoveryCommunity {
         let prefix = prefix_of(&DISCOVERY_COMMUNITY_ID);
         let c = community.clone();
         endpoint
-            .add_prefix_listener(prefix, Arc::new(move |src, pkt| c.on_packet(src, pkt)))
+            .add_prefix_listener(
+                prefix,
+                Arc::new(move |src, pkt| c.on_packet(src, pkt)),
+                crate::packet::WIRE_DISCOVERY,
+            )
             .await;
         community
     }
@@ -235,13 +239,16 @@ impl DiscoveryCommunity {
     ) -> Result<(), Ipv8Error> {
         let mut w = Writer::new();
         payload.pack(&mut w)?;
-        let packet = Packet::sign(
-            &DISCOVERY_COMMUNITY_ID,
-            P::MSG_ID,
-            &self.key,
-            self.claim_global_time() % 65536,
-            &w.into_bytes(),
-        );
+        let gtime = self.claim_global_time() % 65536;
+        let body = w.into_bytes();
+        // `lazy_wrapper_unsigned` Python : ping/pong (3/4) et
+        // puncture-requests sont non signes (`_ez_pack(..., sig=False)`)
+        // ; tout le reste de la community est signe avec `dist`.
+        let packet = if crate::packet::WIRE_DISCOVERY.is_unsigned(P::MSG_ID) {
+            Packet::pack_unsigned(&DISCOVERY_COMMUNITY_ID, P::MSG_ID, gtime, &body)
+        } else {
+            Packet::sign(&DISCOVERY_COMMUNITY_ID, P::MSG_ID, &self.key, gtime, &body)
+        };
         self.endpoint.send_to(addr, &packet).await
     }
 
@@ -249,9 +256,34 @@ impl DiscoveryCommunity {
     fn on_packet(self: &Arc<Self>, src: SocketAddr, pkt: Packet) -> Result<(), Ipv8Error> {
         let src_addr = UdpAddress::from(src);
 
-        // Messages non signes : puncture-request (250/232).
+        // Messages non signes (`lazy_wrapper_unsigned` — avec `dist`
+        // mais sans auth) : ping/pong (3/4) et puncture-request
+        // (250/232).
         if !pkt.signed {
-            return self.on_puncture_request(src_addr, &pkt);
+            return match pkt.msg_id {
+                msg::PING => {
+                    self.update_global_time(pkt.global_time);
+                    let mut r = Reader::new(&pkt.payload);
+                    let p = Ping::unpack(&mut r)?;
+                    let c = self.clone();
+                    tokio::spawn(async move {
+                        let _ = c
+                            .send_payload(
+                                &src_addr,
+                                &crate::payloads::Pong {
+                                    identifier: p.identifier,
+                                },
+                            )
+                            .await;
+                    });
+                    Ok(())
+                }
+                msg::PONG => {
+                    self.update_global_time(pkt.global_time);
+                    Ok(())
+                }
+                _ => self.on_puncture_request(src_addr, &pkt),
+            };
         }
 
         // `update_global_time` avant tout (horloge de Lamport).

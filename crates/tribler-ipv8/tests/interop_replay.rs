@@ -31,8 +31,12 @@ fn rejoue_paquets_pyipv8() {
     let mut seen_intro_resp = false;
     let mut seen_sim_req = false;
     for p in &packets {
-        let pkt = Packet::parse(p, Some(&DISCOVERY_COMMUNITY_ID))
-            .expect("paquet pyipv8 rejete par le parseur Rust");
+        let pkt = Packet::parse(
+            p,
+            Some(&DISCOVERY_COMMUNITY_ID),
+            &tribler_ipv8::packet::WIRE_DISCOVERY,
+        )
+        .expect("paquet pyipv8 rejete par le parseur Rust");
         assert!(pkt.signed, "paquet pyipv8 non signe ?");
         match pkt.msg_id {
             246 => seen_intro_req = true,
@@ -54,7 +58,11 @@ fn rejoue_paquets_rust_verifies_par_pyipv8() {
     let packets = parse_fixture(RUST_PACKETS);
     assert!(packets.len() >= 4, "fixture incomplete");
     for p in &packets {
-        Packet::parse(p, Some(&DISCOVERY_COMMUNITY_ID))
-            .expect("paquet Rust rejete par notre parseur");
+        Packet::parse(
+            p,
+            Some(&DISCOVERY_COMMUNITY_ID),
+            &tribler_ipv8::packet::WIRE_DISCOVERY,
+        )
+        .expect("paquet Rust rejete par notre parseur");
     }
 }
