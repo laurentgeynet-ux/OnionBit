@@ -632,6 +632,19 @@ class _DownloadsContextMenuState extends ConsumerState<_DownloadsContextMenu> {
         () => showMoveStorageDialog(context, d),
       ),
       const Divider(height: 1),
+      if (d.isPrivate)
+        item(
+          Icons.public,
+          'Republier en anonyme',
+          () => _act(
+            'republication anonyme',
+            notifier.clonePublic(d.infohash).then((ih) {
+              if (ih.isNotEmpty) {
+                _toast('Jumeau public créé en seed anonyme ($ih)');
+              }
+            }),
+          ),
+        ),
       item(Icons.link, 'Copier le lien magnet', () {
         Clipboard.setData(ClipboardData(text: magnetUri));
         _toast('Lien magnet copié');

@@ -22,6 +22,7 @@ extension DownloadJson on Map<String, dynamic> {
     numConnectedPeers: (this['num_connected_peers'] as num?)?.toInt() ?? 0,
     hops: (this['hops'] as num?)?.toInt() ?? 0,
     anonDownload: this['anon_download'] == true,
+    isPrivate: this['private'] == true,
     safeSeeding: this['safe_seeding'] == true,
     uploaded: (this['all_time_upload'] as num?)?.toInt() ?? 0,
     downloaded: (this['all_time_download'] as num?)?.toInt() ?? 0,

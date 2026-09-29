@@ -84,6 +84,14 @@ class DownloadsNotifier extends AsyncNotifier<List<Download>> {
       _run((r) => r.setSeedingRatio(infohash, ratio));
   Future<void> resetSeedingRatio(String infohash) =>
       _run((r) => r.resetSeedingRatio(infohash));
+  Future<String> clonePublic(String infohash, {int? anonHops}) async {
+    final ih = await ref
+        .read(downloadsRepositoryProvider)
+        .clonePublic(infohash, anonHops: anonHops);
+    await _refresh();
+    return ih;
+  }
+
   Future<void> recheck(String infohash) => _run((r) => r.recheck(infohash));
   Future<void> moveStorage(
     String infohash, {

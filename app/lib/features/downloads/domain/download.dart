@@ -36,6 +36,7 @@ class Download {
     required this.timeFinished,
     required this.trackers,
     required this.peers,
+    this.isPrivate = false,
   });
 
   final String infohash;
@@ -90,6 +91,11 @@ class Download {
   /// Pairs connectés (`?get_peers=1`) — vide si la liste n'a pas été
   /// demandée.
   final List<DownloadPeer> peers;
+
+  /// Flag `private` du metainfo (extension backend) — trackers
+  /// uniquement, DHT/PEX désactivés. Permet d'offrir « Republier en
+  /// anonyme » (jumeau public).
+  final bool isPrivate;
 
   bool get isActive => status == 'DOWNLOADING' || status == 'SEEDING';
   bool get isPaused => status == 'STOPPED';

@@ -36,6 +36,10 @@ pub fn build(state: AppState) -> Router {
             get(downloads_extra::get_download_torrent),
         )
         .route(
+            "/api/downloads/{infohash}/clone_public",
+            post(downloads_extra::clone_public),
+        )
+        .route(
             "/api/downloads/{infohash}/trackers",
             get(downloads_extra::get_trackers),
         )

@@ -1122,6 +1122,49 @@ impl CoreSession {
         Ok(dl)
     }
 
+    /// Cree un jumeau public du download : `private` et trackers
+    /// retires du metainfo (nouvel info-hash, DHT/PEX reactives), puis
+    /// ajoute sur la lane `anon_hops` **sur les memes fichiers** — le
+    /// contenu d'un torrent prive devient seedable par l'essaim
+    /// anonyme sans re-telechargement ni fuite de l'URL du tracker.
+    /// `anon_hops=None` => `download_defaults/number_hops` (>= 1).
+    pub async fn clone_public(
+        &self,
+        id_or_hash: &str,
+        anon_hops: Option<u32>,
+    ) -> Result<Download> {
+        let dl = self
+            .find_download(id_or_hash)
+            .ok_or(CoreError::InvalidState("telechargement inconnu"))?;
+        let bytes = dl
+            .torrent_bytes()
+            .ok_or(CoreError::InvalidState(
+                "metainfo indisponible (magnet non resolu)",
+            ))?
+            .to_vec();
+        let meta = tribler_format::torrent::TorrentMeta::parse(&bytes)?;
+        if !meta.private {
+            return Err(CoreError::InvalidState(
+                "le torrent n'est pas prive — deja partageable",
+            ));
+        }
+        let public = tribler_format::torrent::to_public(&bytes)?;
+        // `name_subfolder` (parite libtorrent) re-ajoute <nom> sous la
+        // destination : pour un multi-fichiers on vise le parent de
+        // l'output_folder courant pour retomber sur les memes fichiers.
+        let output = dl.output_folder();
+        let destination = if meta.files.len() > 1 {
+            output.parent().map(std::path::Path::to_path_buf)
+        } else {
+            Some(output)
+        };
+        let hops = anon_hops.unwrap_or_else(|| {
+            self.download_defaults().number_hops.max(1)
+        });
+        self.add_torrent_bytes_anon(public, false, hops, hops > 0, destination)
+            .await
+    }
+
     /// Dossier de sortie d'un nouveau telechargement : `destination`
     /// explicite (`PUT /api/downloads`), sinon le `saveas` effectif
     /// (override `POST /api/settings`), sinon `None` = dossier de

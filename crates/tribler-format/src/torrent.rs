@@ -273,6 +273,44 @@ pub fn strip_trackers(data: &[u8]) -> Result<Vec<u8>> {
     Ok(out)
 }
 
+/// Cree une copie publique d'un `.torrent` prive : retire le flag
+/// `private` du dictionnaire `info` (=> nouvel info-hash, DHT/PEX
+/// reactives) ainsi que `announce`/`announce-list` — l'URL du
+/// tracker prive ne doit pas figurer dans le jumeau, le partage se
+/// fait par la DHT/PEX a travers les circuits.
+///
+/// Chirurgical comme [`strip_trackers`] : seules les entrees
+/// concernees sont decoupees, le reste (dont `pieces`) est recopie
+/// verbatim — pas de re-hash des donnees, la copie seede les memes
+/// fichiers instantanement.
+pub fn to_public(data: &[u8]) -> Result<Vec<u8>> {
+    // 1. Les trackers (prives) hors de la copie publique.
+    let data = strip_trackers(data)?;
+    // 2. `private` a l'interieur du dict `info` — son retrait change
+    //    l'info-hash (l'info est re-serialisee sans la cle).
+    let (info_start, info_end) = raw_info_span(&data)?;
+    let mut pos = info_start + 1; // saute le 'd' du dict info
+    let mut cut = None;
+    while pos < info_end && data[pos] != b'e' {
+        let entry_start = pos;
+        let key = parser::decode_at(&data, pos, 1)?;
+        let val = parser::decode_at(&data, key.end, 1)?;
+        pos = val.end;
+        if matches!(&key.value, BValue::Bytes(b) if b == b"private") {
+            cut = Some((entry_start, val.end));
+            break;
+        }
+    }
+    if let Some((s, e)) = cut {
+        let mut out = Vec::with_capacity(data.len());
+        out.extend_from_slice(&data[..s]);
+        out.extend_from_slice(&data[e..]);
+        Ok(out)
+    } else {
+        Ok(data)
+    }
+}
+
 /// Extrait le sous-arbre "file tree" d'un torrent v2 en liste de fichiers.
 fn collect_v2_files(
     tree: &BTreeMap<Vec<u8>, BValue>,
@@ -301,6 +339,13 @@ fn collect_v2_files(
 /// a l'info-hash SHA-1 : la re-serialisation canonique pourrait differer
 /// si le fichier source n'etait pas canonique).
 fn extract_raw_info(data: &[u8]) -> Result<&[u8]> {
+    let (start, end) = raw_info_span(data)?;
+    Ok(&data[start..end])
+}
+
+/// Offsets `[start, end)` de la valeur `info` dans le dictionnaire
+/// racine (meme marche d'offsets bruts que [`extract_raw_info`]).
+fn raw_info_span(data: &[u8]) -> Result<(usize, usize)> {
     if data.first() != Some(&b'd') {
         return Err(FormatError::MissingField("racine non-dictionnaire"));
     }
@@ -314,7 +359,7 @@ fn extract_raw_info(data: &[u8]) -> Result<&[u8]> {
                 let is_info = matches!(&key.value, BValue::Bytes(b) if b == b"info");
                 let val = parser::decode_at(data, pos, 0)?;
                 if is_info {
-                    return Ok(&data[pos..val.end]);
+                    return Ok((pos, val.end));
                 }
                 pos = val.end;
             }
@@ -393,5 +438,50 @@ mod tests {
     #[test]
     fn parse_rejette_un_torrent_sans_info() {
         assert!(TorrentMeta::parse(b"d1:ai1ee").is_err());
+    }
+
+    /// `.torrent` prive minimal (announce + private=1 dans info).
+    fn build_private_torrent() -> Vec<u8> {
+        let mut pieces = String::from("6:pieces20:");
+        for _ in 0..20 {
+            pieces.push('\0');
+        }
+        let info = format!(
+            "d6:lengthi42e4:name8:test.bin12:piece lengthi16384e{}7:privatei1ee",
+            pieces
+        );
+        format!(
+            "d8:announce13:udp://t.local13:announce-listll14:udp://t2.localee4:info{}e",
+            info
+        )
+        .into_bytes()
+    }
+
+    #[test]
+    fn to_public_retire_private_et_trackers() {
+        let data = build_private_torrent();
+        let priv_meta = TorrentMeta::parse(&data).unwrap();
+        assert!(priv_meta.private);
+
+        let public = to_public(&data).unwrap();
+        let pub_meta = TorrentMeta::parse(&public).unwrap();
+        assert!(!pub_meta.private);
+        // Nouvel info-hash (le retrait de `private` modifie `info`).
+        assert_ne!(pub_meta.info_hash, priv_meta.info_hash);
+        // Trackers prives retires de la copie.
+        assert!(pub_meta.announce.is_none());
+        assert!(pub_meta.announce_list.is_empty());
+        // Contenu (pieces, fichiers) inchange — reseeding immediat.
+        assert_eq!(pub_meta.pieces_v1, priv_meta.pieces_v1);
+        assert_eq!(pub_meta.files, priv_meta.files);
+    }
+
+    #[test]
+    fn to_public_idempotent_sur_torrent_public() {
+        let data = build_torrent();
+        let public = to_public(&data).unwrap();
+        let meta = TorrentMeta::parse(&public).unwrap();
+        assert!(!meta.private);
+        assert!(meta.announce.is_none());
     }
 }

@@ -40,6 +40,40 @@ pub async fn get_download_torrent(
         .map_err(|e| ApiError::internal(e.to_string()))
 }
 
+/// Corps optionnel de `POST /api/downloads/{ih}/clone_public`.
+#[derive(Debug, Default, Deserialize)]
+pub struct ClonePublicRequest {
+    /// Sauts anonymes du jumeau public (defaut :
+    /// `download_defaults/number_hops`, minimum 1 — comme le
+    /// `hops=-1` Python qui prend le defaut configure).
+    pub anon_hops: Option<u32>,
+}
+
+/// `POST /api/downloads/{ih}/clone_public` — extension (pas
+/// d'equivalent Python) : cree un jumeau public du download
+/// (flag `private` et trackers retires -> nouvel info-hash,
+/// DHT/PEX reactives) et l'ajoute en seed anonyme sur les memes
+/// fichiers. Sert a repartager un contenu de tracker prive vers
+/// l'essaim anonyme sans re-telechargement.
+pub async fn clone_public(
+    State(state): State<AppState>,
+    Path(infohash): Path<String>,
+    body: Option<Json<ClonePublicRequest>>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    find(&state, &infohash)?;
+    let hops = body.and_then(|b| b.0.anon_hops);
+    let dl = state
+        .session
+        .clone_public(&infohash, hops)
+        .await
+        .map_err(|e| ApiError::internal_handled(e.to_string()))?;
+    Ok(Json(serde_json::json!({
+        "started": true,
+        "infohash": dl.info_hash_hex(),
+        "name": dl.name().unwrap_or_default(),
+    })))
+}
+
 /// Corps des requetes tracker (`url` obligatoire — message Python
 /// `"url parameter missing"` sur 400).
 #[derive(Debug, Deserialize)]

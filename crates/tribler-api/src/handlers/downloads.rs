@@ -81,6 +81,7 @@ pub async fn get_downloads(
             info.anon_download = info.hops > 0;
             if let Some(dl) = &dl {
                 info.destination = dl.output_folder().display().to_string();
+                info.private = dl.is_private();
                 info.trackers = crate::handlers::downloads_extra::trackers_json(
                     dl.trackers(),
                     state.session.engine().config().enable_dht,

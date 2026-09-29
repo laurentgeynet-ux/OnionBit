@@ -96,6 +96,12 @@ abstract interface class DownloadsRepository {
   /// Réinitialise le ratio au défaut (`PATCH seeding_ratio_default`).
   Future<void> resetSeedingRatio(String infohash);
 
+  /// Crée un jumeau public du torrent privé (flag `private` et
+  /// trackers retirés → nouvel info-hash) seedé anonymement sur les
+  /// mêmes fichiers (`POST /{ih}/clone_public`). Retourne le nouvel
+  /// info-hash.
+  Future<String> clonePublic(String infohash, {int? anonHops});
+
   /// Re-vérification des données (`PATCH state=recheck`).
   Future<void> recheck(String infohash);
 

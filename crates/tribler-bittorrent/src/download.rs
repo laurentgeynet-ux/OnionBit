@@ -132,6 +132,14 @@ impl Download {
         self.inner.output_folder().to_path_buf()
     }
 
+    /// Flag `private` du metainfo (DHT/PEX/LSD desactives —
+    /// pairs uniquement via le tracker).
+    pub fn is_private(&self) -> bool {
+        self.inner
+            .with_metadata(|m| m.info.info().private)
+            .unwrap_or(false)
+    }
+
     /// Le torrent est-il en pause ?
     pub fn is_paused(&self) -> bool {
         self.inner.is_paused()

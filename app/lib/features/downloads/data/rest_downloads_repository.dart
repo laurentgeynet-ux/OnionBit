@@ -197,6 +197,22 @@ class RestDownloadsRepository implements DownloadsRepository {
       _api.patch('/downloads/$infohash', body: {'seeding_ratio_default': true});
 
   @override
+  Future<String> clonePublic(String infohash, {int? anonHops}) async {
+    try {
+      final resp = await _api.post(
+        '/downloads/$infohash/clone_public',
+        body: {'anon_hops': ?anonHops},
+      ) as Map<String, dynamic>;
+      final ih = (resp['infohash'] as String?) ?? '';
+      uiLog('jumeau public cree infohash=$ih (depuis $infohash)');
+      return ih;
+    } catch (e) {
+      uiLog('clone public en echec : $e');
+      rethrow;
+    }
+  }
+
+  @override
   Future<void> recheck(String infohash) =>
       _api.patch('/downloads/$infohash', body: {'state': 'recheck'});
 

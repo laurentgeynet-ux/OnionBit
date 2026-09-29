@@ -107,6 +107,9 @@ pub struct DownloadInfo {
     pub user_stopped: bool,
     /// Flux multimedia diffusable.
     pub streamable: bool,
+    /// Extension (pas Python) : flag `private` du metainfo —
+    /// permet au client de proposer « republier en anonyme ».
+    pub private: bool,
 }
 
 impl DownloadInfo {
@@ -168,6 +171,7 @@ impl DownloadInfo {
             auto_managed: false,
             user_stopped: matches!(s.state, DownloadState::Paused),
             streamable,
+            private: false,
         }
     }
 }
