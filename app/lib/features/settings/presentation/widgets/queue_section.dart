@@ -107,6 +107,19 @@ class _QueueSectionState extends ConsumerState<QueueSection> {
               ],
             ),
             SettingsSwitch(
+              path: const ['libtorrent', 'fastresume_check'],
+              value: settingsBool(
+                settings,
+                const ['libtorrent', 'fastresume_check'],
+                def: true,
+              ),
+              title: 'Vérification au démarrage',
+              subtitle:
+                  'Relit un échantillon de pièces pour détecter les '
+                  'fichiers modifiés. Désactivé : démarrage quasi '
+                  'instantané mais une corruption passera inaperçue.',
+            ),
+            SettingsSwitch(
               path: const [
                 'libtorrent',
                 'download_defaults',
