@@ -16,6 +16,7 @@ use std::sync::atomic::{AtomicU16, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use rand::seq::SliceRandom;
 use rand::RngCore;
 use tribler_crypto::ipv8::dh::crypto_box_beforenm;
 use tribler_crypto::ipv8::keys::LibNaClSecretKey;
@@ -188,6 +189,21 @@ pub(crate) struct CreatedRequest {
     pub(crate) candidates: HashMap<Vec<u8>, Peer>,
 }
 
+/// Champs communs d'une `introduction-request` (formats ancien 246
+/// et nouveau 234), decodes pour `on_introduction_request`.
+pub(crate) struct IntroRequestParams<'a> {
+    /// Identifiant a renvoyer dans la reponse.
+    pub(crate) identifier: u16,
+    /// LAN annonce du demandeur.
+    pub(crate) source_lan: UdpAddress,
+    /// WAN annonce du demandeur.
+    pub(crate) source_wan: UdpAddress,
+    /// Requete au format `ip_address` (msg 234).
+    pub(crate) new_style: bool,
+    /// `extra_bytes` (portent les `peer_flags` du demandeur).
+    pub(crate) extra_bytes: &'a [u8],
+}
+
 /// `TunnelCommunity`.
 pub struct TunnelCommunity {
     /// `community_id` (prefixe reseau) — `TUNNEL_COMMUNITY_ID` pyipv8
@@ -227,6 +243,11 @@ pub struct TunnelCommunity {
     /// `(identifier, octets_cellule)` de chaque `test-response` (cell.
     /// 22) recue — consomme par `run_speedtest`.
     pub(crate) test_tx: tokio::sync::broadcast::Sender<(u32, usize)>,
+    /// `DiscoveryCommunity` de la meme stack (injectee via
+    /// [`Self::set_discovery`]) : source de `my_estimated_lan/wan`
+    /// pour les introductions et punctures (le `my_peer` Python est
+    /// partage entre overlays sur le meme endpoint).
+    pub(crate) discovery: Mutex<Option<Arc<tribler_ipv8::discovery::DiscoveryCommunity>>>,
 }
 
 /// Detail d'un objet de routage detruit (`circuit_removed` pyipv8) —
@@ -404,6 +425,7 @@ impl TunnelCommunity {
             circuits_changed_tx,
             circuit_removed_tx,
             test_tx,
+            discovery: Mutex::new(None),
         });
         let weak = Arc::downgrade(&community);
         endpoint
@@ -1760,6 +1782,150 @@ impl TunnelCommunity {
         self.send_introduction_request(addr).await
     }
 
+    /// Injecte la `DiscoveryCommunity` de la stack (estimations
+    /// WAN/LAN partagees, `my_peer` Python).
+    pub fn set_discovery(&self, discovery: Arc<tribler_ipv8::discovery::DiscoveryCommunity>) {
+        *self.discovery.lock().unwrap() = Some(discovery);
+    }
+
+    /// `my_estimated_wan` (via la discovery ; sinon non-specifie).
+    fn my_wan(&self) -> UdpAddress {
+        self.discovery
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|d| d.my_estimated_wan())
+            .unwrap_or_else(UdpAddress::unspecified)
+    }
+
+    /// `my_estimated_lan` (via la discovery ; sinon non-specifie).
+    fn my_lan(&self) -> UdpAddress {
+        self.discovery
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|d| d.my_estimated_lan())
+            .unwrap_or_else(UdpAddress::unspecified)
+    }
+
+    /// `RandomWalk.take_step` sous le prefixe tunnel (cible 20 pairs,
+    /// `BaseLauncher.get_walk_strategies` Tribler) : introduction-
+    /// request vers un pair connu de l'overlay (qui nous introduit a
+    /// un pair de son choix), une adresse walkable du service, un
+    /// pair verifie quelconque (un noeud Tribler porte toutes ses
+    /// overlays sur le meme port) ou un noeud de bootstrap.
+    ///
+    /// Sans cette marche l'overlay tunnel ne se peuple que de pairs
+    /// vus en traffic de circuits — les `ExtraIntroductionPayload`
+    /// (flags RELAY/EXIT) arrivent trop tard pour elargir le pool de
+    /// candidats au premier saut.
+    pub async fn step(&self, bootstrap: &[UdpAddress]) -> Result<(), Ipv8Error> {
+        const WALK_TARGET_PEERS: usize = 20;
+        let known = self.network.peers_for_service(&self.community_id);
+        if known.len() >= WALK_TARGET_PEERS {
+            return Ok(());
+        }
+        let walkable = self
+            .network
+            .get_walkable_addresses(Some(&self.community_id), false);
+        let target = {
+            let mut rng = rand::thread_rng();
+            if !known.is_empty() && (walkable.is_empty() || rand::random::<f64>() < 0.5) {
+                known.choose(&mut rng).and_then(|p| p.address.clone())
+            } else {
+                walkable.choose(&mut rng).cloned().or_else(|| {
+                    self.network
+                        .verified_peers()
+                        .choose(&mut rng)
+                        .and_then(|p| p.address.clone())
+                        .or_else(|| bootstrap.choose(&mut rng).cloned())
+                })
+            }
+        };
+        if let Some(addr) = target {
+            self.walk_to(&addr).await?;
+        }
+        Ok(())
+    }
+
+    /// Boucle de marche aleatoire (a spawner) — `walker_interval`
+    /// Python (`ipv8.walker_interval`).
+    pub async fn run(self: &Arc<Self>, bootstrap: Vec<UdpAddress>, interval: Duration) {
+        let mut tick = tokio::time::interval(interval);
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        tick.tick().await;
+        loop {
+            tick.tick().await;
+            if let Err(e) = self.step(&bootstrap).await {
+                tracing::debug!(error = %e, "etape de marche tunnel echouee");
+            }
+        }
+    }
+
+    /// `on_puncture_request` generique (non signe, msg 250/232) :
+    /// repond par un `puncture` signe vers `wan_walker` (ou
+    /// `lan_walker` si meme IP WAN que nous) — c'est ce trou NAT qui
+    /// permet a un pair introduit sous l'overlay tunnel de nous
+    /// joindre.
+    fn on_puncture_request(self: &Arc<Self>, pkt: &Packet) {
+        let mut r = Reader::new(&pkt.payload);
+        let (lan_walker, wan_walker, identifier, new_style) = match pkt.msg_id {
+            ip::msg::PUNCTURE_REQUEST => match ip::PunctureRequestPayload::unpack(&mut r) {
+                Ok(p) => (
+                    p.lan_walker_address,
+                    p.wan_walker_address,
+                    p.identifier,
+                    false,
+                ),
+                Err(_) => return,
+            },
+            ip::msg::NEW_PUNCTURE_REQUEST => match ip::NewPunctureRequestPayload::unpack(&mut r) {
+                Ok(p) => (
+                    p.lan_walker_address,
+                    p.wan_walker_address,
+                    p.identifier,
+                    true,
+                ),
+                Err(_) => return,
+            },
+            _ => return,
+        };
+        let my_wan = self.my_wan();
+        let same_wan = match (&wan_walker, &my_wan) {
+            (UdpAddress::Ipv4(x), UdpAddress::Ipv4(y)) => x.ip() == y.ip(),
+            (UdpAddress::Ipv6(x), UdpAddress::Ipv6(y)) => x.ip() == y.ip(),
+            _ => false,
+        };
+        let target = if same_wan {
+            lan_walker
+        } else {
+            wan_walker.clone()
+        };
+        let c = self.clone();
+        let my_lan = self.my_lan();
+        tokio::spawn(async move {
+            let mut w = Writer::new();
+            let msg_id = if new_style {
+                let _ = w.ip_address(&my_lan);
+                let _ = w.ip_address(&wan_walker);
+                ip::msg::NEW_PUNCTURE
+            } else {
+                let _ = w.ipv4(&my_lan);
+                let _ = w.ipv4(&wan_walker);
+                ip::msg::PUNCTURE
+            };
+            w.u16(identifier);
+            let pkt = Packet::sign(
+                &c.community_id,
+                msg_id,
+                &c.key,
+                c.claim_global_time(),
+                &w.into_bytes(),
+            );
+            let _ = c.endpoint.send_to(&target, &pkt).await;
+        });
+    }
+
     /// Annuaire reseau partage.
     pub fn network(&self) -> &Arc<Network> {
         &self.network
@@ -1815,13 +1981,19 @@ impl TunnelCommunity {
     /// `Flags`). A utiliser pour decouvrir les flags d'un pair
     /// connu (`network`) avant de l'integrer comme saut/sortie.
     pub async fn send_introduction_request(&self, addr: &UdpAddress) -> Result<(), Ipv8Error> {
-        let local = self.endpoint.local_addr()?;
-        let my_addr = UdpAddress::from(local);
+        let local = UdpAddress::from(self.endpoint.local_addr()?);
+        let (lan, wan) = (self.my_lan(), self.my_wan());
+        let my_lan = if lan.is_unspecified() {
+            local.clone()
+        } else {
+            lan
+        };
+        let my_wan = if wan.is_unspecified() { local } else { wan };
         let mut w = Writer::new();
         ip::IntroductionRequest {
             destination_address: addr.clone(),
-            source_lan_address: my_addr.clone(),
-            source_wan_address: my_addr,
+            source_lan_address: my_lan,
+            source_wan_address: my_wan,
             advice: true,
             supports_new_style: true,
             connection_type: ip::ConnectionType::Unknown,
@@ -1844,30 +2016,67 @@ impl TunnelCommunity {
     /// `introduction_request_callback` + reponse : enregistre les
     /// flags du demandeur, marque le pair service tunnel, renvoie une
     /// `introduction-response` (meme style que la requete) portant nos
-    /// flags. Simplifie vs `Community` : pas de `puncture-request` (le
-    /// suivi NAT est du ressort de `DiscoveryCommunity`).
+    /// flags et un pair introduit de l'overlay
+    /// (`get_peer_for_introduction`), plus une `puncture-request` non
+    /// signee vers le pair introduit (`create_introduction_response`
+    /// Python — le trou NAT est perce par le puncture).
+    /// Parametres decodes d'une `introduction-request` (ancien ou
+    /// nouveau format).
     fn on_introduction_request(
         self: &Arc<Self>,
         src: SocketAddr,
         public_key_bin: &[u8],
-        identifier: u16,
-        source_wan: &UdpAddress,
-        new_style: bool,
-        extra_bytes: &[u8],
+        req: IntroRequestParams<'_>,
     ) {
+        let (identifier, source_lan, source_wan, new_style, extra_bytes) = (
+            req.identifier,
+            req.source_lan,
+            req.source_wan,
+            req.new_style,
+            req.extra_bytes,
+        );
         let flags = Self::extract_peer_flags(extra_bytes);
         self.register_tunnel_peer(public_key_bin, src, flags);
+
+        let candidates: Vec<Peer> = self
+            .network
+            .peers_for_service(&self.community_id)
+            .into_iter()
+            .filter(|q| q.public_key_bin != public_key_bin)
+            .filter(|q| q.address.as_ref().is_some_and(|a| !a.is_unspecified()))
+            .collect();
+        let introduction = candidates.choose(&mut rand::thread_rng()).cloned();
+        let (lan_i, wan_i) = match introduction.as_ref().and_then(|p| p.address.clone()) {
+            Some(a) => (a.clone(), a),
+            None => (UdpAddress::unspecified(), UdpAddress::unspecified()),
+        };
 
         let c = self.clone();
         let dst = UdpAddress::from(src);
         let dest_addr = source_wan.clone();
+        let my_lan = {
+            let l = self.my_lan();
+            if l.is_unspecified() {
+                self.endpoint
+                    .local_addr()
+                    .map(UdpAddress::from)
+                    .unwrap_or_else(|_| UdpAddress::unspecified())
+            } else {
+                l
+            }
+        };
+        let my_wan = {
+            let w = self.my_wan();
+            if w.is_unspecified() {
+                self.endpoint
+                    .local_addr()
+                    .map(UdpAddress::from)
+                    .unwrap_or_else(|_| UdpAddress::unspecified())
+            } else {
+                w
+            }
+        };
         tokio::spawn(async move {
-            let local = match c.endpoint.local_addr() {
-                Ok(a) => a,
-                Err(_) => return,
-            };
-            let my_addr = UdpAddress::from(local);
-            let unspecified = || UdpAddress::from("0.0.0.0:0".parse::<SocketAddr>().unwrap());
             let flags_bytes = (c.inner.lock().unwrap().peer_flags as u16)
                 .to_be_bytes()
                 .to_vec();
@@ -1876,10 +2085,10 @@ impl TunnelCommunity {
                 (
                     ip::NewIntroductionResponse {
                         destination_address: dest_addr,
-                        source_lan_address: my_addr.clone(),
-                        source_wan_address: my_addr,
-                        lan_introduction_address: unspecified(),
-                        wan_introduction_address: unspecified(),
+                        source_lan_address: my_lan,
+                        source_wan_address: my_wan,
+                        lan_introduction_address: lan_i,
+                        wan_introduction_address: wan_i,
                         identifier,
                         intro_supports_new_style: false,
                         extra_bytes: flags_bytes,
@@ -1891,10 +2100,10 @@ impl TunnelCommunity {
                 (
                     ip::IntroductionResponse {
                         destination_address: dest_addr,
-                        source_lan_address: my_addr.clone(),
-                        source_wan_address: my_addr,
-                        lan_introduction_address: unspecified(),
-                        wan_introduction_address: unspecified(),
+                        source_lan_address: my_lan,
+                        source_wan_address: my_wan,
+                        lan_introduction_address: lan_i,
+                        wan_introduction_address: wan_i,
                         connection_type: ip::ConnectionType::Unknown,
                         supports_new_style: true,
                         peer_limit_reached: false,
@@ -1917,24 +2126,76 @@ impl TunnelCommunity {
                 let _ = c.endpoint.send_to(&dst, &pkt).await;
             }
         });
+
+        // `puncture-request` vers le pair introduit pour qu'il perce
+        // son NAT vers le demandeur.
+        if let Some(intro) = introduction {
+            if let Some(intro_addr) = intro.address {
+                let c = self.clone();
+                let req_lan = source_lan.clone();
+                let req_wan = source_wan.clone();
+                tokio::spawn(async move {
+                    let mut w = Writer::new();
+                    let msg_id = if new_style
+                        || !matches!(req_lan, UdpAddress::Ipv4(_))
+                        || !matches!(req_wan, UdpAddress::Ipv4(_))
+                    {
+                        let _ = w.ip_address(&req_lan);
+                        let _ = w.ip_address(&req_wan);
+                        ip::msg::NEW_PUNCTURE_REQUEST
+                    } else {
+                        let _ = w.ipv4(&req_lan);
+                        let _ = w.ipv4(&req_wan);
+                        ip::msg::PUNCTURE_REQUEST
+                    };
+                    w.u16(identifier);
+                    let pkt = Packet::pack_unsigned(
+                        &c.community_id,
+                        msg_id,
+                        c.claim_global_time(),
+                        &w.into_bytes(),
+                    );
+                    let _ = c.endpoint.send_to(&intro_addr, &pkt).await;
+                });
+            }
+        }
     }
 
     /// `introduction_response_callback` : enregistre les flags de
-    /// l'emetteur de la reponse.
+    /// l'emetteur de la reponse et inscrit les adresses introduites
+    /// en walkables du service tunnel (`introductions` Python).
     fn on_introduction_response(
         self: &Arc<Self>,
         src: SocketAddr,
         public_key_bin: &[u8],
+        lan_introduction: UdpAddress,
+        wan_introduction: UdpAddress,
+        new_style: bool,
         extra_bytes: &[u8],
     ) {
         let flags = Self::extract_peer_flags(extra_bytes);
         self.register_tunnel_peer(public_key_bin, src, flags);
+        if let Some(peer) = Peer::new(public_key_bin.to_vec(), Some(UdpAddress::from(src))) {
+            for addr in [lan_introduction, wan_introduction] {
+                if !addr.is_unspecified() {
+                    self.network
+                        .discover_address(&peer, addr, Some(self.community_id), new_style);
+                }
+            }
+        }
     }
 
     /// Paquet IPv8 (signe ou non) recu sur le prefixe tunnel :
     /// `destroy`, introductions (suivi des flags de sortie) et
     /// messages E2E (non-cellules).
     fn on_packet(self: &Arc<Self>, src: SocketAddr, pkt: Packet) -> Result<(), Ipv8Error> {
+        if !pkt.signed {
+            // `puncture-request` (250/232) est le seul message non
+            // signe de la marche — y repondre permet a un pair
+            // introduit de percer son NAT vers nous.
+            self.on_puncture_request(&pkt);
+            return Ok(());
+        }
         match pkt.msg_id {
             msg::DESTROY => {
                 let mut r = Reader::new(&pkt.payload);
@@ -1947,10 +2208,13 @@ impl TunnelCommunity {
                 self.on_introduction_request(
                     src,
                     &pkt.public_key_bin,
-                    p.identifier,
-                    &p.source_wan_address,
-                    false,
-                    &p.extra_bytes,
+                    IntroRequestParams {
+                        identifier: p.identifier,
+                        source_lan: p.source_lan_address,
+                        source_wan: p.source_wan_address,
+                        new_style: false,
+                        extra_bytes: &p.extra_bytes,
+                    },
                 );
             }
             x if x == ip::NewIntroductionRequest::MSG_ID => {
@@ -1959,21 +2223,38 @@ impl TunnelCommunity {
                 self.on_introduction_request(
                     src,
                     &pkt.public_key_bin,
-                    p.identifier,
-                    &p.source_wan_address,
-                    true,
-                    &p.extra_bytes,
+                    IntroRequestParams {
+                        identifier: p.identifier,
+                        source_lan: p.source_lan_address,
+                        source_wan: p.source_wan_address,
+                        new_style: true,
+                        extra_bytes: &p.extra_bytes,
+                    },
                 );
             }
             x if x == ip::IntroductionResponse::MSG_ID => {
                 let mut r = Reader::new(&pkt.payload);
                 let p = ip::IntroductionResponse::unpack(&mut r)?;
-                self.on_introduction_response(src, &pkt.public_key_bin, &p.extra_bytes);
+                self.on_introduction_response(
+                    src,
+                    &pkt.public_key_bin,
+                    p.lan_introduction_address,
+                    p.wan_introduction_address,
+                    false,
+                    &p.extra_bytes,
+                );
             }
             x if x == ip::NewIntroductionResponse::MSG_ID => {
                 let mut r = Reader::new(&pkt.payload);
                 let p = ip::NewIntroductionResponse::unpack(&mut r)?;
-                self.on_introduction_response(src, &pkt.public_key_bin, &p.extra_bytes);
+                self.on_introduction_response(
+                    src,
+                    &pkt.public_key_bin,
+                    p.lan_introduction_address,
+                    p.wan_introduction_address,
+                    true,
+                    &p.extra_bytes,
+                );
             }
             _ => {
                 tracing::trace!(msg_id = pkt.msg_id, %src, "paquet tunnel ignore");

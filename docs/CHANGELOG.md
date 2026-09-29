@@ -3,6 +3,39 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Correctif majeur : les overlays DHT et tunnel ne marchaient jamais non plus (2026-09-29)
+
+Suite de l'audit « pas de trou ailleurs » : en Python, **toutes** les
+communities Tribler reçoivent `RandomWalk(target=20)` via
+`BaseLauncher.get_walk_strategies` (`components.py`). Après
+content-discovery, les deux overlays restants avaient le même trou :
+
+| Overlay | Avant | Après |
+| --- | --- | --- |
+| `DhtCommunity` | `walk_to` au bootstrap seulement, réponse d'intro minimale (pas d'introduction de tiers, pas de `discover_address`) | `step()`/`run()` périodique + handlers complets |
+| `TunnelCommunity` | aucune marche, réponse d'intro sans introduire de pair, punctures ignorées | `step()`/`run()` périodique + handlers complets |
+
+- `tribler-ipv8/dht/community.rs` : marche aléatoire (même ordre de
+  choix : pair de l'overlay → adresse walkable du service → pair
+  vérifié quelconque → bootstrapper), `discover_address` sur les
+  intros reçues, introduction d'un tiers + `puncture-request`,
+  traitement des punctures.
+- `tribler-tunnel/community.rs` : idem ; les `peer_flags` du tunnel
+  continuent d'être portés par `extra_bytes` des intros émises et
+  lus à la réception ; `IntroRequestParams` factorise le decode
+  des formats ancien (246) et nouveau (234).
+- `tribler-core/ipv8_stack.rs` : injection de la `DiscoveryCommunity`
+  dans le tunnel (adresses `my_estimated_lan/wan` partagées, comme
+  l'endpoint unique Python) et spawn des marches DHT/tunnel aux
+  côtés de content-discovery dans la tâche de bootstrap.
+- Test loopback ajouté côté tunnel : une intro mutuelle peuple
+  l'overlay des deux côtés.
+
+Impact : le premier saut des circuits anonymes ne dépend plus du
+repli `all_verified_peers` et le DHT overlay ne dépend plus du seul
+bootstrap initial — les deux overlays maintiennent leur population
+comme pyipv8.
+
 ## Correctif majeur : l'overlay content-discovery ne marchait jamais (2026-09-29)
 
 Symptôme : la recherche de l'UI ne trouvait rien — `PUT

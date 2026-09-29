@@ -19,6 +19,7 @@ use std::time::{Duration, Instant};
 
 use tokio::sync::oneshot;
 
+use rand::seq::{IteratorRandom, SliceRandom};
 use tribler_crypto::hash::sha1;
 use tribler_crypto::ipv8::keys::LibNaClSecretKey;
 
@@ -1446,7 +1447,9 @@ impl DhtCommunity {
             destination_address: addr.clone(),
             source_lan_address: self.my_lan(),
             source_wan_address: self.my_wan(),
-            advice: false,
+            // `advice=True` : on demande une introduction a un pair
+            // de l'overlay (pas un simple accuse).
+            advice: true,
             supports_new_style: true,
             connection_type: crate::payloads::ConnectionType::Unknown,
             identifier: rand::random::<u16>(),
@@ -1459,6 +1462,55 @@ impl DhtCommunity {
             &w.into_bytes(),
         )
         .await
+    }
+
+    /// `RandomWalk.take_step` sous le prefixe DHT (le launcher Tribler
+    /// donne `RandomWalk(20)` a `DHTDiscoveryCommunity` comme aux
+    /// autres overlays) : introduction-request vers un pair connu du
+    /// service, une adresse walkable du service, ou un noeud de
+    /// bootstrap. Sans elle, le bootstrap du DHT repose sur les seuls
+    /// `walk_to` initiaux et les tables se vident au fil du churn.
+    pub async fn walk_step(&self, bootstrap: &[UdpAddress]) -> Result<(), Ipv8Error> {
+        const WALK_TARGET_PEERS: usize = 20;
+        let known = self.network.peers_for_service(&DHT_COMMUNITY_ID);
+        if known.len() >= WALK_TARGET_PEERS {
+            return Ok(());
+        }
+        let walkable = self
+            .network
+            .get_walkable_addresses(Some(&DHT_COMMUNITY_ID), false);
+        let target = {
+            let mut rng = rand::thread_rng();
+            if !known.is_empty() && (walkable.is_empty() || rand::random::<f64>() < 0.5) {
+                known.choose(&mut rng).and_then(|p| p.address.clone())
+            } else {
+                walkable
+                    .choose(&mut rng)
+                    .cloned()
+                    .or_else(|| bootstrap.choose(&mut rng).cloned())
+            }
+        };
+        if let Some(addr) = target {
+            self.walk_to(&addr).await?;
+        }
+        Ok(())
+    }
+
+    /// Boucle de marche aleatoire (a spawner) — `walker_interval`.
+    pub async fn walk_run(
+        self: &Arc<Self>,
+        bootstrap: Vec<UdpAddress>,
+        interval: std::time::Duration,
+    ) {
+        let mut tick = tokio::time::interval(interval);
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        tick.tick().await;
+        loop {
+            tick.tick().await;
+            if let Err(e) = self.walk_step(&bootstrap).await {
+                tracing::debug!(error = %e, "etape de marche DHT echouee");
+            }
+        }
     }
 
     /// `on_packet` : dispatch par `msg_id` (comme `decode_map` Python).
@@ -1716,37 +1768,97 @@ impl DhtCommunity {
                 // `on_puncture` Python : no-op (le trou NAT est ouvert
                 // par la reception meme).
             }
-            crate::payloads::msg::INTRODUCTION_REQUEST => {
-                let p = crate::payloads::IntroductionRequest::unpack(&mut r)?;
+            crate::payloads::msg::NEW_INTRODUCTION_REQUEST => {
+                let p = crate::payloads::NewIntroductionRequest::unpack(&mut r)?;
                 self.on_node_discovered(peer.public_key_bin.clone(), src_addr.clone());
-                // Reponse minimale (pas d'introduction d'un tiers ici).
-                self.reply_result(src_addr, crate::payloads::msg::INTRODUCTION_RESPONSE, {
+                self.reply_result(src_addr, crate::payloads::msg::NEW_INTRODUCTION_RESPONSE, {
                     let mut w = Writer::new();
-                    let _ =
-                        crate::payloads::IntroductionResponse {
-                            destination_address: p.source_wan_address,
-                            source_lan_address: self.my_lan(),
-                            source_wan_address: self.my_wan(),
-                            lan_introduction_address: UdpAddress::Ipv4(
-                                std::net::SocketAddrV4::new(std::net::Ipv4Addr::UNSPECIFIED, 0),
-                            ),
-                            wan_introduction_address: UdpAddress::Ipv4(
-                                std::net::SocketAddrV4::new(std::net::Ipv4Addr::UNSPECIFIED, 0),
-                            ),
-                            connection_type: crate::payloads::ConnectionType::Unknown,
-                            supports_new_style: true,
-                            intro_supports_new_style: false,
-                            peer_limit_reached: false,
-                            identifier: p.identifier,
-                            extra_bytes: Vec::new(),
-                        }
-                        .pack(&mut w);
+                    let _ = crate::payloads::NewIntroductionResponse {
+                        destination_address: p.source_wan_address.clone(),
+                        source_lan_address: self.my_lan(),
+                        source_wan_address: self.my_wan(),
+                        lan_introduction_address: UdpAddress::unspecified(),
+                        wan_introduction_address: UdpAddress::unspecified(),
+                        identifier: p.identifier,
+                        intro_supports_new_style: false,
+                        extra_bytes: Vec::new(),
+                    }
+                    .pack(&mut w);
                     w.into_bytes()
                 });
             }
-            crate::payloads::msg::INTRODUCTION_RESPONSE => {
-                let _p = crate::payloads::IntroductionResponse::unpack(&mut r)?;
+            crate::payloads::msg::INTRODUCTION_REQUEST => {
+                let p = crate::payloads::IntroductionRequest::unpack(&mut r)?;
                 self.on_node_discovered(peer.public_key_bin.clone(), src_addr.clone());
+                // `get_peer_for_introduction` : un pair connu du
+                // service DHT (hors demandeur) est introduit, puis
+                // `puncture-request` vers lui (`create_introduction_
+                // response` Python).
+                let intro_addr = {
+                    let mut rng = rand::thread_rng();
+                    self.network
+                        .peers_for_service(&DHT_COMMUNITY_ID)
+                        .into_iter()
+                        .filter(|q| q.public_key_bin != peer.public_key_bin)
+                        .filter_map(|q| q.address)
+                        .filter(|a| !a.is_unspecified())
+                        .choose(&mut rng)
+                };
+                let (lan_i, wan_i) = match &intro_addr {
+                    Some(a) => (a.clone(), a.clone()),
+                    None => (UdpAddress::unspecified(), UdpAddress::unspecified()),
+                };
+                self.reply_result(src_addr, crate::payloads::msg::INTRODUCTION_RESPONSE, {
+                    let mut w = Writer::new();
+                    let _ = crate::payloads::IntroductionResponse {
+                        destination_address: p.source_wan_address.clone(),
+                        source_lan_address: self.my_lan(),
+                        source_wan_address: self.my_wan(),
+                        lan_introduction_address: lan_i,
+                        wan_introduction_address: wan_i,
+                        connection_type: crate::payloads::ConnectionType::Unknown,
+                        supports_new_style: true,
+                        intro_supports_new_style: false,
+                        peer_limit_reached: false,
+                        identifier: p.identifier,
+                        extra_bytes: Vec::new(),
+                    }
+                    .pack(&mut w);
+                    w.into_bytes()
+                });
+                if let Some(intro) = intro_addr {
+                    let pkt = self.make_puncture_request(
+                        &p.source_lan_address,
+                        &p.source_wan_address,
+                        p.identifier as u32,
+                    );
+                    let ep = self.endpoint.clone();
+                    tokio::spawn(async move {
+                        let _ = ep.send_to(&intro, &pkt).await;
+                    });
+                }
+            }
+            crate::payloads::msg::INTRODUCTION_RESPONSE => {
+                let p = crate::payloads::IntroductionResponse::unpack(&mut r)?;
+                self.on_node_discovered(peer.public_key_bin.clone(), src_addr.clone());
+                // `introductions` Python : les adresses introduites
+                // deviennent des walkables du service DHT.
+                for addr in [p.lan_introduction_address, p.wan_introduction_address] {
+                    if !addr.is_unspecified() {
+                        self.network
+                            .discover_address(&peer, addr, Some(DHT_COMMUNITY_ID), false);
+                    }
+                }
+            }
+            crate::payloads::msg::NEW_INTRODUCTION_RESPONSE => {
+                let p = crate::payloads::NewIntroductionResponse::unpack(&mut r)?;
+                self.on_node_discovered(peer.public_key_bin.clone(), src_addr.clone());
+                for addr in [p.lan_introduction_address, p.wan_introduction_address] {
+                    if !addr.is_unspecified() {
+                        self.network
+                            .discover_address(&peer, addr, Some(DHT_COMMUNITY_ID), true);
+                    }
+                }
             }
             _ => {
                 tracing::trace!(msg_id = pkt.msg_id, "message DHT inconnu");

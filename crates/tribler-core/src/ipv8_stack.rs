@@ -851,16 +851,19 @@ impl Ipv8Stack {
             } else {
                 tribler_tunnel::TUNNEL_COMMUNITY_ID
             };
-            Some(
-                TunnelCommunity::new_with_id(
-                    key.clone(),
-                    network.clone(),
-                    endpoint.clone(),
-                    config.peer_flags,
-                    community_id,
-                )
-                .await,
+            let t = TunnelCommunity::new_with_id(
+                key.clone(),
+                network.clone(),
+                endpoint.clone(),
+                config.peer_flags,
+                community_id,
             )
+            .await;
+            // `my_peer` Python est partage entre overlays : la
+            // tunnel-community emprunte les estimations WAN/LAN de la
+            // discovery pour ses introductions et punctures.
+            t.set_discovery(discovery.clone());
+            Some(t)
         } else {
             None
         };
@@ -938,6 +941,7 @@ impl Ipv8Stack {
             let d = discovery.clone();
             let dht = dht.clone();
             let cd = content_discovery.clone();
+            let tunnel_for_walk = tunnel.clone();
             let walker_interval = std::time::Duration::from_secs_f64(config.walker_interval);
             tokio::spawn(async move {
                 let mut peers = Vec::new();
@@ -965,16 +969,31 @@ impl Ipv8Stack {
                         count = peers.len(),
                         "bootstrap IPv8 demarre vers les noeuds d'amorcage"
                     );
-                    // `RandomWalk` par overlay (BaseLauncher Python) :
-                    // la marche content-discovery a ses propres
-                    // introduction-requests sous son prefixe — sans
-                    // elle l'overlay reste vide et la recherche
-                    // distante n'interroge personne.
+                    // `RandomWalk` par overlay (BaseLauncher Python
+                    // donne `RandomWalk(20)` a toutes les communities
+                    // Tribler) : chaque overlay marche sous son propre
+                    // prefixe, sinon l'overlay reste vide — le gossip
+                    // content-discovery n'a personne a qui parler et
+                    // la recherche distante est muette.
                     if let Some(cd) = &cd {
                         let cd = cd.clone();
                         let peers = peers.clone();
                         tokio::spawn(async move {
                             cd.run(peers, walker_interval).await;
+                        });
+                    }
+                    if let Some(t) = &tunnel_for_walk {
+                        let t = t.clone();
+                        let peers = peers.clone();
+                        tokio::spawn(async move {
+                            t.run(peers, walker_interval).await;
+                        });
+                    }
+                    if let Some(dht) = &dht {
+                        let dht = dht.clone();
+                        let peers = peers.clone();
+                        tokio::spawn(async move {
+                            dht.walk_run(peers, walker_interval).await;
                         });
                     }
                     d.run(peers).await;

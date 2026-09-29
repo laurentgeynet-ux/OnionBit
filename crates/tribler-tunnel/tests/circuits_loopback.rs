@@ -1303,3 +1303,36 @@ async fn establish_intro_populates_pex_store() {
     assert!(ip.seeder_pk.starts_with(b"LibNaCLPK:"));
     assert_eq!(ip.peer_key, i.key.public_key().to_bin());
 }
+
+/// `RandomWalk` tunnel : une `introduction-request` sous le prefixe
+/// tunnel enregistre le demandeur cote B (service + flags) et le
+/// repondant cote A via la `introduction-response` — l'overlay se
+/// peuple sans trafic de circuit.
+#[tokio::test(flavor = "multi_thread")]
+async fn walk_decouvre_les_pairs_tunnel() {
+    let a = make_node_flags(PEER_FLAG_RELAY).await;
+    let b = make_node_flags(PEER_FLAG_EXIT_BT).await;
+
+    a.tunnel
+        .walk_to(&UdpAddress::from(b.addr))
+        .await
+        .expect("walk_to");
+
+    let deadline = Instant::now() + TEST_TIMEOUT;
+    let mut ok = false;
+    while Instant::now() < deadline {
+        let a_peers = a.network.peers_for_service(&TUNNEL_COMMUNITY_ID);
+        let b_peers = b.network.peers_for_service(&TUNNEL_COMMUNITY_ID);
+        if !a_peers.is_empty() && !b_peers.is_empty() {
+            ok = true;
+            break;
+        }
+        tokio::time::sleep(POLL).await;
+    }
+    assert!(ok, "la marche n'a pas peuple l'overlay tunnel");
+    // Les flags de service ont transite par `extra_bytes`.
+    assert_eq!(
+        a.tunnel.peer_flags_of(&b.key.public_key().to_bin()) & PEER_FLAG_EXIT_BT,
+        PEER_FLAG_EXIT_BT
+    );
+}
