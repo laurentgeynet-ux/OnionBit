@@ -425,7 +425,13 @@ impl UdpEndpoint {
                     Ok(pkt) => {
                         let msg_id = pkt.msg_id;
                         if let Err(e) = h(src, pkt) {
-                            tracing::debug!(error = %e, msg_id, "handler de community en erreur");
+                            tracing::debug!(
+                                error = %e,
+                                msg_id,
+                                prefix = hex::encode(&prefix[..8]),
+                                %src,
+                                "handler de community en erreur"
+                            );
                         }
                     }
                     Err(e) => {

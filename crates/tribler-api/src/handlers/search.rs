@@ -90,6 +90,13 @@ pub async fn remote_search(
             }
         }
     }
+    tracing::info!(
+        %uuid,
+        query = %query,
+        overlay_peers = peers.len(),
+        queried = queried.len(),
+        "recherche distante emise"
+    );
     Ok(Json(serde_json::json!({
         "request_uuid": uuid,
         "peers": queried,

@@ -784,6 +784,7 @@ impl ContentDiscoveryCommunity {
             },
         );
         self.send_payload(peer, &RemoteSelect { id, json }).await?;
+        tracing::debug!(?peer, id, "remote-select envoye");
         Ok(id)
     }
 
@@ -887,6 +888,7 @@ impl ContentDiscoveryCommunity {
             }
             msg::HEALTH => {
                 let p = HealthPayload::unpack(&mut r)?;
+                tracing::debug!(?src_addr, count = p.torrents.len(), "health recu");
                 let to_resolve = self.provider.process_health(&p.torrents);
                 let c = self.clone();
                 tokio::spawn(async move {
@@ -926,6 +928,12 @@ impl ContentDiscoveryCommunity {
             }
             msg::SELECT_RESPONSE => {
                 let p = SelectResponse::unpack(&mut r)?;
+                tracing::debug!(
+                    ?src_addr,
+                    id = p.id,
+                    bytes = p.blob.len(),
+                    "select-response recu"
+                );
                 // `request_cache.get(mid, id)` Python : l'id est
                 // unique par processus ; on verifie la source.
                 let callback = {
