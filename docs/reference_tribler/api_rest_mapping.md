@@ -60,8 +60,8 @@ Convention générale :
 | **Recherche distante** (`search_endpoint.py`) | | | |
 | `PUT /api/search/remote?fts_text=` | idem | ✅ | `RemoteSelect` vers les pairs de la community content-discovery ; réponses intégrées à `channel_node`. 400 si IPv8 inactif |
 | **Torrentinfo / createtorrent** | | | |
-| `POST /api/torrentinfo/uri` | idem | ✅ | `file://`, `http(s)://` (fetch anti-SSRF), `magnet:` (résolution DHT ; `skipmagnet` = réponse immédiate) |
-| `PUT /api/torrentinfo/file` | idem | ✅ | Corps brut bencode ou `{"torrent": "<hex>"}` |
+| `POST /api/torrentinfo/uri` | idem | ✅ | `file://`, `http(s)://` (fetch anti-SSRF), `magnet:` (résolution DHT ; `skipmagnet` = réponse immédiate). **Extension** : la réponse inclut `trackers` + `private` (absents du Python) |
+| `PUT /api/torrentinfo/file` | idem | ✅ | Corps brut bencode ou `{"torrent": "<hex>"}`. **Extension** : `trackers` + `private` dans la réponse |
 | `POST /api/createtorrent` | idem | ✅ | Délégué à `librqbit::create_torrent` ; `export_dir`/`name`/`tracker`/`piece_length` |
 | `POST /api/createtorrent/dryrun` | idem | ✅ | Vérifie l'écriture dans `export_dir` |
 | **Session moteur** (`libtorrent_endpoint.py`) | | | |
@@ -159,8 +159,8 @@ Convention générale :
 | Endpoint Python | Statut | Raison |
 | :--- | :--- | :--- |
 | `/api/webui` | ⛔ | UI — hors périmètre backend |
-| `/api/knowledge` (GraphDB/Rules) | ⛔ | service « knowledge » non réimplémenté (V1 hors scope) |
-| `/api/trustview`, `bandwidth` | ⛔ | community TrustChain absente de la V1 |
+| `/api/knowledge` (GraphDB/Rules) | — | supprimé en amont : absent des sources 8.x (pas un écart) |
+| `/api/trustview`, `bandwidth` | — | supprimé en amont : TrustChain/BandwidthAccounting retirés de Tribler 8.x — les tunnels n'ont plus de comptabilité de crédit, chez eux comme chez nous |
 | `/api/downloads/{ih}/peerdna` | ⏳ | analyse d'identité de pair — non implémenté |
 | `channels` (CRUD channels) | ⏳ | la base `channel_node` est prête ; l'édition de channels est une fonctionnalité ultérieure |
 | `identity/*` | ⛔ | exclusion actée (cf. ADR-0006 — pas d'identités/pseudonymes dans le périmètre V1) |

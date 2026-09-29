@@ -1,6 +1,7 @@
 import 'download.dart';
 import 'download_file.dart';
 import 'download_tracker.dart';
+import 'torrent_preview.dart';
 
 /// Opération de déplacement dans la file (`queue_position` Python).
 enum QueueOp {
@@ -42,6 +43,10 @@ abstract interface class DownloadsRepository {
     bool safeSeeding = false,
     bool paused = false,
   });
+
+  /// Aperçu d'un `.torrent` avant ajout (`PUT /api/torrentinfo/file`)
+  /// — nom, trackers et flag `private`, sans créer de téléchargement.
+  Future<TorrentPreview> previewTorrentFile(List<int> bytes);
 
   /// Fichiers du téléchargement (`GET /{ih}/files`).
   Future<List<DownloadFile>> files(String infohash);

@@ -910,6 +910,10 @@ async fn torrentinfo_file_et_uri() {
     assert_eq!(body["name"], "api-test.bin");
     assert_eq!(body["files"][0]["size"], 42);
     assert_eq!(body["download_exists"], false);
+    // Extension : trackers + flag private exposes pour l'anticipation
+    // cote client (torrent sans tracker -> liste vide).
+    assert_eq!(body["trackers"], serde_json::json!([]));
+    assert_eq!(body["private"], false);
 
     // POST /api/torrentinfo/uri via file://.
     let torrent_path = srv._dir.path().join("t.torrent");

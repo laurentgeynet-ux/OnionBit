@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/api/api_client.dart';
 import '../../../../core/theme/app_theme.dart';
+import '../../domain/torrent_preview.dart';
 import '../providers/downloads_providers.dart';
 
 /// Dialogue « Ajouter » — magnet/URI, fichier `.torrent` (binaire,
@@ -32,6 +33,7 @@ class _AddDownloadDialogState extends ConsumerState<AddDownloadDialog> {
   );
   final _destController = TextEditingController();
   XFile? _file;
+  TorrentPreview? _preview;
   int _hops = 0;
   bool _paused = false;
   bool _busy = false;
@@ -47,13 +49,42 @@ class _AddDownloadDialogState extends ConsumerState<AddDownloadDialog> {
   bool get _canSubmit =>
       !_busy && (_uriController.text.trim().isNotEmpty || _file != null);
 
+  /// Trackers connus avant ajout : metainfo du `.torrent` choisi via
+  /// `/api/torrentinfo/file`, ou parametres `tr=` d'un magnet saisi.
+  List<String> get _knownTrackers {
+    if (_preview != null) return _preview!.trackers;
+    final uri = Uri.tryParse(_uriController.text.trim());
+    if (uri == null || uri.scheme != 'magnet') return const [];
+    return uri.queryParametersAll['tr'] ?? const [];
+  }
+
+  /// Tous les trackers connus sont HTTPS → injoignables via les
+  /// sorties anonymes (relai HTTP clair one-shot uniquement).
+  bool get _httpsOnlyTrackers =>
+      _knownTrackers.isNotEmpty &&
+      _knownTrackers.every((t) => t.toLowerCase().startsWith('https://'));
+
   Future<void> _pickFile() async {
     final file = await openFile(
       acceptedTypeGroups: [
         const XTypeGroup(label: 'torrent', extensions: ['torrent']),
       ],
     );
-    if (file != null) setState(() => _file = file);
+    if (file == null) return;
+    setState(() {
+      _file = file;
+      _preview = null;
+    });
+    // Aperçu des trackers pour l'avertissement HTTPS-only — echec
+    // silencieux : le torrent reste ajoutable sans l'alerte.
+    try {
+      final preview = await ref
+          .read(downloadsRepositoryProvider)
+          .previewTorrentFile(await file.readAsBytes());
+      if (mounted && _file == file) setState(() => _preview = preview);
+    } catch (_) {
+      // Metainfo illisible : l'ajout remontera l'erreur proprement.
+    }
   }
 
   Future<void> _submit() async {
@@ -129,7 +160,10 @@ class _AddDownloadDialogState extends ConsumerState<AddDownloadDialog> {
                 if (_file != null)
                   IconButton(
                     tooltip: 'Retirer le fichier',
-                    onPressed: () => setState(() => _file = null),
+                    onPressed: () => setState(() {
+                      _file = null;
+                      _preview = null;
+                    }),
                     icon: const Icon(Icons.close),
                   ),
               ],
@@ -159,6 +193,18 @@ class _AddDownloadDialogState extends ConsumerState<AddDownloadDialog> {
                 color: theme.colorScheme.outline,
               ),
             ),
+            if (_hops > 0 && _httpsOnlyTrackers) ...[
+              const SizedBox(height: AppSpacing.xs),
+              Text(
+                'Tous les trackers de ce torrent sont en HTTPS : ils '
+                'sont injoignables via les sorties anonymes (relai '
+                'HTTP en clair uniquement). En mode anonyme, ce '
+                'torrent ne trouvera aucun pair — choisissez « Direct ».',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.tertiary,
+                ),
+              ),
+            ],
             const SizedBox(height: AppSpacing.md),
             TextField(
               controller: _destController,

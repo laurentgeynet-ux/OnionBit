@@ -3,6 +3,7 @@ import '../domain/download.dart';
 import '../domain/download_file.dart';
 import '../domain/download_tracker.dart';
 import '../domain/downloads_repository.dart';
+import '../domain/torrent_preview.dart';
 import 'download_dto.dart';
 
 /// Implémentation REST du dépôt downloads (endpoints Python).
@@ -68,6 +69,20 @@ class RestDownloadsRepository implements DownloadsRepository {
       },
     ) as Map<String, dynamic>;
     return (resp['infohash'] as String?) ?? '';
+  }
+
+  @override
+  Future<TorrentPreview> previewTorrentFile(List<int> bytes) async {
+    final resp = await _api.putTorrent('/torrentinfo/file', bytes)
+        as Map<String, dynamic>;
+    final trackers = (resp['trackers'] as List<dynamic>? ?? const [])
+        .whereType<String>()
+        .toList();
+    return TorrentPreview(
+      name: (resp['name'] as String?) ?? '',
+      trackers: trackers,
+      isPrivate: resp['private'] == true,
+    );
   }
 
   @override

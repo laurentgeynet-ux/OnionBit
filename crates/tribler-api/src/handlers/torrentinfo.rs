@@ -39,6 +39,12 @@ fn metainfo_json(
         "description": meta.comment.clone().unwrap_or_default(),
         "download_exists": download_exists,
         "valid_certificate": valid_cert,
+        // Extension par rapport au Python : expose les trackers et le
+        // flag `private` pour que le client puisse anticiper les
+        // annonces impossibles (trackers HTTPS-only injoignables via
+        // les sorties anonymes — http-request one-shot en clair).
+        "trackers": meta.tracker_urls(),
+        "private": meta.private,
     })
 }
 

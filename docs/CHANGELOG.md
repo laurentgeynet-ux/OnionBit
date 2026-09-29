@@ -3,6 +3,25 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## UI : avertissement trackers HTTPS-only à l'ajout anonyme (2026-09-29)
+
+Conséquence de la limitation confirmée ci-dessous (sorties =
+`http-request` one-shot HTTP clair, pas de relais TCP générique) : un
+torrent dont **tous** les trackers sont en `https://` ne découvrira
+aucun pair en mode anonyme — le `ClientHello` TLS n'est pas une
+requête HTTP relayable, d'où les `tls handshake eof` observés.
+
+- **`/api/torrentinfo/{file,uri}`** : extension de la réponse avec
+  `trackers` (announce + announce-list dédoublonnés) et `private`,
+  pour anticiper côté client (écart documenté dans
+  `docs/reference_tribler/api_rest_mapping.md`).
+- **Dialogue « Ajouter » (Flutter)** : aperçu du `.torrent` choisi via
+  `PUT /api/torrentinfo/file` (échec silencieux — l'ajout reste
+  possible) et lecture des `tr=` des magnets ; si tous les trackers
+  connus sont HTTPS et que `anon_hops > 0`, avertissement explicite
+  invitant à choisir « Direct ». Pas de blocage : le torrent reste
+  téléchargeable en désactivant l'anonymat.
+
 ## Correctif majeur (bis) : trafic anonyme routé en UDP tunnel — librqbit vendored (2026-09-29)
 
 Le flux continu `http-request`/`http-response` de `6d2f11c` n'était
