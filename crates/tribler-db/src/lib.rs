@@ -22,6 +22,7 @@ pub mod migrations;
 pub mod misc;
 pub mod models;
 pub mod peers;
+pub mod pex;
 pub mod ranks;
 pub mod rss;
 
@@ -29,6 +30,7 @@ pub use db::Database;
 pub use error::{DbError, Result};
 pub use models::{ChannelNodeRow, DownloadRow, TorrentStateRow, TrackerStateRow};
 pub use peers::Ipv8PeerRow;
+pub use pex::PexRow;
 pub use rss::RssItemRow;
 
 #[cfg(test)]

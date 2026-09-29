@@ -1117,6 +1117,49 @@ impl Ipv8Stack {
             None
         };
 
+        // Stores PEX persistes (`tunnel_pex`) : on redevient point
+        // d'introduction des swarms connus des le demarrage — le
+        // hidden seeding reste joignable sans attendre un nouveau
+        // `establish-intro` du seeder.
+        if let Some(t) = &tunnel {
+            let pex_rows = db.call(tribler_db::pex::list).await.unwrap_or_default();
+            if !pex_rows.is_empty() {
+                type Grouped = HashMap<
+                    [u8; 20],
+                    (
+                        Vec<tribler_tunnel::routing::IntroductionPoint>,
+                        Vec<Vec<u8>>,
+                    ),
+                >;
+                let mut grouped = Grouped::new();
+                for r in pex_rows {
+                    let Ok(ih) = <[u8; 20]>::try_from(r.info_hash.as_slice()) else {
+                        continue;
+                    };
+                    let entry = grouped.entry(ih).or_default();
+                    if r.own {
+                        entry.1.push(r.seeder_pk);
+                    } else if let Ok(sa) = r.address.parse::<SocketAddr>() {
+                        entry.0.push(tribler_tunnel::routing::IntroductionPoint {
+                            address: UdpAddress::from(sa),
+                            peer_key: r.peer_key,
+                            seeder_pk: r.seeder_pk,
+                            source: r.source as u8,
+                            last_seen_secs: r.last_seen as u64,
+                        });
+                    }
+                }
+                let n = grouped.len();
+                t.pex_restore(
+                    grouped
+                        .into_iter()
+                        .map(|(ih, (learned, announces))| (ih, learned, announces))
+                        .collect(),
+                );
+                tracing::info!(swarms = n, "stores PEX restaures depuis la base");
+            }
+        }
+
         // Relais `circuit_removed` -> `Notification::TunnelRemoved`
         // (tribler-tunnel ne depend pas de tribler-core : pont par
         // canal broadcast, equivalent du Notifier partage Python).
@@ -1223,6 +1266,7 @@ impl Ipv8Stack {
         {
             let network = network.clone();
             let db = db.clone();
+            let tunnel_cache = tunnel.clone();
             let interval = std::time::Duration::from_secs(config.peer_persist_interval_secs.max(5));
             let max = config.peer_cache_max;
             let max_age = config.peer_cache_max_age_secs;
@@ -1231,6 +1275,47 @@ impl Ipv8Stack {
                     tokio::time::sleep(interval).await;
                     let now = now_unix() as i64;
                     let cutoff = now.saturating_sub(max_age as i64);
+                    // Stores PEX : annonces propres + points appris
+                    // (meme snapshot que `ipv8_peers`, meme ecriture).
+                    let pex_rows: Vec<tribler_db::PexRow> = tunnel_cache
+                        .as_ref()
+                        .map(|t| {
+                            t.pex_dump()
+                                .into_iter()
+                                .flat_map(|(ih, learned, announces)| {
+                                    let mut v = Vec::with_capacity(learned.len() + announces.len());
+                                    for ip in learned {
+                                        v.push(tribler_db::PexRow {
+                                            info_hash: ih.to_vec(),
+                                            own: false,
+                                            peer_key: ip.peer_key,
+                                            seeder_pk: ip.seeder_pk,
+                                            address: ip
+                                                .address
+                                                .to_socket_addr()
+                                                .map(|s| s.to_string())
+                                                .unwrap_or_default(),
+                                            source: ip.source as i64,
+                                            last_seen: ip.last_seen_secs as i64,
+                                        });
+                                    }
+                                    for pk in announces {
+                                        v.push(tribler_db::PexRow {
+                                            info_hash: ih.to_vec(),
+                                            own: true,
+                                            peer_key: Vec::new(),
+                                            seeder_pk: pk,
+                                            address: String::new(),
+                                            source: 0,
+                                            last_seen: 0,
+                                        });
+                                    }
+                                    v
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    let write_pex = tunnel_cache.is_some();
                     let rows: Vec<tribler_db::Ipv8PeerRow> = network
                         .verified_peers()
                         .iter()
@@ -1247,13 +1332,16 @@ impl Ipv8Stack {
                             })
                         })
                         .collect();
-                    if rows.is_empty() {
-                        continue;
-                    }
                     let _ = db
                         .call(move |c| {
-                            tribler_db::peers::upsert_batch(c, &rows, now)?;
-                            tribler_db::peers::prune(c, cutoff, max)
+                            if !rows.is_empty() {
+                                tribler_db::peers::upsert_batch(c, &rows, now)?;
+                                tribler_db::peers::prune(c, cutoff, max)?;
+                            }
+                            if write_pex {
+                                tribler_db::pex::replace_all(c, &pex_rows)?;
+                            }
+                            Ok(())
                         })
                         .await;
                 }

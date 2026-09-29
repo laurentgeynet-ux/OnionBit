@@ -11,7 +11,7 @@
 //! semantique du schema, pas l'interoperabilite binaire).
 
 /// Version courante du schema de ce crate.
-pub const SCHEMA_VERSION: i64 = 9;
+pub const SCHEMA_VERSION: i64 = 10;
 
 /// Script SQL de chaque migration, dans l'ordre (index 0 = v1).
 pub const MIGRATIONS: &[&str] = &[
@@ -210,6 +210,26 @@ CREATE TABLE ipv8_peers (
     new_style   INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX idx_ipv8_peers_seen ON ipv8_peers(last_seen);
+",
+    // v10 : stores PEX des swarms caches (`TunnelCommunity.pex` —
+    // `PexCommunity` reduite a ses donnees, cf. `pex.rs` cote tunnel).
+    // `own=1` : `intro_points_for` (seeder_pk que l'on annonce soi-meme
+    // apres `establish-intro` — on reste joignable comme point
+    // d'introduction au redemarrage) ; `own=0` : points d'introduction
+    // appris via PEX (`intro_points`, TTL 300 s filtre au chargement).
+    // Ecriture par snapshot complet (`replace_all`), comme le cache de
+    // pairs — la carte est petite et volatile.
+    "
+CREATE TABLE tunnel_pex (
+    info_hash BLOB NOT NULL,
+    own       INTEGER NOT NULL DEFAULT 0,
+    peer_key  BLOB NOT NULL,
+    seeder_pk BLOB NOT NULL,
+    address   TEXT NOT NULL DEFAULT '',
+    source    INTEGER NOT NULL DEFAULT 0,
+    last_seen INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (info_hash, own, peer_key, seeder_pk)
+);
 ",
 ];
 

@@ -132,6 +132,14 @@ pub(crate) struct Inner {
     pub(crate) flag_registry: HashMap<Vec<u8>, i32>,
 }
 
+/// Snapshot PEX d'un swarm pour `pex_dump`/`pex_restore` :
+/// (`info_hash`, points appris, `seeder_pk` annonces par nous).
+pub type PexDumpEntry = (
+    [u8; 20],
+    Vec<crate::routing::IntroductionPoint>,
+    Vec<Vec<u8>>,
+);
+
 /// `TunnelExitSocket` : socket UDP de sortie dediee par circuit —
 /// les reponses des destinations externes arrivent hors-prefixe sur
 /// cette socket et sont reencapsulees en cellules `data` (BACKWARD).
@@ -641,6 +649,46 @@ impl TunnelCommunity {
             .iter_mut()
             .map(|(ih, store)| (*ih, store.intro_points(&our_key, &our_wan, now)))
             .collect()
+    }
+
+    /// Dump des stores PEX pour persistance (extension Rust) : par
+    /// `info_hash`, les points appris `intro_points` (TTL applique par
+    /// le store a la lecture) et les `seeder_pk` annonces
+    /// (`intro_points_for`). Le consommateur — `tribler-core` — ecrit
+    /// le snapshot en base ; `tribler-tunnel` reste sans dependance
+    /// SQLite.
+    pub fn pex_dump(&self) -> Vec<PexDumpEntry> {
+        let inner = self.inner.lock().unwrap();
+        inner
+            .pex
+            .iter()
+            .map(|(ih, store)| {
+                (
+                    *ih,
+                    store.intro_points.iter().cloned().collect(),
+                    store.intro_points_for.clone(),
+                )
+            })
+            .collect()
+    }
+
+    /// Recharge des stores PEX persistes (`intro_points` appris +
+    /// annonces propres restaurees via `start_announce` — elles sont
+    /// regenerees avec notre WAN a la prochaine requete).
+    pub fn pex_restore(&self, entries: Vec<PexDumpEntry>) {
+        let mut inner = self.inner.lock().unwrap();
+        for (ih, learned, announces) in entries {
+            if learned.is_empty() && announces.is_empty() {
+                continue;
+            }
+            let store = inner.pex.entry(ih).or_default();
+            for ip in learned {
+                store.push_learned(ip);
+            }
+            for seeder_pk in announces {
+                store.start_announce(seeder_pk);
+            }
+        }
     }
 
     /// Pairs tunnel connus avec leurs flags de service pour

@@ -1607,7 +1607,11 @@ impl CoreSession {
         let dst = dest_dir.to_path_buf();
         let moved = tokio::task::spawn_blocking(move || move_dir_contents(&src, &dst))
             .await
-            .unwrap_or_else(|e| Err(std::io::Error::other(format!("deplacement interrompu: {e}"))));
+            .unwrap_or_else(|e| {
+                Err(std::io::Error::other(format!(
+                    "deplacement interrompu: {e}"
+                )))
+            });
         let elapsed = t0.elapsed();
         if elapsed > std::time::Duration::from_millis(500) {
             tracing::warn!(
