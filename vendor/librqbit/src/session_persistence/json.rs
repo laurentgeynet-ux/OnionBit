@@ -131,8 +131,11 @@ impl JsonSessionPersistenceStore {
             .shared
             .storage_factory
             .is_type_id(TypeId::of::<FilesystemStorageFactory>())
+            && !torrent.shared.storage_factory.is_type_id(TypeId::of::<
+                crate::storage::examples::mmap::MmapFilesystemStorageFactory,
+            >())
         {
-            bail!("storages other than FilesystemStorageFactory are not supported");
+            bail!("storages other than filesystem-based factories are not supported");
         }
 
         let st = SerializedTorrent {

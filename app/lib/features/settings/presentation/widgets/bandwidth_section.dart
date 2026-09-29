@@ -70,7 +70,7 @@ class _BandwidthSectionState extends ConsumerState<BandwidthSection> {
                     keyboardType: TextInputType.number,
                     decoration: const InputDecoration(
                       labelText: 'Téléchargement (Ko/s)',
-                      hintText: '0 = illimité',
+                      hintText: 'défaut : 0 = illimité',
                       prefixIcon: Icon(Icons.arrow_downward),
                     ),
                   ),
@@ -82,7 +82,7 @@ class _BandwidthSectionState extends ConsumerState<BandwidthSection> {
                     keyboardType: TextInputType.number,
                     decoration: const InputDecoration(
                       labelText: 'Envoi (Ko/s)',
-                      hintText: '0 = illimité',
+                      hintText: 'défaut : 0 = illimité',
                       prefixIcon: Icon(Icons.arrow_upward),
                     ),
                   ),

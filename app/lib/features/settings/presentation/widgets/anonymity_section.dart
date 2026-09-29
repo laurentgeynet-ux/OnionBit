@@ -76,7 +76,7 @@ class _AnonymitySectionState extends ConsumerState<AnonymitySection> {
               title: 'TunnelCommunity activée',
               subtitle:
                   'Requis pour les téléchargements anonymes. '
-                  'Pris en compte au redémarrage.',
+                  'Pris en compte au redémarrage. Défaut : activé.',
             ),
             SettingsSwitch(
               path: [..._t, 'exitnode_enabled'],
@@ -84,7 +84,9 @@ class _AnonymitySectionState extends ConsumerState<AnonymitySection> {
               title: 'Agir comme noeud de sortie',
               subtitle:
                   'Attention : votre machine relaye alors le trafic '
-                  'BitTorrent des autres pairs vers l\'Internet public.',
+                  'BitTorrent des autres pairs vers l\'Internet public. '
+                  'Défaut : désactivé. '
+                  'Pris en compte au redémarrage.',
             ),
             const SizedBox(height: AppSpacing.sm),
             Row(
@@ -94,7 +96,7 @@ class _AnonymitySectionState extends ConsumerState<AnonymitySection> {
                     controller: _minCircuits,
                     keyboardType: TextInputType.number,
                     decoration: const InputDecoration(
-                      labelText: 'Circuits minimum',
+                      labelText: 'Circuits minimum (défaut : 3)',
                       isDense: true,
                     ),
                   ),
@@ -105,7 +107,7 @@ class _AnonymitySectionState extends ConsumerState<AnonymitySection> {
                     controller: _maxCircuits,
                     keyboardType: TextInputType.number,
                     decoration: const InputDecoration(
-                      labelText: 'Circuits maximum',
+                      labelText: 'Circuits maximum (défaut : 8)',
                       isDense: true,
                     ),
                   ),

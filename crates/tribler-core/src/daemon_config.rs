@@ -458,11 +458,19 @@ pub struct LoggingConfig {
     /// `tribler.log` courant (`tribler.log.1` … `.N` ; `0` = un seul
     /// fichier ecrase a chaque demarrage).
     pub max_files: usize,
+    /// Mode debug asyncio persistant (`PUT /api/ipv8/asyncio/debug`
+    /// `enable`) : Python ne le persistait pas, mais l'utilisateur
+    /// attend que le choix « info/debug » survive au redemarrage —
+    /// restaure par `init_tracing` au lancement.
+    pub debug: bool,
 }
 
 impl Default for LoggingConfig {
     fn default() -> Self {
-        Self { max_files: 5 }
+        Self {
+            max_files: 5,
+            debug: false,
+        }
     }
 }
 

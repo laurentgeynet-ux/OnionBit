@@ -170,6 +170,12 @@ fn init_tracing(state_dir: &std::path::Path, daemon_config: &DaemonConfig) {
             tracing::warn!(error = %e, "rechargement du filtre de log impossible");
         }
     });
+
+    // Restaure le mode debug persiste (`logging/debug`) : le choix
+    // info/debug de l'onglet Logs survit au redemarrage.
+    if daemon_config.logging.debug {
+        tribler_core::asyncio::debug_log().set_enabled(true);
+    }
 }
 
 /// Ctrl-C d'une console attachee. En sous-systeme GUI sans console,

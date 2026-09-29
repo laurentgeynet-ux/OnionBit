@@ -58,6 +58,12 @@ impl WatchFolderService {
         &self.dir
     }
 
+    /// Intervalle de scan (pour `apply_service_settings` —
+    /// redemarrage si la cadence change).
+    pub fn interval(&self) -> Duration {
+        self.interval
+    }
+
     pub fn start(&self) {
         let svc = self.clone();
         let mut stop_rx = self.stop.subscribe();

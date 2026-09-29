@@ -52,7 +52,7 @@ class _ConnectionSectionState extends ConsumerState<ConnectionSection> {
                   controller: _urlController,
                   decoration: const InputDecoration(
                     labelText: 'URL de l\'API',
-                    hintText: 'http://127.0.0.1:8085',
+                    hintText: 'défaut : http://127.0.0.1:8085',
                     prefixIcon: Icon(Icons.dns_outlined),
                   ),
                 ),

@@ -134,7 +134,7 @@ pub async fn get_tasks(State(state): State<AppState>) -> Response {
 /// `set_asyncio_debug` : `PUT /debug` — `{"enable"?, "slow_callback_duration"?}`.
 /// Aucun des deux → 400 `{"success": false, ...}` ; sinon applique et
 /// `{"success": true}`.
-pub async fn set_debug(State(_state): State<AppState>, body: Bytes) -> Response {
+pub async fn set_debug(State(state): State<AppState>, body: Bytes) -> Response {
     let parameters = match parse_json_body(&body) {
         Ok(v) => v,
         Err(r) => return *r,
@@ -151,7 +151,18 @@ pub async fn set_debug(State(_state): State<AppState>, body: Bytes) -> Response 
         buffer.set_slow_callback_duration(d.as_f64().unwrap_or_default());
     }
     if let Some(enable) = parameters.get("enable") {
-        buffer.set_enabled(truthy(enable));
+        let enable = truthy(enable);
+        buffer.set_enabled(enable);
+        // Persiste le choix (`logging/debug`) : `init_tracing` le
+        // restaure au redemarrage — le basculement info/debug n'est
+        // plus un etat perdu a chaque lancement.
+        let mut cfg = state.daemon_config.lock().unwrap();
+        cfg.logging.debug = enable;
+        if let Some(path) = &state.config_path {
+            if let Err(e) = cfg.write(path) {
+                return unhandled(format!("ecriture configuration.json: {e}"));
+            }
+        }
     }
     Json(json!({"success": true})).into_response()
 }

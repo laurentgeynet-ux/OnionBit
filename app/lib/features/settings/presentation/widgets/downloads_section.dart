@@ -116,7 +116,7 @@ class _DownloadsSectionState extends ConsumerState<DownloadsSection> {
                       controller: _saveasController,
                       decoration: InputDecoration(
                         labelText: 'Dossier de destination par défaut',
-                        hintText: 'C:\\Users\\...\\Downloads',
+                        hintText: 'défaut : <état du daemon>/downloads',
                         prefixIcon: const Icon(Icons.folder_outlined),
                         suffixIcon: IconButton(
                           tooltip: 'Parcourir…',

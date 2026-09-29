@@ -121,7 +121,7 @@ class _AutomationSectionState extends ConsumerState<AutomationSection> {
               title: const Text('Surveiller un dossier'),
               subtitle: const Text(
                 'Les fichiers .torrent déposés dedans sont ajoutés '
-                'automatiquement.',
+                'automatiquement. Défaut : désactivé.',
               ),
               contentPadding: EdgeInsets.zero,
               dense: true,
@@ -149,7 +149,7 @@ class _AutomationSectionState extends ConsumerState<AutomationSection> {
                 controller: _watchInterval,
                 keyboardType: TextInputType.number,
                 decoration: const InputDecoration(
-                  labelText: 'Intervalle de scan (secondes)',
+                  labelText: 'Intervalle de scan (s) — défaut : 10',
                   isDense: true,
                 ),
               ),
@@ -160,6 +160,7 @@ class _AutomationSectionState extends ConsumerState<AutomationSection> {
               value: _rssEnabled,
               onChanged: (v) => setState(() => _rssEnabled = v),
               title: const Text('Watchers RSS actifs'),
+              subtitle: const Text('Défaut : activé (aucun flux).'),
               contentPadding: EdgeInsets.zero,
               dense: true,
             ),

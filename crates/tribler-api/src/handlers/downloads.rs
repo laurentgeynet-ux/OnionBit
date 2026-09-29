@@ -20,7 +20,9 @@ pub async fn get_downloads(
     axum::extract::Query(params): axum::extract::Query<DownloadQuery>,
 ) -> Json<serde_json::Value> {
     let hops_map = state.session.anon_hops_map();
-    let defaults = state.session.config().download_defaults.clone();
+    // `effective_config` : reflete un `POST /api/settings` recent sans
+    // attendre un redemarrage (defauts `seeding_ratio` affiches).
+    let defaults = state.session.effective_config().download_defaults.clone();
     let want_peers = params.get_peers.as_deref() == Some("1");
     let want_pieces = params.get_pieces.as_deref() == Some("1");
     let want_availability = params.get_availability.as_deref() == Some("1");
@@ -337,6 +339,10 @@ pub async fn add_download(
 
     if is_raw_torrent {
         let cli = query.cli.unwrap_or(false);
+        // Endpoint Python : `anon_hops`/`safe_seeding` non specifies =
+        // ajout direct non-anonyme ; ce sont les clients GUI
+        // (`ask_download_settings` / notre dialogue d'ajout) qui
+        // pre-remplissent depuis `download_defaults`.
         let hops = query.anon_hops.unwrap_or(0);
         let safe_seeding = query.safe_seeding.unwrap_or(false);
         let paused = query.paused.unwrap_or(false);

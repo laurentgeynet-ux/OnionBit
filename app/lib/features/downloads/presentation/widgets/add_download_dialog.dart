@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/api/api_client.dart';
 import '../../../../core/theme/app_theme.dart';
+import '../../../settings/presentation/providers/settings_providers.dart';
 import '../../domain/torrent_preview.dart';
 import '../providers/downloads_providers.dart';
 
@@ -34,7 +35,11 @@ class _AddDownloadDialogState extends ConsumerState<AddDownloadDialog> {
   final _destController = TextEditingController();
   XFile? _file;
   TorrentPreview? _preview;
+  /// Sauts choisis — initialisés depuis `download_defaults` quand les
+  /// réglages arrivent (comme `ask_download_settings` Tribler qui
+  /// pré-remplit le dialogue avec les défauts configurés).
   int _hops = 0;
+  bool _hopsInitialized = false;
   bool _paused = false;
   bool _busy = false;
   String? _error;
@@ -128,9 +133,26 @@ class _AddDownloadDialogState extends ConsumerState<AddDownloadDialog> {
     }
   }
 
+  /// Pré-remplit les sauts depuis `libtorrent/download_defaults`
+  /// (`anonymity_enabled` + `number_hops`) une fois les réglages
+  /// chargés — l'utilisateur peut toujours les changer ensuite.
+  void _initHops(Map<String, dynamic>? settings) {
+    if (_hopsInitialized || settings == null) return;
+    _hopsInitialized = true;
+    final dd = settings['libtorrent'] is Map
+        ? (settings['libtorrent'] as Map)['download_defaults']
+        : null;
+    if (dd is! Map) return;
+    final anonymous = dd['anonymity_enabled'] == true;
+    final hops = (dd['number_hops'] as num?)?.toInt() ?? 0;
+    // Appelé pendant build : affectation directe, pas de setState.
+    _hops = anonymous ? hops.clamp(1, 3) : 0;
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    _initHops(ref.watch(daemonSettingsProvider).value);
     return AlertDialog(
       title: const Text('Ajouter un téléchargement'),
       content: SizedBox(

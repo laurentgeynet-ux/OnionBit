@@ -78,6 +78,10 @@ struct ServiceOverrides {
     /// `config.engine.max_*_bps`) — appliquees a chaud via
     /// `Session::ratelimits` rqbit.
     rate_limits: Option<(Option<u64>, Option<u64>)>,
+    /// Defauts des nouveaux telechargements (`Some` = remplace
+    /// `config.download_defaults`) — Python lit `download_defaults`
+    /// depuis l'objet config mute in-place, donc a chaud.
+    download_defaults: Option<crate::config::DownloadDefaults>,
 }
 
 /// Parametres initiaux communs de `persist`/`persist_torrent`.
@@ -116,6 +120,10 @@ struct Inner {
     /// quand la tache de fond a termine ; [`Self::wait_restored`]
     /// permet aux tests de l'attendre.
     restore_done: tokio::sync::watch::Sender<bool>,
+    /// `AugmentedSearch` Python : vocabulaire de sous-mots appris des
+    /// titres de torrents, utilise par `local_search` (`augmenter`
+    /// du `DatabaseEndpoint`).
+    augmenter: Arc<crate::augmenter::Augmenter>,
 }
 
 impl std::fmt::Debug for CoreSession {
@@ -149,12 +157,14 @@ impl CoreSession {
         let asyncio = crate::asyncio::AsyncioMonitor::new(config.ipv8.walker_interval);
         let ipv8 = start_ipv8(&config, db.clone(), notifier.clone(), asyncio.tasks.clone()).await?;
         let services_config = config.clone();
+        let augmenter = Arc::new(crate::augmenter::Augmenter::new(&config.state_dir));
+        let notifier_aug = notifier.clone();
         let session = Self {
             inner: Arc::new(Inner {
                 config,
                 overrides: std::sync::RwLock::new(ServiceOverrides::default()),
                 engine,
-                db,
+                db: db.clone(),
                 notifier,
                 services: std::sync::Mutex::new(Services::default()),
                 ipv8,
@@ -162,8 +172,28 @@ impl CoreSession {
                 asyncio,
                 stopped: std::sync::atomic::AtomicBool::new(false),
                 restore_done: tokio::sync::watch::channel(false).0,
+                augmenter: augmenter.clone(),
             }),
         };
+        // `AugmentedSearch` Python : abonne aux metadonnees ajoutees
+        // et amorce le vocabulaire depuis la base s'il est vide
+        // (`seed_augmenter` + `schedule_study`).
+        augmenter.spawn_consumer(notifier_aug);
+        if augmenter.needs_kickstart() {
+            let titles = db
+                .with(|c| {
+                    let mut stmt = c.prepare(
+                        "SELECT title FROM channel_node WHERE title != ''
+                         ORDER BY RANDOM() LIMIT 10000",
+                    )?;
+                    let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+                    Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+                })
+                .unwrap_or_default();
+            augmenter.seed(titles);
+            let aug = augmenter.clone();
+            tokio::task::spawn_blocking(move || aug.study_pending());
+        }
         session.start_services(&services_config).await;
         session.spawn_restore();
         session.spawn_progress_loop();
@@ -180,6 +210,7 @@ impl CoreSession {
         let asyncio = crate::asyncio::AsyncioMonitor::new(config.ipv8.walker_interval);
         let ipv8 = start_ipv8(&config, db.clone(), notifier.clone(), asyncio.tasks.clone()).await?;
         let services_config = config.clone();
+        let augmenter = Arc::new(crate::augmenter::Augmenter::new(&config.state_dir));
         let session = Self {
             inner: Arc::new(Inner {
                 config,
@@ -195,8 +226,13 @@ impl CoreSession {
                 // Base memoire : rien a restaurer — restauration
                 // marquee terminee d'emblee.
                 restore_done: tokio::sync::watch::channel(true).0,
+                augmenter,
             }),
         };
+        session
+            .inner
+            .augmenter
+            .spawn_consumer(session.inner.notifier.clone());
         session.start_services(&services_config).await;
         session.spawn_progress_loop();
         Ok(session)
@@ -446,7 +482,7 @@ impl CoreSession {
     /// Retourne `false` quand le metainfo n'est pas encore la (magnet
     /// non resolu — a reessayer au prochain tick) ou `true` sinon.
     fn backup_torrent_file(&self, ih_hex: &str) -> bool {
-        let folder = &self.inner.config.download_defaults.torrent_folder;
+        let folder = self.download_defaults().torrent_folder;
         let Some(dl) = self.find_download_hex(ih_hex) else {
             return true; // disparu entre-temps — ne pas reessayer
         };
@@ -457,8 +493,8 @@ impl CoreSession {
             .name()
             .unwrap_or_else(|| ih_hex.to_string())
             .replace(['/', '\\'], "_");
-        let path = Path::new(folder).join(format!("{name} [{ih_hex}].torrent"));
-        if let Err(e) = std::fs::create_dir_all(folder).and_then(|_| std::fs::write(&path, &bytes))
+        let path = Path::new(&folder).join(format!("{name} [{ih_hex}].torrent"));
+        if let Err(e) = std::fs::create_dir_all(&folder).and_then(|_| std::fs::write(&path, &bytes))
         {
             tracing::warn!(error = %e, path = %path.display(), "sauvegarde .torrent impossible");
         }
@@ -542,7 +578,10 @@ impl CoreSession {
         if row.paused || row.user_stopped {
             return;
         }
-        let dd = &self.inner.config.download_defaults;
+        // Reglages lus a chaud : un changement de `seeding_mode` dans
+        // `POST /api/settings` s'applique aux seeds existants au tick
+        // suivant (Python relit `config` a chaque iteration).
+        let dd = self.download_defaults();
         let ratio_target = row
             .seeding_ratio
             .filter(|r| *r > 0.0)
@@ -745,7 +784,7 @@ impl CoreSession {
     /// anonyme (`anon_hops` sauts de tunnel — necessite
     /// `ipv8.enable_anonymity`), et le persiste.
     pub async fn add_download(&self, uri: &str, paused: bool) -> Result<Download> {
-        let safe = self.inner.config.download_defaults.safeseeding_enabled;
+        let safe = self.download_defaults().safeseeding_enabled;
         self.add_download_anon(uri, paused, 0, safe, None).await
     }
 
@@ -802,7 +841,7 @@ impl CoreSession {
     /// d'abord le fichier depuis `trackers_file_sync_url` si configure
     /// (`sync_default_trackers_file` : un fetch par heure maximum).
     async fn default_trackers(&self) -> Vec<String> {
-        let dd = &self.inner.config.download_defaults;
+        let dd = self.download_defaults();
         let Some(path) =
             crate::trackers::trackers_file_path(&self.inner.config.state_dir, &dd.trackers_file)
         else {
@@ -970,7 +1009,7 @@ impl CoreSession {
 
     /// Ajoute un telechargement depuis les octets d'un `.torrent`.
     pub async fn add_torrent_bytes(&self, bytes: Vec<u8>, paused: bool) -> Result<Download> {
-        let safe = self.inner.config.download_defaults.safeseeding_enabled;
+        let safe = self.download_defaults().safeseeding_enabled;
         self.add_torrent_bytes_anon(bytes, paused, 0, safe, None)
             .await
     }
@@ -1048,7 +1087,7 @@ impl CoreSession {
         c: &rusqlite::Connection,
         safe_seeding: bool,
     ) -> tribler_db::Result<DownloadRow> {
-        let dd = &self.inner.config.download_defaults;
+        let dd = self.download_defaults();
         Ok(DownloadRow {
             safe_seeding,
             auto_managed: dd.auto_managed,
@@ -1683,6 +1722,12 @@ impl CoreSession {
     }
 
     /// Acces a la base de metadonnees (endpoints `/api/metadata`).
+    /// `db_endpoint.augmenter` Python : acces a l'augmenteur de
+    /// recherche (`local_search`).
+    pub fn augmenter(&self) -> &Arc<crate::augmenter::Augmenter> {
+        &self.inner.augmenter
+    }
+
     pub fn db(&self) -> &Arc<Database> {
         &self.inner.db
     }
@@ -1713,7 +1758,28 @@ impl CoreSession {
             cfg.engine.max_upload_bps = up;
             cfg.engine.max_download_bps = down;
         }
+        if let Some(dd) = &ov.download_defaults {
+            cfg.download_defaults = dd.clone();
+        }
+        // Bornes de circuits a chaud : relues dans la stack IPv8.
+        if let Some(stack) = self.ipv8() {
+            let (min, max) = stack.circuit_bounds();
+            cfg.ipv8.min_circuits = min as u32;
+            cfg.ipv8.max_circuits = max as u32;
+        }
         cfg
+    }
+
+    /// `download_defaults` effectif — `POST /api/settings` applique a
+    /// chaud (comme le `config` mute in-place de Python).
+    fn download_defaults(&self) -> crate::config::DownloadDefaults {
+        self.inner
+            .overrides
+            .read()
+            .unwrap()
+            .download_defaults
+            .clone()
+            .unwrap_or_else(|| self.inner.config.download_defaults.clone())
     }
 
     /// Reconfigure les services a chaud (`POST /api/settings`) :
@@ -1727,7 +1793,17 @@ impl CoreSession {
             download_dir: Some(config.engine.output_dir.clone()),
             queue: Some(config.queue.clone()),
             rate_limits: Some((config.engine.max_upload_bps, config.engine.max_download_bps)),
+            download_defaults: Some(config.download_defaults.clone()),
         };
+        // `min_circuits`/`max_circuits` : Python les lit dans
+        // `self.settings` a chaque tick de `monitor_downloads` — le
+        // watchdog des lanes relit les bornes partagees a chaud.
+        if let Some(stack) = self.ipv8() {
+            stack.set_circuit_bounds(
+                config.ipv8.min_circuits as usize,
+                config.ipv8.max_circuits as usize,
+            );
+        }
         // `set_session_limits` Python : les bornes de debit de
         // session s'appliquent a chaud sur toutes les lanes
         // (`Session::ratelimits` rqbit est mutable). La file
@@ -1750,12 +1826,15 @@ impl CoreSession {
             mgr.update(&config.rss_urls);
             services.rss = Some(mgr);
         }
-        // Watch folder : redemarrage si le repertoire change.
+        // Watch folder : redemarrage si le repertoire OU l'intervalle
+        // change (le tick est fige a la creation du service).
+        let interval =
+            std::time::Duration::from_millis(config.watch_folder_interval_ms);
         let current = services
             .watch_folder
             .as_ref()
-            .map(|w| w.directory().to_path_buf());
-        if current != config.watch_folder_dir {
+            .map(|w| (w.directory().to_path_buf(), w.interval()));
+        if current != config.watch_folder_dir.clone().map(|d| (d, interval)) {
             if let Some(w) = services.watch_folder.take() {
                 w.stop();
             }
@@ -1847,6 +1926,9 @@ impl CoreSession {
         self.inner.engine.stop().await;
         self.shutdown_state("Shutting down local SOCKS5 interface.");
         self.shutdown_state("Shutting down metadata database.");
+        // `on_shutdown` de `AugmentedSearch` : persiste la fenetre de
+        // titres en attente pour le prochain demarrage.
+        self.inner.augmenter.flush_cache();
         self.shutdown_state("Shutting down GUI connection. Going dark.");
     }
 }

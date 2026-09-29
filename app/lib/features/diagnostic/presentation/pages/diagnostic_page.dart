@@ -285,6 +285,18 @@ class _SwarmsTab extends ConsumerWidget {
   }
 }
 
+/// `PEER_FLAG_*` IPv8/pyipv8 → nom lisible (les valeurs inconnues
+/// restent affichées en numéro).
+String _peerFlagLabel(int flag) => switch (flag) {
+  1 => 'relais',
+  2 => 'sortie-bt',
+  4 => 'sortie-ipv8',
+  8 => 'speed-test',
+  16384 => 'sortie-backup',
+  32768 => 'sortie-http',
+  _ => '#$flag',
+};
+
 class _PeersTab extends ConsumerWidget {
   const _PeersTab();
 
@@ -303,7 +315,11 @@ class _PeersTab extends ConsumerWidget {
           style: const TextStyle(fontFamily: 'monospace'),
         ),
         subtitle: Text('${p.ip}:${p.port}'),
-        trailing: Text('flags ${p.flags.join(',')}'),
+        trailing: Text(
+          p.flags.isEmpty
+              ? 'aucun flag'
+              : p.flags.map(_peerFlagLabel).join(' · '),
+        ),
       ),
     );
   }

@@ -87,33 +87,40 @@ class _NetworkSectionState extends ConsumerState<NetworkSection> {
               path: [...lt, 'dht'],
               value: settingsBool(settings, [...lt, 'dht'], def: true),
               title: 'DHT (mainline BEP 5)',
+              subtitle: 'Défaut : activé. Pris en compte au redémarrage.',
             ),
             SettingsSwitch(
               path: [...lt, 'upnp'],
               value: settingsBool(settings, [...lt, 'upnp'], def: true),
               title: 'UPnP',
+              subtitle: 'Défaut : activé. Pris en compte au redémarrage.',
             ),
             SettingsSwitch(
               path: [...lt, 'natpmp'],
               value: settingsBool(settings, [...lt, 'natpmp'], def: true),
               title: 'NAT-PMP',
+              subtitle: 'Défaut : activé. Pris en compte au redémarrage.',
             ),
             SettingsSwitch(
               path: [...lt, 'lsd'],
               value: settingsBool(settings, [...lt, 'lsd'], def: true),
               title: 'Découverte locale (LSD)',
+              subtitle: 'Défaut : activé. Pris en compte au redémarrage.',
             ),
             SettingsSwitch(
               path: [...lt, 'utp'],
               value: settingsBool(settings, [...lt, 'utp'], def: true),
               title: 'uTP',
+              subtitle: 'Défaut : activé. Pris en compte au redémarrage.',
             ),
             const Divider(height: AppSpacing.lg),
             Text('Proxy sortant', style: theme.textTheme.labelMedium),
             const SizedBox(height: AppSpacing.xs),
             DropdownButtonFormField<int>(
               initialValue: _proxyType,
-              decoration: const InputDecoration(labelText: 'Type de proxy'),
+              decoration: const InputDecoration(
+                labelText: 'Type de proxy (défaut : aucun)',
+              ),
               items: [
                 for (final e in _proxyTypes.entries)
                   DropdownMenuItem(value: e.key, child: Text(e.value)),

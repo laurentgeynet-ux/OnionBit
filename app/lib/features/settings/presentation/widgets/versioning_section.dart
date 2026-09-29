@@ -79,7 +79,9 @@ class VersioningSection extends ConsumerWidget {
                 def: true,
               ),
               title: 'Vérification de version',
-              subtitle: 'Section désactivée = endpoints absents (404).',
+              subtitle:
+                  'Section désactivée = endpoints absents (404). '
+                  'Défaut : activé.',
             ),
             SettingsSwitch(
               path: const ['versioning', 'allow_pre'],
@@ -88,6 +90,7 @@ class VersioningSection extends ConsumerWidget {
                 const ['versioning', 'allow_pre'],
               ),
               title: 'Accepter les pré-versions',
+              subtitle: 'Défaut : désactivé.',
             ),
           ],
         );

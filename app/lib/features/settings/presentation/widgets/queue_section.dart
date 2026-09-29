@@ -60,13 +60,13 @@ class _QueueSectionState extends ConsumerState<QueueSection> {
     if (mounted) setState(() => _saving = false);
   }
 
-  Widget _field(TextEditingController c, String label) => Expanded(
+  Widget _field(TextEditingController c, String label, int def) => Expanded(
     child: TextField(
       controller: c,
       keyboardType: TextInputType.number,
       decoration: InputDecoration(
         labelText: label,
-        hintText: '-1 = illimité',
+        hintText: 'défaut : $def · -1 = illimité',
         isDense: true,
       ),
     ),
@@ -93,17 +93,17 @@ class _QueueSectionState extends ConsumerState<QueueSection> {
             const SizedBox(height: AppSpacing.sm),
             Row(
               children: [
-                _field(_downloads, 'Téléchargements actifs'),
+                _field(_downloads, 'Téléchargements actifs', 3),
                 const SizedBox(width: AppSpacing.sm),
-                _field(_seeds, 'Seeds actifs'),
+                _field(_seeds, 'Seeds actifs', 5),
               ],
             ),
             const SizedBox(height: AppSpacing.sm),
             Row(
               children: [
-                _field(_checking, 'Vérifications actives'),
+                _field(_checking, 'Vérifications actives', 1),
                 const SizedBox(width: AppSpacing.sm),
-                _field(_limit, 'Limite globale'),
+                _field(_limit, 'Limite globale', 500),
               ],
             ),
             SettingsSwitch(
@@ -119,7 +119,7 @@ class _QueueSectionState extends ConsumerState<QueueSection> {
               title: 'Gestion automatique par défaut',
               subtitle:
                   'Les nouveaux téléchargements sont placés sous la '
-                  'file d\'attente.',
+                  'file d\'attente. Défaut : désactivé.',
             ),
             Align(
               alignment: Alignment.centerRight,

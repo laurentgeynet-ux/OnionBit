@@ -102,6 +102,13 @@ class _SeedingSectionState extends ConsumerState<SeedingSection> {
               selected: {_mode},
               onSelectionChanged: (s) => setState(() => _mode = s.first),
             ),
+            const SizedBox(height: AppSpacing.xs),
+            Text(
+              'Défaut : « Pour toujours ».',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.outline,
+              ),
+            ),
             const SizedBox(height: AppSpacing.sm),
             if (_mode == 'ratio')
               TextField(
@@ -111,7 +118,7 @@ class _SeedingSectionState extends ConsumerState<SeedingSection> {
                 ),
                 decoration: const InputDecoration(
                   labelText: 'Ratio de seed cible',
-                  hintText: 'ex. 2.0',
+                  hintText: 'défaut : 2.0',
                 ),
               ),
             if (_mode == 'time')
@@ -120,7 +127,7 @@ class _SeedingSectionState extends ConsumerState<SeedingSection> {
                 keyboardType: TextInputType.number,
                 decoration: const InputDecoration(
                   labelText: 'Durée de seed (secondes)',
-                  hintText: 'ex. 3600',
+                  hintText: 'défaut : 60',
                 ),
               ),
             const Divider(height: AppSpacing.lg),
@@ -132,6 +139,7 @@ class _SeedingSectionState extends ConsumerState<SeedingSection> {
               path: [..._dd, 'anonymity_enabled'],
               value: _anonymity,
               title: 'Téléchargements anonymes par défaut',
+              subtitle: 'Défaut : activé, 1 saut.',
               onChangedOverride: (v) => setState(() {
                 _anonymity = v;
                 // Anonyme implique ≥1 saut — cohérence du couple
@@ -159,7 +167,8 @@ class _SeedingSectionState extends ConsumerState<SeedingSection> {
                     : (v) => setState(() => _safeSeeding = v),
                 title: const Text('Safe seeding'),
                 subtitle: const Text(
-                  'Obligatoire quand des sauts anonymes sont demandés.',
+                  'Obligatoire quand des sauts anonymes sont demandés. '
+                  'Défaut : activé.',
                 ),
                 contentPadding: EdgeInsets.zero,
                 dense: true,
