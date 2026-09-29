@@ -35,6 +35,14 @@ pub fn upsert_torrent_state(conn: &Connection, infohash: &[u8]) -> Result<Torren
         .ok_or_else(|| crate::DbError::Corrupt("torrent_state absent apres upsert".into()))
 }
 
+/// Liste tous les etats d'essaim connus — evite le N+1 de
+/// `GET /api/downloads` (une requete puis indexation memoire).
+pub fn list_torrent_states(conn: &Connection) -> Result<Vec<TorrentStateRow>> {
+    let mut stmt = conn.prepare(&format!("SELECT {TS_COLS} FROM torrent_state"))?;
+    let rows = stmt.query_map([], torrent_state_from_row)?;
+    Ok(rows.collect::<std::result::Result<_, _>>()?)
+}
+
 /// Lit l'etat d'un essaim par info-hash.
 pub fn get_torrent_state(conn: &Connection, infohash: &[u8]) -> Result<Option<TorrentStateRow>> {
     Ok(conn

@@ -17,7 +17,7 @@ pub async fn get_tribler_stats(State(state): State<AppState>) -> Json<serde_json
     let (num_torrents, num_channels) = state
         .session
         .db()
-        .with(|c| {
+        .call(|c| {
             let torrents: i64 = c.query_row(
                 "SELECT COUNT(*) FROM channel_node WHERE metadata_type IN (300,400)",
                 [],
@@ -30,6 +30,7 @@ pub async fn get_tribler_stats(State(state): State<AppState>) -> Json<serde_json
             )?;
             Ok((torrents, channels))
         })
+        .await
         .unwrap_or((0, 0));
 
     let mut stats = serde_json::json!({

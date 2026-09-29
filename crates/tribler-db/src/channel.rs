@@ -480,10 +480,9 @@ pub fn autocomplete_terms(
              ORDER BY rowid DESC LIMIT ?2)
          ORDER BY COALESCE(ts.seeders, 0) DESC",
     )?;
-    let titles = stmt.query_map(
-        params![fts_query, max_terms.max(1) as i64],
-        |r| r.get::<_, String>(0),
-    )?;
+    let titles = stmt.query_map(params![fts_query, max_terms.max(1) as i64], |r| {
+        r.get::<_, String>(0)
+    })?;
     let titles: Vec<String> = titles.collect::<std::result::Result<_, _>>()?;
 
     // `suggestion_re` Python : les mots joints par `\W+`, suivis de
@@ -491,7 +490,10 @@ pub fn autocomplete_terms(
     // mot, groupe 2 = continuation du dernier mot (ou mot suivant).
     let mut result = Vec::new();
     let text = words.join(" ");
-    let ends_word = text.chars().last().is_some_and(|c| c.is_alphanumeric() || c == '_');
+    let ends_word = text
+        .chars()
+        .last()
+        .is_some_and(|c| c.is_alphanumeric() || c == '_');
     for title in titles {
         let lower = title.to_lowercase();
         if let Some((g1, g2)) = continuation(&lower, words) {

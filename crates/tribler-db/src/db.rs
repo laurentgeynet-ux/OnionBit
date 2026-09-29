@@ -33,6 +33,7 @@ impl Database {
         let mut conn = Connection::open(path)?;
         configure(&conn)?;
         migrations::migrate(&mut conn)?;
+        optimize(&conn);
         tracing::info!(path = %path.display(), "base sqlite ouverte");
         Ok(Self {
             conn: Mutex::new(conn),
@@ -58,20 +59,69 @@ impl Database {
         f(&conn)
     }
 
+    /// Version async de [`Database::with`] : le travail SQLite est
+    /// deporte sur le pool de threads bloquants de Tokio
+    /// (`spawn_blocking`) pour ne pas figer l'executor pendant les
+    /// requetes lourdes (recherche FTS, listes longues). A preferer
+    /// dans les handlers axum ; `with` reste acceptable pour les
+    /// ecritures courtes hors chemin de requete.
+    pub async fn call<R>(
+        self: &std::sync::Arc<Self>,
+        f: impl FnOnce(&Connection) -> Result<R> + Send + 'static,
+    ) -> Result<R>
+    where
+        R: Send + 'static,
+    {
+        let db = self.clone();
+        tokio::task::spawn_blocking(move || db.with(f))
+            .await
+            .map_err(|e| crate::DbError::Corrupt(format!("tache sqlite interrompue: {e}")))?
+    }
+
     /// Version de schema courante (`PRAGMA user_version`).
     pub fn schema_version(&self) -> Result<i64> {
         self.with(|c| Ok(c.pragma_query_value(None, "user_version", |r| r.get(0))?))
     }
 }
 
-/// Reglages de connexion communs (journal WAL, foreign keys).
+/// Reglages de connexion communs (journal WAL, foreign keys,
+/// pragmas de performance).
 fn configure(conn: &Connection) -> Result<()> {
     conn.pragma_update(None, "foreign_keys", true)?;
     // WAL n'a de sens que pour une base fichier ; en memoire c'est un
-    // no-op controle par rusqlite.
+    // no-op controle par rusqlite. Permet aux lecteurs de ne pas
+    // attendre l'ecrivain.
     let _ = conn.pragma_update(None, "journal_mode", "WAL");
+    // Durabilite relachee mais sure en WAL : un checkpoint reste
+    // atomique, on evite le fsync a chaque transaction.
+    let _ = conn.pragma_update(None, "synchronous", "NORMAL");
+    // La connexion est serialisee par le `Mutex`, mais WAL autorise
+    // des lecteurs externes (fichier) : ne jamais rendre SQLITE_BUSY
+    // immediatement.
+    conn.pragma_update(None, "busy_timeout", 5_000)?;
+    // Tables temporaires/tri en memoire (ORDER BY des recherches,
+    // CTE de l'augmenteur).
+    let _ = conn.pragma_update(None, "temp_store", "MEMORY");
+    // Cache de pages (~20 Mio) : les recherches FTS + jointures
+    // `channel_node`/`torrent_state` restent en memoire.
+    let _ = conn.pragma_update(None, "cache_size", -20_000i64);
+    // Lecture mmap du fichier DB (64 Mio) : scan de `channel_node`
+    // sans copie dans le cache de pages. Ignore en memoire.
+    let _ = conn.pragma_update(None, "mmap_size", 64_i64 * 1024 * 1024);
+    // Prepares statements reutilises (listes/recherches appelees en
+    // boucle par les endpoints REST).
+    conn.set_prepared_statement_cache_capacity(64);
     // `search_rank` Python : fonction de ranking appelee depuis le
     // SQL (`get_entries_query`, tri de pertinence des `txt_filter`).
     crate::ranks::register_search_rank(conn)?;
     Ok(())
+}
+
+/// `PRAGMA optimize` post-migrations : met a jour les statistiques
+/// du planner si les tables ont significativement change (cout
+/// quasi nul, evite des plans de requete degrades).
+fn optimize(conn: &Connection) {
+    if let Err(e) = conn.execute_batch("PRAGMA optimize") {
+        tracing::warn!(error = %e, "pragma optimize ignore");
+    }
 }

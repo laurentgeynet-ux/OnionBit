@@ -3,6 +3,34 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Passe performance : SQLite hors du thread async + index (2026-09-29)
+
+Objectif : fluidité de l'UI Flutter — les requêtes SQLite étaient
+exécutées en synchrone sur les threads de l'executor Tokio (handlers
+axum), figeant l'API pendant les recherches FTS et les listes.
+
+Changements :
+
+- `tribler-db/db.rs` : pragmas de performance à l'ouverture —
+  `synchronous=NORMAL` (sûr en WAL), `busy_timeout=5000`,
+  `temp_store=MEMORY`, `cache_size=-20000` (~20 Mio),
+  `mmap_size=64 Mio`, cache de statements préparés (64) et
+  `PRAGMA optimize` post-migrations. Nouvelle méthode async
+  `Database::call` (`spawn_blocking` + `with`).
+- `tribler-db/migrations.rs` : **v8** — index
+  `channel_node(metadata_type, torrent_date)` (popular / filtres de
+  type), `torrent_state(has_data, last_check)` et
+  `torrent_state(last_check)` (popular / historique de santé).
+- `tribler-db/health.rs` : `list_torrent_states` en masse.
+- `tribler-api/handlers/` : tous les accès DB du chemin de requête
+  passent par `call`/`spawn_blocking` (`metadata` : popular, santé,
+  `search/local` FTS + augmenteur, completions, tags ; `statistics`,
+  `rss`).
+- `downloads.rs` `GET /api/downloads` : suppression du **N+1** —
+  `downloads::list` + `list_torrent_states` une seule fois, indexées
+  en mémoire, au lieu de 2 requêtes par téléchargement (+
+  `anon_hops_map` fusionné dans le même fetch).
+
 ## Fastresume rqbit : plus de re-hash au changement de hops ni au redémarrage (2026-09-29)
 
 Symptôme : changer `anon_hops` en cours de téléchargement (ou

@@ -15,7 +15,7 @@ use crate::state::AppState;
 /// `PUT /api/search/remote?fts_text=...` — recherche distante sur la
 /// community content-discovery. Parametres = `RemoteQueryParameters`
 /// + `MetadataParameters` Python ; reponse
-/// `{"request_uuid", "peers": [mids]}` comme Python.
+///   `{"request_uuid", "peers": [mids]}` comme Python.
 #[derive(Debug, Deserialize)]
 pub struct RemoteSearchQuery {
     /// Texte de recherche (obligatoire, converti en `txt_filter` FTS).

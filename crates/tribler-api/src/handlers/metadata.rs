@@ -71,7 +71,8 @@ pub async fn get_torrent_health(
             let trackers = state
                 .session
                 .db()
-                .with(|c| tribler_db::health::trackers_of(c, &ih))
+                .call(move |c| tribler_db::health::trackers_of(c, &ih))
+                .await
                 .unwrap_or_default();
             for t in &trackers {
                 let _ = checker.check_tracker(t, &[ih]).await;
@@ -82,7 +83,8 @@ pub async fn get_torrent_health(
     let row = state
         .session
         .db()
-        .with(|c| tribler_db::health::get_torrent_state(c, &ih))?;
+        .call(move |c| tribler_db::health::get_torrent_state(c, &ih))
+        .await?;
     Ok(Json(match row {
         Some(r) => serde_json::json!({
             "infohash": infohash,
@@ -117,30 +119,34 @@ pub async fn get_popular_torrents(
         })
         .map(|n| n.min(LIST_LIMIT as u64) as u32)
         .unwrap_or(LIST_LIMIT);
-    let rows = state.session.db().with(|c| {
-        let mut stmt = c.prepare(
-            "SELECT n.infohash, n.title, n.size, n.torrent_date, t.seeders, t.leechers,
+    let rows = state
+        .session
+        .db()
+        .call(move |c| {
+            let mut stmt = c.prepare(
+                "SELECT n.infohash, n.title, n.size, n.torrent_date, t.seeders, t.leechers,
                     t.last_check
              FROM channel_node n
              LEFT JOIN torrent_state t ON t.rowid = n.health_rowid
              WHERE n.metadata_type IN (300,400)
              ORDER BY COALESCE(t.seeders, 0) DESC, n.xxx DESC
              LIMIT ?1",
-        )?;
-        let rows = stmt.query_map([limit], |r| {
-            Ok(serde_json::json!({
-                "infohash": hex::encode(r.get::<_, Vec<u8>>(0)?),
-                "name": r.get::<_, String>(1)?,
-                "length": r.get::<_, i64>(2)?,
-                "size": r.get::<_, i64>(2)?,
-                "updated": r.get::<_, i64>(3)?,
-                "num_seeders": r.get::<_, Option<i64>>(4)?,
-                "num_leechers": r.get::<_, Option<i64>>(5)?,
-                "last_tracker_check": r.get::<_, Option<i64>>(6)?,
-            }))
-        })?;
-        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
-    })?;
+            )?;
+            let rows = stmt.query_map([limit], |r| {
+                Ok(serde_json::json!({
+                    "infohash": hex::encode(r.get::<_, Vec<u8>>(0)?),
+                    "name": r.get::<_, String>(1)?,
+                    "length": r.get::<_, i64>(2)?,
+                    "size": r.get::<_, i64>(2)?,
+                    "updated": r.get::<_, i64>(3)?,
+                    "num_seeders": r.get::<_, Option<i64>>(4)?,
+                    "num_leechers": r.get::<_, Option<i64>>(5)?,
+                    "last_tracker_check": r.get::<_, Option<i64>>(6)?,
+                }))
+            })?;
+            Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+        })
+        .await?;
 
     // Inclut les telechargements de la session courante si non encore dans channel_node.
     let mut rows = rows;
@@ -176,21 +182,25 @@ pub async fn get_popular_torrents(
 pub async fn get_torrent_health_history(
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let rows = state.session.db().with(|c| {
-        let mut stmt = c.prepare(
-            "SELECT infohash, seeders, leechers, last_check FROM torrent_state
+    let rows = state
+        .session
+        .db()
+        .call(|c| {
+            let mut stmt = c.prepare(
+                "SELECT infohash, seeders, leechers, last_check FROM torrent_state
              ORDER BY last_check DESC LIMIT ?1",
-        )?;
-        let rows = stmt.query_map([LIST_LIMIT], |r| {
-            Ok(serde_json::json!({
-                "infohash": hex::encode(r.get::<_, Vec<u8>>(0)?),
-                "num_seeders": r.get::<_, i64>(1)?,
-                "num_leechers": r.get::<_, i64>(2)?,
-                "last_tracker_check": r.get::<_, i64>(3)?,
-            }))
-        })?;
-        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
-    })?;
+            )?;
+            let rows = stmt.query_map([LIST_LIMIT], |r| {
+                Ok(serde_json::json!({
+                    "infohash": hex::encode(r.get::<_, Vec<u8>>(0)?),
+                    "num_seeders": r.get::<_, i64>(1)?,
+                    "num_leechers": r.get::<_, i64>(2)?,
+                    "last_tracker_check": r.get::<_, i64>(3)?,
+                }))
+            })?;
+            Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+        })
+        .await?;
     Ok(Json(serde_json::json!({ "history": rows })))
 }
 
@@ -266,25 +276,28 @@ fn parse_metadata_types(v: &Option<String>) -> Option<Vec<i64>> {
 
 /// Construit les `SelectParams` partages local/remote a partir des
 /// parametres REST sanitizes (`sanitize_parameters` Python).
-fn build_select_params(q: &SearchQuery, extra_tags: Vec<String>, fts: Option<String>) -> tribler_db::channel::SelectParams {
+fn build_select_params(
+    q: &SearchQuery,
+    extra_tags: Vec<String>,
+    fts: Option<String>,
+) -> tribler_db::channel::SelectParams {
     let mut tags = extra_tags;
     if let Some(csv) = &q.tags {
-        tags.extend(csv.split(',').map(|t| t.trim().to_string()).filter(|t| !t.is_empty()));
+        tags.extend(
+            csv.split(',')
+                .map(|t| t.trim().to_string())
+                .filter(|t| !t.is_empty()),
+        );
     }
     let sort_by = q.sort_by.clone();
     tribler_db::channel::SelectParams {
-        txt_filter: fts
-            .as_deref()
-            .and_then(tribler_core::queries::to_fts_query),
+        txt_filter: fts.as_deref().and_then(tribler_core::queries::to_fts_query),
         terms: fts
             .as_deref()
             .map(tribler_core::queries::fts_terms)
             .unwrap_or_default(),
         metadata_types: parse_metadata_types(&q.metadata_type),
-        channel_pk: q
-            .channel_pk
-            .as_ref()
-            .and_then(|s| hex::decode(s).ok()),
+        channel_pk: q.channel_pk.as_ref().and_then(|s| hex::decode(s).ok()),
         origin_id: q.origin_id,
         max_rowid: q.max_rowid,
         hide_xxx: parse_bool_opt(q.hide_xxx.as_deref(), false),
@@ -355,17 +368,20 @@ pub async fn local_search(
         .saturating_sub(params.first)
         .max(1) as usize;
     let offset = params.first.max(1) as usize;
-    let (aug_sql, aug_params) =
-        state.session.augmenter().augment(&fts, limit, offset);
-    let rowids: Vec<i64> = state.session.db().with(|c| {
-        let mut stmt = c.prepare(&aug_sql)?;
-        let refs: Vec<&dyn rusqlite::ToSql> =
-            aug_params.iter().map(|p| p as &dyn rusqlite::ToSql).collect();
-        let rows = stmt.query_map(rusqlite::params_from_iter(refs), |r| {
-            r.get::<_, i64>(0)
-        })?;
-        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
-    })?;
+    let (aug_sql, aug_params) = state.session.augmenter().augment(&fts, limit, offset);
+    let rowids: Vec<i64> = state
+        .session
+        .db()
+        .call(move |c| {
+            let mut stmt = c.prepare(&aug_sql)?;
+            let refs: Vec<&dyn rusqlite::ToSql> = aug_params
+                .iter()
+                .map(|p| p as &dyn rusqlite::ToSql)
+                .collect();
+            let rows = stmt.query_map(rusqlite::params_from_iter(refs), |r| r.get::<_, i64>(0))?;
+            Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+        })
+        .await?;
 
     let mut p2 = params.clone();
     p2.txt_filter = None;
@@ -376,22 +392,26 @@ pub async fn local_search(
     let rows = state
         .session
         .db()
-        .with(|c| tribler_db::channel::select_entries(c, &p2))?;
+        .call(move |c| tribler_db::channel::select_entries(c, &p2))
+        .await?;
 
     // `include_total` Python : compte sans pagination via la
-    // branche FTS (`get_total_count`) + `get_max_rowid`.
+    // branche FTS (`get_total_count`) + `get_max_rowid` — une seule
+    // tache bloquante pour les deux requetes.
     let (total, max_rowid) = if parse_bool_opt(q.include_total.as_deref(), false) {
-        let t = state
+        let p3 = params.clone();
+        state
             .session
             .db()
-            .with(|c| tribler_db::channel::count_entries(c, &params))
-            .unwrap_or(0);
-        let m = state
-            .session
-            .db()
-            .with(tribler_db::channel::max_rowid)
-            .unwrap_or(0);
-        (Some(t), Some(m))
+            .call(move |c| {
+                Ok((
+                    tribler_db::channel::count_entries(c, &p3)?,
+                    tribler_db::channel::max_rowid(c)?,
+                ))
+            })
+            .await
+            .map(|(t, m)| (Some(t), Some(m)))
+            .unwrap_or((None, None))
     } else {
         (None, None)
     };
@@ -465,12 +485,12 @@ pub async fn completions(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     // `fts_keyword_search_re.findall` Python.
     let words = tribler_core::queries::fts_terms(&q.q.unwrap_or_default());
+    let max_terms = q.max_terms.unwrap_or(5).max(1);
     let suggestions = state
         .session
         .db()
-        .with(|c| {
-            tribler_db::channel::autocomplete_terms(c, &words, q.max_terms.unwrap_or(5).max(1))
-        })
+        .call(move |c| tribler_db::channel::autocomplete_terms(c, &words, max_terms))
+        .await
         .unwrap_or_default();
     Ok(Json(serde_json::json!({ "completions": suggestions })))
 }
@@ -505,27 +525,32 @@ pub async fn add_tag(
         .ok_or_else(|| ApiError::bad_request("tag parameter missing"))?;
     let ih = tribler_crypto::hash::from_hex(&infohash)
         .ok_or_else(|| ApiError::bad_request("infohash hex attendu"))?;
-    let exists = state.session.db().with(|c| {
-        let mut row = match tribler_db::channel::get_by_infohash(c, &ih)? {
-            Some(r) => r,
-            None => return Ok(false),
-        };
-        let mut tags: Vec<String> = row
-            .tags
-            .split(',')
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect();
-        if !tags.iter().any(|t| t == &tag) {
-            tags.push(tag.clone());
-        }
-        row.tags = tags.join(",");
-        c.execute(
-            "UPDATE channel_node SET tags = ?1 WHERE rowid = ?2",
-            rusqlite::params![row.tags, row.rowid],
-        )?;
-        Ok(true)
-    })?;
+    let tag2 = tag.clone();
+    let exists = state
+        .session
+        .db()
+        .call(move |c| {
+            let mut row = match tribler_db::channel::get_by_infohash(c, &ih)? {
+                Some(r) => r,
+                None => return Ok(false),
+            };
+            let mut tags: Vec<String> = row
+                .tags
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+            if !tags.iter().any(|t| t == &tag2) {
+                tags.push(tag2.clone());
+            }
+            row.tags = tags.join(",");
+            c.execute(
+                "UPDATE channel_node SET tags = ?1 WHERE rowid = ?2",
+                rusqlite::params![row.tags, row.rowid],
+            )?;
+            Ok(true)
+        })
+        .await?;
     if !exists {
         return Err(ApiError::not_found(format!(
             "torrent inconnu dans la base de metadonnees: {infohash}"
@@ -550,22 +575,27 @@ pub async fn remove_tag(
         .ok_or_else(|| ApiError::bad_request("tag parameter missing"))?;
     let ih = tribler_crypto::hash::from_hex(&infohash)
         .ok_or_else(|| ApiError::bad_request("infohash hex attendu"))?;
-    state.session.db().with(|c| {
-        if let Some(mut row) = tribler_db::channel::get_by_infohash(c, &ih)? {
-            let tags: Vec<String> = row
-                .tags
-                .split(',')
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty() && s != &tag)
-                .collect();
-            row.tags = tags.join(",");
-            c.execute(
-                "UPDATE channel_node SET tags = ?1 WHERE rowid = ?2",
-                rusqlite::params![row.tags, row.rowid],
-            )?;
-        }
-        Ok(())
-    })?;
+    let tag2 = tag.clone();
+    state
+        .session
+        .db()
+        .call(move |c| {
+            if let Some(mut row) = tribler_db::channel::get_by_infohash(c, &ih)? {
+                let tags: Vec<String> = row
+                    .tags
+                    .split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty() && s != &tag2)
+                    .collect();
+                row.tags = tags.join(",");
+                c.execute(
+                    "UPDATE channel_node SET tags = ?1 WHERE rowid = ?2",
+                    rusqlite::params![row.tags, row.rowid],
+                )?;
+            }
+            Ok(())
+        })
+        .await?;
     Ok(Json(serde_json::json!({
         "infohash": infohash,
         "removed": true,
@@ -585,15 +615,20 @@ pub async fn update_tags(
         .ok_or_else(|| ApiError::bad_request("tags parameter missing"))?;
     let ih = tribler_crypto::hash::from_hex(&infohash)
         .ok_or_else(|| ApiError::bad_request("infohash hex attendu"))?;
-    state.session.db().with(|c| {
-        if let Some(row) = tribler_db::channel::get_by_infohash(c, &ih)? {
-            c.execute(
-                "UPDATE channel_node SET tags = ?1 WHERE rowid = ?2",
-                rusqlite::params![tags.join(","), row.rowid],
-            )?;
-        }
-        Ok(())
-    })?;
+    let tags_csv = tags.join(",");
+    state
+        .session
+        .db()
+        .call(move |c| {
+            if let Some(row) = tribler_db::channel::get_by_infohash(c, &ih)? {
+                c.execute(
+                    "UPDATE channel_node SET tags = ?1 WHERE rowid = ?2",
+                    rusqlite::params![tags_csv, row.rowid],
+                )?;
+            }
+            Ok(())
+        })
+        .await?;
     Ok(Json(serde_json::json!({
         "infohash": infohash,
         "updated": true,

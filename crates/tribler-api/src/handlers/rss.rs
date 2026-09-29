@@ -33,10 +33,10 @@ pub async fn update_feeds(
 pub async fn list_items(
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, crate::error::ApiError> {
-    let items = state
-        .session
-        .db()
-        .list_rss_items()
+    let db = state.session.db().clone();
+    let items = tokio::task::spawn_blocking(move || db.list_rss_items())
+        .await
+        .map_err(|e| crate::error::ApiError::internal(e.to_string()))?
         .map_err(|e| crate::error::ApiError::internal(e.to_string()))?;
     Ok(Json(serde_json::json!({
         "items": items

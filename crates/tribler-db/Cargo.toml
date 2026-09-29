@@ -9,6 +9,7 @@ authors.workspace = true
 [dependencies]
 rusqlite.workspace = true
 thiserror.workspace = true
+tokio.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]

@@ -19,7 +19,37 @@ pub async fn get_downloads(
     State(state): State<AppState>,
     axum::extract::Query(params): axum::extract::Query<DownloadQuery>,
 ) -> Json<serde_json::Value> {
-    let hops_map = state.session.anon_hops_map();
+    // Une seule tache bloquante : lignes `downloads` + etats d'essaim
+    // indexes en memoire par infohash — evite les 2 requetes par
+    // telechargement (N+1) qui figeaient l'executor async.
+    let (dl_rows, ts_rows) = state
+        .session
+        .db()
+        .call(|c| {
+            Ok((
+                tribler_db::downloads::list(c)?,
+                tribler_db::health::list_torrent_states(c)?,
+            ))
+        })
+        .await
+        .unwrap_or_default();
+    let row_map: std::collections::HashMap<Vec<u8>, tribler_db::DownloadRow> = dl_rows
+        .into_iter()
+        .map(|r| (r.infohash.clone(), r))
+        .collect();
+    let health_map: std::collections::HashMap<Vec<u8>, (i64, i64)> = ts_rows
+        .into_iter()
+        .map(|r| (r.infohash, (r.seeders, r.leechers)))
+        .collect();
+    let hops_map: std::collections::HashMap<String, u32> = row_map
+        .values()
+        .map(|r| {
+            (
+                tribler_crypto::hash::to_hex(&r.infohash),
+                r.anon_hops.max(0) as u32,
+            )
+        })
+        .collect();
     // `effective_config` : reflete un `POST /api/settings` recent sans
     // attendre un redemarrage (defauts `seeding_ratio` affiches).
     let defaults = state.session.effective_config().download_defaults.clone();
@@ -48,17 +78,10 @@ pub async fn get_downloads(
             let mut info = DownloadInfo::from_stats(s);
             let dl = state.session.find_download(&s.info_hash);
             let ih_bytes = tribler_crypto::hash::from_hex(&s.info_hash);
-            let row = ih_bytes.as_ref().and_then(|ih| {
-                state
-                    .session
-                    .db()
-                    .with(|c| tribler_db::downloads::get(c, ih))
-                    .ok()
-                    .flatten()
-            });
+            let row = ih_bytes.as_ref().and_then(|ih| row_map.get(ih));
             // Reglages persistes (`DownloadConfig` checkpointe
             // Python) : safe_seeding, limites, ratio, queue…
-            if let Some(r) = &row {
+            if let Some(r) = row {
                 info.hops = r.anon_hops.max(0) as u32;
                 info.safe_seeding = r.safe_seeding;
                 info.user_stopped = r.user_stopped;
@@ -95,13 +118,9 @@ pub async fn get_downloads(
             // n'expose pas les compteurs swarm lt — on retient le
             // scrape, coherent avec `metadata/torrents/.../health`).
             if let Some(ih) = &ih_bytes {
-                if let Ok(Some(ts)) = state
-                    .session
-                    .db()
-                    .with(|c| tribler_db::health::get_torrent_state(c, ih))
-                {
-                    info.num_seeds = ts.seeders.max(0) as u32;
-                    info.num_peers = info.num_peers.max(ts.leechers.max(0) as u32);
+                if let Some((seeders, leechers)) = health_map.get(ih) {
+                    info.num_seeds = (*seeders).max(0) as u32;
+                    info.num_peers = info.num_peers.max((*leechers).max(0) as u32);
                 }
             }
             let mut v = serde_json::to_value(&info).unwrap_or_else(|_| serde_json::json!({}));

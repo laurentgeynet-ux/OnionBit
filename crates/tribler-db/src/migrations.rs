@@ -11,7 +11,7 @@
 //! semantique du schema, pas l'interoperabilite binaire).
 
 /// Version courante du schema de ce crate.
-pub const SCHEMA_VERSION: i64 = 7;
+pub const SCHEMA_VERSION: i64 = 8;
 
 /// Script SQL de chaque migration, dans l'ordre (index 0 = v1).
 pub const MIGRATIONS: &[&str] = &[
@@ -185,6 +185,17 @@ CREATE TRIGGER IF NOT EXISTS fts_au AFTER UPDATE ON channel_node BEGIN
     INSERT INTO FtsIndex(rowid, title) VALUES (new.rowid, new.title);
 END;
 INSERT INTO FtsIndex(FtsIndex) VALUES('rebuild');
+",
+    // v8 : index des requetes chaudes de `metadata_endpoint` —
+    // `popular`/`local_search` filtrent `channel_node` par
+    // `metadata_type` (300/400) et trient par `torrent_date` ;
+    // `popular`/l'historique de sante filtrent/ordonnent
+    // `torrent_state` par `has_data`/`last_check`. Sans index,
+    // chaque requete etait un scan complet + tri.
+    "
+CREATE INDEX idx_channel_node_type_date ON channel_node(metadata_type, torrent_date);
+CREATE INDEX idx_torrent_state_health ON torrent_state(has_data, last_check);
+CREATE INDEX idx_torrent_state_last_check ON torrent_state(last_check);
 ",
 ];
 
