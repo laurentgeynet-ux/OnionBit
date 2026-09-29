@@ -25,6 +25,21 @@ en haut.
   la file d'attente qui sature quand le disque est pris par un gros
   torrent multi-fichiers.
 
+## Fix : doublons session.json et chemins imbriques au restore (2026-09-29)
+
+- **Dedup de persistance (librqbit vendored)** : `session.json`
+  accumulait plusieurs entrees par infohash (ajouts/suppressions
+  repetes) ; chaque exemplaire etait restaure sur son propre
+  `output_folder`. `JsonSessionPersistenceStore::new` supprime
+  desormais les entrees dupliquees au chargement (plus petit id
+  conserve, warn logue) — le fichier se nettoie au prochain flush.
+- **Chemin `Nom\Nom` au restore** : `output_dir` persiste provient de
+  `Download::output_folder()` = dossier final (nom inclus), mais
+  `rqbit_opts` reappliquait `name_subfolder: true` → rqbit re-joignait
+  le nom → donnees invisibles dans le dossier imbrique, torrents
+  revus a 0 %. Nouveau flag `AddDownloadOptions::output_includes_name`
+  (vrai au restore) desactivant `name_subfolder` dans ce cas.
+
 ## Étape 12 clôturée : interop tunnel rejouée contre pyipv8 réel (2026-09-29)
 
 Le banc `scripts/interop_exit_download.ps1` a été exécuté avec

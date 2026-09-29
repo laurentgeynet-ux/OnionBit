@@ -357,6 +357,9 @@ impl CoreSession {
         AddDownloadOptions {
             paused: row.paused,
             output_folder: (!row.output_dir.is_empty()).then(|| PathBuf::from(&row.output_dir)),
+            // `output_dir` persiste = `Download::output_folder()` :
+            // dossier final, nom du torrent deja inclus.
+            output_includes_name: true,
             only_files: row
                 .selected_files
                 .as_ref()

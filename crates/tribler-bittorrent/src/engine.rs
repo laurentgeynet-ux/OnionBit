@@ -558,7 +558,9 @@ fn rqbit_opts(o: &crate::add_options::AddDownloadOptions) -> AddTorrentOptions {
         // Parite libtorrent : les torrents multi-fichiers s'ecrivent
         // dans <destination>/<nom du torrent>/ — aussi sous une
         // `destination` explicite (pas seulement le defaut rqbit).
-        name_subfolder: true,
+        // Desactive au restore : `output_dir` persiste contient deja
+        // le nom (sinon chemin imbrique `Nom\Nom`).
+        name_subfolder: !o.output_includes_name,
         only_files: o.only_files.clone(),
         trackers: (!o.trackers.is_empty()).then(|| o.trackers.clone()),
         ratelimits: librqbit::limits::LimitsConfig {

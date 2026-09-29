@@ -48,19 +48,58 @@ impl JsonSessionPersistenceStore {
                 format!("couldn't create directory {output_folder:?} for session storage")
             })?;
 
-        let db = match tokio::fs::File::open(&db_filename).await {
-            Ok(f) => {
-                let mut buf = Vec::new();
-                let mut rdr = tokio::io::BufReader::new(f);
-                rdr.read_to_end(&mut buf).await?;
+        let mut db: SerializedSessionDatabase =
+            match tokio::fs::File::open(&db_filename).await {
+                Ok(f) => {
+                    let mut buf = Vec::new();
+                    let mut rdr = tokio::io::BufReader::new(f);
+                    rdr.read_to_end(&mut buf).await?;
 
-                serde_json::from_reader(&buf[..]).context("error deserializing session database")?
+                    serde_json::from_reader(&buf[..])
+                        .context("error deserializing session database")?
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Default::default(),
+                Err(e) => {
+                    return Err(e).context(format!("error opening session file {db_filename:?}"));
+                }
+            };
+
+        // Dedup par info_hash : des versions anterieures ont pu
+        // persister plusieurs entrees pour le meme torrent (ex. apres
+        // des ajouts/suppressions repetes). Sans ca chaque exemplaire
+        // est restaure sur son propre output_folder — y compris des
+        // dossiers imbriques legacy — et le doublon survit aux flushs.
+        // On garde le plus petit id (le plus ancien).
+        let mut kept: HashMap<Id20, TorrentId> = HashMap::new();
+        db.torrents.retain(|id, st| {
+            match kept.entry(*st.info_hash()) {
+                std::collections::hash_map::Entry::Vacant(e) => {
+                    e.insert(*id);
+                    true
+                }
+                std::collections::hash_map::Entry::Occupied(mut e) => {
+                    if *id < *e.get() {
+                        let dropped = *e.get();
+                        warn!(
+                            removed = dropped,
+                            kept = *id,
+                            info_hash = ?st.info_hash(),
+                            "suppression d'une entree de session dupliquee"
+                        );
+                        e.insert(*id);
+                        false
+                    } else {
+                        warn!(
+                            removed = *id,
+                            kept = *e.get(),
+                            info_hash = ?st.info_hash(),
+                            "suppression d'une entree de session dupliquee"
+                        );
+                        false
+                    }
+                }
             }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Default::default(),
-            Err(e) => {
-                return Err(e).context(format!("error opening session file {db_filename:?}"));
-            }
-        };
+        });
 
         Ok(Self {
             db_filename,

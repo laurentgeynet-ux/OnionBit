@@ -14,7 +14,16 @@ pub struct AddDownloadOptions {
     /// Demarrer en pause (`user_stopped` persiste).
     pub paused: bool,
     /// Dossier de sortie explicite (`None` = dossier de session).
+    /// Parite libtorrent : pour un torrent multi-fichiers, le
+    /// sous-dossier `<nom du torrent>` y est ajoute par rqbit
+    /// (`name_subfolder`), sauf si `output_includes_name` est vrai.
     pub output_folder: Option<PathBuf>,
+    /// `true` quand `output_folder` designe deja le dossier final
+    /// (nom du torrent inclus) — typiquement au restore, ou le
+    /// `output_dir` persiste provient de `Download::output_folder()`
+    /// qui retourne le dossier complet. Evite le chemin imbrique
+    /// `Nom\Nom` a la restauration.
+    pub output_includes_name: bool,
     /// Indices des fichiers a telecharger (`None` = tous ;
     /// `Some(vec![])` = aucun — comme `selected_files` Python).
     pub only_files: Option<Vec<usize>>,
