@@ -3,6 +3,18 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Fix : téléchargements en file de restauration visibles dans l'API (2026-09-29)
+
+- `GET /api/downloads` n'émettait que les torrents déjà insérés dans le
+  moteur : pendant la restauration sérialisée (`concurrent_init_limit`),
+  les téléchargements en attente n'apparaissaient pas dans l'UI puis
+  surgissaient un par un.
+- Les lignes `downloads` de `tribler.db` absentes du moteur sont
+  désormais émises en `WAITING_FOR_HASHCHECK` (statut Python 1,
+  « en file pour le check » — `STOPPED` si `paused`/`user_stopped`),
+  avec les réglages persistés (destination, hops, limites). L'UI les
+  affiche « Vérification » dès le lancement.
+
 ## Fix : dédup in-flight des `add_torrent` — fin des doublons session.json (2026-09-29)
 
 - **Race à l'insertion** : depuis que `create_and_init` tourne hors du
