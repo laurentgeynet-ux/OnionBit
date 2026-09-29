@@ -3,6 +3,22 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Fix UI : zone de contenu invisible + fluidité executor au restore (2026-09-29)
+
+- **UI vide** : le `Stack` de `AppShell` n'avait qu'un enfant
+  non-positionné à taille nulle (`PendingFilesHandler` →
+  `SizedBox.shrink`) : en `fit: loose`, le `Stack` mesurait 0×0 et le
+  `Positioned.fill` réduisait tout le corps à zéro pixel — seule la
+  sidebar (hors `Stack`) restait visible. `PendingFilesHandler` est
+  désormais en `Positioned.fill` (variantes compacte et desktop).
+- **Gel du daemon au démarrage** : les I/O synchrone de librqbit
+  (marquage sparse, hash, init mmap) s'exécutent via `block_in_place`
+  sur les workers Tokio — plusieurs gros torrents multi-fichiers
+  absorbaient tous les workers et figeaient l'API jusqu'à ~66 s.
+  `EngineConfig::runtime_worker_threads` borne le sémaphore
+  `block_in_place` de rqbit et le runtime Tokio passe à
+  `2 × cœurs` (min 8) pour garder des workers libres.
+
 ## Étape 12 clôturée : interop tunnel rejouée contre pyipv8 réel (2026-09-29)
 
 Le banc `scripts/interop_exit_download.ps1` a été exécuté avec

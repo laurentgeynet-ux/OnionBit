@@ -55,7 +55,10 @@ class AppShell extends StatelessWidget {
       return Scaffold(
         body: SafeArea(
           child: Stack(
-            children: [Positioned.fill(child: body), const PendingFilesHandler()],
+            children: [
+              Positioned.fill(child: body),
+              const Positioned.fill(child: PendingFilesHandler()),
+            ],
           ),
         ),
         bottomNavigationBar: NavigationBar(
@@ -81,7 +84,10 @@ class AppShell extends StatelessWidget {
           Expanded(
             child: SafeArea(
               child: Stack(
-                children: [Positioned.fill(child: body), const PendingFilesHandler()],
+                children: [
+                  Positioned.fill(child: body),
+                  const Positioned.fill(child: PendingFilesHandler()),
+                ],
               ),
             ),
           ),
