@@ -1150,7 +1150,11 @@ impl Ipv8Stack {
         cfg.udp_tracker_socket = Some(std::sync::Arc::new(udp_sockets.tracker));
         cfg.disable_lsd = true;
         cfg.listen_port = None;
-        cfg.output_dir = self.downloads_dir.join(format!("anon{hops}"));
+        // Parite Python : le `destination`/`saveas` est global, pas de
+        // sous-dossier par saut — une lane anonyme telecharge dans le
+        // meme dossier par defaut que le moteur principal (sauf
+        // `destination` explicite a l'ajout, qui prevaut par download).
+        cfg.output_dir = self.downloads_dir.clone();
         let engine = BtEngine::start(cfg).await?;
         self.tasks.register(
             Some("Ipv8Stack"),

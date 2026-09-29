@@ -3,6 +3,22 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Parité : dossier de destination global pour les lanes anonymes (2026-09-29)
+
+Les téléchargements anonymes tombaient par défaut dans
+`<downloads>/anon<hops>` (`anon1`..`anon3`) — chaque lane anonyme
+figeait son propre `output_dir`. Tribler Python n'a pas de
+sous-dossier par saut : le `destination`/`saveas` est global à
+toutes les sessions libtorrent.
+
+- `tribler-core/ipv8_stack.rs` : `anon_engine` utilise désormais
+  `downloads_dir` comme `output_dir` par défaut, comme le moteur
+  principal. `destination` explicite (`PUT /api/downloads`) et
+  `download_dir` (`POST /api/settings`) restent prioritaires.
+- Les téléchargements déjà persistés gardent leur `output_dir` en
+  DB — seuls les nouveaux ajouts sans destination changent de
+  dossier.
+
 ## Perf : l'API binde avant la restauration des downloads (2026-09-29)
 
 Le daemon mettait ~18 s avant d'écouter : `CoreSession::start`
