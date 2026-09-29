@@ -3,6 +3,18 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Option : échantillonnage fastresume désactivable au démarrage (2026-09-29)
+
+- Nouvelle clé `libtorrent/fastresume_check` (défaut `true` —
+  comportement actuel identique à Tribler) propagée jusqu'au vendored
+  librqbit (`SessionOptions::fastresume_sampled_check` →
+  `TorrentStateInitializing::validate_fastresume`).
+- `false` : le `.bitv` persisté est accepté après le simple contrôle de
+  longueur — restauration quasi instantanée, aucun re-hash
+  échantillonné. Trade-off assumé : les fichiers modifiés/déplacés entre
+  deux runs ne sont plus détectés (comportement proche du fastresume de
+  qBittorrent/libtorrent).
+
 ## Fix : téléchargements en file de restauration visibles dans l'API (2026-09-29)
 
 - `GET /api/downloads` n'émettait que les torrents déjà insérés dans le

@@ -70,6 +70,14 @@ pub struct EngineConfig {
     /// persistance (le bitfield est ecrit dans `<ih>.bitv` apres le
     /// check initial).
     pub fastresume: bool,
+    /// Echantillonnage de pieces a la restauration fastresume
+    /// (`fastresume_sampled_check` librqbit — extension Tribler,
+    /// pas d'equivalent Python) : quelques pieces par torrent sont
+    /// relues au demarrage pour detecter des fichiers modifies entre
+    /// deux runs. `false` = le `.bitv` est accepte tel quel —
+    /// restauration quasi instantanee mais aucune detection de
+    /// corruption deplacee/modifiee.
+    pub fastresume_sampled_check: bool,
     /// Dossier de persistance de session (`SessionPersistenceConfig::
     /// Json` rqbit : `session.json` + `<ih>.bitv` + `<ih>.torrent`).
     /// Doit etre distinct par moteur — partager le dossier restaurerait
@@ -145,6 +153,7 @@ impl Default for EngineConfig {
             concurrent_init_limit: None,
             socks5_proxy: None,
             fastresume: true,
+            fastresume_sampled_check: true,
             persistence_dir: None,
             utp_only: false,
             max_upload_bps: None,
@@ -179,6 +188,7 @@ impl EngineConfig {
             concurrent_init_limit: None,
             socks5_proxy: None,
             fastresume: false,
+            fastresume_sampled_check: true,
             persistence_dir: None,
             utp_only: false,
             max_upload_bps: None,
@@ -232,6 +242,7 @@ impl EngineConfig {
             disable_local_service_discovery: self.disable_lsd,
             ipv4_only: self.ipv4_only,
             fastresume: self.fastresume,
+            fastresume_sampled_check: self.fastresume_sampled_check,
             persistence: if self.fastresume {
                 self.persistence_dir.clone().map(|folder| {
                     librqbit::SessionPersistenceConfig::Json {

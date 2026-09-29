@@ -87,6 +87,7 @@ impl TorrentStateInitializing {
         &self,
         bitv_factory: &dyn BitVFactory,
         have_pieces: Option<Box<dyn BitV>>,
+        sampled_check: bool,
     ) -> Option<Box<dyn BitV>> {
         let hp = have_pieces?;
         let actual = hp.as_bytes().len();
@@ -98,6 +99,16 @@ impl TorrentStateInitializing {
                 "the bitfield loaded isn't of correct length, ignoring it, will do full check"
             );
             return None;
+        }
+
+        // Tribler : `fastresume_sampled_check=false` — on fait
+        // confiance au `.bitv` apres le simple controle de longueur
+        // (comme le fastresume de libtorrent), aucun rehash
+        // echantillonne au demarrage.
+        if !sampled_check {
+            self.checked_bytes
+                .store(self.metadata.lengths().total_length(), Ordering::Relaxed);
+            return Some(hp);
         }
 
         let is_broken = self
@@ -188,13 +199,9 @@ impl TorrentStateInitializing {
 
     pub async fn check(&self) -> anyhow::Result<TorrentStatePaused> {
         let id: TorrentIdOrHash = self.shared.info_hash.into();
-        let bitv_factory = self
-            .shared
-            .session
-            .upgrade()
-            .context("session is dead")?
-            .bitv_factory
-            .clone();
+        let session = self.shared.session.upgrade().context("session is dead")?;
+        let bitv_factory = session.bitv_factory.clone();
+        let sampled_check = session.fastresume_sampled_check;
         let have_pieces = if self.previously_errored {
             if let Err(e) = bitv_factory.clear(id).await {
                 warn!(id=?self.shared.id, info_hash = ?self.shared.info_hash, error=?e, "error clearing bitfield");
@@ -207,7 +214,9 @@ impl TorrentStateInitializing {
                 .context("error loading have_pieces")?
         };
 
-        let have_pieces = self.validate_fastresume(&*bitv_factory, have_pieces).await;
+        let have_pieces = self
+            .validate_fastresume(&*bitv_factory, have_pieces, sampled_check)
+            .await;
 
         let have_pieces = match have_pieces {
             Some(h) => h,

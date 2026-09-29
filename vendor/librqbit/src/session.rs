@@ -136,6 +136,10 @@ pub struct Session {
 
     lsd: Option<LocalServiceDiscovery>,
 
+    // Tribler : echantillonnage fastresume (voir `SessionOptions::
+    // fastresume_sampled_check`).
+    pub(crate) fastresume_sampled_check: bool,
+
     // Limits and throttling
     pub(crate) concurrent_initialize_semaphore: Arc<tokio::sync::Semaphore>,
     // Tribler : verrou par infohash — serialise les `add_torrent`
@@ -453,6 +457,13 @@ pub struct SessionOptions {
     /// Enable fastresume, to restore state quickly after restart.
     pub fastresume: bool,
 
+    /// Tribler : echantillonnage de pieces a la restauration fastresume
+    /// (`validate_fastresume` relit quelques pieces par torrent pour
+    /// detecter des fichiers modifies entre deux runs). `false` = le
+    /// `.bitv` est accepte tel quel — restauration quasi instantanee
+    /// mais aucune detection de corruption deplacee/modifiee.
+    pub fastresume_sampled_check: bool,
+
     /// Turn on to dump session contents into a file periodically, so that on next start
     /// all remembered torrents will continue where they left off.
     pub persistence: Option<SessionPersistenceConfig>,
@@ -517,6 +528,7 @@ impl Default for SessionOptions {
             bind_device_name: None,
             disable_trackers: false,
             fastresume: false,
+            fastresume_sampled_check: true,
             persistence: None,
             peer_id: None,
             listen: None,
@@ -847,6 +859,7 @@ impl Session {
                     opts.concurrent_init_limit.unwrap_or(3),
                 )),
                 add_locks: parking_lot::Mutex::new(HashMap::new()),
+                fastresume_sampled_check: opts.fastresume_sampled_check,
                 udp_tracker_client,
                 ratelimits: Limits::new(opts.ratelimits),
                 ipv4_only: opts.ipv4_only,

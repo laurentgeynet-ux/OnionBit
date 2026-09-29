@@ -264,6 +264,13 @@ pub struct LibtorrentConfig {
     pub max_concurrent_http_announces: u64,
     /// Re-hash après complétion.
     pub check_after_complete: bool,
+    /// Échantillonnage des pièces à la restauration fastresume
+    /// (extension Tribler-Rust, sans équivalent Python —
+    /// `fastresume_sampled_check` librqbit) : `true` (défaut) relit
+    /// quelques pièces par torrent au démarrage pour détecter des
+    /// fichiers modifiés ; `false` fait confiance au `.bitv` tel quel
+    /// — démarrage quasi instantané, pas de détection de corruption.
+    pub fastresume_check: bool,
     /// File d'attente : téléchargements actifs.
     pub active_downloads: i64,
     /// File d'attente : seeds actifs.
@@ -315,6 +322,7 @@ impl Default for LibtorrentConfig {
             announce_to_all_trackers: false,
             max_concurrent_http_announces: 50,
             check_after_complete: false,
+            fastresume_check: true,
             active_downloads: 3,
             active_seeds: 5,
             active_checking: 1,
@@ -689,6 +697,7 @@ impl DaemonConfig {
             // borne explicite.
             concurrent_init_limit: (self.libtorrent.active_checking > 0)
                 .then_some(self.libtorrent.active_checking as usize),
+            fastresume_sampled_check: self.libtorrent.fastresume_check,
             // `max_*_rate` Python : 0 = illimite.
             max_upload_bps: (self.libtorrent.max_upload_rate > 0)
                 .then_some(self.libtorrent.max_upload_rate),
