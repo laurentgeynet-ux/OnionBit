@@ -111,6 +111,11 @@ struct Inner {
     /// l'arret (Ctrl-C, item « Quitter » du systray, `PUT
     /// /api/shutdown` puis le graceful shutdown du serveur).
     stopped: std::sync::atomic::AtomicBool,
+    /// Fin de la restauration des telechargements persistes
+    /// (`load_checkpoint` Python — asynchrone) : `false` → `true`
+    /// quand la tache de fond a termine ; [`Self::wait_restored`]
+    /// permet aux tests de l'attendre.
+    restore_done: tokio::sync::watch::Sender<bool>,
 }
 
 impl std::fmt::Debug for CoreSession {
@@ -123,8 +128,13 @@ impl std::fmt::Debug for CoreSession {
 
 impl CoreSession {
     /// Demarre la session : ouvre la base, cree le moteur BitTorrent,
-    /// restaure les telechargements connus, lance la boucle de
-    /// publication de progression.
+    /// lance la boucle de publication de progression. La restauration
+    /// des telechargements persistes (`load_checkpoint` Python) part
+    /// en tache de fond — la verification initiale des pieces peut
+    /// prendre plusieurs secondes par torrent et ne doit pas retarder
+    /// le bind de l'API de controle. Les downloads restaurés
+    /// apparaissent progressivement cote clients ; [`Self::wait_restored`]
+    /// attend la fin si besoin.
     pub async fn start(config: CoreConfig, notifier: Notifier) -> Result<Self> {
         std::fs::create_dir_all(&config.state_dir)?;
         // `memory_db` (`db_filename = ":memory:"`) → base volatile,
@@ -151,10 +161,11 @@ impl CoreSession {
                 last_tracker_sync: std::sync::Mutex::new(None),
                 asyncio,
                 stopped: std::sync::atomic::AtomicBool::new(false),
+                restore_done: tokio::sync::watch::channel(false).0,
             }),
         };
         session.start_services(&services_config).await;
-        session.restore_downloads().await;
+        session.spawn_restore();
         session.spawn_progress_loop();
         session.inner.notifier.notify(Notification::SessionStarted);
         Ok(session)
@@ -181,11 +192,45 @@ impl CoreSession {
                 last_tracker_sync: std::sync::Mutex::new(None),
                 asyncio,
                 stopped: std::sync::atomic::AtomicBool::new(false),
+                // Base memoire : rien a restaurer — restauration
+                // marquee terminee d'emblee.
+                restore_done: tokio::sync::watch::channel(true).0,
             }),
         };
         session.start_services(&services_config).await;
         session.spawn_progress_loop();
         Ok(session)
+    }
+
+    /// Lance la restauration des telechargements persistes en tache
+    /// de fond (`load_checkpoint` Python : un `TaskManager` anonyme,
+    /// les downloads apparaissent au fil de leur re-add — la
+    /// verification initiale des pieces rqbit peut durer plusieurs
+    /// secondes par gros torrent et bloquait le bind de l'API).
+    /// `restore_done` bascule a `true` en fin de tache.
+    fn spawn_restore(&self) {
+        let session = self.clone();
+        self.inner
+            .asyncio
+            .tasks
+            .register(Some("CoreSession"), "load_checkpoint", None);
+        tokio::spawn(async move {
+            session.restore_downloads().await;
+            let _ = session.inner.restore_done.send(true);
+        });
+    }
+
+    /// Attend la fin de la restauration des telechargements persistes
+    /// (tests, diagnostics). Immediate si la restauration est deja
+    /// terminee ou si la session n'en avait pas (base memoire).
+    pub async fn wait_restored(&self) {
+        let mut rx = self.inner.restore_done.subscribe();
+        if *rx.borrow() {
+            return;
+        }
+        // Err(_) = emetteur perdu : la session est detruite, on
+        // considere la restauration close pour ne pas bloquer.
+        let _ = rx.changed().await;
     }
 
     /// Reinjecte dans les moteurs les telechargements persistes, avec
@@ -201,6 +246,12 @@ impl CoreSession {
             }
         };
         for row in rows {
+            // `stop()` pendant la restauration : on abandonne — les
+            // downloads non reinjectes seront relus au prochain run.
+            if self.inner.stopped.load(std::sync::atomic::Ordering::SeqCst) {
+                tracing::info!("restauration interrompue par l'arret de la session");
+                return;
+            }
             let engine = match self.engine_for(row.anon_hops as u32).await {
                 Ok(e) => e,
                 Err(e) => {

@@ -3,6 +3,24 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Perf : l'API binde avant la restauration des downloads (2026-09-29)
+
+Le daemon mettait ~18 s avant d'écouter : `CoreSession::start`
+attendait `restore_downloads` (re-add séquentiel + vérification
+initiale des pièces rqbit — ~17,6 s pour un seul gros torrent) avant
+le `TcpListener::bind`. L'UI attendait donc l'API pendant toute la
+restauration.
+
+- `restore_downloads` part désormais en **tâche de fond** nommée
+  `CoreSession:load_checkpoint` (registre `/api/ipv8/asyncio/tasks`),
+  comme le `load_checkpoint` asynchrone de Tribler Python — les
+  downloads restaurés apparaissent progressivement côté clients.
+- `CoreSession::wait_restored()` (canal `watch` `restore_done`) :
+  attente explicite pour les tests ; abandon anticipé de la boucle si
+  `stop()` arrive en cours de restauration.
+- `main.rs` inchangé : `start()` retournant plus tôt, l'API binde
+  quelques centaines de ms après l'ouverture SQLite.
+
 ## UI : avertissement trackers HTTPS-only à l'ajout anonyme (2026-09-29)
 
 Conséquence de la limitation confirmée ci-dessous (sorties =

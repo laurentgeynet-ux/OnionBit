@@ -29,10 +29,12 @@ async fn downloads_restores_apres_redemarrage() {
     assert!(dl.is_paused());
     session.stop().await;
 
-    // Seconde session : restauration depuis `downloads` (DB fichier).
+    // Seconde session : restauration depuis `downloads` (DB fichier) —
+    // tache de fond (`load_checkpoint` Python), on attend sa fin.
     let session = CoreSession::start(cfg, Notifier::new())
         .await
         .expect("start #2");
+    session.wait_restored().await;
     let restored = session
         .find_download(&ih)
         .unwrap_or_else(|| panic!("download {ih} non restaure"));
@@ -59,6 +61,7 @@ async fn download_supprime_n_est_pas_restaure() {
     let session = CoreSession::start(cfg, Notifier::new())
         .await
         .expect("start #2");
+    session.wait_restored().await;
     assert!(session.downloads().is_empty(), "download supprime restaure");
     session.stop().await;
 }
