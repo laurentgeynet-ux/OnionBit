@@ -3,6 +3,26 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Diagnostic perf : sonde de lag de l'executor + timings I/O (2026-09-29)
+
+Objectif : identifier la cause des ralentissements disque rapportés —
+mesurer avant d'optimiser (un appel `std::fs` synchrone dans du code
+async fige tout l'executor Tokio : API, tunnels, moteur).
+
+Changements :
+
+- `tribler-core/asyncio/monitor.rs` : **sonde de lag de l'executor** —
+  tâche tickant toutes les 100 ms ; un retard ≥ 500 ms log un
+  `warn!` (« tache bloquante suspectee »). Démarrée dans
+  `AsyncioMonitor::new`, abordée au `Drop`.
+- `tribler-db` : `Database::with` log un `warn!` pour toute opération
+  SQLite (attente du mutex comprise) ≥ 250 ms — les requêtes lentes et
+  la contention de connexion deviennent visibles dans `tribler.log`.
+- `tribler-core/session.rs` : `move_storage` déporte le déplacement de
+  fichiers (`move_dir_contents`, copie récursive inter-volumes) sur
+  `spawn_blocking` + `warn!` si > 500 ms — fix réel : la copie de gros
+  volumes ne fige plus l'executor, rollback inclus.
+
 ## Cache de pairs IPv8 persisté : bootstrap quasi instantané (2026-09-29)
 
 Objectif : réactivité au démarrage — pyipv8 ne persiste pas son
