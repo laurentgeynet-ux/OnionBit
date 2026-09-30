@@ -672,7 +672,7 @@ class _OverviewTabState extends ConsumerState<_OverviewTab> {
               _StatCard(
                 icon: Icons.link,
                 label: 'Circuits prêts',
-                value: '${ready} / ${circuits?.length ?? '—'}',
+                value: '$ready / ${circuits?.length ?? '—'}',
               ),
               _StatCard(
                 icon: Icons.swap_horiz,
@@ -682,7 +682,7 @@ class _OverviewTabState extends ConsumerState<_OverviewTab> {
               _StatCard(
                 icon: Icons.exit_to_app,
                 label: 'Sorties actives',
-                value: '${exitsOn} / ${exits?.length ?? '—'}',
+                value: '$exitsOn / ${exits?.length ?? '—'}',
               ),
               _StatCard(
                 icon: Icons.person_outline,
