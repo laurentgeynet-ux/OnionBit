@@ -148,10 +148,40 @@ class SettingsSwitch extends ConsumerWidget {
         }
         applySettingsPatch(context, ref, patch as Map<String, dynamic>);
       },
-      title: Text(title),
+      title: Row(
+        children: [
+          Expanded(child: Text(title)),
+          KeyInfoIcon(path),
+        ],
+      ),
       subtitle: subtitle != null ? Text(subtitle!) : null,
       contentPadding: EdgeInsets.zero,
       dense: true,
+    );
+  }
+}
+
+/// Icône `i` affichant le chemin de la clé dans `configuration.json`
+/// (`libtorrent/max_download_rate`) + une description optionnelle —
+/// repère de debug/documentaire sur les champs de réglage.
+class KeyInfoIcon extends StatelessWidget {
+  const KeyInfoIcon(this.path, {super.key, this.description});
+
+  /// Chemin de la clé dans l'arbre (`['libtorrent', 'dht']`).
+  final List<String> path;
+  final String? description;
+
+  @override
+  Widget build(BuildContext context) {
+    final shown = path.join('/');
+    return Tooltip(
+      message: description != null ? '$shown\n$description' : shown,
+      preferBelow: false,
+      child: Icon(
+        Icons.info_outline,
+        size: 14,
+        color: Theme.of(context).colorScheme.outline,
+      ),
     );
   }
 }

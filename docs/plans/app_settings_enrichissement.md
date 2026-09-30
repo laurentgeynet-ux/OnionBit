@@ -33,7 +33,7 @@ Chaque étape = implémentation + `flutter analyze`/tests + cochage ici +
   accepte `dirtyId` et l'affiche depuis le provider) + bandeau collant
   « N section(s) modifiée(s) · Enregistrer tout / Tout annuler ».
 
-## Étape 3 — Tooltips « clé configuration.json »
+## Étape 3 — Tooltips « clé configuration.json » [x] (2026-10-02)
 
 - Widget `KeyInfoIcon(path, description)` — icône `i` affichant le
   chemin de la clé (`libtorrent/max_download_rate`) + texte de l'aide

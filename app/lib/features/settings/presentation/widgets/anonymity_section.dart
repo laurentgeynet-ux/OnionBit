@@ -111,6 +111,10 @@ class _AnonymitySectionState extends ConsumerState<AnonymitySection> {
                     decoration: const InputDecoration(
                       labelText: 'Circuits minimum (défaut : 3)',
                       isDense: true,
+                      suffixIcon: KeyInfoIcon([
+                        'tunnel_community',
+                        'min_circuits',
+                      ]),
                     ),
                   ),
                 ),
@@ -123,6 +127,10 @@ class _AnonymitySectionState extends ConsumerState<AnonymitySection> {
                     decoration: const InputDecoration(
                       labelText: 'Circuits maximum (défaut : 8)',
                       isDense: true,
+                      suffixIcon: KeyInfoIcon([
+                        'tunnel_community',
+                        'max_circuits',
+                      ]),
                     ),
                   ),
                 ),

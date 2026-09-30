@@ -147,18 +147,24 @@ class _AutomationSectionState extends ConsumerState<AutomationSection> {
                 decoration: InputDecoration(
                   labelText: 'Dossier à surveiller',
                   prefixIcon: const Icon(Icons.folder_outlined),
-                  suffixIcon: IconButton(
-                    tooltip: 'Parcourir…',
-                    icon: const Icon(Icons.folder_open),
-                    onPressed: () async {
-                      final dir = await getDirectoryPath();
-                      if (dir != null) {
-                        setState(() {
-                          _watchDir.text = dir;
-                          _deferred.markDirty();
-                        });
-                      }
-                    },
+                  suffixIcon: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const KeyInfoIcon(['watch_folder', 'directory']),
+                      IconButton(
+                        tooltip: 'Parcourir…',
+                        icon: const Icon(Icons.folder_open),
+                        onPressed: () async {
+                          final dir = await getDirectoryPath();
+                          if (dir != null) {
+                            setState(() {
+                              _watchDir.text = dir;
+                              _deferred.markDirty();
+                            });
+                          }
+                        },
+                      ),
+                    ],
                   ),
                 ),
               ),
@@ -170,6 +176,7 @@ class _AutomationSectionState extends ConsumerState<AutomationSection> {
                 decoration: const InputDecoration(
                   labelText: 'Intervalle de scan (s) — défaut : 10',
                   isDense: true,
+                  suffixIcon: KeyInfoIcon(['watch_folder', 'check_interval']),
                 ),
               ),
             ],
@@ -211,6 +218,7 @@ class _AutomationSectionState extends ConsumerState<AutomationSection> {
                         labelText: 'URL du flux',
                         hintText: 'https://exemple.com/feed.xml',
                         isDense: true,
+                        suffixIcon: KeyInfoIcon(['rss', 'urls']),
                       ),
                       onSubmitted: (_) => _addFeed(),
                     ),

@@ -131,6 +131,7 @@ class _NetworkSectionState extends ConsumerState<NetworkSection> {
               initialValue: _proxyType,
               decoration: const InputDecoration(
                 labelText: 'Type de proxy (défaut : aucun)',
+                suffixIcon: KeyInfoIcon(['libtorrent', 'proxy_type']),
               ),
               items: [
                 for (final e in _proxyTypes.entries)
@@ -148,6 +149,7 @@ class _NetworkSectionState extends ConsumerState<NetworkSection> {
                 onChanged: (_) => _deferred.markDirty(),
                 decoration: const InputDecoration(
                   labelText: 'Serveur (hôte:port)',
+                  suffixIcon: KeyInfoIcon(['libtorrent', 'proxy_server']),
                   hintText: '127.0.0.1:9050',
                 ),
               ),
@@ -159,6 +161,10 @@ class _NetworkSectionState extends ConsumerState<NetworkSection> {
                   obscureText: true,
                   decoration: const InputDecoration(
                     labelText: 'Authentification (utilisateur:mot de passe)',
+                    suffixIcon: KeyInfoIcon([
+                      'libtorrent',
+                      'proxy_username',
+                    ], description: 'Mot de passe : libtorrent/proxy_password'),
                   ),
                 ),
               ],

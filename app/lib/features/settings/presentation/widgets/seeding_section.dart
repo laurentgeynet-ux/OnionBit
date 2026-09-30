@@ -129,6 +129,11 @@ class _SeedingSectionState extends ConsumerState<SeedingSection> {
                 decoration: const InputDecoration(
                   labelText: 'Ratio de seed cible',
                   hintText: 'défaut : 2.0',
+                  suffixIcon: KeyInfoIcon([
+                    'libtorrent',
+                    'download_defaults',
+                    'seeding_ratio',
+                  ]),
                 ),
               ),
             if (_mode == 'time')
@@ -139,6 +144,11 @@ class _SeedingSectionState extends ConsumerState<SeedingSection> {
                 decoration: const InputDecoration(
                   labelText: 'Durée de seed (secondes)',
                   hintText: 'défaut : 60',
+                  suffixIcon: KeyInfoIcon([
+                    'libtorrent',
+                    'download_defaults',
+                    'seeding_time',
+                  ]),
                 ),
               ),
             const Divider(height: AppSpacing.lg),

@@ -3,6 +3,16 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## UI — Réglages : tooltips « clé configuration.json » (étape 3/8)
+
+- `KeyInfoIcon(path, [description])` : icône `i` affichant le chemin
+  dans `configuration.json` (`libtorrent/max_download_rate`) au survol.
+- `SettingsSwitch` affiche désormais automatiquement l'icône à partir
+  de son `path` — couverture gratuite de tous les commutateurs.
+- `suffixIcon` déployé sur les champs texte des sections Bandwidth,
+  Queue, Downloads (saveas), Seeding (ratio/durée), Anonymity
+  (circuits), Network (proxy) et Automation (watch folder/RSS).
+
 ## UI — Réglages : éditeur avancé de l'arbre `configuration.json` (étape 5, partie éditeur)
 
 - Nouvelle section « Configuration avancée » : éditeur JSON indenté de

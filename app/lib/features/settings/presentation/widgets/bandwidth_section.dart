@@ -82,6 +82,10 @@ class _BandwidthSectionState extends ConsumerState<BandwidthSection> {
                     keyboardType: TextInputType.number,
                     decoration: const InputDecoration(
                       labelText: 'Téléchargement (Ko/s)',
+                      suffixIcon: KeyInfoIcon([
+                        'libtorrent',
+                        'max_download_rate',
+                      ], description: 'Débit descendant global ; 0 = illimité'),
                       hintText: 'défaut : 0 = illimité',
                       prefixIcon: Icon(Icons.arrow_downward),
                     ),
@@ -95,6 +99,10 @@ class _BandwidthSectionState extends ConsumerState<BandwidthSection> {
                     keyboardType: TextInputType.number,
                     decoration: const InputDecoration(
                       labelText: 'Envoi (Ko/s)',
+                      suffixIcon: KeyInfoIcon([
+                        'libtorrent',
+                        'max_upload_rate',
+                      ], description: 'Débit montant global ; 0 = illimité'),
                       hintText: 'défaut : 0 = illimité',
                       prefixIcon: Icon(Icons.arrow_upward),
                     ),

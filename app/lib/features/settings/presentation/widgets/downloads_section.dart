@@ -148,10 +148,20 @@ class _DownloadsSectionState extends ConsumerState<DownloadsSection> {
                         labelText: 'Dossier de destination par défaut',
                         hintText: 'défaut : <état du daemon>/downloads',
                         prefixIcon: const Icon(Icons.folder_outlined),
-                        suffixIcon: IconButton(
-                          tooltip: 'Parcourir…',
-                          icon: const Icon(Icons.folder_open),
-                          onPressed: _pickDirectory,
+                        suffixIcon: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            KeyInfoIcon(const [
+                              'libtorrent',
+                              'download_defaults',
+                              'saveas',
+                            ]),
+                            IconButton(
+                              tooltip: 'Parcourir…',
+                              icon: const Icon(Icons.folder_open),
+                              onPressed: _pickDirectory,
+                            ),
+                          ],
                         ),
                       ),
                     ),

@@ -69,7 +69,12 @@ class _QueueSectionState extends ConsumerState<QueueSection> {
     if (mounted) setState(() => _saving = false);
   }
 
-  Widget _field(TextEditingController c, String label, int def) => Expanded(
+  Widget _field(
+    TextEditingController c,
+    String label,
+    int def,
+    List<String> keyPath,
+  ) => Expanded(
     child: TextField(
       controller: c,
       onChanged: (_) => _deferred.markDirty(),
@@ -78,6 +83,7 @@ class _QueueSectionState extends ConsumerState<QueueSection> {
         labelText: label,
         hintText: 'défaut : $def · -1 = illimité',
         isDense: true,
+        suffixIcon: KeyInfoIcon(keyPath),
       ),
     ),
   );
@@ -103,17 +109,29 @@ class _QueueSectionState extends ConsumerState<QueueSection> {
             const SizedBox(height: AppSpacing.sm),
             Row(
               children: [
-                _field(_downloads, 'Téléchargements actifs', 3),
+                _field(_downloads, 'Téléchargements actifs', 3, const [
+                  'libtorrent',
+                  'active_downloads',
+                ]),
                 const SizedBox(width: AppSpacing.sm),
-                _field(_seeds, 'Seeds actifs', 5),
+                _field(_seeds, 'Seeds actifs', 5, const [
+                  'libtorrent',
+                  'active_seeds',
+                ]),
               ],
             ),
             const SizedBox(height: AppSpacing.sm),
             Row(
               children: [
-                _field(_checking, 'Vérifications actives', 1),
+                _field(_checking, 'Vérifications actives', 1, const [
+                  'libtorrent',
+                  'active_checking',
+                ]),
                 const SizedBox(width: AppSpacing.sm),
-                _field(_limit, 'Limite globale', 500),
+                _field(_limit, 'Limite globale', 500, const [
+                  'libtorrent',
+                  'active_limit',
+                ]),
               ],
             ),
             SettingsSwitch(
