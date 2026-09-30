@@ -3,6 +3,13 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## UI : sélection multiple + ajout en lot dans Rechercher (2026-09-30)
+
+Étape 4 de `docs/plans/app_search_enrichissement.md` : cases à cocher
+sur les lignes (`searchSelectionProvider`), bouton « Ajouter (N) » dans
+la barre — ajout séquentiel direct, erreurs comptabilisées en snackbar
+de synthèse, sélection vidée au terme.
+
 ## UI : badge « déjà téléchargé » dans Rechercher (2026-09-30)
 
 Étape 3 de `docs/plans/app_search_enrichissement.md` : les résultats

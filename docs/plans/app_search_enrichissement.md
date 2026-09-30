@@ -39,7 +39,7 @@ Constantes backend vérifiées (2026-09-30) :
 - Croisement `infohash` × `downloadsProvider` : chip « En cours » sur
   les lignes connues, bouton Ajouter désactivé (tooltip).
 
-## Étape 4 — Sélection multiple + ajout en lot
+## Étape 4 — Sélection multiple + ajout en lot [x] (2026-09-30)
 
 - Cases + provider de sélection (même pattern que downloads) ; bouton
   « Ajouter la sélection » dans la barre d'outils quand sélection ≠ ∅.

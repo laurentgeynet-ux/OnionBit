@@ -87,6 +87,30 @@ int Function(TorrentResult, TorrentResult) searchComparator(SearchCol col) {
   };
 }
 
+/// Sélection courante de résultats (infohashes) — ajout en lot.
+final searchSelectionProvider =
+    NotifierProvider<SearchSelectionNotifier, Set<String>>(
+      SearchSelectionNotifier.new,
+    );
+
+class SearchSelectionNotifier extends Notifier<Set<String>> {
+  @override
+  Set<String> build() => const {};
+
+  void toggle(String infohash) => state = state.contains(infohash)
+      ? state.difference({infohash})
+      : state.union({infohash});
+
+  void selectOnly(String infohash) => state = {infohash};
+
+  void selectAll(List<TorrentResult> results) => state = {
+    for (final r in results)
+      if (r.infohash.isNotEmpty) r.infohash,
+  };
+
+  void clear() => state = const {};
+}
+
 /// Résultats « de base » : populaires quand la requête est vide,
 /// recherche locale sinon. La recherche distante est lancée ici, ses
 /// résultats arrivent dans [remoteResultsProvider] via SSE.

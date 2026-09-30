@@ -25,6 +25,7 @@ class SearchPage extends ConsumerWidget {
     final query = ref.watch(searchQueryProvider);
     final sort = ref.watch(searchSortProvider);
     final colSort = ref.watch(searchColSortProvider);
+    final selection = ref.watch(searchSelectionProvider);
     final local = ref.watch(searchResultsProvider);
     final remote = ref.watch(remoteResultsProvider);
     // Info-hashes déjà gérés par le daemon — badge « En cours » et
@@ -71,6 +72,21 @@ class SearchPage extends ConsumerWidget {
                   style: Theme.of(context).textTheme.titleSmall,
                 ),
               ),
+              if (selection.isNotEmpty) ...[
+                FilledButton.tonalIcon(
+                  icon: const Icon(Icons.download, size: 18),
+                  label: Text('Ajouter (${selection.length})'),
+                  onPressed: () =>
+                      _addSelected(context, ref, merged, selection),
+                ),
+                const SizedBox(width: AppSpacing.xs),
+                IconButton(
+                  tooltip: 'Désélectionner',
+                  onPressed: ref.read(searchSelectionProvider.notifier).clear,
+                  icon: const Icon(Icons.close, size: 18),
+                ),
+                const SizedBox(width: AppSpacing.xs),
+              ],
               if (searching)
                 Row(
                   mainAxisSize: MainAxisSize.min,
@@ -131,16 +147,55 @@ class SearchPage extends ConsumerWidget {
                               horizontal: AppSpacing.sm,
                             ),
                             itemCount: merged.length,
-                            itemBuilder: (context, i) =>
-                                _ResultTile(result: merged[i], known: known),
+                            itemBuilder: (context, i) => _ResultTile(
+                              result: merged[i],
+                              known: known,
+                              selection: selection,
+                            ),
                           )
-                        : _ResultsTable(results: merged, known: known),
+                        : _ResultsTable(
+                            results: merged,
+                            known: known,
+                            selection: selection,
+                          ),
                   ),
           ),
         ),
       ],
     );
   }
+}
+
+/// Ajout en lot de la sélection — erreurs par élément, snackbar de
+/// synthèse, sélection vidée au terme.
+Future<void> _addSelected(
+  BuildContext context,
+  WidgetRef ref,
+  List<TorrentResult> merged,
+  Set<String> selection,
+) async {
+  final repo = ref.read(downloadsRepositoryProvider);
+  var added = 0, failed = 0;
+  for (final r in merged.where((e) => selection.contains(e.infohash))) {
+    try {
+      await repo.add(uri: r.magnet);
+      added++;
+    } catch (_) {
+      failed++;
+    }
+  }
+  ref.read(searchSelectionProvider.notifier).clear();
+  await ref.read(downloadsProvider.notifier).refresh();
+  if (!context.mounted) return;
+  ScaffoldMessenger.of(context).showSnackBar(
+    SnackBar(
+      content: Text(
+        failed == 0
+            ? '$added téléchargement(s) ajouté(s)'
+            : '$added ajouté(s), $failed en échec',
+      ),
+    ),
+  );
 }
 
 String _sortLabel(SearchSort s) => switch (s) {
@@ -152,12 +207,17 @@ String _sortLabel(SearchSort s) => switch (s) {
 };
 
 class _ResultTile extends StatelessWidget {
-  const _ResultTile({required this.result, required this.known});
+  const _ResultTile({
+    required this.result,
+    required this.known,
+    required this.selection,
+  });
 
   final TorrentResult result;
 
   /// Info-hashes déjà gérés par le daemon.
   final Set<String> known;
+  final Set<String> selection;
 
   @override
   Widget build(BuildContext context) {
@@ -168,11 +228,26 @@ class _ResultTile extends StatelessWidget {
           _SearchContextMenu.show(context, details.globalPosition, r),
       child: ListTile(
         dense: true,
-        leading: Icon(
-          r.source == TorrentSource.remote
-              ? Icons.cloud_outlined
-              : Icons.storage_outlined,
-          size: 20,
+        leading: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Checkbox(
+              value: selection.contains(r.infohash),
+              visualDensity: VisualDensity.compact,
+              onChanged: r.infohash.isEmpty
+                  ? null
+                  : (_) =>
+                        ProviderScope.containerOf(context)
+                            .read(searchSelectionProvider.notifier)
+                            .toggle(r.infohash),
+            ),
+            Icon(
+              r.source == TorrentSource.remote
+                  ? Icons.cloud_outlined
+                  : Icons.storage_outlined,
+              size: 20,
+            ),
+          ],
         ),
         title: Text(
           r.name.isEmpty ? r.infohash : r.name,
@@ -205,10 +280,15 @@ class _ResultTile extends StatelessWidget {
 /// Table desktop : en-têtes triables (clic = asc/desc, comme la page
 /// Téléchargements) + scroll horizontal sous ~900 px utiles.
 class _ResultsTable extends ConsumerWidget {
-  const _ResultsTable({required this.results, required this.known});
+  const _ResultsTable({
+    required this.results,
+    required this.known,
+    required this.selection,
+  });
 
   final List<TorrentResult> results;
   final Set<String> known;
+  final Set<String> selection;
 
   static const double _minWidth = 900;
 
@@ -230,8 +310,11 @@ class _ResultsTable extends ConsumerWidget {
             Expanded(
               child: ListView.builder(
                 itemCount: results.length,
-                itemBuilder: (context, i) =>
-                    _ResultRow(result: results[i], known: known),
+                itemBuilder: (context, i) => _ResultRow(
+                  result: results[i],
+                  known: known,
+                  selection: selection,
+                ),
               ),
             ),
           ],
@@ -289,6 +372,7 @@ class _HeaderRow extends ConsumerWidget {
       ),
       child: Row(
         children: [
+          const SizedBox(width: 36),
           h('Nom', SearchCol.name, flex: 5),
           h('Taille', SearchCol.size, width: 90),
           h('Seeds', SearchCol.seeds, width: 80),
@@ -303,10 +387,15 @@ class _HeaderRow extends ConsumerWidget {
 }
 
 class _ResultRow extends StatelessWidget {
-  const _ResultRow({required this.result, required this.known});
+  const _ResultRow({
+    required this.result,
+    required this.known,
+    required this.selection,
+  });
 
   final TorrentResult result;
   final Set<String> known;
+  final Set<String> selection;
 
   @override
   Widget build(BuildContext context) {
@@ -326,6 +415,18 @@ class _ResultRow extends StatelessWidget {
           ),
           child: Row(
             children: [
+              SizedBox(
+                width: 36,
+                child: Checkbox(
+                  value: selection.contains(r.infohash),
+                  onChanged: r.infohash.isEmpty
+                      ? null
+                      : (_) =>
+                            ProviderScope.containerOf(context)
+                                .read(searchSelectionProvider.notifier)
+                                .toggle(r.infohash),
+                ),
+              ),
               Expanded(
                 flex: 5,
                 child: Text(
