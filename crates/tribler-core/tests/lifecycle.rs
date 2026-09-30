@@ -117,7 +117,10 @@ async fn restauration_sortie_inaccessible_erreur_differee() {
     // qu'il sorte de Initializing/Checking.
     let settled = tribler_test_support::wait_for(std::time::Duration::from_secs(15), || {
         let s = restored.stats();
-        !matches!(s.state, DownloadState::Initializing | DownloadState::Checking)
+        !matches!(
+            s.state,
+            DownloadState::Initializing | DownloadState::Checking
+        )
     })
     .await;
     let s = restored.stats();

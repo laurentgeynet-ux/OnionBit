@@ -3,6 +3,40 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Interop — Tribler.exe 8.4.3 comme premier relais (route épinglée)
+
+- **`Circuit` porte un plan de sauts épinglés** (`pinned_hops`) :
+  `TunnelCommunity::create_circuit_pinned` + priorité du saut épinglé
+  dans `send_extend`, avec `node_addr` réel transmis même hors annuaire
+  local — aucun repli vers les candidats publics annoncés par le relais
+  précédent. Cause de l'échec précédent identifiée : `send_extend`
+  piochait le saut suivant dans les `candidates` du `CREATED` de Tribler
+  (pairs du réseau réel) — `EXTENDED` revenait sans qu'aucun `CREATE`
+  n'atteigne le relais Rust voulu.
+- `exit_download_interop --relay <keyfile> --tribler-id` : Tribler.exe
+  (community `a3591a6b…`) en premier saut, relais Rust épinglés ensuite,
+  sortie pyipv8 `EXIT_BT` ; affiche `route = verified_hops` à rapprocher
+  de `attendu = [clés attendues]`, plus `demande=`/`verifie=` octets.
+- `scripts/interop_tribler_relay.ps1` durci : lecture `configuration.json`
+  (port IPv8 8090, clé API), vérification d'identité de l'instance
+  jointe via `/api/ipv8/overlays` (le `my_peer` de la tunnel community
+  doit égaler le PEM `ec_multichain` — un autre processus « Tribler »
+  est rejeté), polling `/api/ipv8/tunnel/relays` pendant le transfert
+  (`circuit_from`/`circuit_to`/octets, rapprochés du `circuit_id` Rust),
+  `[Diagnostics.Process]` direct (ExitCode fiable — `Start-Process`
+  -PassThru avec redirections ne le renseigne pas sous PS 5.1),
+  preuve positive exigée (code 0 + ligne OK + `verifie=` == demandé),
+  timeout borné, `try/finally` (un Tribler préexistant n'est jamais tué).
+- **Confinement des panics vérifié** : test `panic_handler_ne_tue_pas_la_reception`
+  — un handler qui panique ne stoppe pas la réception des autres
+  (`catch_unwind` de `recv_loop`).
+- **Mesures** (route épinglée `Tribler.exe → relais Rust → sortie
+  pyipv8`, vérifiée par `verified_hops`) : 200 Ko à 2 et 3 sauts, 4 Mio
+  à 3 sauts, 200 Ko à 3 sauts avec DHT locale. Compteurs de la route
+  relais de Tribler croissants pendant le transfert (~244 Ko pour
+  200 Ko utiles). Limites : Tribler n'est pas la sortie `EXIT_BT` de ce
+  banc ; la DHT reste le nœud bootstrap local, pas la DHT publique.
+
 ## Interop — transfert multi-sauts via sortie pyipv8, DHT incluse
 
 - `scripts/interop_exit_download.ps1` + `examples/exit_download_interop` :

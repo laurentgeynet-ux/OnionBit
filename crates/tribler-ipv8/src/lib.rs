@@ -198,4 +198,63 @@ mod tests {
         // Sans filtre de prefixe, le paquet est accepte.
         assert!(Packet::parse(&raw, None, &crate::packet::WIRE_DEFAULT).is_ok());
     }
+
+    /// Confinement d'un panic de handler : un listener qui panique ne
+    /// doit pas tuer `recv_loop` — un autre listener (autre prefixe)
+    /// continue de recevoir. Ne prouve que le confinement : l'etat
+    /// interne de la community fautive (mutex empoisonne eventuel)
+    /// n'est pas garanti recuperable.
+    #[tokio::test]
+    async fn panic_handler_ne_tue_pas_la_reception() {
+        let ep = UdpEndpoint::bind("127.0.0.1:0").await.unwrap();
+        let local = ep.local_addr().unwrap();
+
+        let mut panic_prefix = [0xBBu8; PREFIX_LEN];
+        panic_prefix[0] = 0;
+        ep.add_raw_prefix_listener(
+            panic_prefix,
+            std::sync::Arc::new(|_src, _data| -> Result<(), Ipv8Error> {
+                panic!("panic volontaire de test");
+            }),
+        )
+        .await;
+
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<usize>(1);
+        let mut ok_prefix = [0xCCu8; PREFIX_LEN];
+        ok_prefix[0] = 0;
+        ep.add_raw_prefix_listener(
+            ok_prefix,
+            std::sync::Arc::new(move |_src, data| {
+                let _ = tx.try_send(data.len());
+                Ok(())
+            }),
+        )
+        .await;
+
+        let run = tokio::spawn({
+            let ep = ep.clone();
+            async move {
+                let _ = ep.run().await;
+            }
+        });
+
+        // Datagramme qui declenche le panic.
+        let mut bad = Vec::from(&panic_prefix[..]);
+        bad.extend_from_slice(b"boom");
+        ep.send_to(&UdpAddress::from(local), &bad).await.unwrap();
+        // Laisse le temps au panic de se produire dans recv_loop.
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        // La boucle doit etre encore vivante : le second listener
+        // recoit son datagramme.
+        let mut good = Vec::from(&ok_prefix[..]);
+        good.extend_from_slice(b"ping-apres-panic");
+        ep.send_to(&UdpAddress::from(local), &good).await.unwrap();
+        let got = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv()).await;
+        assert_eq!(
+            got.expect("recv_loop morte apres panic de handler"),
+            Some(good.len())
+        );
+        run.abort();
+    }
 }

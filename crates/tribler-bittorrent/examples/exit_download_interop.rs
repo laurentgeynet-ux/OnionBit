@@ -42,8 +42,6 @@ use tribler_tunnel::udp_relay;
 
 /// Delai max de telechargement a travers le tunnel.
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(180);
-/// Delai max pour que le circuit devienne READY.
-const READY_TIMEOUT_MS: u64 = 15_000;
 /// Taille du fichier telecharge.
 const DEFAULT_PAYLOAD: usize = 200_000;
 
@@ -52,16 +50,52 @@ struct TunnelNode {
     key: LibNaClSecretKey,
     network: Arc<Network>,
     tunnel: Arc<TunnelCommunity>,
+    endpoint: Arc<UdpEndpoint>,
+    /// Discovery overlay optionnel (introduction vers un pair externe
+    /// comme Tribler.exe — fait de nous un pair verifie dans son
+    /// `Network`, ce qui lui evite le `dht_peer_lookup` bloquant
+    /// quand il relaie un `extend` vers ce relais).
+    discovery: Option<Arc<tribler_ipv8::discovery::DiscoveryCommunity>>,
     addr: SocketAddr,
 }
 
-async fn make_node() -> TunnelNode {
+async fn make_node(
+    community_id: tribler_ipv8::CommunityId,
+    next_hop_timeout: Duration,
+    with_discovery: bool,
+) -> TunnelNode {
     let key = LibNaClSecretKey::generate();
     let network = Arc::new(Network::default());
     let ep = UdpEndpoint::bind("127.0.0.1:0").await.unwrap();
     let addr = ep.local_addr().unwrap();
-    let tunnel =
-        TunnelCommunity::new(key.clone(), network.clone(), ep.clone(), PEER_FLAG_RELAY).await;
+    let tunnel = TunnelCommunity::new_with_id(
+        key.clone(),
+        network.clone(),
+        ep.clone(),
+        tribler_tunnel::settings::TunnelSettings {
+            peer_flags: PEER_FLAG_RELAY,
+            next_hop_timeout,
+            ..Default::default()
+        },
+        community_id,
+    )
+    .await;
+    // `my_lan` = adresse UDP reelle du noeud : pyipv8 fait de
+    // `source_lan_address` l'adresse du pair (`peer.address`), c'est
+    // la ou le relais externe enverra son CREATE.
+    let discovery = if with_discovery {
+        Some(
+            tribler_ipv8::discovery::DiscoveryCommunity::new(
+                key.clone(),
+                network.clone(),
+                ep.clone(),
+                UdpAddress::from(addr),
+            )
+            .await,
+        )
+    } else {
+        None
+    };
     let ep_run = ep.clone();
     tokio::spawn(async move {
         let _ = ep_run.run().await;
@@ -70,8 +104,25 @@ async fn make_node() -> TunnelNode {
         key,
         network,
         tunnel,
+        endpoint: ep,
+        discovery,
         addr,
     }
+}
+
+/// Logue chaque datagramme UDP du noeud (prefixe + en-tete cellule) —
+/// diagnostic interop : permet de distinguer "le relais externe n'a
+/// rien envoye" de "recu mais rejete avant dispatch".
+fn spawn_tap(node: &TunnelNode, tag: &str) {
+    let tag = tag.to_string();
+    let ep = node.endpoint.clone();
+    tokio::spawn(async move {
+        let mut rx = ep.set_tap().await;
+        while let Ok((dir, src, data)) = rx.recv().await {
+            let head = hex::encode(&data[..data.len().min(30)]);
+            eprintln!("TAP[{tag}] {dir:?} {src} len={} head={head}", data.len());
+        }
+    });
 }
 
 fn peer_of(node: &TunnelNode) -> Peer {
@@ -94,7 +145,9 @@ fn free_udp_port() -> u16 {
 #[tokio::main(flavor = "multi_thread")]
 async fn main() {
     tracing_subscriber::fmt()
-        .with_env_filter("tribler_tunnel=trace,tribler_bittorrent=info,librqbit=debug,librqbit_dht=info")
+        .with_env_filter(
+            "tribler_tunnel=trace,tribler_bittorrent=info,librqbit=debug,librqbit_dht=info",
+        )
         .with_writer(std::io::stderr)
         .try_init()
         .ok();
@@ -103,6 +156,9 @@ async fn main() {
     let mut hops = 2usize;
     let mut payload_len = DEFAULT_PAYLOAD;
     let mut use_dht = false;
+    let mut relay_keyfile = None;
+    let mut tribler_id = false;
+    let mut hop_timeout_ms = 10_000u64;
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
@@ -110,11 +166,30 @@ async fn main() {
             "--hops" => hops = args.next().unwrap().parse().unwrap(),
             "--payload" => payload_len = args.next().unwrap().parse().unwrap(),
             "--dht" => use_dht = true,
+            // Prefixe de `TriblerTunnelCommunity` (`a3591a6b…`) au lieu
+            // de celui du `TunnelCommunity` pyipv8 generique — a coupler
+            // avec `--relay` (Tribler.exe) et `--community-id` cote
+            // noeud Python pour que la chaine partage le meme prefixe.
+            "--tribler-id" => tribler_id = true,
+            // Timeout `next_hop` (ms) : les relais Tribler reels font un
+            // `dht_peer_lookup` avant de forwarder un `extend` vers un
+            // pair inconnu — peut depasser les 10 s par defaut.
+            "--hop-timeout-ms" => hop_timeout_ms = args.next().unwrap().parse().unwrap(),
+            // Fichier "pubkey_hex port" d'un pair externe (ex. le vrai
+            // Tribler.exe installe) utilise comme PREMIER saut du
+            // circuit a la place d'un relais Rust interne.
+            "--relay" => relay_keyfile = args.next(),
             _ => {}
         }
     }
     let keyfile = keyfile.expect("--keyfile requis");
     assert!((1..=3).contains(&hops), "--hops doit etre 1..=3");
+    if relay_keyfile.is_some() {
+        assert!(
+            hops >= 2,
+            "--relay exige --hops >= 2 (le relais n'est pas la sortie)"
+        );
+    }
 
     // Cle publique + port du noeud Python (relais + sortie EXIT_BT).
     let kf = std::fs::read_to_string(&keyfile).expect("lecture keyfile");
@@ -213,41 +288,171 @@ async fn main() {
 
     // 4. Noeuds tunnel : downloader + `hops-1` relais Rust, sortie =
     //    noeud Python (`required_exit`).
-    let d = make_node().await;
+    let community_id = if tribler_id {
+        tribler_tunnel::TRIBLER_TUNNEL_COMMUNITY_ID
+    } else {
+        tribler_tunnel::TUNNEL_COMMUNITY_ID
+    };
+
+    // Pair relais externe optionnel (ex. Tribler.exe installe) : meme
+    // format de fichier que la keyfile Python (`pubkey_hex port`).
+    let ext_relay = relay_keyfile.map(|kf| {
+        let s = std::fs::read_to_string(&kf).expect("lecture relay keyfile");
+        let mut p = s.split_whitespace();
+        let pk = hex::decode(p.next().expect("pubkey hex")).expect("hex invalide");
+        let port: u16 = p.next().expect("port").parse().unwrap();
+        Peer::new(
+            pk,
+            Some(UdpAddress::from(
+                format!("127.0.0.1:{port}").parse::<SocketAddr>().unwrap(),
+            )),
+        )
+        .expect("cle publique relais invalide")
+    });
+
+    let hop_timeout = Duration::from_millis(hop_timeout_ms);
+    let d = make_node(community_id, hop_timeout, false).await;
+    // `hops` compte la sortie : relais intermediaires = hops-1, dont
+    // le premier peut etre le pair externe (`--relay`), le reste des
+    // relais Rust internes. Les relais Rust situes derriere un relais
+    // externe (Tribler.exe) portent une DiscoveryCommunity : ils se
+    // presentent a Tribler par introduction-request pour devenir des
+    // pairs verifies dans son annuaire, sinon `on_extend` cote Tribler
+    // fait un `dht_peer_lookup` synchrone qui peut depasser le
+    // `hop_timeout`.
+    let rust_relays = hops - 1 - usize::from(ext_relay.is_some());
     let mut relays = Vec::new();
-    for _ in 1..hops {
-        relays.push(make_node().await);
+    let tap_enabled = std::env::args().any(|a| a == "--tap");
+    for _ in 0..rust_relays {
+        relays.push(make_node(community_id, hop_timeout, ext_relay.is_some()).await);
+    }
+    if tap_enabled {
+        spawn_tap(&d, "dl");
+        for r in &relays {
+            spawn_tap(r, "rel");
+        }
+    }
+    // Introduction des relais Rust aupres du relais externe (Tribler) :
+    // signature verifiee -> `add_verified_peer` cote Tribler.
+    if let Some(rp) = &ext_relay {
+        if let Some(sa) = rp.address.as_ref().and_then(|a| a.to_socket_addr()) {
+            let taddr = UdpAddress::from(sa);
+            for r in &relays {
+                if let Some(disc) = &r.discovery {
+                    for _ in 0..8 {
+                        let _ = disc.walk_to(&taddr).await;
+                        if disc.intro_response_count() > 0 {
+                            break;
+                        }
+                        tokio::time::sleep(Duration::from_millis(250)).await;
+                    }
+                    eprintln!(
+                        "relais {} : {} intro-response(s) du relais externe",
+                        r.addr,
+                        disc.intro_response_count()
+                    );
+                }
+            }
+        }
     }
     d.network.add_verified(py_peer.clone());
+    if let Some(rp) = &ext_relay {
+        d.network.add_verified(rp.clone());
+        let sa = rp
+            .address
+            .as_ref()
+            .and_then(|a| a.to_socket_addr())
+            .expect("adresse relais");
+        d.tunnel
+            .register_exit_peer(&rp.public_key_bin, sa, PEER_FLAG_RELAY);
+    }
     for r in &relays {
         d.network.add_verified(peer_of(r));
         // Registre le relais avec son flag pour que `send_extend` le
         // trouve via `get_candidates_subset([EXIT_BT, RELAY])`.
-        d.tunnel.register_exit_peer(
-            &r.key.public_key().to_bin(),
-            r.addr,
-            PEER_FLAG_RELAY,
-        );
+        d.tunnel
+            .register_exit_peer(&r.key.public_key().to_bin(), r.addr, PEER_FLAG_RELAY);
     }
-    let first_hop = relays.first().map(peer_of).unwrap_or_else(|| py_peer.clone());
-    let cid = d
-        .tunnel
-        .create_circuit_typed(
-            hops,
-            &first_hop,
-            tribler_tunnel::routing::CIRCUIT_TYPE_DATA,
-            Some(py_pk),
-            None,
-        )
-        .await
-        .expect("create_circuit");
+    let first_hop = ext_relay
+        .clone()
+        .or_else(|| relays.first().map(peer_of))
+        .unwrap_or_else(|| py_peer.clone());
+    // Sauts intermediaires epingles = relais Rust situes APRES le
+    // premier saut : `send_extend` les impose (avec adresse reelle) au
+    // lieu de piocher dans les `candidates` annonces par le saut
+    // precedent — indispensable quand le premier saut est Tribler.exe
+    // connecte au reseau reel (ses candidates sont des pairs publics,
+    // qui ne peuvent pas joindre notre sortie loopback).
+    let pinned: Vec<Peer> = relays
+        .iter()
+        .skip(usize::from(ext_relay.is_none()))
+        .map(peer_of)
+        .collect();
+    let cid = if pinned.is_empty() {
+        d.tunnel
+            .create_circuit_typed(
+                hops,
+                &first_hop,
+                tribler_tunnel::routing::CIRCUIT_TYPE_DATA,
+                Some(py_pk.clone()),
+                None,
+            )
+            .await
+    } else {
+        d.tunnel
+            .create_circuit_pinned(
+                hops,
+                &first_hop,
+                tribler_tunnel::routing::CIRCUIT_TYPE_DATA,
+                Some(py_pk.clone()),
+                None,
+                pinned,
+            )
+            .await
+    }
+    .expect("create_circuit");
+    // Un relais Tribler peut faire un `dht_peer_lookup` avant de
+    // relayer un `extend` : le ready-wait doit couvrir `hop_timeout`
+    // par saut restant, plus une marge.
+    let ready_timeout_ms = hop_timeout_ms * (hops as u64 + 1);
     if d.tunnel
-        .wait_circuit_ready(cid, READY_TIMEOUT_MS)
+        .wait_circuit_ready(cid, ready_timeout_ms)
         .await
         .is_err()
     {
         eprintln!("ECHEC : circuit {cid} jamais READY");
         std::process::exit(1);
+    }
+    // Route effectivement construite : mids hex des sauts verifies vs
+    // attendus (relais externe, relais Rust epingles, sortie pyipv8) —
+    // evite qu'un EXTENDED valide sur une route detournee passe pour
+    // un succes de la topologie visee.
+    let expected: Vec<Peer> = {
+        let mut v = Vec::with_capacity(hops);
+        if let Some(rp) = &ext_relay {
+            v.push(rp.clone());
+        }
+        v.extend(relays.iter().map(peer_of));
+        v.push(py_peer.clone());
+        v
+    };
+    let info = d
+        .tunnel
+        .circuits_info()
+        .into_iter()
+        .find(|c| c.circuit_id == cid);
+    if let Some(info) = &info {
+        let got: Vec<String> = info.verified_hops.clone();
+        let want: Vec<String> = expected
+            .iter()
+            .map(|p| hex::encode(tribler_crypto::hash::ipv8_mid(&p.public_key_bin)))
+            .collect();
+        eprintln!("route   = {:?}", got);
+        eprintln!("attendu = {:?}", want);
+        assert_eq!(
+            got, want,
+            "route construite differente de la topologie visee"
+        );
     }
     eprintln!("circuit {cid} READY ({hops} saut(s), sortie = pyipv8)");
 
@@ -262,9 +467,8 @@ async fn main() {
 
     let mut initial_peers = None;
     let _sockets = if use_dht {
-        let socks =
-            TunnelUdpSockets::new(d.tunnel.clone(), hops, "127.0.0.1:0".parse().unwrap())
-                .expect("tunnel udp sockets");
+        let socks = TunnelUdpSockets::new(d.tunnel.clone(), hops, "127.0.0.1:0".parse().unwrap())
+            .expect("tunnel udp sockets");
         dl_cfg.utp_socket = Some(socks.utp.clone());
         dl_cfg.dht_socket = Some(Arc::new(socks.dht.clone()));
         dl_cfg.enable_dht = true;
@@ -300,14 +504,23 @@ async fn main() {
         .expect("wait_completed");
 
     let got = std::fs::read(dl_dir.path().join("fichier.bin")).unwrap();
+    // Tailles demandee (argument) et effectivement verifiee (fichier
+    // relu) : les afficher separement evite qu'un succes sous-
+    // dimensionne passe pour un gros transfert.
+    assert_eq!(
+        got.len(),
+        payload_len,
+        "taille telechargee differente de la taille demandee"
+    );
     assert_eq!(got, payload, "contenu telecharge identique");
 
     downloader.stop().await;
     seeder.stop().await;
     drop(dht_state);
     eprintln!(
-        "INTEROP EXIT DOWNLOAD OK ({} octets, {} saut(s){})",
-        payload.len(),
+        "INTEROP EXIT DOWNLOAD OK (demande={} octets, verifie={} octets, {} saut(s){})",
+        payload_len,
+        got.len(),
         hops,
         if use_dht { ", DHT" } else { "" }
     );

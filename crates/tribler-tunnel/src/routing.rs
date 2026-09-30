@@ -186,6 +186,12 @@ pub struct Circuit {
     /// de service du dernier saut, si connus (selection des circuits
     /// compatibles HTTP).
     pub exit_flags: i32,
+    /// Sauts intermediaires epingles (banc controle) : quand non vide,
+    /// `send_extend` impose ce pair comme prochain saut — avec son
+    /// adresse reelle dans `node_addr` — au lieu de choisir dans les
+    /// `candidates` annonces par le saut precedent. Consomme a mesure
+    /// que les sauts sont verifies ; en echec, pas de repli public.
+    pub pinned_hops: std::collections::VecDeque<tribler_ipv8::peer::Peer>,
     /// Etat force a `CLOSING`.
     closing: Option<String>,
 }
@@ -210,12 +216,21 @@ impl Circuit {
             relay_early_count: 0,
             hs_session_keys: None,
             exit_flags: 0,
+            pinned_hops: std::collections::VecDeque::new(),
             closing: None,
         }
     }
 
-    /// `add_hop`.
+    /// `add_hop`. Consomme le saut epingle correspondant (le plan de
+    /// sauts avance quand le pair epingle est verifie).
     pub fn add_hop(&mut self, hop: Hop) {
+        if self
+            .pinned_hops
+            .front()
+            .is_some_and(|p| p.public_key_bin == hop.public_key_bin)
+        {
+            self.pinned_hops.pop_front();
+        }
         self.hops.push(hop);
         self.unverified_hop = None;
     }

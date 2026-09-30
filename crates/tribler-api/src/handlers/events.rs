@@ -151,9 +151,7 @@ fn notification_to_event(
             "tribler_new_version".into(),
             serde_json::json!({"version": version}),
         ),
-        Notification::SettingsChanged => {
-            ("settings_changed".into(), serde_json::json!({}))
-        }
+        Notification::SettingsChanged => ("settings_changed".into(), serde_json::json!({})),
     };
     Some((topic, kwargs))
 }
@@ -233,8 +231,7 @@ mod tests {
     /// boucle de resynchronisation multi-clients de l'UI.
     #[test]
     fn settings_changed_est_mappe_en_topic_sse() {
-        let (topic, kwargs) =
-            notification_to_event(&Notification::SettingsChanged, "aa").unwrap();
+        let (topic, kwargs) = notification_to_event(&Notification::SettingsChanged, "aa").unwrap();
         assert_eq!(topic, "settings_changed");
         assert_eq!(kwargs, serde_json::json!({}));
     }

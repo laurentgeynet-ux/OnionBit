@@ -77,6 +77,10 @@ async def main() -> int:
     parser.add_argument("--keyfile", required=True)
     parser.add_argument("--log", required=True)
     parser.add_argument("--duration", type=float, default=10.0)
+    # Prefixe de community different de celui de `TunnelCommunity`
+    # pyipv8 generique — ex. `a3591a6bd89bbaca0974062a1287afcfbc6fd6bc`
+    # pour parler le fil de `TriblerTunnelCommunity` (Tribler.exe).
+    parser.add_argument("--community-id", default=None)
     args = parser.parse_args()
 
     with open(args.log, "w", encoding="ascii") as log:
@@ -92,7 +96,17 @@ async def main() -> int:
         # EXIT_BT necessaire : le DataChecker n'autorise du trafic
         # "forme uTP" qu'avec ce flag (IPv8 seul rejette).
         settings.peer_flags = {PEER_FLAG_RELAY, PEER_FLAG_EXIT_IPV8, PEER_FLAG_EXIT_BT}
-        community = TunnelCommunity(settings)
+        if args.community_id:
+            # Sous-classe a community_id custom (ex. prefixe de
+            # TriblerTunnelCommunity) : meme comportement, autre fil.
+            cid = bytes.fromhex(args.community_id)
+
+            class TriblerCompatCommunity(TunnelCommunity):
+                community_id = cid
+
+            community = TriblerCompatCommunity(settings)
+        else:
+            community = TunnelCommunity(settings)
 
         # Exporte la cle publique + port pour le noeud Rust.
         with open(args.keyfile, "w", encoding="ascii") as kf:

@@ -60,7 +60,10 @@ if (-not (Test-Path $keyFile)) {
 }
 
 $dhtFlag = if ($Dht) { "--dht" } else { "" }
-Write-Host "== telechargement rqbit via circuit ($Hops saut(s), sortie pyipv8$(if ($Dht) { ', DHT' })) =="
+# La taille demandee figure dans la ligne de lancement : une execution
+# sous-dimensionnee (ex. mauvais nom de parametre avale en silencieux)
+# reste visible dans la sortie.
+Write-Host "== telechargement rqbit via circuit ($Hops saut(s), sortie pyipv8$(if ($Dht) { ', DHT' }), payload demande = $Payload octets) =="
 $rsErr = Join-Path $outDir "rust_exit_stderr.log"
 cmd /c "`".\target\debug\examples\exit_download_interop.exe`" --keyfile `"$keyFile`" --hops $Hops --payload $Payload $dhtFlag > `"$rsLog`" 2> `"$rsErr`""
 $rsOk = $LASTEXITCODE -eq 0
@@ -70,6 +73,14 @@ Stop-Process -Id $pyProc.Id -Force -ErrorAction SilentlyContinue
 $rsStderr = Get-Content $rsErr -Raw -ErrorAction SilentlyContinue
 Write-Host "---- rust stderr (extrait) ----"
 ($rsStderr -split "`n" | Select-String "READY|INTEROP|ECHEC|timeout" | Select-Object -Last 8) | ForEach-Object { $_.Line }
+
+# La ligne OK rapporte la taille reellement verifiee : elle doit
+# correspondre a la taille demandee.
+$verified = [regex]::Match($rsStderr, "verifie=(\d+) octets")
+if ($verified.Success -and [int64]$verified.Groups[1].Value -ne [int64]$Payload) {
+    Write-Host "INTEROP EXIT DOWNLOAD ECHEC - taille verifiee $($verified.Groups[1].Value) <> demandee $Payload"
+    exit 1
+}
 
 if ($rsOk) {
     Write-Host "INTEROP EXIT DOWNLOAD OK"

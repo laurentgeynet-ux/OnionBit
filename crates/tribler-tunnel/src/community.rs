@@ -828,7 +828,7 @@ impl TunnelCommunity {
 
         if let Some(peer) = first_hops.first() {
             tracing::info!(hops, peer = ?peer.address, "tentative de creation proactive de circuit");
-            self.create_circuit_inner(hops, first_hops, CIRCUIT_TYPE_DATA, None, None)
+            self.create_circuit_inner(hops, first_hops, CIRCUIT_TYPE_DATA, None, None, Vec::new())
                 .await?;
         }
         Ok(())
@@ -1138,6 +1138,33 @@ impl TunnelCommunity {
             ctype,
             required_exit,
             info_hash,
+            Vec::new(),
+        )
+        .await
+    }
+
+    /// `create_circuit_typed` + sauts intermediaires epingles : les
+    /// hops 2..goal-1 (ordre donne) sont IMPOSES a `send_extend` avec
+    /// leur adresse reelle — pour les bancs controles ou la topologie
+    /// exacte doit etre prouvee (pas de repli sur les `candidates`
+    /// annonces par le saut precedent). `pinned` doit couvrir tous les
+    /// sauts entre `first_hop` et la sortie.
+    pub async fn create_circuit_pinned(
+        self: &Arc<Self>,
+        goal_hops: usize,
+        first_hop: &Peer,
+        ctype: &str,
+        required_exit: Option<Vec<u8>>,
+        info_hash: Option<[u8; 20]>,
+        pinned: Vec<Peer>,
+    ) -> Result<u32, Ipv8Error> {
+        self.create_circuit_inner(
+            goal_hops,
+            vec![first_hop.clone()],
+            ctype,
+            required_exit,
+            info_hash,
+            pinned,
         )
         .await
     }
@@ -1153,6 +1180,7 @@ impl TunnelCommunity {
         ctype: &str,
         required_exit: Option<Vec<u8>>,
         info_hash: Option<[u8; 20]>,
+        pinned: Vec<Peer>,
     ) -> Result<u32, Ipv8Error> {
         if first_hops.is_empty() {
             return Err(Ipv8Error::Malformed("pas de premier hop disponible"));
@@ -1162,6 +1190,7 @@ impl TunnelCommunity {
             let mut inner = self.inner.lock().unwrap();
             let mut circuit = Circuit::new(circuit_id, goal_hops, ctype, info_hash);
             circuit.required_exit = required_exit;
+            circuit.pinned_hops = pinned.into();
             inner.circuits.insert(circuit_id, circuit);
         }
         self.notify_circuits_changed();
@@ -1292,7 +1321,7 @@ impl TunnelCommunity {
     ) -> Result<(), Ipv8Error> {
         let zero: UdpAddress = UdpAddress::from("0.0.0.0:0".parse::<SocketAddr>().unwrap());
         let my_pk = self.key.public_key().to_bin();
-        let (become_exit, required_exit, first_hop_addr, exclude) = {
+        let (become_exit, required_exit, first_hop_addr, exclude, pinned) = {
             let inner = self.inner.lock().unwrap();
             let Some(c) = inner.circuits.get(&circuit_id) else {
                 return Err(Ipv8Error::Malformed("circuit inconnu"));
@@ -1310,37 +1339,62 @@ impl TunnelCommunity {
                     .and_then(|h| h.address.clone())
                     .ok_or(Ipv8Error::Malformed("pas de premier hop"))?,
                 exclude,
+                c.pinned_hops.front().cloned(),
             )
         };
 
-        // Choix du prochain saut (`send_extend` Python).
-        let (extend_pk, node_addr, alternates): (Vec<u8>, UdpAddress, Vec<Vec<u8>>) = if become_exit
-        {
-            if let Some(pk) = required_exit {
-                // `required_exit` impose : pas d'alternates.
-                let addr = self
-                    .network
-                    .get_by_key(&pk)
-                    .and_then(|p| p.address)
-                    .unwrap_or_else(|| zero.clone());
-                (pk, addr, Vec::new())
+        // Choix du prochain saut (`send_extend` Python) : un saut
+        // epingle (banc controle) prime sur les `candidates` — avec son
+        // adresse reelle dans `node_addr`, jamais de repli public.
+        let pinned = if become_exit { None } else { pinned };
+        let (extend_pk, node_addr, alternates): (Vec<u8>, UdpAddress, Vec<Vec<u8>>) =
+            if let Some(p) = pinned {
+                tracing::debug!(
+                    circuit_id,
+                    hop_pk = hex::encode(&p.public_key_bin[..8.min(p.public_key_bin.len())]),
+                    addr = ?p.address,
+                    "extend : saut epingle (banc controle)"
+                );
+                (
+                    p.public_key_bin.clone(),
+                    p.address.clone().unwrap_or_else(|| zero.clone()),
+                    // Reessayer le meme saut epingle (pas d'alternates
+                    // publics dans un banc controle).
+                    vec![p.public_key_bin.clone()],
+                )
+            } else if become_exit {
+                if let Some(pk) = required_exit {
+                    // `required_exit` impose : pas d'alternates.
+                    let addr = self
+                        .network
+                        .get_by_key(&pk)
+                        .and_then(|p| p.address)
+                        .unwrap_or_else(|| zero.clone());
+                    (pk, addr, Vec::new())
+                } else {
+                    (Vec::new(), zero.clone(), Vec::new())
+                }
             } else {
-                (Vec::new(), zero.clone(), Vec::new())
-            }
-        } else {
-            let valid: Vec<Vec<u8>> = candidates
-                .iter()
-                .filter(|k| {
-                    !exclude.contains(k)
-                        && tribler_crypto::ipv8::keys::LibNaClPublicKey::from_bin(k).is_ok()
-                })
-                .cloned()
-                .collect();
-            match valid.split_first() {
-                Some((pk, rest)) => (pk.clone(), zero.clone(), rest.to_vec()),
-                None => (Vec::new(), zero.clone(), Vec::new()),
-            }
-        };
+                let valid: Vec<Vec<u8>> = candidates
+                    .iter()
+                    .filter(|k| {
+                        !exclude.contains(k)
+                            && tribler_crypto::ipv8::keys::LibNaClPublicKey::from_bin(k).is_ok()
+                    })
+                    .cloned()
+                    .collect();
+                match valid.split_first() {
+                    Some((pk, rest)) => {
+                        tracing::debug!(
+                            circuit_id,
+                            hop_pk = hex::encode(&pk[..8.min(pk.len())]),
+                            "extend : saut issu des candidates du created"
+                        );
+                        (pk.clone(), zero.clone(), rest.to_vec())
+                    }
+                    None => (Vec::new(), zero.clone(), Vec::new()),
+                }
+            };
         let (extend_pk, node_addr, alternates) = if extend_pk.is_empty() {
             // Plus de candidat : les derniers hops proposent
             // normalement des pairs deja pounces ; a defaut on tente
@@ -1369,11 +1423,19 @@ impl TunnelCommunity {
                 choices.choose(&mut rng).cloned()
             };
             match picked {
-                Some(p) => (
-                    p.public_key_bin.clone(),
-                    p.address.unwrap_or_else(|| zero.clone()),
-                    Vec::new(),
-                ),
+                Some(p) => {
+                    tracing::debug!(
+                        circuit_id,
+                        hop_pk = hex::encode(&p.public_key_bin[..8.min(p.public_key_bin.len())]),
+                        addr = ?p.address,
+                        "extend : saut issu du registre local (repli)"
+                    );
+                    (
+                        p.public_key_bin.clone(),
+                        p.address.clone().unwrap_or_else(|| zero.clone()),
+                        Vec::new(),
+                    )
+                }
                 None => {
                     self.remove_circuit(circuit_id, "no candidates to extend")
                         .await;
@@ -1390,7 +1452,8 @@ impl TunnelCommunity {
             .network
             .get_by_key(&extend_pk)
             .and_then(|p| p.address)
-            .filter(|a| !a.is_unspecified());
+            .filter(|a| !a.is_unspecified())
+            .or_else(|| (!node_addr.is_unspecified()).then(|| node_addr.clone()));
         {
             let mut inner = self.inner.lock().unwrap();
             let Some(c) = inner.circuits.get_mut(&circuit_id) else {
@@ -1551,7 +1614,7 @@ impl TunnelCommunity {
             // "Could not create circuit, no first hop available".
             return Ok(None);
         }
-        self.create_circuit_inner(goal_hops, first_hops, ctype, required_key, None)
+        self.create_circuit_inner(goal_hops, first_hops, ctype, required_key, None, Vec::new())
             .await
             .map(Some)
     }
