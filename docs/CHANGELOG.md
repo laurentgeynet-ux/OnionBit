@@ -3,6 +3,31 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## IPv8 — Fix : overlay DHT (`DHTDiscoveryCommunity`) sans pairs
+
+- Symptôme observé en live : `/api/ipv8/overlays` affichait
+  `DHTDiscoveryCommunity` à **0 pair** alors que Discovery en comptait ~26.
+- Cause : les quatre handlers d'introduction de `DhtCommunity`
+  (`INTRODUCTION_REQUEST`/`NEW_INTRODUCTION_REQUEST`/`*_RESPONSE`)
+  appelaient `on_node_discovered` (table de routage) mais **jamais**
+  `network.add_verified` + `discover_service(DHT_COMMUNITY_ID)` —
+  étape que la classe de base pyipv8 (`Community.on_introduction_*`)
+  applique à tout pair d'introduction. Conséquences : `peers_for_service`
+  vide → marche sans candidat, jamais de pair introduit en réponse
+  (`get_peer_for_introduction`), affichage UI à 0.
+- Correctif : ajout de `add_verified` + `discover_service` dans les
+  quatre handlers, avec `new_style_intro` positionné comme pyipv8
+  (`true` pour les messages NEW_*, `supports_new_style` sinon).
+- Test de régression : `dht_intro_ping_store_find_loopback` vérifie
+  désormais `network().peers_for_service(DHT_COMMUNITY_ID)` non vide
+  des deux côtés après découverte mutuelle.
+- « Aucun relais » dans l'onglet Diagnostic est en revanche un état
+  réel et attendu : `on_extend`/`join_circuit` existent et le flag
+  `RELAY` est annoncé, mais servir de relais exige qu'un initiateur
+  public nous choisisse **et** que son `CREATE` atteigne notre port
+  (NAT) — le banc épinglé prouve que le code relaie quand il est
+  sollicité.
+
 ## Daemon — Icône systray/exe passée à OnionBit
 
 - `resources/tribler.ico` (ancien logo Tribler rouge) remplacé par

@@ -1527,7 +1527,7 @@ impl DhtCommunity {
             return self.on_puncture_request(src_addr, &pkt);
         }
 
-        let Some(peer) = Peer::new(pkt.public_key_bin.clone(), Some(src_addr.clone())) else {
+        let Some(mut peer) = Peer::new(pkt.public_key_bin.clone(), Some(src_addr.clone())) else {
             return Ok(());
         };
         let mut r = Reader::new(&pkt.payload);
@@ -1774,6 +1774,13 @@ impl DhtCommunity {
             }
             crate::payloads::msg::NEW_INTRODUCTION_REQUEST => {
                 let p = crate::payloads::NewIntroductionRequest::unpack(&mut r)?;
+                // `peer.new_style_intro = True` + `add_verified_peer`
+                // + `discover_services([community_id])` Python : le
+                // demandeur rejoint les pairs du service DHT.
+                peer.new_style_intro = true;
+                self.network.add_verified(peer.clone());
+                self.network
+                    .discover_service(&peer.public_key_bin, DHT_COMMUNITY_ID);
                 self.on_node_discovered(peer.public_key_bin.clone(), src_addr.clone());
                 self.reply_result(src_addr, crate::payloads::msg::NEW_INTRODUCTION_RESPONSE, {
                     let mut w = Writer::new();
@@ -1793,6 +1800,12 @@ impl DhtCommunity {
             }
             crate::payloads::msg::INTRODUCTION_REQUEST => {
                 let p = crate::payloads::IntroductionRequest::unpack(&mut r)?;
+                // `peer.new_style_intro = supports_new_style` +
+                // `add_verified_peer` + `discover_services` Python.
+                peer.new_style_intro = p.supports_new_style;
+                self.network.add_verified(peer.clone());
+                self.network
+                    .discover_service(&peer.public_key_bin, DHT_COMMUNITY_ID);
                 self.on_node_discovered(peer.public_key_bin.clone(), src_addr.clone());
                 // `get_peer_for_introduction` : un pair connu du
                 // service DHT (hors demandeur) est introduit, puis
@@ -1844,6 +1857,14 @@ impl DhtCommunity {
             }
             crate::payloads::msg::INTRODUCTION_RESPONSE => {
                 let p = crate::payloads::IntroductionResponse::unpack(&mut r)?;
+                // `add_verified_peer` + `discover_services` Python :
+                // le repondant rejoint les pairs du service DHT —
+                // sans cela `peers_for_service` reste vide (marche,
+                // intros et affichage `overlays` a 0).
+                peer.new_style_intro = p.supports_new_style;
+                self.network.add_verified(peer.clone());
+                self.network
+                    .discover_service(&peer.public_key_bin, DHT_COMMUNITY_ID);
                 self.on_node_discovered(peer.public_key_bin.clone(), src_addr.clone());
                 // `introductions` Python : les adresses introduites
                 // deviennent des walkables du service DHT.
@@ -1856,6 +1877,10 @@ impl DhtCommunity {
             }
             crate::payloads::msg::NEW_INTRODUCTION_RESPONSE => {
                 let p = crate::payloads::NewIntroductionResponse::unpack(&mut r)?;
+                peer.new_style_intro = true;
+                self.network.add_verified(peer.clone());
+                self.network
+                    .discover_service(&peer.public_key_bin, DHT_COMMUNITY_ID);
                 self.on_node_discovered(peer.public_key_bin.clone(), src_addr.clone());
                 for addr in [p.lan_introduction_address, p.wan_introduction_address] {
                     if !addr.is_unspecified() {

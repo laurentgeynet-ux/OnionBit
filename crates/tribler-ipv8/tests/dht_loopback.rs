@@ -42,6 +42,19 @@ async fn dht_intro_ping_store_find_loopback() {
     assert!(a.node_count() >= 1, "A n'a pas decouvert B");
     assert!(b.node_count() >= 1, "B n'a pas decouvert A");
 
+    // Regression : `add_verified_peer` + `discover_services` Python —
+    // un echange d'introduction doit aussi inscrire le pair dans le
+    // service DHT du `Network` (sinon `peers_for_service` reste vide :
+    // `/api/ipv8/overlays` a 0 pair, la marche n'a aucun candidat).
+    assert!(
+        !a.network().peers_for_service(&DHT_COMMUNITY_ID).is_empty(),
+        "B absent des pairs du service DHT de A"
+    );
+    assert!(
+        !b.network().peers_for_service(&DHT_COMMUNITY_ID).is_empty(),
+        "A absent des pairs du service DHT de B"
+    );
+
     // B stocke une valeur signee ; A l'heberge (B crawl sa table ->
     // token -> store-request vers A).
     let target: [u8; 20] = tribler_crypto::hash::sha1(b"cle-de-test");
