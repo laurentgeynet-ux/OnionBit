@@ -3,6 +3,14 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## UI — Sidebar : mode rail rétractable 216 ↔ 72 px (étape 5/6)
+
+- `sidebarCollapsedProvider` (session) + bouton chevron en pied :
+  rail icônes seules — logo `icon.svg`, bouton « + », items centrés
+  avec `Tooltip`, groupes remplacés par un séparateur.
+- Même items/providers, aucun état dupliqué ; l'indentation des
+  sous-filtres est neutralisée en mode rail.
+
 ## UI — Sidebar : sous-filtres repliables (étape 4/6)
 
 - `sidebarFiltersExpandedProvider` (session) + chevron en bout de

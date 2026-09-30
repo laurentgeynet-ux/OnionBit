@@ -39,7 +39,7 @@ Chaque étape = implémentation + `flutter analyze`/tests + cochage ici +
 - La navigation vers `/downloads` reste au clic sur le label ; le
   chevron seul replie/déplie.
 
-## Étape 5 — Mode rail rétractable
+## Étape 5 — Mode rail rétractable [x] (2026-10-02)
 
 - Bouton en bas de sidebar : bascule largeur 216 px ↔ rail icônes
   (~72 px, labels masqués, `Tooltip` sur les entrées).

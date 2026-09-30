@@ -25,6 +25,19 @@ class _FiltersExpandedNotifier extends Notifier<bool> {
   void toggle() => state = !state;
 }
 
+/// Bascule sidebar pleine largeur ↔ rail icônes seules (état de
+/// session uniquement).
+final sidebarCollapsedProvider = NotifierProvider<_CollapsedNotifier, bool>(
+  _CollapsedNotifier.new,
+);
+
+class _CollapsedNotifier extends Notifier<bool> {
+  @override
+  bool build() => false;
+
+  void toggle() => state = !state;
+}
+
 /// Sidebar fixe type Tribler (~216 px) : bouton « Ajouter » en tête,
 /// groupe « Bibliothèque » (Téléchargements + sous-filtres avec
 /// compteurs, Rechercher) puis groupe « Système » (Réglages,
@@ -45,6 +58,9 @@ class AppSidebar extends ConsumerWidget {
 
   static const double width = 216;
 
+  /// Largeur du rail rétracté (icônes seules).
+  static const double collapsedWidth = 72;
+
   static const _filterIcons = {
     DownloadFilter.downloading: Icons.downloading,
     DownloadFilter.completed: Icons.check_circle_outline,
@@ -58,22 +74,27 @@ class AppSidebar extends ConsumerWidget {
     final downloads = ref.watch(downloadsProvider).value;
     final errors = downloads?.where((d) => d.isError).length ?? 0;
     final filtersExpanded = ref.watch(sidebarFiltersExpandedProvider);
+    final collapsed = ref.watch(sidebarCollapsedProvider);
     return Material(
       color: scheme.surface,
       child: SizedBox(
-        width: width,
+        width: collapsed ? collapsedWidth : width,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Padding(
-              padding: const EdgeInsets.all(AppSpacing.md),
+              padding: EdgeInsets.all(
+                collapsed ? AppSpacing.xs : AppSpacing.md,
+              ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   // Logo OnionBit (SVG brandé) — fallback icône si
                   // l'asset n'est pas embarqué dans ce build.
                   SvgPicture.asset(
-                    'assets/branding/logo-horizontal.svg',
+                    collapsed
+                        ? 'assets/branding/icon.svg'
+                        : 'assets/branding/logo-horizontal.svg',
                     height: 28,
                     fit: BoxFit.contain,
                     alignment: Alignment.centerLeft,
@@ -92,13 +113,28 @@ class AppSidebar extends ConsumerWidget {
                     ),
                   ),
                   const SizedBox(height: AppSpacing.md),
-                  FilledButton.icon(
-                    onPressed: () => AddDownloadDialog.show(context),
-                    icon: const Icon(Icons.add),
-                    label: const Text('Ajouter'),
-                  ),
-                  const SizedBox(height: AppSpacing.sm),
-                  const _SpeedsRow(),
+                  if (collapsed)
+                    Tooltip(
+                      message: 'Ajouter un téléchargement',
+                      child: FilledButton(
+                        style: FilledButton.styleFrom(
+                          padding: EdgeInsets.zero,
+                          minimumSize: const Size(48, 40),
+                        ),
+                        onPressed: () => AddDownloadDialog.show(context),
+                        child: const Icon(Icons.add),
+                      ),
+                    )
+                  else
+                    FilledButton.icon(
+                      onPressed: () => AddDownloadDialog.show(context),
+                      icon: const Icon(Icons.add),
+                      label: const Text('Ajouter'),
+                    ),
+                  if (!collapsed) ...[
+                    const SizedBox(height: AppSpacing.sm),
+                    const _SpeedsRow(),
+                  ],
                 ],
               ),
             ),
@@ -106,9 +142,10 @@ class AppSidebar extends ConsumerWidget {
               child: ListView(
                 padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm),
                 children: [
-                  const _GroupLabel('Bibliothèque'),
+                  if (!collapsed) const _GroupLabel('Bibliothèque'),
                   _NavItem(
                     d: kNavCatalog[0],
+                    collapsed: collapsed,
                     selected:
                         currentPath == '/downloads' &&
                         currentQuery['f'] == null,
@@ -133,6 +170,7 @@ class AppSidebar extends ConsumerWidget {
                     for (final f in DownloadFilter.values.skip(1))
                       _FilterItem(
                         filter: f,
+                        collapsed: collapsed,
                         icon: _filterIcons[f],
                         selected:
                             currentPath == '/downloads' &&
@@ -141,18 +179,37 @@ class AppSidebar extends ConsumerWidget {
                       ),
                   _NavItem(
                     d: kNavCatalog[1],
+                    collapsed: collapsed,
                     selected: currentPath == '/search',
                   ),
-                  const _GroupLabel('Système'),
+                  if (!collapsed)
+                    const Divider(height: AppSpacing.lg)
+                  else
+                    const _GroupLabel('Système'),
                   _NavItem(
                     d: kNavCatalog[3],
+                    collapsed: collapsed,
                     selected: currentPath == '/settings',
                   ),
                   _NavItem(
                     d: kNavCatalog[2],
+                    collapsed: collapsed,
                     selected: currentPath == '/diagnostic',
                   ),
                 ],
+              ),
+            ),
+            const Divider(height: 1),
+            Align(
+              alignment: collapsed ? Alignment.center : Alignment.centerRight,
+              child: IconButton(
+                tooltip: collapsed ? 'Déplier la sidebar' : 'Replier en rail',
+                icon: Icon(
+                  collapsed ? Icons.chevron_right : Icons.chevron_left,
+                  size: 20,
+                ),
+                onPressed: () =>
+                    ref.read(sidebarCollapsedProvider.notifier).toggle(),
               ),
             ),
           ],
@@ -194,12 +251,16 @@ class _NavItem extends StatelessWidget {
   const _NavItem({
     required this.d,
     required this.selected,
+    this.collapsed = false,
     this.badge,
     this.trailing,
   });
 
   final NavDestinationSpec d;
   final bool selected;
+
+  /// Mode rail : icône seule + tooltip sur le label.
+  final bool collapsed;
 
   /// Badge en bout d'item (ex. compteur d'erreurs).
   final Widget? badge;
@@ -212,6 +273,7 @@ class _NavItem extends StatelessWidget {
     return _SidebarItem(
       icon: selected ? d.selectedIcon : d.icon,
       label: d.label,
+      collapsed: collapsed,
       selected: selected,
       trailing: badge != null || trailing != null
           ? Row(mainAxisSize: MainAxisSize.min, children: [?badge, ?trailing])
@@ -226,22 +288,25 @@ class _FilterItem extends StatelessWidget {
   const _FilterItem({
     required this.filter,
     required this.selected,
+    this.collapsed = false,
     this.icon,
     this.count,
   });
 
   final DownloadFilter filter;
   final bool selected;
+  final bool collapsed;
   final IconData? icon;
   final int? count;
 
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.only(left: AppSpacing.lg),
+      padding: EdgeInsets.only(left: collapsed ? 0 : AppSpacing.lg),
       child: _SidebarItem(
         icon: icon,
         label: filter.label,
+        collapsed: collapsed,
         selected: selected,
         trailing: count == null ? null : _CountBadge(count: count!),
         onTap: () => context.go('/downloads?f=${filter.queryKey}'),
@@ -258,6 +323,7 @@ class _SidebarItem extends StatelessWidget {
     required this.label,
     required this.selected,
     required this.onTap,
+    this.collapsed = false,
     this.icon,
     this.trailing,
   });
@@ -265,6 +331,9 @@ class _SidebarItem extends StatelessWidget {
   final String label;
   final bool selected;
   final VoidCallback onTap;
+
+  /// Mode rail : icône centrée, label masqué, `Tooltip` au survol.
+  final bool collapsed;
   final IconData? icon;
   final Widget? trailing;
 
@@ -273,6 +342,26 @@ class _SidebarItem extends StatelessWidget {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final color = selected ? scheme.onPrimaryContainer : scheme.onSurface;
+    if (collapsed) {
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 2),
+        child: Tooltip(
+          message: label,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(24),
+            onTap: onTap,
+            child: Container(
+              decoration: BoxDecoration(
+                color: selected ? scheme.primaryContainer : Colors.transparent,
+                borderRadius: BorderRadius.circular(24),
+              ),
+              padding: const EdgeInsets.all(AppSpacing.sm - 2),
+              child: Center(child: Icon(icon, size: 20, color: color)),
+            ),
+          ),
+        ),
+      );
+    }
     return Padding(
       padding: const EdgeInsets.only(bottom: 2),
       child: InkWell(
