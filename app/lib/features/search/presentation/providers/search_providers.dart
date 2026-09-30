@@ -58,8 +58,7 @@ final searchColSortProvider =
       SearchColSortNotifier.new,
     );
 
-class SearchColSortNotifier
-    extends Notifier<({SearchCol col, bool asc})?> {
+class SearchColSortNotifier extends Notifier<({SearchCol col, bool asc})?> {
   @override
   ({SearchCol col, bool asc})? build() => null;
 
@@ -74,16 +73,16 @@ int Function(TorrentResult, TorrentResult) searchComparator(SearchCol col) {
   int? leechersOf(TorrentResult r) => r.leechers;
   return switch (col) {
     SearchCol.name => (a, b) => a.name.toLowerCase().compareTo(
-        b.name.toLowerCase(),
-      ),
+      b.name.toLowerCase(),
+    ),
     SearchCol.size => (a, b) => a.size.compareTo(b.size),
-    SearchCol.seeds => (a, b) =>
-        (seedsOf(a) ?? -1).compareTo(seedsOf(b) ?? -1),
-    SearchCol.leechers => (a, b) =>
-        (leechersOf(a) ?? -1).compareTo(leechersOf(b) ?? -1),
+    SearchCol.seeds => (a, b) => (seedsOf(a) ?? -1).compareTo(seedsOf(b) ?? -1),
+    SearchCol.leechers => (a, b) => (leechersOf(a) ?? -1).compareTo(
+      leechersOf(b) ?? -1,
+    ),
     SearchCol.date => (a, b) => (a.date ?? DateTime(1970)).compareTo(
-        b.date ?? DateTime(1970),
-      ),
+      b.date ?? DateTime(1970),
+    ),
     SearchCol.source => (a, b) => a.source.index.compareTo(b.source.index),
   };
 }

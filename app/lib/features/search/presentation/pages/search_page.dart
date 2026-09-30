@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/di/providers.dart';
@@ -7,6 +8,7 @@ import '../../../../core/theme/app_theme.dart';
 import '../../../../core/utils/byte_formatter.dart';
 import '../../../../core/widgets/empty_state.dart';
 import '../../../../core/widgets/error_state.dart';
+import '../../../downloads/presentation/providers/downloads_providers.dart';
 import '../../../downloads/presentation/widgets/add_download_dialog.dart';
 import '../../domain/torrent_result.dart';
 import '../providers/search_providers.dart';
@@ -83,8 +85,7 @@ class SearchPage extends ConsumerWidget {
                 tooltip: 'Trier les résultats',
                 icon: const Icon(Icons.sort, size: 20),
                 initialValue: sort,
-                onSelected: (s) =>
-                    ref.read(searchSortProvider.notifier).set(s),
+                onSelected: (s) => ref.read(searchSortProvider.notifier).set(s),
                 itemBuilder: (context) => [
                   for (final s in SearchSort.values)
                     CheckedPopupMenuItem(
@@ -116,15 +117,18 @@ class SearchPage extends ConsumerWidget {
                         : 'Essayez d\'autres termes, ou attendez les '
                               'réponses du réseau.',
                   )
-                : compact
-                ? ListView.builder(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: AppSpacing.sm,
-                    ),
-                    itemCount: merged.length,
-                    itemBuilder: (context, i) => _ResultTile(result: merged[i]),
-                  )
-                : _ResultsTable(results: merged),
+                : _SearchContextMenu(
+                    child: compact
+                        ? ListView.builder(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: AppSpacing.sm,
+                            ),
+                            itemCount: merged.length,
+                            itemBuilder: (context, i) =>
+                                _ResultTile(result: merged[i]),
+                          )
+                        : _ResultsTable(results: merged),
+                  ),
           ),
         ),
       ],
@@ -149,37 +153,41 @@ class _ResultTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final r = result;
     final theme = Theme.of(context);
-    return ListTile(
-      dense: true,
-      leading: Icon(
-        r.source == TorrentSource.remote
-            ? Icons.cloud_outlined
-            : Icons.storage_outlined,
-        size: 20,
-      ),
-      title: Text(
-        r.name.isEmpty ? r.infohash : r.name,
-        overflow: TextOverflow.ellipsis,
-      ),
-      subtitle: Text(
-        [
-          ByteFormatter.format(r.size),
-          if (r.seeders != null)
-            '${r.seeders} seeds / ${r.leechers ?? 0} leechers',
-          r.source == TorrentSource.remote ? 'réseau' : 'local',
-        ].join(' · '),
-        style: theme.textTheme.bodySmall,
-      ),
-      trailing: FilledButton.tonalIcon(
-        onPressed: r.infohash.isEmpty
+    return GestureDetector(
+      onSecondaryTapUp: (details) =>
+          _SearchContextMenu.show(context, details.globalPosition, r),
+      child: ListTile(
+        dense: true,
+        leading: Icon(
+          r.source == TorrentSource.remote
+              ? Icons.cloud_outlined
+              : Icons.storage_outlined,
+          size: 20,
+        ),
+        title: Text(
+          r.name.isEmpty ? r.infohash : r.name,
+          overflow: TextOverflow.ellipsis,
+        ),
+        subtitle: Text(
+          [
+            ByteFormatter.format(r.size),
+            if (r.seeders != null)
+              '${r.seeders} seeds / ${r.leechers ?? 0} leechers',
+            r.source == TorrentSource.remote ? 'réseau' : 'local',
+          ].join(' · '),
+          style: theme.textTheme.bodySmall,
+        ),
+        trailing: FilledButton.tonalIcon(
+          onPressed: r.infohash.isEmpty
+              ? null
+              : () => AddDownloadDialog.show(context, initialUri: r.magnet),
+          icon: const Icon(Icons.download, size: 18),
+          label: const Text('Ajouter'),
+        ),
+        onTap: r.infohash.isEmpty
             ? null
             : () => AddDownloadDialog.show(context, initialUri: r.magnet),
-        icon: const Icon(Icons.download, size: 18),
-        label: const Text('Ajouter'),
       ),
-      onTap: r.infohash.isEmpty
-          ? null
-          : () => AddDownloadDialog.show(context, initialUri: r.magnet),
     );
   }
 }
@@ -296,6 +304,8 @@ class _ResultRow extends StatelessWidget {
         onTap: r.infohash.isEmpty
             ? null
             : () => AddDownloadDialog.show(context, initialUri: r.magnet),
+        onSecondaryTapUp: (details) =>
+            _SearchContextMenu.show(context, details.globalPosition, r),
         child: Padding(
           padding: const EdgeInsets.symmetric(
             horizontal: AppSpacing.sm,
@@ -396,4 +406,110 @@ String _formatDate(DateTime? d) {
   if (d == null) return '—';
   String two(int v) => v.toString().padLeft(2, '0');
   return '${d.year}-${two(d.month)}-${two(d.day)}';
+}
+
+/// Menu contextuel d'un résultat (même pattern `MenuAnchor` que la page
+/// Téléchargements) : ajout direct anonyme, copie magnet/info-hash.
+class _SearchContextMenu extends ConsumerStatefulWidget {
+  const _SearchContextMenu({required this.child});
+
+  final Widget child;
+
+  static void show(BuildContext context, Offset position, TorrentResult r) {
+    context.findAncestorStateOfType<_SearchContextMenuState>()?._open(
+      position,
+      r,
+    );
+  }
+
+  @override
+  ConsumerState<_SearchContextMenu> createState() => _SearchContextMenuState();
+}
+
+class _SearchContextMenuState extends ConsumerState<_SearchContextMenu> {
+  final MenuController _controller = MenuController();
+  TorrentResult? _target;
+
+  void _open(Offset position, TorrentResult r) {
+    setState(() => _target = r);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _controller.open(position: position);
+    });
+  }
+
+  void _toast(String message) {
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  /// Ajout direct (sans dialogue) avec `hops` sauts anonymes —
+  /// `safeSeeding` forcé quand hops > 0 (règle Python).
+  Future<void> _add(TorrentResult r, int hops) async {
+    try {
+      await ref
+          .read(downloadsRepositoryProvider)
+          .add(uri: r.magnet, anonHops: hops, safeSeeding: hops > 0);
+      await ref.read(downloadsProvider.notifier).refresh();
+      _toast(
+        hops == 0
+            ? '« ${r.name} » ajouté'
+            : '« ${r.name} » ajouté en anonyme ($hops saut${hops > 1 ? 's' : ''})',
+      );
+    } catch (e) {
+      _toast('Ajout : $e');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final r = _target;
+    return MenuAnchor(
+      controller: _controller,
+      menuChildren: r == null ? const [] : _items(r),
+      child: widget.child,
+    );
+  }
+
+  List<Widget> _items(TorrentResult r) {
+    MenuItemButton item(IconData icon, String label, void Function() onTap) =>
+        MenuItemButton(
+          leadingIcon: Icon(icon, size: 18),
+          onPressed: onTap,
+          child: Text(label),
+        );
+
+    return [
+      item(
+        Icons.download,
+        'Ajouter…',
+        () => AddDownloadDialog.show(context, initialUri: r.magnet),
+      ),
+      SubmenuButton(
+        leadingIcon: const Icon(Icons.shield_outlined, size: 18),
+        menuChildren: [
+          for (final h in const [0, 1, 2, 3])
+            MenuItemButton(
+              leadingIcon: Icon(
+                h == 0 ? Icons.public : Icons.shield_outlined,
+                size: 18,
+              ),
+              onPressed: () => _add(r, h),
+              child: Text(
+                h == 0 ? 'Direct (0 saut)' : '$h saut${h > 1 ? 's' : ''}',
+              ),
+            ),
+        ],
+        child: const Text('Ajout rapide'),
+      ),
+      const Divider(height: 1),
+      item(Icons.link, 'Copier le lien magnet', () {
+        Clipboard.setData(ClipboardData(text: r.magnet));
+        _toast('Lien magnet copié');
+      }),
+      item(Icons.copy, 'Copier l\'info-hash', () {
+        Clipboard.setData(ClipboardData(text: r.infohash));
+        _toast('Info-hash copié');
+      }),
+    ];
+  }
 }

@@ -59,11 +59,14 @@ class RestSearchRepository implements SearchRepository {
     bool sortDesc = true,
   }) async => [
     for (final j in _results(
-      await _api.get('/metadata/search/local', query: {
-        'fts_text': query,
-        'sort_by': ?sortBy,
-        'sort_desc': '$sortDesc',
-      }),
+      await _api.get(
+        '/metadata/search/local',
+        query: {
+          'fts_text': query,
+          'sort_by': ?sortBy,
+          'sort_desc': '$sortDesc',
+        },
+      ),
     ))
       _parse(j, TorrentSource.local),
   ];

@@ -3,6 +3,14 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## UI : menu contextuel + ajout anonyme dans Rechercher (2026-09-30)
+
+Étape 2 de `docs/plans/app_search_enrichissement.md` : clic droit sur
+un résultat (table et liste compacte) — « Ajouter… » (dialogue),
+sous-menu « Ajout rapide » 0-3 sauts (`anon_hops` + `safe_seeding`
+forcé, ajout direct sans dialogue), copie magnet/info-hash. Même
+pattern `MenuAnchor` que Téléchargements.
+
 ## UI : table triable + date + santé dans Rechercher (2026-09-30)
 
 Étape 1 de `docs/plans/app_search_enrichissement.md` : les résultats

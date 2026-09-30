@@ -28,7 +28,7 @@ Constantes backend vérifiées (2026-09-30) :
   vert, leechers seuls = orange, rien = rouge/gris).
 - Compact : ListTiles conservés.
 
-## Étape 2 — Menu contextuel + ajout anonyme
+## Étape 2 — Menu contextuel + ajout anonyme [x] (2026-09-30)
 
 - Clic droit / appui long : Ajouter, sous-menu « Ajouter en anonyme »
   (0-3 sauts — `add(uri:, anonHops: h, safeSeeding: true)`), Copier le
