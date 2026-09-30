@@ -3,6 +3,15 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## UI — Tests widget des zones enrichies (étape 7/8)
+
+- `test/ui_enrichissement_test.dart` : centre de notifications
+  (push/non-lues/borne à 100/markAllRead/clear), persistance des
+  préférences UI (tri Téléchargements et Rechercher, rail rétracté,
+  filtres repliés, mode d'affichage — rechargement via
+  `uiPrefsInitProvider` + vérification write-through), widget
+  `EmptyState` (rendu + action). Suite portée à 15 tests.
+
 ## UI — Téléchargements : vues grille et liste compacte (étape 6/8)
 
 - `downloadViewModeProvider` (persisté `ui.downloadViewMode`) +
