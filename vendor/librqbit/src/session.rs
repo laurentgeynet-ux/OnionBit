@@ -1471,9 +1471,16 @@ impl Session {
         // l'API) et les autres add_torrent. -> init hors du lock
         // (la concurrence reste bornee par `_permit`), la dedup est
         // re-verifiee au moment de l'insertion.
+        let t_init = std::time::Instant::now();
         let storage = self
             .spawner
             .block_in_place(|| minfo.storage_factory.create_and_init(&minfo, &metadata))?;
+        info!(
+            id,
+            elapsed_ms = t_init.elapsed().as_millis() as u64,
+            files = metadata.file_infos.len(),
+            "create_and_init termine"
+        );
 
         let managed_torrent = {
             let mut g = self.db.write();

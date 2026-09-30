@@ -214,14 +214,23 @@ impl TorrentStateInitializing {
                 .context("error loading have_pieces")?
         };
 
+        let t_fast = Instant::now();
         let have_pieces = self
             .validate_fastresume(&*bitv_factory, have_pieces, sampled_check)
             .await;
+        if have_pieces.is_some() {
+            info!(
+                torrent = ?self.shared.id,
+                elapsed_ms = t_fast.elapsed().as_millis() as u64,
+                "validate_fastresume termine"
+            );
+        }
 
         let have_pieces = match have_pieces {
             Some(h) => h,
             None => {
                 info!("Doing initial checksum validation, this might take a while...");
+                let t_full = Instant::now();
                 let have_pieces = self
                     .shared
                     .spawner
@@ -230,6 +239,11 @@ impl TorrentStateInitializing {
                             .initial_check(&self.checked_bytes, &self.pause_requested)
                     })
                     .await?;
+                info!(
+                    torrent = ?self.shared.id,
+                    elapsed_ms = t_full.elapsed().as_millis() as u64,
+                    "initial_check termine"
+                );
                 bitv_factory
                     .store_initial_check(id, have_pieces)
                     .await
@@ -267,7 +281,9 @@ impl TorrentStateInitializing {
         );
 
         // Ensure file lengths are correct, and reopen read-only.
-        self.shared
+        let t_len = Instant::now();
+        let res = self
+            .shared
             .spawner
             .block_in_place_with_semaphore(|| {
                 for (idx, fi) in self.metadata.file_infos.iter().enumerate() {
@@ -299,7 +315,13 @@ impl TorrentStateInitializing {
                 }
                 Ok::<_, anyhow::Error>(())
             })
-            .await?;
+            .await;
+        info!(
+            torrent = ?self.shared.id,
+            elapsed_ms = t_len.elapsed().as_millis() as u64,
+            "ensure_file_length termine"
+        );
+        res?;
 
         let paused = TorrentStatePaused {
             shared: self.shared.clone(),
