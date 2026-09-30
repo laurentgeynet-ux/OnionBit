@@ -29,7 +29,7 @@ fichier (cochage) + `docs/CHANGELOG.md` + commit dédié. Les modifications
 - Pastille santé colorée dans la colonne Pairs (vert/orange/rouge selon
   `numSeeds`/`numConnectedPeers`).
 
-## Étape 3 — Presets de limites de débit dans le menu contextuel
+## Étape 3 — Presets de limites de débit dans le menu contextuel [x] (2026-09-30)
 
 - Sous-menu « Limites de débit » : upload et download, presets
   64 / 128 / 512 Kio/s / 1 Mio/s / illimité, coche sur la valeur courante,

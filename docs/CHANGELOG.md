@@ -3,6 +3,15 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## UI : presets de limites de débit dans le menu contextuel (2026-09-30)
+
+Étape 3 de `docs/plans/app_downloads_enrichissement.md` : le menu
+contextuel remplace l'entrée « Limites de débit… » par un sous-menu
+Réception/Envoi à presets rapides (64 à 4096 Kio/s, coche sur la valeur
+courante), « Illimité » (`-1` — `0` est ignoré par le walrus backend et
+`-1` retombe sur `None` via `u64::try_from`) et « Personnalisé… » qui
+rouvre le dialogue complet.
+
 ## UI : lignes de téléchargement enrichies (2026-09-30)
 
 Étape 2 de `docs/plans/app_downloads_enrichissement.md` :

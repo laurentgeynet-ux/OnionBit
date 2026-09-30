@@ -672,6 +672,57 @@ class _DownloadsContextMenuState extends ConsumerState<_DownloadsContextMenu> {
     ).showSnackBar(SnackBar(content: Text(message)));
   }
 
+  /// Presets en octets/s : 64/128/256/512 Kio/s, 1/4 Mio/s.
+  static const _kRatePresets = [
+    64 * 1024,
+    128 * 1024,
+    256 * 1024,
+    512 * 1024,
+    1024 * 1024,
+    4 * 1024 * 1024,
+  ];
+
+  /// Sous-menu d'une direction (réception/envoi) : presets cochés sur
+  /// la valeur courante, « Illimité » (`-1` — `0` est ignoré par le
+  /// walrus backend, `-1` retombe sur `None` côté `try_from`), et
+  /// « Personnalisé… » renvoyant au dialogue complet.
+  Widget _rateLimitSubmenu({
+    required String label,
+    required int current,
+    required List<int> presets,
+    required void Function(int bytesPerSec) onPick,
+    required void Function() onCustom,
+  }) {
+    return SubmenuButton(
+      menuChildren: [
+        for (final v in presets)
+          MenuItemButton(
+            leadingIcon: Icon(
+              current == v ? Icons.check : null,
+              size: 18,
+            ),
+            onPressed: () => onPick(v),
+            child: Text(ByteFormatter.formatRate(v)),
+          ),
+        const Divider(height: 1),
+        MenuItemButton(
+          leadingIcon: Icon(
+            current <= 0 ? Icons.check : null,
+            size: 18,
+          ),
+          onPressed: () => onPick(-1),
+          child: const Text('Illimité'),
+        ),
+        MenuItemButton(
+          leadingIcon: const Icon(Icons.tune, size: 18),
+          onPressed: onCustom,
+          child: const Text('Personnalisé…'),
+        ),
+      ],
+      child: Text('$label (${current > 0 ? ByteFormatter.formatRate(current) : '∞'})'),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final d = _target;
@@ -787,10 +838,31 @@ class _DownloadsContextMenuState extends ConsumerState<_DownloadsContextMenu> {
         ),
       ),
       const Divider(height: 1),
-      item(
-        Icons.speed,
-        'Limites de débit…',
-        () => showRateLimitsDialog(context, d),
+      SubmenuButton(
+        leadingIcon: const Icon(Icons.speed, size: 18),
+        menuChildren: [
+          _rateLimitSubmenu(
+            label: 'Réception ↓',
+            current: d.downloadLimit,
+            presets: _kRatePresets,
+            onPick: (v) => _act(
+              'limite de réception',
+              notifier.setRateLimits(d.infohash, downloadLimit: v),
+            ),
+            onCustom: () => showRateLimitsDialog(context, d),
+          ),
+          _rateLimitSubmenu(
+            label: 'Envoi ↑',
+            current: d.uploadLimit,
+            presets: _kRatePresets,
+            onPick: (v) => _act(
+              'limite d\'envoi',
+              notifier.setRateLimits(d.infohash, uploadLimit: v),
+            ),
+            onCustom: () => showRateLimitsDialog(context, d),
+          ),
+        ],
+        child: const Text('Limites de débit'),
       ),
       item(Icons.balance, 'Ratio de seed…', () => showSeedingRatioDialog(context, d)),
       item(
