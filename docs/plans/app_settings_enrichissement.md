@@ -64,7 +64,7 @@ Chaque étape = implémentation + `flutter analyze`/tests + cochage ici +
   (illimité, 1/5/10 Mo/s) cohérents avec le menu contextuel des
   téléchargements.
 
-## Étape 7 — Réseau : état réel en lecture seule
+## Étape 7 — Réseau : état réel en lecture seule [x] (2026-10-02)
 
 - Carte d'état dans `NetworkSection` : port d'écoute, DHT, UPnP/NAT-PMP,
   proxy actif — valeurs lues depuis l'arbre de réglages + état runtime

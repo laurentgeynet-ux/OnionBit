@@ -3,6 +3,16 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## UI — Réglages : carte « État effectif » réseau (étape 7/8)
+
+- `_EffectiveState` en tête de la section Réseau : port d'écoute et
+  interfaces réels (`listen_port`/`listen_interfaces` runtime),
+  indicateurs DHT/UPnP/NAT-PMP/LSD/uTP, proxy actif, et pairs par
+  overlay IPv8 (`/api/ipv8/overlays`).
+- Lecture seule et tooltip rappelant que les commutateurs éditables
+  ne prennent effet qu'au redémarrage — réutilise
+  `overlaysProvider` du diagnostic, aucune traduction REST dupliquée.
+
 ## UI — Réglages : sliders + presets de bande passante (étape 6/8)
 
 - `_RateControl` : champ Ko/s + slider exponentiel (0 = illimité ↔

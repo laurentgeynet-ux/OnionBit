@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/theme/app_theme.dart';
+import '../../../diagnostic/presentation/providers/diagnostic_providers.dart';
 import 'settings_section.dart';
 import 'settings_defaults.dart';
 
@@ -95,6 +96,8 @@ class _NetworkSectionState extends ConsumerState<NetworkSection> {
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            _EffectiveState(settings: settings),
+            const Divider(height: AppSpacing.lg),
             Text('Découverte & transport', style: theme.textTheme.labelMedium),
             SettingsSwitch(
               path: [...lt, 'dht'],
@@ -183,6 +186,101 @@ class _NetworkSectionState extends ConsumerState<NetworkSection> {
           ],
         );
       },
+    );
+  }
+}
+
+/// Carte « État effectif » — valeurs réellement appliquées par le
+/// daemon (`listen_port`/`listen_interfaces` runtime, indicateurs de
+/// découverte, proxy) + pairs TunnelCommunity en direct
+/// (`/api/ipv8/overlays`). Lecture seule, distinguée des réglages
+/// éditables : les commutateurs ci-dessous ne prennent effet qu'au
+/// redémarrage.
+class _EffectiveState extends ConsumerWidget {
+  const _EffectiveState({required this.settings});
+
+  final Map<String, dynamic> settings;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final theme = Theme.of(context);
+    const lt = ['libtorrent'];
+    final port = settingsInt(settings, [...lt, 'listen_port']);
+    final interfaces = settingsLeaf(settings, [...lt, 'listen_interfaces']);
+    final proxyType = settingsInt(settings, [...lt, 'proxy_type']);
+    final proxyServer = settingsString(settings, [...lt, 'proxy_server']);
+    final overlays = ref.watch(overlaysProvider).value ?? const [];
+
+    Widget flag(String label, bool on) => Chip(
+      label: Text('$label : ${on ? 'actif' : 'inactif'}'),
+      visualDensity: VisualDensity.compact,
+      labelStyle: theme.textTheme.bodySmall,
+    );
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Text('État effectif', style: theme.textTheme.labelMedium),
+            const SizedBox(width: AppSpacing.xs),
+            Tooltip(
+              message:
+                  'Valeurs réellement appliquées par le daemon '
+                  '(lecture seule). Les réglages ci-dessous peuvent '
+                  'différer tant que le daemon n\'a pas redémarré.',
+              child: Icon(
+                Icons.info_outline,
+                size: 14,
+                color: theme.colorScheme.outline,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: AppSpacing.xs),
+        Wrap(
+          spacing: AppSpacing.xs,
+          runSpacing: AppSpacing.xs,
+          children: [
+            Chip(
+              label: Text('Port d\'écoute : ${port > 0 ? port : '—'}'),
+              visualDensity: VisualDensity.compact,
+              labelStyle: theme.textTheme.bodySmall,
+            ),
+            if (interfaces is List && interfaces.isNotEmpty)
+              Chip(
+                label: Text('Interfaces : ${interfaces.join(', ')}'),
+                visualDensity: VisualDensity.compact,
+                labelStyle: theme.textTheme.bodySmall,
+              ),
+            for (final e in const [
+              ('DHT', 'dht'),
+              ('UPnP', 'upnp'),
+              ('NAT-PMP', 'natpmp'),
+              ('LSD', 'lsd'),
+              ('uTP', 'utp'),
+            ])
+              flag(e.$1, settingsBool(settings, [...lt, e.$2], def: true)),
+            Chip(
+              label: Text(
+                proxyType == 0
+                    ? 'Proxy : aucun'
+                    : 'Proxy : type $proxyType'
+                          '${proxyServer.isNotEmpty ? ' · $proxyServer' : ''}',
+              ),
+              visualDensity: VisualDensity.compact,
+              labelStyle: theme.textTheme.bodySmall,
+            ),
+            for (final o in overlays)
+              Chip(
+                avatar: const Icon(Icons.hub, size: 14),
+                label: Text('${o.name} : ${o.peers} pairs'),
+                visualDensity: VisualDensity.compact,
+                labelStyle: theme.textTheme.bodySmall,
+              ),
+          ],
+        ),
+      ],
     );
   }
 }
