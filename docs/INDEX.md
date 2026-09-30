@@ -33,6 +33,7 @@ chaque étape (cf. `AGENTS.md`, "Workflow par étape").
 | `docs/reference_tribler/ipv8_rust_tunnels/` | Extraits des sources `ipv8-rust-tunnels` (formats clés, DH, paquets) |
 | `docs/security/revue_garde_fous.md` | Inventaire des protections réseau (anti-SSRF, exit policy, kill switch, proxy guard, hidden seeding) + tests qui les couvrent |
 | `docs/plans/mobile_execution_model.md` | Étape 18 — modèle d'exécution Android/iOS (façade FFI, foreground service, contraintes) |
+| `docs/plans/app_downloads_enrichissement.md` | Plan d'enrichissement de l'onglet Téléchargements (UI Flutter, 8 étapes) |
 | `scripts/build_release.ps1` | Build release reproductible multi-cibles + `dist/<target>/` + manifest |
 | `docs/CHANGELOG.md` | Historique des étapes franchies |
 | `scripts/verify_all.ps1` | Validation complète (check/clippy/fmt/test) |

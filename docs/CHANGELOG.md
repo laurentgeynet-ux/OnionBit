@@ -3,6 +3,19 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## UI : tri par colonnes et sélection étendue dans Téléchargements (2026-09-30)
+
+Étape 1 de `docs/plans/app_downloads_enrichissement.md` :
+
+- En-têtes de la table desktop cliquables (Nom, Taille, Progression, État,
+  ↓, ↑, ETA, Pairs) : même colonne = inversion du sens, nouvelle colonne =
+  ascendant ; flèche et couleur primaire sur la colonne active. État porté
+  par `downloadSortProvider`, comparateurs dans `downloadComparator`.
+- Sélection clavier/souris : clic = sélection unique, Ctrl/Cmd+clic =
+  toggle, Shift+clic = plage depuis l'ancre du dernier clic, Ctrl+A = tout,
+  Échap = vider (`CallbackShortcuts` sur la table). `DownloadSelectionNotifier`
+  mémorise une ancre pour les plages.
+
 ## Perf : stockage paresseux + cache des lignes `/api/downloads` (2026-09-30)
 
 Les mesures d'instrumentation (`890ee72`) ont tranche : la restauration

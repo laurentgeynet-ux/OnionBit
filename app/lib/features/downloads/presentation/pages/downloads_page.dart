@@ -57,16 +57,23 @@ class _DownloadsPageState extends ConsumerState<DownloadsPage> {
               onRetry: () => ref.read(downloadsProvider.notifier).refresh(),
             ),
             data: (all) {
-              final visible = all
-                  .where(widget.filter.matches)
-                  .where(
-                    (d) =>
-                        _nameFilter.isEmpty ||
-                        d.name.toLowerCase().contains(
-                          _nameFilter.toLowerCase(),
-                        ),
-                  )
-                  .toList();
+              final sort = ref.watch(downloadSortProvider);
+              final visible =
+                  all
+                      .where(widget.filter.matches)
+                      .where(
+                        (d) =>
+                            _nameFilter.isEmpty ||
+                            d.name.toLowerCase().contains(
+                              _nameFilter.toLowerCase(),
+                            ),
+                      )
+                      .toList()
+                    ..sort(
+                      (a, b) =>
+                          downloadComparator(sort.col)(a, b) *
+                          (sort.asc ? 1 : -1),
+                    );
               if (visible.isEmpty) {
                 return EmptyState(
                   icon: Icons.download_outlined,
@@ -87,7 +94,27 @@ class _DownloadsPageState extends ConsumerState<DownloadsPage> {
               return _DownloadsContextMenu(
                 child: compact
                     ? _CompactList(downloads: visible)
-                    : _DesktopTable(downloads: visible, selection: selection),
+                    : CallbackShortcuts(
+                        bindings: {
+                          const SingleActivator(
+                            LogicalKeyboardKey.keyA,
+                            control: true,
+                          ): () => ref
+                              .read(downloadSelectionProvider.notifier)
+                              .selectAll(visible),
+                          const SingleActivator(LogicalKeyboardKey.escape):
+                              () => ref
+                                  .read(downloadSelectionProvider.notifier)
+                                  .clear(),
+                        },
+                        child: Focus(
+                          autofocus: true,
+                          child: _DesktopTable(
+                            downloads: visible,
+                            selection: selection,
+                          ),
+                        ),
+                      ),
               );
             },
           ),
@@ -311,7 +338,7 @@ class _DesktopTable extends ConsumerWidget {
               child: ListView.builder(
                 itemCount: downloads.length,
                 itemBuilder: (context, i) =>
-                    _DownloadRow(download: downloads[i]),
+                    _DownloadRow(download: downloads[i], ordered: downloads),
               ),
             ),
           ],
@@ -321,21 +348,48 @@ class _DesktopTable extends ConsumerWidget {
   }
 }
 
-class _HeaderRow extends StatelessWidget {
+class _HeaderRow extends ConsumerWidget {
   const _HeaderRow();
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final style = Theme.of(context).textTheme.labelSmall;
-    Widget h(String s, {double? width, int flex = 0}) => flex > 0
-        ? Expanded(
-            flex: flex,
-            child: Text(s, style: style),
-          )
-        : SizedBox(
-            width: width,
-            child: Text(s, style: style),
-          );
+    final sort = ref.watch(downloadSortProvider);
+    final sortNotifier = ref.read(downloadSortProvider.notifier);
+    final scheme = Theme.of(context).colorScheme;
+
+    /// En-tête triable : la colonne active affiche la flèche du sens.
+    Widget h(String s, DownloadSort col, {double? width, int flex = 0}) {
+      final active = sort.col == col;
+      final child = InkWell(
+        onTap: () => sortNotifier.tap(col),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Flexible(
+              child: Text(
+                s,
+                style: style?.copyWith(
+                  color: active ? scheme.primary : null,
+                  fontWeight: active ? FontWeight.w600 : null,
+                ),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            if (active)
+              Icon(
+                sort.asc ? Icons.arrow_upward : Icons.arrow_downward,
+                size: 12,
+                color: scheme.primary,
+              ),
+          ],
+        ),
+      );
+      return flex > 0
+          ? Expanded(flex: flex, child: child)
+          : SizedBox(width: width, child: child);
+    }
+
     return Padding(
       padding: const EdgeInsets.symmetric(
         horizontal: AppSpacing.sm,
@@ -344,14 +398,14 @@ class _HeaderRow extends StatelessWidget {
       child: Row(
         children: [
           const SizedBox(width: 36),
-          h('Nom', flex: 4),
-          h('Taille', width: 80),
-          h('Progression', flex: 2),
-          h('État', width: 160),
-          h('↓', width: 90),
-          h('↑', width: 90),
-          h('ETA', width: 80),
-          h('Pairs', width: 80),
+          h('Nom', DownloadSort.name, flex: 4),
+          h('Taille', DownloadSort.size, width: 80),
+          h('Progression', DownloadSort.progress, flex: 2),
+          h('État', DownloadSort.status, width: 160),
+          h('↓', DownloadSort.down, width: 90),
+          h('↑', DownloadSort.up, width: 90),
+          h('ETA', DownloadSort.eta, width: 80),
+          h('Pairs', DownloadSort.peers, width: 80),
           const SizedBox(width: 28),
         ],
       ),
@@ -360,9 +414,13 @@ class _HeaderRow extends StatelessWidget {
 }
 
 class _DownloadRow extends ConsumerWidget {
-  const _DownloadRow({required this.download});
+  const _DownloadRow({required this.download, required this.ordered});
 
   final Download download;
+
+  /// Liste visible dans l'ordre affiché — nécessaire à la sélection
+  /// par plage (Shift+clic).
+  final List<Download> ordered;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -376,7 +434,15 @@ class _DownloadRow extends ConsumerWidget {
     return Material(
       color: selected ? scheme.secondaryContainer : null,
       child: InkWell(
-        onTap: () => sel.selectOnly(d.infohash),
+        onTap: () {
+          final kb = HardwareKeyboard.instance;
+          sel.click(
+            d.infohash,
+            ordered,
+            ctrl: kb.isControlPressed || kb.isMetaPressed,
+            shift: kb.isShiftPressed,
+          );
+        },
         onSecondaryTapUp: (details) =>
             _DownloadsContextMenu.show(context, details.globalPosition, d),
         child: Padding(
