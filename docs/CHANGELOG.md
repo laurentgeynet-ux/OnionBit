@@ -3,6 +3,16 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## UI — Réglages : éditeur avancé de l'arbre `configuration.json` (étape 5, partie éditeur)
+
+- Nouvelle section « Configuration avancée » : éditeur JSON indenté de
+  l'arbre complet retourné par `GET /api/settings` — fallback pour les
+  réglages non exposés dans les sections dédiées.
+- Validation avant envoi : document obligatoirement objet, erreurs de
+  syntaxe affichées sous le champ, avertissement sur les clés sensibles.
+- Raccordée au bus « Enregistrer tout » / pastille « modifié » de
+  l'étape 2 ; bouton « Recharger » pour réinitialiser depuis le serveur.
+
 ## UI — Réglages : indicateurs « modifié » + enregistrement global (étape 2/8)
 
 - Sections à sauvegarde différée (Bande passante, File d'attente,

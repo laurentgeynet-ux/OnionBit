@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/theme/app_theme.dart';
 import '../providers/settings_providers.dart';
+import '../widgets/advanced_section.dart';
 import '../widgets/anonymity_section.dart';
 import '../widgets/appearance_section.dart';
 import '../widgets/automation_section.dart';
@@ -102,6 +103,12 @@ final _kSections = <_SectionEntry>[
     title: 'Connexion',
     keywords: 'daemon clé api port http connexion key',
     child: const ConnectionSection(),
+  ),
+  _SectionEntry(
+    title: 'Configuration avancée',
+    sectionId: 'advanced',
+    keywords: 'json arbre brut expert toutes les clés configuration',
+    child: const AdvancedSection(),
   ),
   _SectionEntry(
     title: 'Daemon',
