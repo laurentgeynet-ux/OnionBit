@@ -12,8 +12,60 @@ pub type DownloadsRows = (
     Vec<tribler_db::TorrentStateRow>,
 );
 
-/// Cache horodate des lignes ci-dessus (voir `AppState::downloads_rows`).
-pub type DownloadsRowsCache = Mutex<Option<(std::time::Instant, Arc<DownloadsRows>)>>;
+/// Fraicheur du cache `DownloadsRowsCache` — bien en dessous du tick
+/// d'affichage de l'UI (1-2 s), invisible a l'ecran.
+pub const DOWNLOADS_ROWS_TTL: std::time::Duration = std::time::Duration::from_millis(800);
+
+/// Cache court **single-flight** des lignes ci-dessus : pendant la
+/// restauration, chaque evenement SSE `DownloadStateChanged` redeclenche
+/// un `GET /api/downloads` de l'UI (~10+/s) et chaque acces sqlite
+/// prendait 300-700 ms sous contention — les requetes concurrentes se
+/// coalescent sur `fetch` au lieu d'empiler des lectures identiques.
+pub struct DownloadsRowsCache {
+    inner: Mutex<Option<(std::time::Instant, Arc<DownloadsRows>)>>,
+    fetch: tokio::sync::Mutex<()>,
+}
+
+impl DownloadsRowsCache {
+    /// Retourne les lignes fraiches, en executant `fetch` une seule
+    /// fois si le cache est perime (les appelants concurrents
+    /// attendent puis reutilisent le resultat).
+    pub async fn get_or_fetch<F>(&self, fetch: F) -> DownloadsRows
+    where
+        F: std::future::Future<Output = DownloadsRows>,
+    {
+        if let Some((fetched, rows)) = self.inner.lock().unwrap().as_ref() {
+            if fetched.elapsed() < DOWNLOADS_ROWS_TTL {
+                return (**rows).clone();
+            }
+        }
+        let _guard = self.fetch.lock().await;
+        // Re-test sous le verrou : un appelant precedent vient peut-etre
+        // de rafraichir.
+        if let Some((fetched, rows)) = self.inner.lock().unwrap().as_ref() {
+            if fetched.elapsed() < DOWNLOADS_ROWS_TTL {
+                return (**rows).clone();
+            }
+        }
+        let rows = fetch.await;
+        *self.inner.lock().unwrap() = Some((std::time::Instant::now(), Arc::new(rows.clone())));
+        rows
+    }
+
+    /// Invalide le cache (endpoints mutants de `/api/downloads`).
+    pub fn invalidate(&self) {
+        *self.inner.lock().unwrap() = None;
+    }
+}
+
+impl Default for DownloadsRowsCache {
+    fn default() -> Self {
+        Self {
+            inner: Mutex::new(None),
+            fetch: tokio::sync::Mutex::new(()),
+        }
+    }
+}
 
 /// Etat injecte dans tous les handlers.
 #[derive(Clone)]
@@ -43,12 +95,8 @@ pub struct AppState {
     /// tests de l'API — la session est alors arretee sans que le
     /// processus ne quitte).
     pub shutdown_notify: Option<Arc<tokio::sync::Notify>>,
-    /// Cache court des lignes `downloads` + `torrent_states` lues par
-    /// `GET /api/downloads`. Sous contention (restauration,
-    /// checkpoints) chaque acces sqlite prend 300-700 ms et l'UI poll
-    /// ~1 fois/s — une fenetre de fraicheur < 1 s supprime la majorite
-    /// des lectures sans impact visible. Invalide par les endpoints
-    /// mutants de `/api/downloads`.
+    /// Cache single-flight des lignes `downloads` + `torrent_states`
+    /// lues par `GET /api/downloads` — voir `DownloadsRowsCache`.
     pub downloads_rows: Arc<DownloadsRowsCache>,
 }
 
@@ -64,7 +112,7 @@ impl AppState {
             unhandled_cli: Arc::new(Mutex::new(std::collections::VecDeque::new())),
             sse_sessions: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             shutdown_notify: None,
-            downloads_rows: Arc::new(Mutex::new(None)),
+            downloads_rows: Arc::new(DownloadsRowsCache::default()),
         }
     }
 

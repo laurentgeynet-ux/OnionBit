@@ -21,36 +21,26 @@ pub async fn get_downloads(
 ) -> Json<serde_json::Value> {
     // Une seule tache bloquante : lignes `downloads` + etats d'essaim
     // indexes en memoire par infohash — evite les 2 requetes par
-    // telechargement (N+1) qui figeaient l'executor async. Les lignes
-    // sont mises en cache ~800 ms (`state.downloads_rows`) : pendant la
-    // restauration l'UI poll en boucle et chaque acces sqlite prenait
-    // 300-700 ms sous contention.
-    const ROWS_TTL: std::time::Duration = std::time::Duration::from_millis(800);
-    let cached = state
+    // telechargement (N+1) qui figeaient l'executor async. Le cache
+    // single-flight `downloads_rows` coalesce les requetes
+    // concurrentes (les evenements SSE de la restauration declenchent
+    // ~10 GET/s) et absorbe la contention sqlite.
+    let (dl_rows, ts_rows) = state
         .downloads_rows
-        .lock()
-        .unwrap()
-        .as_ref()
-        .filter(|(fetched, _)| fetched.elapsed() < ROWS_TTL)
-        .map(|(_, rows)| std::sync::Arc::clone(rows));
-    let (dl_rows, ts_rows) = if let Some(rows) = cached {
-        (rows.0.clone(), rows.1.clone())
-    } else {
-        let rows = state
-            .session
-            .db()
-            .call("downloads.list", |c| {
-                Ok((
-                    tribler_db::downloads::list(c)?,
-                    tribler_db::health::list_torrent_states(c)?,
-                ))
-            })
-            .await
-            .unwrap_or_default();
-        *state.downloads_rows.lock().unwrap() =
-            Some((std::time::Instant::now(), std::sync::Arc::new(rows.clone())));
-        rows
-    };
+        .get_or_fetch(async {
+            state
+                .session
+                .db()
+                .call("downloads.list", |c| {
+                    Ok((
+                        tribler_db::downloads::list(c)?,
+                        tribler_db::health::list_torrent_states(c)?,
+                    ))
+                })
+                .await
+                .unwrap_or_default()
+        })
+        .await;
     let row_map: std::collections::HashMap<Vec<u8>, tribler_db::DownloadRow> = dl_rows
         .into_iter()
         .map(|r| (r.infohash.clone(), r))
@@ -238,7 +228,7 @@ pub async fn get_downloads(
 /// `AppState::downloads_rows`) — a appeler sur tout endpoint qui ecrit
 /// dans la table.
 fn invalidate_downloads_rows(state: &AppState) {
-    *state.downloads_rows.lock().unwrap() = None;
+    state.downloads_rows.invalidate();
 }
 
 /// `peers` du `get_peer_list` Python (`include_have=False`) — memes
