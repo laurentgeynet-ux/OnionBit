@@ -15,6 +15,16 @@ class RestSearchRepository implements SearchRepository {
           .toList() ??
       const [];
 
+  /// `updated`/`torrent_date` : epoch secondes côté Rust, chaîne ISO
+  /// possible côté réponses distantes — les deux sont acceptés.
+  static DateTime? _parseDate(dynamic v) {
+    if (v is num) {
+      return DateTime.fromMillisecondsSinceEpoch(v.toInt() * 1000);
+    }
+    if (v is String) return DateTime.tryParse(v);
+    return null;
+  }
+
   static TorrentResult _parse(Map<String, dynamic> j, TorrentSource source) =>
       TorrentResult(
         infohash: '${j['infohash'] ?? ''}',
@@ -23,6 +33,7 @@ class RestSearchRepository implements SearchRepository {
         source: source,
         seeders: (j['num_seeders'] as num?)?.toInt(),
         leechers: (j['num_leechers'] as num?)?.toInt(),
+        date: _parseDate(j['updated'] ?? j['torrent_date']),
       );
 
   /// Parse une entrée `remote_query_results` (même forme `results`).

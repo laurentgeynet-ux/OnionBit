@@ -48,6 +48,46 @@ class SearchSortNotifier extends Notifier<SearchSort> {
   void set(SearchSort sort) => state = sort;
 }
 
+/// Colonnes triables de la table desktop — tri côté client appliqué à
+/// la liste fusionnée (local + distant) ; `null` = ordre brut
+/// (pertinence locale puis arrivées distantes).
+enum SearchCol { name, size, seeds, leechers, date, source }
+
+final searchColSortProvider =
+    NotifierProvider<SearchColSortNotifier, ({SearchCol col, bool asc})?>(
+      SearchColSortNotifier.new,
+    );
+
+class SearchColSortNotifier
+    extends Notifier<({SearchCol col, bool asc})?> {
+  @override
+  ({SearchCol col, bool asc})? build() => null;
+
+  void tap(SearchCol col) => state = state?.col == col
+      ? (col: col, asc: !state!.asc)
+      : (col: col, asc: true);
+}
+
+/// Comparateur associé à `col`.
+int Function(TorrentResult, TorrentResult) searchComparator(SearchCol col) {
+  int? seedsOf(TorrentResult r) => r.seeders;
+  int? leechersOf(TorrentResult r) => r.leechers;
+  return switch (col) {
+    SearchCol.name => (a, b) => a.name.toLowerCase().compareTo(
+        b.name.toLowerCase(),
+      ),
+    SearchCol.size => (a, b) => a.size.compareTo(b.size),
+    SearchCol.seeds => (a, b) =>
+        (seedsOf(a) ?? -1).compareTo(seedsOf(b) ?? -1),
+    SearchCol.leechers => (a, b) =>
+        (leechersOf(a) ?? -1).compareTo(leechersOf(b) ?? -1),
+    SearchCol.date => (a, b) => (a.date ?? DateTime(1970)).compareTo(
+        b.date ?? DateTime(1970),
+      ),
+    SearchCol.source => (a, b) => a.source.index.compareTo(b.source.index),
+  };
+}
+
 /// Résultats « de base » : populaires quand la requête est vide,
 /// recherche locale sinon. La recherche distante est lancée ici, ses
 /// résultats arrivent dans [remoteResultsProvider] via SSE.

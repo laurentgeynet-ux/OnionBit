@@ -3,6 +3,15 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## UI : table triable + date + santé dans Rechercher (2026-09-30)
+
+Étape 1 de `docs/plans/app_search_enrichissement.md` : les résultats
+passent en table desktop à en-têtes triables (Nom, Taille, Seeds,
+Leechers, Date, Source — tri client sur la liste fusionnée, `null` =
+ordre pertinence). `TorrentResult.date` est désormais mappé depuis
+`updated`/`torrent_date` (epoch ou ISO). Pastille de santé par ligne
+(seeds/leechers/inconnu). Compact : ListTiles conservés.
+
 ## UI : snackbar de complétion sur SSE `torrent_finished` (2026-09-30)
 
 Étape 8 de `docs/plans/app_downloads_enrichissement.md` :

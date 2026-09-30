@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/di/providers.dart';
+import '../../../../core/layout/breakpoints.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../core/utils/byte_formatter.dart';
 import '../../../../core/widgets/empty_state.dart';
@@ -20,8 +21,12 @@ class SearchPage extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final query = ref.watch(searchQueryProvider);
     final sort = ref.watch(searchSortProvider);
+    final colSort = ref.watch(searchColSortProvider);
     final local = ref.watch(searchResultsProvider);
     final remote = ref.watch(remoteResultsProvider);
+    final compact =
+        AppBreakpoints.of(MediaQuery.sizeOf(context).width) ==
+        AppBreakpoint.compact;
 
     // Fusion local + distant, dédupliquée par info-hash (local d'abord).
     final results = local.value ?? const <TorrentResult>[];
@@ -30,6 +35,12 @@ class SearchPage extends ConsumerWidget {
       for (final r in remote.results)
         if (!results.any((l) => l.infohash == r.infohash)) r,
     ];
+    // Tri colonne : `null` = ordre brut (pertinence + arrivées).
+    if (colSort != null) {
+      merged.sort(
+        (a, b) => searchComparator(colSort.col)(a, b) * (colSort.asc ? 1 : -1),
+      );
+    }
 
     final searching = query.isNotEmpty && remote.state.uuid != null;
 
@@ -105,13 +116,15 @@ class SearchPage extends ConsumerWidget {
                         : 'Essayez d\'autres termes, ou attendez les '
                               'réponses du réseau.',
                   )
-                : ListView.builder(
+                : compact
+                ? ListView.builder(
                     padding: const EdgeInsets.symmetric(
                       horizontal: AppSpacing.sm,
                     ),
                     itemCount: merged.length,
                     itemBuilder: (context, i) => _ResultTile(result: merged[i]),
-                  ),
+                  )
+                : _ResultsTable(results: merged),
           ),
         ),
       ],
@@ -169,4 +182,218 @@ class _ResultTile extends StatelessWidget {
           : () => AddDownloadDialog.show(context, initialUri: r.magnet),
     );
   }
+}
+
+/// Table desktop : en-têtes triables (clic = asc/desc, comme la page
+/// Téléchargements) + scroll horizontal sous ~900 px utiles.
+class _ResultsTable extends ConsumerWidget {
+  const _ResultsTable({required this.results});
+
+  final List<TorrentResult> results;
+
+  static const double _minWidth = 900;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          minWidth: _minWidth,
+          maxWidth: MediaQuery.sizeOf(context).width
+              .clamp(_minWidth, 4000)
+              .toDouble(),
+        ),
+        child: Column(
+          children: [
+            const _HeaderRow(),
+            const Divider(height: 1),
+            Expanded(
+              child: ListView.builder(
+                itemCount: results.length,
+                itemBuilder: (context, i) => _ResultRow(result: results[i]),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _HeaderRow extends ConsumerWidget {
+  const _HeaderRow();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final style = Theme.of(context).textTheme.labelSmall;
+    final sort = ref.watch(searchColSortProvider);
+    final notifier = ref.read(searchColSortProvider.notifier);
+    final scheme = Theme.of(context).colorScheme;
+
+    Widget h(String s, SearchCol col, {double? width, int flex = 0}) {
+      final active = sort?.col == col;
+      final child = InkWell(
+        onTap: () => notifier.tap(col),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Flexible(
+              child: Text(
+                s,
+                style: style?.copyWith(
+                  color: active ? scheme.primary : null,
+                  fontWeight: active ? FontWeight.w600 : null,
+                ),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            if (active)
+              Icon(
+                sort!.asc ? Icons.arrow_upward : Icons.arrow_downward,
+                size: 12,
+                color: scheme.primary,
+              ),
+          ],
+        ),
+      );
+      return flex > 0
+          ? Expanded(flex: flex, child: child)
+          : SizedBox(width: width, child: child);
+    }
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.sm,
+        vertical: AppSpacing.xs,
+      ),
+      child: Row(
+        children: [
+          h('Nom', SearchCol.name, flex: 5),
+          h('Taille', SearchCol.size, width: 90),
+          h('Seeds', SearchCol.seeds, width: 80),
+          h('Leechers', SearchCol.leechers, width: 80),
+          h('Date', SearchCol.date, width: 100),
+          h('Source', SearchCol.source, width: 80),
+          const SizedBox(width: 90),
+        ],
+      ),
+    );
+  }
+}
+
+class _ResultRow extends StatelessWidget {
+  const _ResultRow({required this.result});
+
+  final TorrentResult result;
+
+  @override
+  Widget build(BuildContext context) {
+    final r = result;
+    final small = Theme.of(context).textTheme.bodySmall;
+    return Material(
+      child: InkWell(
+        onTap: r.infohash.isEmpty
+            ? null
+            : () => AddDownloadDialog.show(context, initialUri: r.magnet),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.sm,
+            vertical: AppSpacing.xs,
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                flex: 5,
+                child: Text(
+                  r.name.isEmpty ? r.infohash : r.name,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              SizedBox(
+                width: 90,
+                child: Text(
+                  r.size > 0 ? ByteFormatter.format(r.size) : '—',
+                  style: small,
+                ),
+              ),
+              SizedBox(
+                width: 80,
+                child: Row(
+                  children: [
+                    _ResultHealthDot(result: r),
+                    const SizedBox(width: 4),
+                    Text('${r.seeders ?? '—'}', style: small),
+                  ],
+                ),
+              ),
+              SizedBox(
+                width: 80,
+                child: Text('${r.leechers ?? '—'}', style: small),
+              ),
+              SizedBox(
+                width: 100,
+                child: Text(_formatDate(r.date), style: small),
+              ),
+              SizedBox(
+                width: 80,
+                child: Text(
+                  r.source == TorrentSource.remote ? 'réseau' : 'local',
+                  style: small,
+                ),
+              ),
+              SizedBox(
+                width: 90,
+                child: Align(
+                  alignment: Alignment.centerRight,
+                  child: IconButton(
+                    tooltip: 'Ajouter',
+                    onPressed: r.infohash.isEmpty
+                        ? null
+                        : () => AddDownloadDialog.show(
+                            context,
+                            initialUri: r.magnet,
+                          ),
+                    icon: const Icon(Icons.download, size: 18),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Pastille de santé du résultat : vert = seeders, orange = leechers
+/// seuls, gris = santé inconnue ou morte.
+class _ResultHealthDot extends StatelessWidget {
+  const _ResultHealthDot({required this.result});
+
+  final TorrentResult result;
+
+  @override
+  Widget build(BuildContext context) {
+    final r = result;
+    final (color, tip) = (r.seeders ?? 0) > 0
+        ? (Colors.green, '${r.seeders} seeder(s)')
+        : (r.leechers ?? 0) > 0
+        ? (Colors.orange, 'Leechers seuls — santé fragile')
+        : (Colors.grey, 'Santé inconnue');
+    return Tooltip(
+      message: tip,
+      child: Container(
+        width: 8,
+        height: 8,
+        decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+      ),
+    );
+  }
+}
+
+String _formatDate(DateTime? d) {
+  if (d == null) return '—';
+  String two(int v) => v.toString().padLeft(2, '0');
+  return '${d.year}-${two(d.month)}-${two(d.day)}';
 }

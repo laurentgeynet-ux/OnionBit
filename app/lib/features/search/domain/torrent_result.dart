@@ -19,6 +19,7 @@ class TorrentResult {
     required this.source,
     this.seeders,
     this.leechers,
+    this.date,
   });
 
   final String infohash;
@@ -27,6 +28,10 @@ class TorrentResult {
   final TorrentSource source;
   final int? seeders;
   final int? leechers;
+
+  /// Date du torrent (`updated`/`torrent_date` du backend, epoch
+  /// secondes ; `null` = inconnu).
+  final DateTime? date;
 
   /// Magnet minimal pour l'ajout direct.
   String get magnet =>
@@ -42,5 +47,6 @@ class TorrentResult {
     source: TorrentSource.remote,
     seeders: seeders,
     leechers: leechers,
+    date: date,
   );
 }
