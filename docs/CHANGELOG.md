@@ -35,6 +35,14 @@ ce comportement et rend la phase de check visible dans l'API.
   `cargo test --manifest-path vendor/librqbit/Cargo.toml` fonctionne
   désormais.
 
+## UI : ancres + filtre dans Réglages (2026-09-30)
+
+Étape 1 de `docs/plans/app_settings_enrichissement.md` : la page passe
+d'une liste littérale à un catalogue (`_kSections` : titre, mots-clés
+incluant chemins de clés, widget). Rail de chips en haut →
+`Scrollable.ensureVisible` sur la section ; champ « Filtrer les
+réglages » qui ne construit que les sections correspondantes.
+
 ## UI : sonde de santé à la demande dans Rechercher (2026-09-30)
 
 Étape 8 de `docs/plans/app_search_enrichissement.md` : entrée
