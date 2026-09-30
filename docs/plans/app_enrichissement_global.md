@@ -37,7 +37,7 @@ Chaque étape = implémentation + `flutter analyze`/tests (ou
   (marquer tout lu, vider) ; `TorrentFinishedListener` alimente le
   centre en plus du snackbar.
 
-## Étape 4 — Bannière « daemon injoignable » actionnable
+## Étape 4 — Bannière « daemon injoignable » actionnable [x] (2026-10-02)
 
 - La bannière existante gagne un bouton « Configurer… » ouvrant un
   dialogue adresse/port/clé API (réutilise `ConnectionSection` /

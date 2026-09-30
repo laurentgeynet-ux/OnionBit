@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../router/nav_catalog.dart';
 import 'app_sidebar.dart';
 import 'breakpoints.dart';
+import 'daemon_unreachable_banner.dart';
 import 'drop_zone.dart';
+import '../di/providers.dart';
 import '../notifications/notifications_listener.dart';
 import 'pending_files_handler.dart';
 import 'status_bar.dart';
@@ -18,7 +21,7 @@ import 'torrent_finished_listener.dart';
 /// - ≥ 600 dp : sidebar fixe type Tribler à gauche.
 /// Les deux variantes portent la barre de recherche en haut et la
 /// barre d'état en bas.
-class AppShell extends StatelessWidget {
+class AppShell extends ConsumerWidget {
   const AppShell({
     super.key,
     required this.currentPath,
@@ -35,14 +38,17 @@ class AppShell extends StatelessWidget {
   final Widget? banner;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final breakpoint = AppBreakpoints.of(MediaQuery.sizeOf(context).width);
+    final sse = ref.watch(sseConnectedProvider);
+    final unreachable = sse.value == false && !sse.isLoading;
 
     final body = DropZone(
       child: Column(
         children: [
           const TopBar(),
           ?banner,
+          if (unreachable) const DaemonUnreachableBanner(),
           Expanded(child: child),
           const StatusBar(),
         ],

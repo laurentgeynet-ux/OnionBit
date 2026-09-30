@@ -3,6 +3,14 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## UI — Bannière « daemon injoignable » actionnable (étape 4/8)
+
+- `DaemonUnreachableBanner` montée par `AppShell` quand le SSE est
+  coupé : URL courante, « Réessayer » (redécouverte locale) et
+  « Configurer… » — dialogue URL + clé API branché sur
+  `connectionSettingsProvider.save` (même persistance que Réglages →
+  Connexion). Premier onboarding de connexion.
+
 ## UI — Centre de notifications (étape 3/8)
 
 - `notificationsProvider` : liste bornée (100) + compteur de non-lues ;
