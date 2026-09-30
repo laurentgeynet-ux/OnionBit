@@ -3,6 +3,18 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## UI : lignes de téléchargement enrichies (2026-09-30)
+
+Étape 2 de `docs/plans/app_downloads_enrichissement.md` :
+
+- % affiché au centre de la barre de progression (barre rouge si erreur).
+- Zone de badges en fin de ligne : erreur (tooltip `error`), torrent
+  privé, position de file, anonymat (`_RowBadges`).
+- Pastille de santé de l'essaim dans la colonne Pairs : vert/orange/rouge
+  selon seeders connus et pairs connectés (`_HealthDot`).
+- Nouvelles colonnes triables « Ratio » et « Ajouté » (largeur min de la
+  table portée à 1130 px).
+
 ## UI : tri par colonnes et sélection étendue dans Téléchargements (2026-09-30)
 
 Étape 1 de `docs/plans/app_downloads_enrichissement.md` :

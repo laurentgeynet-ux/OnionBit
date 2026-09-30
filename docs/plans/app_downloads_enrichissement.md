@@ -20,7 +20,7 @@ fichier (cochage) + `docs/CHANGELOG.md` + commit dédié. Les modifications
   Shift+clic = plage depuis l'ancre ; Ctrl+A = tout ; Échap = vider.
 - `DownloadSortNotifier` (colonne + direction) persistant en session.
 
-## Étape 2 — Lignes enrichies
+## Étape 2 — Lignes enrichies [x] (2026-09-30)
 
 - % affiché au bout de la barre de progression (texte, pas seulement chip).
 - Badges : erreur (icône + tooltip `error`), `isPrivate`, position de file

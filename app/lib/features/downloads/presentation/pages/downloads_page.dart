@@ -317,7 +317,7 @@ class _DesktopTable extends ConsumerWidget {
   final List<Download> downloads;
   final Set<String> selection;
 
-  static const double _minWidth = 960;
+  static const double _minWidth = 1130;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -406,7 +406,9 @@ class _HeaderRow extends ConsumerWidget {
           h('↑', DownloadSort.up, width: 90),
           h('ETA', DownloadSort.eta, width: 80),
           h('Pairs', DownloadSort.peers, width: 80),
-          const SizedBox(width: 28),
+          h('Ratio', DownloadSort.ratio, width: 70),
+          h('Ajouté', DownloadSort.added, width: 100),
+          const SizedBox(width: 88),
         ],
       ),
     );
@@ -476,8 +478,18 @@ class _DownloadRow extends ConsumerWidget {
                   padding: const EdgeInsets.symmetric(
                     horizontal: AppSpacing.sm,
                   ),
-                  child: LinearProgressIndicator(
-                    value: d.progress.clamp(0.0, 1.0),
+                  child: Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      LinearProgressIndicator(
+                        value: d.progress.clamp(0.0, 1.0),
+                        color: d.isError ? scheme.error : null,
+                      ),
+                      Text(
+                        '${(d.progress * 100).toStringAsFixed(1)} %',
+                        style: small,
+                      ),
+                    ],
                   ),
                 ),
               ),
@@ -502,18 +514,112 @@ class _DownloadRow extends ConsumerWidget {
               ),
               SizedBox(
                 width: 80,
-                child: Text(
-                  '${d.numConnectedPeers} (${d.numPeers})',
-                  style: small,
+                child: Row(
+                  children: [
+                    _HealthDot(download: d),
+                    const SizedBox(width: 4),
+                    Text(
+                      '${d.numConnectedPeers} (${d.numPeers})',
+                      style: small,
+                    ),
+                  ],
                 ),
               ),
-              SizedBox(width: 28, child: AnonBadge(download: d)),
+              SizedBox(
+                width: 70,
+                child: Text(d.ratio.toStringAsFixed(2), style: small),
+              ),
+              SizedBox(
+                width: 100,
+                child: Text(_formatDate(d.timeAdded), style: small),
+              ),
+              SizedBox(width: 88, child: _RowBadges(download: d)),
             ],
           ),
         ),
       ),
     );
   }
+}
+
+/// Pastille de santé de l'essaim : vert = seeders connectés, orange =
+/// seeders connus mais aucun connecté, rouge = essaim mort.
+class _HealthDot extends StatelessWidget {
+  const _HealthDot({required this.download});
+
+  final Download download;
+
+  @override
+  Widget build(BuildContext context) {
+    final d = download;
+    final (color, tip) = d.numSeeds <= 0
+        ? (Colors.red, 'Aucun seeder connu')
+        : d.numConnectedPeers > 0
+        ? (Colors.green, '${d.numSeeds} seeder(s), essaim joignable')
+        : (Colors.orange, 'Seeders connus mais aucun pair connecté');
+    return Tooltip(
+      message: tip,
+      child: Container(
+        width: 8,
+        height: 8,
+        decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+      ),
+    );
+  }
+}
+
+/// Badges d'état en fin de ligne : erreur, torrent privé, position de
+/// file, anonymat. 88 px fixes — les icônes absentes ne prennent pas de
+/// place.
+class _RowBadges extends StatelessWidget {
+  const _RowBadges({required this.download});
+
+  final Download download;
+
+  @override
+  Widget build(BuildContext context) {
+    final d = download;
+    final scheme = Theme.of(context).colorScheme;
+    final style = Theme.of(context).textTheme.labelSmall;
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.end,
+      children: [
+        if (d.isError)
+          Tooltip(
+            message: d.error.isEmpty ? 'Arrêté sur erreur' : d.error,
+            child: Icon(Icons.error_outline, size: 16, color: scheme.error),
+          ),
+        if (d.isPrivate)
+          Tooltip(
+            message: 'Torrent privé (DHT/PEX désactivés)',
+            child: Icon(Icons.lock_outline, size: 16, color: scheme.outline),
+          ),
+        if (d.queuePosition >= 0)
+          Tooltip(
+            message: 'Position ${d.queuePosition} dans la file',
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.format_list_numbered,
+                  size: 16,
+                  color: scheme.outline,
+                ),
+                Text('${d.queuePosition}', style: style),
+              ],
+            ),
+          ),
+        AnonBadge(download: d),
+      ],
+    );
+  }
+}
+
+String _formatDate(int epoch) {
+  if (epoch <= 0) return '—';
+  final dt = DateTime.fromMillisecondsSinceEpoch(epoch * 1000);
+  String two(int v) => v.toString().padLeft(2, '0');
+  return '${dt.year}-${two(dt.month)}-${two(dt.day)}';
 }
 
 /// Menu contextuel d'un téléchargement (`MenuAnchor` Material 3 +

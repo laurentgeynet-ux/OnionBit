@@ -146,7 +146,18 @@ class DownloadsNotifier extends AsyncNotifier<List<Download>> {
 }
 
 /// Colonnes triables de la table desktop.
-enum DownloadSort { name, size, progress, status, down, up, eta, peers }
+enum DownloadSort {
+  name,
+  size,
+  progress,
+  status,
+  down,
+  up,
+  eta,
+  peers,
+  ratio,
+  added,
+}
 
 /// Tri courant de la table : colonne + sens (ascendant par défaut).
 final downloadSortProvider =
@@ -181,6 +192,8 @@ int Function(Download, Download) downloadComparator(DownloadSort col) {
     DownloadSort.peers => (a, b) => a.numConnectedPeers.compareTo(
         b.numConnectedPeers,
       ),
+    DownloadSort.ratio => (a, b) => a.ratio.compareTo(b.ratio),
+    DownloadSort.added => (a, b) => a.timeAdded.compareTo(b.timeAdded),
   };
 }
 
