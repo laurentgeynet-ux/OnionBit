@@ -736,28 +736,63 @@ class _PeersTab extends StatelessWidget {
             style: theme.textTheme.titleMedium,
           ),
           const SizedBox(height: AppSpacing.sm),
-          for (final p in d.peers)
-            Card(
-              margin: const EdgeInsets.only(bottom: AppSpacing.xs),
-              child: ListTile(
-                dense: true,
-                leading: Icon(
-                  p.direction == 'L' ? Icons.south_west : Icons.north_east,
-                  size: 18,
-                ),
-                title: Text('${p.ip}:${p.port}'),
-                subtitle: Text(
-                  [
-                    if (p.extendedVersion.isNotEmpty) p.extendedVersion,
-                    if (p.connectionType.isNotEmpty) p.connectionType,
-                  ].join(' · '),
-                ),
-                trailing: Text(
-                  '↓${ByteFormatter.format(p.dtotal)} '
-                  '↑${ByteFormatter.format(p.utotal)}',
-                ),
-              ),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: DataTable(
+              headingRowHeight: 32,
+              dataRowMinHeight: 32,
+              dataRowMaxHeight: 36,
+              columnSpacing: AppSpacing.md,
+              columns: const [
+                DataColumn(label: Text('Adresse')),
+                DataColumn(label: Text('Client')),
+                DataColumn(label: Text('Dir.')),
+                DataColumn(label: Text('↓ débit'), numeric: true),
+                DataColumn(label: Text('↑ débit'), numeric: true),
+                DataColumn(label: Text('↓ total'), numeric: true),
+                DataColumn(label: Text('↑ total'), numeric: true),
+                DataColumn(label: Text('Transport')),
+              ],
+              rows: [
+                for (final p in d.peers)
+                  DataRow(
+                    cells: [
+                      DataCell(SelectableText('${p.ip}:${p.port}')),
+                      DataCell(
+                        Text(
+                          p.extendedVersion.isEmpty
+                              ? '—'
+                              : p.extendedVersion,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      DataCell(
+                        Tooltip(
+                          message: p.direction == 'L'
+                              ? 'Entrant (le pair a initié)'
+                              : 'Sortant',
+                          child: Icon(
+                            p.direction == 'L'
+                                ? Icons.south_west
+                                : Icons.north_east,
+                            size: 16,
+                          ),
+                        ),
+                      ),
+                      DataCell(Text(ByteFormatter.formatRate(p.downrate))),
+                      DataCell(Text(ByteFormatter.formatRate(p.uprate))),
+                      DataCell(Text(ByteFormatter.format(p.dtotal))),
+                      DataCell(Text(ByteFormatter.format(p.utotal))),
+                      DataCell(
+                        Text(
+                          p.connectionType.isEmpty ? '—' : p.connectionType,
+                        ),
+                      ),
+                    ],
+                  ),
+              ],
             ),
+          ),
         ] else if (d.isActive) ...[
           const SizedBox(height: AppSpacing.md),
           const EmptyState(

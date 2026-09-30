@@ -3,6 +3,14 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## UI : onglet Pairs en table détaillée (2026-09-30)
+
+Étape 7 de `docs/plans/app_downloads_enrichissement.md` : les pairs
+connectés (déjà pollués via `?get_peers=1`) passent de cartes à une
+`DataTable` — adresse, client (`extended_version`), direction
+entrant/sortant, débits ↓/↑, totaux échangés, transport
+(`connection_type`). Scroll horizontal sous faible largeur.
+
 ## UI : glisser-déposer .torrent/magnet sur Téléchargements (2026-09-30)
 
 Étape 6 de `docs/plans/app_downloads_enrichissement.md` : `DropTarget`

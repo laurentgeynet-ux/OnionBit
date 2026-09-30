@@ -54,7 +54,7 @@ fichier (cochage) + `docs/CHANGELOG.md` + commit dédié. Les modifications
 - Surbrillance de la liste pendant le survol. Web : non applicable
   (DropTarget desktop only) — documenter l'écart.
 
-## Étape 7 — Onglet Pairs enrichi
+## Étape 7 — Onglet Pairs enrichi [x] (2026-09-30)
 
 - Table : adresse, client (`extended_version`), direction (entrant/sortant),
   débits ↓/↑, totaux échangés, transport (`connection_type`).
