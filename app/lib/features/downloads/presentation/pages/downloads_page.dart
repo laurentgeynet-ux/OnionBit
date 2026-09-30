@@ -106,6 +106,21 @@ class _DownloadsPageState extends ConsumerState<DownloadsPage> {
                               () => ref
                                   .read(downloadSelectionProvider.notifier)
                                   .clear(),
+                          const SingleActivator(LogicalKeyboardKey.space):
+                              () => _togglePauseSelection(all, selection),
+                          const SingleActivator(LogicalKeyboardKey.delete):
+                              () => confirmRemoveSelected(
+                            context,
+                            ref,
+                            selection,
+                          ),
+                          const SingleActivator(LogicalKeyboardKey.f2): () {
+                            if (selection.length != 1) return;
+                            final d = all
+                                .where((e) => e.infohash == selection.first)
+                                .firstOrNull;
+                            if (d != null) showRateLimitsDialog(context, d);
+                          },
                         },
                         child: Focus(
                           autofocus: true,
@@ -133,6 +148,77 @@ class _DownloadsPageState extends ConsumerState<DownloadsPage> {
       const Divider(height: 1),
       SizedBox(height: 280, child: DownloadDetailPanel(download: d)),
     ];
+  }
+
+  /// Espace : reprend les éléments en pause, met en pause les autres —
+  /// sélection mixte gérée élément par élément.
+  void _togglePauseSelection(List<Download> all, Set<String> selection) {
+    final notifier = ref.read(downloadsProvider.notifier);
+    for (final d in all) {
+      if (!selection.contains(d.infohash)) continue;
+      final future = d.isPaused
+          ? notifier.resume(d.infohash)
+          : notifier.pause(d.infohash);
+      future.catchError((Object e) {
+        if (mounted) showDownloadError(context, 'pause/reprise', e);
+        return null;
+      });
+    }
+  }
+}
+
+/// Dialogue de suppression partagé entre la barre d'actions et le
+/// raccourci Suppr.
+Future<void> confirmRemoveSelected(
+  BuildContext context,
+  WidgetRef ref,
+  Set<String> selection,
+) async {
+  if (selection.isEmpty) return;
+  var deleteFiles = false;
+  final ok = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => StatefulBuilder(
+      builder: (ctx, setState) => AlertDialog(
+        title: const Text('Supprimer'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              '${selection.length} téléchargement(s) '
+              'seront retirés du daemon.',
+            ),
+            CheckboxListTile(
+              value: deleteFiles,
+              onChanged: (v) => setState(() => deleteFiles = v ?? false),
+              title: const Text('Supprimer aussi les données sur disque'),
+              contentPadding: EdgeInsets.zero,
+              dense: true,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Annuler'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Supprimer'),
+          ),
+        ],
+      ),
+    ),
+  );
+  if (ok != true) return;
+  final notifier = ref.read(downloadsProvider.notifier);
+  try {
+    await Future.wait([
+      for (final ih in selection) notifier.remove(ih, deleteFiles: deleteFiles),
+    ]);
+    ref.read(downloadSelectionProvider.notifier).clear();
+  } catch (e) {
+    if (context.mounted) showDownloadError(context, 'supprimer', e);
   }
 }
 
@@ -170,50 +256,8 @@ class _Toolbar extends ConsumerWidget {
       }
     }
 
-    Future<void> confirmRemove() async {
-      var deleteFiles = false;
-      final ok = await showDialog<bool>(
-        context: context,
-        builder: (ctx) => StatefulBuilder(
-          builder: (ctx, setState) => AlertDialog(
-            title: const Text('Supprimer'),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  '${selection.length} téléchargement(s) '
-                  'seront retirés du daemon.',
-                ),
-                CheckboxListTile(
-                  value: deleteFiles,
-                  onChanged: (v) => setState(() => deleteFiles = v ?? false),
-                  title: const Text('Supprimer aussi les données sur disque'),
-                  contentPadding: EdgeInsets.zero,
-                  dense: true,
-                ),
-              ],
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(ctx).pop(false),
-                child: const Text('Annuler'),
-              ),
-              FilledButton(
-                onPressed: () => Navigator.of(ctx).pop(true),
-                child: const Text('Supprimer'),
-              ),
-            ],
-          ),
-        ),
-      );
-      if (ok == true) {
-        await run(
-          'supprimer',
-          (ih) => notifier.remove(ih, deleteFiles: deleteFiles),
-        );
-        sel.clear();
-      }
-    }
+    Future<void> confirmRemove() =>
+        confirmRemoveSelected(context, ref, selection);
 
     return Material(
       color: Theme.of(context).colorScheme.surface,
