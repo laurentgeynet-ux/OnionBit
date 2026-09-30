@@ -1,3 +1,4 @@
+import 'package:desktop_drop/desktop_drop.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -33,6 +34,43 @@ class DownloadsPage extends ConsumerStatefulWidget {
 
 class _DownloadsPageState extends ConsumerState<DownloadsPage> {
   String _nameFilter = '';
+  bool _dragging = false;
+
+  /// `.torrent` → upload binaire ; `magnet:` (fichier texte ou lien) →
+  /// URI. Les erreurs remontent en snackbar, sans interrompre le lot.
+  Future<void> _handleDrop(List<DropItem> items) async {
+    final repo = ref.read(downloadsRepositoryProvider);
+    var added = 0;
+    for (final item in items) {
+      try {
+        final name = item.name.toLowerCase();
+        if (name.endsWith('.torrent')) {
+          await repo.addTorrentBytes(await item.readAsBytes());
+          added++;
+        } else {
+          final text = String.fromCharCodes(await item.readAsBytes()).trim();
+          if (text.startsWith('magnet:')) {
+            await repo.add(uri: text.split(RegExp(r'\s')).first);
+            added++;
+          } else {
+            _toast('« ${item.name} » ignoré — ni .torrent ni magnet');
+          }
+        }
+      } catch (e) {
+        _toast('« ${item.name} » : $e');
+      }
+    }
+    if (added > 0) {
+      await ref.read(downloadsProvider.notifier).refresh();
+      _toast('$added téléchargement(s) ajouté(s)');
+    }
+  }
+
+  void _toast(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -50,88 +88,115 @@ class _DownloadsPageState extends ConsumerState<DownloadsPage> {
           onNameFilter: compact ? null : (v) => setState(() => _nameFilter = v),
         ),
         Expanded(
-          child: async.when(
-            loading: () => const Center(child: CircularProgressIndicator()),
-            error: (e, _) => ErrorState(
-              message: '$e',
-              onRetry: () => ref.read(downloadsProvider.notifier).refresh(),
-            ),
-            data: (all) {
-              final sort = ref.watch(downloadSortProvider);
-              final visible =
-                  all
-                      .where(widget.filter.matches)
-                      .where(
-                        (d) =>
-                            _nameFilter.isEmpty ||
-                            d.name.toLowerCase().contains(
-                              _nameFilter.toLowerCase(),
-                            ),
-                      )
-                      .toList()
-                    ..sort(
-                      (a, b) =>
-                          downloadComparator(sort.col)(a, b) *
-                          (sort.asc ? 1 : -1),
+          // Zone de dépôt : .torrent ou magnet lâchés n'importe où sur
+          // la liste (desktop ; non applicable au web — desktop_drop
+          // n'expose rien côté navigateur).
+          child: DropTarget(
+            onDragEntered: (_) => setState(() => _dragging = true),
+            onDragExited: (_) => setState(() => _dragging = false),
+            onDragDone: (details) {
+              setState(() => _dragging = false);
+              _handleDrop(details.files);
+            },
+            child: Container(
+              decoration: _dragging
+                  ? BoxDecoration(
+                      border: Border.all(
+                        color: Theme.of(context).colorScheme.primary,
+                        width: 2,
+                      ),
+                      color: Theme.of(context).colorScheme.primaryContainer
+                          .withValues(alpha: 0.2),
+                    )
+                  : null,
+              child: async.when(
+                loading: () => const Center(child: CircularProgressIndicator()),
+                error: (e, _) => ErrorState(
+                  message: '$e',
+                  onRetry: () => ref.read(downloadsProvider.notifier).refresh(),
+                ),
+                data: (all) {
+                  final sort = ref.watch(downloadSortProvider);
+                  final visible =
+                      all
+                          .where(widget.filter.matches)
+                          .where(
+                            (d) =>
+                                _nameFilter.isEmpty ||
+                                d.name.toLowerCase().contains(
+                                  _nameFilter.toLowerCase(),
+                                ),
+                          )
+                          .toList()
+                        ..sort(
+                          (a, b) =>
+                              downloadComparator(sort.col)(a, b) *
+                              (sort.asc ? 1 : -1),
+                        );
+                  if (visible.isEmpty) {
+                    return EmptyState(
+                      icon: Icons.download_outlined,
+                      title: 'Aucun téléchargement',
+                      message: widget.filter == DownloadFilter.all
+                          ? 'Ajoutez un magnet ou un fichier .torrent.'
+                          : 'Aucun élément dans le filtre « '
+                                '${widget.filter.label} ».',
+                      action: widget.filter == DownloadFilter.all
+                          ? FilledButton.icon(
+                              onPressed: () => AddDownloadDialog.show(context),
+                              icon: const Icon(Icons.add),
+                              label: const Text('Ajouter'),
+                            )
+                          : null,
                     );
-              if (visible.isEmpty) {
-                return EmptyState(
-                  icon: Icons.download_outlined,
-                  title: 'Aucun téléchargement',
-                  message: widget.filter == DownloadFilter.all
-                      ? 'Ajoutez un magnet ou un fichier .torrent.'
-                      : 'Aucun élément dans le filtre « '
-                            '${widget.filter.label} ».',
-                  action: widget.filter == DownloadFilter.all
-                      ? FilledButton.icon(
-                          onPressed: () => AddDownloadDialog.show(context),
-                          icon: const Icon(Icons.add),
-                          label: const Text('Ajouter'),
-                        )
-                      : null,
-                );
-              }
-              return _DownloadsContextMenu(
-                child: compact
-                    ? _CompactList(downloads: visible)
-                    : CallbackShortcuts(
-                        bindings: {
-                          const SingleActivator(
-                            LogicalKeyboardKey.keyA,
-                            control: true,
-                          ): () => ref
-                              .read(downloadSelectionProvider.notifier)
-                              .selectAll(visible),
-                          const SingleActivator(LogicalKeyboardKey.escape):
-                              () => ref
+                  }
+                  return _DownloadsContextMenu(
+                    child: compact
+                        ? _CompactList(downloads: visible)
+                        : CallbackShortcuts(
+                            bindings: {
+                              const SingleActivator(
+                                LogicalKeyboardKey.keyA,
+                                control: true,
+                              ): () => ref
+                                  .read(downloadSelectionProvider.notifier)
+                                  .selectAll(visible),
+                              const SingleActivator(
+                                LogicalKeyboardKey.escape,
+                              ): () => ref
                                   .read(downloadSelectionProvider.notifier)
                                   .clear(),
-                          const SingleActivator(LogicalKeyboardKey.space):
-                              () => _togglePauseSelection(all, selection),
-                          const SingleActivator(LogicalKeyboardKey.delete):
-                              () => confirmRemoveSelected(
-                            context,
-                            ref,
-                            selection,
+                              const SingleActivator(
+                                LogicalKeyboardKey.space,
+                              ): () =>
+                                  _togglePauseSelection(all, selection),
+                              const SingleActivator(
+                                LogicalKeyboardKey.delete,
+                              ): () => confirmRemoveSelected(
+                                context,
+                                ref,
+                                selection,
+                              ),
+                              const SingleActivator(LogicalKeyboardKey.f2): () {
+                                if (selection.length != 1) return;
+                                final d = all
+                                    .where((e) => e.infohash == selection.first)
+                                    .firstOrNull;
+                                if (d != null) showRateLimitsDialog(context, d);
+                              },
+                            },
+                            child: Focus(
+                              autofocus: true,
+                              child: _DesktopTable(
+                                downloads: visible,
+                                selection: selection,
+                              ),
+                            ),
                           ),
-                          const SingleActivator(LogicalKeyboardKey.f2): () {
-                            if (selection.length != 1) return;
-                            final d = all
-                                .where((e) => e.infohash == selection.first)
-                                .firstOrNull;
-                            if (d != null) showRateLimitsDialog(context, d);
-                          },
-                        },
-                        child: Focus(
-                          autofocus: true,
-                          child: _DesktopTable(
-                            downloads: visible,
-                            selection: selection,
-                          ),
-                        ),
-                      ),
-              );
-            },
+                  );
+                },
+              ),
+            ),
           ),
         ),
         // Panneau de détail (desktop) — une seule ligne sélectionnée.
@@ -679,9 +744,10 @@ class _DownloadsContextMenu extends ConsumerStatefulWidget {
 
   /// Ouvre le menu de `d` à `position` (coordonnées globales).
   static void show(BuildContext context, Offset position, Download d) {
-    context
-        .findAncestorStateOfType<_DownloadsContextMenuState>()
-        ?._open(position, d);
+    context.findAncestorStateOfType<_DownloadsContextMenuState>()?._open(
+      position,
+      d,
+    );
   }
 
   @override
@@ -711,9 +777,8 @@ class _DownloadsContextMenuState extends ConsumerState<_DownloadsContextMenu> {
   }
 
   void _toast(String message) {
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(message)));
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
   }
 
   /// Presets en octets/s : 64/128/256/512 Kio/s, 1/4 Mio/s.
@@ -741,19 +806,13 @@ class _DownloadsContextMenuState extends ConsumerState<_DownloadsContextMenu> {
       menuChildren: [
         for (final v in presets)
           MenuItemButton(
-            leadingIcon: Icon(
-              current == v ? Icons.check : null,
-              size: 18,
-            ),
+            leadingIcon: Icon(current == v ? Icons.check : null, size: 18),
             onPressed: () => onPick(v),
             child: Text(ByteFormatter.formatRate(v)),
           ),
         const Divider(height: 1),
         MenuItemButton(
-          leadingIcon: Icon(
-            current <= 0 ? Icons.check : null,
-            size: 18,
-          ),
+          leadingIcon: Icon(current <= 0 ? Icons.check : null, size: 18),
           onPressed: () => onPick(-1),
           child: const Text('Illimité'),
         ),
@@ -763,7 +822,9 @@ class _DownloadsContextMenuState extends ConsumerState<_DownloadsContextMenu> {
           child: const Text('Personnalisé…'),
         ),
       ],
-      child: Text('$label (${current > 0 ? ByteFormatter.formatRate(current) : '∞'})'),
+      child: Text(
+        '$label (${current > 0 ? ByteFormatter.formatRate(current) : '∞'})',
+      ),
     );
   }
 
@@ -795,9 +856,7 @@ class _DownloadsContextMenuState extends ConsumerState<_DownloadsContextMenu> {
         d.isPaused ? 'Reprendre' : 'Mettre en pause',
         () => _act(
           d.isPaused ? 'reprise' : 'pause',
-          d.isPaused
-              ? notifier.resume(d.infohash)
-              : notifier.pause(d.infohash),
+          d.isPaused ? notifier.resume(d.infohash) : notifier.pause(d.infohash),
         ),
       ),
       if (d.destination.isNotEmpty)
@@ -812,9 +871,7 @@ class _DownloadsContextMenuState extends ConsumerState<_DownloadsContextMenu> {
         menuChildren: [
           MenuItemButton(
             leadingIcon: Icon(
-              d.autoManaged
-                  ? Icons.check_box
-                  : Icons.check_box_outline_blank,
+              d.autoManaged ? Icons.check_box : Icons.check_box_outline_blank,
               size: 18,
             ),
             onPressed: () => _act(
@@ -908,7 +965,11 @@ class _DownloadsContextMenuState extends ConsumerState<_DownloadsContextMenu> {
         ],
         child: const Text('Limites de débit'),
       ),
-      item(Icons.balance, 'Ratio de seed…', () => showSeedingRatioDialog(context, d)),
+      item(
+        Icons.balance,
+        'Ratio de seed…',
+        () => showSeedingRatioDialog(context, d),
+      ),
       item(
         Icons.fact_check_outlined,
         'Revérifier les données',

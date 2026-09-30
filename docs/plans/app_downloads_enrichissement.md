@@ -47,7 +47,7 @@ fichier (cochage) + `docs/CHANGELOG.md` + commit dédié. Les modifications
   (avec le dialogue existant), Ctrl+A, Échap, F2 = limites.
 - `FocusableActionDetector`/`Shortcuts`/`Actions` Material.
 
-## Étape 6 — Drag & drop
+## Étape 6 — Drag & drop [x] (2026-09-30)
 
 - `DropTarget` (package `desktop_drop`, MIT — déjà standard pour Flutter
   desktop) : `.torrent` → `addTorrentBytes`, `magnet:` → `add(uri:)`.

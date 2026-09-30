@@ -3,6 +3,15 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## UI : glisser-déposer .torrent/magnet sur Téléchargements (2026-09-30)
+
+Étape 6 de `docs/plans/app_downloads_enrichissement.md` : `DropTarget`
+(`desktop_drop` 0.8.x, MIT) enveloppe la liste — un `.torrent` lâché
+part en `addTorrentBytes`, un fichier/lien `magnet:` en `add(uri:)` ;
+surbrillance pendant le survol, erreurs par fichier en snackbar sans
+interrompre le lot. Non applicable au web (pas de dépôt de fichiers
+desktop côté navigateur) — écart assumé, documenté dans le plan.
+
 ## UI : raccourcis clavier sur Téléchargements (2026-09-30)
 
 Étape 5 de `docs/plans/app_downloads_enrichissement.md` : Espace

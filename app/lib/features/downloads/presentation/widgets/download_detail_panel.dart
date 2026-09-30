@@ -129,7 +129,9 @@ class _DetailsTabState extends ConsumerState<_DetailsTab> {
               onPressed: () {
                 Clipboard.setData(ClipboardData(text: magnetUri));
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Lien magnet copié dans le presse-papier')),
+                  const SnackBar(
+                    content: Text('Lien magnet copié dans le presse-papier'),
+                  ),
                 );
               },
             ),
@@ -139,7 +141,9 @@ class _DetailsTabState extends ConsumerState<_DetailsTab> {
               onPressed: () {
                 Clipboard.setData(ClipboardData(text: d.infohash));
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Info-hash copié dans le presse-papier')),
+                  const SnackBar(
+                    content: Text('Info-hash copié dans le presse-papier'),
+                  ),
                 );
               },
             ),
@@ -343,9 +347,7 @@ class _SparklinePainter extends CustomPainter {
       for (var i = 0; i < history.length; i++) {
         final y =
             size.height - (pick(history[i]) / peak) * (size.height - 4) - 2;
-        i == 0
-            ? path.moveTo(0, y)
-            : path.lineTo(i * dx, y);
+        i == 0 ? path.moveTo(0, y) : path.lineTo(i * dx, y);
       }
       canvas.drawPath(path, paint);
     }
@@ -355,8 +357,7 @@ class _SparklinePainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(_SparklinePainter old) =>
-      !identical(old.history, history);
+  bool shouldRepaint(_SparklinePainter old) => !identical(old.history, history);
 }
 
 class _FilesTab extends ConsumerWidget {
@@ -429,11 +430,7 @@ class _FilesTab extends ConsumerWidget {
                           try {
                             await ref
                                 .read(downloadsProvider.notifier)
-                                .setFilePriority(
-                                  download.infohash,
-                                  f.index,
-                                  p,
-                                );
+                                .setFilePriority(download.infohash, f.index, p);
                             if (context.mounted) {
                               ScaffoldMessenger.of(context).showSnackBar(
                                 SnackBar(
@@ -448,10 +445,19 @@ class _FilesTab extends ConsumerWidget {
                           }
                         },
                         itemBuilder: (_) => const [
-                          PopupMenuItem(value: 0, child: Text('Ne pas télécharger')),
-                          PopupMenuItem(value: 1, child: Text('Priorité basse')),
+                          PopupMenuItem(
+                            value: 0,
+                            child: Text('Ne pas télécharger'),
+                          ),
+                          PopupMenuItem(
+                            value: 1,
+                            child: Text('Priorité basse'),
+                          ),
                           PopupMenuItem(value: 4, child: Text('Normale')),
-                          PopupMenuItem(value: 7, child: Text('Priorité haute')),
+                          PopupMenuItem(
+                            value: 7,
+                            child: Text('Priorité haute'),
+                          ),
                         ],
                       ),
                       if (download.destination.isNotEmpty)
@@ -508,15 +514,14 @@ class _TrackersTab extends ConsumerWidget {
             .read(downloadsProvider.notifier)
             .addTracker(download.infohash, url);
         if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Tracker ajouté : $url')),
-          );
+          ScaffoldMessenger.of(context)
+              .showSnackBar(SnackBar(content: Text('Tracker ajouté : $url')));
         }
       } catch (e) {
         if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Erreur ajout tracker : $e')),
-          );
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text('Erreur ajout tracker : $e')));
         }
       }
     }
@@ -524,7 +529,9 @@ class _TrackersTab extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final trackersAsync = ref.watch(downloadTrackersProvider(download.infohash));
+    final trackersAsync = ref.watch(
+      downloadTrackersProvider(download.infohash),
+    );
 
     return trackersAsync.when(
       loading: () => const Center(child: CircularProgressIndicator()),
@@ -546,9 +553,8 @@ class _TrackersTab extends ConsumerWidget {
     try {
       await action();
       if (context.mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('$label effectué')));
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('$label effectué')));
       }
     } catch (e) {
       if (context.mounted) showDownloadError(context, label, e);
@@ -697,13 +703,22 @@ class _PeersTab extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Statistiques de l\'essaim (Swarm)', style: theme.textTheme.titleMedium),
+                Text(
+                  'Statistiques de l\'essaim (Swarm)',
+                  style: theme.textTheme.titleMedium,
+                ),
                 const SizedBox(height: AppSpacing.sm),
                 _statRow('Seeders connectés', '${d.numSeeds}'),
                 _statRow('Leechers connectés', '${d.numPeers}'),
                 _statRow('Total pairs connectés', '${d.numConnectedPeers}'),
-                _statRow('Débit descendant actuel', ByteFormatter.formatRate(d.speedDown)),
-                _statRow('Débit montant actuel', ByteFormatter.formatRate(d.speedUp)),
+                _statRow(
+                  'Débit descendant actuel',
+                  ByteFormatter.formatRate(d.speedDown),
+                ),
+                _statRow(
+                  'Débit montant actuel',
+                  ByteFormatter.formatRate(d.speedUp),
+                ),
                 _statRow(
                   'Mode réseau',
                   d.anonDownload

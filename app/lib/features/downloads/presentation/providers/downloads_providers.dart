@@ -98,8 +98,11 @@ class DownloadsNotifier extends AsyncNotifier<List<Download>> {
     required String destination,
     String? completedDir,
   }) => _run(
-    (r) =>
-        r.moveStorage(infohash, destination: destination, completedDir: completedDir),
+    (r) => r.moveStorage(
+      infohash,
+      destination: destination,
+      completedDir: completedDir,
+    ),
   );
   Future<void> setFilePriority(String infohash, int index, int priority) =>
       _run((r) => r.setFilePriority(infohash, index, priority));
@@ -167,8 +170,7 @@ final downloadSortProvider =
 
 class DownloadSortNotifier extends Notifier<({DownloadSort col, bool asc})> {
   @override
-  ({DownloadSort col, bool asc}) build() =>
-      (col: DownloadSort.name, asc: true);
+  ({DownloadSort col, bool asc}) build() => (col: DownloadSort.name, asc: true);
 
   /// Clique sur un en-tête : même colonne = inverse le sens, sinon
   /// nouvelle colonne en ascendant.
@@ -181,8 +183,8 @@ class DownloadSortNotifier extends Notifier<({DownloadSort col, bool asc})> {
 int Function(Download, Download) downloadComparator(DownloadSort col) {
   return switch (col) {
     DownloadSort.name => (a, b) => a.name.toLowerCase().compareTo(
-        b.name.toLowerCase(),
-      ),
+      b.name.toLowerCase(),
+    ),
     DownloadSort.size => (a, b) => a.size.compareTo(b.size),
     DownloadSort.progress => (a, b) => a.progress.compareTo(b.progress),
     DownloadSort.status => (a, b) => a.status.compareTo(b.status),
@@ -190,8 +192,8 @@ int Function(Download, Download) downloadComparator(DownloadSort col) {
     DownloadSort.up => (a, b) => a.speedUp.compareTo(b.speedUp),
     DownloadSort.eta => (a, b) => a.etaSeconds.compareTo(b.etaSeconds),
     DownloadSort.peers => (a, b) => a.numConnectedPeers.compareTo(
-        b.numConnectedPeers,
-      ),
+      b.numConnectedPeers,
+    ),
     DownloadSort.ratio => (a, b) => a.ratio.compareTo(b.ratio),
     DownloadSort.added => (a, b) => a.timeAdded.compareTo(b.timeAdded),
   };
@@ -238,8 +240,12 @@ class DownloadSelectionNotifier extends Notifier<Set<String>> {
 
   /// Clic ligne : `ctrl` = toggle, `shift` = plage, sinon sélection
   /// unique (et nouvelle ancre).
-  void click(String infohash, List<Download> ordered,
-      {bool ctrl = false, bool shift = false}) {
+  void click(
+    String infohash,
+    List<Download> ordered, {
+    bool ctrl = false,
+    bool shift = false,
+  }) {
     if (shift) {
       selectRange(infohash, ordered);
     } else if (ctrl) {
@@ -282,4 +288,3 @@ final downloadTrackersProvider = FutureProvider.autoDispose
       (ref, infohash) =>
           ref.watch(downloadsRepositoryProvider).trackers(infohash),
     );
-
