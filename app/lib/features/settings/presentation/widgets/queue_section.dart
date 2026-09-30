@@ -115,9 +115,10 @@ class _QueueSectionState extends ConsumerState<QueueSection> {
               ),
               title: 'Vérification au démarrage',
               subtitle:
-                  'Relit un échantillon de pièces pour détecter les '
-                  'fichiers modifiés. Désactivé : démarrage quasi '
-                  'instantané mais une corruption passera inaperçue.',
+                  'Relit un échantillon de pièces après la restauration '
+                  'pour détecter les fichiers modifiés entre deux '
+                  'sessions. Désactivé : aucune relecture, une '
+                  'corruption passera inaperçue.',
             ),
             SettingsSwitch(
               path: const [
