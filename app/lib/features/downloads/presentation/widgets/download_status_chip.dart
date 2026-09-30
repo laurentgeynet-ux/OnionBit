@@ -36,8 +36,9 @@ class DownloadStatusChip extends StatelessWidget {
   }
 }
 
-/// Pastille d'anonymat — honnête : plein = lane anonyme, l'état « en
-/// attente de circuit » relève du statut du téléchargement (le kill
+/// Badge d'anonymat explicite : « Clair » (trafic direct) ou
+/// « Anon ×N » (N sauts de circuit). Contour plein = lane anonyme
+/// établie ; contour pointillé = « en attente de circuit » (le kill
 /// switch bloque le trafic sans circuit).
 class AnonBadge extends StatelessWidget {
   const AnonBadge({super.key, required this.download});
@@ -46,18 +47,49 @@ class AnonBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (!download.anonDownload) return const SizedBox(width: 24);
     final scheme = Theme.of(context).colorScheme;
+    final hops = download.hops;
+    final anon = download.anonDownload && hops > 0;
     final waiting =
-        download.status == 'METADATA' ||
-        (download.speedDown == 0 && download.speedUp == 0);
+        anon &&
+        (download.status == 'METADATA' ||
+            (download.speedDown == 0 && download.speedUp == 0));
+    final color = !anon
+        ? scheme.outline
+        : waiting
+        ? scheme.tertiary
+        : scheme.primary;
     return Tooltip(
-      message:
-          '${download.hops} saut(s)${waiting ? ' — en attente de circuit' : ''}',
-      child: Icon(
-        waiting ? Icons.shield_outlined : Icons.shield,
-        size: 18,
-        color: waiting ? scheme.tertiary : scheme.primary,
+      message: !anon
+          ? 'Trafic direct (non anonyme)'
+          : 'Anonyme : $hops saut(s)'
+                '${waiting ? ' — en attente de circuit' : ''}',
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+        decoration: BoxDecoration(
+          border: Border.all(color: color),
+          borderRadius: BorderRadius.circular(6),
+          color: anon ? color.withAlpha(18) : null,
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              !anon
+                  ? Icons.public
+                  : waiting
+                  ? Icons.shield_outlined
+                  : Icons.shield,
+              size: 11,
+              color: color,
+            ),
+            const SizedBox(width: 3),
+            Text(
+              !anon ? 'Clair' : 'Anon ×$hops',
+              style: TextStyle(fontSize: 10, color: color),
+            ),
+          ],
+        ),
       ),
     );
   }

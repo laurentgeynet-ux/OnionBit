@@ -3,6 +3,16 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## UI — Téléchargements : badge d'anonymat explicite + % lisible
+
+- `AnonBadge` devient une pastille texte : « Clair » (trafic direct,
+  icône globe) ou « Anon ×N » (N sauts, bouclier plein/pointillé selon
+  l'établissement du circuit) — avant : une icône bouclier seule pour
+  les anonymes, rien pour les clairs. Colonne badges 88 → 130 px.
+- `_ProgressBar` mutualisé (table, grille, liste compacte) : barre de
+  16 px arrondie + étiquette % sur pastille de surface translucide —
+  le texte était invisible sur la portion remplie en thème sombre.
+
 ## UI — Fix : Réglages vides au scroll (ref en dispose)
 
 - `DeferredSection.detach()` appelait `ref.read()` depuis `dispose()`

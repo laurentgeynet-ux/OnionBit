@@ -458,7 +458,7 @@ class _DesktopTable extends ConsumerWidget {
   final List<Download> downloads;
   final Set<String> selection;
 
-  static const double _minWidth = 1130;
+  static const double _minWidth = 1172;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -549,7 +549,7 @@ class _HeaderRow extends ConsumerWidget {
           h('Pairs', DownloadSort.peers, width: 80),
           h('Ratio', DownloadSort.ratio, width: 70),
           h('Ajouté', DownloadSort.added, width: 100),
-          const SizedBox(width: 88),
+          const SizedBox(width: 130),
         ],
       ),
     );
@@ -619,19 +619,7 @@ class _DownloadRow extends ConsumerWidget {
                   padding: const EdgeInsets.symmetric(
                     horizontal: AppSpacing.sm,
                   ),
-                  child: Stack(
-                    alignment: Alignment.center,
-                    children: [
-                      LinearProgressIndicator(
-                        value: d.progress.clamp(0.0, 1.0),
-                        color: d.isError ? scheme.error : null,
-                      ),
-                      Text(
-                        '${(d.progress * 100).toStringAsFixed(1)} %',
-                        style: small,
-                      ),
-                    ],
-                  ),
+                  child: _ProgressBar(download: d),
                 ),
               ),
               SizedBox(width: 160, child: DownloadStatusChip(download: d)),
@@ -674,7 +662,7 @@ class _DownloadRow extends ConsumerWidget {
                 width: 100,
                 child: Text(_formatDate(d.timeAdded), style: small),
               ),
-              SizedBox(width: 88, child: _RowBadges(download: d)),
+              SizedBox(width: 130, child: _RowBadges(download: d)),
             ],
           ),
         ),
@@ -1082,7 +1070,7 @@ class _CompactList extends ConsumerWidget {
           subtitle: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              LinearProgressIndicator(value: d.progress.clamp(0, 1)),
+              _ProgressBar(download: d),
               const SizedBox(height: 2),
               Text(
                 '${d.status} · ↓${ByteFormatter.formatRate(d.speedDown)}'
@@ -1230,19 +1218,7 @@ class _GridCard extends ConsumerWidget {
                 ],
               ),
               const SizedBox(height: AppSpacing.xs),
-              Stack(
-                alignment: Alignment.center,
-                children: [
-                  LinearProgressIndicator(
-                    value: d.progress.clamp(0.0, 1.0),
-                    color: d.isError ? scheme.error : null,
-                  ),
-                  Text(
-                    '${(d.progress * 100).toStringAsFixed(1)} %',
-                    style: small,
-                  ),
-                ],
-              ),
+              _ProgressBar(download: d),
               const Spacer(),
               Row(
                 children: [
@@ -1259,6 +1235,50 @@ class _GridCard extends ConsumerWidget {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// Barre de progression avec pourcentage toujours lisible : barre de
+/// 16 px et étiquette sur une pastille de surface translucide (le
+/// texte brut était invisible sur la portion remplie en thème sombre,
+/// et la barre fine le rendait flottant autour).
+class _ProgressBar extends StatelessWidget {
+  const _ProgressBar({required this.download});
+
+  final Download download;
+
+  @override
+  Widget build(BuildContext context) {
+    final d = download;
+    final scheme = Theme.of(context).colorScheme;
+    return SizedBox(
+      height: 16,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: LinearProgressIndicator(
+              value: d.progress.clamp(0.0, 1.0),
+              minHeight: 16,
+              color: d.isError ? scheme.error : null,
+              backgroundColor: scheme.surfaceContainerHighest,
+            ),
+          ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 4),
+            decoration: BoxDecoration(
+              color: scheme.surface.withAlpha(200),
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: Text(
+              '${(d.progress * 100).toStringAsFixed(1)} %',
+              style: Theme.of(context).textTheme.labelSmall,
+            ),
+          ),
+        ],
       ),
     );
   }
