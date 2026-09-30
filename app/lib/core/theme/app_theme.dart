@@ -1,12 +1,17 @@
 import 'package:flutter/material.dart';
 
-/// Design system Material 3 de l'application — repris à l'identique
-/// de l'app de référence (`C:\Emule-Sion-UI-UX\app`).
+/// Design system Material 3 de l'application — repris de l'app de
+/// référence (`C:\Emule-Sion-UI-UX\app`), recalé sur la palette de la
+/// marque OnionBit (`branding/`).
 ///
 /// Couleur de départ personnalisable (accent utilisateur) — la valeur
 /// par défaut vit ici, une seule source de vérité.
 abstract final class AppTheme {
-  static const Color defaultSeedColor = Color(0xFF2F6FED);
+  /// Violet ampoule du logo OnionBit (`#6C2EA6`).
+  static const Color defaultSeedColor = Color(0xFF6C2EA6);
+
+  /// Cyan flèche du logo OnionBit (`#4FD8E0`) — accent `tertiary`.
+  static const Color brandTertiary = Color(0xFF4FD8E0);
 
   static ThemeData light({Color seedColor = defaultSeedColor}) =>
       _build(seedColor: seedColor, brightness: Brightness.light);
@@ -18,10 +23,9 @@ abstract final class AppTheme {
     required Color seedColor,
     required Brightness brightness,
   }) {
-    final colorScheme = ColorScheme.fromSeed(
-      seedColor: seedColor,
-      brightness: brightness,
-    );
+    final colorScheme =
+        ColorScheme.fromSeed(seedColor: seedColor, brightness: brightness)
+            .copyWith(tertiary: brandTertiary);
     return ThemeData(
       useMaterial3: true,
       colorScheme: colorScheme,

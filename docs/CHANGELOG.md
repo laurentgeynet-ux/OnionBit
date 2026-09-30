@@ -3,6 +3,13 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## UI — Palette OnionBit (étape 1/8 du plan global)
+
+- `AppTheme.defaultSeedColor` → violet `#6C2EA6` (ampoule du logo) ;
+  `tertiary` fixée au cyan `#4FD8E0` (flèche) dans les deux thèmes.
+- `kAccentChoices` : entrée « OnionBit » en tête de liste ; la
+  persistance du thème (`theme_settings.dart`) existait déjà.
+
 ## UI — Sidebar : pied avec état daemon + version (étape 6/6)
 
 - `_DaemonFooter` : pastille `sseConnectedProvider` + « Daemon vX.Y »

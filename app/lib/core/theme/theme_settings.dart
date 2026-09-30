@@ -10,9 +10,10 @@ import 'app_theme.dart';
 const _kKeySeedColor = 'theme.seedColor';
 const _kKeyThemeMode = 'theme.themeMode';
 
-/// Palette d'accents proposée dans les réglages (bleu par défaut,
-/// identique à l'app de référence).
+/// Palette d'accents proposée dans les réglages (violet OnionBit par
+/// défaut — couleur du logo).
 const kAccentChoices = <(String, Color)>[
+  ('OnionBit', Color(0xFF6C2EA6)),
   ('Bleu', Color(0xFF2F6FED)),
   ('Indigo', Color(0xFF5C6BC0)),
   ('Vert', Color(0xFF2E7D57)),
