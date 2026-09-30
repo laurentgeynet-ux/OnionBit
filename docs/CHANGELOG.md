@@ -3,6 +3,23 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Fix : dédup par infohash à l'écriture de session.json (2026-09-30)
+
+- Le guard in-flight par infohash (`4a28ac5`) empêchait les doublons
+  dans `db.torrents` mais pas dans le **fichier** : une entrée chargée
+  au démarrage (restore rqbit) restait dans la map de persistance même
+  quand son `add_torrent` retournait `AlreadyManaged`, pendant que la
+  restore `tribler.db` réinjectait le même infohash sous un nouvel id —
+  les deux coexistaient dans `session.json` et se multipliaient à
+  chaque démarrage.
+- `JsonSessionPersistenceStore::update_db` supprime désormais les
+  entrées d'autres ids portant le même `info_hash` avant l'insertion —
+  le fichier ne peut plus contenir deux entrées pour un même torrent.
+- Instrumentation des phases d'init (commit `890ee72`) : `create_and_init`,
+  `validate_fastresume`, `initial_check`, `ensure_file_length` loguent
+  leur `elapsed_ms` ; `restore_downloads` logue un récapitulatif
+  `total_elapsed_ms` en fin de restauration.
+
 ## Option : échantillonnage fastresume désactivable au démarrage (2026-09-29)
 
 - Nouvelle clé `libtorrent/fastresume_check` (défaut `true` —

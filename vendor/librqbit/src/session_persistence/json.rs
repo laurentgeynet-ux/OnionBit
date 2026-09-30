@@ -219,7 +219,18 @@ impl JsonSessionPersistenceStore {
             }
         }
 
-        self.db_content.write().await.torrents.insert(id, st);
+        // Tribler : dedup par infohash a l'ecriture — une entree
+        // chargee (ex. id 0, issue du restore rqbit) survit dans la
+        // map meme quand l'add_torrent correspondant retourne
+        // `AlreadyManaged` : si Tribler a reinjecte le meme torrent
+        // sous un nouvel id via tribler.db, les deux coexisteraient
+        // dans session.json et seraient toutes deux restaurees au
+        // prochain run.
+        let mut g = self.db_content.write().await;
+        g.torrents
+            .retain(|eid, e| *eid == id || e.info_hash != st.info_hash);
+        g.torrents.insert(id, st);
+        drop(g);
         self.flush().await?;
 
         Ok(())
