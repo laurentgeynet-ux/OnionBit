@@ -3,6 +3,38 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Stabilisation : erreurs différées du stockage paresseux + état hashcheck (2026-09-30)
+
+Suite de « stockage paresseux » : l'init sans accès disque reporte les
+erreurs de chemin/permissions à la première E/S — cette étape verrouille
+ce comportement et rend la phase de check visible dans l'API.
+
+- **Tests d'erreur différée** (librqbit vendored) : `OpenedFile::new_lazy`
+  sur un chemin impossible (parent = fichier ordinaire) → `ensure_len`
+  différé sans disque, erreur propre au premier `ensure_open`/`lock_read`/
+  `lock_write` ; `FilesystemStorage` et `MmapFilesystemStorage` remontent
+  `Err` sans panique — le mmap n'est pas matérialisé après l'échec.
+- **État « check en cours » distinct de « en file »** :
+  `TorrentStateInitializing::check_started` (positionné à l'entrée de
+  `check()`, après le sémaphore `concurrent_init_limit`) exposé via
+  `TorrentStats.checking` ; `Download::stats` mappe un torrent en
+  `Initializing` non pausé vers `Checking` → l'API émet `HASHCHECKING`
+  (2) quand le fastresume/recheck tourne réellement,
+  `WAITING_FOR_HASHCHECK` (1) tant qu'il attend dans la file d'init.
+  « Restauration terminée » et « vérification terminée » sont deux
+  états mesurables distincts.
+- **Chaîne complète** (test `tribler-core`) :
+  `restauration_sortie_inaccessible_erreur_differee` — dossier de sortie
+  remplacé par un fichier entre deux runs : la restauration réussit
+  (init lazy), le check différé marque toutes les pièces manquantes
+  (`progress_bytes = 0`), le download sort de `Initializing`/`Checking`
+  sans état `Error` fatale ni crash.
+- **Infra de test vendored** : `vendor/*` exclus du workspace racine +
+  `[patch.crates-io]` local dans `vendor/librqbit/Cargo.toml` vers les
+  crates sœurs vendored + `resources/` rapatrié depuis rqbit —
+  `cargo test --manifest-path vendor/librqbit/Cargo.toml` fonctionne
+  désormais.
+
 ## UI : historique des recherches récentes (2026-09-30)
 
 Étape 7 de `docs/plans/app_search_enrichissement.md` :

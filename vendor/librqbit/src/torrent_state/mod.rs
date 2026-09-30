@@ -515,6 +515,7 @@ impl ManagedTorrent {
             progress_bytes: 0,
             uploaded_bytes: 0,
             finished: false,
+            checking: false,
             live: None,
         };
 
@@ -524,6 +525,7 @@ impl ManagedTorrent {
                 ManagedTorrentState::Initializing(i) => {
                     resp.state = S::Initializing { paused: g.paused };
                     resp.progress_bytes = i.checked_bytes.load(Ordering::Relaxed);
+                    resp.checking = i.is_check_started();
                 }
                 ManagedTorrentState::Paused(p) => {
                     resp.state = S::Paused;

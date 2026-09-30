@@ -299,7 +299,61 @@ mod tests {
     use peer_binary_protocol::DoubleBufHelper;
     use tempfile::TempDir;
 
-    use crate::storage::filesystem::opened_file::OurFileExt;
+    use crate::storage::filesystem::opened_file::{OpenedFile, OurFileExt};
+    use crate::Error;
+
+    /// Chemin dont le parent est un fichier ordinaire : `create_dir_all`
+    /// et l'ouverture echoueront au premier acces.
+    fn unopenable_path(td: &TempDir) -> std::path::PathBuf {
+        let blocker = td.path().join("blocker");
+        std::fs::write(&blocker, b"x").unwrap();
+        blocker.join("child.bin")
+    }
+
+    #[test]
+    fn test_lazy_erreur_differee_au_premier_acces() {
+        let td = TempDir::with_prefix("test_lazy_err").unwrap();
+        let path = unopenable_path(&td);
+
+        // L'enregistrement paresseux ne touche pas le disque : aucune
+        // erreur a la construction ni a ensure_len (longueur enregistree).
+        let f = OpenedFile::new_lazy(path, true);
+        f.ensure_len(42).unwrap();
+        assert!(!f.is_open());
+
+        // L'erreur (dossier/permissions) remonte au premier acces,
+        // sans panique, et le fichier reste non ouvert.
+        assert!(f.ensure_open().is_err());
+        assert!(!f.is_open());
+    }
+
+    #[test]
+    fn test_lazy_pending_len_appliquee_a_l_ouverture() {
+        let td = TempDir::with_prefix("test_lazy_len").unwrap();
+        let path = td.path().join("sub").join("f.bin");
+        let f = OpenedFile::new_lazy(path.clone(), true);
+        f.ensure_len(123).unwrap();
+        // ensure_len differe : le fichier n'existe pas encore.
+        assert!(!path.exists());
+        let g = f.ensure_open().unwrap();
+        assert_eq!(g.metadata().unwrap().len(), 123);
+        assert!(f.is_open());
+    }
+
+    #[test]
+    fn test_lazy_pread_sur_fichier_inaccessible() {
+        let td = TempDir::with_prefix("test_lazy_pread").unwrap();
+        let f = OpenedFile::new_lazy(unopenable_path(&td), true);
+        // lock_read declenche ensure_open : erreur propre, pas de panique.
+        assert!(f.lock_read().is_err());
+        assert!(f.lock_write().is_err());
+    }
+
+    #[test]
+    fn test_dummy_renvoie_fs_file_is_none() {
+        let f = OpenedFile::new_dummy();
+        assert!(matches!(f.ensure_open(), Err(Error::FsFileIsNone)));
+    }
 
     #[test]
     fn test_pwrite_all_vectored() {

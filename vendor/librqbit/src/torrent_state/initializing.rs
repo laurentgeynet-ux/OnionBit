@@ -33,6 +33,11 @@ pub struct TorrentStateInitializing {
     pub(crate) checked_bytes: AtomicU64,
     pause_requested: AtomicBool,
     check_running: AtomicBool,
+    /// Tribler : `true` une fois `check()` reellement entre (apres le
+    /// semaphore `concurrent_init_limit`) — distingue « en file pour
+    /// le check » de « hashcheck disque en cours » pour l'API
+    /// (`WAITING_FOR_HASHCHECK` vs `HASHCHECKING`).
+    check_started: AtomicBool,
     previously_errored: bool,
 }
 
@@ -52,6 +57,7 @@ impl TorrentStateInitializing {
             checked_bytes: AtomicU64::new(0),
             pause_requested: AtomicBool::new(false),
             check_running: AtomicBool::new(false),
+            check_started: AtomicBool::new(false),
             previously_errored,
         }
     }
@@ -81,6 +87,12 @@ impl TorrentStateInitializing {
 
     pub(crate) fn finish_check(&self) {
         self.check_running.store(false, Ordering::Release);
+    }
+
+    /// `true` quand `check()` a effectivement commence (validation
+    /// fastresume / recheck disque), pas seulement ete planifie.
+    pub fn is_check_started(&self) -> bool {
+        self.check_started.load(Ordering::Relaxed)
     }
 
     async fn validate_fastresume(
@@ -198,6 +210,7 @@ impl TorrentStateInitializing {
     }
 
     pub async fn check(&self) -> anyhow::Result<TorrentStatePaused> {
+        self.check_started.store(true, Ordering::Release);
         let id: TorrentIdOrHash = self.shared.info_hash.into();
         let session = self.shared.session.upgrade().context("session is dead")?;
         let bitv_factory = session.bitv_factory.clone();

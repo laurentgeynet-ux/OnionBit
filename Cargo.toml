@@ -14,6 +14,15 @@ members = [
     "crates/tribler-daemon",
     "crates/tribler-test-support",
 ]
+# Les crates vendored (`[patch.crates-io]`) ne sont pas des membres du
+# workspace : l'exclure permet de lancer `cargo test` dans vendor/*.
+exclude = [
+    "vendor/librqbit",
+    "vendor/librqbit-dht",
+    "vendor/librqbit-dualstack-sockets",
+    "vendor/librqbit-tracker-comms",
+    "vendor/librqbit-utp",
+]
 
 [workspace.package]
 version = "0.3.0"

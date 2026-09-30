@@ -153,3 +153,36 @@ impl TorrentStorage for FilesystemStorage {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use tempfile::TempDir;
+
+    use super::*;
+    use crate::storage::filesystem::OpenedFile;
+
+    /// Un fichier enregistre en lazy dont le chemin est impossible a
+    /// ouvrir (parent = fichier ordinaire) : les E/S echouent
+    /// proprement au premier acces au lieu de paniquer.
+    #[test]
+    fn test_erreur_differee_sur_io() {
+        let td = TempDir::with_prefix("test_fs_lazy_err").unwrap();
+        let blocker = td.path().join("blocker");
+        std::fs::write(&blocker, b"x").unwrap();
+
+        let storage = FilesystemStorage {
+            output_folder: td.path().to_path_buf(),
+            opened_files: vec![OpenedFile::new_lazy(blocker.join("f.bin"), true)],
+        };
+
+        // ensure_file_length reste differe (aucun acces disque).
+        storage.ensure_file_length(0, 16).unwrap();
+        assert!(!blocker.join("f.bin").exists());
+
+        let mut buf = [0u8; 8];
+        assert!(storage.pread_exact(0, 0, &mut buf).is_err());
+        assert!(storage.pwrite_all(0, 0, &buf).is_err());
+        // id de fichier hors bornes : erreur, pas de panique.
+        assert!(storage.pread_exact(9, 0, &mut buf).is_err());
+    }
+}

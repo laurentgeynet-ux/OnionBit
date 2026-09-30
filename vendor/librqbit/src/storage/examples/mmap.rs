@@ -168,3 +168,39 @@ impl TorrentStorage for MmapFilesystemStorage {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use tempfile::TempDir;
+
+    use super::*;
+    use crate::storage::filesystem::OpenedFile;
+
+    /// Chemin impossible a ouvrir (parent = fichier ordinaire) : la
+    /// materialisation du mmap au premier acces doit echouer
+    /// proprement — erreur remontee, mmap non materialise, pas de
+    /// panique ni de faute d'acces.
+    #[test]
+    fn test_erreur_differee_au_mapping() {
+        let td = TempDir::with_prefix("test_mmap_lazy_err").unwrap();
+        let blocker = td.path().join("blocker");
+        std::fs::write(&blocker, b"x").unwrap();
+
+        let storage = MmapFilesystemStorage {
+            opened_mmaps: vec![RwLock::new(None)],
+            lens: vec![16],
+            fs: FilesystemStorage {
+                output_folder: td.path().to_path_buf(),
+                opened_files: vec![OpenedFile::new_lazy(blocker.join("f.bin"), true)],
+            },
+        };
+
+        let mut buf = [0u8; 8];
+        assert!(storage.pread_exact(0, 0, &mut buf).is_err());
+        assert!(storage.pwrite_all(0, 0, &buf).is_err());
+        // Le mmap n'a pas ete materialise apres l'echec.
+        assert!(storage.opened_mmaps[0].read().is_none());
+        // id de fichier hors bornes : erreur, pas de panique.
+        assert!(storage.pread_exact(9, 0, &mut buf).is_err());
+    }
+}

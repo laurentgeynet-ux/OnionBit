@@ -81,6 +81,10 @@ pub struct TorrentStats {
     pub uploaded_bytes: u64,
     pub total_bytes: u64,
     pub finished: bool,
+    /// Tribler : `true` tant que le torrent est en phase de check
+    /// disque (fastresume/recheck) — distingue « en file pour le
+    /// check » de « hashcheck en cours » cote API.
+    pub checking: bool,
     pub live: Option<LiveStats>,
 }
 
@@ -154,6 +158,7 @@ mod tests {
             uploaded_bytes: 0,
             total_bytes: 100,
             finished: false,
+            checking: false,
             live: None,
         }
     }

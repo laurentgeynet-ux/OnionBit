@@ -154,7 +154,11 @@ impl Download {
             TorrentStatsState::Initializing { paused } => {
                 if paused {
                     DownloadState::Paused
-                } else if s.progress_bytes > 0 {
+                } else if s.checking || s.progress_bytes > 0 {
+                    // `checking` = `check()` rqbit reellement en cours
+                    // (fastresume/recheck disque) — distinct de
+                    // l'attente dans la file `concurrent_init_limit`,
+                    // qui reste `Initializing` -> WAITING_FOR_HASHCHECK.
                     DownloadState::Checking
                 } else {
                     DownloadState::Initializing

@@ -387,3 +387,12 @@ features = [
     "Win32_System_IO",
     "Win32_System_Ioctl",
 ]
+
+# Permet `cargo test` standalone dans vendor/librqbit (le crate est
+# `exclude` du workspace racine) : redirige vers les crates soeurs
+# vendored+patchees, comme le `[patch.crates-io]` de la racine.
+[patch.crates-io]
+librqbit-dht = { path = "../librqbit-dht" }
+librqbit-tracker-comms = { path = "../librqbit-tracker-comms" }
+librqbit-dualstack-sockets = { path = "../librqbit-dualstack-sockets" }
+librqbit-utp = { path = "../librqbit-utp" }
