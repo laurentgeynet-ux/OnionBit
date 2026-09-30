@@ -27,6 +27,7 @@ class SearchPage extends ConsumerWidget {
     final colSort = ref.watch(searchColSortProvider);
     final selection = ref.watch(searchSelectionProvider);
     final filter = ref.watch(searchFilterProvider);
+    final history = ref.watch(searchHistoryProvider);
     final local = ref.watch(searchResultsProvider);
     final remote = ref.watch(remoteResultsProvider);
     // Info-hashes déjà gérés par le daemon — badge « En cours » et
@@ -148,6 +149,37 @@ class SearchPage extends ConsumerWidget {
                   ),
                 ],
               ),
+              if (query.isEmpty && history.isNotEmpty) ...[
+                const SizedBox(height: AppSpacing.xs),
+                SizedBox(
+                  height: 32,
+                  child: ListView(
+                    scrollDirection: Axis.horizontal,
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.only(
+                          right: AppSpacing.xs,
+                          top: 6,
+                        ),
+                        child: Text(
+                          'Récents :',
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                      ),
+                      for (final h in history)
+                        Padding(
+                          padding: const EdgeInsets.only(right: AppSpacing.xs),
+                          child: ActionChip(
+                            label: Text(h),
+                            avatar: const Icon(Icons.history, size: 16),
+                            onPressed: () =>
+                                ref.read(searchQueryProvider.notifier).set(h),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ],
               const SizedBox(height: AppSpacing.xs),
               SizedBox(
                 height: 32,

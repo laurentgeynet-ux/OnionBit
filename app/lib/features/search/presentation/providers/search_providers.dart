@@ -126,6 +126,26 @@ class SearchFilterNotifier extends Notifier<SearchFilter> {
   void toggleMinSeeds() => state = state.copy(minSeeds: !state.minSeeds);
 }
 
+/// Historique des recherches de la session (LRU, 10 max) — chips
+/// « Récents » affichées quand la requête est vide.
+final searchHistoryProvider =
+    NotifierProvider<SearchHistoryNotifier, List<String>>(
+      SearchHistoryNotifier.new,
+    );
+
+class SearchHistoryNotifier extends Notifier<List<String>> {
+  static const _max = 10;
+
+  @override
+  List<String> build() => const [];
+
+  /// Pousse `q` en tête (dédupliqué) — ignoré si déjà en tête.
+  void record(String q) {
+    if (q.isEmpty || (state.isNotEmpty && state.first == q)) return;
+    state = [q, ...state.where((e) => e != q)].take(_max).toList();
+  }
+}
+
 /// Sélection courante de résultats (infohashes) — ajout en lot.
 final searchSelectionProvider =
     NotifierProvider<SearchSelectionNotifier, Set<String>>(
@@ -165,6 +185,7 @@ class SearchResultsNotifier extends AsyncNotifier<List<TorrentResult>> {
     final sort = ref.watch(searchSortProvider);
     final repo = ref.watch(searchRepositoryProvider);
     if (query.isEmpty) return repo.popular();
+    ref.read(searchHistoryProvider.notifier).record(query);
     unawaited(_launchRemote(query));
     return repo.searchLocal(query, sortBy: sort.param);
   }

@@ -54,7 +54,7 @@ Constantes backend vérifiées (2026-09-30) :
 - Bouton Stop (coupe la fenêtre de collecte `_collectRemote`), compteur
   « N nouveaux résultats », timestamp de fin affiché.
 
-## Étape 7 — Historique des recherches récentes
+## Étape 7 — Historique des recherches récentes [x] (2026-09-30)
 
 - `searchHistoryProvider` (session, 10 max, LRU) alimenté à chaque
   requête non vide ; chips « Récents » quand la requête est vide, sous

@@ -3,6 +3,13 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## UI : historique des recherches récentes (2026-09-30)
+
+Étape 7 de `docs/plans/app_search_enrichissement.md` :
+`searchHistoryProvider` (LRU 10, session) est alimenté par chaque
+recherche non vide ; quand la requête est vide, une rangée de chips
+« Récents » sous le titre permet de relancer une requête en un clic.
+
 ## UI : arrêt et compteur de la recherche distante (2026-09-30)
 
 Étape 6 de `docs/plans/app_search_enrichissement.md` : la barre affiche
