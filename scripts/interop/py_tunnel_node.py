@@ -40,8 +40,8 @@ logging.getLogger("TunnelExitSocket").setLevel(logging.INFO)
 class RecordingEndpoint(UDPEndpoint):
     """UDPEndpoint qui journalise chaque datagramme en hex."""
 
-    def __init__(self, port: int, log):
-        super().__init__(port=port, ip="127.0.0.1")
+    def __init__(self, port: int, log, ip: str = "127.0.0.1"):
+        super().__init__(port=port, ip=ip)
         self._log = log
 
     def send(self, socket_address, packet) -> None:
@@ -73,6 +73,11 @@ class EchoProtocol(asyncio.DatagramProtocol):
 async def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, required=True)
+    # IP d'ecoute (defaut loopback). Pour joindre Internet ou etre
+    # joint par des relais externes, passer l'IP LAN publique de la
+    # machine — un socket lie a 127.0.0.1 ne peut ni emettre vers le
+    # reseau public ni recevoir d'autres hotes.
+    parser.add_argument("--listen", default="127.0.0.1")
     parser.add_argument("--echo-port", type=int, default=None)
     parser.add_argument("--keyfile", required=True)
     parser.add_argument("--log", required=True)
@@ -84,11 +89,11 @@ async def main() -> int:
     args = parser.parse_args()
 
     with open(args.log, "w", encoding="ascii") as log:
-        endpoint = RecordingEndpoint(args.port, log)
+        endpoint = RecordingEndpoint(args.port, log, ip=args.listen)
         await endpoint.open()
 
         key = default_eccrypto.generate_key("curve25519")
-        my_peer = Peer(key, UDPv4Address("127.0.0.1", args.port))
+        my_peer = Peer(key, UDPv4Address(args.listen, args.port))
         settings = TunnelSettings()
         settings.my_peer = my_peer
         settings.endpoint = endpoint

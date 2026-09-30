@@ -3,6 +3,29 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Interop — banc DHT publique : téléchargement réel via le réseau Tribler
+
+- `examples/interop_public_download.rs` + `scripts/interop_public_dht.ps1` :
+  le downloader rejoint le **réseau Tribler réel** (marche aléatoire sur
+  le prefixe `a3591a6b` bootstrapée sur Tribler.exe local — le seul
+  rôle de l'instance installée est l'introduction dans l'overlay),
+  construit des circuits à **sauts libres** (aucun épinglage, pas de
+  `required_exit` : sélection standard `candidates`/`EXIT_BT|RELAY`,
+  route rapportée = `verified_hops` observés), route DHT mainline
+  publique (`router.bittorrent.com`…) et uTP dans le tunnel, sortie =
+  noeud Tribler réel flaggé exit. Endpoint bind `0.0.0.0` + `my_lan`
+  réel : nécessaire hors loopback. `py_tunnel_node.py --listen` ajouté
+  pour une sortie contrôlée non-loopback.
+- **Verdict positif exigé** : code 0 + `INTEROP PUBLIC DOWNLOAD OK` +
+  `octets_verifies >= -MinBytes` — l'intégrité est celle des pièces
+  BitTorrent elles-mêmes (`progress_bytes` ne compte que du vérifié).
+- **Mesures (réseau réel, non déterministe)** : magnet Sintel —
+  2 sauts : 1,37 Mio vérifiés via 2 pairs publics
+  (`7a2fb4b7…`, `c2b2f2ec…`) ; 3 sauts : 327 Kio via Tribler.exe local
+  + relais public + sortie publique (`38891a02…`, `ce9ff7b8…`,
+  `a002e79f…`). Cohérent avec l'UI Tribler qui montre des circuits
+  1–2 sauts : c'est son défaut (`number_hops=1`), notre stack tient 3.
+
 ## UI — Fix : colonne ETA affichant des nombres absurdes
 
 - `formatSeconds` : ETA > ~300 ans (débit nul → backend
