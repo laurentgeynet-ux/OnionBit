@@ -36,6 +36,12 @@ final uiPrefsInitProvider = FutureProvider<void>((ref) async {
     }
   }
 
+  final vm = prefs.getString('ui.downloadViewMode');
+  final mode = DownloadViewMode.values.asNameMap()[vm];
+  if (mode != null) {
+    ref.read(downloadViewModeProvider.notifier).init(mode);
+  }
+
   final ss = prefs.getString('ui.searchColSort');
   if (ss != null) {
     if (ss.isEmpty) {

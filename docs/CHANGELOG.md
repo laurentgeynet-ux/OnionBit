@@ -3,6 +3,14 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## UI — Téléchargements : vues grille et liste compacte (étape 6/8)
+
+- `downloadViewModeProvider` (persisté `ui.downloadViewMode`) +
+  `SegmentedButton` dans la barre d'outils desktop : table / grille /
+  liste compacte. La grille réutilise sélection Ctrl/Shift, clic droit
+  contextuel, Ctrl+A/Échap et les pastilles santé/badges de la table.
+  Écran étroit : la liste compacte reste imposée.
+
 ## UI — Persistance des préférences d'interface (étape 5/8)
 
 - `uiPrefsInitProvider` (FutureProvider, semé au démarrage par

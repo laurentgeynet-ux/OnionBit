@@ -150,49 +150,72 @@ class _DownloadsPageState extends ConsumerState<DownloadsPage> {
                           : null,
                     );
                   }
+                  // Le mode d'affichage choisi ne s'applique qu'en
+                  // desktop : l'écran étroit impose la liste compacte.
+                  final viewMode = ref.watch(downloadViewModeProvider);
+                  final effective = compact
+                      ? DownloadViewMode.compact
+                      : viewMode;
                   return _DownloadsContextMenu(
-                    child: compact
-                        ? _CompactList(downloads: visible)
-                        : CallbackShortcuts(
-                            bindings: {
-                              const SingleActivator(
-                                LogicalKeyboardKey.keyA,
-                                control: true,
-                              ): () => ref
-                                  .read(downloadSelectionProvider.notifier)
-                                  .selectAll(visible),
-                              const SingleActivator(
-                                LogicalKeyboardKey.escape,
-                              ): () => ref
-                                  .read(downloadSelectionProvider.notifier)
-                                  .clear(),
-                              const SingleActivator(
-                                LogicalKeyboardKey.space,
-                              ): () =>
-                                  _togglePauseSelection(all, selection),
-                              const SingleActivator(
-                                LogicalKeyboardKey.delete,
-                              ): () => confirmRemoveSelected(
-                                context,
-                                ref,
-                                selection,
-                              ),
-                              const SingleActivator(LogicalKeyboardKey.f2): () {
-                                if (selection.length != 1) return;
-                                final d = all
-                                    .where((e) => e.infohash == selection.first)
-                                    .firstOrNull;
-                                if (d != null) showRateLimitsDialog(context, d);
-                              },
-                            },
-                            child: Focus(
-                              autofocus: true,
-                              child: _DesktopTable(
-                                downloads: visible,
-                                selection: selection,
-                              ),
-                            ),
+                    child: switch (effective) {
+                      DownloadViewMode.compact => _CompactList(
+                        downloads: visible,
+                      ),
+                      DownloadViewMode.grid => CallbackShortcuts(
+                        bindings: {
+                          const SingleActivator(
+                            LogicalKeyboardKey.keyA,
+                            control: true,
+                          ): () => ref
+                              .read(downloadSelectionProvider.notifier)
+                              .selectAll(visible),
+                          const SingleActivator(
+                            LogicalKeyboardKey.escape,
+                          ): () => ref
+                              .read(downloadSelectionProvider.notifier)
+                              .clear(),
+                        },
+                        child: Focus(
+                          autofocus: true,
+                          child: _GridView(downloads: visible),
+                        ),
+                      ),
+                      DownloadViewMode.table => CallbackShortcuts(
+                        bindings: {
+                          const SingleActivator(
+                            LogicalKeyboardKey.keyA,
+                            control: true,
+                          ): () => ref
+                              .read(downloadSelectionProvider.notifier)
+                              .selectAll(visible),
+                          const SingleActivator(
+                            LogicalKeyboardKey.escape,
+                          ): () => ref
+                              .read(downloadSelectionProvider.notifier)
+                              .clear(),
+                          const SingleActivator(LogicalKeyboardKey.space): () =>
+                              _togglePauseSelection(all, selection),
+                          const SingleActivator(
+                            LogicalKeyboardKey.delete,
+                          ): () =>
+                              confirmRemoveSelected(context, ref, selection),
+                          const SingleActivator(LogicalKeyboardKey.f2): () {
+                            if (selection.length != 1) return;
+                            final d = all
+                                .where((e) => e.infohash == selection.first)
+                                .firstOrNull;
+                            if (d != null) showRateLimitsDialog(context, d);
+                          },
+                        },
+                        child: Focus(
+                          autofocus: true,
+                          child: _DesktopTable(
+                            downloads: visible,
+                            selection: selection,
                           ),
+                        ),
+                      ),
+                    },
                   );
                 },
               ),
@@ -336,14 +359,22 @@ class _Toolbar extends ConsumerWidget {
             Row(
               children: [
                 if (selection.isEmpty) ...[
-                  Text(
-                    'Téléchargements',
-                    style: Theme.of(context).textTheme.titleSmall,
+                  Flexible(
+                    child: Text(
+                      'Téléchargements',
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.titleSmall,
+                    ),
                   ),
                   const Spacer(),
-                  if (onNameFilter != null)
+                  if (!compact)
+                    _ViewModeSelector(
+                      mode: ref.watch(downloadViewModeProvider),
+                    ),
+                  if (onNameFilter != null) ...[
+                    const SizedBox(width: AppSpacing.sm),
                     SizedBox(
-                      width: 220,
+                      width: 180,
                       child: TextField(
                         decoration: const InputDecoration(
                           hintText: 'Filtrer par nom',
@@ -354,6 +385,7 @@ class _Toolbar extends ConsumerWidget {
                         onChanged: onNameFilter,
                       ),
                     ),
+                  ],
                 ] else ...[
                   Text(
                     '${selection.length} sélectionné(s)',
@@ -1068,6 +1100,156 @@ class _CompactList extends ConsumerWidget {
           ),
         );
       },
+    );
+  }
+}
+
+/// Bascule table / grille / liste compacte — desktop uniquement
+/// (le mode choisi est persisté via `downloadViewModeProvider`).
+class _ViewModeSelector extends ConsumerWidget {
+  const _ViewModeSelector({required this.mode});
+
+  final DownloadViewMode mode;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return SegmentedButton<DownloadViewMode>(
+      showSelectedIcon: false,
+      style: const ButtonStyle(
+        visualDensity: VisualDensity.compact,
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      ),
+      segments: const [
+        ButtonSegment(
+          value: DownloadViewMode.table,
+          icon: Icon(Icons.table_rows_outlined, size: 18),
+          tooltip: 'Vue table',
+        ),
+        ButtonSegment(
+          value: DownloadViewMode.grid,
+          icon: Icon(Icons.grid_view_outlined, size: 18),
+          tooltip: 'Vue grille',
+        ),
+        ButtonSegment(
+          value: DownloadViewMode.compact,
+          icon: Icon(Icons.view_list_outlined, size: 18),
+          tooltip: 'Vue liste compacte',
+        ),
+      ],
+      selected: {mode},
+      onSelectionChanged: (s) =>
+          ref.read(downloadViewModeProvider.notifier).set(s.first),
+    );
+  }
+}
+
+/// Vue grille desktop : cartes ~340 px reprenant les informations
+/// essentielles de la ligne (nom, santé, badges, progression, état,
+/// débits). Mêmes interactions que la table : clic = sélection
+/// (Ctrl/Shift), clic droit = menu contextuel.
+class _GridView extends ConsumerWidget {
+  const _GridView({required this.downloads});
+
+  final List<Download> downloads;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return GridView.builder(
+      padding: const EdgeInsets.all(AppSpacing.sm),
+      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+        maxCrossAxisExtent: 340,
+        mainAxisExtent: 120,
+        mainAxisSpacing: AppSpacing.sm,
+        crossAxisSpacing: AppSpacing.sm,
+      ),
+      itemCount: downloads.length,
+      itemBuilder: (context, i) =>
+          _GridCard(download: downloads[i], ordered: downloads),
+    );
+  }
+}
+
+class _GridCard extends ConsumerWidget {
+  const _GridCard({required this.download, required this.ordered});
+
+  final Download download;
+  final List<Download> ordered;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final d = download;
+    final selection = ref.watch(downloadSelectionProvider);
+    final sel = ref.read(downloadSelectionProvider.notifier);
+    final selected = selection.contains(d.infohash);
+    final scheme = Theme.of(context).colorScheme;
+    final small = Theme.of(context).textTheme.bodySmall;
+
+    return Card(
+      clipBehavior: Clip.antiAlias,
+      color: selected ? scheme.secondaryContainer : null,
+      margin: EdgeInsets.zero,
+      child: InkWell(
+        onTap: () {
+          final kb = HardwareKeyboard.instance;
+          sel.click(
+            d.infohash,
+            ordered,
+            ctrl: kb.isControlPressed || kb.isMetaPressed,
+            shift: kb.isShiftPressed,
+          );
+        },
+        onSecondaryTapUp: (details) =>
+            _DownloadsContextMenu.show(context, details.globalPosition, d),
+        child: Padding(
+          padding: const EdgeInsets.all(AppSpacing.sm),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  _HealthDot(download: d),
+                  const SizedBox(width: AppSpacing.xs),
+                  Expanded(
+                    child: Text(
+                      d.name.isEmpty ? d.infohash : d.name,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.titleSmall,
+                    ),
+                  ),
+                  _RowBadges(download: d),
+                ],
+              ),
+              const SizedBox(height: AppSpacing.xs),
+              Stack(
+                alignment: Alignment.center,
+                children: [
+                  LinearProgressIndicator(
+                    value: d.progress.clamp(0.0, 1.0),
+                    color: d.isError ? scheme.error : null,
+                  ),
+                  Text(
+                    '${(d.progress * 100).toStringAsFixed(1)} %',
+                    style: small,
+                  ),
+                ],
+              ),
+              const Spacer(),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      '↓${ByteFormatter.formatRate(d.speedDown)}'
+                      ' · ↑${ByteFormatter.formatRate(d.speedUp)}',
+                      style: small,
+                    ),
+                  ),
+                  DownloadStatusChip(download: d),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

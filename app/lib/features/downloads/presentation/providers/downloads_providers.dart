@@ -190,6 +190,27 @@ class DownloadSortNotifier extends Notifier<({DownloadSort col, bool asc})> {
   }
 }
 
+/// Mode d'affichage de la liste — table (par défaut), grille de
+/// cartes ou liste compacte. Persisté (`ui.downloadViewMode`).
+enum DownloadViewMode { table, grid, compact }
+
+final downloadViewModeProvider =
+    NotifierProvider<DownloadViewModeNotifier, DownloadViewMode>(
+      DownloadViewModeNotifier.new,
+    );
+
+class DownloadViewModeNotifier extends Notifier<DownloadViewMode> {
+  @override
+  DownloadViewMode build() => DownloadViewMode.table;
+
+  void init(DownloadViewMode v) => state = v;
+
+  void set(DownloadViewMode v) {
+    state = v;
+    unawaited(uiPrefsWrite('ui.downloadViewMode', v.name));
+  }
+}
+
 /// Comparateur correspondant à `sort` — appliqué à la liste visible.
 int Function(Download, Download) downloadComparator(DownloadSort col) {
   return switch (col) {
