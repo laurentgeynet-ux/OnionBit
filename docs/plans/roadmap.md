@@ -466,7 +466,7 @@ activée en parité Python (loopback compris — `tribler-cli` la lit dans
 
 ## Phase 5c — Cycle de vie desktop du daemon
 
-- [i] **Étape 29. Systray Windows et arrêt unifié du daemon.**
+- [x] **Étape 29. Systray Windows et arrêt unifié du daemon.**
   `tribler-daemon` passe en sous-système GUI
   (`#![windows_subsystem = "windows"]` — plus aucune fenêtre console
   au lancement) : icône de zone de notification (`tray-icon` sur un
@@ -487,8 +487,8 @@ activée en parité Python (loopback compris — `tribler-cli` la lit dans
   (AttachConsole/AllocConsole + handles `CONOUT$`, pour le debug) et
   `--no-tray` ; réglage persisté `tray/enabled` dans
   `configuration.json`. `demarrer.ps1` (template `build_dist.ps1`)
-  sans `-WindowStyle`. **Reste** : validation visuelle manuelle
-  (clic des items du menu, bascule autostart) avant `[x]`.
+  sans `-WindowStyle`. **Validation visuelle faite** (2026-09-30) :
+  menu systray, bascule autostart et « Quitter » vérifiés à la souris.
 
 ## Jalon "backend terminé à 100 %"
 
@@ -497,13 +497,15 @@ Toutes les étapes 0 à 18 cochées, étape 12 comprise : le critère
 le banc `scripts/interop_exit_download.ps1` a été rejoué le
 2026-09-29 contre le `TunnelCommunity` pyipv8 réel en sortie
 (`PEER_FLAG_EXIT_BT`) : 200 Ko rqbit/uTP à travers un circuit
-2 sauts, contenu vérifié octet à octet (`INTEROP EXIT DOWNLOAD OK`).
-Restent `[i]` : étape 20 (UI Flutter — validation visuelle) et étape
-29 (systray — validation visuelle).
+2 sauts, contenu vérifié octet à octet (`INTEROP EXIT DOWNLOAD OK`),
+puis étendu le 2026-09-30 à un premier saut assuré par **Tribler.exe
+8.4.3 réel** (route épinglée vérifiée, 4 Mio à 3 sauts). Étapes 20
+et 29 également clôturées : validation visuelle faite — **toute la
+roadmap est terminée**.
 
 ## Phase 6 — Interface Flutter desktop
 
-- [i] **Étape 20. Plan d'architecture Flutter + coquille
+- [x] **Étape 20. Plan d'architecture Flutter + coquille
   implémentée** — `docs/plans/flutter_architecture.md`, patterns de
   `C:\Emule-Sion-UI-UX\app`, consommant exclusivement `tribler-api`
   (REST + SSE). Cible immédiate : **Windows desktop** ; Linux/macOS
@@ -534,9 +536,9 @@ Restent `[i]` : étape 20 (UI Flutter — validation visuelle) et étape
   « Tunnels anonymes » (`min/max_circuits`, noeud de sortie),
   « Réseau » (DHT/UPnP/NAT-PMP/LSD/uTP + proxy), « Automatisation »
   (watch folder + flux RSS avec items découverts), « Mises à jour »
-  (version + sonde) et indicateur d'espace disque. **Reste** :
-  validation visuelle manuelle (rendu réel contre le daemon) avant
-  de cocher `[x]`.
+  (version + sonde) et indicateur d'espace disque. **Validation
+  visuelle faite** (2026-09-30) : rendu réel contre le daemon
+  vérifié à la souris.
 
 ---
 

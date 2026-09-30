@@ -3,6 +3,16 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Roadmap clôturée — étapes 20 (UI Flutter) et 29 (systray) validées
+
+- Validation visuelle manuelle effectuée (2026-09-30) : étape 20 (rendu
+  réel de l'UI Flutter contre le daemon) et étape 29 (menu systray,
+  bascule « Démarrer avec Windows », « Quitter ») passent de `[i]` à
+  `[x]` — **toutes les étapes de la roadmap sont terminées**.
+- Le travail réseau se poursuit hors roadmap : banc DHT publique
+  (sélection libre, route observée) et sortie `EXIT_BT` Tribler réelle
+  restent des jalons d'interop séparés.
+
 ## Interop — Tribler.exe 8.4.3 comme premier relais (route épinglée)
 
 - **`Circuit` porte un plan de sauts épinglés** (`pinned_hops`) :
