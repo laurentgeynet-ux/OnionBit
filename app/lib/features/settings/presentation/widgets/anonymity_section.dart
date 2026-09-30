@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/theme/app_theme.dart';
 import 'settings_section.dart';
+import 'settings_defaults.dart';
 
 /// Section « Tunnels anonymes » — réglages de la `TunnelCommunity`
 /// (`tunnel_community/*` : activation, bornes de circuits, rôle de
@@ -76,6 +77,7 @@ class _AnonymitySectionState extends ConsumerState<AnonymitySection> {
       icon: Icons.shield_outlined,
       title: 'Tunnels anonymes',
       sectionId: 'anonymity',
+      defaults: kAnonymityDefaults,
       child: (context, settings) {
         _sync(settings);
         final enabled = settingsBool(settings, [..._t, 'enabled'], def: true);

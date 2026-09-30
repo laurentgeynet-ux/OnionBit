@@ -41,7 +41,7 @@ Chaque étape = implémentation + `flutter analyze`/tests + cochage ici +
 - Déployé sur les champs principaux : Bandwidth, Queue, Downloads,
   Seeding, Anonymity, Network, Automation.
 
-## Étape 4 — « Rétablir les défauts » par section
+## Étape 4 — « Rétablir les défauts » par section [x] (2026-10-02)
 
 - `kSettingsDefaults` (map des défauts documentés —
   `api_endpoints_complet.md` / `configuration_cablage.md`).

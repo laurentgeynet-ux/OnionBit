@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/theme/app_theme.dart';
 import 'settings_section.dart';
+import 'settings_defaults.dart';
 
 /// Section « Seed & anonymat par défaut » — politique de seed des
 /// nouveaux téléchargements (`libtorrent/download_defaults/*` :
@@ -93,6 +94,7 @@ class _SeedingSectionState extends ConsumerState<SeedingSection> {
       icon: Icons.upload,
       title: 'Seed & anonymat par défaut',
       sectionId: 'seeding',
+      defaults: kSeedingDefaults,
       child: (context, settings) {
         _sync(settings);
         return Column(

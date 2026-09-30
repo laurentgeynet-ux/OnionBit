@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/theme/app_theme.dart';
 import 'settings_section.dart';
+import 'settings_defaults.dart';
 
 /// Section « Réseau » — transports et découverte de la session
 /// (`libtorrent/{dht,upnp,natpmp,lsd,utp}`) et proxy sortant
@@ -87,6 +88,7 @@ class _NetworkSectionState extends ConsumerState<NetworkSection> {
       icon: Icons.public,
       title: 'Réseau',
       sectionId: 'network',
+      defaults: kNetworkDefaults,
       child: (context, settings) {
         _sync(settings);
         const lt = ['libtorrent'];

@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/theme/app_theme.dart';
 import 'settings_section.dart';
+import 'settings_defaults.dart';
 
 /// Section « Bande passante » — limites globales de débit de la
 /// session (`libtorrent/max_download_rate`, `max_upload_rate`,
@@ -68,6 +69,7 @@ class _BandwidthSectionState extends ConsumerState<BandwidthSection> {
       icon: Icons.speed,
       title: 'Bande passante',
       sectionId: 'bandwidth',
+      defaults: kBandwidthDefaults,
       child: (context, settings) {
         _sync(settings);
         return Column(

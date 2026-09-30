@@ -14,6 +14,7 @@ class SettingsSection extends ConsumerWidget {
     required this.title,
     required this.child,
     this.sectionId,
+    this.defaults,
   });
 
   final IconData icon;
@@ -22,6 +23,10 @@ class SettingsSection extends ConsumerWidget {
   /// Id de la section — affiche la puce « modifié » quand présent dans
   /// `settingsDirtyProvider` (sections à sauvegarde différée).
   final String? sectionId;
+
+  /// Patch « rétablir les défauts » (`settings_defaults.dart`) —
+  /// affiche le bouton reset dans l'en-tête quand fourni.
+  final Map<String, dynamic>? defaults;
 
   /// Construit le contenu depuis l'arbre de réglages du daemon.
   final Widget Function(BuildContext context, Map<String, dynamic> settings)
@@ -48,6 +53,25 @@ class SettingsSection extends ConsumerWidget {
                 Expanded(
                   child: Text(title, style: theme.textTheme.titleMedium),
                 ),
+                if (defaults != null)
+                  IconButton(
+                    tooltip: 'Rétablir les défauts de la section',
+                    icon: const Icon(Icons.restart_alt, size: 18),
+                    visualDensity: VisualDensity.compact,
+                    onPressed: () async {
+                      await applySettingsPatch(
+                        context,
+                        ref,
+                        defaults!,
+                        successMessage: 'Défauts restaurés',
+                      );
+                      // Ré-synchronise les champs locaux des sections à
+                      // sauvegarde différée depuis la nouvelle config.
+                      if (sectionId != null) {
+                        ref.read(settingsSaveBusProvider)[sectionId]?.discard();
+                      }
+                    },
+                  ),
                 if (sectionId != null &&
                     ref.watch(
                       settingsDirtyProvider.select(

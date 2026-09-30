@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../providers/settings_providers.dart';
 import 'settings_section.dart';
+import 'settings_defaults.dart';
 
 /// Section « Automatisation » — dossier surveillé
 /// (`watch_folder/*`) et flux RSS (`rss/*` + `PUT /api/rss` pour
@@ -119,6 +120,7 @@ class _AutomationSectionState extends ConsumerState<AutomationSection> {
       icon: Icons.smart_button_outlined,
       title: 'Automatisation',
       sectionId: 'automation',
+      defaults: kAutomationDefaults,
       child: (context, settings) {
         _sync(settings);
         final items = ref.watch(rssItemsProvider).value ?? const [];

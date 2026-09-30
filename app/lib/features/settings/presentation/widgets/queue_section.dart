@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/theme/app_theme.dart';
 import 'settings_section.dart';
+import 'settings_defaults.dart';
 
 /// Section « File d'attente » — bornes du gestionnaire de file
 /// (`libtorrent/active_*` : `-1` = illimité) et comportement
@@ -94,6 +95,7 @@ class _QueueSectionState extends ConsumerState<QueueSection> {
       icon: Icons.queue,
       title: 'File d\'attente',
       sectionId: 'queue',
+      defaults: kQueueDefaults,
       child: (context, settings) {
         _sync(settings);
         return Column(

@@ -3,6 +3,17 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## UI — Réglages : bouton « Rétablir les défauts » par section (étape 4/8)
+
+- `settings_defaults.dart` : `kBandwidthDefaults`, `kQueueDefaults`,
+  `kSeedingDefaults`, `kAnonymityDefaults`, `kNetworkDefaults`,
+  `kAutomationDefaults` — valeurs identiques aux `Default` backend
+  (`tribler-core`/`tribler-bittorrent`/`tribler-tunnel`).
+- `SettingsSection` accepte `defaults` : bouton reset dans l'en-tête →
+  `applySettingsPatch` + ré-synchronisation des champs locaux via le
+  bus de l'étape 2.
+- Downloads volontairement exclu : aucun défaut sûr pour `saveas`.
+
 ## UI — Réglages : tooltips « clé configuration.json » (étape 3/8)
 
 - `KeyInfoIcon(path, [description])` : icône `i` affichant le chemin
