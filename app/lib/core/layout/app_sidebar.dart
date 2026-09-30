@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -11,6 +13,7 @@ import '../di/providers.dart';
 import '../router/nav_catalog.dart';
 import '../theme/app_theme.dart';
 import '../utils/byte_formatter.dart';
+import '../config/ui_prefs.dart';
 import 'nav_destination.dart';
 
 /// Replie/déplie le groupe des sous-filtres Téléchargements (état de
@@ -24,7 +27,12 @@ class _FiltersExpandedNotifier extends Notifier<bool> {
   @override
   bool build() => true;
 
-  void toggle() => state = !state;
+  void init(bool v) => state = v;
+
+  void toggle() {
+    state = !state;
+    unawaited(uiPrefsWrite('ui.filtersExpanded', state));
+  }
 }
 
 /// Bascule sidebar pleine largeur ↔ rail icônes seules (état de
@@ -37,7 +45,12 @@ class _CollapsedNotifier extends Notifier<bool> {
   @override
   bool build() => false;
 
-  void toggle() => state = !state;
+  void init(bool v) => state = v;
+
+  void toggle() {
+    state = !state;
+    unawaited(uiPrefsWrite('ui.sidebarCollapsed', state));
+  }
 }
 
 /// Sidebar fixe type Tribler (~216 px) : bouton « Ajouter » en tête,

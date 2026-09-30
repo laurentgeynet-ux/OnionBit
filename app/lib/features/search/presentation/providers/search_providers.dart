@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/api/events.dart';
+import '../../../../core/config/ui_prefs.dart';
 import '../../../../core/di/providers.dart';
 import '../../data/rest_search_repository.dart';
 import '../../domain/search_repository.dart';
@@ -62,9 +63,20 @@ class SearchColSortNotifier extends Notifier<({SearchCol col, bool asc})?> {
   @override
   ({SearchCol col, bool asc})? build() => null;
 
-  void tap(SearchCol col) => state = state?.col == col
-      ? (col: col, asc: !state!.asc)
-      : (col: col, asc: true);
+  void init(({SearchCol col, bool asc})? v) => state = v;
+
+  void tap(SearchCol col) {
+    state = state?.col == col
+        ? (col: col, asc: !state!.asc)
+        : (col: col, asc: true);
+    final s = state;
+    unawaited(
+      uiPrefsWrite(
+        'ui.searchColSort',
+        s == null ? '' : '${s.col.name}:${s.asc ? 'asc' : 'desc'}',
+      ),
+    );
+  }
 }
 
 /// Comparateur associé à `col`.

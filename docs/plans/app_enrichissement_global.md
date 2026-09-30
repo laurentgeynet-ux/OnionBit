@@ -43,7 +43,7 @@ Chaque étape = implémentation + `flutter analyze`/tests (ou
   dialogue adresse/port/clé API (réutilise `ConnectionSection` /
   `DaemonConfigProvider`) — onboarding de première connexion.
 
-## Étape 5 — Persistance des préférences UI
+## Étape 5 — Persistance des préférences UI [x] (2026-10-02)
 
 - `shared_preferences` : rail rétracté, filtres repliés, tri des
   tables Téléchargements/Rechercher, accent couleur/mode thème.

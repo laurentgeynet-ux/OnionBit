@@ -3,6 +3,15 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## UI — Persistance des préférences d'interface (étape 5/8)
+
+- `uiPrefsInitProvider` (FutureProvider, semé au démarrage par
+  `TriblerApp`) + `uiPrefsWrite` (write-through dans les notifiers) :
+  rail rétracté, filtres repliés, tri des tables Téléchargements et
+  Rechercher survivent au redémarrage. Clés `ui.sidebarCollapsed`,
+  `ui.filtersExpanded`, `ui.downloadSort`, `ui.searchColSort`. Le
+  thème (mode + accent) était déjà persisté par `themeSettingsProvider`.
+
 ## UI — Bannière « daemon injoignable » actionnable (étape 4/8)
 
 - `DaemonUnreachableBanner` montée par `AppShell` quand le SSE est

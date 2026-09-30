@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/api/events.dart';
+import '../../../../core/config/ui_prefs.dart';
 import '../../../../core/di/providers.dart';
 import '../../data/rest_downloads_repository.dart';
 import '../../domain/download.dart';
@@ -172,11 +173,21 @@ class DownloadSortNotifier extends Notifier<({DownloadSort col, bool asc})> {
   @override
   ({DownloadSort col, bool asc}) build() => (col: DownloadSort.name, asc: true);
 
+  void init(({DownloadSort col, bool asc}) v) => state = v;
+
   /// Clique sur un en-tête : même colonne = inverse le sens, sinon
   /// nouvelle colonne en ascendant.
-  void tap(DownloadSort col) => state = state.col == col
-      ? (col: col, asc: !state.asc)
-      : (col: col, asc: true);
+  void tap(DownloadSort col) {
+    state = state.col == col
+        ? (col: col, asc: !state.asc)
+        : (col: col, asc: true);
+    unawaited(
+      uiPrefsWrite(
+        'ui.downloadSort',
+        '${state.col.name}:${state.asc ? 'asc' : 'desc'}',
+      ),
+    );
+  }
 }
 
 /// Comparateur correspondant à `sort` — appliqué à la liste visible.
