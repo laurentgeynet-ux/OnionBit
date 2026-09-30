@@ -1,5 +1,5 @@
-// resources.rc — icone de l'executable et du systray.
+// resources.rc — icone OnionBit de l'executable et du systray.
 // IDI_ICON 101 est charge au runtime par `Icon::from_resource`
 // (src/tray.rs) ; c'est aussi l'icone du fichier .exe dans Explorer.
 #define IDI_ICON 101
-IDI_ICON ICON "resources\\tribler.ico"
+IDI_ICON ICON "resources\\onionbit.ico"

@@ -39,7 +39,7 @@ windows-sys = { workspace = true, features = [
     "Win32_UI_WindowsAndMessaging",
 ] }
 
-# Icône tribler.ico embarquée dans tribler-daemon.exe (resources.rc) —
+# Icône onionbit.ico embarquée dans tribler-daemon.exe (resources.rc) —
 # sert aussi d'icône de fichier pour l'exe dans l'explorateur.
 [target.'cfg(windows)'.build-dependencies]
 embed-resource.workspace = true

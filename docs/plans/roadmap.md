@@ -474,7 +474,7 @@ activée en parité Python (loopback compris — `tribler-cli` la lit dans
   Tribler » (lance `tribler_ui.exe` à côté de l'exe), « Démarrer
   avec Windows » (valeur `HKCU\...\Run` via `winreg`, état coché
   reflété en direct), « Ouvrir le dossier des logs », « Quitter ».
-  Icône `tribler.ico` embarquée via `embed-resource` + `resources.rc`
+  Icône `onionbit.ico` embarquée via `embed-resource` + `resources.rc`
   (ressource 101, sert aussi d'icône de l'exe). Arrêt unifié :
   `ShutdownSignal` (`tokio::sync::Notify`) déclenché par Ctrl-C, «
   Quitter » ou `PUT /api/shutdown` — le endpoint termine désormais

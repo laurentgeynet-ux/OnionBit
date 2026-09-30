@@ -1,5 +1,5 @@
 //! `build.rs` de `tribler-daemon` : embarque `resources.rc`
-//! (icone `tribler.ico` + infos de version) dans l'exe Windows.
+//! (icone `onionbit.ico` + infos de version) dans l'exe Windows.
 //! Hors cible Windows : no-op (`CARGO_CFG_WINDOWS` non defini).
 //! Un echec de compilation de ressource degrade en warning (l'icone
 //! tray a un fallback `Icon::from_rgba`), jamais en erreur de build.

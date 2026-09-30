@@ -3,6 +3,16 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Daemon — Icône systray/exe passée à OnionBit
+
+- `resources/tribler.ico` (ancien logo Tribler rouge) remplacé par
+  `onionbit.ico` généré depuis `branding/platforms/linux/hicolor/`
+  (frames 16→256 px). `resources.rc`, le fallback `Icon::from_path`
+  de `tray.rs` et les commentaires pointent sur le nouveau fichier.
+- Nécessite un rebuild de `tribler-daemon` (l'icône est embarquée
+  dans l'exe via `embed-resource`) ; `tray_icon_color` non vide
+  reste prioritaire (carré RGB, comportement Python conservé).
+
 ## Interop — banc DHT publique : téléchargement réel via le réseau Tribler
 
 - `examples/interop_public_download.rs` + `scripts/interop_public_dht.ps1` :

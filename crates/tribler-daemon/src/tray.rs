@@ -26,7 +26,7 @@ pub struct TrayOptions {
     pub autostart_cmd: String,
     /// Couleur d'icône personnalisée (`tray_icon_color` Python —
     /// recolor de l'icône ; `None` = ressource `IDI_ICON` /
-    /// `tribler.ico` / carré bleu par défaut). Quand elle est fournie,
+    /// `onionbit.ico` / carré bleu par défaut). Quand elle est fournie,
     /// un carré RGB de cette couleur remplace l'icône — on ne sait
     /// pas recolorer une ressource `.ico`.
     pub icon_color: Option<[u8; 3]>,
@@ -219,7 +219,7 @@ mod windows_impl {
 
     /// Icône du tray : `tray_icon_color` (carré RGB recoloré, comme le
     /// `recolor_tray_icon` Python) → ressource embarquée `IDI_ICON`
-    /// (build.rs) → `tribler.ico` à côté de l'exe → carré bleu généré
+    /// (build.rs) → `onionbit.ico` à côté de l'exe → carré bleu généré
     /// (dernier recours pour que l'entrée systray existe toujours).
     fn load_icon(icon_color: Option<[u8; 3]>) -> Icon {
         if let Some([r, g, b]) = icon_color {
@@ -231,7 +231,7 @@ mod windows_impl {
         }
         if let Some(path) = std::env::current_exe()
             .ok()
-            .and_then(|exe| exe.parent().map(|d| d.join("tribler.ico")))
+            .and_then(|exe| exe.parent().map(|d| d.join("onionbit.ico")))
             .filter(|p| p.exists())
         {
             if let Ok(icon) = Icon::from_path(&path, Some((32, 32))) {
