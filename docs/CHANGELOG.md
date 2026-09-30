@@ -3,6 +3,13 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## UI — Fix : colonne ETA affichant des nombres absurdes
+
+- `formatSeconds` : ETA > ~300 ans (débit nul → backend
+  `total/1e-6` ≈ 1e15 s) débordait `Duration` en int64 → nombres
+  négatifs géants (« -2121196235785 s »). Borné : non-fini, ≤ 0 ou
+  > 1e10 s → « — ». Cas NaN/∞ couverts par test.
+
 ## UI — Fix : dernière colonne des tables coupée par la sidebar
 
 - Les tables Téléchargements et Rechercher calculaient `maxWidth`

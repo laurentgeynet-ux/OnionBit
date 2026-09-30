@@ -1,8 +1,11 @@
 /// Formattage des durées (ETA de téléchargement, uptime…).
 abstract final class DurationFormatter {
-  /// `seconds <= 0` renvoie `—` (ETA inconnu/indéfini).
+  /// `seconds <= 0` renvoie `—` (ETA inconnu/indéfini). Au-delà de
+  /// ~300 ans, l'ETA est de fait infinie (débit nul côté backend =
+  /// `total/1e-6`) et `Duration(seconds:)` déborde en int64 —
+  /// microsecondes signées — affichant des nombres négatifs absurdes.
   static String formatSeconds(double seconds) {
-    if (seconds <= 0) return '—';
+    if (!seconds.isFinite || seconds <= 0 || seconds > 1e10) return '—';
     return format(Duration(seconds: seconds.round()));
   }
 

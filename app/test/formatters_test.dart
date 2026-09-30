@@ -26,5 +26,13 @@ void main() {
       expect(DurationFormatter.formatSeconds(3660), '1 h 1 min');
       expect(DurationFormatter.formatSeconds(90061), '1 j 1 h');
     });
+
+    test('formatSeconds : ETA astronomique (débit nul) → tiret', () {
+      // Backend : eta = total / max(speed, 1e-6) — ~1e15 s quand le
+      // débit est nul ; Duration(seconds:) débordait en négatif.
+      expect(DurationFormatter.formatSeconds(2.9e15), '—');
+      expect(DurationFormatter.formatSeconds(double.infinity), '—');
+      expect(DurationFormatter.formatSeconds(double.nan), '—');
+    });
   });
 }
