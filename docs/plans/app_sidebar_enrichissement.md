@@ -26,7 +26,7 @@ Chaque étape = implémentation + `flutter analyze`/tests + cochage ici +
 - Sous le bouton « Ajouter » : ligne ↓/↑ temps réel
   (`totalSpeedsProvider` déjà existant) en `bodySmall`, avec icônes.
 
-## Étape 3 — Logo OnionBit (SVG)
+## Étape 3 — Logo OnionBit (SVG) [x] (2026-10-02)
 
 - `flutter_svg` + asset `branding/logo-horizontal.svg` (copie dans
   `app/assets/branding/`) dans l'en-tête à la place du shield+texte.

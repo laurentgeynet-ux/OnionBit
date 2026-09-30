@@ -3,6 +3,13 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## UI — Sidebar : logo OnionBit SVG (étape 3/6)
+
+- `flutter_svg` + assets `app/assets/branding/` (copie de
+  `branding/logo-horizontal.svg` et `icon.svg`) ; l'en-tête de la
+  sidebar affiche le logo horizontal, avec fallback shield+texte si
+  l'asset n'est pas embarqué.
+
 ## UI — Sidebar : débits globaux ↓/↑ dans l'en-tête (étape 2/6)
 
 - `_SpeedsRow` sous le bouton « Ajouter » : réception/envoi temps

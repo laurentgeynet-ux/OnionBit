@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
@@ -54,18 +55,26 @@ class AppSidebar extends ConsumerWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Row(
-                    children: [
-                      Icon(Icons.shield_outlined, color: scheme.primary),
-                      const SizedBox(width: AppSpacing.sm),
-                      Flexible(
-                        child: Text(
-                          'Tribler-Rust',
-                          style: Theme.of(context).textTheme.titleSmall,
-                          overflow: TextOverflow.ellipsis,
+                  // Logo OnionBit (SVG brandé) — fallback icône si
+                  // l'asset n'est pas embarqué dans ce build.
+                  SvgPicture.asset(
+                    'assets/branding/logo-horizontal.svg',
+                    height: 28,
+                    fit: BoxFit.contain,
+                    alignment: Alignment.centerLeft,
+                    placeholderBuilder: (_) => Row(
+                      children: [
+                        Icon(Icons.shield_outlined, color: scheme.primary),
+                        const SizedBox(width: AppSpacing.sm),
+                        Flexible(
+                          child: Text(
+                            'Tribler-Rust',
+                            style: Theme.of(context).textTheme.titleSmall,
+                            overflow: TextOverflow.ellipsis,
+                          ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                   const SizedBox(height: AppSpacing.md),
                   FilledButton.icon(
