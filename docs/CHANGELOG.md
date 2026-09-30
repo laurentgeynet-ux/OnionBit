@@ -3,6 +3,14 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## UI — Fix : dernière colonne des tables coupée par la sidebar
+
+- Les tables Téléchargements et Rechercher calculaient `maxWidth`
+  depuis `MediaQuery` (largeur fenêtre entière) au lieu de la zone de
+  contenu : la table dépassait de ~216 px à droite, la dernière
+  colonne sortait de l'écran sans scroll visible. `LayoutBuilder`
+  donne désormais la contrainte réelle.
+
 ## UI — Logo OnionBit plus visible dans la sidebar
 
 - Logo agrandi : 28 → 44 px en sidebar pleine largeur, 36 px en rail

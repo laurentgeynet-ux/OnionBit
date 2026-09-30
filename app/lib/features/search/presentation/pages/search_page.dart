@@ -445,31 +445,34 @@ class _ResultsTable extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: ConstrainedBox(
-        constraints: BoxConstraints(
-          minWidth: _minWidth,
-          maxWidth: MediaQuery.sizeOf(context).width
-              .clamp(_minWidth, 4000)
-              .toDouble(),
-        ),
-        child: Column(
-          children: [
-            const _HeaderRow(),
-            const Divider(height: 1),
-            Expanded(
-              child: ListView.builder(
-                itemCount: results.length,
-                itemBuilder: (context, i) => _ResultRow(
-                  result: results[i],
-                  known: known,
-                  selection: selection,
-                  query: query,
+    // LayoutBuilder : la largeur utile est celle de la zone de
+    // contenu (fenêtre − sidebar), pas `MediaQuery` — la dernière
+    // colonne dépassait sinon de ~216 px hors de l'écran.
+    return LayoutBuilder(
+      builder: (context, constraints) => SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            minWidth: _minWidth,
+            maxWidth: constraints.maxWidth.clamp(_minWidth, 4000.0),
+          ),
+          child: Column(
+            children: [
+              const _HeaderRow(),
+              const Divider(height: 1),
+              Expanded(
+                child: ListView.builder(
+                  itemCount: results.length,
+                  itemBuilder: (context, i) => _ResultRow(
+                    result: results[i],
+                    known: known,
+                    selection: selection,
+                    query: query,
+                  ),
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
