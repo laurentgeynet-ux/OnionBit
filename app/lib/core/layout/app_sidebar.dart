@@ -7,6 +7,7 @@ import '../../features/downloads/presentation/providers/downloads_providers.dart
 import '../../features/downloads/presentation/widgets/add_download_dialog.dart';
 import '../router/nav_catalog.dart';
 import '../theme/app_theme.dart';
+import '../utils/byte_formatter.dart';
 import 'nav_destination.dart';
 
 /// Sidebar fixe type Tribler (~216 px) : bouton « Ajouter » en tête,
@@ -72,6 +73,8 @@ class AppSidebar extends ConsumerWidget {
                     icon: const Icon(Icons.add),
                     label: const Text('Ajouter'),
                   ),
+                  const SizedBox(height: AppSpacing.sm),
+                  const _SpeedsRow(),
                 ],
               ),
             ),
@@ -302,6 +305,61 @@ class _ErrorBadge extends StatelessWidget {
         style: Theme.of(context).textTheme.labelSmall
             ?.copyWith(color: scheme.onErrorContainer),
       ),
+    );
+  }
+}
+
+/// Débits globaux de session (↓/↑ temps réel) dans l'en-tête de la
+/// sidebar — même source `totalSpeedsProvider` que la barre d'état.
+class _SpeedsRow extends ConsumerWidget {
+  const _SpeedsRow();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final speeds = ref.watch(totalSpeedsProvider);
+    final theme = Theme.of(context);
+    final style = theme.textTheme.bodySmall;
+    return Row(
+      children: [
+        Expanded(
+          child: Row(
+            children: [
+              Icon(
+                Icons.arrow_downward,
+                size: 13,
+                color: theme.colorScheme.primary,
+              ),
+              const SizedBox(width: 2),
+              Expanded(
+                child: Text(
+                  ByteFormatter.formatRate(speeds.down),
+                  style: style,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
+        ),
+        Expanded(
+          child: Row(
+            children: [
+              Icon(
+                Icons.arrow_upward,
+                size: 13,
+                color: theme.colorScheme.tertiary,
+              ),
+              const SizedBox(width: 2),
+              Expanded(
+                child: Text(
+                  ByteFormatter.formatRate(speeds.up),
+                  style: style,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }

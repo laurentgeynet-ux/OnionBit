@@ -21,7 +21,7 @@ Chaque étape = implémentation + `flutter analyze`/tests + cochage ici +
   outline.
 - Badge rouge compteur `STOPPED_ON_ERROR` sur l'entrée Téléchargements.
 
-## Étape 2 — Bloc débit global dans l'en-tête
+## Étape 2 — Bloc débit global dans l'en-tête [x] (2026-10-02)
 
 - Sous le bouton « Ajouter » : ligne ↓/↑ temps réel
   (`totalSpeedsProvider` déjà existant) en `bodySmall`, avec icônes.

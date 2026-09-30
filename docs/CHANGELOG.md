@@ -3,6 +3,12 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## UI — Sidebar : débits globaux ↓/↑ dans l'en-tête (étape 2/6)
+
+- `_SpeedsRow` sous le bouton « Ajouter » : réception/envoi temps
+  réel via `totalSpeedsProvider` (même source que la barre d'état),
+  icônes fléchées colorées + `ByteFormatter.formatRate`.
+
 ## UI — Sidebar : items pilule + groupes + badge d'erreurs (étape 1/6)
 
 - `app_sidebar.dart` réécrit : `_SidebarItem` pilule arrondie
