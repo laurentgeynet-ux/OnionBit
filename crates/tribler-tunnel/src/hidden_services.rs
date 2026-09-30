@@ -1370,7 +1370,9 @@ impl TunnelCommunity {
                         },
                         direction: Direction::Forward,
                         rendezvous_relay: true,
-                        relay_early_count: 0,
+                        // Init a 1 comme `RelayRoute.__init__` Python
+                        // (route creee par une cellule `relay_early`).
+                        relay_early_count: 1,
                     },
                 );
                 inner.relays.insert(
@@ -1384,7 +1386,7 @@ impl TunnelCommunity {
                         },
                         direction: Direction::Forward,
                         rendezvous_relay: true,
-                        relay_early_count: 0,
+                        relay_early_count: 1,
                     },
                 );
                 true

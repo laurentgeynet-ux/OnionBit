@@ -9,13 +9,20 @@
 # et achemine les reponses en retour — le contenu telecharge est
 # verifie octet a octet.
 #
-# Usage : powershell -NoProfile -ExecutionPolicy RemoteSigned -File scripts\interop_exit_download.ps1 [-Hops 1|2]
+# Usage : powershell -NoProfile -ExecutionPolicy RemoteSigned -File scripts\interop_exit_download.ps1 [-Hops 1|2|3] [-Dht]
 # Prerequis : venv interop (voir scripts/interop_ipv8.ps1).
+# -Dht : le pair du seeder est decouvert par la DHT routee dans le
+# tunnel (get_peers a travers la sortie pyipv8) au lieu de
+# l'injection `initial_peers`.
 
 param(
-    # 1 = circuit direct vers la sortie Python ; 2 = relais Rust en
-    # premier saut puis sortie Python (defaut).
-    [int] $Hops = 2
+    # 1 = circuit direct vers la sortie Python ; 2/3 = un/deux
+    # relais Rust avant la sortie Python (defaut 2).
+    [int] $Hops = 2,
+    # Decouverte du seeder par la DHT via le tunnel.
+    [switch] $Dht,
+    # Taille du fichier telecharge en octets (defaut 200000).
+    [int] $Payload = 200000
 )
 
 $ErrorActionPreference = "Stop"
@@ -39,7 +46,7 @@ if ($LASTEXITCODE -ne 0) { throw "build echoue" }
 $env:PYTHONPATH = $pyipv8
 Write-Host "== noeud Python tunnel (relais+exit EXIT_BT) sur 127.0.0.1:$pyPort =="
 $pyProc = Start-Process -FilePath $venvPy -PassThru -NoNewWindow `
-    -ArgumentList "`"$PSScriptRoot\interop\py_tunnel_node.py`" --port $pyPort --keyfile `"$keyFile`" --log `"$pyLog`" --duration 60" `
+    -ArgumentList "`"$PSScriptRoot\interop\py_tunnel_node.py`" --port $pyPort --keyfile `"$keyFile`" --log `"$pyLog`" --duration 300" `
     -RedirectStandardError (Join-Path $outDir "py_exit_stderr.log")
 
 # Attendre que le noeud Python ait ecrit sa cle.
@@ -52,9 +59,10 @@ if (-not (Test-Path $keyFile)) {
     throw "keyfile jamais ecrit - voir target\interop-exit-download\py_exit_stderr.log"
 }
 
-Write-Host "== telechargement rqbit via circuit ($Hops saut(s), sortie pyipv8) =="
+$dhtFlag = if ($Dht) { "--dht" } else { "" }
+Write-Host "== telechargement rqbit via circuit ($Hops saut(s), sortie pyipv8$(if ($Dht) { ', DHT' })) =="
 $rsErr = Join-Path $outDir "rust_exit_stderr.log"
-cmd /c "`".\target\debug\examples\exit_download_interop.exe`" --keyfile `"$keyFile`" --hops $Hops 2> `"$rsErr`""
+cmd /c "`".\target\debug\examples\exit_download_interop.exe`" --keyfile `"$keyFile`" --hops $Hops --payload $Payload $dhtFlag > `"$rsLog`" 2> `"$rsErr`""
 $rsOk = $LASTEXITCODE -eq 0
 
 Stop-Process -Id $pyProc.Id -Force -ErrorAction SilentlyContinue

@@ -3,6 +3,34 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Interop — transfert multi-sauts via sortie pyipv8, DHT incluse
+
+- `scripts/interop_exit_download.ps1` + `examples/exit_download_interop` :
+  harnais automatisé rqbit → `TunnelCommunity` Rust (1 à 3 relais Rust)
+  → sortie **pyipv8** réelle (`EXIT_BT`) → seed uTP, avec vérification
+  octet à octet du payload. Options `--hops`, `--payload`, `--dht`.
+- **Découverte DHT à travers le tunnel** : `EngineConfig::dht_bootstrap_addrs`
+  + `announce_port` (annonces effectives sur loopback), sockets DHT/uTP
+  injectés (`TunnelUdpSocket`) — aucun datagramme ne contourne le tunnel.
+  Patch vendored `librqbit-dht` : le bootstrap `find_node` apprend
+  l'`id` du répondant depuis la réponse (BEP 5) — sans cela la table
+  restait vide et `get_peers`/`announce` n'interrogeaient personne.
+- **Bug majeur corrigé** : `relay_early_count` était `u8` alors que
+  Python l'incrémente à **chaque** cellule relayée (int non borné,
+  `crypto.py:208`). Débordement à la 256e cellule → panic dans
+  `process_cell` → mutex `inner` empoisonné → noeud relais sourd
+  définitivement tout en continuant à émettre. Élargi en `u32`
+  (`Circuit` + `RelayRoute`), `RelayRoute` initialisé à 1 comme
+  `tunnel.py:236`, `max_relay_early` passé en `u32`.
+- **Durcissement endpoint** : les handlers de community (raw + packet)
+  sont enveloppés de `catch_unwind` dans `recv_loop` — un panic de
+  handler ne peut plus tuer la boucle de réception UDP du noeud.
+- **Mesures** (payload vérifié octet à octet, boucle locale) :
+  4 Mio OK à 1/2/3 sauts avec et sans DHT ; 32 Mio OK à 3 sauts
+  (~24 000 cellules relayées par route — ancien plafond : 256).
+  Limite connue : topologie contrôlée locale, pas encore une sortie
+  Tribler 8.4.3 réelle ni la DHT publique.
+
 ## Backend — SSE `settings_changed` (étape 8/8)
 
 - Nouvelle variante `Notification::SettingsChanged` (`tribler-core`) ;

@@ -4675,9 +4675,11 @@ version = "0.3.0"
 dependencies = [
  "base64 0.22.1",
  "bytes",
+ "futures-util",
  "hex 0.4.3",
  "librqbit",
  "librqbit-core",
+ "librqbit-dualstack-sockets",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",

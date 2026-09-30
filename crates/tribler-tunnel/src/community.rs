@@ -3023,7 +3023,10 @@ impl TunnelCommunity {
                     },
                     direction: Direction::Backward,
                     rendezvous_relay: false,
-                    relay_early_count: 0,
+                    // `RelayRoute.__init__` Python : la route nait d'un
+                    // `extend` qui avait le flag `relay_early` — le
+                    // compteur demarre donc a 1.
+                    relay_early_count: 1,
                 },
             );
             // Cellules venant de l'amont (from_circuit_id) -> aval
@@ -3039,7 +3042,7 @@ impl TunnelCommunity {
                     },
                     direction: Direction::Forward,
                     rendezvous_relay: false,
-                    relay_early_count: 0,
+                    relay_early_count: 1,
                 },
             );
         }

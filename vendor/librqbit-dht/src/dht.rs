@@ -433,6 +433,16 @@ impl<C: RecursiveRequestCallbacks> RecursiveRequest<C> {
             .inspect(|r| {
                 self.mark_node_responded(addr, r);
             });
+        // Patch Tribler-Rust-Torrent : l'id du repondant entre dans la
+        // table de routage meme quand sa liste `nodes` est vide — sans
+        // cela, un bootstrap vers un DHT isole a un seul noeud (tests
+        // d'interop) laisse la table vide et `get_peers` n'interroge
+        // jamais personne (ni announce ni decouverte).
+        if let Ok(ResponseOrError::Response(resp)) = &response {
+            let mut table = self.dht.get_table_for_addr(addr).write();
+            table.add_node(resp.id, addr);
+            table.mark_response(&resp.id, now());
+        }
         if let Some(id) = id {
             self.callbacks.on_request_end(self, id, addr, &response);
         }

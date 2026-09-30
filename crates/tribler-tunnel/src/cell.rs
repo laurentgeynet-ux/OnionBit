@@ -120,7 +120,7 @@ impl Cell {
 }
 
 /// `check_cell_flags` des tunnels Rust.
-pub fn check_cell_flags(cell: &[u8], max_relay_early: u8) -> Result<(), Ipv8Error> {
+pub fn check_cell_flags(cell: &[u8], max_relay_early: u32) -> Result<(), Ipv8Error> {
     // relay_early non nul uniquement pour extend (msg 4).
     if (cell[OFF_RELAY_EARLY] == 0 && cell[OFF_INNER_MSG_ID] == 4) || max_relay_early == 0 {
         return Err(Ipv8Error::Malformed("flag relay_early absent ou inattendu"));

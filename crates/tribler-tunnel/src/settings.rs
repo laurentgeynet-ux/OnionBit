@@ -60,8 +60,9 @@ pub struct TunnelSettings {
     /// `create`).
     pub peer_flags: i32,
     /// `max_relay_early` Python (8) : cellules `relay_early` max
-    /// autorisees a traverser un relais.
-    pub max_relay_early: u8,
+    /// autorisees a traverser un relais. `u32` pour rester comparable
+    /// aux compteurs `relay_early_count` non bornes cote Python.
+    pub max_relay_early: u32,
 
     // -- `TriblerTunnelSettings` (core/tunnel/community.py) ---------
     /// `default_hops` Python (0) : sauts par defaut des

@@ -120,6 +120,14 @@ pub struct EngineConfig {
     /// socket` — lane anonyme : DHT routee dans le tunnel au lieu
     /// d'une socket UDP reelle).
     pub dht_socket: Option<std::sync::Arc<dyn librqbit::DatagramSocket>>,
+    /// Adresses de bootstrap DHT (`DhtSessionConfig::bootstrap_addrs`)
+    /// — `None` = les routeurs par defaut de librqbit.
+    pub dht_bootstrap_addrs: Option<Vec<String>>,
+    /// Port annonce en DHT/tracker (`ListenerOptions::announce_port`)
+    /// — force l'annonce meme sur une ecoute loopback (tests, NAT
+    /// connu). `None` = comportement librqbit (pas d'annonce en
+    /// loopback).
+    pub announce_port: Option<u16>,
     /// Socket datagramme injectee pour les trackers `udp://`
     /// (`SessionOptions::udp_tracker_socket` — anti-fuite : sans elle,
     /// les annonces UDP tracker partiraient en UDP clair hors tunnel).
@@ -163,6 +171,8 @@ impl Default for EngineConfig {
             dht_readiness_timeout_secs: 0,
             utp_socket: None,
             dht_socket: None,
+            dht_bootstrap_addrs: None,
+            announce_port: None,
             udp_tracker_socket: None,
             runtime_worker_threads: default_runtime_worker_threads(),
         }
@@ -198,6 +208,8 @@ impl EngineConfig {
             dht_readiness_timeout_secs: 0,
             utp_socket: None,
             dht_socket: None,
+            dht_bootstrap_addrs: None,
+            announce_port: None,
             udp_tracker_socket: None,
             runtime_worker_threads: default_runtime_worker_threads(),
         }
@@ -220,6 +232,7 @@ impl EngineConfig {
             Some(librqbit::DhtSessionConfig {
                 persistence: None,
                 socket: self.dht_socket.clone(),
+                bootstrap_addrs: self.dht_bootstrap_addrs.clone(),
                 ..Default::default()
             })
         } else {
@@ -275,6 +288,7 @@ impl EngineConfig {
                     },
                     listen_addr: addr,
                     enable_upnp_port_forwarding: self.enable_upnp,
+                    announce_port: self.announce_port,
                     ..Default::default()
                 }),
             connect,

@@ -415,8 +415,19 @@ impl UdpEndpoint {
             }
             let raw_handler = { self.raw_listeners.lock().await.get(&prefix).cloned() };
             if let Some(h) = raw_handler {
-                if let Err(e) = h(src, data) {
-                    tracing::debug!(error = %e, "raw handler de community en erreur");
+                // `catch_unwind` : un panic dans un handler de community
+                // (ex. bug dans `process_cell`) ne doit PAS tuer la
+                // boucle de reception — sinon le noeud devient sourd
+                // definitivement tout en continuant a emettre.
+                let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| h(src, data)));
+                match res {
+                    Ok(Err(e)) => {
+                        tracing::debug!(error = %e, "raw handler de community en erreur");
+                    }
+                    Err(_) => {
+                        tracing::error!(%src, "raw handler de community a panicke — paquet ignore");
+                    }
+                    _ => {}
                 }
             }
             let handler = { self.listeners.lock().await.get(&prefix).cloned() };
@@ -424,14 +435,28 @@ impl UdpEndpoint {
                 match Packet::parse(data, None, &policy) {
                     Ok(pkt) => {
                         let msg_id = pkt.msg_id;
-                        if let Err(e) = h(src, pkt) {
-                            tracing::debug!(
-                                error = %e,
-                                msg_id,
-                                prefix = hex::encode(&prefix[..8]),
-                                %src,
-                                "handler de community en erreur"
-                            );
+                        let res =
+                            std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+                                h(src, pkt)
+                            }));
+                        match res {
+                            Ok(Err(e)) => {
+                                tracing::debug!(
+                                    error = %e,
+                                    msg_id,
+                                    prefix = hex::encode(&prefix[..8]),
+                                    %src,
+                                    "handler de community en erreur"
+                                );
+                            }
+                            Err(_) => {
+                                tracing::error!(
+                                    msg_id,
+                                    %src,
+                                    "handler de community a panicke — paquet ignore"
+                                );
+                            }
+                            _ => {}
                         }
                     }
                     Err(e) => {

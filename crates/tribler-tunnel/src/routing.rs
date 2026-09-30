@@ -174,8 +174,10 @@ pub struct Circuit {
     /// `required_exit` : sortie requise.
     pub required_exit: Option<Vec<u8>>,
     /// `relay_early_count` : cellules deja relachees en `relay_early`
-    /// (`send_cell` Python le pose si `< max_relay_early`).
-    pub relay_early_count: u8,
+    /// (`send_cell` Python le pose si `< max_relay_early`). `u32` :
+    /// Python le borne par la condition de pose du flag, pas par le
+    /// type — un `u8` deborderait apres 256 cellules `EXTEND`.
+    pub relay_early_count: u32,
     /// `hs_session_keys` : couche e2e supplementaire (hidden services,
     /// posee a la liaison `linked-e2e` — `crypto.py` `outgoing_crypto`
     /// /`incoming_crypto`).
@@ -268,9 +270,12 @@ pub struct RelayRoute {
     /// `rendezvous_relay` : transforme FORWARD->BACKWARD au point de
     /// rendez-vous (hidden services).
     pub rendezvous_relay: bool,
-    /// Compteur de cellules relayees en `relay_early` (borne
-    /// `max_relay_early` Python).
-    pub relay_early_count: u8,
+    /// Compteur de cellules relayees sur cette route. Python utilise
+    /// un int non borne (`relay_cell` l'incremente a CHAQUE cellule
+    /// relayee, pas seulement celles flaggees `relay_early`) : un `u8`
+    /// panic par depassement des 256 cellules relayees — fatal pour un
+    /// transfert soutenu.
+    pub relay_early_count: u32,
 }
 
 /// `RendezvousPoint`.
