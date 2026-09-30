@@ -191,7 +191,11 @@ class SearchResultsNotifier extends AsyncNotifier<List<TorrentResult>> {
     final repo = ref.read(searchRepositoryProvider);
     for (var i = 0; i < attempts; i++) {
       await Future<void>.delayed(gap);
-      if (!ref.mounted || ref.read(searchQueryProvider) != query) return;
+      if (!ref.mounted ||
+          ref.read(searchQueryProvider) != query ||
+          !ref.read(remoteResultsProvider).state.running) {
+        return;
+      }
       try {
         final fresh = await repo.searchLocal(query);
         ref.read(remoteResultsProvider.notifier).absorb(fresh);
@@ -205,11 +209,20 @@ class SearchResultsNotifier extends AsyncNotifier<List<TorrentResult>> {
 
 /// État de la recherche distante en cours.
 class RemoteSearchState {
-  const RemoteSearchState({required this.uuid, required this.peerCount});
+  const RemoteSearchState({
+    required this.uuid,
+    required this.peerCount,
+    this.finishedAt,
+  });
 
   /// `null` = aucune recherche distante en vol.
   final String? uuid;
   final int peerCount;
+
+  /// Fin de la dernière fenêtre de collecte (`null` = jamais lancée).
+  final DateTime? finishedAt;
+
+  bool get running => uuid != null;
 }
 
 /// Résultats distants accumulés (SSE `remote_query_results`), filtrés
@@ -289,10 +302,18 @@ class RemoteResultsNotifier extends Notifier<RemoteResults> {
   void finish() {
     if (state.state.uuid == null) return;
     state = RemoteResults(
-      state: RemoteSearchState(uuid: null, peerCount: state.state.peerCount),
+      state: RemoteSearchState(
+        uuid: null,
+        peerCount: state.state.peerCount,
+        finishedAt: DateTime.now(),
+      ),
       results: state.results,
     );
   }
+
+  /// Arrêt demandé par l'utilisateur : identique à `finish` — la boucle
+  /// `_collectRemote` sort au prochain tick (uuid redevenu `null`).
+  void stop() => finish();
 
   /// Aucune recherche distante en vol (échec du PUT, stack inactive).
   void idle() {

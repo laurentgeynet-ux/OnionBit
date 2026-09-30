@@ -49,7 +49,7 @@ Constantes backend vérifiées (2026-09-30) :
 - Termes de la requête surlignés dans les noms (`Text.rich` segments).
 - Chips de filtre : source (tous/local/réseau), seeds ≥ 10.
 
-## Étape 6 — Recherche distante : Stop + compteur
+## Étape 6 — Recherche distante : Stop + compteur [x] (2026-09-30)
 
 - Bouton Stop (coupe la fenêtre de collecte `_collectRemote`), compteur
   « N nouveaux résultats », timestamp de fin affiché.

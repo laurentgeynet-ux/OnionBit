@@ -3,6 +3,14 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## UI : arrêt et compteur de la recherche distante (2026-09-30)
+
+Étape 6 de `docs/plans/app_search_enrichissement.md` : la barre affiche
+le nombre de résultats distants accumulés, un bouton Stop coupe la
+fenêtre de collecte (`RemoteResultsNotifier.stop` — la boucle
+`_collectRemote` sort au prochain tick), et l'heure de fin est affichée
+après la recherche (`finishedAt`).
+
 ## UI : surlignage des termes + chips de filtre dans Rechercher (2026-09-30)
 
 Étape 5 de `docs/plans/app_search_enrichissement.md` : les termes de la

@@ -106,11 +106,30 @@ class SearchPage extends ConsumerWidget {
                         ),
                         const SizedBox(width: AppSpacing.sm),
                         Text(
-                          'recherche distante '
-                          '(${remote.state.peerCount} pairs)',
+                          'recherche distante · '
+                          '${remote.results.length} résultat(s) · '
+                          '${remote.state.peerCount} pairs',
                           style: Theme.of(context).textTheme.bodySmall,
                         ),
+                        IconButton(
+                          tooltip: 'Arrêter la recherche distante',
+                          onPressed: ref
+                              .read(remoteResultsProvider.notifier)
+                              .stop,
+                          icon: const Icon(Icons.stop, size: 18),
+                        ),
                       ],
+                    )
+                  else if (remote.state.finishedAt != null &&
+                      remote.results.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(right: AppSpacing.xs),
+                      child: Text(
+                        '${remote.results.length} résultat(s) distants · '
+                        'terminée à ${remote.state.finishedAt!.hour.toString().padLeft(2, '0')}'
+                        ':${remote.state.finishedAt!.minute.toString().padLeft(2, '0')}',
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
                     ),
                   PopupMenuButton<SearchSort>(
                     tooltip: 'Trier les résultats',
