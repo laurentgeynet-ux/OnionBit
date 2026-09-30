@@ -3,6 +3,15 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## UI — Diagnostic : onglet « Vue d'ensemble » (étape 2/8)
+
+- Premier onglet : grille de 9 `_StatCard` (overlays, circuits prêts/
+  total, relais, sorties actives, pairs tunnel, torrents, débits ↓/↑,
+  taille DB) alimentée par les providers existants.
+- Pastille de santé tunnel (vert = circuits READY, orange =
+  communauté active sans circuit, rouge = inactive) et auto-refresh
+  périodique de 5 s tant que l'onglet est monté.
+
 ## UI — Palette OnionBit (étape 1/8 du plan global)
 
 - `AppTheme.defaultSeedColor` → violet `#6C2EA6` (ampoule du logo) ;

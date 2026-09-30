@@ -20,7 +20,7 @@ Chaque étape = implémentation + `flutter analyze`/tests (ou
   accents cyan `#4FD8E0` en `tertiary` ; densité compacte confortable.
 - Vérifier le rendu des éléments `primaryContainer` (sidebar pilules).
 
-## Étape 2 — Diagnostic : onglet « Vue d'ensemble »
+## Étape 2 — Diagnostic : onglet « Vue d'ensemble » [x] (2026-10-02)
 
 - Premier onglet : cartes compteurs (overlays, circuits ready/total,
   relais, sorties actives, pairs tunnel, torrents, débits) alimentées

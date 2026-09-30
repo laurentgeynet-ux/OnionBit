@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -5,6 +7,7 @@ import '../../../../core/theme/app_theme.dart';
 import '../../../../core/utils/byte_formatter.dart';
 import '../../../../core/widgets/empty_state.dart';
 import '../../../../core/widgets/error_state.dart';
+import '../../../downloads/presentation/providers/downloads_providers.dart';
 import '../../domain/diagnostic_models.dart';
 import '../providers/diagnostic_providers.dart';
 import '../widgets/speed_test_dialog.dart';
@@ -18,13 +21,14 @@ class DiagnosticPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
-      length: 10,
+      length: 11,
       child: Column(
         children: [
           const TabBar(
             isScrollable: true,
             tabAlignment: TabAlignment.start,
             tabs: [
+              Tab(text: 'Vue d\'ensemble'),
               Tab(text: 'Statistiques'),
               Tab(text: 'Overlays'),
               Tab(text: 'Circuits'),
@@ -40,6 +44,7 @@ class DiagnosticPage extends StatelessWidget {
           const Expanded(
             child: TabBarView(
               children: [
+                _OverviewTab(),
                 _StatsTab(),
                 _OverlaysTab(),
                 _CircuitsTab(),
@@ -190,16 +195,8 @@ class _CircuitsTab extends ConsumerWidget {
             // l'ordre (+ saut en cours d'ajout suffixé « … »).
             if (c.verifiedHops.isNotEmpty)
               Text(
-                'route : ${[
-                  for (final h in c.verifiedHops)
-                    h.length > 8 ? h.substring(0, 8) : h,
-                  if (c.unverifiedHop.isNotEmpty)
-                    '${c.unverifiedHop.substring(0, c.unverifiedHop.length.clamp(0, 8))}…',
-                ].join(' → ')}',
-                style: const TextStyle(
-                  fontFamily: 'monospace',
-                  fontSize: 11,
-                ),
+                'route : ${[for (final h in c.verifiedHops) h.length > 8 ? h.substring(0, 8) : h, if (c.unverifiedHop.isNotEmpty) '${c.unverifiedHop.substring(0, c.unverifiedHop.length.clamp(0, 8))}…'].join(' → ')}',
+                style: const TextStyle(fontFamily: 'monospace', fontSize: 11),
               ),
           ],
         ),
@@ -214,8 +211,7 @@ class _CircuitsTab extends ConsumerWidget {
               IconButton(
                 tooltip: 'Test de vitesse',
                 icon: const Icon(Icons.speed, size: 18),
-                onPressed: () =>
-                    SpeedTestDialog.showForCircuit(context, c.id),
+                onPressed: () => SpeedTestDialog.showForCircuit(context, c.id),
               ),
           ],
         ),
@@ -562,6 +558,207 @@ class _LogsTab extends ConsumerWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// Onglet « Vue d'ensemble » — tableau de bord des compteurs clés du
+/// daemon (overlays, circuits, relais, sorties, pairs tunnel,
+/// torrents, débits globaux) + pastille de santé. Auto-refresh 5 s —
+/// la page diagnostic est faite pour être surveillée.
+class _OverviewTab extends ConsumerStatefulWidget {
+  const _OverviewTab();
+
+  @override
+  ConsumerState<_OverviewTab> createState() => _OverviewTabState();
+}
+
+class _OverviewTabState extends ConsumerState<_OverviewTab> {
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _timer = Timer.periodic(const Duration(seconds: 5), (_) {
+      if (!mounted) return;
+      ref.invalidate(overlaysProvider);
+      ref.invalidate(tunnelCircuitsProvider);
+      ref.invalidate(tunnelRelaysProvider);
+      ref.invalidate(tunnelExitsProvider);
+      ref.invalidate(tunnelPeersProvider);
+      ref.invalidate(triblerStatsProvider);
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  void _refresh() {
+    ref.invalidate(overlaysProvider);
+    ref.invalidate(tunnelCircuitsProvider);
+    ref.invalidate(tunnelRelaysProvider);
+    ref.invalidate(tunnelExitsProvider);
+    ref.invalidate(tunnelPeersProvider);
+    ref.invalidate(triblerStatsProvider);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final overlays = ref.watch(overlaysProvider).value;
+    final circuits = ref.watch(tunnelCircuitsProvider).value;
+    final relays = ref.watch(tunnelRelaysProvider).value;
+    final exits = ref.watch(tunnelExitsProvider).value;
+    final peers = ref.watch(tunnelPeersProvider).value;
+    final stats = ref.watch(triblerStatsProvider).value;
+    final speeds = ref.watch(totalSpeedsProvider);
+
+    final ready = circuits?.where((c) => c.ready).length ?? 0;
+    final exitsOn = exits?.where((e) => e.enabled).length ?? 0;
+    final tunnelsUp = (overlays ?? const []).isNotEmpty;
+    final healthy = tunnelsUp && ready > 0;
+    final partial = tunnelsUp;
+
+    final scheme = Theme.of(context).colorScheme;
+    final healthColor = healthy
+        ? Colors.green
+        : partial
+        ? scheme.tertiary
+        : scheme.error;
+
+    return Column(
+      children: [
+        Row(
+          children: [
+            const SizedBox(width: AppSpacing.md),
+            Icon(Icons.circle, size: 10, color: healthColor),
+            const SizedBox(width: AppSpacing.xs),
+            Text(
+              !tunnelsUp
+                  ? 'TunnelCommunity inactive'
+                  : ready > 0
+                  ? 'Tunnels opérationnels ($ready circuits prêts)'
+                  : 'TunnelCommunity active, aucun circuit prêt',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            const Spacer(),
+            Text(
+              'auto-refresh 5 s',
+              style: Theme.of(context).textTheme.labelSmall
+                  ?.copyWith(color: scheme.outline),
+            ),
+            IconButton(
+              tooltip: 'Rafraîchir',
+              icon: const Icon(Icons.refresh, size: 18),
+              onPressed: _refresh,
+            ),
+          ],
+        ),
+        Expanded(
+          child: GridView.count(
+            crossAxisCount: 3,
+            childAspectRatio: 3.2,
+            padding: const EdgeInsets.all(AppSpacing.md),
+            mainAxisSpacing: AppSpacing.sm,
+            crossAxisSpacing: AppSpacing.sm,
+            children: [
+              _StatCard(
+                icon: Icons.hub_outlined,
+                label: 'Overlays IPv8',
+                value: '${overlays?.length ?? '—'}',
+              ),
+              _StatCard(
+                icon: Icons.link,
+                label: 'Circuits prêts',
+                value: '${ready} / ${circuits?.length ?? '—'}',
+              ),
+              _StatCard(
+                icon: Icons.swap_horiz,
+                label: 'Relais',
+                value: '${relays?.length ?? '—'}',
+              ),
+              _StatCard(
+                icon: Icons.exit_to_app,
+                label: 'Sorties actives',
+                value: '${exitsOn} / ${exits?.length ?? '—'}',
+              ),
+              _StatCard(
+                icon: Icons.person_outline,
+                label: 'Pairs tunnel',
+                value: '${peers?.length ?? '—'}',
+              ),
+              _StatCard(
+                icon: Icons.cloud_download_outlined,
+                label: 'Torrents connus',
+                value: '${stats?.numTorrents ?? '—'}',
+              ),
+              _StatCard(
+                icon: Icons.arrow_downward,
+                label: 'Réception',
+                value: ByteFormatter.formatRate(speeds.down),
+              ),
+              _StatCard(
+                icon: Icons.arrow_upward,
+                label: 'Envoi',
+                value: ByteFormatter.formatRate(speeds.up),
+              ),
+              _StatCard(
+                icon: Icons.storage_outlined,
+                label: 'Base de données',
+                value: stats != null ? ByteFormatter.format(stats.dbSize) : '—',
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// Carte compteur du tableau de bord « Vue d'ensemble ».
+class _StatCard extends StatelessWidget {
+  const _StatCard({
+    required this.icon,
+    required this.label,
+    required this.value,
+  });
+
+  final IconData icon;
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(AppSpacing.md),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Row(
+              children: [
+                Icon(icon, size: 16, color: theme.colorScheme.outline),
+                const SizedBox(width: AppSpacing.xs),
+                Expanded(
+                  child: Text(
+                    label,
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: theme.colorScheme.outline,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: AppSpacing.xs),
+            Text(value, style: theme.textTheme.titleMedium),
+          ],
+        ),
+      ),
     );
   }
 }
