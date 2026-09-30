@@ -67,7 +67,8 @@ class StatusBar extends ConsumerWidget {
                     switch (lane?.state) {
                       AnonLaneState.ready =>
                         'Anonyme : ${lane!.readyCircuits} circuit(s) prêt(s)',
-                      AnonLaneState.waiting => 'Anonyme : en attente de circuit',
+                      AnonLaneState.waiting =>
+                        'Anonyme : en attente de circuit',
                       AnonLaneState.disabled => 'Anonyme : désactivé',
                       null => 'Anonyme : …',
                     },

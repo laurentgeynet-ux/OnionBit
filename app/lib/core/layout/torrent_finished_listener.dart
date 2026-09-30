@@ -19,7 +19,8 @@ class TorrentFinishedListener extends ConsumerWidget {
       if (event == null || event.topic != EventTopics.torrentFinished) {
         return;
       }
-      final name = (event.data['name'] as String?) ??
+      final name =
+          (event.data['name'] as String?) ??
           (event.data['infohash'] as String?) ??
           '';
       ScaffoldMessenger.of(context).showSnackBar(

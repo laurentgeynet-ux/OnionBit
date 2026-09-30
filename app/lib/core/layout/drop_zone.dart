@@ -29,9 +29,11 @@ class _DropZoneState extends ConsumerState<DropZone> {
         setState(() => _hovering = false);
         final paths = details.files
             .map((f) => f.path)
-            .where((p) =>
-                p.toLowerCase().endsWith('.torrent') ||
-                p.toLowerCase().endsWith('.magnet'))
+            .where(
+              (p) =>
+                  p.toLowerCase().endsWith('.torrent') ||
+                  p.toLowerCase().endsWith('.magnet'),
+            )
             .toList();
         if (paths.isNotEmpty) {
           ref.read(pendingFilesProvider.notifier).enqueue(paths);

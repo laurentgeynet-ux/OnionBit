@@ -28,7 +28,7 @@ Chaque étape = implémentation + `flutter analyze`/tests (ou
 - Santé globale : pastille verte/orange/rouge selon overlays présents
   et circuits READY.
 
-## Étape 3 — Centre de notifications
+## Étape 3 — Centre de notifications [x] (2026-10-02)
 
 - `notificationsProvider` : liste session (titre, message, sévérité,
   horodatage) alimentée par les événements SSE (`torrent_finished`,

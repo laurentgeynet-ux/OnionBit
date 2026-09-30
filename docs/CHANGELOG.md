@@ -3,6 +3,18 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## UI — Centre de notifications (étape 3/8)
+
+- `notificationsProvider` : liste bornée (100) + compteur de non-lues ;
+  `AppNotification` (sévérité, horodatage, lecture).
+- `NotificationsListener` dans le shell traduit les SSE
+  `torrent_finished` (succès), `download_state_changed` →
+  `STOPPED_ON_ERROR` (dédupliqué par infohash), `tribler_exception`,
+  `low_space`, `tribler_new_version` — les snackbars existants sont
+  conservés.
+- `NotificationBell` dans la `TopBar` : badge non-lus + panneau
+  MenuAnchor (tout marquer lu / vider, 50 dernières).
+
 ## UI — Diagnostic : onglet « Vue d'ensemble » (étape 2/8)
 
 - Premier onglet : grille de 9 `_StatCard` (overlays, circuits prêts/

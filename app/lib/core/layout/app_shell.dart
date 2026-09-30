@@ -5,6 +5,7 @@ import '../router/nav_catalog.dart';
 import 'app_sidebar.dart';
 import 'breakpoints.dart';
 import 'drop_zone.dart';
+import '../notifications/notifications_listener.dart';
 import 'pending_files_handler.dart';
 import 'status_bar.dart';
 import 'top_bar.dart';
@@ -60,6 +61,7 @@ class AppShell extends StatelessWidget {
               Positioned.fill(child: body),
               const Positioned.fill(child: PendingFilesHandler()),
               const Positioned.fill(child: TorrentFinishedListener()),
+              const Positioned.fill(child: NotificationsListener()),
             ],
           ),
         ),
@@ -90,6 +92,7 @@ class AppShell extends StatelessWidget {
                   Positioned.fill(child: body),
                   const Positioned.fill(child: PendingFilesHandler()),
                   const Positioned.fill(child: TorrentFinishedListener()),
+                  const Positioned.fill(child: NotificationsListener()),
                 ],
               ),
             ),
