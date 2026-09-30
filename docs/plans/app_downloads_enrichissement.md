@@ -35,7 +35,7 @@ fichier (cochage) + `docs/CHANGELOG.md` + commit dédié. Les modifications
   64 / 128 / 512 Kio/s / 1 Mio/s / illimité, coche sur la valeur courante,
   entrée « Personnalisé… » renvoyant au dialogue existant.
 
-## Étape 4 — Sparkline de débit temps réel
+## Étape 4 — Sparkline de débit temps réel [x] (2026-09-30)
 
 - Historique glissant (120 points, 1 échantillon/poll) des débits down/up du
   téléchargement sélectionné, affiché en haut de l'onglet Détails.

@@ -3,6 +3,16 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## UI : sparkline de débit temps réel dans le panneau de détail (2026-09-30)
+
+Étape 4 de `docs/plans/app_downloads_enrichissement.md` : l'onglet
+« Détails » affiche en tête un graphe ↓/↑ des 120 derniers échantillons
+(un par poll de `downloadsProvider`), avec débits courants et crête.
+Historique conservé dans le `State` du widget (`_DetailsTab` devient
+stateful) — pas de provider supplémentaire, mémoire bornée, destruction
+à la fermeture du panneau. Rendu par `CustomPainter` maison
+(`SpeedSparkline`).
+
 ## UI : presets de limites de débit dans le menu contextuel (2026-09-30)
 
 Étape 3 de `docs/plans/app_downloads_enrichissement.md` : le menu

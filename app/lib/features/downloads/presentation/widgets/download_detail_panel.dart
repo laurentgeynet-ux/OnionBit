@@ -51,10 +51,45 @@ class DownloadDetailPanel extends ConsumerWidget {
   }
 }
 
-class _DetailsTab extends ConsumerWidget {
+class _DetailsTab extends ConsumerStatefulWidget {
   const _DetailsTab({required this.download});
 
   final Download download;
+
+  @override
+  ConsumerState<_DetailsTab> createState() => _DetailsTabState();
+}
+
+class _DetailsTabState extends ConsumerState<_DetailsTab> {
+  /// Historique glissant des débits (un échantillon par poll de
+  /// `downloadsProvider`) — alimente le sparkline. Mémoire bornée.
+  static const _maxSamples = 120;
+  final _history = <({int down, int up})>[];
+
+  Download get download => widget.download;
+
+  @override
+  void initState() {
+    super.initState();
+    _record(widget.download);
+  }
+
+  @override
+  void didUpdateWidget(_DetailsTab oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _record(widget.download);
+  }
+
+  void _record(Download d) {
+    if (identical(d, _history.isEmpty ? null : _lastDownload)) return;
+    _lastDownload = d;
+    _history.add((down: d.speedDown, up: d.speedUp));
+    if (_history.length > _maxSamples) {
+      _history.removeRange(0, _history.length - _maxSamples);
+    }
+  }
+
+  Download? _lastDownload;
 
   String _date(int epoch) {
     if (epoch <= 0) return '—';
@@ -65,7 +100,7 @@ class _DetailsTab extends ConsumerWidget {
   }
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
     final d = download;
     final notifier = ref.read(downloadsProvider.notifier);
     final magnetUri =
@@ -74,6 +109,8 @@ class _DetailsTab extends ConsumerWidget {
     return ListView(
       padding: const EdgeInsets.all(AppSpacing.md),
       children: [
+        SpeedSparkline(history: _history),
+        const SizedBox(height: AppSpacing.sm),
         LinearProgressIndicator(value: d.progress.clamp(0.0, 1.0)),
         const SizedBox(height: AppSpacing.md),
         Wrap(
@@ -208,6 +245,118 @@ class _DetailsTab extends ConsumerWidget {
       ),
     );
   }
+}
+
+/// Sparkline des débits ↓/↑ — `CustomPainter` maison (pas de
+/// dépendance chart pour un graphe de 120 points).
+class SpeedSparkline extends StatelessWidget {
+  const SpeedSparkline({super.key, required this.history});
+
+  /// Échantillons chronologiques (un par poll).
+  final List<({int down, int up})> history;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final small = Theme.of(context).textTheme.labelSmall;
+    final peak = history.fold(
+      1,
+      (m, s) => s.down > m ? s.down : (s.up > m ? s.up : m),
+    );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Icon(Icons.arrow_downward, size: 12, color: scheme.primary),
+            Text(
+              ' ${ByteFormatter.formatRate(history.lastOrNull?.down ?? 0)}',
+              style: small,
+            ),
+            const SizedBox(width: AppSpacing.sm),
+            Icon(Icons.arrow_upward, size: 12, color: scheme.tertiary),
+            Text(
+              ' ${ByteFormatter.formatRate(history.lastOrNull?.up ?? 0)}',
+              style: small,
+            ),
+            const Spacer(),
+            Text('crête ${ByteFormatter.formatRate(peak)}', style: small),
+          ],
+        ),
+        const SizedBox(height: 4),
+        SizedBox(
+          height: 48,
+          width: double.infinity,
+          child: CustomPaint(
+            painter: _SparklinePainter(
+              history: history,
+              downColor: scheme.primary,
+              upColor: scheme.tertiary,
+              gridColor: scheme.outlineVariant,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _SparklinePainter extends CustomPainter {
+  _SparklinePainter({
+    required this.history,
+    required this.downColor,
+    required this.upColor,
+    required this.gridColor,
+  });
+
+  final List<({int down, int up})> history;
+  final Color downColor;
+  final Color upColor;
+  final Color gridColor;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final grid = Paint()
+      ..color = gridColor
+      ..strokeWidth = 1;
+    canvas.drawLine(
+      Offset(0, size.height - 0.5),
+      Offset(size.width, size.height - 0.5),
+      grid,
+    );
+    if (history.length < 2) return;
+
+    var peak = 1.0;
+    for (final s in history) {
+      if (s.down > peak) peak = s.down.toDouble();
+      if (s.up > peak) peak = s.up.toDouble();
+    }
+    final dx = size.width / (history.length - 1);
+
+    void draw(Color color, int Function(({int down, int up}) s) pick) {
+      final paint = Paint()
+        ..color = color
+        ..strokeWidth = 1.5
+        ..style = PaintingStyle.stroke
+        ..strokeJoin = StrokeJoin.round;
+      final path = Path();
+      for (var i = 0; i < history.length; i++) {
+        final y =
+            size.height - (pick(history[i]) / peak) * (size.height - 4) - 2;
+        i == 0
+            ? path.moveTo(0, y)
+            : path.lineTo(i * dx, y);
+      }
+      canvas.drawPath(path, paint);
+    }
+
+    draw(downColor, (s) => s.down);
+    draw(upColor, (s) => s.up);
+  }
+
+  @override
+  bool shouldRepaint(_SparklinePainter old) =>
+      !identical(old.history, history);
 }
 
 class _FilesTab extends ConsumerWidget {
