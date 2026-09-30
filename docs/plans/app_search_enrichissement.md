@@ -34,7 +34,7 @@ Constantes backend vérifiées (2026-09-30) :
   (0-3 sauts — `add(uri:, anonHops: h, safeSeeding: true)`), Copier le
   magnet, Copier l'info-hash.
 
-## Étape 3 — Badge « déjà téléchargé »
+## Étape 3 — Badge « déjà téléchargé » [x] (2026-09-30)
 
 - Croisement `infohash` × `downloadsProvider` : chip « En cours » sur
   les lignes connues, bouton Ajouter désactivé (tooltip).

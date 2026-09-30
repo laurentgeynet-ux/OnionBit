@@ -3,6 +3,13 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## UI : badge « déjà téléchargé » dans Rechercher (2026-09-30)
+
+Étape 3 de `docs/plans/app_search_enrichissement.md` : les résultats
+dont l'info-hash figure déjà dans `downloadsProvider` affichent un
+chip « En cours » à la place du bouton Ajouter (table et liste
+compacte) — anti-doublon immédiat.
+
 ## UI : menu contextuel + ajout anonyme dans Rechercher (2026-09-30)
 
 Étape 2 de `docs/plans/app_search_enrichissement.md` : clic droit sur

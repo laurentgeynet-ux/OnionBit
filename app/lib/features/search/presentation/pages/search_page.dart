@@ -8,6 +8,7 @@ import '../../../../core/theme/app_theme.dart';
 import '../../../../core/utils/byte_formatter.dart';
 import '../../../../core/widgets/empty_state.dart';
 import '../../../../core/widgets/error_state.dart';
+import '../../../downloads/domain/download.dart';
 import '../../../downloads/presentation/providers/downloads_providers.dart';
 import '../../../downloads/presentation/widgets/add_download_dialog.dart';
 import '../../domain/torrent_result.dart';
@@ -26,6 +27,12 @@ class SearchPage extends ConsumerWidget {
     final colSort = ref.watch(searchColSortProvider);
     final local = ref.watch(searchResultsProvider);
     final remote = ref.watch(remoteResultsProvider);
+    // Info-hashes déjà gérés par le daemon — badge « En cours » et
+    // bouton Ajouter désactivé (anti-doublon).
+    final known = {
+      for (final d in ref.watch(downloadsProvider).value ?? const <Download>[])
+        d.infohash,
+    };
     final compact =
         AppBreakpoints.of(MediaQuery.sizeOf(context).width) ==
         AppBreakpoint.compact;
@@ -125,9 +132,9 @@ class SearchPage extends ConsumerWidget {
                             ),
                             itemCount: merged.length,
                             itemBuilder: (context, i) =>
-                                _ResultTile(result: merged[i]),
+                                _ResultTile(result: merged[i], known: known),
                           )
-                        : _ResultsTable(results: merged),
+                        : _ResultsTable(results: merged, known: known),
                   ),
           ),
         ),
@@ -145,9 +152,12 @@ String _sortLabel(SearchSort s) => switch (s) {
 };
 
 class _ResultTile extends StatelessWidget {
-  const _ResultTile({required this.result});
+  const _ResultTile({required this.result, required this.known});
 
   final TorrentResult result;
+
+  /// Info-hashes déjà gérés par le daemon.
+  final Set<String> known;
 
   @override
   Widget build(BuildContext context) {
@@ -195,9 +205,10 @@ class _ResultTile extends StatelessWidget {
 /// Table desktop : en-têtes triables (clic = asc/desc, comme la page
 /// Téléchargements) + scroll horizontal sous ~900 px utiles.
 class _ResultsTable extends ConsumerWidget {
-  const _ResultsTable({required this.results});
+  const _ResultsTable({required this.results, required this.known});
 
   final List<TorrentResult> results;
+  final Set<String> known;
 
   static const double _minWidth = 900;
 
@@ -219,7 +230,8 @@ class _ResultsTable extends ConsumerWidget {
             Expanded(
               child: ListView.builder(
                 itemCount: results.length,
-                itemBuilder: (context, i) => _ResultRow(result: results[i]),
+                itemBuilder: (context, i) =>
+                    _ResultRow(result: results[i], known: known),
               ),
             ),
           ],
@@ -291,9 +303,10 @@ class _HeaderRow extends ConsumerWidget {
 }
 
 class _ResultRow extends StatelessWidget {
-  const _ResultRow({required this.result});
+  const _ResultRow({required this.result, required this.known});
 
   final TorrentResult result;
+  final Set<String> known;
 
   @override
   Widget build(BuildContext context) {
@@ -356,16 +369,24 @@ class _ResultRow extends StatelessWidget {
                 width: 90,
                 child: Align(
                   alignment: Alignment.centerRight,
-                  child: IconButton(
-                    tooltip: 'Ajouter',
-                    onPressed: r.infohash.isEmpty
-                        ? null
-                        : () => AddDownloadDialog.show(
-                            context,
-                            initialUri: r.magnet,
+                  child: known.contains(r.infohash)
+                      ? const Tooltip(
+                          message: 'Déjà dans vos téléchargements',
+                          child: Chip(
+                            label: Text('En cours'),
+                            visualDensity: VisualDensity.compact,
                           ),
-                    icon: const Icon(Icons.download, size: 18),
-                  ),
+                        )
+                      : IconButton(
+                          tooltip: 'Ajouter',
+                          onPressed: r.infohash.isEmpty
+                              ? null
+                              : () => AddDownloadDialog.show(
+                                  context,
+                                  initialUri: r.magnet,
+                                ),
+                          icon: const Icon(Icons.download, size: 18),
+                        ),
                 ),
               ),
             ],
