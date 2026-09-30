@@ -201,7 +201,13 @@ a la demande, comme le file pool de libtorrent :
   validation complete n'est pas cassee.
 - Effet de bord : un chemin de sortie invalide ou des permissions
   manquantes ne sont plus detectes a l'ajout du torrent mais a la
-  premiere I/O (erreur differee documentee).
+  premiere I/O (erreur differee documentee — ADR-0008).
+- Precision de mesure : « restauration en quelques ms » = fin de
+  l'init/registration, pas fin de validation — `validate_fastresume`
+  (echantillonnage, actif par defaut) et `initial_check` continuent en
+  arriere-plan ; le deux sont distingues dans l'API depuis l'entree
+  « erreurs differees » ci-dessus (`WAITING_FOR_HASHCHECK` vs
+  `HASHCHECKING` via `TorrentStats.checking`).
 - `GET /api/downloads` met en cache ~800 ms les lignes
   `downloads`/`torrent_states` (`AppState::downloads_rows`) : pendant la
   restauration l'UI poll en boucle et chaque acces sqlite prenait
