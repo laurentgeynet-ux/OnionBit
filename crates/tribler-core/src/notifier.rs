@@ -132,6 +132,11 @@ pub enum Notification {
         /// Chaine de version distante.
         version: String,
     },
+    /// `settings_changed` : `POST /api/settings` a modifie et persiste
+    /// la configuration — les clients doivent recharger l'arbre
+    /// (boucle multi-clients : l'editeur avance d'un client
+    /// resynchronise les sections dediees des autres).
+    SettingsChanged,
 }
 
 /// Bus de notifications. `Clone` : chaque service detient un

@@ -13,4 +13,8 @@ abstract final class EventTopics {
   /// intègre les réponses directement dans `channel_node` (sans
   /// événement dédié) — conservé pour compatibilité ascendante.
   static const remoteQueryResults = 'remote_query_results';
+
+  /// Poussé par `POST /api/settings` — les clients doivent recharger
+  /// l'arbre de configuration (boucle multi-clients).
+  static const settingsChanged = 'settings_changed';
 }

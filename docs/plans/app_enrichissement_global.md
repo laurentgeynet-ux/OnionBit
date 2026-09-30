@@ -55,14 +55,14 @@ Chaque étape = implémentation + `flutter analyze`/tests (ou
 - Bascule table ↔ liste dense (ListTiles avec % + débits) via
   bouton dans la barre d'outils ; choix persisté (étape 5).
 
-## Étape 7 — SSE `settings_changed` (backend)
+## Étape 7 — SSE `settings_changed` (backend) [x] (2026-10-02)
 
 - `tribler-api` émet `settings_changed` après `POST /api/settings` ;
   l'UI écoute `daemonEventsProvider` et invalide
   `daemonSettingsProvider` → resynchronisation multi-clients et de
   l'éditeur avancé.
 
-## Étape 8 — Tests widget des pages enrichies
+## Étape 8 — Tests widget des pages enrichies [x] (2026-10-02, fusionnée à l'étape 7 UI)
 
 - Tests widget : sidebar (pilules, badge erreurs, rail), réglages
   (dirty banner, défauts), recherche (badge en cours), downloads

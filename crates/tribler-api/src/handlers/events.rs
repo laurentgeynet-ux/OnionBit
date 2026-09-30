@@ -151,6 +151,9 @@ fn notification_to_event(
             "tribler_new_version".into(),
             serde_json::json!({"version": version}),
         ),
+        Notification::SettingsChanged => {
+            ("settings_changed".into(), serde_json::json!({}))
+        }
     };
     Some((topic, kwargs))
 }
@@ -220,4 +223,19 @@ pub async fn get_events_info(State(state): State<AppState>) -> Json<serde_json::
             .load(std::sync::atomic::Ordering::Relaxed)
             .to_string(),
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `settings_changed` doit atteindre les clients SSE — c'est la
+    /// boucle de resynchronisation multi-clients de l'UI.
+    #[test]
+    fn settings_changed_est_mappe_en_topic_sse() {
+        let (topic, kwargs) =
+            notification_to_event(&Notification::SettingsChanged, "aa").unwrap();
+        assert_eq!(topic, "settings_changed");
+        assert_eq!(kwargs, serde_json::json!({}));
+    }
 }

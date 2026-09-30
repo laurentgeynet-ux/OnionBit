@@ -3,6 +3,16 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Backend — SSE `settings_changed` (étape 8/8)
+
+- Nouvelle variante `Notification::SettingsChanged` (`tribler-core`) ;
+  `POST /api/settings` l'émet après persistance → topic SSE
+  `settings_changed` (`tribler-api`, mapping + test de mapping).
+- Côté UI : `EventTopics.settingsChanged` + `ref.listen` dans
+  `daemonSettingsProvider` → `invalidateSelf()` : un client qui modifie
+  la config resynchronise les sections dédiées des autres clients et
+  l'éditeur avancé, sans action manuelle.
+
 ## UI — Tests widget des zones enrichies (étape 7/8)
 
 - `test/ui_enrichissement_test.dart` : centre de notifications

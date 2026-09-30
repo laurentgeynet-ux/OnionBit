@@ -1,5 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../core/api/events.dart';
+import '../../../../core/api/sse_client.dart';
 import '../../../../core/di/providers.dart';
 import '../../data/rest_settings_repository.dart';
 import '../../domain/settings_repository.dart';
@@ -9,7 +11,17 @@ final settingsRepositoryProvider = Provider<SettingsRepository>(
 );
 
 final daemonSettingsProvider = FutureProvider.autoDispose<Map<String, dynamic>>(
-  (ref) => ref.watch(settingsRepositoryProvider).get(),
+  (ref) {
+    // SSE `settings_changed` (POST /api/settings d'un client) →
+    // recharge l'arbre : ferme la boucle entre l'éditeur avancé et
+    // les sections dédiées, et entre plusieurs clients.
+    ref.listen<AsyncValue<SseEvent>>(daemonEventsProvider, (_, next) {
+      if (next.value?.topic == EventTopics.settingsChanged) {
+        ref.invalidateSelf();
+      }
+    });
+    return ref.watch(settingsRepositoryProvider).get();
+  },
 );
 
 /// Espace disque d'un répertoire (`null` = dossier de téléchargement

@@ -53,6 +53,12 @@ pub async fn update_settings(
     let core_cfg = cfg.to_core_config(&state.session.config().state_dir);
     drop(cfg);
     state.session.apply_service_settings(&core_cfg);
+    // Resynchronise les autres clients SSE (editeur avance d'un
+    // client → sections dediees des autres rafraichies).
+    state
+        .session
+        .notifier()
+        .notify(tribler_core::Notification::SettingsChanged);
 
     Ok(Json(serde_json::json!({ "modified": true })))
 }
