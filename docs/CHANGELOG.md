@@ -3,6 +3,12 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## UI — Logo OnionBit plus visible dans la sidebar
+
+- Logo agrandi : 28 → 44 px en sidebar pleine largeur, 36 px en rail
+  rétracté, centré (était aligné à gauche et trop petit par rapport
+  au bouton « Ajouter »).
+
 ## UI — Téléchargements : badge d'anonymat explicite + % lisible
 
 - `AnonBadge` devient une pastille texte : « Clair » (trafic direct,

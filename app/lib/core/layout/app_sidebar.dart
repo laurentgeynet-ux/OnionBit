@@ -110,9 +110,9 @@ class AppSidebar extends ConsumerWidget {
                     collapsed
                         ? 'assets/branding/icon.svg'
                         : 'assets/branding/logo-horizontal.svg',
-                    height: 28,
+                    height: collapsed ? 36 : 44,
                     fit: BoxFit.contain,
-                    alignment: Alignment.centerLeft,
+                    alignment: Alignment.center,
                     placeholderBuilder: (_) => Row(
                       children: [
                         Icon(Icons.shield_outlined, color: scheme.primary),
