@@ -866,7 +866,17 @@ class _DownloadsContextMenuState extends ConsumerState<_DownloadsContextMenu> {
     return MenuAnchor(
       controller: _controller,
       menuChildren: d == null ? const [] : _items(d),
-      child: widget.child,
+      // Le menu vit dans un overlay : tout pointeur qui atteint la
+      // liste en dessous est par définition « hors du menu » → on
+      // ferme. Les clics sur les items du menu ne traversent pas
+      // l'overlay, ce Listener ne les voit jamais.
+      child: Listener(
+        behavior: HitTestBehavior.translucent,
+        onPointerDown: (_) {
+          if (_controller.isOpen) _controller.close();
+        },
+        child: widget.child,
+      ),
     );
   }
 

@@ -3,6 +3,14 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## UI — Menus contextuels : fermeture au clic extérieur
+
+- `MenuAnchor` des pages Téléchargements et Rechercher enveloppé d'un
+  `Listener` translucent : tout `pointerDown` atteignant le contenu
+  sous-jacent (le menu vit dans un overlay) ferme le menu — le clic
+  souris hors menu ne le renvoyait plus au `TapRegion` interne et il
+  fallait passer par Échap.
+
 ## Roadmap clôturée — étapes 20 (UI Flutter) et 29 (systray) validées
 
 - Validation visuelle manuelle effectuée (2026-09-30) : étape 20 (rendu

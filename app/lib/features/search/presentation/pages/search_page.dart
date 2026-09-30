@@ -746,7 +746,17 @@ class _SearchContextMenuState extends ConsumerState<_SearchContextMenu> {
     return MenuAnchor(
       controller: _controller,
       menuChildren: r == null ? const [] : _items(r),
-      child: widget.child,
+      // Le menu vit dans un overlay : tout pointeur atteignant la
+      // liste en dessous est « hors du menu » → fermeture (le clic
+      // extérieur ne renvoyait pas de tap géré par le TapRegion dans
+      // ce contexte de fenêtrage).
+      child: Listener(
+        behavior: HitTestBehavior.translucent,
+        onPointerDown: (_) {
+          if (_controller.isOpen) _controller.close();
+        },
+        child: widget.child,
+      ),
     );
   }
 
