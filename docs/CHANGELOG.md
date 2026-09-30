@@ -3,6 +3,14 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## UI — Réglages : sliders + presets de bande passante (étape 6/8)
+
+- `_RateControl` : champ Ko/s + slider exponentiel (0 = illimité ↔
+  10 Mo/s, granularité fine en bas de plage) + chips presets
+  Illimité / 1 / 5 / 10 Mo/s — tout synchronisé bidirectionnellement.
+- Convention `0 = illimité` inchangée (backend `0 → None`) ; la
+  modification passe par le suivi « modifié » de l'étape 2.
+
 ## UI — Réglages : export/import de la configuration (étape 5/8)
 
 - « Exporter » : copie du JSON complet dans le presse-papier.

@@ -57,7 +57,7 @@ Chaque étape = implémentation + `flutter analyze`/tests + cochage ici +
   presse-papier). Import : « Coller » → aperçu → `POST /api/settings`
   (merge récursif côté backend).
 
-## Étape 6 — Bande passante : sliders + presets
+## Étape 6 — Bande passante : sliders + presets [x] (2026-10-02)
 
 - `Slider` logarithmique par direction (0 = illimité ↔ 10 Mo/s) en plus
   du champ numérique, synchronisés ; chips presets

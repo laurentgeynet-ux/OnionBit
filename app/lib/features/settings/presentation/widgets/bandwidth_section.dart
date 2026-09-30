@@ -1,3 +1,5 @@
+import 'dart:math';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -75,42 +77,20 @@ class _BandwidthSectionState extends ConsumerState<BandwidthSection> {
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _down,
-                    onChanged: (_) => _deferred.markDirty(),
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(
-                      labelText: 'Téléchargement (Ko/s)',
-                      suffixIcon: KeyInfoIcon([
-                        'libtorrent',
-                        'max_download_rate',
-                      ], description: 'Débit descendant global ; 0 = illimité'),
-                      hintText: 'défaut : 0 = illimité',
-                      prefixIcon: Icon(Icons.arrow_downward),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: AppSpacing.md),
-                Expanded(
-                  child: TextField(
-                    controller: _up,
-                    onChanged: (_) => _deferred.markDirty(),
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(
-                      labelText: 'Envoi (Ko/s)',
-                      suffixIcon: KeyInfoIcon([
-                        'libtorrent',
-                        'max_upload_rate',
-                      ], description: 'Débit montant global ; 0 = illimité'),
-                      hintText: 'défaut : 0 = illimité',
-                      prefixIcon: Icon(Icons.arrow_upward),
-                    ),
-                  ),
-                ),
-              ],
+            _RateControl(
+              label: 'Téléchargement',
+              keyPath: const ['libtorrent', 'max_download_rate'],
+              icon: Icons.arrow_downward,
+              controller: _down,
+              onChanged: _deferred.markDirty,
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            _RateControl(
+              label: 'Envoi',
+              keyPath: const ['libtorrent', 'max_upload_rate'],
+              icon: Icons.arrow_upward,
+              controller: _up,
+              onChanged: _deferred.markDirty,
             ),
             const SizedBox(height: AppSpacing.md),
             Align(
@@ -124,6 +104,103 @@ class _BandwidthSectionState extends ConsumerState<BandwidthSection> {
           ],
         );
       },
+    );
+  }
+}
+
+/// Ligne de limite de débit : champ numérique (Ko/s) + slider
+/// exponentiel (0 = illimité ↔ 10 Mo/s) + chips de presets, tous
+/// synchronisés. `0` = illimité, convention backend `0 → None`.
+class _RateControl extends StatelessWidget {
+  const _RateControl({
+    required this.label,
+    required this.keyPath,
+    required this.icon,
+    required this.controller,
+    required this.onChanged,
+  });
+
+  final String label;
+  final List<String> keyPath;
+  final IconData icon;
+  final TextEditingController controller;
+  final VoidCallback onChanged;
+
+  /// Plafond du slider : 10 Mo/s en Ko/s.
+  static const _maxKb = 10 * 1024;
+
+  /// Positions du slider : 0 = illimité, 1..100 = échelle
+  /// exponentielle 1 Ko/s → 10 Mo/s (la granularité fine compte en
+  /// bas de plage, pas en haut).
+  static const _positions = 100.0;
+
+  static double _toPos(int kb) =>
+      kb <= 0 ? 0 : 1 + (log(kb) / log(_maxKb)) * (_positions - 1);
+
+  static int _toKb(double pos) =>
+      pos <= 0 ? 0 : exp((pos - 1) / (_positions - 1) * log(_maxKb)).round();
+
+  int _kb() => (int.tryParse(controller.text.trim()) ?? 0).clamp(0, 1 << 40);
+
+  void _setKb(int kb) {
+    controller.text = '$kb';
+    onChanged();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final presets = <(String, int)>[
+      ('Illimité', 0),
+      ('1 Mo/s', 1024),
+      ('5 Mo/s', 5 * 1024),
+      ('10 Mo/s', _maxKb),
+    ];
+    final kb = _kb();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: TextField(
+                controller: controller,
+                onChanged: (_) => onChanged(),
+                keyboardType: TextInputType.number,
+                decoration: InputDecoration(
+                  labelText: '$label (Ko/s)',
+                  hintText: 'défaut : 0 = illimité',
+                  prefixIcon: Icon(icon),
+                  suffixIcon: KeyInfoIcon(
+                    keyPath,
+                    description: 'Débit global ; 0 = illimité',
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+        Row(
+          children: [
+            Expanded(
+              child: Slider(
+                value: _toPos(kb).clamp(0, _positions),
+                max: _positions,
+                onChanged: (pos) => _setKb(_toKb(pos)),
+              ),
+            ),
+            for (final (label, v) in presets)
+              Padding(
+                padding: const EdgeInsets.only(left: AppSpacing.xs),
+                child: ChoiceChip(
+                  label: Text(label),
+                  selected: kb == v,
+                  visualDensity: VisualDensity.compact,
+                  onSelected: (_) => _setKb(v),
+                ),
+              ),
+          ],
+        ),
+      ],
     );
   }
 }
