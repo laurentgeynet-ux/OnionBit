@@ -3,6 +3,14 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## UI — Réglages : export/import de la configuration (étape 5/8)
+
+- « Exporter » : copie du JSON complet dans le presse-papier.
+- « Importer » : dialogue de collage avec validation (objet JSON
+  obligatoire), aperçu des sections racines détectées ; le contenu
+  charge l'éditeur mais n'est envoyé qu'au « Appliquer » — intégré au
+  suivi « modifié » de l'étape 2.
+
 ## UI — Réglages : bouton « Rétablir les défauts » par section (étape 4/8)
 
 - `settings_defaults.dart` : `kBandwidthDefaults`, `kQueueDefaults`,

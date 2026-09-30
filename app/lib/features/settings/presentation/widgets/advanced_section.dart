@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/theme/app_theme.dart';
@@ -78,6 +79,27 @@ class _AdvancedSectionState extends ConsumerState<AdvancedSection> {
     if (mounted) setState(() => _saving = false);
   }
 
+  Future<void> _copyAll() async {
+    await Clipboard.setData(ClipboardData(text: _controller.text));
+    if (mounted) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('Configuration copiée')));
+    }
+  }
+
+  Future<void> _import() async {
+    final json = await showDialog<String>(
+      context: context,
+      builder: (context) => const _ImportDialog(),
+    );
+    if (json == null || !mounted) return;
+    setState(() {
+      _controller.text = json;
+      _deferred.markDirty();
+      _parseError = null;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -130,6 +152,17 @@ class _AdvancedSectionState extends ConsumerState<AdvancedSection> {
               mainAxisAlignment: MainAxisAlignment.end,
               children: [
                 TextButton.icon(
+                  onPressed: _copyAll,
+                  icon: const Icon(Icons.copy, size: 18),
+                  label: const Text('Exporter'),
+                ),
+                TextButton.icon(
+                  onPressed: _import,
+                  icon: const Icon(Icons.file_upload_outlined, size: 18),
+                  label: const Text('Importer'),
+                ),
+                const Spacer(),
+                TextButton.icon(
                   onPressed: _discard,
                   icon: const Icon(Icons.refresh, size: 18),
                   label: const Text('Recharger'),
@@ -151,6 +184,100 @@ class _AdvancedSectionState extends ConsumerState<AdvancedSection> {
           ],
         );
       },
+    );
+  }
+}
+
+/// Dialogue d'import : colle un JSON de configuration, valide la forme
+/// et affiche un aperçu des sections racines avant d'injecter le texte
+/// dans l'éditeur (l'application reste soumise à « Appliquer »).
+class _ImportDialog extends StatefulWidget {
+  const _ImportDialog();
+
+  @override
+  State<_ImportDialog> createState() => _ImportDialogState();
+}
+
+class _ImportDialogState extends State<_ImportDialog> {
+  final _controller = TextEditingController();
+  String? _error;
+  List<String> _sections = const [];
+
+  void _validate(String text) {
+    setState(() {
+      try {
+        final decoded = jsonDecode(text);
+        if (decoded is! Map<String, dynamic>) {
+          _error = 'Le document doit être un objet JSON.';
+          _sections = const [];
+          return;
+        }
+        _error = null;
+        _sections = decoded.keys.toList()..sort();
+      } on FormatException catch (e) {
+        _error = 'JSON invalide : ${e.message}';
+        _sections = const [];
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Importer une configuration'),
+      content: SizedBox(
+        width: 480,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            TextField(
+              controller: _controller,
+              maxLines: 10,
+              style: Theme.of(context).textTheme.bodySmall
+                  ?.copyWith(fontFamily: 'monospace'),
+              decoration: InputDecoration(
+                hintText: '{ "libtorrent": { ... }, ... }',
+                border: const OutlineInputBorder(),
+                errorText: _error,
+                errorMaxLines: 3,
+              ),
+              onChanged: _validate,
+            ),
+            if (_sections.isNotEmpty) ...[
+              const SizedBox(height: AppSpacing.sm),
+              Text(
+                'Sections détectées : ${_sections.join(', ')}',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+              Text(
+                'Le contenu remplacera l\'éditeur — rien n\'est envoyé '
+                'tant que « Appliquer » n\'est pas pressé.',
+                style: Theme.of(context).textTheme.bodySmall
+                    ?.copyWith(color: Theme.of(context).colorScheme.outline),
+              ),
+            ],
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Annuler'),
+        ),
+        FilledButton(
+          onPressed: _error == null && _sections.isNotEmpty
+              ? () => Navigator.of(context).pop(_controller.text)
+              : null,
+          child: const Text('Charger dans l\'éditeur'),
+        ),
+      ],
     );
   }
 }

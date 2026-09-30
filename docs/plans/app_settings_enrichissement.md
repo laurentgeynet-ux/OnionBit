@@ -48,7 +48,7 @@ Chaque étape = implémentation + `flutter analyze`/tests + cochage ici +
 - Bouton « Défauts » par section concernée → patch des défauts via
   `applySettingsPatch`, resync des controllers.
 
-## Étape 5 — Section « Avancé » : arbre configuration + export/import
+## Étape 5 — Section « Avancé » : arbre configuration + export/import [x] (2026-10-02)
 
 - `AdvancedSection` : arbre récursif de `GET /api/settings` (feuilles
   éditables via dialogue — bool/int/string selon le type) →
