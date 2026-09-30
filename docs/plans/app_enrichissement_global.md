@@ -50,7 +50,7 @@ Chaque étape = implémentation + `flutter analyze`/tests (ou
 - Provider `uiPrefsProvider` chargé au démarrage, écrit à chaque
   changement ; providers existants initialisés depuis les prefs.
 
-## Étape 6 — Vue compacte Téléchargements
+## Étape 6 — Vue compacte Téléchargements [x] (2026-10-02)
 
 - Bascule table ↔ liste dense (ListTiles avec % + débits) via
   bouton dans la barre d'outils ; choix persisté (étape 5).
