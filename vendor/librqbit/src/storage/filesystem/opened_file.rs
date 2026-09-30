@@ -108,9 +108,15 @@ impl OurFileExt for File {
 
 #[derive(Default, Debug)]
 struct OpenedFileLocked {
-    #[allow(unused)]
     path: PathBuf,
     fd: Option<File>,
+    /// Tribler : semantique d'ouverture a reproduire lors de
+    /// l'ouverture paresseuse (`false` = `create_new` strict, comme
+    /// l'init eager d'origine).
+    allow_overwrite: bool,
+    /// Longueur demandee par `ensure_file_length` avant que le fichier
+    /// ne soit ouvert — appliquee juste apres l'open.
+    pending_len: Option<u64>,
     #[cfg(windows)]
     tried_marking_sparse: bool,
 }
@@ -135,11 +141,17 @@ pub(crate) struct OpenedFile {
 }
 
 impl OpenedFile {
-    pub fn new(path: PathBuf, f: File) -> Self {
+    /// Tribler : fichier enregistre sans etre ouvert. Le `fd` est cree
+    /// a la premiere lecture/ecriture (`ensure_open`) — l'init d'un
+    /// torrent multi-fichiers ne fait plus des milliers d'appels
+    /// `CreateFile`/sparse/`SetEndOfFile` synchrones au demarrage.
+    pub fn new_lazy(path: PathBuf, allow_overwrite: bool) -> Self {
         Self {
             file: RwLock::new(OpenedFileLocked {
                 path,
-                fd: Some(f),
+                fd: None,
+                allow_overwrite,
+                pending_len: None,
                 #[cfg(windows)]
                 tried_marking_sparse: false,
             }),
@@ -152,6 +164,11 @@ impl OpenedFile {
         }
     }
 
+    /// `true` si le fichier a son `fd` ouvert (lazy deja materialise).
+    pub fn is_open(&self) -> bool {
+        self.file.read().fd.is_some()
+    }
+
     pub fn take_clone(&self) -> anyhow::Result<Self> {
         let f = std::mem::take(&mut *self.file.write());
         Ok(Self {
@@ -159,15 +176,93 @@ impl OpenedFile {
         })
     }
 
-    pub fn lock_read(&self) -> crate::Result<impl Deref<Target = File>> {
-        RwLockReadGuard::try_map(self.file.read(), |f| f.as_ref())
+    /// Ouvre le fichier sous `g` s'il ne l'est pas encore (creation du
+    /// dossier parent, options d'ouverture repliquees de l'init eager,
+    /// `pending_len` appliquee).
+    fn open_locked(g: &mut OpenedFileLocked) -> crate::Result<()> {
+        if g.fd.is_some() {
+            return Ok(());
+        }
+        // Fichier "dummy" (padding) : jamais de fd.
+        if g.path.as_os_str().is_empty() {
+            return Err(Error::FsFileIsNone);
+        }
+        let path = g.path.clone();
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| {
+                Error::Anyhow(anyhow::anyhow!("error creating dir {parent:?}: {e:#}"))
+            })?;
+        }
+        let f = if g.allow_overwrite {
+            std::fs::OpenOptions::new()
+                .create(true)
+                .truncate(false)
+                .read(true)
+                .write(true)
+                .open(&path)
+        } else {
+            // Meme sequence que l'init eager : create_new puis rw.
+            std::fs::OpenOptions::new()
+                .create_new(true)
+                .write(true)
+                .open(&path)
+                .and_then(|_| {
+                    std::fs::OpenOptions::new()
+                        .read(true)
+                        .write(true)
+                        .open(&path)
+                })
+        }
+        .map_err(|e| Error::Anyhow(anyhow::anyhow!("error opening {path:?}: {e:#}")))?;
+        if let Some(len) = g.pending_len.take() {
+            f.set_len(len).map_err(|e| {
+                Error::Anyhow(anyhow::anyhow!("error setting len {len} on {path:?}: {e:#}"))
+            })?;
+        }
+        g.fd = Some(f);
+        Ok(())
+    }
+
+    /// Retourne un guard sur le `File`, en l'ouvrant si necessaire.
+    pub fn ensure_open(&self) -> crate::Result<impl Deref<Target = File>> {
+        {
+            let g = self.file.read();
+            if g.fd.is_some() {
+                return RwLockReadGuard::try_map(g, |f| f.fd.as_ref())
+                    .ok()
+                    .ok_or(Error::FsFileIsNone);
+            }
+        }
+        let mut g = self.file.write();
+        Self::open_locked(&mut g)?;
+        let g = parking_lot::RwLockWriteGuard::downgrade(g);
+        RwLockReadGuard::try_map(g, |f| f.fd.as_ref())
             .ok()
             .ok_or(Error::FsFileIsNone)
     }
 
+    /// `set_len` immediat si le fichier est ouvert, sinon la longueur
+    /// est enregistree et appliquee a l'ouverture paresseuse.
+    pub fn ensure_len(&self, len: u64) -> crate::Result<()> {
+        let mut g = self.file.write();
+        if let Some(f) = g.fd.as_ref() {
+            f.set_len(len)
+                .map_err(|e| Error::Anyhow(anyhow::anyhow!("error setting len: {e:#}")))?;
+        } else {
+            g.pending_len = Some(len);
+        }
+        Ok(())
+    }
+
+    pub fn lock_read(&self) -> crate::Result<impl Deref<Target = File>> {
+        self.ensure_open()
+    }
+
     #[allow(dead_code)]
     pub fn lock_write(&self) -> crate::Result<impl DerefMut<Target = File>> {
-        RwLockWriteGuard::try_map(self.file.write(), |f| f.as_mut())
+        let mut g = self.file.write();
+        Self::open_locked(&mut g)?;
+        RwLockWriteGuard::try_map(g, |f| f.fd.as_mut())
             .ok()
             .ok_or(Error::FsFileIsNone)
     }
@@ -176,20 +271,23 @@ impl OpenedFile {
     pub fn try_mark_sparse(&self) -> crate::Result<impl Deref<Target = File>> {
         {
             let g = self.file.read();
-            if g.tried_marking_sparse {
+            if g.fd.is_some() && g.tried_marking_sparse {
                 return RwLockReadGuard::try_map(g, |f| f.fd.as_ref())
                     .ok()
                     .ok_or(Error::FsFileIsNone);
             }
         }
         let mut g = self.file.write();
+        Self::open_locked(&mut g)?;
         if !g.tried_marking_sparse {
             g.tried_marking_sparse = true;
             let f = g.fd.as_ref().ok_or(Error::FsFileIsNone)?;
             tracing::debug!(path=?g.path, marked=super::sparse::mark_file_sparse(f), "marking sparse");
         }
         let g = parking_lot::RwLockWriteGuard::downgrade(g);
-        Ok(RwLockReadGuard::try_map(g, |f| f.fd.as_ref()).ok().unwrap())
+        RwLockReadGuard::try_map(g, |f| f.fd.as_ref())
+            .ok()
+            .ok_or(Error::FsFileIsNone)
     }
 }
 

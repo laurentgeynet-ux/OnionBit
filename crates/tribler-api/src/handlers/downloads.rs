@@ -21,18 +21,36 @@ pub async fn get_downloads(
 ) -> Json<serde_json::Value> {
     // Une seule tache bloquante : lignes `downloads` + etats d'essaim
     // indexes en memoire par infohash — evite les 2 requetes par
-    // telechargement (N+1) qui figeaient l'executor async.
-    let (dl_rows, ts_rows) = state
-        .session
-        .db()
-        .call("downloads.list", |c| {
-            Ok((
-                tribler_db::downloads::list(c)?,
-                tribler_db::health::list_torrent_states(c)?,
-            ))
-        })
-        .await
-        .unwrap_or_default();
+    // telechargement (N+1) qui figeaient l'executor async. Les lignes
+    // sont mises en cache ~800 ms (`state.downloads_rows`) : pendant la
+    // restauration l'UI poll en boucle et chaque acces sqlite prenait
+    // 300-700 ms sous contention.
+    const ROWS_TTL: std::time::Duration = std::time::Duration::from_millis(800);
+    let cached = state
+        .downloads_rows
+        .lock()
+        .unwrap()
+        .as_ref()
+        .filter(|(fetched, _)| fetched.elapsed() < ROWS_TTL)
+        .map(|(_, rows)| std::sync::Arc::clone(rows));
+    let (dl_rows, ts_rows) = if let Some(rows) = cached {
+        (rows.0.clone(), rows.1.clone())
+    } else {
+        let rows = state
+            .session
+            .db()
+            .call("downloads.list", |c| {
+                Ok((
+                    tribler_db::downloads::list(c)?,
+                    tribler_db::health::list_torrent_states(c)?,
+                ))
+            })
+            .await
+            .unwrap_or_default();
+        *state.downloads_rows.lock().unwrap() =
+            Some((std::time::Instant::now(), std::sync::Arc::new(rows.clone())));
+        rows
+    };
     let row_map: std::collections::HashMap<Vec<u8>, tribler_db::DownloadRow> = dl_rows
         .into_iter()
         .map(|r| (r.infohash.clone(), r))
@@ -214,6 +232,13 @@ pub async fn get_downloads(
         "checkpoints": { "total": downloads.len(), "loaded": downloads.len(), "all_loaded": true },
         "clierrors": state.unhandled_cli.lock().unwrap().len(),
     }))
+}
+
+/// Invalide le cache court des lignes `downloads` (voir
+/// `AppState::downloads_rows`) — a appeler sur tout endpoint qui ecrit
+/// dans la table.
+fn invalidate_downloads_rows(state: &AppState) {
+    *state.downloads_rows.lock().unwrap() = None;
 }
 
 /// `peers` du `get_peer_list` Python (`include_have=False`) — memes
@@ -462,6 +487,7 @@ pub async fn add_download(
                 _ => add_err(&state, e.to_string(), cli),
             })?;
 
+        invalidate_downloads_rows(&state);
         return Ok(Json(serde_json::json!({
             "started": true,
             "infohash": dl.info_hash_hex(),
@@ -545,6 +571,7 @@ pub async fn add_download(
                     tracing::warn!(error = %msg, "ajout magnet en arriere-plan echoue");
                 }
             });
+            invalidate_downloads_rows(&state);
             return Ok(Json(serde_json::json!({
                 "started": true,
                 "infohash": infohash,
@@ -568,6 +595,7 @@ pub async fn add_download(
         return Err(add_err(&state, "uri parameter missing".into(), cli));
     };
 
+    invalidate_downloads_rows(&state);
     Ok(Json(serde_json::json!({
         "started": true,
         "infohash": dl.info_hash_hex(),
@@ -592,6 +620,7 @@ pub async fn delete_download(
         .session
         .remove(&infohash, req.remove_data.unwrap_or(false))
         .await?;
+    invalidate_downloads_rows(&state);
     Ok(Json(serde_json::json!({
         "removed": true,
         "infohash": infohash,
@@ -707,6 +736,7 @@ pub async fn update_download(
             .update_hops(&infohash, hops)
             .await
             .map_err(invalid_state_as_bad_request)?;
+        invalidate_downloads_rows(&state);
         return Ok(Json(serde_json::json!({
             "modified": true,
             "infohash": ih_hex,
@@ -845,6 +875,7 @@ pub async fn update_download(
         }
     }
 
+    invalidate_downloads_rows(&state);
     Ok(Json(serde_json::json!({
         "modified": modified,
         "infohash": ih_hex,

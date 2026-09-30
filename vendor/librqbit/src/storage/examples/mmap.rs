@@ -2,7 +2,7 @@ use std::path::Path;
 
 use anyhow::Context;
 use memmap2::{MmapMut, MmapOptions};
-use parking_lot::RwLock;
+use parking_lot::{RwLock, RwLockReadGuard};
 
 use crate::torrent_state::{ManagedTorrentShared, TorrentMetadata};
 
@@ -13,7 +13,7 @@ use crate::storage::filesystem::{FilesystemStorage, FilesystemStorageFactory};
 #[derive(Default, Clone, Copy)]
 pub struct MmapFilesystemStorageFactory {}
 
-type OpenedMmap = RwLock<MmapMut>;
+type OpenedMmap = RwLock<Option<MmapMut>>;
 
 fn dummy_mmap() -> anyhow::Result<MmapMut> {
     Ok(memmap2::MmapOptions::new().len(1).map_anon()?)
@@ -31,6 +31,7 @@ impl StorageFactory for MmapFilesystemStorageFactory {
 
         Ok(MmapFilesystemStorage {
             opened_mmaps: Vec::new(),
+            lens: Vec::new(),
             fs: fs_storage,
         })
     }
@@ -41,17 +42,55 @@ impl StorageFactory for MmapFilesystemStorageFactory {
 }
 
 pub struct MmapFilesystemStorage {
+    // Tribler : `None` = pas encore mappe — le mmap (et l'ouverture du
+    // fichier sous-jacent) est cree a la premiere lecture/ecriture,
+    // comme le file pool de libtorrent.
     opened_mmaps: Vec<OpenedMmap>,
+    lens: Vec<u64>,
     fs: FilesystemStorage,
+}
+
+impl MmapFilesystemStorage {
+    /// Guard sur le mmap du fichier, le creat si necessaire.
+    fn mmap(
+        &self,
+        file_id: usize,
+    ) -> anyhow::Result<impl std::ops::Deref<Target = MmapMut> + '_> {
+        let cell = self.opened_mmaps.get(file_id).context("no such file")?;
+        {
+            let g = cell.read();
+            if g.is_some() {
+                return Ok(RwLockReadGuard::try_map(g, |o| o.as_ref())
+                    .ok()
+                    .context("bug")?);
+            }
+        }
+        let mut g = cell.write();
+        if g.is_none() {
+            let len = *self.lens.get(file_id).context("no such file")?;
+            // ensure_file_length ouvre le fichier paresseux et fixe sa
+            // longueur avant le mapping.
+            self.fs.ensure_file_length(file_id, len)?;
+            let fg = self
+                .fs
+                .opened_files
+                .get(file_id)
+                .context("no such file")?
+                .ensure_open()?;
+            let mmap = unsafe { MmapOptions::new().map_mut(&*fg) }
+                .context("error mapping file")?;
+            *g = Some(mmap);
+        }
+        let g = parking_lot::RwLockWriteGuard::downgrade(g);
+        Ok(RwLockReadGuard::try_map(g, |o| o.as_ref())
+            .ok()
+            .context("bug")?)
+    }
 }
 
 impl TorrentStorage for MmapFilesystemStorage {
     fn pread_exact(&self, file_id: usize, offset: u64, buf: &mut [u8]) -> anyhow::Result<()> {
-        let g = self
-            .opened_mmaps
-            .get(file_id)
-            .context("no such file")?
-            .read();
+        let g = self.mmap(file_id)?;
         let start = offset;
         let end = offset + buf.len() as u64;
         let start = start.try_into()?;
@@ -61,16 +100,21 @@ impl TorrentStorage for MmapFilesystemStorage {
     }
 
     fn pwrite_all(&self, file_id: usize, offset: u64, buf: &[u8]) -> anyhow::Result<()> {
-        let mut g = self
-            .opened_mmaps
-            .get(file_id)
-            .context("no such file")?
-            .write();
+        let g = self.mmap(file_id)?;
         let start = offset;
         let end = offset + buf.len() as u64;
         let start = start.try_into()?;
         let end = end.try_into()?;
-        g.get_mut(start..end).context("bug")?.copy_from_slice(buf);
+        // Safety: `mmap` returns a read guard; MmapMut write goes
+        // through unsafe pointer cast avoided — use a write lock
+        // instead by taking the cell again.
+        drop(g);
+        let mut g = self.opened_mmaps.get(file_id).context("no such file")?.write();
+        g.as_mut()
+            .context("bug")?
+            .get_mut(start..end)
+            .context("bug")?
+            .copy_from_slice(buf);
         Ok(())
     }
 
@@ -92,11 +136,15 @@ impl TorrentStorage for MmapFilesystemStorage {
                 .opened_mmaps
                 .iter()
                 .map(|m| {
-                    let d = dummy_mmap()?;
                     let mut g = m.write();
-                    Ok::<_, anyhow::Error>(RwLock::new(std::mem::replace(&mut *g, d)))
+                    let moved = match g.as_mut() {
+                        Some(mmap) => Some(std::mem::replace(mmap, dummy_mmap()?)),
+                        None => None,
+                    };
+                    Ok::<_, anyhow::Error>(RwLock::new(moved))
                 })
                 .collect::<anyhow::Result<_>>()?,
+            lens: self.lens.clone(),
             fs: self.fs.take_fs()?,
         }))
     }
@@ -106,17 +154,17 @@ impl TorrentStorage for MmapFilesystemStorage {
         shared: &ManagedTorrentShared,
         metadata: &TorrentMetadata,
     ) -> anyhow::Result<()> {
+        // Tribler : paresseux — les fichiers restent fermes et non
+        // mappes jusqu'au premier acces. L'init ne fait aucun appel
+        // disque (les erreurs de chemin/permission seront reportees au
+        // premier acces au lieu de l'ajout).
         self.fs.init(shared, metadata)?;
-        let mut mmaps = Vec::new();
-        for (idx, file) in self.fs.opened_files.iter().enumerate() {
-            let fg = file.lock_write()?;
-            fg.set_len(metadata.file_infos[idx].len)
-                .context("mmap storage: error setting length")?;
-            let mmap = unsafe { MmapOptions::new().map_mut(&*fg) }.context("error mapping file")?;
-            mmaps.push(RwLock::new(mmap));
-        }
-
-        self.opened_mmaps = mmaps;
+        self.lens = metadata.file_infos.iter().map(|fi| fi.len).collect();
+        self.opened_mmaps = metadata
+            .file_infos
+            .iter()
+            .map(|_| RwLock::new(None))
+            .collect();
         Ok(())
     }
 }

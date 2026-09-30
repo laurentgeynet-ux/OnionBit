@@ -3,6 +3,39 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Perf : stockage paresseux + cache des lignes `/api/downloads` (2026-09-30)
+
+Les mesures d'instrumentation (`890ee72`) ont tranche : la restauration
+etait dominee par `create_and_init` (~31 ms **par fichier** sous Windows
+— 349 s pour un torrent de 11 310 fichiers) puis par
+`validate_fastresume`. Le stockage vendored ouvre desormais les fichiers
+a la demande, comme le file pool de libtorrent :
+
+- `OpenedFile` (`vendor/librqbit/.../opened_file.rs`) peut etre cree en
+  mode paresseux (`new_lazy`) : chemin + `allow_overwrite` enregistres,
+  `fd` ouvert a la premiere lecture/ecriture (`ensure_open`). La
+  creation du dossier parent, `CreateFile`, le marquage sparse et
+  `set_len` sont differes ; `ensure_file_length` sur un fichier non
+  encore ouvert n'enregistre que la longueur (`pending_len`), appliquee
+  a l'ouverture.
+- `FilesystemStorage::init` ne fait plus aucun appel disque — il
+  n'enregistre que les metadonnees des fichiers.
+- `MmapFilesystemStorage` ne mappe plus les fichiers a l'init : chaque
+  `RwLock<Option<MmapMut>>` est materialise a la premiere lecture/
+  ecriture du fichier.
+- Compatibilite `FileOps` : un fichier absent/non encore cree remonte
+  l'erreur `FsFileIsNone`/I/O au lecteur, deja traitee par
+  `initial_check` (pieces marquees manquantes, check continue) — la
+  validation complete n'est pas cassee.
+- Effet de bord : un chemin de sortie invalide ou des permissions
+  manquantes ne sont plus detectes a l'ajout du torrent mais a la
+  premiere I/O (erreur differee documentee).
+- `GET /api/downloads` met en cache ~800 ms les lignes
+  `downloads`/`torrent_states` (`AppState::downloads_rows`) : pendant la
+  restauration l'UI poll en boucle et chaque acces sqlite prenait
+  300-700 ms sous contention. Le cache est invalide par les endpoints
+  mutants (`PUT`/`PATCH`/`DELETE /api/downloads`).
+
 ## Fix : dédup par infohash à l'écriture de session.json (2026-09-30)
 
 - Le guard in-flight par infohash (`4a28ac5`) empêchait les doublons

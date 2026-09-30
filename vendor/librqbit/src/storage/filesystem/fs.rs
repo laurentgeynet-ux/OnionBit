@@ -1,5 +1,4 @@
 use std::{
-    fs::OpenOptions,
     io::IoSlice,
     path::{Path, PathBuf},
 };
@@ -93,9 +92,13 @@ impl TorrentStorage for FilesystemStorage {
 
     fn ensure_file_length(&self, file_id: usize, len: u64) -> anyhow::Result<()> {
         let f = &self.opened_files.get(file_id).context("no such file")?;
+        // Tribler : paresseux — si le fichier n'est pas encore ouvert,
+        // la longueur est enregistree et appliquee a l'ouverture.
         #[cfg(windows)]
-        f.try_mark_sparse()?;
-        Ok(f.lock_read()?.set_len(len)?)
+        if f.is_open() {
+            f.try_mark_sparse()?;
+        }
+        Ok(f.ensure_len(len)?)
     }
 
     fn take(&self) -> anyhow::Result<Box<dyn TorrentStorage>> {
@@ -127,42 +130,25 @@ impl TorrentStorage for FilesystemStorage {
         shared: &ManagedTorrentShared,
         metadata: &TorrentMetadata,
     ) -> anyhow::Result<()> {
-        let mut files = Vec::<OpenedFile>::new();
-        for file_details in metadata.file_infos.iter() {
-            let mut full_path = self.output_folder.clone();
-            let relative_path = &file_details.relative_filename;
-            full_path.push(relative_path);
-
-            if file_details.attrs.padding {
-                files.push(OpenedFile::new_dummy());
-                continue;
-            };
-            std::fs::create_dir_all(full_path.parent().context("bug: no parent")?)?;
-            let f = if shared.options.allow_overwrite {
-                OpenOptions::new()
-                    .create(true)
-                    .truncate(false)
-                    .read(true)
-                    .write(true)
-                    .open(&full_path)
-                    .with_context(|| format!("error opening {full_path:?} in read/write mode"))?
-            } else {
-                // create_new does not seem to work with read(true), so calling this twice.
-                OpenOptions::new()
-                    .create_new(true)
-                    .write(true)
-                    .open(&full_path)
-                    .with_context(|| {
-                        format!(
-                            "error creating a new file (because allow_overwrite = false) {:?}",
-                            full_path
-                        )
-                    })?;
-                OpenOptions::new().read(true).write(true).open(&full_path)?
-            };
-            files.push(OpenedFile::new(full_path.clone(), f));
-        }
-
+        // Tribler : ouverture paresseuse — on enregistre seulement les
+        // chemins attendus. Les `CreateFile`/sparse/`set_len` par
+        // fichier (qui prenaient ~30 ms chacun sous Windows, soit des
+        // minutes sur un torrent a milliers de fichiers) sont differes
+        // a la premiere lecture/ecriture (`OpenedFile::ensure_open`).
+        let files = metadata
+            .file_infos
+            .iter()
+            .map(|file_details| {
+                if file_details.attrs.padding {
+                    OpenedFile::new_dummy()
+                } else {
+                    OpenedFile::new_lazy(
+                        self.output_folder.join(&file_details.relative_filename),
+                        shared.options.allow_overwrite,
+                    )
+                }
+            })
+            .collect();
         self.opened_files = files;
         Ok(())
     }

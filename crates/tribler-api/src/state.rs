@@ -6,6 +6,15 @@ use std::sync::{Arc, Mutex};
 
 use tribler_core::{CoreSession, DaemonConfig};
 
+/// Lignes `downloads` + `torrent_states` relues par `GET /api/downloads`.
+pub type DownloadsRows = (
+    Vec<tribler_db::DownloadRow>,
+    Vec<tribler_db::TorrentStateRow>,
+);
+
+/// Cache horodate des lignes ci-dessus (voir `AppState::downloads_rows`).
+pub type DownloadsRowsCache = Mutex<Option<(std::time::Instant, Arc<DownloadsRows>)>>;
+
 /// Etat injecte dans tous les handlers.
 #[derive(Clone)]
 pub struct AppState {
@@ -34,6 +43,13 @@ pub struct AppState {
     /// tests de l'API — la session est alors arretee sans que le
     /// processus ne quitte).
     pub shutdown_notify: Option<Arc<tokio::sync::Notify>>,
+    /// Cache court des lignes `downloads` + `torrent_states` lues par
+    /// `GET /api/downloads`. Sous contention (restauration,
+    /// checkpoints) chaque acces sqlite prend 300-700 ms et l'UI poll
+    /// ~1 fois/s — une fenetre de fraicheur < 1 s supprime la majorite
+    /// des lectures sans impact visible. Invalide par les endpoints
+    /// mutants de `/api/downloads`.
+    pub downloads_rows: Arc<DownloadsRowsCache>,
 }
 
 impl AppState {
@@ -48,6 +64,7 @@ impl AppState {
             unhandled_cli: Arc::new(Mutex::new(std::collections::VecDeque::new())),
             sse_sessions: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             shutdown_notify: None,
+            downloads_rows: Arc::new(Mutex::new(None)),
         }
     }
 
