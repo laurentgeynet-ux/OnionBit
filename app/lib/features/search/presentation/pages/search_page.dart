@@ -26,6 +26,7 @@ class SearchPage extends ConsumerWidget {
     final sort = ref.watch(searchSortProvider);
     final colSort = ref.watch(searchColSortProvider);
     final selection = ref.watch(searchSelectionProvider);
+    final filter = ref.watch(searchFilterProvider);
     final local = ref.watch(searchResultsProvider);
     final remote = ref.watch(remoteResultsProvider);
     // Info-hashes déjà gérés par le daemon — badge « En cours » et
@@ -45,7 +46,10 @@ class SearchPage extends ConsumerWidget {
       for (final r in remote.results)
         if (!results.any((l) => l.infohash == r.infohash)) r,
     ];
-    // Tri colonne : `null` = ordre brut (pertinence + arrivées).
+    // Filtres chips (source, seeds min) puis tri colonne.
+    if (filter.isActive) {
+      merged.removeWhere((r) => !filter.matches(r));
+    }
     if (colSort != null) {
       merged.sort(
         (a, b) => searchComparator(colSort.col)(a, b) * (colSort.asc ? 1 : -1),
@@ -62,61 +66,99 @@ class SearchPage extends ConsumerWidget {
             horizontal: AppSpacing.md,
             vertical: AppSpacing.sm,
           ),
-          child: Row(
+          child: Column(
             children: [
-              Expanded(
-                child: Text(
-                  query.isEmpty
-                      ? 'Populaires sur le réseau'
-                      : 'Résultats pour « $query »',
-                  style: Theme.of(context).textTheme.titleSmall,
-                ),
-              ),
-              if (selection.isNotEmpty) ...[
-                FilledButton.tonalIcon(
-                  icon: const Icon(Icons.download, size: 18),
-                  label: Text('Ajouter (${selection.length})'),
-                  onPressed: () =>
-                      _addSelected(context, ref, merged, selection),
-                ),
-                const SizedBox(width: AppSpacing.xs),
-                IconButton(
-                  tooltip: 'Désélectionner',
-                  onPressed: ref.read(searchSelectionProvider.notifier).clear,
-                  icon: const Icon(Icons.close, size: 18),
-                ),
-                const SizedBox(width: AppSpacing.xs),
-              ],
-              if (searching)
-                Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const SizedBox(
-                      width: 14,
-                      height: 14,
-                      child: CircularProgressIndicator(strokeWidth: 2),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      query.isEmpty
+                          ? 'Populaires sur le réseau'
+                          : 'Résultats pour « $query »',
+                      style: Theme.of(context).textTheme.titleSmall,
                     ),
-                    const SizedBox(width: AppSpacing.sm),
-                    Text(
-                      'recherche distante '
-                      '(${remote.state.peerCount} pairs)',
-                      style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                  if (selection.isNotEmpty) ...[
+                    FilledButton.tonalIcon(
+                      icon: const Icon(Icons.download, size: 18),
+                      label: Text('Ajouter (${selection.length})'),
+                      onPressed: () =>
+                          _addSelected(context, ref, merged, selection),
+                    ),
+                    const SizedBox(width: AppSpacing.xs),
+                    IconButton(
+                      tooltip: 'Désélectionner',
+                      onPressed: ref
+                          .read(searchSelectionProvider.notifier)
+                          .clear,
+                      icon: const Icon(Icons.close, size: 18),
+                    ),
+                    const SizedBox(width: AppSpacing.xs),
+                  ],
+                  if (searching)
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const SizedBox(
+                          width: 14,
+                          height: 14,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                        const SizedBox(width: AppSpacing.sm),
+                        Text(
+                          'recherche distante '
+                          '(${remote.state.peerCount} pairs)',
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                      ],
+                    ),
+                  PopupMenuButton<SearchSort>(
+                    tooltip: 'Trier les résultats',
+                    icon: const Icon(Icons.sort, size: 20),
+                    initialValue: sort,
+                    onSelected: (s) =>
+                        ref.read(searchSortProvider.notifier).set(s),
+                    itemBuilder: (context) => [
+                      for (final s in SearchSort.values)
+                        CheckedPopupMenuItem(
+                          value: s,
+                          checked: s == sort,
+                          child: Text(_sortLabel(s)),
+                        ),
+                    ],
+                  ),
+                ],
+              ),
+              const SizedBox(height: AppSpacing.xs),
+              SizedBox(
+                height: 32,
+                child: ListView(
+                  scrollDirection: Axis.horizontal,
+                  children: [
+                    for (final (label, source) in const [
+                      ('Tous', null),
+                      ('Local', TorrentSource.local),
+                      ('Réseau', TorrentSource.remote),
+                    ])
+                      Padding(
+                        padding: const EdgeInsets.only(right: AppSpacing.xs),
+                        child: ChoiceChip(
+                          label: Text(label),
+                          selected: filter.source == source,
+                          onSelected: (_) => ref
+                              .read(searchFilterProvider.notifier)
+                              .setSource(source),
+                        ),
+                      ),
+                    FilterChip(
+                      label: const Text('≥ 10 seeds'),
+                      selected: filter.minSeeds,
+                      onSelected: (_) => ref
+                          .read(searchFilterProvider.notifier)
+                          .toggleMinSeeds(),
                     ),
                   ],
                 ),
-              PopupMenuButton<SearchSort>(
-                tooltip: 'Trier les résultats',
-                icon: const Icon(Icons.sort, size: 20),
-                initialValue: sort,
-                onSelected: (s) => ref.read(searchSortProvider.notifier).set(s),
-                itemBuilder: (context) => [
-                  for (final s in SearchSort.values)
-                    CheckedPopupMenuItem(
-                      value: s,
-                      checked: s == sort,
-                      child: Text(_sortLabel(s)),
-                    ),
-                ],
               ),
             ],
           ),
@@ -151,12 +193,14 @@ class SearchPage extends ConsumerWidget {
                               result: merged[i],
                               known: known,
                               selection: selection,
+                              query: query,
                             ),
                           )
                         : _ResultsTable(
                             results: merged,
                             known: known,
                             selection: selection,
+                            query: query,
                           ),
                   ),
           ),
@@ -164,6 +208,46 @@ class SearchPage extends ConsumerWidget {
       ],
     );
   }
+}
+
+/// `TextSpan` avec les termes de `query` en gras — correspondance
+/// insensible à la casse, mot par mot.
+InlineSpan _highlighted(BuildContext context, String text, String query) {
+  final terms = [
+    for (final t in query.trim().split(RegExp(r'\s+')))
+      if (t.length >= 2) t.toLowerCase(),
+  ];
+  if (terms.isEmpty || text.isEmpty) return TextSpan(text: text);
+  final lower = text.toLowerCase();
+  final spans = <TextSpan>[];
+  var pos = 0;
+  while (pos < text.length) {
+    // Prochaine occurrence de n'importe quel terme.
+    var hit = -1, len = 0;
+    for (final t in terms) {
+      final i = lower.indexOf(t, pos);
+      if (i >= 0 && (hit < 0 || i < hit)) {
+        hit = i;
+        len = t.length;
+      }
+    }
+    if (hit < 0) {
+      spans.add(TextSpan(text: text.substring(pos)));
+      break;
+    }
+    if (hit > pos) spans.add(TextSpan(text: text.substring(pos, hit)));
+    spans.add(
+      TextSpan(
+        text: text.substring(hit, hit + len),
+        style: const TextStyle(fontWeight: FontWeight.bold),
+      ),
+    );
+    pos = hit + len;
+  }
+  return TextSpan(
+    style: Theme.of(context).textTheme.bodyMedium,
+    children: spans,
+  );
 }
 
 /// Ajout en lot de la sélection — erreurs par élément, snackbar de
@@ -211,9 +295,11 @@ class _ResultTile extends StatelessWidget {
     required this.result,
     required this.known,
     required this.selection,
+    required this.query,
   });
 
   final TorrentResult result;
+  final String query;
 
   /// Info-hashes déjà gérés par le daemon.
   final Set<String> known;
@@ -284,11 +370,13 @@ class _ResultsTable extends ConsumerWidget {
     required this.results,
     required this.known,
     required this.selection,
+    required this.query,
   });
 
   final List<TorrentResult> results;
   final Set<String> known;
   final Set<String> selection;
+  final String query;
 
   static const double _minWidth = 900;
 
@@ -314,6 +402,7 @@ class _ResultsTable extends ConsumerWidget {
                   result: results[i],
                   known: known,
                   selection: selection,
+                  query: query,
                 ),
               ),
             ),
@@ -391,11 +480,13 @@ class _ResultRow extends StatelessWidget {
     required this.result,
     required this.known,
     required this.selection,
+    required this.query,
   });
 
   final TorrentResult result;
   final Set<String> known;
   final Set<String> selection;
+  final String query;
 
   @override
   Widget build(BuildContext context) {
@@ -429,8 +520,12 @@ class _ResultRow extends StatelessWidget {
               ),
               Expanded(
                 flex: 5,
-                child: Text(
-                  r.name.isEmpty ? r.infohash : r.name,
+                child: Text.rich(
+                  _highlighted(
+                    context,
+                    r.name.isEmpty ? r.infohash : r.name,
+                    query,
+                  ),
                   overflow: TextOverflow.ellipsis,
                 ),
               ),

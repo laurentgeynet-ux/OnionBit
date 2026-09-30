@@ -3,6 +3,14 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## UI : surlignage des termes + chips de filtre dans Rechercher (2026-09-30)
+
+Étape 5 de `docs/plans/app_search_enrichissement.md` : les termes de la
+requête (≥ 2 caractères, insensible à la casse) apparaissent en gras
+dans les noms (`Text.rich`, `_highlighted`). Chips de filtre sous la
+barre de titre : source Tous/Local/Réseau et « ≥ 10 seeds »
+(`searchFilterProvider`, appliqué à la liste fusionnée avant le tri).
+
 ## UI : sélection multiple + ajout en lot dans Rechercher (2026-09-30)
 
 Étape 4 de `docs/plans/app_search_enrichissement.md` : cases à cocher

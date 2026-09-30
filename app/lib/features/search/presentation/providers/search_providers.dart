@@ -87,6 +87,45 @@ int Function(TorrentResult, TorrentResult) searchComparator(SearchCol col) {
   };
 }
 
+/// Filtres rapides appliqués à la liste fusionnée (chips de la page).
+class SearchFilter {
+  const SearchFilter({this.source, this.minSeeds = false});
+
+  /// `null` = toutes sources.
+  final TorrentSource? source;
+
+  /// N'afficher que les résultats à ≥ 10 seeders.
+  final bool minSeeds;
+
+  bool get isActive => source != null || minSeeds;
+
+  bool matches(TorrentResult r) {
+    if (source != null && r.source != source) return false;
+    if (minSeeds && (r.seeders ?? 0) < 10) return false;
+    return true;
+  }
+
+  SearchFilter copy({TorrentSource? Function()? source, bool? minSeeds}) =>
+      SearchFilter(
+        source: source != null ? source() : this.source,
+        minSeeds: minSeeds ?? this.minSeeds,
+      );
+}
+
+final searchFilterProvider =
+    NotifierProvider<SearchFilterNotifier, SearchFilter>(
+      SearchFilterNotifier.new,
+    );
+
+class SearchFilterNotifier extends Notifier<SearchFilter> {
+  @override
+  SearchFilter build() => const SearchFilter();
+
+  void setSource(TorrentSource? s) => state = state.copy(source: () => s);
+
+  void toggleMinSeeds() => state = state.copy(minSeeds: !state.minSeeds);
+}
+
 /// Sélection courante de résultats (infohashes) — ajout en lot.
 final searchSelectionProvider =
     NotifierProvider<SearchSelectionNotifier, Set<String>>(

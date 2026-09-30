@@ -44,7 +44,7 @@ Constantes backend vérifiées (2026-09-30) :
 - Cases + provider de sélection (même pattern que downloads) ; bouton
   « Ajouter la sélection » dans la barre d'outils quand sélection ≠ ∅.
 
-## Étape 5 — Surlignage + filtres
+## Étape 5 — Surlignage + filtres [x] (2026-09-30)
 
 - Termes de la requête surlignés dans les noms (`Text.rich` segments).
 - Chips de filtre : source (tous/local/réseau), seeds ≥ 10.
