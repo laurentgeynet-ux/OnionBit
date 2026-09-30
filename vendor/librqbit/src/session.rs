@@ -906,6 +906,23 @@ impl Session {
                         },
                     );
                 }
+                // Socket uTP injectee (Tribler-Rust-Torrent vendored
+                // patch) : accepteur sur le transport tunnelse.
+                if let Some(utp) = listen.utp_acceptor.take() {
+                    let max_pending_incoming_handshake_checks =
+                        listen.max_pending_incoming_handshake_checks;
+                    session.spawn(
+                        debug_span!(parent: session.rs(), "utp_listen_custom", addr = ?listen.addr),
+                        "utp_listen_custom",
+                        {
+                            let this = session.clone();
+                            async move {
+                                this.task_listener(utp, max_pending_incoming_handshake_checks)
+                                    .await
+                            }
+                        },
+                    );
+                }
                 if listen.enable_upnp_port_forwarding
                     && let Some(announce_port) = listen.announce_port
                 {

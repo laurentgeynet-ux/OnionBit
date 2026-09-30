@@ -3,6 +3,46 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Hidden services — banc live complet vert : seed, upload anonyme, kill, reprise
+
+- `scripts/live_hidden_upload.ps1` (trois daemons isoles : A ancre,
+  S seeder anonyme, D downloader bootstrappe via A uniquement) passe
+  les **8 verdicts** : SEEDING, IP_SEEDER READY, gate DHT (S/A/D voient
+  la valeur, instrumentation `debug` du lookup), octets reels chez D,
+  `all_time_upload` delta>0 chez S, kill switch (drain borne puis
+  invariance stricte 60 s), reprise apres redemarrage de S,
+  `progress=100 %` (chaque piece validee par hashcheck rqbit).
+- **Fix majeur — accepteur uTP entrant sur transport tunnel**
+  (`vendor/librqbit`) : trait object-safe `UtpAcceptor` symetrique de
+  `UtpConnector`, `ListenerOptions.utp_socket` (aucun bind UDP reel,
+  `announce_port=None`, UPnP off), `ListenResult.utp_acceptor` +
+  `utp_listen_custom` dans `session.rs`, `EngineConfig.utp_listen_socket`.
+  Sans lui le SYN e2e injecte chez S restait en cache puis RST — le
+  uTP entrant n'existait que pour la socket d'ecoute reelle.
+- **Fix librqbit-utp vendored — race SYN-cache/DATA** : quand un SYN
+  attendait un accepteur (`try_cache_syn`), le ST_DATA suivant tombait
+  sur `streams.get` vide et etait perdu -> le pair restait en
+  `SynAckSent` jusqu'a `max syn-ack retransmissions`/`remote inactive`
+  (cause de l'echec de reprise observe en live). Les paquets pour
+  `conn_id+1` d'un SYN en file sont maintenant stockes dans un backlog
+  borne (16) rejoue a la creation du stream. Reproduction locale :
+  `accepteur_utp_syn_cache_puis_data`.
+- **Dialecte seq/ack documente** : le SYN-ACK part avec `seq_nr` mais
+  l'initiateur l'acquitte comme `seq_nr-1` (cf. `StreamArgs::
+  new_outgoing` : `last_consumed_remote_seq_nr = remote_ack.seq_nr-1`)
+  — convention upstream conservee.
+- **Fix routage sortant** : `select_circuit`/`select_http_circuit`
+  (sockets tunnel UDP + SOCKS5) ne considerent plus que les circuits
+  `CIRCUIT_TYPE_DATA` (`ready_data_circuits_of_hops[_flags]`) — du
+  trafic DHT generique pouvait partir sur un circuit `RP_SEEDER` et
+  aboutir injecte dans la socket uTP du pair e2e.
+- **Filtre d'injection e2e** : seuls les datagrammes `could_be_utp`
+  sont pousses dans la socket uTP de la lane (le chemin
+  `inject_incoming` contournait le filtrage par forme de `data_rx`).
+- Phase kill du banc refaite selon le modele drain/fenetre-morte :
+  drain borne (2 Mio, 15 s de silence ou 90 s max) puis invariance
+  stricte 60 s — un burst post-kill borne n'est plus un faux positif.
+
 ## IPv8 — Fix : overlay DHT (`DHTDiscoveryCommunity`) sans pairs
 
 - Symptôme observé en live : `/api/ipv8/overlays` affichait

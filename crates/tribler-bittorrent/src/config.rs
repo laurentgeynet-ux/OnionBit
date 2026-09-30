@@ -116,6 +116,13 @@ pub struct EngineConfig {
     /// cellules `data` du tunnel). Prioritaire sur la socket uTP
     /// d'ecoute cote librqbit.
     pub utp_socket: Option<std::sync::Arc<dyn librqbit::UtpConnector>>,
+    /// Socket uTP injectee pour les connexions pairs ENTRANTES
+    /// (`ListenerOptions::utp_socket` — lanes anonymes : le SYN uTP du
+    /// downloader arrive en cellule `data` e2e, pas en UDP reel). Sans
+    /// elle, les SYN entrants sont caches puis RST (pas d'accepteur) :
+    /// le hidden seeding ne peut jamais recevoir de pair. Force un
+    /// `ListenerOptions` `UtpOnly` meme si `listen_port` est `None`.
+    pub utp_listen_socket: Option<std::sync::Arc<dyn librqbit::UtpAcceptor>>,
     /// Socket datagramme injectee pour la DHT (`DhtSessionConfig::
     /// socket` — lane anonyme : DHT routee dans le tunnel au lieu
     /// d'une socket UDP reelle).
@@ -170,6 +177,7 @@ impl Default for EngineConfig {
             clear_orphaned_parts: false,
             dht_readiness_timeout_secs: 0,
             utp_socket: None,
+            utp_listen_socket: None,
             dht_socket: None,
             dht_bootstrap_addrs: None,
             announce_port: None,
@@ -207,6 +215,7 @@ impl EngineConfig {
             clear_orphaned_parts: false,
             dht_readiness_timeout_secs: 0,
             utp_socket: None,
+            utp_listen_socket: None,
             dht_socket: None,
             dht_bootstrap_addrs: None,
             announce_port: None,
@@ -272,25 +281,38 @@ impl EngineConfig {
                 librqbit::storage::examples::mmap::MmapFilesystemStorageFactory {}.boxed()
             }),
             client_name_and_version: Some(CLIENT_NAME.to_string()),
-            listen: self
-                .listen_addr_v6
-                .or_else(|| {
-                    self.listen_port
-                        .map(|port| SocketAddr::new(self.listen_ip, port))
-                })
-                .map(|addr| librqbit::ListenerOptions {
-                    mode: if self.utp_only {
-                        librqbit::ListenerMode::UtpOnly
-                    } else if self.enable_utp {
-                        librqbit::ListenerMode::TcpAndUtp
-                    } else {
-                        librqbit::ListenerMode::TcpOnly
-                    },
-                    listen_addr: addr,
-                    enable_upnp_port_forwarding: self.enable_upnp,
-                    announce_port: self.announce_port,
+            listen: if let Some(acceptor) = self.utp_listen_socket.clone() {
+                // Lane anonyme : ecoute uTP sur le transport tunnelse
+                // (pas de bind UDP reel — adresse loopback factice, pas
+                // de port annonce, pas d'UPnP).
+                Some(librqbit::ListenerOptions {
+                    mode: librqbit::ListenerMode::UtpOnly,
+                    listen_addr: SocketAddr::new(std::net::Ipv4Addr::LOCALHOST.into(), 0),
+                    enable_upnp_port_forwarding: false,
+                    announce_port: None,
+                    utp_socket: Some(acceptor),
                     ..Default::default()
-                }),
+                })
+            } else {
+                self.listen_addr_v6
+                    .or_else(|| {
+                        self.listen_port
+                            .map(|port| SocketAddr::new(self.listen_ip, port))
+                    })
+                    .map(|addr| librqbit::ListenerOptions {
+                        mode: if self.utp_only {
+                            librqbit::ListenerMode::UtpOnly
+                        } else if self.enable_utp {
+                            librqbit::ListenerMode::TcpAndUtp
+                        } else {
+                            librqbit::ListenerMode::TcpOnly
+                        },
+                        listen_addr: addr,
+                        enable_upnp_port_forwarding: self.enable_upnp,
+                        announce_port: self.announce_port,
+                        ..Default::default()
+                    })
+            },
             connect,
             udp_tracker_socket: self.udp_tracker_socket.clone(),
             runtime_worker_threads: self.runtime_worker_threads,
@@ -311,4 +333,64 @@ fn default_runtime_worker_threads() -> Option<usize> {
             .unwrap_or(4)
             .max(2),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use std::future::Future;
+    use std::pin::Pin;
+    use std::sync::Arc;
+
+    use super::*;
+
+    /// Accepteur uTP factice : jamais appele (test de configuration
+    /// uniquement — le chemin `accept()` est couvert par
+    /// `tests/utp_acceptor.rs`).
+    #[derive(Debug)]
+    struct NoAcceptor;
+
+    impl librqbit::UtpAcceptor for NoAcceptor {
+        fn accept(
+            self: Arc<Self>,
+        ) -> Pin<
+            Box<
+                dyn Future<Output = librqbit_utp::Result<librqbit_utp::UtpStream>>
+                    + Send
+                    + Sync
+                    + 'static,
+            >,
+        > {
+            Box::pin(async { unreachable!("jamais appele") })
+        }
+    }
+
+    /// Anti-fuite : une lane anonyme (`utp_listen_socket` injectee,
+    /// `listen_port` absent) doit produire un `ListenerOptions`
+    /// `UtpOnly` sur l'accepteur injecte, sans port annonce ni UPnP
+    /// — le seeder cache n'expose aucune socket UDP reelle.
+    #[test]
+    fn lane_anonyme_ecoute_utp_sans_fuite() {
+        let mut cfg = EngineConfig::offline(PathBuf::from("dl"));
+        cfg.utp_only = true;
+        cfg.utp_listen_socket = Some(Arc::new(NoAcceptor));
+
+        let opts = cfg.to_session_options();
+        let listen = opts.listen.expect("lane anonyme sans listener");
+        assert!(
+            matches!(listen.mode, librqbit::ListenerMode::UtpOnly),
+            "mode attendu UtpOnly : {:?}",
+            listen.mode
+        );
+        assert!(listen.utp_socket.is_some(), "accepteur injecte absent");
+        assert!(listen.announce_port.is_none(), "port annonce en DHT");
+        assert!(
+            !listen.enable_upnp_port_forwarding,
+            "UPnP actif sur lane anonyme"
+        );
+        assert!(
+            listen.listen_addr.ip().is_loopback(),
+            "bind non loopback : {:?}",
+            listen.listen_addr
+        );
+    }
 }

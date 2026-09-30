@@ -28,5 +28,8 @@ tribler-ipv8 = { path = "../tribler-ipv8" }
 # bootstrap DHT exige au moins une adresse — on bootstrap le noeud
 # local sur lui-meme).
 librqbit-dualstack-sockets = "0.7"
+# Accepteur uTP injectable (patch vendored `UtpAcceptor`) : test
+# unitaire sur un transport factice.
+librqbit-utp.workspace = true
 futures-util.workspace = true
 tracing-subscriber.workspace = true

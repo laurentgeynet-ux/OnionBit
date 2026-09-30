@@ -297,7 +297,19 @@ const ACCEPT_QUEUE_MAX_SYNS: usize = 32;
 struct Syn {
     remote: SocketAddr,
     header: UtpHeader,
+    // (Tribler-Rust-Torrent vendored patch): paquets recus pour
+    // `connection_id + 1` pendant que le SYN attendait un accepteur.
+    // Sans cette file, un ST_DATA arrive "trop tot" tombait sur une
+    // table `streams` vide et etait perdu silencieusement, laissant
+    // le stream bloque en `SynAckSent` jusqu'a sa mort (observe en
+    // hidden seeding e2e ou le SYN est suivi de pres par le
+    // handshake BitTorrent).
+    backlog: Vec<UtpMessage>,
 }
+
+/// (Tribler-Rust-Torrent vendored patch): borne du backlog par SYN en
+/// attente d'accepteur (protection memoire — au-dela, perte UDP).
+const SYN_BACKLOG_MAX_PACKETS: usize = 16;
 
 enum MatchSynWithAccept<T, E> {
     Matched,
@@ -555,7 +567,7 @@ impl<T: Transport, E: UtpEnvironment> Dispatcher<T, E> {
 
     fn match_syn_with_accept(
         &mut self,
-        syn: Syn,
+        mut syn: Syn,
         accept: Acceptor<T, E>,
     ) -> MatchSynWithAccept<T, E> {
         if self.streams_full() {
@@ -574,7 +586,13 @@ impl<T: Transport, E: UtpEnvironment> Dispatcher<T, E> {
 
         let starter = UtpStreamStarter::new(&self.socket, syn.remote, rx, args);
 
-        self.streams.insert(recv_key, tx);
+        self.streams.insert(recv_key, tx.clone());
+        // Rejouer les paquets arrives pendant que le SYN attendait un
+        // accepteur (ils precedent tout nouveau datagramme : le canal
+        // est FIFO et le stream n'est pas encore lance).
+        for early in syn.backlog.drain(..) {
+            let _ = tx.send(early);
+        }
         match accept.tx.send(starter) {
             Ok(()) => {
                 trace!("created stream and passed to acceptor");
@@ -608,6 +626,7 @@ impl<T: Transport, E: UtpEnvironment> Dispatcher<T, E> {
         let mut syn = Syn {
             remote,
             header: msg.header,
+            backlog: Vec::new(),
         };
         while let Some(acceptor) = self.accept_queue.try_next_acceptor() {
             match self.match_syn_with_accept(syn, acceptor) {
@@ -667,7 +686,28 @@ impl<T: Transport, E: UtpEnvironment> Dispatcher<T, E> {
                 self.on_syn(addr, message).await?;
             }
             _ => {
-                trace!(?message, ?addr, "dropping packet");
+                // (Tribler-Rust-Torrent vendored patch): un paquet pour
+                // `conn_id = syn.conn_id + 1` d'un SYN encore en file
+                // d'acceptation est conserve dans le backlog du SYN et
+                // sera livre au stream a sa creation (avant, il etait
+                // perdu -> pair bloque en `SynAckSent`).
+                let cached = self
+                    .accept_queue
+                    .syns
+                    .iter_mut()
+                    .find(|s| {
+                        s.remote == addr
+                            && s.header.connection_id + 1 == message.header.connection_id
+                    });
+                match cached {
+                    Some(syn) if syn.backlog.len() < SYN_BACKLOG_MAX_PACKETS => {
+                        trace!(?key, "queued packet for cached SYN");
+                        syn.backlog.push(message);
+                    }
+                    _ => {
+                        trace!(?message, ?addr, "dropping packet");
+                    }
+                }
             }
         }
         Ok(())

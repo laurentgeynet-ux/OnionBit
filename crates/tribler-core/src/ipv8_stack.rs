@@ -121,6 +121,14 @@ pub struct Ipv8Config {
     /// `content_discovery_community/enabled` Python : cree la
     /// `ContentDiscoveryCommunity` (recherche distante, select).
     pub enable_content_discovery: bool,
+    /// Extension Rust : point d'introduction impose pour les circuits
+    /// `IP_SEEDER` (`required_ip` de `create_introduction_point`
+    /// pyipv8). `None` = selection automatique (`select_exit`).
+    pub intro_point_peer: Option<UdpAddress>,
+    /// Extension Rust : sortie imposee pour les circuits `DATA`
+    /// (`required_exit` de `create_circuit` pyipv8). `None` =
+    /// selection automatique `EXIT_BT`.
+    pub data_exit_peer: Option<UdpAddress>,
     /// `ipv8/interfaces[UDPIPv6]` Python (`ip:port`, ex. `"[::]:8091"`)
     /// — socket UDP secondaire partageant les memes communities
     /// (`DispatcherEndpoint` pyipv8). `None` = IPv4 seul.
@@ -158,6 +166,8 @@ impl Ipv8Config {
             max_circuits: DEFAULT_MAX_CIRCUITS,
             socks_listen_ports: vec![0; MAX_ANON_HOPS],
             enable_content_discovery: true,
+            intro_point_peer: None,
+            data_exit_peer: None,
             listen_addr_v6: Some(format!("[::]:{}", DEFAULT_IPV8_PORT + 1)),
             peer_cache_max: DEFAULT_PEER_CACHE_MAX,
             peer_cache_max_age_secs: DEFAULT_PEER_CACHE_MAX_AGE_SECS,
@@ -184,6 +194,8 @@ impl Default for Ipv8Config {
             max_circuits: DEFAULT_MAX_CIRCUITS,
             socks_listen_ports: vec![0; MAX_ANON_HOPS],
             enable_content_discovery: true,
+            intro_point_peer: None,
+            data_exit_peer: None,
             listen_addr_v6: None,
             peer_cache_max: DEFAULT_PEER_CACHE_MAX,
             peer_cache_max_age_secs: DEFAULT_PEER_CACHE_MAX_AGE_SECS,
@@ -1085,6 +1097,8 @@ impl Ipv8Stack {
                     peer_flags: config.peer_flags,
                     min_circuits: config.min_circuits.max(1) as usize,
                     max_circuits: config.max_circuits.max(1) as usize,
+                    intro_point_peer: config.intro_point_peer.clone(),
+                    data_exit_peer: config.data_exit_peer.clone(),
                     ..tribler_tunnel::settings::TunnelSettings::default()
                 },
                 community_id,
@@ -1094,6 +1108,13 @@ impl Ipv8Stack {
             // tunnel-community emprunte les estimations WAN/LAN de la
             // discovery pour ses introductions et punctures.
             t.set_discovery(discovery.clone());
+            // `dht_provider` (`out["dht_provider"] =
+            // DHTCommunityProvider(...)` du composant Tribler) :
+            // annonces/lookups des points d'introduction des swarms
+            // caches dans la `DHTDiscoveryCommunity`.
+            if let Some(d) = &dht {
+                t.set_dht_provider(d.clone());
+            }
             // `register_task("do_circuits")`/`do_ping`/
             // `do_peer_discovery` Python : maintenance des circuits
             // (nettoyage, keepalive, lookups de swarms caches).
@@ -1618,7 +1639,14 @@ impl Ipv8Stack {
         // tache de fond).
         cfg.dht_readiness_timeout_secs = 0;
         let utp_transport = udp_sockets.utp_transport.clone();
-        cfg.utp_socket = Some(udp_sockets.utp);
+        cfg.utp_socket = Some(udp_sockets.utp.clone());
+        // Le hidden seeding recoit le uTP SYN du downloader en cellule
+        // `data` e2e : la lane doit accepter les connexions entrantes
+        // sur la socket tunnelsee (sans elle, librqbit_utp cache le
+        // SYN faute d'accepteur puis repond RST — jamais de pair).
+        // `on_e2e_finished` pyipv8 est le chemin symetrique : cote
+        // seeder, le pair arrive par l'ecoute uTP du tunnel.
+        cfg.utp_listen_socket = Some(udp_sockets.utp);
         cfg.dht_socket = Some(std::sync::Arc::new(udp_sockets.dht));
         cfg.udp_tracker_socket = Some(std::sync::Arc::new(udp_sockets.tracker));
         cfg.disable_lsd = true;
@@ -1862,24 +1890,38 @@ fn spawn_swarm_monitor(
                         .lock()
                         .unwrap()
                         .insert((hops, lookup), stat.state);
-                    if prev == Some(stat.state) {
-                        continue;
-                    }
                     use tribler_bittorrent::DownloadState as S;
-                    match stat.state {
-                        S::Downloading | S::Initializing | S::Checking => {
-                            tunnel.join_swarm(lookup, hops, false);
+                    if prev != Some(stat.state) {
+                        match stat.state {
+                            S::Downloading | S::Initializing | S::Checking => {
+                                tunnel.join_swarm(lookup, hops, false);
+                            }
+                            S::Seeding => {
+                                tunnel.join_swarm(lookup, hops, true);
+                            }
+                            S::Paused | S::Stopped | S::Error => {
+                                tunnel.leave_swarm(&lookup);
+                            }
                         }
-                        S::Seeding => {
-                            // `seeding=True` + `max_intro_points` :
-                            // points d'introduction sur circuits
-                            // `IP_SEEDER` dedies a ce swarm.
-                            tunnel.join_swarm(lookup, hops, true);
-                            ensure_introduction_points(&tunnel, lookup);
-                        }
-                        S::Paused | S::Stopped | S::Error => {
-                            tunnel.leave_swarm(&lookup);
-                        }
+                    }
+                    // `monitor_hidden_swarms` pyipv8 : l'appel a
+                    // `create_introduction_point` n'est PAS borne a la
+                    // transition — il est retente a chaque tick tant
+                    // que le swarm `SEEDING` n'a pas son compte de
+                    // circuits IP_SEEDER (`info_hash not in ip_hashes`).
+                    // Sinon un premier essai echoue (reseau encore vide
+                    // de pairs exit) condamnait le hidden seeding pour
+                    // toute la session.
+                    if stat.state == S::Seeding {
+                        ensure_introduction_points(&tunnel, lookup);
+                        // Re-annonce DHT periodique (bornee par
+                        // `intro_reannounce_interval`) : l'annonce
+                        // faite par le point d'introduction peut etre
+                        // perdue/non propagee — le seeder re-publie.
+                        let t = tunnel.clone();
+                        tokio::spawn(async move {
+                            t.reannounce_intro_points(lookup).await;
+                        });
                     }
                 }
             }
@@ -1916,10 +1958,36 @@ fn ensure_introduction_points(tunnel: &Arc<TunnelCommunity>, lookup: [u8; 20]) {
         })
         .count();
     let target = tunnel.settings.max_intro_points;
+    // `required_ip` pyipv8 : `intro_point_peer` epingle impose le
+    // DERNIER saut des circuits IP_SEEDER. Pair inconnu/non verifie ->
+    // `walk_to` pour le decouvrir, retry au prochain tick (creer sans
+    // le pin contournerait le reglage).
+    let pinned = match tunnel.settings.intro_point_peer.as_ref() {
+        None => None,
+        Some(addr) => match tunnel.network().get_verified_by_address(addr) {
+            Some(p) => Some(p),
+            None => {
+                tracing::debug!(
+                    addr = ?addr,
+                    "intro_point_peer pas encore verifie : walk_to, retry au prochain tick"
+                );
+                let t = tunnel.clone();
+                let a = addr.clone();
+                tokio::spawn(async move {
+                    let _ = t.walk_to(&a).await;
+                });
+                return;
+            }
+        },
+    };
     for _ in existing..target {
         let tunnel = tunnel.clone();
+        let required = pinned.clone();
         tokio::spawn(async move {
-            match tunnel.create_introduction_point(lookup, None).await {
+            match tunnel
+                .create_introduction_point(lookup, required.as_ref())
+                .await
+            {
                 Ok(cid) => {
                     let timeout = tunnel.settings.circuit_timeout.as_millis() as u64;
                     if tunnel.wait_circuit_ready(cid, timeout).await.is_ok() {
@@ -1944,9 +2012,11 @@ fn ensure_introduction_points(tunnel: &Arc<TunnelCommunity>, lookup: [u8; 20]) {
 /// `on_e2e_finished` Python : a la liaison d'un circuit e2e, injecte
 /// le pair dans le download concerne.
 ///
-/// - `RP_DOWNLOADER` (on telecharge) : `udp_relay::dial` expose le
-///   circuit en loopback et l'adresse est injectee via
-///   `Download::add_peer` (`dl.add_peer(addr)` Python).
+/// - `RP_DOWNLOADER` (on telecharge) : l'adresse factice est epinglee
+///   sur le circuit e2e dans la socket uTP de la lane, les cellules
+///   entrantes y sont injectees et l'adresse est passee a
+///   `Download::add_peer` (`dl.add_peer(circuit_id_to_ip(cid), 1024)`
+///   Python — meme adresse factice pour les deux roles).
 /// - `RP_SEEDER` (on seede) : l'adresse factice
 ///   `circuit_id_to_ip(cid):1024` est epinglee sur le circuit dans le
 ///   transport uTP de la lane et les cellules `data` entrantes y
@@ -1986,30 +2056,61 @@ fn spawn_e2e_listener(
                         .map(|c| c.ctype)
                 })
                 .unwrap_or_default();
+            let fake = SocketAddr::V4(std::net::SocketAddrV4::new(
+                circuit_id_to_ip(cid),
+                CIRCUIT_ID_PORT,
+            ));
             match ctype.as_str() {
-                tribler_tunnel::routing::CIRCUIT_TYPE_RP_DOWNLOADER => {
-                    let tunnel = tunnel.clone();
-                    tokio::spawn(async move {
-                        if let Ok(addr) = tribler_tunnel::udp_relay::dial(tunnel, cid).await {
-                            if let Some(dl) = engine.get_by_hash(&real_ih) {
-                                dl.add_peer(addr);
-                            }
-                        }
-                    });
-                }
-                tribler_tunnel::routing::CIRCUIT_TYPE_RP_SEEDER => {
-                    let fake = SocketAddr::V4(std::net::SocketAddrV4::new(
-                        circuit_id_to_ip(cid),
-                        CIRCUIT_ID_PORT,
-                    ));
+                // `on_e2e_finished` pyipv8 : `add_peer` recoit
+                // `circuit_id_to_ip(cid):1024` dans les DEUX roles —
+                // la socket uTP de la lane est une `TunnelUdpSocket`
+                // (pas d'UDP reel) : `dial` loopback serait un
+                // datagramme `data` vers l'exit, jamais vu en local.
+                // Le pin impose le circuit e2e lie et les cellules
+                // entrantes sont injectees sous l'adresse factice.
+                tribler_tunnel::routing::CIRCUIT_TYPE_RP_DOWNLOADER
+                | tribler_tunnel::routing::CIRCUIT_TYPE_RP_SEEDER => {
                     utp.pin_circuit(fake, cid);
                     let mut data_rx = tunnel.subscribe_circuit_data(cid);
                     let utp = utp.clone();
+                    let fake2 = fake;
                     tokio::spawn(async move {
+                        let mut n = 0u64;
                         while let Some(msg) = data_rx.recv().await {
-                            utp.inject_incoming(msg.data, fake);
+                            // Le circuit e2e peut transporter autre
+                            // chose que de l'uTP (mis-routage, bruit
+                            // du pair) : filtrer par forme comme le
+                            // fait `data_rx` de `TunnelUdpSocket`.
+                            if !tribler_network_policy::exit_policy::could_be_utp(&msg.data) {
+                                continue;
+                            }
+                            n += 1;
+                            if n <= 8 || n.is_multiple_of(256) {
+                                tracing::debug!(
+                                    circuit_id = cid,
+                                    n,
+                                    len = msg.data.len(),
+                                    head = %hex::encode(&msg.data[..msg.data.len().min(8)]),
+                                    "e2e -> injection uTP"
+                                );
+                            }
+                            utp.inject_incoming(msg.data, fake2);
                         }
                     });
+                    let mut added = false;
+                    if ctype == tribler_tunnel::routing::CIRCUIT_TYPE_RP_DOWNLOADER {
+                        if let Some(dl) = engine.get_by_hash(&real_ih) {
+                            added = dl.add_peer(fake);
+                        }
+                    }
+                    tracing::info!(
+                        circuit_id = cid,
+                        ctype = %ctype,
+                        %fake,
+                        add_peer = added,
+                        info_hash = %hex::encode(real_ih),
+                        "e2e listener : lane branchee"
+                    );
                 }
                 _ => {}
             }

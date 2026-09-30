@@ -4680,6 +4680,7 @@ dependencies = [
  "librqbit",
  "librqbit-core",
  "librqbit-dualstack-sockets",
+ "librqbit-utp",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",

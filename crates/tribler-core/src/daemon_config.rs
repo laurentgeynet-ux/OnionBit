@@ -15,6 +15,7 @@
 //! le daemon n'écrit jamais hors de son répertoire d'état sans
 //! configuration explicite.
 
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -351,6 +352,18 @@ pub struct TunnelCommunityConfig {
     pub max_circuits: u32,
     /// Accepte d'être noeud de sortie (`exitnode_enabled` Tribler).
     pub exitnode_enabled: bool,
+    /// Point d'introduction impose `"ip:port"` — extension Rust
+    /// (`required_ip` de `create_introduction_point` pyipv8) : tous les
+    /// circuits `IP_SEEDER` terminent sur ce pair. Vide = selection
+    /// automatique. Reserve aux bancs controles et au diagnostic.
+    pub intro_point_peer: String,
+    /// Sortie imposee des circuits `DATA` `"ip:port"` — extension Rust
+    /// (`required_exit` de `create_circuit` pyipv8) : tous les circuits
+    /// `DATA` terminent sur ce pair, et aucun circuit n'est cree tant
+    /// qu'il n'est pas verifie. Vide = selection automatique `EXIT_BT`.
+    /// Reserve aux bancs controles (point d'introduction joignable
+    /// uniquement en loopback, NAT sans hairpin, ...).
+    pub data_exit_peer: String,
     /// Clés tunnel additionnelles — préservées.
     #[serde(flatten)]
     pub extra: serde_json::Map<String, Value>,
@@ -363,6 +376,8 @@ impl Default for TunnelCommunityConfig {
             min_circuits: 3,
             max_circuits: 8,
             exitnode_enabled: false,
+            intro_point_peer: String::new(),
+            data_exit_peer: String::new(),
             extra: serde_json::Map::new(),
         }
     }
@@ -826,6 +841,36 @@ impl DaemonConfig {
             peer_flags,
             tribler_tunnel_community: true,
             enable_dht: self.dht_discovery.enabled,
+            intro_point_peer: if self.tunnel_community.intro_point_peer.is_empty() {
+                None
+            } else {
+                match self.tunnel_community.intro_point_peer.parse::<SocketAddr>() {
+                    Ok(a) => Some(tribler_ipv8::UdpAddress::from(a)),
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %e,
+                            value = %self.tunnel_community.intro_point_peer,
+                            "tunnel_community/intro_point_peer invalide, ignore"
+                        );
+                        None
+                    }
+                }
+            },
+            data_exit_peer: if self.tunnel_community.data_exit_peer.is_empty() {
+                None
+            } else {
+                match self.tunnel_community.data_exit_peer.parse::<SocketAddr>() {
+                    Ok(a) => Some(tribler_ipv8::UdpAddress::from(a)),
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %e,
+                            value = %self.tunnel_community.data_exit_peer,
+                            "tunnel_community/data_exit_peer invalide, ignore"
+                        );
+                        None
+                    }
+                }
+            },
             walker_interval: self.ipv8.walker_interval,
             min_circuits: self.tunnel_community.min_circuits,
             max_circuits: self.tunnel_community.max_circuits,

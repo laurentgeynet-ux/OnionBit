@@ -6,6 +6,8 @@
 
 use std::time::Duration;
 
+use tribler_ipv8::UdpAddress;
+
 /// `TunnelSettings` pyipv8 (+ extensions `TriblerTunnelSettings`).
 ///
 /// Les champs portent les noms Python et les defauts sont les valeurs
@@ -84,6 +86,28 @@ pub struct TunnelSettings {
     /// sans reponse est atteint (inferieur a `min_` dans le code
     /// officiel — fidelement reproduit).
     pub max_dht_lookup_interval: Duration,
+
+    // -- Extension Rust ----------------------------------------------
+    /// Point d'introduction impose (`required_ip` de
+    /// `create_introduction_point` pyipv8 expose en configuration) :
+    /// quand il est defini, tout circuit `IP_SEEDER` se termine sur ce
+    /// pair — bancs controles et diagnostic reseau (certains points
+    /// d'introduction publics acceptent `establish-intro` sans relayer
+    /// le `create-e2e`). `None` = selection automatique (`select_exit`).
+    pub intro_point_peer: Option<UdpAddress>,
+    /// Sortie imposee des circuits `DATA` (`required_exit` de
+    /// `create_circuit` pyipv8 expose en configuration) : quand il est
+    /// defini, tout circuit `DATA` se termine sur ce pair — bancs
+    /// controles ou le point d'introduction n'est joignable que via un
+    /// saut connu (ex. loopback, NAT sans hairpin). Tant que le pair
+    /// n'est pas verifie, AUCUN circuit `DATA` n'est cree.
+    /// `None` = selection automatique (`select_exit` / `EXIT_BT`).
+    pub data_exit_peer: Option<UdpAddress>,
+    /// Intervalle entre deux republications DHT des points
+    /// d'introduction d'un swarm seede (`reannounce_intro_points`) —
+    /// extension Rust : pyipv8 ne re-annonce jamais, une annonce
+    /// perdue ou diluee rend le swarm invisible definitivement.
+    pub intro_reannounce_interval: Duration,
 }
 
 impl Default for TunnelSettings {
@@ -112,6 +136,9 @@ impl Default for TunnelSettings {
             swarm_max_ip_age: Duration::from_secs(180),
             min_dht_lookup_interval: Duration::from_secs(300),
             max_dht_lookup_interval: Duration::from_secs(120),
+            intro_point_peer: None,
+            data_exit_peer: None,
+            intro_reannounce_interval: Duration::from_secs(60),
         }
     }
 }

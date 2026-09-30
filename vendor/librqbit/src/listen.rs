@@ -10,11 +10,24 @@ use tokio::io::AsyncWrite;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
-use crate::{stream_connect::ConnectionKind, vectored_traits::AsyncReadVectored};
+use crate::{
+    stream_connect::{ConnectionKind, UtpAcceptor},
+    vectored_traits::AsyncReadVectored,
+};
+
+/// Socket uTP injectee sous forme concrete pour le accept loop
+/// (Tribler-Rust-Torrent vendored patch) — un wrapper plutot que
+/// `Arc<dyn UtpAcceptor>` direct pour eviter l'inference de lifetime
+/// sur le trait object dans `task_listener<A: Accept>`.
+pub(crate) struct InjectedUtpSocket(pub Arc<dyn UtpAcceptor>);
 
 pub(crate) struct ListenResult {
     pub tcp_socket: Option<TcpListener>,
     pub utp_socket: Option<Arc<UtpSocketUdp>>,
+    /// Accepteur uTP injecte (`ListenerOptions::utp_socket`) — lanes
+    /// anonymes dont la socket n'est pas un bind UDP reel
+    /// (Tribler-Rust-Torrent vendored patch).
+    pub utp_acceptor: Option<InjectedUtpSocket>,
     pub enable_upnp_port_forwarding: bool,
     pub addr: SocketAddr,
     pub announce_port: Option<u16>,
@@ -57,6 +70,12 @@ pub struct ListenerOptions {
     pub announce_port: Option<u16>,
     pub ipv4_only: bool,
     pub max_pending_incoming_handshake_checks: usize,
+    /// Socket uTP injectee pour les connexions entrantes
+    /// (Tribler-Rust-Torrent vendored patch) : quand elle est
+    /// presente, aucune socket UDP reelle n'est ouverte — `accept()`
+    /// tourne sur ce transport. Typiquement la meme `UtpSocket` que
+    /// `ConnectionOptions::utp_socket`.
+    pub utp_socket: Option<Arc<dyn UtpAcceptor>>,
 }
 
 impl Default for ListenerOptions {
@@ -70,6 +89,7 @@ impl Default for ListenerOptions {
             announce_port: None,
             ipv4_only: false,
             max_pending_incoming_handshake_checks: DEFAULT_MAX_PENDING_INCOMING_HANDSHAKE_CHECKS,
+            utp_socket: None,
         }
     }
 }
@@ -117,7 +137,12 @@ impl ListenerOptions {
             None
         };
 
-        let utp_socket = if self.mode.utp_enabled() {
+        // Socket injectee (Tribler-Rust-Torrent vendored patch) : la
+        // lane anonyme ecoute le uTP sur son transport tunnelse — pas
+        // de bind UDP reel (le trafic pair ne doit jamais sortir en
+        // clair).
+        let custom_utp = self.utp_socket.take();
+        let utp_socket = if self.mode.utp_enabled() && custom_utp.is_none() {
             let bind_result = UtpSocketUdp::new_udp_with_opts(
                 listen_addr,
                 utp_opts,
@@ -156,6 +181,7 @@ impl ListenerOptions {
         Ok(ListenResult {
             tcp_socket,
             utp_socket,
+            utp_acceptor: custom_utp.map(InjectedUtpSocket),
             announce_port,
             addr: listen_addr,
             enable_upnp_port_forwarding: self.enable_upnp_port_forwarding,
@@ -207,6 +233,29 @@ impl Accept for Arc<UtpSocketUdp> {
         ),
     )> {
         let stream = self.accept().await.context("error accepting uTP")?;
+        let addr = stream.remote_addr();
+        let (read, write) = stream.split();
+        Ok((addr, (read, write)))
+    }
+}
+
+/// Socket uTP injectee (`ListenerOptions::utp_socket`) — le stream
+/// accepte est le meme type `UtpStream` quel que soit le transport
+/// (Tribler-Rust-Torrent vendored patch).
+impl Accept for InjectedUtpSocket {
+    const KIND: ConnectionKind = ConnectionKind::Utp;
+    async fn accept(
+        &self,
+    ) -> anyhow::Result<(
+        SocketAddr,
+        (
+            impl AsyncReadVectored + Send + 'static,
+            impl AsyncWrite + Unpin + Send + 'static,
+        ),
+    )> {
+        let stream = UtpAcceptor::accept(self.0.clone())
+            .await
+            .context("error accepting uTP")?;
         let addr = stream.remote_addr();
         let (read, write) = stream.split();
         Ok((addr, (read, write)))

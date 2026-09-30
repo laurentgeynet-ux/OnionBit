@@ -38,6 +38,8 @@ struct Node {
     network: Arc<Network>,
     /// Community tunnels.
     tunnel: Arc<TunnelCommunity>,
+    /// Socket UDP partage (communities overlay en plus du tunnel).
+    ep: Arc<UdpEndpoint>,
     /// Adresse d'ecoute.
     addr: SocketAddr,
 }
@@ -62,8 +64,17 @@ async fn make_node_flags(flags: i32) -> Node {
         key,
         network,
         tunnel,
+        ep,
         addr,
     }
+}
+
+/// `DHTDiscoveryCommunity` sur le meme endpoint (`my_wan`/`my_lan` =
+/// adresse loopback — necessaire a `on_node_discovered`/`calc_node_id`).
+async fn dht_of(node: &Node) -> Arc<tribler_ipv8::dht::DhtCommunity> {
+    let local = UdpAddress::from(node.addr);
+    tribler_ipv8::dht::DhtCommunity::new(node.key.clone(), local.clone(), local, node.ep.clone())
+        .await
 }
 
 /// Datagramme conforme `DataChecker.could_be_utp` : ST_SYN v1, ext 0,
@@ -552,6 +563,123 @@ async fn hidden_service_e2e_roundtrip() {
     // (decryptee cote seeder) et le RP reexpedie.
     let mut s_rx = s.tunnel.data_rx();
     let payload = b"e2e-hello-seeder";
+    let zero = UdpAddress::from("0.0.0.0:0".parse::<SocketAddr>().unwrap());
+    d.tunnel
+        .send_data(e2e_cid, &zero, &zero, payload)
+        .await
+        .expect("send e2e data");
+    let got = tokio::time::timeout(TEST_TIMEOUT, s_rx.recv())
+        .await
+        .expect("pas de donnee e2e au seeder")
+        .expect("canal data seeder");
+    assert_eq!(got.data, payload);
+}
+
+/// Hidden services via la vraie DHT IPv8 : `on_establish_intro`
+/// annonce le point d'introduction sous la cle du swarm
+/// (`dht_announce` -> `store_value`) ; le downloader le retrouve par
+/// `find_values` (`dht_lookup`) puis mene le e2e bout-en-bout —
+/// le chemin PEX direct n'est pas utilise.
+#[tokio::test]
+async fn hidden_service_dht_announce_lookup_e2e() {
+    let d = make_node().await; // downloader
+    let s = make_node().await; // seeder
+    let i = make_node().await; // point d'introduction
+    let r1 = make_node().await; // relais du downloader
+    let nodes = [&d, &s, &i, &r1];
+    for a in &nodes {
+        for b in &nodes {
+            if !std::ptr::eq(*a, *b) {
+                learn(a, b);
+            }
+        }
+    }
+
+    // DHT overlays sur les memes endpoints : `i` annonce, `d`
+    // interroge. Le provider est injecte dans leurs tunnels.
+    let dht_i = dht_of(&i).await;
+    let dht_d = dht_of(&d).await;
+    i.tunnel.set_dht_provider(dht_i.clone());
+    d.tunnel.set_dht_provider(dht_d.clone());
+    dht_i
+        .walk_to(&UdpAddress::from(d.addr))
+        .await
+        .expect("walk i->d");
+    dht_d
+        .walk_to(&UdpAddress::from(i.addr))
+        .await
+        .expect("walk d->i");
+    let deadline = Instant::now() + Duration::from_secs(8);
+    while (dht_i.node_count() < 1 || dht_d.node_count() < 1) && Instant::now() < deadline {
+        tokio::time::sleep(POLL).await;
+    }
+    assert!(dht_i.node_count() >= 1 && dht_d.node_count() >= 1);
+
+    // Seeder : point d'introduction chez `i` + establish-intro — la
+    // reponse declenche le `dht_announce` cote `i`.
+    let info_hash = [9u8; 20];
+    s.tunnel.join_swarm(info_hash, 0, true);
+    let ip_cid = s
+        .tunnel
+        .create_introduction_point(info_hash, Some(&peer_of(&i)))
+        .await
+        .expect("circuit IP_SEEDER");
+    s.tunnel
+        .wait_circuit_ready(ip_cid, TEST_TIMEOUT.as_millis() as u64)
+        .await
+        .expect("IP circuit READY");
+    let intro_rx = s
+        .tunnel
+        .send_establish_intro(ip_cid, info_hash)
+        .await
+        .expect("send establish-intro");
+    tokio::time::timeout(TEST_TIMEOUT, intro_rx)
+        .await
+        .expect("timeout intro-established")
+        .expect("intro-established");
+
+    // Downloader : `find_values(cle du swarm)` — l'annonce DHT doit
+    // contenir le point d'introduction de `i` et le `seeder_pk` du
+    // swarm (cle ephemere du seeder, pas sa cle de noeud).
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut found_ip = None;
+    while Instant::now() < deadline && found_ip.is_none() {
+        if let Ok(values) = dht_d.find_values(&info_hash, 0).await {
+            for (data, _) in values {
+                if let Some(ip) = tribler_tunnel::hidden_services::unpack_dht_intro_point(&data) {
+                    found_ip = Some(ip);
+                    break;
+                }
+            }
+        }
+        if found_ip.is_none() {
+            tokio::time::sleep(POLL * 5).await;
+        }
+    }
+    let ip = found_ip.expect("aucun point d'introduction trouve via la DHT");
+    assert_eq!(
+        ip.peer_key,
+        i.key.public_key().to_bin(),
+        "le point d'introduction annonce doit etre le noeud i"
+    );
+    assert!(!ip.seeder_pk.is_empty(), "seeder_pk present");
+    assert_eq!(ip.source, tribler_tunnel::routing::PEER_SOURCE_DHT);
+
+    // Chemin e2e complet : circuit data du downloader, create-e2e vers
+    // le point d'introduction trouve via DHT, donnee au seeder.
+    d.tunnel.join_swarm(info_hash, 1, false);
+    let data_cid = d
+        .tunnel
+        .create_circuit(1, &peer_of(&r1))
+        .await
+        .expect("circuit data D");
+    d.tunnel
+        .wait_circuit_ready(data_cid, TEST_TIMEOUT.as_millis() as u64)
+        .await
+        .expect("circuit data READY");
+    let e2e_cid = create_e2e_with_retry(&d, info_hash, &ip).await;
+    let mut s_rx = s.tunnel.data_rx();
+    let payload = b"e2e-via-dht";
     let zero = UdpAddress::from("0.0.0.0:0".parse::<SocketAddr>().unwrap());
     d.tunnel
         .send_data(e2e_cid, &zero, &zero, payload)
@@ -1127,6 +1255,64 @@ async fn tunnel_exit_drops_non_bt_or_unflagged() {
             .is_err(),
         "uTP sorti sans flag EXIT_BT"
     );
+}
+
+/// Regression : `build_circuits_if_needed` a 1 saut exige un
+/// candidat `EXIT_BT` (`select_exit(ctype=DATA)` pyipv8 — `None` =>
+/// pas de circuit). Sans lui, un pair relay-only devenait l'unique
+/// hop : circuit cul-de-sac, ses cellules `data` jetees par la
+/// politique de sortie — DHT/uTP tunnels muets a jamais.
+#[tokio::test]
+async fn build_circuits_1hop_refuse_relay_only() {
+    let a = make_node().await;
+    // Relay-only : aucun circuit ne doit etre cree.
+    let b = make_node_flags(PEER_FLAG_RELAY).await;
+    a.tunnel
+        .send_introduction_request(&UdpAddress::from(b.addr))
+        .await
+        .unwrap();
+    let deadline = Instant::now() + TEST_TIMEOUT;
+    loop {
+        if a.tunnel.peer_flags_of(&b.key.public_key().to_bin()) & PEER_FLAG_RELAY != 0 {
+            break;
+        }
+        assert!(Instant::now() < deadline, "flags de B non appris");
+        tokio::time::sleep(POLL).await;
+    }
+    a.tunnel.build_circuits_if_needed(1, 1).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    assert!(
+        a.tunnel.ready_circuits().is_empty(),
+        "circuit 1 saut cree sur un relais non-exit"
+    );
+
+    // Controle positif : un pair EXIT_BT permet la creation.
+    let c = make_node_flags(PEER_FLAG_RELAY | PEER_FLAG_EXIT_BT).await;
+    a.tunnel
+        .send_introduction_request(&UdpAddress::from(c.addr))
+        .await
+        .unwrap();
+    let deadline = Instant::now() + TEST_TIMEOUT;
+    loop {
+        if a.tunnel.peer_flags_of(&c.key.public_key().to_bin()) & PEER_FLAG_EXIT_BT != 0 {
+            break;
+        }
+        assert!(Instant::now() < deadline, "flags de C non appris");
+        tokio::time::sleep(POLL).await;
+    }
+    a.tunnel.build_circuits_if_needed(1, 1).await.unwrap();
+    let deadline = Instant::now() + TEST_TIMEOUT;
+    loop {
+        if a.tunnel
+            .ready_circuits_of_hops_flags(1, PEER_FLAG_EXIT_BT)
+            .len()
+            == 1
+        {
+            break;
+        }
+        assert!(Instant::now() < deadline, "circuit 1 saut non READY");
+        tokio::time::sleep(POLL).await;
+    }
 }
 
 /// Deux lanes SOCKS5 sur la meme community (`data_rx` broadcast) :

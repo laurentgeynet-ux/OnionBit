@@ -28,8 +28,9 @@ use crate::community::{
 };
 use crate::payload::{self as tp, msg, Cellable};
 use crate::routing::{
-    IntroductionPoint, PendingE2e, RendezvousPoint, Swarm, CIRCUIT_TYPE_IP_SEEDER,
-    CIRCUIT_TYPE_RP_DOWNLOADER, CIRCUIT_TYPE_RP_SEEDER, PEER_SOURCE_DHT, PEER_SOURCE_PEX,
+    IntroductionPoint, PendingE2e, RendezvousPoint, Swarm, CIRCUIT_STATE_READY,
+    CIRCUIT_TYPE_IP_SEEDER, CIRCUIT_TYPE_RP_DOWNLOADER, CIRCUIT_TYPE_RP_SEEDER, PEER_SOURCE_DHT,
+    PEER_SOURCE_PEX,
 };
 
 /// `PeersRequestCache.timeout_delay` pyipv8 (`RequestCache` : 10 s).
@@ -53,6 +54,25 @@ pub fn lookup_info_hash(info_hash: &[u8; 20]) -> [u8; 20] {
     let mut data = b"tribler anonymous download".to_vec();
     data.extend_from_slice(hex::encode(info_hash).as_bytes());
     tribler_crypto::hash::sha1(&data)
+}
+
+/// `DHTIntroPointPayload` (`["ip_address","I","varlenH","varlenH"]`)
+/// → `IntroductionPoint` : les cles stockees sans prefixe retrouvent
+/// `LibNaCLPK:`, la source est `PEER_SOURCE_DHT`. `None` si le blob
+/// n'est pas decodable (`PackError` Python → valeur ignoree).
+pub fn unpack_dht_intro_point(data: &[u8]) -> Option<IntroductionPoint> {
+    let mut r = Reader::new(data);
+    let address = r.ip_address().ok()?;
+    let last_seen = r.u32().ok()?;
+    let intro_pk = r.varlen_h().ok()?;
+    let seeder_pk = r.varlen_h().ok()?;
+    Some(IntroductionPoint {
+        address,
+        peer_key: [b"LibNaCLPK:".as_slice(), intro_pk].concat(),
+        seeder_pk: [b"LibNaCLPK:".as_slice(), seeder_pk].concat(),
+        source: PEER_SOURCE_DHT,
+        last_seen_secs: last_seen as u64,
+    })
 }
 
 /// `E2ERequestCache` Python : contexte d'un `create-e2e` emis, en
@@ -298,13 +318,25 @@ impl TunnelCommunity {
             };
             (swarm.hops + 1, sk.public_key().to_bin())
         };
+        // `required_ip` Python devient `required_exit` : le DERNIER saut
+        // impose (le point d'introduction lui-meme). Le premier hop reste
+        // un relais ordinaire (`possible_first_hops` de `create_circuit`,
+        // `required_exit` exclu) — l'imposer aussi comme premier saut
+        // produirait un circuit S->A->A que l'etablissement peut refuser.
+        // Pour un circuit a 1 saut, `create_circuit_typed` substitue deja
+        // `required_exit` comme premier hop (egalite Python
+        // `possible_first_hops = [required_exit]`).
+        let required_exit = required_ip.map(|p| p.public_key_bin.clone());
         let first_hop = match required_ip {
-            Some(p) => p.clone(),
-            None => self
-                .pick_first_hop(None)
+            // 1 saut : `create_circuit_typed` substitue `required_exit`
+            // comme premier hop — le choix importe peu, on evite juste
+            // d'echouer sur `pick_first_hop` quand le pair epingle est le
+            // seul pair tunnel connu.
+            Some(p) if hops == 1 => p.clone(),
+            _ => self
+                .pick_first_hop(required_exit.as_deref())
                 .ok_or(Ipv8Error::Malformed("aucun pair tunnel"))?,
         };
-        let required_exit = required_ip.map(|p| p.public_key_bin.clone());
         let cid = self
             .create_circuit_typed(
                 hops,
@@ -379,6 +411,12 @@ impl TunnelCommunity {
             inner
                 .intro_point_for
                 .insert(p.public_key.clone(), (cid, p.info_hash));
+            // "Established introduction point for %s" (info).
+            tracing::info!(
+                circuit_id = cid,
+                info_hash = hex::encode(p.info_hash),
+                "point d'introduction etabli (nous sommes l'intro point)"
+            );
             // `on_establish_intro` Python : cree le store PEX de ce
             // swarm si besoin puis `start_announce(seeder_pk)` — on
             // s'annonce point d'introduction.
@@ -389,6 +427,11 @@ impl TunnelCommunity {
                 .start_announce(p.public_key.clone());
             cid
         };
+        // `dht_announce` Python : le point d'introduction publie le
+        // `DHTIntroPointPayload` sous la cle du swarm dans la DHT
+        // IPv8 — c'est ce que `find_values` du downloader interroge.
+        // Sans elle le swarm reste invisible hors PEX.
+        self.dht_announce(p.info_hash, p.public_key);
         let reply = tp::IntroEstablished {
             circuit_id: exit_cid,
             identifier: p.identifier,
@@ -402,9 +445,169 @@ impl TunnelCommunity {
 
     /// `on_intro_established` : complete l'attente `IPRequestCache`.
     pub(crate) fn on_intro_established(self: &Arc<Self>, p: tp::IntroEstablished) {
-        if let Some(tx) = self.inner.lock().unwrap().ip_requests.remove(&p.identifier) {
-            let _ = tx.send(());
+        let announce = {
+            let mut inner = self.inner.lock().unwrap();
+            match inner.ip_requests.remove(&p.identifier) {
+                Some(tx) => {
+                    // "Established introduction tunnel %s" (info).
+                    tracing::info!(circuit_id = p.circuit_id, "intro-established recu");
+                    let _ = tx.send(());
+                    // Annonce DHT redondante cote seeder : pyipv8
+                    // s'en remet entierement au point d'introduction
+                    // (`on_establish_intro` → `dht_announce`) — si ce
+                    // noeud ne publie pas (provider absent, store en
+                    // echec), le swarm reste invisible a jamais et la
+                    // dedup `intro_point_for` interdit tout second
+                    // essai vers ce noeud. On re-publie le meme
+                    // `DHTIntroPointPayload` (adresse+cle du point,
+                    // notre seeder_pk) : contenu identique, source
+                    // differente — sans effet quand le point a deja
+                    // annonce.
+                    inner.circuits.get(&p.circuit_id).map(|c| {
+                        (
+                            c.info_hash,
+                            c.hops
+                                .last()
+                                .map(|h| (h.address.clone(), h.public_key_bin.clone())),
+                        )
+                    })
+                }
+                None => None,
+            }
+        };
+        if let Some((Some(info_hash), Some((Some(addr), intro_pk)))) = announce {
+            self.announce_intro_circuit(info_hash, &addr, &intro_pk);
         }
+    }
+
+    /// Publie le `DHTIntroPointPayload` d'un circuit `IP_SEEDER` pret
+    /// depuis le cote seeder (annonce redondante — cf.
+    /// `on_intro_established`). `addr`/`intro_pk` decrivent le saut
+    /// final (le point d'introduction).
+    fn announce_intro_circuit(
+        self: &Arc<Self>,
+        info_hash: [u8; 20],
+        addr: &UdpAddress,
+        intro_pk: &[u8],
+    ) {
+        let seeder_pk = {
+            let inner = self.inner.lock().unwrap();
+            inner
+                .swarms
+                .get(&info_hash)
+                .and_then(|s| s.seeder_sk.as_ref().map(|k| k.public_key().to_bin()))
+        };
+        let Some(seeder_pk) = seeder_pk else { return };
+        // Point epingle (`intro_point_peer`) : publier l'adresse du
+        // pin plutot que le WAN estime du dernier saut — sur un banc
+        // local le WAN annonce (NAT, hairpin impossible) serait
+        // injoignable pour le downloader.
+        let addr = match &self.settings.intro_point_peer {
+            Some(pin) => match self.network.get_verified_by_address(pin) {
+                Some(peer) if peer.public_key_bin == intro_pk => pin.clone(),
+                _ => addr.clone(),
+            },
+            None => addr.clone(),
+        };
+        self.dht_store_intro_point(info_hash, &addr, intro_pk, &seeder_pk);
+    }
+
+    /// Re-annonce periodique des points d'introduction d'un swarm
+    /// `SEEDING` (robustesse : une annonce perdue/diluee rend le swarm
+    /// invisible — pyipv8 s'en remet au seul point d'introduction, qui
+    /// ne re-publie jamais). Bornee par `intro_reannounce_interval` ;
+    /// chaque circuit `IP_SEEDER` pret republie son `DHTIntroPointPayload`.
+    pub async fn reannounce_intro_points(self: &Arc<Self>, info_hash: [u8; 20]) {
+        let circuits = {
+            let mut inner = self.inner.lock().unwrap();
+            let last = inner.ip_announced_at.get(&info_hash).copied();
+            if last.is_some_and(|t| t.elapsed() < self.settings.intro_reannounce_interval) {
+                return;
+            }
+            inner.ip_announced_at.insert(info_hash, Instant::now());
+            inner
+                .circuits
+                .values()
+                .filter(|c| {
+                    c.ctype == CIRCUIT_TYPE_IP_SEEDER
+                        && c.info_hash == Some(info_hash)
+                        && c.state() == CIRCUIT_STATE_READY
+                })
+                .filter_map(|c| {
+                    c.hops
+                        .last()
+                        .and_then(|h| h.address.clone().map(|a| (a, h.public_key_bin.clone())))
+                })
+                .collect::<Vec<_>>()
+        };
+        for (addr, intro_pk) in circuits {
+            self.announce_intro_circuit(info_hash, &addr, &intro_pk);
+        }
+    }
+
+    /// `public_key_bin[10:]` Python : retire le prefixe `LibNaCLPK:`
+    /// des cles ecrites dans `DHTIntroPointPayload` (limite de taille
+    /// des valeurs DHT — les cles ne portent pas leur prefixe wire).
+    fn strip_pk_prefix(pk: &[u8]) -> &[u8] {
+        pk.strip_prefix(b"LibNaCLPK:".as_slice()).unwrap_or(pk)
+    }
+
+    /// `dht_announce` (`hidden_services.py`) : appele par le noeud qui
+    /// accepte un `establish-intro` — publie le `DHTIntroPointPayload`
+    /// `(notre_adresse_wan, last_seen, intro_pk, seeder_pk)` sous la
+    /// cle `info_hash` (deja `lookup_info_hash`) de la DHT IPv8.
+    /// No-op sans `dht_provider` configure.
+    fn dht_announce(self: &Arc<Self>, info_hash: [u8; 20], seeder_pk: Vec<u8>) {
+        // `IntroductionPoint(Peer(my_peer.key, my_estimated_wan)…)` :
+        // l'adresse annoncee est notre WAN estime — repli sur
+        // l'adresse d'ecoute locale si l'estimation est encore absente
+        // (sinon l'annonce serait inexploitable).
+        let wan = self.my_wan();
+        let addr = if !wan.is_unspecified() {
+            wan
+        } else {
+            self.endpoint
+                .local_addr()
+                .map(UdpAddress::from)
+                .unwrap_or_else(|_| unspecified_addr())
+        };
+        let pk = self.key.public_key().to_bin();
+        self.dht_store_intro_point(info_hash, &addr, &pk, &seeder_pk);
+    }
+
+    /// Publication effective du `DHTIntroPointPayload`
+    /// `(intro_addr, last_seen, intro_pk, seeder_pk)` sous la cle
+    /// `info_hash` de la DHT IPv8 (`dht_announce` →
+    /// `DHTCommunityProvider.announce` → `store_value`).
+    /// No-op sans `dht_provider` configure.
+    fn dht_store_intro_point(
+        self: &Arc<Self>,
+        info_hash: [u8; 20],
+        intro_addr: &UdpAddress,
+        intro_pk: &[u8],
+        seeder_pk: &[u8],
+    ) {
+        let Some(dht) = self.dht_provider() else {
+            return;
+        };
+        let mut w = Writer::new();
+        if w.ip_address(intro_addr).is_err() {
+            return;
+        }
+        w.u32(crate::pex::epoch_secs() as u32);
+        w.varlen_h(Self::strip_pk_prefix(intro_pk));
+        w.varlen_h(Self::strip_pk_prefix(seeder_pk));
+        let ih_hex = hex::encode(info_hash);
+        tokio::spawn(async move {
+            // "Announced %s to the DHTCommunity" (info).
+            match dht.store_value(&info_hash, &w.into_bytes(), false).await {
+                Ok(_) => tracing::info!(
+                    info_hash = ih_hex,
+                    "point d'introduction annonce sur la DHT"
+                ),
+                Err(e) => tracing::debug!(info_hash = ih_hex, error = %e, "dht_announce echoue"),
+            }
+        });
     }
 
     /// `create_rendezvous_point` : circuit `RP_SEEDER` + `establish-
@@ -785,9 +988,14 @@ impl TunnelCommunity {
         // ignores, seuls les succes alimentent le swarm.
         let mut requests: Vec<Option<IntroductionPoint>> =
             targets.iter().cloned().map(Some).collect();
-        // Lookup DHT (via la sortie) si le delai le commande ou si le
-        // swarm ne connait encore aucun point d'introduction.
-        if dht_lookup_due || targets.is_empty() {
+        // Lookup DHT si le delai le commande ou si le swarm ne connait
+        // encore aucun point d'introduction. Avec un `dht_provider`
+        // c'est le vrai `find_values(lookup)` sur la DHT IPv8 locale
+        // (`dht_lookup` Python) ; sans provider, repli historique :
+        // `peers-request` en cellule vers la sortie (`target=None`).
+        let want_dht = dht_lookup_due || targets.is_empty();
+        let dht = if want_dht { self.dht_provider() } else { None };
+        if want_dht && dht.is_none() {
             requests.push(None);
         }
         let results = futures_util::future::join_all(requests.iter().map(|ip| {
@@ -802,6 +1010,29 @@ impl TunnelCommunity {
         for ips in results.into_iter().flatten() {
             saw_dht |= ips.iter().any(|i| i.source == PEER_SOURCE_DHT);
             found.extend(ips);
+        }
+        // `dht_lookup` : chaque valeur stockee sous la cle du swarm
+        // est un `DHTIntroPointPayload` annonce par un point
+        // d'introduction.
+        if let Some(dht) = dht {
+            match dht.find_values(&info_hash, 0).await {
+                Ok(values) => {
+                    tracing::info!(
+                        info_hash = hex::encode(info_hash),
+                        n = values.len(),
+                        "dht_lookup du swarm : valeur(s) DHT"
+                    );
+                    for (data, _) in values {
+                        if let Some(ip) = unpack_dht_intro_point(&data) {
+                            saw_dht = true;
+                            found.push(ip);
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::debug!(error = %e, "dht_lookup du swarm echoue");
+                }
+            }
         }
         // `add_intro_point` + `create_e2e` vers les seeder_pk non
         // connectes (`do_peer_discovery` Python).
@@ -824,7 +1055,9 @@ impl TunnelCommunity {
                 .collect()
         };
         for ip in pending {
-            let _ = self.create_e2e(info_hash, &ip).await;
+            if let Err(e) = self.create_e2e(info_hash, &ip).await {
+                tracing::debug!(error = %e, "create_e2e echoue");
+            }
         }
     }
 
@@ -884,6 +1117,13 @@ impl TunnelCommunity {
             .first()
             .copied()
             .ok_or(Ipv8Error::Malformed("aucun circuit pour e2e"))?;
+        // "Creating e2e circuit for introduction point %s" (info).
+        tracing::info!(
+            info_hash = hex::encode(info_hash),
+            intro = ?intro_point.address,
+            circuit_id = cid,
+            "create-e2e vers le point d'introduction"
+        );
         let (dh_secret, dh_public) = generate_diffie_secret();
         let identifier = self.next_id();
         let p = tp::CreateE2E {
@@ -1009,6 +1249,12 @@ impl TunnelCommunity {
                     inner.intro_point_for.get(&p.node_public_key).copied()
                 };
                 if let Some((relay_cid, _)) = fwd {
+                    // "On create-e2e: forwarding message because
+                    // received over socket" (info).
+                    tracing::info!(
+                        circuit_id = relay_cid,
+                        "create-e2e recu hors circuit : relais vers le seeder"
+                    );
                     let mut w = Writer::new();
                     if p.pack(&mut w).is_err() {
                         return;
@@ -1066,6 +1312,13 @@ impl TunnelCommunity {
                         tracing::debug!("create-e2e duplique en cours, ignore");
                     }
                     Dedup::New => {
+                        // "On create-e2e: creating rendezvous point"
+                        // (info).
+                        tracing::info!(
+                            info_hash = hex::encode(p.info_hash),
+                            circuit_id = cid,
+                            "create-e2e recu sur circuit : creation du point de rendez-vous"
+                        );
                         let info_hash = p.info_hash;
                         let this = self.clone();
                         tokio::spawn(async move {
@@ -1097,7 +1350,7 @@ impl TunnelCommunity {
         {
             Ok(rp) => rp,
             Err(e) => {
-                tracing::debug!(error = %e, "create_rendezvous_point echoue");
+                tracing::info!(error = %e, "create_rendezvous_point echoue");
                 return;
             }
         };
@@ -1170,7 +1423,19 @@ impl TunnelCommunity {
                 }
             }
         }
+        tracing::info!(
+            circuit_id = intro_circuit,
+            "created-e2e envoye au downloader"
+        );
         let _ = self.tunnel_data(intro_circuit, &requester, &packet).await;
+        // Chez pyipv8 seul le downloader marque `circuit.e2e` — le
+        // seeder ne recoit pas de `linked-e2e`. Mais notre pont
+        // `RP_SEEDER` -> uTP (`subscribe_circuit_data`/`pin_circuit`)
+        // est installe par le listener `e2e_ready` : il faut donc le
+        // declencher ici, une fois le RP cree et la reponse emise —
+        // sinon la donnee e2e entrante sur le circuit RP_SEEDER
+        // n'atteint jamais la lane anonyme du seeder.
+        let _ = self.e2e_ready_tx.send((rp.circuit, p.info_hash));
     }
 
     /// `on_created_e2e` (downloader) : verifie l'auth, dechiffre
@@ -1246,6 +1511,11 @@ impl TunnelCommunity {
         let Some(first_hop) = self.pick_first_hop(Some(&rp_info.key)) else {
             return;
         };
+        tracing::info!(
+            info_hash = hex::encode(req.info_hash),
+            rp = ?rp_info.address,
+            "created-e2e valide : construction du circuit RP_DOWNLOADER"
+        );
         let cid = match self
             .create_circuit_typed(
                 hops,
@@ -1258,7 +1528,7 @@ impl TunnelCommunity {
         {
             Ok(c) => c,
             Err(e) => {
-                tracing::debug!(error = %e, "circuit RP_DOWNLOADER echoue");
+                tracing::info!(error = %e, "circuit RP_DOWNLOADER echoue");
                 return;
             }
         };
@@ -1299,6 +1569,7 @@ impl TunnelCommunity {
             }
         }
         pending_guard.disarm();
+        tracing::info!(circuit_id = cid, "link-e2e envoye au point de rendez-vous");
         let addr = {
             let inner = self.inner.lock().unwrap();
             match inner
@@ -1395,6 +1666,7 @@ impl TunnelCommunity {
         if !linked {
             return;
         }
+        tracing::info!(circuit_id, "circuits e2e lies au point de rendez-vous");
         let reply = tp::LinkedE2E {
             circuit_id,
             identifier: p.identifier,
@@ -1434,6 +1706,11 @@ impl TunnelCommunity {
                 c.base.beat_heart();
             }
         }
+        tracing::info!(
+            circuit_id = req.circuit_id,
+            info_hash = hex::encode(req.info_hash),
+            "linked-e2e : circuit e2e pret"
+        );
         let _ = self.e2e_ready_tx.send((req.circuit_id, req.info_hash));
     }
 }

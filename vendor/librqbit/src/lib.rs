@@ -96,7 +96,7 @@ pub use session::{
     SUPPORTED_SCHEMES, Session, SessionOptions, SessionPersistenceConfig,
 };
 pub use librqbit_dualstack_sockets::DatagramSocket;
-pub use stream_connect::{ConnectionOptions, UtpConnector};
+pub use stream_connect::{ConnectionOptions, UtpAcceptor, UtpConnector};
 pub use torrent_state::{
     ManagedTorrent, ManagedTorrentShared, ManagedTorrentState, TorrentMetadata, TorrentStats,
     TorrentStatsState,

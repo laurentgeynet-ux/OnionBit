@@ -61,6 +61,34 @@ impl<T: librqbit_utp::Transport, E: UtpEnvironment> UtpConnector for UtpSocket<T
     }
 }
 
+/// Injectable uTP acceptor for inbound peer connections
+/// (Tribler-Rust-Torrent vendored patch) — symmetric counterpart of
+/// [`UtpConnector`] on the listen path. Anonymous Tribler lanes
+/// accept inbound uTP on a tunnelled datagram transport rather than a
+/// real UDP bind, so `accept()` must come from the same custom
+/// `UtpSocket` that outbound `connect()` uses.
+pub trait UtpAcceptor: Send + Sync + std::fmt::Debug + 'static {
+    fn accept(
+        self: Arc<Self>,
+    ) -> std::pin::Pin<
+        Box<
+            dyn Future<Output = librqbit_utp::Result<librqbit_utp::UtpStream>> + Send + Sync + 'static,
+        >,
+    >;
+}
+
+impl<T: librqbit_utp::Transport, E: UtpEnvironment> UtpAcceptor for UtpSocket<T, E> {
+    fn accept(
+        self: Arc<Self>,
+    ) -> std::pin::Pin<
+        Box<
+            dyn Future<Output = librqbit_utp::Result<librqbit_utp::UtpStream>> + Send + Sync + 'static,
+        >,
+    > {
+        Box::pin(async move { UtpSocket::accept(&self).await })
+    }
+}
+
 pub struct ConnectionOptions {
     // socks5://[username:password@]host:port
     // If set, outgoing peer TCP connections go through the proxy.

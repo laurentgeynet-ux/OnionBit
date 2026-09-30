@@ -130,6 +130,10 @@ pub(crate) struct Inner {
     /// service appris via `ExtraIntroductionPayload` (introductions
     /// signees sur le prefixe tunnel). Alimente `get_candidates`.
     pub(crate) flag_registry: HashMap<Vec<u8>, i32>,
+    /// Derniere re-annonce DHT par swarm (extension robustesse —
+    /// `reannounce_intro_points`) : borne la frequence des
+    /// republications des points d'introduction cote seeder.
+    pub(crate) ip_announced_at: HashMap<[u8; 20], std::time::Instant>,
 }
 
 /// Snapshot PEX d'un swarm pour `pex_dump`/`pex_restore` :
@@ -272,6 +276,12 @@ pub struct TunnelCommunity {
     /// pour les introductions et punctures (le `my_peer` Python est
     /// partage entre overlays sur le meme endpoint).
     pub(crate) discovery: Mutex<Option<Arc<tribler_ipv8::discovery::DiscoveryCommunity>>>,
+    /// `dht_provider` (`HiddenTunnelSettings`) : la `DHTDiscovery-
+    /// Community` de la stack, injectee via [`Self::set_dht_provider`].
+    /// Sert aux `dht_announce` (publication des points d'introduction
+    /// sous la cle du swarm) et `dht_lookup` (decouverte des points
+    /// par le downloader).
+    pub(crate) dht_provider: Mutex<Option<Arc<tribler_ipv8::dht::DhtCommunity>>>,
     /// `TunnelSettings` Python (`self.settings`) : tous les seuils et
     /// cadences de la community (defauts = valeurs officielles).
     pub settings: TunnelSettings,
@@ -455,6 +465,7 @@ impl TunnelCommunity {
                 http_requests: HashMap::new(),
                 data_subscribers: HashMap::new(),
                 flag_registry: HashMap::new(),
+                ip_announced_at: HashMap::new(),
             }),
             identifier: AtomicU16::new(0),
             global_time: AtomicU64::new(0),
@@ -464,6 +475,7 @@ impl TunnelCommunity {
             circuit_removed_tx,
             test_tx,
             discovery: Mutex::new(None),
+            dht_provider: Mutex::new(None),
             settings,
         });
         let weak = Arc::downgrade(&community);
@@ -767,6 +779,44 @@ impl TunnelCommunity {
             .collect()
     }
 
+    /// Variante de [`Self::ready_circuits_of_hops`] limitee aux
+    /// circuits `DATA` : les circuits `RP_*`/`IP_*` servent les lanes
+    /// e2e/hidden seeding — y router du trafic applicatif generique
+    /// enverrait des datagrammes sans rapport au pair e2e (un paquet
+    /// DHT reponse a pu ainsi etre injecte dans la socket uTP du
+    /// downloader distant).
+    pub fn ready_data_circuits_of_hops(&self, hops: usize) -> Vec<u32> {
+        self.inner
+            .lock()
+            .unwrap()
+            .circuits
+            .values()
+            .filter(|c| {
+                c.state() == CIRCUIT_STATE_READY
+                    && c.goal_hops == hops
+                    && c.ctype == crate::routing::CIRCUIT_TYPE_DATA
+            })
+            .map(|c| c.base.circuit_id)
+            .collect()
+    }
+
+    /// [`Self::ready_data_circuits_of_hops`] + flag de sortie.
+    pub fn ready_data_circuits_of_hops_flags(&self, hops: usize, flag: i32) -> Vec<u32> {
+        self.inner
+            .lock()
+            .unwrap()
+            .circuits
+            .values()
+            .filter(|c| {
+                c.state() == CIRCUIT_STATE_READY
+                    && c.goal_hops == hops
+                    && c.ctype == crate::routing::CIRCUIT_TYPE_DATA
+                    && c.exit_flags & flag != 0
+            })
+            .map(|c| c.base.circuit_id)
+            .collect()
+    }
+
     /// Enregistre les flags de service du dernier saut (`exit_flags`)
     /// quand ils sont connus (decouverte, annonces).
     pub fn set_circuit_exit_flags(&self, circuit_id: u32, flags: i32) {
@@ -803,33 +853,78 @@ impl TunnelCommunity {
         if ready + pending >= min_circuits {
             return Ok(());
         }
+        // `data_exit_peer` (extension Rust — `required_exit` de
+        // `create_circuit` pyipv8) : le dernier saut est impose. Pair
+        // non verifie -> aucun circuit (determinisme de banc ; le
+        // watchdog retente au prochain tick).
+        let pinned = match self.settings.data_exit_peer.as_ref() {
+            None => None,
+            Some(addr) => match self.network.get_verified_by_address(addr) {
+                Some(p) => Some(p),
+                None => {
+                    tracing::debug!(
+                        addr = ?addr,
+                        "data_exit_peer pas encore verifie — walk_to, aucun circuit DATA cree"
+                    );
+                    // Comme `ensure_introduction_points` : marche
+                    // active vers le pin pour le decouvrir/verifier —
+                    // un pair qui ne repond pas encore n'est jamais
+                    // resolu sinon (bootstrap non deterministe).
+                    let t = self.clone();
+                    let a = addr.clone();
+                    tokio::spawn(async move {
+                        let _ = t.walk_to(&a).await;
+                    });
+                    return Ok(());
+                }
+            },
+        };
         // Choix du premier hop : comme `create_circuit` pyipv8, toute
         // la liste des candidats est transmise a `send_initial_create`
         // — chaque timeout de saut retente sur le candidat suivant au
         // lieu de reconverger toujours vers le meme pair.
-        // Pour 1 saut : sorties `EXIT_BT` (aleatoire, `select_exit`).
+        // Pour 1 saut : `select_exit(ctype=DATA)` — sorties `EXIT_BT`
+        // UNIQUEMENT. Aucun repli sur un pair non-exit : un circuit
+        // 1 saut dont l'unique hop ne fait pas sortie est un cul-de-sac
+        // (la politique de sortie jette ses cellules `data`) — pyipv8
+        // renvoie `None` ("no available exit-nodes") et le rythme du
+        // watchdog retentera au prochain tick.
         // Pour 2 ou 3 sauts : relays/sorties les moins utilises.
-        let first_hops = if hops == 1 {
-            let mut exits = self.get_candidates(crate::routing::PEER_FLAG_EXIT_BT);
-            if exits.is_empty() {
-                exits = self.network.peers_for_service(&self.community_id);
+        let (first_hops, required_key) = match &pinned {
+            Some(p) => (
+                if hops == 1 {
+                    vec![p.clone()]
+                } else {
+                    self.first_hop_candidates(CIRCUIT_TYPE_DATA, Some(p.public_key_bin.as_slice()))
+                },
+                Some(p.public_key_bin.clone()),
+            ),
+            None if hops == 1 => {
+                let mut exits = self.get_candidates(crate::routing::PEER_FLAG_EXIT_BT);
+                exits.shuffle(&mut rand::thread_rng());
+                (exits, None)
             }
-            exits.shuffle(&mut rand::thread_rng());
-            exits
-        } else {
-            self.first_hop_candidates(CIRCUIT_TYPE_DATA, None)
+            None => (self.first_hop_candidates(CIRCUIT_TYPE_DATA, None), None),
         };
 
-        let first_hops = if first_hops.is_empty() {
-            self.network.all_verified_peers()
-        } else {
-            first_hops
-        };
+        if first_hops.is_empty() {
+            // `Could not create circuit, no available exit-nodes /
+            // no first hop available` — pyipv8 ne cree rien.
+            tracing::debug!(hops, "aucun candidat de premier hop — circuit non cree");
+            return Ok(());
+        }
 
         if let Some(peer) = first_hops.first() {
             tracing::info!(hops, peer = ?peer.address, "tentative de creation proactive de circuit");
-            self.create_circuit_inner(hops, first_hops, CIRCUIT_TYPE_DATA, None, None, Vec::new())
-                .await?;
+            self.create_circuit_inner(
+                hops,
+                first_hops,
+                CIRCUIT_TYPE_DATA,
+                required_key,
+                None,
+                Vec::new(),
+            )
+            .await?;
         }
         Ok(())
     }
@@ -1591,11 +1686,31 @@ impl TunnelCommunity {
     ) -> Result<Option<u32>, Ipv8Error> {
         let mut required_exit = if ctype == crate::routing::CIRCUIT_TYPE_IP_SEEDER {
             self.select_exit(&[], ctype)
+        } else if ctype == crate::routing::CIRCUIT_TYPE_DATA
+            && self.settings.data_exit_peer.is_some()
+        {
+            // `required_exit` impose par configuration
+            // (`data_exit_peer`) : pair non verifie => `None` ici et au
+            // repli 1-saut plus bas => `Ok(None)`, jamais de circuit
+            // non epingle (determinisme de banc) ; le watchdog retente.
+            self.settings
+                .data_exit_peer
+                .as_ref()
+                .and_then(|addr| self.network.get_verified_by_address(addr))
         } else if !exit_flags.is_empty() {
             self.select_exit(exit_flags, ctype)
         } else {
             None
         };
+        // `data_exit_peer` configure mais pair non verifie : aucun
+        // circuit plutot qu'un circuit non epingle (determinisme de
+        // banc) — le watchdog `build_circuits_if_needed` retente.
+        if ctype == crate::routing::CIRCUIT_TYPE_DATA
+            && self.settings.data_exit_peer.is_some()
+            && required_exit.is_none()
+        {
+            return Ok(None);
+        }
         let mut required_key = required_exit.as_ref().map(|p| p.public_key_bin.clone());
         let first_hops = if goal_hops == 1 {
             if required_exit.is_none() {
@@ -2197,8 +2312,21 @@ impl TunnelCommunity {
         *self.discovery.lock().unwrap() = Some(discovery);
     }
 
+    /// Injecte la `DHTDiscoveryCommunity` de la stack
+    /// (`out["dht_provider"] = DHTCommunityProvider(...)` du composant
+    /// Tribler). Sans elle les annonces/lookups de points
+    /// d'introduction restent reduits au seul chemin PEX.
+    pub fn set_dht_provider(&self, dht: Arc<tribler_ipv8::dht::DhtCommunity>) {
+        *self.dht_provider.lock().unwrap() = Some(dht);
+    }
+
+    /// Acces interne au provider DHT (`None` si non configure).
+    pub(crate) fn dht_provider(&self) -> Option<Arc<tribler_ipv8::dht::DhtCommunity>> {
+        self.dht_provider.lock().unwrap().clone()
+    }
+
     /// `my_estimated_wan` (via la discovery ; sinon non-specifie).
-    fn my_wan(&self) -> UdpAddress {
+    pub(crate) fn my_wan(&self) -> UdpAddress {
         self.discovery
             .lock()
             .unwrap()

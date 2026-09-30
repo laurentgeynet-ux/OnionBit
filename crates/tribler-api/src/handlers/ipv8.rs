@@ -381,22 +381,11 @@ fn intro_point_json(ip: &tribler_tunnel::routing::IntroductionPoint) -> serde_js
     })
 }
 
-/// `DHTIntroPointPayload` (`["ip_address","I","varlenH","varlenH"]`)
-/// → `IntroductionPoint` (`Peer(b"LibNaCLPK:"+intro_pk)`, source
-/// `PEER_SOURCE_DHT`). `None` sur `PackError` (valeur ignoree).
+/// `DHTIntroPointPayload` → `IntroductionPoint` : delegation a
+/// `tribler_tunnel::hidden_services::unpack_dht_intro_point`
+/// (implementation unique, partagee avec `swarm_lookup`).
 fn unpack_dht_intro_point(data: &[u8]) -> Option<tribler_tunnel::routing::IntroductionPoint> {
-    let mut r = tribler_ipv8::serializer::Reader::new(data);
-    let address = r.ip_address().ok()?;
-    let last_seen = r.u32().ok()?;
-    let intro_pk = r.varlen_h().ok()?;
-    let seeder_pk = r.varlen_h().ok()?;
-    Some(tribler_tunnel::routing::IntroductionPoint {
-        address,
-        peer_key: [b"LibNaCLPK:".as_slice(), intro_pk].concat(),
-        seeder_pk: [b"LibNaCLPK:".as_slice(), seeder_pk].concat(),
-        source: tribler_tunnel::routing::PEER_SOURCE_DHT,
-        last_seen_secs: last_seen as u64,
-    })
+    tribler_tunnel::hidden_services::unpack_dht_intro_point(data)
 }
 
 /// `GET /api/ipv8/tunnel/swarms/{infohash}/size` — `get_swarm_size`
