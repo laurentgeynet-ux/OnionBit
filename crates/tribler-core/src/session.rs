@@ -297,6 +297,9 @@ impl CoreSession {
     /// selection de fichiers, trackers additionnels, limites,
     /// dossier de sortie et etat pause sont reappliques a l'ajout).
     async fn restore_downloads(&self) {
+        let t0 = std::time::Instant::now();
+        let mut restored = 0usize;
+        let mut failed = 0usize;
         let rows = match self.inner.db.with(tribler_db::downloads::list) {
             Ok(r) => r,
             Err(e) => {
@@ -324,6 +327,7 @@ impl CoreSession {
             };
             match self.readd_row(&engine, &row).await {
                 Ok(dl) => {
+                    restored += 1;
                     tracing::info!(
                         infohash = %dl.info_hash_hex(),
                         "telechargement restaure"
@@ -333,6 +337,7 @@ impl CoreSession {
                     }
                 }
                 Err(e) => {
+                    failed += 1;
                     tracing::warn!(
                         infohash = %hex::encode(&row.infohash),
                         error = %e,
@@ -346,6 +351,16 @@ impl CoreSession {
                 }
             }
         }
+        // Recap de fin de restauration : le temps mur jusqu'ici est la
+        // mesure pertinente (les phases rqbit instrumentees peuvent se
+        // chevaucher entre torrents — la somme des elapsed_ms n'est pas
+        // le temps ressenti).
+        tracing::info!(
+            restored,
+            failed,
+            total_elapsed_ms = t0.elapsed().as_millis() as u64,
+            "restauration des telechargements terminee"
+        );
     }
 
     /// Options rqbit reconstruites depuis la ligne persistee — les
