@@ -3,6 +3,14 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## UI : snackbar de complétion sur SSE `torrent_finished` (2026-09-30)
+
+Étape 8 de `docs/plans/app_downloads_enrichissement.md` :
+`TorrentFinishedListener` (même pattern que `PendingFilesHandler`,
+monté dans les deux variantes du shell) écoute `daemonEventsProvider`
+et affiche un snackbar avec le nom du torrent terminé — visible sur
+toutes les pages, pas seulement Téléchargements.
+
 ## UI : onglet Pairs en table détaillée (2026-09-30)
 
 Étape 7 de `docs/plans/app_downloads_enrichissement.md` : les pairs

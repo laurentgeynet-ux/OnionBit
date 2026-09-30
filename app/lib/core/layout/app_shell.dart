@@ -8,6 +8,7 @@ import 'drop_zone.dart';
 import 'pending_files_handler.dart';
 import 'status_bar.dart';
 import 'top_bar.dart';
+import 'torrent_finished_listener.dart';
 
 /// Coquille responsive de l'application.
 ///
@@ -58,6 +59,7 @@ class AppShell extends StatelessWidget {
             children: [
               Positioned.fill(child: body),
               const Positioned.fill(child: PendingFilesHandler()),
+              const Positioned.fill(child: TorrentFinishedListener()),
             ],
           ),
         ),
@@ -87,6 +89,7 @@ class AppShell extends StatelessWidget {
                 children: [
                   Positioned.fill(child: body),
                   const Positioned.fill(child: PendingFilesHandler()),
+                  const Positioned.fill(child: TorrentFinishedListener()),
                 ],
               ),
             ),

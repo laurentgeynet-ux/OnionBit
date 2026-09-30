@@ -61,7 +61,7 @@ fichier (cochage) + `docs/CHANGELOG.md` + commit dédié. Les modifications
 - Nécessite `?get_peers=1` — provider dédié avec poll tant que l'onglet est
   visible.
 
-## Étape 8 — Notification de complétion
+## Étape 8 — Notification de complétion [x] (2026-09-30)
 
 - Snackbar global sur l'événement SSE `torrent_finished` (avec nom du
   torrent), dans le shell — pas dans la page.
