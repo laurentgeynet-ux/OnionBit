@@ -3,6 +3,14 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## UI : raccourcis clavier sur Téléchargements (2026-09-30)
+
+Étape 5 de `docs/plans/app_downloads_enrichissement.md` : Espace
+pause/reprend la sélection (éléments mixtes gérés un à un), Suppr ouvre
+le dialogue de suppression (factorisé en `confirmRemoveSelected`,
+partagé avec la barre d'actions), F2 ouvre les limites de débit sur
+sélection unique. Ctrl+A/Échap livrés à l'étape 1.
+
 ## UI : sparkline de débit temps réel dans le panneau de détail (2026-09-30)
 
 Étape 4 de `docs/plans/app_downloads_enrichissement.md` : l'onglet

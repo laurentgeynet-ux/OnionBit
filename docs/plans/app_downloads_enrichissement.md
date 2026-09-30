@@ -41,7 +41,7 @@ fichier (cochage) + `docs/CHANGELOG.md` + commit dédié. Les modifications
   téléchargement sélectionné, affiché en haut de l'onglet Détails.
 - `CustomPainter` maison (pas de dépendance chart pour un sparkline).
 
-## Étape 5 — Raccourcis clavier
+## Étape 5 — Raccourcis clavier [x] (2026-09-30)
 
 - Sur la page : Espace = pause/reprendre la sélection, Suppr = supprimer
   (avec le dialogue existant), Ctrl+A, Échap, F2 = limites.
