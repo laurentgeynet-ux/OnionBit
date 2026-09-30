@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 640" width="1280" height="640">
+  <defs>
+    <radialGradient id="bgg" cx="0.5" cy="0.4" r="0.9">
+      <stop offset="0" stop-color="#2C2140"/>
+      <stop offset="1" stop-color="#130D1C"/>
+    </radialGradient>
+    <linearGradient id="bulb" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#9B59D0"/>
+      <stop offset="1" stop-color="#6C2EA6"/>
+    </linearGradient>
+    <linearGradient id="arrow" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#4FD8E0"/>
+      <stop offset="1" stop-color="#1FA8B8"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1280" height="640" fill="url(#bgg)"/>
+
+  <!-- Glyphe -->
+  <g transform="translate(130 150) scale(0.68)">
+    <ellipse cx="256" cy="300" rx="196" ry="150" fill="none"
+             stroke="#8F5BC0" stroke-width="12" opacity="0.45" stroke-dasharray="4 34" stroke-linecap="round"/>
+    <circle cx="82"  cy="238" r="18" fill="#8F5BC0"/>
+    <circle cx="430" cy="238" r="18" fill="#8F5BC0"/>
+    <circle cx="130" cy="400" r="18" fill="#8F5BC0"/>
+    <circle cx="382" cy="400" r="18" fill="#8F5BC0"/>
+    <circle cx="256" cy="452" r="18" fill="#8F5BC0"/>
+    <path d="M244 118 C240 86 226 62 206 48" fill="none" stroke="#8F5BC0" stroke-width="22" stroke-linecap="round"/>
+    <path d="M268 118 C272 84 288 58 310 44" fill="none" stroke="#B07BD6" stroke-width="22" stroke-linecap="round"/>
+    <path d="M256 118 C170 118 104 190 104 288 C104 386 172 462 256 462
+             C340 462 408 386 408 288 C408 190 342 118 256 118 Z"
+          fill="url(#bulb)"/>
+    <path d="M196 138 C164 190 152 250 158 310 C164 370 190 420 216 446"
+          fill="none" stroke="#C39BD8" stroke-width="14" stroke-linecap="round" opacity="0.85"/>
+    <path d="M316 138 C348 190 360 250 354 310 C348 370 322 420 296 446"
+          fill="none" stroke="#C39BD8" stroke-width="14" stroke-linecap="round" opacity="0.85"/>
+    <path d="M232 210 h48 v96 h34 l-58 74 -58 -74 h34 Z" fill="url(#arrow)"/>
+  </g>
+
+  <!-- Texte -->
+  <text x="560" y="300" font-family="Segoe UI, Roboto, Helvetica, Arial, sans-serif"
+        font-size="118" font-weight="700">
+    <tspan fill="#B07BD6">Onion</tspan><tspan fill="#4FD8E0">Bit</tspan>
+  </text>
+  <text x="564" y="368" font-family="Segoe UI, Roboto, Helvetica, Arial, sans-serif"
+        font-size="34" fill="#B8B3C4" letter-spacing="2">Anonymous BitTorrent client, native in Rust</text>
+  <text x="564" y="428" font-family="Segoe UI, Roboto, Helvetica, Arial, sans-serif"
+        font-size="24" fill="#6E6879" letter-spacing="1">A Tribler port · Onion-routed circuits · GPL-3.0</text>
+</svg>
