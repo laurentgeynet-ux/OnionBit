@@ -45,7 +45,7 @@ Chaque étape = implémentation + `flutter analyze`/tests + cochage ici +
   (~72 px, labels masqués, `Tooltip` sur les entrées).
 - État dans un provider session (pas de persistance disque).
 
-## Étape 6 — Pied de sidebar : état daemon
+## Étape 6 — Pied de sidebar : état daemon [x] (2026-10-02)
 
 - En bas : pastille connexion (`sseConnectedProvider`) + « Daemon » +
   version (`versionsProvider` settings) ; lecture seule.

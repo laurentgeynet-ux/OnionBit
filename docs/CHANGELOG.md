@@ -3,6 +3,12 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## UI — Sidebar : pied avec état daemon + version (étape 6/6)
+
+- `_DaemonFooter` : pastille `sseConnectedProvider` + « Daemon vX.Y »
+  (`/api/versioning/versions` → `current`) ; réduite à la pastille
+  avec tooltip en mode rail. Plan terminé.
+
 ## UI — Sidebar : mode rail rétractable 216 ↔ 72 px (étape 5/6)
 
 - `sidebarCollapsedProvider` (session) + bouton chevron en pied :

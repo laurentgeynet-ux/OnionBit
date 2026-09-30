@@ -6,6 +6,8 @@ import 'package:go_router/go_router.dart';
 import '../../features/downloads/domain/download_filter.dart';
 import '../../features/downloads/presentation/providers/downloads_providers.dart';
 import '../../features/downloads/presentation/widgets/add_download_dialog.dart';
+import '../../features/settings/presentation/providers/settings_providers.dart';
+import '../di/providers.dart';
 import '../router/nav_catalog.dart';
 import '../theme/app_theme.dart';
 import '../utils/byte_formatter.dart';
@@ -200,6 +202,7 @@ class AppSidebar extends ConsumerWidget {
               ),
             ),
             const Divider(height: 1),
+            _DaemonFooter(collapsed: collapsed),
             Align(
               alignment: collapsed ? Alignment.center : Alignment.centerRight,
               child: IconButton(
@@ -497,6 +500,59 @@ class _SpeedsRow extends ConsumerWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// Pied de sidebar : pastille de connexion SSE + version du daemon
+/// (`GET /api/versioning/versions` → `current`). Réduit à la pastille
+/// en mode rail.
+class _DaemonFooter extends ConsumerWidget {
+  const _DaemonFooter({required this.collapsed});
+
+  final bool collapsed;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final theme = Theme.of(context);
+    final connected = ref.watch(sseConnectedProvider).value ?? false;
+    final version = ref.watch(versionsProvider).value?['current'];
+    final dot = Icon(
+      Icons.circle,
+      size: 8,
+      color: connected ? Colors.green : theme.colorScheme.error,
+    );
+    if (collapsed) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
+        child: Tooltip(
+          message: connected
+              ? 'Daemon connecté${version != null ? ' · $version' : ''}'
+              : 'Daemon injoignable',
+          child: Center(child: dot),
+        ),
+      );
+    }
+    return Padding(
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.md,
+        vertical: AppSpacing.xs,
+      ),
+      child: Row(
+        children: [
+          dot,
+          const SizedBox(width: AppSpacing.xs),
+          Expanded(
+            child: Text(
+              connected
+                  ? 'Daemon${version != null ? ' $version' : ''}'
+                  : 'Daemon injoignable',
+              style: theme.textTheme.bodySmall,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
