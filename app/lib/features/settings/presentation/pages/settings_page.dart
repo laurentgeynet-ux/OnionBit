@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/theme/app_theme.dart';
+import '../providers/settings_providers.dart';
 import '../widgets/anonymity_section.dart';
 import '../widgets/appearance_section.dart';
 import '../widgets/automation_section.dart';
@@ -20,6 +22,7 @@ class _SectionEntry {
     required this.title,
     required this.keywords,
     required this.child,
+    this.sectionId,
   });
 
   final String title;
@@ -27,6 +30,10 @@ class _SectionEntry {
   /// Texte de recherche : titre + noms de champs + chemins de clés.
   final String keywords;
   final Widget child;
+
+  /// Identifiant `settingsDirtyProvider` quand la section supporte la
+  /// sauvegarde différée (null = enregistrement immédiat uniquement).
+  final String? sectionId;
   final key = GlobalKey();
 }
 
@@ -38,14 +45,14 @@ final _kSections = <_SectionEntry>[
   ),
   _SectionEntry(
     title: 'Téléchargements par défaut',
-    keywords:
-        'destination dossier espace disque download_defaults saveas',
+    keywords: 'destination dossier espace disque download_defaults saveas',
+    sectionId: 'downloads',
     child: const DownloadsSection(),
   ),
   _SectionEntry(
     title: 'Bande passante',
-    keywords:
-        'limite débit vitesse ko/s max_download_rate max_upload_rate',
+    keywords: 'limite débit vitesse ko/s max_download_rate max_upload_rate',
+    sectionId: 'bandwidth',
     child: const BandwidthSection(),
   ),
   _SectionEntry(
@@ -53,6 +60,7 @@ final _kSections = <_SectionEntry>[
     keywords:
         'queue active_downloads active_seeds active_checking '
         'active_limit auto_managed fastresume vérification démarrage',
+    sectionId: 'queue',
     child: const QueueSection(),
   ),
   _SectionEntry(
@@ -60,6 +68,7 @@ final _kSections = <_SectionEntry>[
     keywords:
         'seeding ratio durée hops sauts safe seeding '
         'download_defaults number_anon_downloads',
+    sectionId: 'seeding',
     child: const SeedingSection(),
   ),
   _SectionEntry(
@@ -67,6 +76,7 @@ final _kSections = <_SectionEntry>[
     keywords:
         'tunnel community circuits min_circuits max_circuits '
         'exitnode sortie test vitesse',
+    sectionId: 'anonymity',
     child: const AnonymitySection(),
   ),
   _SectionEntry(
@@ -74,11 +84,13 @@ final _kSections = <_SectionEntry>[
     keywords:
         'dht upnp natpmp lsd utp proxy socks port écoute '
         'listen_interface',
+    sectionId: 'network',
     child: const NetworkSection(),
   ),
   _SectionEntry(
     title: 'Automatisation',
     keywords: 'watch folder rss flux dossier surveillance items',
+    sectionId: 'automation',
     child: const AutomationSection(),
   ),
   _SectionEntry(
@@ -99,27 +111,89 @@ final _kSections = <_SectionEntry>[
 ];
 
 /// Page « Réglages » — rail d'ancres + filtre + sections du catalogue.
-class SettingsPage extends StatefulWidget {
+class SettingsPage extends ConsumerStatefulWidget {
   const SettingsPage({super.key});
 
   @override
-  State<SettingsPage> createState() => _SettingsPageState();
+  ConsumerState<SettingsPage> createState() => _SettingsPageState();
 }
 
-class _SettingsPageState extends State<SettingsPage> {
+class _SettingsPageState extends ConsumerState<SettingsPage> {
   String _filter = '';
+  bool _savingAll = false;
+
+  Future<void> _saveAll() async {
+    setState(() => _savingAll = true);
+    // Chaque `_save` se marque propre en cas de succès ; les sections en
+    // échec conservent leur pastille « modifié ».
+    for (final entry in ref.read(settingsSaveBusProvider).values) {
+      await entry.save();
+    }
+    if (mounted) setState(() => _savingAll = false);
+  }
+
+  void _discardAll() {
+    for (final entry in ref.read(settingsSaveBusProvider).values) {
+      entry.discard();
+    }
+    ref.read(settingsDirtyProvider.notifier).clear();
+  }
 
   bool _matches(_SectionEntry e) =>
       _filter.isEmpty ||
-      '${e.title} ${e.keywords}'.toLowerCase().contains(
-        _filter.toLowerCase(),
-      );
+      '${e.title} ${e.keywords}'.toLowerCase().contains(_filter.toLowerCase());
 
   @override
   Widget build(BuildContext context) {
     final visible = _kSections.where(_matches).toList();
+    final dirty = ref.watch(settingsDirtyProvider);
+    final scheme = Theme.of(context).colorScheme;
     return Column(
       children: [
+        if (dirty.isNotEmpty)
+          Material(
+            color: scheme.tertiaryContainer,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(
+                horizontal: AppSpacing.md,
+                vertical: AppSpacing.xs,
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.edit_note,
+                    size: 20,
+                    color: scheme.onTertiaryContainer,
+                  ),
+                  const SizedBox(width: AppSpacing.sm),
+                  Expanded(
+                    child: Text(
+                      '${dirty.length} section(s) modifiée(s) '
+                      'non enregistrée(s)',
+                      style: Theme.of(context).textTheme.bodySmall
+                          ?.copyWith(color: scheme.onTertiaryContainer),
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: _discardAll,
+                    child: const Text('Tout annuler'),
+                  ),
+                  const SizedBox(width: AppSpacing.xs),
+                  FilledButton.icon(
+                    onPressed: _savingAll ? null : _saveAll,
+                    icon: _savingAll
+                        ? const SizedBox(
+                            width: 14,
+                            height: 14,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.save, size: 18),
+                    label: const Text('Enregistrer tout'),
+                  ),
+                ],
+              ),
+            ),
+          ),
         Padding(
           padding: const EdgeInsets.symmetric(
             horizontal: AppSpacing.md,
@@ -136,10 +210,17 @@ class _SettingsPageState extends State<SettingsPage> {
                     children: [
                       for (final e in visible)
                         Padding(
-                          padding: const EdgeInsets.only(
-                            right: AppSpacing.xs,
-                          ),
+                          padding: const EdgeInsets.only(right: AppSpacing.xs),
                           child: ActionChip(
+                            avatar:
+                                e.sectionId != null &&
+                                    dirty.contains(e.sectionId)
+                                ? Icon(
+                                    Icons.circle,
+                                    size: 8,
+                                    color: scheme.tertiary,
+                                  )
+                                : null,
                             label: Text(e.title),
                             visualDensity: VisualDensity.compact,
                             onPressed: () {
@@ -147,9 +228,7 @@ class _SettingsPageState extends State<SettingsPage> {
                               if (ctx != null) {
                                 Scrollable.ensureVisible(
                                   ctx,
-                                  duration: const Duration(
-                                    milliseconds: 250,
-                                  ),
+                                  duration: const Duration(milliseconds: 250),
                                 );
                               }
                             },
@@ -183,9 +262,7 @@ class _SettingsPageState extends State<SettingsPage> {
                 Padding(
                   padding: const EdgeInsets.all(AppSpacing.lg),
                   child: Center(
-                    child: Text(
-                      'Aucune section ne correspond à « $_filter ».',
-                    ),
+                    child: Text('Aucune section ne correspond à « $_filter ».'),
                   ),
                 ),
             ],

@@ -23,7 +23,7 @@ Chaque étape = implémentation + `flutter analyze`/tests + cochage ici +
   mots-clés + chemins de clés ; les sections masquées ne sont pas
   construites.
 
-## Étape 2 — Indicateur « modifié » + « Enregistrer tout »
+## Étape 2 — Indicateur « modifié » + « Enregistrer tout » [x] (2026-10-02)
 
 - `settingsDirtyProvider` (Set d'ids de sections) + bus
   `settingsSaveBusProvider` (Map id → callback `_save`).

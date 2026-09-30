@@ -13,10 +13,15 @@ class SettingsSection extends ConsumerWidget {
     required this.icon,
     required this.title,
     required this.child,
+    this.sectionId,
   });
 
   final IconData icon;
   final String title;
+
+  /// Id de la section — affiche la puce « modifié » quand présent dans
+  /// `settingsDirtyProvider` (sections à sauvegarde différée).
+  final String? sectionId;
 
   /// Construit le contenu depuis l'arbre de réglages du daemon.
   final Widget Function(BuildContext context, Map<String, dynamic> settings)
@@ -43,6 +48,20 @@ class SettingsSection extends ConsumerWidget {
                 Expanded(
                   child: Text(title, style: theme.textTheme.titleMedium),
                 ),
+                if (sectionId != null &&
+                    ref.watch(
+                      settingsDirtyProvider.select(
+                        (s) => s.contains(sectionId),
+                      ),
+                    ))
+                  Tooltip(
+                    message: 'Modifications non enregistrées',
+                    child: Icon(
+                      Icons.circle,
+                      size: 10,
+                      color: theme.colorScheme.tertiary,
+                    ),
+                  ),
               ],
             ),
             const SizedBox(height: AppSpacing.sm),
@@ -78,15 +97,13 @@ Future<void> applySettingsPatch(
     await ref.read(settingsRepositoryProvider).update(patch);
     ref.invalidate(daemonSettingsProvider);
     if (successMessage != null && context.mounted) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(successMessage)));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(successMessage)));
     }
   } catch (e) {
     if (context.mounted) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Erreur : $e')));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('Erreur : $e')));
     }
   }
 }
@@ -149,8 +166,11 @@ Object? settingsLeaf(Map<String, dynamic> settings, List<String> path) {
   return node;
 }
 
-bool settingsBool(Map<String, dynamic> s, List<String> path, {bool def = false}) =>
-    settingsLeaf(s, path) == true || (settingsLeaf(s, path) == null && def);
+bool settingsBool(
+  Map<String, dynamic> s,
+  List<String> path, {
+  bool def = false,
+}) => settingsLeaf(s, path) == true || (settingsLeaf(s, path) == null && def);
 
 int settingsInt(Map<String, dynamic> s, List<String> path, {int def = 0}) =>
     (settingsLeaf(s, path) as num?)?.toInt() ?? def;
@@ -159,12 +179,44 @@ double settingsDouble(
   Map<String, dynamic> s,
   List<String> path, {
   double def = 0,
-}) =>
-    (settingsLeaf(s, path) as num?)?.toDouble() ?? def;
+}) => (settingsLeaf(s, path) as num?)?.toDouble() ?? def;
+
+/// Lien entre une section à sauvegarde différée et le bus global :
+/// enregistre `save`/`discard`, gère la puce « modifié ». Usage :
+/// créer dans `initState` (`late final`), `attach`/`detach`,
+/// `markDirty()` sur changement de champ, `markClean()` après succès.
+class DeferredSection {
+  DeferredSection(this._ref, this.id);
+
+  final WidgetRef _ref;
+
+  /// Identifiant stable de la section (`dirtyProvider`, bus).
+  final String id;
+  bool _dirty = false;
+
+  void attach({
+    required Future<void> Function() save,
+    required void Function() discard,
+  }) {
+    _ref.read(settingsSaveBusProvider)[id] = (save: save, discard: discard);
+  }
+
+  void detach() => _ref.read(settingsSaveBusProvider).remove(id);
+
+  void markDirty() {
+    if (_dirty) return;
+    _dirty = true;
+    _ref.read(settingsDirtyProvider.notifier).add(id);
+  }
+
+  void markClean() {
+    _dirty = false;
+    _ref.read(settingsDirtyProvider.notifier).remove(id);
+  }
+}
 
 String settingsString(
   Map<String, dynamic> s,
   List<String> path, {
   String def = '',
-}) =>
-    '${settingsLeaf(s, path) ?? def}';
+}) => '${settingsLeaf(s, path) ?? def}';

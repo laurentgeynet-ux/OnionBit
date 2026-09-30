@@ -16,6 +16,7 @@ class SeedingSection extends ConsumerStatefulWidget {
 }
 
 class _SeedingSectionState extends ConsumerState<SeedingSection> {
+  late final _deferred = DeferredSection(ref, 'seeding');
   static const _dd = ['libtorrent', 'download_defaults'];
 
   /// Modes de seed du backend (`forever`/`never`/`ratio`/`time`).
@@ -36,7 +37,14 @@ class _SeedingSectionState extends ConsumerState<SeedingSection> {
   bool _saving = false;
 
   @override
+  void initState() {
+    super.initState();
+    _deferred.attach(save: _save, discard: _discard);
+  }
+
+  @override
   void dispose() {
+    _deferred.detach();
     _ratio.dispose();
     _time.dispose();
     super.dispose();
@@ -44,11 +52,7 @@ class _SeedingSectionState extends ConsumerState<SeedingSection> {
 
   void _sync(Map<String, dynamic> settings) {
     if (_initialized) return;
-    _mode = settingsString(
-      settings,
-      [..._dd, 'seeding_mode'],
-      def: 'forever',
-    );
+    _mode = settingsString(settings, [..._dd, 'seeding_mode'], def: 'forever');
     if (!_modes.containsKey(_mode)) _mode = 'forever';
     _anonymity = settingsBool(settings, [..._dd, 'anonymity_enabled']);
     _hops = settingsInt(settings, [..._dd, 'number_hops']).clamp(0, 3);
@@ -58,26 +62,27 @@ class _SeedingSectionState extends ConsumerState<SeedingSection> {
     _initialized = true;
   }
 
+  void _discard() => setState(() {
+    _initialized = false;
+    _deferred.markClean();
+  });
+
   Future<void> _save() async {
     setState(() => _saving = true);
-    await applySettingsPatch(
-      context,
-      ref,
-      {
-        'libtorrent': {
-          'download_defaults': {
-            'seeding_mode': _mode,
-            'seeding_ratio': double.tryParse(_ratio.text.trim()) ?? 0,
-            'seeding_time': double.tryParse(_time.text.trim()) ?? 0,
-            'safeseeding_enabled': _safeSeeding,
-            'anonymity_enabled': _anonymity,
-            // Règle backend : `number_hops > 0` impose le safe seeding.
-            'number_hops': _hops,
-          },
+    await applySettingsPatch(context, ref, {
+      'libtorrent': {
+        'download_defaults': {
+          'seeding_mode': _mode,
+          'seeding_ratio': double.tryParse(_ratio.text.trim()) ?? 0,
+          'seeding_time': double.tryParse(_time.text.trim()) ?? 0,
+          'safeseeding_enabled': _safeSeeding,
+          'anonymity_enabled': _anonymity,
+          // Règle backend : `number_hops > 0` impose le safe seeding.
+          'number_hops': _hops,
         },
       },
-      successMessage: 'Politique de seed enregistrée',
-    );
+    }, successMessage: 'Politique de seed enregistrée');
+    _deferred.markClean();
     if (mounted) setState(() => _saving = false);
   }
 
@@ -87,6 +92,7 @@ class _SeedingSectionState extends ConsumerState<SeedingSection> {
     return SettingsSection(
       icon: Icons.upload,
       title: 'Seed & anonymat par défaut',
+      sectionId: 'seeding',
       child: (context, settings) {
         _sync(settings);
         return Column(
@@ -100,7 +106,10 @@ class _SeedingSectionState extends ConsumerState<SeedingSection> {
                   ButtonSegment(value: e.key, label: Text(e.value)),
               ],
               selected: {_mode},
-              onSelectionChanged: (s) => setState(() => _mode = s.first),
+              onSelectionChanged: (s) => setState(() {
+                _mode = s.first;
+                _deferred.markDirty();
+              }),
             ),
             const SizedBox(height: AppSpacing.xs),
             Text(
@@ -113,6 +122,7 @@ class _SeedingSectionState extends ConsumerState<SeedingSection> {
             if (_mode == 'ratio')
               TextField(
                 controller: _ratio,
+                onChanged: (_) => _deferred.markDirty(),
                 keyboardType: const TextInputType.numberWithOptions(
                   decimal: true,
                 ),
@@ -124,6 +134,7 @@ class _SeedingSectionState extends ConsumerState<SeedingSection> {
             if (_mode == 'time')
               TextField(
                 controller: _time,
+                onChanged: (_) => _deferred.markDirty(),
                 keyboardType: TextInputType.number,
                 decoration: const InputDecoration(
                   labelText: 'Durée de seed (secondes)',
@@ -141,6 +152,7 @@ class _SeedingSectionState extends ConsumerState<SeedingSection> {
               title: 'Téléchargements anonymes par défaut',
               subtitle: 'Défaut : activé, 1 saut.',
               onChangedOverride: (v) => setState(() {
+                _deferred.markDirty();
                 _anonymity = v;
                 // Anonyme implique ≥1 saut — cohérence du couple
                 // `anonymity_enabled`/`number_hops`.
@@ -156,7 +168,10 @@ class _SeedingSectionState extends ConsumerState<SeedingSection> {
                   ButtonSegment(value: 3, label: Text('3 sauts')),
                 ],
                 selected: {_hops == 0 ? 1 : _hops},
-                onSelectionChanged: (s) => setState(() => _hops = s.first),
+                onSelectionChanged: (s) => setState(() {
+                  _hops = s.first;
+                  _deferred.markDirty();
+                }),
               ),
               SwitchListTile(
                 value: _safeSeeding || _hops > 0,
@@ -164,7 +179,10 @@ class _SeedingSectionState extends ConsumerState<SeedingSection> {
                 // backend, le commutateur est donc forcé à true.
                 onChanged: _hops > 0
                     ? null
-                    : (v) => setState(() => _safeSeeding = v),
+                    : (v) => setState(() {
+                        _safeSeeding = v;
+                        _deferred.markDirty();
+                      }),
                 title: const Text('Safe seeding'),
                 subtitle: const Text(
                   'Obligatoire quand des sauts anonymes sont demandés. '

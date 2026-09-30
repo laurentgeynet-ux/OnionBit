@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../core/utils/byte_formatter.dart';
 import '../providers/settings_providers.dart';
+import 'settings_section.dart';
 
 /// Section « Téléchargements & Anonymat » — réglages du dossier par défaut et comportement réseau.
 class DownloadsSection extends ConsumerStatefulWidget {
@@ -15,12 +16,20 @@ class DownloadsSection extends ConsumerStatefulWidget {
 }
 
 class _DownloadsSectionState extends ConsumerState<DownloadsSection> {
+  late final _deferred = DeferredSection(ref, 'downloads');
   final _saveasController = TextEditingController();
   bool _initialized = false;
   bool _saving = false;
 
   @override
+  void initState() {
+    super.initState();
+    _deferred.attach(save: _save, discard: _discard);
+  }
+
+  @override
   void dispose() {
+    _deferred.detach();
     _saveasController.dispose();
     super.dispose();
   }
@@ -37,9 +46,17 @@ class _DownloadsSectionState extends ConsumerState<DownloadsSection> {
   Future<void> _pickDirectory() async {
     final dir = await getDirectoryPath();
     if (dir != null) {
-      setState(() => _saveasController.text = dir);
+      setState(() {
+        _saveasController.text = dir;
+        _deferred.markDirty();
+      });
     }
   }
+
+  void _discard() => setState(() {
+    _initialized = false;
+    _deferred.markClean();
+  });
 
   Future<void> _save() async {
     setState(() => _saving = true);
@@ -48,15 +65,16 @@ class _DownloadsSectionState extends ConsumerState<DownloadsSection> {
     try {
       await repo.update({
         'libtorrent': {
-          'download_defaults': {
-            'saveas': saveas,
-          },
+          'download_defaults': {'saveas': saveas},
         },
       });
       ref.invalidate(daemonSettingsProvider);
+      _deferred.markClean();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Réglages de téléchargement enregistrés')),
+          const SnackBar(
+            content: Text('Réglages de téléchargement enregistrés'),
+          ),
         );
       }
     } catch (e) {
@@ -95,6 +113,17 @@ class _DownloadsSectionState extends ConsumerState<DownloadsSection> {
                     style: theme.textTheme.titleMedium,
                   ),
                 ),
+                if (ref.watch(
+                  settingsDirtyProvider.select((s) => s.contains('downloads')),
+                ))
+                  Tooltip(
+                    message: 'Modifications non enregistrées',
+                    child: Icon(
+                      Icons.circle,
+                      size: 10,
+                      color: theme.colorScheme.tertiary,
+                    ),
+                  ),
                 if (_saving)
                   const SizedBox(
                     width: 16,
@@ -114,6 +143,7 @@ class _DownloadsSectionState extends ConsumerState<DownloadsSection> {
                   children: [
                     TextField(
                       controller: _saveasController,
+                      onChanged: (_) => _deferred.markDirty(),
                       decoration: InputDecoration(
                         labelText: 'Dossier de destination par défaut',
                         hintText: 'défaut : <état du daemon>/downloads',

@@ -22,79 +22,79 @@ class DaemonSection extends ConsumerWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
-            children: [
-              Expanded(
-                child: Text(
-                  'État du daemon',
-                  style: theme.textTheme.titleMedium,
+              children: [
+                Expanded(
+                  child: Text(
+                    'État du daemon',
+                    style: theme.textTheme.titleMedium,
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Rafraîchir',
+                  onPressed: () => ref.invalidate(daemonSettingsProvider),
+                  icon: const Icon(Icons.refresh, size: 18),
+                ),
+              ],
+            ),
+            settings.when(
+              loading: () => const Padding(
+                padding: EdgeInsets.all(AppSpacing.sm),
+                child: LinearProgressIndicator(),
+              ),
+              error: (e, _) => Text(
+                '$e',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.error,
                 ),
               ),
-              IconButton(
-                tooltip: 'Rafraîchir',
-                onPressed: () => ref.invalidate(daemonSettingsProvider),
-                icon: const Icon(Icons.refresh, size: 18),
+              data: (s) {
+                final lt = s['libtorrent'] as Map<String, dynamic>?;
+                final defaults =
+                    lt?['download_defaults'] as Map<String, dynamic>?;
+                final tunnel = s['tunnel_community'] as Map<String, dynamic>?;
+                final ipv8 = s['ipv8'] as Map<String, dynamic>?;
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _line(
+                      context,
+                      'Dossier d\'état',
+                      '${s['state_dir'] ?? '—'}',
+                    ),
+                    _line(
+                      context,
+                      'Téléchargements vers',
+                      '${defaults?['saveas'] ?? '—'}',
+                    ),
+                    _line(
+                      context,
+                      'IPv8',
+                      (ipv8?['enabled'] == true)
+                          ? 'actif (${ipv8?['address'] ?? ''})'
+                          : 'inactif',
+                    ),
+                    _line(
+                      context,
+                      'Tunnels anonymes',
+                      (tunnel?['enabled'] == true) ? 'activés' : 'désactivés',
+                    ),
+                  ],
+                );
+              },
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            Align(
+              alignment: Alignment.centerRight,
+              child: OutlinedButton.icon(
+                icon: const Icon(Icons.power_settings_new, size: 18),
+                label: const Text('Arrêter le daemon'),
+                onPressed: () => _confirmShutdown(context, ref),
               ),
-            ],
-          ),
-          settings.when(
-            loading: () => const Padding(
-              padding: EdgeInsets.all(AppSpacing.sm),
-              child: LinearProgressIndicator(),
             ),
-            error: (e, _) => Text(
-              '$e',
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: theme.colorScheme.error,
-              ),
-            ),
-            data: (s) {
-              final lt = s['libtorrent'] as Map<String, dynamic>?;
-              final defaults =
-                  lt?['download_defaults'] as Map<String, dynamic>?;
-              final tunnel = s['tunnel_community'] as Map<String, dynamic>?;
-              final ipv8 = s['ipv8'] as Map<String, dynamic>?;
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _line(
-                    context,
-                    'Dossier d\'état',
-                    '${s['state_dir'] ?? '—'}',
-                  ),
-                  _line(
-                    context,
-                    'Téléchargements vers',
-                    '${defaults?['saveas'] ?? '—'}',
-                  ),
-                  _line(
-                    context,
-                    'IPv8',
-                    (ipv8?['enabled'] == true)
-                        ? 'actif (${ipv8?['address'] ?? ''})'
-                        : 'inactif',
-                  ),
-                  _line(
-                    context,
-                    'Tunnels anonymes',
-                    (tunnel?['enabled'] == true) ? 'activés' : 'désactivés',
-                  ),
-                ],
-              );
-            },
-          ),
-          const SizedBox(height: AppSpacing.sm),
-          Align(
-            alignment: Alignment.centerRight,
-            child: OutlinedButton.icon(
-              icon: const Icon(Icons.power_settings_new, size: 18),
-              label: const Text('Arrêter le daemon'),
-              onPressed: () => _confirmShutdown(context, ref),
-            ),
-          ),
-        ],
+          ],
+        ),
       ),
-    ),
-  );
+    );
   }
 
   Widget _line(BuildContext context, String label, String value) {

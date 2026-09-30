@@ -15,6 +15,7 @@ class AnonymitySection extends ConsumerStatefulWidget {
 }
 
 class _AnonymitySectionState extends ConsumerState<AnonymitySection> {
+  late final _deferred = DeferredSection(ref, 'anonymity');
   static const _t = ['tunnel_community'];
 
   final _minCircuits = TextEditingController();
@@ -23,7 +24,14 @@ class _AnonymitySectionState extends ConsumerState<AnonymitySection> {
   bool _saving = false;
 
   @override
+  void initState() {
+    super.initState();
+    _deferred.attach(save: _save, discard: _discard);
+  }
+
+  @override
   void dispose() {
+    _deferred.detach();
     _minCircuits.dispose();
     _maxCircuits.dispose();
     super.dispose();
@@ -31,10 +39,17 @@ class _AnonymitySectionState extends ConsumerState<AnonymitySection> {
 
   void _sync(Map<String, dynamic> settings) {
     if (_initialized) return;
-    _minCircuits.text = '${settingsInt(settings, [..._t, 'min_circuits'], def: 3)}';
-    _maxCircuits.text = '${settingsInt(settings, [..._t, 'max_circuits'], def: 8)}';
+    _minCircuits.text =
+        '${settingsInt(settings, [..._t, 'min_circuits'], def: 3)}';
+    _maxCircuits.text =
+        '${settingsInt(settings, [..._t, 'max_circuits'], def: 8)}';
     _initialized = true;
   }
+
+  void _discard() => setState(() {
+    _initialized = false;
+    _deferred.markClean();
+  });
 
   Future<void> _save() async {
     setState(() => _saving = true);
@@ -47,14 +62,10 @@ class _AnonymitySectionState extends ConsumerState<AnonymitySection> {
       );
       return;
     }
-    await applySettingsPatch(
-      context,
-      ref,
-      {
-        'tunnel_community': {'min_circuits': min, 'max_circuits': max},
-      },
-      successMessage: 'Réglages des tunnels enregistrés',
-    );
+    await applySettingsPatch(context, ref, {
+      'tunnel_community': {'min_circuits': min, 'max_circuits': max},
+    }, successMessage: 'Réglages des tunnels enregistrés');
+    _deferred.markClean();
     if (mounted) setState(() => _saving = false);
   }
 
@@ -64,6 +75,7 @@ class _AnonymitySectionState extends ConsumerState<AnonymitySection> {
     return SettingsSection(
       icon: Icons.shield_outlined,
       title: 'Tunnels anonymes',
+      sectionId: 'anonymity',
       child: (context, settings) {
         _sync(settings);
         final enabled = settingsBool(settings, [..._t, 'enabled'], def: true);
@@ -94,6 +106,7 @@ class _AnonymitySectionState extends ConsumerState<AnonymitySection> {
                 Expanded(
                   child: TextField(
                     controller: _minCircuits,
+                    onChanged: (_) => _deferred.markDirty(),
                     keyboardType: TextInputType.number,
                     decoration: const InputDecoration(
                       labelText: 'Circuits minimum (défaut : 3)',
@@ -105,6 +118,7 @@ class _AnonymitySectionState extends ConsumerState<AnonymitySection> {
                 Expanded(
                   child: TextField(
                     controller: _maxCircuits,
+                    onChanged: (_) => _deferred.markDirty(),
                     keyboardType: TextInputType.number,
                     decoration: const InputDecoration(
                       labelText: 'Circuits maximum (défaut : 8)',

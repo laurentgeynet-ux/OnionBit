@@ -15,6 +15,7 @@ class QueueSection extends ConsumerStatefulWidget {
 }
 
 class _QueueSectionState extends ConsumerState<QueueSection> {
+  late final _deferred = DeferredSection(ref, 'queue');
   final _downloads = TextEditingController();
   final _seeds = TextEditingController();
   final _checking = TextEditingController();
@@ -23,7 +24,14 @@ class _QueueSectionState extends ConsumerState<QueueSection> {
   bool _saving = false;
 
   @override
+  void initState() {
+    super.initState();
+    _deferred.attach(save: _save, discard: _discard);
+  }
+
+  @override
   void dispose() {
+    _deferred.detach();
     _downloads.dispose();
     _seeds.dispose();
     _checking.dispose();
@@ -41,28 +49,30 @@ class _QueueSectionState extends ConsumerState<QueueSection> {
     _initialized = true;
   }
 
+  void _discard() => setState(() {
+    _initialized = false;
+    _deferred.markClean();
+  });
+
   Future<void> _save() async {
     setState(() => _saving = true);
     int parse(String s) => int.tryParse(s.trim()) ?? -1;
-    await applySettingsPatch(
-      context,
-      ref,
-      {
-        'libtorrent': {
-          'active_downloads': parse(_downloads.text),
-          'active_seeds': parse(_seeds.text),
-          'active_checking': parse(_checking.text),
-          'active_limit': parse(_limit.text),
-        },
+    await applySettingsPatch(context, ref, {
+      'libtorrent': {
+        'active_downloads': parse(_downloads.text),
+        'active_seeds': parse(_seeds.text),
+        'active_checking': parse(_checking.text),
+        'active_limit': parse(_limit.text),
       },
-      successMessage: 'File d\'attente enregistrée',
-    );
+    }, successMessage: 'File d\'attente enregistrée');
+    _deferred.markClean();
     if (mounted) setState(() => _saving = false);
   }
 
   Widget _field(TextEditingController c, String label, int def) => Expanded(
     child: TextField(
       controller: c,
+      onChanged: (_) => _deferred.markDirty(),
       keyboardType: TextInputType.number,
       decoration: InputDecoration(
         labelText: label,
@@ -77,6 +87,7 @@ class _QueueSectionState extends ConsumerState<QueueSection> {
     return SettingsSection(
       icon: Icons.queue,
       title: 'File d\'attente',
+      sectionId: 'queue',
       child: (context, settings) {
         _sync(settings);
         return Column(
@@ -86,9 +97,8 @@ class _QueueSectionState extends ConsumerState<QueueSection> {
               'Les téléchargements « gérés automatiquement » au-delà de '
               'ces bornes sont mis en pause puis repris quand un slot '
               'se libère.',
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: Theme.of(context).colorScheme.outline,
-              ),
+              style: Theme.of(context).textTheme.bodySmall
+                  ?.copyWith(color: Theme.of(context).colorScheme.outline),
             ),
             const SizedBox(height: AppSpacing.sm),
             Row(
@@ -108,11 +118,10 @@ class _QueueSectionState extends ConsumerState<QueueSection> {
             ),
             SettingsSwitch(
               path: const ['libtorrent', 'fastresume_check'],
-              value: settingsBool(
-                settings,
-                const ['libtorrent', 'fastresume_check'],
-                def: true,
-              ),
+              value: settingsBool(settings, const [
+                'libtorrent',
+                'fastresume_check',
+              ], def: true),
               title: 'Vérification au démarrage',
               subtitle:
                   'Relit un échantillon de pièces après la restauration '
@@ -121,15 +130,12 @@ class _QueueSectionState extends ConsumerState<QueueSection> {
                   'corruption passera inaperçue.',
             ),
             SettingsSwitch(
-              path: const [
+              path: const ['libtorrent', 'download_defaults', 'auto_managed'],
+              value: settingsBool(settings, const [
                 'libtorrent',
                 'download_defaults',
                 'auto_managed',
-              ],
-              value: settingsBool(
-                settings,
-                const ['libtorrent', 'download_defaults', 'auto_managed'],
-              ),
+              ]),
               title: 'Gestion automatique par défaut',
               subtitle:
                   'Les nouveaux téléchargements sont placés sous la '

@@ -29,4 +29,3 @@ abstract interface class SettingsRepository {
   /// `{new_version, has_version}`).
   Future<Map<String, dynamic>> checkVersion();
 }
-

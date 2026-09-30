@@ -18,6 +18,7 @@ class AutomationSection extends ConsumerStatefulWidget {
 }
 
 class _AutomationSectionState extends ConsumerState<AutomationSection> {
+  late final _deferred = DeferredSection(ref, 'automation');
   final _watchDir = TextEditingController();
   final _watchInterval = TextEditingController();
   final _newFeed = TextEditingController();
@@ -28,7 +29,14 @@ class _AutomationSectionState extends ConsumerState<AutomationSection> {
   bool _saving = false;
 
   @override
+  void initState() {
+    super.initState();
+    _deferred.attach(save: _save, discard: _discard);
+  }
+
+  @override
   void dispose() {
+    _deferred.detach();
     _watchDir.dispose();
     _watchInterval.dispose();
     _newFeed.dispose();
@@ -37,26 +45,28 @@ class _AutomationSectionState extends ConsumerState<AutomationSection> {
 
   void _sync(Map<String, dynamic> settings) {
     if (_initialized) return;
-    _watchEnabled = settingsBool(
-      settings,
-      const ['watch_folder', 'enabled'],
-    );
-    _watchDir.text = settingsString(
-      settings,
-      const ['watch_folder', 'directory'],
-    );
+    _watchEnabled = settingsBool(settings, const ['watch_folder', 'enabled']);
+    _watchDir.text = settingsString(settings, const [
+      'watch_folder',
+      'directory',
+    ]);
     _watchInterval.text =
         '${settingsDouble(settings, const ['watch_folder', 'check_interval'], def: 10).round()}';
     _rssEnabled = settingsBool(settings, const ['rss', 'enabled'], def: true);
     _feeds = [
-      for (final u in (settingsLeaf(settings, const ['rss', 'urls'])
-                  as List?)
-              ?.whereType<Object>() ??
-          const [])
+      for (final u
+          in (settingsLeaf(settings, const ['rss', 'urls']) as List?)
+                  ?.whereType<Object>() ??
+              const [])
         '$u',
     ];
     _initialized = true;
   }
+
+  void _discard() => setState(() {
+    _initialized = false;
+    _deferred.markClean();
+  });
 
   Future<void> _save() async {
     setState(() => _saving = true);
@@ -66,8 +76,7 @@ class _AutomationSectionState extends ConsumerState<AutomationSection> {
         'watch_folder': {
           'enabled': _watchEnabled,
           'directory': _watchDir.text.trim(),
-          'check_interval':
-              double.tryParse(_watchInterval.text.trim()) ?? 10,
+          'check_interval': double.tryParse(_watchInterval.text.trim()) ?? 10,
         },
         'rss': {'enabled': _rssEnabled, 'urls': _feeds},
       });
@@ -77,6 +86,7 @@ class _AutomationSectionState extends ConsumerState<AutomationSection> {
       await repo.setRssFeeds(_rssEnabled ? _feeds : const []);
       ref.invalidate(daemonSettingsProvider);
       ref.invalidate(rssItemsProvider);
+      _deferred.markClean();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Automatisation enregistrée')),
@@ -84,9 +94,8 @@ class _AutomationSectionState extends ConsumerState<AutomationSection> {
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Erreur : $e')));
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Erreur : $e')));
       }
     } finally {
       if (mounted) setState(() => _saving = false);
@@ -99,6 +108,7 @@ class _AutomationSectionState extends ConsumerState<AutomationSection> {
     setState(() {
       _feeds.add(url);
       _newFeed.clear();
+      _deferred.markDirty();
     });
   }
 
@@ -108,6 +118,7 @@ class _AutomationSectionState extends ConsumerState<AutomationSection> {
     return SettingsSection(
       icon: Icons.smart_button_outlined,
       title: 'Automatisation',
+      sectionId: 'automation',
       child: (context, settings) {
         _sync(settings);
         final items = ref.watch(rssItemsProvider).value ?? const [];
@@ -117,7 +128,10 @@ class _AutomationSectionState extends ConsumerState<AutomationSection> {
             Text('Dossier surveillé', style: theme.textTheme.labelMedium),
             SwitchListTile(
               value: _watchEnabled,
-              onChanged: (v) => setState(() => _watchEnabled = v),
+              onChanged: (v) => setState(() {
+                _watchEnabled = v;
+                _deferred.markDirty();
+              }),
               title: const Text('Surveiller un dossier'),
               subtitle: const Text(
                 'Les fichiers .torrent déposés dedans sont ajoutés '
@@ -129,6 +143,7 @@ class _AutomationSectionState extends ConsumerState<AutomationSection> {
             if (_watchEnabled) ...[
               TextField(
                 controller: _watchDir,
+                onChanged: (_) => _deferred.markDirty(),
                 decoration: InputDecoration(
                   labelText: 'Dossier à surveiller',
                   prefixIcon: const Icon(Icons.folder_outlined),
@@ -138,7 +153,10 @@ class _AutomationSectionState extends ConsumerState<AutomationSection> {
                     onPressed: () async {
                       final dir = await getDirectoryPath();
                       if (dir != null) {
-                        setState(() => _watchDir.text = dir);
+                        setState(() {
+                          _watchDir.text = dir;
+                          _deferred.markDirty();
+                        });
                       }
                     },
                   ),
@@ -147,6 +165,7 @@ class _AutomationSectionState extends ConsumerState<AutomationSection> {
               const SizedBox(height: AppSpacing.sm),
               TextField(
                 controller: _watchInterval,
+                onChanged: (_) => _deferred.markDirty(),
                 keyboardType: TextInputType.number,
                 decoration: const InputDecoration(
                   labelText: 'Intervalle de scan (s) — défaut : 10',
@@ -158,7 +177,10 @@ class _AutomationSectionState extends ConsumerState<AutomationSection> {
             Text('Flux RSS', style: theme.textTheme.labelMedium),
             SwitchListTile(
               value: _rssEnabled,
-              onChanged: (v) => setState(() => _rssEnabled = v),
+              onChanged: (v) => setState(() {
+                _rssEnabled = v;
+                _deferred.markDirty();
+              }),
               title: const Text('Watchers RSS actifs'),
               subtitle: const Text('Défaut : activé (aucun flux).'),
               contentPadding: EdgeInsets.zero,
@@ -174,7 +196,10 @@ class _AutomationSectionState extends ConsumerState<AutomationSection> {
                   trailing: IconButton(
                     icon: const Icon(Icons.remove_circle_outline, size: 18),
                     tooltip: 'Retirer',
-                    onPressed: () => setState(() => _feeds.remove(url)),
+                    onPressed: () => setState(() {
+                      _feeds.remove(url);
+                      _deferred.markDirty();
+                    }),
                   ),
                 ),
               Row(

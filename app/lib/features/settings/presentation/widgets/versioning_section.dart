@@ -28,9 +28,8 @@ class VersioningSection extends ConsumerWidget {
       );
     } catch (e) {
       if (context.mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Vérification : $e')));
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Vérification : $e')));
       }
     }
   }
@@ -73,11 +72,10 @@ class VersioningSection extends ConsumerWidget {
             ),
             SettingsSwitch(
               path: const ['versioning', 'enabled'],
-              value: settingsBool(
-                settings,
-                const ['versioning', 'enabled'],
-                def: true,
-              ),
+              value: settingsBool(settings, const [
+                'versioning',
+                'enabled',
+              ], def: true),
               title: 'Vérification de version',
               subtitle:
                   'Section désactivée = endpoints absents (404). '
@@ -85,10 +83,7 @@ class VersioningSection extends ConsumerWidget {
             ),
             SettingsSwitch(
               path: const ['versioning', 'allow_pre'],
-              value: settingsBool(
-                settings,
-                const ['versioning', 'allow_pre'],
-              ),
+              value: settingsBool(settings, const ['versioning', 'allow_pre']),
               title: 'Accepter les pré-versions',
               subtitle: 'Défaut : désactivé.',
             ),

@@ -3,6 +3,19 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## UI — Réglages : indicateurs « modifié » + enregistrement global (étape 2/8)
+
+- Sections à sauvegarde différée (Bande passante, File d'attente,
+  Téléchargements, Seed & anonymat, Tunnels, Réseau, Automatisation)
+  désormais raccordées à un bus partagé (`settingsSaveBusProvider`) et à
+  un compteur de sections sales (`settingsDirtyProvider`).
+- Pastille orange « modifié » sur la carte de section et sur la chip du
+  rail d'ancres ; bannière globale « N section(s) modifiée(s) » avec
+  « Enregistrer tout » (séquentiel, les échecs conservent leur pastille)
+  et « Tout annuler » (ré-initialise les champs depuis le serveur).
+- Les boutons « Enregistrer » par section existants sont conservés et
+  effacent la pastille en cas de succès.
+
 ## Stabilisation : erreurs différées du stockage paresseux + état hashcheck (2026-09-30)
 
 Suite de « stockage paresseux » : l'init sans accès disque reporte les

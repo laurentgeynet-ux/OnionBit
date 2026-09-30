@@ -16,6 +16,8 @@ class NetworkSection extends ConsumerStatefulWidget {
 }
 
 class _NetworkSectionState extends ConsumerState<NetworkSection> {
+  late final _deferred = DeferredSection(ref, 'network');
+
   /// Valeurs `proxy_type` de `lt::settings_pack` (enum Python).
   static const _proxyTypes = {
     0: 'Aucun',
@@ -32,7 +34,14 @@ class _NetworkSectionState extends ConsumerState<NetworkSection> {
   bool _saving = false;
 
   @override
+  void initState() {
+    super.initState();
+    _deferred.attach(save: _save, discard: _discard);
+  }
+
+  @override
   void dispose() {
+    _deferred.detach();
     _proxyServer.dispose();
     _proxyAuth.dispose();
     super.dispose();
@@ -42,31 +51,32 @@ class _NetworkSectionState extends ConsumerState<NetworkSection> {
     if (_initialized) return;
     _proxyType = settingsInt(settings, const ['libtorrent', 'proxy_type']);
     if (!_proxyTypes.containsKey(_proxyType)) _proxyType = 0;
-    _proxyServer.text = settingsString(
-      settings,
-      const ['libtorrent', 'proxy_server'],
-    );
-    _proxyAuth.text = settingsString(
-      settings,
-      const ['libtorrent', 'proxy_auth'],
-    );
+    _proxyServer.text = settingsString(settings, const [
+      'libtorrent',
+      'proxy_server',
+    ]);
+    _proxyAuth.text = settingsString(settings, const [
+      'libtorrent',
+      'proxy_auth',
+    ]);
     _initialized = true;
   }
 
+  void _discard() => setState(() {
+    _initialized = false;
+    _deferred.markClean();
+  });
+
   Future<void> _save() async {
     setState(() => _saving = true);
-    await applySettingsPatch(
-      context,
-      ref,
-      {
-        'libtorrent': {
-          'proxy_type': _proxyType,
-          'proxy_server': _proxyServer.text.trim(),
-          'proxy_auth': _proxyAuth.text,
-        },
+    await applySettingsPatch(context, ref, {
+      'libtorrent': {
+        'proxy_type': _proxyType,
+        'proxy_server': _proxyServer.text.trim(),
+        'proxy_auth': _proxyAuth.text,
       },
-      successMessage: 'Réglages réseau enregistrés',
-    );
+    }, successMessage: 'Réglages réseau enregistrés');
+    _deferred.markClean();
     if (mounted) setState(() => _saving = false);
   }
 
@@ -76,6 +86,7 @@ class _NetworkSectionState extends ConsumerState<NetworkSection> {
     return SettingsSection(
       icon: Icons.public,
       title: 'Réseau',
+      sectionId: 'network',
       child: (context, settings) {
         _sync(settings);
         const lt = ['libtorrent'];
@@ -125,12 +136,16 @@ class _NetworkSectionState extends ConsumerState<NetworkSection> {
                 for (final e in _proxyTypes.entries)
                   DropdownMenuItem(value: e.key, child: Text(e.value)),
               ],
-              onChanged: (v) => setState(() => _proxyType = v ?? 0),
+              onChanged: (v) => setState(() {
+                _proxyType = v ?? 0;
+                _deferred.markDirty();
+              }),
             ),
             if (_proxyType != 0) ...[
               const SizedBox(height: AppSpacing.sm),
               TextField(
                 controller: _proxyServer,
+                onChanged: (_) => _deferred.markDirty(),
                 decoration: const InputDecoration(
                   labelText: 'Serveur (hôte:port)',
                   hintText: '127.0.0.1:9050',
@@ -140,6 +155,7 @@ class _NetworkSectionState extends ConsumerState<NetworkSection> {
                 const SizedBox(height: AppSpacing.sm),
                 TextField(
                   controller: _proxyAuth,
+                  onChanged: (_) => _deferred.markDirty(),
                   obscureText: true,
                   decoration: const InputDecoration(
                     labelText: 'Authentification (utilisateur:mot de passe)',

@@ -22,12 +22,10 @@ class RestSettingsRepository implements SettingsRepository {
 
   @override
   Future<Map<String, int>> dirSpace({String? directory}) async {
-    final resp =
-        await _api.put(
-              '/statistics/dirspace',
-              body: {'directory': ?directory},
-            )
-            as Map<String, dynamic>;
+    final resp = await _api.put(
+      '/statistics/dirspace',
+      body: {'directory': ?directory},
+    ) as Map<String, dynamic>;
     final s = resp['statistics'] as Map<String, dynamic>? ?? const {};
     return {
       'total': (s['total'] as num?)?.toInt() ?? 0,
