@@ -32,7 +32,7 @@ Chaque étape = implémentation + `flutter analyze`/tests + cochage ici +
   `app/assets/branding/`) dans l'en-tête à la place du shield+texte.
 - Fallback `Icons.shield_outlined` si l'asset n'est pas trouvé.
 
-## Étape 4 — Filtres repliables
+## Étape 4 — Filtres repliables [x] (2026-10-02)
 
 - Le groupe de sous-filtres devient repliable (chevron sur l'entrée
   parente Téléchargements) ; état conservé dans un provider session.

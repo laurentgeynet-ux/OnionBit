@@ -3,6 +3,13 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## UI — Sidebar : sous-filtres repliables (étape 4/6)
+
+- `sidebarFiltersExpandedProvider` (session) + chevron en bout de
+  l'entrée Téléchargements : replie/déplie le groupe des quatre
+  filtres sans toucher à la navigation ; le label conserve
+  `context.go('/downloads')`.
+
 ## UI — Sidebar : logo OnionBit SVG (étape 3/6)
 
 - `flutter_svg` + assets `app/assets/branding/` (copie de

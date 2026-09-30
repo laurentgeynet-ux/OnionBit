@@ -11,6 +11,20 @@ import '../theme/app_theme.dart';
 import '../utils/byte_formatter.dart';
 import 'nav_destination.dart';
 
+/// Replie/déplie le groupe des sous-filtres Téléchargements (état de
+/// session uniquement).
+final sidebarFiltersExpandedProvider =
+    NotifierProvider<_FiltersExpandedNotifier, bool>(
+      _FiltersExpandedNotifier.new,
+    );
+
+class _FiltersExpandedNotifier extends Notifier<bool> {
+  @override
+  bool build() => true;
+
+  void toggle() => state = !state;
+}
+
 /// Sidebar fixe type Tribler (~216 px) : bouton « Ajouter » en tête,
 /// groupe « Bibliothèque » (Téléchargements + sous-filtres avec
 /// compteurs, Rechercher) puis groupe « Système » (Réglages,
@@ -43,6 +57,7 @@ class AppSidebar extends ConsumerWidget {
     final scheme = Theme.of(context).colorScheme;
     final downloads = ref.watch(downloadsProvider).value;
     final errors = downloads?.where((d) => d.isError).length ?? 0;
+    final filtersExpanded = ref.watch(sidebarFiltersExpandedProvider);
     return Material(
       color: scheme.surface,
       child: SizedBox(
@@ -98,18 +113,32 @@ class AppSidebar extends ConsumerWidget {
                         currentPath == '/downloads' &&
                         currentQuery['f'] == null,
                     badge: errors > 0 ? _ErrorBadge(count: errors) : null,
+                    trailing: IconButton(
+                      tooltip: filtersExpanded
+                          ? 'Replier les filtres'
+                          : 'Déplier les filtres',
+                      icon: Icon(
+                        filtersExpanded ? Icons.expand_less : Icons.expand_more,
+                        size: 18,
+                      ),
+                      visualDensity: VisualDensity.compact,
+                      onPressed: () => ref
+                          .read(sidebarFiltersExpandedProvider.notifier)
+                          .toggle(),
+                    ),
                   ),
                   // Sous-filtres Téléchargements (sauf « Tous » =
-                  // entrée parente).
-                  for (final f in DownloadFilter.values.skip(1))
-                    _FilterItem(
-                      filter: f,
-                      icon: _filterIcons[f],
-                      selected:
-                          currentPath == '/downloads' &&
-                          currentQuery['f'] == f.queryKey,
-                      count: downloads?.where(f.matches).length,
-                    ),
+                  // entrée parente) — repliables via le chevron.
+                  if (filtersExpanded)
+                    for (final f in DownloadFilter.values.skip(1))
+                      _FilterItem(
+                        filter: f,
+                        icon: _filterIcons[f],
+                        selected:
+                            currentPath == '/downloads' &&
+                            currentQuery['f'] == f.queryKey,
+                        count: downloads?.where(f.matches).length,
+                      ),
                   _NavItem(
                     d: kNavCatalog[1],
                     selected: currentPath == '/search',
@@ -162,7 +191,12 @@ class _GroupLabel extends StatelessWidget {
 
 /// Item de navigation principal en pilule (surbrillance arrondie).
 class _NavItem extends StatelessWidget {
-  const _NavItem({required this.d, required this.selected, this.badge});
+  const _NavItem({
+    required this.d,
+    required this.selected,
+    this.badge,
+    this.trailing,
+  });
 
   final NavDestinationSpec d;
   final bool selected;
@@ -170,13 +204,18 @@ class _NavItem extends StatelessWidget {
   /// Badge en bout d'item (ex. compteur d'erreurs).
   final Widget? badge;
 
+  /// Contrôle supplémentaire en bout d'item (ex. chevron replier).
+  final Widget? trailing;
+
   @override
   Widget build(BuildContext context) {
     return _SidebarItem(
       icon: selected ? d.selectedIcon : d.icon,
       label: d.label,
       selected: selected,
-      trailing: badge,
+      trailing: badge != null || trailing != null
+          ? Row(mainAxisSize: MainAxisSize.min, children: [?badge, ?trailing])
+          : null,
       onTap: () => context.go(d.path),
     );
   }
