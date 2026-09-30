@@ -93,6 +93,20 @@ class RestSearchRepository implements SearchRepository {
   }
 
   @override
+  Future<({int seeders, int leechers})?> health(String infohash) async {
+    final resp = await _api.get(
+      '/metadata/torrents/$infohash/health',
+      query: {'refresh': '1'},
+    ) as Map<String, dynamic>;
+    final h = resp['health'];
+    if (h is! Map<String, dynamic>) return null; // « checking »
+    return (
+      seeders: (h['seeders'] as num?)?.toInt() ?? 0,
+      leechers: (h['leechers'] as num?)?.toInt() ?? 0,
+    );
+  }
+
+  @override
   Future<List<String>> completions(String query) async {
     try {
       final resp = await _api.get(

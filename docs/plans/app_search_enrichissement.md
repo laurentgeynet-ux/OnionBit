@@ -60,7 +60,7 @@ Constantes backend vérifiées (2026-09-30) :
   requête non vide ; chips « Récents » quand la requête est vide, sous
   le titre « Populaires ».
 
-## Étape 8 — Sonde de santé à la demande
+## Étape 8 — Sonde de santé à la demande [x] (2026-09-30)
 
 - Action « Rafraîchir la santé » dans le menu contextuel (et icône en
   fin de ligne pour la sélection courante) →

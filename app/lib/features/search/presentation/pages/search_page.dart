@@ -47,6 +47,18 @@ class SearchPage extends ConsumerWidget {
       for (final r in remote.results)
         if (!results.any((l) => l.infohash == r.infohash)) r,
     ];
+    // Sondes de santé demandées (menu contextuel) — écrasent les
+    // seeds/leechers affichés sans recharger la liste.
+    final overrides = ref.watch(healthOverridesProvider);
+    if (overrides.isNotEmpty) {
+      for (var i = 0; i < merged.length; i++) {
+        final o = overrides[merged[i].infohash];
+        if (o != null) {
+          merged[i] = merged[i].withHealth(o.seeders, o.leechers);
+        }
+      }
+    }
+
     // Filtres chips (source, seeds min) puis tri colonne.
     if (filter.isActive) {
       merged.removeWhere((r) => !filter.matches(r));
@@ -769,6 +781,20 @@ class _SearchContextMenuState extends ConsumerState<_SearchContextMenu> {
         ],
         child: const Text('Ajout rapide'),
       ),
+      item(Icons.monitor_heart_outlined, 'Rafraîchir la santé', () async {
+        try {
+          final res = await ref
+              .read(healthOverridesProvider.notifier)
+              .probe(r.infohash);
+          _toast(
+            res == 'ok'
+                ? 'Santé rafraîchie'
+                : 'Santé en cours de vérification côté daemon',
+          );
+        } catch (e) {
+          _toast('Sonde santé : $e');
+        }
+      }),
       const Divider(height: 1),
       item(Icons.link, 'Copier le lien magnet', () {
         Clipboard.setData(ClipboardData(text: r.magnet));

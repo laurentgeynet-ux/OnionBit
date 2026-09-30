@@ -126,6 +126,30 @@ class SearchFilterNotifier extends Notifier<SearchFilter> {
   void toggleMinSeeds() => state = state.copy(minSeeds: !state.minSeeds);
 }
 
+/// Santés rafraîchies à la demande (sonde `/metadata/torrents/{ih}/
+/// health`) — écrase les seeds/leechers des résultats affichés sans
+/// recharger la liste.
+final healthOverridesProvider =
+    NotifierProvider<
+      HealthOverridesNotifier,
+      Map<String, ({int seeders, int leechers})>
+    >(HealthOverridesNotifier.new);
+
+class HealthOverridesNotifier
+    extends Notifier<Map<String, ({int seeders, int leechers})>> {
+  @override
+  Map<String, ({int seeders, int leechers})> build() => const {};
+
+  /// Sonde un infohash — met à jour l'override si le daemon a une
+  /// santé connue (`null` = « checking », pas encore de réponse).
+  Future<String> probe(String infohash) async {
+    final h = await ref.read(searchRepositoryProvider).health(infohash);
+    if (h == null) return 'checking';
+    state = {...state, infohash: h};
+    return 'ok';
+  }
+}
+
 /// Historique des recherches de la session (LRU, 10 max) — chips
 /// « Récents » affichées quand la requête est vide.
 final searchHistoryProvider =

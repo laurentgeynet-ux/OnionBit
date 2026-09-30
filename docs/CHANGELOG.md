@@ -35,6 +35,15 @@ ce comportement et rend la phase de check visible dans l'API.
   `cargo test --manifest-path vendor/librqbit/Cargo.toml` fonctionne
   désormais.
 
+## UI : sonde de santé à la demande dans Rechercher (2026-09-30)
+
+Étape 8 de `docs/plans/app_search_enrichissement.md` : entrée
+« Rafraîchir la santé » du menu contextuel →
+`GET /metadata/torrents/{ih}/health?refresh=1` (scrape immédiat des
+trackers connus) ; la réponse met à jour seeds/leechers de la ligne via
+`healthOverridesProvider` sans recharger la liste (`"checking"` →
+snackbar explicite). Plan terminé.
+
 ## UI : historique des recherches récentes (2026-09-30)
 
 Étape 7 de `docs/plans/app_search_enrichissement.md` :

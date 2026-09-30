@@ -40,6 +40,18 @@ class TorrentResult {
   /// Copie marquée « réseau » — pour les entrées qui apparaissent en
   /// base locale suite à une recherche distante (le backend intègre
   /// les `SelectResponse` dans `channel_node` sans événement dédié).
+  /// Copie avec la santé rafraîchie (sonde
+  /// `/metadata/torrents/{ih}/health`).
+  TorrentResult withHealth(int seeders, int leechers) => TorrentResult(
+    infohash: infohash,
+    name: name,
+    size: size,
+    source: source,
+    seeders: seeders,
+    leechers: leechers,
+    date: date,
+  );
+
   TorrentResult asRemote() => TorrentResult(
     infohash: infohash,
     name: name,

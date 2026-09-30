@@ -30,6 +30,12 @@ abstract interface class SearchRepository {
   /// Diffuse la requête aux pairs — réponses poussées via SSE.
   Future<RemoteQuery> searchRemote(String query);
 
+  /// Sonde de santé à la demande (`GET
+  /// /metadata/torrents/{ih}/health?refresh=1` — scrape immédiat des
+  /// trackers connus). `null` = santé en cours de vérification côté
+  /// daemon (`"checking"`).
+  Future<({int seeders, int leechers})?> health(String infohash);
+
   /// Suggestions d'autocomplétion (`GET /metadata/search/completions`
   /// — FTS préfixe + continuation de mot, comme le GUI Tribler).
   Future<List<String>> completions(String query);
