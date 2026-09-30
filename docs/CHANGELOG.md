@@ -3,6 +3,16 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## UI — Fix : Réglages vides au scroll (ref en dispose)
+
+- `DeferredSection.detach()` appelait `ref.read()` depuis `dispose()`
+  → `StateError` « ref when unmounted » à chaque démontage de section
+  hors écran : l'exception dans `finalizeTree` corrompait l'arbre et
+  affichait un grand bloc gris (ErrorWidget release). Le bus de
+  sauvegarde est désormais capturé à `attach`.
+- `test/settings_page_test.dart` : le test widget qui défile la page
+  reproduisait le crash avant le fix (16 tests au total).
+
 ## UI — Menus contextuels : fermeture au clic extérieur
 
 - `MenuAnchor` des pages Téléchargements et Rechercher enveloppé d'un

@@ -248,14 +248,21 @@ class DeferredSection {
   final String id;
   bool _dirty = false;
 
+  /// Map partagée capturée à `attach` : `detach` est appelé depuis
+  /// `dispose()` où `ref.read` est interdit (widget démonté) — la
+  /// référence à la map du provider, elle, reste valide.
+  Map<String, ({Future<void> Function() save, void Function() discard})>?
+  _bus;
+
   void attach({
     required Future<void> Function() save,
     required void Function() discard,
   }) {
-    _ref.read(settingsSaveBusProvider)[id] = (save: save, discard: discard);
+    _bus = _ref.read(settingsSaveBusProvider);
+    _bus![id] = (save: save, discard: discard);
   }
 
-  void detach() => _ref.read(settingsSaveBusProvider).remove(id);
+  void detach() => _bus?.remove(id);
 
   void markDirty() {
     if (_dirty) return;
