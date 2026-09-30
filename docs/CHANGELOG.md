@@ -3,6 +3,16 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## UI — Sidebar : items pilule + groupes + badge d'erreurs (étape 1/6)
+
+- `app_sidebar.dart` réécrit : `_SidebarItem` pilule arrondie
+  (InkWell + primaryContainer) remplace les `ListTile` plats,
+  compteurs en badge `surfaceContainerHighest`, icônes par filtre.
+- En-têtes de groupe « Bibliothèque » / « Système » (labelSmall,
+  tracking 0.8).
+- Badge `errorContainer` affichant le nombre de téléchargements en
+  `STOPPED_ON_ERROR` sur l'entrée Téléchargements.
+
 ## UI — Réglages : carte « État effectif » réseau (étape 7/8)
 
 - `_EffectiveState` en tête de la section Réseau : port d'écoute et

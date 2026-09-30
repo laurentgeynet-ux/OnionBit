@@ -10,8 +10,10 @@ import '../theme/app_theme.dart';
 import 'nav_destination.dart';
 
 /// Sidebar fixe type Tribler (~216 px) : bouton « Ajouter » en tête,
-/// entrée Téléchargements + sous-filtres avec compteurs, puis
-/// Rechercher / Réglages / Diagnostic.
+/// groupe « Bibliothèque » (Téléchargements + sous-filtres avec
+/// compteurs, Rechercher) puis groupe « Système » (Réglages,
+/// Diagnostic). Items en pilule arrondie, badge d'erreurs sur
+/// l'entrée Téléchargements.
 class AppSidebar extends ConsumerWidget {
   const AppSidebar({
     super.key,
@@ -27,9 +29,18 @@ class AppSidebar extends ConsumerWidget {
 
   static const double width = 216;
 
+  static const _filterIcons = {
+    DownloadFilter.downloading: Icons.downloading,
+    DownloadFilter.completed: Icons.check_circle_outline,
+    DownloadFilter.active: Icons.bolt,
+    DownloadFilter.inactive: Icons.pause_circle_outline,
+  };
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final scheme = Theme.of(context).colorScheme;
+    final downloads = ref.watch(downloadsProvider).value;
+    final errors = downloads?.where((d) => d.isError).length ?? 0;
     return Material(
       color: scheme.surface,
       child: SizedBox(
@@ -66,33 +77,38 @@ class AppSidebar extends ConsumerWidget {
             ),
             Expanded(
               child: ListView(
-                padding: EdgeInsets.zero,
+                padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm),
                 children: [
-                  _item(
-                    context,
-                    kNavCatalog[0],
+                  const _GroupLabel('Bibliothèque'),
+                  _NavItem(
+                    d: kNavCatalog[0],
                     selected:
                         currentPath == '/downloads' &&
                         currentQuery['f'] == null,
+                    badge: errors > 0 ? _ErrorBadge(count: errors) : null,
                   ),
                   // Sous-filtres Téléchargements (sauf « Tous » =
                   // entrée parente).
                   for (final f in DownloadFilter.values.skip(1))
-                    _filterItem(context, ref, f),
-                  _item(
-                    context,
-                    kNavCatalog[1],
+                    _FilterItem(
+                      filter: f,
+                      icon: _filterIcons[f],
+                      selected:
+                          currentPath == '/downloads' &&
+                          currentQuery['f'] == f.queryKey,
+                      count: downloads?.where(f.matches).length,
+                    ),
+                  _NavItem(
+                    d: kNavCatalog[1],
                     selected: currentPath == '/search',
                   ),
-                  const Divider(height: AppSpacing.lg),
-                  _item(
-                    context,
-                    kNavCatalog[3],
+                  const _GroupLabel('Système'),
+                  _NavItem(
+                    d: kNavCatalog[3],
                     selected: currentPath == '/settings',
                   ),
-                  _item(
-                    context,
-                    kNavCatalog[2],
+                  _NavItem(
+                    d: kNavCatalog[2],
                     selected: currentPath == '/diagnostic',
                   ),
                 ],
@@ -103,43 +119,189 @@ class AppSidebar extends ConsumerWidget {
       ),
     );
   }
+}
 
-  Widget _item(
-    BuildContext context,
-    NavDestinationSpec d, {
-    required bool selected,
-  }) {
-    final scheme = Theme.of(context).colorScheme;
-    return ListTile(
-      dense: true,
+/// En-tête de groupe de la sidebar (« Bibliothèque », « Système »).
+class _GroupLabel extends StatelessWidget {
+  const _GroupLabel(this.label);
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        AppSpacing.sm,
+        AppSpacing.sm,
+        AppSpacing.sm,
+        AppSpacing.xs,
+      ),
+      child: Text(
+        label.toUpperCase(),
+        style: theme.textTheme.labelSmall?.copyWith(
+          color: theme.colorScheme.outline,
+          letterSpacing: 0.8,
+        ),
+      ),
+    );
+  }
+}
+
+/// Item de navigation principal en pilule (surbrillance arrondie).
+class _NavItem extends StatelessWidget {
+  const _NavItem({required this.d, required this.selected, this.badge});
+
+  final NavDestinationSpec d;
+  final bool selected;
+
+  /// Badge en bout d'item (ex. compteur d'erreurs).
+  final Widget? badge;
+
+  @override
+  Widget build(BuildContext context) {
+    return _SidebarItem(
+      icon: selected ? d.selectedIcon : d.icon,
+      label: d.label,
       selected: selected,
-      selectedTileColor: scheme.primaryContainer,
-      leading: Icon(selected ? d.selectedIcon : d.icon, size: 20),
-      title: Text(d.label),
+      trailing: badge,
       onTap: () => context.go(d.path),
     );
   }
+}
 
-  Widget _filterItem(
-    BuildContext context,
-    WidgetRef ref,
-    DownloadFilter filter,
-  ) {
+/// Item de sous-filtre indenté avec icône et compteur badge.
+class _FilterItem extends StatelessWidget {
+  const _FilterItem({
+    required this.filter,
+    required this.selected,
+    this.icon,
+    this.count,
+  });
+
+  final DownloadFilter filter;
+  final bool selected;
+  final IconData? icon;
+  final int? count;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(left: AppSpacing.lg),
+      child: _SidebarItem(
+        icon: icon,
+        label: filter.label,
+        selected: selected,
+        trailing: count == null ? null : _CountBadge(count: count!),
+        onTap: () => context.go('/downloads?f=${filter.queryKey}'),
+      ),
+    );
+  }
+}
+
+/// Brique commune : pilule `InkWell` arrondie, icône + label +
+/// trailing optionnel. Style M3 « navigation rail » adapté à la
+/// sidebar fixe.
+class _SidebarItem extends StatelessWidget {
+  const _SidebarItem({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+    this.icon,
+    this.trailing,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+  final IconData? icon;
+  final Widget? trailing;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final color = selected ? scheme.onPrimaryContainer : scheme.onSurface;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 2),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(24),
+        onTap: onTap,
+        child: Container(
+          decoration: BoxDecoration(
+            color: selected ? scheme.primaryContainer : Colors.transparent,
+            borderRadius: BorderRadius.circular(24),
+          ),
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.sm,
+            vertical: AppSpacing.sm - 2,
+          ),
+          child: Row(
+            children: [
+              if (icon != null) ...[
+                Icon(icon, size: 18, color: color),
+                const SizedBox(width: AppSpacing.sm),
+              ],
+              Expanded(
+                child: Text(
+                  label,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: color,
+                    fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              ?trailing,
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Badge de compteur neutre (fond `surfaceContainerHighest`).
+class _CountBadge extends StatelessWidget {
+  const _CountBadge({required this.count});
+
+  final int count;
+
+  @override
+  Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final selected =
-        currentPath == '/downloads' && currentQuery['f'] == filter.queryKey;
-    final downloads = ref.watch(downloadsProvider).value;
-    final count = downloads?.where(filter.matches).length;
-    return ListTile(
-      dense: true,
-      contentPadding: const EdgeInsets.only(left: AppSpacing.xl + 8),
-      selected: selected,
-      selectedTileColor: scheme.primaryContainer,
-      title: Text(filter.label),
-      trailing: count == null
-          ? null
-          : Text('$count', style: Theme.of(context).textTheme.bodySmall),
-      onTap: () => context.go('/downloads?f=${filter.queryKey}'),
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Text('$count', style: Theme.of(context).textTheme.labelSmall),
+    );
+  }
+}
+
+/// Badge d'erreurs (fond `errorContainer`) — attirer l'œil sur les
+/// téléchargements en échec sans changer de page.
+class _ErrorBadge extends StatelessWidget {
+  const _ErrorBadge({required this.count});
+
+  final int count;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+      decoration: BoxDecoration(
+        color: scheme.errorContainer,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Text(
+        '$count',
+        style: Theme.of(context).textTheme.labelSmall
+            ?.copyWith(color: scheme.onErrorContainer),
+      ),
     );
   }
 }
