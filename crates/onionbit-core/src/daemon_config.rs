@@ -376,6 +376,11 @@ pub struct TunnelCommunityConfig {
     /// Reserve aux bancs controles (point d'introduction joignable
     /// uniquement en loopback, NAT sans hairpin, ...).
     pub data_exit_peer: String,
+    /// Guard nodes (ADR-0010, experimentale) : premiers sauts
+    /// persistants bornant la loterie Sybil des reconstructions sous
+    /// `DESTROY`. `false` = selection pyipv8 exacte (defaut tant que la
+    /// feature n'est pas validee sur le terrain).
+    pub guards_enabled: bool,
     /// Clés tunnel additionnelles — préservées.
     #[serde(flatten)]
     pub extra: serde_json::Map<String, Value>,
@@ -390,6 +395,7 @@ impl Default for TunnelCommunityConfig {
             exitnode_enabled: false,
             intro_point_peer: String::new(),
             data_exit_peer: String::new(),
+            guards_enabled: false,
             extra: serde_json::Map::new(),
         }
     }
@@ -901,6 +907,7 @@ impl DaemonConfig {
             walker_interval: self.ipv8.walker_interval,
             min_circuits: self.tunnel_community.min_circuits,
             max_circuits: self.tunnel_community.max_circuits,
+            guards_enabled: self.tunnel_community.guards_enabled,
             socks_listen_ports: self.libtorrent.socks_listen_ports.clone(),
             enable_content_discovery: self.content_discovery_community.enabled,
             listen_addr_v6: listen_v6,

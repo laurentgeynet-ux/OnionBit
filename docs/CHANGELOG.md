@@ -27,9 +27,17 @@ en haut.
   assertion déterministe). 5 tests unitaires (adoption+diversité,
   ordre, rétrogradation sans tirage sous pression, remise à zéro sur
   preuve de vie, repli pyipv8).
-- Persistance DB, rotation par horloge au watchdog et exposition API
-  restent à faire — feature expérimentale derrière
-  `TunnelSettings::guards.enabled`.
+- Persistance SQLite (migration v11, table `guards` : clé publique,
+  dernière adresse, adoption/dernière vue, échecs, actif/réserve,
+  `position` = ordre sémantique du set) via `onionbit-db::guards`
+  (lignes brutes, snapshot `replace_all` ≤ 5 lignes) et adaptateur
+  `onionbit-core::guard_store::DbGuardStore` implémentant
+  `GuardStore` — `onionbit-tunnel`/`onionbit-db` ne dépendent pas l'un
+  de l'autre, la couture vit dans `core`. Injection dans
+  `ipv8_stack` quand `tunnel_community/guards_enabled` est vrai dans
+  `configuration.json` (défaut `false` partout).
+- Reste à faire : exposition API/diagnostic, activation par défaut
+  après validation terrain.
 
 ## Campagne libFuzzer native Windows + ADR guard nodes (2026-10-01)
 

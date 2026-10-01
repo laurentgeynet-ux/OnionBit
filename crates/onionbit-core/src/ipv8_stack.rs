@@ -133,6 +133,10 @@ pub struct Ipv8Config {
     /// (`required_exit` de `create_circuit` pyipv8). `None` =
     /// selection automatique `EXIT_BT`.
     pub data_exit_peer: Option<UdpAddress>,
+    /// Guard nodes (ADR-0010, experimentale) : premiers sauts
+    /// persistants bornant la loterie Sybil des reconstructions.
+    /// `false` = selection pyipv8 exacte.
+    pub guards_enabled: bool,
     /// Extension Rust (bancs loopback) : estimation WAN initiale.
     /// Sur un mesh 100 % loopback, `destination_address` des
     /// intro-responses est toujours en sous-reseau LAN →
@@ -179,6 +183,7 @@ impl Ipv8Config {
             enable_content_discovery: true,
             intro_point_peer: None,
             data_exit_peer: None,
+            guards_enabled: false,
             estimated_wan: None,
             listen_addr_v6: Some(format!("[::]:{}", DEFAULT_IPV8_PORT + 1)),
             peer_cache_max: DEFAULT_PEER_CACHE_MAX,
@@ -208,6 +213,7 @@ impl Default for Ipv8Config {
             enable_content_discovery: true,
             intro_point_peer: None,
             data_exit_peer: None,
+            guards_enabled: false,
             estimated_wan: None,
             listen_addr_v6: None,
             peer_cache_max: DEFAULT_PEER_CACHE_MAX,
@@ -1125,11 +1131,21 @@ impl Ipv8Stack {
                     max_circuits: config.max_circuits.max(1) as usize,
                     intro_point_peer: config.intro_point_peer.clone(),
                     data_exit_peer: config.data_exit_peer.clone(),
+                    guards: onionbit_tunnel::guards::GuardsConfig {
+                        enabled: config.guards_enabled,
+                        ..onionbit_tunnel::guards::GuardsConfig::default()
+                    },
                     ..onionbit_tunnel::settings::TunnelSettings::default()
                 },
                 community_id,
             )
             .await;
+            // ADR-0010 : persistance des guards dans `onionbit.db` —
+            // injectee seulement quand la feature est activee (set
+            // volatile sinon, selection pyipv8 exacte).
+            if config.guards_enabled {
+                t.set_guard_store(Arc::new(crate::guard_store::DbGuardStore::new(db.clone())));
+            }
             // `my_peer` Python est partage entre overlays : la
             // tunnel-community emprunte les estimations WAN/LAN de la
             // discovery pour ses introductions et punctures.

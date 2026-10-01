@@ -15,7 +15,7 @@
 //! semantique du schema, pas l'interoperabilite binaire).
 
 /// Version courante du schema de ce crate.
-pub const SCHEMA_VERSION: i64 = 10;
+pub const SCHEMA_VERSION: i64 = 11;
 
 /// Script SQL de chaque migration, dans l'ordre (index 0 = v1).
 pub const MIGRATIONS: &[&str] = &[
@@ -233,6 +233,22 @@ CREATE TABLE tunnel_pex (
     source    INTEGER NOT NULL DEFAULT 0,
     last_seen INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (info_hash, own, peer_key, seeder_pk)
+);
+",
+    // v11 : guard nodes (ADR-0010) — premiers sauts persistants de la
+    // TunnelCommunity. Identite = cle publique (un changement d'IP ne
+    // change pas le guard) ; `position` conserve l'ordre du set
+    // (actifs d'abord, reserve ensuite) qui est semantique pour
+    // `order_first_hops`. Ecriture par snapshot complet (<= 5 lignes).
+    "
+CREATE TABLE guards (
+    public_key  BLOB PRIMARY KEY,
+    address     TEXT NOT NULL DEFAULT '',
+    adopted_at  INTEGER NOT NULL,
+    last_seen   INTEGER NOT NULL,
+    failures    INTEGER NOT NULL DEFAULT 0,
+    reserve     INTEGER NOT NULL DEFAULT 0,
+    position    INTEGER NOT NULL DEFAULT 0
 );
 ",
 ];

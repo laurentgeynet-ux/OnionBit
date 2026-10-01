@@ -1,7 +1,9 @@
 # ADR-0010 — Guard nodes : persistance du premier saut
 
-Statut : Proposée (2026-10-01) — document de décision, **aucune
-implémentation** avant acceptation.
+Statut : Acceptée (2026-10-01) — implémentée derrière
+`TunnelSettings::guards.enabled` / `tunnel_community/guards_enabled`
+(**désactivée par défaut** : sélection pyipv8 exacte). Activation par
+défaut et exposition API après validation terrain.
 
 ## Contexte
 
@@ -62,10 +64,12 @@ trait GuardStore: Send + Sync {
 }
 ```
 
-- `GuardStore` implémenté dans `onionbit-db` (table `guards` : clé
-  publique, dernière adresse vue, date d'adoption, compteur d'échecs,
-  statut actif/réserve), injecté par `core`/`daemon` à la construction
-  de la communauté ;
+- `onionbit-db` stocke des lignes brutes (table `guards`, migration
+  v11 : clé publique, dernière adresse vue, dates d'adoption/dernière
+  vue, compteur d'échecs, statut actif/réserve, `position` = ordre
+  sémantique du set) sans connaître `GuardRecord` ; l'adaptateur
+  `DbGuardStore` vit dans `onionbit-core::guard_store` et est injecté
+  par `ipv8_stack` quand `guards_enabled` est vrai ;
 - sans store injecté (tests, outils) : `InMemoryGuardStore` — set
   volatile, comportement identique sauf persistance ;
 - pas de chiffrement supplémentaire — la base n'est pas chiffrée
