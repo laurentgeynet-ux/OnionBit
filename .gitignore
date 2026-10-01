@@ -42,3 +42,4 @@ secrets.*
 /logs/
 *.log
 coverage/
+/promo/
