@@ -583,6 +583,167 @@ async fn hidden_service_e2e_roundtrip() {
     assert_eq!(got.data, payload);
 }
 
+/// Invariant de non-fuite (threat model) : pendant tout le cycle
+/// hidden-service (peers-request -> create-e2e -> link-e2e -> donnee
+/// e2e), l'endpoint du downloader n'emet que des datagrammes a
+/// prefixe tunnel et uniquement vers les premiers sauts de ses
+/// circuits — JAMAIS vers le point d'introduction, l'adresse reelle
+/// du seeder ou une destination hors overlay. Reciproquement, ni
+/// l'intro point ni le seeder ne recoivent de datagramme dont la
+/// source est l'adresse du downloader : tout le contact transite
+/// dans les cellules relayees.
+///
+/// Le downloader ne connait volontairement QUE ses deux relais
+/// (`learn` restreint) : le RP est appris via `rp_info`
+/// (`add_verified` dans `on_created_e2e`), l'intro point via
+/// l'`IntroductionPoint` — aucun egress direct vers i/s n'est alors
+/// justifiable comme choix de relais.
+#[tokio::test]
+async fn hidden_service_egress_uniquement_vers_relais() {
+    let d = make_node().await; // downloader
+    let s = make_node().await; // seeder
+    let i = make_node().await; // point d'introduction
+    let r1 = make_node().await; // premier saut
+    let r2 = make_node().await; // second saut / sortie
+
+    learn(&d, &r1);
+    learn(&d, &r2);
+    // Le seeder connait son intro point et les relais (candidats de
+    // son circuit RP_SEEDER) ; les relais/intro se connaissent entre
+    // eux — aucun ne connait le downloader.
+    for (a, b) in [
+        (&s, &i),
+        (&s, &r1),
+        (&s, &r2),
+        (&i, &r1),
+        (&i, &r2),
+        (&i, &s),
+        (&r1, &r2),
+        (&r2, &r1),
+        (&r1, &i),
+        (&r2, &i),
+    ] {
+        learn(a, b);
+    }
+
+    // Taps avant toute operation : enregistrent chaque datagramme.
+    let mut tap_d = d.ep.set_tap().await;
+    let mut tap_i = i.ep.set_tap().await;
+    let mut tap_s = s.ep.set_tap().await;
+
+    let info_hash = [8u8; 20];
+
+    // Seeder : swarm + point d'introduction chez `i`.
+    s.tunnel.join_swarm(info_hash, 0, true);
+    let ip_cid = s
+        .tunnel
+        .create_introduction_point(info_hash, Some(&peer_of(&i)))
+        .await
+        .expect("circuit IP_SEEDER");
+    s.tunnel
+        .wait_circuit_ready(ip_cid, TEST_TIMEOUT.as_millis() as u64)
+        .await
+        .expect("IP circuit READY");
+    let intro_rx = s
+        .tunnel
+        .send_establish_intro(ip_cid, info_hash)
+        .await
+        .expect("send establish-intro");
+    tokio::time::timeout(TEST_TIMEOUT, intro_rx)
+        .await
+        .expect("timeout intro-established")
+        .expect("intro-established");
+
+    // Downloader : swarm a 2 sauts — a 1 saut, le RP verrait
+    // legitiment l'IP de d (c'est son dernier saut) ; a 2, seuls
+    // r1/r2 la voient. L'invariant reste le meme : jamais de contact
+    // direct downloader <-> i/s.
+    d.tunnel.join_swarm(info_hash, 2, false);
+    let data_cid = d
+        .tunnel
+        .create_circuit(2, &peer_of(&r1))
+        .await
+        .expect("circuit data D");
+    d.tunnel
+        .wait_circuit_ready(data_cid, TEST_TIMEOUT.as_millis() as u64)
+        .await
+        .expect("circuit data READY");
+
+    let ip_hint = onionbit_tunnel::routing::IntroductionPoint {
+        address: UdpAddress::from(i.addr),
+        peer_key: i.key.public_key().to_bin(),
+        seeder_pk: Vec::new(),
+        source: onionbit_tunnel::routing::PEER_SOURCE_UNKNOWN,
+        last_seen_secs: 0,
+    };
+    let ips = d
+        .tunnel
+        .send_peers_request(info_hash, Some(&ip_hint), 2)
+        .await
+        .expect("peers-response");
+    assert_eq!(ips.len(), 1, "un point d'introduction attendu");
+
+    let e2e_cid = create_e2e_with_retry(&d, info_hash, &ips[0]).await;
+
+    // Plan de donnees e2e, lui aussi sous invariant.
+    let mut s_rx = s.tunnel.data_rx();
+    let zero = UdpAddress::from("0.0.0.0:0".parse::<SocketAddr>().unwrap());
+    d.tunnel
+        .send_data(e2e_cid, &zero, &zero, b"e2e-invariant")
+        .await
+        .expect("send e2e data");
+    tokio::time::timeout(TEST_TIMEOUT, s_rx.recv())
+        .await
+        .expect("pas de donnee e2e au seeder")
+        .expect("canal data seeder");
+
+    // Laisse retomber les datagrammes encore en vol avant le verdict.
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // (1) Egress du downloader : destinations ⊆ {r1, r2} et chaque
+    //     datagramme porte le prefixe tunnel — rien d'autre ne sort.
+    let allowed: std::collections::HashSet<SocketAddr> = [r1.addr, r2.addr].into_iter().collect();
+    // Prefixe filaire complet : 0x00 + version(0x02) + community_id.
+    let prefix = onionbit_ipv8::packet::prefix_of(&TUNNEL_COMMUNITY_ID);
+    let mut tx_count = 0usize;
+    while let Ok((dir, dest, bytes)) = tap_d.try_recv() {
+        if !matches!(dir, onionbit_ipv8::endpoint::TapDir::Tx) {
+            continue;
+        }
+        tx_count += 1;
+        assert!(
+            allowed.contains(&dest),
+            "fuite : egress direct du downloader vers {dest} (non-relais)"
+        );
+        assert!(
+            bytes.starts_with(&prefix),
+            "egress sans prefixe tunnel vers {dest}: {}",
+            hex::encode(&bytes[..bytes.len().min(40)])
+        );
+    }
+    assert!(tx_count > 0, "tap vide — instrumentation cassee");
+
+    // (2) Ingress de i et s : aucune source n'est l'adresse reelle
+    //     de d — ni l'intro point ni le seeder n'apprennent l'IP du
+    //     downloader.
+    let mut i_rx = 0usize;
+    while let Ok((dir, src, _)) = tap_i.try_recv() {
+        if matches!(dir, onionbit_ipv8::endpoint::TapDir::Rx) {
+            i_rx += 1;
+            assert_ne!(src, d.addr, "l'intro point voit l'IP du downloader");
+        }
+    }
+    assert!(i_rx > 0, "i n'a rien recu — le flux n'a pas eu lieu");
+    let mut s_pkts = 0usize;
+    while let Ok((dir, src, _)) = tap_s.try_recv() {
+        if matches!(dir, onionbit_ipv8::endpoint::TapDir::Rx) {
+            s_pkts += 1;
+            assert_ne!(src, d.addr, "le seeder voit l'IP du downloader");
+        }
+    }
+    assert!(s_pkts > 0, "s n'a rien recu — le flux n'a pas eu lieu");
+}
+
 /// Hidden services via la vraie DHT IPv8 : `on_establish_intro`
 /// annonce le point d'introduction sous la cle du swarm
 /// (`dht_announce` -> `store_value`) ; le downloader le retrouve par

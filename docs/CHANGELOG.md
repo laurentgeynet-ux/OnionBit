@@ -3,7 +3,29 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
-## Résilience ancre : `rendezvous-established` publie le WAN estimé, pacing des réannonces DHT (2026-10-01)
+## Anti-fuite : `torrent_checker` ne scrape jamais un swarm anonyme + invariant d'egress hidden-service (2026-10-01)
+
+- Audit statique des chemins d'egress (`UdpSocket::bind`, `send_to`,
+  `lookup_host`, `reqwest`, `TcpStream`) : le plan de contrôle IPv8
+  passe uniquement par `UdpEndpoint::send_to` ; les `peers-request`/
+  `create-e2e` transitent dans les cellules (`tunnel_data`/`send_cell`)
+  — c'est l'exit qui fait le lookup DHT du swarm.
+- **Fuite corrigée** : `TorrentChecker` scrapait les trackers en clair
+  depuis l'IP réelle pour tout infohash de `torrent_state` — dont ceux
+  en téléchargement/seeding anonyme (`anon_hops > 0`), liant IP ↔
+  contenu. `check_tracker` filtre désormais ces infohashes avant tout
+  egress et `check_oldest` les saute en SQL ; la santé d'un swarm caché
+  vient du tunnel (`peers-request`), comme Tribler — écart assumé avec
+  upstream qui scrape en clair.
+- Nouveau test `torrent_checker_never_scrapes_anonymous_infohash`
+  (`onionbit-core`) : tracker UDP espion en loopback — `check_tracker`
+  et `check_oldest` silencieux, zéro datagramme émis.
+- Nouveau test `hidden_service_egress_uniquement_vers_relais`
+  (`circuits_loopback`) : tap `UdpEndpoint::set_tap` sur 3 noeuds —
+  pendant `join_swarm`/`peers-request`/`create-e2e`/`link-e2e`/donnée
+  e2e à 2 sauts, tout egress du downloader est un datagramme à préfixe
+  tunnel vers ses seuls premiers sauts, et ni le point d'introduction
+  ni le seeder ne reçoivent de paquet sourcé de l'adresse du downloader.
 
 - `on_establish_rendezvous` répondait `local_addr` au lieu de
   `my_estimated_wan` (pyipv8 `TunnelCommunity.on_establish_rendezvous`)

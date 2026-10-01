@@ -25,6 +25,18 @@ et sur le reseau public Tribler :
   circuits) prouve en plein transfert.
 - **Reseau reel** : telechargement anonyme a 3 sauts via des exits
   Tribler reels (magnet public, octets verifies).
+- **Egress borne aux relais** (`hidden_service_egress_uniquement_vers_relais`)
+  : pendant `join_swarm`/`peers-request`/`create-e2e`/`link-e2e` et la
+  donnee e2e a 2 sauts, le tap `UdpEndpoint` prouve que chaque datagramme
+  emis par le downloader est a prefixe tunnel et destine a un premier
+  saut de circuit — le point d'introduction et le seeder ne recoivent
+  jamais de paquet source de l'adresse reelle du downloader.
+- **Pas de scrape clair d'un swarm anonyme**
+  (`torrent_checker_never_scrapes_anonymous_infohash`) : un infohash
+  `anon_hops > 0` n'est jamais annonce aux trackers depuis l'IP reelle
+  — ni par `check_oldest` (rotation SQL) ni par `check_tracker`
+  (filtre en amont des chemins API et periodique). Ecart assume avec
+  Tribler upstream, dont le health-check sort en clair.
 
 ## Ce qui n'est PAS demontre
 
@@ -43,10 +55,14 @@ Un attaquant de cette classe n'est **pas** couvert :
   BitTorrent clair (protocole en clair par construction) et peut
   analyser/modifier les pieces non chiffrees — l'integrite par pieces
   protege l'achemineur, pas l'exit.
-- **Fuites applicatives hors banc** : les garde-fous bloquent les
-  replis directs connus, mais un chemin de code non exerce par les bancs
-  (ex. un futur endpoint API) n'est garanti que par la revue, pas par
-  mesure.
+- **Fuites applicatives hors banc** : l'audit des points d'egress a
+  elimine le scrape clair des swarms anonymes (`torrent_checker`) et
+  l'invariant d'egress hidden-service est teste ; mais un chemin de
+  code non exerce (ex. un futur endpoint API ou service ajoute) n'est
+  garanti que par la revue, pas par mesure. Points residuels connus :
+  la resolution DNS des URI `http(s)` utilisateur (`check_uri_policy`)
+  et la synchronisation periodique `trackers_file` sortent en clair —
+  aucune des deux ne transporte d'infohash.
 - **Fingerprinting de l'implementation** : les differences de timing,
   tailles de paquets ou comportements de retry entre Rust et pyipv8
   peuvent rendre un noeud OnionBit identifiable sur le reseau.
