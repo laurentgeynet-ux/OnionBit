@@ -412,11 +412,14 @@ fn select_filtered(conn: &Connection, p: &SelectParams) -> Result<Vec<ChannelNod
         p.order_by(use_fts || !p.terms.is_empty(), &mut args)
     ));
     // `pony_query[first-1:last]` : OFFSET first-1, LIMIT borne.
+    // rusqlite >= 0.37 n'accepte plus `u64` en ToSql : borne i64.
     let first = p.first.max(1);
     let last = p.last.unwrap_or(first + 49);
     sql.push_str(" LIMIT ? OFFSET ?");
-    args.push(Box::new(last.saturating_sub(first) + 1));
-    args.push(Box::new(first - 1));
+    args.push(Box::new(
+        i64::try_from(last.saturating_sub(first) + 1).unwrap_or(i64::MAX),
+    ));
+    args.push(Box::new(i64::try_from(first - 1).unwrap_or(i64::MAX)));
 
     let mut stmt = conn.prepare(&sql)?;
     let refs: Vec<&dyn rusqlite::ToSql> = args.iter().map(|b| b.as_ref()).collect();
