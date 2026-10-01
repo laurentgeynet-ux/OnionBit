@@ -39,6 +39,18 @@ same design Tribler pioneered:
 > real Tribler network (Tribler 8.x interop testbench). Not yet recommended for
 > high-stakes anonymity.
 
+## Screenshots
+
+| Downloads — multi-hop anonymity badges | Diagnostics — live circuits & relays |
+| :---: | :---: |
+| ![Downloads](assets/screenshots/screenshot-downloads.png) | ![Diagnostics](assets/screenshots/screenshot-diagnostic.png) |
+
+| Decentralized search | Settings & dark mode |
+| :---: | :---: |
+| ![Search](assets/screenshots/screenshot-search.png) | ![Dark mode](assets/screenshots/screenshot-dark.png) |
+
+*UI in English and French (System / English / Français in Settings → Appearance).*
+
 ## Architecture
 
 ```
