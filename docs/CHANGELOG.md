@@ -49,6 +49,14 @@ en haut.
   listes tronquées, dispatch non signé, DHT, uTP) + scaffold
   `fuzz/` cargo-fuzz (6 cibles, dont `on_raw_datagram` complet) prêt
   pour nightly+clang.
+- Storm `DESTROY` : test `destroy_storm_et_reconstruction_bornee` —
+  destroys signés arbitraires (parité pyipv8 : pas d'auth par saut)
+  sur circuits valides/cids inconnus → nettoyage idempotent, purge
+  symétrique des sorties, rebuild OK ; borne `ready+pending >= min`
+  de `build_circuits_if_needed` épinglée (rythme rebuild plafonné
+  par le watchdog 5 s, pas par le flux entrant). Épingle DNS
+  `adresse_domaine_ne_se_resout_pas_cote_client` : `UdpAddress::Domain`
+  opaque côté client, résolution uniquement côté exit.
 
 - `on_establish_rendezvous` répondait `local_addr` au lieu de
   `my_estimated_wan` (pyipv8 `TunnelCommunity.on_establish_rendezvous`)

@@ -162,6 +162,18 @@ fn cellule_decryptee_sans_msg_interne_ne_panique_pas() {
     assert!(Cell::parse(&vingt_neuf).is_err());
 }
 
+/// Epingle DNS (threat model) : `UdpAddress::Domain` ne se resout
+/// JAMAIS en `SocketAddr` — l'endpoint ne peut donc pas emettre vers
+/// un nom (ni le resoudre localement) ; la resolution a lieu cote
+/// exit (`send_tcp_request` sur `TcpStream::connect((host, port))`).
+/// Si un jour `to_socket_addr` resolvait les domaines, le chemin UDP
+/// fuiterait en DNS clair — ce test le detecterait.
+#[test]
+fn adresse_domaine_ne_se_resout_pas_cote_client() {
+    let domain = onionbit_ipv8::UdpAddress::Domain("tracker.example".into(), 6969);
+    assert!(domain.to_socket_addr().is_none());
+}
+
 proptest! {
     /// Octets arbitraires : tous les parsers, aucune panic.
     #[test]

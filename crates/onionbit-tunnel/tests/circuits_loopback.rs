@@ -210,6 +210,105 @@ async fn circuit_exit_flags_mis_a_jour_apres_introduction_tardive() {
     );
 }
 
+/// Rafale de `DESTROY` (threat model — relais malveillant) : le
+/// DESTROY n'est authentifie ni par saut ni par pair au niveau du
+/// fil (parite pyipv8 — quiconque connait le `circuit_id` peut
+/// l'abattre ; le premier saut connait toujours le sien, d'ou la
+/// fenetre d'attaque reelle). Ce test epingle :
+///
+///  - nettoyage idempotent (destroy repete, cid inconnu : no-op) ;
+///  - purge symetrique cote sortie (`exit_sockets`/`relays`) ;
+///  - borne d'amplification des reconstructions :
+///    `build_circuits_if_needed` cree au plus un circuit par appel et
+///    s'arrete a `ready + pending >= min` — sous storm, le rythme de
+///    rebuild est donc plafonne par le tick du watchdog
+///    (`CIRCUIT_PROBE_INTERVAL` = 5 s cote core), jamais par le flux
+///    de destroys entrant ;
+///  - le noeud reste fonctionnel : reconstruction immediate possible.
+#[tokio::test]
+async fn destroy_storm_et_reconstruction_bornee() {
+    let a = make_node().await; // cible
+    let r = make_node_flags(PEER_FLAG_RELAY | PEER_FLAG_EXIT_BT).await; // relais/sortie
+    let atk = make_node().await; // pair hostile — cle valide, paquets signes
+    learn(&a, &r);
+    learn(&r, &a);
+    // `a` connait `r` comme sortie BT (chemin du cache bootstrap).
+    a.tunnel.register_exit_peer(
+        &r.key.public_key().to_bin(),
+        r.addr,
+        PEER_FLAG_RELAY | PEER_FLAG_EXIT_BT,
+    );
+
+    // Borne anti-amplification : 5 appels rapides -> au plus `min`
+    // circuits (pending+ready comptes). Deterministe : chaque appel
+    // cree au plus un circuit, les appels excedentaires sont no-op.
+    for _ in 0..5 {
+        a.tunnel.build_circuits_if_needed(1, 2).await.unwrap();
+    }
+    assert!(
+        a.tunnel.circuit_count() <= 2,
+        "build_circuits_if_needed sans borne : {} circuits",
+        a.tunnel.circuit_count()
+    );
+
+    // Attendre les circuits READY.
+    let deadline = Instant::now() + TEST_TIMEOUT;
+    let cids = loop {
+        let ready = a.tunnel.ready_circuits();
+        if ready.len() >= 2 {
+            break ready;
+        }
+        assert!(Instant::now() < deadline, "circuits jamais READY");
+        tokio::time::sleep(POLL).await;
+    };
+
+    // Rafale : circuits valides et `circuit_id` inconnus melanges,
+    // repetition incluse — depuis un pair signe quelconque.
+    for i in 0..30u32 {
+        let cid = match i % 3 {
+            0 => cids[0],
+            1 => cids[1],
+            _ => 0xF000_0000 + i,
+        };
+        atk.tunnel
+            .send_destroy(&UdpAddress::from(a.addr), cid, DESTROY_REASON_UNNEEDED)
+            .await
+            .ok();
+        atk.tunnel
+            .send_destroy(&UdpAddress::from(r.addr), cid, DESTROY_REASON_UNNEEDED)
+            .await
+            .ok();
+    }
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    // Cote `a` : les deux circuits abattus, les cids inconnus ignores.
+    assert_eq!(a.tunnel.circuit_count(), 0, "circuit residuel apres storm");
+    assert!(a.tunnel.ready_circuits().is_empty());
+    // Cote `r` : sorties et routes purgees symetriquement.
+    assert!(
+        r.tunnel.exits_info().is_empty(),
+        "exit_socket residuelle apres storm"
+    );
+
+    // Le noeud reste fonctionnel : reconstruction immediate OK.
+    let cid = a
+        .tunnel
+        .create_circuit(1, &peer_of(&r))
+        .await
+        .expect("rebuild post-storm");
+    assert!(wait_ready(&a.tunnel, cid).await, "rebuild jamais READY");
+
+    // Double-destroy sur le circuit frais : idempotent, pas de panic.
+    for _ in 0..3 {
+        atk.tunnel
+            .send_destroy(&UdpAddress::from(a.addr), cid, DESTROY_REASON_UNNEEDED)
+            .await
+            .ok();
+    }
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(a.tunnel.circuit_count(), 0);
+}
+
 #[tokio::test]
 async fn tunnel_circuit_2_hops_becomes_ready() {
     let a = make_node().await;

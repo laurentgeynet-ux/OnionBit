@@ -77,6 +77,20 @@ et sur le reseau public Tribler :
   pile 29 octets faisait paniquer `check_cell_flags` (DoS injectable
   par un relais du circuit). Scaffold `fuzz/` cargo-fuzz pret pour le
   fuzzing couverture-guidee prolonge (nightly + clang requis).
+- **Storm de DESTROY borne** (`destroy_storm_et_reconstruction_bornee`)
+  : le `DESTROY` n'est authentifie ni par saut ni par pair (parite
+  pyipv8 — un premier saut peut toujours abattre son circuit). Epingle
+  : nettoyage idempotent, purge symetrique relais/sortie,
+  reconstruction possible — et la borne d'amplification
+  (`build_circuits_if_needed` : 1 circuit par appel, plafond
+  `ready + pending >= min`, rythme du watchdog 5 s cote core).
+- **Pas de resolution DNS cote client** (epingle
+  `adresse_domaine_ne_se_resout_pas_cote_client`) : `ATYP_DOMAIN`
+  SOCKS5 -> `UdpAddress::Domain` opaque, `to_socket_addr` renvoie
+  `None` — le domaine est forwarde dans la cellule (`http-request`)
+  et resolu par le noeud de sortie (`send_tcp_request`), comme un
+  exit Tor. **Residu documente** : bootstrap configure et
+  `check_uri_policy` resolvent en clair (amorcage et URI utilisateur).
 
 ## Ce qui n'est PAS demontre
 
