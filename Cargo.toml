@@ -17,6 +17,7 @@ members = [
 # Les crates vendored (`[patch.crates-io]`) ne sont pas des membres du
 # workspace : l'exclure permet de lancer `cargo test` dans vendor/*.
 exclude = [
+    "fuzz",
     "vendor/librqbit",
     "vendor/librqbit-dht",
     "vendor/librqbit-dualstack-sockets",

@@ -27,3 +27,8 @@ librqbit-dualstack-sockets = "0.7"
 [dev-dependencies]
 tempfile.workspace = true
 tracing-subscriber.workspace = true
+hex.workspace = true
+proptest.workspace = true
+# Re-expose pour les tests d'integration (fuzz_regression) — le parser
+# de datagrammes uTP est une surface exposee aux relais hostiles.
+librqbit-utp.workspace = true

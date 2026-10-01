@@ -1,0 +1,73 @@
+# This file is part of OnionBit - a Rust port of the Tribler daemon.
+# Copyright (C) 2026 Laurent Geynet <laurent.geynet@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+# Harnais cargo-fuzz (libFuzzer) des surfaces de parsing exposees aux
+# relais/pairs hostiles. Requiert nightly + clang :
+#   rustup toolchain install nightly
+#   cargo +nightly install cargo-fuzz
+#   cargo +nightly fuzz run <cible>
+# Le miroir stable executable en CI est
+# `crates/onionbit-tunnel/tests/fuzz_regression.rs`.
+
+[package]
+name = "onionbit-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+onionbit-ipv8 = { path = "../crates/onionbit-ipv8" }
+onionbit-crypto = { path = "../crates/onionbit-crypto" }
+onionbit-tunnel = { path = "../crates/onionbit-tunnel" }
+librqbit-utp = { path = "../vendor/librqbit-utp" }
+tokio = { version = "1", features = ["full"] }
+
+# Meme version vendored que le workspace parent — le patch ne
+# s'herite pas dans un workspace autonome.
+[patch.crates-io]
+librqbit-dualstack-sockets = { path = "../vendor/librqbit-dualstack-sockets" }
+
+# Workspace autonome : cargo-fuzz construit hors du workspace parent.
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "ipv8_packet"
+path = "fuzz_targets/ipv8_packet.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "tunnel_cell"
+path = "fuzz_targets/tunnel_cell.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "tunnel_payloads"
+path = "fuzz_targets/tunnel_payloads.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "unsigned_dispatch"
+path = "fuzz_targets/unsigned_dispatch.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "utp_datagram"
+path = "fuzz_targets/utp_datagram.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "raw_datagram"
+path = "fuzz_targets/raw_datagram.rs"
+test = false
+doc = false

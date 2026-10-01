@@ -40,6 +40,15 @@ en haut.
   rejoué verbatim depuis `seen_e2e` sans second `RP_SEEDER`. Surface
   résiduelle (coût RP par identifiant neuf, parité pyipv8) documentée
   dans `docs/security/threat_model.md`.
+- Fuzzing des parsers (P1) : correctif DoS dans `cell.rs` —
+  `check_cell_flags`, `decrypt_cell`, `encrypt_cell` et
+  `Cell::swap_circuit_id` indexaient sans borne ; une cellule
+  déchiffrant à ≤ 29 octets crashait le process (injectable par un
+  relais du circuit). Gardes `Truncated` ajoutées. Harnais stable
+  `tests/fuzz_regression.rs` (proptest : bordures du format 22..46,
+  listes tronquées, dispatch non signé, DHT, uTP) + scaffold
+  `fuzz/` cargo-fuzz (6 cibles, dont `on_raw_datagram` complet) prêt
+  pour nightly+clang.
 
 - `on_establish_rendezvous` répondait `local_addr` au lieu de
   `my_estimated_wan` (pyipv8 `TunnelCommunity.on_establish_rendezvous`)

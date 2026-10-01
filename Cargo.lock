@@ -3163,6 +3163,7 @@ dependencies = [
  "onionbit-crypto",
  "onionbit-ipv8",
  "onionbit-network-policy",
+ "proptest",
  "rand 0.10.3",
  "serde",
  "tempfile",

@@ -115,8 +115,13 @@ impl Cell {
     }
 
     /// Remplace le `circuit_id` de la cellule brute
-    /// (`swap_circuit_id` Rust tunnels).
+    /// (`swap_circuit_id` Rust tunnels). Entree trop courte pour
+    /// porter un `circuit_id` : rendue inchangee (elle sera rejetee
+    /// par le parser en aval plutot que de paniquer ici).
     pub fn swap_circuit_id(cell: &[u8], circuit_id: u32) -> Vec<u8> {
+        if cell.len() < 27 {
+            return cell.to_vec();
+        }
         let mut out = cell.to_vec();
         out[23..27].copy_from_slice(&circuit_id.to_be_bytes());
         out
@@ -125,6 +130,15 @@ impl Cell {
 
 /// `check_cell_flags` des tunnels Rust.
 pub fn check_cell_flags(cell: &[u8], max_relay_early: u32) -> Result<(), Ipv8Error> {
+    // Le resultat d'un decrypt peut etre plus court que la cellule
+    // d'entree (le tag AEAD est retire par couche) : jusqu'a 29 octets,
+    // sans `inner_msg_id` — borne avant toute indexation.
+    if cell.len() <= OFF_INNER_MSG_ID {
+        return Err(Ipv8Error::Truncated {
+            need: OFF_INNER_MSG_ID + 1,
+            have: cell.len(),
+        });
+    }
     // relay_early non nul uniquement pour extend (msg 4).
     if (cell[OFF_RELAY_EARLY] == 0 && cell[OFF_INNER_MSG_ID] == 4) || max_relay_early == 0 {
         return Err(Ipv8Error::Malformed("flag relay_early absent ou inattendu"));
@@ -145,6 +159,12 @@ pub fn encrypt_cell(
     direction: onionbit_crypto::ipv8::session::Direction,
     keys_list: &mut [SessionKeys],
 ) -> Result<Vec<u8>, Ipv8Error> {
+    if cell.len() <= OFF_INNER_MSG_ID {
+        return Err(Ipv8Error::Truncated {
+            need: OFF_INNER_MSG_ID + 1,
+            have: cell.len(),
+        });
+    }
     if cell[OFF_PLAINTEXT] != 0 {
         return Ok(cell.to_vec());
     }
@@ -163,6 +183,12 @@ pub fn decrypt_cell(
     direction: onionbit_crypto::ipv8::session::Direction,
     keys_list: &[SessionKeys],
 ) -> Result<Vec<u8>, Ipv8Error> {
+    if cell.len() <= OFF_INNER_MSG_ID {
+        return Err(Ipv8Error::Truncated {
+            need: OFF_INNER_MSG_ID + 1,
+            have: cell.len(),
+        });
+    }
     if cell[OFF_PLAINTEXT] != 0 {
         return Ok(cell.to_vec());
     }

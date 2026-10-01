@@ -69,6 +69,14 @@ et sur le reseau public Tribler :
   `create-e2e` a identifiant neuf avec la vraie `seeder_pk` coute un
   circuit RP au seeder — surface de DoS inherente a la parite pyipv8
   (bornee par la duree de vie des circuits, pas par quota).
+- **Robustesse des parsers** (`fuzz_regression`, proptest + vecteurs
+  de bord) : aucun parser expose aux pairs hostiles (enveloppe IPv8,
+  cellule, payloads e2e/DHT, header uTP) ne panique — entrees
+  arbitraires, frontieres de format, compteurs de listes adversaires.
+  A trouve et corrige un crash reel : une cellule dechiffrant a
+  pile 29 octets faisait paniquer `check_cell_flags` (DoS injectable
+  par un relais du circuit). Scaffold `fuzz/` cargo-fuzz pret pour le
+  fuzzing couverture-guidee prolonge (nightly + clang requis).
 
 ## Ce qui n'est PAS demontre
 
