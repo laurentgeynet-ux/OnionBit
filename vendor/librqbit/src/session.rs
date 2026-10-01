@@ -1004,6 +1004,11 @@ impl Session {
             .read_write_timeout
             .unwrap_or_else(|| Duration::from_secs(10));
 
+        // (Tribler-Rust-Torrent vendored patch): tracer l'arrivee du
+        // stream accepte — sur les lanes e2e anonymes le handler peut
+        // mourir en silence (vu en interop hops>1 : vsock actif, DATA
+        // acked, aucune trace `incoming{addr}` ni reponse envoyee).
+        debug!(%addr, ?kind, "check_incoming_connection: start");
         let incoming_ip = addr.ip();
         if self.blocklist.has(incoming_ip) {
             self.stats

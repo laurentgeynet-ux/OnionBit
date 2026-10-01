@@ -2101,12 +2101,22 @@ fn spawn_e2e_listener(
                                 continue;
                             }
                             n += 1;
-                            if n <= 8 || n.is_multiple_of(256) {
+                            if n <= 16 || n.is_multiple_of(64) {
+                                // Entete uTP : seq_nr/ack_nr (offsets 16 et
+                                // 18) + 8 premiers octets de payload — pour
+                                // distinguer desordre/rejeu de corruption.
+                                let d = &msg.data;
+                                let seq = u16::from_be_bytes([d[16], d[17]]);
+                                let ack = u16::from_be_bytes([d[18], d[19]]);
+                                let pay = &d[20..d.len().min(28)];
                                 tracing::debug!(
                                     circuit_id = cid,
                                     n,
-                                    len = msg.data.len(),
-                                    head = %hex::encode(&msg.data[..msg.data.len().min(8)]),
+                                    len = d.len(),
+                                    head = %hex::encode(&d[..d.len().min(8)]),
+                                    seq_nr = seq,
+                                    ack_nr = ack,
+                                    payload_head = %hex::encode(pay),
                                     "e2e -> injection uTP"
                                 );
                             }

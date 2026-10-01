@@ -487,7 +487,8 @@ try {
     # ---------- Phase 6 : integrite ----------
     $ddE = Download-State $P_D.Api $kD $ih
     $dtE = TDownload-State $ih
-    $tulDelta = (if ($dtE) { [int64]$dtE.all_time_upload } else { 0 }) - $tulBefore
+    $tulNow = if ($dtE) { [int64]$dtE.all_time_upload } else { 0 }
+    $tulDelta = $tulNow - $tulBefore
     Verdict ($tulDelta -gt 0) 'T upload (delta all_time_upload)' "delta=$tulDelta"
     if ($ddE) {
         Verdict ($ddE.progress -ge 1.0) 'D : telechargement termine (pieces verifiees)' ("progress={0:P1} dl={1}" -f $ddE.progress, $ddE.all_time_download)

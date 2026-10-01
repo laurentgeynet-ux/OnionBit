@@ -3,6 +3,33 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Resilience interop : `anon_hops=2` vert dans les deux sens + filtre SYN WAN
+
+- Sens A `-Hops 2` : run `target/interop-hidden-dl-20261001-062029/`,
+  transfert complet 6 291 456 o en ~17 s apres `create-e2e`,
+  SHA-256 `b9ed9f6a…` identique. Sens B `-Hops 2` : run
+  `target/interop-hidden-seed-20261001-063246/`, `dl=6291456`, 100 %,
+  SHA-256 `a9cb7b61…` identique.
+- **Cause racine du stall hops=2** : la socket uTP de lane injectait
+  dans rqbit **tous** les datagrammes plausibles uTP livres par
+  l'exit — y compris les `ST_SYN` de scanners WAN. La file FIFO
+  d'acceptation + les slots `max_pending_incoming_handshake_checks`
+  se saturaient : le SYN e2e de Tribler attendait ~160 s avant
+  `check_incoming_connection`, au-dela de son timeout. A hops=1 le
+  timing passait par chance (le SYN e2e precedait la saturation).
+- **Fix** (`exit_policy.rs`, `tunnel_udp_socket.rs`) : nouveau
+  classifieur `is_utp_syn` ; les `ST_SYN` arrivant par le chemin exit
+  (`data_rx`) sont ignores — en Tribler l'entrant anonyme n'existe
+  que via les lanes e2e (`inject_incoming`), les connexions anonymes
+  classiques sont toujours sortantes. `ST_STATE`/`ST_DATA` et le
+  trafic etabli passent toujours.
+- Instrumentation : log `e2e -> injection uTP` enrichi
+  (seq_nr/ack_nr/prefixe payload — a permis de prouver que les
+  handshakes BT `\x13BitTor` arrivaient alignes, ecartant une
+  corruption e2e), `seq_nr`/`ack_nr` sur les sorties tunnel, et log
+  d'entree `check_incoming_connection` dans le vendored librqbit
+  (a revele le delai de 160 s).
+
 ## Interop hidden-service sens B vert : downloader Rust télécharge depuis Tribler 8.4.3
 
 - `scripts/interop_hidden_tribler_seed.ps1` (sens B : T = seeder

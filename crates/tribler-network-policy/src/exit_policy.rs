@@ -34,6 +34,20 @@ pub fn could_be_utp(data: &[u8]) -> bool {
     (b1 >> 4) <= 4 && (b1 & 0x0F) == 1 && b2 <= 3
 }
 
+/// `ST_SYN` (type 4) — paquet d'initiation de connexion uTP. Les
+/// datagrammes uTP delivres par le chemin exit (`data_rx` d'une
+/// socket tunnel) qui portent ce type sont des connexions WAN
+/// entrantes non sollicitees : en Tribler, le pair entrant anonyme
+/// n'existe que via les lanes e2e des hidden services (injecte par
+/// `inject_incoming`, pas par `data_rx`) ; les connexions anonymes
+/// classiques sont toujours sortantes. Relayer ces SYN au moteur ne
+/// sert qu'a saturer sa file d'acceptation (observe en interop :
+/// le scan WAN via l'exit retarde le SYN e2e de ~160 s, au-dela du
+/// timeout uTP du pair).
+pub fn is_utp_syn(data: &[u8]) -> bool {
+    data.len() >= 20 && (data[0] >> 4) == 4 && (data[0] & 0x0F) == 1
+}
+
 /// `DataChecker.could_be_udp_tracker` : champ `action` 0..3 en
 /// position 0 ou 8 (protocole tracker UDP).
 pub fn could_be_udp_tracker(data: &[u8]) -> bool {

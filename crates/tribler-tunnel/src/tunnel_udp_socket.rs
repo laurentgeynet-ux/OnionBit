@@ -152,6 +152,18 @@ impl TunnelUdpSocket {
                             if !kind.matches(&msg.data) {
                                 continue;
                             }
+                            // Les ST_SYN WAN livres par l'exit sont des
+                            // connexions entrantes non sollicitees sans
+                            // chemin anonyme utile (l'entrant anonyme
+                            // n'existe que via les lanes e2e, injectees
+                            // par `inject_incoming`). Les laisser
+                            // entrer sature la file d'acceptation uTP
+                            // du moteur et affame les SYN e2e.
+                            if kind == TunnelUdpKind::Utp
+                                && tribler_network_policy::exit_policy::is_utp_syn(&msg.data)
+                            {
+                                continue;
+                            }
                             let Some(src) = msg.origin.to_socket_addr() else {
                                 continue;
                             };
@@ -269,11 +281,23 @@ impl Inner {
                 cid
             }
         };
+        // Entete uTP : seq_nr/ack_nr (offsets 16 et 18) — l'ack_nr des
+        // STATE sortants revele si le vsock a consomme le DATA entrant.
+        let (seq_nr, ack_nr) = if self.kind == TunnelUdpKind::Utp && data.len() >= 20 {
+            (
+                u16::from_be_bytes([data[16], data[17]]),
+                u16::from_be_bytes([data[18], data[19]]),
+            )
+        } else {
+            (0, 0)
+        };
         tracing::debug!(
             %target,
             circuit_id = cid,
             len = data.len(),
             head = %hex::encode(&data[..data.len().min(8)]),
+            seq_nr,
+            ack_nr,
             ?self.kind,
             "socket tunnel -> cellule data"
         );
