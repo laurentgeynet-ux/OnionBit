@@ -24,7 +24,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use onionbit_ipv8::UdpAddress;
-use rand::RngCore;
+use rand::Rng;
 
 use crate::community::TunnelCommunity;
 use crate::payload::{self as tp};
@@ -113,7 +113,7 @@ impl TunnelCommunity {
                 let results = results.clone();
                 tokio::spawn(async move {
                     let mut random_data = [0u8; SPEED_TEST_RANDOM_BUF];
-                    rand::thread_rng().fill_bytes(&mut random_data);
+                    rand::rng().fill_bytes(&mut random_data);
                     loop {
                         // `if sum(rtts[-10:])/10 > target_rtt:
                         // sleep(0)` — yield sans bloquer.
@@ -184,7 +184,7 @@ impl TunnelCommunity {
             return;
         }
         let mut data = vec![0u8; p.response_size as usize];
-        rand::thread_rng().fill_bytes(&mut data);
+        rand::rng().fill_bytes(&mut data);
         let reply = tp::TestResponse {
             circuit_id: p.circuit_id,
             identifier: p.identifier,
@@ -213,7 +213,7 @@ impl TunnelCommunity {
     /// octets aleatoires — aucun controle de flag cote backend Rust.
     pub(crate) fn on_speedtest_request(self: &Arc<Self>, src: SocketAddr, p: tp::SpeedTestRequest) {
         let mut data = vec![0u8; p.response_size as usize];
-        rand::thread_rng().fill_bytes(&mut data);
+        rand::rng().fill_bytes(&mut data);
         let reply = tp::SpeedTestResponse {
             circuit_id: p.circuit_id,
             identifier: p.identifier,

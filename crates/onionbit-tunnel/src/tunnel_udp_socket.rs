@@ -348,7 +348,7 @@ impl Inner {
         if usable.is_empty() {
             usable = self.tunnel.ready_data_circuits_of_hops(self.hops);
         }
-        usable.shuffle(&mut rand::thread_rng());
+        usable.shuffle(&mut rand::rng());
         usable.first().copied().ok_or(Ipv8Error::Malformed(
             "aucun circuit pret pour la socket tunnel",
         ))

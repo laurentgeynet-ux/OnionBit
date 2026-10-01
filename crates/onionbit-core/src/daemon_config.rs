@@ -647,7 +647,7 @@ impl DaemonConfig {
     pub fn ensure_api_key(&mut self) {
         if self.api.key.is_empty() {
             let mut bytes = [0u8; 16];
-            rand::Rng::fill(&mut rand::thread_rng(), &mut bytes);
+            rand::RngExt::fill(&mut rand::rng(), &mut bytes);
             self.api.key = hex::encode(bytes);
         }
     }

@@ -18,7 +18,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use onionbit_crypto::ipv8::keys::LibNaClSecretKey;
-use rand::seq::SliceRandom;
+use rand::seq::IndexedRandom;
 
 use crate::address::UdpAddress;
 use crate::endpoint::UdpEndpoint;
@@ -453,7 +453,7 @@ impl DiscoveryCommunity {
             .filter(|q| q.public_key_bin != peer.public_key_bin)
             .filter(|q| q.address.as_ref().is_some_and(|a| !a.is_unspecified()))
             .collect::<Vec<_>>();
-        let introduction = intro_peer.choose(&mut rand::thread_rng()).cloned();
+        let introduction = intro_peer.choose(&mut rand::rng()).cloned();
         let (lan_i, wan_i) = match introduction.as_ref().and_then(|p| p.address.clone()) {
             Some(a) => (a.clone(), a),
             None => (unspecified(), unspecified()),
@@ -802,7 +802,7 @@ impl DiscoveryCommunity {
             // Petit hasard de reparation d'un reseau partitionne.
             let rebootstrap = !bootstrap.is_empty() && rand::random::<f64>() < REBOOTSTRAP_CHANCE;
             let target = {
-                let mut rng = rand::thread_rng();
+                let mut rng = rand::rng();
                 if rebootstrap {
                     bootstrap.choose(&mut rng).cloned()
                 } else {
@@ -815,7 +815,7 @@ impl DiscoveryCommunity {
         }
         // Aucun pair verifie : marche vers un noeud d'amorcage.
         let target = {
-            let mut rng = rand::thread_rng();
+            let mut rng = rand::rng();
             bootstrap.choose(&mut rng).cloned()
         };
         if let Some(addr) = target {
@@ -837,8 +837,8 @@ impl DiscoveryCommunity {
             return;
         }
         let window: Vec<Peer> = {
-            let mut rng = rand::thread_rng();
-            peers.choose_multiple(&mut rng, n).cloned().collect()
+            let mut rng = rand::rng();
+            peers.sample(&mut rng, n).cloned().collect()
         };
         for peer in window {
             let Some(addr) = peer.address.clone() else {
@@ -940,7 +940,7 @@ impl DiscoveryCommunity {
         // randint(0, 255) >= reset_chance -> marche walkable (~80 %).
         if !available.is_empty() && rand::random::<u8>() >= RESET_CHANCE {
             let target = {
-                let mut rng = rand::thread_rng();
+                let mut rng = rand::rng();
                 available.choose(&mut rng).cloned()
             };
             if let Some(addr) = target {
