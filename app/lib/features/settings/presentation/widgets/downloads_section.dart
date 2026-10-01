@@ -8,7 +8,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/l10n/l10n_ext.dart';
 import '../../../../core/theme/app_theme.dart';
-import '../../../../core/utils/byte_formatter.dart';
 import '../providers/settings_providers.dart';
 import 'settings_section.dart';
 
@@ -227,8 +226,8 @@ class _DiskSpace extends ConsumerWidget {
           Expanded(
             child: Text(
               context.l10n.diskSpaceFree(
-                ByteFormatter.format(s['free'] ?? 0),
-                ByteFormatter.format(s['total'] ?? 0),
+                context.fmtBytes(s['free'] ?? 0),
+                context.fmtBytes(s['total'] ?? 0),
               ),
               style: style,
             ),

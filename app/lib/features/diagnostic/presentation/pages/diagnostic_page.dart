@@ -10,7 +10,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../l10n/app_localizations.dart' show AppLocalizations;
 import '../../../../core/l10n/l10n_ext.dart';
 import '../../../../core/theme/app_theme.dart';
-import '../../../../core/utils/byte_formatter.dart';
 import '../../../../core/widgets/empty_state.dart';
 import '../../../../core/widgets/error_state.dart';
 import '../../../downloads/presentation/providers/downloads_providers.dart';
@@ -219,8 +218,8 @@ class _CircuitsTab extends ConsumerWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(
-              '↑${ByteFormatter.format(c.bytesUp)} '
-              '↓${ByteFormatter.format(c.bytesDown)}',
+              '↑${context.fmtBytes(c.bytesUp)} '
+              '↓${context.fmtBytes(c.bytesDown)}',
             ),
             if (_testable(c))
               IconButton(
@@ -253,8 +252,8 @@ class _RelaysTab extends ConsumerWidget {
               : context.l10n.relay,
         ),
         trailing: Text(
-          '↑${ByteFormatter.format(r.bytesUp)} '
-          '↓${ByteFormatter.format(r.bytesDown)}',
+          '↑${context.fmtBytes(r.bytesUp)} '
+          '↓${context.fmtBytes(r.bytesDown)}',
         ),
       ),
     );
@@ -448,7 +447,7 @@ class _StatsTab extends ConsumerWidget {
                 _stat(
                   context,
                   context.l10n.statDbSize,
-                  ByteFormatter.format(s.dbSize),
+                  context.fmtBytes(s.dbSize),
                 ),
                 _stat(
                   context,
@@ -726,17 +725,17 @@ class _OverviewTabState extends ConsumerState<_OverviewTab> {
               _StatCard(
                 icon: Icons.arrow_downward,
                 label: context.l10n.cardDownload,
-                value: ByteFormatter.formatRate(speeds.down),
+                value: context.fmtRate(speeds.down),
               ),
               _StatCard(
                 icon: Icons.arrow_upward,
                 label: context.l10n.cardUpload,
-                value: ByteFormatter.formatRate(speeds.up),
+                value: context.fmtRate(speeds.up),
               ),
               _StatCard(
                 icon: Icons.storage_outlined,
                 label: context.l10n.cardDatabase,
-                value: stats != null ? ByteFormatter.format(stats.dbSize) : '—',
+                value: stats != null ? context.fmtBytes(stats.dbSize) : '—',
               ),
             ],
           ),

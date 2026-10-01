@@ -11,7 +11,6 @@ import '../../features/downloads/presentation/providers/downloads_providers.dart
 import '../di/providers.dart';
 import '../l10n/l10n_ext.dart';
 import '../theme/app_theme.dart';
-import '../utils/byte_formatter.dart';
 
 /// Barre d'état inférieure : connexion daemon (SSE), état honnête de
 /// la lane anonyme (circuits `READY`, jamais la seule joignabilité du
@@ -87,9 +86,9 @@ class StatusBar extends ConsumerWidget {
             ),
           ),
           const SizedBox(width: AppSpacing.md),
-          Text('↓ ${ByteFormatter.formatRate(speeds.down)}', style: small),
+          Text('↓ ${context.fmtRate(speeds.down)}', style: small),
           const SizedBox(width: AppSpacing.md),
-          Text('↑ ${ByteFormatter.formatRate(speeds.up)}', style: small),
+          Text('↑ ${context.fmtRate(speeds.up)}', style: small),
         ],
       ),
     );

@@ -17,7 +17,6 @@ import '../di/providers.dart';
 import '../l10n/l10n_ext.dart';
 import '../router/nav_catalog.dart';
 import '../theme/app_theme.dart';
-import '../utils/byte_formatter.dart';
 import '../config/ui_prefs.dart';
 
 /// Replie/déplie le groupe des sous-filtres Téléchargements (état de
@@ -492,7 +491,7 @@ class _SpeedsRow extends ConsumerWidget {
               const SizedBox(width: 2),
               Expanded(
                 child: Text(
-                  ByteFormatter.formatRate(speeds.down),
+                  context.fmtRate(speeds.down),
                   style: style,
                   overflow: TextOverflow.ellipsis,
                 ),
@@ -511,7 +510,7 @@ class _SpeedsRow extends ConsumerWidget {
               const SizedBox(width: 2),
               Expanded(
                 child: Text(
-                  ByteFormatter.formatRate(speeds.up),
+                  context.fmtRate(speeds.up),
                   style: style,
                   overflow: TextOverflow.ellipsis,
                 ),

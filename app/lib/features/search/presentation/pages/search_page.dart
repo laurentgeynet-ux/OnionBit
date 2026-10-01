@@ -11,7 +11,6 @@ import '../../../../core/di/providers.dart';
 import '../../../../core/l10n/l10n_ext.dart';
 import '../../../../core/layout/breakpoints.dart';
 import '../../../../core/theme/app_theme.dart';
-import '../../../../core/utils/byte_formatter.dart';
 import '../../../../core/widgets/empty_state.dart';
 import '../../../../core/widgets/error_state.dart';
 import '../../../downloads/domain/download.dart';
@@ -414,7 +413,7 @@ class _ResultTile extends StatelessWidget {
         ),
         subtitle: Text(
           [
-            ByteFormatter.format(r.size),
+            context.fmtBytes(r.size),
             if (r.seeders != null)
               context.l10n.resultSeedsLeechers(
                 r.seeders!,
@@ -613,7 +612,7 @@ class _ResultRow extends StatelessWidget {
               SizedBox(
                 width: 90,
                 child: Text(
-                  r.size > 0 ? ByteFormatter.format(r.size) : '—',
+                  r.size > 0 ? context.fmtBytes(r.size) : '—',
                   style: small,
                 ),
               ),

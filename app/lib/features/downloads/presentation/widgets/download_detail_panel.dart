@@ -9,7 +9,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/l10n/l10n_ext.dart';
 import '../../../../core/platform/desktop_shell.dart';
 import '../../../../core/theme/app_theme.dart';
-import '../../../../core/utils/byte_formatter.dart';
 import '../../../../core/widgets/empty_state.dart';
 import '../../../../core/widgets/error_state.dart';
 import '../../domain/download.dart';
@@ -183,7 +182,7 @@ class _DetailsTabState extends ConsumerState<_DetailsTab> {
         const SizedBox(height: AppSpacing.md),
         _row(context, l10n.rowName, d.name.isEmpty ? l10n.noName : d.name),
         _row(context, l10n.rowStatus, d.status),
-        _row(context, l10n.rowSize, ByteFormatter.format(d.size)),
+        _row(context, l10n.rowSize, context.fmtBytes(d.size)),
         _row(context, l10n.rowHealth, l10n.healthValue(d.numSeeds, d.numPeers)),
         _row(
           context,
@@ -205,7 +204,7 @@ class _DetailsTabState extends ConsumerState<_DetailsTab> {
                   ? l10n.queuePosSuffix(d.queuePosition)
                   : ''),
         ),
-        _row(context, l10n.rowLimits, formatLimits(d)),
+        _row(context, l10n.rowLimits, formatLimits(d, context.uiLang)),
         _row(
           context,
           l10n.rowSeedRatio,
@@ -276,18 +275,18 @@ class SpeedSparkline extends StatelessWidget {
           children: [
             Icon(Icons.arrow_downward, size: 12, color: scheme.primary),
             Text(
-              ' ${ByteFormatter.formatRate(history.lastOrNull?.down ?? 0)}',
+              ' ${context.fmtRate(history.lastOrNull?.down ?? 0)}',
               style: small,
             ),
             const SizedBox(width: AppSpacing.sm),
             Icon(Icons.arrow_upward, size: 12, color: scheme.tertiary),
             Text(
-              ' ${ByteFormatter.formatRate(history.lastOrNull?.up ?? 0)}',
+              ' ${context.fmtRate(history.lastOrNull?.up ?? 0)}',
               style: small,
             ),
             const Spacer(),
             Text(
-              context.l10n.peakLabel(ByteFormatter.formatRate(peak)),
+              context.l10n.peakLabel(context.fmtRate(peak)),
               style: small,
             ),
           ],
@@ -429,7 +428,7 @@ class _FilesTab extends ConsumerWidget {
                     children: [
                       Text(
                         '${(f.fraction * 100).toStringAsFixed(0)} % · '
-                        '${ByteFormatter.format(f.size)}',
+                        '${context.fmtBytes(f.size)}',
                         style: Theme.of(context).textTheme.bodySmall,
                       ),
                       PopupMenuButton<int>(
@@ -737,11 +736,11 @@ class _PeersTab extends StatelessWidget {
                 ),
                 _statRow(
                   context.l10n.downRateRow,
-                  ByteFormatter.formatRate(d.speedDown),
+                  context.fmtRate(d.speedDown),
                 ),
                 _statRow(
                   context.l10n.upRateRow,
-                  ByteFormatter.formatRate(d.speedUp),
+                  context.fmtRate(d.speedUp),
                 ),
                 _statRow(
                   context.l10n.netMode,
@@ -815,10 +814,10 @@ class _PeersTab extends StatelessWidget {
                           ),
                         ),
                       ),
-                      DataCell(Text(ByteFormatter.formatRate(p.downrate))),
-                      DataCell(Text(ByteFormatter.formatRate(p.uprate))),
-                      DataCell(Text(ByteFormatter.format(p.dtotal))),
-                      DataCell(Text(ByteFormatter.format(p.utotal))),
+                      DataCell(Text(context.fmtRate(p.downrate))),
+                      DataCell(Text(context.fmtRate(p.uprate))),
+                      DataCell(Text(context.fmtBytes(p.dtotal))),
+                      DataCell(Text(context.fmtBytes(p.utotal))),
                       DataCell(
                         Text(
                           p.connectionType.isEmpty ? '—' : p.connectionType,

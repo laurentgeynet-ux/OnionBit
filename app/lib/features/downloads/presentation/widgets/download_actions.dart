@@ -244,8 +244,9 @@ Future<void> showMoveStorageDialog(BuildContext context, Download d) async {
   }
 }
 
-/// Libellé court des limites individuelles (« — » = illimité).
-String formatLimits(Download d) {
-  String f(int v) => v > 0 ? ByteFormatter.formatRate(v) : '∞';
+/// Libellé court des limites individuelles (« ∞ » = illimité).
+/// `locale` = code langue de l'UI (unités `Ko`/`KiB`…).
+String formatLimits(Download d, String locale) {
+  String f(int v) => v > 0 ? ByteFormatter.formatRate(v, locale) : '∞';
   return '↓ ${f(d.downloadLimit)} · ↑ ${f(d.uploadLimit)}';
 }

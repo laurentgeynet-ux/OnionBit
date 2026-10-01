@@ -11,8 +11,6 @@ import '../../../../core/l10n/l10n_ext.dart';
 import '../../../../core/layout/breakpoints.dart';
 import '../../../../core/platform/desktop_shell.dart';
 import '../../../../core/theme/app_theme.dart';
-import '../../../../core/utils/byte_formatter.dart';
-import '../../../../core/utils/duration_formatter.dart';
 import '../../../../core/widgets/empty_state.dart';
 import '../../../../core/widgets/error_state.dart';
 import '../../domain/download.dart';
@@ -554,7 +552,7 @@ class _DownloadRow extends ConsumerWidget {
               ),
               SizedBox(
                 width: 80,
-                child: Text(ByteFormatter.format(d.size), style: small),
+                child: Text(context.fmtBytes(d.size), style: small),
               ),
               Expanded(
                 flex: 2,
@@ -568,19 +566,16 @@ class _DownloadRow extends ConsumerWidget {
               SizedBox(width: 160, child: DownloadStatusChip(download: d)),
               SizedBox(
                 width: 90,
-                child: Text(
-                  ByteFormatter.formatRate(d.speedDown),
-                  style: small,
-                ),
+                child: Text(context.fmtRate(d.speedDown), style: small),
               ),
               SizedBox(
                 width: 90,
-                child: Text(ByteFormatter.formatRate(d.speedUp), style: small),
+                child: Text(context.fmtRate(d.speedUp), style: small),
               ),
               SizedBox(
                 width: 80,
                 child: Text(
-                  DurationFormatter.formatSeconds(d.etaSeconds),
+                  context.fmtEta(d.etaSeconds),
                   style: small,
                 ),
               ),
@@ -772,7 +767,7 @@ class _DownloadsContextMenuState extends ConsumerState<_DownloadsContextMenu> {
           MenuItemButton(
             leadingIcon: Icon(current == v ? Icons.check : null, size: 18),
             onPressed: () => onPick(v),
-            child: Text(ByteFormatter.formatRate(v)),
+            child: Text(context.fmtRate(v)),
           ),
         const Divider(height: 1),
         MenuItemButton(
@@ -787,7 +782,7 @@ class _DownloadsContextMenuState extends ConsumerState<_DownloadsContextMenu> {
         ),
       ],
       child: Text(
-        '$label (${current > 0 ? ByteFormatter.formatRate(current) : '∞'})',
+        '$label (${current > 0 ? context.fmtRate(current) : '∞'})',
       ),
     );
   }
@@ -1016,8 +1011,8 @@ class _CompactList extends ConsumerWidget {
               _ProgressBar(download: d),
               const SizedBox(height: 2),
               Text(
-                '${d.status} · ↓${ByteFormatter.formatRate(d.speedDown)}'
-                ' · ↑${ByteFormatter.formatRate(d.speedUp)}',
+                '${d.status} · ↓${context.fmtRate(d.speedDown)}'
+                ' · ↑${context.fmtRate(d.speedUp)}',
                 style: Theme.of(context).textTheme.bodySmall,
               ),
             ],
@@ -1167,8 +1162,8 @@ class _GridCard extends ConsumerWidget {
                 children: [
                   Expanded(
                     child: Text(
-                      '↓${ByteFormatter.formatRate(d.speedDown)}'
-                      ' · ↑${ByteFormatter.formatRate(d.speedUp)}',
+                      '↓${context.fmtRate(d.speedDown)}'
+                      ' · ↑${context.fmtRate(d.speedUp)}',
                       style: small,
                     ),
                   ),
