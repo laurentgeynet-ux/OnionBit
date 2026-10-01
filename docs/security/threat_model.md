@@ -120,6 +120,9 @@ Un attaquant de cette classe n'est **pas** couvert :
 - **Fingerprinting de l'implementation** : les differences de timing,
   tailles de paquets ou comportements de retry entre Rust et pyipv8
   peuvent rendre un noeud OnionBit identifiable sur le reseau.
+  Procedure de mesure : `docs/security/fingerprinting.md` +
+  `scripts/fingerprint_stats.ps1` (statistiques agregees REST,
+  comparables avec Tribler officiel).
 - **Disponibilite contre censure du bootstrap** : les bancs supposent
   au moins un point d'amorcage joignable ; un reseau ou tous les
   bootstrapper Tribler sont bloques n'est pas couvert.

@@ -40,6 +40,11 @@ en haut.
   `{guards: [{mid, address, reserve, failures, adopted_at,
   last_seen}], enabled}`) ; documentée dans `api_rest_mapping.md`.
 - Reste à faire : activation par défaut après validation terrain.
+- Hors guards : `scripts/fingerprint_stats.ps1` +
+  `docs/security/fingerprinting.md` — échantillonneur de compteurs
+  REST (overlays/statistics + circuits) en CSV pour la mesure
+  comparative de fingerprinting vs Tribler officiel (agrégats,
+  jamais de PCAP).
 
 ## Campagne libFuzzer native Windows + ADR guard nodes (2026-10-01)
 
