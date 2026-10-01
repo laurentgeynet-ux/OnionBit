@@ -3665,7 +3665,21 @@ impl TunnelCommunity {
             );
             return;
         }
-        tracing::trace!(circuit_id, dest = ?p.dest_address, "exit_data");
+        // Les paquets IPv8 sortant par un exit socket sont quasi
+        // toujours du controle hidden-service (create-e2e vers
+        // l'intro, created-e2e vers le downloader...) — debug pour
+        // suivre le trajet retour e2e entre deux exits du meme noeud.
+        let looks_ipv8 = p.data.len() > prefix.len() && p.data[..prefix.len()] == prefix;
+        if looks_ipv8 {
+            tracing::debug!(
+                circuit_id,
+                dest = ?p.dest_address,
+                len = p.data.len(),
+                "exit_data : paquet ipv8 sorti vers l'exterieur"
+            );
+        } else {
+            tracing::trace!(circuit_id, dest = ?p.dest_address, "exit_data");
+        }
         let Some(dest_sa) = p.dest_address.to_socket_addr() else {
             return;
         };
@@ -3729,6 +3743,13 @@ impl TunnelCommunity {
                 None => return,
             }
         };
+        tracing::debug!(
+            circuit_id,
+            src = ?src,
+            upstream = ?upstream_addr,
+            len = data.len(),
+            "exit_recv_data : datagramme externe reencapsule vers l'amont"
+        );
         // `is_allowed` est applique dans les deux sens par pyipv8
         // (`sendto` ET `datagram_received`) : une reponse externe non
         // conforme ne doit pas non plus retourner dans le tunnel.

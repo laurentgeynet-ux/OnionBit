@@ -112,6 +112,12 @@ pub struct TunnelSettings {
     /// extension Rust : pyipv8 ne re-annonce jamais, une annonce
     /// perdue ou diluee rend le swarm invisible definitivement.
     pub intro_reannounce_interval: Duration,
+    /// Decalage entre deux `store_value` consecutifs d'une re-annonce
+    /// multi-points : chaque store declenche un `find_nodes` qui
+    /// interroge les memes noeuds DHT — une rafale de ~10 stores
+    /// depasse le `blocked()` pyipv8 (10 requetes / 5 s) et tout est
+    /// drope. 500 ms garde ~10 req/5 s par noeud cible au maximum.
+    pub dht_reannounce_stagger: Duration,
 }
 
 impl Default for TunnelSettings {
@@ -143,6 +149,7 @@ impl Default for TunnelSettings {
             intro_point_peer: None,
             data_exit_peer: None,
             intro_reannounce_interval: Duration::from_secs(60),
+            dht_reannounce_stagger: Duration::from_millis(500),
         }
     }
 }

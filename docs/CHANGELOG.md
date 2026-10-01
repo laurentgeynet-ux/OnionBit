@@ -3,6 +3,31 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Résilience ancre : `rendezvous-established` publie le WAN estimé, pacing des réannonces DHT (2026-10-01)
+
+- `on_establish_rendezvous` répondait `local_addr` au lieu de
+  `my_estimated_wan` (pyipv8 `TunnelCommunity.on_establish_rendezvous`)
+  : le `RendezvousInfo` du `created-e2e` portait `0.0.0.0:0`, le
+  downloader pyipv8 ne pouvait pas créer sa jambe `RP_DOWNLOADER` —
+  `E2ERequestCache` expirait en boucle, download figé après kill.
+  Fix : WAN estimé + WARN si non spécifié.
+- Instrumentation du trajet retour `created-e2e` corrélée par
+  `identifier` (relais intro, création RP seeder, `exit_data` IPv8,
+  `exit_recv_data`) — le cycle `create-e2e`→`created-e2e`→`link-e2e`
+  est maintenant traçable de bout en bout.
+- `reannounce_intro_points` émettait ~10 `store_value` en rafale :
+  chaque store lance un `find_nodes` qui interroge les mêmes noeuds,
+  dépassant le `blocked()` pyipv8 (10 req / 5 s) — les annonces étaient
+  droppées. Les stores sont maintenant séquencés dans une seule tâche,
+  espacés de `dht_reannounce_stagger` (500 ms, `TunnelSettings`), avec
+  log par point d'introduction.
+- Banc `interop_hidden_killseeder -KillTarget anchor` sens A (seeder
+  Rust, kill A1 ancre+EXIT_BT) : **PASS complet** — flux e2e survécu,
+  découverte sans ancre, `IP_SEEDER` reconstruit sur autre noeud,
+  annonce attribuée au seeder, 100 %, SHA-256 identique.
+- Test `hidden_seed_e2e_burst_integrity` : tolérance de pertes 99 %→
+  90 % (drop-tail attendu sous contention CPU de la suite parallèle).
+
 ## Version 0.3.2-alpha (2026-10-01)
 
 - Release succédant à `v0.3.1-alpha` (supprimée — bundle incomplet et
