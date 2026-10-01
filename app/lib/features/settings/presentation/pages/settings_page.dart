@@ -5,7 +5,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../core/l10n/l10n_ext.dart';
 import '../../../../core/theme/app_theme.dart';
+import '../../../../l10n/app_localizations.dart' show AppLocalizations;
 import '../providers/settings_providers.dart';
 import '../widgets/advanced_section.dart';
 import '../widgets/anonymity_section.dart';
@@ -20,19 +22,55 @@ import '../widgets/queue_section.dart';
 import '../widgets/seeding_section.dart';
 import '../widgets/versioning_section.dart';
 
-/// Entrée du catalogue des sections — titre de l'ancre + mots-clés de
-/// recherche (chemins de clés inclus).
+/// Identifiants des sections de réglages — les titres affichés sont
+/// localisés via [_SectionIdX.title] (ARB).
+enum _SectionId {
+  appearance,
+  downloads,
+  bandwidth,
+  queue,
+  seeding,
+  anonymity,
+  network,
+  automation,
+  versioning,
+  connection,
+  advanced,
+  daemon,
+}
+
+extension on _SectionId {
+  /// Titre localisé de la section (puce d'ancre + filtre).
+  String title(AppLocalizations l10n) => switch (this) {
+    _SectionId.appearance => l10n.settingsAppearanceTitle,
+    _SectionId.downloads => l10n.sectionDownloadsDefaults,
+    _SectionId.bandwidth => l10n.sectionBandwidth,
+    _SectionId.queue => l10n.sectionQueue,
+    _SectionId.seeding => l10n.sectionSeeding,
+    _SectionId.anonymity => l10n.sectionAnonymity,
+    _SectionId.network => l10n.sectionNetwork,
+    _SectionId.automation => l10n.sectionAutomation,
+    _SectionId.versioning => l10n.sectionVersioning,
+    _SectionId.connection => l10n.sectionConnection,
+    _SectionId.advanced => l10n.sectionAdvanced,
+    _SectionId.daemon => l10n.sectionDaemon,
+  };
+}
+
+/// Entrée du catalogue des sections — id de l'ancre + mots-clés de
+/// recherche (chemins de clés + termes FR/EN, non affichés).
 class _SectionEntry {
   _SectionEntry({
-    required this.title,
+    required this.id,
     required this.keywords,
     required this.child,
     this.sectionId,
   });
 
-  final String title;
+  final _SectionId id;
 
-  /// Texte de recherche : titre + noms de champs + chemins de clés.
+  /// Texte de recherche : termes FR+EN + noms de champs + chemins de
+  /// clés (jamais affiché — la recherche est une sous-chaîne simple).
   final String keywords;
   final Widget child;
 
@@ -44,79 +82,83 @@ class _SectionEntry {
 
 final _kSections = <_SectionEntry>[
   _SectionEntry(
-    title: 'Apparence',
-    keywords: 'thème mode clair sombre accent couleur',
+    id: _SectionId.appearance,
+    keywords: 'thème mode clair sombre accent couleur theme light dark '
+        'color language langue',
     child: const AppearanceSection(),
   ),
   _SectionEntry(
-    title: 'Téléchargements par défaut',
-    keywords: 'destination dossier espace disque download_defaults saveas',
+    id: _SectionId.downloads,
+    keywords: 'destination dossier espace disque download_defaults saveas '
+        'folder disk space default',
     sectionId: 'downloads',
     child: const DownloadsSection(),
   ),
   _SectionEntry(
-    title: 'Bande passante',
-    keywords: 'limite débit vitesse ko/s max_download_rate max_upload_rate',
+    id: _SectionId.bandwidth,
+    keywords: 'limite débit vitesse ko/s max_download_rate max_upload_rate '
+        'limit rate speed kb/s',
     sectionId: 'bandwidth',
     child: const BandwidthSection(),
   ),
   _SectionEntry(
-    title: 'File d\'attente',
+    id: _SectionId.queue,
     keywords:
         'queue active_downloads active_seeds active_checking '
-        'active_limit auto_managed fastresume vérification démarrage',
+        'active_limit auto_managed fastresume vérification démarrage '
+        'startup check',
     sectionId: 'queue',
     child: const QueueSection(),
   ),
   _SectionEntry(
-    title: 'Seed & anonymat par défaut',
+    id: _SectionId.seeding,
     keywords:
         'seeding ratio durée hops sauts safe seeding '
-        'download_defaults number_anon_downloads',
+        'download_defaults number_anon_downloads duration default',
     sectionId: 'seeding',
     child: const SeedingSection(),
   ),
   _SectionEntry(
-    title: 'Tunnels anonymes',
+    id: _SectionId.anonymity,
     keywords:
         'tunnel community circuits min_circuits max_circuits '
-        'exitnode sortie test vitesse',
+        'exitnode sortie test vitesse exit speed anonymous',
     sectionId: 'anonymity',
     child: const AnonymitySection(),
   ),
   _SectionEntry(
-    title: 'Réseau',
+    id: _SectionId.network,
     keywords:
         'dht upnp natpmp lsd utp proxy socks port écoute '
-        'listen_interface',
+        'listen_interface listen',
     sectionId: 'network',
     child: const NetworkSection(),
   ),
   _SectionEntry(
-    title: 'Automatisation',
-    keywords: 'watch folder rss flux dossier surveillance items',
+    id: _SectionId.automation,
+    keywords: 'watch folder rss flux dossier surveillance items feed',
     sectionId: 'automation',
     child: const AutomationSection(),
   ),
   _SectionEntry(
-    title: 'Mises à jour',
-    keywords: 'version mise à jour update checker versioning',
+    id: _SectionId.versioning,
+    keywords: 'version mise à jour update checker versioning upgrade',
     child: const VersioningSection(),
   ),
   _SectionEntry(
-    title: 'Connexion',
-    keywords: 'daemon clé api port http connexion key',
+    id: _SectionId.connection,
+    keywords: 'daemon clé api port http connexion key url',
     child: const ConnectionSection(),
   ),
   _SectionEntry(
-    title: 'Configuration avancée',
+    id: _SectionId.advanced,
     sectionId: 'advanced',
-    keywords: 'json arbre brut expert toutes les clés configuration',
+    keywords: 'json arbre brut expert toutes les clés configuration raw',
     child: const AdvancedSection(),
   ),
   _SectionEntry(
-    title: 'Daemon',
-    keywords: 'arrêt shutdown redémarrage logs',
+    id: _SectionId.daemon,
+    keywords: 'arrêt shutdown redémarrage logs stop restart state',
     child: const DaemonSection(),
   ),
 ];
@@ -150,13 +192,16 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     ref.read(settingsDirtyProvider.notifier).clear();
   }
 
-  bool _matches(_SectionEntry e) =>
+  bool _matches(_SectionEntry e, AppLocalizations l10n) =>
       _filter.isEmpty ||
-      '${e.title} ${e.keywords}'.toLowerCase().contains(_filter.toLowerCase());
+      '${e.id.title(l10n)} ${e.keywords}'.toLowerCase().contains(
+        _filter.toLowerCase(),
+      );
 
   @override
   Widget build(BuildContext context) {
-    final visible = _kSections.where(_matches).toList();
+    final l10n = context.l10n;
+    final visible = _kSections.where((e) => _matches(e, l10n)).toList();
     final dirty = ref.watch(settingsDirtyProvider);
     final scheme = Theme.of(context).colorScheme;
     return Column(
@@ -179,15 +224,14 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                   const SizedBox(width: AppSpacing.sm),
                   Expanded(
                     child: Text(
-                      '${dirty.length} section(s) modifiée(s) '
-                      'non enregistrée(s)',
+                      l10n.settingsDirtyBanner(dirty.length),
                       style: Theme.of(context).textTheme.bodySmall
                           ?.copyWith(color: scheme.onTertiaryContainer),
                     ),
                   ),
                   TextButton(
                     onPressed: _discardAll,
-                    child: const Text('Tout annuler'),
+                    child: Text(l10n.discardAll),
                   ),
                   const SizedBox(width: AppSpacing.xs),
                   FilledButton.icon(
@@ -199,7 +243,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                             child: CircularProgressIndicator(strokeWidth: 2),
                           )
                         : const Icon(Icons.save, size: 18),
-                    label: const Text('Enregistrer tout'),
+                    label: Text(l10n.saveAll),
                   ),
                 ],
               ),
@@ -232,7 +276,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                                     color: scheme.tertiary,
                                   )
                                 : null,
-                            label: Text(e.title),
+                            label: Text(e.id.title(l10n)),
                             visualDensity: VisualDensity.compact,
                             onPressed: () {
                               final ctx = e.key.currentContext;
@@ -253,11 +297,11 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
               SizedBox(
                 width: 220,
                 child: TextField(
-                  decoration: const InputDecoration(
-                    hintText: 'Filtrer les réglages',
+                  decoration: InputDecoration(
+                    hintText: l10n.filterSettings,
                     isDense: true,
-                    prefixIcon: Icon(Icons.filter_list, size: 18),
-                    border: OutlineInputBorder(),
+                    prefixIcon: const Icon(Icons.filter_list, size: 18),
+                    border: const OutlineInputBorder(),
                   ),
                   onChanged: (v) => setState(() => _filter = v),
                 ),
@@ -273,7 +317,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                 Padding(
                   padding: const EdgeInsets.all(AppSpacing.lg),
                   child: Center(
-                    child: Text('Aucune section ne correspond à « $_filter ».'),
+                    child: Text(l10n.noMatchingSection(_filter)),
                   ),
                 ),
             ],

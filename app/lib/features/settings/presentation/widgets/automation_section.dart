@@ -6,6 +6,7 @@ import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../core/l10n/l10n_ext.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../providers/settings_providers.dart';
 import 'settings_section.dart';
@@ -94,13 +95,14 @@ class _AutomationSectionState extends ConsumerState<AutomationSection> {
       _deferred.markClean();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Automatisation enregistrée')),
+          SnackBar(content: Text(context.l10n.autoSaved)),
         );
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Erreur : $e')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(context.l10n.errorMessage('$e'))),
+        );
       }
     } finally {
       if (mounted) setState(() => _saving = false);
@@ -120,9 +122,10 @@ class _AutomationSectionState extends ConsumerState<AutomationSection> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l10n = context.l10n;
     return SettingsSection(
       icon: Icons.smart_button_outlined,
-      title: 'Automatisation',
+      title: l10n.sectionAutomation,
       sectionId: 'automation',
       defaults: kAutomationDefaults,
       child: (context, settings) {
@@ -131,18 +134,15 @@ class _AutomationSectionState extends ConsumerState<AutomationSection> {
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Dossier surveillé', style: theme.textTheme.labelMedium),
+            Text(l10n.watchFolderTitle, style: theme.textTheme.labelMedium),
             SwitchListTile(
               value: _watchEnabled,
               onChanged: (v) => setState(() {
                 _watchEnabled = v;
                 _deferred.markDirty();
               }),
-              title: const Text('Surveiller un dossier'),
-              subtitle: const Text(
-                'Les fichiers .torrent déposés dedans sont ajoutés '
-                'automatiquement. Défaut : désactivé.',
-              ),
+              title: Text(l10n.watchSwitch),
+              subtitle: Text(l10n.watchSwitchSub),
               contentPadding: EdgeInsets.zero,
               dense: true,
             ),
@@ -151,14 +151,14 @@ class _AutomationSectionState extends ConsumerState<AutomationSection> {
                 controller: _watchDir,
                 onChanged: (_) => _deferred.markDirty(),
                 decoration: InputDecoration(
-                  labelText: 'Dossier à surveiller',
+                  labelText: l10n.watchDirLabel,
                   prefixIcon: const Icon(Icons.folder_outlined),
                   suffixIcon: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       const KeyInfoIcon(['watch_folder', 'directory']),
                       IconButton(
-                        tooltip: 'Parcourir…',
+                        tooltip: l10n.browse,
                         icon: const Icon(Icons.folder_open),
                         onPressed: () async {
                           final dir = await getDirectoryPath();
@@ -179,23 +179,25 @@ class _AutomationSectionState extends ConsumerState<AutomationSection> {
                 controller: _watchInterval,
                 onChanged: (_) => _deferred.markDirty(),
                 keyboardType: TextInputType.number,
-                decoration: const InputDecoration(
-                  labelText: 'Intervalle de scan (s) — défaut : 10',
+                decoration: InputDecoration(
+                  labelText: l10n.watchIntervalLabel,
                   isDense: true,
-                  suffixIcon: KeyInfoIcon(['watch_folder', 'check_interval']),
+                  suffixIcon: const KeyInfoIcon(
+                    ['watch_folder', 'check_interval'],
+                  ),
                 ),
               ),
             ],
             const Divider(height: AppSpacing.lg),
-            Text('Flux RSS', style: theme.textTheme.labelMedium),
+            Text(l10n.rssTitle, style: theme.textTheme.labelMedium),
             SwitchListTile(
               value: _rssEnabled,
               onChanged: (v) => setState(() {
                 _rssEnabled = v;
                 _deferred.markDirty();
               }),
-              title: const Text('Watchers RSS actifs'),
-              subtitle: const Text('Défaut : activé (aucun flux).'),
+              title: Text(l10n.rssSwitch),
+              subtitle: Text(l10n.rssSwitchSub),
               contentPadding: EdgeInsets.zero,
               dense: true,
             ),
@@ -208,7 +210,7 @@ class _AutomationSectionState extends ConsumerState<AutomationSection> {
                   title: Text(url, overflow: TextOverflow.ellipsis),
                   trailing: IconButton(
                     icon: const Icon(Icons.remove_circle_outline, size: 18),
-                    tooltip: 'Retirer',
+                    tooltip: l10n.rssRemove,
                     onPressed: () => setState(() {
                       _feeds.remove(url);
                       _deferred.markDirty();
@@ -220,18 +222,18 @@ class _AutomationSectionState extends ConsumerState<AutomationSection> {
                   Expanded(
                     child: TextField(
                       controller: _newFeed,
-                      decoration: const InputDecoration(
-                        labelText: 'URL du flux',
+                      decoration: InputDecoration(
+                        labelText: l10n.rssUrlLabel,
                         hintText: 'https://exemple.com/feed.xml',
                         isDense: true,
-                        suffixIcon: KeyInfoIcon(['rss', 'urls']),
+                        suffixIcon: const KeyInfoIcon(['rss', 'urls']),
                       ),
                       onSubmitted: (_) => _addFeed(),
                     ),
                   ),
                   IconButton(
                     icon: const Icon(Icons.add),
-                    tooltip: 'Ajouter le flux',
+                    tooltip: l10n.rssAddTooltip,
                     onPressed: _addFeed,
                   ),
                 ],
@@ -239,7 +241,7 @@ class _AutomationSectionState extends ConsumerState<AutomationSection> {
               if (items.isNotEmpty) ...[
                 const SizedBox(height: AppSpacing.sm),
                 Text(
-                  'Derniers items découverts',
+                  l10n.rssLastItems,
                   style: theme.textTheme.labelMedium,
                 ),
                 for (final i in items.take(8))
@@ -267,7 +269,7 @@ class _AutomationSectionState extends ConsumerState<AutomationSection> {
               child: FilledButton.icon(
                 onPressed: _saving ? null : _save,
                 icon: const Icon(Icons.save),
-                label: const Text('Enregistrer'),
+                label: Text(l10n.save),
               ),
             ),
           ],

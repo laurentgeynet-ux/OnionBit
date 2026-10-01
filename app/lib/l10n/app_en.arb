@@ -309,6 +309,231 @@
   "speedTestDone": "Test finished",
   "close": "Close",
 
+  "errorMessage": "Error: {error}",
+  "@errorMessage": {
+    "placeholders": { "error": { "type": "String" } }
+  },
+  "defaultHint": "default: {value}",
+  "@defaultHint": {
+    "description": "Input hint showing a default value",
+    "placeholders": { "value": { "type": "String" } }
+  },
+  "defaultOn": "Default: on.",
+  "defaultOff": "Default: off.",
+  "appliedOnRestart": "Applied on restart.",
+  "appliedOnRestartDefaultOn": "Default: on. Applied on restart.",
+  "browse": "Browse…",
+  "apply": "Apply",
+
+  "sectionDownloadsDefaults": "Default downloads",
+  "sectionBandwidth": "Bandwidth",
+  "sectionQueue": "Queue",
+  "sectionSeeding": "Default seeding & anonymity",
+  "sectionAnonymity": "Anonymous tunnels",
+  "sectionNetwork": "Network",
+  "sectionAutomation": "Automation",
+  "sectionVersioning": "Updates",
+  "sectionConnection": "Connection",
+  "sectionAdvanced": "Advanced configuration",
+  "sectionDaemon": "Daemon",
+  "settingsDirtyBanner": "{count, plural, =1{# modified section not saved} other{# modified sections not saved}}",
+  "@settingsDirtyBanner": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "discardAll": "Discard all",
+  "saveAll": "Save all",
+  "filterSettings": "Filter settings",
+  "noMatchingSection": "No section matches \"{filter}\".",
+  "@noMatchingSection": {
+    "placeholders": { "filter": { "type": "String" } }
+  },
+  "resetSectionDefaults": "Restore section defaults",
+  "defaultsRestored": "Defaults restored",
+  "unsavedChanges": "Unsaved changes",
+
+  "dlSettingsSaved": "Download settings saved",
+  "saveError": "Save error: {error}",
+  "@saveError": {
+    "placeholders": { "error": { "type": "String" } }
+  },
+  "dlDestFolder": "Default destination folder",
+  "dlDestHint": "default: <daemon state>/downloads",
+  "dlDestHelp": "New downloads without a specific folder will be saved here.",
+  "diskSpaceLoading": "Disk space: …",
+  "diskSpaceUnavailable": "Disk space: unavailable",
+  "diskSpaceFree": "Free space: {free} of {total}",
+  "@diskSpaceFree": {
+    "placeholders": {
+      "free": { "type": "String" },
+      "total": { "type": "String" }
+    }
+  },
+
+  "bwSaved": "Bandwidth limits saved",
+  "bwDownloadLabel": "Download",
+  "bwUploadLabel": "Upload",
+  "rateFieldLabel": "{label} (KB/s)",
+  "@rateFieldLabel": {
+    "placeholders": { "label": { "type": "String" } }
+  },
+  "rateUnlimited": "Unlimited",
+  "rateUnlimitedHint": "default: 0 = unlimited",
+  "rateDesc": "Global rate; 0 = unlimited",
+  "ratePresetMb": "{mb} MB/s",
+  "@ratePresetMb": {
+    "placeholders": { "mb": { "type": "int" } }
+  },
+
+  "queueSaved": "Queue saved",
+  "queueHelp": "Downloads marked auto-managed beyond these limits are paused, then resumed when a slot frees up.",
+  "queueActiveDownloads": "Active downloads",
+  "queueActiveSeeds": "Active seeds",
+  "queueActiveChecking": "Active checks",
+  "queueActiveLimit": "Global limit",
+  "queueDefHint": "default: {def} · -1 = unlimited",
+  "@queueDefHint": {
+    "placeholders": { "def": { "type": "int" } }
+  },
+  "queueFastresume": "Check on startup",
+  "queueFastresumeSub": "Re-reads a sample of pieces after restore to detect files changed between sessions. Disabled: no re-read, corruption may go unnoticed.",
+  "queueAutoManaged": "Auto-managed by default",
+  "queueAutoManagedSub": "New downloads are placed under the queue. Default: off.",
+
+  "seedSaved": "Seeding policy saved",
+  "seedMode": "Seeding mode",
+  "seedModeForever": "Forever",
+  "seedModeNever": "Never",
+  "seedModeRatio": "Until ratio",
+  "seedModeTime": "Time-limited",
+  "seedModeDefault": "Default: \"Forever\".",
+  "seedRatioLabel": "Target seed ratio",
+  "seedTimeLabel": "Seed duration (seconds)",
+  "seedAnonTitle": "Default anonymity for new downloads",
+  "seedAnonSwitch": "Anonymous downloads by default",
+  "seedAnonSub": "Default: on, 1 hop.",
+  "safeSeedingSub": "Required when anonymous hops are requested. Default: on.",
+
+  "anonSaved": "Tunnel settings saved",
+  "anonMinMaxError": "min_circuits must be ≤ max_circuits",
+  "anonEnabled": "TunnelCommunity enabled",
+  "anonEnabledSub": "Required for anonymous downloads. Applied on restart. Default: on.",
+  "anonExit": "Act as exit node",
+  "anonExitSub": "Warning: your machine then relays other peers' BitTorrent traffic to the public Internet. Default: off. Applied on restart.",
+  "circuitsMinLabel": "Minimum circuits (default: 3)",
+  "circuitsMaxLabel": "Maximum circuits (default: 8)",
+  "anonCircuitsNote": "Circuits maintained permanently per anonymous lane; live detail in Diagnostics → Circuits.",
+
+  "netSaved": "Network settings saved",
+  "proxyNone": "None",
+  "proxySocks5Auth": "SOCKS5 + authentication",
+  "proxyHttpAuth": "HTTP + authentication",
+  "netDiscovery": "Discovery & transport",
+  "appliedOnRestartOn": "Default: on. Applied on restart.",
+  "lsdTitle": "Local discovery (LSD)",
+  "proxySection": "Outgoing proxy",
+  "proxyTypeLabel": "Proxy type (default: none)",
+  "proxyServerLabel": "Server (host:port)",
+  "proxyAuthLabel": "Authentication (user:password)",
+  "proxyAuthDesc": "Password: libtorrent/proxy_password",
+  "effectiveState": "Effective state",
+  "effectiveStateTip": "Values actually applied by the daemon (read-only). The settings below may differ until the daemon restarts.",
+  "listenPortChip": "Listen port: {port}",
+  "@listenPortChip": {
+    "placeholders": { "port": { "type": "String" } }
+  },
+  "interfacesChip": "Interfaces: {list}",
+  "@interfacesChip": {
+    "placeholders": { "list": { "type": "String" } }
+  },
+  "stateOn": "on",
+  "stateOff": "off",
+  "proxyChipNone": "Proxy: none",
+  "proxyChipType": "Proxy: type {type}{server}",
+  "@proxyChipType": {
+    "placeholders": {
+      "type": { "type": "int" },
+      "server": { "type": "String" }
+    }
+  },
+  "overlayPeersChip": "{name}: {count, plural, =1{# peer} other{# peers}}",
+  "@overlayPeersChip": {
+    "placeholders": {
+      "name": { "type": "String" },
+      "count": { "type": "int" }
+    }
+  },
+
+  "autoSaved": "Automation saved",
+  "watchFolderTitle": "Watched folder",
+  "watchSwitch": "Watch a folder",
+  "watchSwitchSub": ".torrent files dropped in it are added automatically. Default: off.",
+  "watchDirLabel": "Folder to watch",
+  "watchIntervalLabel": "Scan interval (s) — default: 10",
+  "rssTitle": "RSS feeds",
+  "rssSwitch": "Active RSS watchers",
+  "rssSwitchSub": "Default: on (no feeds).",
+  "rssRemove": "Remove",
+  "rssUrlLabel": "Feed URL",
+  "rssAddTooltip": "Add feed",
+  "rssLastItems": "Latest discovered items",
+
+  "advSaved": "Advanced configuration applied",
+  "jsonNotObject": "The document must be a JSON object.",
+  "jsonInvalid": "Invalid JSON: {message}",
+  "@jsonInvalid": {
+    "placeholders": { "message": { "type": "String" } }
+  },
+  "configCopied": "Configuration copied",
+  "advWarning": "Raw editing of the `configuration.json` tree. Sensitive keys (API keys, identity paths) are visible — handle with care.",
+  "export": "Export",
+  "import": "Import",
+  "reload": "Reload",
+  "importTitle": "Import a configuration",
+  "importSections": "Detected sections: {sections}",
+  "@importSections": {
+    "placeholders": { "sections": { "type": "String" } }
+  },
+  "importNote": "Content will replace the editor — nothing is sent until \"Apply\" is pressed.",
+  "importLoad": "Load into editor",
+
+  "apiUrlLabel": "API URL",
+  "apiKeyLabelShort": "API key",
+  "apiKeyHint": "auto: daemon's configuration.json",
+
+  "daemonState": "Daemon state",
+  "stateDir": "State folder",
+  "downloadsTo": "Downloads to",
+  "ipv8Active": "active ({address})",
+  "@ipv8Active": {
+    "placeholders": { "address": { "type": "String" } }
+  },
+  "ipv8Inactive": "inactive",
+  "tunnelsOn": "enabled",
+  "tunnelsOff": "disabled",
+  "shutdownBtn": "Stop daemon",
+  "shutdownTitle": "Stop the daemon?",
+  "shutdownBody": "Downloads will be suspended until the next startup.",
+  "shutdownConfirm": "Stop",
+  "shutdownSent": "Daemon shutdown requested.",
+
+  "newVersionAvail": "New version available: {version}",
+  "@newVersionAvail": {
+    "placeholders": { "version": { "type": "String" } }
+  },
+  "upToDate": "The daemon is up to date.",
+  "checkError": "Check: {error}",
+  "@checkError": {
+    "placeholders": { "error": { "type": "String" } }
+  },
+  "daemonVersionLine": "Daemon version: {version}",
+  "@daemonVersionLine": {
+    "placeholders": { "version": { "type": "String" } }
+  },
+  "checkVersion": "Check",
+  "versionCheckSwitch": "Version check",
+  "versionCheckSub": "Disabled section = missing endpoints (404). Default: on.",
+  "allowPre": "Accept pre-releases",
+
   "settingsAppearanceTitle": "Appearance",
   "@settingsAppearanceTitle": { "description": "Settings — Appearance section title" },
   "settingsThemeMode": "Mode",

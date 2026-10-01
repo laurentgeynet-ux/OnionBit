@@ -5,7 +5,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../core/l10n/l10n_ext.dart';
 import '../../../../core/theme/app_theme.dart';
+import '../../../../l10n/app_localizations.dart' show AppLocalizations;
 import '../../../diagnostic/presentation/providers/diagnostic_providers.dart';
 import 'settings_section.dart';
 import 'settings_defaults.dart';
@@ -24,14 +26,20 @@ class NetworkSection extends ConsumerStatefulWidget {
 class _NetworkSectionState extends ConsumerState<NetworkSection> {
   late final _deferred = DeferredSection(ref, 'network');
 
-  /// Valeurs `proxy_type` de `lt::settings_pack` (enum Python).
-  static const _proxyTypes = {
-    0: 'Aucun',
-    2: 'SOCKS5',
-    3: 'SOCKS5 + authentification',
-    4: 'HTTP',
-    5: 'HTTP + authentification',
-  };
+  /// Valeurs `proxy_type` de `lt::settings_pack` (enum Python) —
+  /// libellés localisés via [_proxyTypeLabel].
+  static const _proxyTypeValues = [0, 2, 3, 4, 5];
+
+  /// Libellé localisé d'un `proxy_type` libtorrent.
+  static String _proxyTypeLabel(AppLocalizations l10n, int type) =>
+      switch (type) {
+        0 => l10n.proxyNone,
+        2 => 'SOCKS5',
+        3 => l10n.proxySocks5Auth,
+        4 => 'HTTP',
+        5 => l10n.proxyHttpAuth,
+        _ => '$type',
+      };
 
   int _proxyType = 0;
   final _proxyServer = TextEditingController();
@@ -56,7 +64,7 @@ class _NetworkSectionState extends ConsumerState<NetworkSection> {
   void _sync(Map<String, dynamic> settings) {
     if (_initialized) return;
     _proxyType = settingsInt(settings, const ['libtorrent', 'proxy_type']);
-    if (!_proxyTypes.containsKey(_proxyType)) _proxyType = 0;
+    if (!_proxyTypeValues.contains(_proxyType)) _proxyType = 0;
     _proxyServer.text = settingsString(settings, const [
       'libtorrent',
       'proxy_server',
@@ -81,7 +89,7 @@ class _NetworkSectionState extends ConsumerState<NetworkSection> {
         'proxy_server': _proxyServer.text.trim(),
         'proxy_auth': _proxyAuth.text,
       },
-    }, successMessage: 'Réglages réseau enregistrés');
+    }, successMessage: context.l10n.netSaved);
     _deferred.markClean();
     if (mounted) setState(() => _saving = false);
   }
@@ -89,9 +97,10 @@ class _NetworkSectionState extends ConsumerState<NetworkSection> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l10n = context.l10n;
     return SettingsSection(
       icon: Icons.public,
-      title: 'Réseau',
+      title: l10n.sectionNetwork,
       sectionId: 'network',
       defaults: kNetworkDefaults,
       child: (context, settings) {
@@ -102,49 +111,52 @@ class _NetworkSectionState extends ConsumerState<NetworkSection> {
           children: [
             _EffectiveState(settings: settings),
             const Divider(height: AppSpacing.lg),
-            Text('Découverte & transport', style: theme.textTheme.labelMedium),
+            Text(l10n.netDiscovery, style: theme.textTheme.labelMedium),
             SettingsSwitch(
               path: [...lt, 'dht'],
               value: settingsBool(settings, [...lt, 'dht'], def: true),
               title: 'DHT (mainline BEP 5)',
-              subtitle: 'Défaut : activé. Pris en compte au redémarrage.',
+              subtitle: l10n.appliedOnRestartOn,
             ),
             SettingsSwitch(
               path: [...lt, 'upnp'],
               value: settingsBool(settings, [...lt, 'upnp'], def: true),
               title: 'UPnP',
-              subtitle: 'Défaut : activé. Pris en compte au redémarrage.',
+              subtitle: l10n.appliedOnRestartOn,
             ),
             SettingsSwitch(
               path: [...lt, 'natpmp'],
               value: settingsBool(settings, [...lt, 'natpmp'], def: true),
               title: 'NAT-PMP',
-              subtitle: 'Défaut : activé. Pris en compte au redémarrage.',
+              subtitle: l10n.appliedOnRestartOn,
             ),
             SettingsSwitch(
               path: [...lt, 'lsd'],
               value: settingsBool(settings, [...lt, 'lsd'], def: true),
-              title: 'Découverte locale (LSD)',
-              subtitle: 'Défaut : activé. Pris en compte au redémarrage.',
+              title: l10n.lsdTitle,
+              subtitle: l10n.appliedOnRestartOn,
             ),
             SettingsSwitch(
               path: [...lt, 'utp'],
               value: settingsBool(settings, [...lt, 'utp'], def: true),
               title: 'uTP',
-              subtitle: 'Défaut : activé. Pris en compte au redémarrage.',
+              subtitle: l10n.appliedOnRestartOn,
             ),
             const Divider(height: AppSpacing.lg),
-            Text('Proxy sortant', style: theme.textTheme.labelMedium),
+            Text(l10n.proxySection, style: theme.textTheme.labelMedium),
             const SizedBox(height: AppSpacing.xs),
             DropdownButtonFormField<int>(
               initialValue: _proxyType,
-              decoration: const InputDecoration(
-                labelText: 'Type de proxy (défaut : aucun)',
-                suffixIcon: KeyInfoIcon(['libtorrent', 'proxy_type']),
+              decoration: InputDecoration(
+                labelText: l10n.proxyTypeLabel,
+                suffixIcon: const KeyInfoIcon(['libtorrent', 'proxy_type']),
               ),
               items: [
-                for (final e in _proxyTypes.entries)
-                  DropdownMenuItem(value: e.key, child: Text(e.value)),
+                for (final t in _proxyTypeValues)
+                  DropdownMenuItem(
+                    value: t,
+                    child: Text(_proxyTypeLabel(l10n, t)),
+                  ),
               ],
               onChanged: (v) => setState(() {
                 _proxyType = v ?? 0;
@@ -156,9 +168,9 @@ class _NetworkSectionState extends ConsumerState<NetworkSection> {
               TextField(
                 controller: _proxyServer,
                 onChanged: (_) => _deferred.markDirty(),
-                decoration: const InputDecoration(
-                  labelText: 'Serveur (hôte:port)',
-                  suffixIcon: KeyInfoIcon(['libtorrent', 'proxy_server']),
+                decoration: InputDecoration(
+                  labelText: l10n.proxyServerLabel,
+                  suffixIcon: const KeyInfoIcon(['libtorrent', 'proxy_server']),
                   hintText: '127.0.0.1:9050',
                 ),
               ),
@@ -168,12 +180,12 @@ class _NetworkSectionState extends ConsumerState<NetworkSection> {
                   controller: _proxyAuth,
                   onChanged: (_) => _deferred.markDirty(),
                   obscureText: true,
-                  decoration: const InputDecoration(
-                    labelText: 'Authentification (utilisateur:mot de passe)',
-                    suffixIcon: KeyInfoIcon([
-                      'libtorrent',
-                      'proxy_username',
-                    ], description: 'Mot de passe : libtorrent/proxy_password'),
+                  decoration: InputDecoration(
+                    labelText: l10n.proxyAuthLabel,
+                    suffixIcon: KeyInfoIcon(
+                      const ['libtorrent', 'proxy_username'],
+                      description: l10n.proxyAuthDesc,
+                    ),
                   ),
                 ),
               ],
@@ -184,7 +196,7 @@ class _NetworkSectionState extends ConsumerState<NetworkSection> {
               child: FilledButton.icon(
                 onPressed: _saving ? null : _save,
                 icon: const Icon(Icons.save),
-                label: const Text('Enregistrer'),
+                label: Text(l10n.save),
               ),
             ),
           ],
@@ -208,6 +220,7 @@ class _EffectiveState extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
+    final l10n = context.l10n;
     const lt = ['libtorrent'];
     final port = settingsInt(settings, [...lt, 'listen_port']);
     final interfaces = settingsLeaf(settings, [...lt, 'listen_interfaces']);
@@ -216,7 +229,7 @@ class _EffectiveState extends ConsumerWidget {
     final overlays = ref.watch(overlaysProvider).value ?? const [];
 
     Widget flag(String label, bool on) => Chip(
-      label: Text('$label : ${on ? 'actif' : 'inactif'}'),
+      label: Text('$label : ${on ? l10n.stateOn : l10n.stateOff}'),
       visualDensity: VisualDensity.compact,
       labelStyle: theme.textTheme.bodySmall,
     );
@@ -226,13 +239,10 @@ class _EffectiveState extends ConsumerWidget {
       children: [
         Row(
           children: [
-            Text('État effectif', style: theme.textTheme.labelMedium),
+            Text(l10n.effectiveState, style: theme.textTheme.labelMedium),
             const SizedBox(width: AppSpacing.xs),
             Tooltip(
-              message:
-                  'Valeurs réellement appliquées par le daemon '
-                  '(lecture seule). Les réglages ci-dessous peuvent '
-                  'différer tant que le daemon n\'a pas redémarré.',
+              message: l10n.effectiveStateTip,
               child: Icon(
                 Icons.info_outline,
                 size: 14,
@@ -247,13 +257,15 @@ class _EffectiveState extends ConsumerWidget {
           runSpacing: AppSpacing.xs,
           children: [
             Chip(
-              label: Text('Port d\'écoute : ${port > 0 ? port : '—'}'),
+              label: Text(
+                l10n.listenPortChip(port > 0 ? '$port' : '—'),
+              ),
               visualDensity: VisualDensity.compact,
               labelStyle: theme.textTheme.bodySmall,
             ),
             if (interfaces is List && interfaces.isNotEmpty)
               Chip(
-                label: Text('Interfaces : ${interfaces.join(', ')}'),
+                label: Text(l10n.interfacesChip(interfaces.join(', '))),
                 visualDensity: VisualDensity.compact,
                 labelStyle: theme.textTheme.bodySmall,
               ),
@@ -268,9 +280,11 @@ class _EffectiveState extends ConsumerWidget {
             Chip(
               label: Text(
                 proxyType == 0
-                    ? 'Proxy : aucun'
-                    : 'Proxy : type $proxyType'
-                          '${proxyServer.isNotEmpty ? ' · $proxyServer' : ''}',
+                    ? l10n.proxyChipNone
+                    : l10n.proxyChipType(
+                        proxyType,
+                        proxyServer.isNotEmpty ? ' · $proxyServer' : '',
+                      ),
               ),
               visualDensity: VisualDensity.compact,
               labelStyle: theme.textTheme.bodySmall,
@@ -278,7 +292,7 @@ class _EffectiveState extends ConsumerWidget {
             for (final o in overlays)
               Chip(
                 avatar: const Icon(Icons.hub, size: 14),
-                label: Text('${o.name} : ${o.peers} pairs'),
+                label: Text(l10n.overlayPeersChip(o.name, o.peers)),
                 visualDensity: VisualDensity.compact,
                 labelStyle: theme.textTheme.bodySmall,
               ),

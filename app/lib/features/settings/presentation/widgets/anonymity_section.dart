@@ -5,6 +5,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../core/l10n/l10n_ext.dart';
 import '../../../../core/theme/app_theme.dart';
 import 'settings_section.dart';
 import 'settings_defaults.dart';
@@ -63,13 +64,13 @@ class _AnonymitySectionState extends ConsumerState<AnonymitySection> {
     if (min < 0 || max < min) {
       setState(() => _saving = false);
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('min_circuits doit être ≤ max_circuits')),
+        SnackBar(content: Text(context.l10n.anonMinMaxError)),
       );
       return;
     }
     await applySettingsPatch(context, ref, {
       'tunnel_community': {'min_circuits': min, 'max_circuits': max},
-    }, successMessage: 'Réglages des tunnels enregistrés');
+    }, successMessage: context.l10n.anonSaved);
     _deferred.markClean();
     if (mounted) setState(() => _saving = false);
   }
@@ -77,9 +78,10 @@ class _AnonymitySectionState extends ConsumerState<AnonymitySection> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l10n = context.l10n;
     return SettingsSection(
       icon: Icons.shield_outlined,
-      title: 'Tunnels anonymes',
+      title: l10n.sectionAnonymity,
       sectionId: 'anonymity',
       defaults: kAnonymityDefaults,
       child: (context, settings) {
@@ -91,20 +93,14 @@ class _AnonymitySectionState extends ConsumerState<AnonymitySection> {
             SettingsSwitch(
               path: [..._t, 'enabled'],
               value: enabled,
-              title: 'TunnelCommunity activée',
-              subtitle:
-                  'Requis pour les téléchargements anonymes. '
-                  'Pris en compte au redémarrage. Défaut : activé.',
+              title: l10n.anonEnabled,
+              subtitle: l10n.anonEnabledSub,
             ),
             SettingsSwitch(
               path: [..._t, 'exitnode_enabled'],
               value: settingsBool(settings, [..._t, 'exitnode_enabled']),
-              title: 'Agir comme noeud de sortie',
-              subtitle:
-                  'Attention : votre machine relaye alors le trafic '
-                  'BitTorrent des autres pairs vers l\'Internet public. '
-                  'Défaut : désactivé. '
-                  'Pris en compte au redémarrage.',
+              title: l10n.anonExit,
+              subtitle: l10n.anonExitSub,
             ),
             const SizedBox(height: AppSpacing.sm),
             Row(
@@ -114,10 +110,10 @@ class _AnonymitySectionState extends ConsumerState<AnonymitySection> {
                     controller: _minCircuits,
                     onChanged: (_) => _deferred.markDirty(),
                     keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(
-                      labelText: 'Circuits minimum (défaut : 3)',
+                    decoration: InputDecoration(
+                      labelText: l10n.circuitsMinLabel,
                       isDense: true,
-                      suffixIcon: KeyInfoIcon([
+                      suffixIcon: const KeyInfoIcon([
                         'tunnel_community',
                         'min_circuits',
                       ]),
@@ -130,10 +126,10 @@ class _AnonymitySectionState extends ConsumerState<AnonymitySection> {
                     controller: _maxCircuits,
                     onChanged: (_) => _deferred.markDirty(),
                     keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(
-                      labelText: 'Circuits maximum (défaut : 8)',
+                    decoration: InputDecoration(
+                      labelText: l10n.circuitsMaxLabel,
                       isDense: true,
-                      suffixIcon: KeyInfoIcon([
+                      suffixIcon: const KeyInfoIcon([
                         'tunnel_community',
                         'max_circuits',
                       ]),
@@ -144,8 +140,7 @@ class _AnonymitySectionState extends ConsumerState<AnonymitySection> {
             ),
             const SizedBox(height: AppSpacing.xs),
             Text(
-              'Circuits maintenus en permanence par lane anonyme ; '
-              'le détail en direct est visible dans Diagnostic → Circuits.',
+              l10n.anonCircuitsNote,
               style: theme.textTheme.bodySmall?.copyWith(
                 color: theme.colorScheme.outline,
               ),
@@ -156,7 +151,7 @@ class _AnonymitySectionState extends ConsumerState<AnonymitySection> {
               child: FilledButton.icon(
                 onPressed: _saving ? null : _save,
                 icon: const Icon(Icons.save),
-                label: const Text('Enregistrer'),
+                label: Text(l10n.save),
               ),
             ),
           ],

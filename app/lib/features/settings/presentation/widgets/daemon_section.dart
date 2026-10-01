@@ -5,6 +5,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../core/l10n/l10n_ext.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../providers/settings_providers.dart';
 
@@ -16,6 +17,7 @@ class DaemonSection extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
+    final l10n = context.l10n;
     final settings = ref.watch(daemonSettingsProvider);
 
     return Card(
@@ -29,12 +31,12 @@ class DaemonSection extends ConsumerWidget {
               children: [
                 Expanded(
                   child: Text(
-                    'État du daemon',
+                    l10n.daemonState,
                     style: theme.textTheme.titleMedium,
                   ),
                 ),
                 IconButton(
-                  tooltip: 'Rafraîchir',
+                  tooltip: l10n.refresh,
                   onPressed: () => ref.invalidate(daemonSettingsProvider),
                   icon: const Icon(Icons.refresh, size: 18),
                 ),
@@ -62,25 +64,27 @@ class DaemonSection extends ConsumerWidget {
                   children: [
                     _line(
                       context,
-                      'Dossier d\'état',
+                      l10n.stateDir,
                       '${s['state_dir'] ?? '—'}',
                     ),
                     _line(
                       context,
-                      'Téléchargements vers',
+                      l10n.downloadsTo,
                       '${defaults?['saveas'] ?? '—'}',
                     ),
                     _line(
                       context,
                       'IPv8',
                       (ipv8?['enabled'] == true)
-                          ? 'actif (${ipv8?['address'] ?? ''})'
-                          : 'inactif',
+                          ? l10n.ipv8Active('${ipv8?['address'] ?? ''}')
+                          : l10n.ipv8Inactive,
                     ),
                     _line(
                       context,
-                      'Tunnels anonymes',
-                      (tunnel?['enabled'] == true) ? 'activés' : 'désactivés',
+                      l10n.sectionAnonymity,
+                      (tunnel?['enabled'] == true)
+                          ? l10n.tunnelsOn
+                          : l10n.tunnelsOff,
                     ),
                   ],
                 );
@@ -91,7 +95,7 @@ class DaemonSection extends ConsumerWidget {
               alignment: Alignment.centerRight,
               child: OutlinedButton.icon(
                 icon: const Icon(Icons.power_settings_new, size: 18),
-                label: const Text('Arrêter le daemon'),
+                label: Text(l10n.shutdownBtn),
                 onPressed: () => _confirmShutdown(context, ref),
               ),
             ),
@@ -126,19 +130,16 @@ class DaemonSection extends ConsumerWidget {
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Arrêter le daemon ?'),
-        content: const Text(
-          'Les téléchargements seront suspendus jusqu\'au prochain '
-          'démarrage.',
-        ),
+        title: Text(ctx.l10n.shutdownTitle),
+        content: Text(ctx.l10n.shutdownBody),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(false),
-            child: const Text('Annuler'),
+            child: Text(ctx.l10n.cancel),
           ),
           FilledButton(
             onPressed: () => Navigator.of(ctx).pop(true),
-            child: const Text('Arrêter'),
+            child: Text(ctx.l10n.shutdownConfirm),
           ),
         ],
       ),
@@ -152,7 +153,7 @@ class DaemonSection extends ConsumerWidget {
       }
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Arrêt du daemon demandé.')),
+          SnackBar(content: Text(context.l10n.shutdownSent)),
         );
       }
     }

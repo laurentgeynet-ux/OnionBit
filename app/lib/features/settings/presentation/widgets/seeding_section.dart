@@ -5,7 +5,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../core/l10n/l10n_ext.dart';
 import '../../../../core/theme/app_theme.dart';
+import '../../../../l10n/app_localizations.dart' show AppLocalizations;
 import 'settings_section.dart';
 import 'settings_defaults.dart';
 
@@ -24,13 +26,19 @@ class _SeedingSectionState extends ConsumerState<SeedingSection> {
   late final _deferred = DeferredSection(ref, 'seeding');
   static const _dd = ['libtorrent', 'download_defaults'];
 
-  /// Modes de seed du backend (`forever`/`never`/`ratio`/`time`).
-  static const _modes = {
-    'forever': 'Pour toujours',
-    'never': 'Jamais',
-    'ratio': 'Jusqu\'au ratio',
-    'time': 'Durée limitée',
-  };
+  /// Modes de seed du backend (`forever`/`never`/`ratio`/`time`) —
+  /// les libellés affichés sont localisés via [_modeLabel].
+  static const _modeKeys = ['forever', 'never', 'ratio', 'time'];
+
+  /// Libellé localisé d'un mode de seed backend.
+  static String _modeLabel(AppLocalizations l10n, String mode) =>
+      switch (mode) {
+        'forever' => l10n.seedModeForever,
+        'never' => l10n.seedModeNever,
+        'ratio' => l10n.seedModeRatio,
+        'time' => l10n.seedModeTime,
+        _ => mode,
+      };
 
   String _mode = 'forever';
   int _hops = 0;
@@ -58,7 +66,7 @@ class _SeedingSectionState extends ConsumerState<SeedingSection> {
   void _sync(Map<String, dynamic> settings) {
     if (_initialized) return;
     _mode = settingsString(settings, [..._dd, 'seeding_mode'], def: 'forever');
-    if (!_modes.containsKey(_mode)) _mode = 'forever';
+    if (!_modeKeys.contains(_mode)) _mode = 'forever';
     _anonymity = settingsBool(settings, [..._dd, 'anonymity_enabled']);
     _hops = settingsInt(settings, [..._dd, 'number_hops']).clamp(0, 3);
     _safeSeeding = settingsBool(settings, [..._dd, 'safeseeding_enabled']);
@@ -86,7 +94,7 @@ class _SeedingSectionState extends ConsumerState<SeedingSection> {
           'number_hops': _hops,
         },
       },
-    }, successMessage: 'Politique de seed enregistrée');
+    }, successMessage: context.l10n.seedSaved);
     _deferred.markClean();
     if (mounted) setState(() => _saving = false);
   }
@@ -94,9 +102,10 @@ class _SeedingSectionState extends ConsumerState<SeedingSection> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l10n = context.l10n;
     return SettingsSection(
       icon: Icons.upload,
-      title: 'Seed & anonymat par défaut',
+      title: l10n.sectionSeeding,
       sectionId: 'seeding',
       defaults: kSeedingDefaults,
       child: (context, settings) {
@@ -104,12 +113,12 @@ class _SeedingSectionState extends ConsumerState<SeedingSection> {
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Mode de seed', style: theme.textTheme.labelMedium),
+            Text(l10n.seedMode, style: theme.textTheme.labelMedium),
             const SizedBox(height: AppSpacing.xs),
             SegmentedButton<String>(
               segments: [
-                for (final e in _modes.entries)
-                  ButtonSegment(value: e.key, label: Text(e.value)),
+                for (final m in _modeKeys)
+                  ButtonSegment(value: m, label: Text(_modeLabel(l10n, m))),
               ],
               selected: {_mode},
               onSelectionChanged: (s) => setState(() {
@@ -119,7 +128,7 @@ class _SeedingSectionState extends ConsumerState<SeedingSection> {
             ),
             const SizedBox(height: AppSpacing.xs),
             Text(
-              'Défaut : « Pour toujours ».',
+              l10n.seedModeDefault,
               style: theme.textTheme.bodySmall?.copyWith(
                 color: theme.colorScheme.outline,
               ),
@@ -132,10 +141,10 @@ class _SeedingSectionState extends ConsumerState<SeedingSection> {
                 keyboardType: const TextInputType.numberWithOptions(
                   decimal: true,
                 ),
-                decoration: const InputDecoration(
-                  labelText: 'Ratio de seed cible',
-                  hintText: 'défaut : 2.0',
-                  suffixIcon: KeyInfoIcon([
+                decoration: InputDecoration(
+                  labelText: l10n.seedRatioLabel,
+                  hintText: l10n.defaultHint('2.0'),
+                  suffixIcon: const KeyInfoIcon([
                     'libtorrent',
                     'download_defaults',
                     'seeding_ratio',
@@ -147,10 +156,10 @@ class _SeedingSectionState extends ConsumerState<SeedingSection> {
                 controller: _time,
                 onChanged: (_) => _deferred.markDirty(),
                 keyboardType: TextInputType.number,
-                decoration: const InputDecoration(
-                  labelText: 'Durée de seed (secondes)',
-                  hintText: 'défaut : 60',
-                  suffixIcon: KeyInfoIcon([
+                decoration: InputDecoration(
+                  labelText: l10n.seedTimeLabel,
+                  hintText: l10n.defaultHint('60'),
+                  suffixIcon: const KeyInfoIcon([
                     'libtorrent',
                     'download_defaults',
                     'seeding_time',
@@ -158,15 +167,12 @@ class _SeedingSectionState extends ConsumerState<SeedingSection> {
                 ),
               ),
             const Divider(height: AppSpacing.lg),
-            Text(
-              'Anonymat par défaut des nouveaux téléchargements',
-              style: theme.textTheme.labelMedium,
-            ),
+            Text(l10n.seedAnonTitle, style: theme.textTheme.labelMedium),
             SettingsSwitch(
               path: [..._dd, 'anonymity_enabled'],
               value: _anonymity,
-              title: 'Téléchargements anonymes par défaut',
-              subtitle: 'Défaut : activé, 1 saut.',
+              title: l10n.seedAnonSwitch,
+              subtitle: l10n.seedAnonSub,
               onChangedOverride: (v) => setState(() {
                 _deferred.markDirty();
                 _anonymity = v;
@@ -178,10 +184,9 @@ class _SeedingSectionState extends ConsumerState<SeedingSection> {
             if (_anonymity) ...[
               const SizedBox(height: AppSpacing.xs),
               SegmentedButton<int>(
-                segments: const [
-                  ButtonSegment(value: 1, label: Text('1 saut')),
-                  ButtonSegment(value: 2, label: Text('2 sauts')),
-                  ButtonSegment(value: 3, label: Text('3 sauts')),
+                segments: [
+                  for (final n in const [1, 2, 3])
+                    ButtonSegment(value: n, label: Text(l10n.ctxHops(n))),
                 ],
                 selected: {_hops == 0 ? 1 : _hops},
                 onSelectionChanged: (s) => setState(() {
@@ -200,10 +205,7 @@ class _SeedingSectionState extends ConsumerState<SeedingSection> {
                         _deferred.markDirty();
                       }),
                 title: const Text('Safe seeding'),
-                subtitle: const Text(
-                  'Obligatoire quand des sauts anonymes sont demandés. '
-                  'Défaut : activé.',
-                ),
+                subtitle: Text(l10n.safeSeedingSub),
                 contentPadding: EdgeInsets.zero,
                 dense: true,
               ),
@@ -214,7 +216,7 @@ class _SeedingSectionState extends ConsumerState<SeedingSection> {
               child: FilledButton.icon(
                 onPressed: _saving ? null : _save,
                 icon: const Icon(Icons.save),
-                label: const Text('Enregistrer'),
+                label: Text(l10n.save),
               ),
             ),
           ],

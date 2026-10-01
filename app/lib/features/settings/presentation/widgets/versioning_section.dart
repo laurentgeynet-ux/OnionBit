@@ -5,6 +5,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../core/l10n/l10n_ext.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../core/widgets/error_state.dart';
 import '../providers/settings_providers.dart';
@@ -25,15 +26,16 @@ class VersioningSection extends ConsumerWidget {
         SnackBar(
           content: Text(
             has
-                ? 'Nouvelle version disponible : ${r['new_version']}'
-                : 'Le daemon est à jour.',
+                ? context.l10n.newVersionAvail('${r['new_version']}')
+                : context.l10n.upToDate,
           ),
         ),
       );
     } catch (e) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Vérification : $e')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(context.l10n.checkError('$e'))),
+        );
       }
     }
   }
@@ -42,9 +44,10 @@ class VersioningSection extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
     final versions = ref.watch(versionsProvider);
+    final l10n = context.l10n;
     return SettingsSection(
       icon: Icons.system_update_alt,
-      title: 'Mises à jour',
+      title: l10n.sectionVersioning,
       child: (context, settings) {
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -61,13 +64,13 @@ class VersioningSection extends ConsumerWidget {
                   children: [
                     Expanded(
                       child: Text(
-                        'Version du daemon : ${v['current'] ?? '—'}',
+                        l10n.daemonVersionLine('${v['current'] ?? '—'}'),
                         style: theme.textTheme.bodyMedium,
                       ),
                     ),
                     TextButton.icon(
                       icon: const Icon(Icons.refresh, size: 16),
-                      label: const Text('Vérifier'),
+                      label: Text(l10n.checkVersion),
                       onPressed: () => _check(context, ref),
                     ),
                   ],
@@ -80,16 +83,14 @@ class VersioningSection extends ConsumerWidget {
                 'versioning',
                 'enabled',
               ], def: true),
-              title: 'Vérification de version',
-              subtitle:
-                  'Section désactivée = endpoints absents (404). '
-                  'Défaut : activé.',
+              title: l10n.versionCheckSwitch,
+              subtitle: l10n.versionCheckSub,
             ),
             SettingsSwitch(
               path: const ['versioning', 'allow_pre'],
               value: settingsBool(settings, const ['versioning', 'allow_pre']),
-              title: 'Accepter les pré-versions',
-              subtitle: 'Défaut : désactivé.',
+              title: l10n.allowPre,
+              subtitle: l10n.defaultOff,
             ),
           ],
         );

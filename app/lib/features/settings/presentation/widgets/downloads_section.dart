@@ -6,6 +6,7 @@ import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../core/l10n/l10n_ext.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../core/utils/byte_formatter.dart';
 import '../providers/settings_providers.dart';
@@ -76,15 +77,13 @@ class _DownloadsSectionState extends ConsumerState<DownloadsSection> {
       _deferred.markClean();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Réglages de téléchargement enregistrés'),
-          ),
+          SnackBar(content: Text(context.l10n.dlSettingsSaved)),
         );
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Erreur lors de l\'enregistrement : $e')),
+          SnackBar(content: Text(context.l10n.saveError('$e'))),
         );
       }
     } finally {
@@ -95,6 +94,7 @@ class _DownloadsSectionState extends ConsumerState<DownloadsSection> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l10n = context.l10n;
     final async = ref.watch(daemonSettingsProvider);
 
     return Card(
@@ -113,7 +113,7 @@ class _DownloadsSectionState extends ConsumerState<DownloadsSection> {
                 const SizedBox(width: AppSpacing.sm),
                 Expanded(
                   child: Text(
-                    'Téléchargements par défaut',
+                    l10n.sectionDownloadsDefaults,
                     style: theme.textTheme.titleMedium,
                   ),
                 ),
@@ -121,7 +121,7 @@ class _DownloadsSectionState extends ConsumerState<DownloadsSection> {
                   settingsDirtyProvider.select((s) => s.contains('downloads')),
                 ))
                   Tooltip(
-                    message: 'Modifications non enregistrées',
+                    message: l10n.unsavedChanges,
                     child: Icon(
                       Icons.circle,
                       size: 10,
@@ -139,7 +139,7 @@ class _DownloadsSectionState extends ConsumerState<DownloadsSection> {
             const SizedBox(height: AppSpacing.md),
             async.when(
               loading: () => const Center(child: CircularProgressIndicator()),
-              error: (e, _) => Text('Erreur : $e'),
+              error: (e, _) => Text(l10n.errorMessage('$e')),
               data: (settings) {
                 _syncWithSettings(settings);
                 return Column(
@@ -149,8 +149,8 @@ class _DownloadsSectionState extends ConsumerState<DownloadsSection> {
                       controller: _saveasController,
                       onChanged: (_) => _deferred.markDirty(),
                       decoration: InputDecoration(
-                        labelText: 'Dossier de destination par défaut',
-                        hintText: 'défaut : <état du daemon>/downloads',
+                        labelText: l10n.dlDestFolder,
+                        hintText: l10n.dlDestHint,
                         prefixIcon: const Icon(Icons.folder_outlined),
                         suffixIcon: Row(
                           mainAxisSize: MainAxisSize.min,
@@ -161,7 +161,7 @@ class _DownloadsSectionState extends ConsumerState<DownloadsSection> {
                               'saveas',
                             ]),
                             IconButton(
-                              tooltip: 'Parcourir…',
+                              tooltip: l10n.browse,
                               icon: const Icon(Icons.folder_open),
                               onPressed: _pickDirectory,
                             ),
@@ -171,7 +171,7 @@ class _DownloadsSectionState extends ConsumerState<DownloadsSection> {
                     ),
                     const SizedBox(height: AppSpacing.xs),
                     Text(
-                      'Les nouveaux téléchargements sans dossier spécifique seront enregistrés ici.',
+                      l10n.dlDestHelp,
                       style: theme.textTheme.bodySmall?.copyWith(
                         color: theme.colorScheme.outline,
                       ),
@@ -184,7 +184,7 @@ class _DownloadsSectionState extends ConsumerState<DownloadsSection> {
                       child: FilledButton.icon(
                         onPressed: _saving ? null : _save,
                         icon: const Icon(Icons.save),
-                        label: const Text('Enregistrer'),
+                        label: Text(l10n.save),
                       ),
                     ),
                   ],
@@ -213,8 +213,9 @@ class _DiskSpace extends ConsumerWidget {
     );
     final style = Theme.of(context).textTheme.bodySmall;
     return space.when(
-      loading: () => Text('Espace disque : …', style: style),
-      error: (_, _) => Text('Espace disque : indisponible', style: style),
+      loading: () => Text(context.l10n.diskSpaceLoading, style: style),
+      error: (_, _) =>
+          Text(context.l10n.diskSpaceUnavailable, style: style),
       data: (s) => Row(
         children: [
           Icon(
@@ -225,8 +226,10 @@ class _DiskSpace extends ConsumerWidget {
           const SizedBox(width: AppSpacing.xs),
           Expanded(
             child: Text(
-              'Espace libre : ${ByteFormatter.format(s['free'] ?? 0)} '
-              'sur ${ByteFormatter.format(s['total'] ?? 0)}',
+              context.l10n.diskSpaceFree(
+                ByteFormatter.format(s['free'] ?? 0),
+                ByteFormatter.format(s['total'] ?? 0),
+              ),
               style: style,
             ),
           ),

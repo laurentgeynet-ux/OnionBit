@@ -5,6 +5,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../core/l10n/l10n_ext.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../providers/settings_providers.dart';
 
@@ -59,7 +60,7 @@ class SettingsSection extends ConsumerWidget {
                 ),
                 if (defaults != null)
                   IconButton(
-                    tooltip: 'Rétablir les défauts de la section',
+                    tooltip: context.l10n.resetSectionDefaults,
                     icon: const Icon(Icons.restart_alt, size: 18),
                     visualDensity: VisualDensity.compact,
                     onPressed: () async {
@@ -67,7 +68,7 @@ class SettingsSection extends ConsumerWidget {
                         context,
                         ref,
                         defaults!,
-                        successMessage: 'Défauts restaurés',
+                        successMessage: context.l10n.defaultsRestored,
                       );
                       // Ré-synchronise les champs locaux des sections à
                       // sauvegarde différée depuis la nouvelle config.
@@ -83,7 +84,7 @@ class SettingsSection extends ConsumerWidget {
                       ),
                     ))
                   Tooltip(
-                    message: 'Modifications non enregistrées',
+                    message: context.l10n.unsavedChanges,
                     child: Icon(
                       Icons.circle,
                       size: 10,
@@ -130,8 +131,9 @@ Future<void> applySettingsPatch(
     }
   } catch (e) {
     if (context.mounted) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text('Erreur : $e')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(context.l10n.errorMessage('$e'))),
+      );
     }
   }
 }
