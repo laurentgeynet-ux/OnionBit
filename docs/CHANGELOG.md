@@ -3,6 +3,15 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Journal daemon : annonces DHT hidden-service rétrogradées en debug (2026-10-01)
+
+- `hidden_services.rs` : « point d'introduction annonce sur la DHT »
+  (re-annonce périodique par intro point — ~1400 lignes en quelques
+  minutes sur 3 swarms seedés) et « dht_lookup du swarm : valeur(s)
+  DHT » (tick de découverte par swarm) passent de `info!` à `debug!` —
+  visibles uniquement via le switch « Debug » de l'onglet Journaux
+  (`PUT /api/ipv8/asyncio/debug`).
+
 ## Fix : double DropTarget — un `.torrent` déposé partait en clair malgré les sauts choisis (2026-10-01)
 
 - Symptôme : déposer un `.torrent` sur la page Téléchargements puis
