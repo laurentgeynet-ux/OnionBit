@@ -53,3 +53,13 @@ crash fuzz -> minimisation -> test de regression stable -> correctif
 | :--- | :--- | :--- | :--- |
 | 2026-10-01 | `9bc4a9d` | smoke 30-60 s x6 cibles (MSVC, `-s none`) | ~98 M execs, 0 crash, corpus amorce |
 | (en cours) | `9bc4a9d` | campagne de reference complete | — |
+
+Incident 2026-10-01 : une instance du script lancee en double a ete
+tuee avant son premier run ; sa ligne CSV parasite
+(`f5d503c,raw_datagram,exit=-1`) a ete retiree — aucun run valide
+n'existait pour elle. La campagne d'origine n'a pas ete interrompue.
+Note de provenance : les cibles lancees apres `77e2b2e`/`f5d503c`
+sont relinkees sur le HEAD courant (`cargo fuzz run` recompile si les
+sources changent) ; le code guard ajoute est desactive par defaut et
+inaccessible aux surfaces fuzzees — comportement identique, mais le
+commit journalise (capture au lancement) reste `9bc4a9d`.

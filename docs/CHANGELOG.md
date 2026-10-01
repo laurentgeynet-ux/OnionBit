@@ -36,8 +36,10 @@ en haut.
   de l'autre, la couture vit dans `core`. Injection dans
   `ipv8_stack` quand `tunnel_community/guards_enabled` est vrai dans
   `configuration.json` (défaut `false` partout).
-- Reste à faire : exposition API/diagnostic, activation par défaut
-  après validation terrain.
+- Diagnostic : `GET /api/ipv8/tunnel/guards` (extension Rust —
+  `{guards: [{mid, address, reserve, failures, adopted_at,
+  last_seen}], enabled}`) ; documentée dans `api_rest_mapping.md`.
+- Reste à faire : activation par défaut après validation terrain.
 
 ## Campagne libFuzzer native Windows + ADR guard nodes (2026-10-01)
 

@@ -106,6 +106,25 @@ impl GuardStore for InMemoryGuardStore {
     }
 }
 
+/// Instantane d'un guard (`/api/ipv8/tunnel/guards`) — diagnostic
+/// utilisateur : le mid hex tronque masque la cle complete (la liste
+/// des premiers sauts est revelatrice de topologie, cf. ADR-0010 §UX).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct GuardInfo {
+    /// `mid` hex du pair (comme `CircuitInfo::verified_hops`).
+    pub mid: String,
+    /// Derniere adresse connue `"ip:port"` (`""` = inconnue).
+    pub address: String,
+    /// `true` = reserve, `false` = actif.
+    pub reserve: bool,
+    /// Echecs de handshake `create` consecutifs.
+    pub failures: u32,
+    /// Epoch secondes de l'adoption.
+    pub adopted_at: u64,
+    /// Epoch secondes de la derniere preuve de vie.
+    pub last_seen: u64,
+}
+
 /// `true` si deux adresses sont dans le meme sous-reseau (/24 IPv4,
 /// /64 IPv6) ou identiques — dedup de diversite a l'admission.
 /// Les domaines sont comparees par nom exact ; sans adresse connue on
@@ -166,6 +185,34 @@ impl GuardSet {
             .unwrap()
             .iter()
             .map(|r| r.public_key_bin.clone())
+            .collect()
+    }
+
+    /// Instantane diagnostic du set (actifs puis reserve) —
+    /// `GuardInfo` pour l'API (`/api/ipv8/tunnel/guards`).
+    pub fn guards_info(&self) -> Vec<GuardInfo> {
+        let epoch = |t: SystemTime| {
+            t.duration_since(SystemTime::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0)
+        };
+        self.records
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|r| GuardInfo {
+                mid: hex::encode(onionbit_crypto::hash::ipv8_mid(&r.public_key_bin)),
+                address: r
+                    .last_address
+                    .as_ref()
+                    .and_then(|a| a.to_socket_addr())
+                    .map(|s| s.to_string())
+                    .unwrap_or_default(),
+                reserve: r.reserve,
+                failures: r.failures,
+                adopted_at: epoch(r.adopted_at),
+                last_seen: epoch(r.last_seen),
+            })
             .collect()
     }
 

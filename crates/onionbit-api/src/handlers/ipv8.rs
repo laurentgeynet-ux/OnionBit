@@ -356,6 +356,22 @@ pub async fn get_tunnel_swarms(State(state): State<AppState>) -> Response {
     Json(serde_json::json!({ "swarms": tunnel.swarms_info() })).into_response()
 }
 
+/// `GET /api/ipv8/tunnel/guards` — guard nodes actifs/reserve
+/// (ADR-0010, extension Rust sans equivalent pyipv8) :
+/// `{"guards": [], "enabled": bool}` — `enabled` reflete la config,
+/// la liste est vide tant qu'aucun guard n'est adopte ou si la
+/// feature est desactivee.
+pub async fn get_tunnel_guards(State(state): State<AppState>) -> Response {
+    let Some(tunnel) = tunnel_of(&state) else {
+        return Json(serde_json::json!({ "guards": [], "enabled": false })).into_response();
+    };
+    Json(serde_json::json!({
+        "guards": tunnel.guards.guards_info(),
+        "enabled": tunnel.settings.guards.enabled,
+    }))
+    .into_response()
+}
+
 /// `GET /api/ipv8/tunnel/peers` — pairs tunnel connus + flags.
 pub async fn get_tunnel_peers(State(state): State<AppState>) -> Response {
     let Some(tunnel) = tunnel_of(&state) else {
