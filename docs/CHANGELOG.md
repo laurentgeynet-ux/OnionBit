@@ -3,6 +3,26 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Resilience interop : kill du seeder en plein transfert, reprise verifiee
+
+- `scripts/interop_hidden_killseeder.ps1` (`-Sens A|B`) : seeder tue
+  a >=3 Mo telecharges, drain borne mesure, fenetre morte stricte de
+  30 s sans octet, restart, puis reprise jusqu'a 100 % et SHA-256
+  identique.
+- **Sens A** (seeder Rust tue, downloader Tribler 8.4.3) :
+  `target/interop-killseed-20261001-072004/`. Kill a dl=3 777 273 o,
+  drain +351 111 o en 2,0 s, fenêtre morte 30 s, restart → SEEDING +
+  IP_SEEDER reconstruits, reprise par re-decouverte Tribler
+  (`do_peer_discovery`/`swarm_lookup_interval` = 30 s), 100 %,
+  SHA-256 `6405c943…` identique.
+- **Sens B** (seeder Tribler tue, downloader Rust) :
+  `target/interop-killseed-20261001-073411/`. Kill a dl=3 997 696 o,
+  drain +49 152 o en 1,1 s, fenetre morte 30 s, Tribler restaure
+  SEEDING+IP_SEEDER ~10 s apres reboot, D repart a +266 s (temps que
+  le nouvel intro point re-annonce sur la DHT et que
+  `do_peer_discovery` cree le nouvel e2e), 100 %, SHA-256
+  `b9792f43…` identique.
+
 ## Resilience interop : `anon_hops=3` vert dans les deux sens
 
 - Sens A : `target/interop-hidden-dl-20261001-065729/` (10 IP_SEEDER
