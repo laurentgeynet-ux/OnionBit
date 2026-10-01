@@ -69,7 +69,7 @@ tempfile = "3"
 proptest = "1"
 lz4_flex = "0.11"
 fs2 = "0.4"
-base64 = "0.22"
+base64 = "0.23"
 
 # API HTTPS (onionbit-daemon) : listener TLS de l'API de controle
 # (`api/https_*` Python) — axum-server pour le serveur rustls,

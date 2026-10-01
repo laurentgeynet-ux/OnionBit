@@ -2924,7 +2924,7 @@ name = "onionbit-api"
 version = "0.3.1-alpha"
 dependencies = [
  "axum",
- "base64 0.22.1",
+ "base64 0.23.1",
  "fs2",
  "futures-util",
  "hex 0.4.3",
@@ -2954,7 +2954,7 @@ dependencies = [
 name = "onionbit-bittorrent"
 version = "0.3.1-alpha"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.1",
  "bytes",
  "futures-util",
  "hex 0.4.3",
