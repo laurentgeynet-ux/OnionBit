@@ -32,6 +32,14 @@ en haut.
   `pumpApp(locale: …)`, assertions sur les chaînes EN) ;
   `check_i18n.ps1` vert. ADR-0009.
 
+## UI : pouce de scrollbar visible en mode clair (2026-10-01)
+
+- Le thème ne définissait pas de `scrollbarTheme` : le défaut M3
+  (`onSurface` très dilué) rendait le pouce quasi invisible en mode
+  clair sur toutes les listes. `thumbColor` global → `outline` au
+  repos, `onSurfaceVariant` au survol/drag — lisible dans les deux
+  modes, appliqué à toutes les fenêtres via `MaterialScrollBehavior`.
+
 ## Daemon : systray renommé OnionBit (2026-10-01)
 
 - Le renommage produit avait oublié le tray Windows : tooltip
