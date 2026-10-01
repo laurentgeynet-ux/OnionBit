@@ -55,7 +55,7 @@
   "connecting": "Connecting…",
   "save": "Save",
 
-  "statusAnonReady": "Anonymous: {count, plural, =1{# circuit ready} other{# circuits ready}}",
+  "statusAnonReady": "Anonymous: {count, plural, =1{{count} circuit ready} other{{count} circuits ready}}",
   "@statusAnonReady": {
     "description": "Status bar — anonymous lane ready circuits",
     "placeholders": { "count": { "type": "int" } }
@@ -98,7 +98,7 @@
     "placeholders": { "count": { "type": "int" } }
   },
   "searchDeselect": "Clear selection",
-  "searchRemoteProgress": "remote search · {results, plural, =1{# result} other{# results}} · {peers, plural, =1{# peer} other{# peers}}",
+  "searchRemoteProgress": "remote search · {results, plural, =1{{results} result} other{{results} results}} · {peers, plural, =1{{peers} peer} other{{peers} peers}}",
   "@searchRemoteProgress": {
     "placeholders": {
       "results": { "type": "int" },
@@ -106,7 +106,7 @@
     }
   },
   "searchRemoteStop": "Stop remote search",
-  "searchRemoteFinished": "{count, plural, =1{# remote result} other{# remote results}} · finished at {time}",
+  "searchRemoteFinished": "{count, plural, =1{{count} remote result} other{{count} remote results}} · finished at {time}",
   "@searchRemoteFinished": {
     "placeholders": {
       "count": { "type": "int" },
@@ -129,11 +129,11 @@
   "emptyNoResults": "No results",
   "emptyDiscovering": "The daemon is still discovering the network — trending torrents will appear here.",
   "emptyTryOther": "Try other terms, or wait for network replies.",
-  "batchAdded": "{added, plural, =1{# download added} other{# downloads added}}",
+  "batchAdded": "{added, plural, =1{{added} download added} other{{added} downloads added}}",
   "@batchAdded": {
     "placeholders": { "added": { "type": "int" } }
   },
-  "batchAddedFailed": "{added, plural, =1{# added} other{# added}}, {failed, plural, =1{# failed} other{# failed}}",
+  "batchAddedFailed": "{added, plural, =1{{added} added} other{{added} added}}, {failed, plural, =1{{failed} failed} other{{failed} failed}}",
   "@batchAddedFailed": {
     "placeholders": {
       "added": { "type": "int" },
@@ -151,7 +151,7 @@
   "sourceLocal": "local",
   "alreadyDownloaded": "Already in your downloads",
   "inProgress": "In progress",
-  "healthSeeders": "{count, plural, =1{# seeder} other{# seeders}}",
+  "healthSeeders": "{count, plural, =1{{count} seeder} other{{count} seeders}}",
   "@healthSeeders": {
     "placeholders": { "count": { "type": "int" } }
   },
@@ -160,7 +160,7 @@
   "ctxAdd": "Add…",
   "ctxQuickAdd": "Quick add",
   "ctxDirectHop": "Direct (0 hops)",
-  "ctxHops": "{count, plural, =1{# hop} other{# hops}}",
+  "ctxHops": "{count, plural, =1{{count} hop} other{{count} hops}}",
   "@ctxHops": {
     "placeholders": { "count": { "type": "int" } }
   },
@@ -171,7 +171,7 @@
   "@toastAdded": {
     "placeholders": { "name": { "type": "String" } }
   },
-  "toastAddedAnon": "\"{name}\" added anonymously ({hops, plural, =1{# hop} other{# hops}})",
+  "toastAddedAnon": "\"{name}\" added anonymously ({hops, plural, =1{{hops} hop} other{{hops} hops}})",
   "@toastAddedAnon": {
     "placeholders": {
       "name": { "type": "String" },
@@ -206,7 +206,7 @@
 
   "emptyOverlays": "No overlay",
   "emptyOverlaysMsg": "Is the IPv8 stack active?",
-  "peersCount": "{count, plural, =1{# peer} other{# peers}}",
+  "peersCount": "{count, plural, =1{{count} peer} other{{count} peers}}",
   "@peersCount": {
     "placeholders": { "count": { "type": "int" } }
   },
@@ -241,7 +241,7 @@
   },
   "emptySwarms": "No hidden swarm",
   "emptySwarmsMsg": "Appears when an anonymous download starts.",
-  "connectionsCount": "{count, plural, =1{# connection} other{# connections}}",
+  "connectionsCount": "{count, plural, =1{{count} connection} other{{count} connections}}",
   "@connectionsCount": {
     "placeholders": { "count": { "type": "int" } }
   },
@@ -254,7 +254,7 @@
   "noFlags": "no flag",
   "emptyTunnelPeers": "No tunnel peer",
   "emptyIntroPointsMsg": "Appears when hidden-swarm introduction points are known.",
-  "introPointsCount": "{count, plural, =1{# introduction point} other{# introduction points}}",
+  "introPointsCount": "{count, plural, =1{{count} introduction point} other{{count} introduction points}}",
   "@introPointsCount": {
     "placeholders": { "count": { "type": "int" } }
   },
@@ -279,7 +279,7 @@
   "emptyLogsMsg": "The daemon has not written anything yet.",
 
   "overviewTunnelInactive": "TunnelCommunity inactive",
-  "overviewTunnelsOk": "Tunnels operational ({count, plural, =1{# circuit ready} other{# circuits ready}})",
+  "overviewTunnelsOk": "Tunnels operational ({count, plural, =1{{count} circuit ready} other{{count} circuits ready}})",
   "@overviewTunnelsOk": {
     "placeholders": { "count": { "type": "int" } }
   },
@@ -336,7 +336,7 @@
   "sectionConnection": "Connection",
   "sectionAdvanced": "Advanced configuration",
   "sectionDaemon": "Daemon",
-  "settingsDirtyBanner": "{count, plural, =1{# modified section not saved} other{# modified sections not saved}}",
+  "settingsDirtyBanner": "{count, plural, =1{{count} modified section not saved} other{{count} modified sections not saved}}",
   "@settingsDirtyBanner": {
     "placeholders": { "count": { "type": "int" } }
   },
@@ -455,7 +455,7 @@
       "server": { "type": "String" }
     }
   },
-  "overlayPeersChip": "{name}: {count, plural, =1{# peer} other{# peers}}",
+  "overlayPeersChip": "{name}: {count, plural, =1{{count} peer} other{{count} peers}}",
   "@overlayPeersChip": {
     "placeholders": {
       "name": { "type": "String" },
@@ -541,13 +541,13 @@
     "placeholders": { "filter": { "type": "String" } }
   },
   "deleteTitle": "Delete",
-  "deleteConfirmBody": "{count, plural, =1{# download will be removed from the daemon.} other{# downloads will be removed from the daemon.}}",
+  "deleteConfirmBody": "{count, plural, =1{{count} download will be removed from the daemon.} other{{count} downloads will be removed from the daemon.}}",
   "@deleteConfirmBody": {
     "placeholders": { "count": { "type": "int" } }
   },
   "deleteAlsoFiles": "Also delete files on disk",
   "delete": "Delete",
-  "selectedCount": "{count, plural, =1{# selected} other{# selected}}",
+  "selectedCount": "{count, plural, =1{{count} selected} other{{count} selected}}",
   "@selectedCount": {
     "placeholders": { "count": { "type": "int" } }
   },
@@ -587,7 +587,7 @@
   "viewGrid": "Grid view",
   "viewCompact": "Compact list",
   "noSeeders": "No known seeders",
-  "seedersReachable": "{count, plural, =1{# seeder, swarm reachable} other{# seeders, swarm reachable}}",
+  "seedersReachable": "{count, plural, =1{{count} seeder, swarm reachable} other{{count} seeders, swarm reachable}}",
   "@seedersReachable": {
     "placeholders": { "count": { "type": "int" } }
   },
@@ -622,7 +622,7 @@
     "placeholders": { "hops": { "type": "int" } }
   },
   "trafficDirect": "Direct traffic (not anonymous)",
-  "anonTip": "Anonymous: {count, plural, =1{# hop} other{# hops}}{suffix}",
+  "anonTip": "Anonymous: {count, plural, =1{{count} hop} other{{count} hops}}{suffix}",
   "@anonTip": {
     "placeholders": {
       "count": { "type": "int" },
@@ -651,7 +651,7 @@
     }
   },
   "rowAnon": "Anonymity",
-  "hopsValue": "{count, plural, =1{# hop} other{# hops}}{suffix}",
+  "hopsValue": "{count, plural, =1{{count} hop} other{{count} hops}}{suffix}",
   "@hopsValue": {
     "placeholders": {
       "count": { "type": "int" },
@@ -702,7 +702,7 @@
   "@trackerAddError": {
     "placeholders": { "error": { "type": "String" } }
   },
-  "trackerCount": "{count, plural, =1{# tracker} other{# trackers}}",
+  "trackerCount": "{count, plural, =1{{count} tracker} other{{count} trackers}}",
   "@trackerCount": {
     "placeholders": { "count": { "type": "int" } }
   },
@@ -726,12 +726,12 @@
   "downRateRow": "Current download rate",
   "upRateRow": "Current upload rate",
   "netMode": "Network mode",
-  "netModeAnon": "IPv8 anonymous tunnel ({count, plural, =1{# hop} other{# hops}})",
+  "netModeAnon": "IPv8 anonymous tunnel ({count, plural, =1{{count} hop} other{{count} hops}})",
   "@netModeAnon": {
     "placeholders": { "count": { "type": "int" } }
   },
   "netModeDirect": "Direct BitTorrent connection",
-  "peersConnCount": "{count, plural, =1{# connected peer} other{# connected peers}}",
+  "peersConnCount": "{count, plural, =1{{count} connected peer} other{{count} connected peers}}",
   "@peersConnCount": {
     "placeholders": { "count": { "type": "int" } }
   },
@@ -754,7 +754,7 @@
   "torrentFileBtn": ".torrent file…",
   "removeFile": "Remove file",
   "anonDirectWarn": "Your IP is visible to peers.",
-  "anonRelaysInfo": "{count, plural, =1{# relay between you and the swarm} other{# relays between you and the swarm}}. If no circuit is ready, the download will wait (never falls back to direct). Seeding will also be anonymized (safe seeding).",
+  "anonRelaysInfo": "{count, plural, =1{{count} relay between you and the swarm} other{{count} relays between you and the swarm}}. If no circuit is ready, the download will wait (never falls back to direct). Seeding will also be anonymized (safe seeding).",
   "@anonRelaysInfo": {
     "placeholders": { "count": { "type": "int" } }
   },
