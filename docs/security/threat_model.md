@@ -135,6 +135,19 @@ c'est une impossibilite structurelle partagee avec Tribler. Les bancs
 `anchor` deployent donc A2 en second exit pour mesurer quelque chose
 de significatif.
 
+## Declaration de couverture
+
+OnionBit dispose de tests de regression pour les vecteurs suivants :
+egress direct hors relais, configuration a faible nombre de sauts,
+resolution DNS locale, reconstruction de circuit forcee (storm
+`DESTROY`), injection de messages e2e non signes, et entrees de
+parseurs hostiles. Ces tests **ne** protegent **pas** contre la
+correlation de trafic globale, les attaques Sybil a grande echelle,
+l'analyse d'intersection a long terme, la compromission de l'endpoint,
+ni les vulnerabilites d'implementation futures. Les guard nodes
+(ADR-0010, proposee) visent precisement le premier de ces residus
+exploitables : la multiplication des tirages d'entree.
+
 ## Gate de bootstrap Tribler (informational)
 
 Le snapshot `/ipv8/overlays` de Tribler (`peers`, `tunnel`, `exits`)

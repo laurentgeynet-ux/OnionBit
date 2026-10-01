@@ -608,28 +608,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "librqbit-utp"
-version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4f3bfdc73944bc76cab24d5690a98816770040a654c449edf5ff2b9ba22626aa"
-dependencies = [
- "bitvec",
- "dontfrag",
- "lazy_static",
- "libc",
- "librqbit-dualstack-sockets",
- "parking_lot",
- "rand 0.9.5",
- "ringbuf",
- "rustc-hash",
- "socket2",
- "thiserror",
- "tokio",
- "tokio-util",
- "tracing",
-]
-
-[[package]]
 name = "lock_api"
 version = "0.4.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -694,8 +672,9 @@ dependencies = [
 name = "onionbit-fuzz"
 version = "0.0.0"
 dependencies = [
+ "cc",
  "libfuzzer-sys",
- "librqbit-utp 0.7.0",
+ "librqbit-utp",
  "onionbit-crypto",
  "onionbit-ipv8",
  "onionbit-tunnel",
@@ -730,7 +709,7 @@ dependencies = [
  "futures-util",
  "hex",
  "librqbit-dualstack-sockets",
- "librqbit-utp 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "librqbit-utp",
  "onionbit-crypto",
  "onionbit-ipv8",
  "onionbit-network-policy",
@@ -1477,3 +1456,15 @@ name = "zmij"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
+
+[[patch.unused]]
+name = "librqbit"
+version = "9.0.1"
+
+[[patch.unused]]
+name = "librqbit-dht"
+version = "9.0.1"
+
+[[patch.unused]]
+name = "librqbit-tracker-comms"
+version = "9.0.1"

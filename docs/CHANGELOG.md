@@ -3,6 +3,30 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Campagne libFuzzer native Windows + ADR guard nodes (2026-10-01)
+
+- **Coverage-guiding sous Windows/MSVC rendu possible** : rustc ne
+  livre aucun runtime sanitizer pour `windows-msvc` et l'instrumentation
+  sancov émet des bornes `__start_/__stop_` que lld-link ne synthétise
+  pas. Contournement validé : `fuzz/sancov_shim.c` (compilé par
+  `fuzz/build.rs`) définit les bornes de groupes `.SCOV$*`/`.SCOVP$*` ;
+  `CUSTOM_LIBFUZZER_PATH` utilise le runtime fuzzer précompilé de LLVM
+  (`clang_rt.fuzzer-x86_64.lib`) ; `LIB` pointe les libs MSVC/SDK.
+  Campagne coverage-guidée (`-s none`, sans ASan) fonctionnelle.
+- `scripts/fuzz_campaign.ps1` : détection automatique LLVM/MSVC,
+  plan de référence (5 h au total), journal CSV dans
+  `docs/security/fuzz_journal.csv`, doc `docs/security/fuzz_journal.md`.
+- Smoke run 6 cibles : ~98 M exécutions, zéro crash, corpus amorcé ;
+  campagne complète lancée sur commit `9bc4a9d`.
+- **ADR-0010 « guard nodes »** (`docs/architecture/decisions/`) :
+  persistance du premier saut contre la multiplication des tirages
+  d'entrée sous `DESTROY` storm — 3 actifs + 2 réserve, 30 jours,
+  diversité IP, bootstrap pool existant, écart pyipv8 comportemental
+  (aucun changement filaire), jamais sur `hops=0`. Proposée, aucune
+  implémentation avant acceptation.
+- `threat_model.md` : section « Déclaration de couverture » résumant
+  ce qui est démontré vs hors périmètre.
+
 ## Anti-fuite : `torrent_checker` ne scrape jamais un swarm anonyme + invariant d'egress hidden-service (2026-10-01)
 
 - Audit statique des chemins d'egress (`UdpSocket::bind`, `send_to`,

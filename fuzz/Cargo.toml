@@ -27,10 +27,17 @@ onionbit-tunnel = { path = "../crates/onionbit-tunnel" }
 librqbit-utp = { path = "../vendor/librqbit-utp" }
 tokio = { version = "1", features = ["full"] }
 
-# Meme version vendored que le workspace parent — le patch ne
-# s'herite pas dans un workspace autonome.
+[build-dependencies]
+cc = "1"
+
+# Memes crates vendored que le workspace parent — les patches ne
+# s'heritent pas dans un workspace autonome.
 [patch.crates-io]
+librqbit = { path = "../vendor/librqbit" }
+librqbit-dht = { path = "../vendor/librqbit-dht" }
+librqbit-tracker-comms = { path = "../vendor/librqbit-tracker-comms" }
 librqbit-dualstack-sockets = { path = "../vendor/librqbit-dualstack-sockets" }
+librqbit-utp = { path = "../vendor/librqbit-utp" }
 
 # Workspace autonome : cargo-fuzz construit hors du workspace parent.
 [workspace]
