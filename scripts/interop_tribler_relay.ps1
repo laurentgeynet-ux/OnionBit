@@ -138,7 +138,7 @@ try {
     Remove-Item -Force -ErrorAction SilentlyContinue $pyKeyFile
 
     Write-Host "== build exit_download_interop (rust) =="
-    cargo build -p tribler-bittorrent --example exit_download_interop
+    cargo build -p onionbit-bittorrent --example exit_download_interop
     if ($LASTEXITCODE -ne 0) { throw "build echoue" }
 
     Write-Host "== sortie pyipv8 (EXIT_BT, cid=$triblerCid) sur 127.0.0.1:$pyPort =="
@@ -217,7 +217,7 @@ try {
     try {
         Invoke-WebRequest -Uri "http://127.0.0.1:$apiPort/api/logging" `
             -Headers @{ "X-Api-Key" = $apiKey } -TimeoutSec 10 -UseBasicParsing `
-            -OutFile (Join-Path $outDir "tribler_api_logging.log") | Out-Null
+            -OutFile (Join-Path $outDir "onionbit_api_logging.log") | Out-Null
     } catch {}
 
     $rsStderr = Get-Content $rsErr -Raw -ErrorAction SilentlyContinue

@@ -1,6 +1,6 @@
-# Mapping API REST — Tribler Python ↔ `tribler-api` (Rust)
+# Mapping API REST — Tribler Python ↔ `onionbit-api` (Rust)
 
-Références : `D:\Projet\Tribler_sources\tribler\src\tribler\core\restapi\`
+Références : `<Tribler sources checkout> (env `TRIBLER_SRC`)\src\tribler\core\restapi\`
 (`rest_manager.py`, `events_endpoint.py`) et
 `core\libtorrent\restapi\downloads_endpoint.py`.
 

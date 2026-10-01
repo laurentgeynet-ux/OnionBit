@@ -119,7 +119,7 @@ class AppSidebar extends ConsumerWidget {
                         const SizedBox(width: AppSpacing.sm),
                         Flexible(
                           child: Text(
-                            'Tribler-Rust',
+                            'OnionBit',
                             style: Theme.of(context).textTheme.titleSmall,
                             overflow: TextOverflow.ellipsis,
                           ),

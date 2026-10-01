@@ -11,7 +11,7 @@
 # Les deux daemons doivent deja tourner :
 #   - Tribler Python : `Tribler.exe -s` (cle API dans
 #     `<state>\8.0\configuration.json`, entree `api/key`).
-#   - Daemon Rust : `tribler-daemon` (cle dans `<state>\configuration.json`,
+#   - Daemon Rust : `onionbit-daemon` (cle dans `<state>\configuration.json`,
 #     entree `api.key`).
 #
 # Usage :

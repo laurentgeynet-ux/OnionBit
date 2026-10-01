@@ -1,6 +1,6 @@
-/// Topics SSE émis par `tribler-api` — noms identiques aux
+/// Topics SSE émis par `onionbit-api` — noms identiques aux
 /// notifications `tribler.core.notifier.Notification` (Python), tels
-/// qu'émis par `tribler-api/src/handlers/events.rs`.
+/// qu'émis par `onionbit-api/src/handlers/events.rs`.
 abstract final class EventTopics {
   static const eventsStart = 'events_start';
   static const triblerShutdownStarted = 'tribler_shutdown_started';

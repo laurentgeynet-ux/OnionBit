@@ -22,7 +22,7 @@ $pyLog = Join-Path $outDir "py_packets.log"
 $rsLog = Join-Path $outDir "rust_packets.log"
 
 Write-Host "== build interop_node (rust) =="
-cargo build -p tribler-ipv8 --example interop_node
+cargo build -p onionbit-ipv8 --example interop_node
 if ($LASTEXITCODE -ne 0) { throw "build echoue" }
 
 $env:PYTHONPATH = $pyipv8

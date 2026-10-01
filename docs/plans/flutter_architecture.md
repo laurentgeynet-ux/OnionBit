@@ -1,7 +1,7 @@
 # Étape 20 — Architecture de l'interface Flutter desktop
 
 Plan d'architecture de l'interface graphique, réutilisant les patterns
-de `C:\Emule-Sion-UI-UX\app`. Cible immédiate : **Windows desktop** ;
+de `the reference Flutter UI project`. Cible immédiate : **Windows desktop** ;
 Linux/macOS ensuite. Android/iOS seront une interface de pilotage à
 distance (même base, même API) — voir roadmap, étape 19 remplacée.
 
@@ -20,7 +20,7 @@ distance (même base, même API) — voir roadmap, étape 19 remplacée.
 
 ## Différence majeure avec l'app eMule
 
-L'app de référence parle **JSON-RPC/WebSocket** ; `tribler-api` parle
+L'app de référence parle **JSON-RPC/WebSocket** ; `onionbit-api` parle
 **REST + SSE**. Le `RpcClient` devient donc `ApiClient` :
 
 ```
@@ -42,7 +42,7 @@ quel (SSE déconnecté → même politique de recul).
 
 Décisions arrêtées le 2026-09-28.
 
-### Thème — repris de `C:\Emule-Sion-UI-UX\app`, inchangé
+### Thème — repris de `the reference Flutter UI project`, inchangé
 
 Copie adaptée de `core/theme/app_theme.dart` + `theme_settings.dart` de
 la référence : Material 3 via `ColorScheme.fromSeed`, seed bleu
@@ -56,7 +56,7 @@ est à remplacer par cette version.
 ### Menus — sidebar fixe type Tribler (pas le `NavigationRail` de la référence)
 
 La référence utilise `AdaptiveScaffold` (rail étroit / `NavigationBar`
-bas en compact). Pour Tribler-Rust, l'utilisateur retient la
+bas en compact). Pour OnionBit, l'utilisateur retient la
 **présentation Tribler** : une vraie colonne latérale ~200 px avec
 groupes dépliables, dérivée du pattern `AdaptiveScaffold` mais avec un
 widget sidebar custom. En fenêtre très étroite (et pour le futur
@@ -65,7 +65,7 @@ primaires seulement.
 
 ```text
 ┌──────────────────────────────────────────────────────────────────┐
-│  Tribler-Rust   [🔍 Rechercher du contenu…]           ⚙  ─ □ ✕ │
+│  OnionBit   [🔍 Rechercher du contenu…]           ⚙  ─ □ ✕ │
 ├───────────────┬──────────────────────────────────────────────────┤
 │ ＋ Ajouter     │  [Actions sélection : ▶ ⏸ 🗑]       [Filtrer…] │
 │               │ ┌──────────────────────────────────────────────┐ │
@@ -170,7 +170,7 @@ repository) → `presentation/` (pages, providers, widgets).
 
 ## Correspondance features ↔ API
 
-| Feature | Endpoints `tribler-api` |
+| Feature | Endpoints `onionbit-api` |
 | :--- | :--- |
 | downloads | `GET/PUT /api/downloads`, `PATCH/DELETE /{ih}`, `/files`, `/stream/{i}`, `/trackers`, `clierrors` |
 | dashboard | `/api/statistics/{tribler,ipv8}`, `PUT dirspace` |
@@ -195,8 +195,8 @@ repository) → `presentation/` (pages, providers, widgets).
   à un daemon existant — décision V1 : **daemon enfant lancé par
   l'app** avec fallback « se connecter à un daemon existant ».
   **Implémenté** (2026-09-28) : `daemon_launcher` lance
-  `tribler-daemon[.exe]` voisin de l'exe détaché si l'API ne répond
-  pas, sonde jusqu'à 30 s ; `TRIBLER_DAEMON_EXE` surcharge le chemin
+  `onionbit-daemon[.exe]` voisin de l'exe détaché si l'API ne répond
+  pas, sonde jusqu'à 30 s ; `ONIONBIT_DAEMON_EXE` surcharge le chemin
   en dev. `demarrer.cmd`/`arreter.cmd` supprimés (2026-09-28) —
   l'UI suffit pour lancer, le systray ou `PUT /api/shutdown` pour
   arrêter.
@@ -206,7 +206,7 @@ repository) → `presentation/` (pages, providers, widgets).
 - Tests unitaires : DTO (JSON ↔ `downloads_endpoint` Python),
   `SseClient` (flux simulé), repositories avec `ApiTransport` fake.
 - Tests widget : pages principales avec providers surchargés.
-- Test d'intégration : `flutter test` contre un `tribler-daemon`
+- Test d'intégration : `flutter test` contre un `onionbit-daemon`
   `offline` lancé en process (script `scripts/test_app_e2e.ps1`).
 
 ## Sous-étapes

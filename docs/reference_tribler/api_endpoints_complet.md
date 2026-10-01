@@ -1,12 +1,12 @@
 # API Web Tribler — Inventaire complet des fonctions
 
-> Source de vérité : `D:\Projet\Tribler_sources\tribler` (Tribler 8.x)
+> Source de vérité : `<Tribler sources checkout> (env `TRIBLER_SRC`)` (Tribler 8.x)
 > + sous-module `pyipv8/`. Consommateur : `src/tribler/ui/` (React/TS,
 > `services/tribler.service.ts` + `services/ipv8.service.ts`).
 >
 > Ce document liste **toutes** les fonctions exposées au frontend web,
 > leur emplacement d'implantation Python, leur pendant Rust
-> (`crates/tribler-api`), les paramètres avec valeurs par défaut et
+> (`crates/onionbit-api`), les paramètres avec valeurs par défaut et
 > bornes min/max quand elles existent.
 
 ## 1. Architecture du plan de contrôle HTTP
@@ -497,7 +497,7 @@ Adapté à tokio (cf. ADR-0006) : `DriftMeasurementStrategy` → tache
 | `GET /{autre}` | `ui_middleware` redirige vers `/ui<path>` | ⛔ |
 | `PUT /api/recommender/clicked` | **Appelé par l'UI** (`tribler.service.ts`) `{query, chosen_index, timestamp, results[]}` — **aucun handler Python** : retourne 404 | ⛔ absent même en Python |
 
-### Routes Python non encore portées dans `tribler-api` (récapitulatif ❌)
+### Routes Python non encore portées dans `onionbit-api` (récapitulatif ❌)
 
 - IPv8 : `identity/*` (exclusion actée — cf. ADR-0006)
 - Écarts de signature : `PUT /api/statistics/dirspace` (Rust = GET `?path=`),
@@ -510,6 +510,6 @@ Adapté à tokio (cf. ADR-0006) : `DriftMeasurementStrategy` → tache
 
 ---
 
-*Document généré par analyse statique des sources `D:\Projet\Tribler_sources\tribler`
-(rev. checkout local) et `crates/tribler-api`. Complément statut :
+*Document généré par analyse statique des sources `<Tribler sources checkout> (env `TRIBLER_SRC`)`
+(rev. checkout local) et `crates/onionbit-api`. Complément statut :
 `docs/reference_tribler/api_rest_mapping.md`.*

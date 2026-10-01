@@ -4,7 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/config/connection_settings.dart';
 import '../../../../core/theme/app_theme.dart';
 
-/// Section « Connexion daemon » — URL de base de `tribler-api` + clé
+/// Section « Connexion daemon » — URL de base de `onionbit-api` + clé
 /// éventuelle, persistées (`connectionSettingsProvider`).
 class ConnectionSection extends ConsumerStatefulWidget {
   const ConnectionSection({super.key});

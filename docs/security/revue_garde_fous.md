@@ -4,11 +4,11 @@ Inventaire des protections, leur emplacement unique et le test qui les
 couvre. Règle absolue : **aucun repli silencieux** — une politique qui
 échoue ferme la connexion, jamais de fallback direct.
 
-## 1. Anti-SSRF — `tribler-network-policy/src/address_policy.rs`
+## 1. Anti-SSRF — `onionbit-network-policy/src/address_policy.rs`
 
 | Contrôle | Emplacement | Test |
 | :--- | :--- | :--- |
-| Refus loopback/privé/link-local/multicast/non-routable/doc | `IpPolicy::strict()` → `check(addr)` | `tribler-core/tests/policy.rs::http_uri_to_loopback_denied_by_strict_policy` |
+| Refus loopback/privé/link-local/multicast/non-routable/doc | `IpPolicy::strict()` → `check(addr)` | `onionbit-core/tests/policy.rs::http_uri_to_loopback_denied_by_strict_policy` |
 | Vérification **après** résolution DNS (toutes les adresses) | `CoreSession::check_uri_policy` (lookup puis `check` sur chaque addr) | `policy.rs` (hôte numérique) + code : `count == 0` → refus |
 | Fetch HTTP borné (taille, politique) | `services::fetch_checked` + `read_body_limited` | `services.rs` RSS/checker |
 | Mode permissif réservé aux tests | `IpPolicy::permissive()` — jamais en config de production | — |
@@ -22,7 +22,7 @@ moindre trafic.
 
 | Contrôle | Emplacement | Test |
 | :--- | :--- | :--- |
-| Flags de sortie (`EXIT_BT` etc.) exigés selon le protocole | `exit_policy::is_allowed` — appelé à la sortie **et** au retour (bidirectionnel comme `DataChecker` pyipv8) | `tribler-tunnel::tunnel_exit_drops_non_bt_or_unflagged` |
+| Flags de sortie (`EXIT_BT` etc.) exigés selon le protocole | `exit_policy::is_allowed` — appelé à la sortie **et** au retour (bidirectionnel comme `DataChecker` pyipv8) | `onionbit-tunnel::tunnel_exit_drops_non_bt_or_unflagged` |
 | `is_allowed` dans les deux sens | `community.rs` exit path + `exit_recv_data` | idem |
 
 ## 3. Kill switch — `kill_switch.rs`
@@ -32,7 +32,7 @@ moindre trafic.
 | Engagements **scopés** (`engage_scoped`/`release_scoped`) : le switch reste engagé tant qu'une portée est active — un proxy redevenu joignable ne désarme pas une panne de circuits | `kill_switch.rs` portées `proxy`/`circuits`/`manuel` | `kill_switch::tests::scopes_independants_*` |
 | `guard()` refuse add/resume tant qu'engagé | `BtEngine::add`/`resume` appellent `ks.guard()` | `bittorrent::kill_switch_blocks_add_while_proxy_down` |
 | Watchdog sonde TCP périodique du proxy (portée `proxy`) | `BtEngine::spawn_proxy_watchdog` | `kill_switch_midtransfer` (proxy mort en plein transfert) |
-| Watchdog **circuits** par lane (portée `circuits`) : engage quand la lane perd tous ses circuits `READY` à `hops` sauts après en avoir eu un — **proxy joignable ≠ circuit disponible** | `ipv8_stack::spawn_circuit_watchdog` + `TunnelCommunity::watch_circuits` (notification événementielle, tick 5 s en filet) | `tribler-core::circuit_detruit_bloque_la_lane_sans_fuite` |
+| Watchdog **circuits** par lane (portée `circuits`) : engage quand la lane perd tous ses circuits `READY` à `hops` sauts après en avoir eu un — **proxy joignable ≠ circuit disponible** | `ipv8_stack::spawn_circuit_watchdog` + `TunnelCommunity::watch_circuits` (notification événementielle, tick 5 s en filet) | `onionbit-core::circuit_detruit_bloque_la_lane_sans_fuite` |
 
 ## 4. Guard du proxy SOCKS5 — `proxy_guard.rs`
 
@@ -62,7 +62,7 @@ moindre trafic.
 - Adresse factice `circuit_id` vers circuit non-RP → rejetée.
 - `POST /api/versioning/versions/{v}` supprime uniquement un sous-
   répertoire `v*` validé de `state_dir` (pas de traversée de chemin).
-- `createtorrent/dryrun` écrit un fichier `.tribler-*-probe` puis le
+- `createtorrent/dryrun` écrit un fichier `.onionbit-*-probe` puis le
   supprime — pas d'écriture arbitraire.
 
 ## Bancs d'interop (2026-09-27)

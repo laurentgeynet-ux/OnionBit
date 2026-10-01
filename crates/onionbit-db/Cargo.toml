@@ -1,0 +1,16 @@
+[package]
+name = "onionbit-db"
+description = "Persistance SQLite : metadonnees de canaux/torrents (ChannelNode), sante des essaims, trackers, telechargements connus, reglages du daemon."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+rusqlite.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

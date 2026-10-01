@@ -1,6 +1,6 @@
 /// Défauts documentés des réglages — mêmes valeurs que les `Default`
-/// du backend (`tribler-core/src/config.rs`,
-/// `tribler-bittorrent/src/config.rs`, `tribler-tunnel/src/settings.rs`).
+/// du backend (`onionbit-core/src/config.rs`,
+/// `onionbit-bittorrent/src/config.rs`, `onionbit-tunnel/src/settings.rs`).
 /// Consommés par le bouton « Défauts » des sections : patch merge
 /// envoyé tel quel à `POST /api/settings`.
 library;

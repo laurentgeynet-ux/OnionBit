@@ -1,16 +1,16 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:tribler_ui/app.dart';
-import 'package:tribler_ui/core/api/sse_client.dart';
-import 'package:tribler_ui/core/config/app_config.dart';
-import 'package:tribler_ui/core/di/providers.dart';
-import 'package:tribler_ui/features/diagnostic/domain/diagnostic_models.dart';
-import 'package:tribler_ui/features/diagnostic/presentation/providers/diagnostic_providers.dart';
-import 'package:tribler_ui/features/downloads/domain/download.dart';
-import 'package:tribler_ui/features/downloads/presentation/providers/downloads_providers.dart';
-import 'package:tribler_ui/features/search/domain/torrent_result.dart';
-import 'package:tribler_ui/features/search/presentation/providers/search_providers.dart';
+import 'package:onionbit_ui/app.dart';
+import 'package:onionbit_ui/core/api/sse_client.dart';
+import 'package:onionbit_ui/core/config/app_config.dart';
+import 'package:onionbit_ui/core/di/providers.dart';
+import 'package:onionbit_ui/features/diagnostic/domain/diagnostic_models.dart';
+import 'package:onionbit_ui/features/diagnostic/presentation/providers/diagnostic_providers.dart';
+import 'package:onionbit_ui/features/downloads/domain/download.dart';
+import 'package:onionbit_ui/features/downloads/presentation/providers/downloads_providers.dart';
+import 'package:onionbit_ui/features/search/domain/torrent_result.dart';
+import 'package:onionbit_ui/features/search/presentation/providers/search_providers.dart';
 
 class _FakeSseClient extends SseClient {
   _FakeSseClient() : super(const AppConfig());

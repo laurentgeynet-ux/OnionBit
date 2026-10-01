@@ -17,7 +17,7 @@ abstract interface class DiagnosticRepository {
   Future<List<SwarmPeers>> pexPeers();
 
   /// Statistiques générales (`GET /api/statistics/tribler`).
-  Future<TriblerStats> triblerStats();
+  Future<TriblerStats> onionbitStats();
 
   /// Test de vitesse sur un circuit existant (`READY` + flag
   /// `PEER_FLAG_SPEED_TEST`) — flux `speed:` pyipv8 en MiB/s.

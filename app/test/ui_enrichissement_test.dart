@@ -2,13 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:tribler_ui/core/config/ui_prefs.dart';
-import 'package:tribler_ui/core/layout/app_sidebar.dart';
-import 'package:tribler_ui/core/notifications/app_notification.dart';
-import 'package:tribler_ui/core/notifications/notifications_provider.dart';
-import 'package:tribler_ui/core/widgets/empty_state.dart';
-import 'package:tribler_ui/features/downloads/presentation/providers/downloads_providers.dart';
-import 'package:tribler_ui/features/search/presentation/providers/search_providers.dart';
+import 'package:onionbit_ui/core/config/ui_prefs.dart';
+import 'package:onionbit_ui/core/layout/app_sidebar.dart';
+import 'package:onionbit_ui/core/notifications/app_notification.dart';
+import 'package:onionbit_ui/core/notifications/notifications_provider.dart';
+import 'package:onionbit_ui/core/widgets/empty_state.dart';
+import 'package:onionbit_ui/features/downloads/presentation/providers/downloads_providers.dart';
+import 'package:onionbit_ui/features/search/presentation/providers/search_providers.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();

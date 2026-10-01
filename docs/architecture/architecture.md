@@ -1,24 +1,24 @@
-# Architecture — Tribler-Rust-Torrent
+# Architecture — OnionBit
 
 ## 1. Principes (clean architecture)
 
 Le workspace suit une architecture en couches avec inversion de
-dépendance : le domaine (`tribler-core`) ne dépend d'aucune
+dépendance : le domaine (`onionbit-core`) ne dépend d'aucune
 infrastructure concrète, il définit des **traits** (ports) que les
 crates d'infrastructure implémentent (adaptateurs).
 
 ```
                         ┌───────────────────────────┐
                         │   Clients (hors backend)   │
-                        │  tribler-cli | future UI   │
+                        │  onionbit-cli | future UI   │
                         └─────────────┬─────────────┘
                                       │ HTTP / SSE
                         ┌─────────────▼─────────────┐
-                        │        tribler-api         │  Interface (adaptateur entrant)
+                        │        onionbit-api         │  Interface (adaptateur entrant)
                         └─────────────┬─────────────┘
                                       │ appels de traits
                         ┌─────────────▼─────────────┐
-                        │       tribler-core          │  Domaine + orchestration
+                        │       onionbit-core          │  Domaine + orchestration
                         │  Session / Notifier /       │  (ne dépend d'aucune I/O concrète)
                         │  règles métier              │
                         └──┬─────────┬─────────┬─────┘
@@ -27,52 +27,52 @@ crates d'infrastructure implémentent (adaptateurs).
                            │         │         │
           ┌────────────────┘   ┌─────┘   ┌─────┴───────────┐
           ▼                    ▼         ▼                 ▼
-  tribler-bittorrent   tribler-tunnel  tribler-db   tribler-network-policy
-  (via librqbit)        (via tribler-ipv8)  (rusqlite)   (garde-fous)
+  onionbit-bittorrent   onionbit-tunnel  onionbit-db   onionbit-network-policy
+  (via librqbit)        (via onionbit-ipv8)  (rusqlite)   (garde-fous)
           │                    │
           ▼                    ▼
-     [réseau BitTorrent]  tribler-ipv8 → [réseau overlay IPv8]
+     [réseau BitTorrent]  onionbit-ipv8 → [réseau overlay IPv8]
 
-  Support transverse : tribler-format (formats), tribler-crypto (primitives),
-  tribler-test-support (dev-dependency uniquement)
+  Support transverse : onionbit-format (formats), onionbit-crypto (primitives),
+  onionbit-test-support (dev-dependency uniquement)
 ```
 
 Règles de dépendance :
 
-- `tribler-core` ne dépend **jamais** de `tribler-api`, `tribler-bittorrent`,
-  `tribler-ipv8`, `tribler-tunnel` ou `tribler-db` concrètement — il expose
+- `onionbit-core` ne dépend **jamais** de `onionbit-api`, `onionbit-bittorrent`,
+  `onionbit-ipv8`, `onionbit-tunnel` ou `onionbit-db` concrètement — il expose
   des traits, ces crates les implémentent.
-- `tribler-api` consomme `tribler-core` pour la logique métier ; il peut
+- `onionbit-api` consomme `onionbit-core` pour la logique métier ; il peut
   importer les **types/DTO** des crates d'infrastructure
-  (`tribler-bittorrent`, `tribler-format`, `tribler-ipv8`,
-  `tribler-tunnel`, `tribler-db`) pour la sérialisation — jamais pour
+  (`onionbit-bittorrent`, `onionbit-format`, `onionbit-ipv8`,
+  `onionbit-tunnel`, `onionbit-db`) pour la sérialisation — jamais pour
   y déléguer de la logique de domaine.
-- `tribler-daemon` est le seul crate autorisé à connaître **tout le monde**
+- `onionbit-daemon` est le seul crate autorisé à connaître **tout le monde**
   (c'est le point de câblage/composition racine, "main composition root").
-- `tribler-tunnel` dépend de `tribler-ipv8` (et non l'inverse).
-- `tribler-bittorrent` peut optionnellement utiliser le proxy SOCKS5 exposé
-  par `tribler-tunnel` pour router du trafic, mais ne dépend pas de son
+- `onionbit-tunnel` dépend de `onionbit-ipv8` (et non l'inverse).
+- `onionbit-bittorrent` peut optionnellement utiliser le proxy SOCKS5 exposé
+  par `onionbit-tunnel` pour router du trafic, mais ne dépend pas de son
   code interne (frontière = SOCKS5 standard).
 
 ## 2. Couches et responsabilités
 
 | Couche | Crate(s) | Analogue Python |
 | :--- | :--- | :--- |
-| Interface (entrée) | `tribler-api`, `tribler-cli` | `tribler.core.restapi` |
-| Domaine / orchestration | `tribler-core` | `tribler.core.session`, `components.py`, `notifier.py`, `content_discovery/`, `torrent_checker/`, `rss/`, `watch_folder/` |
-| Infrastructure — BitTorrent | `tribler-bittorrent` (sur `librqbit`) | `tribler.core.libtorrent` |
-| Infrastructure — overlay anonyme | `tribler-ipv8`, `tribler-tunnel` | `pyipv8`, `tribler.core.tunnel` |
-| Infrastructure — persistance | `tribler-db` | `tribler.core.database` |
-| Infrastructure — sécurité réseau | `tribler-network-policy` | `tribler.core.socks5` (partiellement) + règles ajoutées pour la sécurité |
-| Support transverse | `tribler-format`, `tribler-crypto`, `tribler-test-support` | utilitaires épars côté Python |
-| Composition racine | `tribler-daemon` | point d'entrée `run.py`/`start_tribler.py` |
+| Interface (entrée) | `onionbit-api`, `onionbit-cli` | `tribler.core.restapi` |
+| Domaine / orchestration | `onionbit-core` | `tribler.core.session`, `components.py`, `notifier.py`, `content_discovery/`, `torrent_checker/`, `rss/`, `watch_folder/` |
+| Infrastructure — BitTorrent | `onionbit-bittorrent` (sur `librqbit`) | `tribler.core.libtorrent` |
+| Infrastructure — overlay anonyme | `onionbit-ipv8`, `onionbit-tunnel` | `pyipv8`, `tribler.core.tunnel` |
+| Infrastructure — persistance | `onionbit-db` | `tribler.core.database` |
+| Infrastructure — sécurité réseau | `onionbit-network-policy` | `tribler.core.socks5` (partiellement) + règles ajoutées pour la sécurité |
+| Support transverse | `onionbit-format`, `onionbit-crypto`, `onionbit-test-support` | utilitaires épars côté Python |
+| Composition racine | `onionbit-daemon` | point d'entrée `run.py`/`start_tribler.py` |
 
 ## 3. Flux d'événements
 
-`tribler-core::Notifier` est le bus d'événements interne (équivalent du
+`onionbit-core::Notifier` est le bus d'événements interne (équivalent du
 `notifier.py` Python). Toute I/O qui produit un événement notable
 (progression de téléchargement, changement d'état de circuit, nouveau
-pair IPv8...) publie sur ce bus. `tribler-api` s'y abonne pour pousser
+pair IPv8...) publie sur ce bus. `onionbit-api` s'y abonne pour pousser
 les événements en SSE (`text/event-stream`), exactement comme l'API
 Python actuelle.
 
@@ -94,11 +94,11 @@ circuits) doit être porté depuis `pyipv8`/`tribler.core.tunnel` sans
 
 ## 6. Multiplateforme
 
-- Desktop (Windows x64/arm64, Linux, macOS) : `tribler-daemon` tourne en
-  processus natif, `tribler-api` écoute sur `127.0.0.1`.
-- Android/iOS : `tribler-daemon` (ou une variante allégée) tourne comme
+- Desktop (Windows x64/arm64, Linux, macOS) : `onionbit-daemon` tourne en
+  processus natif, `onionbit-api` écoute sur `127.0.0.1`.
+- Android/iOS : `onionbit-daemon` (ou une variante allégée) tourne comme
   service applicatif ; sujet dédié à traiter avant l'étape 14 (contraintes
   d'exécution en arrière-plan, cf. `plan_faisabilite.md` §7).
 - Web : pas de daemon dans le navigateur ; le futur frontend Flutter Web
-  se connecte en HTTP/SSE à une instance `tribler-daemon` locale ou
+  se connecte en HTTP/SSE à une instance `onionbit-daemon` locale ou
   distante, comme le fait déjà l'UI React actuelle de Tribler.

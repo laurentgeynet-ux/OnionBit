@@ -6,7 +6,7 @@ import 'daemon_launcher.dart';
 import 'ui_log.dart';
 
 /// Connexion au daemon persistée (`shared_preferences`) — URL de base
-/// de `tribler-api` + clé éventuelle. Modifiable dans Réglages, prend
+/// de `onionbit-api` + clé éventuelle. Modifiable dans Réglages, prend
 /// effet immédiatement (les providers `apiClient`/`sseClient`
 /// surveillent cette source).
 ///
@@ -14,7 +14,7 @@ import 'ui_log.dart';
 /// 1. réglage utilisateur pointant hors loopback (daemon distant) —
 ///    toujours respecté tel quel ;
 /// 2. daemon local garanti vivant puis découvert (`daemon_launcher` :
-///    lance `tribler-daemon` s'il ne tourne pas, relit
+///    lance `onionbit-daemon` s'il ne tourne pas, relit
 ///    `configuration.json` — clé régénérée et port aléatoire
 ///    `http_port_running` se résolvent seuls) ;
 /// 3. préférences persistées puis défauts (`127.0.0.1:8085`, sans clé).

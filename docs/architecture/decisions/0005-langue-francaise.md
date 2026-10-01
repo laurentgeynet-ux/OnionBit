@@ -15,7 +15,7 @@ sont rédigés en français, cohérent avec les autres projets de
 l'utilisateur. Les identifiants techniques calqués sur des noms officiels
 (BEP, opcodes IPv8, noms de champs JSON de l'API REST Tribler existante)
 restent dans leur forme originale (anglaise) pour rester traçables face
-à la référence de vérité (`D:\Projet\Tribler_sources\tribler`).
+à la référence de vérité (`<Tribler sources checkout> (env `TRIBLER_SRC`)`).
 
 ## Conséquences
 

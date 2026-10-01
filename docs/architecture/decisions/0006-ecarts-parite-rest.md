@@ -18,7 +18,7 @@ travaux futurs sachent les distinguer des bugs.
 
 Les endpoints `/api/ipv8/identity/*` (pseudonymes, attestations,
 vérifications) portent sur la couche identité IPv8, absente du
-périmètre V1 du portage (`tribler-ipv8` couvre discovery, content
+périmètre V1 du portage (`onionbit-ipv8` couvre discovery, content
 discovery, DHT, tunnel — pas `IdentityCommunity`). Aucun appelant
 daemon/UI de la V1 ne les consomme. **Décision** : exclusion
 permanente de la phase 5b ; à réévaluer si une attestation est un
@@ -46,7 +46,7 @@ Tokio ne fournit pas `all_tasks()`/`Task.get_stack()`/`Task.get_name()`
 
 `ipv8-rust-tunnels` (backend réel de Tribler 8.x) utilise les cellules
 `test-request`/`test-response` **21/22** avec `identifier` u32 ; le
-backend Python pur utilise **19/20** avec u16. `tribler-tunnel`
+backend Python pur utilise **19/20** avec u16. `onionbit-tunnel`
 décode et répond aux deux formats et émet en 21/22 — l'interop avec
 un pair Python-pur en tant que demandeur fonctionne, en tant que
 répondeur seul le format 21/22 est émis (identique au comportement du

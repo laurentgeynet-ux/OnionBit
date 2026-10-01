@@ -20,7 +20,7 @@ Future<void> initDesktopShell() async {
     return;
   }
   if (Platform.isWindows && kReleaseMode) {
-    // Association `.torrent` → tribler_ui (HKCU, sans droits
+    // Association `.torrent` → onionbit_ui (HKCU, sans droits
     // admin) : double-clic / « Ouvrir avec » lance l'app avec le
     // fichier en argv.
     unawaited(_registerTorrentFileAssoc());
@@ -28,7 +28,7 @@ Future<void> initDesktopShell() async {
   await windowManager.ensureInitialized();
   const options = WindowOptions(
     minimumSize: _kMinWindowSize,
-    title: 'Tribler-Rust',
+    title: 'OnionBit',
     titleBarStyle: TitleBarStyle.normal,
   );
   await windowManager.waitUntilReadyToShow(options, () async {

@@ -57,7 +57,7 @@ Chaque étape = implémentation + `flutter analyze`/tests (ou
 
 ## Étape 7 — SSE `settings_changed` (backend) [x] (2026-10-02)
 
-- `tribler-api` émet `settings_changed` après `POST /api/settings` ;
+- `onionbit-api` émet `settings_changed` après `POST /api/settings` ;
   l'UI écoute `daemonEventsProvider` et invalide
   `daemonSettingsProvider` → resynchronisation multi-clients et de
   l'éditeur avancé.

@@ -1,8 +1,8 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:tribler_ui/core/config/app_config.dart';
-import 'package:tribler_ui/core/config/daemon_launcher_native.dart';
+import 'package:onionbit_ui/core/config/app_config.dart';
+import 'package:onionbit_ui/core/config/daemon_launcher_native.dart';
 
 void main() {
   group('isDaemonApiAlive', () {

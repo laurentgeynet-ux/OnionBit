@@ -26,7 +26,7 @@ $keyFile = Join-Path $outDir "py_key.txt"
 Remove-Item -Force -ErrorAction SilentlyContinue $keyFile
 
 Write-Host "== build tunnel_interop_node (rust) =="
-cargo build -p tribler-tunnel --example tunnel_interop_node
+cargo build -p onionbit-tunnel --example tunnel_interop_node
 if ($LASTEXITCODE -ne 0) { throw "build echoue" }
 
 $env:PYTHONPATH = $pyipv8

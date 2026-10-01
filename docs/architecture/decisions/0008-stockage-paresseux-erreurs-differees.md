@@ -78,7 +78,7 @@ torrents sont visibles dans l'API : « restauration terminée » et
   différée.
 - `vendor/librqbit/src/torrent_state/initializing.rs` — `check_started`,
   `validate_fastresume` (échantillonnage).
-- `crates/tribler-core/tests/lifecycle.rs` —
+- `crates/onionbit-core/tests/lifecycle.rs` —
   `restauration_sortie_inaccessible_erreur_differee`.
 - `docs/CHANGELOG.md` — entrées « Perf : stockage paresseux » et
   « Stabilisation : erreurs différées » (2026-09-30).

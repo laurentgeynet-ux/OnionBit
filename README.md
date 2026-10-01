@@ -1,13 +1,13 @@
-# Tribler-Rust-Torrent
+# OnionBit
 
 Portage en Rust du daemon [Tribler](https://github.com/Tribler/tribler)
 (client BitTorrent avec réseau d'anonymisation IPv8/TunnelCommunity), avec
-une future interface Flutter multiplateforme (Windows x64/arm64, Linux,
-macOS, Android, iOS, Web).
+interface Flutter multiplateforme (Windows x64/arm64, Linux, macOS,
+Android, iOS, Web) dans `app/`.
 
-**Backend d'abord** : aucune ligne d'UI ne sera écrite avant que le daemon
-soit validé à 100 % sur les fonctionnalités listées dans
-[`docs/plans/roadmap.md`](docs/plans/roadmap.md).
+Version : **0.3.1-alpha** — l'interop avec Tribler 8.x est validée sur le
+banc (téléchargements anonymes via circuits, hidden seeding, résilience
+aux kills), cf. [`docs/CHANGELOG.md`](docs/CHANGELOG.md).
 
 ## Documentation
 
@@ -25,10 +25,10 @@ soit validé à 100 % sur les fonctionnalités listées dans
 
 ## Structure
 
-Workspace Cargo, 12 crates sous `crates/` (`tribler-format`,
-`tribler-crypto`, `tribler-bittorrent`, `tribler-ipv8`, `tribler-tunnel`,
-`tribler-core`, `tribler-db`, `tribler-network-policy`, `tribler-api`,
-`tribler-cli`, `tribler-daemon`, `tribler-test-support`). Détail des
+Workspace Cargo, 12 crates sous `crates/` (`onionbit-format`,
+`onionbit-crypto`, `onionbit-bittorrent`, `onionbit-ipv8`, `onionbit-tunnel`,
+`onionbit-core`, `onionbit-db`, `onionbit-network-policy`, `onionbit-api`,
+`onionbit-cli`, `onionbit-daemon`, `onionbit-test-support`). Détail des
 responsabilités dans [`docs/architecture/architecture.md`](docs/architecture/architecture.md).
 
 ## Validation

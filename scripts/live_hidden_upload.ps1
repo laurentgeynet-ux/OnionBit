@@ -4,7 +4,7 @@
   Test live bout-en-bout : hidden seeding + upload anonyme + kill switch.
 
 .DESCRIPTION
-  Trois instances tribler-daemon isolees (etats separes) :
+  Trois instances onionbit-daemon isolees (etats separes) :
     A = ancre/relais pur (bootstrap Tribler.exe)  api 8097, ipv8 17787
     S = seeder anonyme (bootstrap A + Tribler)  api 8095, ipv8 17785
     D = downloader  (bootstrap A UNIQUEMENT)    api 8096, ipv8 17786
@@ -30,7 +30,7 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $root   = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $out    = Join-Path $root $OutDir
-$daemon = Join-Path $root 'target\debug\tribler-daemon.exe'
+$daemon = Join-Path $root 'target\debug\onionbit-daemon.exe'
 $mk     = Join-Path $root 'target\debug\examples\mk_torrent.exe'
 $rep    = Join-Path $out 'report'
 New-Item -ItemType Directory -Force -Path $out, $rep | Out-Null
@@ -91,7 +91,7 @@ function Start-Daemon($p, [string[]]$boot) {
     $psi.UseShellExecute = $false
     # Detail debug sur les crates tunnel/core seulement (le fil wire
     # reste en info — les logs sont deja volumineux).
-    $psi.EnvironmentVariables['RUST_LOG'] = 'info,tribler_tunnel=debug,tribler_core=debug,librqbit_utp=debug,librqbit=debug'
+    $psi.EnvironmentVariables['RUST_LOG'] = 'info,onionbit_tunnel=debug,onionbit_core=debug,librqbit_utp=debug,librqbit=debug'
     $proc = [System.Diagnostics.Process]::Start($psi)
     $procs[$p.Name] = $proc
     Log ("{0} demarre pid={1} bootstrap=[{2}]" -f $p.Name, $proc.Id, ($boot -join ', '))
@@ -124,8 +124,8 @@ function Download-State([int]$port, $key, [string]$ih) {
 
 # ---------- Phase 0 : contenu + torrent ----------
 Log '=== Phase 0 : contenu de test ==='
-if (-not (Test-Path $daemon)) { throw 'tribler-daemon.exe absent - cargo build -p tribler-daemon' }
-if (-not (Test-Path $mk)) { throw 'mk_torrent.exe absent - cargo build -p tribler-bittorrent --example mk_torrent' }
+if (-not (Test-Path $daemon)) { throw 'onionbit-daemon.exe absent - cargo build -p onionbit-daemon' }
+if (-not (Test-Path $mk)) { throw 'mk_torrent.exe absent - cargo build -p onionbit-bittorrent --example mk_torrent' }
 $content = Join-Path $out 'content'
 # Nonce aleatoire : infohash unique par run -> cle DHT vierge, donc les
 # seuls points d'introduction resolus par D sont ceux que S vient
@@ -384,7 +384,7 @@ finally {
         if ($procs.ContainsKey($p.Name) -and -not $procs[$p.Name].HasExited) {
             try { $procs[$p.Name].Kill(); $procs[$p.Name].WaitForExit() } catch {}
         }
-        $log = Join-Path $p.Dir 'logs\tribler.log'
+        $log = Join-Path $p.Dir 'logs\onionbit.log'
         if (Test-Path $log) { Copy-Item $log (Join-Path $rep ("tribler_{0}.log" -f $p.Name)) -Force }
     }
     Write-Host ''

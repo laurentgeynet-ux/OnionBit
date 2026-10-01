@@ -32,7 +32,7 @@ $rsLog = Join-Path $outDir "rust_stderr.log"
 Remove-Item -Force -ErrorAction SilentlyContinue $pyLog, $pyErr, $rsLog
 
 Write-Host "== build discovery_interop_node (rust) =="
-cargo build -p tribler-ipv8 --example discovery_interop_node
+cargo build -p onionbit-ipv8 --example discovery_interop_node
 if ($LASTEXITCODE -ne 0) { throw "build echoue" }
 
 $env:PYTHONPATH = $pyipv8

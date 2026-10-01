@@ -1,11 +1,11 @@
 /// Résolution automatique de la connexion au daemon local, spécifique
 /// plateforme — même mécanisme que `session_resolver` d'eMule-Rust :
-/// `tribler-daemon` persiste `state_dir/configuration.json`
+/// `onionbit-daemon` persiste `state_dir/configuration.json`
 /// (`api.key`, `api.http_port_running`) et l'UI le relit au démarrage,
 /// comme la GUI Tribler lit `api/key` + `api/http_port_running`.
 ///
 /// Sur desktop (`dart.library.io`) : variable d'environnement
-/// `TRIBLER_API_KEY` (+ `TRIBLER_API` pour l'URL), puis
+/// `ONIONBIT_API_KEY` (+ `ONIONBIT_API` pour l'URL), puis
 /// `configuration.json` cherché dans les répertoires candidats (bundle
 /// `dist\`, boucle de dev). Sur web/stub : pas de fichier local lisible
 /// → `null` (réglages manuels dans « Connexion daemon »).

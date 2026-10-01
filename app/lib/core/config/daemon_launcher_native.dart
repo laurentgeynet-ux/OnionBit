@@ -1,7 +1,7 @@
 /// Lancement du daemon local depuis l'UI (`dart:io`, desktop).
 ///
-/// « Daemon enfant lancé par l'app » (décision V1) : `tribler_ui.exe`
-/// démarre `tribler-daemon.exe` si l'API ne répond pas ; si le daemon
+/// « Daemon enfant lancé par l'app » (décision V1) : `onionbit_ui.exe`
+/// démarre `onionbit-daemon.exe` si l'API ne répond pas ; si le daemon
 /// tourne déjà (lancé à la main, resté en systray, ou autostart) l'UI
 /// s'y connecte directement — aucun script de lancement requis.
 library;
@@ -25,14 +25,14 @@ const _kProbeTimeout = Duration(milliseconds: 800);
 /// Garantit un daemon local vivant et renvoie sa config de connexion.
 ///
 /// 1. `configuration.json` résolu + API vivante → renvoyé tel quel ;
-/// 2. API morte → `tribler-daemon[.exe]` voisin de l'exe lancé détaché
+/// 2. API morte → `onionbit-daemon[.exe]` voisin de l'exe lancé détaché
 ///    (`--state-dir <exe>/state`), API sondée jusqu'à timeout — port
 ///    réel et clé relus à chaque tentative (`http_port=0` possible) ;
 /// 3. binaire absent (`flutter run`, install partielle) → `null`
 ///    (connexion manuelle dans « Connexion daemon »).
 ///
-/// `TRIBLER_API_KEY` dans l'environnement = setup externe piloté : on
-/// ne lance jamais de daemon enfant. `TRIBLER_DAEMON_EXE` surcharge le
+/// `ONIONBIT_API_KEY` dans l'environnement = setup externe piloté : on
+/// ne lance jamais de daemon enfant. `ONIONBIT_DAEMON_EXE` surcharge le
 /// chemin du binaire (boucle de développement).
 Future<AppConfig?> ensureDaemonRunning() async {
   final t0 = DateTime.now();
@@ -42,7 +42,7 @@ Future<AppConfig?> ensureDaemonRunning() async {
     uiLog('alive en ${DateTime.now().difference(t0).inMilliseconds} ms');
     return config;
   }
-  if ((Platform.environment['TRIBLER_API_KEY'] ?? '').trim().isNotEmpty) {
+  if ((Platform.environment['ONIONBIT_API_KEY'] ?? '').trim().isNotEmpty) {
     return config;
   }
 
@@ -85,16 +85,16 @@ Future<AppConfig?> ensureDaemonRunning() async {
   return null;
 }
 
-/// `tribler-daemon[.exe]` voisin de l'exécutable de l'UI
-/// (`TRIBLER_DAEMON_EXE` en premier — ex. `target\debug\…` en dev).
+/// `onionbit-daemon[.exe]` voisin de l'exécutable de l'UI
+/// (`ONIONBIT_DAEMON_EXE` en premier — ex. `target\debug\…` en dev).
 File? _daemonExe() {
-  final override = Platform.environment['TRIBLER_DAEMON_EXE']?.trim();
+  final override = Platform.environment['ONIONBIT_DAEMON_EXE']?.trim();
   if (override != null && override.isNotEmpty) {
     final f = File(override);
     if (f.existsSync()) return f;
   }
   final exeDir = File(Platform.resolvedExecutable).parent;
-  final name = Platform.isWindows ? 'tribler-daemon.exe' : 'tribler-daemon';
+  final name = Platform.isWindows ? 'onionbit-daemon.exe' : 'onionbit-daemon';
   final f = File('${exeDir.path}${Platform.pathSeparator}$name');
   return f.existsSync() ? f : null;
 }

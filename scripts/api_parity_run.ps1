@@ -1,4 +1,4 @@
-# api_parity_run.ps1 - lance Tribler.exe -s ET tribler-daemon en etats
+# api_parity_run.ps1 - lance Tribler.exe -s ET onionbit-daemon en etats
 # isoles, attend que les deux API REST soient en ligne, puis execute le
 # banc `api_parity.ps1`.
 #
@@ -99,10 +99,10 @@ $conf = @{
 $json = $conf | ConvertTo-Json -Depth 10
 [System.IO.File]::WriteAllText($confFile, $json, [System.Text.UTF8Encoding]::new($false))
 
-Write-Host "== build tribler-daemon =="
-cargo build -p tribler-daemon
+Write-Host "== build onionbit-daemon =="
+cargo build -p onionbit-daemon
 if ($LASTEXITCODE -ne 0) { throw "build echoue" }
-$rustBin = Join-Path $root "target\debug\tribler-daemon.exe"
+$rustBin = Join-Path $root "target\debug\onionbit-daemon.exe"
 
 Get-Process -Name "Tribler" -ErrorAction SilentlyContinue |
     Where-Object { $_.Path -eq $triblerExe } | Stop-Process -Force -ErrorAction SilentlyContinue
@@ -117,7 +117,7 @@ $pyProc = Start-Process -FilePath $triblerExe -PassThru -NoNewWindow `
     -RedirectStandardOutput (Join-Path $outDir "tribler_stdout.log") `
     -RedirectStandardError (Join-Path $outDir "tribler_stderr.log")
 
-Write-Host "== tribler-daemon (api :$rsApiPort, ipv8 :$rsUdpPort) =="
+Write-Host "== onionbit-daemon (api :$rsApiPort, ipv8 :$rsUdpPort) =="
 $rsProc = Start-Process -FilePath $rustBin -PassThru -NoNewWindow `
     -ArgumentList "--state-dir", "`"$rustState`"", "--listen", "127.0.0.1:$rsApiPort", "--ipv8-port", "$rsUdpPort", "--no-tray" `
     -RedirectStandardOutput (Join-Path $outDir "rust_stdout.log") `

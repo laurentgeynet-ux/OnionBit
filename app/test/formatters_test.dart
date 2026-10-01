@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:tribler_ui/core/utils/byte_formatter.dart';
-import 'package:tribler_ui/core/utils/duration_formatter.dart';
+import 'package:onionbit_ui/core/utils/byte_formatter.dart';
+import 'package:onionbit_ui/core/utils/duration_formatter.dart';
 
 void main() {
   group('ByteFormatter', () {

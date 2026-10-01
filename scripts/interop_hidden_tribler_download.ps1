@@ -57,7 +57,7 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $root   = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $out    = Join-Path $root $OutDir
-$daemon = Join-Path $root 'target\debug\tribler-daemon.exe'
+$daemon = Join-Path $root 'target\debug\onionbit-daemon.exe'
 $mk     = Join-Path $root 'target\debug\examples\mk_torrent.exe'
 $rep    = Join-Path $out 'report'
 $triblerExe = if ($env:TRIBLER_EXE) { $env:TRIBLER_EXE } else { 'C:\Program Files (x86)\Tribler\Tribler.exe' }
@@ -131,7 +131,7 @@ function Start-Daemon($p, [string[]]$boot) {
     $psi = New-Object System.Diagnostics.ProcessStartInfo($daemon)
     $psi.Arguments = $argList -join ' '
     $psi.UseShellExecute = $false
-    $psi.EnvironmentVariables['RUST_LOG'] = 'info,tribler_ipv8=debug,tribler_tunnel=debug,tribler_core=debug,librqbit_utp=debug,librqbit=debug'
+    $psi.EnvironmentVariables['RUST_LOG'] = 'info,onionbit_ipv8=debug,onionbit_tunnel=debug,onionbit_core=debug,librqbit_utp=debug,librqbit=debug'
     $proc = [System.Diagnostics.Process]::Start($psi)
     $procs[$p.Name] = $proc
     Log ("{0} demarre pid={1} bootstrap=[{2}]" -f $p.Name, $proc.Id, ($boot -join ', '))
@@ -186,8 +186,8 @@ function LogGrep([string]$file, [string]$pattern) {
 
 # ---------- Phase 0 : contenu + torrent ----------
 Log '=== Phase 0 : contenu de test ==='
-if (-not (Test-Path $daemon)) { throw 'tribler-daemon.exe absent - cargo build -p tribler-daemon' }
-if (-not (Test-Path $mk)) { throw 'mk_torrent.exe absent - cargo build -p tribler-bittorrent --example mk_torrent' }
+if (-not (Test-Path $daemon)) { throw 'onionbit-daemon.exe absent - cargo build -p onionbit-daemon' }
+if (-not (Test-Path $mk)) { throw 'mk_torrent.exe absent - cargo build -p onionbit-bittorrent --example mk_torrent' }
 if (-not (Test-Path $triblerExe)) { throw "Tribler.exe absent : $triblerExe" }
 $content = Join-Path $out 'content'
 foreach ($p in (@($P_S, $P_A) + $relays)) {
@@ -511,7 +511,7 @@ try {
     if (-not $addOk) { throw 'ajout download refuse' }
 
     # ---------- Phase 4 : attente + collecte de preuves ----------
-    $sLog = Join-Path $P_S.Dir 'logs\tribler.log'
+    $sLog = Join-Path $P_S.Dir 'logs\onionbit.log'
     $seen = @{ e2e = $false; linked = $false; utp = $false; rp = $false; bytes = $false; dhtT = $false }
     $ds0 = Download-State $P_S.Api $kS $ih
     $ulBefore = if ($ds0) { [int64]$ds0.all_time_upload } else { 0 }
@@ -596,7 +596,7 @@ finally {
         if ($procs.ContainsKey($p.Name) -and -not $procs[$p.Name].HasExited) {
             try { $procs[$p.Name].Kill(); $procs[$p.Name].WaitForExit() } catch {}
         }
-        $log = Join-Path $p.Dir 'logs\tribler.log'
+        $log = Join-Path $p.Dir 'logs\onionbit.log'
         if (Test-Path $log) { Copy-Item $log (Join-Path $rep ("tribler_{0}.log" -f $p.Name)) -Force }
     }
     # Instantanes Tribler avant extinction.

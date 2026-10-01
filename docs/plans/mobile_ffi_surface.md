@@ -12,7 +12,7 @@ verdict « faisable avec un hôte FFI minimal »).
 - **Pas de HTTP** : la façade appelle `CoreSession` directement, dans
   le même processus que l'app hôte. Pas de socket de contrôle locale.
 - **Payloads JSON UTF-8** : chaque fonction prend/rend des chaînes
-  JSON — les structs de `tribler-api` (`DownloadInfo`, etc.) sont déjà
+  JSON — les structs de `onionbit-api` (`DownloadInfo`, etc.) sont déjà
   sérialisables ; pas de marshalling de types complexes à travers la
   frontière.
 - **Une seule session** : `tribler_start` refuse un second appel tant

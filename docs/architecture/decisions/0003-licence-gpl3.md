@@ -8,7 +8,7 @@ Tribler est publié sous licence **GPL-3.0**. Ce projet porte
 l'architecture et le comportement de Tribler (protocole IPv8, logique de
 session, schéma de métadonnées, contrat d'API REST) vers Rust, en
 s'appuyant activement sur les sources officielles comme référence de
-vérité (`D:\Projet\Tribler_sources\tribler`). Il ne s'agit pas d'une
+vérité (`<Tribler sources checkout> (env `TRIBLER_SRC`)`). Il ne s'agit pas d'une
 réimplémentation "clean-room" (à la différence, par exemple, du projet
 eMule-Rust de l'utilisateur qui reconstruit un protocole legacy sans
 réutiliser de code sous licence copyleft comme référence de comportement

@@ -1,6 +1,6 @@
 /// Modèles du panneau Diagnostic — miroirs de `CircuitInfo`,
 /// `RelayInfo`, `ExitInfo`, `SwarmInfo`, `TunnelPeerInfo`
-/// (`tribler-tunnel`) et de `overlays` (`tribler-ipv8`).
+/// (`onionbit-tunnel`) et de `overlays` (`onionbit-ipv8`).
 class OverlayInfo {
   const OverlayInfo({
     required this.name,

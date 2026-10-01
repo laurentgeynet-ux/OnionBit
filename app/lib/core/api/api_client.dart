@@ -16,7 +16,7 @@ class ApiException implements Exception {
   String toString() => 'ApiException($statusCode): $message';
 }
 
-/// Client REST de `tribler-api`.
+/// Client REST de `onionbit-api`.
 ///
 /// Toutes les features passent par cette classe (comme `RpcClient`
 /// dans l'app de référence) : encodage JSON, `X-Api-Key`, décodage des

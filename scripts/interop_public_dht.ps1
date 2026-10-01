@@ -84,7 +84,7 @@ try {
     if (-not $peersOk) { throw "Tribler.exe n'a decouvert aucun pair en ${TriblerWaitSec}s" }
 
     Write-Host "== build interop_public_download (rust) =="
-    cargo build -p tribler-bittorrent --example interop_public_download
+    cargo build -p onionbit-bittorrent --example interop_public_download
     if ($LASTEXITCODE -ne 0) { throw "build echoue" }
 
     $rsLog = Join-Path $outDir "public_download.log"

@@ -63,10 +63,10 @@ function New-Tribler([string]$tag, [string]$stateDir, [string]$destDir) {
                                 @('130.161.119.201', 6528)
                             )
                             dns_addresses = @(
-                                @('dispersy1.tribler.org', 6421), @('dispersy1.st.tudelft.nl', 6421),
-                                @('dispersy2.tribler.org', 6422), @('dispersy2.st.tudelft.nl', 6422),
-                                @('dispersy3.tribler.org', 6423), @('dispersy3.st.tudelft.nl', 6423),
-                                @('dispersy4.tribler.org', 6424)
+                                @('dispersy1.onionbit.org', 6421), @('dispersy1.st.tudelft.nl', 6421),
+                                @('dispersy2.onionbit.org', 6422), @('dispersy2.st.tudelft.nl', 6422),
+                                @('dispersy3.onionbit.org', 6423), @('dispersy3.st.tudelft.nl', 6423),
+                                @('dispersy4.onionbit.org', 6424)
                             )
                             bootstrap_timeout = 30.0
                         } }

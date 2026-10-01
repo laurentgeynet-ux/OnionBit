@@ -1,0 +1,23 @@
+[package]
+name = "onionbit-crypto"
+description = "Primitives cryptographiques : hachage BitTorrent (SHA-1/SHA-256), cles IPv8 LibNaCL (Ed25519/X25519), crypto de tunnel (ChaCha20-Poly1305, HKDF-SHA256, HSalsa20, HMAC)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+sha1.workspace = true
+sha2.workspace = true
+ed25519-dalek.workspace = true
+x25519-dalek.workspace = true
+chacha20poly1305.workspace = true
+hkdf.workspace = true
+hmac.workspace = true
+subtle.workspace = true
+rand.workspace = true
+hex.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true

@@ -40,7 +40,7 @@ $keyFile = Join-Path $outDir "py_key.txt"
 Remove-Item -Force -ErrorAction SilentlyContinue $keyFile
 
 Write-Host "== build exit_download_interop (rust) =="
-cargo build -p tribler-bittorrent --example exit_download_interop
+cargo build -p onionbit-bittorrent --example exit_download_interop
 if ($LASTEXITCODE -ne 0) { throw "build echoue" }
 
 $env:PYTHONPATH = $pyipv8

@@ -47,21 +47,21 @@ try {
     # cargo n'a pas de profil « debug » : c'est « dev » (mais la sortie
     # reste sous target\<target>\debug).
     $cargoProfile = if ($Profile -eq "release") { "release" } else { "dev" }
-    cargo build --profile $cargoProfile -p tribler-daemon -p tribler-cli --target $Target
+    cargo build --profile $cargoProfile -p onionbit-daemon -p onionbit-cli --target $Target
 
     $out = Join-Path $root "dist\$Target"
     New-Item -ItemType Directory -Force -Path $out | Out-Null
     $suffix = if ($Target -like "*windows*") { ".exe" } else { "" }
     $srcDir = if ($Profile -eq "release") { "release" } else { "debug" }
     $src = Join-Path $root "target\$Target\$srcDir"
-    foreach ($bin in @("tribler-daemon", "tribler-cli")) {
+    foreach ($bin in @("onionbit-daemon", "onionbit-cli")) {
         Copy-Item "$src\$bin$suffix" -Destination $out -Force
     }
 
     $manifest = @{
         target   = $Target
         profile  = $Profile
-        version  = (cargo pkgid -p tribler-daemon).Split("#")[-1]
+        version  = (cargo pkgid -p onionbit-daemon).Split("#")[-1]
         commit   = (git rev-parse --short HEAD 2>$null)
         rustc    = (rustc -V)
         built_utc = (Get-Date).ToUniversalTime().ToString("o")

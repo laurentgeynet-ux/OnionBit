@@ -115,7 +115,7 @@ $json = $conf | ConvertTo-Json -Depth 10
 [System.IO.File]::WriteAllText($confFile, $json, [System.Text.UTF8Encoding]::new($false))
 
 Write-Host "== build tribler_relay_interop (rust) =="
-cargo build -p tribler-tunnel --example tribler_relay_interop
+cargo build -p onionbit-tunnel --example tribler_relay_interop
 if ($LASTEXITCODE -ne 0) { throw "build echoue" }
 
 # Nettoyage d'un eventuel Tribler de test restant + echo.

@@ -3,6 +3,26 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Renommage produit : OnionBit + version 0.3.1-alpha (2026-10-01)
+
+- Crates `tribler-*` → `onionbit-*` (dossiers, `Cargo.toml`, imports
+  `tribler_*` → `onionbit_*`) ; binaires `onionbit-daemon`,
+  `onionbit-cli`, `onionbit_ui`.
+- Artefacts produit : etat `.onionbit/`, `onionbit.db`, `onionbit.log`,
+  env `ONIONBIT_API_KEY` / `ONIONBIT_API` / `ONIONBIT_DAEMON_EXE`,
+  provider Dart `onionbitStats*`, titres « OnionBit » (fenetre,
+  manifeste web, `Runner.rc`).
+- **Preserve pour la parite wire Tribler** : evenements SSE
+  `tribler_*`, endpoint `/api/statistics/tribler`, cle JSON
+  `tribler_statistics`, sel d'identite `tribler anonymous download`,
+  `TRIBLER_TUNNEL_COMMUNITY_ID`, flags d'interop `--tribler-*`.
+- Version workspace `0.3.1-alpha` (pubspec `0.3.1+1`), auteur
+  Laurent Geynet (Loulach), `repository` → github OnionBit.
+- AGENTS.md simplifie ; chemins locaux purges des docs (remplaces par
+  les env `TRIBLER_SRC` / `RQBIT_SRC` / `TRIBLER_EXE`) — les scripts
+  d'interop gardent leurs defauts locaux (env-overridables).
+- Release : `dist/OnionBit-0.3.1-alpha-windows-x64.zip`.
+
 ## Transport tunnel : pompe d'emission FIFO (fix reordonnancement e2e)
 
 - Symptome : un test loopback de rafale e2e (`hidden_seed_e2e_burst_integrity`,
@@ -12,7 +32,7 @@ en haut.
   un `tokio::spawn` par envoi ; sur runtime multi-thread, deux taches
   consecutives s'executent dans un ordre arbitraire. pyipv8 envoie
   depuis la boucle asyncio unique — FIFO garanti.
-- `crates/tribler-tunnel/src/community.rs` : file bornée
+- `crates/onionbit-tunnel/src/community.rs` : file bornée
   (`SEND_QUEUE_CAP = 4096`, drop-tail = semantique UDP) drainee par une
   pompe d'emission unique `SendJob::Endpoint|ExitSocket`. Les chemins
   `relay_cell` et `exit_data` enquetent au lieu de spawner.
@@ -290,7 +310,7 @@ en haut.
   `onionbit.ico` généré depuis `branding/platforms/linux/hicolor/`
   (frames 16→256 px). `resources.rc`, le fallback `Icon::from_path`
   de `tray.rs` et les commentaires pointent sur le nouveau fichier.
-- Nécessite un rebuild de `tribler-daemon` (l'icône est embarquée
+- Nécessite un rebuild de `onionbit-daemon` (l'icône est embarquée
   dans l'exe via `embed-resource`) ; `tray_icon_color` non vide
   reste prioritaire (carré RGB, comportement Python conservé).
 
@@ -440,9 +460,9 @@ en haut.
 
 ## Backend — SSE `settings_changed` (étape 8/8)
 
-- Nouvelle variante `Notification::SettingsChanged` (`tribler-core`) ;
+- Nouvelle variante `Notification::SettingsChanged` (`onionbit-core`) ;
   `POST /api/settings` l'émet après persistance → topic SSE
-  `settings_changed` (`tribler-api`, mapping + test de mapping).
+  `settings_changed` (`onionbit-api`, mapping + test de mapping).
 - Côté UI : `EventTopics.settingsChanged` + `ref.listen` dans
   `daemonSettingsProvider` → `invalidateSelf()` : un client qui modifie
   la config resynchronise les sections dédiées des autres clients et
@@ -585,7 +605,7 @@ en haut.
 - `settings_defaults.dart` : `kBandwidthDefaults`, `kQueueDefaults`,
   `kSeedingDefaults`, `kAnonymityDefaults`, `kNetworkDefaults`,
   `kAutomationDefaults` — valeurs identiques aux `Default` backend
-  (`tribler-core`/`tribler-bittorrent`/`tribler-tunnel`).
+  (`onionbit-core`/`onionbit-bittorrent`/`onionbit-tunnel`).
 - `SettingsSection` accepte `defaults` : bouton reset dans l'en-tête →
   `applySettingsPatch` + ré-synchronisation des champs locaux via le
   bus de l'étape 2.
@@ -644,7 +664,7 @@ ce comportement et rend la phase de check visible dans l'API.
   `WAITING_FOR_HASHCHECK` (1) tant qu'il attend dans la file d'init.
   « Restauration terminée » et « vérification terminée » sont deux
   états mesurables distincts.
-- **Chaîne complète** (test `tribler-core`) :
+- **Chaîne complète** (test `onionbit-core`) :
   `restauration_sortie_inaccessible_erreur_differee` — dossier de sortie
   remplacé par un fichier entre deux runs : la restauration réussit
   (init lazy), le check différé marque toutes les pièces manquantes
@@ -849,7 +869,7 @@ a la demande, comme le file pool de libtorrent :
   dans `db.torrents` mais pas dans le **fichier** : une entrée chargée
   au démarrage (restore rqbit) restait dans la map de persistance même
   quand son `add_torrent` retournait `AlreadyManaged`, pendant que la
-  restore `tribler.db` réinjectait le même infohash sous un nouvel id —
+  restore `onionbit.db` réinjectait le même infohash sous un nouvel id —
   les deux coexistaient dans `session.json` et se multipliaient à
   chaque démarrage.
 - `JsonSessionPersistenceStore::update_db` supprime désormais les
@@ -878,7 +898,7 @@ a la demande, comme le file pool de libtorrent :
   moteur : pendant la restauration sérialisée (`concurrent_init_limit`),
   les téléchargements en attente n'apparaissaient pas dans l'UI puis
   surgissaient un par un.
-- Les lignes `downloads` de `tribler.db` absentes du moteur sont
+- Les lignes `downloads` de `onionbit.db` absentes du moteur sont
   désormais émises en `WAITING_FOR_HASHCHECK` (statut Python 1,
   « en file pour le check » — `STOPPED` si `paused`/`user_stopped`),
   avec les réglages persistés (destination, hops, limites). L'UI les
@@ -888,7 +908,7 @@ a la demande, comme le file pool de libtorrent :
 
 - **Race à l'insertion** : depuis que `create_and_init` tourne hors du
   write-lock de `Session.db` (cf. entrée précédente), la restauration
-  rqbit (`session.json`) et celle de Tribler (`tribler.db`) appelaient
+  rqbit (`session.json`) et celle de Tribler (`onionbit.db`) appelaient
   `add_torrent` en parallèle pour le même infohash : les deux passaient
   le check `AlreadyManaged` avant que l'autre ait inséré → une entrée
   dupliquée re-persistée à chaque démarrage (7 nouvelles observées au
@@ -971,14 +991,14 @@ le seeder refasse un `establish-intro`.
 
 Changements :
 
-- `tribler-db` : **migration v10** — table `tunnel_pex`
+- `onionbit-db` : **migration v10** — table `tunnel_pex`
   (`info_hash`, `own` = annonce propre vs point appris, `peer_key`,
   `seeder_pk`, `address`, `source`, `last_seen`) ; module `pex.rs`
   (`replace_all` snapshot transactionnel, `list`, `delete_swarm`).
-- `tribler-tunnel/community.rs` : `pex_dump`/`pex_restore`
+- `onionbit-tunnel/community.rs` : `pex_dump`/`pex_restore`
   (extension Rust — le crate reste sans dépendance SQLite ; type
   public `PexDumpEntry`).
-- `tribler-core/ipv8_stack.rs` : restauration après création du
+- `onionbit-core/ipv8_stack.rs` : restauration après création du
   tunnel (les annonces `intro_points_for` sont régénérées avec notre
   WAN courant) ; la tâche `ipv8_peer_cache` écrit aussi le snapshot
   PEX dans le même `db.call` — pas d'écriture supplémentaire.
@@ -991,14 +1011,14 @@ async fige tout l'executor Tokio : API, tunnels, moteur).
 
 Changements :
 
-- `tribler-core/asyncio/monitor.rs` : **sonde de lag de l'executor** —
+- `onionbit-core/asyncio/monitor.rs` : **sonde de lag de l'executor** —
   tâche tickant toutes les 100 ms ; un retard ≥ 500 ms log un
   `warn!` (« tache bloquante suspectee »). Démarrée dans
   `AsyncioMonitor::new`, abordée au `Drop`.
-- `tribler-db` : `Database::with` log un `warn!` pour toute opération
+- `onionbit-db` : `Database::with` log un `warn!` pour toute opération
   SQLite (attente du mutex comprise) ≥ 250 ms — les requêtes lentes et
-  la contention de connexion deviennent visibles dans `tribler.log`.
-- `tribler-core/session.rs` : `move_storage` déporte le déplacement de
+  la contention de connexion deviennent visibles dans `onionbit.log`.
+- `onionbit-core/session.rs` : `move_storage` déporte le déplacement de
   fichiers (`move_dir_contents`, copie récursive inter-volumes) sur
   `spawn_blocking` + `warn!` si > 500 ms — fix réel : la copie de gros
   volumes ne fige plus l'executor, rollback inclus.
@@ -1012,12 +1032,12 @@ pair vérifié, circuits anonymes et recherche distante indisponibles).
 
 Changements :
 
-- `tribler-db` : **migration v9** — table `ipv8_peers`
+- `onionbit-db` : **migration v9** — table `ipv8_peers`
   (`public_key` PK, `address` "ip:port", `last_seen`, `new_style`) +
   index sur `last_seen` ; module `peers.rs` (`upsert_batch` en une
   transaction, `list_peers` borné par fraîcheur, `prune` expire +
   borne la table).
-- `tribler-core/ipv8_stack.rs` : au `start`, les pairs du cache sont
+- `onionbit-core/ipv8_stack.rs` : au `start`, les pairs du cache sont
   rechargés dans `Network::add_verified` et leurs adresses jointes
   aux cibles de marche du bootstrap (le cache seul suffit à amorcer
   si la liste de noeuds est vide ou le DNS lent). Tâche
@@ -1039,18 +1059,18 @@ axum), figeant l'API pendant les recherches FTS et les listes.
 
 Changements :
 
-- `tribler-db/db.rs` : pragmas de performance à l'ouverture —
+- `onionbit-db/db.rs` : pragmas de performance à l'ouverture —
   `synchronous=NORMAL` (sûr en WAL), `busy_timeout=5000`,
   `temp_store=MEMORY`, `cache_size=-20000` (~20 Mio),
   `mmap_size=64 Mio`, cache de statements préparés (64) et
   `PRAGMA optimize` post-migrations. Nouvelle méthode async
   `Database::call` (`spawn_blocking` + `with`).
-- `tribler-db/migrations.rs` : **v8** — index
+- `onionbit-db/migrations.rs` : **v8** — index
   `channel_node(metadata_type, torrent_date)` (popular / filtres de
   type), `torrent_state(has_data, last_check)` et
   `torrent_state(last_check)` (popular / historique de santé).
-- `tribler-db/health.rs` : `list_torrent_states` en masse.
-- `tribler-api/handlers/` : tous les accès DB du chemin de requête
+- `onionbit-db/health.rs` : `list_torrent_states` en masse.
+- `onionbit-api/handlers/` : tous les accès DB du chemin de requête
   passent par `call`/`spawn_blocking` (`metadata` : popular, santé,
   `search/local` FTS + augmenteur, completions, tags ; `statistics`,
   `rss`).
@@ -1073,17 +1093,17 @@ effet (`NonPersistentBitVFactory`).
 
 Changements :
 
-- `tribler-bittorrent/config.rs` : nouveau champ `persistence_dir`
+- `onionbit-bittorrent/config.rs` : nouveau champ `persistence_dir`
   traduit en `SessionPersistenceConfig::Json` quand `fastresume` est
   actif ; tests offline inchanges (`None`).
-- `tribler-core/daemon_config.rs` : le moteur principal persiste dans
+- `onionbit-core/daemon_config.rs` : le moteur principal persiste dans
   `state_dir/rqbit/main`.
-- `tribler-core/ipv8_stack.rs` : chaque lane anonyme a son dossier
+- `onionbit-core/ipv8_stack.rs` : chaque lane anonyme a son dossier
   `state_dir/rqbit/anon<N>` — un dossier dedie par moteur empeche la
   restauration croisee des torrents anonymes sur le moteur en clair
   (rqbit re-ajoute le contenu de `session.json` au demarrage de la
   session).
-- `tribler-core/session.rs` : `update_hops` met de cote le
+- `onionbit-core/session.rs` : `update_hops` met de cote le
   `<ih>.bitv` de l'ancienne lane (le `delete` rqbit le supprime) et
   le depose dans le dossier de la nouvelle lane avant le re-add —
   `validate_fastresume` (verification legere d'un echantillon par
@@ -1114,22 +1134,22 @@ désalignés.
 
 Changements :
 
-- `tribler-ipv8/packet.rs` : `WirePolicy` (`signed` + `dist` par
+- `onionbit-ipv8/packet.rs` : `WirePolicy` (`signed` + `dist` par
   `msg_id`) avec `WIRE_DEFAULT` et `WIRE_DISCOVERY` ; `Packet::parse`
   prend la policy en paramètre.
-- `tribler-ipv8/endpoint.rs` : la policy est stockée par listener de
+- `onionbit-ipv8/endpoint.rs` : la policy est stockée par listener de
   préfixe (`add_prefix_listener_with_policy`).
-- `tribler-ipv8/discovery.rs` : enregistrement sous `WIRE_DISCOVERY`,
+- `onionbit-ipv8/discovery.rs` : enregistrement sous `WIRE_DISCOVERY`,
   `send_payload` aligné sur pyipv8 (ping/pong non signés + dist,
   similarity signée + dist).
-- `tribler-ipv8/{content_discovery,dht}`, `tribler-tunnel` :
+- `onionbit-ipv8/{content_discovery,dht}`, `onionbit-tunnel` :
   enregistrement `WIRE_DEFAULT`.
-- `tribler-ipv8/content_discovery.rs` : `HealthPayload` — les items
+- `onionbit-ipv8/content_discovery.rs` : `HealthPayload` — les items
   `[HealthFormat]` sont des `NestedPayload` pyipv8, donc chacun est
   prefixe de sa longueur `>H` (u16). Sans ce prefixe, le `unpack`
   desalignait et `varlen_h` exigeait des dizaines de ko — les erreurs
   « paquet tronque … msg_id=4 » du journal.
-- `tribler-tunnel/community.rs` : port du retry pyipv8 —
+- `onionbit-tunnel/community.rs` : port du retry pyipv8 —
   `send_initial_create` reteste les candidats alternatifs du premier
   saut (jusqu'à `circuit_timeout / next_hop_timeout` essais) ;
   `send_extend` reteste les candidats de relais/sortie de la liste
@@ -1139,10 +1159,10 @@ Changements :
 
 Tests : fixtures de test corrigées (ping non signé ⇒ les tests de
 découverte passent par `introduction-request`, le vrai chemin signé) ;
-tous les tests `tribler-ipv8`/`tribler-tunnel` + workspace verts.
+tous les tests `onionbit-ipv8`/`onionbit-tunnel` + workspace verts.
 `cargo check`/`clippy -D warnings`/`fmt --check` propres. Les tests
-`tribler-daemon`/`tribler-cli` n'ont pas pu être relancés : le binaire
-`target\debug\tribler-daemon.exe` était verrouillé par une instance en
+`onionbit-daemon`/`onionbit-cli` n'ont pas pu être relancés : le binaire
+`target\debug\onionbit-daemon.exe` était verrouillé par une instance en
 cours d'exécution (compilation vérifiée via `cargo check`).
 
 ## Correctif majeur : les overlays DHT et tunnel ne marchaient jamais non plus (2026-09-29)
@@ -1157,16 +1177,16 @@ content-discovery, les deux overlays restants avaient le même trou :
 | `DhtCommunity` | `walk_to` au bootstrap seulement, réponse d'intro minimale (pas d'introduction de tiers, pas de `discover_address`) | `step()`/`run()` périodique + handlers complets |
 | `TunnelCommunity` | aucune marche, réponse d'intro sans introduire de pair, punctures ignorées | `step()`/`run()` périodique + handlers complets |
 
-- `tribler-ipv8/dht/community.rs` : marche aléatoire (même ordre de
+- `onionbit-ipv8/dht/community.rs` : marche aléatoire (même ordre de
   choix : pair de l'overlay → adresse walkable du service → pair
   vérifié quelconque → bootstrapper), `discover_address` sur les
   intros reçues, introduction d'un tiers + `puncture-request`,
   traitement des punctures.
-- `tribler-tunnel/community.rs` : idem ; les `peer_flags` du tunnel
+- `onionbit-tunnel/community.rs` : idem ; les `peer_flags` du tunnel
   continuent d'être portés par `extra_bytes` des intros émises et
   lus à la réception ; `IntroRequestParams` factorise le decode
   des formats ancien (246) et nouveau (234).
-- `tribler-core/ipv8_stack.rs` : injection de la `DiscoveryCommunity`
+- `onionbit-core/ipv8_stack.rs` : injection de la `DiscoveryCommunity`
   dans le tunnel (adresses `my_estimated_lan/wan` partagées, comme
   l'endpoint unique Python) et spawn des marches DHT/tunnel aux
   côtés de content-discovery dans la tâche de bootstrap.
@@ -1190,7 +1210,7 @@ entrants sous son préfixe — que personne n'émettait puisqu'on ne
 s'annonçait jamais sous ce préfixe. Cercle vicieux : 0 pair →
 gossip sans cible → recherche muette.
 
-- `tribler-ipv8/content_discovery.rs` :
+- `onionbit-ipv8/content_discovery.rs` :
   - `step()`/`run()` : marche aléatoire périodique
     (`walker_interval` de la stack) — introduction-request sous le
     préfixe de la community vers un pair connu de l'overlay, une
@@ -1208,10 +1228,10 @@ gossip sans cible → recherche muette.
   - La community reçoit la `DiscoveryCommunity` de la stack pour
     les estimations WAN/LAN (un seul endpoint = une seule paire
     d'estimations, comme `IPv8` Python).
-- `tribler-core/ipv8_stack.rs` : la tâche `bootstrap` spawne aussi
+- `onionbit-core/ipv8_stack.rs` : la tâche `bootstrap` spawne aussi
   `ContentDiscoveryCommunity::run` avec les noeuds résolus, à la
   cadence `walker_interval`.
-- `tribler-ipv8/discovery.rs` : `same_ip` exposé en `pub(crate)`
+- `onionbit-ipv8/discovery.rs` : `same_ip` exposé en `pub(crate)`
   (partage avec la community content-discovery).
 - Test loopback `walk_decouvre_les_pairs_de_l_overlay` : une
   `introduction-request` peuple `peers_for_service` des deux côtés.
@@ -1224,7 +1244,7 @@ figeait son propre `output_dir`. Tribler Python n'a pas de
 sous-dossier par saut : le `destination`/`saveas` est global à
 toutes les sessions libtorrent.
 
-- `tribler-core/ipv8_stack.rs` : `anon_engine` utilise désormais
+- `onionbit-core/ipv8_stack.rs` : `anon_engine` utilise désormais
   `downloads_dir` comme `output_dir` par défaut, comme le moteur
   principal. `destination` explicite (`PUT /api/downloads`) et
   `download_dir` (`POST /api/settings`) restent prioritaires.
@@ -1293,7 +1313,7 @@ bindant des sockets réelles. D'où le vendoring :
   DHT + tracker UDP, `ConnectionOptions.utp_socket`
   (`Arc<dyn UtpConnector>` sur `UtpSocket<T,E>`), re-export
   `UtpEnvironment`, proxy pair uniquement si `enable_tcp` (ADR-0007).
-- **`tribler-tunnel::tunnel_udp_socket`** : `TunnelUdpSocket`
+- **`onionbit-tunnel::tunnel_udp_socket`** : `TunnelUdpSocket`
   implémente `librqbit_utp::Transport` + `DatagramSocket` par-dessus
   `send_data`/`data_rx` — pinning destination→circuit (préférence
   `PEER_FLAG_EXIT_BT`), réception démuxée par forme de paquet
@@ -1331,7 +1351,7 @@ n'est pas honoré — comme en Python. Docs alignées :
 
 La contrainte « backend d'abord » est levée (décision utilisateur) :
 l'interface `app/` se développe en parallèle du daemon. Exposition
-complète des capacités déjà présentes dans `tribler-api` :
+complète des capacités déjà présentes dans `onionbit-api` :
 
 - **File d'attente** : `queue_position` (monter/descendre/haut/bas),
   `auto_managed`, recheck, `move_storage`, limites de débit et ratio
@@ -1405,14 +1425,14 @@ sortie.
 ## Logs : un fichier par run + horodatage local (2026-09-29)
 
 - **Rotation par run** : `rolling::daily` concaténait tous les runs du
-  jour dans `tribler.log.YYYY-MM-DD`. Désormais `rolling::never` écrit
-  `tribler.log` (run courant uniquement) ; au démarrage, le fichier
-  précédent est archivé `tribler.log` → `.1`, `.N` → `.N+1`
-  (`crates/tribler-daemon/src/logs.rs`). `/api/logging` reste
-  compatible (filtre préfixe `tribler.log.`).
+  jour dans `onionbit.log.YYYY-MM-DD`. Désormais `rolling::never` écrit
+  `onionbit.log` (run courant uniquement) ; au démarrage, le fichier
+  précédent est archivé `onionbit.log` → `.1`, `.N` → `.N+1`
+  (`crates/onionbit-daemon/src/logs.rs`). `/api/logging` reste
+  compatible (filtre préfixe `onionbit.log.`).
 - **`logging/max_files`** (nouvelle section `configuration.json`,
   extension propre au portage, défaut 5) : nombre d'archives
-  conservées. Les anciens fichiers datés `tribler.log.YYYY-MM-DD` ont
+  conservées. Les anciens fichiers datés `onionbit.log.YYYY-MM-DD` ont
   leur propre rétention `max_files` triée par récence — transition en
   douceur.
 - **Heure locale** : le formatteur `fmt` par défaut écrivait en UTC
@@ -1503,7 +1523,7 @@ les flags daemon/UI et les attributs de canal par téléchargement.
 - **`start_minimized`** : lue mais **inerte** côté daemon — chez
   Tribler core et UI sont le même processus (`run_tribler`), la clé ne
   régit que l'état de la fenêtre. Ici le daemon ne lance jamais l'UI :
-  c'est `tribler_ui.exe` qui démarre le daemon (`daemon_launcher`),
+  c'est `onionbit_ui.exe` qui démarre le daemon (`daemon_launcher`),
   sinon UI lancée → daemon → UI, boucle.
 - **`database.enabled=false`** : `db_filename` bascule sur
   `":memory:"` (mode dégradé sans persistance, même repli que
@@ -1522,7 +1542,7 @@ les flags daemon/UI et les attributs de canal par téléchargement.
   (`PostHandleOp.WRITE_BACKUP_TORRENT` / `write_backup_torrent_file`
   Python ; une fois par téléchargement par session).
 - **`channel_download` / `add_download_to_channel`** : migration
-  `tribler-db` v6 (`downloads.channel_download`,
+  `onionbit-db` v6 (`downloads.channel_download`,
   `downloads.add_download_to_channel`), propagées depuis
   `download_defaults` à l'insertion et persistantes par
   téléchargement comme les champs `DownloadConfig` Python —
@@ -1545,7 +1565,7 @@ les réglages `libtorrent` restants.
 - **`libtorrent/dht_readiness_timeout`** :
   `EngineConfig.dht_readiness_timeout_secs` — `BtEngine::start` attend
   que la table de routage DHT soit peuplée (borne en secondes, warn si
-  le délai s'écoule), comme le `wait_for_dht` de `start_tribler_core`
+  le délai s'écoule), comme le `wait_for_dht` de `start_onionbit_core`
   Python. `0` = pas d'attente (tests offline).
 - **`libtorrent/clear_orphaned_parts`** : `BtEngine::stop` purge les
   `*.parts` orphelins de l'`output_dir` (stem `<infohash>` hex absent
@@ -1605,7 +1625,7 @@ jamais lus (audit complet : ~40 champs concernés).
   `DispatcherEndpoint` pyipv8). Repli IPv4-seul avec warn si le bind
   v6 échoue. Test `endpoint_dual_stack_envoie_et_recoit_en_v6`.
 - **`ipv8/logger_level`** : chargé avant `init_tracing`, injecté comme
-  directive `tribler_ipv8=LVL,tribler_tunnel=LVL` dans le `EnvFilter`
+  directive `onionbit_ipv8=LVL,onionbit_tunnel=LVL` dans le `EnvFilter`
   de base (les niveaux hors `INFO` seulement ; valeur invalide =
   warn + ignorée).
 - **`statistics`** et **`ipv8/interfaces[].worker_threads`** :
@@ -1628,7 +1648,7 @@ est réellement fonctionnel).
 Cause : `TunnelCommunityConfig.min_circuits` (défaut `3`, section
 `tunnel_community` du fichier de config) existait dans
 `docs/reference_tribler` mais n'était **jamais lu** — `spawn_
-circuit_watchdog` (`tribler-core/src/ipv8_stack.rs`) appelait
+circuit_watchdog` (`onionbit-core/src/ipv8_stack.rs`) appelait
 `build_circuits_if_needed(hops, 1)` en dur, donc une seule lane par
 `hops` ne maintenait jamais plus d'un circuit, quelle que soit la
 config.
@@ -1661,7 +1681,7 @@ directement à cet instant (`flag_registry` ne le connaît pas encore),
 `exit_flags` reste `0` **pour toujours** : le circuit est bien
 `READY` mais invisible du sélecteur SOCKS5 HTTP.
 
-- `TunnelCommunity::register_tunnel_peer` (`crates/tribler-tunnel/src/
+- `TunnelCommunity::register_tunnel_peer` (`crates/onionbit-tunnel/src/
   community.rs`) : en plus d'alimenter `flag_registry`, parcourt
   désormais les circuits dont le dernier saut correspond à ce pair et
   rattrape leur `exit_flags` (+ `notify_circuits_changed`).
@@ -1690,18 +1710,18 @@ donc aucune nouvelle tentative avec un autre pair n'était jamais
 lancée — la lane anonyme restait bloquée par le kill switch pour
 toujours.
 
-- `TunnelCommunity::spawn_hop_timeout` (`crates/tribler-tunnel/src/
+- `TunnelCommunity::spawn_hop_timeout` (`crates/onionbit-tunnel/src/
   community.rs`) : après l'envoi d'un `create`/`extend`, programme une
   purge du circuit (`remove_circuit`) si `retry_requests` porte
   toujours le même `identifier` après `CIRCUIT_READY_TIMEOUT_MS`
   (`next_hop_timeout` pyipv8, 10 s) — équivalent du `on_timeout` de
   `NextHopRequestCache` côté Python. Le watchdog de circuits
-  (`spawn_circuit_watchdog`, `tribler-core/src/ipv8_stack.rs`) peut
+  (`spawn_circuit_watchdog`, `onionbit-core/src/ipv8_stack.rs`) peut
   alors retenter avec un autre pair au tick suivant.
 
 ## Suppression des lanceurs `demarrer`/`arreter` (2026-09-28)
 
-Devenus inutiles : `tribler_ui.exe` lance le daemon elle-même
+Devenus inutiles : `onionbit_ui.exe` lance le daemon elle-même
 (`daemon_launcher`) et l'arrêt se fait via « Quitter » du systray ou
 `PUT /api/shutdown` (qui termine réellement le processus depuis
 l'étape 29). `build_dist.ps1` ne les génère plus et nettoie les restes
@@ -1710,17 +1730,17 @@ des builds précédents dans `dist\`.
 ## UI : lancement automatique du daemon (2026-09-28)
 
 Décision V1 de `flutter_architecture.md` implémentée : plus besoin de
-`demarrer.cmd`, lancer `tribler_ui.exe` suffit.
+`demarrer.cmd`, lancer `onionbit_ui.exe` suffit.
 
 - `core/config/daemon_launcher{,_native,_stub}` : au build de
   `connectionSettingsProvider`, si l'API découverte ne répond pas,
-  `tribler-daemon[.exe]` voisin de l'exécutable est lancé détaché
+  `onionbit-daemon[.exe]` voisin de l'exécutable est lancé détaché
   (`--state-dir <exe>/state` — disposition du bundle `dist\`), puis
   l'API est sondée 30 s (clé et `http_port_running` relus à chaque
   tentative). Daemon déjà vivant → connexion directe ; binaire absent
   (`flutter run`, web) → `null` et repli sur les préférences.
-- `TRIBLER_API_KEY` présent = setup externe : jamais de daemon enfant.
-  `TRIBLER_DAEMON_EXE` surcharge le chemin du binaire en dev.
+- `ONIONBIT_API_KEY` présent = setup externe : jamais de daemon enfant.
+  `ONIONBIT_DAEMON_EXE` surcharge le chemin du binaire en dev.
 - Sonde « API vivante » = toute réponse HTTP, même 401 (même logique
   que `Test-ApiAlive` de `demarrer.ps1`) — testée en loopback
   (`daemon_launcher_test.dart`).
@@ -1732,7 +1752,7 @@ Décision V1 de `flutter_architecture.md` implémentée : plus besoin de
 Le daemon n'affiche plus de fenêtre console : il vit dans la zone de
 notification, comme les clients BitTorrent classiques.
 
-- `tribler-daemon` en sous-système GUI (`#![windows_subsystem =
+- `onionbit-daemon` en sous-système GUI (`#![windows_subsystem =
   "windows"]`) ; `--console` rattache la console parente ou en alloue
   une (`AttachConsole`/`AllocConsole` + handles `CONOUT$`, en
   préservant les redirections déjà branchées — `api_parity_run.ps1`
@@ -1741,7 +1761,7 @@ notification, comme les clients BitTorrent classiques.
   thread dédié à pompe Win32 (`GetMessage`/`DispatchMessage` — les
   `WM_COMMAND` du menu sont drainés après chaque dispatch) ; `WM_QUIT`
   termine le thread et retire l'icône. Menu : « Ouvrir Tribler »
-  (lance `tribler_ui.exe` voisin de l'exe, désactivé s'il est absent),
+  (lance `onionbit_ui.exe` voisin de l'exe, désactivé s'il est absent),
   « Démarrer avec Windows » (`HKCU\...\Run\TriblerRustDaemon` via
   `winreg`, item coché reflétant le registre), « Ouvrir le dossier
   des logs », « Quitter ». Icône `tribler.ico` embarquée dans l'exe
@@ -1762,7 +1782,7 @@ notification, comme les clients BitTorrent classiques.
   propre au portage), flag `--no-tray` (tests, sessions non
   interactives — `api_parity_run.ps1` et le test e2e le passent).
 - `demarrer.ps1` : plus de `-WindowStyle Minimized` (inutile en GUI
-  subsystem) ; message d'échec renvoyé vers `state\logs\tribler.log`.
+  subsystem) ; message d'échec renvoyé vers `state\logs\onionbit.log`.
 - Vérifié en live : lancement détaché sans console, icône créée,
   API 200, `PUT /api/shutdown` → `signal d'arret recu` →
   `thread systray terminé` → `daemon arrete proprement`, mutex
@@ -1774,10 +1794,10 @@ notification, comme les clients BitTorrent classiques.
 ## Fix `/api/logging` : journal vide dans l'UI (2026-09-28)
 
 - `tracing_appender::rolling::daily` produit
-  `tribler.log.YYYY-MM-DD` — l'extension est la **date**, pas `log`.
+  `onionbit.log.YYYY-MM-DD` — l'extension est la **date**, pas `log`.
   Le handler filtrait `extension == "log"` → aucun candidat →
   l'onglet Journaux affichait « Journal vide » malgré un fichier
-  alimenté. Filtre corrigé sur le préfixe `tribler.log`.
+  alimenté. Filtre corrigé sur le préfixe `onionbit.log`.
 - Test `logging_trouve_le_journal_rolle_par_date` fige le nom réel.
 
 ## Suivi des pairs et observabilité live (2026-09-28)
@@ -1811,7 +1831,7 @@ Suivi complet d'un téléchargement anonyme (1-3 sauts) :
   circuit (`route : <mid8> → <mid8> → <mid8>…`).
 - Rappel d'exploitation : `PUT /api/ipv8/asyncio/debug
   {"enable": true}` bascule le `EnvFilter` à `debug` à chaud — le
-  journal `state/logs/tribler.log` (et l'onglet Journaux, via
+  journal `state/logs/onionbit.log` (et l'onglet Journaux, via
   `GET /api/logging`) montre alors create/extend/created/destroy,
   e2e et rejets de sortie, sans redémarrage.
 - Test `circuit_info_expose_route_et_creation` (loopback, circuit
@@ -1842,13 +1862,13 @@ DTO Rust et les modèles Dart — un seul nom canonique à chaque étage :
 - Test `tracker_lists_follow_trackerstatusdict_shape` fige la shape
   sur les deux endpoints.
 - `flutter analyze` propre, 8/8 tests ; `cargo clippy -D warnings` +
-  `fmt` propres, 54/54 tests `tribler-api`.
+  `fmt` propres, 54/54 tests `onionbit-api`.
 
 ## Étape 20 (avancement) — intégration UI↔daemon validée en live (2026-09-28)
 
 - Inventaire des routes consommées par `app/` : 11 endpoints REST +
   SSE `/api/events` — tous présents dans le routeur et répondent 200
-  contre `tribler-daemon` réel (offline) : `downloads`, `settings`,
+  contre `onionbit-daemon` réel (offline) : `downloads`, `settings`,
   `ipv8/overlays`, `tunnel/{circuits,relays,exits,swarms,peers}`,
   `metadata/{torrents/popular,search/local}`, `logging`,
   `events/info`.
@@ -1864,12 +1884,12 @@ DTO Rust et les modèles Dart — un seul nom canonique à chaque étage :
 ## Étape 12 (clôture) — téléchargement réel via sortie pyipv8 (2026-09-28)
 
 - **`scripts/interop_exit_download.ps1`** +
-  `crates/tribler-bittorrent/examples/exit_download_interop.rs` :
+  `crates/onionbit-bittorrent/examples/exit_download_interop.rs` :
   critère final de l'étape 12 validé — rqbit downloader → circuit 2
   sauts → **sortie pyipv8 réelle** (`PEER_FLAG_EXIT_BT`) → socket uTP
   du seeder rqbit, 200 Ko téléchargés et vérifiés octet à octet
   (`INTEROP EXIT DOWNLOAD OK`). `--hops 1` permet le circuit direct.
-- **`udp_relay::dial_to`** (`tribler-tunnel`) : variante de `dial` à
+- **`udp_relay::dial_to`** (`onionbit-tunnel`) : variante de `dial` à
   destination filaire explicite (les cellules `data` ciblent la
   socket uTP réelle du seeder ; `dial` conserve l'IPv4 factice des
   circuits e2e liés).
@@ -1882,7 +1902,7 @@ DTO Rust et les modèles Dart — un seul nom canonique à chaque étage :
   isolés `TSTATEDIR`/`--state-dir`, ports libres dédiés, lancement de
   `Tribler.exe -s` (config `configuration.json` générée avec
   `rss`/`versioning` activés pour que leurs endpoints soient montés)
-  et de `tribler-daemon`, attente de disponibilité des deux API,
+  et de `onionbit-daemon`, attente de disponibilité des deux API,
   exécution d'`api_parity.ps1`, nettoyage (arrêt des processus,
   journaux conservés sous `target/parity/`).
 - **Comparaison en sous-ensemble** : le Rust doit fournir toutes les
@@ -1898,7 +1918,7 @@ DTO Rust et les modèles Dart — un seul nom canonique à chaque étage :
 ## Étape 28 — `asyncio/*` tokio, items RSS, banc de parité (2026-09-28)
 
 - **`/api/ipv8/asyncio/*`** (`handlers/asyncio.rs` +
-  `tribler-core/src/asyncio/`) — adaptation tokio documentée en
+  `onionbit-core/src/asyncio/`) — adaptation tokio documentée en
   ADR-0006 :
   - `GET/PUT /drift` : `AsyncioMonitor` (`DriftMeasurementStrategy`)
     — tache `interval(walker_interval)` mesurant
@@ -1937,7 +1957,7 @@ DTO Rust et les modèles Dart — un seul nom canonique à chaque étage :
 
 ## Étape 27 — Tunnel avancé : swarm size, peers dht/pex, speed-test SSE (2026-09-28)
 
-- **Speed-test de circuits** (`tribler-tunnel/src/speedtest.rs` +
+- **Speed-test de circuits** (`onionbit-tunnel/src/speedtest.rs` +
   dispatch dans `community.rs`) : port de `run_speedtest`
   d'`ipv8-rust-tunnels` — cellules `test-request`(21)/
   `test-response`(22) avec `identifier` **u32** (filaire réel de
@@ -1988,7 +2008,7 @@ DTO Rust et les modèles Dart — un seul nom canonique à chaque étage :
 
 ## Étape 26 — IPv8 réseau, isolation, noblockdht, overlays/statistics (2026-09-28)
 
-- **`StatisticsEndpoint`** (`tribler-ipv8/src/endpoint.rs`) :
+- **`StatisticsEndpoint`** (`onionbit-ipv8/src/endpoint.rs`) :
   `UdpEndpoint` porte désormais les compteurs Python — agregat
   atomique (`total_up`/`total_down`) + `NetworkStat` par
   `(prefixe community, msg_id)` (`num_up/down`, `bytes_up/down`,
@@ -2036,8 +2056,8 @@ DTO Rust et les modèles Dart — un seul nom canonique à chaque étage :
   `add_bootstrapper`, `walk_to`, `overlay_info` ; `DhtCommunity`/
   `ContentDiscoveryCommunity`/`TunnelCommunity` gagnent
   `overlay_info`/`walk_to`/`network`/`claim_global_time` selon
-  besoin. Aucune dépendance `tribler-ipv8`→`tribler-tunnel` : la
-  decode_map du tunnel vit dans `tribler-tunnel` et est injectée
+  besoin. Aucune dépendance `onionbit-ipv8`→`onionbit-tunnel` : la
+  decode_map du tunnel vit dans `onionbit-tunnel` et est injectée
   dans `OverlayInfo`.
 - **Tests** : `endpoint_statistics_par_message` (comptage rx/tx par
   msg_id) + 8 tests REST étape 26 (`network` vide, shapes overlays,
@@ -2078,7 +2098,7 @@ DTO Rust et les modèles Dart — un seul nom canonique à chaque étage :
   construction du `Crawl` (table vide) comme Python — levée aussi
   en mode valeurs. Divergence documentée : `distance` en décimale
   chaîne (int Python 160 bits > u128 JSON).
-- **Accesseurs** `tribler-ipv8` : `stats_snapshot`/`buckets_snapshot`/
+- **Accesseurs** `onionbit-ipv8` : `stats_snapshot`/`buckets_snapshot`/
   `stored_values`/`find_values_debug`/`refresh_bucket`,
   `Node::failed`, `Storage::items_snapshot` — instantanés read-only,
   aucun mutex interne exposé.
@@ -2135,7 +2155,7 @@ DTO Rust et les modèles Dart — un seul nom canonique à chaque étage :
   `"url parameter missing"` ; erreurs moteur → 500 `handled`.
 - **`removed_trackers` (migration v4)** : comme `tdef.atp.trackers`
   Python, le retrait survit aux re-adds — la source est réécrite sans
-  ses trackers (`tribler_format::torrent::strip_trackers` chirurgical,
+  ses trackers (`onionbit_format::torrent::strip_trackers` chirurgical,
   infohash préservé ; `magnet::strip_trackers` retire les `tr`) et
   l'ensemble effectif `(source ∪ extra) ∖ removed` est passé à
   `opts.trackers` (librqbit fusionne toujours source + options).
@@ -2154,20 +2174,20 @@ DTO Rust et les modèles Dart — un seul nom canonique à chaque étage :
 
 ## Étape 22 — Réglages par download persistés + PATCH complet (2026-09-28)
 
-- **Migration `tribler-db` v3** : colonnes `downloads` —
+- **Migration `onionbit-db` v3** : colonnes `downloads` —
   `safe_seeding`, `upload_limit`, `download_limit`, `seeding_ratio`,
   `auto_managed`, `queue_position`, `completed_dir`, `selected_files`,
   `file_priorities`, `extra_trackers`, `time_finished`. Upsert complet,
   restauration des réglages aux re-add internes (équivalent des
   `dlcheckpoints`/`DownloadConfig` Python). Tests de migration
   v1→v3, réouverture idempotente, rejet de schéma futur, round-trip.
-- **`tribler-bittorrent`** : `AddDownloadOptions` (paused, fichiers
+- **`onionbit-bittorrent`** : `AddDownloadOptions` (paused, fichiers
   sélectionnés, dossier, trackers, limites par torrent via
   `AddTorrentOptions::ratelimits`) ; `update_only_files`, limites de
   session à chaud, bitfield des pièces en base64 (`api_dump_haves`),
   stats par pair, `force_announce`, `total_pieces`, fichiers/traqueurs
   exposés par `Download`.
-- **`tribler-core`** : `DownloadDefaults` dans `CoreConfig` (alimenté
+- **`onionbit-core`** : `DownloadDefaults` dans `CoreConfig` (alimenté
   par `download_defaults` de `configuration.json`), politique d'arrêt de
   seed (`seeding_ratio`/`seeding_mode`/`seeding_time`, `safe_seeding`)
   dans la boucle de progression, `pause`/`resume` idempotents (parité
@@ -2199,8 +2219,8 @@ DTO Rust et les modèles Dart — un seul nom canonique à chaque étage :
 - **Auto-découverte de la session daemon** (`app/lib/core/config/daemon_api_resolver*.dart`) :
   même mécanisme que `session_resolver` d'eMule-Rust — l'UI lit
   `configuration.json` du daemon (`api.key` + `api.http_port_running`)
-  dans les répertoires candidats (`<exe>/state`, `<cwd>/.tribler`, …)
-  ou `TRIBLER_API_KEY`/`TRIBLER_API` en environnement, puis retombe sur
+  dans les répertoires candidats (`<exe>/state`, `<cwd>/.onionbit`, …)
+  ou `ONIONBIT_API_KEY`/`ONIONBIT_API` en environnement, puis retombe sur
   les préférences. Un réglage utilisateur vers un daemon distant
   (non-loopback) reste prioritaire. Conditional import : stub `null`
   sur web.
@@ -2213,7 +2233,7 @@ DTO Rust et les modèles Dart — un seul nom canonique à chaque étage :
 
 ## Étape 21 — Configuration persistée et clé API (2026-09-28)
 
-- **`DaemonConfig` persistée** (`tribler-core/daemon_config.rs`) :
+- **`DaemonConfig` persistée** (`onionbit-core/daemon_config.rs`) :
   arbre `TriblerConfig` serde (`api`, `ipv8`, `libtorrent` +
   `download_defaults`, `tunnel_community`, `rss`, `watch_folder`,
   `torrent_checker`, `dht_discovery`, `versioning`, `statistics`,
@@ -2221,53 +2241,53 @@ DTO Rust et les modèles Dart — un seul nom canonique à chaque étage :
   Clés inconnues conservées au merge (compat ascendante). `api/key`
   générée hex (32 car.) au premier démarrage ; `api/http_port_running`
   réécrit après le bind réel (port `0` = aléatoire, comme Python).
-- **Authentification par clé API** (`tribler-api/auth.rs`) : middleware
+- **Authentification par clé API** (`onionbit-api/auth.rs`) : middleware
   axum strictement équivalent à `ApiKeyMiddleware` Python — clé lue dans
   `X-Api-Key`, puis `?key=`, puis le cookie `api_key`, même en loopback ;
   rejet `401 {"error": {"handled": true, "message": "Unauthorized
   access"}}`. `DefaultBodyLimit` aligné à 16 Mio (`MAX_REQUEST_SIZE`).
-- **`/api/settings` adossé au fichier** (`tribler-api/handlers/settings.rs`) :
+- **`/api/settings` adossé au fichier** (`onionbit-api/handlers/settings.rs`) :
   `GET` rend l'arbre persisté complet ; `POST` merge récursivement le JSON,
   réécrit `configuration.json` (équivalent `config.write()`) et applique à
   chaud les clés connues (`rss`, `watch_folder`, `libtorrent`,
   `tunnel_community`, `api`, `ipv8`) via `apply_service_settings`.
-- **`tribler-daemon`** : charge `configuration.json`, applique les
+- **`onionbit-daemon`** : charge `configuration.json`, applique les
   overrides CLI (`--api`, `--ipv8-port`, `--bootstrap`, …), publie le
   port réel dans `api/http_port_running` et la clé dans l'`AppState`.
-- **`tribler-cli`** : options `--api-key` et `--state-dir` ; découverte
+- **`onionbit-cli`** : options `--api-key` et `--state-dir` ; découverte
   automatique de la clé et du port dans `state_dir/configuration.json`
-  (défaut `.tribler`) quand rien n'est passé explicitement.
+  (défaut `.onionbit`) quand rien n'est passé explicitement.
 - **Tests** : auth 401/en-tête/query/cookie, round-trip de settings
-  persistés (`tribler-api/tests/api.rs`), e2e daemon avec clé générée +
-  `http_port_running` (`tribler-daemon/tests/daemon.rs`), découverte de
-  clé CLI (`tribler-cli/tests/cli.rs`).
+  persistés (`onionbit-api/tests/api.rs`), e2e daemon avec clé générée +
+  `http_port_running` (`onionbit-daemon/tests/daemon.rs`), découverte de
+  clé CLI (`onionbit-cli/tests/cli.rs`).
 
 ## Correctif — Parité `/api/libtorrent` (`hop`), création proactive de circuits & garde d'ajout (2026-09-28)
 
 - **Parité protocolaire `/api/libtorrent`** :
-  - `tribler-api/handlers/libtorrent.rs` : support du paramètre de requête `?hop={0..3}` pour `/api/libtorrent/settings` et `/api/libtorrent/session` en stricte conformité avec Python Tribler (`libtorrent_endpoint.py`), tout en conservant `session` en alias pour la rétro-compatibilité.
+  - `onionbit-api/handlers/libtorrent.rs` : support du paramètre de requête `?hop={0..3}` pour `/api/libtorrent/settings` et `/api/libtorrent/session` en stricte conformité avec Python Tribler (`libtorrent_endpoint.py`), tout en conservant `session` en alias pour la rétro-compatibilité.
   - Mise à jour de `docs/reference_tribler/api_endpoints_complet.md` (section 5 validée ✅).
-  - Tests automatisés dans `tribler-api/tests/api.rs`.
+  - Tests automatisés dans `onionbit-api/tests/api.rs`.
 - **Ajout de téléchargements anonymes (1, 2, 3 sauts)** :
-  - `tribler-network-policy/kill_switch.rs` : ajout de `guard_add(&self)` qui n'interdit l'ajout qu'en cas de panne critique du proxy SOCKS5 local ou d'arrêt d'urgence manuel, sans bloquer l'ingestion tant que les circuits overlay sont en cours d'établissement.
-  - `tribler-bittorrent/engine.rs` : utilisation de `guard_add` lors de l'ajout d'un torrent. Le flux réseau SOCKS5 rejette silencieusement les paquets UDP tant qu'aucun circuit n'est prêt (zéro fuite IP garantie), permettant au téléchargement de patienter et de démarrer dès que le circuit est fonctionnel.
+  - `onionbit-network-policy/kill_switch.rs` : ajout de `guard_add(&self)` qui n'interdit l'ajout qu'en cas de panne critique du proxy SOCKS5 local ou d'arrêt d'urgence manuel, sans bloquer l'ingestion tant que les circuits overlay sont en cours d'établissement.
+  - `onionbit-bittorrent/engine.rs` : utilisation de `guard_add` lors de l'ajout d'un torrent. Le flux réseau SOCKS5 rejette silencieusement les paquets UDP tant qu'aucun circuit n'est prêt (zéro fuite IP garantie), permettant au téléchargement de patienter et de démarrer dès que le circuit est fonctionnel.
 - **Construction proactive des circuits dans `TunnelCommunity`** :
-  - `tribler-ipv8/peer.rs` : exposition de `all_verified_peers()` dans `Network`.
-  - `tribler-tunnel/community.rs` : implémentation de `build_circuits_if_needed(hops, min_circuits)` qui choisit des pairs vérifiés (priorité aux drapeaux de sortie BitTorrent `PEER_FLAG_EXIT_BT` à 1 saut, relais `PEER_FLAG_RELAY` à 2+ sauts, ou pairs vérifiés) et déclenche `create_circuit`.
-  - `tribler-core/ipv8_stack.rs` : appel proactif de `build_circuits_if_needed` dès le démarrage des lanes anonymes et à chaque cycle (5s) du watchdog.
+  - `onionbit-ipv8/peer.rs` : exposition de `all_verified_peers()` dans `Network`.
+  - `onionbit-tunnel/community.rs` : implémentation de `build_circuits_if_needed(hops, min_circuits)` qui choisit des pairs vérifiés (priorité aux drapeaux de sortie BitTorrent `PEER_FLAG_EXIT_BT` à 1 saut, relais `PEER_FLAG_RELAY` à 2+ sauts, ou pairs vérifiés) et déclenche `create_circuit`.
+  - `onionbit-core/ipv8_stack.rs` : appel proactif de `build_circuits_if_needed` dès le démarrage des lanes anonymes et à chaque cycle (5s) du watchdog.
 - **Packaging & Déploiement** :
-  - Binaires release `tribler-daemon.exe` et `tribler-cli.exe` recompilés et déployés dans `dist/` et `C:\Users\Lou\Desktop\Tribler-Rust-Torrent`.
+  - Binaires release `onionbit-daemon.exe` et `onionbit-cli.exe` recompilés et déployés dans `dist/` et `C:\Users\Lou\Desktop\OnionBit`.
 
 ## Correctif — Initialisation des lanes anonymes (sauts 1, 2, 3) & persistance DHT (2026-09-28)
 
 - **Correction du conflit DHT sur les lanes anonymes** :
-  - `tribler-bittorrent/config.rs` : configuration de `librqbit::DhtSessionConfig` avec `persistence: None` pour la DHT en mémoire éphémère (évite le verrouillage concurrent de `dht.json` et les collisions de port persistant sur Windows `WSAEADDRINUSE 10048`).
-  - `tribler-core/ipv8_stack.rs` : isolation stricte des moteurs BitTorrent anonymes créés par `anon_engine(hops)` : désactivation explicite de la DHT mainline (`enable_dht = false`), de la découverte locale (`disable_lsd = true`) et du port d'écoute direct (`listen_port = None`). Un téléchargement anonyme ne doit jamais émettre de paquets UDP DHT/LSD hors du circuit SOCKS5.
+  - `onionbit-bittorrent/config.rs` : configuration de `librqbit::DhtSessionConfig` avec `persistence: None` pour la DHT en mémoire éphémère (évite le verrouillage concurrent de `dht.json` et les collisions de port persistant sur Windows `WSAEADDRINUSE 10048`).
+  - `onionbit-core/ipv8_stack.rs` : isolation stricte des moteurs BitTorrent anonymes créés par `anon_engine(hops)` : désactivation explicite de la DHT mainline (`enable_dht = false`), de la découverte locale (`disable_lsd = true`) et du port d'écoute direct (`listen_port = None`). Un téléchargement anonyme ne doit jamais émettre de paquets UDP DHT/LSD hors du circuit SOCKS5.
 - **Précision des messages d'erreur API** :
-  - `tribler-api/handlers/downloads.rs` : distinction des erreurs réelles de parsing de fichier (`CoreError::Format(_) -> "corrupt torrent file"`) par rapport aux erreurs d'état du moteur ou de réseau, évitant de masquer les erreurs d'infrastructure sous un faux message de fichier corrompu.
+  - `onionbit-api/handlers/downloads.rs` : distinction des erreurs réelles de parsing de fichier (`CoreError::Format(_) -> "corrupt torrent file"`) par rapport aux erreurs d'état du moteur ou de réseau, évitant de masquer les erreurs d'infrastructure sous un faux message de fichier corrompu.
 - **Tests & Packaging** :
-  - Ajout d'un test de non-régression dans `crates/tribler-core/tests/circuit_death.rs` (`anon_engine_demarre_proprement_avec_dht_active_sur_session`) validant que les 3 lanes anonymes s'initialisent correctement même quand la DHT est active sur la session principale.
-  - Reconstruction release complète via `scripts/build_dist.ps1 -SkipCheck` et synchronisation vers `C:\Users\Lou\Desktop\Tribler-Rust-Torrent`.
+  - Ajout d'un test de non-régression dans `crates/onionbit-core/tests/circuit_death.rs` (`anon_engine_demarre_proprement_avec_dht_active_sur_session`) validant que les 3 lanes anonymes s'initialisent correctement même quand la DHT est active sur la session principale.
+  - Reconstruction release complète via `scripts/build_dist.ps1 -SkipCheck` et synchronisation vers `C:\Users\Lou\Desktop\OnionBit`.
 
 ## Étape 20 (partie 2) — Câblage complet de l'interface Flutter et du backend (2026-09-28)
 
@@ -2281,13 +2301,13 @@ DTO Rust et les modèles Dart — un seul nom canonique à chaque étage :
   - Onglet « Fichiers » avec bouton d'ouverture directe de l'emplacement de chaque fichier individuel (`openPath`).
   - Dialogue d'ajout : sélecteur de dossier natif (`getDirectoryPath`) et transmission effective du dossier de destination personnalisé en mode magnet comme en upload `.torrent` brut.
 - **Indexation locale & Recherche / Découverte** :
-  - `tribler-core` : indexation automatique dans `channel_node` (`metadata_type = 300`) des téléchargements ajoutés et restaurés.
-  - `tribler-api` : enrichissement dynamique des endpoints `/api/metadata/torrents/popular` et `/api/metadata/torrents/local_search` pour inclure immédiatement les torrents actifs de la session.
+  - `onionbit-core` : indexation automatique dans `channel_node` (`metadata_type = 300`) des téléchargements ajoutés et restaurés.
+  - `onionbit-api` : enrichissement dynamique des endpoints `/api/metadata/torrents/popular` et `/api/metadata/torrents/local_search` pour inclure immédiatement les torrents actifs de la session.
 - **Réglages & Préférences** :
   - Section « Téléchargements par défaut » dans la page Réglages avec sélection et enregistrement du répertoire par défaut via `POST /api/settings`.
   - Backend : prise en compte à chaud de `download_defaults.saveas` dans `ServiceOverrides`, `effective_config` et application immédiate.
 - **Journaux et Diagnostique** :
-  - Configuration de `tracing_appender` dans `tribler-daemon` écrivant dans `<state_dir>/logs/tribler.log` (rotation quotidienne) en plus de stdout, rendant l'onglet « Journaux » fonctionnel.
+  - Configuration de `tracing_appender` dans `onionbit-daemon` écrivant dans `<state_dir>/logs/onionbit.log` (rotation quotidienne) en plus de stdout, rendant l'onglet « Journaux » fonctionnel.
 - **Layout & Polissage UI** :
   - Correction de l'espacement et des débordements de texte dans la barre d'état et le badge de statut des téléchargements.
   - Packaging complet de `dist\` et synchronisation avec le dossier de test Bureau.
@@ -2298,18 +2318,18 @@ DTO Rust et les modèles Dart — un seul nom canonique à chaque étage :
   (daemon + CLI release, UI Flutter Windows release, `demarrer.cmd`,
   `arreter.cmd`, `build-manifest.json`). Le lanceur démarre le daemon
   (console minimisée, `--state-dir %~dp0state`), attend l'API
-  `127.0.0.1:8085` (30 s max), puis ouvre `tribler_ui.exe`.
+  `127.0.0.1:8085` (30 s max), puis ouvre `onionbit_ui.exe`.
   `arreter.cmd` fait `PUT /api/shutdown` puis `taskkill` en filet.
   `dist\state\` (données utilisateur) n'est jamais effacé par le build.
   Vérifié de bout en bout : daemon démarré, API `/api/events/info` OK,
   UI connectée (2 sessions TCP REST+SSE).
-- **Activation IPv8 et bootstrap réel dans `tribler-daemon`** :
+- **Activation IPv8 et bootstrap réel dans `onionbit-daemon`** :
   `Ipv8Config::production()` avec les 20 nœuds officiels `DISPERSY_BOOTSTRAPPER`
-  (TU Delft / Tribler), résolution DNS asynchrone des adresses `dispersy*.tribler.org`,
+  (TU Delft / Tribler), résolution DNS asynchrone des adresses `dispersy*.onionbit.org`,
   repli automatique sur port éphémère si le port UDP 8090 est occupé,
   options CLI `--no-ipv8`, `--no-anonymity`, `--ipv8-port`, `--bootstrap`.
   Binaires release régénérés dans `dist\` et le dossier de bureau.
-- **Support de l'upload binaire brut de `.torrent` dans `tribler-api`** :
+- **Support de l'upload binaire brut de `.torrent` dans `onionbit-api`** :
   `PUT /api/downloads` accepte désormais à la fois le JSON standard et
   le flux binaire brut (`Content-Type: applications/x-bittorrent` ou
   `application/x-bittorrent`) avec query parameters (`anon_hops`, `safe_seeding`,
@@ -2367,7 +2387,7 @@ référence). La prochaine phase est l'interface **Windows desktop**.
 - `docs/plans/flutter_architecture.md` : plan d'architecture de
   l'étape 20 — stack Flutter 3.47/Riverpod 3/go_router, arborescence
   `core/`+`features/` en `data/domain/presentation` (pattern
-  `C:\Emule-Sion-UI-UX\app`), `ApiClient` REST+SSE maison (le
+  `the reference Flutter UI project`), `ApiClient` REST+SSE maison (le
   `RpcClient` WebSocket de la référence devient un client
   `text/event-stream`), correspondance features↔endpoints, cycle de
   vie window/tray, stratégie de tests, sous-étapes.
@@ -2472,12 +2492,12 @@ proxy seule ne démontrait pas la protection).
   `manuel`) : le switch reste engagé tant qu'une portée signale une
   panne ; `reason()` liste les portées actives. Le watchdog proxy du
   moteur utilise la portée `proxy`.
-- `tribler-tunnel::TunnelCommunity::watch_circuits()` : canal
+- `onionbit-tunnel::TunnelCommunity::watch_circuits()` : canal
   `watch` incrémenté à chaque mutation d'état de circuit (création,
   hop ajouté → `READY`, `DESTROY` reçu → `on_destroy`). Le polling
   seul ratait une transition `READY → détruit` plus rapide qu'un
   tick — la détection est désormais événementielle (réaction en ms).
-- `tribler-core::ipv8_stack::spawn_circuit_watchdog` : une tâche par
+- `onionbit-core::ipv8_stack::spawn_circuit_watchdog` : une tâche par
   lane anonyme, **fail-closed dès la création** — la portée
   `circuits` est engagée avant le premier `READY` (un `add`/`resume`
   prématuré est refusé par `guard()` plutôt que d'attendre un CONNECT
@@ -2497,7 +2517,7 @@ proxy seule ne démontrait pas la protection).
   Isolation prouvée par `socks5_two_lanes_isolated_returns` : deux
   lanes (1 et 2 sauts) actives simultanément sur la même community,
   chacune ne reçoit que les réponses de ses circuits.
-- Test `crates/tribler-core/tests/circuit_death.rs` (~5 s) : portée
+- Test `crates/onionbit-core/tests/circuit_death.rs` (~5 s) : portée
   `circuits` engagée dès la création de la lane → vrai circuit 1 saut
   vers un relais autonome → échange de données prouvé (`UDP ASSOCIATE`
   SOCKS5 → cellules `data` → `exit_data` → echo UDP) → la lane à
@@ -2513,7 +2533,7 @@ proxy seule ne démontrait pas la protection).
 
 ## Durcissement étapes 13/16 — test de fuite en plein transfert (2026-09-27)
 
-- `crates/tribler-bittorrent/tests/kill_switch_midtransfer.rs` :
+- `crates/onionbit-bittorrent/tests/kill_switch_midtransfer.rs` :
   stub SOCKS5 pilotable (RFC 1928 CONNECT, relais bridé ~400 Ko/s,
   `kill()` ferme le listener **et** coupe les flux établis) +
   downloader rqbit dont tout le trafic pair passe par le proxy.
@@ -2584,7 +2604,7 @@ proxy seule ne démontrait pas la protection).
   `TunnelCommunity::send_destroy` → `sign_no_dist` (`send_destroy`
   pyipv8 = `ezr_pack` sans dist).
 - **Banc d'interop** : `scripts/interop_dht.ps1` +
-  `crates/tribler-ipv8/examples/dht_interop_node.rs` +
+  `crates/onionbit-ipv8/examples/dht_interop_node.rs` +
   `scripts/interop/py_dht_node.py` (vrai `DHTCommunity` pyipv8,
   loopback 127.0.0.1:12100↔12101). Résultat **`INTEROP DHT OK`** —
   les 10 assertions passent :
@@ -2645,18 +2665,18 @@ proxy seule ne démontrait pas la protection).
 
 ## Étape 16 — durcissement + tests de bout en bout (2026-09-27)
 
-- **`tribler-test-support` peuplé** : `test_torrent_bytes(name, len)`,
+- **`onionbit-test-support` peuplé** : `test_torrent_bytes(name, len)`,
   `free_port()`, `wait_for(timeout, f)` — fixtures dupliquées dans
-  `tribler-api`/`tribler-cli`/`tribler-daemon` remplacées par la
+  `onionbit-api`/`onionbit-cli`/`onionbit-daemon` remplacées par la
   fixture partagée.
-- **Téléchargement loopback réel** (`tribler-bittorrent/tests/
+- **Téléchargement loopback réel** (`onionbit-bittorrent/tests/
   loopback_download.rs`) : seeder + downloader rqbit uTP en loopback,
   `initial_peers`, contenu vérifié octet-pour-octet.
-- **Persistance/redémarrage** (`tribler-core/tests/lifecycle.rs`) :
+- **Persistance/redémarrage** (`onionbit-core/tests/lifecycle.rs`) :
   deux `CoreSession` successives sur le même `state_dir` — le
   téléchargement est restauré (info-hash + état pause) ; un download
   supprimé n'est pas restauré.
-- **Migration de schéma** (`tribler-db/tests/migrations.rs`) : base
+- **Migration de schéma** (`onionbit-db/tests/migrations.rs`) : base
   figée à v1 migrée vers `SCHEMA_VERSION` à l'ouverture avec
   conservation des données ; réouverture idempotente ; refus
   `SchemaTooNew` si la base est plus récente.
@@ -2671,8 +2691,8 @@ proxy seule ne démontrait pas la protection).
   `/api/*` + sous-endpoints `/api/ipv8/*` + `/ui` + `/docs`), avec pour
   chacune la méthode, le chemin, la description, les paramètres et leurs
   valeurs par défaut/bornes min-max, l'emplacement d'implantation Python
-  (`D:\Projet\Tribler_sources\tribler`) et le pendant Rust
-  (`crates/tribler-api`) avec statut de portage.
+  (`<Tribler sources checkout> (env `TRIBLER_SRC`)`) et le pendant Rust
+  (`crates/onionbit-api`) avec statut de portage.
 - Inclut l'arbre de configuration complet servi par
   `GET /api/settings` (défauts `tribler_config.py` + `ipv8/configuration.py`
   + `TunnelSettings`) et les topics SSE de `/api/events`.
@@ -2688,18 +2708,18 @@ proxy seule ne démontrait pas la protection).
 Couverture complète des endpoints `tribler.core.restapi` utiles au
 futur client, avec les ajouts d'infrastructure nécessaires.
 
-- **Stack IPv8 dans `CoreSession`** (`tribler-core/src/ipv8_stack.rs`) :
+- **Stack IPv8 dans `CoreSession`** (`onionbit-core/src/ipv8_stack.rs`) :
   endpoint UDP, `Network`, `DiscoveryCommunity`, `ContentDiscoveryCommunity`
   (provider = base `channel_node` + sérialiseur mdblob signé),
   `TunnelCommunity` optionnelle + serveur SOCKS5 par lane anonyme et
   moteur `BtEngine` dédié par nombre de sauts (`anon_engine(hops)`).
   Reglages dans `CoreConfig.ipv8` (`enabled`, `listen_addr`,
   `bootstrap_peers`, `enable_anonymity`, `peer_flags`,
-  `tribler_tunnel_community`).
+  `onionbit_tunnel_community`).
 - **`downloads.anon_hops`** (migration DB v2) : le téléchargement est
   routé vers la lane anonyme correspondante (`anon_hops` de
   `PUT /api/downloads`) et restauré sur la bonne lane au démarrage.
-- **`tribler-format::mdblob::encode_entry`** : sérialisation signée
+- **`onionbit-format::mdblob::encode_entry`** : sérialisation signée
   `.mdblob` (réponses du remote-select).
 - **Endpoints ajoutés** (36 routes au total) : `downloads/{ih}/torrent`
   `trackers` (GET/PUT) `files` `stream/{i}` (seek par `start`),
@@ -2711,10 +2731,10 @@ futur client, avec les ajouts d'infrastructure nécessaires.
   `libtorrent/settings|session` (par lane), `ipv8/overlays` +
   `ipv8/tunnel/{settings,circuits,relays,exits,swarms,peers}`,
   `files/browse|list|create`, `rss`, `versioning/*`, `logging`.
-- **`tribler-bittorrent`** : `Download` expose `files()`/`trackers()`/
+- **`onionbit-bittorrent`** : `Download` expose `files()`/`trackers()`/
   `add_tracker()`/`torrent_bytes()`/`stream_file_from()` (seek) ;
   trackers additionnels partagés par info-hash au niveau `BtEngine`.
-- **`tribler-tunnel`/`tribler-ipv8`** : accesseurs de stats
+- **`onionbit-tunnel`/`onionbit-ipv8`** : accesseurs de stats
   (`circuits_info`, `relays_info`, `exits_info`, `swarms_info`,
   `tunnel_peers_info`, compteurs d'octets `UdpEndpoint`).
 - Reglages mutables à chaud (`rss.urls`, `watch_folder`) reflétés par
@@ -2728,24 +2748,24 @@ Quatre services inspirés de Tribler (`src/tribler/core/content_discovery/`,
 `torrent_checker/`, `rss/`, `watch_folder/`), câblés dans `CoreSession`
 via `CoreConfig`.
 
-- `tribler-ipv8::content_discovery` : community `9aca62f8…1648` —
+- `onionbit-ipv8::content_discovery` : community `9aca62f8…1648` —
   payloads santé (msgs 3/4, `HealthInfo` binaire pyipv8), version
   (101/102) et remote-select (201/202) ; trait `ContentProvider`
   injecté par la couche supérieure ; gossip périodique des santés
   vers les pairs de la community. Tests loopback `tests/content_discovery.rs`.
-- `tribler-core::services::torrent_checker` : scrape BEP-15 UDP
+- `onionbit-core::services::torrent_checker` : scrape BEP-15 UDP
   (connect/announce→scrape) et HTTP bencode (`files` dict), socket UDP
   dédiée partagée, sélection des torrents les moins récemment vérifiés
   depuis `torrent_state`, persistance seeders/leechers/last_check +
   notification `TorrentHealthUpdated`. `IpPolicy` appliquée aux
   trackers. Test `torrent_checker_udp_scrape` (tracker factice
   loopback).
-- `tribler-core::services::rss` : watchers périodiques (`RssManager`),
+- `onionbit-core::services::rss` : watchers périodiques (`RssManager`),
   extraction des URLs `.torrent` du XML, requêtes conditionnelles
   (ETag/Last-Modified) et backoff `Keep-Alive: timeout=N`, fetch des
   torrents via le helper anti-SSRF partagé, notification
   `TorrentMetadataCreated`. Test `rss_discovers_torrent_and_notifies`.
-- `tribler-core::services::watch_folder` : scan récursif périodique,
+- `onionbit-core::services::watch_folder` : scan récursif périodique,
   `.torrent` et `.magnet`, dédup par chemin+hash, import via
   `CoreSession::add_download`. Test `watch_folder_imports_torrent`
   (`.torrent` — le magnet nécessite le DHT, hors champ offline).
@@ -2756,9 +2776,9 @@ via `CoreConfig`.
   `start_offline`, les arrête dans `stop()` (pas de tâche orpheline),
   expose `torrent_checker()`/`rss()` pour l'API future.
 - `Notification::TorrentHealthUpdated` → event SSE
-  `torrent_health_updated` dans `tribler-api`.
+  `torrent_health_updated` dans `onionbit-api`.
 
-## Étape 13 — `tribler-network-policy` : anti-SSRF, exit policy, kill switch (2026-09-27)
+## Étape 13 — `onionbit-network-policy` : anti-SSRF, exit policy, kill switch (2026-09-27)
 
 Crate de politiques réseau pures (sans dépendance vers ipv8/bittorrent)
 + intégration dans tunnel, bittorrent et core.
@@ -2770,22 +2790,22 @@ Crate de politiques réseau pures (sans dépendance vers ipv8/bittorrent)
   `exit_socket.py`) — `could_be_utp`/`udp_tracker`/`dht`/`ipv8`,
   `is_exit_data_allowed` exige `PEER_FLAG_EXIT_BT`/`PEER_FLAG_EXIT_IPV8`
   ou le préfixe de la community. Les constantes `PEER_FLAG_*` vivent
-  ici désormais (source unique, ré-exportées par `tribler-tunnel::routing`).
+  ici désormais (source unique, ré-exportées par `onionbit-tunnel::routing`).
 - `kill_switch::KillSwitch` : atomic bool + raison diagnostic + `guard()`.
 - `proxy_guard::validate_local_socks5_url` : `socks5://`/`socks5h://`
   numérique loopback uniquement (ni DNS, ni credentials, ni port nul).
-- `tribler-tunnel` : `exit_data` ET `exit_recv_data` appliquent
+- `onionbit-tunnel` : `exit_data` ET `exit_recv_data` appliquent
   `is_exit_data_allowed` (les deux sens, comme `sendto` +
   `datagram_received` côté pyipv8) ; les flags de sortie = `peer_flags`
   locaux annoncés. Test `tunnel_exit_drops_non_bt_or_unflagged` ;
   les sorties des tests existants portent désormais `EXIT_BT` et des
   payloads uTP-shaped.
-- `tribler-bittorrent` : `BtEngine::start` valide `socks5_proxy`
+- `onionbit-bittorrent` : `BtEngine::start` valide `socks5_proxy`
   (distant = échec de démarrage, jamais de repli direct) ; watchdog
   TCP du proxy + `KillSwitch` qui bloque `add`/`resume` tant que le
   proxy est injoignable ; `kill_switch()` exposée pour le futur
   câblage tunnel (circuits morts). Tests `tests/policy.rs`.
-- `tribler-core` : `CoreConfig.ip_policy` (stricte par défaut,
+- `onionbit-core` : `CoreConfig.ip_policy` (stricte par défaut,
   permissive offline) appliquée dans `Session::add_download` aux URI
   `http(s)` — résolution DNS puis refus fermé sur toute adresse niée.
   Tests `tests/policy.rs`.
@@ -2831,12 +2851,12 @@ valides.
 L'objection « tout le chiffrement peut diverger » est levee pour le
 plan de donnees des tunnels : `scripts/interop_tunnel.ps1` fait
 converser le vrai `TunnelCommunity` pyipv8 (venv interop) avec notre
-`tribler-tunnel` en loopback.
+`onionbit-tunnel` en loopback.
 
 - `scripts/interop/py_tunnel_node.py` : noeud `TunnelCommunity`
   (flags RELAY|EXIT_IPV8|EXIT_BT) + echo UDP + dump des
   `SessionKeys` ; exporte sa cle publique via keyfile.
-- `crates/tribler-tunnel/examples/tunnel_interop_node.rs` : noeud
+- `crates/onionbit-tunnel/examples/tunnel_interop_node.rs` : noeud
   Rust qui cree un circuit 1 saut vers le pair Python
   (`create`→`created` accepte), envoie un datagramme
   « uTP-compatible » (`DataChecker.could_be_utp`) vers l'echo a
@@ -2852,7 +2872,7 @@ montage :
   deux fois ; pyipv8 le strippe (`pack_serializable(payload)[4:]`)
   et le reinsere via `unwrap`. Le message cellule est desormais
   `msg_id + payload[4:]`.
-- `tribler-crypto/src/ipv8/session.rs` : `generate_session_keys`
+- `onionbit-crypto/src/ipv8/session.rs` : `generate_session_keys`
   faisait un HKDF extract+expand (sel nul) alors que la reference
   est **EXPAND_ONLY** (`set_hkdf_key(shared_secret)` comme PRK
   directe) → `Hkdf::from_prk`. C'est la raison du "Decryption
@@ -2864,7 +2884,7 @@ a faire separement.
 ## Étape 12 (correctif) — garde-fou IPv4 factice, relais UDP first-seen, idempotence `create_e2e` (2026-09-27)
 
 Suite à une revue externe puis vérification directe du code, trois défauts
-de sécurité/robustesse ont été corrigés dans `tribler-tunnel` :
+de sécurité/robustesse ont été corrigés dans `onionbit-tunnel` :
 
 - **Fuite réseau via l'IPv4 factice** (`socks5.rs`) : `handle_udp_frame`
   décodait un `circuit_id` depuis l'adresse `CIRCUIT_ID_PORT` sans vérifier
@@ -2911,7 +2931,7 @@ de sécurité/robustesse ont été corrigés dans `tribler-tunnel` :
     Corrigé en excluant `required_exit` du tirage dans `on_created_e2e`.
 
 Validation : `cargo check/clippy/fmt` propres sur le workspace,
-`cargo test --workspace` vert, suite `tribler-tunnel` (12 tests) stable
+`cargo test --workspace` vert, suite `onionbit-tunnel` (12 tests) stable
 sur des dizaines d'exécutions séquentielles et parallèles après le
 correctif de `pick_first_hop`.
 
@@ -2927,13 +2947,13 @@ perdre et le test `hidden_service_e2e_roundtrip` expirait a
 - `tests/circuits_loopback.rs` : `create_e2e_with_retry` — retente le
   `create_e2e` jusqu'a 3 fois (equivalent du `RequestCache` a retry de
   pyipv8), utilise aussi par le test de relais hidden seeding.
-- `tribler-bittorrent/tests/anon_download.rs` : meme repli sur la
+- `onionbit-bittorrent/tests/anon_download.rs` : meme repli sur la
   creation e2e du telechargement anonyme.
 
 Validation : `verify_all.ps1` vert, le retry a ete observe en action
 sous charge (succes a la 2e tentative).
 
-## Étape 12 (partie 5) — `tribler-tunnel` : relais UDP de hidden seeding (2026-09-27)
+## Étape 12 (partie 5) — `onionbit-tunnel` : relais UDP de hidden seeding (2026-09-27)
 
 Le pont entre les circuits e2e et un moteur BitTorrent a socket UDP
 concrete (rqbit) est en place :
@@ -2959,7 +2979,7 @@ concrete (rqbit) est en place :
   faux moteur echo cote seeder, datagramme du client downloader
   revenant en echo a travers le tunnel (10 tests au total).
 
-## Étape 12 (partie 4) — `tribler-tunnel` : CONNECT HTTP par cellules 28/29 (2026-09-27)
+## Étape 12 (partie 4) — `onionbit-tunnel` : CONNECT HTTP par cellules 28/29 (2026-09-27)
 
 Le SOCKS5 CONNECT est desormais fonctionnel (requetes HTTP via le
 tunnel — le chemin des annonces de tracker de Tribler) :
@@ -2987,7 +3007,7 @@ tunnel — le chemin des annonces de tracker de Tribler) :
   tracker HTTP loopback ; annonce bencodee renvoyee par le tunnel et
   verifiee octet par octet (9 tests au total).
 
-## Étape 12 (partie 3) — `tribler-tunnel` : hidden services E2E (2026-09-27)
+## Étape 12 (partie 3) — `onionbit-tunnel` : hidden services E2E (2026-09-27)
 
 Le flux de services cachés pyipv8 est implémenté et validé bout en
 bout en loopback :
@@ -3020,7 +3040,7 @@ bout en loopback :
   deux circuits sont lies (`link_e2e`/`linked_e2e`) et les donnees
   circulent dans les deux sens avec la couche `hs_session_keys`.
 
-## Étape 12 (partie 2) — `tribler-tunnel` : sortie bidirectionnelle + SOCKS5 (2026-09-27)
+## Étape 12 (partie 2) — `onionbit-tunnel` : sortie bidirectionnelle + SOCKS5 (2026-09-27)
 
 Le tunnel est maintenant bidirectionnel et expose un proxy SOCKS5 :
 
@@ -3041,7 +3061,7 @@ Le tunnel est maintenant bidirectionnel et expose un proxy SOCKS5 :
 - Bug corrige en chemin : `handle_associate` relisait le port une
   seconde fois (deja consomme par `read_address`) → blocage.
 
-## Étape 12 (partie 1) — `tribler-tunnel` : circuits fonctionnels en loopback (2026-09-27)
+## Étape 12 (partie 1) — `onionbit-tunnel` : circuits fonctionnels en loopback (2026-09-27)
 
 Premier tronçon de la TunnelCommunity, validé par tests loopback réels :
 
@@ -3066,7 +3086,7 @@ Premier tronçon de la TunnelCommunity, validé par tests loopback réels :
   (paquet signé), `ping`/`pong` de circuit, `send_cell` = `outgoing_
   crypto` (circuit → FORWARD tous hops, exit → BACKWARD, relais →
   direction de l'autre route).
-- `tribler-ipv8::endpoint` : `add_raw_prefix_listener` — les cellules
+- `onionbit-ipv8::endpoint` : `add_raw_prefix_listener` — les cellules
   ne sont pas des `Packet` signés et étaient rejetées par le dispatch.
 - Tests `tests/circuits_loopback.rs` : 5 tests sur sockets UDP réels —
   circuit 1 saut et 2 sauts READY (DH complet + relais), données
@@ -3091,7 +3111,7 @@ Suite à revue externe de la preuve de l'étape 9 :
   `store_value`/`find_values` + jetons avec résultat contrôlé des deux
   côtés (10) ; introductions new-style 233/234 et punctures
   250/232 → 249/231 avec payloads décodés (11).
-- `crates/tribler-ipv8/tests/fixtures/README.md` créé : provenance des
+- `crates/onionbit-ipv8/tests/fixtures/README.md` créé : provenance des
   captures (commit pyipv8 `4a294ed1`, commit Tribler `3ac2f4b4`,
   sens de chaque fichier, msg_ids contenus, procédure de
   régénération) — une évolution de la référence ne pourra plus effacer
@@ -3103,7 +3123,7 @@ Suite à revue externe de la preuve de l'étape 9 :
 
 ## Référence supplémentaire : Tribler 8.4.3 installé (2026-09-27)
 
-- `C:\Program Files (x86)\Tribler` documenté dans `AGENTS.md` et
+- `<Tribler install dir> (env `TRIBLER_EXE`)` documenté dans `AGENTS.md` et
   `docs/INDEX.md` comme référence locale supplémentaire : `Tribler.exe`
   est un noeud Tribler réel (communities IPv8, tunnels, API REST)
   utilisable pour les jalons d'interop ping-pong des étapes `[i]` 10-11
@@ -3119,19 +3139,19 @@ L'échange reproductible exigé par la règle de cochage est en place et
 
 - `scripts/interop/py_node.py` : noeud pyipv8 reel (`UDPEndpoint` +
   `DiscoveryCommunity` sur `curve25519`, venv
-  `D:\Projet\Tribler_sources\.venv-interop`), journalise chaque
+  `<Tribler sources checkout> (env `TRIBLER_SRC`)\.venv-interop`), journalise chaque
   datagramme en hex et envoie des introduction-request a la cible Rust.
 - `scripts/interop/verify_packets.py` : decode chaque paquet
   enregistre (prefix|msg_id|varlenH pubkey|global_time|payload|sig) et
   verifie la signature Ed25519 via le vrai `default_eccrypto` pyipv8.
-- `crates/tribler-ipv8/examples/interop_node.rs` : noeud Rust
+- `crates/onionbit-ipv8/examples/interop_node.rs` : noeud Rust
   (`DiscoveryCommunity`) avec tap de paquets rx/tx (nouveau
   `UdpEndpoint::set_tap`) ecrivant le meme journal hex.
 - `scripts/interop_ipv8.ps1` : orchestre les deux noeuds sur loopback,
   verifie 39/39 paquets dans les deux sens, verifie que chaque noeud a
   enregistre l'autre comme pair verifie. Chemins reseables via
   `TRIBLER_PYIPV8` / `TRIBLER_INTEROP_PY`.
-- Fixtures enregistrees `crates/tribler-ipv8/tests/fixtures/*.hex`
+- Fixtures enregistrees `crates/onionbit-ipv8/tests/fixtures/*.hex`
   (paquets reels pyipv8 + paquets Rust acceptes par pyipv8) rejouees en
   CI par `tests/interop_replay.rs`.
 - `roadmap.md` : etape 9 repassee en `[x]` (format filaire + signatures
@@ -3168,7 +3188,7 @@ Python et le code. Corrections appliquées :
 - `plan_faisabilite.md` : références d'étapes obsolètes corrigées
   (packaging = étapes 17-19, mobile = étape 18).
 
-## Étape 11 — `tribler-ipv8` : framework de communities complet (2026-09-27)
+## Étape 11 — `onionbit-ipv8` : framework de communities complet (2026-09-27)
 
 - `peer.rs` reecrit : `Peer` (+ `new_style_intro`, `update_clock`
   Lamport, `last_response`), `WalkableAddress`, `Network` complet —
@@ -3194,7 +3214,7 @@ Python et le code. Corrections appliquées :
   via introduction puis `get_new_introduction` vers un 3e noeud,
   puncture-request non signe → puncture signe verifie sur socket brut.
 
-## Étape 10 — `tribler-ipv8` : overlay DHT (2026-09-27)
+## Étape 10 — `onionbit-ipv8` : overlay DHT (2026-09-27)
 
 - `dht/routing.rs` : `calc_node_id` (CRC-32 **IEEE/zlib** d'IP masquee
   `0x030f3fff`/`0x0103070f1f3f7fff` + `mid[:17]` — le commentaire Python
@@ -3222,7 +3242,7 @@ Python et le code. Corrections appliquées :
 - Tests loopback : introduction DHT -> ping -> `store_value` signe ->
   `find_values` entre deux noeuds ; rejet de valeur corrompue.
 
-## Étape 9 — `tribler-ipv8` : overlay minimal (2026-09-27)
+## Étape 9 — `onionbit-ipv8` : overlay minimal (2026-09-27)
 
 - `serializer.rs` : packers pyipv8 (`B/H/I/Q`, `varlenH`, `varlenHx20`,
   `ipv4` `>4sH`, `ip_address` type+donnees, `bits` MSB-first, `raw`,
@@ -3248,14 +3268,14 @@ Python et le code. Corrections appliquées :
 - Jalon d'interop avec un noeud pyipv8 reel : formats repris a
   l'identique ; test manuel reseau reporte (hors tests offline).
 
-## Étape 8 — `tribler-daemon` : executable bout en bout (2026-09-27)
+## Étape 8 — `onionbit-daemon` : executable bout en bout (2026-09-27)
 
 - Assemblage complet : `CoreSession` (moteur BitTorrent + SQLite +
-  notifier) derriere `tribler-api`, servi par axum avec
+  notifier) derriere `onionbit-api`, servi par axum avec
   `with_graceful_shutdown` (Ctrl-C -> `session.stop()` -> arret
   propre).
 - CLI clap : `--listen` (defaut `127.0.0.1:8085` = `DEFAULT_API` de
-  tribler-cli), `--state-dir`, `--offline`. **Garde-fou** : refuse
+  onionbit-cli), `--state-dir`, `--offline`. **Garde-fou** : refuse
   toute adresse d'ecoute non-loopback (l'API de controle n'est jamais
   exposee sur le reseau).
 - Logging `tracing` fmt + `EnvFilter` (`RUST_LOG`, defaut info) —
@@ -3264,7 +3284,7 @@ Python et le code. Corrections appliquées :
   sur loopback, kill propre. Le test manuel "telechargement torrent
   reel" reste a l'etape 16 (necessite du reseau).
 
-## Étape 7 — `tribler-cli` : CLI de pilotage (2026-09-27)
+## Étape 7 — `onionbit-cli` : CLI de pilotage (2026-09-27)
 
 - Sous-commandes clap : `status`, `list`, `add` (`--paused`),
   `remove` (`--remove-data`), `pause`, `resume` ; option globale
@@ -3275,13 +3295,13 @@ Python et le code. Corrections appliquées :
   `torrent` pour un chemin local), comme l'API Python.
 - Erreurs d'API affichees au format Tribler (`HTTP <code> : <message>`
   sur stderr, exit code 1).
-- 1 test d'integration reel : binaire `tribler-cli` (via
-  `CARGO_BIN_EXE_*`) contre un serveur `tribler-api` sur
+- 1 test d'integration reel : binaire `onionbit-cli` (via
+  `CARGO_BIN_EXE_*`) contre un serveur `onionbit-api` sur
   `127.0.0.1:0` — cycle complet + cas daemon injoignable.
 - Piege corrige : `std::process::Command` bloque le runtime tokio
   mono-thread du test ; `tokio::process::Command` utilise.
 
-## Étape 6 — `tribler-api` : REST + SSE (2026-09-27)
+## Étape 6 — `onionbit-api` : REST + SSE (2026-09-27)
 
 - Routeur axum (`router.rs`) + etat partage `AppState` (`CoreSession`).
 - Endpoints : `GET /api/downloads` (filtres `infohash`/`excluded`),
@@ -3305,7 +3325,7 @@ Python et le code. Corrections appliquées :
   cycle complet ajout/pause/resume/suppression, 400/404 au format
   Tribler, format SSE verifie) + smoke test du routeur.
 
-## Étape 5 — `tribler-core` : Session + Notifier (2026-09-27)
+## Étape 5 — `onionbit-core` : Session + Notifier (2026-09-27)
 
 - `CoreSession` : facade domaine (equivalent de `tribler.core.session.
   Session`) assemblant `BtEngine` + `Database` + `Notifier`.
@@ -3325,7 +3345,7 @@ Python et le code. Corrections appliquées :
 - 2 tests : session offline bout en bout (ajout + stats + notification)
   et notifier sans abonnes.
 
-## Étape 4 — `tribler-db` : schema SQLite + migrations (2026-09-27)
+## Étape 4 — `onionbit-db` : schema SQLite + migrations (2026-09-27)
 
 - `Database` : ouverture fichier/memoire, `Mutex<Connection>` pour le
   partage entre services async, WAL + `foreign_keys` actives.
@@ -3346,7 +3366,7 @@ Python et le code. Corrections appliquées :
 - 5 tests en memoire (migrations, misc, sante+trackers, dedup
   channel_node, cycle downloads).
 
-## Étape 3 — `tribler-bittorrent` : enveloppe `librqbit` (2026-09-27)
+## Étape 3 — `onionbit-bittorrent` : enveloppe `librqbit` (2026-09-27)
 
 - `BtEngine` : enveloppe de `librqbit::Session` v9 (cycle de vie
   start/stop, ajout magnet/URI/bytes `.torrent`, liste, pause, reprise,
@@ -3357,14 +3377,14 @@ Python et le code. Corrections appliquées :
   Downloading/Seeding/Paused/Error/Stopped`), `progress()` normalisé.
 - `EngineConfig` : regroupe tous les réglages (output_dir, DHT,
   trackers, LSD, IPv4-only, port d'écoute, peer_limit, fastresume,
-  proxy SOCKS5 point d'intégration `tribler-tunnel`). Constructeur
+  proxy SOCKS5 point d'intégration `onionbit-tunnel`). Constructeur
   `EngineConfig::offline` pour les tests sans réseau.
 - Traduction `EngineConfig → librqbit::SessionOptions`
   (`ListenerOptions`, `ConnectionOptions::proxy_url`).
 - 1 test offline (session sans réseau + ajout de `.torrent` encodé par
-  `tribler-format`).
+  `onionbit-format`).
 
-## Étape 1 — `tribler-format` : bencode, `.torrent`, magnet, `.mdblob` (2026-09-27)
+## Étape 1 — `onionbit-format` : bencode, `.torrent`, magnet, `.mdblob` (2026-09-27)
 
 - Parser bencode borné maison (`bencode/parser.rs`) : profondeur max,
   tailles de chaînes/listes/dicts limitées via `limits.rs`, offsets
@@ -3385,10 +3405,10 @@ Python et le code. Corrections appliquées :
   `CHANNEL_DESCRIPTION`, `BINARY_NODE`, `CHANNEL_THUMBNAIL`, `DELETED` ;
   types absents du mapping Python rejetés comme
   `UnknownBlobTypeException`. Vérification de signature Ed25519 via
-  `tribler-crypto`.
+  `onionbit-crypto`.
 - 18 tests offline, `clippy -D warnings` et `fmt` propres.
 
-## Étape 2 — `tribler-crypto` : hachage et crypto IPv8 (2026-09-27)
+## Étape 2 — `onionbit-crypto` : hachage et crypto IPv8 (2026-09-27)
 
 - `hash.rs` : SHA-1/SHA-256 + hex, validé contre vecteurs officiels.
 - `ipv8/keys.rs` : clés `LibNaCLPK`/`LibNaCLSK` au format binaire pyipv8
@@ -3404,13 +3424,13 @@ Python et le code. Corrections appliquées :
 
 ## Étape 0 — Mise en place du dépôt (2026-09-27)
 
-- Dépôt git local initialisé (`D:\Projet\Tribler-Rust-Torrent`).
+- Dépôt git local initialisé (`<repo root>`).
 - Licence GPL-3.0-or-later (texte officiel FSF) ajoutée en `LICENSE`.
 - `AGENTS.md` rédigé (règles critiques, conventions de code, workflow
   par étape, anti-duplication), inspiré de la structure du projet
   eMule-Rust de l'utilisateur.
 - Analyse de l'architecture officielle Tribler
-  (`D:\Projet\Tribler_sources\tribler`) : cartographie des modules
+  (`<Tribler sources checkout> (env `TRIBLER_SRC`)`) : cartographie des modules
   Python (`core/libtorrent`, `core/database`, `core/restapi`,
   `core/tunnel`, `core/content_discovery`, `core/torrent_checker`,
   `core/socks5`, `core/rss`, `core/watch_folder`, `pyipv8/`).
@@ -3424,10 +3444,10 @@ Python et le code. Corrections appliquées :
   (structure workspace Cargo inspirée d'eMule-Rust), ADR-0005 (langue
   française).
 - Workspace Cargo créé avec 12 crates squelettes
-  (`tribler-format`, `tribler-crypto`, `tribler-bittorrent`,
-  `tribler-ipv8`, `tribler-tunnel`, `tribler-core`, `tribler-db`,
-  `tribler-network-policy`, `tribler-api`, `tribler-cli`,
-  `tribler-daemon`, `tribler-test-support`) : chaque crate compile,
+  (`onionbit-format`, `onionbit-crypto`, `onionbit-bittorrent`,
+  `onionbit-ipv8`, `onionbit-tunnel`, `onionbit-core`, `onionbit-db`,
+  `onionbit-network-policy`, `onionbit-api`, `onionbit-cli`,
+  `onionbit-daemon`, `onionbit-test-support`) : chaque crate compile,
   documente sa responsabilité et son étape d'implémentation prévue, et
   passe `cargo check`/`cargo clippy -D warnings`/`cargo fmt --check`/
   `cargo test`.

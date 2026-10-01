@@ -1,4 +1,4 @@
-# Plan de faisabilité — Tribler-Rust-Torrent
+# Plan de faisabilité — OnionBit
 
 Date de rédaction : 2026-09-27.
 Statut : validé pour démarrage du backend (étape 0 terminée).
@@ -15,7 +15,7 @@ fonctionnalités clés.
 
 ## 2. Analyse du logiciel de référence
 
-Sources officielles étudiées : `D:\Projet\Tribler_sources\tribler`
+Sources officielles étudiées : `<Tribler sources checkout> (env `TRIBLER_SRC`)`
 (dépôt principal + sous-module `pyipv8`).
 
 | Composant Python | Emplacement | Rôle | Taille approx. |
@@ -70,23 +70,23 @@ fonctionnelle de l'API REST/DB.
 | Moteur BitTorrent | Moteur Rust pur, en s'appuyant sur `librqbit` plutôt qu'un FFI vers `libtorrent-rasterbar` (C++) — nécessaire pour un portage mobile/web réaliste | ADR-0001 |
 | Périmètre IPv8/anonymat | Inclus dès la V1 du daemon (pas repoussé en V2) | ADR-0002 |
 | Licence du projet | GPL-3.0-or-later, héritée de Tribler | ADR-0003 |
-| Structure du dépôt | Workspace Cargo multi-crates, inspiré de la structure du projet **eMule-Rust** de l'utilisateur (`C:\Emule-Sion-UI-UX`) | ADR-0004 |
-| UI | Flutter, développée **après** validation complète du backend ; réutilisation des patterns de style de `C:\Emule-Sion-UI-UX\app` | — (hors périmètre backend actuel) |
+| Structure du dépôt | Workspace Cargo multi-crates, inspiré de la structure du projet **eMule-Rust** de l'utilisateur | ADR-0004 |
+| UI | Flutter, développée **après** validation complète du backend ; réutilisation des patterns de style de `the reference Flutter UI project` | — (hors périmètre backend actuel) |
 | Plateformes cibles | Windows x64/arm64, Linux, macOS, Android, iOS, Web | — |
 
 ## 5. Analyse de faisabilité par composant
 
 | Composant | Risque | Complexité | Commentaire |
 | :--- | :--- | :--- | :--- |
-| `tribler-format` (bencode/.torrent/magnet) | Faible | Faible | Largement couvert par les sous-crates de `librqbit` |
-| `tribler-crypto` | Faible | Faible-Moyenne | Primitives disponibles (dalek) ; le travail est surtout de reproduire les tailles de clé pyipv8 |
-| `tribler-bittorrent` (intégration `librqbit`) | Faible-Moyenne | Moyenne | Adapter l'API `librqbit::Session` aux besoins Tribler (notifications, routage optionnel via SOCKS5 tunnel) |
-| `tribler-db` (SQLite) | Faible | Moyenne | Reproduire le schéma logique de Pony ORM (torrents, canaux, votes, réglages) et ses migrations |
-| `tribler-network-policy` | Moyenne | Moyenne | Garde-fous de sécurité, logique métier propre mais critique |
-| `tribler-api` (REST + SSE) | Moyenne | Moyenne-Élevée | Beaucoup d'endpoints à couvrir pour la parité (11 fichiers côté Python) ; travail volumineux mais peu risqué techniquement |
-| `tribler-core` (orchestration) | Moyenne | Moyenne | Logique métier de `content_discovery`/`torrent_checker`/`rss`/`watch_folder` à reproduire |
-| `tribler-ipv8` (overlay) | **Élevé** | **Élevée** | Protocole propriétaire, aucune implémentation Rust de référence, NAT traversal, gestion du churn |
-| `tribler-tunnel` (TunnelCommunity) | **Élevé** | **Élevée** | Construction de circuits, crypto par saut, hidden seeding, résistance Sybil — dépend d'`tribler-ipv8` fiable |
+| `onionbit-format` (bencode/.torrent/magnet) | Faible | Faible | Largement couvert par les sous-crates de `librqbit` |
+| `onionbit-crypto` | Faible | Faible-Moyenne | Primitives disponibles (dalek) ; le travail est surtout de reproduire les tailles de clé pyipv8 |
+| `onionbit-bittorrent` (intégration `librqbit`) | Faible-Moyenne | Moyenne | Adapter l'API `librqbit::Session` aux besoins Tribler (notifications, routage optionnel via SOCKS5 tunnel) |
+| `onionbit-db` (SQLite) | Faible | Moyenne | Reproduire le schéma logique de Pony ORM (torrents, canaux, votes, réglages) et ses migrations |
+| `onionbit-network-policy` | Moyenne | Moyenne | Garde-fous de sécurité, logique métier propre mais critique |
+| `onionbit-api` (REST + SSE) | Moyenne | Moyenne-Élevée | Beaucoup d'endpoints à couvrir pour la parité (11 fichiers côté Python) ; travail volumineux mais peu risqué techniquement |
+| `onionbit-core` (orchestration) | Moyenne | Moyenne | Logique métier de `content_discovery`/`torrent_checker`/`rss`/`watch_folder` à reproduire |
+| `onionbit-ipv8` (overlay) | **Élevé** | **Élevée** | Protocole propriétaire, aucune implémentation Rust de référence, NAT traversal, gestion du churn |
+| `onionbit-tunnel` (TunnelCommunity) | **Élevé** | **Élevée** | Construction de circuits, crypto par saut, hidden seeding, résistance Sybil — dépend d'`onionbit-ipv8` fiable |
 | Portage multiplateforme (build) | Moyenne | Moyenne | `librqbit`/Tokio sont déjà multiplateformes ; le vrai risque est l'exécution en arrière-plan sur mobile (limitations OS) et le modèle "Web" (cf. §7) |
 
 ## 6. Estimation de charge (ordre de grandeur, à titre indicatif)

@@ -2,9 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:tribler_ui/features/settings/domain/settings_repository.dart';
-import 'package:tribler_ui/features/settings/presentation/pages/settings_page.dart';
-import 'package:tribler_ui/features/settings/presentation/providers/settings_providers.dart';
+import 'package:onionbit_ui/features/settings/domain/settings_repository.dart';
+import 'package:onionbit_ui/features/settings/presentation/pages/settings_page.dart';
+import 'package:onionbit_ui/features/settings/presentation/providers/settings_providers.dart';
 
 class _FakeSettings implements SettingsRepository {
   @override

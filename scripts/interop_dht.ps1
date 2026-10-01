@@ -32,7 +32,7 @@ $pyKeyFile = Join-Path $outDir "py_key.txt"
 Remove-Item -Force -ErrorAction SilentlyContinue $rsKeyFile, $pyKeyFile, $pyLog, $pyErr, $rsLog
 
 Write-Host "== build dht_interop_node (rust) =="
-cargo build -p tribler-ipv8 --example dht_interop_node
+cargo build -p onionbit-ipv8 --example dht_interop_node
 if ($LASTEXITCODE -ne 0) { throw "build echoue" }
 
 # Le noeud Rust demarre en premier : il ecrit sa cle puis attend le

@@ -2920,6 +2920,223 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
+name = "onionbit-api"
+version = "0.3.1-alpha"
+dependencies = [
+ "axum",
+ "base64 0.22.1",
+ "fs2",
+ "futures-util",
+ "hex 0.4.3",
+ "librqbit",
+ "onionbit-bittorrent",
+ "onionbit-core",
+ "onionbit-crypto",
+ "onionbit-db",
+ "onionbit-format",
+ "onionbit-ipv8",
+ "onionbit-test-support",
+ "onionbit-tunnel",
+ "reqwest",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tokio-stream",
+ "tokio-tungstenite 0.24.0",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "onionbit-bittorrent"
+version = "0.3.1-alpha"
+dependencies = [
+ "base64 0.22.1",
+ "bytes",
+ "futures-util",
+ "hex 0.4.3",
+ "librqbit",
+ "librqbit-core",
+ "librqbit-dualstack-sockets",
+ "librqbit-utp",
+ "onionbit-crypto",
+ "onionbit-format",
+ "onionbit-ipv8",
+ "onionbit-network-policy",
+ "onionbit-tunnel",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+]
+
+[[package]]
+name = "onionbit-cli"
+version = "0.3.1-alpha"
+dependencies = [
+ "axum",
+ "clap",
+ "onionbit-api",
+ "onionbit-core",
+ "onionbit-format",
+ "onionbit-test-support",
+ "reqwest",
+ "serde_json",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
+name = "onionbit-core"
+version = "0.3.1-alpha"
+dependencies = [
+ "bytes",
+ "fs2",
+ "hex 0.4.3",
+ "lz4_flex",
+ "onionbit-bittorrent",
+ "onionbit-crypto",
+ "onionbit-db",
+ "onionbit-format",
+ "onionbit-ipv8",
+ "onionbit-network-policy",
+ "onionbit-test-support",
+ "onionbit-tunnel",
+ "rand 0.8.8",
+ "reqwest",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+]
+
+[[package]]
+name = "onionbit-crypto"
+version = "0.3.1-alpha"
+dependencies = [
+ "chacha20poly1305",
+ "ed25519-dalek",
+ "hex 0.4.3",
+ "hkdf",
+ "hmac",
+ "proptest",
+ "rand 0.8.8",
+ "sha1",
+ "sha2",
+ "subtle",
+ "thiserror 2.0.21",
+ "x25519-dalek",
+]
+
+[[package]]
+name = "onionbit-daemon"
+version = "0.3.1-alpha"
+dependencies = [
+ "axum",
+ "axum-server",
+ "clap",
+ "embed-resource",
+ "onionbit-api",
+ "onionbit-bittorrent",
+ "onionbit-core",
+ "onionbit-test-support",
+ "rcgen",
+ "reqwest",
+ "rustls-pemfile",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
+ "tray-icon",
+ "windows-sys 0.61.2",
+ "winreg",
+]
+
+[[package]]
+name = "onionbit-db"
+version = "0.3.1-alpha"
+dependencies = [
+ "rusqlite",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "onionbit-format"
+version = "0.3.1-alpha"
+dependencies = [
+ "onionbit-crypto",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "onionbit-ipv8"
+version = "0.3.1-alpha"
+dependencies = [
+ "hex 0.4.3",
+ "onionbit-crypto",
+ "rand 0.8.8",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "onionbit-network-policy"
+version = "0.3.1-alpha"
+dependencies = [
+ "thiserror 2.0.21",
+ "tracing",
+]
+
+[[package]]
+name = "onionbit-test-support"
+version = "0.3.1-alpha"
+dependencies = [
+ "onionbit-format",
+ "tokio",
+]
+
+[[package]]
+name = "onionbit-tunnel"
+version = "0.3.1-alpha"
+dependencies = [
+ "futures-util",
+ "hex 0.4.3",
+ "librqbit-dualstack-sockets",
+ "librqbit-utp",
+ "onionbit-crypto",
+ "onionbit-ipv8",
+ "onionbit-network-policy",
+ "rand 0.8.8",
+ "serde",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "x25519-dalek",
+]
+
+[[package]]
 name = "opaque-debug"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4636,223 +4853,6 @@ dependencies = [
  "png",
  "thiserror 2.0.21",
  "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "tribler-api"
-version = "0.3.0"
-dependencies = [
- "axum",
- "base64 0.22.1",
- "fs2",
- "futures-util",
- "hex 0.4.3",
- "librqbit",
- "reqwest",
- "rusqlite",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.21",
- "tokio",
- "tokio-stream",
- "tokio-tungstenite 0.24.0",
- "tracing",
- "tribler-bittorrent",
- "tribler-core",
- "tribler-crypto",
- "tribler-db",
- "tribler-format",
- "tribler-ipv8",
- "tribler-test-support",
- "tribler-tunnel",
- "uuid",
-]
-
-[[package]]
-name = "tribler-bittorrent"
-version = "0.3.0"
-dependencies = [
- "base64 0.22.1",
- "bytes",
- "futures-util",
- "hex 0.4.3",
- "librqbit",
- "librqbit-core",
- "librqbit-dualstack-sockets",
- "librqbit-utp",
- "tempfile",
- "thiserror 2.0.21",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "tribler-crypto",
- "tribler-format",
- "tribler-ipv8",
- "tribler-network-policy",
- "tribler-tunnel",
- "url",
-]
-
-[[package]]
-name = "tribler-cli"
-version = "0.3.0"
-dependencies = [
- "axum",
- "clap",
- "reqwest",
- "serde_json",
- "tempfile",
- "tokio",
- "tribler-api",
- "tribler-core",
- "tribler-format",
- "tribler-test-support",
-]
-
-[[package]]
-name = "tribler-core"
-version = "0.3.0"
-dependencies = [
- "bytes",
- "fs2",
- "hex 0.4.3",
- "lz4_flex",
- "rand 0.8.8",
- "reqwest",
- "rusqlite",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.21",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "tribler-bittorrent",
- "tribler-crypto",
- "tribler-db",
- "tribler-format",
- "tribler-ipv8",
- "tribler-network-policy",
- "tribler-test-support",
- "tribler-tunnel",
- "url",
-]
-
-[[package]]
-name = "tribler-crypto"
-version = "0.3.0"
-dependencies = [
- "chacha20poly1305",
- "ed25519-dalek",
- "hex 0.4.3",
- "hkdf",
- "hmac",
- "proptest",
- "rand 0.8.8",
- "sha1",
- "sha2",
- "subtle",
- "thiserror 2.0.21",
- "x25519-dalek",
-]
-
-[[package]]
-name = "tribler-daemon"
-version = "0.3.0"
-dependencies = [
- "axum",
- "axum-server",
- "clap",
- "embed-resource",
- "rcgen",
- "reqwest",
- "rustls-pemfile",
- "serde_json",
- "tempfile",
- "thiserror 2.0.21",
- "tokio",
- "tracing",
- "tracing-appender",
- "tracing-subscriber",
- "tray-icon",
- "tribler-api",
- "tribler-bittorrent",
- "tribler-core",
- "tribler-test-support",
- "windows-sys 0.61.2",
- "winreg",
-]
-
-[[package]]
-name = "tribler-db"
-version = "0.3.0"
-dependencies = [
- "rusqlite",
- "tempfile",
- "thiserror 2.0.21",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "tribler-format"
-version = "0.3.0"
-dependencies = [
- "thiserror 2.0.21",
- "tribler-crypto",
-]
-
-[[package]]
-name = "tribler-ipv8"
-version = "0.3.0"
-dependencies = [
- "hex 0.4.3",
- "rand 0.8.8",
- "serde_json",
- "tempfile",
- "thiserror 2.0.21",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "tribler-crypto",
-]
-
-[[package]]
-name = "tribler-network-policy"
-version = "0.3.0"
-dependencies = [
- "thiserror 2.0.21",
- "tracing",
-]
-
-[[package]]
-name = "tribler-test-support"
-version = "0.3.0"
-dependencies = [
- "tokio",
- "tribler-format",
-]
-
-[[package]]
-name = "tribler-tunnel"
-version = "0.3.0"
-dependencies = [
- "futures-util",
- "hex 0.4.3",
- "librqbit-dualstack-sockets",
- "librqbit-utp",
- "rand 0.8.8",
- "serde",
- "tempfile",
- "thiserror 2.0.21",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "tribler-crypto",
- "tribler-ipv8",
- "tribler-network-policy",
- "x25519-dalek",
 ]
 
 [[package]]

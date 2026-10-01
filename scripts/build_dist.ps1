@@ -7,16 +7,16 @@
 #
 # Produit `dist\` a la racine du depot (dossier portable, deja ignore par
 # git) :
-#   tribler-daemon.exe, tribler-cli.exe   - backend Rust (plan de controle)
-#   tribler_ui.exe + *.dll + data\        - interface Flutter Windows
+#   onionbit-daemon.exe, onionbit-cli.exe   - backend Rust (plan de controle)
+#   onionbit_ui.exe + *.dll + data\        - interface Flutter Windows
 #   build-manifest.json                   - version, commit, rustc, date UTC
 #
-# Pas de script de lancement : `tribler_ui.exe` demarre le daemon tout
+# Pas de script de lancement : `onionbit_ui.exe` demarre le daemon tout
 # seul s'il ne tourne pas (daemon_launcher, etape 20) et le daemon vit
 # en icone systray (etape 29). Pour arreter : « Quitter » du menu tray
 # ou PUT /api/shutdown.
 #
-# `dist\state\` est cree par tribler_ui.exe/tribler-daemon.exe
+# `dist\state\` est cree par onionbit_ui.exe/onionbit-daemon.exe
 # (--state-dir) et n'est JAMAIS efface par ce script - c'est la donnee
 # utilisateur (base SQLite + telechargements). Seuls les artefacts de
 # build connus sont rafraichis.
@@ -31,7 +31,7 @@ $ErrorActionPreference = "Stop"
 $root   = Split-Path -Parent $PSScriptRoot
 $app    = Join-Path $root "app"
 $dist   = Join-Path $root "dist"
-$listen = "127.0.0.1:8085"   # DEFAULT_LISTEN de tribler-daemon
+$listen = "127.0.0.1:8085"   # DEFAULT_LISTEN de onionbit-daemon
 
 Push-Location $root
 try {
@@ -44,7 +44,7 @@ try {
     # cargo n'a pas de profil « debug » : c'est « dev » (sortie
     # target\debug — inchangée pour la suite du script).
     $cargoProfile = if ($Profile -eq "release") { "release" } else { "dev" }
-    cargo build --profile $cargoProfile -p tribler-daemon -p tribler-cli
+    cargo build --profile $cargoProfile -p onionbit-daemon -p onionbit-cli
     if ($LASTEXITCODE -ne 0) { throw "cargo build a echoue ($LASTEXITCODE)" }
 
     # -- 2) Interface Flutter Windows -----------------------------------
@@ -62,15 +62,15 @@ try {
     # -- 3) Assemblage dans dist\ ---------------------------------------
     $cargoOut = Join-Path $root "target\$Profile"
     $flutterOut = Join-Path $app "build\windows\x64\runner\$(@{$true='Release';$false='Debug'}[$Profile -eq 'release'])"
-    if (-not (Test-Path "$cargoOut\tribler-daemon.exe")) {
-        throw "tribler-daemon.exe introuvable dans $cargoOut"
+    if (-not (Test-Path "$cargoOut\onionbit-daemon.exe")) {
+        throw "onionbit-daemon.exe introuvable dans $cargoOut"
     }
-    if (-not (Test-Path "$flutterOut\tribler_ui.exe")) {
-        throw "tribler_ui.exe introuvable dans $flutterOut"
+    if (-not (Test-Path "$flutterOut\onionbit_ui.exe")) {
+        throw "onionbit_ui.exe introuvable dans $flutterOut"
     }
 
     New-Item -ItemType Directory -Force -Path $dist | Out-Null
-    foreach ($bin in @("tribler-daemon.exe", "tribler-cli.exe")) {
+    foreach ($bin in @("onionbit-daemon.exe", "onionbit-cli.exe")) {
         Copy-Item (Join-Path $cargoOut $bin) -Destination $dist -Force
     }
     # Payload Flutter : exe + DLLs + data\ (l'etat utilisateur n'y est pas).
@@ -87,8 +87,8 @@ try {
     # -- 5) Manifest de build -------------------------------------------
     $manifest = @{
         profile   = $Profile
-        daemon    = (cargo pkgid -p tribler-daemon).Split("#")[-1]
-        ui        = "tribler_ui (Flutter windows $Profile)"
+        daemon    = (cargo pkgid -p onionbit-daemon).Split("#")[-1]
+        ui        = "onionbit_ui (Flutter windows $Profile)"
         api       = $listen
         commit    = (git rev-parse --short HEAD 2>$null)
         rustc     = (rustc -V)
@@ -98,7 +98,7 @@ try {
 
     Write-Host ""
     Write-Host "Build OK -> dist\" -ForegroundColor Green
-    Write-Host "  Lancement  : dist\tribler_ui.exe (demarre le daemon au besoin)"
+    Write-Host "  Lancement  : dist\onionbit_ui.exe (demarre le daemon au besoin)"
     Write-Host "  Arret      : systray « Quitter » ou PUT /api/shutdown"
     Write-Host "  Etat/datas : dist\state\ (conserve entre builds)"
     Get-ChildItem $dist -File | Format-Table Name, Length

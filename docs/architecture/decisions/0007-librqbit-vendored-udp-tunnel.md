@@ -47,7 +47,7 @@ Vendored + patch de 4 crates rqbit dans `vendor/` (reliées par
 pairs**, meme via le proxy — parite `enable_outgoing_tcp=False`. Le
 proxy reste utilise pour les trackers HTTP(S) via `reqwest`.
 
-Nouveau `tribler_tunnel::tunnel_udp_socket` : `TunnelUdpSocket`
+Nouveau `onionbit_tunnel::tunnel_udp_socket` : `TunnelUdpSocket`
 implemente `librqbit_utp::Transport` + `DatagramSocket` au-dessus de
 `TunnelCommunity::send_data`/`data_rx` :
 
@@ -66,7 +66,7 @@ anonymes.
 ## Consequences
 
 - `vendor/` (~4 crates) a resynchroniser manuellement aux upgrades de
-  librqbit ; les patches sont minimaux et documentes « Tribler-Rust-
+  librqbit ; les patches sont minimaux et documentes « OnionBit-
   Torrent vendored patch » dans le code.
 - Les trackers **HTTPS** ne fonctionnent pas en mode anonyme — meme
   limitation que Tribler officiel. Les trackers `http://` et `udp://`

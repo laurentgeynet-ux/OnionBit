@@ -23,7 +23,7 @@ App Flutter (UI)
 tribler-mobile (nouveau crate, façade FFI)
    │  appels directs (pas de HTTP — même processus)
    ▼
-tribler-core / tribler-daemon(mode embedded)
+onionbit-core / onionbit-daemon(mode embedded)
 ```
 
 - **Pas de serveur HTTP local** sur mobile : l'API REST/SSE devient
@@ -72,4 +72,4 @@ tribler-core / tribler-daemon(mode embedded)
 Le moteur BitTorrent + overlay IPv8 compilables pour mobile sont
 **faisables** ; le *comportement* change (pas de daemon permanent, pas
 d'anonymat par défaut, pas de seeding continu). L'étape 19 se fera
-avec un hôte FFI minimal, pas avec `tribler-daemon` tel quel.
+avec un hôte FFI minimal, pas avec `onionbit-daemon` tel quel.

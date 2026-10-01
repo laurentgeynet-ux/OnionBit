@@ -1,11 +1,11 @@
-# Roadmap d'implémentation — Tribler-Rust-Torrent
+# Roadmap d'implémentation — OnionBit
 
 Ce document est la **source de vérité de l'avancement**. Chaque étape est
 cochée quand : implémentée + testée + validée manuellement + documentée +
 commitée (cf. `AGENTS.md`, section "Workflow par étape"). La contrainte
 « backend d'abord » est levée (décision du 2026-09-28) : l'UI Flutter
 (`app/`) se développe en parallèle du backend, en consommant
-exclusivement `tribler-api`.
+exclusivement `onionbit-api`.
 
 Légende : `[ ]` à faire · `[~]` en cours · `[i]` implémentée et testée en
 loopback, mais **interopérabilité avec un noeud pyipv8 réel non encore
@@ -22,14 +22,14 @@ ne sont donc pas « terminées » au sens strict) · `[x]` terminée.
 
 ## Phase 1 — Moteur BitTorrent (via `librqbit`)
 
-- [x] **Étape 1. Fondations formats.** `tribler-format` : parser
+- [x] **Étape 1. Fondations formats.** `onionbit-format` : parser
   bencode borné maison (zéro dépendance réseau, profondeur et tailles
   limitées), parsing `.torrent` (info-hash v1 calculé sur le dict `info`
   brut, support partiel v2/hybride : `pieces root`, `file tree`),
   liens magnet (btih hex/base32, btmh v2, trackers, webseeds, `dn`),
   blobs `.mdblob` (payloads signés Ed25519 des types du mapping Python
   `METADATA_TYPE_TO_PAYLOAD_CLASS`). 18 tests offline.
-- [x] **Étape 2. Crypto de base.** `tribler-crypto` : SHA-1/SHA-256
+- [x] **Étape 2. Crypto de base.** `onionbit-crypto` : SHA-1/SHA-256
   (vecteurs officiels), clés IPv8 `LibNaCLPK`/`LibNaCLSK` (format
   binaire pyipv8 `LibNaCLPK:`/`LibNaCLSK:` + X25519 + Ed25519, MID =
   SHA-1), DH X25519 (`crypto_box_beforenm` + HSalsa20, fidèle à
@@ -37,15 +37,15 @@ ne sont donc pas « terminées » au sens strict) · `[x]` terminée.
   AEAD ChaCha20-Poly1305 (pas AES-GCM : cf. note 2026-09-27), signatures
   Ed25519. 16 tests.
 - [x] **Étape 3. Intégration `librqbit` et sessions de téléchargement.**
-  `tribler-bittorrent` : `BtEngine` (enveloppe de `librqbit::Session`
+  `onionbit-bittorrent` : `BtEngine` (enveloppe de `librqbit::Session`
   v9), `Download`/`DownloadStats`/`DownloadState` (types domaine
   decouples), ajout par magnet/URI/bytes `.torrent`, pause/reprise/
   suppression, `EngineConfig` (DHT, trackers, listen, proxy SOCKS5 pour
   les futurs tunnels). Test offline : session sans DHT/trackers/écoute +
-  ajout de `.torrent` construit par `tribler-format`. Note : le test
+  ajout de `.torrent` construit par `onionbit-format`. Note : le test
   "téléchargement réel de bout en bout" reste à faire (nécessite du
   réseau ; hors scope des tests offline) — voir étape 16.
-- [x] **Étape 4. Schéma SQLite et migrations.** `tribler-db` :
+- [x] **Étape 4. Schéma SQLite et migrations.** `onionbit-db` :
   `misc`, `torrent_state` (santé essaims), `tracker_state`, lien N-N
   essaim↔trackers, `channel_node` (table discriminée fidèle au mapping
   Pony v15 : metadata_type, signature nullable unique pour FFA,
@@ -55,31 +55,31 @@ ne sont donc pas « terminées » au sens strict) · `[x]` terminée.
 
 ## Phase 2 — Daemon minimal et API de contrôle
 
-- [x] **Étape 5. Session et Notifier.** `tribler-core` : `CoreSession`
+- [x] **Étape 5. Session et Notifier.** `onionbit-core` : `CoreSession`
   (démarrage/arrêt ordonné, restauration des téléchargements persistés,
   boucle de progression périodique bornée), `Notifier` (broadcast
   tokio borné, non-bloquant, `Lagged` pour les abonnés lents),
   `CoreConfig` centralisée. Persistance automatique des ajouts dans
   `downloads`. 2 tests offline (session en mémoire + notifier).
-- [x] **Étape 6. API REST + flux d'événements minimale.** `tribler-api`
+- [x] **Étape 6. API REST + flux d'événements minimale.** `onionbit-api`
   (axum) : `GET/PUT/DELETE/PATCH /api/downloads` (list/add/remove/
   pause/resume), `GET /api/events` en **SSE** (`event: <topic>\ndata:
   <json>\n\n` — le Python utilise SSE et non WebSocket, correction de
   fidélité), erreurs au format `{"error": {handled, message}}`, DTO
   `downloads[]` miroir du dict `info` Python (codes `DownloadStatus`
   0..11 conservés). Routeur destiné au bind `127.0.0.1` (fait dans
-  `tribler-daemon`). 5 tests d'intégration HTTP loopback + smoke test.
+  `onionbit-daemon`). 5 tests d'intégration HTTP loopback + smoke test.
   Mapping complet : `docs/reference_tribler/api_rest_mapping.md`.
-- [x] **Étape 7. CLI de pilotage minimal.** `tribler-cli` (clap +
+- [x] **Étape 7. CLI de pilotage minimal.** `onionbit-cli` (clap +
   reqwest) : `status`, `list` (tableau infohash/statut/progression/
   débits/nom), `add` (magnet/URI → `uri`, chemin → `torrent`),
   `remove` (`--remove-data`), `pause`, `resume`. Parle uniquement à
-  `tribler-api` via `--api` (défaut `http://127.0.0.1:8085`, cf.
+  `onionbit-api` via `--api` (défaut `http://127.0.0.1:8085`, cf.
   `DEFAULT_API`). Erreurs `{error:{handled,message}}` affichées sur
   stderr. 1 test e2e : binaire réel contre serveur API loopback
   (`status`/`list`/`add`/`pause`/`resume`/`remove` + cas injoignable).
 - [x] **Étape 8. Premier daemon exécutable de bout en bout.**
-  `tribler-daemon` (clap) : `--listen` (défaut `127.0.0.1:8085`,
+  `onionbit-daemon` (clap) : `--listen` (défaut `127.0.0.1:8085`,
   **refuse toute adresse non-loopback**), `--state-dir`, `--offline`
   (tests : aucun trafic sortant) ; logging `tracing`/`EnvFilter`
   (`RUST_LOG`, info par défaut) ; démarrage `CoreSession` + serveur
@@ -90,7 +90,7 @@ ne sont donc pas « terminées » au sens strict) · `[x]` terminée.
 
 ## Phase 3 — Réseau d'anonymisation IPv8
 
-- [x] **Étape 9. Overlay IPv8 minimal.** `tribler-ipv8` : serialiseur
+- [x] **Étape 9. Overlay IPv8 minimal.** `onionbit-ipv8` : serialiseur
   binaire pyipv8 (formats `B/H/I/Q/?`, `varlenH`, `varlenHx20`, `ipv4`,
   `ip_address`, `bits`, `raw`, `20s/…`), paquets signés au format filaire
   exact (`0x00 + version 0x02 + community_id(20o) + msg_id + varlenH(pubkey)
@@ -100,14 +100,14 @@ ne sont donc pas « terminées » au sens strict) · `[x]` terminée.
   response, introduction-request/response (ancien format IPv4), marche
   aléatoire périodique. 4 tests dont échange réel ping/pong loopback entre
   deux noeuds. **Preuve d'interop (bornée)** : discovery signée validée
-  sur loopback contre pyipv8 (venv `D:\Projet\Tribler_sources\
+  sur loopback contre pyipv8 (venv `<Tribler sources checkout> (env `TRIBLER_SRC`)\
   .venv-interop`, via `scripts/interop_ipv8.ps1`) — 39/39 paquets de
   l'essai acceptés dans les deux sens par le vrai `default_eccrypto`,
   pairs mutuellement enregistrés ; fixtures issues de pyipv8 rejouées
   avec succès en CI (`tests/interop_replay.rs`, `tests/fixtures/*.hex`,
   provenance : `tests/fixtures/README.md`). La cible distincte
   « Tribler 8.4.3 installé » n'est pas encore exercée.
-- [x] **Étape 10. DHT overlay IPv8.** `tribler-ipv8::dht` : `calc_node_id`
+- [x] **Étape 10. DHT overlay IPv8.** `onionbit-ipv8::dht` : `calc_node_id`
   (CRC-32 IEEE d'IP masquée + `mid[:17]` — fidèle à `binascii.crc32`),
   `distance` XOR, `RoutingTable` (trie binaire, buckets de 8, split),
   `Storage` versionné, `DhtCommunity` (fusion `DHTCommunity` +
@@ -125,7 +125,7 @@ ne sont donc pas « terminées » au sens strict) · `[x]` terminée.
   pour les intros/punctures (246/245/234/233/249/231) ; les messages
   DHT `ez_send` sont `[auth, payload]` sans `dist`
   (`Packet::sign_no_dist`/`sign_auto`).
-- [x] **Étape 11. Framework de communities complet.** `tribler-ipv8` :
+- [x] **Étape 11. Framework de communities complet.** `onionbit-ipv8` :
   `Network` complet (`_all_addresses`/`WalkableAddress`, `discover_address`,
   `get_walkable_addresses` filtré par service/old-style,
   `get_verified_by_address`, `get_introductions_from`, `blacklist` +
@@ -158,8 +158,8 @@ ne sont donc pas « terminées » au sens strict) · `[x]` terminée.
   ajoutés : `intro_request_count`/`intro_response_count`/
   `puncture_count` + `send_puncture_request` publique.
 - [x] **Étape 12. TunnelCommunity : circuits et hidden seeding.**
-  `tribler-tunnel` : construction de circuits en onion routing (1/2/3
-  sauts), chiffrement ChaCha20-Poly1305 par saut (`tribler-crypto`), hidden
+  `onionbit-tunnel` : construction de circuits en onion routing (1/2/3
+  sauts), chiffrement ChaCha20-Poly1305 par saut (`onionbit-crypto`), hidden
   seeding, proxy SOCKS5 local. Jalon : téléchargement anonyme réel via
   un circuit construit contre le réseau Tribler existant.
   **Fait** : format de cellule (`cell.rs`, fidèle à `CellPayload`),
@@ -218,7 +218,7 @@ ne sont donc pas « terminées » au sens strict) · `[x]` terminée.
   ASSOCIATE (+ rejet IPv4 factice sur circuit DATA), CONNECT HTTP
   28/29, e2e hidden services complet, retry e2e sans doublon, et
   `hidden_seed_udp_relay_roundtrip`. Telechargement anonyme REEL
-  valide : `tribler-bittorrent/tests/anon_download.rs` — 200 Ko
+  valide : `onionbit-bittorrent/tests/anon_download.rs` — 200 Ko
   rqbit/uTP a travers un circuit e2e lie via `udp_relay`.
   **Preuve d'interop tunnels (bornee)** : `scripts/interop_tunnel.ps1`
   — un noeud Rust cree un circuit vers le vrai `TunnelCommunity`
@@ -252,7 +252,7 @@ ne sont donc pas « terminées » au sens strict) · `[x]` terminée.
   bloquant etait l'absence d'une sortie Tribler reelle
   (`exitnode_enabled` non exposable par configuration du client
   installe) ; le banc `scripts/interop_exit_download.ps1` +
-  `examples/exit_download_interop.rs` (tribler-bittorrent) valide le
+  `examples/exit_download_interop.rs` (onionbit-bittorrent) valide le
   scenario retenu — telechargement rqbit **reel** (200 Ko, uTP) a
   travers un circuit a 2 sauts dont le dernier saut est le vrai
   `TunnelCommunity` pyipv8 en sortie (`PEER_FLAG_EXIT_BT`,
@@ -263,29 +263,29 @@ ne sont donc pas « terminées » au sens strict) · `[x]` terminée.
   du seeder, au lieu de l'IPv4 factice des circuits e2e).
   `INTEROP EXIT DOWNLOAD OK`.
 - [x] **Étape 13. Politiques de sécurité réseau et kill switch.**
-  `tribler-network-policy` : crate de politiques pures sans dépendance
-  vers `tribler-ipv8`/`tribler-bittorrent` — `address_policy::IpPolicy`
+  `onionbit-network-policy` : crate de politiques pures sans dépendance
+  vers `onionbit-ipv8`/`onionbit-bittorrent` — `address_policy::IpPolicy`
   (anti-SSRF : loopback, privé/CGNAT, link-local, multicast,
   unspecified, réservé, IPv4-mapped IPv6, ports bornés),
   `exit_policy` (port fidèle de `DataChecker`/`is_allowed` pyipv8 :
   uTP/tracker-UDP/DHT + `PEER_FLAG_EXIT_BT`, IPv8 + `PEER_FLAG_EXIT_IPV8`
   ou préfixe de la community ; source unique des constantes
-  `PEER_FLAG_*` ré-exportées par `tribler-tunnel::routing`),
+  `PEER_FLAG_*` ré-exportées par `onionbit-tunnel::routing`),
   `kill_switch::KillSwitch` (engagements **scopés** par portée
   `proxy`/`circuits`/`manuel` — un proxy redevenu joignable ne
   désarme pas une panne de circuits — `guard()`),
   `proxy_guard::validate_local_socks5_url` (loopback numérique
-  uniquement). Intégrations : `tribler-tunnel::community` applique
+  uniquement). Intégrations : `onionbit-tunnel::community` applique
   `is_exit_data_allowed` dans les deux sens (`exit_data` sortant et
   `exit_recv_data` rentrant, fidèle à `TunnelExitSocket`) ;
-  `tribler-bittorrent::BtEngine` valide `socks5_proxy` au démarrage
+  `onionbit-bittorrent::BtEngine` valide `socks5_proxy` au démarrage
   (refus = pas de démarrage, jamais de repli direct), crée un
   `KillSwitch` sondé par watchdog TCP (portée `proxy` : engage tant
   que le proxy est injoignable → `add`/`resume` refusés) ;
-  `tribler-core` ajoute un watchdog **circuits** par lane anonyme
+  `onionbit-core` ajoute un watchdog **circuits** par lane anonyme
   (portée `circuits`, événementiel via
   `TunnelCommunity::watch_circuits` : proxy joignable ≠ circuit
-  disponible) ; `tribler-core` applique
+  disponible) ; `onionbit-core` applique
   `ip_policy` aux URI `http(s)` de `Session::add_download`
   (résolution DNS + refus fermé sur toute adresse niée).
   Tests : 9 unitaires politique + `tunnel_exit_drops_non_bt_or_unflagged`
@@ -295,18 +295,18 @@ ne sont donc pas « terminées » au sens strict) · `[x]` terminée.
 
 ## Phase 4 — Parité fonctionnelle et services secondaires
 
-- [x] **Étape 14. Services secondaires.** `tribler-core` : équivalents de
+- [x] **Étape 14. Services secondaires.** `onionbit-core` : équivalents de
   `content_discovery` (découverte via canaux), `torrent_checker`
   (scrape santé des torrents), `rss` (abonnements), `watch_folder`
   (import automatique de `.torrent`). Community `ContentDiscovery`
   (id `9aca62f8…1648`, msgs 3/4 santés, 101/102 version, 201/202
-  remote-select) dans `tribler-ipv8` ; checker BEP-15 UDP + scrape
+  remote-select) dans `onionbit-ipv8` ; checker BEP-15 UDP + scrape
   HTTP avec persistance `torrent_state` et `Notification::
   TorrentHealthUpdated` ; watchers RSS conditionnels (ETag) + fetch
   anti-SSRF ; watch folder `.torrent`/`.magnet` dédupliqué. Services
   démarrés/arrêtés par `CoreSession` via `CoreConfig` — validation
   complète verte (tests loopback uniquement).
-- [x] **Étape 15. Parité complète de l'API REST/SSE.** `tribler-api`
+- [x] **Étape 15. Parité complète de l'API REST/SSE.** `onionbit-api`
   couvre les endpoints utiles au futur client : downloads (+ sous-
   endpoints `torrent`/`trackers`/`files`/`stream`), `settings` (GET
   + POST à chaud pour RSS/watch-folder), `shutdown`, `statistics/*`
@@ -317,23 +317,23 @@ ne sont donc pas « terminées » au sens strict) · `[x]` terminée.
   `versioning/*`, `logging`. `CoreSession` expose la stack IPv8
   optionnelle (`ipv8_stack.rs` : endpoint UDP, discovery, content
   discovery, tunnel, SOCKS5, moteurs rqbit par lane `anon_hops`),
-  persistée dans `downloads.anon_hops` (migration v2). `tribler-format`
+  persistée dans `downloads.anon_hops` (migration v2). `onionbit-format`
   gagne le sérialiseur signé `mdblob::encode_entry`. Mapping complet
   dans `docs/reference_tribler/api_rest_mapping.md`.
 - [x] **Étape 16. Durcissement et tests de bout en bout.** Couverture
   e2e des scénarios critiques : téléchargement réel loopback
-  (`tribler-bittorrent::loopback_download`), téléchargement anonyme via
+  (`onionbit-bittorrent::loopback_download`), téléchargement anonyme via
   hidden service (`anon_download`), persistance/redémarrage du daemon
-  (`tribler-core::lifecycle` : DB fichier + `restore_downloads`),
-  migration de schéma v1→v2 (`tribler-db::migrations` : conservation
+  (`onionbit-core::lifecycle` : DB fichier + `restore_downloads`),
+  migration de schéma v1→v2 (`onionbit-db::migrations` : conservation
   des données, idempotence, refus `SchemaTooNew`), kill switch +
   anti-SSRF + proxy guard (`policy.rs` dans bittorrent et core),
   fuite en plein transfert sous deux scénarios distincts : proxy mort
-  (`tribler-bittorrent::kill_switch_midtransfer`) et **circuit détruit
-  proxy vivant** (`tribler-core::circuit_death` — portée `circuits`
+  (`onionbit-bittorrent::kill_switch_midtransfer`) et **circuit détruit
+  proxy vivant** (`onionbit-core::circuit_death` — portée `circuits`
   du kill switch, zéro datagramme vers la destination pendant la
   fenêtre morte, reprise sur nouveau circuit).
-  `tribler-test-support` peuplé (`test_torrent_bytes`, `free_port`,
+  `onionbit-test-support` peuplé (`test_torrent_bytes`, `free_port`,
   `wait_for`) — fixtures dupliquées dedupliquées. Revue des garde-fous
   dans `docs/security/revue_garde_fous.md`.
 
@@ -358,7 +358,7 @@ ne sont donc pas « terminées » au sens strict) · `[x]` terminée.
   callback notifications, règles suspension/arrêt/reprise).
 - [ ] **Étape 19 — remplacée (2026-09-28).** Pas de daemon mobile :
   Android/iOS seront une **interface de pilotage à distance**
-  (consommant `tribler-api` REST+SSE sur un daemon desktop),
+  (consommant `onionbit-api` REST+SSE sur un daemon desktop),
   développée après l'interface desktop. La façade FFI
   `tribler-mobile` et ses builds ne sont plus nécessaires — le
   document `mobile_ffi_surface.md` reste comme référence si le
@@ -370,7 +370,7 @@ ne sont donc pas « terminées » au sens strict) · `[x]` terminée.
 Câblage dans le daemon de tous les endpoints restants de
 `docs/reference_tribler/api_endpoints_complet.md` (daemon uniquement,
 pas d'UI). Décisions du 2026-09-28 : clé API `X-Api-Key`/`?key=`/cookie
-activée en parité Python (loopback compris — `tribler-cli` la lit dans
+activée en parité Python (loopback compris — `onionbit-cli` la lit dans
 `configuration.json`) ; `asyncio/*` adapté au runtime tokio ;
 `identity/*` exclu (ADR à rédiger) ; `GET /api/rss` (items) implémenté.
 
@@ -383,20 +383,20 @@ activée en parité Python (loopback compris — `tribler-cli` la lit dans
   `api/key` générée hex au premier run, `api/http_port_running`
   réécrit après bind réel. Middleware auth axum (header `X-Api-Key`,
   `?key=`, cookie `api_key` → 401 `{error:{handled:true}}`) ; pas de
-  chemins exemptés (`/docs`/`/ui` absents). `tribler-cli --api-key` +
+  chemins exemptés (`/docs`/`/ui` absents). `onionbit-cli --api-key` +
   lecture auto du fichier. `GET /api/settings` = arbre complet ;
   `POST /api/settings` = merge récursif + persistance disque +
   application à chaud. `DefaultBodyLimit` aligné à 16 Mio
   (`MAX_REQUEST_SIZE` Python).
 - [x] **Étape 22. Réglages par download persistés + PATCH complet.**
-  Migration `tribler-db` v3 (`downloads` : `safe_seeding`,
+  Migration `onionbit-db` v3 (`downloads` : `safe_seeding`,
   `upload_limit`, `download_limit`, `seeding_ratio`, `auto_managed`,
   `queue_position`, `completed_dir`, `selected_files`, `trackers`) →
   DTO complété. `PATCH` : `selected_files` (`Session::update_only_files`
   rqbit), `state=recheck`/`move_storage` (stop + déplacement + ré-add
   re-hashé), `upload_limit`/`download_limit` (`ratelimits` rqbit par
   torrent + session), `seeding_ratio(+_default)`/`seeding_mode`
-  (politique d'arrêt de seed dans `tribler-core`).
+  (politique d'arrêt de seed dans `onionbit-core`).
   `queue_position`/`auto_managed`/`file_priority` : sémantique
   simplifiée documentée (pas d'équivalent rqbit — ADR si substantiel).
 - [x] **Étape 23. Trackers et flags d'enrichissement du listing.**
@@ -467,11 +467,11 @@ activée en parité Python (loopback compris — `tribler-cli` la lit dans
 ## Phase 5c — Cycle de vie desktop du daemon
 
 - [x] **Étape 29. Systray Windows et arrêt unifié du daemon.**
-  `tribler-daemon` passe en sous-système GUI
+  `onionbit-daemon` passe en sous-système GUI
   (`#![windows_subsystem = "windows"]` — plus aucune fenêtre console
   au lancement) : icône de zone de notification (`tray-icon` sur un
   thread dédié à pompe de messages Win32) avec menu « Ouvrir
-  Tribler » (lance `tribler_ui.exe` à côté de l'exe), « Démarrer
+  Tribler » (lance `onionbit_ui.exe` à côté de l'exe), « Démarrer
   avec Windows » (valeur `HKCU\...\Run` via `winreg`, état coché
   reflété en direct), « Ouvrir le dossier des logs », « Quitter ».
   Icône `onionbit.ico` embarquée via `embed-resource` + `resources.rc`
@@ -507,7 +507,7 @@ roadmap est terminée**.
 
 - [x] **Étape 20. Plan d'architecture Flutter + coquille
   implémentée** — `docs/plans/flutter_architecture.md`, patterns de
-  `C:\Emule-Sion-UI-UX\app`, consommant exclusivement `tribler-api`
+  `the reference Flutter UI project`, consommant exclusivement `onionbit-api`
   (REST + SSE). Cible immédiate : **Windows desktop** ; Linux/macOS
   ensuite ; le mobile distant reprendra la même base (étape 19
   remplacée). Première passe livrée dans `app/` : thème eMule (seed
@@ -551,7 +551,7 @@ risque IPv8 sous/sur-estimé, etc.), avec la date.
 - 2026-09-28 : phase 5b planifiée (étapes 21-28) — parité complète de
   l'API de contrôle dans le daemon, d'après l'inventaire
   `api_endpoints_complet.md`. Constat clé : la `DhtCommunity` de
-  `tribler-ipv8` n'est pas instanciée dans `Ipv8Stack` (pré-requis de
+  `onionbit-ipv8` n'est pas instanciée dans `Ipv8Stack` (pré-requis de
   tout `/api/ipv8/dht/*` et de `tunnel/peers/dht`) et aucune
   configuration n'est persistée (`configuration.json` absent → lot 1
   en fondation). Arbitrages actés : clé API en parité Python même en
@@ -581,18 +581,18 @@ risque IPv8 sous/sur-estimé, etc.), avec la date.
   initiale d'un moteur BitTorrent écrit entièrement à la main.
 - 2026-09-27 : étape 6 terminée. Correction de fidélité : l'endpoint
   `/api/events` Python est du **SSE** (`text/event-stream`), pas un
-  WebSocket — `tribler-api` reproduit ce format exact. Écarts DTO
+  WebSocket — `onionbit-api` reproduit ce format exact. Écarts DTO
   connus consignés dans `api_rest_mapping.md` (`eta` en chaîne
   formatée, `num_seeds`/`num_connected_seeds` à 0 tant que le scraping
   trackers n'est pas implémenté).
 - 2026-09-27 : étapes 1 et 2 terminées. Deux corrections de fidélité par
   rapport au plan initial : (a) le chiffrement de tunnel IPv8 est
   **ChaCha20-Poly1305** et non AES-GCM (source : `ipv8-rust-tunnels`
-  `crypto.rs`) ; (b) bencode est implémenté maison dans `tribler-format`
+  `crypto.rs`) ; (b) bencode est implémenté maison dans `onionbit-format`
   plutôt que via `librqbit-bencode`, pour garder le parsing borné sous
   notre contrôle (et éviter une dépendance pour un codec simple).
 - 2026-09-27 : nouvelle ressource d'interop documentée — Tribler 8.4.3
-  installé (`C:\Program Files (x86)\Tribler`) : `Tribler.exe` = noeud
+  installé (`<Tribler install dir> (env `TRIBLER_EXE`)`) : `Tribler.exe` = noeud
   Tribler réel pour les tests ping-pong des étapes `[i]` et de l'étape
   12 ; `lib/` = pyipv8 figé importable dans un venv CPython 3.12.
   **Cible distincte du venv pyipv8** : son existence ne prouve aucun

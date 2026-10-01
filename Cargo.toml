@@ -1,18 +1,18 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/tribler-format",
-    "crates/tribler-crypto",
-    "crates/tribler-bittorrent",
-    "crates/tribler-ipv8",
-    "crates/tribler-tunnel",
-    "crates/tribler-core",
-    "crates/tribler-db",
-    "crates/tribler-network-policy",
-    "crates/tribler-api",
-    "crates/tribler-cli",
-    "crates/tribler-daemon",
-    "crates/tribler-test-support",
+    "crates/onionbit-format",
+    "crates/onionbit-crypto",
+    "crates/onionbit-bittorrent",
+    "crates/onionbit-ipv8",
+    "crates/onionbit-tunnel",
+    "crates/onionbit-core",
+    "crates/onionbit-db",
+    "crates/onionbit-network-policy",
+    "crates/onionbit-api",
+    "crates/onionbit-cli",
+    "crates/onionbit-daemon",
+    "crates/onionbit-test-support",
 ]
 # Les crates vendored (`[patch.crates-io]`) ne sont pas des membres du
 # workspace : l'exclure permet de lancer `cargo test` dans vendor/*.
@@ -25,11 +25,11 @@ exclude = [
 ]
 
 [workspace.package]
-version = "0.3.0"
+version = "0.3.1-alpha"
 edition = "2021"
 license = "GPL-3.0-or-later"
-authors = ["Lou"]
-repository = "https://github.com/Tribler/tribler"
+authors = ["Laurent Geynet (Loulach) <laurent.geynet@gmail.com>"]
+repository = "https://github.com/laurentgeynet-ux/OnionBit"
 rust-version = "1.80"
 
 # NOTE: cette table de dependances partagees est preparee a l'avance (cf.
@@ -71,7 +71,7 @@ lz4_flex = "0.11"
 fs2 = "0.4"
 base64 = "0.22"
 
-# API HTTPS (tribler-daemon) : listener TLS de l'API de controle
+# API HTTPS (onionbit-daemon) : listener TLS de l'API de controle
 # (`api/https_*` Python) — axum-server pour le serveur rustls,
 # rustls-pemfile pour parser le PEM `https_certfile` (cert + cle dans
 # le meme fichier, comme `load_cert_chain`), rcgen pour le certificat
@@ -80,7 +80,7 @@ axum-server = { version = "0.8", features = ["tls-rustls"] }
 rustls-pemfile = "2"
 rcgen = "0.13"
 
-# Bureau Windows (tribler-daemon) : icone systray, cle Run d'autostart,
+# Bureau Windows (onionbit-daemon) : icone systray, cle Run d'autostart,
 # console/icone executable. Version epinglee exacte pour tray-icon
 # (0.25.1, 2026-09-16) : eviter de resoudre vers une version fraiche.
 tray-icon = "=0.25.1"

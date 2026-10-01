@@ -396,7 +396,7 @@ class _StatsTab extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final stats = ref.watch(triblerStatsProvider);
+    final stats = ref.watch(onionbitStatsProvider);
     return Column(
       children: [
         Align(
@@ -404,7 +404,7 @@ class _StatsTab extends ConsumerWidget {
           child: IconButton(
             tooltip: 'Rafraîchir',
             icon: const Icon(Icons.refresh, size: 18),
-            onPressed: () => ref.invalidate(triblerStatsProvider),
+            onPressed: () => ref.invalidate(onionbitStatsProvider),
           ),
         ),
         Expanded(
@@ -412,7 +412,7 @@ class _StatsTab extends ConsumerWidget {
             loading: () => const Center(child: CircularProgressIndicator()),
             error: (e, _) => ErrorState(
               message: '$e',
-              onRetry: () => ref.invalidate(triblerStatsProvider),
+              onRetry: () => ref.invalidate(onionbitStatsProvider),
             ),
             data: (s) => ListView(
               padding: const EdgeInsets.all(AppSpacing.md),
@@ -586,7 +586,7 @@ class _OverviewTabState extends ConsumerState<_OverviewTab> {
       ref.invalidate(tunnelRelaysProvider);
       ref.invalidate(tunnelExitsProvider);
       ref.invalidate(tunnelPeersProvider);
-      ref.invalidate(triblerStatsProvider);
+      ref.invalidate(onionbitStatsProvider);
     });
   }
 
@@ -602,7 +602,7 @@ class _OverviewTabState extends ConsumerState<_OverviewTab> {
     ref.invalidate(tunnelRelaysProvider);
     ref.invalidate(tunnelExitsProvider);
     ref.invalidate(tunnelPeersProvider);
-    ref.invalidate(triblerStatsProvider);
+    ref.invalidate(onionbitStatsProvider);
   }
 
   @override
@@ -612,7 +612,7 @@ class _OverviewTabState extends ConsumerState<_OverviewTab> {
     final relays = ref.watch(tunnelRelaysProvider).value;
     final exits = ref.watch(tunnelExitsProvider).value;
     final peers = ref.watch(tunnelPeersProvider).value;
-    final stats = ref.watch(triblerStatsProvider).value;
+    final stats = ref.watch(onionbitStatsProvider).value;
     final speeds = ref.watch(totalSpeedsProvider);
 
     final ready = circuits?.where((c) => c.ready).length ?? 0;

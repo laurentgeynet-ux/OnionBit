@@ -131,7 +131,7 @@ class RestDiagnosticRepository implements DiagnosticRepository {
       _swarmPeers(await _api.get('/ipv8/tunnel/peers/pex'));
 
   @override
-  Future<TriblerStats> triblerStats() async {
+  Future<TriblerStats> onionbitStats() async {
     final resp = await _api.get('/statistics/tribler') as Map<String, dynamic>;
     final s =
         resp['tribler_statistics'] as Map<String, dynamic>? ?? const {};

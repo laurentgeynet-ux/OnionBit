@@ -4,7 +4,7 @@
 /// tourne déjà.
 ///
 /// Sur desktop (`dart.library.io`) : si l'API découverte ne répond
-/// pas, `tribler-daemon[.exe]` à côté de l'exécutable de l'UI est
+/// pas, `onionbit-daemon[.exe]` à côté de l'exécutable de l'UI est
 /// lancé détaché (`--state-dir <exe>/state`, la disposition du bundle
 /// `dist\`), puis sondé ~30 s. Sur web : no-op (`null` — un
 /// navigateur ne peut pas lancer de processus).

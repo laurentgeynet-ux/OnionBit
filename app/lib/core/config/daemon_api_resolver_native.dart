@@ -2,9 +2,9 @@
 ///
 /// Ordre de résolution (miroir de `session_resolver_native.dart`
 /// d'eMule-Rust) :
-/// 1. `TRIBLER_API_KEY` dans l'environnement du processus — injectée par
-///    un lanceur ou un service wrapper ; `TRIBLER_API` surcharge l'URL ;
-/// 2. `configuration.json` écrit par `tribler-daemon` dans son
+/// 1. `ONIONBIT_API_KEY` dans l'environnement du processus — injectée par
+///    un lanceur ou un service wrapper ; `ONIONBIT_API` surcharge l'URL ;
+/// 2. `configuration.json` écrit par `onionbit-daemon` dans son
 ///    `state_dir`, cherché dans les répertoires candidats.
 ///
 /// `configuration.json` expose `api.key` (clé `X-Api-Key`) et le port
@@ -18,9 +18,9 @@ import 'dart:io';
 import 'app_config.dart';
 
 /// Répertoires candidats contenant `configuration.json`, par priorité :
-/// `<exe>/state` et `<exe>/../state` (bundle `dist\` : `tribler_ui.exe`
+/// `<exe>/state` et `<exe>/../state` (bundle `dist\` : `onionbit_ui.exe`
 /// à la racine, daemon lancé avec `--state-dir <dist>\state`),
-/// `<cwd>/.tribler`, `<cwd>/../.tribler` et `<cwd>/state` (boucle de
+/// `<cwd>/.onionbit`, `<cwd>/../.onionbit` et `<cwd>/state` (boucle de
 /// développement : `flutter run` depuis `app\`, daemon depuis la racine
 /// du dépôt ou son propre `--state-dir`).
 List<Directory> _candidateStateDirs() {
@@ -30,8 +30,8 @@ List<Directory> _candidateStateDirs() {
   return [
     Directory('${exeDir.path}${sep}state'),
     Directory('${exeDir.parent.path}${sep}state'),
-    Directory('${cwd.path}$sep.tribler'),
-    Directory('${cwd.parent.path}$sep.tribler'),
+    Directory('${cwd.path}$sep.onionbit'),
+    Directory('${cwd.parent.path}$sep.onionbit'),
     Directory('${cwd.path}${sep}state'),
   ];
 }
@@ -81,9 +81,9 @@ AppConfig? _fromConfigFile() {
 /// retombe alors sur les préférences persistées puis les défauts.
 AppConfig? resolveDaemonApi() {
   final env = Platform.environment;
-  final envKey = env['TRIBLER_API_KEY']?.trim() ?? '';
+  final envKey = env['ONIONBIT_API_KEY']?.trim() ?? '';
   if (envKey.isNotEmpty) {
-    final envUrl = env['TRIBLER_API']?.trim() ?? '';
+    final envUrl = env['ONIONBIT_API']?.trim() ?? '';
     return AppConfig(
       baseUrl: envUrl.isNotEmpty ? envUrl : const AppConfig().baseUrl,
       apiKey: envKey,

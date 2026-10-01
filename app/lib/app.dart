@@ -26,7 +26,7 @@ class TriblerApp extends ConsumerWidget {
     final mode = appearance?.mode ?? ThemeMode.system;
 
     return MaterialApp.router(
-      title: 'Tribler-Rust',
+      title: 'OnionBit',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light(seedColor: seed),
       darkTheme: AppTheme.dark(seedColor: seed),

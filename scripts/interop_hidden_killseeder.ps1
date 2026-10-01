@@ -2,11 +2,11 @@
 # anonyme en plein transfert, drain borne, fenetre morte stricte,
 # redemarrage puis reprise jusqu'au SHA-256.
 #
-#   -Sens A : seeder = tribler-daemon Rust, downloader = Tribler 8.4.3.
+#   -Sens A : seeder = onionbit-daemon Rust, downloader = Tribler 8.4.3.
 #             Mesure : Tribler re-decouvre le seeder via
 #             `do_peer_discovery`/`swarm_lookup_interval` (30 s) apres
 #             que le seeder a re-public sur la DHT via son nouvel IP.
-#   -Sens B : seeder = Tribler 8.4.3, downloader = tribler-daemon Rust.
+#   -Sens B : seeder = Tribler 8.4.3, downloader = onionbit-daemon Rust.
 #             Mesure : notre `do_peer_discovery` re-looke la DHT, cree
 #             un nouvel e2e et reprend le telechargement.
 #
@@ -48,7 +48,7 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $root   = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $out    = Join-Path $root $OutDir
-$daemon = Join-Path $root 'target\debug\tribler-daemon.exe'
+$daemon = Join-Path $root 'target\debug\onionbit-daemon.exe'
 $mk     = Join-Path $root 'target\debug\examples\mk_torrent.exe'
 $rep    = Join-Path $out 'report'
 $triblerExe = if ($env:TRIBLER_EXE) { $env:TRIBLER_EXE } else { 'C:\Program Files (x86)\Tribler\Tribler.exe' }
@@ -113,7 +113,7 @@ function Start-Daemon($p, [string[]]$boot) {
     $psi = New-Object System.Diagnostics.ProcessStartInfo($daemon)
     $psi.Arguments = $argList -join ' '
     $psi.UseShellExecute = $false
-    $psi.EnvironmentVariables['RUST_LOG'] = 'info,tribler_ipv8=debug,tribler_tunnel=debug,tribler_core=debug,librqbit_utp=debug,librqbit=debug'
+    $psi.EnvironmentVariables['RUST_LOG'] = 'info,onionbit_ipv8=debug,onionbit_tunnel=debug,onionbit_core=debug,librqbit_utp=debug,librqbit=debug'
     $proc = [System.Diagnostics.Process]::Start($psi)
     $procs[$p.Name] = $proc
     Log ("{0} demarre pid={1} bootstrap=[{2}]" -f $p.Name, $proc.Id, ($boot -join ', '))
@@ -234,7 +234,7 @@ function Start-Tribler {
 
 # ---------- Phase 0 : contenu + torrent ----------
 Log "=== Phase 0 : contenu de test (sens $Sens, hops=$Hops) ==="
-if (-not (Test-Path $daemon)) { throw 'tribler-daemon.exe absent - cargo build -p tribler-daemon' }
+if (-not (Test-Path $daemon)) { throw 'onionbit-daemon.exe absent - cargo build -p onionbit-daemon' }
 if (-not (Test-Path $mk)) { throw 'mk_torrent.exe absent' }
 if (-not (Test-Path $triblerExe)) { throw "Tribler.exe absent : $triblerExe" }
 $content = Join-Path $out 'content'
@@ -821,7 +821,7 @@ finally {
         if ($procs.ContainsKey($p.Name) -and -not $procs[$p.Name].HasExited) {
             try { $procs[$p.Name].Kill(); $procs[$p.Name].WaitForExit() } catch {}
         }
-        $log = Join-Path $p.Dir 'logs\tribler.log'
+        $log = Join-Path $p.Dir 'logs\onionbit.log'
         if (Test-Path $log) { Copy-Item $log (Join-Path $rep ("tribler_{0}.log" -f $p.Name)) -Force }
     }
     try { TCircuits | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $rep 'T_circuits.json') -Encoding UTF8 } catch {}

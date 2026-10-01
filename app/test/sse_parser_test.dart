@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:tribler_ui/core/api/events.dart';
-import 'package:tribler_ui/core/api/sse_client.dart';
+import 'package:onionbit_ui/core/api/events.dart';
+import 'package:onionbit_ui/core/api/sse_client.dart';
 
 void main() {
   group('SseEventParser', () {

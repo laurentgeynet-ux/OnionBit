@@ -2,7 +2,7 @@ import 'download_peer.dart';
 import 'download_tracker.dart';
 
 /// Entité métier `Download` — miroir de `DownloadInfo` (DTO de
-/// `tribler-api`, lui-même miroir du dict `info` Python).
+/// `onionbit-api`, lui-même miroir du dict `info` Python).
 class Download {
   const Download({
     required this.infohash,

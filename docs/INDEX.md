@@ -8,26 +8,26 @@ chaque étape (cf. `AGENTS.md`, "Workflow par étape").
 | `AGENTS.md` | Règles pour agents IA (règles critiques, conventions, workflow) |
 | `LICENSE` | Texte complet GPL-3.0 |
 | `Cargo.toml` | Workspace Cargo, 12 crates, dépendances partagées |
-| `crates/tribler-format/` | Bencode, `.torrent`, magnet, `.mdblob` |
-| `crates/tribler-crypto/` | Hachage, clés IPv8, crypto tunnel |
-| `crates/tribler-bittorrent/` | Intégration `librqbit`, sessions de téléchargement |
-| `crates/tribler-ipv8/` | Moteur overlay IPv8 (discovery, communities, DHT overlay) |
-| `crates/tribler-tunnel/` | `TunnelCommunity` : circuits, hidden seeding, `TunnelUdpSocket` (uTP/DHT/tracker via cellules `data`) |
-| `crates/tribler-core/` | Domaine/orchestration : `Session`, `Notifier`, règles métier |
-| `crates/tribler-db/` | Persistance SQLite |
-| `crates/tribler-network-policy/` | Garde-fous réseau (anti-SSRF, exit policy, kill switch) |
-| `crates/tribler-api/` | API REST + SSE (axum) |
-| `crates/tribler-cli/` | CLI de pilotage |
-| `crates/tribler-daemon/` | Binaire principal (composition racine) |
-| `crates/tribler-test-support/` | Fixtures/helpers de tests partagés |
+| `crates/onionbit-format/` | Bencode, `.torrent`, magnet, `.mdblob` |
+| `crates/onionbit-crypto/` | Hachage, clés IPv8, crypto tunnel |
+| `crates/onionbit-bittorrent/` | Intégration `librqbit`, sessions de téléchargement |
+| `crates/onionbit-ipv8/` | Moteur overlay IPv8 (discovery, communities, DHT overlay) |
+| `crates/onionbit-tunnel/` | `TunnelCommunity` : circuits, hidden seeding, `TunnelUdpSocket` (uTP/DHT/tracker via cellules `data`) |
+| `crates/onionbit-core/` | Domaine/orchestration : `Session`, `Notifier`, règles métier |
+| `crates/onionbit-db/` | Persistance SQLite |
+| `crates/onionbit-network-policy/` | Garde-fous réseau (anti-SSRF, exit policy, kill switch) |
+| `crates/onionbit-api/` | API REST + SSE (axum) |
+| `crates/onionbit-cli/` | CLI de pilotage |
+| `crates/onionbit-daemon/` | Binaire principal (composition racine) |
+| `crates/onionbit-test-support/` | Fixtures/helpers de tests partagés |
 | `vendor/` | `librqbit*` vendored+patchés (`[patch.crates-io]`) : `DatagramSocket` injectable, uTP/DHT/tracker-UDP sur tunnel (ADR-0007) |
-| `app/` | Interface Flutter desktop (Riverpod + go_router, consomme `tribler-api` REST/SSE) |
+| `app/` | Interface Flutter desktop (Riverpod + go_router, consomme `onionbit-api` REST/SSE) |
 | `docs/plans/plan_faisabilite.md` | Analyse de faisabilité, risques, décisions |
 | `docs/plans/roadmap.md` | Plan d'implémentation détaillé (source de vérité de l'avancement) |
 | `docs/architecture/architecture.md` | Vue d'ensemble de la clean architecture |
 | `docs/architecture/decisions/000X-*.md` | ADRs |
 | `docs/reference_tribler/correspondance_modules.md` | Correspondance Python Tribler ↔ Rust |
-| `docs/reference_tribler/api_rest_mapping.md` | Mapping endpoints/DTO/topics SSE API Python ↔ `tribler-api` |
+| `docs/reference_tribler/api_rest_mapping.md` | Mapping endpoints/DTO/topics SSE API Python ↔ `onionbit-api` |
 | `docs/reference_tribler/api_endpoints_complet.md` | Inventaire exhaustif des fonctions de l'API web Tribler (routes, paramètres, défauts/min-max, implantation Python ↔ Rust) |
 | `docs/reference_tribler/configuration_cablage.md` | Câblage des champs `configuration.json` : mapping direct, décisions explicites et écarts assumés |
 | `docs/reference_tribler/ipv8_rust_tunnels/` | Extraits des sources `ipv8-rust-tunnels` (formats clés, DH, paquets) |
@@ -42,13 +42,13 @@ chaque étape (cf. `AGENTS.md`, "Workflow par étape").
 | `docs/CHANGELOG.md` | Historique des étapes franchies |
 | `scripts/verify_all.ps1` | Validation complète (check/clippy/fmt/test) |
 | `scripts/interop_ipv8.ps1` + `scripts/interop/` | Jalon d'interop Rust↔pyipv8 sur loopback : `py_node.py` (noeud Python), `verify_packets.py` (vérification Ed25519 via le vrai `default_eccrypto`), chemins réglables via `TRIBLER_PYIPV8`/`TRIBLER_INTEROP_PY` |
-| `crates/tribler-ipv8/tests/fixtures/` | Paquets filaires réels enregistrés pendant l'interop (`.hex`) + `README.md` de provenance (commit pyipv8, sens, msg_ids) ; rejoués par `tests/interop_replay.rs` |
+| `crates/onionbit-ipv8/tests/fixtures/` | Paquets filaires réels enregistrés pendant l'interop (`.hex`) + `README.md` de provenance (commit pyipv8, sens, msg_ids) ; rejoués par `tests/interop_replay.rs` |
 
 ## Sources externes de référence (locales)
 
 | Chemin | Rôle |
 | :--- | :--- |
-| `D:\Projet\Tribler_sources\tribler` | Sources officielles Tribler (+ sous-module `pyipv8/`) — référence de vérité protocolaire IPv8 / formats / API REST |
-| `D:\Projet\Rqbit` | Sources de rqbit (branche main) — référence de l'API interne `librqbit` (`Session`, `ManagedTorrent`, options, stats) ; plus récent que `librqbit 9.0.1` sur crates.io |
-| `C:\Program Files (x86)\Tribler` | Tribler **8.4.3** installé (application figée CPython 3.12) — `Tribler.exe` = noeud Tribler réel pour les tests d'interop/ping-pong des étapes 9-12 ; `lib/` = dépendances figées (`ipv8` en `.pyc`, `ipv8_rust_tunnels.pyd`, `libtorrent`, `tribler`) importables dans un venv **CPython 3.12** via `PYTHONPATH` ; `tribler_source/` = sources `.py` de la version installée ; `tools/reset*.bat` = réinitialisation de l'état |
-| `C:\Emule-Sion-UI-UX\app` | UI Flutter de référence (style) — **à ne pas modifier**, consultée uniquement pour la phase 6 |
+| `<Tribler sources checkout> (env `TRIBLER_SRC`)` | Sources officielles Tribler (+ sous-module `pyipv8/`) — référence de vérité protocolaire IPv8 / formats / API REST |
+| `<rqbit source checkout> (env `RQBIT_SRC`)` | Sources de rqbit (branche main) — référence de l'API interne `librqbit` (`Session`, `ManagedTorrent`, options, stats) ; plus récent que `librqbit 9.0.1` sur crates.io |
+| `<Tribler install dir> (env `TRIBLER_EXE`)` | Tribler **8.4.3** installé (application figée CPython 3.12) — `Tribler.exe` = noeud Tribler réel pour les tests d'interop/ping-pong des étapes 9-12 ; `lib/` = dépendances figées (`ipv8` en `.pyc`, `ipv8_rust_tunnels.pyd`, `libtorrent`, `tribler`) importables dans un venv **CPython 3.12** via `PYTHONPATH` ; `tribler_source/` = sources `.py` de la version installée ; `tools/reset*.bat` = réinitialisation de l'état |
+| `the reference Flutter UI project` | UI Flutter de référence (style) — **à ne pas modifier**, consultée uniquement pour la phase 6 |

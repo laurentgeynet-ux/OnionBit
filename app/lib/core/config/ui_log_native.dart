@@ -1,5 +1,5 @@
 /// Journal UI desktop (`dart:io`) : `<exe>/state/logs/ui.log` —
-/// à côté du `tribler.log` du daemon. Tolère toute erreur d'écriture.
+/// à côté du `onionbit.log` du daemon. Tolère toute erreur d'écriture.
 library;
 
 import 'dart:io';

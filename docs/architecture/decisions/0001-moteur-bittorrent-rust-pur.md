@@ -32,8 +32,8 @@ réécriture complète depuis zéro.
 
 ## Conséquences
 
-- `tribler-bittorrent` est un crate d'adaptation (traduit l'API
-  `librqbit::Session` vers les traits/domaine de `tribler-core`), pas un
+- `onionbit-bittorrent` est un crate d'adaptation (traduit l'API
+  `librqbit::Session` vers les traits/domaine de `onionbit-core`), pas un
   moteur bas niveau.
 - Dépendance externe dont il faut suivre les versions (parfois beta) —
   figer dans `Cargo.lock`, revalider à chaque mise à jour volontaire.
