@@ -2,7 +2,7 @@
 # Copyright (C) 2026 Laurent Geynet <laurent.geynet@gmail.com>
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-﻿# interop_public_dht.ps1 - banc DHT publique / reseau Tribler reel.
+# interop_public_dht.ps1 - banc DHT publique / reseau Tribler reel.
 #
 #   downloader Rust -> circuits a sauts LIBRES sur le reseau Tribler
 #   (selection standard, route OBSERVEE rapportee) -> sortie = noeud
