@@ -39,8 +39,4 @@ abstract interface class SearchRepository {
   /// trackers connus). `null` = santé en cours de vérification côté
   /// daemon (`"checking"`).
   Future<({int seeders, int leechers})?> health(String infohash);
-
-  /// Suggestions d'autocomplétion (`GET /metadata/search/completions`
-  /// — FTS préfixe + continuation de mot, comme le GUI Tribler).
-  Future<List<String>> completions(String query);
 }

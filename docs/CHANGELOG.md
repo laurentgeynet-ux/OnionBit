@@ -32,6 +32,17 @@ en haut.
   `pumpApp(locale: …)`, assertions sur les chaînes EN) ;
   `check_i18n.ps1` vert. ADR-0009.
 
+## UI : suppression de la prédiction de recherche dans la TopBar (2026-10-01)
+
+- `top_bar.dart` : le champ de recherche n'utilise plus
+  `Autocomplete` (suggestions FTS `/metadata/search/completions` en
+  popover) — simple `TextField` avec debounce 300 ms, bouton effacer
+  et synchro `searchQueryProvider`.
+- `search_repository.dart` / `rest_search_repository.dart` : la
+  méthode `completions` retirée (code mort) ; l'endpoint daemon
+  `/metadata/search/completions` reste disponible pour la parité
+  wire Tribler.
+
 ## UI : panneau de détail des téléchargements redimensionnable (2026-10-01)
 
 - Le panneau « Détails/Fichiers/Trackers/Pairs » était figé à 280 px
