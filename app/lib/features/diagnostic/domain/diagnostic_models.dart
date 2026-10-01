@@ -145,7 +145,6 @@ class OnionbitStats {
   const OnionbitStats({
     required this.dbSize,
     required this.numTorrents,
-    required this.numChannels,
     required this.peers,
     required this.sessions,
     required this.version,
@@ -153,7 +152,6 @@ class OnionbitStats {
 
   final int dbSize;
   final int numTorrents;
-  final int numChannels;
 
   /// Pairs découverts par la stack IPv8 (`-1` = stack inactive).
   final int peers;

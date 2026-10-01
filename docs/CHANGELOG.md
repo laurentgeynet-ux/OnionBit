@@ -32,6 +32,15 @@ en haut.
   `pumpApp(locale: …)`, assertions sur les chaînes EN) ;
   `check_i18n.ps1` vert. ADR-0009.
 
+## Diagnostic : statistique « Canaux » retirée (2026-10-01)
+
+- Le compteur `num_channels` (entrées `metadata_type=400` du
+  GigaChannel) restait structurellement à 0 : le réseau ne produit plus
+  de canaux. Ligne retirée de l'onglet Statistiques + champ
+  `OnionbitStats.numChannels` et clé `statChannels` supprimés.
+- Le champ JSON `num_channels` reste émis par `GET /api/statistics/
+  tribler` (compat API).
+
 ## UI : pouce de scrollbar visible en mode clair (2026-10-01)
 
 - Le thème ne définissait pas de `scrollbarTheme` : le défaut M3

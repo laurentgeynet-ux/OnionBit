@@ -160,7 +160,6 @@
   "statDaemonVersion": "Version du daemon",
   "statDbSize": "Taille de la base",
   "statTorrentsKnown": "Torrents connus",
-  "statChannels": "Canaux",
   "statIpv8Peers": "Pairs IPv8 découverts",
   "statSessions": "Sessions moteur (direct + lanes)",
 

@@ -454,7 +454,7 @@ class _StatsTab extends ConsumerWidget {
                   context.l10n.statTorrentsKnown,
                   '${s.numTorrents}',
                 ),
-                _stat(context, context.l10n.statChannels, '${s.numChannels}'),
+
                 _stat(
                   context,
                   context.l10n.statIpv8Peers,

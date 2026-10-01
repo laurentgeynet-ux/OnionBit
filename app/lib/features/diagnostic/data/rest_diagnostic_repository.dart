@@ -143,7 +143,6 @@ class RestDiagnosticRepository implements DiagnosticRepository {
     return OnionbitStats(
       dbSize: (s['db_size'] as num?)?.toInt() ?? 0,
       numTorrents: (s['num_torrents'] as num?)?.toInt() ?? 0,
-      numChannels: (s['num_channels'] as num?)?.toInt() ?? 0,
       peers: (s['peers'] as num?)?.toInt() ?? -1,
       sessions: (lt?['sessions'] as List?)?.length ?? -1,
       version: '${s['endpoint_version'] ?? ''}',
