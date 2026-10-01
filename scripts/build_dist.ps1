@@ -8,6 +8,8 @@
 #   powershell -NoProfile -ExecutionPolicy RemoteSigned -File scripts\build_dist.ps1
 #   powershell ... -SkipCheck                        (sans le cargo check prealable)
 #   powershell ... -Profile debug                    (binaires debug)
+#   powershell ... -ZipRelease                       (+ bundle+zip GitHub :
+#                                                     dist\OnionBit-<ver>-windows-x64.zip)
 #
 # Produit `dist\` a la racine du depot (dossier portable, deja ignore par
 # git) :
@@ -28,7 +30,8 @@
 param(
     [switch]$SkipCheck,
     [ValidateSet("release", "debug")]
-    [string]$Profile = "release"
+    [string]$Profile = "release",
+    [switch]$ZipRelease
 )
 
 $ErrorActionPreference = "Stop"
@@ -102,6 +105,39 @@ try {
         built_utc = (Get-Date).ToUniversalTime().ToString("o")
     }
     $manifest | ConvertTo-Json | Set-Content (Join-Path $dist "build-manifest.json")
+
+    # -- 6) Bundle + zip de release GitHub (optionnel) ---------------------
+    if ($ZipRelease) {
+        Write-Host "== bundle release OnionBit-<ver>-windows-x64 ==" -ForegroundColor Cyan
+        $ver     = (cargo pkgid -p onionbit-daemon).Split('#')[-1]
+        $bundle  = Join-Path $dist "OnionBit-$ver-windows-x64"
+        $zipPath = "$bundle.zip"
+        if (Test-Path $bundle)  { Remove-Item $bundle -Recurse -Force }
+        if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
+        New-Item -ItemType Directory -Force -Path $bundle | Out-Null
+
+        # Payload = contenu de dist\ (exe, dll, data\) — jamais l'etat
+        # utilisateur ni les artefacts de release eux-memes.
+        Get-ChildItem $dist |
+            Where-Object {
+                $_.Name -ne 'state' -and
+                $_.Name -notlike 'OnionBit-*' -and
+                $_.Name -notlike '*.zip' -and
+                $_.Name -notlike 'LISEZMOI*' -and
+                $_.Name -ne 'build-manifest.json'
+            } | Copy-Item -Destination $bundle -Recurse -Force
+
+        Copy-Item (Join-Path $root 'LICENSE') -Destination $bundle
+        Copy-Item (Join-Path $dist 'build-manifest.json') -Destination $bundle
+        # LISEZMOI : gabarit versionne (placeholder {{VERSION}}).
+        (Get-Content (Join-Path $PSScriptRoot 'dist_lisezmoi.txt') -Raw -Encoding UTF8).
+            Replace('{{VERSION}}', $ver) |
+            Set-Content (Join-Path $bundle 'LISEZMOI.txt') -Encoding UTF8
+
+        Compress-Archive -Path $bundle -DestinationPath $zipPath -CompressionLevel Optimal
+        Write-Host "  Zip release : $zipPath" -ForegroundColor Green
+        Write-Host "  SHA-256     : $((Get-FileHash $zipPath -Algorithm SHA256).Hash)"
+    }
 
     Write-Host ""
     Write-Host "Build OK -> dist\" -ForegroundColor Green
