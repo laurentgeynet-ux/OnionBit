@@ -18,7 +18,7 @@
   "filterInactive": "Inactive",
 
   "sidebarAddDownloadTooltip": "Add a download",
-  "sidebarAdd": "Add",
+  "add": "Add",
   "sidebarGroupLibrary": "Library",
   "sidebarGroupSystem": "System",
   "sidebarFiltersCollapse": "Collapse filters",
@@ -87,6 +87,227 @@
   "@snackFinishedName": {
     "placeholders": { "name": { "type": "String" } }
   },
+
+  "searchPopular": "Trending on the network",
+  "searchResultsFor": "Results for \"{query}\"",
+  "@searchResultsFor": {
+    "placeholders": { "query": { "type": "String" } }
+  },
+  "searchAddSelected": "Add ({count})",
+  "@searchAddSelected": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "searchDeselect": "Clear selection",
+  "searchRemoteProgress": "remote search · {results, plural, =1{# result} other{# results}} · {peers, plural, =1{# peer} other{# peers}}",
+  "@searchRemoteProgress": {
+    "placeholders": {
+      "results": { "type": "int" },
+      "peers": { "type": "int" }
+    }
+  },
+  "searchRemoteStop": "Stop remote search",
+  "searchRemoteFinished": "{count, plural, =1{# remote result} other{# remote results}} · finished at {time}",
+  "@searchRemoteFinished": {
+    "placeholders": {
+      "count": { "type": "int" },
+      "time": { "type": "String" }
+    }
+  },
+  "sortResults": "Sort results",
+  "sortRelevance": "Relevance",
+  "sortHealth": "Health (seeders)",
+  "colName": "Name",
+  "colSize": "Size",
+  "colSeeds": "Seeds",
+  "colLeechers": "Leechers",
+  "colDate": "Date",
+  "colSource": "Source",
+  "searchRecent": "Recent:",
+  "searchSourceNetwork": "Network",
+  "searchMinSeeds": "≥ 10 seeds",
+  "emptyNoTorrents": "No known torrents",
+  "emptyNoResults": "No results",
+  "emptyDiscovering": "The daemon is still discovering the network — trending torrents will appear here.",
+  "emptyTryOther": "Try other terms, or wait for network replies.",
+  "batchAdded": "{added, plural, =1{# download added} other{# downloads added}}",
+  "@batchAdded": {
+    "placeholders": { "added": { "type": "int" } }
+  },
+  "batchAddedFailed": "{added, plural, =1{# added} other{# added}}, {failed, plural, =1{# failed} other{# failed}}",
+  "@batchAddedFailed": {
+    "placeholders": {
+      "added": { "type": "int" },
+      "failed": { "type": "int" }
+    }
+  },
+  "resultSeedsLeechers": "{seeders} seeds / {leechers} leechers",
+  "@resultSeedsLeechers": {
+    "placeholders": {
+      "seeders": { "type": "int" },
+      "leechers": { "type": "int" }
+    }
+  },
+  "sourceNetwork": "network",
+  "sourceLocal": "local",
+  "alreadyDownloaded": "Already in your downloads",
+  "inProgress": "In progress",
+  "healthSeeders": "{count, plural, =1{# seeder} other{# seeders}}",
+  "@healthSeeders": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "healthLeechersOnly": "Leechers only — fragile health",
+  "healthUnknown": "Unknown health",
+  "ctxAdd": "Add…",
+  "ctxQuickAdd": "Quick add",
+  "ctxDirectHop": "Direct (0 hops)",
+  "ctxHops": "{count, plural, =1{# hop} other{# hops}}",
+  "@ctxHops": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "ctxRefreshHealth": "Refresh health",
+  "ctxCopyMagnet": "Copy magnet link",
+  "ctxCopyInfohash": "Copy info-hash",
+  "toastAdded": "\"{name}\" added",
+  "@toastAdded": {
+    "placeholders": { "name": { "type": "String" } }
+  },
+  "toastAddedAnon": "\"{name}\" added anonymously ({hops, plural, =1{# hop} other{# hops}})",
+  "@toastAddedAnon": {
+    "placeholders": {
+      "name": { "type": "String" },
+      "hops": { "type": "int" }
+    }
+  },
+  "toastAddError": "Add: {error}",
+  "@toastAddError": {
+    "placeholders": { "error": { "type": "String" } }
+  },
+  "toastHealthOk": "Health refreshed",
+  "toastHealthPending": "Health check in progress on the daemon",
+  "toastHealthError": "Health probe: {error}",
+  "@toastHealthError": {
+    "placeholders": { "error": { "type": "String" } }
+  },
+  "toastMagnetCopied": "Magnet link copied",
+  "toastInfohashCopied": "Info-hash copied",
+
+  "tabOverview": "Overview",
+  "tabStats": "Statistics",
+  "tabOverlays": "Overlays",
+  "tabCircuits": "Circuits",
+  "tabRelays": "Relays",
+  "tabExits": "Exits",
+  "tabSwarms": "Swarms",
+  "tabPeers": "Peers",
+  "tabDhtPeers": "DHT peers",
+  "tabPexPeers": "PEX peers",
+  "tabLogs": "Logs",
+  "refresh": "Refresh",
+
+  "emptyOverlays": "No overlay",
+  "emptyOverlaysMsg": "Is the IPv8 stack active?",
+  "peersCount": "{count, plural, =1{# peer} other{# peers}}",
+  "@peersCount": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "emptyCircuits": "No circuit",
+  "emptyCircuitsMsg": "Anonymous circuits are built when a download requests one.",
+  "testNewCircuit": "Test a new circuit",
+  "testCircuitHops": "{hops, plural, =1{Test a 1-hop circuit} other{Test a {hops}-hop circuit}}",
+  "@testCircuitHops": {
+    "placeholders": { "hops": { "type": "int" } }
+  },
+  "circuitHopCount": "{goal, plural, =1{{actual}/1 hop} other{{actual}/{goal} hops}}",
+  "@circuitHopCount": {
+    "placeholders": {
+      "actual": { "type": "int" },
+      "goal": { "type": "int" }
+    }
+  },
+  "circuitRoute": "route: {route}",
+  "@circuitRoute": {
+    "placeholders": { "route": { "type": "String" } }
+  },
+  "speedTest": "Speed test",
+  "emptyRelays": "No relay",
+  "relayRendezvous": "rendezvous relay",
+  "relay": "relay",
+  "emptyExits": "No exit",
+  "exitActive": "active",
+  "exitInactive": "inactive",
+  "exitCircuit": "circuit #{id}",
+  "@exitCircuit": {
+    "placeholders": { "id": { "type": "int" } }
+  },
+  "emptySwarms": "No hidden swarm",
+  "emptySwarmsMsg": "Appears when an anonymous download starts.",
+  "connectionsCount": "{count, plural, =1{# connection} other{# connections}}",
+  "@connectionsCount": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "flagRelay": "relay",
+  "flagBtExit": "bt-exit",
+  "flagIpv8Exit": "ipv8-exit",
+  "flagSpeedTest": "speed-test",
+  "flagBackupExit": "backup-exit",
+  "flagHttpExit": "http-exit",
+  "noFlags": "no flag",
+  "emptyTunnelPeers": "No tunnel peer",
+  "emptyIntroPointsMsg": "Appears when hidden-swarm introduction points are known.",
+  "introPointsCount": "{count, plural, =1{# introduction point} other{# introduction points}}",
+  "@introPointsCount": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "seederPrefix": "seeder {pk}",
+  "@seederPrefix": {
+    "placeholders": { "pk": { "type": "String" } }
+  },
+  "emptyDhtIntro": "No DHT introduction point",
+  "emptyPexIntro": "No PEX introduction point",
+
+  "statDaemonVersion": "Daemon version",
+  "statDbSize": "Database size",
+  "statTorrentsKnown": "Known torrents",
+  "statChannels": "Channels",
+  "statIpv8Peers": "Discovered IPv8 peers",
+  "statSessions": "Engine sessions (direct + lanes)",
+
+  "logsDebugTooltip": "Logs detailed tunnel events (create/extend/destroy, e2e…)",
+  "uiLogTitle": "UI log",
+  "uiLogSubtitle": "logs/ui.log — daemon connection, SSE, adds, searches",
+  "emptyLogs": "Empty log",
+  "emptyLogsMsg": "The daemon has not written anything yet.",
+
+  "overviewTunnelInactive": "TunnelCommunity inactive",
+  "overviewTunnelsOk": "Tunnels operational ({count, plural, =1{# circuit ready} other{# circuits ready}})",
+  "@overviewTunnelsOk": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "overviewTunnelNoCircuit": "TunnelCommunity active, no circuit ready",
+  "autoRefresh5s": "auto-refresh 5 s",
+
+  "cardIpv8Overlays": "IPv8 overlays",
+  "cardCircuitsReady": "Ready circuits",
+  "cardRelays": "Relays",
+  "cardActiveExits": "Active exits",
+  "cardTunnelPeers": "Tunnel peers",
+  "cardKnownTorrents": "Known torrents",
+  "cardDownload": "Download",
+  "cardUpload": "Upload",
+  "cardDatabase": "Database",
+
+  "speedTestCircuitTitle": "Circuit #{id} test",
+  "@speedTestCircuitTitle": {
+    "placeholders": { "id": { "type": "int" } }
+  },
+  "speedTestNewTitle": "{hops, plural, =1{Test of a 1-hop circuit} other{Test of a {hops}-hop circuit}}",
+  "@speedTestNewTitle": {
+    "placeholders": { "hops": { "type": "int" } }
+  },
+  "speedMeasuring": "Measuring…",
+  "speedTestFailed": "Test failed",
+  "speedTestDone": "Test finished",
+  "close": "Close",
 
   "settingsAppearanceTitle": "Appearance",
   "@settingsAppearanceTitle": { "description": "Settings — Appearance section title" },

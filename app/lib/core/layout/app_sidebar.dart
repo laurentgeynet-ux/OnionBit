@@ -149,7 +149,7 @@ class AppSidebar extends ConsumerWidget {
                     FilledButton.icon(
                       onPressed: () => AddDownloadDialog.show(context),
                       icon: const Icon(Icons.add),
-                      label: Text(l10n.sidebarAdd),
+                      label: Text(l10n.add),
                     ),
                   if (!collapsed) ...[
                     const SizedBox(height: AppSpacing.sm),

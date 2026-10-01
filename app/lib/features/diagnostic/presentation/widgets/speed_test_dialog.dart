@@ -7,6 +7,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../core/l10n/l10n_ext.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../domain/diagnostic_models.dart';
 import '../providers/diagnostic_providers.dart';
@@ -77,9 +78,10 @@ class _SpeedTestDialogState extends ConsumerState<SpeedTestDialog> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l10n = context.l10n;
     final title = widget.circuitId != null
-        ? 'Test du circuit #${widget.circuitId}'
-        : 'Test d\'un circuit à ${widget.hops} saut(s)';
+        ? l10n.speedTestCircuitTitle(widget.circuitId!)
+        : l10n.speedTestNewTitle(widget.hops);
     return AlertDialog(
       title: Text(title),
       content: SizedBox(
@@ -95,22 +97,22 @@ class _SpeedTestDialogState extends ConsumerState<SpeedTestDialog> {
                 ),
               )
             else if (_last != null) ...[
-              _rate(theme, Icons.arrow_upward, 'Envoi', _last!.up),
+              _rate(theme, Icons.arrow_upward, l10n.cardUpload, _last!.up),
               const SizedBox(height: AppSpacing.sm),
               _rate(
                 theme,
                 Icons.arrow_downward,
-                'Réception',
+                l10n.cardDownload,
                 _last!.down,
               ),
             ] else
-              const Text('Mesure en cours…'),
+              Text(l10n.speedMeasuring),
             const SizedBox(height: AppSpacing.md),
             if (!_done && _error == null)
               const LinearProgressIndicator()
             else
               Text(
-                _error != null ? 'Échec du test' : 'Test terminé',
+                _error != null ? l10n.speedTestFailed : l10n.speedTestDone,
                 style: theme.textTheme.bodySmall?.copyWith(
                   color: theme.colorScheme.outline,
                 ),
@@ -121,7 +123,7 @@ class _SpeedTestDialogState extends ConsumerState<SpeedTestDialog> {
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Fermer'),
+          child: Text(l10n.close),
         ),
       ],
     );

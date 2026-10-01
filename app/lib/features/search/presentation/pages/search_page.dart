@@ -6,7 +6,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../l10n/app_localizations.dart' show AppLocalizations;
 import '../../../../core/di/providers.dart';
+import '../../../../core/l10n/l10n_ext.dart';
 import '../../../../core/layout/breakpoints.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../core/utils/byte_formatter.dart';
@@ -43,6 +45,7 @@ class SearchPage extends ConsumerWidget {
     final compact =
         AppBreakpoints.of(MediaQuery.sizeOf(context).width) ==
         AppBreakpoint.compact;
+    final l10n = context.l10n;
 
     // Fusion local + distant, dédupliquée par info-hash (local d'abord).
     final results = local.value ?? const <TorrentResult>[];
@@ -90,21 +93,23 @@ class SearchPage extends ConsumerWidget {
                   Expanded(
                     child: Text(
                       query.isEmpty
-                          ? 'Populaires sur le réseau'
-                          : 'Résultats pour « $query »',
+                          ? l10n.searchPopular
+                          : l10n.searchResultsFor(query),
                       style: Theme.of(context).textTheme.titleSmall,
                     ),
                   ),
                   if (selection.isNotEmpty) ...[
                     FilledButton.tonalIcon(
                       icon: const Icon(Icons.download, size: 18),
-                      label: Text('Ajouter (${selection.length})'),
+                      label: Text(
+                        l10n.searchAddSelected(selection.length),
+                      ),
                       onPressed: () =>
                           _addSelected(context, ref, merged, selection),
                     ),
                     const SizedBox(width: AppSpacing.xs),
                     IconButton(
-                      tooltip: 'Désélectionner',
+                      tooltip: l10n.searchDeselect,
                       onPressed: ref
                           .read(searchSelectionProvider.notifier)
                           .clear,
@@ -123,13 +128,14 @@ class SearchPage extends ConsumerWidget {
                         ),
                         const SizedBox(width: AppSpacing.sm),
                         Text(
-                          'recherche distante · '
-                          '${remote.results.length} résultat(s) · '
-                          '${remote.state.peerCount} pairs',
+                          l10n.searchRemoteProgress(
+                            remote.results.length,
+                            remote.state.peerCount,
+                          ),
                           style: Theme.of(context).textTheme.bodySmall,
                         ),
                         IconButton(
-                          tooltip: 'Arrêter la recherche distante',
+                          tooltip: l10n.searchRemoteStop,
                           onPressed: ref
                               .read(remoteResultsProvider.notifier)
                               .stop,
@@ -142,14 +148,16 @@ class SearchPage extends ConsumerWidget {
                     Padding(
                       padding: const EdgeInsets.only(right: AppSpacing.xs),
                       child: Text(
-                        '${remote.results.length} résultat(s) distants · '
-                        'terminée à ${remote.state.finishedAt!.hour.toString().padLeft(2, '0')}'
-                        ':${remote.state.finishedAt!.minute.toString().padLeft(2, '0')}',
+                        l10n.searchRemoteFinished(
+                          remote.results.length,
+                          '${remote.state.finishedAt!.hour.toString().padLeft(2, '0')}'
+                              ':${remote.state.finishedAt!.minute.toString().padLeft(2, '0')}',
+                        ),
                         style: Theme.of(context).textTheme.bodySmall,
                       ),
                     ),
                   PopupMenuButton<SearchSort>(
-                    tooltip: 'Trier les résultats',
+                    tooltip: l10n.sortResults,
                     icon: const Icon(Icons.sort, size: 20),
                     initialValue: sort,
                     onSelected: (s) =>
@@ -159,7 +167,7 @@ class SearchPage extends ConsumerWidget {
                         CheckedPopupMenuItem(
                           value: s,
                           checked: s == sort,
-                          child: Text(_sortLabel(s)),
+                          child: Text(_sortLabel(context.l10n, s)),
                         ),
                     ],
                   ),
@@ -178,7 +186,7 @@ class SearchPage extends ConsumerWidget {
                           top: 6,
                         ),
                         child: Text(
-                          'Récents :',
+                          l10n.searchRecent,
                           style: Theme.of(context).textTheme.bodySmall,
                         ),
                       ),
@@ -202,10 +210,10 @@ class SearchPage extends ConsumerWidget {
                 child: ListView(
                   scrollDirection: Axis.horizontal,
                   children: [
-                    for (final (label, source) in const [
-                      ('Tous', null),
-                      ('Local', TorrentSource.local),
-                      ('Réseau', TorrentSource.remote),
+                    for (final (label, source) in [
+                      (l10n.filterAll, null),
+                      (l10n.sourceLocal, TorrentSource.local),
+                      (l10n.searchSourceNetwork, TorrentSource.remote),
                     ])
                       Padding(
                         padding: const EdgeInsets.only(right: AppSpacing.xs),
@@ -218,7 +226,7 @@ class SearchPage extends ConsumerWidget {
                         ),
                       ),
                     FilterChip(
-                      label: const Text('≥ 10 seeds'),
+                      label: Text(l10n.searchMinSeeds),
                       selected: filter.minSeeds,
                       onSelected: (_) => ref
                           .read(searchFilterProvider.notifier)
@@ -241,13 +249,11 @@ class SearchPage extends ConsumerWidget {
                 ? EmptyState(
                     icon: Icons.search_off,
                     title: query.isEmpty
-                        ? 'Aucun torrent connu'
-                        : 'Aucun résultat',
+                        ? l10n.emptyNoTorrents
+                        : l10n.emptyNoResults,
                     message: query.isEmpty
-                        ? 'Le daemon découvre encore le réseau — les '
-                              'torrents populaires apparaîtront ici.'
-                        : 'Essayez d\'autres termes, ou attendez les '
-                              'réponses du réseau.',
+                        ? l10n.emptyDiscovering
+                        : l10n.emptyTryOther,
                   )
                 : _SearchContextMenu(
                     child: compact
@@ -342,19 +348,19 @@ Future<void> _addSelected(
     SnackBar(
       content: Text(
         failed == 0
-            ? '$added téléchargement(s) ajouté(s)'
-            : '$added ajouté(s), $failed en échec',
+            ? context.l10n.batchAdded(added)
+            : context.l10n.batchAddedFailed(added, failed),
       ),
     ),
   );
 }
 
-String _sortLabel(SearchSort s) => switch (s) {
-  SearchSort.relevance => 'Pertinence',
-  SearchSort.health => 'Santé (seeders)',
-  SearchSort.name => 'Nom',
-  SearchSort.size => 'Taille',
-  SearchSort.date => 'Date',
+String _sortLabel(AppLocalizations l10n, SearchSort s) => switch (s) {
+  SearchSort.relevance => l10n.sortRelevance,
+  SearchSort.health => l10n.sortHealth,
+  SearchSort.name => l10n.colName,
+  SearchSort.size => l10n.colSize,
+  SearchSort.date => l10n.colDate,
 };
 
 class _ResultTile extends StatelessWidget {
@@ -410,8 +416,13 @@ class _ResultTile extends StatelessWidget {
           [
             ByteFormatter.format(r.size),
             if (r.seeders != null)
-              '${r.seeders} seeds / ${r.leechers ?? 0} leechers',
-            r.source == TorrentSource.remote ? 'réseau' : 'local',
+              context.l10n.resultSeedsLeechers(
+                r.seeders!,
+                r.leechers ?? 0,
+              ),
+            r.source == TorrentSource.remote
+                ? context.l10n.sourceNetwork
+                : context.l10n.sourceLocal,
           ].join(' · '),
           style: theme.textTheme.bodySmall,
         ),
@@ -420,7 +431,7 @@ class _ResultTile extends StatelessWidget {
               ? null
               : () => AddDownloadDialog.show(context, initialUri: r.magnet),
           icon: const Icon(Icons.download, size: 18),
-          label: const Text('Ajouter'),
+          label: Text(context.l10n.add),
         ),
         onTap: r.infohash.isEmpty
             ? null
@@ -532,12 +543,12 @@ class _HeaderRow extends ConsumerWidget {
       child: Row(
         children: [
           const SizedBox(width: 36),
-          h('Nom', SearchCol.name, flex: 5),
-          h('Taille', SearchCol.size, width: 90),
-          h('Seeds', SearchCol.seeds, width: 80),
-          h('Leechers', SearchCol.leechers, width: 80),
-          h('Date', SearchCol.date, width: 100),
-          h('Source', SearchCol.source, width: 80),
+          h(context.l10n.colName, SearchCol.name, flex: 5),
+          h(context.l10n.colSize, SearchCol.size, width: 90),
+          h(context.l10n.colSeeds, SearchCol.seeds, width: 80),
+          h(context.l10n.colLeechers, SearchCol.leechers, width: 80),
+          h(context.l10n.colDate, SearchCol.date, width: 100),
+          h(context.l10n.colSource, SearchCol.source, width: 80),
           const SizedBox(width: 90),
         ],
       ),
@@ -627,7 +638,9 @@ class _ResultRow extends StatelessWidget {
               SizedBox(
                 width: 80,
                 child: Text(
-                  r.source == TorrentSource.remote ? 'réseau' : 'local',
+                  r.source == TorrentSource.remote
+                      ? context.l10n.sourceNetwork
+                      : context.l10n.sourceLocal,
                   style: small,
                 ),
               ),
@@ -636,15 +649,15 @@ class _ResultRow extends StatelessWidget {
                 child: Align(
                   alignment: Alignment.centerRight,
                   child: known.contains(r.infohash)
-                      ? const Tooltip(
-                          message: 'Déjà dans vos téléchargements',
+                      ? Tooltip(
+                          message: context.l10n.alreadyDownloaded,
                           child: Chip(
-                            label: Text('En cours'),
+                            label: Text(context.l10n.inProgress),
                             visualDensity: VisualDensity.compact,
                           ),
                         )
                       : IconButton(
-                          tooltip: 'Ajouter',
+                          tooltip: context.l10n.add,
                           onPressed: r.infohash.isEmpty
                               ? null
                               : () => AddDownloadDialog.show(
@@ -674,10 +687,10 @@ class _ResultHealthDot extends StatelessWidget {
   Widget build(BuildContext context) {
     final r = result;
     final (color, tip) = (r.seeders ?? 0) > 0
-        ? (Colors.green, '${r.seeders} seeder(s)')
+        ? (Colors.green, context.l10n.healthSeeders(r.seeders!))
         : (r.leechers ?? 0) > 0
-        ? (Colors.orange, 'Leechers seuls — santé fragile')
-        : (Colors.grey, 'Santé inconnue');
+        ? (Colors.orange, context.l10n.healthLeechersOnly)
+        : (Colors.grey, context.l10n.healthUnknown);
     return Tooltip(
       message: tip,
       child: Container(
@@ -737,13 +750,15 @@ class _SearchContextMenuState extends ConsumerState<_SearchContextMenu> {
           .read(downloadsRepositoryProvider)
           .add(uri: r.magnet, anonHops: hops, safeSeeding: hops > 0);
       await ref.read(downloadsProvider.notifier).refresh();
+      if (!mounted) return;
       _toast(
         hops == 0
-            ? '« ${r.name} » ajouté'
-            : '« ${r.name} » ajouté en anonyme ($hops saut${hops > 1 ? 's' : ''})',
+            ? context.l10n.toastAdded(r.name)
+            : context.l10n.toastAddedAnon(r.name, hops),
       );
     } catch (e) {
-      _toast('Ajout : $e');
+      if (!mounted) return;
+      _toast(context.l10n.toastAddError('$e'));
     }
   }
 
@@ -768,6 +783,7 @@ class _SearchContextMenuState extends ConsumerState<_SearchContextMenu> {
   }
 
   List<Widget> _items(TorrentResult r) {
+    final l10n = context.l10n;
     MenuItemButton item(IconData icon, String label, void Function() onTap) =>
         MenuItemButton(
           leadingIcon: Icon(icon, size: 18),
@@ -778,7 +794,7 @@ class _SearchContextMenuState extends ConsumerState<_SearchContextMenu> {
     return [
       item(
         Icons.download,
-        'Ajouter…',
+        l10n.ctxAdd,
         () => AddDownloadDialog.show(context, initialUri: r.magnet),
       ),
       SubmenuButton(
@@ -792,34 +808,34 @@ class _SearchContextMenuState extends ConsumerState<_SearchContextMenu> {
               ),
               onPressed: () => _add(r, h),
               child: Text(
-                h == 0 ? 'Direct (0 saut)' : '$h saut${h > 1 ? 's' : ''}',
+                h == 0 ? l10n.ctxDirectHop : l10n.ctxHops(h),
               ),
             ),
         ],
-        child: const Text('Ajout rapide'),
+        child: Text(l10n.ctxQuickAdd),
       ),
-      item(Icons.monitor_heart_outlined, 'Rafraîchir la santé', () async {
+      item(Icons.monitor_heart_outlined, l10n.ctxRefreshHealth, () async {
         try {
           final res = await ref
               .read(healthOverridesProvider.notifier)
               .probe(r.infohash);
+          if (!context.mounted) return;
           _toast(
-            res == 'ok'
-                ? 'Santé rafraîchie'
-                : 'Santé en cours de vérification côté daemon',
+            res == 'ok' ? l10n.toastHealthOk : l10n.toastHealthPending,
           );
         } catch (e) {
-          _toast('Sonde santé : $e');
+          if (!context.mounted) return;
+          _toast(l10n.toastHealthError('$e'));
         }
       }),
       const Divider(height: 1),
-      item(Icons.link, 'Copier le lien magnet', () {
+      item(Icons.link, l10n.ctxCopyMagnet, () {
         Clipboard.setData(ClipboardData(text: r.magnet));
-        _toast('Lien magnet copié');
+        _toast(l10n.toastMagnetCopied);
       }),
-      item(Icons.copy, 'Copier l\'info-hash', () {
+      item(Icons.copy, l10n.ctxCopyInfohash, () {
         Clipboard.setData(ClipboardData(text: r.infohash));
-        _toast('Info-hash copié');
+        _toast(l10n.toastInfohashCopied);
       }),
     ];
   }
