@@ -88,6 +88,13 @@ enum Command {
         /// Info-hash hex.
         infohash: String,
     },
+    /// Circuits et guards tunnel (GET /api/ipv8/tunnel/*).
+    Tunnel {
+        /// `circuits` (defaut), `guards` (ADR-0010), `relays`,
+        /// `exits`, `swarms`, `peers`.
+        #[arg(long, default_value = "circuits")]
+        show: String,
+    },
 }
 
 /// Cible resolue : URL de base + cle API.
@@ -247,6 +254,101 @@ async fn cmd_remove(
     Ok(())
 }
 
+/// `tunnel` — circuits/guards/relays/exits/swarms/peers.
+async fn cmd_tunnel(client: &reqwest::Client, api: &str, show: &str) -> Result<(), String> {
+    let path = match show {
+        "circuits" | "guards" | "relays" | "exits" | "swarms" | "peers" => {
+            format!("{api}/api/ipv8/tunnel/{show}")
+        }
+        other => {
+            return Err(format!(
+                "vue inconnue « {other} » — attendu : circuits|guards|relays|exits|swarms|peers"
+            ))
+        }
+    };
+    let resp = client
+        .get(&path)
+        .send()
+        .await
+        .map_err(|e| format!("daemon injoignable sur {api} ({e})"))?;
+    let body = ensure_ok(resp).await?;
+    match show {
+        "circuits" => {
+            let items = body["circuits"].as_array().cloned().unwrap_or_default();
+            if items.is_empty() {
+                println!("(aucun circuit)");
+                return Ok(());
+            }
+            println!(
+                "{:<10}  {:<9}  {:>4}/{:<4}  {:>9}  {:>9}  SAUTS",
+                "ID", "ETAT", "HOPS", "GOAL", "UP", "DOWN"
+            );
+            for c in items {
+                let hops = c["verified_hops"]
+                    .as_array()
+                    .map(|h| {
+                        h.iter()
+                            .filter_map(|v| v.as_str().map(|s| s[..8.min(s.len())].to_string()))
+                            .collect::<Vec<_>>()
+                            .join(">")
+                    })
+                    .unwrap_or_default();
+                println!(
+                    "{:<10}  {:<9}  {:>4}/{:<4}  {:>9}  {:>9}  {}",
+                    c["circuit_id"].as_u64().unwrap_or(0),
+                    c["state"].as_str().unwrap_or("?"),
+                    c["actual_hops"].as_u64().unwrap_or(0),
+                    c["goal_hops"].as_u64().unwrap_or(0),
+                    c["bytes_up"].as_u64().unwrap_or(0),
+                    c["bytes_down"].as_u64().unwrap_or(0),
+                    hops,
+                );
+            }
+        }
+        "guards" => {
+            let items = body["guards"].as_array().cloned().unwrap_or_default();
+            let enabled = body["enabled"].as_bool().unwrap_or(false);
+            println!("guards_enabled = {enabled}");
+            if items.is_empty() {
+                println!("(aucun guard adopte)");
+                return Ok(());
+            }
+            println!(
+                "{:<42}  {:<22}  {:<7}  {:>7}  ADOPTE",
+                "MID", "ADRESSE", "ROLE", "ECHECS"
+            );
+            for g in items {
+                println!(
+                    "{:<42}  {:<22}  {:<7}  {:>7}  {}",
+                    g["mid"].as_str().unwrap_or("?"),
+                    g["address"].as_str().unwrap_or(""),
+                    if g["reserve"].as_bool().unwrap_or(false) {
+                        "reserve"
+                    } else {
+                        "actif"
+                    },
+                    g["failures"].as_u64().unwrap_or(0),
+                    g["adopted_at"].as_u64().unwrap_or(0),
+                );
+            }
+        }
+        other => {
+            let key = match other {
+                "relays" => "relays",
+                "exits" => "exits",
+                "swarms" => "swarms",
+                _ => "peers",
+            };
+            let items = body[key].as_array().cloned().unwrap_or_default();
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&items).unwrap_or_default()
+            );
+        }
+    }
+    Ok(())
+}
+
 /// `pause`/`resume` — PATCH state.
 async fn cmd_patch(
     client: &reqwest::Client,
@@ -281,6 +383,7 @@ async fn main() -> ExitCode {
         } => cmd_remove(&client, api, &infohash, remove_data).await,
         Command::Pause { infohash } => cmd_patch(&client, api, &infohash, "stop").await,
         Command::Resume { infohash } => cmd_patch(&client, api, &infohash, "resume").await,
+        Command::Tunnel { show } => cmd_tunnel(&client, api, &show).await,
     };
     match res {
         Ok(()) => ExitCode::SUCCESS,
