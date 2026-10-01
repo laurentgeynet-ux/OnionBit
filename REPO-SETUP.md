@@ -20,7 +20,7 @@ Everything in this folder is ready to push to
 ## First push
 
 ```bash
-cd D:\Projet\OnionBit
+cd <path-to>/OnionBit
 git init -b main
 git remote add origin https://github.com/laurentgeynet-ux/OnionBit.git
 git add -A

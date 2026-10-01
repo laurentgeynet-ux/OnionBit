@@ -9,7 +9,7 @@
 [![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](LICENSE)
 [![Made with Rust](https://img.shields.io/badge/Made%20with-Rust-orange.svg)](https://www.rust-lang.org/)
 [![UI: Flutter](https://img.shields.io/badge/UI-Flutter-02569B.svg)](https://flutter.dev/)
-[![Status: Alpha](https://img.shields.io/badge/Status-Alpha-red.svg)]()
+[![Version](https://img.shields.io/badge/Version-0.3.1--alpha-red.svg)]()
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%C2%B7%20Linux%20%C2%B7%20macOS%20%C2%B7%20Android%20%C2%B7%20iOS%20%C2%B7%20Web-lightgrey.svg)]()
 
 </div>
@@ -69,7 +69,11 @@ same design Tribler pioneered:
 
 ## Getting started
 
-> Packages are not published yet — build from source.
+> **Windows x64 alpha zip** is on the
+> [Releases](https://github.com/laurentgeynet-ux/OnionBit/releases) page
+> (`OnionBit-0.3.1-alpha-windows-x64.zip`): unzip, run `onionbit_ui.exe` —
+> it starts the daemon automatically. Other platforms: build from source
+> (see [docs/BUILDING.md](docs/BUILDING.md)).
 
 **Prerequisites:** Rust stable, Flutter stable (UI only).
 
@@ -86,7 +90,8 @@ cd app && flutter run -d windows   # or linux / chrome / android
 ```
 
 The daemon exposes `http://127.0.0.1:8085` (loopback only by default) — the same
-endpoint the UI and CLI consume.
+endpoint the UI and CLI consume. Full build & packaging notes:
+[docs/BUILDING.md](docs/BUILDING.md).
 
 ## Security model
 
