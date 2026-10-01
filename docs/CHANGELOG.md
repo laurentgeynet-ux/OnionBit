@@ -21,12 +21,28 @@ en haut.
   droppées. Les stores sont maintenant séquencés dans une seule tâche,
   espacés de `dht_reannounce_stagger` (500 ms, `TunnelSettings`), avec
   log par point d'introduction.
-- Banc `interop_hidden_killseeder -KillTarget anchor` sens A (seeder
-  Rust, kill A1 ancre+EXIT_BT) : **PASS complet** — flux e2e survécu,
-  découverte sans ancre, `IP_SEEDER` reconstruit sur autre noeud,
-  annonce attribuée au seeder, 100 %, SHA-256 identique.
 - Test `hidden_seed_e2e_burst_integrity` : tolérance de pertes 99 %→
   90 % (drop-tail attendu sous contention CPU de la suite parallèle).
+
+### Validation — banc `interop_hidden_killseeder -KillTarget anchor`
+
+Maillage : A1 = bootstrap + `EXIT_BT`, A2 = second `EXIT_BT`, A3 =
+relais (sans second exit, tuer A1 rend toute reconstruction DATA
+impossible par design — `select_exit` pyipv8 n'a plus de candidat ;
+limite de topologie de banc, pas de casse protocole). Binaire
+reconstruit incluant la pompe d'émission FIFO.
+
+| sens | hops | kill_target | flux_survit | octets post-kill | fenetre_morte | nouveau_circuit | nouvelle_annonce | completion | sha256 | fallback_direct | verdict |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| A (seeder Rust → Tribler 8.4.3) | 1 | anchor A1 | oui (+30 s) | 21 709 636 | 0 s | oui `43074219a86d…` (id hors snapshot pré-kill, dernier saut ≠ A1) | oui — `seeder_pk` identique, `intro_mid` = nouveau mid | 100 % | identique `f7c1cb3f…` | aucun | PASS |
+| B (seeder Tribler 8.4.3 → Rust) | 1 | anchor A1 | oui (+30 s) | 21 938 176 | 0 s | oui `cec559938f90…` (id hors snapshot pré-kill, dernier saut ≠ A1) | oui — seeder identique, `intro_mid` = nouveau mid | 100 % | identique `da0ea3ae…` | aucun | PASS |
+
+Artefacts : `target/interop-killseed-20261001-173905/` (A) et
+`target/interop-killseed-20261001-175315/` (B) — `report/verdicts.txt`
+pour le détail des 13-14 assertions chacun. FAIL résiduel cosmétique
+dans les deux runs : le gate `Tribler : bootstrap maillage` compte
+`exits=0` trop tôt au démarrage de T (le téléchargement anonyme
+fonctionne ensuite).
 
 ## Version 0.3.2-alpha (2026-10-01)
 
