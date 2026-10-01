@@ -4,13 +4,13 @@
 
 ### Anonymous BitTorrent client, native in Rust
 
-**A full Rust port of [Tribler](https://github.com/Tribler/tribler) — torrent through onion-routed circuits, with no traceable IP.**
+**A full Rust port of [Tribler](https://github.com/Tribler/tribler) — BitTorrent over onion-routed, multi-hop circuits.**
 
 [![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](LICENSE)
 [![Made with Rust](https://img.shields.io/badge/Made%20with-Rust-orange.svg)](https://www.rust-lang.org/)
 [![UI: Flutter](https://img.shields.io/badge/UI-Flutter-02569B.svg)](https://flutter.dev/)
 [![CI](https://github.com/laurentgeynet-ux/OnionBit/actions/workflows/ci.yml/badge.svg)](https://github.com/laurentgeynet-ux/OnionBit/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/Version-0.3.2--alpha-red.svg)](https://github.com/laurentgeynet-ux/OnionBit/releases)
+[![Version](https://img.shields.io/badge/Version-0.3.1--alpha-red.svg)](https://github.com/laurentgeynet-ux/OnionBit/releases)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%C2%B7%20Linux%20%C2%B7%20macOS%20%C2%B7%20Android%20%C2%B7%20iOS%20%C2%B7%20Web-lightgrey.svg)]()
 
 </div>
@@ -37,7 +37,23 @@ same design Tribler pioneered:
 
 > **Status: alpha.** The engine is under active development and validated against the
 > real Tribler network (Tribler 8.x interop testbench). Not yet recommended for
-> high-stakes anonymity.
+> high-stakes anonymity. Onion routing reduces network-level linkability; it does
+> not eliminate all privacy risks — see the [threat model](docs/THREAT-MODEL.md).
+
+## Proven interoperability
+
+OnionBit has completed **bidirectional hidden-service transfers with unmodified
+Tribler 8.4.3**:
+
+- Tribler downloads from an OnionBit anonymous seeder — and vice versa.
+- Controlled **2-hop and 3-hop** transfers completed in both directions.
+- Seeder, introduction-point and bootstrap-node **kill/recovery scenarios**
+  completed with verified content integrity.
+- Real-network downloads over live Tribler relays and the public DHT.
+
+Every transfer is checked twice: BitTorrent piece hashing, then an independent
+SHA-256 of the received file. Full scenario table, failure semantics and
+reproduction scripts: [**interoperability evidence**](docs/interop/README.md).
 
 ## Screenshots
 
@@ -84,7 +100,7 @@ same design Tribler pioneered:
 
 > **Windows x64 alpha zip** is on the
 > [Releases](https://github.com/laurentgeynet-ux/OnionBit/releases) page
-> (`OnionBit-0.3.2-alpha-windows-x64.zip`): unzip, run `onionbit_ui.exe` —
+> (`OnionBit-0.3.1-alpha-windows-x64.zip`): unzip, run `onionbit_ui.exe` —
 > it starts the daemon automatically. Other platforms: build from source
 > (see [docs/BUILDING.md](docs/BUILDING.md)).
 
@@ -128,7 +144,7 @@ See [SECURITY.md](SECURITY.md) for reporting and the threat model.
 | Onion circuits + hidden seeding | ✅ |
 | Live interop with Tribler 8.x nodes | ✅ |
 | Flutter UI (desktop first) | ✅ |
-| First tagged alpha release | ✅ [`v0.3.2-alpha`](https://github.com/laurentgeynet-ux/OnionBit/releases/tag/v0.3.2-alpha) |
+| First tagged alpha release | ✅ [`v0.3.1-alpha`](https://github.com/laurentgeynet-ux/OnionBit/releases/tag/v0.3.1-alpha) |
 | Mobile execution model (Android/iOS) | 📋 |
 | Linux / macOS packages | 📋 |
 
