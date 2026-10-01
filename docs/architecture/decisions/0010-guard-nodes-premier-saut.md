@@ -51,12 +51,27 @@ l'ancien en tâche de fond — jamais de tirage synchrone sous pression.
 
 ### 4. Stockage
 
-`onionbit-db` : table `guards` (clé publique, adresse estimée, date
-d'adoption, compteur d'échecs, statut actif/réserve). Pas de chiffrement
-supplémentaire — la base n'est pas chiffrée ailleurs ; le contenu est
-des clés publiques, non secrètes au sens crypto (mais révélatrices de
-la topologie d'usage si le disque est lu — à documenter dans le threat
-model : compromission d'endpoint déjà hors périmètre).
+`onionbit-tunnel` **ne dépend pas** de `onionbit-db` (sens des dépendances
+: `db → core → tunnel`) — la couture est un trait injecté :
+
+```rust
+// dans onionbit-tunnel
+trait GuardStore: Send + Sync {
+    fn load_guards(&self) -> Vec<GuardRecord>;
+    fn save_guards(&self, guards: &[GuardRecord]);
+}
+```
+
+- `GuardStore` implémenté dans `onionbit-db` (table `guards` : clé
+  publique, dernière adresse vue, date d'adoption, compteur d'échecs,
+  statut actif/réserve), injecté par `core`/`daemon` à la construction
+  de la communauté ;
+- sans store injecté (tests, outils) : `InMemoryGuardStore` — set
+  volatile, comportement identique sauf persistance ;
+- pas de chiffrement supplémentaire — la base n'est pas chiffrée
+  ailleurs ; le contenu est des clés publiques, non secrètes au sens
+  crypto (mais révélatrices de la topologie d'usage si le disque est
+  lu — cf. threat model : compromission d'endpoint hors périmètre).
 
 ### 5. Diversité
 
@@ -105,6 +120,65 @@ ne multiplient pas les premiers hops distincts).
 Jamais de guard logic sur `hops == 0` (lane publique) — la sélection
 public n'existe pas (`anon_engine` rejette 0). Guards uniquement pour
 les circuits des lanes anonymes (`DATA`, `IP_*`, `RP_*`).
+
+## Questions ouvertes résolues
+
+### Pool réduit vs réseau public
+
+Le set de guards n'est jamais une liste codée en dur ni un serveur
+« officiel » : les guards sont tirés du pool `first_hop_candidates`
+existant (critères de relais inchangés). Règles de dégradation :
+
+- pool < 5 candidats au bootstrap : activer `min(pool, 3)` guards,
+  pas de réserve, WARN `guards_pool_etroit` ;
+- un guard unique vivant est toujours préférable au tirage libre —
+  le plancher n'est jamais « retour au hasard silencieux » ;
+- pool vide : comportement pyipv8 inchangé (pas de circuit, le
+  watchdog retente).
+
+### Comportement sous `DESTROY` répétés
+
+Propriété centrale : la reconstruction consomme le guard existant —
+un storm de `DESTROY` sur les circuits d'un guard sain produit des
+circuits **sur le même premier saut** (test : les premiers hops
+distincts pendant un storm ⊆ set de guards). Le guard n'est jamais
+retiré pour cause de destroys entrants — seul un échec de handshake
+`create` compte (cf. rotation).
+
+### Persistance et changement d'adresse
+
+Le guard est identifié par sa **clé publique** (`public_key_bin`),
+pas par son adresse : un guard qui change d'IP reste le même guard —
+l'adresse est rafraîchie à chaque handshake `create` réussi
+(`get_verified_by_address` puis réassociation). Un pair qui change de
+clé publique est un nouveau candidat : l'ancien guard expire par
+timeout d'injoignabilité (24 h).
+
+### Limites de diversité
+
+Dédup à l'admission : même adresse IP exclue, même /24 exclu (IPv4) /
+même /64 (IPv6). Diversité AS **reportée** (nécessite une base ASN —
+gain non démontré sur un maillage de cette taille). Si les contraintes
+ne peuvent être satisfaites (maillage homogène), on complète avec le
+meilleur candidat restant et on logue `guards_diversite_partielle`.
+
+### Non-régression `guards_enabled=false`
+
+Setting `tunnel.community.guards_enabled` (défaut `true` en anonyme).
+`false` → `first_hop_candidates` inchangé, aucune lecture/écriture de
+la table `guards` — repli strict pyipv8. Le test de régression compare
+la distribution des premiers hops avec/sans guards sur le même pool
+et vérifie l'absence totale d'effet de bord en mode `false`.
+
+## Point d'intégration
+
+Les guards s'insèrent en amont de `first_hop_candidates`
+(`community.rs:965`) : la liste ordonnée passée à
+`send_initial_create` devient `guards_actifs ++ reserve ++
+tirage_libre`. Les mécanismes existants (retry sur alternates,
+`required_exit` qui épingle le *dernier* saut, `pinned_hops` pour les
+sauts intermédiaires) restent inchangés — les guards ne concernent
+que l'entrée du circuit.
 
 ## Conséquences
 
