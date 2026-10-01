@@ -98,10 +98,9 @@ fn chacha(key: &[u8; 32], salt: &[u8; 4], counter: u64) -> (ChaCha20Poly1305, No
     let mut nonce_bytes = [0u8; 12];
     nonce_bytes[..SALT_LEN].copy_from_slice(salt);
     nonce_bytes[SALT_LEN..].copy_from_slice(&counter.to_be_bytes());
-    (
-        ChaCha20Poly1305::new(Key::from_slice(key)),
-        *Nonce::from_slice(&nonce_bytes),
-    )
+    let key: &Key = key.into();
+    let nonce: Nonce = nonce_bytes.into();
+    (ChaCha20Poly1305::new(key), nonce)
 }
 
 impl SessionKeys {
