@@ -32,6 +32,19 @@ en haut.
   `pumpApp(locale: …)`, assertions sur les chaînes EN) ;
   `check_i18n.ps1` vert. ADR-0009.
 
+## UI : panneau de détail des téléchargements redimensionnable (2026-10-01)
+
+- Le panneau « Détails/Fichiers/Trackers/Pairs » était figé à 280 px
+  sans indication de défilement : le contenu de l'onglet Détails
+  (sparkline, boutons, ~10 lignes de propriétés) était tronqué.
+- `downloads_page.dart` : le séparateur devient une poignée de
+  glisser (`resizeUpDown`) — hauteur persistée `ui.detailPanelHeight`
+  via `detailPanelHeightProvider` (bornes 120–720 px, plafond 70 %
+  de la fenêtre à l'affichage).
+- `download_detail_panel.dart` : `Scrollbar` à pouce persistant sur
+  l'onglet Détails — le défilement est désormais visible.
+- `ui_prefs.dart` : `uiPrefsWrite` accepte les `double`.
+
 ## Journal daemon : annonces DHT hidden-service rétrogradées en debug (2026-10-01)
 
 - `hidden_services.rs` : « point d'introduction annonce sur la DHT »

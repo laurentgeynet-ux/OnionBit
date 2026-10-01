@@ -300,6 +300,33 @@ class DownloadSelectionNotifier extends Notifier<Set<String>> {
   }
 }
 
+/// Hauteur du panneau de détail sous la liste (px) — persistée
+/// (`ui.detailPanelHeight`), ajustée par glisser sur le séparateur.
+final detailPanelHeightProvider =
+    NotifierProvider<DetailPanelHeightNotifier, double>(
+      DetailPanelHeightNotifier.new,
+    );
+
+class DetailPanelHeightNotifier extends Notifier<double> {
+  /// Hauteur par défaut du panneau (px).
+  static const defaultHeight = 280.0;
+
+  /// Bornes basse/haute du redimensionnement (px) — le plafond
+  /// effectif est en outre borne par la hauteur de la fenêtre.
+  static const minHeight = 120.0;
+  static const maxHeight = 720.0;
+
+  @override
+  double build() => defaultHeight;
+
+  void init(double v) => state = v.clamp(minHeight, maxHeight);
+
+  void set(double v) {
+    state = v.clamp(minHeight, maxHeight);
+    unawaited(uiPrefsWrite('ui.detailPanelHeight', state));
+  }
+}
+
 /// Débits agrégés de tous les téléchargements (barre d'état).
 final totalSpeedsProvider = Provider<({int down, int up})>((ref) {
   final downloads = ref.watch(downloadsProvider).value ?? const [];

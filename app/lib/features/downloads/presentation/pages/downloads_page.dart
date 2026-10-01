@@ -166,9 +166,30 @@ class _DownloadsPageState extends ConsumerState<DownloadsPage> {
   List<Widget> _detailPanel(List<Download>? all, String infohash) {
     final d = all?.where((e) => e.infohash == infohash).firstOrNull;
     if (d == null) return const [];
+    final wanted = ref.watch(detailPanelHeightProvider);
+    // Plafond effectif : le panneau ne peut pas manger plus de 70 %
+    // de la fenêtre (sinon la liste n'a plus de place).
+    final height = wanted.clamp(
+      DetailPanelHeightNotifier.minHeight,
+      MediaQuery.sizeOf(context).height * 0.7,
+    );
     return [
-      const Divider(height: 1),
-      SizedBox(height: 280, child: DownloadDetailPanel(download: d)),
+      // Poignée de redimensionnement : glisser vertical sur le
+      // séparateur ajuste la hauteur du panneau (persistée).
+      MouseRegion(
+        cursor: SystemMouseCursors.resizeUpDown,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onVerticalDragUpdate: (d) => ref
+              .read(detailPanelHeightProvider.notifier)
+              .set(wanted - d.delta.dy),
+          child: const SizedBox(height: 9, child: Divider(height: 9)),
+        ),
+      ),
+      SizedBox(
+        height: height,
+        child: DownloadDetailPanel(download: d),
+      ),
     ];
   }
 
@@ -574,10 +595,7 @@ class _DownloadRow extends ConsumerWidget {
               ),
               SizedBox(
                 width: 80,
-                child: Text(
-                  context.fmtEta(d.etaSeconds),
-                  style: small,
-                ),
+                child: Text(context.fmtEta(d.etaSeconds), style: small),
               ),
               SizedBox(
                 width: 80,
@@ -781,9 +799,7 @@ class _DownloadsContextMenuState extends ConsumerState<_DownloadsContextMenu> {
           child: Text(context.l10n.customRate),
         ),
       ],
-      child: Text(
-        '$label (${current > 0 ? context.fmtRate(current) : '∞'})',
-      ),
+      child: Text('$label (${current > 0 ? context.fmtRate(current) : '∞'})'),
     );
   }
 
