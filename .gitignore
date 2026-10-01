@@ -16,3 +16,4 @@ dist/
 
 # Config cargo locale (linker/jobs spécifiques à la machine)
 .cargo/
+scripts/gh_create_release.ps1
