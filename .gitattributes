@@ -1,0 +1,7 @@
+# Normalisation LF pour les sources (evite les diffs CRLF Windows)
+* text=auto eol=lf
+
+*.png binary
+*.ico binary
+*.icns binary
+*.svg text eol=lf

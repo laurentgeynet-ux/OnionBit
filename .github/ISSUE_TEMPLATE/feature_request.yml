@@ -1,0 +1,30 @@
+name: Feature request
+description: Suggest an idea for OnionBit
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / use case
+      description: What are you trying to do that OnionBit doesn't support?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+    validations:
+      required: true
+  - type: textarea
+    id: tribler
+    attributes:
+      label: Tribler parity
+      description: Does Tribler already do this? Link the relevant behavior/module if known.
+  - type: checkboxes
+    id: flags
+    attributes:
+      label: Flags
+      options:
+        - label: This touches anonymity / leak protection
+        - label: This requires a protocol or wire-format change

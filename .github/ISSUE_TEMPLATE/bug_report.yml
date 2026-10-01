@@ -1,0 +1,63 @@
+name: Bug report
+description: Report a defect in OnionBit
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you expect, and what did you observe?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Start the daemon with ...
+        2. Add magnet ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - Daemon / REST API
+        - BitTorrent engine
+        - IPv8 overlay / tunnels
+        - CLI
+        - Flutter UI
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version / commit
+      placeholder: e.g. main @ abc1234
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Windows
+        - Linux
+        - macOS
+        - Android
+        - iOS
+        - Web
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Relevant daemon/UI logs (redact IPs and keys)
+      render: shell
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Anonymity impact
+      options:
+        - label: I suspect this bug could leak my IP or break anonymity

@@ -1,0 +1,42 @@
+# ---- Rust ----
+/target/
+**/*.rs.bk
+Cargo.lock.bak
+*.pdb
+
+# ---- Flutter / Dart ----
+app/build/
+app/.dart_tool/
+app/.flutter-plugins
+app/.flutter-plugins-dependencies
+app/.packages
+app/pubspec.lock        # app = produit final ; le lock regenere par build
+.flutter-plugins*
+
+# ---- IDE / editeurs ----
+.idea/
+*.iml
+.vscode/
+*.code-workspace
+.claude/
+.cursor/
+
+# ---- OS ----
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---- Secrets / environnement ----
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+secrets.*
+
+# ---- Artefacts locaux ----
+/dist/
+/logs/
+*.log
+coverage/
