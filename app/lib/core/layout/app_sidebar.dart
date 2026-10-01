@@ -14,11 +14,10 @@ import '../../features/downloads/presentation/providers/downloads_providers.dart
 import '../../features/downloads/presentation/widgets/add_download_dialog.dart';
 import '../../features/settings/presentation/providers/settings_providers.dart';
 import '../di/providers.dart';
+import '../l10n/l10n_ext.dart';
 import '../router/nav_catalog.dart';
 import '../theme/app_theme.dart';
-import '../utils/byte_formatter.dart';
 import '../config/ui_prefs.dart';
-import 'nav_destination.dart';
 
 /// Replie/déplie le groupe des sous-filtres Téléchargements (état de
 /// session uniquement).
@@ -94,6 +93,7 @@ class AppSidebar extends ConsumerWidget {
     final errors = downloads?.where((d) => d.isError).length ?? 0;
     final filtersExpanded = ref.watch(sidebarFiltersExpandedProvider);
     final collapsed = ref.watch(sidebarCollapsedProvider);
+    final l10n = context.l10n;
     return Material(
       color: scheme.surface,
       child: SizedBox(
@@ -134,7 +134,7 @@ class AppSidebar extends ConsumerWidget {
                   const SizedBox(height: AppSpacing.md),
                   if (collapsed)
                     Tooltip(
-                      message: 'Ajouter un téléchargement',
+                      message: l10n.sidebarAddDownloadTooltip,
                       child: FilledButton(
                         style: FilledButton.styleFrom(
                           padding: EdgeInsets.zero,
@@ -148,7 +148,7 @@ class AppSidebar extends ConsumerWidget {
                     FilledButton.icon(
                       onPressed: () => AddDownloadDialog.show(context),
                       icon: const Icon(Icons.add),
-                      label: const Text('Ajouter'),
+                      label: Text(l10n.add),
                     ),
                   if (!collapsed) ...[
                     const SizedBox(height: AppSpacing.sm),
@@ -161,7 +161,7 @@ class AppSidebar extends ConsumerWidget {
               child: ListView(
                 padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm),
                 children: [
-                  if (!collapsed) const _GroupLabel('Bibliothèque'),
+                  if (!collapsed) _GroupLabel(l10n.sidebarGroupLibrary),
                   _NavItem(
                     d: kNavCatalog[0],
                     collapsed: collapsed,
@@ -171,8 +171,8 @@ class AppSidebar extends ConsumerWidget {
                     badge: errors > 0 ? _ErrorBadge(count: errors) : null,
                     trailing: IconButton(
                       tooltip: filtersExpanded
-                          ? 'Replier les filtres'
-                          : 'Déplier les filtres',
+                          ? l10n.sidebarFiltersCollapse
+                          : l10n.sidebarFiltersExpand,
                       icon: Icon(
                         filtersExpanded ? Icons.expand_less : Icons.expand_more,
                         size: 18,
@@ -204,7 +204,7 @@ class AppSidebar extends ConsumerWidget {
                   if (!collapsed)
                     const Divider(height: AppSpacing.lg)
                   else
-                    const _GroupLabel('Système'),
+                    _GroupLabel(l10n.sidebarGroupSystem),
                   _NavItem(
                     d: kNavCatalog[3],
                     collapsed: collapsed,
@@ -223,7 +223,9 @@ class AppSidebar extends ConsumerWidget {
             Align(
               alignment: collapsed ? Alignment.center : Alignment.centerRight,
               child: IconButton(
-                tooltip: collapsed ? 'Déplier la sidebar' : 'Replier en rail',
+                tooltip: collapsed
+                    ? l10n.sidebarExpand
+                    : l10n.sidebarCollapse,
                 icon: Icon(
                   collapsed ? Icons.chevron_right : Icons.chevron_left,
                   size: 20,
@@ -292,7 +294,7 @@ class _NavItem extends StatelessWidget {
   Widget build(BuildContext context) {
     return _SidebarItem(
       icon: selected ? d.selectedIcon : d.icon,
-      label: d.label,
+      label: d.label(context.l10n),
       collapsed: collapsed,
       selected: selected,
       trailing: badge != null || trailing != null
@@ -325,7 +327,7 @@ class _FilterItem extends StatelessWidget {
       padding: EdgeInsets.only(left: collapsed ? 0 : AppSpacing.lg),
       child: _SidebarItem(
         icon: icon,
-        label: filter.label,
+        label: filter.label(context.l10n),
         collapsed: collapsed,
         selected: selected,
         trailing: count == null ? null : _CountBadge(count: count!),
@@ -489,7 +491,7 @@ class _SpeedsRow extends ConsumerWidget {
               const SizedBox(width: 2),
               Expanded(
                 child: Text(
-                  ByteFormatter.formatRate(speeds.down),
+                  context.fmtRate(speeds.down),
                   style: style,
                   overflow: TextOverflow.ellipsis,
                 ),
@@ -508,7 +510,7 @@ class _SpeedsRow extends ConsumerWidget {
               const SizedBox(width: 2),
               Expanded(
                 child: Text(
-                  ByteFormatter.formatRate(speeds.up),
+                  context.fmtRate(speeds.up),
                   style: style,
                   overflow: TextOverflow.ellipsis,
                 ),
@@ -544,8 +546,10 @@ class _DaemonFooter extends ConsumerWidget {
         padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
         child: Tooltip(
           message: connected
-              ? 'Daemon connecté${version != null ? ' · $version' : ''}'
-              : 'Daemon injoignable',
+              ? (version != null
+                    ? context.l10n.daemonConnectedVersion(version)
+                    : context.l10n.daemonConnected)
+              : context.l10n.daemonUnreachable,
           child: Center(child: dot),
         ),
       );
@@ -562,8 +566,10 @@ class _DaemonFooter extends ConsumerWidget {
           Expanded(
             child: Text(
               connected
-                  ? 'Daemon${version != null ? ' $version' : ''}'
-                  : 'Daemon injoignable',
+                  ? (version != null
+                        ? context.l10n.daemonFooterVersion(version)
+                        : context.l10n.daemonFooterNoVersion)
+                  : context.l10n.daemonUnreachable,
               style: theme.textTheme.bodySmall,
               overflow: TextOverflow.ellipsis,
             ),

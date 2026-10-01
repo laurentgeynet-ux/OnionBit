@@ -4,11 +4,13 @@
 
 import 'package:flutter/material.dart';
 
+import '../../../../core/l10n/l10n_ext.dart';
 import '../../../../core/widgets/status_chip.dart';
+import '../../../../l10n/app_localizations.dart' show AppLocalizations;
 import '../../domain/download.dart';
 
 /// Puce de statut d'un téléchargement — mapping des statuts Python
-/// (`DLSTATUS_*`) vers libellé français + tonalité.
+/// (`DLSTATUS_*`) vers libellé localisé + tonalité.
 class DownloadStatusChip extends StatelessWidget {
   const DownloadStatusChip({super.key, required this.download});
 
@@ -16,25 +18,23 @@ class DownloadStatusChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final (label, tone) = _map(download);
+    final (label, tone) = _map(context.l10n, download);
     return StatusChip(label: label, tone: tone);
   }
 
-  static (String, StatusTone) _map(Download d) {
-    if (d.isError) return ('Erreur', StatusTone.negative);
+  static (String, StatusTone) _map(AppLocalizations l10n, Download d) {
+    if (d.isError) return (l10n.statusError, StatusTone.negative);
+    final pct = (d.progress * 100).toStringAsFixed(0);
     return switch (d.status) {
       'DOWNLOADING' => (
-        'Téléchargement ${(d.progress * 100).toStringAsFixed(0)} %',
+        l10n.statusDownloading(pct),
         StatusTone.positive,
       ),
-      'SEEDING' => (
-        'Partage ${(d.progress * 100).toStringAsFixed(0)} %',
-        StatusTone.positive,
-      ),
-      'METADATA' => ('Métadonnées', StatusTone.warning),
+      'SEEDING' => (l10n.statusSeeding(pct), StatusTone.positive),
+      'METADATA' => (l10n.statusMetadata, StatusTone.warning),
       'HASHCHECKING' ||
-      'WAITING_FOR_HASHCHECK' => ('Vérification', StatusTone.warning),
-      'STOPPED' => ('Arrêté', StatusTone.neutral),
+      'WAITING_FOR_HASHCHECK' => (l10n.statusChecking, StatusTone.warning),
+      'STOPPED' => (l10n.statusStopped, StatusTone.neutral),
       _ => (d.status.isEmpty ? '—' : d.status, StatusTone.neutral),
     };
   }
@@ -51,6 +51,7 @@ class AnonBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
     final scheme = Theme.of(context).colorScheme;
     final hops = download.hops;
     final anon = download.anonDownload && hops > 0;
@@ -65,9 +66,8 @@ class AnonBadge extends StatelessWidget {
         : scheme.primary;
     return Tooltip(
       message: !anon
-          ? 'Trafic direct (non anonyme)'
-          : 'Anonyme : $hops saut(s)'
-                '${waiting ? ' — en attente de circuit' : ''}',
+          ? l10n.trafficDirect
+          : l10n.anonTip(hops, waiting ? l10n.waitingCircuit : ''),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
         decoration: BoxDecoration(
@@ -89,7 +89,7 @@ class AnonBadge extends StatelessWidget {
             ),
             const SizedBox(width: 3),
             Text(
-              !anon ? 'Clair' : 'Anon ×$hops',
+              !anon ? l10n.badgeClear : l10n.badgeAnon(hops),
               style: TextStyle(fontSize: 10, color: color),
             ),
           ],

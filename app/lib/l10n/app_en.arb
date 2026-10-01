@@ -1,0 +1,836 @@
+{
+  "@@locale": "en",
+  "@@author": "Laurent Geynet",
+
+  "navDownloads": "Downloads",
+  "@navDownloads": { "description": "Sidebar/nav label — Downloads page" },
+  "navSearch": "Search",
+  "@navSearch": { "description": "Sidebar/nav label — Search page" },
+  "navDiagnostic": "Diagnostics",
+  "@navDiagnostic": { "description": "Sidebar/nav label — Diagnostic page" },
+  "navSettings": "Settings",
+  "@navSettings": { "description": "Sidebar/nav label — Settings page" },
+
+  "filterAll": "All",
+  "filterDownloading": "Downloading",
+  "filterCompleted": "Completed",
+  "filterActive": "Active",
+  "filterInactive": "Inactive",
+
+  "sidebarAddDownloadTooltip": "Add a download",
+  "add": "Add",
+  "sidebarGroupLibrary": "Library",
+  "sidebarGroupSystem": "System",
+  "sidebarFiltersCollapse": "Collapse filters",
+  "sidebarFiltersExpand": "Expand filters",
+  "sidebarExpand": "Expand sidebar",
+  "sidebarCollapse": "Collapse to rail",
+
+  "daemonConnected": "Daemon connected",
+  "daemonUnreachable": "Daemon unreachable",
+  "daemonConnectedVersion": "Daemon connected · {version}",
+  "@daemonConnectedVersion": {
+    "description": "Sidebar footer tooltip when connected, with daemon version",
+    "placeholders": { "version": { "type": "String" } }
+  },
+  "daemonFooterVersion": "Daemon {version}",
+  "@daemonFooterVersion": {
+    "description": "Sidebar footer label: daemon name + version",
+    "placeholders": { "version": { "type": "String" } }
+  },
+  "daemonFooterNoVersion": "Daemon",
+
+  "daemonUnreachableBanner": "Daemon unreachable{url}",
+  "@daemonUnreachableBanner": {
+    "description": "Banner when the daemon SSE is down; {url} is ' — <baseUrl>' or empty",
+    "placeholders": { "url": { "type": "String" } }
+  },
+  "retry": "Retry",
+  "configure": "Configure…",
+  "connectionDialogTitle": "Daemon connection",
+  "daemonUrlLabel": "Daemon URL",
+  "apiKeyLabel": "API key (if enabled)",
+  "invalidUrl": "Invalid URL (e.g. http://127.0.0.1:8085)",
+  "cancel": "Cancel",
+  "connecting": "Connecting…",
+  "save": "Save",
+
+  "statusAnonReady": "Anonymous: {count, plural, =1{{count} circuit ready} other{{count} circuits ready}}",
+  "@statusAnonReady": {
+    "description": "Status bar — anonymous lane ready circuits",
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "statusAnonWaiting": "Anonymous: waiting for circuit",
+  "statusAnonDisabled": "Anonymous: disabled",
+  "statusAnonLoading": "Anonymous: …",
+
+  "searchHint": "Search content…",
+
+  "notifications": "Notifications",
+  "markAllRead": "Mark all read",
+  "clearAll": "Clear",
+  "noNotifications": "No notifications",
+
+  "notifDownloadFinished": "Download finished",
+  "notifDaemonError": "Daemon error",
+  "notifLowSpace": "Low disk space",
+  "notifLowSpaceMsg": "The download folder is almost full.",
+  "notifNewVersion": "Update available",
+  "notifNewVersionMsg": "Version {version} available.",
+  "@notifNewVersionMsg": {
+    "placeholders": { "version": { "type": "String" } }
+  },
+  "notifDownloadError": "Download error",
+
+  "snackFinished": "Download finished",
+  "snackFinishedName": "\"{name}\" finished — seeding",
+  "@snackFinishedName": {
+    "placeholders": { "name": { "type": "String" } }
+  },
+
+  "searchPopular": "Trending on the network",
+  "searchResultsFor": "Results for \"{query}\"",
+  "@searchResultsFor": {
+    "placeholders": { "query": { "type": "String" } }
+  },
+  "searchAddSelected": "Add ({count})",
+  "@searchAddSelected": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "searchDeselect": "Clear selection",
+  "searchRemoteProgress": "remote search · {results, plural, =1{{results} result} other{{results} results}} · {peers, plural, =1{{peers} peer} other{{peers} peers}}",
+  "@searchRemoteProgress": {
+    "placeholders": {
+      "results": { "type": "int" },
+      "peers": { "type": "int" }
+    }
+  },
+  "searchRemoteStop": "Stop remote search",
+  "searchRemoteFinished": "{count, plural, =1{{count} remote result} other{{count} remote results}} · finished at {time}",
+  "@searchRemoteFinished": {
+    "placeholders": {
+      "count": { "type": "int" },
+      "time": { "type": "String" }
+    }
+  },
+  "sortResults": "Sort results",
+  "sortRelevance": "Relevance",
+  "sortHealth": "Health (seeders)",
+  "colName": "Name",
+  "colSize": "Size",
+  "colSeeds": "Seeds",
+  "colLeechers": "Leechers",
+  "colDate": "Date",
+  "colSource": "Source",
+  "searchRecent": "Recent:",
+  "searchSourceNetwork": "Network",
+  "searchMinSeeds": "≥ 10 seeds",
+  "emptyNoTorrents": "No known torrents",
+  "emptyNoResults": "No results",
+  "emptyDiscovering": "The daemon is still discovering the network — trending torrents will appear here.",
+  "emptyTryOther": "Try other terms, or wait for network replies.",
+  "batchAdded": "{added, plural, =1{{added} download added} other{{added} downloads added}}",
+  "@batchAdded": {
+    "placeholders": { "added": { "type": "int" } }
+  },
+  "batchAddedFailed": "{added, plural, =1{{added} added} other{{added} added}}, {failed, plural, =1{{failed} failed} other{{failed} failed}}",
+  "@batchAddedFailed": {
+    "placeholders": {
+      "added": { "type": "int" },
+      "failed": { "type": "int" }
+    }
+  },
+  "resultSeedsLeechers": "{seeders} seeds / {leechers} leechers",
+  "@resultSeedsLeechers": {
+    "placeholders": {
+      "seeders": { "type": "int" },
+      "leechers": { "type": "int" }
+    }
+  },
+  "sourceNetwork": "network",
+  "sourceLocal": "local",
+  "alreadyDownloaded": "Already in your downloads",
+  "inProgress": "In progress",
+  "healthSeeders": "{count, plural, =1{{count} seeder} other{{count} seeders}}",
+  "@healthSeeders": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "healthLeechersOnly": "Leechers only — fragile health",
+  "healthUnknown": "Unknown health",
+  "ctxAdd": "Add…",
+  "ctxQuickAdd": "Quick add",
+  "ctxDirectHop": "Direct (0 hops)",
+  "ctxHops": "{count, plural, =1{{count} hop} other{{count} hops}}",
+  "@ctxHops": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "ctxRefreshHealth": "Refresh health",
+  "ctxCopyMagnet": "Copy magnet link",
+  "ctxCopyInfohash": "Copy info-hash",
+  "toastAdded": "\"{name}\" added",
+  "@toastAdded": {
+    "placeholders": { "name": { "type": "String" } }
+  },
+  "toastAddedAnon": "\"{name}\" added anonymously ({hops, plural, =1{{hops} hop} other{{hops} hops}})",
+  "@toastAddedAnon": {
+    "placeholders": {
+      "name": { "type": "String" },
+      "hops": { "type": "int" }
+    }
+  },
+  "toastAddError": "Add: {error}",
+  "@toastAddError": {
+    "placeholders": { "error": { "type": "String" } }
+  },
+  "toastHealthOk": "Health refreshed",
+  "toastHealthPending": "Health check in progress on the daemon",
+  "toastHealthError": "Health probe: {error}",
+  "@toastHealthError": {
+    "placeholders": { "error": { "type": "String" } }
+  },
+  "toastMagnetCopied": "Magnet link copied",
+  "toastInfohashCopied": "Info-hash copied",
+
+  "tabOverview": "Overview",
+  "tabStats": "Statistics",
+  "tabOverlays": "Overlays",
+  "tabCircuits": "Circuits",
+  "tabRelays": "Relays",
+  "tabExits": "Exits",
+  "tabSwarms": "Swarms",
+  "tabPeers": "Peers",
+  "tabDhtPeers": "DHT peers",
+  "tabPexPeers": "PEX peers",
+  "tabLogs": "Logs",
+  "refresh": "Refresh",
+
+  "emptyOverlays": "No overlay",
+  "emptyOverlaysMsg": "Is the IPv8 stack active?",
+  "peersCount": "{count, plural, =1{{count} peer} other{{count} peers}}",
+  "@peersCount": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "emptyCircuits": "No circuit",
+  "emptyCircuitsMsg": "Anonymous circuits are built when a download requests one.",
+  "testNewCircuit": "Test a new circuit",
+  "testCircuitHops": "{hops, plural, =1{Test a 1-hop circuit} other{Test a {hops}-hop circuit}}",
+  "@testCircuitHops": {
+    "placeholders": { "hops": { "type": "int" } }
+  },
+  "circuitHopCount": "{goal, plural, =1{{actual}/1 hop} other{{actual}/{goal} hops}}",
+  "@circuitHopCount": {
+    "placeholders": {
+      "actual": { "type": "int" },
+      "goal": { "type": "int" }
+    }
+  },
+  "circuitRoute": "route: {route}",
+  "@circuitRoute": {
+    "placeholders": { "route": { "type": "String" } }
+  },
+  "speedTest": "Speed test",
+  "emptyRelays": "No relay",
+  "relayRendezvous": "rendezvous relay",
+  "relay": "relay",
+  "emptyExits": "No exit",
+  "exitActive": "active",
+  "exitInactive": "inactive",
+  "exitCircuit": "circuit #{id}",
+  "@exitCircuit": {
+    "placeholders": { "id": { "type": "int" } }
+  },
+  "emptySwarms": "No hidden swarm",
+  "emptySwarmsMsg": "Appears when an anonymous download starts.",
+  "connectionsCount": "{count, plural, =1{{count} connection} other{{count} connections}}",
+  "@connectionsCount": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "flagRelay": "relay",
+  "flagBtExit": "bt-exit",
+  "flagIpv8Exit": "ipv8-exit",
+  "flagSpeedTest": "speed-test",
+  "flagBackupExit": "backup-exit",
+  "flagHttpExit": "http-exit",
+  "noFlags": "no flag",
+  "emptyTunnelPeers": "No tunnel peer",
+  "emptyIntroPointsMsg": "Appears when hidden-swarm introduction points are known.",
+  "introPointsCount": "{count, plural, =1{{count} introduction point} other{{count} introduction points}}",
+  "@introPointsCount": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "seederPrefix": "seeder {pk}",
+  "@seederPrefix": {
+    "placeholders": { "pk": { "type": "String" } }
+  },
+  "emptyDhtIntro": "No DHT introduction point",
+  "emptyPexIntro": "No PEX introduction point",
+
+  "statDaemonVersion": "Daemon version",
+  "statDbSize": "Database size",
+  "statTorrentsKnown": "Known torrents",
+  "statIpv8Peers": "Discovered IPv8 peers",
+  "statSessions": "Engine sessions (direct + lanes)",
+  "statUptime": "Uptime",
+  "statDiskSpace": "Free disk space (download folder)",
+  "statSectionContent": "Content",
+  "statSectionNetwork": "IPv8 network",
+  "statDownloads": "Downloads",
+  "statDownloadsValue": "{active} active · {paused} paused · {error} failed",
+  "@statDownloadsValue": {
+    "placeholders": {
+      "active": { "type": "int" },
+      "paused": { "type": "int" },
+      "error": { "type": "int" }
+    }
+  },
+  "statIpv8Traffic": "Overlay traffic (session)",
+  "statSessionTraffic": "BitTorrent traffic (session)",
+  "statTrafficValue": "↑ {up} · ↓ {down}",
+  "@statTrafficValue": {
+    "placeholders": {
+      "up": { "type": "String" },
+      "down": { "type": "String" }
+    }
+  },
+  "statLanes": "Anonymous lanes",
+  "statDataCircuits": "Ready DATA circuits",
+  "statExitsActive": "Active exits (relaying)",
+  "statNone": "none",
+
+  "logsDebugTooltip": "Logs detailed tunnel events (create/extend/destroy, e2e…)",
+  "uiLogTitle": "UI log",
+  "uiLogSubtitle": "logs/ui.log — daemon connection, SSE, adds, searches",
+  "emptyLogs": "Empty log",
+  "emptyLogsMsg": "The daemon has not written anything yet.",
+
+  "overviewTunnelInactive": "TunnelCommunity inactive",
+  "overviewTunnelsOk": "Tunnels operational ({count, plural, =1{{count} circuit ready} other{{count} circuits ready}})",
+  "@overviewTunnelsOk": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "overviewTunnelNoCircuit": "TunnelCommunity active, no circuit ready",
+  "autoRefresh5s": "auto-refresh 5 s",
+
+  "cardIpv8Overlays": "IPv8 overlays",
+  "cardCircuitsReady": "Ready circuits",
+  "cardRelays": "Relays",
+  "cardActiveExits": "Active exits",
+  "cardTunnelPeers": "Tunnel peers",
+  "cardKnownTorrents": "Known torrents",
+  "cardDownload": "Download",
+  "cardUpload": "Upload",
+  "cardDatabase": "Database",
+
+  "speedTestCircuitTitle": "Circuit #{id} test",
+  "@speedTestCircuitTitle": {
+    "placeholders": { "id": { "type": "int" } }
+  },
+  "speedTestNewTitle": "{hops, plural, =1{Test of a 1-hop circuit} other{Test of a {hops}-hop circuit}}",
+  "@speedTestNewTitle": {
+    "placeholders": { "hops": { "type": "int" } }
+  },
+  "speedMeasuring": "Measuring…",
+  "speedTestFailed": "Test failed",
+  "speedTestDone": "Test finished",
+  "close": "Close",
+
+  "errorMessage": "Error: {error}",
+  "@errorMessage": {
+    "placeholders": { "error": { "type": "String" } }
+  },
+  "defaultHint": "default: {value}",
+  "@defaultHint": {
+    "description": "Input hint showing a default value",
+    "placeholders": { "value": { "type": "String" } }
+  },
+  "defaultOn": "Default: on.",
+  "defaultOff": "Default: off.",
+  "appliedOnRestart": "Applied on restart.",
+  "appliedOnRestartDefaultOn": "Default: on. Applied on restart.",
+  "browse": "Browse…",
+  "apply": "Apply",
+
+  "sectionDownloadsDefaults": "Default downloads",
+  "sectionBandwidth": "Bandwidth",
+  "sectionQueue": "Queue",
+  "sectionSeeding": "Default seeding & anonymity",
+  "sectionAnonymity": "Anonymous tunnels",
+  "sectionNetwork": "Network",
+  "sectionAutomation": "Automation",
+  "sectionVersioning": "Updates",
+  "sectionConnection": "Connection",
+  "sectionAdvanced": "Advanced configuration",
+  "sectionDaemon": "Daemon",
+  "settingsDirtyBanner": "{count, plural, =1{{count} modified section not saved} other{{count} modified sections not saved}}",
+  "@settingsDirtyBanner": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "discardAll": "Discard all",
+  "saveAll": "Save all",
+  "filterSettings": "Filter settings",
+  "noMatchingSection": "No section matches \"{filter}\".",
+  "@noMatchingSection": {
+    "placeholders": { "filter": { "type": "String" } }
+  },
+  "resetSectionDefaults": "Restore section defaults",
+  "defaultsRestored": "Defaults restored",
+  "unsavedChanges": "Unsaved changes",
+
+  "dlSettingsSaved": "Download settings saved",
+  "saveError": "Save error: {error}",
+  "@saveError": {
+    "placeholders": { "error": { "type": "String" } }
+  },
+  "dlDestFolder": "Default destination folder",
+  "dlDestHint": "default: <daemon state>/downloads",
+  "dlDestHelp": "New downloads without a specific folder will be saved here.",
+  "diskSpaceLoading": "Disk space: …",
+  "diskSpaceUnavailable": "Disk space: unavailable",
+  "diskSpaceFree": "Free space: {free} of {total}",
+  "@diskSpaceFree": {
+    "placeholders": {
+      "free": { "type": "String" },
+      "total": { "type": "String" }
+    }
+  },
+
+  "bwSaved": "Bandwidth limits saved",
+  "bwDownloadLabel": "Download",
+  "bwUploadLabel": "Upload",
+  "rateFieldLabel": "{label} (KB/s)",
+  "@rateFieldLabel": {
+    "placeholders": { "label": { "type": "String" } }
+  },
+  "rateUnlimited": "Unlimited",
+  "rateUnlimitedHint": "default: 0 = unlimited",
+  "rateDesc": "Global rate; 0 = unlimited",
+  "ratePresetMb": "{mb} MB/s",
+  "@ratePresetMb": {
+    "placeholders": { "mb": { "type": "int" } }
+  },
+
+  "queueSaved": "Queue saved",
+  "queueHelp": "Downloads marked auto-managed beyond these limits are paused, then resumed when a slot frees up.",
+  "queueActiveDownloads": "Active downloads",
+  "queueActiveSeeds": "Active seeds",
+  "queueActiveChecking": "Active checks",
+  "queueActiveLimit": "Global limit",
+  "queueDefHint": "default: {def} · -1 = unlimited",
+  "@queueDefHint": {
+    "placeholders": { "def": { "type": "int" } }
+  },
+  "queueFastresume": "Check on startup",
+  "queueFastresumeSub": "Re-reads a sample of pieces after restore to detect files changed between sessions. Disabled: no re-read, corruption may go unnoticed.",
+  "queueAutoManaged": "Auto-managed by default",
+  "queueAutoManagedSub": "New downloads are placed under the queue. Default: off.",
+
+  "seedSaved": "Seeding policy saved",
+  "seedMode": "Seeding mode",
+  "seedModeForever": "Forever",
+  "seedModeNever": "Never",
+  "seedModeRatio": "Until ratio",
+  "seedModeTime": "Time-limited",
+  "seedModeDefault": "Default: \"Forever\".",
+  "seedRatioLabel": "Target seed ratio",
+  "seedTimeLabel": "Seed duration (seconds)",
+  "seedAnonTitle": "Default anonymity for new downloads",
+  "seedAnonSwitch": "Anonymous downloads by default",
+  "seedAnonSub": "Default: on, 1 hop.",
+  "safeSeedingSub": "Required when anonymous hops are requested. Default: on.",
+
+  "anonSaved": "Tunnel settings saved",
+  "anonMinMaxError": "min_circuits must be ≤ max_circuits",
+  "anonEnabled": "TunnelCommunity enabled",
+  "anonEnabledSub": "Required for anonymous downloads. Applied on restart. Default: on.",
+  "anonExit": "Act as exit node",
+  "anonExitSub": "Warning: your machine then relays other peers' BitTorrent traffic to the public Internet. Default: off. Applied on restart.",
+  "circuitsMinLabel": "Minimum circuits (default: 3)",
+  "circuitsMaxLabel": "Maximum circuits (default: 8)",
+  "anonCircuitsNote": "Circuits maintained permanently per anonymous lane; live detail in Diagnostics → Circuits.",
+
+  "netSaved": "Network settings saved",
+  "proxyNone": "None",
+  "proxySocks5Auth": "SOCKS5 + authentication",
+  "proxyHttpAuth": "HTTP + authentication",
+  "netDiscovery": "Discovery & transport",
+  "appliedOnRestartOn": "Default: on. Applied on restart.",
+  "lsdTitle": "Local discovery (LSD)",
+  "proxySection": "Outgoing proxy",
+  "proxyTypeLabel": "Proxy type (default: none)",
+  "proxyServerLabel": "Server (host:port)",
+  "proxyAuthLabel": "Authentication (user:password)",
+  "proxyAuthDesc": "Password: libtorrent/proxy_password",
+  "effectiveState": "Effective state",
+  "effectiveStateTip": "Values actually applied by the daemon (read-only). The settings below may differ until the daemon restarts.",
+  "listenPortChip": "Listen port: {port}",
+  "@listenPortChip": {
+    "placeholders": { "port": { "type": "String" } }
+  },
+  "interfacesChip": "Interfaces: {list}",
+  "@interfacesChip": {
+    "placeholders": { "list": { "type": "String" } }
+  },
+  "stateOn": "on",
+  "stateOff": "off",
+  "proxyChipNone": "Proxy: none",
+  "proxyChipType": "Proxy: type {type}{server}",
+  "@proxyChipType": {
+    "placeholders": {
+      "type": { "type": "int" },
+      "server": { "type": "String" }
+    }
+  },
+  "overlayPeersChip": "{name}: {count, plural, =1{{count} peer} other{{count} peers}}",
+  "@overlayPeersChip": {
+    "placeholders": {
+      "name": { "type": "String" },
+      "count": { "type": "int" }
+    }
+  },
+
+  "autoSaved": "Automation saved",
+  "watchFolderTitle": "Watched folder",
+  "watchSwitch": "Watch a folder",
+  "watchSwitchSub": ".torrent files dropped in it are added automatically. Default: off.",
+  "watchDirLabel": "Folder to watch",
+  "watchIntervalLabel": "Scan interval (s) — default: 10",
+  "rssTitle": "RSS feeds",
+  "rssSwitch": "Active RSS watchers",
+  "rssSwitchSub": "Default: on (no feeds).",
+  "rssRemove": "Remove",
+  "rssUrlLabel": "Feed URL",
+  "rssAddTooltip": "Add feed",
+  "rssLastItems": "Latest discovered items",
+
+  "advSaved": "Advanced configuration applied",
+  "jsonNotObject": "The document must be a JSON object.",
+  "jsonInvalid": "Invalid JSON: {message}",
+  "@jsonInvalid": {
+    "placeholders": { "message": { "type": "String" } }
+  },
+  "configCopied": "Configuration copied",
+  "advWarning": "Raw editing of the `configuration.json` tree. Sensitive keys (API keys, identity paths) are visible — handle with care.",
+  "export": "Export",
+  "import": "Import",
+  "reload": "Reload",
+  "importTitle": "Import a configuration",
+  "importSections": "Detected sections: {sections}",
+  "@importSections": {
+    "placeholders": { "sections": { "type": "String" } }
+  },
+  "importNote": "Content will replace the editor — nothing is sent until \"Apply\" is pressed.",
+  "importLoad": "Load into editor",
+
+  "apiUrlLabel": "API URL",
+  "apiKeyLabelShort": "API key",
+  "apiKeyHint": "auto: daemon's configuration.json",
+
+  "daemonState": "Daemon state",
+  "stateDir": "State folder",
+  "downloadsTo": "Downloads to",
+  "ipv8Active": "active ({address})",
+  "@ipv8Active": {
+    "placeholders": { "address": { "type": "String" } }
+  },
+  "ipv8Inactive": "inactive",
+  "tunnelsOn": "enabled",
+  "tunnelsOff": "disabled",
+  "shutdownBtn": "Stop daemon",
+  "shutdownTitle": "Stop the daemon?",
+  "shutdownBody": "Downloads will be suspended until the next startup.",
+  "shutdownConfirm": "Stop",
+  "shutdownSent": "Daemon shutdown requested.",
+
+  "newVersionAvail": "New version available: {version}",
+  "@newVersionAvail": {
+    "placeholders": { "version": { "type": "String" } }
+  },
+  "upToDate": "The daemon is up to date.",
+  "checkError": "Check: {error}",
+  "@checkError": {
+    "placeholders": { "error": { "type": "String" } }
+  },
+  "daemonVersionLine": "Daemon version: {version}",
+  "@daemonVersionLine": {
+    "placeholders": { "version": { "type": "String" } }
+  },
+  "checkVersion": "Check",
+  "versionCheckSwitch": "Version check",
+  "versionCheckSub": "Disabled section = missing endpoints (404). Default: on.",
+  "allowPre": "Accept pre-releases",
+
+  "noDownloads": "No downloads",
+  "noDownloadsHint": "Add a magnet or a .torrent file.",
+  "filterEmpty": "No items in filter \"{filter}\".",
+  "@filterEmpty": {
+    "placeholders": { "filter": { "type": "String" } }
+  },
+  "deleteTitle": "Delete",
+  "deleteConfirmBody": "{count, plural, =1{{count} download will be removed from the daemon.} other{{count} downloads will be removed from the daemon.}}",
+  "@deleteConfirmBody": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "deleteAlsoFiles": "Also delete files on disk",
+  "delete": "Delete",
+  "selectedCount": "{count, plural, =1{{count} selected} other{{count} selected}}",
+  "@selectedCount": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "filterByName": "Filter by name",
+  "resume": "Resume",
+  "pause": "Pause",
+  "deselect": "Deselect",
+  "openFolder": "Open folder",
+  "autoManaged": "Auto-managed",
+  "queueTop": "Move to top",
+  "queueUp": "Move up",
+  "queueDown": "Move down",
+  "queueBottom": "Move to bottom",
+  "queueMenu": "Queue",
+  "queueMenuWithPos": "Queue — position {pos}",
+  "@queueMenuWithPos": {
+    "placeholders": { "pos": { "type": "int" } }
+  },
+  "anonMenuTitle": "Anonymity: {mode}",
+  "@anonMenuTitle": {
+    "placeholders": { "mode": { "type": "String" } }
+  },
+  "anonDirect": "Direct",
+  "rateLimits": "Rate limits",
+  "downloadDir": "Download ↓",
+  "uploadDir": "Upload ↑",
+  "customRate": "Custom…",
+  "seedRatioDialog": "Seed ratio…",
+  "recheck": "Recheck data",
+  "moveFolder": "Move storage…",
+  "republishAnon": "Republish anonymously",
+  "twinCreated": "Public twin created, seeding anonymously ({hash})",
+  "@twinCreated": {
+    "placeholders": { "hash": { "type": "String" } }
+  },
+  "viewTable": "Table view",
+  "viewGrid": "Grid view",
+  "viewCompact": "Compact list",
+  "noSeeders": "No known seeders",
+  "seedersReachable": "{count, plural, =1{{count} seeder, swarm reachable} other{{count} seeders, swarm reachable}}",
+  "@seedersReachable": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "seedersNoPeers": "Known seeders but no connected peer",
+  "stoppedOnError": "Stopped on error",
+  "privateTorrent": "Private torrent (DHT/PEX disabled)",
+  "queuePosTip": "Position {pos} in queue",
+  "@queuePosTip": {
+    "placeholders": { "pos": { "type": "int" } }
+  },
+  "colProgress": "Progress",
+  "colStatus": "Status",
+  "colPeers": "Peers",
+  "colRatio": "Ratio",
+  "colAdded": "Added",
+
+  "statusError": "Error",
+  "statusDownloading": "Downloading {pct} %",
+  "@statusDownloading": {
+    "placeholders": { "pct": { "type": "String" } }
+  },
+  "statusSeeding": "Seeding {pct} %",
+  "@statusSeeding": {
+    "placeholders": { "pct": { "type": "String" } }
+  },
+  "statusMetadata": "Metadata",
+  "statusChecking": "Checking",
+  "statusStopped": "Stopped",
+  "badgeClear": "Clear",
+  "badgeAnon": "Anon ×{hops}",
+  "@badgeAnon": {
+    "placeholders": { "hops": { "type": "int" } }
+  },
+  "trafficDirect": "Direct traffic (not anonymous)",
+  "anonTip": "Anonymous: {count, plural, =1{{count} hop} other{{count} hops}}{suffix}",
+  "@anonTip": {
+    "placeholders": {
+      "count": { "type": "int" },
+      "suffix": { "type": "String" }
+    }
+  },
+  "waitingCircuit": " — waiting for circuit",
+
+  "tabDetails": "Details",
+  "tabFiles": "Files",
+  "copyMagnetToast": "Magnet link copied to clipboard",
+  "copyInfohashToast": "Info-hash copied to clipboard",
+  "limitsBtn": "Limits…",
+  "ratioSeedBtn": "Seed ratio…",
+  "moveBtn": "Move…",
+  "recheckBtn": "Recheck",
+  "rowName": "Name",
+  "rowStatus": "Status",
+  "rowSize": "Size",
+  "rowHealth": "Health",
+  "healthValue": "{seeds} seeders, {leeches} leechers",
+  "@healthValue": {
+    "placeholders": {
+      "seeds": { "type": "int" },
+      "leeches": { "type": "int" }
+    }
+  },
+  "rowAnon": "Anonymity",
+  "hopsValue": "{count, plural, =1{{count} hop} other{{count} hops}}{suffix}",
+  "@hopsValue": {
+    "placeholders": {
+      "count": { "type": "int" },
+      "suffix": { "type": "String" }
+    }
+  },
+  "safeSeedingSuffix": " + safe seeding",
+  "noName": "(unnamed)",
+  "rowDest": "Destination",
+  "daemonDefault": "(daemon default)",
+  "rowQueue": "Queue",
+  "queueAuto": "automatic",
+  "queueManual": "manual",
+  "queuePosSuffix": " · position {pos}",
+  "@queuePosSuffix": {
+    "placeholders": { "pos": { "type": "int" } }
+  },
+  "rowLimits": "Limits",
+  "rowSeedRatio": "Seed ratio",
+  "defaultValue": "default",
+  "rowAdded": "Added on",
+  "rowFinished": "Completed on",
+  "rowError": "Error",
+  "peakLabel": "peak {rate}",
+  "@peakLabel": {
+    "placeholders": { "rate": { "type": "String" } }
+  },
+  "noFiles": "No files listed",
+  "noFilesMeta": "Metadata not yet available.",
+  "includeFile": "Include in download",
+  "filePriority": "File priority",
+  "priorityApplied": "Priority {p} applied",
+  "@priorityApplied": {
+    "placeholders": { "p": { "type": "int" } }
+  },
+  "prioNoDownload": "Do not download",
+  "prioLow": "Low priority",
+  "prioNormal": "Normal",
+  "prioHigh": "High priority",
+  "openLocation": "Open location",
+  "addTracker": "Add tracker",
+  "trackerUrl": "Tracker URL",
+  "trackerAdded": "Tracker added: {url}",
+  "@trackerAdded": {
+    "placeholders": { "url": { "type": "String" } }
+  },
+  "trackerAddError": "Tracker add error: {error}",
+  "@trackerAddError": {
+    "placeholders": { "error": { "type": "String" } }
+  },
+  "trackerCount": "{count, plural, =1{{count} tracker} other{{count} trackers}}",
+  "@trackerCount": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "defaultTrackers": "Default trackers",
+  "noTrackers": "No active trackers",
+  "noTrackersHint": "You can add trackers to improve sources.",
+  "trackerStatus": "Status: {status}",
+  "@trackerStatus": {
+    "placeholders": { "status": { "type": "String" } }
+  },
+  "forceAnnounce": "Force announce",
+  "removeTracker": "Remove this tracker",
+  "actionDone": "{label} done",
+  "@actionDone": {
+    "placeholders": { "label": { "type": "String" } }
+  },
+  "swarmStats": "Swarm statistics",
+  "seedersConn": "Connected seeders",
+  "leechersConn": "Connected leechers",
+  "totalPeersConn": "Total connected peers",
+  "downRateRow": "Current download rate",
+  "upRateRow": "Current upload rate",
+  "netMode": "Network mode",
+  "netModeAnon": "IPv8 anonymous tunnel ({count, plural, =1{{count} hop} other{{count} hops}})",
+  "@netModeAnon": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "netModeDirect": "Direct BitTorrent connection",
+  "peersConnCount": "{count, plural, =1{{count} connected peer} other{{count} connected peers}}",
+  "@peersConnCount": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "colAddress": "Address",
+  "colClient": "Client",
+  "colDir": "Dir.",
+  "colDownRate": "↓ rate",
+  "colUpRate": "↑ rate",
+  "colDownTotal": "↓ total",
+  "colUpTotal": "↑ total",
+  "colTransport": "Transport",
+  "peerDirIn": "Incoming (peer initiated)",
+  "peerDirOut": "Outgoing",
+  "noPeers": "No connected peers",
+  "noPeersHint": "The client is searching for peers via trackers and DHT.",
+
+  "addDownload": "Add download",
+  "magnetOrUrl": "Magnet or URL",
+  "magnetHint": "magnet:?xt=… or https://…",
+  "torrentFileBtn": ".torrent file…",
+  "removeFile": "Remove file",
+  "anonDirectWarn": "Your IP is visible to peers.",
+  "anonRelaysInfo": "{count, plural, =1{{count} relay between you and the swarm} other{{count} relays between you and the swarm}}. If no circuit is ready, the download will wait (never falls back to direct). Seeding will also be anonymized (safe seeding).",
+  "@anonRelaysInfo": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "httpsOnlyWarn": "All trackers of this torrent use HTTPS: they are unreachable through anonymous exits (cleartext HTTP relay only). In anonymous mode this torrent will find no peers — choose \"Direct\".",
+  "destFolderOpt": "Destination folder (optional)",
+  "addPaused": "Add paused",
+  "emptyUnlimited": "empty = unlimited",
+  "moveTitle": "Move files",
+  "newDest": "New destination folder",
+  "moveConfirm": "Move",
+  "moveRequested": "Move requested",
+  "ratioTitle": "Seed ratio",
+  "useDefaultSetting": "Use default setting",
+  "targetRatio": "Target ratio",
+  "invalidValue": "invalid value",
+  "actResume": "resume",
+  "actPause": "pause",
+  "actPauseResume": "pause/resume",
+  "actDelete": "delete",
+  "actQueue": "queue",
+  "actAnon": "anonymity",
+  "actDownLimit": "download limit",
+  "actUpLimit": "upload limit",
+  "actRecheck": "recheck",
+  "actRepublish": "anonymous republication",
+  "actRemove": "deletion",
+  "actSelect": "selection",
+  "actPriority": "priority",
+  "actLimits": "rate limits",
+  "actRatio": "ratio",
+  "actMove": "move",
+  "actAnnounce": "forced announce",
+  "actRemoveTracker": "tracker removal",
+  "actDefaultTrackers": "default trackers add",
+
+  "settingsAppearanceTitle": "Appearance",
+  "@settingsAppearanceTitle": { "description": "Settings — Appearance section title" },
+  "settingsThemeMode": "Mode",
+  "@settingsThemeMode": { "description": "Theme mode label" },
+  "themeModeAuto": "Auto",
+  "themeModeLight": "Light",
+  "themeModeDark": "Dark",
+  "settingsAccent": "Accent",
+  "@settingsAccent": { "description": "Seed color label" },
+  "accentBlue": "Blue",
+  "accentIndigo": "Indigo",
+  "accentGreen": "Green",
+  "accentOrange": "Orange",
+  "accentPink": "Pink",
+  "accentSlate": "Slate",
+  "settingsLanguage": "Language",
+  "@settingsLanguage": { "description": "Language selector label" },
+  "languageSystem": "System"
+}

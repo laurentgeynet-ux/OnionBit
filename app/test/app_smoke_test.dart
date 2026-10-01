@@ -64,10 +64,10 @@ void main() {
     await tester.pump();
     await tester.pump();
 
-    expect(find.text('Ajouter'), findsWidgets);
-    expect(find.text('Téléchargements'), findsWidgets);
-    expect(find.text('Rechercher'), findsOneWidget);
-    expect(find.text('Diagnostic'), findsOneWidget);
-    expect(find.text('Aucun téléchargement'), findsOneWidget);
+    expect(find.text('Add'), findsWidgets);
+    expect(find.text('Downloads'), findsWidgets);
+    expect(find.text('Search'), findsOneWidget);
+    expect(find.text('Diagnostics'), findsOneWidget);
+    expect(find.text('No downloads'), findsOneWidget);
   });
 }

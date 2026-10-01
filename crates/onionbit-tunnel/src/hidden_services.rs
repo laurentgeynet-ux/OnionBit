@@ -626,9 +626,11 @@ impl TunnelCommunity {
         w.varlen_h(Self::strip_pk_prefix(seeder_pk));
         let ih_hex = hex::encode(info_hash);
         tokio::spawn(async move {
-            // "Announced %s to the DHTCommunity" (info).
+            // "Announced %s to the DHTCommunity" — info cote Python
+            // (annonce ponctuelle) ; ici la re-annonce periodique par
+            // point d'introduction inonde le journal : debug.
             match dht.store_value(&info_hash, &w.into_bytes(), false).await {
-                Ok(_) => tracing::info!(
+                Ok(_) => tracing::debug!(
                     info_hash = ih_hex,
                     "point d'introduction annonce sur la DHT"
                 ),
@@ -1104,7 +1106,9 @@ impl TunnelCommunity {
         if let Some(dht) = dht {
             match dht.find_values(&info_hash, 0).await {
                 Ok(values) => {
-                    tracing::info!(
+                    // Tick periodique de decouverte par swarm : debug
+                    // pour ne pas inonder le journal info.
+                    tracing::debug!(
                         info_hash = hex::encode(info_hash),
                         n = values.len(),
                         "dht_lookup du swarm : valeur(s) DHT"

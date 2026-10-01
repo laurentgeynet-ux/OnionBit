@@ -7,6 +7,7 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../core/l10n/l10n_ext.dart';
 import '../../../../core/theme/app_theme.dart';
 import 'settings_section.dart';
 import 'settings_defaults.dart';
@@ -64,16 +65,17 @@ class _BandwidthSectionState extends ConsumerState<BandwidthSection> {
         'max_download_rate': parseKb(_down.text),
         'max_upload_rate': parseKb(_up.text),
       },
-    }, successMessage: 'Limites de bande passante enregistrées');
+    }, successMessage: context.l10n.bwSaved);
     _deferred.markClean();
     if (mounted) setState(() => _saving = false);
   }
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
     return SettingsSection(
       icon: Icons.speed,
-      title: 'Bande passante',
+      title: l10n.sectionBandwidth,
       sectionId: 'bandwidth',
       defaults: kBandwidthDefaults,
       child: (context, settings) {
@@ -82,7 +84,7 @@ class _BandwidthSectionState extends ConsumerState<BandwidthSection> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             _RateControl(
-              label: 'Téléchargement',
+              label: l10n.bwDownloadLabel,
               keyPath: const ['libtorrent', 'max_download_rate'],
               icon: Icons.arrow_downward,
               controller: _down,
@@ -90,7 +92,7 @@ class _BandwidthSectionState extends ConsumerState<BandwidthSection> {
             ),
             const SizedBox(height: AppSpacing.sm),
             _RateControl(
-              label: 'Envoi',
+              label: l10n.bwUploadLabel,
               keyPath: const ['libtorrent', 'max_upload_rate'],
               icon: Icons.arrow_upward,
               controller: _up,
@@ -102,7 +104,7 @@ class _BandwidthSectionState extends ConsumerState<BandwidthSection> {
               child: FilledButton.icon(
                 onPressed: _saving ? null : _save,
                 icon: const Icon(Icons.save),
-                label: const Text('Enregistrer'),
+                label: Text(l10n.save),
               ),
             ),
           ],
@@ -153,11 +155,12 @@ class _RateControl extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
     final presets = <(String, int)>[
-      ('Illimité', 0),
-      ('1 Mo/s', 1024),
-      ('5 Mo/s', 5 * 1024),
-      ('10 Mo/s', _maxKb),
+      (l10n.rateUnlimited, 0),
+      (l10n.ratePresetMb(1), 1024),
+      (l10n.ratePresetMb(5), 5 * 1024),
+      (l10n.ratePresetMb(10), _maxKb),
     ];
     final kb = _kb();
     return Column(
@@ -171,12 +174,12 @@ class _RateControl extends StatelessWidget {
                 onChanged: (_) => onChanged(),
                 keyboardType: TextInputType.number,
                 decoration: InputDecoration(
-                  labelText: '$label (Ko/s)',
-                  hintText: 'défaut : 0 = illimité',
+                  labelText: l10n.rateFieldLabel(label),
+                  hintText: l10n.rateUnlimitedHint,
                   prefixIcon: Icon(icon),
                   suffixIcon: KeyInfoIcon(
                     keyPath,
-                    description: 'Débit global ; 0 = illimité',
+                    description: l10n.rateDesc,
                   ),
                 ),
               ),

@@ -1,0 +1,43 @@
+================================================================
+ OnionBit {{VERSION}} — Windows x64
+ Anonymous BitTorrent client, native in Rust (Tribler port)
+================================================================
+
+CONTENU
+  onionbit_ui.exe       Application graphique (lance le daemon auto)
+  onionbit-daemon.exe   Daemon BitTorrent + API (peut tourner seul)
+  onionbit-cli.exe      Pilotage en ligne de commande du daemon
+  *.dll, data\          Runtime Flutter — ne pas separer de l'exe
+  LICENSE               GPL-3.0-or-later
+
+DEMARRAGE RAPIDE
+  1. Extraire le zip complet dans un dossier (ex. C:\OnionBit).
+  2. Lancer onionbit_ui.exe — l'application demarre le daemon
+     automatiquement (le daemon doit rester dans le meme dossier).
+  3. Premier lancement : l'etat est cree dans .onionbit\ a cote des
+     executables (configuration.json, api key, base SQLite, logs).
+
+LIGNES DE COMMANDE (optionnel)
+  onionbit-daemon.exe                 lance le daemon (API sur
+                                      http://127.0.0.1:8085, loopback)
+  onionbit-cli.exe --help             commandes disponibles
+  Variables d'environnement utiles :
+    ONIONBIT_DAEMON_EXE=<chemin>      force l'exe du daemon pour l'UI
+    ONIONBIT_API_KEY=<cle>            cle d'API (sinon lue depuis
+                                    .onionbit\configuration.json)
+
+ANONYMAT
+  Par defaut les telechargements ajoutes via l'UI utilisent le mode
+  anonyme (circuits a sauts multiples). Le traffic pair, DHT et
+  trackers passe dans le tunnel — aucune connexion UDP clearnet vers
+  les pairs n'est ouverte en mode anonyme.
+
+AVERTISSEMENT — VERSION ALPHA
+  Logiciel en developpement actif. L'anonymat est valide en banc
+  d'interop avec Tribler 8.x mais n'est pas equivalent a Tor face a
+  un adversaire global. Ne pas utiliser pour des besoins critiques.
+  Les tests longue-duree (stress, coupures) sont encore en cours.
+
+SOURCE / RAPPORTS DE BUGS
+  https://github.com/laurentgeynet-ux/OnionBit
+  Securite : voir SECURITY.md du depot (reporting prive).

@@ -149,6 +149,9 @@ struct Inner {
     /// titres de torrents, utilise par `local_search` (`augmenter`
     /// du `DatabaseEndpoint`).
     augmenter: Arc<crate::augmenter::Augmenter>,
+    /// Horodatage de demarrage — expose via `uptime_secs`
+    /// (`GET /api/statistics/tribler`).
+    started_at: std::time::Instant,
 }
 
 impl std::fmt::Debug for CoreSession {
@@ -199,6 +202,7 @@ impl CoreSession {
                 stopped: std::sync::atomic::AtomicBool::new(false),
                 restore_done: tokio::sync::watch::channel(false).0,
                 augmenter: augmenter.clone(),
+                started_at: std::time::Instant::now(),
             }),
         };
         // `AugmentedSearch` Python : abonne aux metadonnees ajoutees
@@ -254,6 +258,7 @@ impl CoreSession {
                 // marquee terminee d'emblee.
                 restore_done: tokio::sync::watch::channel(true).0,
                 augmenter,
+                started_at: std::time::Instant::now(),
             }),
         };
         session
@@ -555,6 +560,12 @@ impl CoreSession {
     /// torrent checker…).
     pub fn engine(&self) -> &BtEngine {
         &self.inner.engine
+    }
+
+    /// Secondes depuis `start()` — `uptime_sec` de
+    /// `GET /api/statistics/tribler`.
+    pub fn uptime_secs(&self) -> u64 {
+        self.inner.started_at.elapsed().as_secs()
     }
 
     /// Moteur cible pour un telechargement : principal si

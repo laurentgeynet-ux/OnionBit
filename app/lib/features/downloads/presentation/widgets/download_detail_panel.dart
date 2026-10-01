@@ -6,9 +6,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../core/l10n/l10n_ext.dart';
 import '../../../../core/platform/desktop_shell.dart';
 import '../../../../core/theme/app_theme.dart';
-import '../../../../core/utils/byte_formatter.dart';
 import '../../../../core/widgets/empty_state.dart';
 import '../../../../core/widgets/error_state.dart';
 import '../../domain/download.dart';
@@ -25,18 +25,19 @@ class DownloadDetailPanel extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final l10n = context.l10n;
     return DefaultTabController(
       length: 4,
       child: Column(
         children: [
-          const TabBar(
+          TabBar(
             isScrollable: true,
             tabAlignment: TabAlignment.start,
             tabs: [
-              Tab(text: 'Détails'),
-              Tab(text: 'Fichiers'),
-              Tab(text: 'Trackers'),
-              Tab(text: 'Pairs'),
+              Tab(text: l10n.tabDetails),
+              Tab(text: l10n.tabFiles),
+              const Tab(text: 'Trackers'),
+              Tab(text: l10n.tabPeers),
             ],
           ),
           Expanded(
@@ -106,129 +107,137 @@ class _DetailsTabState extends ConsumerState<_DetailsTab> {
   @override
   Widget build(BuildContext context) {
     final d = download;
+    final l10n = context.l10n;
     final notifier = ref.read(downloadsProvider.notifier);
     final magnetUri =
         'magnet:?xt=urn:btih:${d.infohash}&dn=${Uri.encodeComponent(d.name.isEmpty ? d.infohash : d.name)}';
 
-    return ListView(
-      padding: const EdgeInsets.all(AppSpacing.md),
-      children: [
-        SpeedSparkline(history: _history),
-        const SizedBox(height: AppSpacing.sm),
-        LinearProgressIndicator(value: d.progress.clamp(0.0, 1.0)),
-        const SizedBox(height: AppSpacing.md),
-        Wrap(
-          spacing: AppSpacing.sm,
-          runSpacing: AppSpacing.xs,
-          children: [
-            if (d.destination.isNotEmpty)
+    // Scrollbar persistante : le contenu « Détails » dépasse la
+    // hauteur du panneau — le pouce rend le défilement visible.
+    return Scrollbar(
+      thumbVisibility: true,
+      child: ListView(
+        padding: const EdgeInsets.all(AppSpacing.md),
+        children: [
+          SpeedSparkline(history: _history),
+          const SizedBox(height: AppSpacing.sm),
+          LinearProgressIndicator(value: d.progress.clamp(0.0, 1.0)),
+          const SizedBox(height: AppSpacing.md),
+          Wrap(
+            spacing: AppSpacing.sm,
+            runSpacing: AppSpacing.xs,
+            children: [
+              if (d.destination.isNotEmpty)
+                OutlinedButton.icon(
+                  icon: const Icon(Icons.folder_open, size: 16),
+                  label: Text(l10n.openFolder),
+                  onPressed: () => openPath(d.destination),
+                ),
               OutlinedButton.icon(
-                icon: const Icon(Icons.folder_open, size: 16),
-                label: const Text('Ouvrir le dossier'),
-                onPressed: () => openPath(d.destination),
+                icon: const Icon(Icons.link, size: 16),
+                label: Text(l10n.ctxCopyMagnet),
+                onPressed: () {
+                  Clipboard.setData(ClipboardData(text: magnetUri));
+                  ScaffoldMessenger.of(
+                    context,
+                  ).showSnackBar(SnackBar(content: Text(l10n.copyMagnetToast)));
+                },
               ),
-            OutlinedButton.icon(
-              icon: const Icon(Icons.link, size: 16),
-              label: const Text('Copier le lien magnet'),
-              onPressed: () {
-                Clipboard.setData(ClipboardData(text: magnetUri));
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Lien magnet copié dans le presse-papier'),
-                  ),
-                );
-              },
-            ),
-            OutlinedButton.icon(
-              icon: const Icon(Icons.copy, size: 16),
-              label: const Text('Copier l\'info-hash'),
-              onPressed: () {
-                Clipboard.setData(ClipboardData(text: d.infohash));
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Info-hash copié dans le presse-papier'),
-                  ),
-                );
-              },
-            ),
-            OutlinedButton.icon(
-              icon: const Icon(Icons.speed, size: 16),
-              label: const Text('Limites…'),
-              onPressed: () => showRateLimitsDialog(context, d),
-            ),
-            OutlinedButton.icon(
-              icon: const Icon(Icons.balance, size: 16),
-              label: const Text('Ratio seed…'),
-              onPressed: () => showSeedingRatioDialog(context, d),
-            ),
-            OutlinedButton.icon(
-              icon: const Icon(Icons.drive_file_move_outlined, size: 16),
-              label: const Text('Déplacer…'),
-              onPressed: () => showMoveStorageDialog(context, d),
-            ),
-            OutlinedButton.icon(
-              icon: const Icon(Icons.fact_check_outlined, size: 16),
-              label: const Text('Revérifier'),
-              onPressed: () async {
-                try {
-                  await notifier.recheck(d.infohash);
-                } catch (e) {
-                  if (context.mounted) {
-                    showDownloadError(context, 'revérification', e);
+              OutlinedButton.icon(
+                icon: const Icon(Icons.copy, size: 16),
+                label: Text(l10n.ctxCopyInfohash),
+                onPressed: () {
+                  Clipboard.setData(ClipboardData(text: d.infohash));
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text(l10n.copyInfohashToast)),
+                  );
+                },
+              ),
+              OutlinedButton.icon(
+                icon: const Icon(Icons.speed, size: 16),
+                label: Text(l10n.limitsBtn),
+                onPressed: () => showRateLimitsDialog(context, d),
+              ),
+              OutlinedButton.icon(
+                icon: const Icon(Icons.balance, size: 16),
+                label: Text(l10n.ratioSeedBtn),
+                onPressed: () => showSeedingRatioDialog(context, d),
+              ),
+              OutlinedButton.icon(
+                icon: const Icon(Icons.drive_file_move_outlined, size: 16),
+                label: Text(l10n.moveBtn),
+                onPressed: () => showMoveStorageDialog(context, d),
+              ),
+              OutlinedButton.icon(
+                icon: const Icon(Icons.fact_check_outlined, size: 16),
+                label: Text(l10n.recheckBtn),
+                onPressed: () async {
+                  try {
+                    await notifier.recheck(d.infohash);
+                  } catch (e) {
+                    if (context.mounted) {
+                      showDownloadError(context, l10n.actRecheck, e);
+                    }
                   }
-                }
-              },
-            ),
-          ],
-        ),
-        const SizedBox(height: AppSpacing.md),
-        _row(context, 'Nom', d.name.isEmpty ? '(sans nom)' : d.name),
-        _row(context, 'Statut', d.status),
-        _row(context, 'Taille', ByteFormatter.format(d.size)),
-        _row(context, 'Santé', '${d.numSeeds} seeders, ${d.numPeers} leechers'),
-        _row(
-          context,
-          'Anonymat',
-          d.anonDownload
-              ? '${d.hops} saut(s)${d.safeSeeding ? ' + safe seeding' : ''}'
-              : 'Direct',
-        ),
-        _row(
-          context,
-          'Destination',
-          d.destination.isEmpty ? '(défaut daemon)' : d.destination,
-        ),
-        _row(
-          context,
-          'File d\'attente',
-          d.autoManaged
-              ? 'automatique${d.queuePosition >= 0 ? ' · position ${d.queuePosition}' : ''}'
-              : d.queuePosition >= 0
-              ? 'manuelle · position ${d.queuePosition}'
-              : 'manuelle',
-        ),
-        _row(context, 'Limites', formatLimits(d)),
-        _row(
-          context,
-          'Ratio de seed',
-          d.seedingRatio > 0 ? d.seedingRatio.toString() : 'défaut',
-        ),
-        _row(context, 'Ajouté le', _date(d.timeAdded)),
-        _row(context, 'Terminé le', _date(d.timeFinished)),
-        if (d.error.isNotEmpty) _row(context, 'Erreur', d.error),
-        const SizedBox(height: AppSpacing.sm),
-        Row(
-          children: [
-            Expanded(
-              child: SelectableText(
-                d.infohash,
-                style: Theme.of(context).textTheme.bodySmall
-                    ?.copyWith(fontFamily: 'monospace'),
+                },
               ),
-            ),
-          ],
-        ),
-      ],
+            ],
+          ),
+          const SizedBox(height: AppSpacing.md),
+          _row(context, l10n.rowName, d.name.isEmpty ? l10n.noName : d.name),
+          _row(context, l10n.rowStatus, d.status),
+          _row(context, l10n.rowSize, context.fmtBytes(d.size)),
+          _row(
+            context,
+            l10n.rowHealth,
+            l10n.healthValue(d.numSeeds, d.numPeers),
+          ),
+          _row(
+            context,
+            l10n.rowAnon,
+            d.anonDownload
+                ? l10n.hopsValue(
+                    d.hops,
+                    d.safeSeeding ? l10n.safeSeedingSuffix : '',
+                  )
+                : l10n.anonDirect,
+          ),
+          _row(
+            context,
+            l10n.rowDest,
+            d.destination.isEmpty ? l10n.daemonDefault : d.destination,
+          ),
+          _row(
+            context,
+            l10n.rowQueue,
+            (d.autoManaged ? l10n.queueAuto : l10n.queueManual) +
+                (d.queuePosition >= 0
+                    ? l10n.queuePosSuffix(d.queuePosition)
+                    : ''),
+          ),
+          _row(context, l10n.rowLimits, formatLimits(d, context.uiLang)),
+          _row(
+            context,
+            l10n.rowSeedRatio,
+            d.seedingRatio > 0 ? d.seedingRatio.toString() : l10n.defaultValue,
+          ),
+          _row(context, l10n.rowAdded, _date(d.timeAdded)),
+          _row(context, l10n.rowFinished, _date(d.timeFinished)),
+          if (d.error.isNotEmpty) _row(context, l10n.rowError, d.error),
+          const SizedBox(height: AppSpacing.sm),
+          Row(
+            children: [
+              Expanded(
+                child: SelectableText(
+                  d.infohash,
+                  style: Theme.of(context).textTheme.bodySmall
+                      ?.copyWith(fontFamily: 'monospace'),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 
@@ -278,17 +287,17 @@ class SpeedSparkline extends StatelessWidget {
           children: [
             Icon(Icons.arrow_downward, size: 12, color: scheme.primary),
             Text(
-              ' ${ByteFormatter.formatRate(history.lastOrNull?.down ?? 0)}',
+              ' ${context.fmtRate(history.lastOrNull?.down ?? 0)}',
               style: small,
             ),
             const SizedBox(width: AppSpacing.sm),
             Icon(Icons.arrow_upward, size: 12, color: scheme.tertiary),
             Text(
-              ' ${ByteFormatter.formatRate(history.lastOrNull?.up ?? 0)}',
+              ' ${context.fmtRate(history.lastOrNull?.up ?? 0)}',
               style: small,
             ),
             const Spacer(),
-            Text('crête ${ByteFormatter.formatRate(peak)}', style: small),
+            Text(context.l10n.peakLabel(context.fmtRate(peak)), style: small),
           ],
         ),
         const SizedBox(height: 4),
@@ -379,10 +388,10 @@ class _FilesTab extends ConsumerWidget {
         onRetry: () => ref.invalidate(downloadFilesProvider(download.infohash)),
       ),
       data: (fileList) => fileList.isEmpty
-          ? const EmptyState(
+          ? EmptyState(
               icon: Icons.folder_open,
-              title: 'Aucun fichier listé',
-              message: 'Les métadonnées ne sont pas encore disponibles.',
+              title: context.l10n.noFiles,
+              message: context.l10n.noFilesMeta,
             )
           : ListView.builder(
               padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
@@ -396,7 +405,7 @@ class _FilesTab extends ConsumerWidget {
                   dense: true,
                   contentPadding: EdgeInsets.zero,
                   leading: Tooltip(
-                    message: 'Inclure dans le téléchargement',
+                    message: context.l10n.includeFile,
                     child: Checkbox(
                       value: f.included,
                       onChanged: (v) async {
@@ -411,7 +420,11 @@ class _FilesTab extends ConsumerWidget {
                               );
                         } catch (e) {
                           if (context.mounted) {
-                            showDownloadError(context, 'sélection', e);
+                            showDownloadError(
+                              context,
+                              context.l10n.actSelect,
+                              e,
+                            );
                           }
                         }
                       },
@@ -424,11 +437,11 @@ class _FilesTab extends ConsumerWidget {
                     children: [
                       Text(
                         '${(f.fraction * 100).toStringAsFixed(0)} % · '
-                        '${ByteFormatter.format(f.size)}',
+                        '${context.fmtBytes(f.size)}',
                         style: Theme.of(context).textTheme.bodySmall,
                       ),
                       PopupMenuButton<int>(
-                        tooltip: 'Priorité du fichier',
+                        tooltip: context.l10n.filePriority,
                         icon: const Icon(Icons.low_priority, size: 18),
                         onSelected: (p) async {
                           try {
@@ -438,36 +451,45 @@ class _FilesTab extends ConsumerWidget {
                             if (context.mounted) {
                               ScaffoldMessenger.of(context).showSnackBar(
                                 SnackBar(
-                                  content: Text('Priorité $p appliquée'),
+                                  content: Text(
+                                    context.l10n.priorityApplied(p),
+                                  ),
                                 ),
                               );
                             }
                           } catch (e) {
                             if (context.mounted) {
-                              showDownloadError(context, 'priorité', e);
+                              showDownloadError(
+                                context,
+                                context.l10n.actPriority,
+                                e,
+                              );
                             }
                           }
                         },
-                        itemBuilder: (_) => const [
+                        itemBuilder: (ctx) => [
                           PopupMenuItem(
                             value: 0,
-                            child: Text('Ne pas télécharger'),
+                            child: Text(ctx.l10n.prioNoDownload),
                           ),
                           PopupMenuItem(
                             value: 1,
-                            child: Text('Priorité basse'),
+                            child: Text(ctx.l10n.prioLow),
                           ),
-                          PopupMenuItem(value: 4, child: Text('Normale')),
+                          PopupMenuItem(
+                            value: 4,
+                            child: Text(ctx.l10n.prioNormal),
+                          ),
                           PopupMenuItem(
                             value: 7,
-                            child: Text('Priorité haute'),
+                            child: Text(ctx.l10n.prioHigh),
                           ),
                         ],
                       ),
                       if (download.destination.isNotEmpty)
                         IconButton(
                           icon: const Icon(Icons.folder_open, size: 18),
-                          tooltip: 'Ouvrir l\'emplacement',
+                          tooltip: context.l10n.openLocation,
                           onPressed: () => openPath(filePath),
                         ),
                     ],
@@ -489,24 +511,24 @@ class _TrackersTab extends ConsumerWidget {
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Ajouter un tracker'),
+        title: Text(ctx.l10n.addTracker),
         content: TextField(
           controller: controller,
           autofocus: true,
-          decoration: const InputDecoration(
-            labelText: 'URL du tracker',
+          decoration: InputDecoration(
+            labelText: ctx.l10n.trackerUrl,
             hintText: 'udp://tracker.example.com:6969/announce',
-            prefixIcon: Icon(Icons.track_changes),
+            prefixIcon: const Icon(Icons.track_changes),
           ),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(false),
-            child: const Text('Annuler'),
+            child: Text(ctx.l10n.cancel),
           ),
           FilledButton(
             onPressed: () => Navigator.of(ctx).pop(true),
-            child: const Text('Ajouter'),
+            child: Text(ctx.l10n.add),
           ),
         ],
       ),
@@ -518,14 +540,15 @@ class _TrackersTab extends ConsumerWidget {
             .read(downloadsProvider.notifier)
             .addTracker(download.infohash, url);
         if (context.mounted) {
-          ScaffoldMessenger.of(context)
-              .showSnackBar(SnackBar(content: Text('Tracker ajouté : $url')));
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(context.l10n.trackerAdded(url))),
+          );
         }
       } catch (e) {
         if (context.mounted) {
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(SnackBar(content: Text('Erreur ajout tracker : $e')));
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(context.l10n.trackerAddError('$e'))),
+          );
         }
       }
     }
@@ -557,8 +580,9 @@ class _TrackersTab extends ConsumerWidget {
     try {
       await action();
       if (context.mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('$label effectué')));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(context.l10n.actionDone(label))));
       }
     } catch (e) {
       if (context.mounted) showDownloadError(context, label, e);
@@ -574,6 +598,7 @@ class _TrackersTab extends ConsumerWidget {
     WidgetRef ref,
     List<DownloadTracker> trackers,
   ) {
+    final l10n = context.l10n;
     final notifier = ref.read(downloadsProvider.notifier);
     final ih = download.infohash;
     return Column(
@@ -586,24 +611,24 @@ class _TrackersTab extends ConsumerWidget {
           child: Row(
             children: [
               Text(
-                '${trackers.length} tracker(s)',
+                l10n.trackerCount(trackers.length),
                 style: Theme.of(context).textTheme.titleSmall,
               ),
               const Spacer(),
               TextButton.icon(
                 icon: const Icon(Icons.playlist_add, size: 16),
-                label: const Text('Trackers par défaut'),
+                label: Text(l10n.defaultTrackers),
                 onPressed: () => _runTrackerAction(
                   context,
                   ref,
-                  'ajout des trackers par défaut',
+                  l10n.actDefaultTrackers,
                   () => notifier.addDefaultTrackers(ih),
                 ),
               ),
               const SizedBox(width: AppSpacing.xs),
               FilledButton.tonalIcon(
                 icon: const Icon(Icons.add, size: 16),
-                label: const Text('Ajouter un tracker'),
+                label: Text(l10n.addTracker),
                 onPressed: () => _addTrackerDialog(context, ref),
               ),
             ],
@@ -614,11 +639,11 @@ class _TrackersTab extends ConsumerWidget {
           child: trackers.isEmpty
               ? EmptyState(
                   icon: Icons.track_changes,
-                  title: 'Aucun tracker actif',
-                  message: 'Vous pouvez ajouter des trackers pour améliorer les sources.',
+                  title: l10n.noTrackers,
+                  message: l10n.noTrackersHint,
                   action: FilledButton.icon(
                     icon: const Icon(Icons.add),
-                    label: const Text('Ajouter un tracker'),
+                    label: Text(l10n.addTracker),
                     onPressed: () => _addTrackerDialog(context, ref),
                   ),
                 )
@@ -633,7 +658,7 @@ class _TrackersTab extends ConsumerWidget {
                       leading: const Icon(Icons.sensors, size: 20),
                       title: SelectableText(t.url),
                       subtitle: Text(
-                        'Statut : ${t.status}',
+                        context.l10n.trackerStatus(t.status),
                         style: TextStyle(
                           color: t.status.toLowerCase().contains('error')
                               ? Colors.red
@@ -655,11 +680,11 @@ class _TrackersTab extends ConsumerWidget {
                           if (!pseudo) ...[
                             IconButton(
                               icon: const Icon(Icons.campaign, size: 18),
-                              tooltip: 'Forcer une annonce',
+                              tooltip: context.l10n.forceAnnounce,
                               onPressed: () => _runTrackerAction(
                                 context,
                                 ref,
-                                'annonce forcée',
+                                context.l10n.actAnnounce,
                                 () => notifier.forceTrackerAnnounce(ih, t.url),
                               ),
                             ),
@@ -668,11 +693,11 @@ class _TrackersTab extends ConsumerWidget {
                                 Icons.remove_circle_outline,
                                 size: 18,
                               ),
-                              tooltip: 'Retirer ce tracker',
+                              tooltip: context.l10n.removeTracker,
                               onPressed: () => _runTrackerAction(
                                 context,
                                 ref,
-                                'retrait du tracker',
+                                context.l10n.actRemoveTracker,
                                 () => notifier.removeTracker(ih, t.url),
                               ),
                             ),
@@ -708,26 +733,23 @@ class _PeersTab extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Statistiques de l\'essaim (Swarm)',
+                  context.l10n.swarmStats,
                   style: theme.textTheme.titleMedium,
                 ),
                 const SizedBox(height: AppSpacing.sm),
-                _statRow('Seeders connectés', '${d.numSeeds}'),
-                _statRow('Leechers connectés', '${d.numPeers}'),
-                _statRow('Total pairs connectés', '${d.numConnectedPeers}'),
+                _statRow(context.l10n.seedersConn, '${d.numSeeds}'),
+                _statRow(context.l10n.leechersConn, '${d.numPeers}'),
+                _statRow(context.l10n.totalPeersConn, '${d.numConnectedPeers}'),
                 _statRow(
-                  'Débit descendant actuel',
-                  ByteFormatter.formatRate(d.speedDown),
+                  context.l10n.downRateRow,
+                  context.fmtRate(d.speedDown),
                 ),
+                _statRow(context.l10n.upRateRow, context.fmtRate(d.speedUp)),
                 _statRow(
-                  'Débit montant actuel',
-                  ByteFormatter.formatRate(d.speedUp),
-                ),
-                _statRow(
-                  'Mode réseau',
+                  context.l10n.netMode,
                   d.anonDownload
-                      ? 'Tunnel anonyme IPv8 (${d.hops} saut(s))'
-                      : 'Connexion directe BitTorrent',
+                      ? context.l10n.netModeAnon(d.hops)
+                      : context.l10n.netModeDirect,
                 ),
               ],
             ),
@@ -736,7 +758,7 @@ class _PeersTab extends StatelessWidget {
         if (d.peers.isNotEmpty) ...[
           const SizedBox(height: AppSpacing.md),
           Text(
-            '${d.peers.length} pair(s) connecté(s)',
+            context.l10n.peersConnCount(d.peers.length),
             style: theme.textTheme.titleMedium,
           ),
           const SizedBox(height: AppSpacing.sm),
@@ -747,15 +769,21 @@ class _PeersTab extends StatelessWidget {
               dataRowMinHeight: 32,
               dataRowMaxHeight: 36,
               columnSpacing: AppSpacing.md,
-              columns: const [
-                DataColumn(label: Text('Adresse')),
-                DataColumn(label: Text('Client')),
-                DataColumn(label: Text('Dir.')),
-                DataColumn(label: Text('↓ débit'), numeric: true),
-                DataColumn(label: Text('↑ débit'), numeric: true),
-                DataColumn(label: Text('↓ total'), numeric: true),
-                DataColumn(label: Text('↑ total'), numeric: true),
-                DataColumn(label: Text('Transport')),
+              columns: [
+                DataColumn(label: Text(context.l10n.colAddress)),
+                DataColumn(label: Text(context.l10n.colClient)),
+                DataColumn(label: Text(context.l10n.colDir)),
+                DataColumn(
+                  label: Text(context.l10n.colDownRate),
+                  numeric: true,
+                ),
+                DataColumn(label: Text(context.l10n.colUpRate), numeric: true),
+                DataColumn(
+                  label: Text(context.l10n.colDownTotal),
+                  numeric: true,
+                ),
+                DataColumn(label: Text(context.l10n.colUpTotal), numeric: true),
+                DataColumn(label: Text(context.l10n.colTransport)),
               ],
               rows: [
                 for (final p in d.peers)
@@ -764,17 +792,15 @@ class _PeersTab extends StatelessWidget {
                       DataCell(SelectableText('${p.ip}:${p.port}')),
                       DataCell(
                         Text(
-                          p.extendedVersion.isEmpty
-                              ? '—'
-                              : p.extendedVersion,
+                          p.extendedVersion.isEmpty ? '—' : p.extendedVersion,
                           overflow: TextOverflow.ellipsis,
                         ),
                       ),
                       DataCell(
                         Tooltip(
                           message: p.direction == 'L'
-                              ? 'Entrant (le pair a initié)'
-                              : 'Sortant',
+                              ? context.l10n.peerDirIn
+                              : context.l10n.peerDirOut,
                           child: Icon(
                             p.direction == 'L'
                                 ? Icons.south_west
@@ -783,14 +809,12 @@ class _PeersTab extends StatelessWidget {
                           ),
                         ),
                       ),
-                      DataCell(Text(ByteFormatter.formatRate(p.downrate))),
-                      DataCell(Text(ByteFormatter.formatRate(p.uprate))),
-                      DataCell(Text(ByteFormatter.format(p.dtotal))),
-                      DataCell(Text(ByteFormatter.format(p.utotal))),
+                      DataCell(Text(context.fmtRate(p.downrate))),
+                      DataCell(Text(context.fmtRate(p.uprate))),
+                      DataCell(Text(context.fmtBytes(p.dtotal))),
+                      DataCell(Text(context.fmtBytes(p.utotal))),
                       DataCell(
-                        Text(
-                          p.connectionType.isEmpty ? '—' : p.connectionType,
-                        ),
+                        Text(p.connectionType.isEmpty ? '—' : p.connectionType),
                       ),
                     ],
                   ),
@@ -799,10 +823,10 @@ class _PeersTab extends StatelessWidget {
           ),
         ] else if (d.isActive) ...[
           const SizedBox(height: AppSpacing.md),
-          const EmptyState(
+          EmptyState(
             icon: Icons.people_outline,
-            title: 'Aucun pair connecté',
-            message: 'Le client recherche des pairs via trackers et DHT.',
+            title: context.l10n.noPeers,
+            message: context.l10n.noPeersHint,
           ),
         ],
       ],

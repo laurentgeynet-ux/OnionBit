@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../config/connection_settings.dart';
+import '../l10n/l10n_ext.dart';
 import '../theme/app_theme.dart';
 
 /// Bannière « daemon injoignable » — visible tant que le SSE est
@@ -31,7 +32,9 @@ class DaemonUnreachableBanner extends ConsumerWidget {
             const SizedBox(width: AppSpacing.sm),
             Expanded(
               child: Text(
-                'Daemon injoignable${baseUrl.isNotEmpty ? ' — $baseUrl' : ''}',
+                context.l10n.daemonUnreachableBanner(
+                  baseUrl.isNotEmpty ? ' — $baseUrl' : '',
+                ),
                 style: Theme.of(context).textTheme.bodySmall
                     ?.copyWith(color: scheme.onErrorContainer),
               ),
@@ -40,13 +43,13 @@ class DaemonUnreachableBanner extends ConsumerWidget {
               onPressed: () =>
                   ref.read(connectionSettingsProvider.notifier).rediscover(),
               icon: const Icon(Icons.refresh, size: 16),
-              label: const Text('Réessayer'),
+              label: Text(context.l10n.retry),
             ),
             const SizedBox(width: AppSpacing.xs),
             FilledButton.tonalIcon(
               onPressed: () => _ConnectionDialog.show(context),
               icon: const Icon(Icons.settings_outlined, size: 16),
-              label: const Text('Configurer…'),
+              label: Text(context.l10n.configure),
             ),
           ],
         ),
@@ -94,7 +97,7 @@ class _ConnectionDialogState extends ConsumerState<_ConnectionDialog> {
     final url = _url.text.trim();
     final uri = Uri.tryParse(url);
     if (uri == null || !uri.hasScheme || uri.host.isEmpty) {
-      setState(() => _error = 'URL invalide (ex. http://127.0.0.1:8085)');
+      setState(() => _error = context.l10n.invalidUrl);
       return;
     }
     setState(() {
@@ -111,8 +114,9 @@ class _ConnectionDialogState extends ConsumerState<_ConnectionDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
     return AlertDialog(
-      title: const Text('Connexion au daemon'),
+      title: Text(l10n.connectionDialogTitle),
       content: SizedBox(
         width: 420,
         child: Column(
@@ -121,7 +125,7 @@ class _ConnectionDialogState extends ConsumerState<_ConnectionDialog> {
             TextField(
               controller: _url,
               decoration: InputDecoration(
-                labelText: 'URL du daemon',
+                labelText: l10n.daemonUrlLabel,
                 hintText: 'http://127.0.0.1:8085',
                 errorText: _error,
               ),
@@ -130,9 +134,7 @@ class _ConnectionDialogState extends ConsumerState<_ConnectionDialog> {
             TextField(
               controller: _key,
               obscureText: true,
-              decoration: const InputDecoration(
-                labelText: 'Clé API (si activée)',
-              ),
+              decoration: InputDecoration(labelText: l10n.apiKeyLabel),
             ),
           ],
         ),
@@ -140,11 +142,11 @@ class _ConnectionDialogState extends ConsumerState<_ConnectionDialog> {
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Annuler'),
+          child: Text(l10n.cancel),
         ),
         FilledButton(
           onPressed: _saving ? null : _save,
-          child: Text(_saving ? 'Connexion…' : 'Enregistrer'),
+          child: Text(_saving ? l10n.connecting : l10n.save),
         ),
       ],
     );

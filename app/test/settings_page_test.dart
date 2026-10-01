@@ -10,6 +10,8 @@ import 'package:onionbit_ui/features/settings/domain/settings_repository.dart';
 import 'package:onionbit_ui/features/settings/presentation/pages/settings_page.dart';
 import 'package:onionbit_ui/features/settings/presentation/providers/settings_providers.dart';
 
+import 'helpers/l10n.dart';
+
 class _FakeSettings implements SettingsRepository {
   @override
   Future<Map<String, dynamic>> get() async => {
@@ -81,7 +83,7 @@ void main() {
         overrides: [
           settingsRepositoryProvider.overrideWithValue(_FakeSettings()),
         ],
-        child: const MaterialApp(home: Scaffold(body: SettingsPage())),
+        child: l10nTestApp(const Scaffold(body: SettingsPage())),
       ),
     );
     await tester.pumpAndSettle();

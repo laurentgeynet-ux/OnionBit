@@ -20,7 +20,7 @@ use crate::shutdown::ShutdownSignal;
 /// Paramètres de l'icône tray (le type existe sur toutes les
 /// plateformes pour que `main` reste sans `cfg`).
 pub struct TrayOptions {
-    /// Texte au survol (`Tribler — 127.0.0.1:<port>`).
+    /// Texte au survol (`OnionBit — 127.0.0.1:<port>`).
     pub tooltip: String,
     /// Dossier ouvert par « Ouvrir le dossier des logs ».
     pub logs_dir: PathBuf,
@@ -132,7 +132,7 @@ mod windows_impl {
     fn run(opts: TrayOptions, ready: mpsc::Sender<Option<u32>>) {
         let thread_id = unsafe { GetCurrentThreadId() };
 
-        let open_ui = MenuItem::new("Ouvrir Tribler", opts.ui_exe.is_some(), None);
+        let open_ui = MenuItem::new("Ouvrir OnionBit", opts.ui_exe.is_some(), None);
         let autostart_item =
             CheckMenuItem::new("Démarrer avec Windows", true, autostart::is_enabled(), None);
         let open_logs = MenuItem::new("Ouvrir le dossier des logs", true, None);

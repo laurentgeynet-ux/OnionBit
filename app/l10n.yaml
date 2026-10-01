@@ -1,0 +1,12 @@
+# This file is part of OnionBit - a Rust port of the Tribler daemon.
+# Copyright (C) 2026 Laurent Geynet <laurent.geynet@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+# Génération `flutter gen-l10n` : app_en.arb est le gabarit (source de
+# vérité — l'app est anglaise par défaut), app_fr.arb la traduction.
+arb-dir: lib/l10n
+template-arb-file: app_en.arb
+output-localization-file: app_localizations.dart
+output-class: AppLocalizations
+output-dir: lib/l10n
+nullable-getter: false

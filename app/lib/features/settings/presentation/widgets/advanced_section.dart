@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../core/l10n/l10n_ext.dart';
 import '../../../../core/theme/app_theme.dart';
 import 'settings_section.dart';
 
@@ -58,13 +59,13 @@ class _AdvancedSectionState extends ConsumerState<AdvancedSection> {
     try {
       final decoded = jsonDecode(_controller.text);
       if (decoded is! Map<String, dynamic>) {
-        setState(() => _parseError = 'Le document doit être un objet JSON.');
+        setState(() => _parseError = context.l10n.jsonNotObject);
         return null;
       }
       setState(() => _parseError = null);
       return decoded;
     } on FormatException catch (e) {
-      setState(() => _parseError = 'JSON invalide : ${e.message}');
+      setState(() => _parseError = context.l10n.jsonInvalid(e.message));
       return null;
     }
   }
@@ -77,7 +78,7 @@ class _AdvancedSectionState extends ConsumerState<AdvancedSection> {
       context,
       ref,
       patch,
-      successMessage: 'Configuration avancée appliquée',
+      successMessage: context.l10n.advSaved,
     );
     _deferred.markClean();
     if (mounted) setState(() => _saving = false);
@@ -86,8 +87,9 @@ class _AdvancedSectionState extends ConsumerState<AdvancedSection> {
   Future<void> _copyAll() async {
     await Clipboard.setData(ClipboardData(text: _controller.text));
     if (mounted) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('Configuration copiée')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(context.l10n.configCopied)),
+      );
     }
   }
 
@@ -107,9 +109,10 @@ class _AdvancedSectionState extends ConsumerState<AdvancedSection> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l10n = context.l10n;
     return SettingsSection(
       icon: Icons.data_object,
-      title: 'Configuration avancée',
+      title: l10n.sectionAdvanced,
       sectionId: 'advanced',
       child: (context, settings) {
         _sync(settings);
@@ -126,9 +129,7 @@ class _AdvancedSectionState extends ConsumerState<AdvancedSection> {
                 const SizedBox(width: AppSpacing.xs),
                 Expanded(
                   child: Text(
-                    'Édition brute de l\'arbre `configuration.json`. '
-                    'Les clés sensibles (clés API, chemins d\'identité) '
-                    'sont visibles — à manipuler avec précaution.',
+                    l10n.advWarning,
                     style: theme.textTheme.bodySmall?.copyWith(
                       color: theme.colorScheme.tertiary,
                     ),
@@ -158,18 +159,18 @@ class _AdvancedSectionState extends ConsumerState<AdvancedSection> {
                 TextButton.icon(
                   onPressed: _copyAll,
                   icon: const Icon(Icons.copy, size: 18),
-                  label: const Text('Exporter'),
+                  label: Text(l10n.export),
                 ),
                 TextButton.icon(
                   onPressed: _import,
                   icon: const Icon(Icons.file_upload_outlined, size: 18),
-                  label: const Text('Importer'),
+                  label: Text(l10n.import),
                 ),
                 const Spacer(),
                 TextButton.icon(
                   onPressed: _discard,
                   icon: const Icon(Icons.refresh, size: 18),
-                  label: const Text('Recharger'),
+                  label: Text(l10n.reload),
                 ),
                 const SizedBox(width: AppSpacing.xs),
                 FilledButton.icon(
@@ -181,7 +182,7 @@ class _AdvancedSectionState extends ConsumerState<AdvancedSection> {
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
                       : const Icon(Icons.save, size: 18),
-                  label: const Text('Appliquer'),
+                  label: Text(l10n.apply),
                 ),
               ],
             ),
@@ -212,14 +213,14 @@ class _ImportDialogState extends State<_ImportDialog> {
       try {
         final decoded = jsonDecode(text);
         if (decoded is! Map<String, dynamic>) {
-          _error = 'Le document doit être un objet JSON.';
+          _error = context.l10n.jsonNotObject;
           _sections = const [];
           return;
         }
         _error = null;
         _sections = decoded.keys.toList()..sort();
       } on FormatException catch (e) {
-        _error = 'JSON invalide : ${e.message}';
+        _error = context.l10n.jsonInvalid(e.message);
         _sections = const [];
       }
     });
@@ -234,7 +235,7 @@ class _ImportDialogState extends State<_ImportDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: const Text('Importer une configuration'),
+      title: Text(context.l10n.importTitle),
       content: SizedBox(
         width: 480,
         child: Column(
@@ -257,12 +258,11 @@ class _ImportDialogState extends State<_ImportDialog> {
             if (_sections.isNotEmpty) ...[
               const SizedBox(height: AppSpacing.sm),
               Text(
-                'Sections détectées : ${_sections.join(', ')}',
+                context.l10n.importSections(_sections.join(', ')),
                 style: Theme.of(context).textTheme.bodySmall,
               ),
               Text(
-                'Le contenu remplacera l\'éditeur — rien n\'est envoyé '
-                'tant que « Appliquer » n\'est pas pressé.',
+                context.l10n.importNote,
                 style: Theme.of(context).textTheme.bodySmall
                     ?.copyWith(color: Theme.of(context).colorScheme.outline),
               ),
@@ -273,13 +273,13 @@ class _ImportDialogState extends State<_ImportDialog> {
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Annuler'),
+          child: Text(context.l10n.cancel),
         ),
         FilledButton(
           onPressed: _error == null && _sections.isNotEmpty
               ? () => Navigator.of(context).pop(_controller.text)
               : null,
-          child: const Text('Charger dans l\'éditeur'),
+          child: Text(context.l10n.importLoad),
         ),
       ],
     );

@@ -539,6 +539,14 @@ roadmap est terminée**.
   (version + sonde) et indicateur d'espace disque. **Validation
   visuelle faite** (2026-09-30) : rendu réel contre le daemon
   vérifié à la souris.
+- [x] **Étape 30. Internationalisation complète de l'app** —
+  `flutter_localizations` + `intl` + `gen_l10n`, gabarit
+  `app_en.arb` + `app_fr.arb` (~300 clés), locale persistée
+  (`ui.locale`) avec **anglais par défaut** et bascule EN/FR à
+  chaud dans Réglages → Apparence. Extraction intégrale des ~300
+  littéraux (core, search, diagnostic, settings, downloads),
+  formatteurs sensibles à la locale, pluriels ICU. Garde-fou
+  `scripts/check_i18n.ps1`. Détails : ADR-0009, CHANGELOG.
 
 ---
 
@@ -547,6 +555,18 @@ roadmap est terminée**.
 Ajouter ici, au fil de l'avancement, tout écart constaté par rapport au
 plan initial (dépendance qui ne convient pas, étape scindée en deux,
 risque IPv8 sous/sur-estimé, etc.), avec la date.
+
+- 2026-10-01 : onglet Diagnostic « Statistiques » enrichi — sections
+  Daemon (version, **uptime** nouveau champ `uptime_sec`, taille DB,
+  espace disque du dossier de réception), Contenu (torrents connus,
+  downloads actifs/en pause/en échec), Réseau IPv8 (pairs, trafic
+  overlay `total_up`/`total_down`, trafic BitTorrent session —
+  `libtorrent.total_{recv,sent}_bytes` désormais renseignés en sommant
+  les stats moteur), Anonymat (sessions, lanes `socks5_sessions`,
+  circuits DATA prêts par lane, sorties actives). Le compteur
+  « Canaux » (`metadata_type=400`, structurellement à 0 — les canaux
+  GigaChannel ne circulent plus sur le réseau) est retiré de l'UI ;
+  le champ `num_channels` reste émis par l'API.
 
 - 2026-09-28 : phase 5b planifiée (étapes 21-28) — parité complète de
   l'API de contrôle dans le daemon, d'après l'inventaire

@@ -145,15 +145,17 @@ class OnionbitStats {
   const OnionbitStats({
     required this.dbSize,
     required this.numTorrents,
-    required this.numChannels,
     required this.peers,
     required this.sessions,
     required this.version,
+    required this.uptimeSec,
+    required this.totalRecvBytes,
+    required this.totalSentBytes,
+    required this.laneHops,
   });
 
   final int dbSize;
   final int numTorrents;
-  final int numChannels;
 
   /// Pairs découverts par la stack IPv8 (`-1` = stack inactive).
   final int peers;
@@ -162,6 +164,31 @@ class OnionbitStats {
   /// = stack inactive).
   final int sessions;
   final String version;
+
+  /// Secondes depuis le démarrage du daemon (`-1` = champ absent,
+  /// daemon plus ancien).
+  final int uptimeSec;
+
+  /// Totaux session des moteurs BitTorrent (`libtorrent.total_*_bytes`,
+  /// `-1` = stack inactive) — remis à zéro au redémarrage.
+  final int totalRecvBytes;
+  final int totalSentBytes;
+
+  /// Sauts des lanes anonymes actives (`socks5_sessions[].hops`,
+  /// vide = aucune / tunnel inactif).
+  final List<int> laneHops;
+}
+
+/// Compteurs d'octets de l'endpoint IPv8 (`GET /api/statistics/ipv8`
+/// → `ipv8_statistics`).
+class Ipv8Traffic {
+  const Ipv8Traffic({required this.up, required this.down});
+
+  /// Octets émis par l'endpoint overlay depuis le démarrage.
+  final int up;
+
+  /// Octets reçus par l'endpoint overlay depuis le démarrage.
+  final int down;
 }
 
 /// Échantillon de débit d'un speed test de circuit (MiB/s,

@@ -42,4 +42,8 @@ Invoke-Step "cargo test (workspace)" {
     cargo test --workspace --all-features
 }
 
+Invoke-Step "check_i18n (aucun litteral FR dans app/lib)" {
+    powershell -NoProfile -ExecutionPolicy Bypass -File "$PSScriptRoot\check_i18n.ps1"
+}
+
 Write-Host "Validation complete OK." -ForegroundColor Green

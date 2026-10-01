@@ -46,6 +46,11 @@ final uiPrefsInitProvider = FutureProvider<void>((ref) async {
     ref.read(downloadViewModeProvider.notifier).init(mode);
   }
 
+  final dh = prefs.getDouble('ui.detailPanelHeight');
+  if (dh != null) {
+    ref.read(detailPanelHeightProvider.notifier).init(dh);
+  }
+
   final ss = prefs.getString('ui.searchColSort');
   if (ss != null) {
     if (ss.isEmpty) {
@@ -73,5 +78,7 @@ Future<void> uiPrefsWrite(String key, Object? value) async {
     await prefs.setBool(key, value);
   } else if (value is String) {
     await prefs.setString(key, value);
+  } else if (value is double) {
+    await prefs.setDouble(key, value);
   }
 }

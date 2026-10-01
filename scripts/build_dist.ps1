@@ -8,6 +8,8 @@
 #   powershell -NoProfile -ExecutionPolicy RemoteSigned -File scripts\build_dist.ps1
 #   powershell ... -SkipCheck                        (sans le cargo check prealable)
 #   powershell ... -Profile debug                    (binaires debug)
+#   powershell ... -ZipRelease                       (+ bundle+zip GitHub :
+#                                                     dist\OnionBit-<ver>-windows-x64.zip)
 #
 # Produit `dist\` a la racine du depot (dossier portable, deja ignore par
 # git) :
@@ -28,7 +30,8 @@
 param(
     [switch]$SkipCheck,
     [ValidateSet("release", "debug")]
-    [string]$Profile = "release"
+    [string]$Profile = "release",
+    [switch]$ZipRelease
 )
 
 $ErrorActionPreference = "Stop"
@@ -83,8 +86,11 @@ try {
     # -- 4) Nettoyage des lanceurs historiques ---------------------------
     # demarrer/arreter n'ont plus lieu d'etre (lancement par l'UI, arret
     # via le systray ou PUT /api/shutdown) — retirer les restes des
-    # builds precedents.
-    foreach ($f in @("demarrer.cmd", "demarrer.ps1", "arreter.cmd", "arreter.ps1")) {
+    # builds precedents, dont les binaires de l'ere tribler-* (avant le
+    # renommage produit en onionbit-*).
+    foreach ($f in @("demarrer.cmd", "demarrer.ps1", "arreter.cmd", "arreter.ps1",
+                     "tribler-daemon.exe", "tribler-cli.exe", "tribler_ui.exe",
+                     "tribler_ui.pdb")) {
         Remove-Item (Join-Path $dist $f) -Force -ErrorAction SilentlyContinue
     }
 
@@ -99,6 +105,39 @@ try {
         built_utc = (Get-Date).ToUniversalTime().ToString("o")
     }
     $manifest | ConvertTo-Json | Set-Content (Join-Path $dist "build-manifest.json")
+
+    # -- 6) Bundle + zip de release GitHub (optionnel) ---------------------
+    if ($ZipRelease) {
+        Write-Host "== bundle release OnionBit-<ver>-windows-x64 ==" -ForegroundColor Cyan
+        $ver     = (cargo pkgid -p onionbit-daemon).Split('#')[-1]
+        $bundle  = Join-Path $dist "OnionBit-$ver-windows-x64"
+        $zipPath = "$bundle.zip"
+        if (Test-Path $bundle)  { Remove-Item $bundle -Recurse -Force }
+        if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
+        New-Item -ItemType Directory -Force -Path $bundle | Out-Null
+
+        # Payload = contenu de dist\ (exe, dll, data\) — jamais l'etat
+        # utilisateur ni les artefacts de release eux-memes.
+        Get-ChildItem $dist |
+            Where-Object {
+                $_.Name -ne 'state' -and
+                -not ($_.PSIsContainer -and $_.Name -like 'OnionBit-*') -and
+                $_.Name -notlike '*.zip' -and
+                $_.Name -notlike 'LISEZMOI*' -and
+                $_.Name -ne 'build-manifest.json'
+            } | Copy-Item -Destination $bundle -Recurse -Force
+
+        Copy-Item (Join-Path $root 'LICENSE') -Destination $bundle
+        Copy-Item (Join-Path $dist 'build-manifest.json') -Destination $bundle
+        # LISEZMOI : gabarit versionne (placeholder {{VERSION}}).
+        (Get-Content (Join-Path $PSScriptRoot 'dist_lisezmoi.txt') -Raw -Encoding UTF8).
+            Replace('{{VERSION}}', $ver) |
+            Set-Content (Join-Path $bundle 'LISEZMOI.txt') -Encoding UTF8
+
+        Compress-Archive -Path $bundle -DestinationPath $zipPath -CompressionLevel Optimal
+        Write-Host "  Zip release : $zipPath" -ForegroundColor Green
+        Write-Host "  SHA-256     : $((Get-FileHash $zipPath -Algorithm SHA256).Hash)"
+    }
 
     Write-Host ""
     Write-Host "Build OK -> dist\" -ForegroundColor Green

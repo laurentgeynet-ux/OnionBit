@@ -3,6 +3,175 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Version 0.3.2-alpha (2026-10-01)
+
+- Release succédant à `v0.3.1-alpha` (supprimée — bundle incomplet et
+  bugs corrigés depuis) :
+  - app **bilingue EN/FR** (i18n complet, ~300 clés ARB, anglais par
+    défaut, sélecteur dans Réglages → Apparence) ;
+  - fix circuits DATA affamés par les circuits e2e (magnets anonymes
+    figés en « Métadonnées ») ;
+  - fix double `DropTarget` — un `.torrent` déposé partait en clair
+    malgré les sauts choisis ;
+  - onglet Diagnostic « Statistiques » enrichi (uptime, trafic overlay
+    et BitTorrent, lanes anonymes, circuits DATA prêts, sorties) ;
+  - UI : panneau de détail redimensionnable, scrollbar visible en mode
+    clair, suppression de l'autocomplétion TopBar, systray renommé
+    OnionBit ;
+  - bumps majeurs Dependabot : rand 0.10, rusqlite 0.40,
+    chacha20poly1305 0.11, sha1 0.11, base64 0.23 ;
+  - build_dist.ps1 : `-ZipRelease` génère le bundle + zip GitHub.
+
+## Étape 30 — Internationalisation de l'app Flutter : anglais par défaut, français disponible (2026-10-01)
+
+- Pipeline standard Flutter : `flutter_localizations` + `intl` +
+  `gen_l10n` (`app/l10n.yaml`). Gabarit `app/lib/l10n/app_en.arb`,
+  traduction complète `app_fr.arb` (~300 clés) ; fichiers générés
+  `app_localizations*.dart` ignorés par git.
+- `AppLocale { system, en, fr }` + `localeSettingsProvider` persisté
+  (`ui.locale`, `SharedPreferences`) ; **défaut `en`**, jamais la
+  locale OS sauf choix « System ». Sélecteur tri-état dans
+  Réglages → Apparence ; bascule à chaud sur tout le shell.
+- Extraction intégrale par zones : core/layout + notifications,
+  search + diagnostic, settings (page + 13 sections, catalogue
+  d'ancres rebâti sur un enum `_SectionId`), downloads (page, table,
+  menu contextuel, panneau détail, dialogue d'ajout).
+- Frontière domaine/UI : les libellés sortent des enums
+  (`DownloadFilterX.label(l10n)`) ; pluriels et paramètres en ICU
+  (`{count, plural, …}`) ; `ByteFormatter`/`DurationFormatter`
+  sensibles à la locale via `context.fmtBytes`/`fmtRate`/`fmtEta`
+  (`o/Ko/Mo` ↔ `B/KiB/MiB`, `j` ↔ `d`).
+- Hors périmètre (ADR-0005 conservée) : commentaires/docs/journaux en
+  français ; autonymes `English`/`Français` ; keywords de recherche
+  bilingues.
+- Garde-fou `scripts/check_i18n.ps1` : échoue sur tout littéral
+  français subsistant dans `app/lib/` (allowlist : commentaires,
+  `uiLog`/`debugPrint`, autonyme, `keywords:`).
+- `flutter analyze` propre, `flutter test` vert (helper
+  `pumpApp(locale: …)`, assertions sur les chaînes EN) ;
+  `check_i18n.ps1` vert. ADR-0009.
+
+## Diagnostic : onglet Statistiques enrichi (2026-10-01)
+
+- Regroupé en sections : **Daemon** (version, uptime, taille DB,
+  espace disque du dossier de réception), **Contenu** (torrents
+  connus, downloads actifs/en pause/en échec), **Réseau IPv8**
+  (pairs découverts, trafic overlay ↑/↓, trafic BitTorrent session
+  ↑/↓), **Anonymat** (sessions moteur, lanes actives, circuits DATA
+  prêts par lane, sorties actives).
+- Backend : `uptime_sec` ajouté à `tribler_statistics`
+  (`CoreSession::uptime_secs`, `Instant` au `start()`) ;
+  `libtorrent.total_recv_bytes`/`total_sent_bytes` renseignés
+  (somme des `progress_bytes`/`uploaded_bytes` de tous les moteurs —
+  étaient `null`).
+- UI : `Ipv8Traffic` + `GET /api/statistics/ipv8` consommé
+  (`total_up`/`total_down` de l'endpoint overlay) ;
+  `socks5_sessions[].hops` → lanes affichées « ×1 · ×2 » ; circuits
+  DATA/READY groupés par `goal_hops` ; sorties `enabled` comptées ;
+  espace disque via `dirSpaceProvider` sur `download_defaults/saveas`.
+
+## Diagnostic : statistique « Canaux » retirée (2026-10-01)
+
+- Le compteur `num_channels` (entrées `metadata_type=400` du
+  GigaChannel) restait structurellement à 0 : le réseau ne produit plus
+  de canaux. Ligne retirée de l'onglet Statistiques + champ
+  `OnionbitStats.numChannels` et clé `statChannels` supprimés.
+- Le champ JSON `num_channels` reste émis par `GET /api/statistics/
+  tribler` (compat API).
+
+## UI : pouce de scrollbar visible en mode clair (2026-10-01)
+
+- Le thème ne définissait pas de `scrollbarTheme` : le défaut M3
+  (`onSurface` très dilué) rendait le pouce quasi invisible en mode
+  clair sur toutes les listes. `thumbColor` global → `outline` au
+  repos, `onSurfaceVariant` au survol/drag — lisible dans les deux
+  modes, appliqué à toutes les fenêtres via `MaterialScrollBehavior`.
+
+## Daemon : systray renommé OnionBit (2026-10-01)
+
+- Le renommage produit avait oublié le tray Windows : tooltip
+  « Tribler — <addr> » (création + mise à jour du port réel) et item
+  « Ouvrir Tribler » → « OnionBit — <addr> » / « Ouvrir OnionBit ».
+- Conservé volontairement : la valeur de registre autostart
+  `TriblerRustDaemon` — la renommer créerait un doublon de clé Run
+  pour les installations existantes.
+
+## UI : suppression de la prédiction de recherche dans la TopBar (2026-10-01)
+
+- `top_bar.dart` : le champ de recherche n'utilise plus
+  `Autocomplete` (suggestions FTS `/metadata/search/completions` en
+  popover) — simple `TextField` avec debounce 300 ms, bouton effacer
+  et synchro `searchQueryProvider`.
+- `search_repository.dart` / `rest_search_repository.dart` : la
+  méthode `completions` retirée (code mort) ; l'endpoint daemon
+  `/metadata/search/completions` reste disponible pour la parité
+  wire Tribler.
+
+## UI : panneau de détail des téléchargements redimensionnable (2026-10-01)
+
+- Le panneau « Détails/Fichiers/Trackers/Pairs » était figé à 280 px
+  sans indication de défilement : le contenu de l'onglet Détails
+  (sparkline, boutons, ~10 lignes de propriétés) était tronqué.
+- `downloads_page.dart` : le séparateur devient une poignée de
+  glisser (`resizeUpDown`) — hauteur persistée `ui.detailPanelHeight`
+  via `detailPanelHeightProvider` (bornes 120–720 px, plafond 70 %
+  de la fenêtre à l'affichage).
+- `download_detail_panel.dart` : `Scrollbar` à pouce persistant sur
+  l'onglet Détails — le défilement est désormais visible.
+- `ui_prefs.dart` : `uiPrefsWrite` accepte les `double`.
+
+## Journal daemon : annonces DHT hidden-service rétrogradées en debug (2026-10-01)
+
+- `hidden_services.rs` : « point d'introduction annonce sur la DHT »
+  (re-annonce périodique par intro point — ~1400 lignes en quelques
+  minutes sur 3 swarms seedés) et « dht_lookup du swarm : valeur(s)
+  DHT » (tick de découverte par swarm) passent de `info!` à `debug!` —
+  visibles uniquement via le switch « Debug » de l'onglet Journaux
+  (`PUT /api/ipv8/asyncio/debug`).
+
+## Fix : double DropTarget — un `.torrent` déposé partait en clair malgré les sauts choisis (2026-10-01)
+
+- Symptôme : déposer un `.torrent` sur la page Téléchargements puis
+  choisir 1–3 sauts dans le dialogue lançait le download en clair
+  (`hops=0`) ; le journal UI montrait un premier `ajout hops=0` suivi
+  du `ajout hops=N` demandé.
+- Cause : deux `DropTarget` `desktop_drop` imbriqués recevaient le même
+  dépôt — celui de `DownloadsPage` appelait `addTorrentBytes` **sans**
+  `anon_hops` (hops=0) et la `DropZone` globale d'`app_shell` ouvrait en
+  parallèle le dialogue « Ajouter » ; au submit, la dédup
+  `download_exists` absorbait le second ajout sur l'existant hops=0.
+- `app/lib/features/downloads/presentation/pages/downloads_page.dart` :
+  `DropTarget`/`_handleDrop`/`_dragging` retirés — la `DropZone`
+  globale couvre déjà toute la fenêtre et route le fichier vers le
+  dialogue où les sauts se choisissent.
+- `app/lib/features/downloads/presentation/widgets/add_download_dialog.dart` :
+  un choix explicite de sauts pose `_hopsInitialized` — les réglages
+  `download_defaults` arrivant en retard n'écrasent plus la sélection.
+
+## Fix : circuits DATA affamés par les circuits e2e — downloads anonymes figés en « Métadonnées » (2026-10-01)
+
+- Symptôme réel : ajout d'un magnet depuis la recherche en lane
+  anonyme (3 sauts) resté indéfiniment en `METADATA` et un autre
+  download à 3 sauts figé à 67 % — alors que le même magnet se
+  résolvait en quelques secondes en clair (hops=0).
+- Cause : `build_circuits_if_needed` comptait les circuits `READY` par
+  `goal_hops` **tous `ctype` confondus** ; depuis que `select_circuit`
+  est limité aux circuits `DATA` (commit `d8d221f`, cross-talk e2e),
+  les circuits `IP_SEEDER` du hidden seeding satisfont le comptage
+  `ready >= min_circuits` sans jamais servir le trafic applicatif —
+  aucune reconstruction DATA n'était lancée et les datagrammes
+  uTP/DHT/trackers de la lane tombaient en perte silencieuse.
+- `crates/onionbit-tunnel/src/community.rs` : comptages `ready` et
+  `pending` limités à `ctype == CIRCUIT_TYPE_DATA`.
+- `crates/onionbit-core/src/ipv8_stack.rs` : le watchdog de lane
+  engage la portée `"circuits"` du kill switch tant que
+  `ready_data_circuits_of_hops(hops)` est vide (prédicat identique à
+  la sélection de circuit du SOCKS5/sockets UDP — la doc le promettait
+  déjà, le code divergeait).
+- Régression couverte par `build_circuits_ne_compte_pas_les_ip_seeder`
+  (`tests/circuits_loopback.rs`) : un `IP_SEEDER` READY ne suffit plus
+  à inhiber la construction d'un `DATA`.
+
 ## Renommage produit : OnionBit + version 0.3.1-alpha (2026-10-01)
 
 - Crates `tribler-*` → `onionbit-*` (dossiers, `Cargo.toml`, imports

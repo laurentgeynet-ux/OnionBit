@@ -7,11 +7,13 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../l10n/app_localizations.dart' show AppLocalizations;
+import '../../../../core/l10n/l10n_ext.dart';
 import '../../../../core/theme/app_theme.dart';
-import '../../../../core/utils/byte_formatter.dart';
 import '../../../../core/widgets/empty_state.dart';
 import '../../../../core/widgets/error_state.dart';
 import '../../../downloads/presentation/providers/downloads_providers.dart';
+import '../../../settings/presentation/providers/settings_providers.dart';
 import '../../domain/diagnostic_models.dart';
 import '../providers/diagnostic_providers.dart';
 import '../widgets/speed_test_dialog.dart';
@@ -24,25 +26,26 @@ class DiagnosticPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
     return DefaultTabController(
       length: 11,
       child: Column(
         children: [
-          const TabBar(
+          TabBar(
             isScrollable: true,
             tabAlignment: TabAlignment.start,
             tabs: [
-              Tab(text: 'Vue d\'ensemble'),
-              Tab(text: 'Statistiques'),
-              Tab(text: 'Overlays'),
-              Tab(text: 'Circuits'),
-              Tab(text: 'Relais'),
-              Tab(text: 'Sorties'),
-              Tab(text: 'Swarms'),
-              Tab(text: 'Pairs'),
-              Tab(text: 'Pairs DHT'),
-              Tab(text: 'Pairs PEX'),
-              Tab(text: 'Journaux'),
+              Tab(text: l10n.tabOverview),
+              Tab(text: l10n.tabStats),
+              Tab(text: l10n.tabOverlays),
+              Tab(text: l10n.tabCircuits),
+              Tab(text: l10n.tabRelays),
+              Tab(text: l10n.tabExits),
+              Tab(text: l10n.tabSwarms),
+              Tab(text: l10n.tabPeers),
+              Tab(text: l10n.tabDhtPeers),
+              Tab(text: l10n.tabPexPeers),
+              Tab(text: l10n.tabLogs),
             ],
           ),
           const Expanded(
@@ -98,7 +101,7 @@ class _TabScaffold<T> extends StatelessWidget {
           children: [
             ...headerActions,
             IconButton(
-              tooltip: 'Rafraîchir',
+              tooltip: context.l10n.refresh,
               icon: const Icon(Icons.refresh, size: 18),
               onPressed: onRetry,
             ),
@@ -135,14 +138,14 @@ class _OverlaysTab extends ConsumerWidget {
     return _TabScaffold<OverlayInfo>(
       value: ref.watch(overlaysProvider),
       onRetry: () => ref.invalidate(overlaysProvider),
-      emptyTitle: 'Aucun overlay',
-      emptyMessage: 'La stack IPv8 est-elle active ?',
+      emptyTitle: context.l10n.emptyOverlays,
+      emptyMessage: context.l10n.emptyOverlaysMsg,
       itemBuilder: (o) => ListTile(
         dense: true,
         leading: const Icon(Icons.hub_outlined, size: 20),
         title: Text(o.name),
         subtitle: Text(o.id, overflow: TextOverflow.ellipsis),
-        trailing: Text('${o.peers} pairs'),
+        trailing: Text(context.l10n.peersCount(o.peers)),
       ),
     );
   }
@@ -164,19 +167,19 @@ class _CircuitsTab extends ConsumerWidget {
     return _TabScaffold<CircuitInfo>(
       value: ref.watch(tunnelCircuitsProvider),
       onRetry: () => ref.invalidate(tunnelCircuitsProvider),
-      emptyTitle: 'Aucun circuit',
-      emptyMessage:
-          'Les circuits anonymes sont construits quand un '
-          'téléchargement en demande.',
+      emptyTitle: context.l10n.emptyCircuits,
+      emptyMessage: context.l10n.emptyCircuitsMsg,
       headerActions: [
         PopupMenuButton<int>(
-          tooltip: 'Tester un nouveau circuit',
+          tooltip: context.l10n.testNewCircuit,
           icon: const Icon(Icons.speed, size: 18),
           onSelected: (hops) => SpeedTestDialog.showNewCircuit(context, hops),
-          itemBuilder: (_) => const [
-            PopupMenuItem(value: 1, child: Text('Tester un circuit à 1 saut')),
-            PopupMenuItem(value: 2, child: Text('Tester un circuit à 2 sauts')),
-            PopupMenuItem(value: 3, child: Text('Tester un circuit à 3 sauts')),
+          itemBuilder: (context) => [
+            for (final h in const [1, 2, 3])
+              PopupMenuItem(
+                value: h,
+                child: Text(context.l10n.testCircuitHops(h)),
+              ),
           ],
         ),
       ],
@@ -192,14 +195,22 @@ class _CircuitsTab extends ConsumerWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              '${c.actualHops}/${c.goalHops} sauts · ${c.state}'
+              '${context.l10n.circuitHopCount(c.actualHops, c.goalHops)}'
+              ' · ${c.state}'
               '${c.infoHash != null ? ' · ${c.infoHash}' : ''}',
             ),
             // Route réellement prise : mid hex de chaque saut, dans
             // l'ordre (+ saut en cours d'ajout suffixé « … »).
             if (c.verifiedHops.isNotEmpty)
               Text(
-                'route : ${[for (final h in c.verifiedHops) h.length > 8 ? h.substring(0, 8) : h, if (c.unverifiedHop.isNotEmpty) '${c.unverifiedHop.substring(0, c.unverifiedHop.length.clamp(0, 8))}…'].join(' → ')}',
+                context.l10n.circuitRoute(
+                  [
+                    for (final h in c.verifiedHops)
+                      h.length > 8 ? h.substring(0, 8) : h,
+                    if (c.unverifiedHop.isNotEmpty)
+                      '${c.unverifiedHop.substring(0, c.unverifiedHop.length.clamp(0, 8))}…',
+                  ].join(' → '),
+                ),
                 style: const TextStyle(fontFamily: 'monospace', fontSize: 11),
               ),
           ],
@@ -208,12 +219,12 @@ class _CircuitsTab extends ConsumerWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(
-              '↑${ByteFormatter.format(c.bytesUp)} '
-              '↓${ByteFormatter.format(c.bytesDown)}',
+              '↑${context.fmtBytes(c.bytesUp)} '
+              '↓${context.fmtBytes(c.bytesDown)}',
             ),
             if (_testable(c))
               IconButton(
-                tooltip: 'Test de vitesse',
+                tooltip: context.l10n.speedTest,
                 icon: const Icon(Icons.speed, size: 18),
                 onPressed: () => SpeedTestDialog.showForCircuit(context, c.id),
               ),
@@ -232,14 +243,18 @@ class _RelaysTab extends ConsumerWidget {
     return _TabScaffold<RelayInfo>(
       value: ref.watch(tunnelRelaysProvider),
       onRetry: () => ref.invalidate(tunnelRelaysProvider),
-      emptyTitle: 'Aucun relais',
+      emptyTitle: context.l10n.emptyRelays,
       itemBuilder: (r) => ListTile(
         dense: true,
         title: Text('${r.circuitIn} → ${r.circuitOut}'),
-        subtitle: Text(r.rendezvous ? 'relais de rendez-vous' : 'relais'),
+        subtitle: Text(
+          r.rendezvous
+              ? context.l10n.relayRendezvous
+              : context.l10n.relay,
+        ),
         trailing: Text(
-          '↑${ByteFormatter.format(r.bytesUp)} '
-          '↓${ByteFormatter.format(r.bytesDown)}',
+          '↑${context.fmtBytes(r.bytesUp)} '
+          '↓${context.fmtBytes(r.bytesDown)}',
         ),
       ),
     );
@@ -254,12 +269,16 @@ class _ExitsTab extends ConsumerWidget {
     return _TabScaffold<ExitInfo>(
       value: ref.watch(tunnelExitsProvider),
       onRetry: () => ref.invalidate(tunnelExitsProvider),
-      emptyTitle: 'Aucune sortie',
+      emptyTitle: context.l10n.emptyExits,
       itemBuilder: (e) => ListTile(
         dense: true,
         leading: Icon(e.enabled ? Icons.exit_to_app : Icons.block, size: 20),
-        title: Text('circuit #${e.circuitId}'),
-        trailing: Text(e.enabled ? 'active' : 'inactive'),
+        title: Text(context.l10n.exitCircuit(e.circuitId)),
+        trailing: Text(
+          e.enabled
+              ? context.l10n.exitActive
+              : context.l10n.exitInactive,
+        ),
       ),
     );
   }
@@ -273,13 +292,13 @@ class _SwarmsTab extends ConsumerWidget {
     return _TabScaffold<SwarmInfo>(
       value: ref.watch(tunnelSwarmsProvider),
       onRetry: () => ref.invalidate(tunnelSwarmsProvider),
-      emptyTitle: 'Aucun swarm caché',
-      emptyMessage: 'Apparaît quand un téléchargement anonyme démarre.',
+      emptyTitle: context.l10n.emptySwarms,
+      emptyMessage: context.l10n.emptySwarmsMsg,
       itemBuilder: (s) => ListTile(
         dense: true,
         leading: Icon(s.seeder ? Icons.upload : Icons.download, size: 20),
         title: Text(s.infoHash, overflow: TextOverflow.ellipsis),
-        trailing: Text('${s.connections} connexion(s)'),
+        trailing: Text(context.l10n.connectionsCount(s.connections)),
       ),
     );
   }
@@ -287,13 +306,13 @@ class _SwarmsTab extends ConsumerWidget {
 
 /// `PEER_FLAG_*` IPv8/pyipv8 → nom lisible (les valeurs inconnues
 /// restent affichées en numéro).
-String _peerFlagLabel(int flag) => switch (flag) {
-  1 => 'relais',
-  2 => 'sortie-bt',
-  4 => 'sortie-ipv8',
-  8 => 'speed-test',
-  16384 => 'sortie-backup',
-  32768 => 'sortie-http',
+String _peerFlagLabel(AppLocalizations l10n, int flag) => switch (flag) {
+  1 => l10n.flagRelay,
+  2 => l10n.flagBtExit,
+  4 => l10n.flagIpv8Exit,
+  8 => l10n.flagSpeedTest,
+  16384 => l10n.flagBackupExit,
+  32768 => l10n.flagHttpExit,
   _ => '#$flag',
 };
 
@@ -305,7 +324,7 @@ class _PeersTab extends ConsumerWidget {
     return _TabScaffold<TunnelPeerInfo>(
       value: ref.watch(tunnelPeersProvider),
       onRetry: () => ref.invalidate(tunnelPeersProvider),
-      emptyTitle: 'Aucun pair tunnel',
+      emptyTitle: context.l10n.emptyTunnelPeers,
       itemBuilder: (p) => ListTile(
         dense: true,
         leading: const Icon(Icons.person_outline, size: 20),
@@ -317,8 +336,10 @@ class _PeersTab extends ConsumerWidget {
         subtitle: Text('${p.ip}:${p.port}'),
         trailing: Text(
           p.flags.isEmpty
-              ? 'aucun flag'
-              : p.flags.map(_peerFlagLabel).join(' · '),
+              ? context.l10n.noFlags
+              : p.flags
+                    .map((f) => _peerFlagLabel(context.l10n, f))
+                    .join(' · '),
         ),
       ),
     );
@@ -339,9 +360,7 @@ class _SwarmPeersTab extends ConsumerWidget {
       value: ref.watch(provider),
       onRetry: () => ref.invalidate(provider),
       emptyTitle: emptyTitle,
-      emptyMessage:
-          'Apparaît quand des points d\'introduction de swarms '
-          'cachés sont connus.',
+      emptyMessage: context.l10n.emptyIntroPointsMsg,
       itemBuilder: (s) => Card(
         margin: const EdgeInsets.only(bottom: AppSpacing.sm),
         child: ExpansionTile(
@@ -352,7 +371,7 @@ class _SwarmPeersTab extends ConsumerWidget {
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
           ),
-          subtitle: Text('${s.peers.length} point(s) d\'introduction'),
+          subtitle: Text(context.l10n.introPointsCount(s.peers.length)),
           children: [
             for (final p in s.peers)
               ListTile(
@@ -360,7 +379,11 @@ class _SwarmPeersTab extends ConsumerWidget {
                 leading: const Icon(Icons.person_pin_outlined, size: 18),
                 title: Text('${p.ip}:${p.port}'),
                 subtitle: Text(
-                  'seeder ${p.seederPk.length > 12 ? '${p.seederPk.substring(0, 12)}…' : p.seederPk}',
+                  context.l10n.seederPrefix(
+                    p.seederPk.length > 12
+                        ? '${p.seederPk.substring(0, 12)}…'
+                        : p.seederPk,
+                  ),
                   style: const TextStyle(fontFamily: 'monospace', fontSize: 11),
                 ),
                 trailing: Text(p.source),
@@ -378,7 +401,7 @@ class _DhtPeersTab extends StatelessWidget {
   @override
   Widget build(BuildContext context) => _SwarmPeersTab(
     provider: dhtPeersProvider,
-    emptyTitle: 'Aucun point d\'introduction DHT',
+    emptyTitle: context.l10n.emptyDhtIntro,
   );
 }
 
@@ -388,13 +411,16 @@ class _PexPeersTab extends StatelessWidget {
   @override
   Widget build(BuildContext context) => _SwarmPeersTab(
     provider: pexPeersProvider,
-    emptyTitle: 'Aucun point d\'introduction PEX',
+    emptyTitle: context.l10n.emptyPexIntro,
   );
 }
 
-/// Onglet « Statistiques » — compteurs globaux du daemon
-/// (`/api/statistics/tribler` : taille DB, torrents, canaux, pairs,
-/// sessions moteur).
+/// Onglet « Statistiques » — compteurs globaux du daemon regroupés
+/// par domaine : `GET /api/statistics/tribler` (version, uptime, DB,
+/// totaux session, lanes), `GET /api/statistics/ipv8` (trafic
+/// overlay), `PUT /api/statistics/dirspace` (espace du dossier de
+/// téléchargement) et dérivés locaux (downloads, circuits DATA,
+/// sorties actives).
 class _StatsTab extends ConsumerWidget {
   const _StatsTab();
 
@@ -406,9 +432,11 @@ class _StatsTab extends ConsumerWidget {
         Align(
           alignment: Alignment.centerRight,
           child: IconButton(
-            tooltip: 'Rafraîchir',
+            tooltip: context.l10n.refresh,
             icon: const Icon(Icons.refresh, size: 18),
-            onPressed: () => ref.invalidate(onionbitStatsProvider),
+            onPressed: () => ref
+              ..invalidate(onionbitStatsProvider)
+              ..invalidate(ipv8TrafficProvider),
           ),
         ),
         Expanded(
@@ -418,32 +446,143 @@ class _StatsTab extends ConsumerWidget {
               message: '$e',
               onRetry: () => ref.invalidate(onionbitStatsProvider),
             ),
-            data: (s) => ListView(
-              padding: const EdgeInsets.all(AppSpacing.md),
-              children: [
-                _stat(context, 'Version du daemon', s.version),
-                _stat(
-                  context,
-                  'Taille de la base',
-                  ByteFormatter.format(s.dbSize),
-                ),
-                _stat(context, 'Torrents connus', '${s.numTorrents}'),
-                _stat(context, 'Canaux', '${s.numChannels}'),
-                _stat(
-                  context,
-                  'Pairs IPv8 découverts',
-                  s.peers < 0 ? '—' : '${s.peers}',
-                ),
-                _stat(
-                  context,
-                  'Sessions moteur (direct + lanes)',
-                  s.sessions < 0 ? '—' : '${s.sessions}',
-                ),
-              ],
-            ),
+            data: (s) => _statsList(context, ref, s),
           ),
         ),
       ],
+    );
+  }
+
+  Widget _statsList(BuildContext context, WidgetRef ref, OnionbitStats s) {
+    final l10n = context.l10n;
+    final traffic = ref.watch(ipv8TrafficProvider).value;
+    final circuits = ref.watch(tunnelCircuitsProvider).value ?? const [];
+    final exits = ref.watch(tunnelExitsProvider).value ?? const [];
+    final downloads = ref.watch(downloadsProvider).value ?? const [];
+
+    // Dossier de destination pour l'espace disque (premier ancêtre
+    // existant mesuré par `PUT /api/statistics/dirspace`).
+    final settings = ref.watch(daemonSettingsProvider).value;
+    final lt = settings?['libtorrent'] as Map<String, dynamic>?;
+    final saveas =
+        (lt?['download_defaults'] as Map<String, dynamic>?)?['saveas']
+            as String?;
+    final disk = ref.watch(
+      dirSpaceProvider(
+        saveas == null || saveas.isEmpty ? null : saveas,
+      ),
+    );
+
+    // Circuits DATA prêts, groupés par lane (« ×2 : 3 »).
+    final dataReady = <int, int>{};
+    for (final c in circuits.where((c) => c.type == 'DATA' && c.ready)) {
+      dataReady[c.goalHops] = (dataReady[c.goalHops] ?? 0) + 1;
+    }
+    final dataReadyText = dataReady.isEmpty
+        ? l10n.statNone
+        : (dataReady.entries.toList()
+                ..sort((a, b) => a.key.compareTo(b.key)))
+            .map((e) => '×${e.key} : ${e.value}')
+            .join(' · ');
+
+    final activeExits = exits.where((e) => e.enabled).length;
+
+    return ListView(
+      padding: const EdgeInsets.all(AppSpacing.md),
+      children: [
+        _section(context, l10n.sectionDaemon),
+        _stat(context, l10n.statDaemonVersion, s.version),
+        _stat(
+          context,
+          l10n.statUptime,
+          s.uptimeSec < 0
+              ? '—'
+              : context.fmtDuration(Duration(seconds: s.uptimeSec)),
+        ),
+        _stat(context, l10n.statDbSize, context.fmtBytes(s.dbSize)),
+        _stat(
+          context,
+          l10n.statDiskSpace,
+          disk.when(
+            loading: () => '…',
+            error: (_, _) => '—',
+            data: (d) => l10n.diskSpaceFree(
+              context.fmtBytes(d['free'] ?? 0),
+              context.fmtBytes(d['total'] ?? 0),
+            ),
+          ),
+        ),
+        _section(context, l10n.statSectionContent),
+        _stat(context, l10n.statTorrentsKnown, '${s.numTorrents}'),
+        _stat(
+          context,
+          l10n.statDownloads,
+          l10n.statDownloadsValue(
+            downloads.where((d) => d.isActive).length,
+            downloads.where((d) => d.isPaused).length,
+            downloads.where((d) => d.isError).length,
+          ),
+        ),
+        _section(context, l10n.statSectionNetwork),
+        _stat(
+          context,
+          l10n.statIpv8Peers,
+          s.peers < 0 ? '—' : '${s.peers}',
+        ),
+        _stat(
+          context,
+          l10n.statIpv8Traffic,
+          traffic == null
+              ? '—'
+              : l10n.statTrafficValue(
+                  context.fmtBytes(traffic.up),
+                  context.fmtBytes(traffic.down),
+                ),
+        ),
+        _stat(
+          context,
+          l10n.statSessionTraffic,
+          s.totalSentBytes < 0
+              ? '—'
+              : l10n.statTrafficValue(
+                  context.fmtBytes(s.totalSentBytes),
+                  context.fmtBytes(s.totalRecvBytes),
+                ),
+        ),
+        _section(context, l10n.rowAnon),
+        _stat(
+          context,
+          l10n.statSessions,
+          s.sessions < 0 ? '—' : '${s.sessions}',
+        ),
+        _stat(
+          context,
+          l10n.statLanes,
+          s.laneHops.isEmpty
+              ? l10n.statNone
+              : ([...s.laneHops]..sort())
+                  .map((h) => '×$h')
+                  .join(' · '),
+        ),
+        _stat(context, l10n.statDataCircuits, dataReadyText),
+        _stat(context, l10n.statExitsActive, '$activeExits'),
+      ],
+    );
+  }
+
+  Widget _section(BuildContext context, String title) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.only(
+        top: AppSpacing.md,
+        bottom: AppSpacing.xs,
+      ),
+      child: Text(
+        title,
+        style: theme.textTheme.labelLarge?.copyWith(
+          color: theme.colorScheme.primary,
+        ),
+      ),
     );
   }
 
@@ -485,9 +624,7 @@ class _LogsTab extends ConsumerWidget {
             // à `debug` à chaud — rend visibles les événements de
             // cellules tunnel (create/extend/destroy, e2e, sorties).
             Tooltip(
-              message:
-                  'Journalise les événements tunnel détaillés '
-                  '(create/extend/destroy, e2e…)',
+              message: context.l10n.logsDebugTooltip,
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -507,7 +644,7 @@ class _LogsTab extends ConsumerWidget {
               ),
             ),
             IconButton(
-              tooltip: 'Rafraîchir',
+              tooltip: context.l10n.refresh,
               icon: const Icon(Icons.refresh, size: 18),
               onPressed: () => ref.invalidate(daemonLogsProvider),
             ),
@@ -517,11 +654,11 @@ class _LogsTab extends ConsumerWidget {
           ExpansionTile(
             dense: true,
             title: Text(
-              'Journal UI',
+              context.l10n.uiLogTitle,
               style: Theme.of(context).textTheme.bodyMedium,
             ),
             subtitle: Text(
-              'logs/ui.log — connexion daemon, SSE, ajouts, recherches',
+              context.l10n.uiLogSubtitle,
               style: Theme.of(context).textTheme.bodySmall,
             ),
             children: [
@@ -546,10 +683,10 @@ class _LogsTab extends ConsumerWidget {
               onRetry: () => ref.invalidate(daemonLogsProvider),
             ),
             data: (text) => text.trim().isEmpty
-                ? const EmptyState(
+                ? EmptyState(
                     icon: Icons.article_outlined,
-                    title: 'Journal vide',
-                    message: 'Le daemon n\'a encore rien écrit.',
+                    title: context.l10n.emptyLogs,
+                    message: context.l10n.emptyLogsMsg,
                   )
                 : SingleChildScrollView(
                     padding: const EdgeInsets.all(AppSpacing.md),
@@ -641,20 +778,20 @@ class _OverviewTabState extends ConsumerState<_OverviewTab> {
             const SizedBox(width: AppSpacing.xs),
             Text(
               !tunnelsUp
-                  ? 'TunnelCommunity inactive'
+                  ? context.l10n.overviewTunnelInactive
                   : ready > 0
-                  ? 'Tunnels opérationnels ($ready circuits prêts)'
-                  : 'TunnelCommunity active, aucun circuit prêt',
+                  ? context.l10n.overviewTunnelsOk(ready)
+                  : context.l10n.overviewTunnelNoCircuit,
               style: Theme.of(context).textTheme.bodySmall,
             ),
             const Spacer(),
             Text(
-              'auto-refresh 5 s',
+              context.l10n.autoRefresh5s,
               style: Theme.of(context).textTheme.labelSmall
                   ?.copyWith(color: scheme.outline),
             ),
             IconButton(
-              tooltip: 'Rafraîchir',
+              tooltip: context.l10n.refresh,
               icon: const Icon(Icons.refresh, size: 18),
               onPressed: _refresh,
             ),
@@ -670,48 +807,48 @@ class _OverviewTabState extends ConsumerState<_OverviewTab> {
             children: [
               _StatCard(
                 icon: Icons.hub_outlined,
-                label: 'Overlays IPv8',
+                label: context.l10n.cardIpv8Overlays,
                 value: '${overlays?.length ?? '—'}',
               ),
               _StatCard(
                 icon: Icons.link,
-                label: 'Circuits prêts',
+                label: context.l10n.cardCircuitsReady,
                 value: '$ready / ${circuits?.length ?? '—'}',
               ),
               _StatCard(
                 icon: Icons.swap_horiz,
-                label: 'Relais',
+                label: context.l10n.cardRelays,
                 value: '${relays?.length ?? '—'}',
               ),
               _StatCard(
                 icon: Icons.exit_to_app,
-                label: 'Sorties actives',
+                label: context.l10n.cardActiveExits,
                 value: '$exitsOn / ${exits?.length ?? '—'}',
               ),
               _StatCard(
                 icon: Icons.person_outline,
-                label: 'Pairs tunnel',
+                label: context.l10n.cardTunnelPeers,
                 value: '${peers?.length ?? '—'}',
               ),
               _StatCard(
                 icon: Icons.cloud_download_outlined,
-                label: 'Torrents connus',
+                label: context.l10n.cardKnownTorrents,
                 value: '${stats?.numTorrents ?? '—'}',
               ),
               _StatCard(
                 icon: Icons.arrow_downward,
-                label: 'Réception',
-                value: ByteFormatter.formatRate(speeds.down),
+                label: context.l10n.cardDownload,
+                value: context.fmtRate(speeds.down),
               ),
               _StatCard(
                 icon: Icons.arrow_upward,
-                label: 'Envoi',
-                value: ByteFormatter.formatRate(speeds.up),
+                label: context.l10n.cardUpload,
+                value: context.fmtRate(speeds.up),
               ),
               _StatCard(
                 icon: Icons.storage_outlined,
-                label: 'Base de données',
-                value: stats != null ? ByteFormatter.format(stats.dbSize) : '—',
+                label: context.l10n.cardDatabase,
+                value: stats != null ? context.fmtBytes(stats.dbSize) : '—',
               ),
             ],
           ),

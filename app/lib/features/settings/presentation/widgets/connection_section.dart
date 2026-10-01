@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/config/connection_settings.dart';
+import '../../../../core/l10n/l10n_ext.dart';
 import '../../../../core/theme/app_theme.dart';
 
 /// Section « Connexion daemon » — URL de base de `onionbit-api` + clé
@@ -32,6 +33,7 @@ class _ConnectionSectionState extends ConsumerState<ConnectionSection> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l10n = context.l10n;
     final settings = ref.watch(connectionSettingsProvider);
 
     return Card(
@@ -54,20 +56,20 @@ class _ConnectionSectionState extends ConsumerState<ConnectionSection> {
                 const SizedBox(height: AppSpacing.sm),
                 TextField(
                   controller: _urlController,
-                  decoration: const InputDecoration(
-                    labelText: 'URL de l\'API',
-                    hintText: 'défaut : http://127.0.0.1:8085',
-                    prefixIcon: Icon(Icons.dns_outlined),
+                  decoration: InputDecoration(
+                    labelText: l10n.apiUrlLabel,
+                    hintText: l10n.defaultHint('http://127.0.0.1:8085'),
+                    prefixIcon: const Icon(Icons.dns_outlined),
                   ),
                 ),
                 const SizedBox(height: AppSpacing.sm),
                 TextField(
                   controller: _keyController,
                   obscureText: true,
-                  decoration: const InputDecoration(
-                    labelText: 'Clé API',
-                    hintText: 'auto : configuration.json du daemon',
-                    prefixIcon: Icon(Icons.key_outlined),
+                  decoration: InputDecoration(
+                    labelText: l10n.apiKeyLabelShort,
+                    hintText: l10n.apiKeyHint,
+                    prefixIcon: const Icon(Icons.key_outlined),
                   ),
                 ),
                 const SizedBox(height: AppSpacing.sm),
@@ -80,7 +82,7 @@ class _ConnectionSectionState extends ConsumerState<ConnectionSection> {
                           baseUrl: _urlController.text,
                           apiKey: _keyController.text,
                         ),
-                    child: const Text('Appliquer'),
+                    child: Text(l10n.apply),
                   ),
                 ),
               ],

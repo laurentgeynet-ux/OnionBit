@@ -5,6 +5,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../core/l10n/l10n_ext.dart';
 import '../../../../core/theme/app_theme.dart';
 import 'settings_section.dart';
 import 'settings_defaults.dart';
@@ -69,7 +70,7 @@ class _QueueSectionState extends ConsumerState<QueueSection> {
         'active_checking': parse(_checking.text),
         'active_limit': parse(_limit.text),
       },
-    }, successMessage: 'File d\'attente enregistrée');
+    }, successMessage: context.l10n.queueSaved);
     _deferred.markClean();
     if (mounted) setState(() => _saving = false);
   }
@@ -86,7 +87,7 @@ class _QueueSectionState extends ConsumerState<QueueSection> {
       keyboardType: TextInputType.number,
       decoration: InputDecoration(
         labelText: label,
-        hintText: 'défaut : $def · -1 = illimité',
+        hintText: context.l10n.queueDefHint(def),
         isDense: true,
         suffixIcon: KeyInfoIcon(keyPath),
       ),
@@ -95,9 +96,10 @@ class _QueueSectionState extends ConsumerState<QueueSection> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
     return SettingsSection(
       icon: Icons.queue,
-      title: 'File d\'attente',
+      title: l10n.sectionQueue,
       sectionId: 'queue',
       defaults: kQueueDefaults,
       child: (context, settings) {
@@ -106,21 +108,19 @@ class _QueueSectionState extends ConsumerState<QueueSection> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Les téléchargements « gérés automatiquement » au-delà de '
-              'ces bornes sont mis en pause puis repris quand un slot '
-              'se libère.',
+              l10n.queueHelp,
               style: Theme.of(context).textTheme.bodySmall
                   ?.copyWith(color: Theme.of(context).colorScheme.outline),
             ),
             const SizedBox(height: AppSpacing.sm),
             Row(
               children: [
-                _field(_downloads, 'Téléchargements actifs', 3, const [
+                _field(_downloads, l10n.queueActiveDownloads, 3, const [
                   'libtorrent',
                   'active_downloads',
                 ]),
                 const SizedBox(width: AppSpacing.sm),
-                _field(_seeds, 'Seeds actifs', 5, const [
+                _field(_seeds, l10n.queueActiveSeeds, 5, const [
                   'libtorrent',
                   'active_seeds',
                 ]),
@@ -129,12 +129,12 @@ class _QueueSectionState extends ConsumerState<QueueSection> {
             const SizedBox(height: AppSpacing.sm),
             Row(
               children: [
-                _field(_checking, 'Vérifications actives', 1, const [
+                _field(_checking, l10n.queueActiveChecking, 1, const [
                   'libtorrent',
                   'active_checking',
                 ]),
                 const SizedBox(width: AppSpacing.sm),
-                _field(_limit, 'Limite globale', 500, const [
+                _field(_limit, l10n.queueActiveLimit, 500, const [
                   'libtorrent',
                   'active_limit',
                 ]),
@@ -146,12 +146,8 @@ class _QueueSectionState extends ConsumerState<QueueSection> {
                 'libtorrent',
                 'fastresume_check',
               ], def: true),
-              title: 'Vérification au démarrage',
-              subtitle:
-                  'Relit un échantillon de pièces après la restauration '
-                  'pour détecter les fichiers modifiés entre deux '
-                  'sessions. Désactivé : aucune relecture, une '
-                  'corruption passera inaperçue.',
+              title: l10n.queueFastresume,
+              subtitle: l10n.queueFastresumeSub,
             ),
             SettingsSwitch(
               path: const ['libtorrent', 'download_defaults', 'auto_managed'],
@@ -160,17 +156,15 @@ class _QueueSectionState extends ConsumerState<QueueSection> {
                 'download_defaults',
                 'auto_managed',
               ]),
-              title: 'Gestion automatique par défaut',
-              subtitle:
-                  'Les nouveaux téléchargements sont placés sous la '
-                  'file d\'attente. Défaut : désactivé.',
+              title: l10n.queueAutoManaged,
+              subtitle: l10n.queueAutoManagedSub,
             ),
             Align(
               alignment: Alignment.centerRight,
               child: FilledButton.icon(
                 onPressed: _saving ? null : _save,
                 icon: const Icon(Icons.save),
-                label: const Text('Enregistrer'),
+                label: Text(l10n.save),
               ),
             ),
           ],

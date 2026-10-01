@@ -110,23 +110,4 @@ class RestSearchRepository implements SearchRepository {
     );
   }
 
-  @override
-  Future<List<String>> completions(String query) async {
-    try {
-      final resp = await _api.get(
-        '/metadata/search/completions',
-        query: {'q': query},
-      );
-      return [
-        for (final c
-            in ((resp as Map<String, dynamic>)['completions'] as List?) ??
-                const [])
-          '$c',
-      ];
-    } catch (_) {
-      // L'autocomplétion est un confort : une erreur réseau ne doit
-      // jamais casser la frappe.
-      return const [];
-    }
-  }
 }

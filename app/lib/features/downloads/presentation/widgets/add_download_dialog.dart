@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/api/api_client.dart';
+import '../../../../core/l10n/l10n_ext.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../settings/presentation/providers/settings_providers.dart';
 import '../../domain/torrent_preview.dart';
@@ -31,14 +32,13 @@ class AddDownloadDialog extends ConsumerStatefulWidget {
     BuildContext context, {
     String? initialUri,
     String? initialFilePath,
-  }) =>
-      showDialog(
-        context: context,
-        builder: (_) => AddDownloadDialog(
-          initialUri: initialUri,
-          initialFilePath: initialFilePath,
-        ),
-      );
+  }) => showDialog(
+    context: context,
+    builder: (_) => AddDownloadDialog(
+      initialUri: initialUri,
+      initialFilePath: initialFilePath,
+    ),
+  );
 
   @override
   ConsumerState<AddDownloadDialog> createState() => _AddDownloadDialogState();
@@ -51,6 +51,7 @@ class _AddDownloadDialogState extends ConsumerState<AddDownloadDialog> {
   final _destController = TextEditingController();
   XFile? _file;
   TorrentPreview? _preview;
+
   /// Sauts choisis — initialisés depuis `download_defaults` quand les
   /// réglages arrivent (comme `ask_download_settings` Tribler qui
   /// pré-remplit le dialogue avec les défauts configurés).
@@ -67,9 +68,12 @@ class _AddDownloadDialogState extends ConsumerState<AddDownloadDialog> {
     if (path != null) {
       if (path.toLowerCase().endsWith('.magnet')) {
         // Fichier .magnet : contient l'URI en clair.
-        XFile(path).readAsString().then((uri) {
-          if (mounted) _uriController.text = uri.trim();
-        }).catchError((_) {});
+        XFile(path)
+            .readAsString()
+            .then((uri) {
+              if (mounted) _uriController.text = uri.trim();
+            })
+            .catchError((_) {});
       } else {
         _file = XFile(path);
         _loadPreview(_file!);
@@ -189,9 +193,10 @@ class _AddDownloadDialogState extends ConsumerState<AddDownloadDialog> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l10n = context.l10n;
     _initHops(ref.watch(daemonSettingsProvider).value);
     return AlertDialog(
-      title: const Text('Ajouter un téléchargement'),
+      title: Text(l10n.addDownload),
       content: SizedBox(
         width: 480,
         child: Column(
@@ -201,10 +206,10 @@ class _AddDownloadDialogState extends ConsumerState<AddDownloadDialog> {
             TextField(
               controller: _uriController,
               enabled: _file == null,
-              decoration: const InputDecoration(
-                labelText: 'Magnet ou URL',
-                hintText: 'magnet:?xt=… ou https://…',
-                prefixIcon: Icon(Icons.link),
+              decoration: InputDecoration(
+                labelText: l10n.magnetOrUrl,
+                hintText: l10n.magnetHint,
+                prefixIcon: const Icon(Icons.link),
               ),
               onChanged: (_) => setState(() {}),
             ),
@@ -214,11 +219,11 @@ class _AddDownloadDialogState extends ConsumerState<AddDownloadDialog> {
                 OutlinedButton.icon(
                   onPressed: _pickFile,
                   icon: const Icon(Icons.upload_file),
-                  label: Text(_file?.name ?? 'Fichier .torrent…'),
+                  label: Text(_file?.name ?? l10n.torrentFileBtn),
                 ),
                 if (_file != null)
                   IconButton(
-                    tooltip: 'Retirer le fichier',
+                    tooltip: l10n.removeFile,
                     onPressed: () => setState(() {
                       _file = null;
                       _preview = null;
@@ -228,26 +233,25 @@ class _AddDownloadDialogState extends ConsumerState<AddDownloadDialog> {
               ],
             ),
             const SizedBox(height: AppSpacing.md),
-            Text('Anonymat', style: theme.textTheme.labelMedium),
+            Text(l10n.rowAnon, style: theme.textTheme.labelMedium),
             const SizedBox(height: AppSpacing.xs),
             SegmentedButton<int>(
-              segments: const [
-                ButtonSegment(value: 0, label: Text('Direct')),
-                ButtonSegment(value: 1, label: Text('1 saut')),
-                ButtonSegment(value: 2, label: Text('2 sauts')),
-                ButtonSegment(value: 3, label: Text('3 sauts')),
+              segments: [
+                ButtonSegment(value: 0, label: Text(l10n.anonDirect)),
+                for (final n in const [1, 2, 3])
+                  ButtonSegment(value: n, label: Text(l10n.ctxHops(n))),
               ],
               selected: {_hops},
-              onSelectionChanged: (s) => setState(() => _hops = s.first),
+              // Le choix explicite verrouille `_hops` : les réglages
+              // (`_initHops`) arrivant en retard ne l'écrasent plus.
+              onSelectionChanged: (s) => setState(() {
+                _hops = s.first;
+                _hopsInitialized = true;
+              }),
             ),
             const SizedBox(height: AppSpacing.xs),
             Text(
-              _hops == 0
-                  ? 'Votre IP est visible par les pairs.'
-                  : '$_hops relais entre vous et l\'essaim. Si aucun '
-                        'circuit n\'est prêt, le téléchargement attendra '
-                        '(jamais de repli en direct). Le seeding sera aussi '
-                        'anonymisé (safe seeding).',
+              _hops == 0 ? l10n.anonDirectWarn : l10n.anonRelaysInfo(_hops),
               style: theme.textTheme.bodySmall?.copyWith(
                 color: theme.colorScheme.outline,
               ),
@@ -255,10 +259,7 @@ class _AddDownloadDialogState extends ConsumerState<AddDownloadDialog> {
             if (_hops > 0 && _httpsOnlyTrackers) ...[
               const SizedBox(height: AppSpacing.xs),
               Text(
-                'Tous les trackers de ce torrent sont en HTTPS : ils '
-                'sont injoignables via les sorties anonymes (relai '
-                'HTTP en clair uniquement). En mode anonyme, ce '
-                'torrent ne trouvera aucun pair — choisissez « Direct ».',
+                l10n.httpsOnlyWarn,
                 style: theme.textTheme.bodySmall?.copyWith(
                   color: theme.colorScheme.tertiary,
                 ),
@@ -268,10 +269,10 @@ class _AddDownloadDialogState extends ConsumerState<AddDownloadDialog> {
             TextField(
               controller: _destController,
               decoration: InputDecoration(
-                labelText: 'Dossier de destination (optionnel)',
+                labelText: l10n.destFolderOpt,
                 prefixIcon: const Icon(Icons.folder_outlined),
                 suffixIcon: IconButton(
-                  tooltip: 'Parcourir…',
+                  tooltip: l10n.browse,
                   icon: const Icon(Icons.folder_open),
                   onPressed: () async {
                     final dir = await getDirectoryPath();
@@ -285,7 +286,7 @@ class _AddDownloadDialogState extends ConsumerState<AddDownloadDialog> {
             CheckboxListTile(
               value: _paused,
               onChanged: (v) => setState(() => _paused = v ?? false),
-              title: const Text('Ajouter en pause'),
+              title: Text(l10n.addPaused),
               contentPadding: EdgeInsets.zero,
               controlAffinity: ListTileControlAffinity.leading,
               dense: true,
@@ -305,7 +306,7 @@ class _AddDownloadDialogState extends ConsumerState<AddDownloadDialog> {
       actions: [
         TextButton(
           onPressed: _busy ? null : () => Navigator.of(context).pop(),
-          child: const Text('Annuler'),
+          child: Text(l10n.cancel),
         ),
         FilledButton(
           onPressed: _canSubmit ? _submit : null,
@@ -315,7 +316,7 @@ class _AddDownloadDialogState extends ConsumerState<AddDownloadDialog> {
                   height: 18,
                   child: CircularProgressIndicator(strokeWidth: 2),
                 )
-              : const Text('Ajouter'),
+              : Text(l10n.add),
         ),
       ],
     );

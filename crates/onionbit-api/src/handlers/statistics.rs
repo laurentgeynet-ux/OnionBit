@@ -37,10 +37,20 @@ pub async fn get_onionbit_stats(State(state): State<AppState>) -> Json<serde_jso
         .await
         .unwrap_or((0, 0));
 
+    // Totaux session : somme des stats de tous les moteurs
+    // (principal + lanes anonymes) — equivalent des compteurs
+    // `libtorrent.sessions` Python, remis a zero au redemarrage.
+    let (mut total_recv, mut total_sent) = (0u64, 0u64);
+    for d in state.session.downloads() {
+        total_recv = total_recv.saturating_add(d.progress_bytes);
+        total_sent = total_sent.saturating_add(d.uploaded_bytes);
+    }
+
     let mut stats = serde_json::json!({
         "db_size": db_size,
         "num_torrents": num_torrents,
         "num_channels": num_channels,
+        "uptime_sec": state.session.uptime_secs(),
         "torrent_queue_stats": [],
         "endpoint_version": env!("CARGO_PKG_VERSION"),
     });
@@ -55,8 +65,8 @@ pub async fn get_onionbit_stats(State(state): State<AppState>) -> Json<serde_jso
         }
         stats["libtorrent"] = serde_json::json!({
             "sessions": sessions,
-            "total_recv_bytes": serde_json::Value::Null,
-            "total_sent_bytes": serde_json::Value::Null,
+            "total_recv_bytes": total_recv,
+            "total_sent_bytes": total_sent,
         });
         if stack.tunnel.is_some() {
             stats["socks5_sessions"] = serde_json::json!(stack

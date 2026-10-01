@@ -27,9 +27,10 @@ abstract final class AppTheme {
     required Color seedColor,
     required Brightness brightness,
   }) {
-    final colorScheme =
-        ColorScheme.fromSeed(seedColor: seedColor, brightness: brightness)
-            .copyWith(tertiary: brandTertiary);
+    final colorScheme = ColorScheme.fromSeed(
+      seedColor: seedColor,
+      brightness: brightness,
+    ).copyWith(tertiary: brandTertiary);
     return ThemeData(
       useMaterial3: true,
       colorScheme: colorScheme,
@@ -42,6 +43,18 @@ abstract final class AppTheme {
         elevation: 0,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(AppRadii.medium),
+        ),
+      ),
+      // Le pouce par défaut de M3 (`onSurface` très dilué) est quasi
+      // invisible en mode clair ; `outline` reste lisible dans les deux
+      // modes, renforcé au survol/drag.
+      scrollbarTheme: ScrollbarThemeData(
+        thumbColor: WidgetStateProperty.resolveWith(
+          (states) =>
+              states.contains(WidgetState.hovered) ||
+                  states.contains(WidgetState.dragged)
+              ? colorScheme.onSurfaceVariant
+              : colorScheme.outline,
         ),
       ),
     );

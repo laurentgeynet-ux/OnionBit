@@ -8,16 +8,25 @@ import 'package:onionbit_ui/core/utils/duration_formatter.dart';
 
 void main() {
   group('ByteFormatter', () {
-    test('formate les ordres de grandeur courants', () {
-      expect(ByteFormatter.format(0), '0 o');
-      expect(ByteFormatter.format(512), '512 o');
-      expect(ByteFormatter.format(2048), '2.0 Ko');
-      expect(ByteFormatter.format(5 * 1024 * 1024), '5.0 Mo');
-      expect(ByteFormatter.format(1610612736), '1.5 Go');
+    test('formate les ordres de grandeur courants (EN par défaut)', () {
+      expect(ByteFormatter.format(0), '0 B');
+      expect(ByteFormatter.format(512), '512 B');
+      expect(ByteFormatter.format(2048), '2.0 KiB');
+      expect(ByteFormatter.format(5 * 1024 * 1024), '5.0 MiB');
+      expect(ByteFormatter.format(1610612736), '1.5 GiB');
+    });
+
+    test('formate les ordres de grandeur courants (FR)', () {
+      expect(ByteFormatter.format(0, 'fr'), '0 o');
+      expect(ByteFormatter.format(512, 'fr'), '512 o');
+      expect(ByteFormatter.format(2048, 'fr'), '2.0 Ko');
+      expect(ByteFormatter.format(5 * 1024 * 1024, 'fr'), '5.0 Mo');
+      expect(ByteFormatter.format(1610612736, 'fr'), '1.5 Go');
     });
 
     test('formate un débit', () {
-      expect(ByteFormatter.formatRate(1536), '1.5 Ko/s');
+      expect(ByteFormatter.formatRate(1536), '1.5 KiB/s');
+      expect(ByteFormatter.formatRate(1536, 'fr'), '1.5 Ko/s');
     });
   });
 
@@ -28,7 +37,11 @@ void main() {
       expect(DurationFormatter.formatSeconds(59), '59 s');
       expect(DurationFormatter.formatSeconds(65), '1 min 5 s');
       expect(DurationFormatter.formatSeconds(3660), '1 h 1 min');
-      expect(DurationFormatter.formatSeconds(90061), '1 j 1 h');
+    });
+
+    test('formatSeconds : jours selon la locale', () {
+      expect(DurationFormatter.formatSeconds(90061), '1 d 1 h');
+      expect(DurationFormatter.formatSeconds(90061, 'fr'), '1 j 1 h');
     });
 
     test('formatSeconds : ETA astronomique (débit nul) → tiret', () {
