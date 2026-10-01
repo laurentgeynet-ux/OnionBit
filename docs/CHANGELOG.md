@@ -44,6 +44,27 @@ dans les deux runs : le gate `Tribler : bootstrap maillage` compte
 `exits=0` trop tôt au démarrage de T (le téléchargement anonyme
 fonctionne ensuite).
 
+### Suite complète de résilience (8 bancs, `target/bench-suite-20261001-191301/`)
+
+| banc | résultat |
+|---|---|
+| `killseed -KillTarget seeder` A | PASS — drain borné (+574 ko/2 s), fenêtre morte 30 s, restart+fastresume, reprise 56 s, SHA-256 |
+| `killseed -KillTarget seeder` B | PASS — restart Tribler, reprise Rust 15 s, SHA-256 |
+| `killseed -KillTarget intro` A | PASS (re-check : verdict DHT via `last_seen`, cf. `0485c57`) |
+| `killseed -KillTarget intro` B | PASS |
+| `killseed -KillTarget anchor -Hops 3` A | PASS — reconstruction 3 sauts, `intro_mid=550826de…` |
+| `killseed -KillTarget anchor -Hops 3` B | PASS (re-check : critère `intro intact` pour ancre hors chemin) |
+| `live_hidden_upload` (3 daemons full-Rust) | PASS — 8/8 verdicts |
+| `interop_public_dht` (réseau réel, Sintel magnet) | PASS — 589 687 octets vérifiés, route 3 sauts via exits Tribler réels |
+
+2 faux FAIL corrigés dans le script de banc (`0485c57`) : contradiction
+`intro_mid nouveau ∧ == newMid` quand l'intro reconstruit atterrissait
+sur un nœud ayant déjà des intros pré-kill (mid du nœud identique) —
+résolu par `last_seen` post-kill ; et BOM UTF-8 parasite dans
+`interop_public_dht.ps1`. Le seul FAIL récurrent restant est le gate
+cosmétique `bootstrap Tribler exits=0` (comptage trop tôt, sans effet
+sur le téléchargement).
+
 ## Version 0.3.2-alpha (2026-10-01)
 
 - Release succédant à `v0.3.1-alpha` (supprimée — bundle incomplet et
