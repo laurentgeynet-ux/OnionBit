@@ -19,15 +19,16 @@ use onionbit_ipv8::peer::{Network, Peer};
 use onionbit_ipv8::serializer::Writer;
 use onionbit_ipv8::UdpAddress;
 use onionbit_tunnel::community::TunnelCommunity;
+use onionbit_tunnel::payload::{self as tp, msg, Cellable};
 use onionbit_tunnel::routing::{
-    CIRCUIT_TYPE_RP_DOWNLOADER, DESTROY_REASON_UNNEEDED, PEER_FLAG_EXIT_BT, PEER_FLAG_EXIT_HTTP,
-    PEER_FLAG_RELAY, PEER_FLAG_SPEED_TEST, PEER_SOURCE_PEX,
+    CIRCUIT_TYPE_RP_DOWNLOADER, CIRCUIT_TYPE_RP_SEEDER, DESTROY_REASON_UNNEEDED, PEER_FLAG_EXIT_BT,
+    PEER_FLAG_EXIT_HTTP, PEER_FLAG_RELAY, PEER_FLAG_SPEED_TEST, PEER_SOURCE_PEX,
 };
 use onionbit_tunnel::socks5::Socks5Server;
 use onionbit_tunnel::tunnel_udp_socket::{TunnelUdpKind, TunnelUdpSocket};
 use onionbit_tunnel::TUNNEL_COMMUNITY_ID;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpStream;
+use tokio::net::{TcpStream, UdpSocket};
 
 /// Delai max d'attente d'un evenement de test.
 const TEST_TIMEOUT: Duration = Duration::from_secs(5);
@@ -759,6 +760,242 @@ async fn hidden_service_egress_uniquement_vers_relais() {
         }
     }
     assert!(s_pkts > 0, "s n'a rien recu — le flux n'a pas eu lieu");
+}
+
+/// Injection negative (threat model) : les messages e2e ne sont pas
+/// signes (`ezr_pack(sig=False)` pyipv8) — la defense repose sur les
+/// caches de requetes et les tables de relais, pas sur la signature
+/// de l'enveloppe. Ce test forge la batterie sur socket brute :
+///
+///  - `peers-response`/`created-e2e` avec un `identifier` sans requete
+///    en cours -> rejetes (`peers_requests`/`e2e_requests`) ;
+///  - `linked-e2e` brut -> non dispatchable hors cellule (whitelist de
+///    `on_packet_from_circuit`) ;
+///  - `create-e2e` avec `node_public_key` inconnue -> l'intro point ne
+///    relaie pas (`intro_point_for`) ;
+///  - `create-e2e` avec la vraie `seeder_pk` -> relaye (parite pyipv8)
+///    mais le doublon rejoue `seen_e2e` sans creer un second
+///    `RP_SEEDER` (anti-amplification).
+///
+/// Les assertions d'etat sont deterministes : `do_peer_discovery` ne
+/// tire que toutes les `swarm_lookup_interval` (30 s) — bien au-dela
+/// de la duree du test.
+#[tokio::test]
+async fn hidden_service_injection_paquets_forjes() {
+    let d = make_node().await; // downloader
+    let s = make_node().await; // seeder
+    let i = make_node().await; // point d'introduction
+    let r1 = make_node().await; // premier saut du downloader
+    let r2 = make_node().await; // relais extra (RP possible)
+    let nodes = [&d, &s, &i, &r1, &r2];
+    for a in &nodes {
+        for b in &nodes {
+            if !std::ptr::eq(*a, *b) {
+                learn(a, b);
+            }
+        }
+    }
+    let info_hash = [9u8; 20];
+
+    // Seeder : swarm + point d'introduction chez `i`.
+    s.tunnel.join_swarm(info_hash, 0, true);
+    let ip_cid = s
+        .tunnel
+        .create_introduction_point(info_hash, Some(&peer_of(&i)))
+        .await
+        .expect("circuit IP_SEEDER");
+    s.tunnel
+        .wait_circuit_ready(ip_cid, TEST_TIMEOUT.as_millis() as u64)
+        .await
+        .expect("IP circuit READY");
+    let intro_rx = s
+        .tunnel
+        .send_establish_intro(ip_cid, info_hash)
+        .await
+        .expect("send establish-intro");
+    tokio::time::timeout(TEST_TIMEOUT, intro_rx)
+        .await
+        .expect("timeout intro-established")
+        .expect("intro-established");
+
+    // Downloader : swarm a 1 saut + circuit de donnees.
+    d.tunnel.join_swarm(info_hash, 1, false);
+    let data_cid = d
+        .tunnel
+        .create_circuit(1, &peer_of(&r1))
+        .await
+        .expect("circuit data D");
+    d.tunnel
+        .wait_circuit_ready(data_cid, TEST_TIMEOUT.as_millis() as u64)
+        .await
+        .expect("circuit data READY");
+
+    // Requete legitime : le chemin reel fonctionne et revele la
+    // `seeder_pk` (information publique — PEX/DHT l'annoncent).
+    let ip_hint = onionbit_tunnel::routing::IntroductionPoint {
+        address: UdpAddress::from(i.addr),
+        peer_key: i.key.public_key().to_bin(),
+        seeder_pk: Vec::new(),
+        source: onionbit_tunnel::routing::PEER_SOURCE_UNKNOWN,
+        last_seen_secs: 0,
+    };
+    let ips = d
+        .tunnel
+        .send_peers_request(info_hash, Some(&ip_hint), 1)
+        .await
+        .expect("peers-response");
+    assert_eq!(ips.len(), 1, "un point d'introduction attendu");
+    let seeder_pk = ips[0].seeder_pk.clone();
+    assert!(!seeder_pk.is_empty(), "seeder_pk present");
+
+    // Attaquant : simple socket UDP — pas un `Node`, aucune cle.
+    let atk = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let atk_addr = atk.local_addr().unwrap();
+    let mut tap_d = d.ep.set_tap().await;
+    let baseline_d = d.tunnel.circuit_count();
+
+    let prefix = onionbit_ipv8::packet::prefix_of(&TUNNEL_COMMUNITY_ID);
+    let forge = |msg_id: u8, body: &[u8]| -> Vec<u8> {
+        let mut out = Vec::with_capacity(prefix.len() + 1 + body.len());
+        out.extend_from_slice(&prefix);
+        out.push(msg_id);
+        out.extend_from_slice(body);
+        out
+    };
+
+    // (1) `peers-response` avec `identifier` sans requete en cours :
+    //     le cache `peers_requests` doit l'absorber — l'intro point
+    //     annonce (adresse de l'attaquant) ne doit JAMAIS etre
+    //     exploite.
+    let mut w = Writer::new();
+    tp::PeersResponse {
+        circuit_id: 0,
+        identifier: 0xBEEF,
+        info_hash,
+        peers: vec![tp::IntroductionInfo {
+            address: UdpAddress::from(atk_addr),
+            key: vec![0xAA; 32],
+            seeder_pk: vec![0xBB; 74],
+            source: PEER_SOURCE_PEX,
+        }],
+    }
+    .pack(&mut w)
+    .unwrap();
+    atk.send_to(&forge(msg::PEERS_RESPONSE, &w.into_bytes()), d.addr)
+        .await
+        .unwrap();
+
+    // (2) `created-e2e` inattendu : `e2e_requests` vide -> rejet avant
+    //     toute verification DH.
+    let mut w = Writer::new();
+    tp::CreatedE2E {
+        identifier: 0xBEEF,
+        key: vec![0u8; 32],
+        auth: [0u8; 32],
+        rp_info_enc: vec![1, 2, 3],
+    }
+    .pack(&mut w)
+    .unwrap();
+    atk.send_to(&forge(msg::CREATED_E2E, &w.into_bytes()), d.addr)
+        .await
+        .unwrap();
+
+    // (3) `linked-e2e` brut : msg 16 absent de la whitelist de
+    //     dispatch sur socket (il n'est valable qu'en cellule).
+    atk.send_to(&forge(msg::LINKED_E2E, &[0; 6]), d.addr)
+        .await
+        .unwrap();
+    // (4) msg inconnu et datagramme tronque au prefixe.
+    atk.send_to(&forge(0xEE, &[0; 4]), d.addr).await.unwrap();
+    atk.send_to(&prefix, d.addr).await.unwrap();
+
+    // Fenetre de reaction eventuelle puis verdict : aucun egress vers
+    // l'attaquant, aucun circuit ni connexion e2e crees.
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    while let Ok((dir, dest, _)) = tap_d.try_recv() {
+        if matches!(dir, onionbit_ipv8::endpoint::TapDir::Tx) {
+            assert_ne!(dest, atk_addr, "le downloader a reagi a un paquet forge");
+        }
+    }
+    assert_eq!(
+        d.tunnel.circuit_count(),
+        baseline_d,
+        "un paquet forge a cree un circuit"
+    );
+    let swarm = d
+        .tunnel
+        .swarms_info()
+        .into_iter()
+        .find(|sw| sw.info_hash == hex::encode(info_hash))
+        .expect("swarm downloader absent");
+    assert_eq!(swarm.num_connections, 0, "connexion e2e creee par forge");
+
+    // (5) `create-e2e` pour une `node_public_key` inconnue : l'intro
+    //     point n'a pas de route `intro_point_for` -> pas de relais,
+    //     pas de RP_SEEDER cree chez le seeder.
+    let (_, atk_dh) = onionbit_tunnel::community::generate_diffie_secret();
+    let forge_create = |identifier: u16, npk: &[u8]| -> Vec<u8> {
+        let mut w = Writer::new();
+        tp::CreateE2E {
+            identifier,
+            info_hash,
+            node_public_key: npk.to_vec(),
+            key: atk_dh.to_vec(),
+        }
+        .pack(&mut w)
+        .unwrap();
+        forge(msg::CREATE_E2E, &w.into_bytes())
+    };
+    let count_rp = |t: &TunnelCommunity| -> usize {
+        t.circuits_info()
+            .iter()
+            .filter(|c| c.ctype == CIRCUIT_TYPE_RP_SEEDER)
+            .count()
+    };
+    atk.send_to(&forge_create(0x1111, &[0xAB; 32]), i.addr)
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(
+        count_rp(&s.tunnel),
+        0,
+        "create-e2e a cle inconnue relaye — intro_point_for non filtrant"
+    );
+
+    // (6) Vraie `seeder_pk` : relais nominal (parite pyipv8 — l'intro
+    //     point sert de passe-plat). Le doublon doit rejouer la
+    //     reponse `seen_e2e` VERBATIM sans recreer un RP_SEEDER.
+    let pkt = forge_create(0x2222, &seeder_pk);
+    let mut buf = vec![0u8; 2048];
+    let mut reply1 = None;
+    for _ in 0..3 {
+        atk.send_to(&pkt, i.addr).await.unwrap();
+        if let Ok(Ok((n, _))) = tokio::time::timeout(TEST_TIMEOUT, atk.recv_from(&mut buf)).await {
+            reply1 = Some(buf[..n].to_vec());
+            break;
+        }
+        // Perte loopback : la re-emission tape `seen_e2e` ou
+        // `in_flight_e2e` — la reponse finit par arriver.
+    }
+    let reply1 = reply1.expect("pas de created-e2e relaye — le chemin nominal est casse");
+    atk.send_to(&pkt, i.addr).await.unwrap();
+    let (n2, _) = tokio::time::timeout(TEST_TIMEOUT, atk.recv_from(&mut buf))
+        .await
+        .expect("pas de replay du created-e2e")
+        .expect("recv doublon");
+    assert_eq!(
+        &buf[..n2],
+        reply1.as_slice(),
+        "doublon create-e2e : la reponse `seen_e2e` doit etre verbatim"
+    );
+    assert_eq!(
+        count_rp(&s.tunnel),
+        1,
+        "doublon create-e2e : un seul RP_SEEDER doit exister"
+    );
+
+    // (7) Le chemin legitime reste fonctionnel apres la batterie.
+    let _e2e_cid = create_e2e_with_retry(&d, info_hash, &ips[0]).await;
 }
 
 /// Hidden services via la vraie DHT IPv8 : `on_establish_intro`

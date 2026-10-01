@@ -57,6 +57,18 @@ et sur le reseau public Tribler :
 - `join_swarm(0, seeding = false)` : impossible de creer un circuit de
   0 saut — les requetes echouent en mode ferme (WARN loguee, parite
   pyipv8 qui ne valide pas ce parametre).
+- **Injection de messages e2e non signes**
+  (`hidden_service_injection_paquets_forjes`) : `ezr_pack(sig=False)`
+  est une parite pyipv8 — la defense repose sur les caches et tables
+  de relais, pas sur la signature. Demontre sur socket brute :
+  `peers-response`/`created-e2e` a `identifier` sans requete en cours
+  rejetes (`peers_requests`/`e2e_requests`) ; `linked-e2e` brut non
+  dispatchable hors cellule ; `create-e2e` a `node_public_key` inconnue
+  non relaye (`intro_point_for`) ; doublon `create-e2e` rejoue depuis
+  `seen_e2e` sans recreer de `RP_SEEDER`. **Residu assume** : un
+  `create-e2e` a identifiant neuf avec la vraie `seeder_pk` coute un
+  circuit RP au seeder — surface de DoS inherente a la parite pyipv8
+  (bornee par la duree de vie des circuits, pas par quota).
 
 ## Ce qui n'est PAS demontre
 

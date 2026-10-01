@@ -32,6 +32,14 @@ en haut.
   à `hops=1` — le RP ne voit jamais le downloader) ; `join_swarm(0,
   non-seeder)` logue un WARN (échec fermé, parité pyipv8). Sémantique
   `hops=0/1` documentée dans `docs/security/threat_model.md`.
+- Test d'injection négative `hidden_service_injection_paquets_forjes` :
+  forge sur socket brute de `peers-response`/`created-e2e`/`linked-e2e`
+  sans état et de `create-e2e` à clé inconnue → tous rejetés par les
+  caches (`peers_requests`, `e2e_requests`, `intro_point_for`,
+  whitelist du dispatch non signé) ; doublon `create-e2e` à clé connue
+  rejoué verbatim depuis `seen_e2e` sans second `RP_SEEDER`. Surface
+  résiduelle (coût RP par identifiant neuf, parité pyipv8) documentée
+  dans `docs/security/threat_model.md`.
 
 - `on_establish_rendezvous` répondait `local_addr` au lieu de
   `my_estimated_wan` (pyipv8 `TunnelCommunity.on_establish_rendezvous`)
