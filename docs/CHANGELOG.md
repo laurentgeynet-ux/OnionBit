@@ -3,6 +3,27 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Transport tunnel : pompe d'emission FIFO (fix reordonnancement e2e)
+
+- Symptome : un test loopback de rafale e2e (`hidden_seed_e2e_burst_integrity`,
+  2000 datagrammes uTP sur circuit lie) montrait des swaps par paires —
+  `premiers tags: [0, 1, 3, 2, 4, 5, ...]` — alors que toutes les
+  cellules arrivaient. Cause : `relay_cell` (et `exit_data`) faisaient
+  un `tokio::spawn` par envoi ; sur runtime multi-thread, deux taches
+  consecutives s'executent dans un ordre arbitraire. pyipv8 envoie
+  depuis la boucle asyncio unique — FIFO garanti.
+- `crates/tribler-tunnel/src/community.rs` : file bornée
+  (`SEND_QUEUE_CAP = 4096`, drop-tail = semantique UDP) drainee par une
+  pompe d'emission unique `SendJob::Endpoint|ExitSocket`. Les chemins
+  `relay_cell` et `exit_data` enquetent au lieu de spawner.
+- Tests `circuits_loopback.rs` : `hidden_seed_e2e_burst_integrity`
+  verifie desormais FIFO strict (sous-sequence strictement croissante)
+  + pertes < 1 % ; `inject_incoming_burst_drop_tail` documente le
+  drop-tail a `DATA_CHANNEL_CAP`. 27/27 verts sous contention CPU.
+- Note : la perte constatee dans le run anchor sens B (3,5 Mo figes)
+  reste expliquee par la topologie mono-exit (A1 seul `EXIT_BT`) ;
+  l'ordonnancement FIFO leve un risque uTP additionnel sur le chemin.
+
 ## Resilience interop : kill de l'ancre A1 (bootstrap + EXIT_BT)
 
 - `scripts/interop_hidden_killseeder.ps1 -KillTarget anchor` : le noeud

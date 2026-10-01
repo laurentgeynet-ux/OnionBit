@@ -58,6 +58,22 @@ const E2E_CHANNEL_CAP: usize = 64;
 const CIRCUIT_REMOVED_CHANNEL_CAP: usize = 64;
 /// Capacite du canal de chunks `http-response` par requete en cours.
 const HTTP_REQUEST_PARTS_CAP: usize = 64;
+/// Capacite de la file d'emission serialisee (`relay_send_tx`) :
+/// au-dela, les datagrammes sont perdus (semantique UDP).
+const SEND_QUEUE_CAP: usize = 4096;
+
+/// Travail d'emission serialise : pyipv8 envoie depuis la boucle
+/// asyncio unique — l'ordre des cellules sur le fil est celui des
+/// appels. Un `tokio::spawn` par envoi reordonne les cellules
+/// consecutives (les taches courent sur les workers) : le trafic
+/// uTP des lanes e2e subissait des swaps par paires. La pompe unique
+/// retablit le FIFO ; file pleine = perte UDP.
+pub(crate) enum SendJob {
+    /// Cellule vers un pair tunnel (socket endpoint partagee).
+    Endpoint(UdpAddress, Vec<u8>),
+    /// Datagramme brut vers l'exterieur (socket de sortie dediee).
+    ExitSocket(Arc<tokio::net::UdpSocket>, SocketAddr, Vec<u8>),
+}
 
 /// Evenement "donnee recue sur un circuit" (livre au consommateur —
 /// equivalent du dispatch `on_data` vers SOCKS5/services internes).
@@ -282,6 +298,9 @@ pub struct TunnelCommunity {
     /// sous la cle du swarm) et `dht_lookup` (decouverte des points
     /// par le downloader).
     pub(crate) dht_provider: Mutex<Option<Arc<tribler_ipv8::dht::DhtCommunity>>>,
+    /// File d'emission serialisee drainee par la pompe unique —
+    /// voir [`SendJob`]. `try_send` : file pleine = perte UDP.
+    pub(crate) relay_send_tx: tokio::sync::mpsc::Sender<SendJob>,
     /// `TunnelSettings` Python (`self.settings`) : tous les seuils et
     /// cadences de la community (defauts = valeurs officielles).
     pub settings: TunnelSettings,
@@ -440,6 +459,25 @@ impl TunnelCommunity {
         let (circuit_removed_tx, _) = tokio::sync::broadcast::channel(CIRCUIT_REMOVED_CHANNEL_CAP);
         let (test_tx, _) =
             tokio::sync::broadcast::channel(crate::speedtest::SPEED_TEST_CHANNEL_CAP);
+        let (relay_send_tx, mut send_rx) = tokio::sync::mpsc::channel::<SendJob>(SEND_QUEUE_CAP);
+        // Pompe d'emission unique : conserve l'ordre des cellules sur
+        // le fil (boucle asyncio unique de pyipv8) — un spawn par
+        // datagramme reordonnait les cellules consecutives relayees.
+        {
+            let ep = endpoint.clone();
+            tokio::spawn(async move {
+                while let Some(job) = send_rx.recv().await {
+                    match job {
+                        SendJob::Endpoint(addr, data) => {
+                            let _ = ep.send_to(&addr, &data).await;
+                        }
+                        SendJob::ExitSocket(sock, addr, data) => {
+                            let _ = sock.send_to(&data, addr).await;
+                        }
+                    }
+                }
+            });
+        }
         let community = Arc::new(Self {
             community_id,
             key,
@@ -476,6 +514,7 @@ impl TunnelCommunity {
             test_tx,
             discovery: Mutex::new(None),
             dht_provider: Mutex::new(None),
+            relay_send_tx,
             settings,
         });
         let weak = Arc::downgrade(&community);
@@ -2108,10 +2147,15 @@ impl TunnelCommunity {
                     r.relay_early_count += 1;
                 }
             }
-            let ep = self.endpoint.clone();
-            tokio::spawn(async move {
-                let _ = ep.send_to(&addr, &forwarded).await;
-            });
+            // File d'emission serialisee : FIFO strict des cellules
+            // relayees (un spawn par cellule les reordonnait).
+            if self
+                .relay_send_tx
+                .try_send(SendJob::Endpoint(addr, forwarded))
+                .is_err()
+            {
+                tracing::debug!(next_cid, "file d'emission pleine — cellule relayee perdue");
+            }
         }
         Ok(())
     }
@@ -3606,9 +3650,18 @@ impl TunnelCommunity {
             return;
         };
         let data = p.data.clone();
-        tokio::spawn(async move {
-            let _ = socket.send_to(&data, dest_sa).await;
-        });
+        // Pompe serialisee (meme raison que `relay_cell` : l'ordre
+        // des datagrammes sortis vers l'exterieur est preserve).
+        if self
+            .relay_send_tx
+            .try_send(SendJob::ExitSocket(socket, dest_sa, data))
+            .is_err()
+        {
+            tracing::debug!(
+                circuit_id,
+                "file d'emission pleine — datagramme de sortie perdu"
+            );
+        }
     }
 
     /// Tache de reception de la socket de sortie : les datagrammes

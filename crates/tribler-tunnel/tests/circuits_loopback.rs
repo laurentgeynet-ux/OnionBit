@@ -1522,3 +1522,202 @@ async fn walk_decouvre_les_pairs_tunnel() {
         PEER_FLAG_EXIT_BT
     );
 }
+
+/// Semantique file pleine de `inject_incoming` (le `try_send` des
+/// lanes e2e) : une rafale synchrone plus grande que la capacite
+/// (`IN_QUEUE_CAP` = 512) perd en drop-tail — FIFO conserve pour la
+/// partie livree, aucun blocage ni panique, et la socket reste
+/// utilisable apres la rafale. C'est le comportement UDP voulu : la
+/// congestion du tunnel est representee par des pertes, jamais par
+/// du backpressure sur la tache de dispatch.
+#[tokio::test]
+async fn inject_incoming_burst_drop_tail() {
+    let a = make_node().await;
+    let bind = "127.0.0.1:1111".parse().unwrap();
+    let sock = TunnelUdpSocket::new(a.tunnel.clone(), 1, TunnelUdpKind::Utp, bind);
+    let src: SocketAddr = "10.9.8.7:1024".parse().unwrap();
+
+    // Rafale synchrone : sur le runtime courant la boucle ne laisse
+    // jamais le consommateur s'executer -> exactement la capacite de
+    // la file est livree, le reste tombe (drop-tail).
+    const BURST: usize = 2048;
+    const CAP: usize = 512;
+    for i in 0..BURST {
+        sock.inject_incoming(utp_payload(&i.to_be_bytes()), src);
+    }
+
+    let mut got = Vec::new();
+    let deadline = Instant::now() + TEST_TIMEOUT;
+    while got.len() < CAP && Instant::now() < deadline {
+        let mut buf = [0u8; 512];
+        match tokio::time::timeout(POLL * 10, sock.recv_from(&mut buf)).await {
+            Ok(Ok((n, from))) => {
+                assert_eq!(from, src);
+                got.push(buf[..n].to_vec());
+            }
+            _ => break,
+        }
+    }
+    assert_eq!(got.len(), CAP, "drop-tail : seule la capacite est livree");
+    // FIFO : les CAP premiers datagrammes dans l'ordre.
+    for (idx, d) in got.iter().enumerate() {
+        let tag = &d[d.len() - 4..];
+        assert_eq!(
+            tag,
+            (idx as u32).to_be_bytes(),
+            "ordre casse a l'index {idx}"
+        );
+    }
+
+    // La socket reste fonctionnelle apres l'overflow.
+    sock.inject_incoming(utp_payload(b"post-burst"), src);
+    let mut buf = [0u8; 512];
+    let (n, _) = tokio::time::timeout(TEST_TIMEOUT, sock.recv_from(&mut buf))
+        .await
+        .expect("socket morte apres la rafale")
+        .unwrap();
+    assert_eq!(&buf[..n], utp_payload(b"post-burst"));
+}
+
+/// Stress e2e : la chaine reelle du hidden seeding cote seeder —
+/// cellules `data` d'un circuit `RP_SEEDER` lie ->
+/// `subscribe_circuit_data` -> filtrage `could_be_utp` ->
+/// `TunnelUdpSocket::inject_incoming` -> `recv_from`. Une rafale de
+/// 2000 datagrammes uTP (> 3x la capacite des deux files en serie)
+/// doit traverser sans perte quand le consommateur suit : les files
+/// absorbent les micro-rafales, le pacing vient du chiffrement
+/// par cellule cote emetteur.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn hidden_seed_e2e_burst_integrity() {
+    let d = make_node().await;
+    let s = make_node().await;
+    let i = make_node().await;
+    let r1 = make_node().await;
+    let r2 = make_node().await;
+    let nodes = [&d, &s, &i, &r1, &r2];
+    for a in &nodes {
+        for b in &nodes {
+            if !std::ptr::eq(*a, *b) {
+                learn(a, b);
+            }
+        }
+    }
+    let info_hash = [13u8; 20];
+
+    s.tunnel.join_swarm(info_hash, 0, true);
+    let ip_cid = s
+        .tunnel
+        .create_introduction_point(info_hash, Some(&peer_of(&i)))
+        .await
+        .expect("circuit IP_SEEDER");
+    s.tunnel
+        .wait_circuit_ready(ip_cid, TEST_TIMEOUT.as_millis() as u64)
+        .await
+        .expect("IP READY");
+    let intro_rx = s
+        .tunnel
+        .send_establish_intro(ip_cid, info_hash)
+        .await
+        .expect("establish-intro");
+    tokio::time::timeout(TEST_TIMEOUT, intro_rx)
+        .await
+        .expect("timeout intro-established")
+        .expect("intro-established");
+
+    d.tunnel.join_swarm(info_hash, 1, false);
+    let data_cid = d
+        .tunnel
+        .create_circuit(1, &peer_of(&r1))
+        .await
+        .expect("circuit data D");
+    d.tunnel
+        .wait_circuit_ready(data_cid, TEST_TIMEOUT.as_millis() as u64)
+        .await
+        .expect("circuit data READY");
+
+    let ip_hint = tribler_tunnel::routing::IntroductionPoint {
+        address: UdpAddress::from(i.addr),
+        peer_key: i.key.public_key().to_bin(),
+        seeder_pk: Vec::new(),
+        source: tribler_tunnel::routing::PEER_SOURCE_UNKNOWN,
+        last_seen_secs: 0,
+    };
+    let ips = d
+        .tunnel
+        .send_peers_request(info_hash, Some(&ip_hint), 1)
+        .await
+        .expect("peers-response");
+    let e2e_cid = create_e2e_with_retry(&d, info_hash, &ips[0]).await;
+
+    // Cote seeder : replique la chaine de production d'ipv8_stack —
+    // abonnement par circuit + inject_incoming sur la socket uTP.
+    let rp_cids = s
+        .tunnel
+        .ready_circuits_of_type(tribler_tunnel::routing::CIRCUIT_TYPE_RP_SEEDER);
+    assert_eq!(rp_cids.len(), 1, "un circuit RP_SEEDER lie attendu");
+    let bind = "127.0.0.1:2222".parse().unwrap();
+    let sock = TunnelUdpSocket::new(s.tunnel.clone(), 1, TunnelUdpKind::Utp, bind);
+    let fake_peer: SocketAddr = "10.1.2.3:1024".parse().unwrap();
+    let mut data_rx = s.tunnel.subscribe_circuit_data(rp_cids[0]);
+    {
+        let sock = sock.clone();
+        tokio::spawn(async move {
+            while let Some(msg) = data_rx.recv().await {
+                if tribler_network_policy::exit_policy::could_be_utp(&msg.data) {
+                    sock.inject_incoming(msg.data, fake_peer);
+                }
+            }
+        });
+    }
+
+    // Consommateur (le `recv_from` de rqbit) : collecte les tags.
+    // Arret au quota ou apres 2 s de silence (file fermee/perturbee).
+    const N: usize = 2000;
+    let (done_tx, done_rx) = tokio::sync::oneshot::channel();
+    let sock2 = sock.clone();
+    tokio::spawn(async move {
+        let mut got: Vec<u32> = Vec::new();
+        while got.len() < N {
+            let mut buf = [0u8; 512];
+            match tokio::time::timeout(Duration::from_secs(2), sock2.recv_from(&mut buf)).await {
+                Ok(Ok((n, _))) if n >= 4 => {
+                    got.push(u32::from_be_bytes(buf[n - 4..n].try_into().unwrap()));
+                }
+                Ok(Ok(_)) => {}
+                _ => break,
+            }
+        }
+        let _ = done_tx.send(got);
+    });
+
+    // Rafale e2e : N cellules `data` successives, le debit n'est
+    // borne que par le chiffrement + loopback UDP.
+    let zero = UdpAddress::from("0.0.0.0:0".parse::<SocketAddr>().unwrap());
+    for i in 0..N as u32 {
+        d.tunnel
+            .send_data(e2e_cid, &zero, &zero, &utp_payload(&i.to_be_bytes()))
+            .await
+            .expect("send_data e2e");
+    }
+
+    let got = tokio::time::timeout(Duration::from_secs(30), done_rx)
+        .await
+        .expect("rafale e2e : consommateur bloque")
+        .expect("canal collecteur");
+    // Invariant 1 — FIFO bout en bout : les tags recus forment une
+    // sous-sequence strictement croissante (la pompe d'emission
+    // serialisee interdit le reordonnancement des cellules relayees).
+    for w in got.windows(2) {
+        assert!(w[0] < w[1], "desordre : {} puis {}", w[0], w[1]);
+    }
+    // Invariant 2 — pertes bornees : les files (`data_subscribers`,
+    // `in_tx`) sont drop-tail, des pertes sous contention CPU sont la
+    // semantique UDP voulue ; uTP reemet. Sous 99 % serait un
+    // goulot inacceptable pour le transfert reel.
+    assert!(
+        got.len() >= N * 99 / 100,
+        "pertes excessives en rafale : {}/{} recus",
+        got.len(),
+        N
+    );
+}
