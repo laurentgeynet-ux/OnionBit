@@ -318,32 +318,39 @@ impl TunnelCommunity {
             };
             (swarm.hops + 1, sk.public_key().to_bin())
         };
-        // `required_ip` Python devient `required_exit` : le DERNIER saut
-        // impose (le point d'introduction lui-meme). Le premier hop reste
-        // un relais ordinaire (`possible_first_hops` de `create_circuit`,
-        // `required_exit` exclu) — l'imposer aussi comme premier saut
-        // produirait un circuit S->A->A que l'etablissement peut refuser.
-        // Pour un circuit a 1 saut, `create_circuit_typed` substitue deja
-        // `required_exit` comme premier hop (egalite Python
-        // `possible_first_hops = [required_exit]`).
-        let required_exit = required_ip.map(|p| p.public_key_bin.clone());
-        let first_hop = match required_ip {
-            // 1 saut : `create_circuit_typed` substitue `required_exit`
-            // comme premier hop — le choix importe peu, on evite juste
-            // d'echouer sur `pick_first_hop` quand le pair epingle est le
-            // seul pair tunnel connu.
-            Some(p) if hops == 1 => p.clone(),
-            _ => self
-                .pick_first_hop(required_exit.as_deref())
-                .ok_or(Ipv8Error::Malformed("aucun pair tunnel"))?,
+        // `create_circuit` pyipv8 : pour `IP_SEEDER` sans `required_ip`,
+        // `required_exit` est choisi LOCALEMENT par `select_exit`
+        // (EXIT_BT puis EXIT_IPV8 puis RELAY) — jamais pris dans les
+        // `candidates` offerts par le saut precedent. Un intro point
+        // elu ainsi est retire du pool local des que l'elagage
+        // (`RandomChurn`) constate sa mort, alors que les `candidates`
+        // offerts par les relais peuvent continuer de le proposer.
+        let required_exit = match required_ip {
+            Some(p) => Some(p.clone()),
+            None => self.select_exit(&[], CIRCUIT_TYPE_IP_SEEDER),
+        };
+        let required_key = required_exit.as_ref().map(|p| p.public_key_bin.clone());
+        // `possible_first_hops` Python : a 1 saut c'est `required_exit`
+        // lui-meme ; sinon les premiers sauts des circuits de meme
+        // ctype + relais connus, `required_exit` exclu (la liste entiere
+        // sert d'alternates au retry du `create`).
+        let first_hops = if hops == 1 {
+            match required_exit {
+                Some(p) => vec![p],
+                // "Could not create circuit, no available exit-nodes".
+                None => return Err(Ipv8Error::Malformed("aucun pair de sortie")),
+            }
+        } else {
+            self.first_hop_candidates(CIRCUIT_TYPE_IP_SEEDER, required_key.as_deref())
         };
         let cid = self
-            .create_circuit_typed(
+            .create_circuit_inner(
                 hops,
-                &first_hop,
+                first_hops,
                 CIRCUIT_TYPE_IP_SEEDER,
-                required_exit,
+                required_key,
                 Some(info_hash),
+                Vec::new(),
             )
             .await?;
         Ok(cid)
@@ -386,6 +393,12 @@ impl TunnelCommunity {
                 .and_then(|c| c.first_hop().and_then(|h| h.address.clone()))
                 .ok_or(Ipv8Error::Malformed("circuit inconnu"))?
         };
+        tracing::info!(
+            circuit_id,
+            identifier,
+            first_hop = ?addr,
+            "establish-intro envoye"
+        );
         self.send_cell(&addr, &p).await?;
         Ok(rx)
     }
@@ -472,7 +485,17 @@ impl TunnelCommunity {
                         )
                     })
                 }
-                None => None,
+                None => {
+                    // Reponse recue sans `ip_requests` correspondant
+                    // (requete deja completee, purgee, ou identifier
+                    // inconnu) — tracee pour diagnostic.
+                    tracing::debug!(
+                        circuit_id = p.circuit_id,
+                        identifier = p.identifier,
+                        "intro-established sans requete en attente"
+                    );
+                    None
+                }
             }
         };
         if let Some((Some(info_hash), Some((Some(addr), intro_pk)))) = announce {
@@ -847,9 +870,8 @@ impl TunnelCommunity {
         // `DHTCommunityProvider.lookup`). Chemin requis pour qu'un
         // point de sortie qui n'est pas le point d'introduction puisse
         // quand meme repondre.
-        let need_dht = circuit_id.is_some_and(|cid| {
-            self.inner.lock().unwrap().exit_sockets.contains_key(&cid)
-        });
+        let need_dht = circuit_id
+            .is_some_and(|cid| self.inner.lock().unwrap().exit_sockets.contains_key(&cid));
         let dht = if need_dht { self.dht_provider() } else { None };
 
         let peers: Vec<tp::IntroductionInfo> = {
@@ -1556,8 +1578,7 @@ impl TunnelCommunity {
         else {
             return;
         };
-        let Ok(rp_info) = tp::RendezvousInfo::unpack_framed(&mut Reader::new(&rp_bin))
-        else {
+        let Ok(rp_info) = tp::RendezvousInfo::unpack_framed(&mut Reader::new(&rp_bin)) else {
             return;
         };
         // Circuit RP_DOWNLOADER vers le RP (required_exit : le dernier

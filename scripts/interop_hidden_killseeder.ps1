@@ -18,6 +18,12 @@
 param(
     [ValidateSet('A','B')]
     [string] $Sens         = 'A',
+    # Cible du kill : 'seeder' (processus seeder entier, restart +
+    # reprise) ou 'intro' (le noeud hebergeant le point d'introduction —
+    # resolu via verified_hops[-1] ; le seeder reste vivant et doit
+    # reconstruire un intro point AILLEURS puis re-annoncer sur la DHT).
+    [ValidateSet('seeder','intro')]
+    [string] $KillTarget   = 'seeder',
     # 24 Mo : assez pour que le kill tombe en plein transfert (~370 ko/s
     # observes sur le mesh loopback -> ~70 s de transfert nominal).
     [int]    $Bytes        = 25165824,
@@ -148,6 +154,44 @@ function TCircuits([string]$ctype = $null) {
     try { $c = @((TApi 'GET' '/ipv8/tunnel/circuits' 15).circuits) } catch { return @() }
     if ($ctype) { $c = @($c | Where-Object { $_.type -eq $ctype }) }
     return $c
+}
+# Parse les valeurs DHT du swarm : DHTIntroPointPayload
+# ["ip_address","I","varlenH","varlenH"] = addr(type+donnees) +
+# last_seen u32 + varlenH intro_pk + varlenH seeder_pk. Retourne
+# @{IntroMid; SeederPkHex} par valeur (IntroMid = sha1 de la cle
+# prefixee, comparable aux mids de verified_hops).
+function Dht-IntroValues([int]$port, $key, [string]$lookup, $sha1) {
+    $out = @()
+    try { $v = Api 'GET' $port "/ipv8/dht/values/$lookup" $key $null 30 } catch { return @() }
+    foreach ($val in @($v.values)) {
+        $h = $val.value; if (-not $h) { continue }
+        $b = [byte[]]::new($h.Length / 2)
+        for ($i = 0; $i -lt $b.Length; $i++) { $b[$i] = [Convert]::ToByte($h.Substring($i * 2, 2), 16) }
+        try {
+            $o = 0
+            switch ($b[$o]) {
+                1 { $o += 7 }      # IPv4 : type + 4 + port(2)
+                3 { $o += 19 }     # IPv6 : type + 16 + port(2)
+                2 { $l = ([int]$b[$o+1] -shl 8) -bor [int]$b[$o+2]; $o += 3 + $l + 2 }
+                default { continue }
+            }
+            $o += 4               # last_seen
+            if ($o + 2 -gt $b.Length) { continue }
+            $li = ([int]$b[$o] -shl 8) -bor [int]$b[$o+1]; $o += 2
+            if ($o + $li -gt $b.Length) { continue }
+            $introPk = $b[$o..($o+$li-1)]; $o += $li
+            if ($o + 2 -gt $b.Length) { continue }
+            $ls = ([int]$b[$o] -shl 8) -bor [int]$b[$o+1]; $o += 2
+            if ($o + $ls -gt $b.Length) { continue }
+            $seederPk = $b[$o..($o+$ls-1)]
+            $fullIntro = [byte[]]@(0x4c,0x69,0x62,0x4e,0x61,0x43,0x4c,0x50,0x4b,0x3a) + $introPk
+            $out += @{
+                IntroMid   = ([BitConverter]::ToString($sha1.ComputeHash($fullIntro))).Replace('-','').ToLower()
+                SeederPkHex = ([BitConverter]::ToString($seederPk)).Replace('-','').ToLower()
+            }
+        } catch { continue }
+    }
+    return $out
 }
 # Lecture du compteur de download quel que soit le sens.
 function Dl-Bytes([string]$ih) {
@@ -301,13 +345,18 @@ try {
     }
 
     if ($Sens -eq 'A') {
-        # S = seeder Rust (intro point epingle -> A1).
+        # S = seeder Rust. Pin de l'intro point sur A1 pour le scenario
+        # 'seeder' (determinisme) ; en 'intro' le pin imposerait le pair
+        # mort comme required_exit et empecherait toute reconstruction
+        # — pyipv8 n'epingle jamais l'intro point en production.
+        $sConf = @{ ipv8 = @{ bootstrap = @{ override = @("127.0.0.1:$($P_A.Ipv8)") };
+                             interfaces = @( @{ interface = 'UDPIPv4'; ip = '127.0.0.1'; port = $P_N.Ipv8 } );
+                             estimated_wan = "127.0.0.1:$($P_N.Ipv8)" } }
+        if ($KillTarget -eq 'seeder') {
+            $sConf.tunnel_community = @{ intro_point_peer = "127.0.0.1:$($P_A.Ipv8)" }
+        }
         [System.IO.File]::WriteAllText((Join-Path $P_N.Dir 'configuration.json'),
-            (@{ tunnel_community = @{ intro_point_peer = "127.0.0.1:$($P_A.Ipv8)" };
-                ipv8 = @{ bootstrap = @{ override = @("127.0.0.1:$($P_A.Ipv8)") };
-                          interfaces = @( @{ interface = 'UDPIPv4'; ip = '127.0.0.1'; port = $P_N.Ipv8 } );
-                          estimated_wan = "127.0.0.1:$($P_N.Ipv8)" } } |
-                ConvertTo-Json -Compress -Depth 5))
+            ($sConf | ConvertTo-Json -Compress -Depth 5))
         Start-Daemon $P_N @()
         $script:kN = Wait-ApiKey $P_N.Dir; Wait-ApiUp $P_N.Api $script:kN; Assert-ConfigOk $P_N
 
@@ -459,41 +508,105 @@ try {
     Verdict $alive "data plane : downloader >= $KillAtBytes octets avant kill" "dl=$dlNow"
     if (-not $alive) { throw 'data plane jamais demarre' }
 
+    # ---------- Resolution du noeud cible ----------
+    # Port ipv8 -> nom de noeud du banc. mid = sha1(pubkey maitresse),
+    # resolu deterministement via /ipv8/overlays (my_peer) de chaque
+    # noeud — couvre A1, absent de sa propre liste de peers.
+    $portMap = @{}; $midMap = @{}
+    $sha1 = [System.Security.Cryptography.SHA1]::Create()
+    foreach ($p in (@($P_N, $P_A) + $relays)) {
+        $portMap[[int]$p.Ipv8] = $p.Name
+        $ov = @((Api 'GET' $p.Api '/ipv8/overlays' (ApiKey $p.Dir)).overlays)
+        if ($ov.Count -gt 0 -and $ov[0].my_peer) {
+            $pkHex = $ov[0].my_peer
+            $pkBytes = [byte[]]::new($pkHex.Length / 2)
+            for ($i = 0; $i -lt $pkBytes.Length; $i++) {
+                $pkBytes[$i] = [Convert]::ToByte($pkHex.Substring($i * 2, 2), 16)
+            }
+            $midMap[([BitConverter]::ToString($sha1.ComputeHash($pkBytes))).Replace('-', '').ToLower()] = $p.Name
+        }
+    }
+
     $killTime = Get-Date
-    if ($Sens -eq 'A') {
-        $procs['S'].Kill(); $procs['S'].WaitForExit()
-        Log "KILL seeder Rust S (pid force-killed) a dl=$dlNow"
+    $killedNode = $null; $killedMid = $null
+    if ($KillTarget -eq 'seeder') {
+        if ($Sens -eq 'A') {
+            $procs['S'].Kill(); $procs['S'].WaitForExit()
+            Log "KILL seeder Rust S (pid force-killed) a dl=$dlNow"
+        } else {
+            $procs['T'].Kill(); $procs['T'].WaitForExit()
+            Log "KILL seeder Tribler T (pid force-killed) a dl=$dlNow"
+        }
+        Verdict $true 'seeder tue en plein transfert' "dl_au_kill=$dlNow"
+
+        # Drain borne : les octets in-flight peuvent encore arriver,
+        # mais la croissance doit s'arreter dans la fenetre DrainSec.
+        $lastGrow = $killTime; $dlLast = $dlNow; $drainEnd = $killTime.AddSeconds($DrainSec)
+        while ((Get-Date) -lt $drainEnd) {
+            Start-Sleep -Seconds 1
+            $d2 = Dl-Bytes $ih
+            if ($d2 -gt $dlLast) { $lastGrow = Get-Date; $dlLast = $d2 }
+        }
+        $drainStop = ($lastGrow - $killTime).TotalSeconds
+        $drained = $dlLast - $dlNow
+        Verdict $true 'drain borne : croissance in-flight arretee' ("dernier octet +{0:N1}s apres kill, +{1} o drains" -f $drainStop, $drained)
+
+        # Fenetre morte stricte : 0 octet pendant DeadSec.
+        $deadBase = Dl-Bytes $ih
+        $deadEnd = (Get-Date).AddSeconds($DeadSec)
+        $deadClean = $true
+        while ((Get-Date) -lt $deadEnd) {
+            Start-Sleep -Seconds 3
+            if ((Dl-Bytes $ih) -gt $deadBase) { $deadClean = $false; break }
+        }
+        Verdict $deadClean "fenetre morte stricte : 0 octet pendant ${DeadSec}s" "dl fige a $deadBase"
     } else {
-        $procs['T'].Kill(); $procs['T'].WaitForExit()
-        Log "KILL seeder Tribler T (pid force-killed) a dl=$dlNow"
-    }
-    Verdict $true 'seeder tue en plein transfert' "dl_au_kill=$dlNow"
+        # ---------- Kill de l'intro point ----------
+        # Le dernier saut du circuit IP_SEEDER du seeder = le point
+        # d'introduction. verified_hops = mids ; on mappe mid->port via
+        # /ipv8/tunnel/peers d'A1 (connaissant tout le mesh).
+        $ipCircs = if ($Sens -eq 'A') { @(Circuits $P_N.Api $script:kN 'IP_SEEDER') } else { @(TCircuits 'IP_SEEDER') }
+        # Snapshot des ids : le verdict de reconstruction exige un
+        # circuit NOUVEAU (d'autres IP_SEEDER peuvent deja avoir un
+        # dernier saut different du noeud tue — le seeder maintient
+        # plusieurs circuits d'introduction). Tous les etats sont
+        # captures (un EXTENDING qui completerait apres le kill ne
+        # compte pas comme reconstruction).
+        $preIpIds = if ($Sens -eq 'A') {
+            @((Circuits $P_N.Api $script:kN 'IP_SEEDER' $null) | ForEach-Object { $_.circuit_id })
+        } else {
+            @((TCircuits 'IP_SEEDER') | ForEach-Object { $_.circuit_id })
+        }
+        $killedMid = $ipCircs[0].verified_hops[-1]
+        $killedNode = $midMap[$killedMid]
+        if (-not $killedNode) { throw "intro point mid=$killedMid hors maillage" }
+        # Snapshot des annonces PRE-kill : seeder_pk commun + ensemble
+        # des mids d'intro points — sert a attribuer la re-annonce au
+        # SEEDER (et non a un autre seeder du meme swarm, ex. le
+        # downloader devenu seeder apres completion).
+        $preVals = @(Dht-IntroValues $P_A.Api $kA $lookup $sha1)
+        $seederPkHex = if ($preVals.Count -gt 0) { $preVals[0].SeederPkHex } else { $null }
+        $preIntroMids = @{}; foreach ($v in $preVals) { $preIntroMids[$v.IntroMid] = $true }
+        Log ("DHT pre-kill : n=$($preVals.Count) annonce(s) seeder_pk=" +
+             $(if ($seederPkHex) { $seederPkHex.Substring(0,[Math]::Min(12,$seederPkHex.Length)) + '…' } else { 'absent' }))
+        $procs[$killedNode].Kill(); $procs[$killedNode].WaitForExit()
+        Log "KILL intro point : noeud $killedNode (mid=$($killedMid.Substring(0,12))…) a dl=$dlNow"
+        Verdict $true 'intro point tue en plein transfert' "noeud=$killedNode dl_au_kill=$dlNow"
 
-    # Drain borne : les octets in-flight peuvent encore arriver, mais
-    # la croissance doit s'arreter dans la fenetre DrainSec.
-    $lastGrow = $killTime; $dlLast = $dlNow; $drainEnd = $killTime.AddSeconds($DrainSec)
-    while ((Get-Date) -lt $drainEnd) {
-        Start-Sleep -Seconds 1
-        $d2 = Dl-Bytes $ih
-        if ($d2 -gt $dlLast) { $lastGrow = Get-Date; $dlLast = $d2 }
+        # Observation (non bloquante) : le flux e2e etabli est
+        # theoriquement independant du circuit d'introduction — la
+        # mesure indique si le chemin e2e traversait le noeud tue.
+        $deadBase = Dl-Bytes $ih
+        Start-Sleep -Seconds $DeadSec
+        $deadGrew = (Dl-Bytes $ih) -gt $deadBase
+        Log ("post-kill ${DeadSec}s : flux e2e " + $(if ($deadGrew) { 'A SURVENU (chemin e2e independant)' } else { 'fige (e2e traversait le noeud tue)' }))
+        Verdict $true "post-kill ${DeadSec}s : flux e2e" $(if ($deadGrew) { 'survecu — intro point seul detruit' } else { 'fige — reconstruction necessaire' })
+        $restartTime = Get-Date
     }
-    $drainStop = ($lastGrow - $killTime).TotalSeconds
-    $drained = $dlLast - $dlNow
-    Verdict $true 'drain borne : croissance in-flight arretee' ("dernier octet +{0:N1}s apres kill, +{1} o drains" -f $drainStop, $drained)
 
-    # Fenetre morte stricte : 0 octet pendant DeadSec.
-    $deadBase = Dl-Bytes $ih
-    $deadEnd = (Get-Date).AddSeconds($DeadSec)
-    $deadClean = $true
-    while ((Get-Date) -lt $deadEnd) {
-        Start-Sleep -Seconds 3
-        if ((Dl-Bytes $ih) -gt $deadBase) { $deadClean = $false; break }
-    }
-    Verdict $deadClean "fenetre morte stricte : 0 octet pendant ${DeadSec}s" "dl fige a $deadBase"
-
-    # ---------- Phase 3 : restart du seeder ----------
+    # ---------- Phase 3 : reconstruction / restart ----------
     $restartTime = Get-Date
-    if ($Sens -eq 'A') {
+    if ($KillTarget -eq 'seeder' -and $Sens -eq 'A') {
         Start-Daemon $P_N @()
         $script:kN = Wait-ApiKey $P_N.Dir; Wait-ApiUp $P_N.Api $script:kN
         # Le download seede est restaure par fastresume (meme infohash) :
@@ -512,9 +625,59 @@ try {
             Start-Sleep -Seconds 5
         }
         Verdict $rip 'S redemarre : IP_SEEDER reconstruit(s)' "n=$nIp"
+    } elseif ($KillTarget -eq 'intro') {
+        # Pas de restart : le seeder (vivant) doit reconstruire un
+        # IP_SEEDER sur un AUTRE noeud et re-annoncer sur la DHT.
+        $rip = $false; $ripWait = (Get-Date).AddMinutes(8); $newMid = $null
+        while ((Get-Date) -lt $ripWait) {
+            $ipCircs = if ($Sens -eq 'A') { @(Circuits $P_N.Api $script:kN 'IP_SEEDER') } else { @(TCircuits 'IP_SEEDER') }
+            $newIp = @($ipCircs | Where-Object {
+                ($preIpIds -notcontains $_.circuit_id) -and
+                $_.verified_hops -and $_.verified_hops[-1] -ne $killedMid })
+            if ($newIp.Count -ge 1) { $rip = $true; $newMid = $newIp[0].verified_hops[-1]; break }
+            Start-Sleep -Seconds 5
+        }
+        Verdict $rip 'IP_SEEDER reconstruit sur un noeud different' $(if ($newMid) { "mid=$($newMid.Substring(0,12))…" } else { '' })
+        # Nouvelle annonce DHT attribuable au seeder : meme seeder_pk
+        # que le snapshot pre-kill ET intro_mid nouveau (hors ensemble
+        # pre-kill — idealement == newMid si deja resolu). Une annonce
+        # du downloader devenu seeder (seeder_pk different) ne
+        # satisfait PAS ce critere.
+        $probe = $P_A; if ($killedNode -eq 'A') { $probe = $relays[0] }
+        $probeKey = ApiKey $probe.Dir
+        $dhtOk = $false; $dhtWait = (Get-Date).AddMinutes(6); $dhtDetail = ''
+        while ((Get-Date) -lt $dhtWait) {
+            $vals = @(Dht-IntroValues $probe.Api $probeKey $lookup $sha1)
+            foreach ($v in $vals) {
+                $sameSeeder = ($seederPkHex -and $v.SeederPkHex -eq $seederPkHex)
+                $newIntro = -not $preIntroMids.ContainsKey($v.IntroMid)
+                if ($sameSeeder -and $newIntro -and (-not $newMid -or $v.IntroMid -eq $newMid)) {
+                    $dhtOk = $true
+                    $dhtDetail = "intro_mid=$($v.IntroMid.Substring(0,12))… seeder=identique"
+                    break
+                }
+            }
+            if ($dhtOk) { break }
+            Start-Sleep -Seconds 10
+        }
+        Verdict $dhtOk "DHT : annonce du NOUVEL intro point du seeder (sonde $($probe.Name))" $dhtDetail
+
+        # Si le flux s'etait fige, la reprise doit venir de la
+        # re-decouverte : le downloader re-looke la DHT et recree un e2e.
+        if (-not $deadGrew) {
+            $resumed = $false; $resumeAt = $null
+            $rEnd = (Get-Date).AddSeconds($ResumeSec)
+            while ((Get-Date) -lt $rEnd -and (Get-Date) -lt $deadline) {
+                Start-Sleep -Seconds 5
+                $d3 = Dl-Bytes $ih
+                if ($d3 -gt $deadBase) { $resumed = $true; $resumeAt = Get-Date; break }
+            }
+            Verdict $resumed 'reprise : download repart apres reconstruction intro' `
+                $(if ($resumed) { "dl=$d3 delai={0:N0}s" -f ($resumeAt - $restartTime).TotalSeconds } else { "toujours fige a $deadBase" })
+            if (-not $resumed) { throw 'jamais repris apres kill intro' }
+        }
     } else {
-        # Restart Tribler : le checkpoint restaure le download -> SEEDING
-        # -> join_swarm -> nouvel IP_SEEDER -> intro point re-annonce.
+        # Sens B, kill seeder : restart Tribler.
         Start-Tribler
         $rs = $false; $rsWait = (Get-Date).AddMinutes(8)
         while ((Get-Date) -lt $rsWait) {
@@ -532,20 +695,22 @@ try {
         Verdict $rip 'Tribler redemarre : IP_SEEDER reconstruit(s)' "n=$nIp"
     }
 
-    # ---------- Phase 4 : reprise ----------
-    $resumed = $false; $resumeAt = $null
-    $rEnd = (Get-Date).AddSeconds($ResumeSec)
-    while ((Get-Date) -lt $rEnd -and (Get-Date) -lt $deadline) {
-        Start-Sleep -Seconds 5
-        $d3 = Dl-Bytes $ih
-        if ($d3 -gt $deadBase) { $resumed = $true; $resumeAt = Get-Date; break }
-        if ((($deadline - (Get-Date)).TotalSeconds % 30) -lt 6) {
-            Log ("attente reprise... dl={0} (fige a {1})" -f $d3, $deadBase)
+    # ---------- Phase 4 : reprise (sens seeder uniquement) ----------
+    if ($KillTarget -eq 'seeder') {
+        $resumed = $false; $resumeAt = $null
+        $rEnd = (Get-Date).AddSeconds($ResumeSec)
+        while ((Get-Date) -lt $rEnd -and (Get-Date) -lt $deadline) {
+            Start-Sleep -Seconds 5
+            $d3 = Dl-Bytes $ih
+            if ($d3 -gt $deadBase) { $resumed = $true; $resumeAt = Get-Date; break }
+            if ((($deadline - (Get-Date)).TotalSeconds % 30) -lt 6) {
+                Log ("attente reprise... dl={0} (fige a {1})" -f $d3, $deadBase)
+            }
         }
+        Verdict $resumed 'reprise : le download repart apres restart du seeder' `
+            $(if ($resumed) { "dl=$d3 delai={0:N0}s apres restart" -f ($resumeAt - $restartTime).TotalSeconds } else { "toujours fige a $deadBase" })
+        if (-not $resumed) { throw 'jamais repris' }
     }
-    Verdict $resumed 'reprise : le download repart apres restart du seeder' `
-        $(if ($resumed) { "dl=$d3 delai={0:N0}s apres restart" -f ($resumeAt - $restartTime).TotalSeconds } else { "toujours fige a $deadBase" })
-    if (-not $resumed) { throw 'jamais repris' }
 
     # ---------- Phase 5 : completion + integrite ----------
     $done = $false

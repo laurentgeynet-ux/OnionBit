@@ -130,12 +130,14 @@ impl RoutingObject {
     }
 
     /// `last_activity < now - max_time_inactive` Python
-    /// (`do_remove` → `"no activity"`). On suit l'inactif sur les
-    /// DEUX directions (`last_incoming`/`last_outgoing`), plus
-    /// precis que le `last_activity` unique Python.
+    /// (`do_remove` → `"no activity"`). Python ne suit QUE l'entrant
+    /// (`beat_heart` dans `on_data`/`on_pong`/`on_ping`) : un circuit
+    /// dont le saut terminal est mort doit vieillir malgre nos pings
+    /// de keepalive — sinon il n'est jamais purge, le swarm ne
+    /// reconstruit pas d'IP_SEEDER et le point d'introduction mort
+    /// reste annonce sur la DHT (defaut observe en kill-intro).
     pub fn is_inactive(&self, max_time_inactive: Duration) -> bool {
         self.last_incoming.elapsed() > max_time_inactive
-            && self.last_outgoing.elapsed() > max_time_inactive
     }
 }
 

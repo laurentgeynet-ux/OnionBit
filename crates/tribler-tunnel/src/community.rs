@@ -1268,7 +1268,7 @@ impl TunnelCommunity {
     /// `send_initial_create` sur la liste ordonnee de premiers sauts
     /// possibles (les alternates servent au retry de
     /// `spawn_hop_timeout`).
-    async fn create_circuit_inner(
+    pub(crate) async fn create_circuit_inner(
         self: &Arc<Self>,
         goal_hops: usize,
         first_hops: Vec<Peer>,
@@ -1457,19 +1457,23 @@ impl TunnelCommunity {
                     // publics dans un banc controle).
                     vec![p.public_key_bin.clone()],
                 )
-            } else if become_exit {
-                if let Some(pk) = required_exit {
-                    // `required_exit` impose : pas d'alternates.
-                    let addr = self
-                        .network
-                        .get_by_key(&pk)
-                        .and_then(|p| p.address)
-                        .unwrap_or_else(|| zero.clone());
-                    (pk, addr, Vec::new())
-                } else {
-                    (Vec::new(), zero.clone(), Vec::new())
-                }
+            } else if let Some(pk) = required_exit.as_ref().filter(|_| become_exit) {
+                // `required_exit` impose : pas d'alternates.
+                let addr = self
+                    .network
+                    .get_by_key(pk)
+                    .and_then(|p| p.address)
+                    .unwrap_or_else(|| zero.clone());
+                (pk.clone(), addr, Vec::new())
             } else {
+                // Dernier saut libre (`become_exit` sans
+                // `required_exit`) : pyipv8 consomme les `candidates`
+                // offerts par le saut precedent comme tout autre saut
+                // — le repli flag-filtre `EXIT_BT|RELAY` n'est qu'un
+                // secours quand l'offre est vide. Court-circuiter
+                // l'offre concentre tous les derniers sauts sur le
+                // seul pair doublement flagge (l'ancre) : s'il meurt,
+                // aucune reconstruction d'IP_SEEDER n'est possible.
                 let valid: Vec<Vec<u8>> = candidates
                     .iter()
                     .filter(|k| {
@@ -1643,7 +1647,7 @@ impl TunnelCommunity {
     /// `select_exit` pyipv8 : pair aleatoire portant `exit_flags`, ou
     /// selon `ctype` (`DATA` → `EXIT_BT` ; `IP_SEEDER` →
     /// `EXIT_BT`|`EXIT_IPV8`|`RELAY` ; sinon `RELAY`|`EXIT_BT`).
-    fn select_exit(&self, exit_flags: &[i32], ctype: &str) -> Option<Peer> {
+    pub(crate) fn select_exit(&self, exit_flags: &[i32], ctype: &str) -> Option<Peer> {
         let candidates = if !exit_flags.is_empty() {
             self.get_candidates_subset(exit_flags)
         } else if ctype == crate::routing::CIRCUIT_TYPE_DATA {
@@ -1739,7 +1743,11 @@ impl TunnelCommunity {
     /// `RELAY & EXIT_BT`, brasses puis tries par frequence d'usage
     /// ascendante (`Counter.most_common().reverse()`), `required_exit`
     /// exclu. Toute la liste est conservee pour le retry alternatif.
-    fn first_hop_candidates(&self, ctype: &str, required_key: Option<&[u8]>) -> Vec<Peer> {
+    pub(crate) fn first_hop_candidates(
+        &self,
+        ctype: &str,
+        required_key: Option<&[u8]>,
+    ) -> Vec<Peer> {
         let mut freq: Vec<(Peer, usize)> = Vec::new();
         let mut push = |p: Peer| match freq
             .iter_mut()
@@ -1860,6 +1868,9 @@ impl TunnelCommunity {
 
     /// Point d'entree brut (raw prefix listener) : cellule ou paquet.
     pub fn on_raw_datagram(self: &Arc<Self>, src: SocketAddr, data: &[u8]) {
+        // `Community.on_packet` pyipv8 : tout datagramme recu d'un
+        // pair verifie (cellule ou paquet) prouve qu'il est vivant.
+        self.network.touch_by_addr(&src);
         let prefix = prefix_of(&self.community_id);
         if cell::is_cell(&prefix, data) {
             if let Err(e) = self.process_cell(src, data) {

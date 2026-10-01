@@ -3,6 +3,48 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Resilience interop : kill de l'intro point, reconstruction verifiee (sens A)
+
+- `scripts/interop_hidden_killseeder.ps1 -KillTarget intro` : le noeud
+  hebergeant le point d'introduction (`verified_hops[-1]`, resolu par
+  `sha1(pubkey)` -> nom) est tue en plein transfert sans restart du
+  seeder. Le flux e2e etabli survit (independance correcte), le seeder
+  reconstruit un `IP_SEEDER` ailleurs, re-annonce sur la DHT, et le
+  telechargement complete a 100 % avec SHA-256 identique.
+- **Verdict attribuable** : le circuit reconstruit doit etre NOUVEAU
+  (id hors snapshot pre-kill) avec dernier saut different ; l'annonce
+  DHT est parsee (`DHTIntroPointPayload` : `seeder_pk` identique au
+  snapshot pre-kill + `intro_mid` nouveau) — une annonce du
+  downloader devenu seeder ne peut plus valider le verdict a tort.
+- **Cause racine de l'echec initial** : deux divergences pyipv8.
+  (1) `create_introduction_point` laissait `required_exit=None` — le
+  dernier saut etait pris dans les `candidates` offerts par les
+  relais, qui continuaient de proposer le noeud mort. Fix : comme
+  `create_circuit` pyipv8, `required_exit = select_exit(IP_SEEDER)`
+  est choisi localement (`EXIT_BT` -> `EXIT_IPV8` -> `RELAY`) et les
+  premiers sauts passent par `first_hop_candidates` (alternates de
+  retry). (2) `RandomChurn` manquait : un pair verifie mort restait
+  indefiniment dans `peers_for_service`/`flag_registry`, donc
+  `select_exit` le re-eliait sans fin. Fix : `churn_step` dans
+  `DiscoveryCommunity::step` (sample 8, ping a 27,5 s d'inactivite,
+  drop a 57,5 s sans reponse — valeurs `ipv8_default_config`), et
+  `last_response` rafraichi a chaque datagramme recu d'un pair
+  verifie (`touch_by_addr` : discovery, tunnel, DHT,
+  content-discovery — equivalent du touch de `Community.on_packet`).
+- `is_inactive` ne regarde plus que l'activite entrante
+  (`last_incoming`) : le keepalive sortant ne maintient plus un
+  circuit mort artificiellement vivant (fidelite `beat_heart`
+  pyipv8, sur trafic entrant uniquement).
+- Le filtre `ST_SYN` WAN de `TunnelUdpSocket` devient opt-in
+  (`with_syn_filter`) : la socket generique reste neutre (les tests
+  loopback d'acceptation inbound passent), seule la lane moteur
+  (`TunnelUdpSockets.utp_transport`) rejette les SYN livres par
+  l'exit — l'entrant anonyme legitime n'existe que via
+  `inject_incoming` (hidden services e2e).
+- Observabilite : log `establish-intro envoye` (cid, identifier,
+  premier saut) et `intro-established sans requete en attente`.
+- Run de validation : `target/interop-killseed-20261001-101231/`.
+
 ## Resilience interop : kill du seeder en plein transfert, reprise verifiee
 
 - `scripts/interop_hidden_killseeder.ps1` (`-Sens A|B`) : seeder tue

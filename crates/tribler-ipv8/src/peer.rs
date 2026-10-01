@@ -15,7 +15,7 @@
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Mutex;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use tribler_crypto::ipv8::keys::LibNaClPublicKey;
 
@@ -82,6 +82,19 @@ impl Peer {
     /// `get_lamport_timestamp`.
     pub fn lamport(&self) -> u64 {
         *self.lamport.lock().unwrap()
+    }
+
+    /// Rafraichit `last_response` sans toucher l'horloge — equivalent
+    /// de `probable_peer.last_response = time()` dans `on_packet`
+    /// pyipv8 (tout paquet recu d'un pair verifie, signe ou non).
+    pub fn touch(&self) {
+        *self.last_response.lock().unwrap() = Instant::now();
+    }
+
+    /// Delai ecoule depuis `last_response` (`time() - peer.last_response`
+    /// Python — sert a `RandomChurn.should_drop`/`is_inactive`).
+    pub fn last_response_elapsed(&self) -> Duration {
+        self.last_response.lock().unwrap().elapsed()
     }
 }
 
@@ -203,6 +216,16 @@ impl Network {
             .values()
             .find(|p| p.address.as_ref() == Some(addr))
             .cloned()
+    }
+
+    /// Rafraichit `last_response` du pair verifie a cette adresse.
+    /// Equivalent du touch de `Community.on_packet` pyipv8 — tout
+    /// datagramme recu (paquet signe, non signe ou cellule tunnel)
+    /// prouve que le pair est vivant.
+    pub fn touch_by_addr(&self, addr: &SocketAddr) {
+        if let Some(peer) = self.get_by_address(addr) {
+            peer.touch();
+        }
     }
 
     /// `discover_services`.

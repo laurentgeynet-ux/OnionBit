@@ -1566,6 +1566,10 @@ impl DhtCommunity {
     fn on_packet(&self, src: SocketAddr, pkt: Packet) -> Result<(), Ipv8Error> {
         let src_addr = UdpAddress::from(src);
 
+        // `Community.on_packet` pyipv8 : tout paquet recu d'un pair
+        // verifie rafraichit son `last_response`.
+        self.network.touch_by_addr(&src);
+
         // Messages non signes : puncture-request (250/232). Jamais de
         // verification de pair (pas de cle publique).
         if !pkt.signed {
@@ -1610,7 +1614,10 @@ impl DhtCommunity {
                 if p.values.iter().any(|v| v.len() > payloads::MAX_ENTRY_SIZE)
                     || p.values.len() > MAX_VALUES_IN_STORE
                 {
-                    tracing::debug!(txn = p.identifier, "dht_store : valeurs hors limites -> drop");
+                    tracing::debug!(
+                        txn = p.identifier,
+                        "dht_store : valeurs hors limites -> drop"
+                    );
                     return Ok(());
                 }
                 if !self.check_token(&node, &p.token) {

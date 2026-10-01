@@ -886,6 +886,9 @@ impl ContentDiscoveryCommunity {
 
     /// Dispatch par `msg_id`.
     fn on_packet(self: &Arc<Self>, src: SocketAddr, pkt: Packet) -> Result<(), Ipv8Error> {
+        // `Community.on_packet` pyipv8 : tout paquet recu d'un pair
+        // verifie rafraichit son `last_response`.
+        self.network.touch_by_addr(&src);
         if !pkt.signed {
             // `puncture-request` est le seul message non signe du
             // protocole de marche (comme `DiscoveryCommunity`).

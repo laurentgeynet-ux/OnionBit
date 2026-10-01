@@ -126,6 +126,21 @@ impl TunnelUdpSocket {
         kind: TunnelUdpKind,
         bind_addr: SocketAddr,
     ) -> Self {
+        Self::with_syn_filter(tunnel, hops, kind, bind_addr, false)
+    }
+
+    /// `new` + `drop_wan_syn` : politique Tribler de la lane
+    /// BitTorrent anonyme — les `ST_SYN` livres par l'exit via
+    /// `data_rx` sont des connexions WAN non sollicitees (l'entrant
+    /// anonyme n'existe que via les lanes e2e, `inject_incoming`).
+    /// Filtre opt-in : la socket generique reste neutre.
+    pub fn with_syn_filter(
+        tunnel: Arc<TunnelCommunity>,
+        hops: usize,
+        kind: TunnelUdpKind,
+        bind_addr: SocketAddr,
+        drop_wan_syn: bool,
+    ) -> Self {
         let (in_tx, in_rx) = mpsc::channel(IN_QUEUE_CAP);
         let (out_tx, mut out_rx) = mpsc::channel(OUT_QUEUE_CAP);
         let socket = Self {
@@ -159,7 +174,8 @@ impl TunnelUdpSocket {
                             // par `inject_incoming`). Les laisser
                             // entrer sature la file d'acceptation uTP
                             // du moteur et affame les SYN e2e.
-                            if kind == TunnelUdpKind::Utp
+                            if drop_wan_syn
+                                && kind == TunnelUdpKind::Utp
                                 && tribler_network_policy::exit_policy::is_utp_syn(&msg.data)
                             {
                                 continue;
@@ -257,9 +273,7 @@ impl Inner {
     async fn dispatch(&self, target: SocketAddr, data: &[u8]) -> Result<(), Ipv8Error> {
         let dest = UdpAddress::from(target);
         let pinned = self.dest_circuits.lock().unwrap().get(&target).copied();
-        let cid = {
-            pinned.filter(|cid| self.tunnel.ready_circuits().contains(cid))
-        };
+        let cid = { pinned.filter(|cid| self.tunnel.ready_circuits().contains(cid)) };
         let cid = match cid {
             Some(cid) => cid,
             None => {
@@ -453,8 +467,18 @@ impl TunnelUdpSockets {
         hops: usize,
         bind_addr: SocketAddr,
     ) -> Result<Self, librqbit_utp::Error> {
-        let utp_transport =
-            TunnelUdpSocket::new(tunnel.clone(), hops, TunnelUdpKind::Utp, bind_addr);
+        // Lane moteur (`utp_transport`) : les `ST_SYN` WAN livres par
+        // l'exit via `data_rx` sont filtres — l'entrant anonyme n'est
+        // legitime que via `inject_incoming` (hidden services e2e).
+        // La politique reste opt-in : la socket generique (`new`)
+        // l'accepte pour rester neutre hors contexte BitTorrent.
+        let utp_transport = TunnelUdpSocket::with_syn_filter(
+            tunnel.clone(),
+            hops,
+            TunnelUdpKind::Utp,
+            bind_addr,
+            true,
+        );
         let utp = librqbit_utp::UtpSocket::new_with_opts(
             utp_transport.clone(),
             librqbit_utp::DefaultUtpEnvironment {},

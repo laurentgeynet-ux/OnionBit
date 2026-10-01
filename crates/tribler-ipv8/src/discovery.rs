@@ -53,6 +53,20 @@ const INTRO_WINDOW: usize = 5;
 /// (50 → ~80 % des etapes explorent une adresse introduite).
 const RESET_CHANCE: u8 = 50;
 
+/// `RandomChurn.sample_size` Python : nombre de pairs verifies
+/// echantillonnes par etape de churn.
+const CHURN_SAMPLE_SIZE: usize = 8;
+/// `RandomChurn.ping_interval` Python : delai minimal entre deux
+/// pings de vivacite vers une meme adresse (10 s par defaut).
+const CHURN_PING_INTERVAL: Duration = Duration::from_millis(10_000);
+/// `RandomChurn.inactive_time` Python : un pair sans reponse depuis
+/// ce delai est pingue (27,5 s par defaut).
+const CHURN_INACTIVE: Duration = Duration::from_millis(27_500);
+/// `RandomChurn.drop_time` Python : un pair pingue toujours sans
+/// reponse apres ce delai total est supprime de l'annuaire (57,5 s
+/// par defaut).
+const CHURN_DROP: Duration = Duration::from_millis(57_500);
+
 /// Adresse "non definie" (`0.0.0.0:0`).
 fn unspecified() -> UdpAddress {
     UdpAddress::unspecified()
@@ -99,6 +113,9 @@ pub struct DiscoveryCommunity {
     /// (`DispersyBootstrapper.ip_addresses.append` — endpoint REST
     /// `/api/ipv8/isolation` "bootstrapnode").
     extra_bootstrap: Mutex<Vec<UdpAddress>>,
+    /// `RandomChurn._pinged` Python : adresses pingees pour verifier
+    /// leur vivacite (adresse -> instant du dernier ping de churn).
+    churn_pinged: Mutex<std::collections::HashMap<UdpAddress, Instant>>,
     /// Observables de decode (equivalents des hooks pyipv8
     /// `introduction_request/response_callback` et `on_puncture`) —
     /// utilises par les tests et le banc d'interop.
@@ -130,6 +147,7 @@ impl DiscoveryCommunity {
             pending_intro: Mutex::new(std::collections::HashMap::new()),
             intro_timeouts: Mutex::new(std::collections::HashMap::new()),
             extra_bootstrap: Mutex::new(Vec::new()),
+            churn_pinged: Mutex::new(std::collections::HashMap::new()),
             intro_requests_seen: std::sync::atomic::AtomicUsize::new(0),
             intro_responses_seen: std::sync::atomic::AtomicUsize::new(0),
             punctures_seen: std::sync::atomic::AtomicUsize::new(0),
@@ -274,6 +292,11 @@ impl DiscoveryCommunity {
     /// `on_packet` : dispatch par `msg_id` (cf. `decode_map` Python).
     fn on_packet(self: &Arc<Self>, src: SocketAddr, pkt: Packet) -> Result<(), Ipv8Error> {
         let src_addr = UdpAddress::from(src);
+
+        // `Community.on_packet` pyipv8 : tout paquet recu d'un pair
+        // verifie prouve qu'il est vivant — `last_response` rafraichi
+        // avant tout traitement (sert a `RandomChurn`/`is_inactive`).
+        self.network.touch_by_addr(&src);
 
         // Messages non signes (`lazy_wrapper_unsigned` — avec `dist`
         // mais sans auth) : ping/pong (3/4) et puncture-request
@@ -797,6 +820,74 @@ impl DiscoveryCommunity {
         Ok(())
     }
 
+    /// `RandomChurn.take_step` Python : echantillonne des pairs
+    /// verifies, pingue ceux devenus inactifs (`CHURN_INACTIVE`) et
+    /// supprime de l'annuaire ceux deja pingues mais toujours sans
+    /// reponse apres `CHURN_DROP` (57,5 s). Sans ce mecanisme, un
+    /// pair mort resterait indefiniment dans `peers_for_service` et
+    /// serait sans cesse re-elu saut de circuit tunnel.
+    async fn churn_step(&self) {
+        let peers = self.network.all_verified_peers();
+        let n = peers.len().min(CHURN_SAMPLE_SIZE);
+        if n == 0 {
+            return;
+        }
+        let window: Vec<Peer> = {
+            let mut rng = rand::thread_rng();
+            peers.choose_multiple(&mut rng, n).cloned().collect()
+        };
+        for peer in window {
+            let Some(addr) = peer.address.clone() else {
+                continue;
+            };
+            let inactivity = peer.last_response_elapsed();
+            enum Action {
+                None,
+                Ping,
+                Drop,
+            }
+            let action = {
+                let mut pinged = self.churn_pinged.lock().unwrap();
+                if inactivity >= CHURN_DROP && pinged.contains_key(&addr) {
+                    // `should_drop` : deja pingue, toujours sans reponse.
+                    pinged.remove(&addr);
+                    Action::Drop
+                } else if inactivity >= CHURN_INACTIVE {
+                    // `is_inactive` : nouveau ping si le precedent date
+                    // de plus de `CHURN_PING_INTERVAL`.
+                    if pinged
+                        .get(&addr)
+                        .is_some_and(|t| t.elapsed() >= CHURN_PING_INTERVAL)
+                    {
+                        pinged.remove(&addr);
+                    }
+                    if !pinged.contains_key(&addr) {
+                        pinged.insert(addr.clone(), Instant::now());
+                        Action::Ping
+                    } else {
+                        Action::None
+                    }
+                } else {
+                    Action::None
+                }
+            };
+            match action {
+                Action::Ping => {
+                    let _ = self.send_ping(&addr).await;
+                }
+                Action::Drop => {
+                    tracing::debug!(
+                        addr = ?addr,
+                        mid = %hex::encode(peer.mid),
+                        "churn : pair inerte supprime de l'annuaire"
+                    );
+                    self.network.remove_peer_key(&peer.public_key_bin);
+                }
+                Action::None => {}
+            }
+        }
+    }
+
     /// `RandomWalk.take_step` Python : **les adresses "walkable"**
     /// (apprises par introduction-response, pas encore verifiees)
     /// d'abord — ~80 % des etapes ; sinon `get_new_introduction`
@@ -804,6 +895,11 @@ impl DiscoveryCommunity {
     /// `INTRO_TIMEOUT` est oubliee ; `INTRO_WINDOW` introductions en
     /// vol suspendent la marche.
     pub async fn step(&self, bootstrap: &[UdpAddress]) -> Result<(), Ipv8Error> {
+        // `RandomChurn` : strategie independante en tete d'etape (les
+        // strategies pyipv8 tournent toutes au meme tick de
+        // `walker_interval`).
+        self.churn_step().await;
+
         // Purge des adresses mortes (`node_timeout`) : sans pair
         // verifie a cette adresse, on l'oublie completement.
         let mut expired = Vec::new();
@@ -832,7 +928,10 @@ impl DiscoveryCommunity {
             .get_walkable_addresses(Some(&DISCOVERY_COMMUNITY_ID), false);
         let available: Vec<UdpAddress> = {
             let timeouts = self.intro_timeouts.lock().unwrap();
-            known.into_iter().filter(|a| !timeouts.contains_key(a)).collect()
+            known
+                .into_iter()
+                .filter(|a| !timeouts.contains_key(a))
+                .collect()
         };
         // randint(0, 255) >= reset_chance -> marche walkable (~80 %).
         if !available.is_empty() && rand::random::<u8>() >= RESET_CHANCE {
