@@ -31,8 +31,8 @@ use onionbit_ipv8::payloads::{self as ip, Payload};
 use onionbit_ipv8::peer::{Network, Peer};
 use onionbit_ipv8::serializer::{Reader, Writer};
 use onionbit_ipv8::{Ipv8Error, UdpAddress};
-use rand::seq::SliceRandom;
-use rand::RngCore;
+use rand::seq::{IndexedRandom, SliceRandom};
+use rand::Rng;
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret};
 
 use crate::cell::{self, Cell};
@@ -959,7 +959,7 @@ impl TunnelCommunity {
             ),
             None if hops == 1 => {
                 let mut exits = self.get_candidates(crate::routing::PEER_FLAG_EXIT_BT);
-                exits.shuffle(&mut rand::thread_rng());
+                exits.shuffle(&mut rand::rng());
                 (exits, None)
             }
             None => (self.first_hop_candidates(CIRCUIT_TYPE_DATA, None), None),
@@ -992,7 +992,7 @@ impl TunnelCommunity {
     fn gen_circuit_id(&self) -> u32 {
         let inner = self.inner.lock().unwrap();
         loop {
-            let id = rand::thread_rng().next_u32();
+            let id = rand::rng().next_u32();
             if !inner.circuits.contains_key(&id)
                 && !inner.relays.contains_key(&id)
                 && !inner.exit_sockets.contains_key(&id)
@@ -1112,7 +1112,7 @@ impl TunnelCommunity {
         request: &[u8],
         timeout_ms: u64,
     ) -> Result<Vec<u8>, Ipv8Error> {
-        let identifier = rand::thread_rng().next_u32();
+        let identifier = rand::rng().next_u32();
         let (tx, mut rx) = tokio::sync::mpsc::channel(HTTP_REQUEST_PARTS_CAP);
         self.inner
             .lock()
@@ -1576,7 +1576,7 @@ impl TunnelCommunity {
             }
             // `thread_rng` n'est pas `Send` — borne a l'expression.
             let picked = {
-                let mut rng = rand::thread_rng();
+                let mut rng = rand::rng();
                 choices.choose(&mut rng).cloned()
             };
             match picked {
@@ -1730,8 +1730,8 @@ impl TunnelCommunity {
                 c
             }
         };
-        use rand::seq::SliceRandom;
-        candidates.choose(&mut rand::thread_rng()).cloned()
+        use rand::seq::IndexedRandom;
+        candidates.choose(&mut rand::rng()).cloned()
     }
 
     /// `create_circuit` pyipv8 complet : selection automatique de la
@@ -1839,7 +1839,7 @@ impl TunnelCommunity {
             .into_iter()
             .filter(|(p, _)| Some(p.public_key_bin.as_slice()) != required_key)
             .collect();
-        possible.shuffle(&mut rand::thread_rng());
+        possible.shuffle(&mut rand::rng());
         // Tri stable par frequence ascendante : les sauts deja utilises
         // passent en dernier, les egalites restent brassées.
         possible.sort_by_key(|(_, n)| *n);
@@ -2456,7 +2456,7 @@ impl TunnelCommunity {
             .network
             .get_walkable_addresses(Some(&self.community_id), false);
         let target = {
-            let mut rng = rand::thread_rng();
+            let mut rng = rand::rng();
             if !known.is_empty() && (walkable.is_empty() || rand::random::<f64>() < 0.5) {
                 known.choose(&mut rng).and_then(|p| p.address.clone())
             } else {
@@ -2906,7 +2906,7 @@ impl TunnelCommunity {
             .filter(|q| q.public_key_bin != public_key_bin)
             .filter(|q| q.address.as_ref().is_some_and(|a| !a.is_unspecified()))
             .collect();
-        let introduction = candidates.choose(&mut rand::thread_rng()).cloned();
+        let introduction = candidates.choose(&mut rand::rng()).cloned();
         let (lan_i, wan_i) = match introduction.as_ref().and_then(|p| p.address.clone()) {
             Some(a) => (a.clone(), a),
             None => (UdpAddress::unspecified(), UdpAddress::unspecified()),
@@ -3928,7 +3928,7 @@ fn cleanup_exit_socket(inner: &mut Inner, circuit_id: u32) {
 /// retourne (secret 32o, public 32o).
 pub fn generate_diffie_secret() -> ([u8; 32], [u8; 32]) {
     let mut sk = [0u8; 32];
-    rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut sk);
+    rand::Rng::fill_bytes(&mut rand::rng(), &mut sk);
     let secret = StaticSecret::from(sk);
     (sk, X25519PublicKey::from(&secret).to_bytes())
 }

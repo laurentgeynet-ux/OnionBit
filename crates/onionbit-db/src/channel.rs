@@ -415,8 +415,10 @@ fn select_filtered(conn: &Connection, p: &SelectParams) -> Result<Vec<ChannelNod
     let first = p.first.max(1);
     let last = p.last.unwrap_or(first + 49);
     sql.push_str(" LIMIT ? OFFSET ?");
-    args.push(Box::new(last.saturating_sub(first) + 1));
-    args.push(Box::new(first - 1));
+    args.push(Box::new(
+        i64::try_from(last.saturating_sub(first) + 1).unwrap_or(i64::MAX),
+    ));
+    args.push(Box::new(i64::try_from(first - 1).unwrap_or(i64::MAX)));
 
     let mut stmt = conn.prepare(&sql)?;
     let refs: Vec<&dyn rusqlite::ToSql> = args.iter().map(|b| b.as_ref()).collect();

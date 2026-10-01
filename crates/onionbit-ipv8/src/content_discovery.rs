@@ -21,7 +21,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use onionbit_crypto::ipv8::keys::LibNaClSecretKey;
-use rand::seq::SliceRandom;
+use rand::seq::IndexedRandom;
 
 use crate::address::UdpAddress;
 use crate::discovery::{same_ip, DiscoveryCommunity};
@@ -465,7 +465,7 @@ impl ContentDiscoveryCommunity {
             .network
             .get_walkable_addresses(Some(&CONTENT_DISCOVERY_COMMUNITY_ID), false);
         let target = {
-            let mut rng = rand::thread_rng();
+            let mut rng = rand::rng();
             if !known.is_empty() && (walkable.is_empty() || rand::random::<f64>() < 0.5) {
                 known.choose(&mut rng).and_then(|p| p.address.clone())
             } else {
@@ -589,7 +589,7 @@ impl ContentDiscoveryCommunity {
             .filter(|q| q.public_key_bin != peer.public_key_bin)
             .filter(|q| q.address.as_ref().is_some_and(|a| !a.is_unspecified()))
             .collect();
-        let introduction = candidates.choose(&mut rand::thread_rng()).cloned();
+        let introduction = candidates.choose(&mut rand::rng()).cloned();
         let (lan_i, wan_i) = match introduction.as_ref().and_then(|p| p.address.clone()) {
             Some(a) => (a.clone(), a),
             None => (UdpAddress::unspecified(), UdpAddress::unspecified()),
@@ -730,13 +730,10 @@ impl ContentDiscoveryCommunity {
         // le premier `.await`.
         let fanout = self.settings.gossip_fanout;
         let (chosen_one, targets) = {
-            let mut rng = rand::thread_rng();
+            let mut rng = rand::rng();
             (
                 peers.choose(&mut rng).cloned(),
-                peers
-                    .choose_multiple(&mut rng, fanout)
-                    .cloned()
-                    .collect::<Vec<_>>(),
+                peers.sample(&mut rng, fanout).cloned().collect::<Vec<_>>(),
             )
         };
         if let Some(p) = chosen_one {
@@ -806,7 +803,7 @@ impl ContentDiscoveryCommunity {
             .filter(|p| p.address.is_some())
             .collect();
         peers = peers
-            .choose_multiple(&mut rand::thread_rng(), self.settings.max_query_peers)
+            .sample(&mut rand::rng(), self.settings.max_query_peers)
             .cloned()
             .collect();
         let mut queried = Vec::new();

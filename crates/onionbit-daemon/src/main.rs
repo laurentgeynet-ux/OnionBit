@@ -224,7 +224,7 @@ fn spawn_tray(
     // core et l'UI sont le MEME processus (`run_tribler`), la cle ne
     // regit que l'etat de la fenetre. Ici le daemon ne lance jamais
     // l'UI — c'est `onionbit_ui.exe` qui demarre le daemon
-    // (`daemon_launcher`), et le menu « Ouvrir Tribler » du tray reste
+    // (`daemon_launcher`), et le menu « Ouvrir OnionBit » du tray reste
     // le seul chemin daemon → UI (action utilisateur explicite).
     // La cle Run doit survivre au repertoire courant : chemins absolus.
     let autostart_cmd = match (
@@ -385,7 +385,7 @@ async fn async_main() -> ExitCode {
     // core soit pret) — la restauration des telechargements et le
     // peuplement DHT peuvent prendre ~1 min sur de gros fichiers ; le
     // tooltip est maj avec le port reel une fois l'API bindée.
-    let tray = spawn_tray(&args, &daemon_config, "Tribler".into(), &shutdown_signal);
+    let tray = spawn_tray(&args, &daemon_config, "OnionBit".into(), &shutdown_signal);
 
     let session = match CoreSession::start(config, Notifier::new()).await {
         Ok(s) => s,
@@ -502,7 +502,7 @@ async fn async_main() -> ExitCode {
     // `listen` montrerait `127.0.0.1:0`).
     if let Some(t) = &tray {
         if let Ok(addr) = listener.local_addr() {
-            t.set_tooltip(format!("Tribler — {addr}"));
+            t.set_tooltip(format!("OnionBit — {addr}"));
         }
     }
 
