@@ -9,7 +9,7 @@
 [![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](LICENSE)
 [![Made with Rust](https://img.shields.io/badge/Made%20with-Rust-orange.svg)](https://www.rust-lang.org/)
 [![UI: Flutter](https://img.shields.io/badge/UI-Flutter-02569B.svg)](https://flutter.dev/)
-[![Version](https://img.shields.io/badge/Version-0.3.1--alpha-red.svg)]()
+[![Version](https://img.shields.io/badge/Version-0.3.1--alpha-red.svg)](https://github.com/laurentgeynet-ux/OnionBit/releases)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%C2%B7%20Linux%20%C2%B7%20macOS%20%C2%B7%20Android%20%C2%B7%20iOS%20%C2%B7%20Web-lightgrey.svg)]()
 
 </div>
@@ -134,6 +134,8 @@ IPv8 protocol conformance, circuit crypto, Flutter UI, interop testing.
   IPv8 overlay protocol.
 
 ## License
+
+Copyright (C) 2026 Laurent Geynet ([@Loulach](https://github.com/Loulach))
 
 [GPL-3.0-or-later](LICENSE) — inherited from Tribler. OnionBit is a derivative work
 of Tribler's GPL-3.0 codebase at the architecture/behavior level.
