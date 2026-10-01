@@ -539,6 +539,14 @@ roadmap est terminée**.
   (version + sonde) et indicateur d'espace disque. **Validation
   visuelle faite** (2026-09-30) : rendu réel contre le daemon
   vérifié à la souris.
+- [x] **Étape 30. Internationalisation complète de l'app** —
+  `flutter_localizations` + `intl` + `gen_l10n`, gabarit
+  `app_en.arb` + `app_fr.arb` (~300 clés), locale persistée
+  (`ui.locale`) avec **anglais par défaut** et bascule EN/FR à
+  chaud dans Réglages → Apparence. Extraction intégrale des ~300
+  littéraux (core, search, diagnostic, settings, downloads),
+  formatteurs sensibles à la locale, pluriels ICU. Garde-fou
+  `scripts/check_i18n.ps1`. Détails : ADR-0009, CHANGELOG.
 
 ---
 

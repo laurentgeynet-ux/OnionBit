@@ -3,6 +3,35 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Étape 30 — Internationalisation de l'app Flutter : anglais par défaut, français disponible (2026-10-01)
+
+- Pipeline standard Flutter : `flutter_localizations` + `intl` +
+  `gen_l10n` (`app/l10n.yaml`). Gabarit `app/lib/l10n/app_en.arb`,
+  traduction complète `app_fr.arb` (~300 clés) ; fichiers générés
+  `app_localizations*.dart` ignorés par git.
+- `AppLocale { system, en, fr }` + `localeSettingsProvider` persisté
+  (`ui.locale`, `SharedPreferences`) ; **défaut `en`**, jamais la
+  locale OS sauf choix « System ». Sélecteur tri-état dans
+  Réglages → Apparence ; bascule à chaud sur tout le shell.
+- Extraction intégrale par zones : core/layout + notifications,
+  search + diagnostic, settings (page + 13 sections, catalogue
+  d'ancres rebâti sur un enum `_SectionId`), downloads (page, table,
+  menu contextuel, panneau détail, dialogue d'ajout).
+- Frontière domaine/UI : les libellés sortent des enums
+  (`DownloadFilterX.label(l10n)`) ; pluriels et paramètres en ICU
+  (`{count, plural, …}`) ; `ByteFormatter`/`DurationFormatter`
+  sensibles à la locale via `context.fmtBytes`/`fmtRate`/`fmtEta`
+  (`o/Ko/Mo` ↔ `B/KiB/MiB`, `j` ↔ `d`).
+- Hors périmètre (ADR-0005 conservée) : commentaires/docs/journaux en
+  français ; autonymes `English`/`Français` ; keywords de recherche
+  bilingues.
+- Garde-fou `scripts/check_i18n.ps1` : échoue sur tout littéral
+  français subsistant dans `app/lib/` (allowlist : commentaires,
+  `uiLog`/`debugPrint`, autonyme, `keywords:`).
+- `flutter analyze` propre, `flutter test` vert (helper
+  `pumpApp(locale: …)`, assertions sur les chaînes EN) ;
+  `check_i18n.ps1` vert. ADR-0009.
+
 ## Journal daemon : annonces DHT hidden-service rétrogradées en debug (2026-10-01)
 
 - `hidden_services.rs` : « point d'introduction annonce sur la DHT »
