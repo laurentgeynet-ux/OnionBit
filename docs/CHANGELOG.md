@@ -3,6 +3,34 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Implémentation expérimentale des guard nodes (ADR-0010) (2026-10-01)
+
+- `onionbit-tunnel/guards.rs` : `GuardSet` (3 actifs + 2 réserve,
+  persistance 30 jours, injoignable 24 h, 3 échecs de handshake avant
+  rétrogradation, diversité /24 IPv4 et /64 IPv6 à l'admission),
+  trait `GuardStore` injectable (`onionbit-tunnel` ne dépend pas de
+  `onionbit-db` — sens des dépendances inversé, implémentation DB à
+  venir) + `InMemoryGuardStore` volatile.
+- Intégration `community.rs` : `first_hop_candidates` ordonne
+  `actifs ++ réserve ++ tirage libre` quand `guards.enabled` (le
+  `required_exit` reste exclu en amont, jamais adopté comme guard) ;
+  timeout du `create` initial → `mark_failure` sur `unverified_hop` ;
+  premier `created` vérifié (`hops_done == 1`) → `mark_alive` +
+  rafraîchissement d'adresse (le guard survit à un changement d'IP).
+- `GuardsConfig::enabled = false` par défaut : sélection pyipv8
+  **bit-exacte** sans le flag (test `desactive_est_le_tirage_pyipv8_exact`).
+  Jamais appliqué à `hops=1` `DATA` (premier hop = exit, choisi par
+  circuit) ni au mode direct `hops=0`.
+- Test d'intégration `guards_bornent_les_premiers_hops_sous_storm_destroy`
+  : storm de `DESTROY` hostile → reconstruction bornée au guard adopté,
+  set inchangé (sur loopback la dédup /24 n'admet qu'un guard —
+  assertion déterministe). 5 tests unitaires (adoption+diversité,
+  ordre, rétrogradation sans tirage sous pression, remise à zéro sur
+  preuve de vie, repli pyipv8).
+- Persistance DB, rotation par horloge au watchdog et exposition API
+  restent à faire — feature expérimentale derrière
+  `TunnelSettings::guards.enabled`.
+
 ## Campagne libFuzzer native Windows + ADR guard nodes (2026-10-01)
 
 - **Coverage-guiding sous Windows/MSVC rendu possible** : rustc ne

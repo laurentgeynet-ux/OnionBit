@@ -19,11 +19,13 @@ use onionbit_ipv8::peer::{Network, Peer};
 use onionbit_ipv8::serializer::Writer;
 use onionbit_ipv8::UdpAddress;
 use onionbit_tunnel::community::TunnelCommunity;
+use onionbit_tunnel::guards::GuardsConfig;
 use onionbit_tunnel::payload::{self as tp, msg, Cellable};
 use onionbit_tunnel::routing::{
     CIRCUIT_TYPE_RP_DOWNLOADER, CIRCUIT_TYPE_RP_SEEDER, DESTROY_REASON_UNNEEDED, PEER_FLAG_EXIT_BT,
     PEER_FLAG_EXIT_HTTP, PEER_FLAG_RELAY, PEER_FLAG_SPEED_TEST, PEER_SOURCE_PEX,
 };
+use onionbit_tunnel::settings::TunnelSettings;
 use onionbit_tunnel::socks5::Socks5Server;
 use onionbit_tunnel::tunnel_udp_socket::{TunnelUdpKind, TunnelUdpSocket};
 use onionbit_tunnel::TUNNEL_COMMUNITY_ID;
@@ -56,11 +58,26 @@ async fn make_node() -> Node {
 
 /// `make_node` avec des flags de service explicites (`PEER_FLAG_*`).
 async fn make_node_flags(flags: i32) -> Node {
+    make_node_settings(flags, TunnelSettings::default()).await
+}
+
+/// `make_node_flags` avec des `TunnelSettings` explicites.
+async fn make_node_settings(flags: i32, settings: TunnelSettings) -> Node {
     let key = LibNaClSecretKey::generate();
     let network = Arc::new(Network::default());
     let ep = UdpEndpoint::bind("127.0.0.1:0").await.unwrap();
     let addr = ep.local_addr().unwrap();
-    let tunnel = TunnelCommunity::new(key.clone(), network.clone(), ep.clone(), flags).await;
+    let tunnel = TunnelCommunity::new_with_id(
+        key.clone(),
+        network.clone(),
+        ep.clone(),
+        TunnelSettings {
+            peer_flags: flags,
+            ..settings
+        },
+        TUNNEL_COMMUNITY_ID,
+    )
+    .await;
     let ep_run = ep.clone();
     tokio::spawn(async move {
         let _ = ep_run.run().await;
@@ -307,6 +324,103 @@ async fn destroy_storm_et_reconstruction_bornee() {
     }
     tokio::time::sleep(Duration::from_millis(200)).await;
     assert_eq!(a.tunnel.circuit_count(), 0);
+}
+
+/// ADR-0010 : avec `guards.enabled`, la reconstruction apres un storm
+/// de `DESTROY` reutilise le(s) meme(s) premier(s) saut(s) — aucun
+/// nouveau tirage d'entree sous pression. Sur loopback tous les relais
+/// partagent 127.0.0.0/24 : la dedup de diversite n'admet qu'un guard,
+/// ce qui rend l'assertion deterministe (tous les premiers hops = le
+/// guard adopte).
+#[tokio::test]
+async fn guards_bornent_les_premiers_hops_sous_storm_destroy() {
+    let a = make_node_settings(
+        PEER_FLAG_RELAY,
+        TunnelSettings {
+            guards: onionbit_tunnel::guards::GuardsConfig {
+                enabled: true,
+                ..GuardsConfig::default()
+            },
+            ..TunnelSettings::default()
+        },
+    )
+    .await;
+    let r1 = make_node_flags(PEER_FLAG_RELAY | PEER_FLAG_EXIT_BT).await;
+    let r2 = make_node_flags(PEER_FLAG_RELAY | PEER_FLAG_EXIT_BT).await;
+    let r3 = make_node_flags(PEER_FLAG_RELAY).await;
+    let atk = make_node().await;
+    for n in [&r1, &r2, &r3] {
+        learn(&a, n);
+        learn(n, &a);
+    }
+    a.tunnel.register_exit_peer(
+        &r1.key.public_key().to_bin(),
+        r1.addr,
+        PEER_FLAG_RELAY | PEER_FLAG_EXIT_BT,
+    );
+    a.tunnel.register_exit_peer(
+        &r2.key.public_key().to_bin(),
+        r2.addr,
+        PEER_FLAG_RELAY | PEER_FLAG_EXIT_BT,
+    );
+
+    // Deux circuits a 2 sauts : les appels construisent au plus un
+    // circuit chacun — boucle jusqu'a 2 READY.
+    async fn wait_two(
+        tunnel: &Arc<TunnelCommunity>,
+    ) -> Vec<onionbit_tunnel::community::CircuitInfo> {
+        let deadline = Instant::now() + TEST_TIMEOUT;
+        loop {
+            for _ in 0..4 {
+                tunnel.build_circuits_if_needed(2, 2).await.unwrap();
+            }
+            let infos = tunnel.circuits_info();
+            if infos.iter().filter(|c| c.state == "READY").count() >= 2 {
+                return infos;
+            }
+            assert!(Instant::now() < deadline, "circuits jamais READY");
+            tokio::time::sleep(POLL).await;
+        }
+    }
+    let infos = wait_two(&a.tunnel).await;
+
+    // Dedup /24 sur loopback : un seul guard adopte.
+    let guards = a.tunnel.guards.guard_keys();
+    assert_eq!(guards.len(), 1, "un seul guard attendu sur loopback");
+    let guard_mid = hex::encode(onionbit_crypto::hash::ipv8_mid(&guards[0]));
+    for c in &infos {
+        assert_eq!(
+            c.verified_hops[0], guard_mid,
+            "premier hop hors du set de guards"
+        );
+    }
+
+    // Storm de DESTROY depuis un pair signe hostile.
+    for c in &infos {
+        for _ in 0..5 {
+            atk.tunnel
+                .send_destroy(
+                    &UdpAddress::from(a.addr),
+                    c.circuit_id,
+                    DESTROY_REASON_UNNEEDED,
+                )
+                .await
+                .ok();
+        }
+    }
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(a.tunnel.circuit_count(), 0, "circuit residuel apres storm");
+
+    // Reconstruction : le(s) premier(s) saut(s) restent dans le set —
+    // aucun nouveau tirage d'entree malgre la pression.
+    let rebuilt = wait_two(&a.tunnel).await;
+    assert_eq!(a.tunnel.guards.guard_keys(), guards, "set de guards stable");
+    for c in &rebuilt {
+        assert_eq!(
+            c.verified_hops[0], guard_mid,
+            "rebuild post-storm hors du guard"
+        );
+    }
 }
 
 #[tokio::test]

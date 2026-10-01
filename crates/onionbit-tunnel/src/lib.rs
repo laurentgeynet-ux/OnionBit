@@ -28,6 +28,7 @@
 
 pub mod cell;
 pub mod community;
+pub mod guards;
 pub mod hidden_services;
 pub mod http_tunnel;
 pub mod payload;

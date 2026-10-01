@@ -145,8 +145,12 @@ parseurs hostiles. Ces tests **ne** protegent **pas** contre la
 correlation de trafic globale, les attaques Sybil a grande echelle,
 l'analyse d'intersection a long terme, la compromission de l'endpoint,
 ni les vulnerabilites d'implementation futures. Les guard nodes
-(ADR-0010, proposee) visent precisement le premier de ces residus
-exploitables : la multiplication des tirages d'entree.
+(ADR-0010) visent precisement le premier de ces residus exploitables :
+la multiplication des tirages d'entree. Ils sont implementes derriere
+`TunnelSettings::guards.enabled` (**desactive par defaut** : selection
+pyipv8 exacte) et testes en boucle locale — premier hop borne au set
+sous storm `DESTROY` — mais sans persistance DB ni validation terrain,
+ils ne figurent pas encore dans les proprietes demontrees ci-dessus.
 
 ## Gate de bootstrap Tribler (informational)
 

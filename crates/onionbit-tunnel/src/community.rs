@@ -308,6 +308,9 @@ pub struct TunnelCommunity {
     /// `TunnelSettings` Python (`self.settings`) : tous les seuils et
     /// cadences de la community (defauts = valeurs officielles).
     pub settings: TunnelSettings,
+    /// Guard nodes (ADR-0010) : premiers sauts persistants quand
+    /// `settings.guards.enabled` — selection pyipv8 inchangee sinon.
+    pub guards: crate::guards::GuardSet,
 }
 
 /// Detail d'un objet de routage detruit (`circuit_removed` pyipv8) —
@@ -464,6 +467,7 @@ impl TunnelCommunity {
         let (test_tx, _) =
             tokio::sync::broadcast::channel(crate::speedtest::SPEED_TEST_CHANNEL_CAP);
         let (relay_send_tx, mut send_rx) = tokio::sync::mpsc::channel::<SendJob>(SEND_QUEUE_CAP);
+        let guard_cfg = settings.guards.clone();
         // Pompe d'emission unique : conserve l'ordre des cellules sur
         // le fil (boucle asyncio unique de pyipv8) — un spawn par
         // datagramme reordonnait les cellules consecutives relayees.
@@ -520,6 +524,7 @@ impl TunnelCommunity {
             dht_provider: Mutex::new(None),
             relay_send_tx,
             settings,
+            guards: crate::guards::GuardSet::new(guard_cfg, None),
         });
         let weak = Arc::downgrade(&community);
         endpoint
@@ -535,6 +540,13 @@ impl TunnelCommunity {
             )
             .await;
         community
+    }
+
+    /// Injecte la persistance des guards (ADR-0010) — appele par
+    /// `core`/`daemon` quand le store DB est pret. Sans store, le set
+    /// reste volatile (meme comportement, rien ne survit au redemarrage).
+    pub fn set_guard_store(&self, store: Arc<dyn crate::guards::GuardStore>) {
+        self.guards.attach_store(store);
     }
 
     /// `number` du RequestCache Python (module 2**16).
@@ -1436,6 +1448,19 @@ impl TunnelCommunity {
             let retried = match candidates {
                 RetryCandidates::FirstHops(peers) if !peers.is_empty() && max_tries >= 1 => {
                     tracing::debug!(circuit_id, "retry du create sur un premier saut alternatif");
+                    // ADR-0010 : le premier saut qui vient de timeout
+                    // compte comme echec de handshake s'il est un guard.
+                    let timed_out = {
+                        let inner = this.inner.lock().unwrap();
+                        inner
+                            .circuits
+                            .get(&circuit_id)
+                            .and_then(|c| c.unverified_hop.as_ref())
+                            .map(|h| h.public_key_bin.clone())
+                    };
+                    if let Some(k) = &timed_out {
+                        this.guards.mark_failure(k);
+                    }
                     this.send_initial_create(circuit_id, peers, max_tries)
                         .await
                         .is_ok()
@@ -1843,7 +1868,15 @@ impl TunnelCommunity {
         // Tri stable par frequence ascendante : les sauts deja utilises
         // passent en dernier, les egalites restent brassées.
         possible.sort_by_key(|(_, n)| *n);
-        possible.into_iter().map(|(p, _)| p).collect()
+        let candidates: Vec<Peer> = possible.into_iter().map(|(p, _)| p).collect();
+        if !self.settings.guards.enabled {
+            return candidates;
+        }
+        // ADR-0010 : les guards actifs prennent la tete, suivis de la
+        // reserve puis du tirage libre — jamais de nouveau tirage
+        // d'entree sous pression (storm de DESTROY).
+        self.guards.ensure(&candidates);
+        self.guards.order_first_hops(candidates)
     }
 
     /// `await circuit.ready` pyipv8 : attend que le circuit atteigne
@@ -3438,8 +3471,8 @@ impl TunnelCommunity {
                 return;
             };
             circuit.add_hop(Hop {
-                public_key_bin: hop_pk_bin,
-                address: hop_addr,
+                public_key_bin: hop_pk_bin.clone(),
+                address: hop_addr.clone(),
                 session_keys,
             });
             circuit.exit_flags = flags;
@@ -3447,6 +3480,11 @@ impl TunnelCommunity {
             let done = circuit.hops.len();
             (goal, done, goal.saturating_sub(1) == done)
         };
+        // ADR-0010 : premier saut verifie = preuve de vie du guard
+        // (adresse rafraichie au passage — il peut avoir change d'IP).
+        if hops_done == 1 {
+            self.guards.mark_alive(&hop_pk_bin, hop_addr);
+        }
         self.notify_circuits_changed();
 
         if hops_done < goal {

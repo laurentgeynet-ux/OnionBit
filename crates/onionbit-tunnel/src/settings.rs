@@ -12,6 +12,8 @@ use std::time::Duration;
 
 use onionbit_ipv8::UdpAddress;
 
+use crate::guards::GuardsConfig;
+
 /// `TunnelSettings` pyipv8 (+ extensions `TriblerTunnelSettings`).
 ///
 /// Les champs portent les noms Python et les defauts sont les valeurs
@@ -118,6 +120,11 @@ pub struct TunnelSettings {
     /// depasse le `blocked()` pyipv8 (10 requetes / 5 s) et tout est
     /// drope. 500 ms garde ~10 req/5 s par noeud cible au maximum.
     pub dht_reannounce_stagger: Duration,
+
+    /// Guard nodes (ADR-0010) : premiers sauts persistants bornant la
+    /// loterie Sybil des reconstructions. `enabled=false` par defaut
+    /// (feature experimentale) = selection pyipv8 exacte.
+    pub guards: GuardsConfig,
 }
 
 impl Default for TunnelSettings {
@@ -150,6 +157,7 @@ impl Default for TunnelSettings {
             data_exit_peer: None,
             intro_reannounce_interval: Duration::from_secs(60),
             dht_reannounce_stagger: Duration::from_millis(500),
+            guards: GuardsConfig::default(),
         }
     }
 }
