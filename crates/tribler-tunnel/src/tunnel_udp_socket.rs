@@ -244,20 +244,39 @@ impl Inner {
     /// Resout/pin le circuit pour `target` puis envoie la cellule.
     async fn dispatch(&self, target: SocketAddr, data: &[u8]) -> Result<(), Ipv8Error> {
         let dest = UdpAddress::from(target);
+        let pinned = self.dest_circuits.lock().unwrap().get(&target).copied();
         let cid = {
-            let pins = self.dest_circuits.lock().unwrap();
-            pins.get(&target)
-                .copied()
-                .filter(|cid| self.tunnel.ready_circuits().contains(cid))
+            pinned.filter(|cid| self.tunnel.ready_circuits().contains(cid))
         };
         let cid = match cid {
             Some(cid) => cid,
             None => {
+                if let Some(stale) = pinned {
+                    // Le pin pointait sur un circuit mort : on le
+                    // depile avant de retomber sur `select_circuit`
+                    // (sinon datagrammes perpetuallement perdus sur le
+                    // pin stale sans trace).
+                    tracing::debug!(
+                        %target,
+                        stale_cid = stale,
+                        ?self.kind,
+                        "socket tunnel: pin stale -> reselection"
+                    );
+                    self.dest_circuits.lock().unwrap().remove(&target);
+                }
                 let cid = self.select_circuit()?;
                 self.dest_circuits.lock().unwrap().insert(target, cid);
                 cid
             }
         };
+        tracing::debug!(
+            %target,
+            circuit_id = cid,
+            len = data.len(),
+            head = %hex::encode(&data[..data.len().min(8)]),
+            ?self.kind,
+            "socket tunnel -> cellule data"
+        );
         match self
             .tunnel
             .send_data(cid, &dest, &zero_address(), data)

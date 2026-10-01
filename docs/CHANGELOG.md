@@ -3,6 +3,41 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Interop hidden-service sens A vert : Tribler 8.4.3 télécharge depuis le seeder Rust
+
+- `scripts/interop_hidden_tribler_download.ps1` (mesh loopback A1
+  EXIT_BT + A2/A3 relais + S seeder anonyme + Tribler.exe 8.4.3 réel
+  downloader) passe **tous les verdicts** : S SEEDING + 10 IP_SEEDER,
+  gate DHT déterministe (`S=1 A=1` avec relecture `find_values` depuis
+  A1 avant de lancer Tribler), `peers-request`/`peers-response`,
+  `create-e2e`/`created-e2e`, `link-e2e`, uTP+handshake BitTorrent sur
+  le circuit e2e lié, upload S `delta=6291456`, Tribler 100 %,
+  **SHA-256 du fichier recu identique a la source**.
+  Run : `target/interop-hidden-dl-20261001-050850/`.
+- **Fix wire `PeersResponse`** (`payload.rs`) : le `payload-list`
+  pyipv8 `[IntroductionInfo]` encode `B` count puis `>H` longueur +
+  corps par element ; on serialisait les elements en ligne sans le
+  prefixe `>H` -> Tribler desalignait et levait `PackError: Cannot
+  unpack address type 0`. Test de regression
+  `peers_response_nested_payload_wire`.
+- **Fix wire `RendezvousInfo`** : `rp_info_enc` de `CreatedE2E` doit
+  contenir `serializer.pack("payload", rp_info)` = `NestedPayload`
+  (`>H` taille + corps `ip_address,varlenH,20s`), pas le corps nu —
+  meme symptome `address type 0` dans `on_created_e2e` cote Tribler.
+  `pack_framed`/`unpack_framed` appliques aux deux sens.
+- Diagnostic e2e : logs `created-e2e : rendezvous_info construit`
+  (adresse RP concrete, `rp_addr_unspecified`), `e2e -> injection
+  uTP`, `socket tunnel -> cellule data`, eviction de pin stale dans
+  `TunnelUdpSocket::dispatch`.
+- Instrumentation DHT : `dht_store` trace selection de noeuds,
+  `store-request`/`store-response` correles par transaction ID,
+  `noeud bloque/absent -> drop` cote receveur — le run `-DhtOnly`
+  a prouve `3/3 STORE` en <35 ms et exclu le store-request des
+  suspects.
+- Rappel : `Peer<0.0.0.0:0>` dans `Added hop` cote Tribler est
+  cosmetique (pyipv8 construit `Hop(Peer(key))` sans adresse) — pas
+  un indice de regression d'adresse.
+
 ## Hidden services — banc live complet vert : seed, upload anonyme, kill, reprise
 
 - `scripts/live_hidden_upload.ps1` (trois daemons isoles : A ancre,

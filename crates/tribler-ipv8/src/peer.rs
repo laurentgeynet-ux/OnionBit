@@ -313,13 +313,26 @@ impl Network {
         old_style: bool,
     ) -> Vec<UdpAddress> {
         let all = self.all_addresses.lock().unwrap();
-        let verified_addrs: Vec<UdpAddress> = self
-            .by_key
-            .lock()
-            .unwrap()
-            .values()
-            .filter_map(|p| p.address.clone())
-            .collect();
+        // `get_peers_for_service(service_id)` Python : seules les
+        // adresses des pairs DU SERVICE demande sont exclues des
+        // walkables — pas tous les pairs verifies. Exclure tous les
+        // verifies rendait les adresses decouvertes par la discovery
+        // (puis verifiees la) invisibles pour l'overlay tunnel, qui ne
+        // marchait alors que sur son pair de bootstrap.
+        let verified_addrs: Vec<UdpAddress> = match service {
+            Some(sid) => self
+                .peers_for_service(sid)
+                .iter()
+                .filter_map(|p| p.address.clone())
+                .collect(),
+            None => self
+                .by_key
+                .lock()
+                .unwrap()
+                .values()
+                .filter_map(|p| p.address.clone())
+                .collect(),
+        };
         let svcs = self.services.lock().unwrap();
         all.iter()
             .filter(|(addr, w)| {

@@ -136,6 +136,13 @@ pub struct Ipv8FileConfig {
     pub walker_interval: f64,
     /// Niveau de log (DEBUG/INFO/WARNING/ERROR).
     pub logger_level: String,
+    /// Estimation WAN forcee `"ip:port"` — extension Rust reservee aux
+    /// bancs loopback : une `destination_address` en 127/8 n'est jamais
+    /// retenue comme WAN (`address_in_lan_subnets` pyipv8), ce qui
+    /// laisserait le DHT muet (`on_node_discovered` refuse tout noeud
+    /// tant que `my_estimated_wan` est inconnu). Vide = comportement
+    /// normal (WAN appris via introduction-response).
+    pub estimated_wan: String,
     /// Clés/communities additionnelles non portées — préservées.
     #[serde(flatten)]
     pub extra: serde_json::Map<String, Value>,
@@ -157,6 +164,7 @@ impl Default for Ipv8FileConfig {
             bootstrap: Ipv8Bootstrap::default(),
             walker_interval: 0.5,
             logger_level: "INFO".into(),
+            estimated_wan: String::new(),
             extra: serde_json::Map::new(),
         }
     }
@@ -866,6 +874,21 @@ impl DaemonConfig {
                             error = %e,
                             value = %self.tunnel_community.data_exit_peer,
                             "tunnel_community/data_exit_peer invalide, ignore"
+                        );
+                        None
+                    }
+                }
+            },
+            estimated_wan: if self.ipv8.estimated_wan.is_empty() {
+                None
+            } else {
+                match self.ipv8.estimated_wan.parse::<SocketAddr>() {
+                    Ok(a) => Some(tribler_ipv8::UdpAddress::from(a)),
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %e,
+                            value = %self.ipv8.estimated_wan,
+                            "ipv8/estimated_wan invalide, ignore"
                         );
                         None
                     }

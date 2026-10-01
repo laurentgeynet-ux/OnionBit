@@ -841,6 +841,17 @@ impl TunnelCommunity {
             .local_addr()
             .map(UdpAddress::from)
             .unwrap_or_else(|_| unspecified_addr());
+        // `elif circuit_id in self.exit_sockets` Python : a defaut de
+        // store PEX local, l'EXIT fait le `find_values` DHT pour le
+        // demandeur (`on_peers_request` -> `dht_lookup` ->
+        // `DHTCommunityProvider.lookup`). Chemin requis pour qu'un
+        // point de sortie qui n'est pas le point d'introduction puisse
+        // quand meme repondre.
+        let need_dht = circuit_id.is_some_and(|cid| {
+            self.inner.lock().unwrap().exit_sockets.contains_key(&cid)
+        });
+        let dht = if need_dht { self.dht_provider() } else { None };
+
         let peers: Vec<tp::IntroductionInfo> = {
             let mut inner = self.inner.lock().unwrap();
             // `if info_hash in self.pex` Python : le store PEX
@@ -874,15 +885,57 @@ impl TunnelCommunity {
                     .collect()
             }
         };
-        let reply = tp::PeersResponse {
-            circuit_id: p.circuit_id,
-            identifier: p.identifier,
-            info_hash: p.info_hash,
-            peers,
-        };
         let this = self.clone();
         let addr = UdpAddress::from(src);
         tokio::spawn(async move {
+            let mut peers = peers;
+            let mut lookup_done = false;
+            if peers.is_empty() {
+                if let Some(ref dht) = dht {
+                    match dht.find_values(&p.info_hash, 0).await {
+                        Ok(values) => {
+                            lookup_done = true;
+                            for (value, _) in values {
+                                let Some(ip) = unpack_dht_intro_point(&value) else {
+                                    continue;
+                                };
+                                peers.push(tp::IntroductionInfo {
+                                    address: ip.address,
+                                    key: ip.peer_key,
+                                    seeder_pk: ip.seeder_pk,
+                                    source: PEER_SOURCE_DHT,
+                                });
+                                if peers.len() >= MAX_PEERS_IN_RESPONSE {
+                                    break;
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            tracing::debug!(error = %e, "peers-request : find_values DHT en echec");
+                        }
+                    }
+                }
+            }
+            if need_dht && dht.is_none() {
+                // `unable to do a DHT lookup` Python : exit sans
+                // provider -> silence cote demandeur (timeout).
+                tracing::debug!(
+                    info_hash = hex::encode(p.info_hash),
+                    "peers-request sans provider DHT sur l'exit"
+                );
+            }
+            // Semantique Python : `provider.lookup` renvoie None sur
+            // DHTError -> aucune reponse (le demandeur timeout). Un
+            // lookup reussi repond meme avec 0 pair.
+            if need_dht && dht.is_some() && !lookup_done && peers.is_empty() {
+                return;
+            }
+            let reply = tp::PeersResponse {
+                circuit_id: p.circuit_id,
+                identifier: p.identifier,
+                info_hash: p.info_hash,
+                peers,
+            };
             match circuit_id {
                 // Reponse dans le tunnel (chiffrement BACKWARD par
                 // `send_cell` sur le circuit_id de l'exit).
@@ -1393,13 +1446,21 @@ impl TunnelCommunity {
             key: rp_exit_key,
             cookie: rp.cookie,
         };
-        let mut w = Writer::new();
-        if rp_info.pack(&mut w).is_err() {
+        tracing::debug!(
+            rp_circuit = rp.circuit,
+            rp_addr = ?rp_info.address,
+            rp_addr_unspecified = rp_info.address.is_unspecified(),
+            "created-e2e : rendezvous_info construit"
+        );
+        // `serializer.pack("payload", rp_info)` (NestedPayload :
+        // `>H` taille + corps) — sans le prefixe, pyipv8 lit la taille
+        // sur les octets de l'adresse (`Cannot unpack address type 0`).
+        let Ok(rp_info_bin) = rp_info.pack_framed() else {
             return;
-        }
+        };
         let Ok(rp_info_enc) = session_keys
             .clone()
-            .encrypt_str(&w.into_bytes(), Direction::Forward)
+            .encrypt_str(&rp_info_bin, Direction::Forward)
         else {
             return;
         };
@@ -1487,7 +1548,8 @@ impl TunnelCommunity {
         else {
             return;
         };
-        let Ok(rp_info) = tp::RendezvousInfo::unpack(&mut Reader::new(&rp_bin)) else {
+        let Ok(rp_info) = tp::RendezvousInfo::unpack_framed(&mut Reader::new(&rp_bin))
+        else {
             return;
         };
         // Circuit RP_DOWNLOADER vers le RP (required_exit : le dernier

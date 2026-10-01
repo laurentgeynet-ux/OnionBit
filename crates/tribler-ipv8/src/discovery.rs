@@ -34,11 +34,6 @@ pub const DISCOVERY_COMMUNITY_ID: CommunityId = [
     0x99, 0xc5, 0xdf, 0x5a,
 ];
 
-/// Intervalle entre deux etapes de marche aleatoire
-/// (`RandomWalk`/`take_step` : le Python utilise des strategies a
-/// intervalle configurable ; 25 s est l'ordre de grandeur historique).
-const WALK_INTERVAL: Duration = Duration::from_secs(25);
-
 /// Nombre maximum de pairs connus avant de couper les introductions
 /// (`max_peers` Python par defaut cote strategy).
 const DEFAULT_MAX_PEERS: usize = 30;
@@ -46,6 +41,17 @@ const DEFAULT_MAX_PEERS: usize = 30;
 /// Probabilite de re-bootstrap quand des pairs existent
 /// (`random() < 0.05` Python dans `get_new_introduction`).
 const REBOOTSTRAP_CHANCE: f64 = 0.05;
+
+/// `RandomWalk.node_timeout` Python : une adresse sans reponse apres
+/// ce delai est oubliee (3 s par defaut).
+const INTRO_TIMEOUT: Duration = Duration::from_secs(3);
+/// `RandomWalk.window_size` Python : nombre maximal d'introductions
+/// en vol avant de suspendre la marche (5 par defaut).
+const INTRO_WINDOW: usize = 5;
+/// `RandomWalk.reset_chance` Python : chance sur 255 de sauter le
+/// walkable et de demander une nouvelle introduction a un pair connu
+/// (50 → ~80 % des etapes explorent une adresse introduite).
+const RESET_CHANCE: u8 = 50;
 
 /// Adresse "non definie" (`0.0.0.0:0`).
 fn unspecified() -> UdpAddress {
@@ -86,6 +92,9 @@ pub struct DiscoveryCommunity {
     my_estimated_lan: Mutex<UdpAddress>,
     /// Requetes d'introduction en attente (identifier -> instant).
     pending_intro: Mutex<std::collections::HashMap<u16, (UdpAddress, Instant)>>,
+    /// `intro_timeouts` de `RandomWalk` : adresses walkable vers
+    /// lesquelles une introduction est en vol (adresse -> instant).
+    intro_timeouts: Mutex<std::collections::HashMap<UdpAddress, Instant>>,
     /// Adresses ajoutees dynamiquement au bootstrap
     /// (`DispersyBootstrapper.ip_addresses.append` — endpoint REST
     /// `/api/ipv8/isolation` "bootstrapnode").
@@ -119,6 +128,7 @@ impl DiscoveryCommunity {
             my_estimated_wan: Mutex::new(unspecified()),
             my_estimated_lan: Mutex::new(my_lan),
             pending_intro: Mutex::new(std::collections::HashMap::new()),
+            intro_timeouts: Mutex::new(std::collections::HashMap::new()),
             extra_bootstrap: Mutex::new(Vec::new()),
             intro_requests_seen: std::sync::atomic::AtomicUsize::new(0),
             intro_responses_seen: std::sync::atomic::AtomicUsize::new(0),
@@ -160,6 +170,15 @@ impl DiscoveryCommunity {
     /// `my_estimated_wan`.
     pub fn my_estimated_wan(&self) -> UdpAddress {
         self.my_estimated_wan.lock().unwrap().clone()
+    }
+
+    /// Injecte une estimation WAN initiale (`my_estimated_wan` Python
+    /// est aussi assignable en test). Utile sur un banc 100 % loopback :
+    /// `destination_address` d'une intro-response en 127/8 n'est jamais
+    /// retenue comme WAN (`address_in_lan_subnets`), ce qui laisse le
+    /// DHT muet (`on_node_discovered` refuse tout noeud sans WAN).
+    pub fn set_estimated_wan(&self, wan: UdpAddress) {
+        *self.my_estimated_wan.lock().unwrap() = wan;
     }
 
     /// `my_estimated_lan`.
@@ -743,9 +762,10 @@ impl DiscoveryCommunity {
         Ok(id)
     }
 
-    /// `get_new_introduction` : introduction-request vers un pair
-    /// connu (choisi au hasard), sinon marche vers une adresse
-    /// "walkable", sinon bootstrap. Avec 5 % de chance, re-bootstrap.
+    /// `Community.get_new_introduction` : introduction-request vers un
+    /// pair verifie de l'overlay (choisi au hasard), sinon bootstrap.
+    /// Avec 5 % de chance, re-bootstrap (`reparation d'un reseau
+    /// partitionne`).
     pub async fn get_new_introduction(&self, bootstrap: &[UdpAddress]) -> Result<(), Ipv8Error> {
         // `ThreadRng` n'est pas `Send` : tout le tirage est fait dans
         // des blocs separes, jamais a travers un `.await`.
@@ -766,16 +786,10 @@ impl DiscoveryCommunity {
                 return self.send_introduction_request(&addr).await.map(|_| ());
             }
         }
-        // Sinon : adresse walkable connue (du discovery), sinon bootstrap.
-        let walkable = self
-            .network
-            .get_walkable_addresses(Some(&DISCOVERY_COMMUNITY_ID), false);
+        // Aucun pair verifie : marche vers un noeud d'amorcage.
         let target = {
             let mut rng = rand::thread_rng();
-            walkable
-                .choose(&mut rng)
-                .cloned()
-                .or_else(|| bootstrap.choose(&mut rng).cloned())
+            bootstrap.choose(&mut rng).cloned()
         };
         if let Some(addr) = target {
             self.send_introduction_request(&addr).await?;
@@ -783,15 +797,66 @@ impl DiscoveryCommunity {
         Ok(())
     }
 
-    /// Une etape de marche aleatoire (`take_step`) : introduction vers
-    /// un pair connu ou une adresse walkable/bootstrap.
+    /// `RandomWalk.take_step` Python : **les adresses "walkable"**
+    /// (apprises par introduction-response, pas encore verifiees)
+    /// d'abord — ~80 % des etapes ; sinon `get_new_introduction`
+    /// (pair connu ou bootstrap). Une adresse sans reponse apres
+    /// `INTRO_TIMEOUT` est oubliee ; `INTRO_WINDOW` introductions en
+    /// vol suspendent la marche.
     pub async fn step(&self, bootstrap: &[UdpAddress]) -> Result<(), Ipv8Error> {
+        // Purge des adresses mortes (`node_timeout`) : sans pair
+        // verifie a cette adresse, on l'oublie completement.
+        let mut expired = Vec::new();
+        {
+            let mut timeouts = self.intro_timeouts.lock().unwrap();
+            timeouts.retain(|addr, t| {
+                if t.elapsed() >= INTRO_TIMEOUT {
+                    expired.push(addr.clone());
+                    false
+                } else {
+                    true
+                }
+            });
+        }
+        for addr in expired {
+            if self.network.get_verified_by_address(&addr).is_none() {
+                self.network.remove_by_address(&addr);
+            }
+        }
+        // Fenetre de vol : assez d'introductions en attente.
+        if self.intro_timeouts.lock().unwrap().len() >= INTRO_WINDOW {
+            return Ok(());
+        }
+        let known = self
+            .network
+            .get_walkable_addresses(Some(&DISCOVERY_COMMUNITY_ID), false);
+        let available: Vec<UdpAddress> = {
+            let timeouts = self.intro_timeouts.lock().unwrap();
+            known.into_iter().filter(|a| !timeouts.contains_key(a)).collect()
+        };
+        // randint(0, 255) >= reset_chance -> marche walkable (~80 %).
+        if !available.is_empty() && rand::random::<u8>() >= RESET_CHANCE {
+            let target = {
+                let mut rng = rand::thread_rng();
+                available.choose(&mut rng).cloned()
+            };
+            if let Some(addr) = target {
+                self.intro_timeouts
+                    .lock()
+                    .unwrap()
+                    .insert(addr.clone(), Instant::now());
+                self.send_introduction_request(&addr).await?;
+            }
+            return Ok(());
+        }
         self.get_new_introduction(bootstrap).await
     }
 
-    /// Boucle de marche aleatoire (a spawner).
-    pub async fn run(self: &Arc<Self>, bootstrap: Vec<UdpAddress>) {
-        let mut tick = tokio::time::interval(WALK_INTERVAL);
+    /// Boucle de marche aleatoire (a spawner) — cadence
+    /// `walker_interval` de la config (`ipv8.walker_interval`, 0,5 s
+    /// comme pyipv8), pas un constant local.
+    pub async fn run(self: &Arc<Self>, bootstrap: Vec<UdpAddress>, interval: Duration) {
+        let mut tick = tokio::time::interval(interval);
         loop {
             tick.tick().await;
             if let Err(e) = self.step(&bootstrap).await {

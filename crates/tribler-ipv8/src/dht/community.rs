@@ -856,17 +856,43 @@ impl DhtCommunity {
 
         let now = now_secs();
         let mut futs = Vec::new();
+        tracing::debug!(
+            target = %hex::encode(key),
+            node_count = self.node_count(),
+            wan = ?self.my_wan(),
+            selected = nodes.len(),
+            "dht_store : selection des noeuds"
+        );
         for node in nodes {
-            let token = self
+            let token_entry = self
                 .tokens
                 .lock()
                 .unwrap()
                 .get(&node.id().unwrap_or_default())
-                .and_then(|(ts, t)| (now < ts + TOKEN_EXPIRATION_TIME).then_some(*t));
-            let Some(token) = token else {
-                tracing::debug!("pas de store-request : token absent");
-                continue;
-            };
+                .copied();
+            let dist = node.id().map(|id| hex::encode(&distance(&id, key)[..4]));
+            match token_entry {
+                Some((ts, _)) if now < ts + TOKEN_EXPIRATION_TIME => {
+                    tracing::debug!(
+                        node = ?node.address(),
+                        mid = %hex::encode(&node.mid[..6]),
+                        dist = ?dist,
+                        token_age_s = now - ts,
+                        "dht_store : noeud avec token"
+                    );
+                }
+                _ => {
+                    tracing::debug!(
+                        node = ?node.address(),
+                        mid = %hex::encode(&node.mid[..6]),
+                        dist = ?dist,
+                        token = ?token_entry.map(|(ts, _)| now - ts),
+                        "pas de store-request : token absent ou expire"
+                    );
+                    continue;
+                }
+            }
+            let token = token_entry.unwrap().1;
             let c = self.clone();
             let node = node.clone();
             let vals = values.to_vec();
@@ -881,10 +907,29 @@ impl DhtCommunity {
                     values: vals,
                 }
                 .pack(&mut w);
-                c.send(&node.address(), msg::STORE_REQUEST, &w.into_bytes())
-                    .await?;
+                let body = w.into_bytes();
+                let addr = node.address();
+                tracing::debug!(
+                    txn = id,
+                    node = ?addr,
+                    payload_len = body.len(),
+                    payload_hash = %hex::encode(&sha1(&body)[..4]),
+                    "dht_store : store-request envoye"
+                );
+                let t0 = std::time::Instant::now();
+                c.send(&addr, msg::STORE_REQUEST, &body)
+                    .await
+                    .map_err(|e| {
+                        tracing::debug!(txn = id, node = ?addr, error = %e, "dht_store : envoi echoue");
+                        e
+                    })?;
                 c.await_pending(PendingKind::Store, id, node.clone(), rx, REQUEST_TIMEOUT)
-                    .await?;
+                    .await
+                    .map_err(|e| {
+                        tracing::debug!(txn = id, node = ?addr, error = %e, rtt_ms = t0.elapsed().as_millis() as u64, "dht_store : aucune reponse (timeout/rejet)");
+                        e
+                    })?;
+                tracing::debug!(txn = id, node = ?addr, rtt_ms = t0.elapsed().as_millis() as u64, "dht_store : store-response recu");
                 Ok::<Arc<Node>, DhtError>(node)
             }));
         }
@@ -1552,15 +1597,29 @@ impl DhtCommunity {
             }
             msg::STORE_REQUEST => {
                 let p = payloads::StoreRequest::unpack(&mut r)?;
+                tracing::debug!(
+                    txn = p.identifier,
+                    src = ?src_addr,
+                    n_values = p.values.len(),
+                    "dht_store : store-request recu"
+                );
                 let Some(node) = self.get_requesting_node(&peer) else {
+                    tracing::debug!(txn = p.identifier, src = ?src_addr, "dht_store : noeud bloque/absent -> drop");
                     return Ok(());
                 };
                 if p.values.iter().any(|v| v.len() > payloads::MAX_ENTRY_SIZE)
                     || p.values.len() > MAX_VALUES_IN_STORE
                 {
+                    tracing::debug!(txn = p.identifier, "dht_store : valeurs hors limites -> drop");
                     return Ok(());
                 }
                 if !self.check_token(&node, &p.token) {
+                    tracing::debug!(
+                        txn = p.identifier,
+                        node = ?node.address(),
+                        mid = %hex::encode(&node.mid[..6]),
+                        "dht_store : token rejete -> drop"
+                    );
                     return Ok(());
                 }
                 // Age reduit selon le nombre de noeuds plus proches
@@ -1581,6 +1640,11 @@ impl DhtCommunity {
                 for v in &p.values {
                     self.add_value(&p.target, v, &src_addr, max_age);
                 }
+                tracing::debug!(
+                    txn = p.identifier,
+                    src = ?src_addr,
+                    "dht_store : valeur stockee, store-response envoye"
+                );
                 self.reply(src_addr, msg::STORE_RESPONSE, {
                     let mut w = Writer::new();
                     payloads::StoreResponse {

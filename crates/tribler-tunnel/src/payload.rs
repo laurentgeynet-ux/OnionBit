@@ -601,6 +601,25 @@ impl RendezvousInfo {
             cookie,
         })
     }
+
+    /// Serialisation `serializer.pack("payload", rp_info)` de pyipv8
+    /// (`NestedPayload`) : `>H` taille + corps. C'est la forme attendue
+    /// dans `created-e2e.rp_info_enc` (`hidden_services.py:494`).
+    pub fn pack_framed(&self) -> Result<Vec<u8>, Ipv8Error> {
+        let mut inner = Writer::new();
+        self.pack(&mut inner)?;
+        let bytes = inner.into_bytes();
+        let mut w = Writer::new();
+        w.u16(bytes.len() as u16);
+        w.bytes(&bytes);
+        Ok(w.into_bytes())
+    }
+
+    /// Parse de la forme `NestedPayload` (`>H` taille + corps).
+    pub fn unpack_framed(r: &mut Reader<'_>) -> Result<Self, Ipv8Error> {
+        let size = r.u16()? as usize;
+        Self::unpack(&mut Reader::new(r.take(size)?))
+    }
 }
 
 /// `PeersRequestPayload` (msg 17) : `I, H, 20s`.
@@ -670,10 +689,14 @@ impl Cellable for PeersResponse {
         w.bytes(&self.info_hash);
         w.u8(self.peers.len() as u8);
         for p in &self.peers {
-            w.ip_address(&p.address)?;
-            w.varlen_h(&p.key);
-            w.varlen_h(&p.seeder_pk);
-            w.u8(p.source);
+            let mut inner = Writer::new();
+            inner.ip_address(&p.address)?;
+            inner.varlen_h(&p.key);
+            inner.varlen_h(&p.seeder_pk);
+            inner.u8(p.source);
+            let bytes = inner.into_bytes();
+            w.u16(bytes.len() as u16);
+            w.bytes(&bytes);
         }
         Ok(())
     }
@@ -685,11 +708,13 @@ impl Cellable for PeersResponse {
         let count = r.u8()? as usize;
         let mut peers = Vec::with_capacity(count.min(255));
         for _ in 0..count {
+            let size = r.u16()? as usize;
+            let mut inner = Reader::new(r.take(size)?);
             peers.push(IntroductionInfo {
-                address: r.ip_address()?,
-                key: r.varlen_h()?.to_vec(),
-                seeder_pk: r.varlen_h()?.to_vec(),
-                source: r.u8()?,
+                address: inner.ip_address()?,
+                key: inner.varlen_h()?.to_vec(),
+                seeder_pk: inner.varlen_h()?.to_vec(),
+                source: inner.u8()?,
             });
         }
         Ok(Self {
@@ -959,6 +984,65 @@ mod tests {
         assert_eq!(q.identifier, 0xDEADBEEF);
         assert_eq!(q.response_size, 1024);
         assert_eq!(q.data, vec![0xAA; 50]);
+    }
+
+    /// `PeersResponse` : `payload-list` pyipv8 = `B` count puis, par
+    /// element, `>H` taille + `IntroductionInfo` serialise
+    /// (`ListOf(NestedPayload)`). Regression : sans le prefixe de
+    /// longueur, pyipv8 deserialise `IntroductionInfo` au mauvais offset
+    /// (`Cannot unpack address type 0` chez Tribler 8.4.3).
+    #[test]
+    fn peers_response_nested_payload_wire() {
+        let addr = UdpAddress::Ipv4("127.0.0.1:17789".parse::<std::net::SocketAddrV4>().unwrap());
+        let p = PeersResponse {
+            circuit_id: 42,
+            identifier: 0x1234,
+            info_hash: [0xAB; 20],
+            peers: vec![
+                IntroductionInfo {
+                    address: addr.clone(),
+                    key: vec![0x11; 66],
+                    seeder_pk: vec![0x22; 74],
+                    source: 1,
+                },
+                IntroductionInfo {
+                    address: addr,
+                    key: vec![0x33; 66],
+                    seeder_pk: vec![0x44; 74],
+                    source: 2,
+                },
+            ],
+        };
+        assert_eq!(PeersResponse::MSG_ID, 18);
+        let mut w = Writer::new();
+        p.pack(&mut w).unwrap();
+        let buf = w.into_bytes();
+
+        // I(4) + H(2) + 20s(20) + B(1) = 27 octets avant la liste.
+        assert_eq!(buf[26], 2);
+        // Chaque element : `>H` taille + IntroductionInfo
+        // (ip_address 7 + varlenH 2+66 + varlenH 2+74 + B 1 = 152).
+        let elem_size = 7 + 2 + 66 + 2 + 74 + 1;
+        let mut off = 27;
+        for _ in 0..2 {
+            let size = u16::from_be_bytes([buf[off], buf[off + 1]]) as usize;
+            assert_eq!(size, elem_size);
+            assert_eq!(buf[off + 2], 0x01); // type IPv4 du `ip_address`
+            off += 2 + size;
+        }
+        assert_eq!(off, buf.len());
+
+        let q = PeersResponse::unpack(&mut Reader::new(&buf)).unwrap();
+        assert_eq!(q.peers.len(), 2);
+        assert_eq!(q.peers[0].key, vec![0x11; 66]);
+        assert_eq!(q.peers[1].source, 2);
+        match &q.peers[0].address {
+            UdpAddress::Ipv4(sa) => {
+                assert_eq!(sa.ip().octets(), [127, 0, 0, 1]);
+                assert_eq!(sa.port(), 17789);
+            }
+            other => panic!("adresse inattendue : {other:?}"),
+        }
     }
 
     /// Roundtrip cellule 22 (`I, I, raw`).

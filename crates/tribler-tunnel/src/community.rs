@@ -2041,7 +2041,16 @@ impl TunnelCommunity {
                 data,
                 Direction::Forward,
                 std::slice::from_ref(&hop.session_keys),
-            )?;
+            )
+            .map_err(|e| {
+                tracing::debug!(
+                    circuit_id = parsed.circuit_id,
+                    next_cid,
+                    error = %e,
+                    "rendezvous: decrypt FORWARD echoue"
+                );
+                e
+            })?;
             // Un `link-e2e` retransmis apres liaison arrive encore sur
             // cette route : il est destine au point de rendez-vous, pas
             // a relayer — dispatch local (`on_link_e2e` re-repond
@@ -2052,7 +2061,14 @@ impl TunnelCommunity {
                 }
             }
             let mut keys = [other];
-            cell::encrypt_cell(&dec, Direction::Backward, &mut keys)?
+            let out = cell::encrypt_cell(&dec, Direction::Backward, &mut keys)?;
+            tracing::debug!(
+                circuit_id = parsed.circuit_id,
+                next_cid,
+                relay_early = parsed.relay_early,
+                "rendezvous: cellule transformee"
+            );
+            out
         } else {
             match direction {
                 Direction::Forward => cell::decrypt_cell(
@@ -2379,6 +2395,13 @@ impl TunnelCommunity {
                 })
             }
         };
+        tracing::debug!(
+            known = known.len(),
+            walkable = walkable.len(),
+            verified = self.network.verified_peers().len(),
+            target = ?target,
+            "etape de marche tunnel"
+        );
         if let Some(addr) = target {
             self.walk_to(&addr).await?;
         }

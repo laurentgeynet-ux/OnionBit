@@ -154,7 +154,12 @@ async fn create_torrent_raw<'a>(
         }
     }
 
-    if remaining_piece_length > 0 && length > 0 {
+    // Piece partielle en suspens : `remaining_piece_length` revient a
+    // `piece_length` des qu'un flush exact a eu lieu — sans ce test
+    // strict, un fichier multiple entier de la taille de piece
+    // pousserait un hash sha1 vide en trop (torrent refuse par
+    // libtorrent : "corrupt torrent file").
+    if remaining_piece_length < piece_length {
         piece_hashes.extend_from_slice(&piece_checksum.finish());
     }
     Ok(CreateTorrentRawResult {

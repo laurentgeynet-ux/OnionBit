@@ -129,6 +129,13 @@ pub struct Ipv8Config {
     /// (`required_exit` de `create_circuit` pyipv8). `None` =
     /// selection automatique `EXIT_BT`.
     pub data_exit_peer: Option<UdpAddress>,
+    /// Extension Rust (bancs loopback) : estimation WAN initiale.
+    /// Sur un mesh 100 % loopback, `destination_address` des
+    /// intro-responses est toujours en sous-reseau LAN →
+    /// `my_estimated_wan` resterait indetermine et le DHT muet
+    /// (`on_node_discovered` refuse tout noeud sans WAN connu —
+    /// meme comportement pyipv8). `None` = apprentissage normal.
+    pub estimated_wan: Option<UdpAddress>,
     /// `ipv8/interfaces[UDPIPv6]` Python (`ip:port`, ex. `"[::]:8091"`)
     /// — socket UDP secondaire partageant les memes communities
     /// (`DispatcherEndpoint` pyipv8). `None` = IPv4 seul.
@@ -168,6 +175,7 @@ impl Ipv8Config {
             enable_content_discovery: true,
             intro_point_peer: None,
             data_exit_peer: None,
+            estimated_wan: None,
             listen_addr_v6: Some(format!("[::]:{}", DEFAULT_IPV8_PORT + 1)),
             peer_cache_max: DEFAULT_PEER_CACHE_MAX,
             peer_cache_max_age_secs: DEFAULT_PEER_CACHE_MAX_AGE_SECS,
@@ -196,6 +204,7 @@ impl Default for Ipv8Config {
             enable_content_discovery: true,
             intro_point_peer: None,
             data_exit_peer: None,
+            estimated_wan: None,
             listen_addr_v6: None,
             peer_cache_max: DEFAULT_PEER_CACHE_MAX,
             peer_cache_max_age_secs: DEFAULT_PEER_CACHE_MAX_AGE_SECS,
@@ -1029,6 +1038,13 @@ impl Ipv8Stack {
             )),
         )
         .await;
+        // Extension Rust (bancs loopback) : `ipv8.estimated_wan` —
+        // sur un mesh 100 % loopback `my_estimated_wan` ne s'apprend
+        // jamais (`address_in_lan_subnets`), ce qui figerait le DHT
+        // (`on_node_discovered` refuse tout noeud — comme pyipv8).
+        if let Some(wan) = &config.estimated_wan {
+            discovery.set_estimated_wan(wan.clone());
+        }
         // `ContentDiscoveryComponent` Python : cree seulement si
         // `content_discovery_community/enabled` (la recherche distante
         // et `/api/search` retournent alors 503-vide cote REST).
@@ -1446,7 +1462,7 @@ impl Ipv8Stack {
                             dht.walk_run(peers, walker_interval).await;
                         });
                     }
-                    d.run(peers).await;
+                    d.run(peers, walker_interval).await;
                 } else {
                     tracing::warn!("aucun pair de bootstrap n'a pu etre resolu pour IPv8");
                 }
