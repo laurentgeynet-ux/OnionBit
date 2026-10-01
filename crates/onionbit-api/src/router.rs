@@ -1,3 +1,7 @@
+// This file is part of OnionBit - a Rust port of the Tribler daemon.
+// Copyright (C) 2026 Laurent Geynet <laurent.geynet@gmail.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Construction du routeur axum.
 //!
 //! Les chemins suivent `tribler.core.restapi` (`/api/...`). Le serveur

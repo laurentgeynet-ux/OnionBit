@@ -1,3 +1,7 @@
+// This file is part of OnionBit - a Rust port of the Tribler daemon.
+// Copyright (C) 2026 Laurent Geynet <laurent.geynet@gmail.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Port de `tribler/core/database/queries.py` : conversion du texte
 //! utilisateur en requete FTS (`to_fts_query`) et extraction des
 //! termes (`fts_terms`, pour notre moteur `LIKE` AND — remplacant

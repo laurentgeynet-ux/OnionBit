@@ -1,3 +1,7 @@
+// This file is part of OnionBit - a Rust port of the Tribler daemon.
+// Copyright (C) 2026 Laurent Geynet <laurent.geynet@gmail.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Test d'integration loopback du DHT IPv8 : deux noeuds sur
 //! `127.0.0.1` se decouvrent (introduction), se pingent, puis
 //! `store_value` / `find_values` de bout en bout — fidélité au protocole

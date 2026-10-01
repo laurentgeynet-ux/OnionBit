@@ -1,3 +1,7 @@
+// This file is part of OnionBit - a Rust port of the Tribler daemon.
+// Copyright (C) 2026 Laurent Geynet <laurent.geynet@gmail.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Proxy SOCKS5 minimal (UDP ASSOCIATE) : le point d'entree local pour
 //! router du trafic applicatif (ex. BitTorrent UDP) a travers les
 //! circuits de `TunnelCommunity` — equivalent de

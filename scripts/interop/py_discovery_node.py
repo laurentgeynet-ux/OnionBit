@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# This file is part of OnionBit - a Rust port of the Tribler daemon.
+# Copyright (C) 2026 Laurent Geynet <laurent.geynet@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 """Noeud d'interop discovery pyipv8 (etape 11) : introductions
 new-style (234 -> 233) et punctures (250/232 -> 249/231) contre le
 noeud Rust `discovery_interop_node`.

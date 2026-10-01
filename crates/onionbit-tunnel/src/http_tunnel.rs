@@ -1,3 +1,7 @@
+// This file is part of OnionBit - a Rust port of the Tribler daemon.
+// Copyright (C) 2026 Laurent Geynet <laurent.geynet@gmail.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Requetes HTTP transportees par les cellules tunnel
 //! (`HTTPRequestPayload` msg 28 / `HTTPResponsePayload` msg 29 —
 //! `tribler/core/tunnel/payload.py`, `ipv8-rust-tunnels`).

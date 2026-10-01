@@ -1,3 +1,7 @@
+// This file is part of OnionBit - a Rust port of the Tribler daemon.
+// Copyright (C) 2026 Laurent Geynet <laurent.geynet@gmail.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! `onionbit-crypto` — primitives cryptographiques partagees.
 //!
 //! - [`hash`] : SHA-1/SHA-256 pour les info-hash BitTorrent et les `mid`

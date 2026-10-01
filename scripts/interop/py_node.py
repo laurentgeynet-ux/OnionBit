@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# This file is part of OnionBit - a Rust port of the Tribler daemon.
+# Copyright (C) 2026 Laurent Geynet <laurent.geynet@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 """Noeud d'interop pyipv8 (vrai DiscoveryCommunity Python) pour le jalon
 Rust<->pyipv8. Enregistre chaque datagramme brut (rx+tx) en hex dans un
 journal, envoie des introduction-request a une cible, puis verifie que

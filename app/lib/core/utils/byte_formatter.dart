@@ -1,3 +1,7 @@
+// This file is part of OnionBit - a Rust port of the Tribler daemon.
+// Copyright (C) 2026 Laurent Geynet <laurent.geynet@gmail.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 /// Formattage des octets/débits pour l'affichage (base 1024).
 abstract final class ByteFormatter {
   static const List<String> _units = ['o', 'Ko', 'Mo', 'Go', 'To'];

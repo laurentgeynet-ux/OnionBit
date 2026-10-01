@@ -1,3 +1,7 @@
+// This file is part of OnionBit - a Rust port of the Tribler daemon.
+// Copyright (C) 2026 Laurent Geynet <laurent.geynet@gmail.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Stockage DHT en memoire (equivalent de `dht/storage.py`) :
 //! `Storage` indexe des valeurs serialisees par cle de 20 octets, avec
 //! expiration (`max_age`) et versioning.

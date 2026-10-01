@@ -1,3 +1,7 @@
+// This file is part of OnionBit - a Rust port of the Tribler daemon.
+// Copyright (C) 2026 Laurent Geynet <laurent.geynet@gmail.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Migrations du schema SQLite.
 //!
 //! Chaque entree de [`MIGRATIONS`] est appliquée dans l'ordre ; le

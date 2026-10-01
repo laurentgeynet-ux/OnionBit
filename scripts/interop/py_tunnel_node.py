@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# This file is part of OnionBit - a Rust port of the Tribler daemon.
+# Copyright (C) 2026 Laurent Geynet <laurent.geynet@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 """Noeud d'interop tunnels : vrai TunnelCommunity pyipv8 (relais + exit
 IPv8) plus un echo UDP "compatible uTP" comme destination de sortie.
 

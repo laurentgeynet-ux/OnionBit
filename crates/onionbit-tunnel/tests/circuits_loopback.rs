@@ -1,3 +1,7 @@
+// This file is part of OnionBit - a Rust port of the Tribler daemon.
+// Copyright (C) 2026 Laurent Geynet <laurent.geynet@gmail.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Tests d'integration `TunnelCommunity` en loopback : construction
 //! de circuits 1 et 2 sauts sur de vrais sockets UDP, relais de
 //! cellules chiffrees ChaCha20-Poly1305, sortie UDP, destroy.

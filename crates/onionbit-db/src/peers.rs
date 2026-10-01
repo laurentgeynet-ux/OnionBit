@@ -1,3 +1,7 @@
+// This file is part of OnionBit - a Rust port of the Tribler daemon.
+// Copyright (C) 2026 Laurent Geynet <laurent.geynet@gmail.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Cache de pairs IPv8 verifies (`ipv8_peers`) — recharge dans
 //! `Network` au demarrage pour sauter le bootstrap DNS/marche
 //! aleatoire a froid. Extension Rust : pyipv8 ne persiste pas son

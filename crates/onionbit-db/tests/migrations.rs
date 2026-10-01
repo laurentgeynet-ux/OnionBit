@@ -1,3 +1,7 @@
+// This file is part of OnionBit - a Rust port of the Tribler daemon.
+// Copyright (C) 2026 Laurent Geynet <laurent.geynet@gmail.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Migrations de schema : une base creee a v1 (ou plus ancienne) est
 //! migraee vers `SCHEMA_VERSION` a l'ouverture, sans perte de donnees.
 

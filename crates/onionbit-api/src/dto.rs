@@ -1,3 +1,7 @@
+// This file is part of OnionBit - a Rust port of the Tribler daemon.
+// Copyright (C) 2026 Laurent Geynet <laurent.geynet@gmail.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! DTOs JSON de l'API REST — champs nommes comme les reponses Python
 //! de `downloads_endpoint.py` (cf. `docs/reference_tribler/
 //! api_rest_mapping.md` pour les ecarts).

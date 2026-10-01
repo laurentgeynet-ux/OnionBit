@@ -1,3 +1,7 @@
+// This file is part of OnionBit - a Rust port of the Tribler daemon.
+// Copyright (C) 2026 Laurent Geynet <laurent.geynet@gmail.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Paquet IPv8 signe (equivalent de `community.py::_ez_pack` /
 //! `lazy_community.py::_ez_unpack_auth`).
 //!

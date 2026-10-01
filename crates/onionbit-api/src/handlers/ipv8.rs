@@ -1,3 +1,7 @@
+// This file is part of OnionBit - a Rust port of the Tribler daemon.
+// Copyright (C) 2026 Laurent Geynet <laurent.geynet@gmail.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Handlers `/api/ipv8` — equivalent de `tribler.core.restapi.
 //! ipv8_endpoint` (pyipv8 `RootEndpoint` : `overlays`, `tunnel`,
 //! `network`, `isolation`, `noblockdht`, `overlays/statistics`).

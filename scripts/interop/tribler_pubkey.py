@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# This file is part of OnionBit - a Rust port of the Tribler daemon.
+# Copyright (C) 2026 Laurent Geynet <laurent.geynet@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 """Extrait la cle publique IPv8 (`key_to_bin()` hex) d'un fichier de
 cle privee pyipv8 (`LibNaCLSK:…`, ex. `ec_multichain.pem` de Tribler).
 

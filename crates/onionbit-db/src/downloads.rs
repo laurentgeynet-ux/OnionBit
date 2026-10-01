@@ -1,3 +1,7 @@
+// This file is part of OnionBit - a Rust port of the Tribler daemon.
+// Copyright (C) 2026 Laurent Geynet <laurent.geynet@gmail.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Acces a `downloads` : telechargements connus du daemon, pour
 //! restaurer la session au demarrage, et reglages par
 //! telechargement (equivalent du `DownloadConfig` checkpointe par

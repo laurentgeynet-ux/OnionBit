@@ -1,3 +1,7 @@
+// This file is part of OnionBit - a Rust port of the Tribler daemon.
+// Copyright (C) 2026 Laurent Geynet <laurent.geynet@gmail.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Anti-SSRF de `Session::add_download` : une URI `http(s)` ne doit
 //! resolver que vers des adresses autorisees par `ip_policy`.
 //!

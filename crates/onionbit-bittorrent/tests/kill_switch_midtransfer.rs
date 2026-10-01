@@ -1,3 +1,7 @@
+// This file is part of OnionBit - a Rust port of the Tribler daemon.
+// Copyright (C) 2026 Laurent Geynet <laurent.geynet@gmail.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Kill switch en plein transfert (residuel des etapes 13/16) : un
 //! telechargement TCP relaye par un proxy SOCKS5 est coupe quand le
 //! proxy meurt — aucune fuite directe, reprise seulement apres

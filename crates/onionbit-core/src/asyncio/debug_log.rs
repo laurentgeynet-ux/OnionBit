@@ -1,3 +1,7 @@
+// This file is part of OnionBit - a Rust port of the Tribler daemon.
+// Copyright (C) 2026 Laurent Geynet <laurent.geynet@gmail.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! `DequeLogHandler` Python (`asyncio_endpoint.py`) adapte a
 //! `tracing` : buffer borne de messages alimente par une couche
 //! [`DebugLogLayer`] gatee par `enable`, plus rechargement a chaud

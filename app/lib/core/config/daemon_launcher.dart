@@ -1,3 +1,7 @@
+// This file is part of OnionBit - a Rust port of the Tribler daemon.
+// Copyright (C) 2026 Laurent Geynet <laurent.geynet@gmail.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 /// Garantit qu'un daemon local répond avant la résolution de la
 /// connexion — décision V1 de `flutter_architecture.md` : « daemon
 /// enfant lancé par l'app », avec connexion directe si un daemon

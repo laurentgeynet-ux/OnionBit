@@ -1,3 +1,7 @@
+// This file is part of OnionBit - a Rust port of the Tribler daemon.
+// Copyright (C) 2026 Laurent Geynet <laurent.geynet@gmail.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Persistance des stores PEX des swarms caches (`tunnel_pex`) —
 //! extension Rust : pyipv8 garde `PexCommunity` en memoire ; on
 //! persiste les annonces propres (`intro_points_for`) et les points

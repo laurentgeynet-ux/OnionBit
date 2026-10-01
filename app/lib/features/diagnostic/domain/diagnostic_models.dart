@@ -1,3 +1,7 @@
+// This file is part of OnionBit - a Rust port of the Tribler daemon.
+// Copyright (C) 2026 Laurent Geynet <laurent.geynet@gmail.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 /// Modèles du panneau Diagnostic — miroirs de `CircuitInfo`,
 /// `RelayInfo`, `ExitInfo`, `SwarmInfo`, `TunnelPeerInfo`
 /// (`onionbit-tunnel`) et de `overlays` (`onionbit-ipv8`).

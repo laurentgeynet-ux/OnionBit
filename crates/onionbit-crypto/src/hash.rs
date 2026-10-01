@@ -1,3 +1,7 @@
+// This file is part of OnionBit - a Rust port of the Tribler daemon.
+// Copyright (C) 2026 Laurent Geynet <laurent.geynet@gmail.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Hachage BitTorrent : SHA-1 (v1, BEP 3) et SHA-256 (v2, BEP 52).
 
 use sha1::Digest as Sha1Digest;

@@ -1,3 +1,7 @@
+// This file is part of OnionBit - a Rust port of the Tribler daemon.
+// Copyright (C) 2026 Laurent Geynet <laurent.geynet@gmail.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Politique d'adresses IP — socle anti-SSRF et garde-fou SOCKS5.
 //!
 //! Toute destination IP atteignable a cause d'une entree controlee

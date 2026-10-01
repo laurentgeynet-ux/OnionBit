@@ -1,3 +1,7 @@
+// This file is part of OnionBit - a Rust port of the Tribler daemon.
+// Copyright (C) 2026 Laurent Geynet <laurent.geynet@gmail.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Structures de routage (port de `messaging/anonymization/tunnel.py`
 //! et `ipv8-rust-tunnels/src/routing/`) : `Hop`, `Circuit`,
 //! `RelayRoute`, `RendezvousPoint`, `IntroductionPoint`, `Swarm`.

@@ -1,3 +1,7 @@
+// This file is part of OnionBit - a Rust port of the Tribler daemon.
+// Copyright (C) 2026 Laurent Geynet <laurent.geynet@gmail.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Mutex d'instance unique : un seul `onionbit-daemon` par répertoire
 //! d'état (deux lancements d'un même `state_dir` = un seul systray et
 //! un seul bind API). Le nom du mutex incorpore un hash du chemin

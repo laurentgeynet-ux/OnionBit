@@ -1,3 +1,7 @@
+// This file is part of OnionBit - a Rust port of the Tribler daemon.
+// Copyright (C) 2026 Laurent Geynet <laurent.geynet@gmail.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Telechargement BitTorrent reel a travers un circuit e2e lie
 //! (hidden seeding) : deux moteurs rqbit uTP relies par les relais
 //! UDP de `onionbit-tunnel`. Tout est en loopback — aucun trafic

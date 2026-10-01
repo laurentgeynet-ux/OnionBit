@@ -1,3 +1,7 @@
+// This file is part of OnionBit - a Rust port of the Tribler daemon.
+// Copyright (C) 2026 Laurent Geynet <laurent.geynet@gmail.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Listener HTTPS de l'API de controle (`api/https_*` Python —
 //! `start_https_site` de `rest_manager.py`) : un second site sert le
 //! meme routeur axum en TLS, `https_port_running` est reecrit avec le

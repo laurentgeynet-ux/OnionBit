@@ -1,3 +1,7 @@
+// This file is part of OnionBit - a Rust port of the Tribler daemon.
+// Copyright (C) 2026 Laurent Geynet <laurent.geynet@gmail.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Encodeur bencode canonique (cles de dictionnaire triees
 //! lexicographiquement par `BTreeMap`, comme exige par BEP 3 pour
 //! l'integrite de l'info-hash).

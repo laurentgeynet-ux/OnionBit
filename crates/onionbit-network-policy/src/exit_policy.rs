@@ -1,3 +1,7 @@
+// This file is part of OnionBit - a Rust port of the Tribler daemon.
+// Copyright (C) 2026 Laurent Geynet <laurent.geynet@gmail.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Politique des noeuds de sortie — port de `DataChecker` et
 //! `TunnelExitSocket.is_allowed` (pyipv8 `messaging/anonymization/
 //! exit_socket.py`).

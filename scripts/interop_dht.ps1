@@ -1,3 +1,7 @@
+# This file is part of OnionBit - a Rust port of the Tribler daemon.
+# Copyright (C) 2026 Laurent Geynet <laurent.geynet@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 # interop_dht.ps1 - echange reproductible Rust <-> DHTCommunity pyipv8.
 #
 # Jalon de l'etape 10 : find_values/store_value dans les DEUX sens

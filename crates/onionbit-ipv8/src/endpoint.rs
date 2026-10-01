@@ -1,3 +1,7 @@
+// This file is part of OnionBit - a Rust port of the Tribler daemon.
+// Copyright (C) 2026 Laurent Geynet <laurent.geynet@gmail.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Endpoint UDP (equivalent de
 //! `messaging/interfaces/udp/endpoint.py`) : socket UDP liee,
 //! dispatch des datagrammes vers les communities par prefixe de 22

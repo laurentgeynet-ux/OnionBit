@@ -1,3 +1,7 @@
+// This file is part of OnionBit - a Rust port of the Tribler daemon.
+// Copyright (C) 2026 Laurent Geynet <laurent.geynet@gmail.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Modele d'un fichier `.torrent` (BEP 3, support partiel BEP 52 v2).
 //!
 //! L'info-hash v1 est le SHA-1 de la **serialisation bencode brute** du

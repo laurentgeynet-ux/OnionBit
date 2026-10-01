@@ -1,3 +1,7 @@
+// This file is part of OnionBit - a Rust port of the Tribler daemon.
+// Copyright (C) 2026 Laurent Geynet <laurent.geynet@gmail.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Integration de `onionbit-network-policy` dans le moteur :
 //! - `socks5_proxy` non loopback refuse au demarrage (proxy guard) ;
 //! - kill switch : sonde du proxy, `add`/`resume` refuses tant qu'il

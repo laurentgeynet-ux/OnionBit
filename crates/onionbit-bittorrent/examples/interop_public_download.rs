@@ -1,3 +1,7 @@
+// This file is part of OnionBit - a Rust port of the Tribler daemon.
+// Copyright (C) 2026 Laurent Geynet <laurent.geynet@gmail.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Banc DHT publique : telecharge un VRAI torrent a travers le reseau
 //! Tribler reel — selection libre des sauts (aucun epinglage, sortie
 //! non imposee), DHT mainline routee dans le tunnel.

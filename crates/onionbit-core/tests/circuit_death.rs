@@ -1,3 +1,7 @@
+// This file is part of OnionBit - a Rust port of the Tribler daemon.
+// Copyright (C) 2026 Laurent Geynet <laurent.geynet@gmail.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Rupture de circuit en plein trafic (etapes 13/16 — scenario
 //! distinct du test `kill_switch_midtransfer` de `onionbit-bittorrent`
 //! qui tue le **proxy**).

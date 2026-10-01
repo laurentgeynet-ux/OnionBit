@@ -1,3 +1,7 @@
+# This file is part of OnionBit - a Rust port of the Tribler daemon.
+# Copyright (C) 2026 Laurent Geynet <laurent.geynet@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 # interop_discovery.ps1 - echange reproductible Rust <-> DiscoveryCommunity pyipv8.
 #
 # Jalon de l'etape 11 : introductions new-style (234 -> 233) et

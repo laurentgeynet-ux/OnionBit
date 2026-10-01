@@ -1,3 +1,7 @@
+# This file is part of OnionBit - a Rust port of the Tribler daemon.
+# Copyright (C) 2026 Laurent Geynet <laurent.geynet@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 # api_parity_run.ps1 - lance Tribler.exe -s ET onionbit-daemon en etats
 # isoles, attend que les deux API REST soient en ligne, puis execute le
 # banc `api_parity.ps1`.

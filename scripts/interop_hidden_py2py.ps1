@@ -1,3 +1,7 @@
+# This file is part of OnionBit - a Rust port of the Tribler daemon.
+# Copyright (C) 2026 Laurent Geynet <laurent.geynet@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 #requires -Version 5.1
 # Controle interop hidden-service : Tribler seeder anonyme -> Tribler
 # downloader anonyme, tous deux reels (8.4.3), etats isoles.

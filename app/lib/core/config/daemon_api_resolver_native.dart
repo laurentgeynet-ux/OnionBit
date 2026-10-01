@@ -1,3 +1,7 @@
+// This file is part of OnionBit - a Rust port of the Tribler daemon.
+// Copyright (C) 2026 Laurent Geynet <laurent.geynet@gmail.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 /// Résolution desktop (`dart:io`) de la connexion au daemon local.
 ///
 /// Ordre de résolution (miroir de `session_resolver_native.dart`

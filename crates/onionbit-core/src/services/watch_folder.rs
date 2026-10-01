@@ -1,3 +1,7 @@
+// This file is part of OnionBit - a Rust port of the Tribler daemon.
+// Copyright (C) 2026 Laurent Geynet <laurent.geynet@gmail.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! `watch_folder` — equivalent de `tribler/core/watch_folder/
 //! manager.py` : surveille un repertoire et importe les `.torrent`
 //! / `.magnet` nouveaux comme telechargements.

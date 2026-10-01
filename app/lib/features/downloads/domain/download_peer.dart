@@ -1,3 +1,7 @@
+// This file is part of OnionBit - a Rust port of the Tribler daemon.
+// Copyright (C) 2026 Laurent Geynet <laurent.geynet@gmail.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 /// Pair BitTorrent connecté à un téléchargement — miroir du dict
 /// `peers[]` de `GET /api/downloads?get_peers=1` (format Python).
 class DownloadPeer {

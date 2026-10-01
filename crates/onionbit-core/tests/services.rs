@@ -1,3 +1,7 @@
+// This file is part of OnionBit - a Rust port of the Tribler daemon.
+// Copyright (C) 2026 Laurent Geynet <laurent.geynet@gmail.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Tests des services secondaires (etape 14) : watch folder,
 //! torrent checker (BEP-15 UDP loopback), RSS (serveur HTTP
 //! loopback). Aucun trafic sortant.

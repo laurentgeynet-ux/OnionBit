@@ -1,3 +1,7 @@
+// This file is part of OnionBit - a Rust port of the Tribler daemon.
+// Copyright (C) 2026 Laurent Geynet <laurent.geynet@gmail.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Interop contre le client Tribler installe (8.4.x) : circuit a 2
 //! sauts `Rust A -> Tribler (relais) -> Rust B (sortie)` puis echo
 //! UDP a travers le tunnel, plus l'echange de `peer_flags` par

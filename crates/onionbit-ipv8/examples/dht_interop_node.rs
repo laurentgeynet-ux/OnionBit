@@ -1,3 +1,7 @@
+// This file is part of OnionBit - a Rust port of the Tribler daemon.
+// Copyright (C) 2026 Laurent Geynet <laurent.geynet@gmail.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Noeud d'interop DHT Rust pour l'etape 10 : prouve
 //! `find`/`store`/`find` aller-retour avec un vrai `DHTCommunity`
 //! pyipv8, dont acceptation + refus des tokens apres rotation des

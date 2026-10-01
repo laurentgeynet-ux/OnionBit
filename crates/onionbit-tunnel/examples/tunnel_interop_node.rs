@@ -1,3 +1,7 @@
+// This file is part of OnionBit - a Rust port of the Tribler daemon.
+// Copyright (C) 2026 Laurent Geynet <laurent.geynet@gmail.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Noeud d'interop tunnels : construit un circuit a 1 saut vers un
 //! `TunnelCommunity` pyipv8 (relais+exit) puis envoie un datagramme
 //! "uTP-compatible" vers l'echo UDP cote Python a travers la sortie.

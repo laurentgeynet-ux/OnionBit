@@ -1,3 +1,7 @@
+// This file is part of OnionBit - a Rust port of the Tribler daemon.
+// Copyright (C) 2026 Laurent Geynet <laurent.geynet@gmail.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! `DHTCommunity` + `DHTDiscoveryCommunity` pyipv8 (equivalent de
 //! `dht/community.py` et `dht/discovery.py`), fusionnees en une seule
 //! struct : les 10 messages partagent le meme `community_id`

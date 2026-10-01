@@ -1,3 +1,7 @@
+// This file is part of OnionBit - a Rust port of the Tribler daemon.
+// Copyright (C) 2026 Laurent Geynet <laurent.geynet@gmail.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Instantanes REST `/api/ipv8/overlays` (`OverlaySchema` pyipv8) :
 //! description d'une community active et nommage des `msg_id`
 //! (`decode_map` → `"id:on_handler"`).

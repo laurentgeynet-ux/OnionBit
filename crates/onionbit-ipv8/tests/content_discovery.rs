@@ -1,3 +1,7 @@
+// This file is part of OnionBit - a Rust port of the Tribler daemon.
+// Copyright (C) 2026 Laurent Geynet <laurent.geynet@gmail.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Test loopback de `ContentDiscoveryCommunity` (etape 14) :
 //! echange de santes (msg 3/4), version (101/102) et select distant
 //! (201/202) entre deux noeuds — 100 % loopback.

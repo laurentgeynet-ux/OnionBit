@@ -28,6 +28,10 @@ cargo test -p <crate> --all-features   # ou --workspace
 
 - Code et docs en **français** ; `thiserror` ; pas de `unwrap()` hors
   tests ; `tracing` ; Tokio ; zéro warning.
+- **En-tête GPL sur chaque fichier source** (RS/Dart/PS1/Py/CMake) :
+  `This file is part of OnionBit...` + `Copyright (C) 2026 Laurent Geynet`
+  + `SPDX-License-Identifier: GPL-3.0-or-later`. `vendor/` exclu
+  (librqbit reste Apache-2.0).
 - **Aucune valeur en dur** : seuils/timeouts → structs de config.
 - **Fidélité protocole** : tout comportement filaire IPv8/BitTorrent/REST
   est vérifié contre les sources Tribler (checkout local via

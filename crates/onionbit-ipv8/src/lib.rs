@@ -1,3 +1,7 @@
+// This file is part of OnionBit - a Rust port of the Tribler daemon.
+// Copyright (C) 2026 Laurent Geynet <laurent.geynet@gmail.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! `onionbit-ipv8` — moteur overlay IPv8.
 //!
 //! Portage du coeur du protocole IPv8 (`pyipv8`) : c'est le composant le
