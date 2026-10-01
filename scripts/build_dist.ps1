@@ -83,8 +83,11 @@ try {
     # -- 4) Nettoyage des lanceurs historiques ---------------------------
     # demarrer/arreter n'ont plus lieu d'etre (lancement par l'UI, arret
     # via le systray ou PUT /api/shutdown) — retirer les restes des
-    # builds precedents.
-    foreach ($f in @("demarrer.cmd", "demarrer.ps1", "arreter.cmd", "arreter.ps1")) {
+    # builds precedents, dont les binaires de l'ere tribler-* (avant le
+    # renommage produit en onionbit-*).
+    foreach ($f in @("demarrer.cmd", "demarrer.ps1", "arreter.cmd", "arreter.ps1",
+                     "tribler-daemon.exe", "tribler-cli.exe", "tribler_ui.exe",
+                     "tribler_ui.pdb")) {
         Remove-Item (Join-Path $dist $f) -Force -ErrorAction SilentlyContinue
     }
 
