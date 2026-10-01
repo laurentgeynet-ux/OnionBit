@@ -971,7 +971,8 @@ impl TunnelCommunity {
             .peers_requests
             .remove(&p.identifier);
         if let Some(tx) = tx {
-            let ips = p
+            let n_total = p.peers.len();
+            let ips: Vec<IntroductionPoint> = p
                 .peers
                 .into_iter()
                 .filter(|i| !i.address.is_unspecified())
@@ -983,6 +984,13 @@ impl TunnelCommunity {
                     last_seen_secs: crate::pex::epoch_secs(),
                 })
                 .collect();
+            tracing::info!(
+                identifier = p.identifier,
+                n_total,
+                n_usable = ips.len(),
+                info_hash = hex::encode(p.info_hash),
+                "peers-response recu (intro points)"
+            );
             let _ = tx.send(ips);
         }
     }

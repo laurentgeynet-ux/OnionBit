@@ -3,6 +3,25 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Interop hidden-service sens B vert : downloader Rust télécharge depuis Tribler 8.4.3
+
+- `scripts/interop_hidden_tribler_seed.ps1` (sens B : T = seeder
+  Tribler reel avec contenu pre-pose -> SEEDING -> IP_SEEDER -> DHT ;
+  D = downloader Rust lance SEULEMENT apres le gate « valeur relue
+  depuis A1 ») passe de bout en bout : `dht_lookup du swarm` trouve
+  l'intro point de T, `created-e2e valide` (parse `RendezvousInfo`
+  NestedPayload de pyipv8), `link-e2e`/`linked-e2e`, `add_peer` sur
+  l'adresse fake `circuit_id_to_ip`, uTP, pieces, `dl=6291456`,
+  progress=100 %, **SHA-256 identique**. T cote : `all_time_upload=
+  6291456`. Run : `target/interop-hidden-seed-20261001-052937/`
+  (~7 s entre create-e2e et fin du transfert).
+- Exerce pour la premiere fois en interop : role intro-point de nos
+  noeuds face a un seeder pyipv8 (`establish-intro` recu de Tribler,
+  `dht_announce` par l'intro point, forwarding over-socket du
+  `create-e2e` vers le circuit d'intro), parse cote downloader de
+  `created-e2e`/`RendezvousInfo` produits par pyipv8.
+- Log `peers-response recu` ajoute (frontiere observable du banc).
+
 ## Interop hidden-service sens A vert : Tribler 8.4.3 télécharge depuis le seeder Rust
 
 - `scripts/interop_hidden_tribler_download.ps1` (mesh loopback A1
