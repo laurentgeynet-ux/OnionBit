@@ -3,6 +3,23 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Resilience interop : `anon_hops=3` vert dans les deux sens
+
+- Sens A : `target/interop-hidden-dl-20261001-065729/` (10 IP_SEEDER
+  READY, transfert complet, SHA-256 `a08dc390…` identique). Sens B :
+  `target/interop-hidden-seed-20261001-070207/` (dl=6291456, 100 %,
+  SHA-256 `73dcd910…` identique).
+- **Correction topologique des bancs** : a `hops>=3` les circuits
+  `IP_SEEDER`/`RP_DOWNLOADER` font `hops+1` sauts (`swarm.hops + 1`,
+  egalite pyipv8) — il faut `hops` relais libres distincts puisque le
+  dernier saut impose (`required_exit`) est exclu des candidats. Les
+  deux scripts ajoutent A4/A5 quand `-Hops -ge 3`. Le premier run
+  hops=3 echouait en `no candidates to extend` faute de relais
+  suffisants — limitation de topologie du banc, pas du protocole.
+- Fix PS 5.1 : `(if ...)` n'est pas une expression valide —
+  `$tulDelta` reecrit en deux lignes (le crash survenait apres les
+  verdicts, sans impact sur la preuve).
+
 ## Resilience interop : `anon_hops=2` vert dans les deux sens + filtre SYN WAN
 
 - Sens A `-Hops 2` : run `target/interop-hidden-dl-20261001-062029/`,

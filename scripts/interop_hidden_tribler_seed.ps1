@@ -59,6 +59,16 @@ $P_D  = @{ Api = 8095; Ipv8 = 17785; Dir = Join-Path $out 'downloader'; Name = '
 $P_A  = @{ Api = 8097; Ipv8 = 17787; Dir = Join-Path $out 'anchor';    Name = 'A' }
 $P_A2 = @{ Api = 8098; Ipv8 = 17788; Dir = Join-Path $out 'relay2';    Name = 'A2' }
 $P_A3 = @{ Api = 8099; Ipv8 = 17789; Dir = Join-Path $out 'relay3';    Name = 'A3' }
+# Relais supplementaires a hops>=3 : IP_SEEDER / RP_DOWNLOADER font
+# hops+1 sauts — il faut `hops` relais libres distincts en plus du
+# dernier saut impose (cf. interop_hidden_tribler_download.ps1).
+$relays = @($P_A2, $P_A3)
+if ($Hops -ge 3) {
+    $relays += @(
+        @{ Api = 8100; Ipv8 = 17790; Dir = Join-Path $out 'relay4'; Name = 'A4' },
+        @{ Api = 8101; Ipv8 = 17791; Dir = Join-Path $out 'relay5'; Name = 'A5' }
+    )
+}
 $procs = @{}
 $verdicts = New-Object System.Collections.Generic.List[string]
 
@@ -163,7 +173,7 @@ if (-not (Test-Path $daemon)) { throw 'tribler-daemon.exe absent - cargo build -
 if (-not (Test-Path $mk)) { throw 'mk_torrent.exe absent - cargo build -p tribler-bittorrent --example mk_torrent' }
 if (-not (Test-Path $triblerExe)) { throw "Tribler.exe absent : $triblerExe" }
 $content = Join-Path $out 'content'
-foreach ($p in @($P_D, $P_A, $P_A2, $P_A3)) {
+foreach ($p in (@($P_D, $P_A) + $relays)) {
     if (Test-Path $p.Dir) { Remove-Item -Recurse -Force $p.Dir }
 }
 # tseed = repertoire "seeder" de Tribler : contient le fichier complet
@@ -258,7 +268,7 @@ $deadline = (Get-Date).AddMinutes($TimeoutMin)
 try {
     # ---------- Phase 1 : maillage A1(EXIT_BT)/A2/A3 ----------
     Log '=== Phase 1 : ancre A1 (EXIT_BT) + relais A2/A3 ==='
-    foreach ($p in @($P_A, $P_A2, $P_A3, $P_D)) {
+    foreach ($p in (@($P_A, $P_D) + $relays)) {
         New-Item -ItemType Directory -Force -Path $p.Dir | Out-Null
     }
     [System.IO.File]::WriteAllText((Join-Path $P_A.Dir 'configuration.json'),
@@ -270,7 +280,7 @@ try {
     Start-Daemon $P_A @()
     $kA = Wait-ApiKey $P_A.Dir; Wait-ApiUp $P_A.Api $kA; Assert-ConfigOk $P_A
 
-    foreach ($p in @($P_A2, $P_A3)) {
+    foreach ($p in $relays) {
         [System.IO.File]::WriteAllText((Join-Path $p.Dir 'configuration.json'),
             (@{ ipv8 = @{ bootstrap = @{ override = @("127.0.0.1:$($P_A.Ipv8)") };
                           interfaces = @( @{ interface = 'UDPIPv4'; ip = '127.0.0.1'; port = $p.Ipv8 } );
@@ -309,9 +319,10 @@ try {
         outdir     = $out
         nodes      = @(
             @{ name = 'T';  api = $tApiPort;   ipv8 = $tIpv8;       dir = $tstate;    pid = $tProc.Id;          role = 'seeder anonyme Tribler 8.4.3 reel' },
-            @{ name = 'A1'; api = $P_A.Api;    ipv8 = $P_A.Ipv8;    dir = $P_A.Dir;   pid = $procs['A'].Id;     role = 'EXIT_BT + intro point probable' },
-            @{ name = 'A2'; api = $P_A2.Api;   ipv8 = $P_A2.Ipv8;   dir = $P_A2.Dir;  pid = $procs['A2'].Id;    role = 'relais' },
-            @{ name = 'A3'; api = $P_A3.Api;   ipv8 = $P_A3.Ipv8;   dir = $P_A3.Dir;  pid = $procs['A3'].Id;    role = 'relais' },
+            @{ name = 'A1'; api = $P_A.Api;    ipv8 = $P_A.Ipv8;    dir = $P_A.Dir;   pid = $procs['A'].Id;     role = 'EXIT_BT + intro point probable' }
+        ) + @($relays | ForEach-Object {
+            @{ name = $_.Name; api = $_.Api; ipv8 = $_.Ipv8; dir = $_.Dir; pid = $procs[$_.Name].Id; role = 'relais' }
+        }) + @(
             @{ name = 'D';  api = $P_D.Api;    ipv8 = $P_D.Ipv8;    dir = $P_D.Dir;   pid = $null;              role = 'downloader anonyme Rust (demarre apres gate DHT)' }
         )
     }
@@ -503,7 +514,7 @@ try {
     }
 }
 finally {
-    foreach ($p in @($P_D, $P_A, $P_A2, $P_A3)) {
+    foreach ($p in (@($P_D, $P_A) + $relays)) {
         try {
             $k = ApiKey $p.Dir
             if ($k) {

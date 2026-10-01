@@ -69,6 +69,19 @@ $P_S  = @{ Api = 8095; Ipv8 = 17785; Dir = Join-Path $out 'seed';    Name = 'S' 
 $P_A  = @{ Api = 8097; Ipv8 = 17787; Dir = Join-Path $out 'anchor';  Name = 'A' }
 $P_A2 = @{ Api = 8098; Ipv8 = 17788; Dir = Join-Path $out 'relay2';  Name = 'A2' }
 $P_A3 = @{ Api = 8099; Ipv8 = 17789; Dir = Join-Path $out 'relay3';  Name = 'A3' }
+# Relais supplementaires a hops>=3 : les circuits IP_SEEDER et
+# RP_DOWNLOADER font hops+1 sauts (`swarm.hops + 1` cote Rust,
+# `download_hops + 1` cote pyipv8) — il faut donc `hops` relais
+# libres distincts, le dernier saut impose (required_exit) etant
+# exclu des candidats. Avec 2 relais seulement, hops=3 ne peut
+# jamais s'etendre ("no candidates to extend").
+$relays = @($P_A2, $P_A3)
+if ($Hops -ge 3) {
+    $relays += @(
+        @{ Api = 8100; Ipv8 = 17790; Dir = Join-Path $out 'relay4'; Name = 'A4' },
+        @{ Api = 8101; Ipv8 = 17791; Dir = Join-Path $out 'relay5'; Name = 'A5' }
+    )
+}
 $procs = @{}
 $verdicts = New-Object System.Collections.Generic.List[string]
 
@@ -177,7 +190,7 @@ if (-not (Test-Path $daemon)) { throw 'tribler-daemon.exe absent - cargo build -
 if (-not (Test-Path $mk)) { throw 'mk_torrent.exe absent - cargo build -p tribler-bittorrent --example mk_torrent' }
 if (-not (Test-Path $triblerExe)) { throw "Tribler.exe absent : $triblerExe" }
 $content = Join-Path $out 'content'
-foreach ($p in @($P_S, $P_A, $P_A2, $P_A3)) {
+foreach ($p in (@($P_S, $P_A) + $relays)) {
     if (Test-Path $p.Dir) { Remove-Item -Recurse -Force $p.Dir }
 }
 foreach ($d in @($content, $tstate, (Join-Path $out 'tribler-dl'))) {
@@ -300,7 +313,7 @@ try {
     # -> tous les circuits DATA de Tribler sortiront chez A1, qui est
     # aussi le point d'introduction epingle de S : le peers-request
     # y est servi depuis `intro_point_for` (chemin local, pas de DHT).
-    foreach ($p in @($P_A, $P_A2, $P_A3, $P_S)) {
+    foreach ($p in (@($P_A, $P_S) + $relays)) {
         New-Item -ItemType Directory -Force -Path $p.Dir | Out-Null
     }
     # `ipv8.bootstrap.override` REMPLACE les bootstrappeurs publics
@@ -327,9 +340,9 @@ try {
     Start-Daemon $P_A @()
     $kA = Wait-ApiKey $P_A.Dir; Wait-ApiUp $P_A.Api $kA; Assert-ConfigOk $P_A
 
-    # A2/A3 : relais purs (flag RELAY de base) pour les circuits 2-hop
+    # Relais purs (flag RELAY de base) pour les circuits multi-hop
     # (RP_DOWNLOADER / IP_SEEDER = hops+1 sauts cote pyipv8).
-    foreach ($p in @($P_A2, $P_A3)) {
+    foreach ($p in $relays) {
         [System.IO.File]::WriteAllText((Join-Path $p.Dir 'configuration.json'),
             (@{ ipv8 = @{ bootstrap = @{ override = @("127.0.0.1:$($P_A.Ipv8)") };
                           interfaces = @( @{ interface = 'UDPIPv4'; ip = '127.0.0.1'; port = $p.Ipv8 } );
@@ -365,10 +378,10 @@ try {
         outdir     = $out
         nodes      = @(
             @{ name = 'S';  api = $P_S.Api;  ipv8 = $P_S.Ipv8;  dir = $P_S.Dir;  pid = $procs['S'].Id;  role = 'seeder anonyme, intro point epingle -> A1' },
-            @{ name = 'A1'; api = $P_A.Api;  ipv8 = $P_A.Ipv8;  dir = $P_A.Dir;  pid = $procs['A'].Id;  role = 'EXIT_BT + intro point' },
-            @{ name = 'A2'; api = $P_A2.Api; ipv8 = $P_A2.Ipv8; dir = $P_A2.Dir; pid = $procs['A2'].Id; role = 'relais' },
-            @{ name = 'A3'; api = $P_A3.Api; ipv8 = $P_A3.Ipv8; dir = $P_A3.Dir; pid = $procs['A3'].Id; role = 'relais' }
-        )
+            @{ name = 'A1'; api = $P_A.Api;  ipv8 = $P_A.Ipv8;  dir = $P_A.Dir;  pid = $procs['A'].Id;  role = 'EXIT_BT + intro point' }
+        ) + @($relays | ForEach-Object {
+            @{ name = $_.Name; api = $_.Api; ipv8 = $_.Ipv8; dir = $_.Dir; pid = $procs[$_.Name].Id; role = 'relais' }
+        })
     }
     $manifest | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $out 'manifest.json') -Encoding UTF8
     Log "manifeste ecrit : $(Join-Path $out 'manifest.json')"
@@ -570,7 +583,7 @@ try {
     }
 }
 finally {
-    foreach ($p in @($P_S, $P_A, $P_A2, $P_A3)) {
+    foreach ($p in (@($P_S, $P_A) + $relays)) {
         try {
             $k = ApiKey $p.Dir
             if ($k) {
