@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-155 -155 822 822" width="512" height="512">
+  <!-- Adaptive icon foreground : le glyphe icon.svg reduit a ~62% pour
+       respecter la zone sure des adaptive icons Android (108dp, cercle 66dp). -->
+  <defs>
+    <linearGradient id="bulb" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#9B59D0"/>
+      <stop offset="1" stop-color="#6C2EA6"/>
+    </linearGradient>
+    <linearGradient id="arrow" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#4FD8E0"/>
+      <stop offset="1" stop-color="#1FA8B8"/>
+    </linearGradient>
+  </defs>
+
+  <ellipse cx="256" cy="300" rx="196" ry="150" fill="none"
+           stroke="#7D4698" stroke-width="8" opacity="0.35" stroke-dasharray="4 26" stroke-linecap="round"/>
+  <circle cx="82"  cy="238" r="14" fill="#7D4698"/>
+  <circle cx="430" cy="238" r="14" fill="#7D4698"/>
+  <circle cx="130" cy="400" r="14" fill="#7D4698"/>
+  <circle cx="382" cy="400" r="14" fill="#7D4698"/>
+  <circle cx="256" cy="452" r="14" fill="#7D4698"/>
+
+  <path d="M244 118 C240 86 226 62 206 48" fill="none" stroke="#7D4698" stroke-width="16" stroke-linecap="round"/>
+  <path d="M268 118 C272 84 288 58 310 44" fill="none" stroke="#9B59D0" stroke-width="16" stroke-linecap="round"/>
+
+  <path d="M256 118
+           C170 118 104 190 104 288
+           C104 386 172 462 256 462
+           C340 462 408 386 408 288
+           C408 190 342 118 256 118 Z"
+        fill="url(#bulb)"/>
+
+  <path d="M196 138 C164 190 152 250 158 310 C164 370 190 420 216 446"
+        fill="none" stroke="#C39BD8" stroke-width="10" stroke-linecap="round" opacity="0.85"/>
+  <path d="M316 138 C348 190 360 250 354 310 C348 370 322 420 296 446"
+        fill="none" stroke="#C39BD8" stroke-width="10" stroke-linecap="round" opacity="0.85"/>
+
+  <path d="M232 210 h48 v96 h34 l-58 74 -58 -74 h34 Z" fill="url(#arrow)"/>
+</svg>

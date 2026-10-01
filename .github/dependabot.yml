@@ -1,0 +1,25 @@
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    # Ne jamais proposer de version publiee il y a moins de 7 jours
+    # (regle du projet : supply-chain, cf. AGENTS.md / CONTRIBUTING.md).
+    cooldown:
+      default-days: 7
+
+  - package-ecosystem: pub
+    directory: /app
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7

@@ -1,0 +1,39 @@
+[package]
+name = "onionbit-core"
+description = "Domaine et orchestration : Session (cycle de vie), Notifier (bus d'evenements), ports vers les crates d'infrastructure."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+onionbit-bittorrent = { path = "../onionbit-bittorrent" }
+onionbit-db = { path = "../onionbit-db" }
+onionbit-format = { path = "../onionbit-format" }
+onionbit-crypto = { path = "../onionbit-crypto" }
+onionbit-network-policy = { path = "../onionbit-network-policy" }
+onionbit-ipv8 = { path = "../onionbit-ipv8" }
+onionbit-tunnel = { path = "../onionbit-tunnel" }
+rusqlite.workspace = true
+lz4_flex.workspace = true
+url.workspace = true
+reqwest.workspace = true
+fs2.workspace = true
+bytes.workspace = true
+rand.workspace = true
+tokio.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+# Couche `DebugLogLayer` (`/api/ipv8/asyncio/debug`) — subscriber.
+tracing-subscriber.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+hex.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+onionbit-test-support = { path = "../onionbit-test-support" }
+onionbit-crypto = { path = "../onionbit-crypto" }
+onionbit-ipv8 = { path = "../onionbit-ipv8" }
+onionbit-tunnel = { path = "../onionbit-tunnel" }
+

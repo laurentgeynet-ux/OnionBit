@@ -1,0 +1,114 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/onionbit-format",
+    "crates/onionbit-crypto",
+    "crates/onionbit-bittorrent",
+    "crates/onionbit-ipv8",
+    "crates/onionbit-tunnel",
+    "crates/onionbit-core",
+    "crates/onionbit-db",
+    "crates/onionbit-network-policy",
+    "crates/onionbit-api",
+    "crates/onionbit-cli",
+    "crates/onionbit-daemon",
+    "crates/onionbit-test-support",
+]
+# Les crates vendored (`[patch.crates-io]`) ne sont pas des membres du
+# workspace : l'exclure permet de lancer `cargo test` dans vendor/*.
+exclude = [
+    "vendor/librqbit",
+    "vendor/librqbit-dht",
+    "vendor/librqbit-dualstack-sockets",
+    "vendor/librqbit-tracker-comms",
+    "vendor/librqbit-utp",
+]
+
+[workspace.package]
+version = "0.3.1-alpha"
+edition = "2021"
+license = "GPL-3.0-or-later"
+authors = ["Laurent Geynet (Loulach) <laurent.geynet@gmail.com>"]
+repository = "https://github.com/laurentgeynet-ux/OnionBit"
+rust-version = "1.80"
+
+# NOTE: cette table de dependances partagees est preparee a l'avance (cf.
+# docs/architecture/architecture.md) mais la plupart ne sont pas encore
+# consommees par les crates au stade "scaffold" (etape 0). Chaque phase de
+# docs/plans/roadmap.md active progressivement les dependances dont elle a
+# besoin dans le Cargo.toml du crate concerne.
+[workspace.dependencies]
+tokio = { version = "1", features = ["full"] }
+axum = { version = "0.8", features = ["ws"] }
+tower-http = { version = "0.6", features = ["fs", "cors"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json", "local-time"] }
+tracing-appender = "0.2"
+clap = { version = "4", features = ["derive"] }
+rusqlite = { version = "0.32", features = ["bundled", "functions"] }
+rand = "0.8"
+sha1 = "0.10"
+sha2 = "0.10"
+ed25519-dalek = "2"
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+chacha20poly1305 = "0.10"
+hkdf = "0.12"
+hmac = "0.12"
+subtle = "2"
+hex = "0.4"
+uuid = { version = "1", features = ["v4", "serde"] }
+url = "2"
+bytes = "1"
+futures-util = "0.3"
+reqwest = { version = "0.13", features = ["json"] }
+tokio-tungstenite = "0.24"
+tempfile = "3"
+proptest = "1"
+lz4_flex = "0.11"
+fs2 = "0.4"
+base64 = "0.22"
+
+# API HTTPS (onionbit-daemon) : listener TLS de l'API de controle
+# (`api/https_*` Python) — axum-server pour le serveur rustls,
+# rustls-pemfile pour parser le PEM `https_certfile` (cert + cle dans
+# le meme fichier, comme `load_cert_chain`), rcgen pour le certificat
+# auto-signe genere quand le fichier est absent.
+axum-server = { version = "0.8", features = ["tls-rustls"] }
+rustls-pemfile = "2"
+rcgen = "0.13"
+
+# Bureau Windows (onionbit-daemon) : icone systray, cle Run d'autostart,
+# console/icone executable. Version epinglee exacte pour tray-icon
+# (0.25.1, 2026-09-16) : eviter de resoudre vers une version fraiche.
+tray-icon = "=0.25.1"
+winreg = "0.55"
+windows-sys = "0.61"
+embed-resource = "3"
+
+# Moteur BitTorrent reutilise (voir ADR-0001) : evite de reecrire bencode,
+# protocole peer-wire, DHT BEP5 et tracker HTTP/UDP qui existent deja en
+# Rust pur et sont actifs/matures.
+librqbit = { version = "9", features = ["storage_examples"] }
+librqbit-core = "9"
+librqbit-bencode = "9"
+librqbit-utp = "0.7"
+
+# Copie vendored + patchee de librqbit 9.0.1 : les tunnels anonymes
+# Tribler n'ont pas de relais TCP generique — le trafic pair anonyme doit
+# passer en uTP/DHT/trackers-UDP a travers les cellules `data` du tunnel
+# (cf. `ipv8-rust-tunnels` de reference). Les patches ajoutent
+# l'injection de sockets UDP « tunnel » (uTP connecteur, DHT, tracker
+# UDP) sans changer le comportement par defaut.
+[patch.crates-io]
+librqbit = { path = "vendor/librqbit" }
+librqbit-dht = { path = "vendor/librqbit-dht" }
+librqbit-tracker-comms = { path = "vendor/librqbit-tracker-comms" }
+librqbit-dualstack-sockets = { path = "vendor/librqbit-dualstack-sockets" }
+librqbit-utp = { path = "vendor/librqbit-utp" }
+
+[profile.release]
+opt-level = 3
+lto = "thin"

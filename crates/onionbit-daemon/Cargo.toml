@@ -1,0 +1,52 @@
+[package]
+name = "onionbit-daemon"
+description = "Binaire principal : assemble onionbit-core, onionbit-bittorrent, onionbit-ipv8, onionbit-tunnel, onionbit-db et onionbit-api ; gere la configuration et le cycle de vie du processus."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "onionbit-daemon"
+path = "src/main.rs"
+
+[dependencies]
+onionbit-api = { path = "../onionbit-api" }
+onionbit-core = { path = "../onionbit-core" }
+onionbit-bittorrent = { path = "../onionbit-bittorrent" }
+clap.workspace = true
+axum.workspace = true
+axum-server.workspace = true
+rustls-pemfile.workspace = true
+rcgen.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+tracing-appender.workspace = true
+
+# Bureau Windows : icone de notification (tray), cle Run d'autostart,
+# rattachement de la console parente (--console), mutex d'instance
+# unique et pompe de messages Win32 du thread tray.
+[target.'cfg(windows)'.dependencies]
+tray-icon.workspace = true
+winreg.workspace = true
+windows-sys = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_System_Console",
+    "Win32_System_Threading",
+    "Win32_Storage_FileSystem",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+# Icône onionbit.ico embarquée dans onionbit-daemon.exe (resources.rc) —
+# sert aussi d'icône de fichier pour l'exe dans l'explorateur.
+[target.'cfg(windows)'.build-dependencies]
+embed-resource.workspace = true
+
+[dev-dependencies]
+reqwest = { workspace = true, features = ["rustls"] }
+serde_json.workspace = true
+tempfile.workspace = true
+onionbit-test-support = { path = "../onionbit-test-support" }
+

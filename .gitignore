@@ -1,8 +1,10 @@
 # ---- Rust ----
 /target/
+**/target/
 **/*.rs.bk
 Cargo.lock.bak
 *.pdb
+.cargo/
 
 # ---- Flutter / Dart ----
 app/build/
