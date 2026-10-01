@@ -881,15 +881,30 @@ impl TunnelCommunity {
         }
         let (ready, pending) = {
             let inner = self.inner.lock().unwrap();
+            // Comptage limite aux circuits `DATA` : les `IP_*`/`RP_*`
+            // servent les lanes e2e et ne sont pas eligibles au
+            // routage applicatif (`select_circuit` /
+            // `ready_data_circuits_of_hops`) — les compter ici
+            // affamerait la lane : `ready >= min` sans aucun circuit
+            // utilisable, plus aucune construction n'est lancee et
+            // les datagrammes tombent en perte silencieuse.
             let ready = inner
                 .circuits
                 .values()
-                .filter(|c| c.state() == CIRCUIT_STATE_READY && c.goal_hops == hops)
+                .filter(|c| {
+                    c.state() == CIRCUIT_STATE_READY
+                        && c.goal_hops == hops
+                        && c.ctype == crate::routing::CIRCUIT_TYPE_DATA
+                })
                 .count();
             let pending = inner
                 .circuits
                 .values()
-                .filter(|c| c.state() != CIRCUIT_STATE_READY && c.goal_hops == hops)
+                .filter(|c| {
+                    c.state() != CIRCUIT_STATE_READY
+                        && c.goal_hops == hops
+                        && c.ctype == crate::routing::CIRCUIT_TYPE_DATA
+                })
                 .count();
             (ready, pending)
         };

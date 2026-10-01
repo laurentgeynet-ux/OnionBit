@@ -335,14 +335,14 @@ fn spawn_dht_maintenance(
 }
 
 /// Watchdog de circuits d'une lane anonyme : la lane est
-/// **indisponible tant qu'aucun circuit `READY` a `hops` sauts
+/// **indisponible tant qu'aucun circuit `DATA` `READY` a `hops` sauts
 /// n'existe** — la portee `"circuits"` est engagee des la creation
 /// (fail-closed : un `add`/`resume` avant le premier circuit est
 /// refuse par `guard()` au lieu d'attendre un CONNECT voue a
-/// l'echec) et tant que `ready_circuits_of_hops(hops)` est vide — le
-/// meme predicat que la selection de circuit donnees du serveur
-/// SOCKS5, donc un circuit d'un autre nombre de sauts ne desarme pas
-/// cette lane.
+/// l'echec) et tant que `ready_data_circuits_of_hops(hops)` est vide
+/// — le meme predicat que la selection de circuit donnees du serveur
+/// SOCKS5 et des sockets UDP tunnel : un circuit `IP_*`/`RP_*` ou
+/// d'un autre nombre de sauts ne desarme pas cette lane.
 ///
 /// Distinct du watchdog proxy du moteur : le listener SOCKS5 local
 /// peut rester joignable alors que tous les circuits sont morts —
@@ -355,7 +355,10 @@ fn spawn_circuit_watchdog(
     engine: BtEngine,
 ) -> Arc<tokio::sync::watch::Sender<bool>> {
     // Fail-closed des la creation de la lane (avant tout circuit).
-    ks.engage_scoped("circuits", format!("aucun circuit READY a {hops} sauts"));
+    ks.engage_scoped(
+        "circuits",
+        format!("aucun circuit DATA READY a {hops} sauts"),
+    );
     let (stop_tx, mut stop_rx) = tokio::sync::watch::channel(false);
     let mut changes = tunnel.watch_circuits();
     tokio::spawn(async move {
@@ -410,8 +413,11 @@ fn spawn_circuit_watchdog(
                         .await;
                 }
             }
-            if tunnel.ready_circuits_of_hops(hops).is_empty() {
-                ks.engage_scoped("circuits", format!("aucun circuit READY a {hops} sauts"));
+            if tunnel.ready_data_circuits_of_hops(hops).is_empty() {
+                ks.engage_scoped(
+                    "circuits",
+                    format!("aucun circuit DATA READY a {hops} sauts"),
+                );
             } else {
                 ks.release_scoped("circuits");
             }

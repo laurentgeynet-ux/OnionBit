@@ -3,6 +3,30 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Fix : circuits DATA affamés par les circuits e2e — downloads anonymes figés en « Métadonnées » (2026-10-01)
+
+- Symptôme réel : ajout d'un magnet depuis la recherche en lane
+  anonyme (3 sauts) resté indéfiniment en `METADATA` et un autre
+  download à 3 sauts figé à 67 % — alors que le même magnet se
+  résolvait en quelques secondes en clair (hops=0).
+- Cause : `build_circuits_if_needed` comptait les circuits `READY` par
+  `goal_hops` **tous `ctype` confondus** ; depuis que `select_circuit`
+  est limité aux circuits `DATA` (commit `d8d221f`, cross-talk e2e),
+  les circuits `IP_SEEDER` du hidden seeding satisfont le comptage
+  `ready >= min_circuits` sans jamais servir le trafic applicatif —
+  aucune reconstruction DATA n'était lancée et les datagrammes
+  uTP/DHT/trackers de la lane tombaient en perte silencieuse.
+- `crates/onionbit-tunnel/src/community.rs` : comptages `ready` et
+  `pending` limités à `ctype == CIRCUIT_TYPE_DATA`.
+- `crates/onionbit-core/src/ipv8_stack.rs` : le watchdog de lane
+  engage la portée `"circuits"` du kill switch tant que
+  `ready_data_circuits_of_hops(hops)` est vide (prédicat identique à
+  la sélection de circuit du SOCKS5/sockets UDP — la doc le promettait
+  déjà, le code divergeait).
+- Régression couverte par `build_circuits_ne_compte_pas_les_ip_seeder`
+  (`tests/circuits_loopback.rs`) : un `IP_SEEDER` READY ne suffit plus
+  à inhiber la construction d'un `DATA`.
+
 ## Renommage produit : OnionBit + version 0.3.1-alpha (2026-10-01)
 
 - Crates `tribler-*` → `onionbit-*` (dossiers, `Cargo.toml`, imports

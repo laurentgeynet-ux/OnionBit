@@ -1323,6 +1323,65 @@ async fn build_circuits_1hop_refuse_relay_only() {
     }
 }
 
+/// Regression : `build_circuits_if_needed` ne doit compter que les
+/// circuits `DATA`. Les circuits `IP_SEEDER`/`RP_*` des hidden
+/// services servent les lanes e2e et ne sont pas eligibles au
+/// routage applicatif (`select_circuit` n'emet que sur `DATA`) — les
+/// compter comme "prets" bloquait toute construction DATA : la lane
+/// mourrait de faim, metadonnees BEP 9 bloquees sans erreur
+/// (downloads anonymes figes en `METADATA`).
+#[tokio::test]
+async fn build_circuits_ne_compte_pas_les_ip_seeder() {
+    let a = make_node().await;
+    let b = make_node_flags(PEER_FLAG_RELAY | PEER_FLAG_EXIT_BT).await;
+    // Flags de B appris par A (necessaire au choix de sortie 1 saut).
+    a.tunnel
+        .send_introduction_request(&UdpAddress::from(b.addr))
+        .await
+        .unwrap();
+    let deadline = Instant::now() + TEST_TIMEOUT;
+    loop {
+        if a.tunnel.peer_flags_of(&b.key.public_key().to_bin()) & PEER_FLAG_EXIT_BT != 0 {
+            break;
+        }
+        assert!(Instant::now() < deadline, "flags de B non appris");
+        tokio::time::sleep(POLL).await;
+    }
+
+    // Circuit IP_SEEDER a 1 saut (swarm a 0 saut + 1) sur B.
+    let ih = [7u8; 20];
+    a.tunnel.join_swarm(ih, 0, true);
+    let ip_cid = a
+        .tunnel
+        .create_introduction_point(ih, Some(&peer_of(&b)))
+        .await
+        .expect("create_introduction_point");
+    a.tunnel
+        .wait_circuit_ready(ip_cid, TEST_TIMEOUT.as_millis() as u64)
+        .await
+        .expect("circuit IP_SEEDER pas READY");
+    assert!(
+        a.tunnel.ready_circuits_of_hops(1).contains(&ip_cid)
+            && a.tunnel.ready_data_circuits_of_hops(1).is_empty(),
+        "circuit IP_SEEDER a 1 saut attendu, aucun DATA"
+    );
+
+    // Le besoin de circuits DATA a 1 saut ne doit pas etre couvert
+    // par l'IP_SEEDER : une construction DATA doit suivre.
+    a.tunnel.build_circuits_if_needed(1, 1).await.unwrap();
+    let deadline = Instant::now() + TEST_TIMEOUT;
+    loop {
+        if !a.tunnel.ready_data_circuits_of_hops(1).is_empty() {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "aucun circuit DATA cree — l'IP_SEEDER a ete compte comme pret"
+        );
+        tokio::time::sleep(POLL).await;
+    }
+}
+
 /// Deux lanes SOCKS5 sur la meme community (`data_rx` broadcast) :
 /// chaque association ne recoit que les reponses de SES circuits
 /// (filtrage `return_map`), meme en trafic simultane.
