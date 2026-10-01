@@ -121,7 +121,7 @@ try {
         Get-ChildItem $dist |
             Where-Object {
                 $_.Name -ne 'state' -and
-                $_.Name -notlike 'OnionBit-*' -and
+                -not ($_.PSIsContainer -and $_.Name -like 'OnionBit-*') -and
                 $_.Name -notlike '*.zip' -and
                 $_.Name -notlike 'LISEZMOI*' -and
                 $_.Name -ne 'build-manifest.json'
