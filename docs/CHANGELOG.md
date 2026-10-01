@@ -3,6 +3,25 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Fix : double DropTarget — un `.torrent` déposé partait en clair malgré les sauts choisis (2026-10-01)
+
+- Symptôme : déposer un `.torrent` sur la page Téléchargements puis
+  choisir 1–3 sauts dans le dialogue lançait le download en clair
+  (`hops=0`) ; le journal UI montrait un premier `ajout hops=0` suivi
+  du `ajout hops=N` demandé.
+- Cause : deux `DropTarget` `desktop_drop` imbriqués recevaient le même
+  dépôt — celui de `DownloadsPage` appelait `addTorrentBytes` **sans**
+  `anon_hops` (hops=0) et la `DropZone` globale d'`app_shell` ouvrait en
+  parallèle le dialogue « Ajouter » ; au submit, la dédup
+  `download_exists` absorbait le second ajout sur l'existant hops=0.
+- `app/lib/features/downloads/presentation/pages/downloads_page.dart` :
+  `DropTarget`/`_handleDrop`/`_dragging` retirés — la `DropZone`
+  globale couvre déjà toute la fenêtre et route le fichier vers le
+  dialogue où les sauts se choisissent.
+- `app/lib/features/downloads/presentation/widgets/add_download_dialog.dart` :
+  un choix explicite de sauts pose `_hopsInitialized` — les réglages
+  `download_defaults` arrivant en retard n'écrasent plus la sélection.
+
 ## Fix : circuits DATA affamés par les circuits e2e — downloads anonymes figés en « Métadonnées » (2026-10-01)
 
 - Symptôme réel : ajout d'un magnet depuis la recherche en lane
