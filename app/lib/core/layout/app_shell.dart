@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../l10n/l10n_ext.dart';
 import '../router/nav_catalog.dart';
 import 'app_sidebar.dart';
 import 'breakpoints.dart';
@@ -83,7 +84,7 @@ class AppShell extends ConsumerWidget {
               NavigationDestination(
                 icon: Icon(d.icon),
                 selectedIcon: Icon(d.selectedIcon),
-                label: d.label,
+                label: d.label(context.l10n),
               ),
           ],
         ),

@@ -2,6 +2,92 @@
   "@@locale": "en",
   "@@author": "Laurent Geynet",
 
+  "navDownloads": "Downloads",
+  "@navDownloads": { "description": "Sidebar/nav label — Downloads page" },
+  "navSearch": "Search",
+  "@navSearch": { "description": "Sidebar/nav label — Search page" },
+  "navDiagnostic": "Diagnostics",
+  "@navDiagnostic": { "description": "Sidebar/nav label — Diagnostic page" },
+  "navSettings": "Settings",
+  "@navSettings": { "description": "Sidebar/nav label — Settings page" },
+
+  "filterAll": "All",
+  "filterDownloading": "Downloading",
+  "filterCompleted": "Completed",
+  "filterActive": "Active",
+  "filterInactive": "Inactive",
+
+  "sidebarAddDownloadTooltip": "Add a download",
+  "sidebarAdd": "Add",
+  "sidebarGroupLibrary": "Library",
+  "sidebarGroupSystem": "System",
+  "sidebarFiltersCollapse": "Collapse filters",
+  "sidebarFiltersExpand": "Expand filters",
+  "sidebarExpand": "Expand sidebar",
+  "sidebarCollapse": "Collapse to rail",
+
+  "daemonConnected": "Daemon connected",
+  "daemonUnreachable": "Daemon unreachable",
+  "daemonConnectedVersion": "Daemon connected · {version}",
+  "@daemonConnectedVersion": {
+    "description": "Sidebar footer tooltip when connected, with daemon version",
+    "placeholders": { "version": { "type": "String" } }
+  },
+  "daemonFooterVersion": "Daemon {version}",
+  "@daemonFooterVersion": {
+    "description": "Sidebar footer label: daemon name + version",
+    "placeholders": { "version": { "type": "String" } }
+  },
+  "daemonFooterNoVersion": "Daemon",
+
+  "daemonUnreachableBanner": "Daemon unreachable{url}",
+  "@daemonUnreachableBanner": {
+    "description": "Banner when the daemon SSE is down; {url} is ' — <baseUrl>' or empty",
+    "placeholders": { "url": { "type": "String" } }
+  },
+  "retry": "Retry",
+  "configure": "Configure…",
+  "connectionDialogTitle": "Daemon connection",
+  "daemonUrlLabel": "Daemon URL",
+  "apiKeyLabel": "API key (if enabled)",
+  "invalidUrl": "Invalid URL (e.g. http://127.0.0.1:8085)",
+  "cancel": "Cancel",
+  "connecting": "Connecting…",
+  "save": "Save",
+
+  "statusAnonReady": "Anonymous: {count, plural, =1{# circuit ready} other{# circuits ready}}",
+  "@statusAnonReady": {
+    "description": "Status bar — anonymous lane ready circuits",
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "statusAnonWaiting": "Anonymous: waiting for circuit",
+  "statusAnonDisabled": "Anonymous: disabled",
+  "statusAnonLoading": "Anonymous: …",
+
+  "searchHint": "Search content…",
+
+  "notifications": "Notifications",
+  "markAllRead": "Mark all read",
+  "clearAll": "Clear",
+  "noNotifications": "No notifications",
+
+  "notifDownloadFinished": "Download finished",
+  "notifDaemonError": "Daemon error",
+  "notifLowSpace": "Low disk space",
+  "notifLowSpaceMsg": "The download folder is almost full.",
+  "notifNewVersion": "Update available",
+  "notifNewVersionMsg": "Version {version} available.",
+  "@notifNewVersionMsg": {
+    "placeholders": { "version": { "type": "String" } }
+  },
+  "notifDownloadError": "Download error",
+
+  "snackFinished": "Download finished",
+  "snackFinishedName": "\"{name}\" finished — seeding",
+  "@snackFinishedName": {
+    "placeholders": { "name": { "type": "String" } }
+  },
+
   "settingsAppearanceTitle": "Appearance",
   "@settingsAppearanceTitle": { "description": "Settings — Appearance section title" },
   "settingsThemeMode": "Mode",

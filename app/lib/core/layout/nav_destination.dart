@@ -4,13 +4,19 @@
 
 import 'package:flutter/material.dart';
 
+import '../../l10n/app_localizations.dart' show AppLocalizations;
+
+/// Identifiants des destinations top-level — les libellés affichés
+/// sont localisés via [NavDestinationSpecX.label] (ARB).
+enum NavId { downloads, search, diagnostic, settings }
+
 /// Description d'une destination de navigation top-level, partagée
 /// entre la sidebar, la `NavigationBar` compacte et le routeur —
 /// un seul catalogue, jamais dupliqué.
 class NavDestinationSpec {
   const NavDestinationSpec({
     required this.path,
-    required this.label,
+    required this.id,
     required this.icon,
     required this.selectedIcon,
     this.primary = true,
@@ -19,8 +25,9 @@ class NavDestinationSpec {
   /// Chemin `go_router` (ex. `/downloads`).
   final String path;
 
-  /// Libellé affiché (français).
-  final String label;
+  /// Identifiant de destination — libellé localisé via
+  /// [NavDestinationSpecX.label].
+  final NavId id;
 
   final IconData icon;
   final IconData selectedIcon;
@@ -28,4 +35,14 @@ class NavDestinationSpec {
   /// `true` pour les entrées visibles dans la nav compacte (barre du
   /// bas — max 5) ; `false` = secondaire, accessible par la sidebar.
   final bool primary;
+}
+
+extension NavDestinationSpecX on NavDestinationSpec {
+  /// Libellé localisé de la destination.
+  String label(AppLocalizations l10n) => switch (id) {
+    NavId.downloads => l10n.navDownloads,
+    NavId.search => l10n.navSearch,
+    NavId.diagnostic => l10n.navDiagnostic,
+    NavId.settings => l10n.navSettings,
+  };
 }

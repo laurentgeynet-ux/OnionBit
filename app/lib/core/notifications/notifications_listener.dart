@@ -5,9 +5,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../l10n/app_localizations.dart' show AppLocalizations;
 import '../api/events.dart';
 import '../api/sse_client.dart';
 import '../di/providers.dart';
+import '../l10n/l10n_ext.dart';
 import 'app_notification.dart';
 import 'notifications_provider.dart';
 
@@ -28,30 +30,30 @@ class _NotificationsListenerState extends ConsumerState<NotificationsListener> {
   /// chaque poll `download_state_changed` (statut persistant).
   final _errorSeen = <String>{};
 
-  void _onEvent(SseEvent event) {
+  void _onEvent(AppLocalizations l10n, SseEvent event) {
     final n = switch (event.topic) {
       EventTopics.torrentFinished => AppNotification(
-        title: 'Téléchargement terminé',
+        title: l10n.notifDownloadFinished,
         message:
             (event.data['name'] as String?) ??
             (event.data['infohash'] as String?) ??
             '',
         severity: AppNotificationSeverity.success,
       ),
-      EventTopics.downloadStateChanged => _downloadChanged(event),
+      EventTopics.downloadStateChanged => _downloadChanged(l10n, event),
       'tribler_exception' => AppNotification(
-        title: 'Erreur daemon',
+        title: l10n.notifDaemonError,
         message: '${event.data['error'] ?? ''}',
         severity: AppNotificationSeverity.error,
       ),
       'low_space' => AppNotification(
-        title: 'Espace disque faible',
-        message: 'Le dossier de téléchargement approche la saturation.',
+        title: l10n.notifLowSpace,
+        message: l10n.notifLowSpaceMsg,
         severity: AppNotificationSeverity.warning,
       ),
       'tribler_new_version' => AppNotification(
-        title: 'Mise à jour disponible',
-        message: 'Version ${event.data['version'] ?? ''} disponible.',
+        title: l10n.notifNewVersion,
+        message: l10n.notifNewVersionMsg('${event.data['version'] ?? ''}'),
         severity: AppNotificationSeverity.info,
       ),
       _ => null,
@@ -61,13 +63,13 @@ class _NotificationsListenerState extends ConsumerState<NotificationsListener> {
 
   /// `download_state_changed` porte un `DownloadInfo` complet — on ne
   /// notifie que le passage en erreur (dédupliqué par infohash).
-  AppNotification? _downloadChanged(SseEvent event) {
+  AppNotification? _downloadChanged(AppLocalizations l10n, SseEvent event) {
     final status = event.data['status'] as String?;
     final infohash = event.data['infohash'] as String? ?? '';
     if (status == 'STOPPED_ON_ERROR') {
       if (!_errorSeen.add(infohash)) return null;
       return AppNotification(
-        title: 'Téléchargement en erreur',
+        title: l10n.notifDownloadError,
         message:
             (event.data['name'] as String?) ??
             (event.data['error'] as String?) ??
@@ -82,9 +84,12 @@ class _NotificationsListenerState extends ConsumerState<NotificationsListener> {
 
   @override
   Widget build(BuildContext context) {
+    // Capturé avant le listener — les chaînes de notification suivent
+    // la locale active au moment de l'événement.
+    final l10n = context.l10n;
     ref.listen<AsyncValue<SseEvent>>(daemonEventsProvider, (_, next) {
       final event = next.value;
-      if (event != null) _onEvent(event);
+      if (event != null) _onEvent(l10n, event);
     });
     return const SizedBox.shrink();
   }

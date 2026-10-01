@@ -1,6 +1,66 @@
 {
   "@@locale": "fr",
 
+  "navDownloads": "Téléchargements",
+  "navSearch": "Rechercher",
+  "navDiagnostic": "Diagnostic",
+  "navSettings": "Réglages",
+
+  "filterAll": "Tous",
+  "filterDownloading": "En cours",
+  "filterCompleted": "Terminés",
+  "filterActive": "Actifs",
+  "filterInactive": "Inactifs",
+
+  "sidebarAddDownloadTooltip": "Ajouter un téléchargement",
+  "sidebarAdd": "Ajouter",
+  "sidebarGroupLibrary": "Bibliothèque",
+  "sidebarGroupSystem": "Système",
+  "sidebarFiltersCollapse": "Replier les filtres",
+  "sidebarFiltersExpand": "Déplier les filtres",
+  "sidebarExpand": "Déplier la sidebar",
+  "sidebarCollapse": "Replier en rail",
+
+  "daemonConnected": "Daemon connecté",
+  "daemonUnreachable": "Daemon injoignable",
+  "daemonConnectedVersion": "Daemon connecté · {version}",
+  "daemonFooterVersion": "Daemon {version}",
+  "daemonFooterNoVersion": "Daemon",
+
+  "daemonUnreachableBanner": "Daemon injoignable{url}",
+  "retry": "Réessayer",
+  "configure": "Configurer…",
+  "connectionDialogTitle": "Connexion au daemon",
+  "daemonUrlLabel": "URL du daemon",
+  "apiKeyLabel": "Clé API (si activée)",
+  "invalidUrl": "URL invalide (ex. http://127.0.0.1:8085)",
+  "cancel": "Annuler",
+  "connecting": "Connexion…",
+  "save": "Enregistrer",
+
+  "statusAnonReady": "Anonyme : {count, plural, =1{# circuit prêt} other{# circuits prêts}}",
+  "statusAnonWaiting": "Anonyme : en attente de circuit",
+  "statusAnonDisabled": "Anonyme : désactivé",
+  "statusAnonLoading": "Anonyme : …",
+
+  "searchHint": "Rechercher du contenu…",
+
+  "notifications": "Notifications",
+  "markAllRead": "Tout lu",
+  "clearAll": "Vider",
+  "noNotifications": "Aucune notification",
+
+  "notifDownloadFinished": "Téléchargement terminé",
+  "notifDaemonError": "Erreur daemon",
+  "notifLowSpace": "Espace disque faible",
+  "notifLowSpaceMsg": "Le dossier de téléchargement approche la saturation.",
+  "notifNewVersion": "Mise à jour disponible",
+  "notifNewVersionMsg": "Version {version} disponible.",
+  "notifDownloadError": "Téléchargement en erreur",
+
+  "snackFinished": "Téléchargement terminé",
+  "snackFinishedName": "« {name} » terminé — seed en cours",
+
   "settingsAppearanceTitle": "Apparence",
   "settingsThemeMode": "Mode",
   "themeModeAuto": "Auto",

@@ -10,6 +10,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../features/search/presentation/providers/search_providers.dart';
 import '../di/providers.dart';
+import '../l10n/l10n_ext.dart';
 import '../notifications/notification_bell.dart';
 import '../theme/app_theme.dart';
 
@@ -133,7 +134,7 @@ class _TopBarState extends ConsumerState<TopBar> {
                       controller: controller,
                       focusNode: focusNode,
                       decoration: InputDecoration(
-                        hintText: 'Rechercher du contenu…',
+                        hintText: context.l10n.searchHint,
                         prefixIcon: const Icon(Icons.search),
                         isDense: true,
                         border: OutlineInputBorder(

@@ -5,6 +5,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../l10n/l10n_ext.dart';
 import '../theme/app_theme.dart';
 import 'app_notification.dart';
 import 'notifications_provider.dart';
@@ -18,6 +19,7 @@ class NotificationBell extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final unread = ref.watch(unreadNotificationsProvider);
     final items = ref.watch(notificationsProvider);
+    final l10n = context.l10n;
     return MenuAnchor(
       alignmentOffset: const Offset(0, 4),
       menuChildren: [
@@ -30,7 +32,7 @@ class NotificationBell extends ConsumerWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               Text(
-                'Notifications',
+                l10n.notifications,
                 style: Theme.of(context).textTheme.titleSmall,
               ),
               const SizedBox(width: AppSpacing.md),
@@ -40,22 +42,22 @@ class NotificationBell extends ConsumerWidget {
                     : () => ref
                           .read(notificationsProvider.notifier)
                           .markAllRead(),
-                child: const Text('Tout lu'),
+                child: Text(l10n.markAllRead),
               ),
               TextButton(
                 onPressed: items.isEmpty
                     ? null
                     : () => ref.read(notificationsProvider.notifier).clear(),
-                child: const Text('Vider'),
+                child: Text(l10n.clearAll),
               ),
             ],
           ),
         ),
         const Divider(height: 1),
         if (items.isEmpty)
-          const Padding(
-            padding: EdgeInsets.all(AppSpacing.md),
-            child: Text('Aucune notification'),
+          Padding(
+            padding: const EdgeInsets.all(AppSpacing.md),
+            child: Text(l10n.noNotifications),
           )
         else
           ConstrainedBox(
@@ -71,7 +73,7 @@ class NotificationBell extends ConsumerWidget {
           ),
       ],
       builder: (context, controller, _) => IconButton(
-        tooltip: 'Notifications',
+        tooltip: l10n.notifications,
         icon: Badge(
           isLabelVisible: unread > 0,
           label: Text('$unread'),

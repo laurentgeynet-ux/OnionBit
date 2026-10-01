@@ -9,6 +9,7 @@ import '../../features/diagnostic/domain/diagnostic_models.dart';
 import '../../features/diagnostic/presentation/providers/diagnostic_providers.dart';
 import '../../features/downloads/presentation/providers/downloads_providers.dart';
 import '../di/providers.dart';
+import '../l10n/l10n_ext.dart';
 import '../theme/app_theme.dart';
 import '../utils/byte_formatter.dart';
 
@@ -48,7 +49,9 @@ class StatusBar extends ConsumerWidget {
           ),
           const SizedBox(width: AppSpacing.xs),
           Text(
-            connected ? 'Daemon connecté' : 'Daemon injoignable',
+            connected
+                ? context.l10n.daemonConnected
+                : context.l10n.daemonUnreachable,
             style: small,
           ),
           const SizedBox(width: AppSpacing.lg),
@@ -69,12 +72,12 @@ class StatusBar extends ConsumerWidget {
                 Flexible(
                   child: Text(
                     switch (lane?.state) {
-                      AnonLaneState.ready =>
-                        'Anonyme : ${lane!.readyCircuits} circuit(s) prêt(s)',
-                      AnonLaneState.waiting =>
-                        'Anonyme : en attente de circuit',
-                      AnonLaneState.disabled => 'Anonyme : désactivé',
-                      null => 'Anonyme : …',
+                      AnonLaneState.ready => context.l10n.statusAnonReady(
+                        lane!.readyCircuits,
+                      ),
+                      AnonLaneState.waiting => context.l10n.statusAnonWaiting,
+                      AnonLaneState.disabled => context.l10n.statusAnonDisabled,
+                      null => context.l10n.statusAnonLoading,
                     },
                     style: small,
                     overflow: TextOverflow.ellipsis,

@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../../core/l10n/l10n_ext.dart';
 import '../../../../core/layout/breakpoints.dart';
 import '../../../../core/platform/desktop_shell.dart';
 import '../../../../core/theme/app_theme.dart';
@@ -431,7 +432,7 @@ class _Toolbar extends ConsumerWidget {
                       Padding(
                         padding: const EdgeInsets.only(right: AppSpacing.xs),
                         child: ChoiceChip(
-                          label: Text(f.label),
+                          label: Text(f.label(context.l10n)),
                           selected: f == filter,
                           onSelected: (_) => _goFilter(context, f),
                         ),

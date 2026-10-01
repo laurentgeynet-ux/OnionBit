@@ -4,6 +4,7 @@
 
 import 'package:flutter/material.dart';
 
+import '../l10n/l10n_ext.dart';
 import '../theme/app_theme.dart';
 
 /// État d'erreur générique avec action de nouvelle tentative — consommé
@@ -34,7 +35,7 @@ class ErrorState extends StatelessWidget {
               const SizedBox(height: AppSpacing.md),
               FilledButton.tonal(
                 onPressed: onRetry,
-                child: const Text('Réessayer'),
+                child: Text(context.l10n.retry),
               ),
             ],
           ],

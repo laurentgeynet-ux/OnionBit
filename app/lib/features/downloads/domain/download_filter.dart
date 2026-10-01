@@ -2,29 +2,29 @@
 // Copyright (C) 2026 Laurent Geynet <laurent.geynet@gmail.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+import '../../../l10n/app_localizations.dart' show AppLocalizations;
 import 'download.dart';
 
 /// Filtres de la liste des téléchargements (sous-menu sidebar, clé de
-/// query `?f=` dans l'URL — deep-linkable).
+/// query `?f=` dans l'URL — deep-linkable). Les libellés affichés
+/// sont localisés via [DownloadFilterX.label] (ARB).
 enum DownloadFilter {
   /// Tous les téléchargements.
-  all('Tous', ''),
+  all(''),
 
   /// En cours de téléchargement (`DOWNLOADING`, métadonnées, check).
-  downloading('En cours', 'downloading'),
+  downloading('downloading'),
 
   /// Terminés (progression 100 % ou `SEEDING`).
-  completed('Terminés', 'completed'),
+  completed('completed'),
 
   /// Actifs : du trafic en cours (up ou down).
-  active('Actifs', 'active'),
+  active('active'),
 
   /// Inactifs : arrêtés/erreur ou sans trafic.
-  inactive('Inactifs', 'inactive');
+  inactive('inactive');
 
-  const DownloadFilter(this.label, this.queryKey);
-
-  final String label;
+  const DownloadFilter(this.queryKey);
 
   /// Valeur du paramètre `?f=` (`''` = absence de paramètre).
   final String queryKey;
@@ -46,5 +46,16 @@ enum DownloadFilter {
       d.status == 'STOPPED' ||
           d.status == 'STOPPED_ON_ERROR' ||
           (d.speedDown == 0 && d.speedUp == 0),
+  };
+}
+
+extension DownloadFilterX on DownloadFilter {
+  /// Libellé localisé du filtre.
+  String label(AppLocalizations l10n) => switch (this) {
+    DownloadFilter.all => l10n.filterAll,
+    DownloadFilter.downloading => l10n.filterDownloading,
+    DownloadFilter.completed => l10n.filterCompleted,
+    DownloadFilter.active => l10n.filterActive,
+    DownloadFilter.inactive => l10n.filterInactive,
   };
 }

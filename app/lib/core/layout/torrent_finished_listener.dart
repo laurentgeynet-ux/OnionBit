@@ -8,6 +8,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../api/events.dart';
 import '../api/sse_client.dart';
 import '../di/providers.dart';
+import '../l10n/l10n_ext.dart';
 
 /// Affiche un snackbar à chaque événement SSE `torrent_finished`
 /// (notification `notifications.torrent_finished` Python : `infohash`,
@@ -18,6 +19,7 @@ class TorrentFinishedListener extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final l10n = context.l10n;
     ref.listen<AsyncValue<SseEvent>>(daemonEventsProvider, (_, next) {
       final event = next.value;
       if (event == null || event.topic != EventTopics.torrentFinished) {
@@ -36,8 +38,8 @@ class TorrentFinishedListener extends ConsumerWidget {
               Expanded(
                 child: Text(
                   name.isEmpty
-                      ? 'Téléchargement terminé'
-                      : '« $name » terminé — seed en cours',
+                      ? l10n.snackFinished
+                      : l10n.snackFinishedName(name),
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
