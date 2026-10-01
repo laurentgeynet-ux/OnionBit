@@ -3,6 +3,25 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Version 0.3.2-alpha (2026-10-01)
+
+- Release succédant à `v0.3.1-alpha` (supprimée — bundle incomplet et
+  bugs corrigés depuis) :
+  - app **bilingue EN/FR** (i18n complet, ~300 clés ARB, anglais par
+    défaut, sélecteur dans Réglages → Apparence) ;
+  - fix circuits DATA affamés par les circuits e2e (magnets anonymes
+    figés en « Métadonnées ») ;
+  - fix double `DropTarget` — un `.torrent` déposé partait en clair
+    malgré les sauts choisis ;
+  - onglet Diagnostic « Statistiques » enrichi (uptime, trafic overlay
+    et BitTorrent, lanes anonymes, circuits DATA prêts, sorties) ;
+  - UI : panneau de détail redimensionnable, scrollbar visible en mode
+    clair, suppression de l'autocomplétion TopBar, systray renommé
+    OnionBit ;
+  - bumps majeurs Dependabot : rand 0.10, rusqlite 0.40,
+    chacha20poly1305 0.11, sha1 0.11, base64 0.23 ;
+  - build_dist.ps1 : `-ZipRelease` génère le bundle + zip GitHub.
+
 ## Étape 30 — Internationalisation de l'app Flutter : anglais par défaut, français disponible (2026-10-01)
 
 - Pipeline standard Flutter : `flutter_localizations` + `intl` +
