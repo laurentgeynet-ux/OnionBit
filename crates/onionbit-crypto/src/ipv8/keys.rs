@@ -19,7 +19,7 @@
 //! - `mid` d'un pair : SHA-1 de `key_to_bin()` de sa cle publique.
 
 use ed25519_dalek::{Signer, SigningKey, Verifier, VerifyingKey};
-use rand::{rngs::OsRng, RngCore};
+use rand::{rand_core::UnwrapErr, rngs::SysRng, Rng};
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret};
 
 use crate::error::CryptoError;
@@ -117,9 +117,9 @@ impl LibNaClSecretKey {
     /// cote pyipv8 : Ed25519 + X25519 independants).
     pub fn generate() -> Self {
         let mut seed = [0u8; 32];
-        OsRng.fill_bytes(&mut seed);
+        UnwrapErr(SysRng).fill_bytes(&mut seed);
         Self {
-            crypt_sk: StaticSecret::random_from_rng(OsRng),
+            crypt_sk: StaticSecret::random(),
             sign: SigningKey::from_bytes(&seed),
         }
     }

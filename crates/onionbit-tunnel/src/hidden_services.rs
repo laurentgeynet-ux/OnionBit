@@ -219,7 +219,7 @@ impl TunnelCommunity {
             .into_iter()
             .filter(|p| p.public_key_bin != my_pk && Some(p.public_key_bin.as_slice()) != exclude)
             .collect();
-        peers.shuffle(&mut rand::thread_rng());
+        peers.shuffle(&mut rand::rng());
         peers.into_iter().next()
     }
 
@@ -662,7 +662,7 @@ impl TunnelCommunity {
         self.wait_circuit_ready(cid, timeout_ms).await?;
 
         let mut cookie = [0u8; 20];
-        rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut cookie);
+        rand::Rng::fill_bytes(&mut rand::rng(), &mut cookie);
         let identifier = self.next_id();
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.inner
@@ -828,7 +828,7 @@ impl TunnelCommunity {
                 break;
             }
             // `random.sample` Python.
-            not_tried.shuffle(&mut rand::thread_rng());
+            not_tried.shuffle(&mut rand::rng());
             let take = not_tried.len().min(SWARM_SIZE_MAX_REQUESTS - tried.len());
             let ips: Vec<Option<IntroductionPoint>> = not_tried.into_iter().take(take).collect();
             // `gather(..., return_exceptions=True)` : les echecs

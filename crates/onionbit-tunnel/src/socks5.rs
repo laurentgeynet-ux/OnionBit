@@ -229,7 +229,7 @@ impl Socks5Server {
         let mut usable = self
             .tunnel
             .ready_data_circuits_of_hops_flags(self.hops, crate::routing::PEER_FLAG_EXIT_HTTP);
-        usable.shuffle(&mut rand::thread_rng());
+        usable.shuffle(&mut rand::rng());
         usable
             .first()
             .copied()
@@ -382,7 +382,7 @@ impl Socks5Server {
     /// aleatoire parmi les circuits prets de la bonne longueur).
     fn select_circuit(&self) -> Result<u32, Ipv8Error> {
         let mut usable = self.tunnel.ready_data_circuits_of_hops(self.hops);
-        usable.shuffle(&mut rand::thread_rng());
+        usable.shuffle(&mut rand::rng());
         usable
             .first()
             .copied()

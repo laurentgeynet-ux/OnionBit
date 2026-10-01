@@ -25,7 +25,7 @@ use tokio::sync::oneshot;
 
 use onionbit_crypto::hash::sha1;
 use onionbit_crypto::ipv8::keys::LibNaClSecretKey;
-use rand::seq::{IteratorRandom, SliceRandom};
+use rand::seq::{IndexedRandom, IteratorRandom};
 
 use crate::address::UdpAddress;
 use crate::dht::payloads::{self, msg};
@@ -1533,7 +1533,7 @@ impl DhtCommunity {
             .network
             .get_walkable_addresses(Some(&DHT_COMMUNITY_ID), false);
         let target = {
-            let mut rng = rand::thread_rng();
+            let mut rng = rand::rng();
             if !known.is_empty() && (walkable.is_empty() || rand::random::<f64>() < 0.5) {
                 known.choose(&mut rng).and_then(|p| p.address.clone())
             } else {
@@ -1887,7 +1887,7 @@ impl DhtCommunity {
                 // `puncture-request` vers lui (`create_introduction_
                 // response` Python).
                 let intro_addr = {
-                    let mut rng = rand::thread_rng();
+                    let mut rng = rand::rng();
                     self.network
                         .peers_for_service(&DHT_COMMUNITY_ID)
                         .into_iter()
