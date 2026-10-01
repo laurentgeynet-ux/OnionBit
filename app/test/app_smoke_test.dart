@@ -68,6 +68,6 @@ void main() {
     expect(find.text('Downloads'), findsWidgets);
     expect(find.text('Search'), findsOneWidget);
     expect(find.text('Diagnostics'), findsOneWidget);
-    expect(find.text('Aucun téléchargement'), findsOneWidget);
+    expect(find.text('No downloads'), findsOneWidget);
   });
 }

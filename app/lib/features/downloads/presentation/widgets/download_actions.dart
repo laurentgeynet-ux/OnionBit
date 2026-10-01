@@ -6,6 +6,7 @@ import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../core/l10n/l10n_ext.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../core/utils/byte_formatter.dart';
 import '../../domain/download.dart';
@@ -37,7 +38,7 @@ Future<void> showRateLimitsDialog(BuildContext context, Download d) async {
   final ok = await showDialog<bool>(
     context: context,
     builder: (ctx) => AlertDialog(
-      title: const Text('Limites de débit'),
+      title: Text(ctx.l10n.rateLimits),
       content: SizedBox(
         width: 360,
         child: Column(
@@ -46,20 +47,20 @@ Future<void> showRateLimitsDialog(BuildContext context, Download d) async {
             TextField(
               controller: down,
               keyboardType: TextInputType.number,
-              decoration: const InputDecoration(
-                labelText: 'Téléchargement (Ko/s)',
-                hintText: 'vide = illimité',
-                prefixIcon: Icon(Icons.arrow_downward),
+              decoration: InputDecoration(
+                labelText: ctx.l10n.rateFieldLabel(ctx.l10n.bwDownloadLabel),
+                hintText: ctx.l10n.emptyUnlimited,
+                prefixIcon: const Icon(Icons.arrow_downward),
               ),
             ),
             const SizedBox(height: AppSpacing.sm),
             TextField(
               controller: up,
               keyboardType: TextInputType.number,
-              decoration: const InputDecoration(
-                labelText: 'Envoi (Ko/s)',
-                hintText: 'vide = illimité',
-                prefixIcon: Icon(Icons.arrow_upward),
+              decoration: InputDecoration(
+                labelText: ctx.l10n.rateFieldLabel(ctx.l10n.bwUploadLabel),
+                hintText: ctx.l10n.emptyUnlimited,
+                prefixIcon: const Icon(Icons.arrow_upward),
               ),
             ),
           ],
@@ -68,11 +69,11 @@ Future<void> showRateLimitsDialog(BuildContext context, Download d) async {
       actions: [
         TextButton(
           onPressed: () => Navigator.of(ctx).pop(false),
-          child: const Text('Annuler'),
+          child: Text(ctx.l10n.cancel),
         ),
         FilledButton(
           onPressed: () => Navigator.of(ctx).pop(true),
-          child: const Text('Appliquer'),
+          child: Text(ctx.l10n.apply),
         ),
       ],
     ),
@@ -96,7 +97,9 @@ Future<void> showRateLimitsDialog(BuildContext context, Download d) async {
           downloadLimit: parseKb(down),
         );
   } catch (e) {
-    if (context.mounted) showDownloadError(context, 'limites', e);
+    if (context.mounted) {
+      showDownloadError(context, context.l10n.actLimits, e);
+    }
   }
 }
 
@@ -114,7 +117,7 @@ Future<void> showSeedingRatioDialog(
     context: context,
     builder: (ctx) => StatefulBuilder(
       builder: (ctx, setState) => AlertDialog(
-        title: const Text('Ratio de seed'),
+        title: Text(ctx.l10n.ratioTitle),
         content: SizedBox(
           width: 360,
           child: Column(
@@ -123,7 +126,7 @@ Future<void> showSeedingRatioDialog(
               SwitchListTile(
                 value: useDefault,
                 onChanged: (v) => setState(() => useDefault = v),
-                title: const Text('Utiliser le réglage par défaut'),
+                title: Text(ctx.l10n.useDefaultSetting),
                 contentPadding: EdgeInsets.zero,
                 dense: true,
               ),
@@ -133,10 +136,10 @@ Future<void> showSeedingRatioDialog(
                 keyboardType: const TextInputType.numberWithOptions(
                   decimal: true,
                 ),
-                decoration: const InputDecoration(
-                  labelText: 'Ratio cible',
+                decoration: InputDecoration(
+                  labelText: ctx.l10n.targetRatio,
                   hintText: 'ex. 2.0',
-                  prefixIcon: Icon(Icons.balance),
+                  prefixIcon: const Icon(Icons.balance),
                 ),
               ),
             ],
@@ -145,11 +148,11 @@ Future<void> showSeedingRatioDialog(
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(false),
-            child: const Text('Annuler'),
+            child: Text(ctx.l10n.cancel),
           ),
           FilledButton(
             onPressed: () => Navigator.of(ctx).pop(true),
-            child: const Text('Appliquer'),
+            child: Text(ctx.l10n.apply),
           ),
         ],
       ),
@@ -165,14 +168,20 @@ Future<void> showSeedingRatioDialog(
       final ratio = double.tryParse(controller.text.trim());
       if (ratio == null || ratio <= 0) {
         if (context.mounted) {
-          showDownloadError(context, 'ratio', 'valeur invalide');
+          showDownloadError(
+            context,
+            context.l10n.actRatio,
+            context.l10n.invalidValue,
+          );
         }
         return;
       }
       await notifier.setSeedingRatio(d.infohash, ratio);
     }
   } catch (e) {
-    if (context.mounted) showDownloadError(context, 'ratio', e);
+    if (context.mounted) {
+      showDownloadError(context, context.l10n.actRatio, e);
+    }
   }
 }
 
@@ -183,17 +192,17 @@ Future<void> showMoveStorageDialog(BuildContext context, Download d) async {
   final ok = await showDialog<bool>(
     context: context,
     builder: (ctx) => AlertDialog(
-      title: const Text('Déplacer les fichiers'),
+      title: Text(ctx.l10n.moveTitle),
       content: SizedBox(
         width: 420,
         child: TextField(
           controller: dest,
           autofocus: true,
           decoration: InputDecoration(
-            labelText: 'Nouveau dossier de destination',
+            labelText: ctx.l10n.newDest,
             prefixIcon: const Icon(Icons.drive_file_move_outlined),
             suffixIcon: IconButton(
-              tooltip: 'Parcourir…',
+              tooltip: ctx.l10n.browse,
               icon: const Icon(Icons.folder_open),
               onPressed: () async {
                 final dir = await getDirectoryPath();
@@ -206,11 +215,11 @@ Future<void> showMoveStorageDialog(BuildContext context, Download d) async {
       actions: [
         TextButton(
           onPressed: () => Navigator.of(ctx).pop(false),
-          child: const Text('Annuler'),
+          child: Text(ctx.l10n.cancel),
         ),
         FilledButton(
           onPressed: () => Navigator.of(ctx).pop(true),
-          child: const Text('Déplacer'),
+          child: Text(ctx.l10n.moveConfirm),
         ),
       ],
     ),
@@ -225,11 +234,13 @@ Future<void> showMoveStorageDialog(BuildContext context, Download d) async {
         .moveStorage(d.infohash, destination: target);
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Déplacement demandé')),
+        SnackBar(content: Text(context.l10n.moveRequested)),
       );
     }
   } catch (e) {
-    if (context.mounted) showDownloadError(context, 'déplacement', e);
+    if (context.mounted) {
+      showDownloadError(context, context.l10n.actMove, e);
+    }
   }
 }
 

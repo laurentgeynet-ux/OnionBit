@@ -534,6 +534,262 @@
   "versionCheckSub": "Disabled section = missing endpoints (404). Default: on.",
   "allowPre": "Accept pre-releases",
 
+  "noDownloads": "No downloads",
+  "noDownloadsHint": "Add a magnet or a .torrent file.",
+  "filterEmpty": "No items in filter \"{filter}\".",
+  "@filterEmpty": {
+    "placeholders": { "filter": { "type": "String" } }
+  },
+  "deleteTitle": "Delete",
+  "deleteConfirmBody": "{count, plural, =1{# download will be removed from the daemon.} other{# downloads will be removed from the daemon.}}",
+  "@deleteConfirmBody": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "deleteAlsoFiles": "Also delete files on disk",
+  "delete": "Delete",
+  "selectedCount": "{count, plural, =1{# selected} other{# selected}}",
+  "@selectedCount": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "filterByName": "Filter by name",
+  "resume": "Resume",
+  "pause": "Pause",
+  "deselect": "Deselect",
+  "openFolder": "Open folder",
+  "autoManaged": "Auto-managed",
+  "queueTop": "Move to top",
+  "queueUp": "Move up",
+  "queueDown": "Move down",
+  "queueBottom": "Move to bottom",
+  "queueMenu": "Queue",
+  "queueMenuWithPos": "Queue — position {pos}",
+  "@queueMenuWithPos": {
+    "placeholders": { "pos": { "type": "int" } }
+  },
+  "anonMenuTitle": "Anonymity: {mode}",
+  "@anonMenuTitle": {
+    "placeholders": { "mode": { "type": "String" } }
+  },
+  "anonDirect": "Direct",
+  "rateLimits": "Rate limits",
+  "downloadDir": "Download ↓",
+  "uploadDir": "Upload ↑",
+  "customRate": "Custom…",
+  "seedRatioDialog": "Seed ratio…",
+  "recheck": "Recheck data",
+  "moveFolder": "Move storage…",
+  "republishAnon": "Republish anonymously",
+  "twinCreated": "Public twin created, seeding anonymously ({hash})",
+  "@twinCreated": {
+    "placeholders": { "hash": { "type": "String" } }
+  },
+  "viewTable": "Table view",
+  "viewGrid": "Grid view",
+  "viewCompact": "Compact list",
+  "noSeeders": "No known seeders",
+  "seedersReachable": "{count, plural, =1{# seeder, swarm reachable} other{# seeders, swarm reachable}}",
+  "@seedersReachable": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "seedersNoPeers": "Known seeders but no connected peer",
+  "stoppedOnError": "Stopped on error",
+  "privateTorrent": "Private torrent (DHT/PEX disabled)",
+  "queuePosTip": "Position {pos} in queue",
+  "@queuePosTip": {
+    "placeholders": { "pos": { "type": "int" } }
+  },
+  "colProgress": "Progress",
+  "colStatus": "Status",
+  "colPeers": "Peers",
+  "colRatio": "Ratio",
+  "colAdded": "Added",
+
+  "statusError": "Error",
+  "statusDownloading": "Downloading {pct} %",
+  "@statusDownloading": {
+    "placeholders": { "pct": { "type": "String" } }
+  },
+  "statusSeeding": "Seeding {pct} %",
+  "@statusSeeding": {
+    "placeholders": { "pct": { "type": "String" } }
+  },
+  "statusMetadata": "Metadata",
+  "statusChecking": "Checking",
+  "statusStopped": "Stopped",
+  "badgeClear": "Clear",
+  "badgeAnon": "Anon ×{hops}",
+  "@badgeAnon": {
+    "placeholders": { "hops": { "type": "int" } }
+  },
+  "trafficDirect": "Direct traffic (not anonymous)",
+  "anonTip": "Anonymous: {count, plural, =1{# hop} other{# hops}}{suffix}",
+  "@anonTip": {
+    "placeholders": {
+      "count": { "type": "int" },
+      "suffix": { "type": "String" }
+    }
+  },
+  "waitingCircuit": " — waiting for circuit",
+
+  "tabDetails": "Details",
+  "tabFiles": "Files",
+  "copyMagnetToast": "Magnet link copied to clipboard",
+  "copyInfohashToast": "Info-hash copied to clipboard",
+  "limitsBtn": "Limits…",
+  "ratioSeedBtn": "Seed ratio…",
+  "moveBtn": "Move…",
+  "recheckBtn": "Recheck",
+  "rowName": "Name",
+  "rowStatus": "Status",
+  "rowSize": "Size",
+  "rowHealth": "Health",
+  "healthValue": "{seeds} seeders, {leeches} leechers",
+  "@healthValue": {
+    "placeholders": {
+      "seeds": { "type": "int" },
+      "leeches": { "type": "int" }
+    }
+  },
+  "rowAnon": "Anonymity",
+  "hopsValue": "{count, plural, =1{# hop} other{# hops}}{suffix}",
+  "@hopsValue": {
+    "placeholders": {
+      "count": { "type": "int" },
+      "suffix": { "type": "String" }
+    }
+  },
+  "safeSeedingSuffix": " + safe seeding",
+  "noName": "(unnamed)",
+  "rowDest": "Destination",
+  "daemonDefault": "(daemon default)",
+  "rowQueue": "Queue",
+  "queueAuto": "automatic",
+  "queueManual": "manual",
+  "queuePosSuffix": " · position {pos}",
+  "@queuePosSuffix": {
+    "placeholders": { "pos": { "type": "int" } }
+  },
+  "rowLimits": "Limits",
+  "rowSeedRatio": "Seed ratio",
+  "defaultValue": "default",
+  "rowAdded": "Added on",
+  "rowFinished": "Completed on",
+  "rowError": "Error",
+  "peakLabel": "peak {rate}",
+  "@peakLabel": {
+    "placeholders": { "rate": { "type": "String" } }
+  },
+  "noFiles": "No files listed",
+  "noFilesMeta": "Metadata not yet available.",
+  "includeFile": "Include in download",
+  "filePriority": "File priority",
+  "priorityApplied": "Priority {p} applied",
+  "@priorityApplied": {
+    "placeholders": { "p": { "type": "int" } }
+  },
+  "prioNoDownload": "Do not download",
+  "prioLow": "Low priority",
+  "prioNormal": "Normal",
+  "prioHigh": "High priority",
+  "openLocation": "Open location",
+  "addTracker": "Add tracker",
+  "trackerUrl": "Tracker URL",
+  "trackerAdded": "Tracker added: {url}",
+  "@trackerAdded": {
+    "placeholders": { "url": { "type": "String" } }
+  },
+  "trackerAddError": "Tracker add error: {error}",
+  "@trackerAddError": {
+    "placeholders": { "error": { "type": "String" } }
+  },
+  "trackerCount": "{count, plural, =1{# tracker} other{# trackers}}",
+  "@trackerCount": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "defaultTrackers": "Default trackers",
+  "noTrackers": "No active trackers",
+  "noTrackersHint": "You can add trackers to improve sources.",
+  "trackerStatus": "Status: {status}",
+  "@trackerStatus": {
+    "placeholders": { "status": { "type": "String" } }
+  },
+  "forceAnnounce": "Force announce",
+  "removeTracker": "Remove this tracker",
+  "actionDone": "{label} done",
+  "@actionDone": {
+    "placeholders": { "label": { "type": "String" } }
+  },
+  "swarmStats": "Swarm statistics",
+  "seedersConn": "Connected seeders",
+  "leechersConn": "Connected leechers",
+  "totalPeersConn": "Total connected peers",
+  "downRateRow": "Current download rate",
+  "upRateRow": "Current upload rate",
+  "netMode": "Network mode",
+  "netModeAnon": "IPv8 anonymous tunnel ({count, plural, =1{# hop} other{# hops}})",
+  "@netModeAnon": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "netModeDirect": "Direct BitTorrent connection",
+  "peersConnCount": "{count, plural, =1{# connected peer} other{# connected peers}}",
+  "@peersConnCount": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "colAddress": "Address",
+  "colClient": "Client",
+  "colDir": "Dir.",
+  "colDownRate": "↓ rate",
+  "colUpRate": "↑ rate",
+  "colDownTotal": "↓ total",
+  "colUpTotal": "↑ total",
+  "colTransport": "Transport",
+  "peerDirIn": "Incoming (peer initiated)",
+  "peerDirOut": "Outgoing",
+  "noPeers": "No connected peers",
+  "noPeersHint": "The client is searching for peers via trackers and DHT.",
+
+  "addDownload": "Add download",
+  "magnetOrUrl": "Magnet or URL",
+  "magnetHint": "magnet:?xt=… or https://…",
+  "torrentFileBtn": ".torrent file…",
+  "removeFile": "Remove file",
+  "anonDirectWarn": "Your IP is visible to peers.",
+  "anonRelaysInfo": "{count, plural, =1{# relay between you and the swarm} other{# relays between you and the swarm}}. If no circuit is ready, the download will wait (never falls back to direct). Seeding will also be anonymized (safe seeding).",
+  "@anonRelaysInfo": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "httpsOnlyWarn": "All trackers of this torrent use HTTPS: they are unreachable through anonymous exits (cleartext HTTP relay only). In anonymous mode this torrent will find no peers — choose \"Direct\".",
+  "destFolderOpt": "Destination folder (optional)",
+  "addPaused": "Add paused",
+  "emptyUnlimited": "empty = unlimited",
+  "moveTitle": "Move files",
+  "newDest": "New destination folder",
+  "moveConfirm": "Move",
+  "moveRequested": "Move requested",
+  "ratioTitle": "Seed ratio",
+  "useDefaultSetting": "Use default setting",
+  "targetRatio": "Target ratio",
+  "invalidValue": "invalid value",
+  "actResume": "resume",
+  "actPause": "pause",
+  "actPauseResume": "pause/resume",
+  "actDelete": "delete",
+  "actQueue": "queue",
+  "actAnon": "anonymity",
+  "actDownLimit": "download limit",
+  "actUpLimit": "upload limit",
+  "actRecheck": "recheck",
+  "actRepublish": "anonymous republication",
+  "actRemove": "deletion",
+  "actSelect": "selection",
+  "actPriority": "priority",
+  "actLimits": "rate limits",
+  "actRatio": "ratio",
+  "actMove": "move",
+  "actAnnounce": "forced announce",
+  "actRemoveTracker": "tracker removal",
+  "actDefaultTrackers": "default trackers add",
+
   "settingsAppearanceTitle": "Appearance",
   "@settingsAppearanceTitle": { "description": "Settings — Appearance section title" },
   "settingsThemeMode": "Mode",
