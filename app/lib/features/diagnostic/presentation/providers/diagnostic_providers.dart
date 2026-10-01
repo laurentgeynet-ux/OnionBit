@@ -85,6 +85,15 @@ final onionbitStatsProvider = FutureProvider.autoDispose<OnionbitStats>(
   },
 );
 
+/// Compteurs d'octets de l'endpoint overlay
+/// (`/api/statistics/ipv8` — `total_up`/`total_down`).
+final ipv8TrafficProvider = FutureProvider.autoDispose<Ipv8Traffic>(
+  (ref) {
+    ref.watch(tickProvider(const Duration(seconds: 5)));
+    return ref.watch(diagnosticRepositoryProvider).ipv8Traffic();
+  },
+);
+
 final daemonLogsProvider = FutureProvider.autoDispose<String>(
   (ref) {
     ref.watch(tickProvider(_kDiagnosticPoll));

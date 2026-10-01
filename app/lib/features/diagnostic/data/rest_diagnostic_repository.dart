@@ -146,6 +146,23 @@ class RestDiagnosticRepository implements DiagnosticRepository {
       peers: (s['peers'] as num?)?.toInt() ?? -1,
       sessions: (lt?['sessions'] as List?)?.length ?? -1,
       version: '${s['endpoint_version'] ?? ''}',
+      uptimeSec: (s['uptime_sec'] as num?)?.toInt() ?? -1,
+      totalRecvBytes: (lt?['total_recv_bytes'] as num?)?.toInt() ?? -1,
+      totalSentBytes: (lt?['total_sent_bytes'] as num?)?.toInt() ?? -1,
+      laneHops: [
+        for (final lane in (s['socks5_sessions'] as List?) ?? const [])
+          if ((lane as Map)['hops'] case final num h) h.toInt(),
+      ],
+    );
+  }
+
+  @override
+  Future<Ipv8Traffic> ipv8Traffic() async {
+    final resp = await _api.get('/statistics/ipv8') as Map<String, dynamic>;
+    final s = resp['ipv8_statistics'] as Map<String, dynamic>? ?? const {};
+    return Ipv8Traffic(
+      up: (s['total_up'] as num?)?.toInt() ?? 0,
+      down: (s['total_down'] as num?)?.toInt() ?? 0,
     );
   }
 

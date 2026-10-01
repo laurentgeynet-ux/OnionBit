@@ -32,6 +32,25 @@ en haut.
   `pumpApp(locale: …)`, assertions sur les chaînes EN) ;
   `check_i18n.ps1` vert. ADR-0009.
 
+## Diagnostic : onglet Statistiques enrichi (2026-10-01)
+
+- Regroupé en sections : **Daemon** (version, uptime, taille DB,
+  espace disque du dossier de réception), **Contenu** (torrents
+  connus, downloads actifs/en pause/en échec), **Réseau IPv8**
+  (pairs découverts, trafic overlay ↑/↓, trafic BitTorrent session
+  ↑/↓), **Anonymat** (sessions moteur, lanes actives, circuits DATA
+  prêts par lane, sorties actives).
+- Backend : `uptime_sec` ajouté à `tribler_statistics`
+  (`CoreSession::uptime_secs`, `Instant` au `start()`) ;
+  `libtorrent.total_recv_bytes`/`total_sent_bytes` renseignés
+  (somme des `progress_bytes`/`uploaded_bytes` de tous les moteurs —
+  étaient `null`).
+- UI : `Ipv8Traffic` + `GET /api/statistics/ipv8` consommé
+  (`total_up`/`total_down` de l'endpoint overlay) ;
+  `socks5_sessions[].hops` → lanes affichées « ×1 · ×2 » ; circuits
+  DATA/READY groupés par `goal_hops` ; sorties `enabled` comptées ;
+  espace disque via `dirSpaceProvider` sur `download_defaults/saveas`.
+
 ## Diagnostic : statistique « Canaux » retirée (2026-10-01)
 
 - Le compteur `num_channels` (entrées `metadata_type=400` du

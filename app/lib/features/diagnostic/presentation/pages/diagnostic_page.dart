@@ -13,6 +13,7 @@ import '../../../../core/theme/app_theme.dart';
 import '../../../../core/widgets/empty_state.dart';
 import '../../../../core/widgets/error_state.dart';
 import '../../../downloads/presentation/providers/downloads_providers.dart';
+import '../../../settings/presentation/providers/settings_providers.dart';
 import '../../domain/diagnostic_models.dart';
 import '../providers/diagnostic_providers.dart';
 import '../widgets/speed_test_dialog.dart';
@@ -414,9 +415,12 @@ class _PexPeersTab extends StatelessWidget {
   );
 }
 
-/// Onglet « Statistiques » — compteurs globaux du daemon
-/// (`/api/statistics/tribler` : taille DB, torrents, canaux, pairs,
-/// sessions moteur).
+/// Onglet « Statistiques » — compteurs globaux du daemon regroupés
+/// par domaine : `GET /api/statistics/tribler` (version, uptime, DB,
+/// totaux session, lanes), `GET /api/statistics/ipv8` (trafic
+/// overlay), `PUT /api/statistics/dirspace` (espace du dossier de
+/// téléchargement) et dérivés locaux (downloads, circuits DATA,
+/// sorties actives).
 class _StatsTab extends ConsumerWidget {
   const _StatsTab();
 
@@ -430,7 +434,9 @@ class _StatsTab extends ConsumerWidget {
           child: IconButton(
             tooltip: context.l10n.refresh,
             icon: const Icon(Icons.refresh, size: 18),
-            onPressed: () => ref.invalidate(onionbitStatsProvider),
+            onPressed: () => ref
+              ..invalidate(onionbitStatsProvider)
+              ..invalidate(ipv8TrafficProvider),
           ),
         ),
         Expanded(
@@ -440,36 +446,143 @@ class _StatsTab extends ConsumerWidget {
               message: '$e',
               onRetry: () => ref.invalidate(onionbitStatsProvider),
             ),
-            data: (s) => ListView(
-              padding: const EdgeInsets.all(AppSpacing.md),
-              children: [
-                _stat(context, context.l10n.statDaemonVersion, s.version),
-                _stat(
-                  context,
-                  context.l10n.statDbSize,
-                  context.fmtBytes(s.dbSize),
-                ),
-                _stat(
-                  context,
-                  context.l10n.statTorrentsKnown,
-                  '${s.numTorrents}',
-                ),
-
-                _stat(
-                  context,
-                  context.l10n.statIpv8Peers,
-                  s.peers < 0 ? '—' : '${s.peers}',
-                ),
-                _stat(
-                  context,
-                  context.l10n.statSessions,
-                  s.sessions < 0 ? '—' : '${s.sessions}',
-                ),
-              ],
-            ),
+            data: (s) => _statsList(context, ref, s),
           ),
         ),
       ],
+    );
+  }
+
+  Widget _statsList(BuildContext context, WidgetRef ref, OnionbitStats s) {
+    final l10n = context.l10n;
+    final traffic = ref.watch(ipv8TrafficProvider).value;
+    final circuits = ref.watch(tunnelCircuitsProvider).value ?? const [];
+    final exits = ref.watch(tunnelExitsProvider).value ?? const [];
+    final downloads = ref.watch(downloadsProvider).value ?? const [];
+
+    // Dossier de destination pour l'espace disque (premier ancêtre
+    // existant mesuré par `PUT /api/statistics/dirspace`).
+    final settings = ref.watch(daemonSettingsProvider).value;
+    final lt = settings?['libtorrent'] as Map<String, dynamic>?;
+    final saveas =
+        (lt?['download_defaults'] as Map<String, dynamic>?)?['saveas']
+            as String?;
+    final disk = ref.watch(
+      dirSpaceProvider(
+        saveas == null || saveas.isEmpty ? null : saveas,
+      ),
+    );
+
+    // Circuits DATA prêts, groupés par lane (« ×2 : 3 »).
+    final dataReady = <int, int>{};
+    for (final c in circuits.where((c) => c.type == 'DATA' && c.ready)) {
+      dataReady[c.goalHops] = (dataReady[c.goalHops] ?? 0) + 1;
+    }
+    final dataReadyText = dataReady.isEmpty
+        ? l10n.statNone
+        : (dataReady.entries.toList()
+                ..sort((a, b) => a.key.compareTo(b.key)))
+            .map((e) => '×${e.key} : ${e.value}')
+            .join(' · ');
+
+    final activeExits = exits.where((e) => e.enabled).length;
+
+    return ListView(
+      padding: const EdgeInsets.all(AppSpacing.md),
+      children: [
+        _section(context, l10n.sectionDaemon),
+        _stat(context, l10n.statDaemonVersion, s.version),
+        _stat(
+          context,
+          l10n.statUptime,
+          s.uptimeSec < 0
+              ? '—'
+              : context.fmtDuration(Duration(seconds: s.uptimeSec)),
+        ),
+        _stat(context, l10n.statDbSize, context.fmtBytes(s.dbSize)),
+        _stat(
+          context,
+          l10n.statDiskSpace,
+          disk.when(
+            loading: () => '…',
+            error: (_, _) => '—',
+            data: (d) => l10n.diskSpaceFree(
+              context.fmtBytes(d['free'] ?? 0),
+              context.fmtBytes(d['total'] ?? 0),
+            ),
+          ),
+        ),
+        _section(context, l10n.statSectionContent),
+        _stat(context, l10n.statTorrentsKnown, '${s.numTorrents}'),
+        _stat(
+          context,
+          l10n.statDownloads,
+          l10n.statDownloadsValue(
+            downloads.where((d) => d.isActive).length,
+            downloads.where((d) => d.isPaused).length,
+            downloads.where((d) => d.isError).length,
+          ),
+        ),
+        _section(context, l10n.statSectionNetwork),
+        _stat(
+          context,
+          l10n.statIpv8Peers,
+          s.peers < 0 ? '—' : '${s.peers}',
+        ),
+        _stat(
+          context,
+          l10n.statIpv8Traffic,
+          traffic == null
+              ? '—'
+              : l10n.statTrafficValue(
+                  context.fmtBytes(traffic.up),
+                  context.fmtBytes(traffic.down),
+                ),
+        ),
+        _stat(
+          context,
+          l10n.statSessionTraffic,
+          s.totalSentBytes < 0
+              ? '—'
+              : l10n.statTrafficValue(
+                  context.fmtBytes(s.totalSentBytes),
+                  context.fmtBytes(s.totalRecvBytes),
+                ),
+        ),
+        _section(context, l10n.rowAnon),
+        _stat(
+          context,
+          l10n.statSessions,
+          s.sessions < 0 ? '—' : '${s.sessions}',
+        ),
+        _stat(
+          context,
+          l10n.statLanes,
+          s.laneHops.isEmpty
+              ? l10n.statNone
+              : ([...s.laneHops]..sort())
+                  .map((h) => '×$h')
+                  .join(' · '),
+        ),
+        _stat(context, l10n.statDataCircuits, dataReadyText),
+        _stat(context, l10n.statExitsActive, '$activeExits'),
+      ],
+    );
+  }
+
+  Widget _section(BuildContext context, String title) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.only(
+        top: AppSpacing.md,
+        bottom: AppSpacing.xs,
+      ),
+      child: Text(
+        title,
+        style: theme.textTheme.labelLarge?.copyWith(
+          color: theme.colorScheme.primary,
+        ),
+      ),
     );
   }
 

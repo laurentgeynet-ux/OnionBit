@@ -556,6 +556,18 @@ Ajouter ici, au fil de l'avancement, tout écart constaté par rapport au
 plan initial (dépendance qui ne convient pas, étape scindée en deux,
 risque IPv8 sous/sur-estimé, etc.), avec la date.
 
+- 2026-10-01 : onglet Diagnostic « Statistiques » enrichi — sections
+  Daemon (version, **uptime** nouveau champ `uptime_sec`, taille DB,
+  espace disque du dossier de réception), Contenu (torrents connus,
+  downloads actifs/en pause/en échec), Réseau IPv8 (pairs, trafic
+  overlay `total_up`/`total_down`, trafic BitTorrent session —
+  `libtorrent.total_{recv,sent}_bytes` désormais renseignés en sommant
+  les stats moteur), Anonymat (sessions, lanes `socks5_sessions`,
+  circuits DATA prêts par lane, sorties actives). Le compteur
+  « Canaux » (`metadata_type=400`, structurellement à 0 — les canaux
+  GigaChannel ne circulent plus sur le réseau) est retiré de l'UI ;
+  le champ `num_channels` reste émis par l'API.
+
 - 2026-09-28 : phase 5b planifiée (étapes 21-28) — parité complète de
   l'API de contrôle dans le daemon, d'après l'inventaire
   `api_endpoints_complet.md`. Constat clé : la `DhtCommunity` de

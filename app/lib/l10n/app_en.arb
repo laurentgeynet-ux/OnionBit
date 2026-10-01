@@ -270,6 +270,32 @@
   "statTorrentsKnown": "Known torrents",
   "statIpv8Peers": "Discovered IPv8 peers",
   "statSessions": "Engine sessions (direct + lanes)",
+  "statUptime": "Uptime",
+  "statDiskSpace": "Free disk space (download folder)",
+  "statSectionContent": "Content",
+  "statSectionNetwork": "IPv8 network",
+  "statDownloads": "Downloads",
+  "statDownloadsValue": "{active} active · {paused} paused · {error} failed",
+  "@statDownloadsValue": {
+    "placeholders": {
+      "active": { "type": "int" },
+      "paused": { "type": "int" },
+      "error": { "type": "int" }
+    }
+  },
+  "statIpv8Traffic": "Overlay traffic (session)",
+  "statSessionTraffic": "BitTorrent traffic (session)",
+  "statTrafficValue": "↑ {up} · ↓ {down}",
+  "@statTrafficValue": {
+    "placeholders": {
+      "up": { "type": "String" },
+      "down": { "type": "String" }
+    }
+  },
+  "statLanes": "Anonymous lanes",
+  "statDataCircuits": "Ready DATA circuits",
+  "statExitsActive": "Active exits (relaying)",
+  "statNone": "none",
 
   "logsDebugTooltip": "Logs detailed tunnel events (create/extend/destroy, e2e…)",
   "uiLogTitle": "UI log",

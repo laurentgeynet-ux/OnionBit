@@ -23,6 +23,10 @@ abstract interface class DiagnosticRepository {
   /// Statistiques générales (`GET /api/statistics/tribler`).
   Future<OnionbitStats> onionbitStats();
 
+  /// Compteurs d'octets de l'endpoint IPv8
+  /// (`GET /api/statistics/ipv8`).
+  Future<Ipv8Traffic> ipv8Traffic();
+
   /// Test de vitesse sur un circuit existant (`READY` + flag
   /// `PEER_FLAG_SPEED_TEST`) — flux `speed:` pyipv8 en MiB/s.
   Stream<SpeedSample> speedTestCircuit(int circuitId, {int testTimeMs = 5000});
