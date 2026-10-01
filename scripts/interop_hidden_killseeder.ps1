@@ -19,10 +19,12 @@ param(
     [ValidateSet('A','B')]
     [string] $Sens         = 'A',
     # Cible du kill : 'seeder' (processus seeder entier, restart +
-    # reprise) ou 'intro' (le noeud hebergeant le point d'introduction —
+    # reprise), 'intro' (le noeud hebergeant le point d'introduction —
     # resolu via verified_hops[-1] ; le seeder reste vivant et doit
-    # reconstruire un intro point AILLEURS puis re-annoncer sur la DHT).
-    [ValidateSet('seeder','intro')]
+    # reconstruire un intro point AILLEURS puis re-annoncer sur la DHT)
+    # ou 'anchor' (A1 bootstrap+EXIT_BT : meme flux qu'intro plus un
+    # verdict de decouverte post-kill sans le noeud d'amorcage).
+    [ValidateSet('seeder','intro','anchor')]
     [string] $KillTarget   = 'seeder',
     # 24 Mo : assez pour que le kill tombe en plein transfert (~370 ko/s
     # observes sur le mesh loopback -> ~70 s de transfert nominal).
@@ -325,11 +327,17 @@ try {
     $kA = Wait-ApiKey $P_A.Dir; Wait-ApiUp $P_A.Api $kA; Assert-ConfigOk $P_A
 
     foreach ($p in $relays) {
+        # A2 est un second exit (EXIT_BT) : sans lui le kill de A1
+        # laisserait le maillage sans aucune sortie et les circuits
+        # DATA 1 saut ne pourraient jamais etre reconstruits —
+        # resultat conforme a pyipv8 mais trivial. Un vrai reseau a
+        # plusieurs exits.
+        $rConf = @{ ipv8 = @{ bootstrap = @{ override = @("127.0.0.1:$($P_A.Ipv8)") };
+                             interfaces = @( @{ interface = 'UDPIPv4'; ip = '127.0.0.1'; port = $p.Ipv8 } );
+                             estimated_wan = "127.0.0.1:$($p.Ipv8)" } }
+        if ($p.Name -eq 'A2') { $rConf.tunnel_community = @{ exitnode_enabled = $true } }
         [System.IO.File]::WriteAllText((Join-Path $p.Dir 'configuration.json'),
-            (@{ ipv8 = @{ bootstrap = @{ override = @("127.0.0.1:$($P_A.Ipv8)") };
-                          interfaces = @( @{ interface = 'UDPIPv4'; ip = '127.0.0.1'; port = $p.Ipv8 } );
-                          estimated_wan = "127.0.0.1:$($p.Ipv8)" } } |
-                ConvertTo-Json -Compress -Depth 5))
+            ($rConf | ConvertTo-Json -Compress -Depth 5))
         Start-Daemon $p @()
         $k = Wait-ApiKey $p.Dir; Wait-ApiUp $p.Api $k; Assert-ConfigOk $p
     }
@@ -561,10 +569,13 @@ try {
         }
         Verdict $deadClean "fenetre morte stricte : 0 octet pendant ${DeadSec}s" "dl fige a $deadBase"
     } else {
-        # ---------- Kill de l'intro point ----------
+        # ---------- Kill de l'intro point / de l'ancre ----------
         # Le dernier saut du circuit IP_SEEDER du seeder = le point
         # d'introduction. verified_hops = mids ; on mappe mid->port via
-        # /ipv8/tunnel/peers d'A1 (connaissant tout le mesh).
+        # sha1(pubkey) -> nom. Pour 'anchor', la cible est toujours A1
+        # (bootstrap + EXIT_BT) quel que soit le dernier saut du
+        # premier IP_SEEDER — le test mesure la survivabilite du flux
+        # etabli et la decouverte SANS le noeud d'amorcage.
         $ipCircs = if ($Sens -eq 'A') { @(Circuits $P_N.Api $script:kN 'IP_SEEDER') } else { @(TCircuits 'IP_SEEDER') }
         # Snapshot des ids : le verdict de reconstruction exige un
         # circuit NOUVEAU (d'autres IP_SEEDER peuvent deja avoir un
@@ -577,9 +588,23 @@ try {
         } else {
             @((TCircuits 'IP_SEEDER') | ForEach-Object { $_.circuit_id })
         }
-        $killedMid = $ipCircs[0].verified_hops[-1]
-        $killedNode = $midMap[$killedMid]
-        if (-not $killedNode) { throw "intro point mid=$killedMid hors maillage" }
+        if ($KillTarget -eq 'anchor') {
+            $killedNode = 'A'
+            $killedMid = ($midMap.GetEnumerator() | Where-Object { $_.Value -eq 'A' } |
+                Select-Object -First 1).Key
+            if (-not $killedMid) { throw 'mid de A1 introuvable dans midMap' }
+            # La reconstruction n'est exigible que si A1 figurait dans
+            # le chemin d'au moins un IP_SEEDER du seeder (ces circuits
+            # meurent avec lui). Si l'intro point vivait ailleurs, le
+            # circuit survit et aucun rebuild n'est attendu.
+            $anchorInIpPath = @($ipCircs | Where-Object {
+                $_.verified_hops -and ($_.verified_hops -contains $killedMid) }).Count -gt 0
+        } else {
+            $anchorInIpPath = $true   # cible = dernier saut par definition
+            $killedMid = $ipCircs[0].verified_hops[-1]
+            $killedNode = $midMap[$killedMid]
+            if (-not $killedNode) { throw "intro point mid=$killedMid hors maillage" }
+        }
         # Snapshot des annonces PRE-kill : seeder_pk commun + ensemble
         # des mids d'intro points — sert a attribuer la re-annonce au
         # SEEDER (et non a un autre seeder du meme swarm, ex. le
@@ -590,8 +615,9 @@ try {
         Log ("DHT pre-kill : n=$($preVals.Count) annonce(s) seeder_pk=" +
              $(if ($seederPkHex) { $seederPkHex.Substring(0,[Math]::Min(12,$seederPkHex.Length)) + '…' } else { 'absent' }))
         $procs[$killedNode].Kill(); $procs[$killedNode].WaitForExit()
-        Log "KILL intro point : noeud $killedNode (mid=$($killedMid.Substring(0,12))…) a dl=$dlNow"
-        Verdict $true 'intro point tue en plein transfert' "noeud=$killedNode dl_au_kill=$dlNow"
+        $cibleTxt = if ($KillTarget -eq 'anchor') { 'ancre A1' } else { 'intro point' }
+        Log "KILL $cibleTxt : noeud $killedNode (mid=$($killedMid.Substring(0,12))…) a dl=$dlNow"
+        Verdict $true "$cibleTxt tue en plein transfert" "noeud=$killedNode dl_au_kill=$dlNow"
 
         # Observation (non bloquante) : le flux e2e etabli est
         # theoriquement independant du circuit d'introduction — la
@@ -600,7 +626,26 @@ try {
         Start-Sleep -Seconds $DeadSec
         $deadGrew = (Dl-Bytes $ih) -gt $deadBase
         Log ("post-kill ${DeadSec}s : flux e2e " + $(if ($deadGrew) { 'A SURVENU (chemin e2e independant)' } else { 'fige (e2e traversait le noeud tue)' }))
-        Verdict $true "post-kill ${DeadSec}s : flux e2e" $(if ($deadGrew) { 'survecu — intro point seul detruit' } else { 'fige — reconstruction necessaire' })
+        Verdict $true "post-kill ${DeadSec}s : flux e2e" $(if ($deadGrew) { "survecu - $cibleTxt seul detruit" } else { 'fige - reconstruction necessaire' })
+
+        # Ancre seulement : la decouverte doit continuer sans le
+        # noeud d'amorcage — le seeder garde des pairs verifies
+        # (A2/A3) dans l'overlay tunnel apres elagage du pair mort.
+        if ($KillTarget -eq 'anchor') {
+            Start-Sleep -Seconds 60   # fenetre du churn (drop_time=57,5 s)
+            $discOk = $false; $nSeen = 0
+            if ($Sens -eq 'A') {
+                $ov = @((Api 'GET' $P_N.Api '/ipv8/overlays' $script:kN).overlays)
+                foreach ($o in $ov) { if ($o.overlay_name -match 'Tunnel') { $nSeen = @($o.peers).Count } }
+            } else {
+                $ov = @((TApi 'GET' '/ipv8/overlays' 15).overlays)
+                foreach ($o in $ov) { if ($o.overlay_name -match 'Tunnel') { $nSeen = @($o.peers).Count } }
+            }
+            # A1 elague mais A2/A3 encore vus : la decouverte ne
+            # depend pas du bootstrap.
+            $discOk = ($nSeen -ge 2)
+            Verdict $discOk "decouverte sans ancre : pairs tunnel encore visibles" "n=$nSeen (A1 elague attendu)"
+        }
         $restartTime = Get-Date
     }
 
@@ -625,24 +670,39 @@ try {
             Start-Sleep -Seconds 5
         }
         Verdict $rip 'S redemarre : IP_SEEDER reconstruit(s)' "n=$nIp"
-    } elseif ($KillTarget -eq 'intro') {
-        # Pas de restart : le seeder (vivant) doit reconstruire un
-        # IP_SEEDER sur un AUTRE noeud et re-annoncer sur la DHT.
-        $rip = $false; $ripWait = (Get-Date).AddMinutes(8); $newMid = $null
-        while ((Get-Date) -lt $ripWait) {
-            $ipCircs = if ($Sens -eq 'A') { @(Circuits $P_N.Api $script:kN 'IP_SEEDER') } else { @(TCircuits 'IP_SEEDER') }
-            $newIp = @($ipCircs | Where-Object {
-                ($preIpIds -notcontains $_.circuit_id) -and
-                $_.verified_hops -and $_.verified_hops[-1] -ne $killedMid })
-            if ($newIp.Count -ge 1) { $rip = $true; $newMid = $newIp[0].verified_hops[-1]; break }
-            Start-Sleep -Seconds 5
+    } elseif ($KillTarget -in @('intro', 'anchor')) {
+        # Pas de restart : si le noeud tue portait un IP_SEEDER du
+        # seeder, celui-ci (vivant) doit reconstruire un IP_SEEDER sur
+        # un AUTRE noeud et re-annoncer sur la DHT. Si l'ancre n'etait
+        # dans aucun chemin IP_SEEDER, les circuits survivent et c'est
+        # cette survie qu'on verifie.
+        if ($anchorInIpPath) {
+            $rip = $false; $ripWait = (Get-Date).AddMinutes(8); $newMid = $null
+            while ((Get-Date) -lt $ripWait) {
+                $ipCircs = if ($Sens -eq 'A') { @(Circuits $P_N.Api $script:kN 'IP_SEEDER') } else { @(TCircuits 'IP_SEEDER') }
+                $newIp = @($ipCircs | Where-Object {
+                    ($preIpIds -notcontains $_.circuit_id) -and
+                    $_.verified_hops -and $_.verified_hops[-1] -ne $killedMid })
+                if ($newIp.Count -ge 1) { $rip = $true; $newMid = $newIp[0].verified_hops[-1]; break }
+                Start-Sleep -Seconds 5
+            }
+            Verdict $rip 'IP_SEEDER reconstruit sur un noeud different' $(if ($newMid) { "mid=$($newMid.Substring(0,12))…" } else { '' })
+        } else {
+            # L'ancre n'etait dans aucun chemin IP_SEEDER : les circuits
+            # d'introduction doivent etre restes intacts.
+            Start-Sleep -Seconds 10   # laisser le churn travailler
+            $ipNow = if ($Sens -eq 'A') { @(Circuits $P_N.Api $script:kN 'IP_SEEDER') } else { @(TCircuits 'IP_SEEDER') }
+            $alive = @($ipNow | Where-Object { $_.verified_hops -and $_.verified_hops[-1] -ne $killedMid })
+            $newMid = if ($alive.Count -gt 0) { $alive[0].verified_hops[-1] } else { $null }
+            Verdict ($alive.Count -ge 1) 'IP_SEEDER intacts : ancre hors chemin, intro vivant' "n=$($alive.Count)"
         }
-        Verdict $rip 'IP_SEEDER reconstruit sur un noeud different' $(if ($newMid) { "mid=$($newMid.Substring(0,12))…" } else { '' })
-        # Nouvelle annonce DHT attribuable au seeder : meme seeder_pk
-        # que le snapshot pre-kill ET intro_mid nouveau (hors ensemble
-        # pre-kill — idealement == newMid si deja resolu). Une annonce
-        # du downloader devenu seeder (seeder_pk different) ne
-        # satisfait PAS ce critere.
+        # Annonce DHT attribuable au seeder : meme seeder_pk que le
+        # snapshot pre-kill. Si le noeud tue portait un intro point on
+        # exige en plus un intro_mid NOUVEAU (hors ensemble pre-kill —
+        # idealement == newMid si deja resolu) ; sinon l'annonce
+        # preexistante doit rester lisible/re-publiee. Une annonce du
+        # downloader devenu seeder (seeder_pk different) ne satisfait
+        # PAS ce critere.
         $probe = $P_A; if ($killedNode -eq 'A') { $probe = $relays[0] }
         $probeKey = ApiKey $probe.Dir
         $dhtOk = $false; $dhtWait = (Get-Date).AddMinutes(6); $dhtDetail = ''
@@ -651,7 +711,8 @@ try {
             foreach ($v in $vals) {
                 $sameSeeder = ($seederPkHex -and $v.SeederPkHex -eq $seederPkHex)
                 $newIntro = -not $preIntroMids.ContainsKey($v.IntroMid)
-                if ($sameSeeder -and $newIntro -and (-not $newMid -or $v.IntroMid -eq $newMid)) {
+                $introOk = if ($anchorInIpPath) { $newIntro -and (-not $newMid -or $v.IntroMid -eq $newMid) } else { $true }
+                if ($sameSeeder -and $introOk) {
                     $dhtOk = $true
                     $dhtDetail = "intro_mid=$($v.IntroMid.Substring(0,12))… seeder=identique"
                     break

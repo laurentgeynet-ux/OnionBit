@@ -3,6 +3,31 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Resilience interop : kill de l'ancre A1 (bootstrap + EXIT_BT)
+
+- `scripts/interop_hidden_killseeder.ps1 -KillTarget anchor` : le noeud
+  d'amorcage A1 (bootstrap du maillage + exit `EXIT_BT`) est tue en
+  plein transfert. Le banc verifie : survie du flux e2e etabli,
+  decouverte maintenue sans le bootstrap (pairs tunnel encore visibles
+  apres elagage par `RandomChurn`), reconstruction `IP_SEEDER`
+  conditionnelle (exigee seulement si A1 figurait dans le chemin d'un
+  circuit du seeder — sinon les intros survivants sont verifies
+  intacts), annonce DHT attribuable au seeder, completion + SHA-256.
+- **Sens A** (seeder Rust) : `target/interop-killseed-20261001-104443/` —
+  flux e2e survecu, decouverte sans ancre `n=3`, `IP_SEEDER`
+  reconstruit sur un noeud different (mid `a2bbe942…`), annonce DHT
+  attribuee, SHA-256 `751d0808…` identique.
+- **Sens B** (seeder Tribler 8.4.3) :
+  `target/interop-killseed-20261001-112453/` — flux e2e survecu,
+  `IP_SEEDER` intacts (ancre hors chemin), annonce lisible, SHA-256
+  `8f1684ab…` identique.
+- **Enseignement topologique** : un premier run sens B a montre qu'avec
+  A1 comme *seul* exit `EXIT_BT`, sa mort rend toute reconstruction de
+  circuit DATA impossible (pyipv8 `select_exit` -> `None`, comportement
+  conforme mais trivial). Le maillage donne desormais
+  `exitnode_enabled` a A2 pour disposer d'un second exit, comme sur le
+  vrai reseau.
+
 ## Resilience interop : kill de l'intro point, reconstruction verifiee
 
 - `scripts/interop_hidden_killseeder.ps1 -KillTarget intro` : le noeud
