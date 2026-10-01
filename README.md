@@ -9,6 +9,7 @@
 [![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](LICENSE)
 [![Made with Rust](https://img.shields.io/badge/Made%20with-Rust-orange.svg)](https://www.rust-lang.org/)
 [![UI: Flutter](https://img.shields.io/badge/UI-Flutter-02569B.svg)](https://flutter.dev/)
+[![CI](https://github.com/laurentgeynet-ux/OnionBit/actions/workflows/ci.yml/badge.svg)](https://github.com/laurentgeynet-ux/OnionBit/actions/workflows/ci.yml)
 [![Version](https://img.shields.io/badge/Version-0.3.1--alpha-red.svg)](https://github.com/laurentgeynet-ux/OnionBit/releases)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%C2%B7%20Linux%20%C2%B7%20macOS%20%C2%B7%20Android%20%C2%B7%20iOS%20%C2%B7%20Web-lightgrey.svg)]()
 
@@ -111,12 +112,13 @@ See [SECURITY.md](SECURITY.md) for reporting and the threat model.
 | :--- | :--- |
 | BitTorrent engine (librqbit integration) | ✅ |
 | REST + SSE control plane, CLI | ✅ |
-| IPv8 overlay port (discovery, communities) | 🚧 |
-| Onion circuits + hidden seeding | 🚧 |
-| Live interop with Tribler 8.x nodes | 🚧 |
-| Flutter UI (desktop first) | 🚧 |
+| IPv8 overlay port (discovery, communities, DHT) | ✅ |
+| Onion circuits + hidden seeding | ✅ |
+| Live interop with Tribler 8.x nodes | ✅ |
+| Flutter UI (desktop first) | ✅ |
+| First tagged alpha release | ✅ [`v0.3.1-alpha`](https://github.com/laurentgeynet-ux/OnionBit/releases/tag/v0.3.1-alpha) |
 | Mobile execution model (Android/iOS) | 📋 |
-| First tagged alpha release | 📋 |
+| Linux / macOS packages | 📋 |
 
 ## Contributing
 
