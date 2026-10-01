@@ -3,7 +3,7 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
-## Resilience interop : kill de l'intro point, reconstruction verifiee (sens A)
+## Resilience interop : kill de l'intro point, reconstruction verifiee
 
 - `scripts/interop_hidden_killseeder.ps1 -KillTarget intro` : le noeud
   hebergeant le point d'introduction (`verified_hops[-1]`, resolu par
@@ -11,6 +11,16 @@ en haut.
   seeder. Le flux e2e etabli survit (independance correcte), le seeder
   reconstruit un `IP_SEEDER` ailleurs, re-annonce sur la DHT, et le
   telechargement complete a 100 % avec SHA-256 identique.
+- **Sens A** (seeder Rust, intro point A1 tue) :
+  `target/interop-killseed-20261001-101231/` — reconstruction apres
+  elagage du pair mort par `RandomChurn` (~58 s), `intro-established`
+  recu, annonce DHT attribuee au seeder, SHA-256 `79b02f6c…`.
+- **Sens B** (seeder Tribler 8.4.3, intro point A1 tue) :
+  `target/interop-killseed-20261001-102831/` — le pyipv8 de Tribler
+  reconstruit son propre `IP_SEEDER` en ~30 s (mid `b3ac5526…`),
+  re-annonce DHT attribuee, download 100 %, SHA-256 `fb422335…`
+  verifie post-teardown (le hashage in-script a ete rendu tolerant au
+  verrou moteur via `FileShare.ReadWrite`).
 - **Verdict attribuable** : le circuit reconstruit doit etre NOUVEAU
   (id hors snapshot pre-kill) avec dernier saut different ; l'annonce
   DHT est parsee (`DHTIntroPointPayload` : `seeder_pk` identique au

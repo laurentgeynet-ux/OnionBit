@@ -727,12 +727,18 @@ try {
         Start-Sleep -Seconds 3
         $f = Get-ChildItem -Recurse -Filter 'donnee.bin' $dld -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($f) {
-            # Le fichier peut rester verrouille quelques secondes par le
-            # moteur qui vient de passer SEEDING — retry borne.
+            # Le fichier peut rester verrouille par le moteur qui
+            # seede (handle/mmap exclusif cote Rust) — ouverture en
+            # FileShare.ReadWrite puis retry borne.
             $h = $null; $hWait = (Get-Date).AddSeconds(45)
             while (-not $h -and (Get-Date) -lt $hWait) {
-                try { $h = (Get-FileHash -Algorithm SHA256 $f.FullName).Hash.ToLower() }
-                catch { Start-Sleep -Seconds 3 }
+                try {
+                    $fs = [System.IO.File]::Open($f.FullName, 'Open', 'Read', 'ReadWrite')
+                    try { $h = ([BitConverter]::ToString(
+                        [System.Security.Cryptography.SHA256]::Create().ComputeHash($fs)
+                    )).Replace('-', '').ToLower() }
+                    finally { $fs.Close() }
+                } catch { Start-Sleep -Seconds 3 }
             }
             if ($h) {
                 Verdict ($h -eq $srcHash) 'integrite : SHA256 du fichier recu' "got=$h want=$srcHash"
