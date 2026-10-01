@@ -76,6 +76,24 @@ Tribler réelle ──> swarm BitTorrent public
 - Octets vérifiés : **327 543** (≥ 256 Kio demandé)
 - Verdict : `INTEROP PUBLIC DHT OK`
 
+## Run 2026-10-01 — 3 sauts — **OK**
+
+- Magnet : `magnet:?xt=urn:btih:08ada5a7a6183aae1e09d831df6748d566095a10`
+  (Sintel, swarm public)
+- Paramètres : `-Hops 3 -MinBytes 524288 -WalkSeconds 25
+  -DownloadTimeoutSec 200 -MaxCircuits 4`
+- Binaire : `work/anchor-resilience` (pompe d'émission FIFO +
+  `my_estimated_wan` + pacing des réannonces DHT)
+- Circuit : **1er essai** — premier saut tiré librement
+  (`147.235.220.62:24223`, pair public non contrôlé)
+- Route observée (`verified_hops`, mids) :
+  `["b59f6ccf05a776538865c9da7375f715a9719012",
+    "3bf6fb31519ef565f1cf4bef35cbb664d73410bc",
+    "0f6a1aee394b969354447214d76c51b6d0901a48"]`
+  → 3 pairs publics réels, aucun nœud contrôlé ni Tribler.exe local
+- Octets vérifiés : **589 687** (≥ 512 Kio demandé)
+- Verdict : `INTEROP PUBLIC DHT OK`
+
 ## Lecture des mids de route
 
 - `38891a02d7dc61ed4b70179f3f5077f1010f5c5f` = `Tribler.exe` installé

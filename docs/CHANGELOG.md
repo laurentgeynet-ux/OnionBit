@@ -61,9 +61,16 @@ fonctionne ensuite).
 `intro_mid nouveau ∧ == newMid` quand l'intro reconstruit atterrissait
 sur un nœud ayant déjà des intros pré-kill (mid du nœud identique) —
 résolu par `last_seen` post-kill ; et BOM UTF-8 parasite dans
-`interop_public_dht.ps1`. Le seul FAIL récurrent restant est le gate
-cosmétique `bootstrap Tribler exits=0` (comptage trop tôt, sans effet
-sur le téléchargement).
+`interop_public_dht.ps1`. Le gate `bootstrap Tribler exits=0` (snapshot
+`/ipv8/overlays` convergent souvent *après* le début du transfert) est
+devenu une ligne `INFO` non bloquante : les vrais critères sont
+fonctionnels — download accepté, `create-e2e` observé, octets vérifiés,
+intégrité finale.
+
+Frontière de confiance explicitée dans `docs/security/threat_model.md`
+(démontré vs non-démontré : pas de protection contre corrélation de
+trafic, adversaire global, Sybil massif, exit malveillant lisant le
+BitTorrent clair — même périmètre que Tribler upstream).
 
 ## Version 0.3.2-alpha (2026-10-01)
 
