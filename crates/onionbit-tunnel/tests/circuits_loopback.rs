@@ -20,8 +20,8 @@ use onionbit_ipv8::serializer::Writer;
 use onionbit_ipv8::UdpAddress;
 use onionbit_tunnel::community::TunnelCommunity;
 use onionbit_tunnel::routing::{
-    DESTROY_REASON_UNNEEDED, PEER_FLAG_EXIT_BT, PEER_FLAG_EXIT_HTTP, PEER_FLAG_RELAY,
-    PEER_FLAG_SPEED_TEST, PEER_SOURCE_PEX,
+    CIRCUIT_TYPE_RP_DOWNLOADER, DESTROY_REASON_UNNEEDED, PEER_FLAG_EXIT_BT, PEER_FLAG_EXIT_HTTP,
+    PEER_FLAG_RELAY, PEER_FLAG_SPEED_TEST, PEER_SOURCE_PEX,
 };
 use onionbit_tunnel::socks5::Socks5Server;
 use onionbit_tunnel::tunnel_udp_socket::{TunnelUdpKind, TunnelUdpSocket};
@@ -566,6 +566,23 @@ async fn hidden_service_e2e_roundtrip() {
     assert!(!ips[0].seeder_pk.is_empty(), "seeder_pk present");
 
     let e2e_cid = create_e2e_with_retry(&d, info_hash, &ips[0]).await;
+
+    // `swarm_circuit_hops` ajoute +1 a `RP_DOWNLOADER` : meme a
+    // `hops=1` au niveau swarm, la jambe e2e du downloader fait 2
+    // sauts — le RP (choisi par le seeder) ne voit jamais l'adresse
+    // reelle du downloader, seulement son premier saut. Epingle la
+    // regression d'anonymat si le +1 sautait.
+    let e2e_info = d
+        .tunnel
+        .circuits_info()
+        .into_iter()
+        .find(|c| c.circuit_id == e2e_cid)
+        .expect("circuit e2e absent");
+    assert_eq!(e2e_info.ctype, CIRCUIT_TYPE_RP_DOWNLOADER);
+    assert_eq!(
+        e2e_info.goal_hops, 2,
+        "RP_DOWNLOADER doit faire swarm.hops + 1 sauts"
+    );
 
     // Donnee e2e downloader -> seeder : la couche hs est appliquee
     // (decryptee cote seeder) et le RP reexpedie.

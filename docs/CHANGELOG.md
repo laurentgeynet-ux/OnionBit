@@ -26,6 +26,12 @@ en haut.
   e2e à 2 sauts, tout egress du downloader est un datagramme à préfixe
   tunnel vers ses seuls premiers sauts, et ni le point d'introduction
   ni le seeder ne reçoivent de paquet sourcé de l'adresse du downloader.
+- Audit des bornes `hops` : production bornée 1..=3 par `anon_engine`
+  et `goal_hops` REST ; `swarm_circuit_hops` +1 sur `IP_SEEDER`/
+  `RP_DOWNLOADER` épinglé par assertion (`RP_DOWNLOADER.goal_hops == 2`
+  à `hops=1` — le RP ne voit jamais le downloader) ; `join_swarm(0,
+  non-seeder)` logue un WARN (échec fermé, parité pyipv8). Sémantique
+  `hops=0/1` documentée dans `docs/security/threat_model.md`.
 
 - `on_establish_rendezvous` répondait `local_addr` au lieu de
   `my_estimated_wan` (pyipv8 `TunnelCommunity.on_establish_rendezvous`)

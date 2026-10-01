@@ -37,6 +37,26 @@ et sur le reseau public Tribler :
   — ni par `check_oldest` (rotation SQL) ni par `check_tracker`
   (filtre en amont des chemins API et periodique). Ecart assume avec
   Tribler upstream, dont le health-check sort en clair.
+- **Le point de rendez-vous ne voit pas le downloader meme a
+  `hops=1`** (`hidden_service_e2e_roundtrip`, assertion
+  `RP_DOWNLOADER.goal_hops == 2`) : `swarm_circuit_hops` ajoute un saut
+  aux jambes `IP_SEEDER`/`RP_DOWNLOADER` (parite pyipv8). Le RP —
+  choisi par le seeder, potentiellement hostile — ne recoit que le
+  premier saut du downloader, jamais son adresse. La regression serait
+  detectee par le test.
+
+## Semantique des sauts (rappel)
+
+- `anon_hops = 0` : telechargement **public** (lane non anonyme), par
+  design — pas une erreur.
+- `anon_hops = 1` : anonymat **reduit** — circuits DATA a 1 saut : le
+  noeud de sortie voit l'IP du client (sans savoir qu'il s'agit d'un
+  swarm cache). Les jambes e2e restent a 2 sauts (`+1`). Valeur par
+  defaut `download_defaults/number_hops = 1`, parite Tribler ;
+  preferer 2-3 pour la confidentialite.
+- `join_swarm(0, seeding = false)` : impossible de creer un circuit de
+  0 saut — les requetes echouent en mode ferme (WARN loguee, parite
+  pyipv8 qui ne valide pas ce parametre).
 
 ## Ce qui n'est PAS demontre
 

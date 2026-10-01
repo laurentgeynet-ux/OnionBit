@@ -169,7 +169,20 @@ fn unspecified_addr() -> UdpAddress {
 
 impl TunnelCommunity {
     /// `join_swarm` : rejoint un swarm cache (seeder si `seeding`).
+    ///
+    /// `hops == 0` n'a de sens que pour un seeder (circuit `IP_SEEDER`
+    /// direct vers l'intro point — le seeder accepte de s'y exposer).
+    /// Un downloader (`seeding == false`) a `hops == 0` ne peut creer
+    /// aucun circuit et echoue en silence — probablement un bug
+    /// d'appelant : on avertit plutot que de rejeter (parite pyipv8,
+    /// qui ne valide pas `hops` a ce niveau).
     pub fn join_swarm(&self, info_hash: [u8; 20], hops: usize, seeding: bool) {
+        if hops == 0 && !seeding {
+            tracing::warn!(
+                info_hash = hex::encode(info_hash),
+                "join_swarm downloader a 0 saut — aucun circuit possible"
+            );
+        }
         let seeder_sk = seeding.then(LibNaClSecretKey::generate);
         self.inner
             .lock()
