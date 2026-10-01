@@ -32,6 +32,15 @@ en haut.
   `pumpApp(locale: …)`, assertions sur les chaînes EN) ;
   `check_i18n.ps1` vert. ADR-0009.
 
+## Daemon : systray renommé OnionBit (2026-10-01)
+
+- Le renommage produit avait oublié le tray Windows : tooltip
+  « Tribler — <addr> » (création + mise à jour du port réel) et item
+  « Ouvrir Tribler » → « OnionBit — <addr> » / « Ouvrir OnionBit ».
+- Conservé volontairement : la valeur de registre autostart
+  `TriblerRustDaemon` — la renommer créerait un doublon de clé Run
+  pour les installations existantes.
+
 ## UI : suppression de la prédiction de recherche dans la TopBar (2026-10-01)
 
 - `top_bar.dart` : le champ de recherche n'utilise plus
