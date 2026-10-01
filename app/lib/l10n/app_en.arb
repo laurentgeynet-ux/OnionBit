@@ -1,0 +1,23 @@
+{
+  "@@locale": "en",
+  "@@author": "Laurent Geynet",
+
+  "settingsAppearanceTitle": "Appearance",
+  "@settingsAppearanceTitle": { "description": "Settings — Appearance section title" },
+  "settingsThemeMode": "Mode",
+  "@settingsThemeMode": { "description": "Theme mode label" },
+  "themeModeAuto": "Auto",
+  "themeModeLight": "Light",
+  "themeModeDark": "Dark",
+  "settingsAccent": "Accent",
+  "@settingsAccent": { "description": "Seed color label" },
+  "accentBlue": "Blue",
+  "accentIndigo": "Indigo",
+  "accentGreen": "Green",
+  "accentOrange": "Orange",
+  "accentPink": "Pink",
+  "accentSlate": "Slate",
+  "settingsLanguage": "Language",
+  "@settingsLanguage": { "description": "Language selector label" },
+  "languageSystem": "System"
+}

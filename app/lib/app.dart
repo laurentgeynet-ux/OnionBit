@@ -5,8 +5,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../l10n/app_localizations.dart';
 import 'core/config/ui_prefs.dart';
 import 'core/di/providers.dart';
+import 'core/l10n/locale_settings.dart';
 import 'core/router/app_router.dart';
 import 'core/theme/app_theme.dart';
 import 'core/theme/theme_settings.dart';
@@ -28,6 +30,10 @@ class OnionbitApp extends ConsumerWidget {
     final appearance = ref.watch(themeSettingsProvider).value;
     final seed = appearance?.seedColor ?? AppTheme.defaultSeedColor;
     final mode = appearance?.mode ?? ThemeMode.system;
+    // Langue persistée — `null` = suit la locale de l'OS (défaut : en).
+    final locale = resolveFlutterLocale(
+      ref.watch(localeSettingsProvider).value,
+    );
 
     return MaterialApp.router(
       title: 'OnionBit',
@@ -35,6 +41,9 @@ class OnionbitApp extends ConsumerWidget {
       theme: AppTheme.light(seedColor: seed),
       darkTheme: AppTheme.dark(seedColor: seed),
       themeMode: mode,
+      locale: locale,
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
       routerConfig: router,
     );
   }
