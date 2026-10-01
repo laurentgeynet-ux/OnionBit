@@ -8,8 +8,8 @@ import 'core/theme/app_theme.dart';
 import 'core/theme/theme_settings.dart';
 
 /// Racine de l'application — thème Material 3 + routeur `go_router`.
-class TriblerApp extends ConsumerWidget {
-  const TriblerApp({super.key});
+class OnionbitApp extends ConsumerWidget {
+  const OnionbitApp({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {

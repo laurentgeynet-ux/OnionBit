@@ -137,8 +137,8 @@ class SwarmPeers {
 
 /// Statistiques générales du daemon (`GET /api/statistics/tribler` →
 /// `tribler_statistics`).
-class TriblerStats {
-  const TriblerStats({
+class OnionbitStats {
+  const OnionbitStats({
     required this.dbSize,
     required this.numTorrents,
     required this.numChannels,

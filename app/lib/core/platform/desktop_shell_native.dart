@@ -42,7 +42,7 @@ Future<void> initDesktopShell() async {
 /// chaque demarrage pour suivre un deplacement de l'exe.
 Future<void> _registerTorrentFileAssoc() async {
   final exe = Platform.resolvedExecutable;
-  const progid = 'TriblerRust.torrent';
+  const progid = 'OnionBit.torrent';
   try {
     for (final args in [
       ['add', r'HKCU\Software\Classes\.torrent', '/ve', '/d', progid, '/f'],
@@ -62,7 +62,7 @@ Future<void> _registerTorrentFileAssoc() async {
         'HKCU\\Software\\Classes\\$progid',
         '/ve',
         '/d',
-        'Tribler torrent',
+        'OnionBit torrent',
         '/f',
       ],
       [

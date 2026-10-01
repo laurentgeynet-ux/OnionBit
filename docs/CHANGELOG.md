@@ -11,11 +11,14 @@ en haut.
 - Artefacts produit : etat `.onionbit/`, `onionbit.db`, `onionbit.log`,
   env `ONIONBIT_API_KEY` / `ONIONBIT_API` / `ONIONBIT_DAEMON_EXE`,
   provider Dart `onionbitStats*`, titres « OnionBit » (fenetre,
-  manifeste web, `Runner.rc`).
+  manifeste web, `Runner.rc`, `app/README.md`), classes Dart
+  `TriblerApp`/`TriblerStats` → `OnionbitApp`/`OnionbitStats`,
+  progid d'association `.torrent` → `OnionBit.torrent`.
 - **Preserve pour la parite wire Tribler** : evenements SSE
   `tribler_*`, endpoint `/api/statistics/tribler`, cle JSON
   `tribler_statistics`, sel d'identite `tribler anonymous download`,
-  `TRIBLER_TUNNEL_COMMUNITY_ID`, flags d'interop `--tribler-*`.
+  `TRIBLER_TUNNEL_COMMUNITY_ID`, flags d'interop `--tribler-*`,
+  adresses de bootstrap `dispersy*.tribler.org` (infra Tribler reelle).
 - Version workspace `0.3.1-alpha` (pubspec `0.3.1+1`), auteur
   Laurent Geynet (Loulach), `repository` → github OnionBit.
 - AGENTS.md simplifie ; chemins locaux purges des docs (remplaces par
@@ -2325,7 +2328,7 @@ DTO Rust et les modèles Dart — un seul nom canonique à chaque étage :
   UI connectée (2 sessions TCP REST+SSE).
 - **Activation IPv8 et bootstrap réel dans `onionbit-daemon`** :
   `Ipv8Config::production()` avec les 20 nœuds officiels `DISPERSY_BOOTSTRAPPER`
-  (TU Delft / Tribler), résolution DNS asynchrone des adresses `dispersy*.onionbit.org`,
+  (TU Delft / Tribler), résolution DNS asynchrone des adresses `dispersy*.tribler.org`,
   repli automatique sur port éphémère si le port UDP 8090 est occupé,
   options CLI `--no-ipv8`, `--no-anonymity`, `--ipv8-port`, `--bootstrap`.
   Binaires release régénérés dans `dist\` et le dossier de bureau.

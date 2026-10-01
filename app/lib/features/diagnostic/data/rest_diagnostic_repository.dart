@@ -131,12 +131,12 @@ class RestDiagnosticRepository implements DiagnosticRepository {
       _swarmPeers(await _api.get('/ipv8/tunnel/peers/pex'));
 
   @override
-  Future<TriblerStats> onionbitStats() async {
+  Future<OnionbitStats> onionbitStats() async {
     final resp = await _api.get('/statistics/tribler') as Map<String, dynamic>;
     final s =
         resp['tribler_statistics'] as Map<String, dynamic>? ?? const {};
     final lt = s['libtorrent'] as Map<String, dynamic>?;
-    return TriblerStats(
+    return OnionbitStats(
       dbSize: (s['db_size'] as num?)?.toInt() ?? 0,
       numTorrents: (s['num_torrents'] as num?)?.toInt() ?? 0,
       numChannels: (s['num_channels'] as num?)?.toInt() ?? 0,

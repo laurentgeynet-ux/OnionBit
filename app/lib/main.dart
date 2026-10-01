@@ -23,7 +23,7 @@ Future<void> main(List<String> args) async {
       overrides: [
         startupFilesProvider.overrideWithValue(startupFiles),
       ],
-      child: const TriblerApp(),
+      child: const OnionbitApp(),
     ),
   );
 }

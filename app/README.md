@@ -1,17 +1,21 @@
-# tribler_ui
+# onionbit_ui
 
-A new Flutter project.
+Interface Flutter d'OnionBit (Windows, Linux, macOS, Android, iOS, Web).
 
-## Getting Started
+Elle consomme exclusivement l'API REST + SSE de `onionbit-daemon`
+(jamais d'accès direct aux crates `onionbit-*`).
 
-This project is a starting point for a Flutter application.
+## Lancement (développement)
 
-A few resources to get you started if this is your first Flutter project:
+```powershell
+# daemon (un autre terminal)
+cargo run -p onionbit-daemon
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
+# UI
+cd app
+flutter run -d windows
+```
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+La clef d'API est résolue automatiquement depuis le répertoire d'état du
+daemon (fichier `api/key` + `api/http_port_running`), comme la GUI
+Tribler. Surcharge possible via `ONIONBIT_API` / `ONIONBIT_API_KEY`.

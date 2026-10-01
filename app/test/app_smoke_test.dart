@@ -54,7 +54,7 @@ void main() {
           remoteResultsProvider.overrideWith(_EmptyRemote.new),
           anonLaneProvider.overrideWith((ref) async => AnonLaneStatus.disabled),
         ],
-        child: const TriblerApp(),
+        child: const OnionbitApp(),
       ),
     );
     await tester.pump();

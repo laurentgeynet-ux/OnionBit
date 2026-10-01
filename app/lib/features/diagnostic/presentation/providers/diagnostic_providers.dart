@@ -74,7 +74,7 @@ final pexPeersProvider = FutureProvider.autoDispose<List<SwarmPeers>>(
 );
 
 /// Statistiques générales du daemon (`/api/statistics/tribler`).
-final onionbitStatsProvider = FutureProvider.autoDispose<TriblerStats>(
+final onionbitStatsProvider = FutureProvider.autoDispose<OnionbitStats>(
   (ref) {
     ref.watch(tickProvider(const Duration(seconds: 5)));
     return ref.watch(diagnosticRepositoryProvider).onionbitStats();
