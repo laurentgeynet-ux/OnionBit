@@ -301,6 +301,8 @@
   "anonExitSub": "Attention : votre machine fait alors SORTIR le trafic des autres pairs vers l'Internet public sous votre adresse IP (transferts BitTorrent/uTP, trackers UDP, DHT, requêtes HTTP de trackers et trafic IPv8). Sans cela, vous ne faites que relayer du trafic chiffré entre pairs du réseau. Sans effet si la TunnelCommunity est désactivée. Défaut : désactivé. Pris en compte au redémarrage.",
   "circuitsMinLabel": "Circuits minimum (défaut : 3)",
   "circuitsMaxLabel": "Circuits maximum (défaut : 8)",
+  "anonGuards": "Nœuds guards (expérimental)",
+  "anonGuardsSub": "Premiers sauts persistants des circuits multi-hop : réduit l'exposition aux attaques Sybil en bornant la loterie des premiers sauts. Mesure expérimentale de réduction d'exposition, pas une garantie d'anonymat. Appliqué à chaud. Défaut : activé.",
   "relaysMaxLabel": "Relais servis maximum (défaut : 100)",
   "relaysMaxNote": "Jambes de relais + sorties servies simultanément pour les autres pairs. Au-delà, les demandes de circuit entrantes sont refusées. Pris en compte au redémarrage.",
   "relayRateAutoNote": "Le débit servi est géré automatiquement : plafonné au tiers de votre capacité upload mesurée (requête WAN UPnP, sondes optionnelles, pic observé — sans jamais brider vos propres téléchargements anonymes). Valeur fixe via tunnel_community/max_relayed_rate dans configuration.json (0 = illimité, -1 = auto).",

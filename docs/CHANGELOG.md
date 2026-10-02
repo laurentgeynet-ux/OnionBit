@@ -3,6 +3,31 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Guard nodes activés par défaut (2026-10-02)
+
+- `tunnel_community/guards_enabled` passe à **`true` par défaut**
+  (ADR-0010) après validation terrain : test public vert (download
+  anonyme 2 sauts, 276,4 Mo vérifiés, premiers hops ⊆ guard set,
+  kill switch sans fallback direct) + validation workspace complète.
+- Garde-fous : désactivation à chaud (`POST /api/settings` →
+  `set_enabled` live, aucun redémarrage), nouveau toggle UI « Nœuds
+  guards » dans la section Tunnels anonymes (FR/EN), API
+  `GET /api/ipv8/tunnel/guards` lecture seule, warn
+  `guards_pool_etroit` si le pool de candidats est insuffisant.
+- Migration : profils sans la clé → nouveau défaut `true` ; un
+  `guards_enabled: false` explicite dans `configuration.json` est
+  préservé.
+- Communication : mesure expérimentale de réduction d'exposition
+  Sybil — pas une garantie d'anonymat. Les circuits 1-saut ne sont
+  pas couverts (premier hop = exit `EXIT_BT` par construction).
+- Fingerprinting : sessions mesh contrôlé OnionBit/Tribler
+  documentées (`docs/security/fingerprinting.md`) — idle ~1,9× le
+  volume Tribler en churn discovery, ~200× sur download anonyme en
+  stall (DHT mainline tunnelisée vs `DHTDiscoveryCommunity`).
+- Test public Tribler : API REST inutilisable sous charge relais
+  réelle (~100 jambes saturées, asyncio affamée) — baseline coarse
+  `netstat -s` conservée (~1 000–1 300 datagrammes/s par sens).
+
 ## Correctifs retour terrain DEBUG (2026-10-02)
 
 - `tunnel_udp_socket` : le log par cellule relayée

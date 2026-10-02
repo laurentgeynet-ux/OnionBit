@@ -46,6 +46,7 @@ const kAnonymityDefaults = <String, dynamic>{
     'min_circuits': 1,
     'max_circuits': 8,
     'exitnode_enabled': false,
+    'guards_enabled': true,
   },
 };
 

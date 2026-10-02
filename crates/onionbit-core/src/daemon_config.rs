@@ -475,10 +475,12 @@ pub struct TunnelCommunityConfig {
     /// Reserve aux bancs controles (point d'introduction joignable
     /// uniquement en loopback, NAT sans hairpin, ...).
     pub data_exit_peer: String,
-    /// Guard nodes (ADR-0010, experimentale) : premiers sauts
-    /// persistants bornant la loterie Sybil des reconstructions sous
-    /// `DESTROY`. `false` = selection pyipv8 exacte (defaut tant que la
-    /// feature n'est pas validee sur le terrain).
+    /// Guard nodes (ADR-0010, mesure experimentale de reduction
+    /// d'exposition Sybil — pas une garantie d'anonymat) : premiers
+    /// sauts persistants bornant la loterie des reconstructions sous
+    /// `DESTROY`. `false` = selection pyipv8 exacte. Validee sur le
+    /// terrain (matrice interop + download public) — `true` par
+    /// defaut ; reste desactivable a chaud via `POST /api/settings`.
     pub guards_enabled: bool,
     /// Clés tunnel additionnelles — préservées.
     #[serde(flatten)]
@@ -497,7 +499,7 @@ impl Default for TunnelCommunityConfig {
             exitnode_enabled: false,
             intro_point_peer: String::new(),
             data_exit_peer: String::new(),
-            guards_enabled: false,
+            guards_enabled: true,
             extra: serde_json::Map::new(),
         }
     }

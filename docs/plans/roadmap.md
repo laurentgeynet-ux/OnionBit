@@ -625,8 +625,37 @@ risque IPv8 sous/sur-estimé, etc.), avec la date.
   actifs + 2 réserve rechargé à l'identique). Baseline sans guards
   exécutée (`interop-noguards-B-h1`) : `enabled=false`, set vide,
   premier hop libre (`beb1d983…`) — tirage pyipv8 inchangé. Reste :
-  session fingerprint Tribler (API affamée par la charge, à refaire
-  post-campagne), activation par défaut toujours différée.
+  activation par défaut toujours différée.
+- 2026-10-02 (test public guards — **vert**) : daemon de banc sur le
+  réseau réel (`target/guards-public-20261002-1852/`, bootstrappeurs
+  par défaut, `guards_enabled=true`), download anonyme Big Buck
+  Bunny (`dd8255ec…`, magnet WebTorrent canonique). Critères :
+  **octets vérifiés > 0** — 276,4 Mo, 100 % en ~10 min (pic 1,2
+  Mo/s, ~450 Ko/s moyen sur tunnels) ; **route publique effective**
+  — exits et guards réels (24.87.16.68, 172.59.188.242,
+  119.213.229.4, 95.19.54.167, 109.221.82.110) ; **guard set non
+  vide** — 3 actifs + 2 réserve adoptés 18:58:04, `failures=0`,
+  persistés en table `guards` ; **premier hop ∈ GuardSet** — les 8
+  circuits DATA 2-sauts post-adoption pinnet tous le guard
+  `30802970…` (sticky conforme), données transportées dessus (pas un
+  circuit proactif parallèle). Absence de fallback direct : kill
+  switch engagé à la création de chaque lane (18:57:37 lane 1 saut,
+  19:01:10 lane 2 sauts), désarmé à READY. Notes : circuits 1-saut =
+  premier hop = exit `EXIT_BT`, guards non applicables (assertion
+  multi-hop, comme la matrice interop) ; les circuits créés avant
+  l'adoption gardent leur premier hop libre — attendu, le critère
+  s'évalue post-adoption.
+- 2026-10-02 (décision guards par défaut) : `guards_enabled=true` —
+  conditions (3)+(4) remplies : download public vert ci-dessus +
+  validation workspace complète verte (check/clippy/fmt/tests Rust
+  + i18n + analyze/test/build web Flutter). Garde-fous en place :
+  désactivation à chaud (`POST /api/settings` + `set_enabled` live,
+  sans redémarrage), toggle UI « Nœuds guards », API
+  `GET /ipv8/tunnel/guards` lecture seule, warn
+  `guards_pool_etroit` quand le pool est insuffisant, migration sûre
+  (absence de clé → nouveau défaut ; `false` explicite préservé).
+  Communication : mesure expérimentale de réduction d'exposition
+  Sybil, jamais garantie d'anonymat.
 - 2026-10-02 (plafond de relais) : `tunnel_community/max_joined_circuits`
   exposé (défaut 100 = `should_join_circuit` pyipv8) — borne la charge
   de relais imposée par le réseau, configurable dans l'UI

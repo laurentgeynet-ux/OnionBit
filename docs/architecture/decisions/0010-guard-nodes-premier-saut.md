@@ -1,9 +1,13 @@
 # ADR-0010 — Guard nodes : persistance du premier saut
 
-Statut : Acceptée (2026-10-01) — implémentée derrière
-`TunnelSettings::guards.enabled` / `tunnel_community/guards_enabled`
-(**désactivée par défaut** : sélection pyipv8 exacte). Activation par
-défaut et exposition API après validation terrain.
+Statut : Acceptée (2026-10-01), **activée par défaut** depuis le
+2026-10-02 après validation terrain : matrice interop guards (sens
+A/B, hops 1/2/3), persistance redémarrage sur réseau réel, et test
+public (download anonyme 2 sauts, 276 Mo vérifiés, premiers hops ⊆
+guard set). Reste une mesure expérimentale de réduction d'exposition
+Sybil — jamais présentée comme une garantie d'anonymat — et reste
+désactivable à chaud via `tunnel_community/guards_enabled`
+(`POST /api/settings`, `set_enabled` live) ou l'UI.
 
 ## Contexte
 

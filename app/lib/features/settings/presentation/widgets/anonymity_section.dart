@@ -111,6 +111,13 @@ class _AnonymitySectionState extends ConsumerState<AnonymitySection> {
               title: l10n.anonExit,
               subtitle: l10n.anonExitSub,
             ),
+            SettingsSwitch(
+              path: [..._t, 'guards_enabled'],
+              value: settingsBool(settings, [..._t, 'guards_enabled'],
+                  def: true),
+              title: l10n.anonGuards,
+              subtitle: l10n.anonGuardsSub,
+            ),
             const SizedBox(height: AppSpacing.sm),
             Row(
               children: [

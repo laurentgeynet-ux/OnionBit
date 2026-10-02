@@ -471,6 +471,8 @@
   "anonExitSub": "Warning: your machine then EXITS other peers' traffic to the public Internet under your own IP address (BitTorrent/uTP transfers, UDP trackers, DHT, tracker HTTP requests and IPv8 traffic). Without it, you only relay encrypted traffic between tunnel peers. No effect while TunnelCommunity is disabled. Default: off. Applied on restart.",
   "circuitsMinLabel": "Minimum circuits (default: 3)",
   "circuitsMaxLabel": "Maximum circuits (default: 8)",
+  "anonGuards": "Guard nodes (experimental)",
+  "anonGuardsSub": "Persistent first hops for multi-hop circuits: reduces exposure to Sybil attacks by bounding the first-hop lottery. Experimental exposure-reduction measure, not an anonymity guarantee. Applied live. Default: on.",
   "relaysMaxLabel": "Maximum relays served (default: 100)",
   "relaysMaxNote": "Relay legs + exit sockets served simultaneously for other peers. Beyond this, incoming circuit requests are refused. Applied on restart.",
   "relayRateAutoNote": "Served bandwidth is managed automatically: capped at one third of your measured upload capacity (UPnP WAN query, optional probes, observed peak — never throttling your own anonymous downloads). Force a fixed value via tunnel_community/max_relayed_rate in configuration.json (0 = unlimited, -1 = auto).",
