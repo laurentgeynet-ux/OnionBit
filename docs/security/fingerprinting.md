@@ -83,12 +83,91 @@ RP_DOWNLOADER, 8 Mio)
   est un signal d'activité tres visible : un observateur du pair
   voit immediatement la difference idle/transfert.
 
-### Tribler 8.4.3 — session C
+### Tribler 8.4.3 — session publique (`target/fingerprint-tribler/`,
+16:24 → ~17:18)
 
-Non collectée : `Tribler.exe -s` joint bien le réseau réel (circuits
-établis, `too many relays`) mais son API REST ne répond pas sous la
-charge machine concurrente (timeouts >90 s même en warmup). À
-refaire une fois la campagne fuzz terminée.
+- API REST **inutilisable sous charge publique** : TCP accepte mais la
+  boucle asyncio est saturee par ~100 relais (`too many relays (100)`
+  en continu dans le log) — timeouts 25–120 s, confirmé sur deux
+  sessions. Pas de contournement : `max_joined_circuits` est fixe a
+  100 en dur cote pyipv8, et l'endpoint Rust ne persiste pas les
+  statistiques en base.
+- Collecte de repli : compteurs UDP systeme (`netstat -s`, toutes les
+  10 s, ~120 echantillons) + stdout. **~1 000–1 300 datagrammes/s par
+  sens** — trafic de relais vers le reseau reel. Le processus a
+  disparu ~17:18 sans message d'arret (crash sous charge ou fermeture
+  externe non determinee).
+- Baseline grossiere uniquement : datagrammes/s systeme, sans
+  ventilation par overlay ni confirmation que tout le trafic est
+  tunnel.
+
+### Mesh controle OnionBit + Tribler — 15 min
+(`target/fingerprint-mesh-20261002-172000/`, `fingerprint_mesh.ps1`)
+
+Topologie fermee loopback : A1 ancre+exit (IPv8 17787), A2/A3 relais,
+D = daemon OnionBit mesure (API 8096), T = Tribler mesure (API 52198)
+— memes communautes (ipv8 + tunnel + dht + content discovery),
+`min_circuits=3` des deux cotes, aucun telechargement actif.
+
+| Metrique (15 min) | OnionBit D | Tribler T |
+|---|---:|---:|
+| Endpoint total up | 3,34 Mo (~3,7 Ko/s) | 1,75 Mo (~1,9 Ko/s) |
+| Endpoint total down | 3,13 Mo (~3,5 Ko/s) | 1,61 Mo (~1,8 Ko/s) |
+| Circuits DATA READY | **0** | **3** (1 saut via A1) |
+| Octets circuits | 0 | ~40 Ko up / ~21 Ko down |
+
+- **Divergence 1 — construction proactive.** Tribler construit
+  `min_circuits` des le demarrage meme sans telechargement. OnionBit
+  ne construit que lorsqu'une lane anonyme existe (`anon_engine`
+  paresseux → watchdog de circuits) : idle sans download anonyme =
+  zero circuit propre. Ecart assume dans le code (`circuits_needed`
+  par lane), mais c'est un signal de fingerprint comportemental et un
+  biais de comparaison : pour un run a perimetre egal il faut creer
+  une lane anonyme sur D (download anonyme ajoute via l'API).
+- **Divergence 2 — volume idle ~1,9×.** Les 3,3 Mo de D sont ~100 %
+  de churn discovery : 4 familles overlay (DiscoveryCommunity,
+  DHTDiscoveryCommunity, ContentDiscoveryCommunity,
+  TriblerTunnelCommunity) marchent chacune ~2 fois/s
+  (~1 800 intros + punctures + reponses en 15 min). Attribution
+  incertaine : mesh loopback (tous pairs en meme IP WAN → punctures)
+  amplifie peut-etre les deux implementations differemment.
+- **Limite Tribler confirmee** : `/api/ipv8/overlays/statistics`
+  retourne `{"statistics":[]}` structurellement (endpoint Rust,
+  `enable_community_statistics` no-op) — comparaison par msg_id
+  impossible cote Tribler. Metriques communes retenues :
+  `total_up`/`total_down` endpoint, sommes `circuits`/`relays`/`exits`,
+  compteurs libtorrent, taille DB (`fingerprint_stats.ps1` etendu).
+
+### Mesh controle avec lane anonyme — 15 min
+(`target/fingerprint-mesh-20261002-183456/`, meme topologie,
+`-WithAnonDownload` : magnet en stall `btih:00…01` ajoute en
+anonyme 1 saut sur D et T — lane creee, `min_circuits` maintenu,
+aucun pair/metadonnee disponible)
+
+| Metrique (15 min) | OnionBit D | Tribler T |
+|---|---:|---:|
+| Endpoint total up/down | **328,7 / 328,9 Mo** (~365 Ko/s) | **1,66 / 1,49 Mo** (~1,8 Ko/s) |
+| Circuits DATA READY | 3 (1 saut via A1) | 4 (1 saut via A1) |
+| `on_cell` messages | ~5,80 M dans chaque sens (~6 400/s) | n/a (stats vides) |
+| Octets dans circuits | 35,3 Mo up / 325,9 Mo down | ~56 Ko up / ~30 Ko down |
+
+- **Signal de fingerprint majeur** : meme workload (« download
+  anonyme en attente de metadonnees ») → OnionBit debite ~200× le
+  trafic de Tribler. Un relais/exit observant la cadence distingue
+  immediatement les deux implementations.
+- Attribution : la lane anonyme OnionBit active la **DHT mainline
+  a travers le tunnel** (`enable_dht=true`, socket uTP tunnelisee) —
+  librqbit y fait son bootstrap/crawling contre le vrai reseau DHT
+  via la sortie A1, et le `find_peers` de la metadata tourne en
+  continu. Tribler route ses lookups de swarm anonymes via la
+  `DHTDiscoveryCommunity`/hidden services, bien plus parcimonieux
+  (et sa session libtorrent mesh a `dht=false`).
+- Caveat de comparaison : la symetrie n'est pas parfaite
+  (`dht=false` cote Tribler vs lane DHT forcee cote OnionBit) — mais
+  le delta mesure est le comportement *par defaut* de chaque
+  implementation, donc un fingerprint reel. A creuser : limiter le
+  debit/agressivite DHT anonyme cote OnionBit est probablement
+  aussi souhaitable d'un point de vue charge reseau.
 
 ### Interpretation preliminaire
 
@@ -96,5 +175,14 @@ refaire une fois la campagne fuzz terminée.
   moyenne des cellules (~57 B) reflète le transport uTP encapsule.
 - Rien d'anormal ne saute dans la distribution des types de messages
   idle — le daemon se comporte comme un membre overlay ordinaire.
-- Une analyse comparative Tribler reste necessaire avant toute
-  conclusion sur le fingerprinting proprement dit.
+- En mesh idle, l'empreinte d'OnionBit est **discovery pure**
+  (~2× le volume Tribler, aucun circuit), celle de Tribler est
+  **circuits + discovery** — l'activite de construction proactive de
+  Tribler est le premier signal differentiel concret.
+- En lane anonyme active, le rapport explose : **~200×** le volume
+  Tribler, concentre dans `on_cell` (DHT mainline tunnelisee). Le
+  couple « cadence de circuits au repos » + « volume d'un download
+  anonyme en stall » est aujourd'hui la signature d'implementation
+  la plus marquante.
+- Reste : download public avec guards (critere de sortie consigne),
+  puis validation workspace et decision guards par defaut.

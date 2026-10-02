@@ -81,6 +81,38 @@ while ((Get-Date) -lt $deadline) {
         Write-Host ("{0} : echantillon ignore ({1})" -f $ts, $_.Exception.Message)
     }
 
+    # Compteurs agreges communs aux deux implementations (l'endpoint
+    # Rust de Tribler ne publie pas les stats par overlay ci-dessus) :
+    # octets totaux de l'endpoint, sommes par objet de routage
+    # (circuits/relays/exits) et totaux libtorrent + taille DB.
+    try {
+        $ep = Invoke-RestMethod -Uri "$ApiBase/api/statistics/ipv8" `
+            -Headers $headers -TimeoutSec $IntervalSec
+        $eu = $ep.ipv8_statistics.total_up; $ed = $ep.ipv8_statistics.total_down
+        "$ts,(endpoint),total,0,0,$eu,$ed,$ready,$total" |
+            Out-File $OutCsv -Append -Encoding utf8
+    } catch {}
+    foreach ($pair in @(@('circuits','circuits'), @('relays','relays'), @('exits','exits'))) {
+        try {
+            $r = Invoke-RestMethod -Uri "$ApiBase/api/ipv8/tunnel/$($pair[0])" `
+                -Headers $headers -TimeoutSec $IntervalSec
+            $items = @($r.($pair[1]))
+            $bu = 0; $bd = 0
+            foreach ($i in $items) { $bu += $i.bytes_up; $bd += $i.bytes_down }
+            "$ts,(tunnel),$($pair[0]),$($items.Count),$($items.Count),$bu,$bd,$ready,$total" |
+                Out-File $OutCsv -Append -Encoding utf8
+        } catch {}
+    }
+    try {
+        $ts2 = Invoke-RestMethod -Uri "$ApiBase/api/statistics/tribler" `
+            -Headers $headers -TimeoutSec $IntervalSec
+        $lb = $ts2.tribler_statistics.libtorrent
+        "$ts,(libtorrent),total,0,0,$($lb.total_sent_bytes),$($lb.total_recv_bytes),$ready,$total" |
+            Out-File $OutCsv -Append -Encoding utf8
+        "$ts,(db),size,0,0,$($ts2.tribler_statistics.db_size),0,$ready,$total" |
+            Out-File $OutCsv -Append -Encoding utf8
+    } catch {}
+
     $elapsed = ((Get-Date) - $t0).TotalSeconds
     $wait = $IntervalSec - $elapsed
     if ($wait -gt 0) { Start-Sleep -Seconds $wait }

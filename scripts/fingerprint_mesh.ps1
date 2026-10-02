@@ -14,14 +14,22 @@
 #
 # Usage :
 #   .\scripts\fingerprint_mesh.ps1 [-Daemon path\to\onionbit-daemon.exe]
-#                                  [-DurationMin 15]
+#                                  [-DurationMin 15] [-WithAnonDownload]
 # CSV produits : <OutDir>\fp_onionbit_mesh.csv, fp_tribler_mesh.csv
+#
+# -WithAnonDownload : ajoute un magnet en stall (infohash factice,
+# aucun pair dans le mesh) en anonyme 1 saut sur D et T. Cree la
+# lane anonyme OnionBit (watchdog de circuits) — sans elle D ne
+# construit pas min_circuits au repos alors que Tribler le fait
+# proactivement : comparaison de cadence de circuits a perimetre
+# egal.
 #
 # NOTE encodage : fichier volontairement ASCII.
 param(
     [string]$Daemon     = "",
     [int]   $DurationMin = 15,
     [int]   $IntervalSec = 5,
+    [switch]$WithAnonDownload,
     [string]$OutDir     = ("target\fingerprint-mesh-" + (Get-Date -Format 'yyyyMMdd-HHmmss')),
     [string]$TriblerExe = $(if ($env:TRIBLER_EXE) { $env:TRIBLER_EXE } else { 'C:\Program Files (x86)\Tribler\Tribler.exe' })
 )
@@ -168,6 +176,30 @@ try {
         -RedirectStandardError (Join-Path $out 'tribler_stderr.log')
     Wait-ApiUp $TApi $TKey 90
 
+    # ---------- Lane anonyme (option -WithAnonDownload) ----------
+    # Magnet factice (infohash bidon, aucun pair dans le mesh) :
+    # force la creation de la lane anonyme et le maintien de
+    # min_circuits, sans aucun flux de donnees utile.
+    if ($WithAnonDownload) {
+        $magnet = 'magnet:?xt=urn:btih:0000000000000000000000000000000000000001&dn=fp-probe'
+        foreach ($t in @(
+            @{ name = 'D'; api = $D.Api; key = $kD },
+            @{ name = 'T'; api = $TApi;  key = $TKey }
+        )) {
+            try {
+                Invoke-RestMethod -Method Put `
+                    -Uri "http://127.0.0.1:$($t.api)/api/downloads" `
+                    -Headers @{ 'X-Api-Key' = $t.key } `
+                    -Body (@{ uri = $magnet; anon_hops = 1; safe_seeding = $true } |
+                        ConvertTo-Json -Compress) `
+                    -ContentType 'application/json' -TimeoutSec 15 | Out-Null
+                Log "download anonyme ajoute sur $($t.name)"
+            } catch {
+                Log "WARN : add download anonyme $($t.name) : $($_.Exception.Message)"
+            }
+        }
+    }
+
     # ---------- Manifeste ----------
     @{
         run_utc = [datetime]::UtcNow.ToString('o')
@@ -175,6 +207,7 @@ try {
         daemon  = $Daemon
         tribler = $TriblerExe
         duration_min = $DurationMin
+        anon_download = [bool]$WithAnonDownload
         nodes = @(
             @{ name = 'D';  api = $D.Api;  ipv8 = $D.Ipv8;  role = 'onionbit echantillonne' },
             @{ name = 'A1'; api = $A1.Api; ipv8 = $A1.Ipv8; role = 'ancre + exit' },
