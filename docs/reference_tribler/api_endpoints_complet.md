@@ -382,7 +382,7 @@ Python : `restapi/statistics_endpoint.py` · Rust : `handlers/statistics.rs`
 | :--- | :--- | :--- | :--- |
 | GET | `/api/versioning/versions` | Sous-versions présentes dans `state_dir` + `current` | ✅ |
 | GET | `/api/versioning/versions/current` | Version courante (`"git"` si source) | ✅ |
-| GET | `/api/versioning/versions/check` | Sonde tribler.org/GitHub → `{new_version, has_version}` | ⚠️ (`has_version:false` — pas de trafic réseau implicite) |
+| GET | `/api/versioning/versions/check` | Sonde tribler.org/GitHub → `{new_version, has_version}` | ✅ (`versioning/check_urls` + `versioning/github_repo` — releases GitHub du dépôt ; ordre `allow_pre` comme Python ; **divergence** : le tableau `releases?per_page=1` est accepté alors que `dict["name"]` Python lève `TypeError` dessus — la sonde `allow_pre` Tribler échoue toujours côté GitHub) |
 | DELETE | `/api/versioning/versions/{version}` | Supprime l'état d'une ancienne version | ✅ |
 | POST | `/api/versioning/upgrade` | Lance la migration des données anciennes | ⚠️ stub `{success}` |
 | GET | `/api/versioning/upgrade/available` | `{can_upgrade}` — anciennes données détectées | ✅ (toujours false) |

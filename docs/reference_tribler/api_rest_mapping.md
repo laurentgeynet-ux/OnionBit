@@ -111,7 +111,7 @@ Convention générale :
 | **Versioning** (`versioning_endpoint.py`) | | | |
 | `GET /api/versioning/versions` | idem | ✅ | Sous-répertoires `v*` de `state_dir` |
 | `GET /api/versioning/versions/current` | idem | ✅ | Version du crate |
-| `GET /api/versioning/versions/check` | idem | ✅ | `has_version: false` — pas de trafic implicite |
+| `GET /api/versioning/versions/check` | idem | ✅ | Sonde réelle : `versioning/check_urls` + releases GitHub `versioning/github_repo` (anti-SSRF `ip_policy`, timeout `check_timeout_secs`) |
 | `DELETE /api/versioning/versions/{v}` | idem | ✅ | Supprime un sous-répertoire `v*` (jamais le courant ; nom validé) |
 | `POST /api/versioning/upgrade` | idem | ✅ | `{"started": false}` — pas de migrateurs |
 | `GET /api/versioning/upgrade/available` | idem | ✅ | `{"can_upgrade": false}` |

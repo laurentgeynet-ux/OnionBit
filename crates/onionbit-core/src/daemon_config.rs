@@ -457,6 +457,18 @@ pub struct VersioningConfig {
     pub enabled: bool,
     /// Accepte les pré-versions.
     pub allow_pre: bool,
+    /// Dépôt GitHub `owner/repo` sondé pour les releases (vide = pas
+    /// de sonde GitHub).
+    pub github_repo: String,
+    /// Sondes additionnelles interrogées avant/après GitHub, dans
+    /// l'ordre — équivalent de `release.tribler.org` côté Python ;
+    /// `{current}` est substitué par la version courante et chaque
+    /// sonde doit répondre un JSON `{"name": "x.y.z"}` (ou un tableau
+    /// dont le premier élément porte `name`).
+    pub check_urls: Vec<String>,
+    /// Timeout d'une sonde de version en secondes
+    /// (`ClientTimeout(total=5)` Python).
+    pub check_timeout_secs: u64,
     /// Clés additionnelles.
     #[serde(flatten)]
     pub extra: serde_json::Map<String, Value>,
@@ -467,9 +479,21 @@ impl Default for VersioningConfig {
         Self {
             enabled: true,
             allow_pre: false,
+            github_repo: default_github_repo(),
+            check_urls: Vec::new(),
+            check_timeout_secs: 5,
             extra: serde_json::Map::new(),
         }
     }
+}
+
+/// `owner/repo` du projet, dérivé du champ `repository` du paquet
+/// (`https://github.com/<owner>/<repo>`) — vide hors GitHub.
+fn default_github_repo() -> String {
+    option_env!("CARGO_PKG_REPOSITORY")
+        .and_then(|u| u.trim_end_matches('/').strip_prefix("https://github.com/"))
+        .unwrap_or_default()
+        .to_owned()
 }
 
 /// Section `watch_folder`.

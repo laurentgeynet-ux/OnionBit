@@ -9,6 +9,7 @@
 
 pub mod rss;
 pub mod torrent_checker;
+pub mod versioning;
 pub mod watch_folder;
 
 use crate::error::{CoreError, Result};
@@ -31,6 +32,18 @@ pub async fn fetch_checked(
     url: &str,
     ip_policy: &onionbit_network_policy::IpPolicy,
 ) -> Result<reqwest::Response> {
+    fetch_checked_with(url, ip_policy, HTTP_TIMEOUT, None).await
+}
+
+/// Variante de [`fetch_checked`] a timeout et `User-Agent`
+/// parametrables (sonde de version : `ClientTimeout(total=5)` Python,
+/// UA exige par l'API GitHub).
+pub async fn fetch_checked_with(
+    url: &str,
+    ip_policy: &onionbit_network_policy::IpPolicy,
+    timeout: std::time::Duration,
+    user_agent: Option<&str>,
+) -> Result<reqwest::Response> {
     let parsed =
         url::Url::parse(url).map_err(|_| CoreError::InvalidState("url invalide pour le fetch"))?;
     let scheme = parsed.scheme();
@@ -52,12 +65,15 @@ pub async fn fetch_checked(
         return Err(CoreError::InvalidState("hote sans adresse resolue"));
     }
     let client = reqwest::Client::builder()
-        .timeout(HTTP_TIMEOUT)
+        .timeout(timeout)
         .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(|_| CoreError::InvalidState("client http indisponible"))?;
-    client
-        .get(url)
+    let mut request = client.get(url);
+    if let Some(ua) = user_agent {
+        request = request.header(reqwest::header::USER_AGENT, ua);
+    }
+    request
         .send()
         .await
         .map_err(|_| CoreError::InvalidState("requete http echouee"))

@@ -78,6 +78,14 @@ redémarrage) — parité `set_session_limits` Python + services :
   `ContentDiscoveryCommunity`.
 - `database/enabled=false` → `db_filename=":memory:"`.
 - `versioning/enabled=false` → routes `/api/versioning/*` absentes (404).
+- `versioning/github_repo` → dépôt `owner/repo` sondé par
+  `versions/check` (défaut : champ `repository` du workspace, vide =
+  pas de sonde GitHub) ; `versioning/check_urls` → sondes
+  additionnelles (`{current}` substitué, équivalent
+  `release.tribler.org`) ; `versioning/allow_pre` → sonde la liste
+  GitHub `releases?per_page=1` (pré-versions) au lieu de
+  `releases/latest` ; `versioning/check_timeout_secs` → timeout par
+  sonde (défaut 5 = `ClientTimeout` Python).
 - `headless` → pas de systray ; `start_minimized` → inerte côté daemon
   (le daemon ne lance jamais l'UI ; la clé reste lue/conservée pour la
   future UI, qui l'appliquera à sa propre fenêtre).
