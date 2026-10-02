@@ -160,9 +160,24 @@ class RestDiagnosticRepository implements DiagnosticRepository {
   Future<Ipv8Traffic> ipv8Traffic() async {
     final resp = await _api.get('/statistics/ipv8') as Map<String, dynamic>;
     final s = resp['ipv8_statistics'] as Map<String, dynamic>? ?? const {};
+    final bw = s['bandwidth'] as Map<String, dynamic>?;
     return Ipv8Traffic(
       up: (s['total_up'] as num?)?.toInt() ?? 0,
       down: (s['total_down'] as num?)?.toInt() ?? 0,
+      bandwidth: bw == null
+          ? null
+          : RelayBandwidth(
+              measuredUpBps: (bw['measured_up_bps'] as num?)?.toInt() ?? 0,
+              measuredDownBps:
+                  (bw['measured_down_bps'] as num?)?.toInt() ?? 0,
+              source: bw['source'] as String?,
+              passivePeakUpBps:
+                  (bw['passive_peak_up_bps'] as num?)?.toInt() ?? 0,
+              effectiveRelayBps:
+                  (bw['effective_relay_bps'] as num?)?.toInt() ?? 0,
+              relayMode: (bw['relay_mode'] as String?) ?? 'auto',
+              relayDropped: (bw['relay_dropped'] as num?)?.toInt() ?? 0,
+            ),
     );
   }
 

@@ -309,7 +309,10 @@ impl Inner {
         } else {
             (0, 0)
         };
-        tracing::debug!(
+        // `trace!` et non `debug!` : une ligne par cellule relayee —
+        // en DEBUG ce log seul produisait ~2 M de lignes / 340 Mio par
+        // session sur un relais actif, et saturait le disque.
+        tracing::trace!(
             %target,
             circuit_id = cid,
             len = data.len(),

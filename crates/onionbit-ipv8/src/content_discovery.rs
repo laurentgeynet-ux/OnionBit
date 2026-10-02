@@ -249,24 +249,42 @@ pub struct SelectResponse {
 
 /// Port domaine → community : fournit et absorbe les donnees de
 /// decouverte. Implemente par `onionbit-core` (base + torrent checker).
+/// Les methodes retournent des futures boxed (dyn-safe) pour permettre
+/// a l'implementation de deporter le travail SQLite hors de
+/// l'executor (`db.call` → `spawn_blocking`) — les appels synchrones
+/// bloquaient la boucle de traitement des paquets sous charge
+/// (observation terrain : requetes distantes en rafale → attente de
+/// 24 s sur le mutex de connexion, lag de l'executor Tokio).
 pub trait ContentProvider: Send + Sync {
     /// `get_random_torrents`/`get_popular_torrents` : santes a
     /// publier pour `request_type` (inconnues → `[]`).
-    fn healths_for(&self, request_type: u8) -> Vec<HealthInfo>;
+    fn healths_for<'a>(
+        &'a self,
+        request_type: u8,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Vec<HealthInfo>> + Send + 'a>>;
     /// `process_torrents_health` : integre les santes recues ;
     /// retourne les infohashes nouveaux a resoudre par
     /// `remote_select`.
-    fn process_health(&self, healths: &[HealthInfo]) -> Vec<[u8; 20]>;
+    fn process_health<'a>(
+        &'a self,
+        healths: &'a [HealthInfo],
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Vec<[u8; 20]>> + Send + 'a>>;
     /// `metadata_store.get_entries_threaded` + `send_db_results` :
     /// repond a un select distant — JSON de parametres -> chunks de
     /// resultat (un chunk <= `maximum_payload_size` par
     /// `SelectResponse`, archive vide si aucun resultat).
-    fn remote_select(&self, json: &[u8]) -> Vec<Vec<u8>>;
+    fn remote_select<'a>(
+        &'a self,
+        json: &'a [u8],
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Vec<Vec<u8>>> + Send + 'a>>;
     /// `process_compressed_mdblob` cote requeteur : integre une
     /// reponse select (blob opaque) ; retourne les `to_simple_dict()`
     /// des objets NOUVEAUX (`ObjState.NEW_OBJECT` Python) pour la
     /// notification `remote_query_results`.
-    fn process_select_response(&self, blob: &[u8]) -> Vec<serde_json::Value>;
+    fn process_select_response<'a>(
+        &'a self,
+        blob: &'a [u8],
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Vec<serde_json::Value>> + Send + 'a>>;
     /// `(version, platform)` locales pour `VersionResponse`.
     fn version_info(&self) -> (String, String);
 }
@@ -737,7 +755,7 @@ impl ContentDiscoveryCommunity {
             )
         };
         if let Some(p) = chosen_one {
-            let healths = self.provider.healths_for(HEALTH_REQUEST_RANDOM);
+            let healths = self.provider.healths_for(HEALTH_REQUEST_RANDOM).await;
             // `gossip_random_torrents_health` Python : le payload est
             // emis meme vide (annonce "rien a offrir").
             let payload = HealthPayload::create(
@@ -965,7 +983,7 @@ impl ContentDiscoveryCommunity {
                 tokio::spawn(async move {
                     // `on_health_request` Python : repond toujours,
                     // meme avec une liste vide.
-                    let healths = c.provider.healths_for(req.request_type);
+                    let healths = c.provider.healths_for(req.request_type).await;
                     let payload = HealthPayload::create(
                         req.request_type,
                         healths,
@@ -977,9 +995,12 @@ impl ContentDiscoveryCommunity {
             msg::HEALTH => {
                 let p = HealthPayload::unpack(&mut r)?;
                 tracing::debug!(?src_addr, count = p.torrents.len(), "health recu");
-                let to_resolve = self.provider.process_health(&p.torrents);
                 let c = self.clone();
                 tokio::spawn(async move {
+                    // `process_health` accede a la base — deporte
+                    // ici (futur spawned) pour ne pas bloquer la
+                    // boucle de paquets.
+                    let to_resolve = c.provider.process_health(&p.torrents).await;
                     for ih in to_resolve {
                         // `send_remote_select(infohash=…, last=1)` Python.
                         let json = serde_json::json!({
@@ -1006,9 +1027,11 @@ impl ContentDiscoveryCommunity {
             }
             msg::REMOTE_SELECT => {
                 let p = RemoteSelect::unpack(&mut r)?;
-                let chunks = self.provider.remote_select(&p.json);
                 let c = self.clone();
                 tokio::spawn(async move {
+                    // La requete SQLite est deportee par le provider
+                    // (`db.call` → `spawn_blocking`) — voir le trait.
+                    let chunks = c.provider.remote_select(&p.json).await;
                     // `send_db_results` Python : un `SelectResponse`
                     // par chunk (<= `maximum_payload_size`), meme id.
                     for blob in chunks {
@@ -1023,7 +1046,10 @@ impl ContentDiscoveryCommunity {
             }
             msg::SELECT_RESPONSE => {
                 let p = SelectResponse::unpack(&mut r)?;
-                tracing::debug!(
+                // `trace!` : une ligne par CHUNK de reponse — une
+                // requete produit jusqu'a `packets_limit` paquets, le
+                // volume en debug saturait le journal.
+                tracing::trace!(
                     ?src_addr,
                     id = p.id,
                     bytes = p.blob.len(),
@@ -1050,10 +1076,15 @@ impl ContentDiscoveryCommunity {
                 let Some((mid, callback)) = pending else {
                     return Ok(());
                 };
-                let results = self.provider.process_select_response(&p.blob);
-                if let Some(cb) = callback {
-                    cb(&mid, results);
-                }
+                let c = self.clone();
+                tokio::spawn(async move {
+                    // Inserts `channel_node` deportes par le provider —
+                    // ne pas bloquer la boucle de paquets.
+                    let results = c.provider.process_select_response(&p.blob).await;
+                    if let Some(cb) = callback {
+                        cb(&mid, results);
+                    }
+                });
             }
             _ => {}
         }

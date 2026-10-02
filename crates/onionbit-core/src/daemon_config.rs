@@ -78,6 +78,13 @@ pub struct ApiConfig {
     /// detection automatique par le daemon (`<exe>/web`,
     /// `state_dir/web`, puis `app/build/web` du depot en dev).
     pub web_ui_dir: String,
+    /// Injecte la cle API dans `index.html` servi (meta
+    /// `onionbit-api-key`) : l'UI web se connecte sans saisie, comme
+    /// la GUI desktop qui lit `configuration.json`. Sans risque hors
+    /// loopback : le daemon ne bind que sur 127.0.0.1 et un autre
+    /// site ne peut pas lire la reponse (same-origin policy).
+    /// `false` = saisie manuelle de la cle dans l'UI.
+    pub web_ui_inject_key: bool,
 }
 
 impl Default for ApiConfig {
@@ -95,6 +102,7 @@ impl Default for ApiConfig {
             https_port_running: 0,
             web_ui_enabled: true,
             web_ui_dir: String::new(),
+            web_ui_inject_key: true,
         }
     }
 }
@@ -363,6 +371,62 @@ impl Default for LibtorrentConfig {
     }
 }
 
+/// Estimateur de capacité upload (`tunnel_community/bandwidth`) —
+/// extension Rust. Le plafond servi en mode `max_relayed_rate = -1`
+/// est `max(capacité_mesurée × share, floor_bps)`. La capacité est
+/// estimée par meilleure source disponible : débit WAN remonté par
+/// UPnP (`GetLinkLayerMaxBitRates`, gratuit — même canal que la
+/// redirection de port), sonde HTTP `probe_up_urls` (opt-in, vide par
+/// défaut — aucun trafic sortant), pic de débit soutenu observé en
+/// passif sur l'endpoint (borne basse).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct BandwidthConfig {
+    /// Part de la capacité upload allouée au trafic servi (1/3).
+    pub share: f64,
+    /// Plancher du plafond servi une fois mesuré (octets/s) : un
+    /// relais sous ce débit n'apporte rien au réseau.
+    pub floor_bps: u64,
+    /// Plafond servi avant la première mesure (ou mesure impossible)
+    /// en mode auto (octets/s).
+    pub fallback_bps: u64,
+    /// Interroge le routeur UPnP (`WANCommonInterfaceConfig`) pour le
+    /// débit WAN provisionné — trafic LAN uniquement.
+    pub measure_upnp: bool,
+    /// Endpoints HTTP POST recevant un blob pour mesurer l'upload
+    /// (opt-in : liste vide = aucune sonde sortante).
+    pub probe_up_urls: Vec<String>,
+    /// Taille du blob de sonde upload (octets).
+    pub probe_bytes: u64,
+    /// Timeout d'une sonde ou de la découverte UPnP (s).
+    pub probe_timeout_secs: u64,
+    /// Cadence de re-mesure de la capacité (s).
+    pub measure_interval_secs: u64,
+    /// Délai avant la première mesure après le démarrage (s) — laisse
+    /// la stack IPv8 s'établir.
+    pub warmup_secs: u64,
+    /// Tick d'échantillonnage des compteurs endpoint pour le pic
+    /// passif (s).
+    pub sample_secs: u64,
+}
+
+impl Default for BandwidthConfig {
+    fn default() -> Self {
+        Self {
+            share: 1.0 / 3.0,
+            floor_bps: 64 * 1024,
+            fallback_bps: 512 * 1024,
+            measure_upnp: true,
+            probe_up_urls: Vec::new(),
+            probe_bytes: 4 * 1024 * 1024,
+            probe_timeout_secs: 15,
+            measure_interval_secs: 3600,
+            warmup_secs: 30,
+            sample_secs: 5,
+        }
+    }
+}
+
 /// Section `tunnel_community`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -373,6 +437,30 @@ pub struct TunnelCommunityConfig {
     pub min_circuits: u32,
     /// Circuits maximum.
     pub max_circuits: u32,
+    /// `max_joined_circuits` Python (défaut 100) : plafond de jambes
+    /// de relais + sorties servies simultanément — au-delà les
+    /// `create` entrants sont refusés (`should_join_circuit`).
+    /// Borne la charge de relais que le réseau impose au nœud ;
+    /// pris en compte au redémarrage (settings figés à la
+    /// construction de la communauté).
+    pub max_joined_circuits: u32,
+    /// Extension Rust (sans équivalent pyipv8) : débit max du trafic
+    /// servi aux autres pairs — cellules relayées + datagrammes de
+    /// sortie — en octets/s. **`-1` = automatique** (défaut : fraction
+    /// `bandwidth/share` de la capacité upload mesurée par
+    /// l'estimateur — voir `BandwidthConfig`), `0` = illimité
+    /// (comportement pyipv8), `>0` = plafond fixe. Le débit servi est
+    /// symétrique (1 datagramme relayé = 1 in + 1 out) : le plafond est
+    /// basé sur l'upload, toujours le facteur limitant — il borne
+    /// automatiquement le download consommé à la même valeur. Appliqué
+    /// à chaud via `POST /api/settings` (seau à jetons sur la pompe
+    /// d'émission ; l'excédent est perdu en sémantique UDP, lissé par
+    /// uTP aux extrémités).
+    pub max_relayed_rate: i64,
+    /// Paramètres de l'estimateur de capacité upload utilisé quand
+    /// `max_relayed_rate = -1` (extension Rust — pyipv8 n'a pas de
+    /// plafond de débit servi).
+    pub bandwidth: BandwidthConfig,
     /// Accepte d'être noeud de sortie (`exitnode_enabled` Tribler).
     pub exitnode_enabled: bool,
     /// Point d'introduction impose `"ip:port"` — extension Rust
@@ -403,6 +491,9 @@ impl Default for TunnelCommunityConfig {
             enabled: true,
             min_circuits: 3,
             max_circuits: 8,
+            max_joined_circuits: 100,
+            max_relayed_rate: -1,
+            bandwidth: BandwidthConfig::default(),
             exitnode_enabled: false,
             intro_point_peer: String::new(),
             data_exit_peer: String::new(),
@@ -871,7 +962,10 @@ impl DaemonConfig {
             .iter()
             .find(|i| i.interface == "UDPIPv6" && !i.ip.is_empty())
             .map(|i| format!("{}:{}", i.ip, i.port));
-        let mut peer_flags = flags::PEER_FLAG_RELAY;
+        // `TunnelSettings.peer_flags` pyipv8 : `{RELAY, SPEED_TEST}` ;
+        // `exitnode_enabled` ajoute les sorties BT/IPv8/HTTP
+        // (`TriblerTunnelCommunity.__init__`).
+        let mut peer_flags = flags::PEER_FLAG_RELAY | flags::PEER_FLAG_SPEED_TEST;
         if self.tunnel_community.exitnode_enabled {
             peer_flags |=
                 flags::PEER_FLAG_EXIT_BT | flags::PEER_FLAG_EXIT_IPV8 | flags::PEER_FLAG_EXIT_HTTP;
@@ -942,6 +1036,9 @@ impl DaemonConfig {
             walker_interval: self.ipv8.walker_interval,
             min_circuits: self.tunnel_community.min_circuits,
             max_circuits: self.tunnel_community.max_circuits,
+            max_joined_circuits: self.tunnel_community.max_joined_circuits as usize,
+            max_relayed_bps: self.tunnel_community.max_relayed_rate,
+            bandwidth: self.tunnel_community.bandwidth.clone(),
             guards_enabled: self.tunnel_community.guards_enabled,
             socks_listen_ports: self.libtorrent.socks_listen_ports.clone(),
             enable_content_discovery: self.content_discovery_community.enabled,
@@ -949,6 +1046,7 @@ impl DaemonConfig {
             peer_cache_max: crate::ipv8_stack::DEFAULT_PEER_CACHE_MAX,
             peer_cache_max_age_secs: crate::ipv8_stack::DEFAULT_PEER_CACHE_MAX_AGE_SECS,
             peer_persist_interval_secs: crate::ipv8_stack::DEFAULT_PEER_PERSIST_INTERVAL_SECS,
+            content_healths_cache_secs: crate::ipv8_stack::DEFAULT_CONTENT_HEALTHS_CACHE_SECS,
         };
 
         crate::CoreConfig {
@@ -1046,8 +1144,73 @@ impl DaemonConfig {
         self.tunnel_community.enabled = core.ipv8.enable_anonymity;
         self.tunnel_community.min_circuits = core.ipv8.min_circuits;
         self.tunnel_community.max_circuits = core.ipv8.max_circuits;
+        self.tunnel_community.max_joined_circuits = core.ipv8.max_joined_circuits as u32;
+        self.tunnel_community.max_relayed_rate = core.ipv8.max_relayed_bps;
         self.libtorrent.socks_listen_ports = core.ipv8.socks_listen_ports.clone();
         self.dht_discovery.enabled = core.ipv8.enable_dht;
         self.content_discovery_community.enabled = core.ipv8.enable_content_discovery;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use onionbit_network_policy::exit_policy as flags;
+    use std::path::Path;
+
+    /// `peer_flags` de `TriblerTunnelCommunity` (`community.py` Python) :
+    /// `{RELAY, SPEED_TEST}` par defaut, plus les sorties
+    /// `EXIT_BT`/`EXIT_IPV8`/`EXIT_HTTP` quand `exitnode_enabled`.
+    #[test]
+    fn peer_flags_refletent_exitnode_enabled() {
+        let cfg = DaemonConfig::default().to_core_config(Path::new("."));
+        assert_eq!(
+            cfg.ipv8.peer_flags,
+            flags::PEER_FLAG_RELAY | flags::PEER_FLAG_SPEED_TEST
+        );
+
+        let mut dcfg = DaemonConfig::default();
+        dcfg.tunnel_community.exitnode_enabled = true;
+        let cfg = dcfg.to_core_config(Path::new("."));
+        assert_eq!(
+            cfg.ipv8.peer_flags,
+            flags::PEER_FLAG_RELAY
+                | flags::PEER_FLAG_SPEED_TEST
+                | flags::PEER_FLAG_EXIT_BT
+                | flags::PEER_FLAG_EXIT_IPV8
+                | flags::PEER_FLAG_EXIT_HTTP
+        );
+    }
+
+    /// `tunnel_community/max_joined_circuits` se propage dans
+    /// `Ipv8Config` (defaut 100 = `should_join_circuit` Python).
+    #[test]
+    fn max_joined_circuits_se_propage() {
+        let cfg = DaemonConfig::default().to_core_config(Path::new("."));
+        assert_eq!(cfg.ipv8.max_joined_circuits, 100);
+
+        let mut dcfg = DaemonConfig::default();
+        dcfg.tunnel_community.max_joined_circuits = 12;
+        let cfg = dcfg.to_core_config(Path::new("."));
+        assert_eq!(cfg.ipv8.max_joined_circuits, 12);
+    }
+
+    /// `tunnel_community/max_relayed_rate` se propage dans
+    /// `Ipv8Config::max_relayed_bps` (extension Rust : `-1` = auto —
+    /// l'estimateur regle la fraction d'upload mesuree ; `0` =
+    /// illimite ; `>0` = fixe).
+    #[test]
+    fn max_relayed_rate_se_propage() {
+        let cfg = DaemonConfig::default().to_core_config(Path::new("."));
+        assert_eq!(cfg.ipv8.max_relayed_bps, -1);
+
+        let mut dcfg = DaemonConfig::default();
+        dcfg.tunnel_community.max_relayed_rate = 256 * 1024;
+        let cfg = dcfg.to_core_config(Path::new("."));
+        assert_eq!(cfg.ipv8.max_relayed_bps, 256 * 1024);
+        // Aller-retour : `apply_runtime_view` restitue la valeur.
+        let mut back = DaemonConfig::default();
+        back.apply_runtime_view(&cfg);
+        assert_eq!(back.tunnel_community.max_relayed_rate, 256 * 1024);
     }
 }

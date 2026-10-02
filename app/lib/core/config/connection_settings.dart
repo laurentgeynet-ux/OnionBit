@@ -8,6 +8,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../platform/injected_api_key.dart';
 import 'app_config.dart';
 import 'daemon_launcher.dart';
 import 'ui_log.dart';
@@ -23,7 +24,9 @@ import 'ui_log.dart';
 /// 2. **web** : `Uri.base.origin` (l'UI est servie par le daemon —
 ///    same-origin, zéro configuration) + `?key=` de l'URL s'il est
 ///    présent (accepté par `auth.rs` comme `X-Api-Key`), sinon la clé
-///    persistée ;
+///    **injectée** par le daemon dans `index.html` (meta
+///    `onionbit-api-key` — équivalent de la lecture de
+///    `configuration.json` par le desktop), sinon la clé persistée ;
 /// 3. desktop : daemon local garanti vivant puis découvert
 ///    (`daemon_launcher` : lance `onionbit-daemon` s'il ne tourne pas,
 ///    relit `configuration.json` — clé régénérée et port aléatoire
@@ -52,10 +55,13 @@ class ConnectionSettingsNotifier extends AsyncNotifier<AppConfig> {
 
     if (kIsWeb) {
       // Same-origin par défaut : le daemon qui sert l'UI est l'API.
-      // `?key=` (bookmark) prime sur la clé persistée et y est
-      // mémorisé pour survivre aux navigations sans paramètre.
+      // `?key=` (bookmark) prime ; sinon la clé injectée par le
+      // daemon dans index.html (auto-connexion), sinon la persistée.
       final urlKey = Uri.base.queryParameters['key']?.trim() ?? '';
-      final key = urlKey.isNotEmpty ? urlKey : savedKey;
+      final metaKey = injectedApiKey() ?? '';
+      final key = urlKey.isNotEmpty
+          ? urlKey
+          : (metaKey.isNotEmpty ? metaKey : savedKey);
       if (urlKey.isNotEmpty && urlKey != savedKey) {
         unawaited(prefs.setString(_kKeyApiKey, key));
       }

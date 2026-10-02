@@ -17,6 +17,8 @@
 #   onionbit_ui.exe + *.dll + data\        - interface Flutter Windows
 #   web\                                  - interface web Flutter, servie
 #                                           par le daemon sur http://127.0.0.1:<port>/
+#   OnionBit Web.cmd + web-launch.ps1     - lanceur navigateur
+#                                           (demarre le daemon au besoin)
 #   build-manifest.json                   - version, commit, rustc, date UTC
 #
 # Pas de script de lancement : `onionbit_ui.exe` demarre le daemon tout
@@ -99,6 +101,20 @@ try {
     if (Test-Path $webDist) { Remove-Item $webDist -Recurse -Force }
     Copy-Item $webOut -Destination $webDist -Recurse -Force
 
+    # Lanceur navigateur « OnionBit Web.cmd » : demarre le daemon s'il
+    # ne tourne pas (meme logique --state-dir que daemon_launcher de
+    # l'UI desktop), sinon ouvre juste l'URL — miroir du double-clic
+    # sur onionbit_ui.exe.
+    Copy-Item (Join-Path $root "scripts\web_launch.ps1") `
+        -Destination (Join-Path $dist "web-launch.ps1") -Force
+    @"
+@echo off
+rem This file is part of OnionBit - a Rust port of the Tribler daemon.
+rem Copyright (C) 2026 Laurent Geynet <laurent.geynet@gmail.com>
+rem SPDX-License-Identifier: GPL-3.0-or-later
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0web-launch.ps1" %*
+"@ | Set-Content -Encoding ascii (Join-Path $dist "OnionBit Web.cmd")
+
     # -- 4) Nettoyage des lanceurs historiques ---------------------------
     # demarrer/arreter n'ont plus lieu d'etre (lancement par l'UI, arret
     # via le systray ou PUT /api/shutdown) — retirer les restes des
@@ -158,8 +174,9 @@ try {
     Write-Host ""
     Write-Host "Build OK -> dist\" -ForegroundColor Green
     Write-Host "  Lancement  : dist\onionbit_ui.exe (demarre le daemon au besoin)"
-    Write-Host "  UI web     : http://127.0.0.1:8085/ une fois le daemon lance"
-    Write-Host "               (cle API : state\configuration.json)"
+    Write-Host "  UI web     : dist\`"OnionBit Web.cmd`" ou"
+    Write-Host "               http://127.0.0.1:8085/ une fois le daemon lance"
+    Write-Host "               (cle API injectee automatiquement)"
     Write-Host "  Arret      : systray « Quitter » ou PUT /api/shutdown"
     Write-Host "  Etat/datas : dist\state\ (conserve entre builds)"
     Get-ChildItem $dist -File | Format-Table Name, Length

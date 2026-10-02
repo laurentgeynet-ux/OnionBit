@@ -38,6 +38,13 @@ pub struct TunnelSettings {
     /// `max_time_inactive` Python (20 s) : inactivite avant
     /// destruction (`remove_* "no activity"`).
     pub max_time_inactive: Duration,
+    /// Extension Rust (sans equivalent pyipv8) : debit max des
+    /// trafics servis aux autres — cellules relayees et datagrammes
+    /// de sortie (octets/s, 0 = illimite). `max_traffic` Python borne
+    /// le budget de vie par objet de routage, pas le debit instantane.
+    /// Defaut 512 Kio/s (ecart de defaut assumé vs pyipv8 = illimite) :
+    /// un relais utile sans saturer la bande passante de l'hote.
+    pub max_relayed_bps: u64,
     /// `max_traffic` Python (10 Gio) : octets (up+down) max par objet
     /// de routage avant destruction (`"traffic limit exceeded"`).
     pub max_traffic: u64,
@@ -137,6 +144,7 @@ impl Default for TunnelSettings {
             max_time: Duration::from_secs(60 * 60),
             max_time_ip: Duration::from_secs(24 * 60 * 60),
             max_time_inactive: Duration::from_secs(20),
+            max_relayed_bps: 512 * 1024,
             max_traffic: 10 * 1024_u64.pow(3),
             circuit_timeout: Duration::from_secs(60),
             unstable_timeout: Duration::from_secs(60),

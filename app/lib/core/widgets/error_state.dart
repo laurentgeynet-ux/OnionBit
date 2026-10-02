@@ -4,33 +4,58 @@
 
 import 'package:flutter/material.dart';
 
+import '../api/api_client.dart';
 import '../l10n/l10n_ext.dart';
 import '../theme/app_theme.dart';
 
 /// État d'erreur générique avec action de nouvelle tentative — consommé
 /// par les écrans branchés sur un `AsyncValue.error` Riverpod.
+///
+/// Un [DaemonUnreachableException] produit un message orienté cause
+/// (« le daemon ne répond pas ») plutôt que la trace HTTP brute ; les
+/// [ApiException] affichent leur `message` métier sans le préfixe
+/// technique ; tout le reste retombe sur `toString()`.
 class ErrorState extends StatelessWidget {
-  const ErrorState({super.key, required this.message, this.onRetry});
+  const ErrorState({super.key, required this.error, this.onRetry});
 
-  final String message;
+  final Object error;
   final VoidCallback? onRetry;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final e = error;
+    final unreachable = e is DaemonUnreachableException;
+    final icon = unreachable ? Icons.cloud_off_outlined : Icons.error_outline;
+    final message = switch (e) {
+      DaemonUnreachableException(:final uri) => context.l10n
+          .daemonUnreachableBody('$uri'),
+      ApiException(:final message) => message,
+      _ => '$e',
+    };
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(AppSpacing.lg),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.error_outline, size: 48, color: theme.colorScheme.error),
+            Icon(icon, size: 48, color: theme.colorScheme.error),
             const SizedBox(height: AppSpacing.md),
             Text(
-              message,
+              unreachable
+                  ? context.l10n.daemonUnreachableTitle
+                  : message,
               style: theme.textTheme.titleMedium,
               textAlign: TextAlign.center,
             ),
+            if (unreachable) ...[
+              const SizedBox(height: AppSpacing.sm),
+              Text(
+                message,
+                style: theme.textTheme.bodyMedium,
+                textAlign: TextAlign.center,
+              ),
+            ],
             if (onRetry != null) ...[
               const SizedBox(height: AppSpacing.md),
               FilledButton.tonal(

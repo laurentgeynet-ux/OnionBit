@@ -15,7 +15,7 @@
 //! semantique du schema, pas l'interoperabilite binaire).
 
 /// Version courante du schema de ce crate.
-pub const SCHEMA_VERSION: i64 = 11;
+pub const SCHEMA_VERSION: i64 = 12;
 
 /// Script SQL de chaque migration, dans l'ordre (index 0 = v1).
 pub const MIGRATIONS: &[&str] = &[
@@ -250,6 +250,12 @@ CREATE TABLE guards (
     reserve     INTEGER NOT NULL DEFAULT 0,
     position    INTEGER NOT NULL DEFAULT 0
 );
+",
+    // v12 : index `torrent_state(seeders)` — `healths_for` populaire
+    // ordonne `ORDER BY t.seeders DESC` ; sans index c'est un tri
+    // complet de la jointure a chaque cache-miss du cache applicatif.
+    "
+CREATE INDEX idx_torrent_state_seeders ON torrent_state(seeders);
 ",
 ];
 

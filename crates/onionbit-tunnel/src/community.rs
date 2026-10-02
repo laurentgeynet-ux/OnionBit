@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU16, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use onionbit_crypto::ipv8::dh::crypto_box_beforenm;
 use onionbit_crypto::ipv8::keys::LibNaClSecretKey;
@@ -77,6 +77,71 @@ pub(crate) enum SendJob {
     Endpoint(UdpAddress, Vec<u8>),
     /// Datagramme brut vers l'exterieur (socket de sortie dediee).
     ExitSocket(Arc<tokio::net::UdpSocket>, SocketAddr, Vec<u8>),
+}
+
+/// Limiteur de debit du trafic servi aux autres pairs (cellules
+/// relayees `SendJob::Endpoint` + datagrammes `SendJob::ExitSocket`)
+/// — extension Rust sans equivalent pyipv8 (`max_traffic` est un
+/// budget de vie par objet de routage, pas un debit).
+///
+/// Seau a jetons : `rate` octets/s (0 = illimite ; defaut produit
+/// 512 Kio/s — pyipv8 sert sans plafond), rafale bornee a une seconde
+/// de debit. Faute de jetons le datagramme est perdu — semantique UDP :
+/// les extremites uTP retransmettent et lissent la charge.
+pub(crate) struct RelayRateLimiter {
+    /// Budget courant en octets/s — 0 = illimite.
+    rate: AtomicU64,
+    /// Jetons (octets) + instant du dernier remplissage.
+    bucket: Mutex<(Instant, u64)>,
+    /// Datagrammes perdus faute de budget (diagnostic).
+    dropped: AtomicU64,
+}
+
+impl RelayRateLimiter {
+    fn new(rate_bps: u64) -> Self {
+        Self {
+            rate: AtomicU64::new(rate_bps),
+            bucket: Mutex::new((Instant::now(), rate_bps)),
+            dropped: AtomicU64::new(0),
+        }
+    }
+
+    /// Debit applique (octets/s) — 0 = illimite.
+    pub(crate) fn rate(&self) -> u64 {
+        self.rate.load(Ordering::Relaxed)
+    }
+
+    /// Met a jour le debit a chaud (`POST /api/settings`).
+    pub(crate) fn set_rate(&self, bps: u64) {
+        self.rate.store(bps, Ordering::Relaxed);
+    }
+
+    /// Datagrammes perdus faute de budget depuis le demarrage.
+    pub(crate) fn dropped(&self) -> u64 {
+        self.dropped.load(Ordering::Relaxed)
+    }
+
+    /// `true` si `len` octets peuvent partir maintenant ; sinon le
+    /// datagramme est compte comme perdu (`dropped`).
+    fn allow(&self, len: usize) -> bool {
+        let rate = self.rate();
+        if rate == 0 {
+            return true;
+        }
+        let mut b = self.bucket.lock().unwrap();
+        let (ref mut last, ref mut tokens) = *b;
+        let refill = last.elapsed().as_secs_f64() * rate as f64;
+        // Rafale bornee a une seconde de debit.
+        *tokens = (*tokens as f64 + refill).min(rate as f64) as u64;
+        *last = Instant::now();
+        if *tokens >= len as u64 {
+            *tokens -= len as u64;
+            true
+        } else {
+            self.dropped.fetch_add(1, Ordering::Relaxed);
+            false
+        }
+    }
 }
 
 /// Evenement "donnee recue sur un circuit" (livre au consommateur —
@@ -305,6 +370,9 @@ pub struct TunnelCommunity {
     /// File d'emission serialisee drainee par la pompe unique —
     /// voir [`SendJob`]. `try_send` : file pleine = perte UDP.
     pub(crate) relay_send_tx: tokio::sync::mpsc::Sender<SendJob>,
+    /// Limiteur de debit du trafic servi (`settings.max_relayed_bps`
+    /// a la construction, `set_relay_rate_bps` a chaud).
+    pub(crate) relay_rate: Arc<RelayRateLimiter>,
     /// `TunnelSettings` Python (`self.settings`) : tous les seuils et
     /// cadences de la community (defauts = valeurs officielles).
     pub settings: TunnelSettings,
@@ -468,13 +536,23 @@ impl TunnelCommunity {
             tokio::sync::broadcast::channel(crate::speedtest::SPEED_TEST_CHANNEL_CAP);
         let (relay_send_tx, mut send_rx) = tokio::sync::mpsc::channel::<SendJob>(SEND_QUEUE_CAP);
         let guard_cfg = settings.guards.clone();
+        let relay_rate = Arc::new(RelayRateLimiter::new(settings.max_relayed_bps));
         // Pompe d'emission unique : conserve l'ordre des cellules sur
         // le fil (boucle asyncio unique de pyipv8) — un spawn par
         // datagramme reordonnait les cellules consecutives relayees.
         {
             let ep = endpoint.clone();
+            let limiter = relay_rate.clone();
             tokio::spawn(async move {
                 while let Some(job) = send_rx.recv().await {
+                    let (len, job) = match &job {
+                        SendJob::Endpoint(_, data) | SendJob::ExitSocket(_, _, data) => {
+                            (data.len(), job)
+                        }
+                    };
+                    if !limiter.allow(len) {
+                        continue;
+                    }
                     match job {
                         SendJob::Endpoint(addr, data) => {
                             let _ = ep.send_to(&addr, &data).await;
@@ -523,6 +601,7 @@ impl TunnelCommunity {
             discovery: Mutex::new(None),
             dht_provider: Mutex::new(None),
             relay_send_tx,
+            relay_rate,
             settings,
             guards: crate::guards::GuardSet::new(guard_cfg, None),
         });
@@ -540,6 +619,18 @@ impl TunnelCommunity {
             )
             .await;
         community
+    }
+
+    /// Debit max du trafic servi aux autres, a chaud
+    /// (`tunnel_community/max_relayed_rate` → `POST /api/settings`) —
+    /// extension Rust : 0 = illimite, defaut produit 512 Kio/s.
+    pub fn set_relay_rate_bps(&self, bps: u64) {
+        self.relay_rate.set_rate(bps);
+    }
+
+    /// Datagrammes servis perdus faute de budget debit (diagnostic).
+    pub fn relay_rate_dropped(&self) -> u64 {
+        self.relay_rate.dropped()
     }
 
     /// Injecte la persistance des guards (ADR-0010) — appele par
@@ -4097,4 +4188,42 @@ pub(crate) fn verify_and_generate_shared_secret(
         return Err(Ipv8Error::Crypto(onionbit_crypto::CryptoError::Aead));
     }
     Ok(shared)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::RelayRateLimiter;
+
+    /// Debit 0 = illimite (comportement pyipv8) ; un debit borne
+    /// laisse passer la rafale initiale (1 s de budget) puis perd
+    /// l'excedent, et `set_rate` bascule a chaud.
+    #[test]
+    fn relay_rate_limiter_borne_et_illimite() {
+        let unlimited = RelayRateLimiter::new(0);
+        for _ in 0..1000 {
+            assert!(unlimited.allow(1024));
+        }
+        assert_eq!(unlimited.dropped(), 0);
+
+        // 1 Kio/s : la rafale initiale (1024 o) passe, le reste perd.
+        let capped = RelayRateLimiter::new(1024);
+        assert!(capped.allow(1024));
+        assert!(!capped.allow(1024));
+        assert!(!capped.allow(1));
+        assert_eq!(capped.dropped(), 2);
+
+        // Bascule a chaud vers illimite puis retour borne.
+        capped.set_rate(0);
+        assert_eq!(capped.rate(), 0);
+        assert!(capped.allow(4096));
+        capped.set_rate(1024);
+        assert_eq!(capped.rate(), 1024);
+
+        // Baisse a chaud : le budget residuel (rafale 1 s) autorise
+        // encore les petits datagrammes.
+        let slow = RelayRateLimiter::new(512);
+        assert!(!slow.allow(1024));
+        assert!(slow.allow(512));
+        assert_eq!(slow.dropped(), 1);
+    }
 }

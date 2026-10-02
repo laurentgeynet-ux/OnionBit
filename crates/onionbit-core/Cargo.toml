@@ -22,6 +22,9 @@ reqwest.workspace = true
 fs2.workspace = true
 bytes.workspace = true
 rand.workspace = true
+# Sonde `GetLinkLayerMaxBitRates` de l'estimateur de capacité upload
+# (`services/bandwidth.rs`) — SSDP + SOAP réutilisés du port forwarder.
+librqbit-upnp = "9.0.1"
 tokio.workspace = true
 thiserror.workspace = true
 tracing.workspace = true

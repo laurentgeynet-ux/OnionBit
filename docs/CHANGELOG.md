@@ -3,6 +3,193 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Correctifs retour terrain DEBUG (2026-10-02)
+
+- `tunnel_udp_socket` : le log par cellule relayée
+  (`socket tunnel -> cellule data`) passe de `debug!` à `trace!` —
+  en niveau DEBUG il produisait ~2 M de lignes / 340 Mio par session
+  et saturait le disque ; `debug!` garde les événements circuit.
+  `select-response recu` (par chunk) passe aussi en `trace!`.
+- Toggle debug UI : le `EnvFilter` devient
+  `debug,librqbit*=info` — les journaux par pair/datagramme des
+  crates librqbit vendored (~30-40k lignes/session : timeouts
+  `manage_peer`, DHT `response_reader`, `udp_tracker`, uTP
+  out-of-order) ne noient plus les logs métier ; leurs `info`/`warn`
+  restent visibles et `RUST_LOG` redonne le plein debug.
+- `bandwidth` : `snapshot.up_bps` = meilleure estimation **mesure
+  active ou pic passif** (sinon « mesure en cours… » à l'infini quand
+  l'IGD ne répond pas) ; `note_applied` publie le plafond en mode
+  fixe/illimité ; `relay_mode` (`auto`/`unlimited`/`fixed`) exposé
+  dans `/api/statistics/ipv8` ; échec UPnP désormais loggé en `info!`.
+- UI : « Plafond débit servi » affiche « illimité » en mode
+  `unlimited` au lieu de « — ».
+
+## Message « daemon injoignable » (2026-10-02)
+
+- `ApiClient` enveloppe les échecs de transport (`http.ClientException`
+  — `SocketException` natif / `TypeError: Failed to fetch` web) dans
+  `DaemonUnreachableException` portant l'URI cible — tous les chemins
+  (`_send`, `getText`, `getStreamedLines`).
+- `ErrorState` prend désormais l'erreur brute : daemon injoignable →
+  icône `cloud_off` + « Le daemon ne répond pas » + URL contactée ;
+  `ApiException` → `message` métier sans le préfixe `ApiException(…)` ;
+  reste → `toString()`. Les 7 écrans passent `error: e`.
+
+## Contention SQLite dans la boucle de paquets IPv8 (2026-10-02)
+
+- **Diagnostic terrain** : sous charge réseau (relais + requêtes de
+  pairs distants), le journal montrait ~320 « operation sqlite lente »
+  (jusqu'à 24 s d'attente sur le `Mutex<Connection>`) et des
+  « lag executor tokio » corrélés — les accès DB étaient exécutés
+  **synchronement dans le traitement des paquets** (`ContentProvider`).
+- `ContentProvider` passe en **futures boxed** (dyn-safe) :
+  `healths_for`, `process_health`, `remote_select`,
+  `process_select_response` — les sites d'appel de `on_packet` sont
+  déportés dans `tokio::spawn`, le travail SQL sur le pool bloquant
+  via `db.call` (`spawn_blocking`). L'executor n'est plus figé par un
+  scan ou un batch d'inserts.
+- **Cache `healths_for`** (`Ipv8Config::content_healths_cache_secs`,
+  défaut 30 s, par `request_type`) — les `HEALTH_REQUEST` distants en
+  rafale ne déclenchent plus un `ORDER BY RANDOM()` à chaque paquet.
+- **Transactions** : `process_health` et `process_select_response`
+  batchent leurs écritures en **une** `unchecked_transaction` au lieu
+  d'un autocommit par ligne (N appends WAL → 1 commit).
+- `version_info` reste synchrone (pas d'accès DB).
+- **Audit DB** : pragmas déjà corrects (WAL, `synchronous=NORMAL`,
+  `busy_timeout`, `temp_store=MEMORY`, cache 20 Mio, mmap 64 Mio) ;
+  ajouts —
+  `wal_autocheckpoint` relevé à ~32 Mio (le seuil par défaut de 4 Mio
+  déclenchait le checkpoint en pleine rafale d'écriture),
+  `PRAGMA wal_checkpoint(TRUNCATE)` à l'arrêt de session (`stop()`),
+  index `idx_torrent_state_seeders` (v12) pour le tri
+  `ORDER BY seeders DESC` de `healths_for`.
+- Toutes les tables justifient leur persistance (`downloads` =
+  restauration, `channel_node`/`FtsIndex`/`torrent_state`/`trackers` =
+  métadonnées servies aux pairs Tribler + recherche locale,
+  `ipv8_peers`/`tunnel_pex`/`guards` = reconnexion, `rss_items`) ;
+  `channel_node`/`torrent_state` croissent sans borne comme chez
+  Tribler — GC éventuel à étudier, pas de suppression en l'état
+  (interop d'abord).
+
+## Plafond de débit servi `max_relayed_rate` — mode auto (2026-10-02)
+
+- `tunnel_community/max_relayed_rate` est désormais un **mode** :
+  **`-1` = automatique** (défaut produit), `0` = illimité
+  (comportement pyipv8), `>0` = plafond fixe en octets/s.
+- **`services/bandwidth.rs` — estimateur de capacité upload** :
+  le débit servi est symétrique (1 datagramme relayé = 1 in + 1 out),
+  l'upload est le facteur limitant → le plafond seul sur l'upload
+  borne automatiquement le download consommé. Sources, meilleure
+  disponible : débit WAN du routeur via **UPnP**
+  (`WANCommonInterfaceConfig:GetLinkLayerMaxBitRates`, trafic LAN),
+  **sonde HTTP POST** (`bandwidth/probe_up_urls`, opt-in — vide par
+  défaut, anti-SSRF `ip_policy`), **pic passif** des compteurs
+  endpoint (borne basse).
+- **`tunnel_community/bandwidth`** : `share` (1/3), `floor_bps`
+  (64 Kio/s), `fallback_bps` (512 Kio/s avant première mesure),
+  `measure_upnp`, `probe_up_urls`/`probe_bytes`/`probe_timeout_secs`,
+  `measure_interval_secs` (1 h), `warmup_secs` (30 s),
+  `sample_secs` (5 s).
+- Tâche session périodique : warmup → mesure → tick 5 s (pic passif +
+  réapplication à chaud via `set_relay_rate_bps`) — seulement en mode
+  auto ; un plafond fixe n'est jamais écrasé.
+- `/api/statistics/ipv8` expose `bandwidth` : `measured_up_bps`,
+  `measured_down_bps`, `source` (`upnp`/`probe`/`passive`),
+  `passive_peak_up_bps`, `effective_relay_bps`, `relay_dropped`.
+- **UI** : le champ « Débit servi maximum » disparaît — remplacé par
+  une note automatique ; la clé reste réglable dans
+  `configuration.json` pour les usages avancés. Le plafond servi est
+  visible dans la barre d'état (`relais ≤ …`) et la capacité mesurée
+  dans Diagnostic → Statistiques (section « Anonymat »).
+- Seau à jetons (`RelayRateLimiter`, rafale bornée à 1 s de débit)
+  dans la pompe d'émission sérialisée de la `TunnelCommunity` :
+  couvre les deux variantes de `SendJob` — cellules **relayées**
+  (`Endpoint`) et datagrammes de **sortie** (`ExitSocket`). Faute de
+  jetons le datagramme est perdu : sémantique UDP, la charge est
+  lissée par les retransmissions uTP aux extrémités plutôt que par
+  une file qui croît sans borne.
+- **Appliqué à chaud** via `POST /api/settings`
+  (`TunnelCommunity::set_relay_rate_bps`, contrairement à
+  `max_joined_circuits` qui reste restart-only) ; compteur
+  `relay_rate_dropped()` pour l'observabilité des pertes.
+- UI : champ « Débit servi maximum » (Kio/s) dans la section
+  « Anonymous tunnels », distingué des bornes BitTorrent
+  `libtorrent/max_*_rate` qui ne concernent que les téléchargements
+  locaux.
+
+## Plafond de relais `max_joined_circuits` (2026-10-02)
+
+- `tunnel_community/max_joined_circuits` (défaut 100, valeur Python de
+  `should_join_circuit` — `tunnel.py`) exposé jusqu'à
+  `TunnelSettings` : au-delà du plafond de jambes de relais + sockets
+  de sortie, les `create` entrants sont refusés. Borne la charge que
+  le réseau impose au nœud — un membre joignable et stable accumule
+  les relais d'autrui (observé : ~550 Mo relayés).
+- Configurable dans l'UI (section « Anonymous tunnels », champ
+  « Relais servis maximum ») — pris en compte au redémarrage, comme
+  `enabled`/`exitnode_enabled` (`TunnelSettings` figé à la
+  construction de la communauté).
+- Libellés anonymat corrigés : « TunnelCommunity enabled » mentionne
+  désormais le rôle de relais interne, « exit node » distingue la
+  sortie vers l'Internet public sous l'IP de l'utilisateur.
+
+## Fix : réglages « restart-only » impossibles à commuter dans l'UI (2026-10-02)
+
+- **Symptôme** : les commutateurs `tunnel_community/enabled`,
+  `ipv8/enabled`, `dht_discovery`, `content_discovery_community`,
+  `torrent_checker`, `libtorrent/{dht,upnp,lsd,utp}` revenaient
+  immédiatement à leur position de démarrage. Le `POST /api/settings`
+  persistait bien la valeur dans `configuration.json`, mais `GET`
+  recouvrait ces clés avec l'état **runtime** (`apply_runtime_view`
+  ← `effective_config()`, qui n'avait d'overrides que pour les
+  réglages appliqués à chaud) — l'écran affichait donc l'état du boot
+  au lieu de la valeur en attente de redémarrage.
+- **`onionbit-core`** : `ServiceOverrides` mémorise désormais les
+  sections restart-only postées (`ipv8`, `engine`,
+  `enable_torrent_checker`) — `effective_config()` reflète la
+  configuration en attente (parité Python : `config.configuration`
+  est muté in-place par le `POST` et relu tel quel par le `GET`),
+  sans rien appliquer à la session en cours. `exitnode_enabled` et
+  `min/max_circuits` étaient déjà correctement reflétés.
+- **`peer_flags` tunnel** : `to_core_config` produisait `RELAY` seul
+  (=1) au lieu de `{RELAY, SPEED_TEST}` (=9, `TunnelSettings` pyipv8)
+  — le nœud ne répondait jamais aux `test-request` pyipv8 ; base
+  corrigée dans `to_core_config` et `Ipv8Config::production`
+  (`exitnode_enabled` ajoute toujours `EXIT_BT|EXIT_IPV8|EXIT_HTTP`).
+- Libellés : le sous-titre du nœud de sortie précise que la sortie
+  couvre aussi trackers UDP/DHT, requêtes HTTP de trackers et trafic
+  IPv8 (pas seulement BitTorrent), et qu'il est sans effet si la
+  TunnelCommunity est désactivée ; carte « État effectif » : clés
+  `listen_port`/`listen_interfaces` inexistantes → `port` +
+  `listen_interface[_v6]` réels.
+- Tests : `settings_restart_only_refletent_la_valeur_postee`
+  (`api.rs`, POST→GET restart-only) +
+  `peer_flags_refletent_exitnode_enabled` (`daemon_config.rs`).
+
+## Fix : téléchargements anonymes « en vérification » figés (2026-10-02)
+
+- **Symptôme** : `tunnel_community.enabled=false` au démarrage du
+  daemon → `restore_downloads` sautait silencieusement chaque ligne
+  `anon_hops>0` (« moteur anonyme indisponible ») ; les lignes DB non
+  réinjectées restaient affichées `WAITING_FOR_HASHCHECK`
+  (« Vérification », 0 %) toute la session et tout `PATCH` répondait
+  `404 this download does not exist` (le téléchargement n'existe dans
+  aucun moteur).
+- **`onionbit-core`** : le skip de lane anonyme à la restauration est
+  désormais remonté au GUI via `Notification::TriblerException`
+  (parité `on_tribler_exception` Python, déjà utilisée pour les
+  échecs de re-add) et compté dans `failed` ; nouvel accesseur
+  `CoreSession::restore_finished()`.
+- **`onionbit-api`** : `GET /api/downloads` n'émet les lignes
+  persistées non restaurées en `WAITING_FOR_HASHCHECK`/`STOPPED` que
+  tant que `load_checkpoint` tourne — après `restore_done` elles sont
+  absentes de la liste (comme Python : `get_downloads` ne liste que
+  les téléchargements chargés) ; `checkpoints.all_loaded` reflète
+  désormais la fin réelle de la restauration.
+- Test : `restauration_anonyme_sans_ipv8_notifie_une_exception`
+  (`lifecycle.rs`) — ligne `anon_hops=3` persistée + session sans
+  ipv8 → download non restauré + `tribler_exception` émis.
+
 ## Version 0.5.0-alpha (2026-10-02)
 
 - Release succédant à `v0.4.0-alpha` :
@@ -13,6 +200,9 @@ en haut.
     pickers/drop/connexion adaptés navigateur, dialogue clé API ;
   - statiques sous `/` exemptes d'auth (parité `/ui`/`/static`),
     `/api/*` inchangé derrière la clé ; `api/web_ui_*` + `--web-ui-dir` ;
+  - **auto-connexion** : clé API injectée dans l'`index.html` servi
+    (`api/web_ui_inject_key`, défaut `true`) — pas de saisie ;
+    lanceur `OnionBit Web.cmd` qui démarre le daemon au besoin ;
   - packaging : `dist/web/` intégré au bundle, systray « Ouvrir dans
     le navigateur », streaming `/stream/{i}?key=` par fichier.
 

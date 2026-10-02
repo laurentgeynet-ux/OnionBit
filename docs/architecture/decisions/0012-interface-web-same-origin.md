@@ -52,9 +52,19 @@ daemon), drop zone (`desktop_drop` / événements HTML5), découverte
 daemon (processus local / no-op + `Uri.base.origin`), notifications
 (navigateur), ouverture d'URL.
 
-La clé API se saisit dans l'UI web (dialogue de connexion, bandeau
-« clé requise » sur 401) ou via `?key=` — mécanismes déjà acceptés
-par `auth.rs`.
+La clé API est **injectée par le daemon** dans l'`index.html` servi
+(`<meta name="onionbit-api-key">`, `api/web_ui_inject_key` = `true`
+par défaut) : l'UI web se connecte sans saisie — équivalent de la
+lecture de `configuration.json` par la GUI desktop. Sans risque hors
+loopback : le daemon ne bind que sur `127.0.0.1` et la same-origin
+policy empêche un site tiers de lire la réponse. Repli : saisie dans
+le dialogue de connexion (bandeau « clé requise » sur 401) ou `?key=`
+— mécanismes déjà acceptés par `auth.rs`.
+
+Un lanceur `OnionBit Web.cmd`/`web-launch.ps1` dans `dist\` reproduit
+le comportement du double-clic desktop : sonde l'API, démarre
+`onionbit-daemon.exe --state-dir <dist>\state` si rien n'écoute
+(jamais de double instance), puis ouvre le navigateur.
 
 ## Conséquences
 

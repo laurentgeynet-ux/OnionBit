@@ -110,7 +110,7 @@ class _TabScaffold<T> extends StatelessWidget {
         Expanded(
           child: value.when(
             loading: () => const Center(child: CircularProgressIndicator()),
-            error: (e, _) => ErrorState(message: '$e', onRetry: onRetry),
+            error: (e, _) => ErrorState(error: e, onRetry: onRetry),
             data: (items) => items.isEmpty
                 ? EmptyState(
                     icon: Icons.insights,
@@ -443,7 +443,7 @@ class _StatsTab extends ConsumerWidget {
           child: stats.when(
             loading: () => const Center(child: CircularProgressIndicator()),
             error: (e, _) => ErrorState(
-              message: '$e',
+              error: e,
               onRetry: () => ref.invalidate(onionbitStatsProvider),
             ),
             data: (s) => _statsList(context, ref, s),
@@ -566,6 +566,36 @@ class _StatsTab extends ConsumerWidget {
         ),
         _stat(context, l10n.statDataCircuits, dataReadyText),
         _stat(context, l10n.statExitsActive, '$activeExits'),
+        // Débit servi aux autres pairs (estimateur de capacité
+        // upload — `tunnel_community/bandwidth`, extension Rust).
+        if (traffic?.bandwidth case final bw?) ...[
+          _stat(
+            context,
+            l10n.statBwUpload,
+            bw.measuredUpBps > 0
+                ? l10n.statBwUploadValue(
+                    context.fmtRate(bw.measuredUpBps),
+                    switch (bw.source) {
+                      'upnp' => l10n.bwSourceUpnp,
+                      'probe' => l10n.bwSourceProbe,
+                      'passive' => l10n.bwSourcePassive,
+                      _ => l10n.bwSourcePending,
+                    },
+                  )
+                : l10n.bwSourcePending,
+          ),
+          _stat(
+            context,
+            l10n.statBwServed,
+            bw.effectiveRelayBps > 0
+                ? context.fmtRate(bw.effectiveRelayBps)
+                : bw.relayMode == 'unlimited'
+                ? l10n.bwUnlimited
+                : '—',
+          ),
+          if (bw.relayDropped > 0)
+            _stat(context, l10n.statBwDropped, '${bw.relayDropped}'),
+        ],
       ],
     );
   }
@@ -679,7 +709,7 @@ class _LogsTab extends ConsumerWidget {
           child: logs.when(
             loading: () => const Center(child: CircularProgressIndicator()),
             error: (e, _) => ErrorState(
-              message: '$e',
+              error: e,
               onRetry: () => ref.invalidate(daemonLogsProvider),
             ),
             data: (text) => text.trim().isEmpty

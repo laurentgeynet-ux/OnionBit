@@ -7,6 +7,7 @@
 //! `content_discovery` — ce dernier vit cote overlay dans
 //! `onionbit-ipv8::content_discovery`).
 
+pub mod bandwidth;
 pub mod rss;
 pub mod torrent_checker;
 pub mod versioning;

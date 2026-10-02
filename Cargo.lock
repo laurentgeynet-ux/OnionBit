@@ -3042,6 +3042,7 @@ dependencies = [
  "bytes",
  "fs2",
  "hex 0.4.3",
+ "librqbit-upnp",
  "lz4_flex",
  "onionbit-bittorrent",
  "onionbit-crypto",

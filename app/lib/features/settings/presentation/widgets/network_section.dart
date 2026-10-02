@@ -222,8 +222,13 @@ class _EffectiveState extends ConsumerWidget {
     final theme = Theme.of(context);
     final l10n = context.l10n;
     const lt = ['libtorrent'];
-    final port = settingsInt(settings, [...lt, 'listen_port']);
-    final interfaces = settingsLeaf(settings, [...lt, 'listen_interfaces']);
+    final port = settingsInt(settings, [...lt, 'port']);
+    final listenV4 = settingsString(settings, [...lt, 'listen_interface']);
+    final listenV6 = settingsString(settings, [...lt, 'listen_interface_v6']);
+    final interfaces = [
+      if (listenV4.isNotEmpty) '$listenV4:$port',
+      if (listenV6.isNotEmpty) '[$listenV6]:${settingsInt(settings, [...lt, 'port_v6'])}',
+    ];
     final proxyType = settingsInt(settings, [...lt, 'proxy_type']);
     final proxyServer = settingsString(settings, [...lt, 'proxy_server']);
     final overlays = ref.watch(overlaysProvider).value ?? const [];
@@ -263,7 +268,7 @@ class _EffectiveState extends ConsumerWidget {
               visualDensity: VisualDensity.compact,
               labelStyle: theme.textTheme.bodySmall,
             ),
-            if (interfaces is List && interfaces.isNotEmpty)
+            if (interfaces.isNotEmpty)
               Chip(
                 label: Text(l10n.interfacesChip(interfaces.join(', '))),
                 visualDensity: VisualDensity.compact,

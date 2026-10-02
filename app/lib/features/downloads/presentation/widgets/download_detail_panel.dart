@@ -389,7 +389,7 @@ class _FilesTab extends ConsumerWidget {
     return files.when(
       loading: () => const Center(child: CircularProgressIndicator()),
       error: (e, _) => ErrorState(
-        message: '$e',
+        error: e,
         onRetry: () => ref.invalidate(downloadFilesProvider(download.infohash)),
       ),
       data: (fileList) => fileList.isEmpty

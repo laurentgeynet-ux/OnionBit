@@ -37,23 +37,44 @@ struct MockProvider {
 }
 
 impl ContentProvider for MockProvider {
-    fn healths_for(&self, _request_type: u8) -> Vec<HealthInfo> {
-        self.healths.clone()
+    fn healths_for<'a>(
+        &'a self,
+        _request_type: u8,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Vec<HealthInfo>> + Send + 'a>> {
+        let healths = self.healths.clone();
+        Box::pin(async move { healths })
     }
-    fn process_health(&self, healths: &[HealthInfo]) -> Vec<[u8; 20]> {
-        self.received
-            .lock()
-            .unwrap()
-            .extend(healths.iter().cloned());
-        Vec::new()
+    fn process_health<'a>(
+        &'a self,
+        healths: &'a [HealthInfo],
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Vec<[u8; 20]>> + Send + 'a>> {
+        let healths = healths.to_vec();
+        Box::pin(async move {
+            self.received.lock().unwrap().extend(healths);
+            Vec::new()
+        })
     }
-    fn remote_select(&self, json: &[u8]) -> Vec<Vec<u8>> {
-        self.selects.lock().unwrap().push(json.to_vec());
-        vec![self.select_blob.clone()]
+    fn remote_select<'a>(
+        &'a self,
+        json: &'a [u8],
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Vec<Vec<u8>>> + Send + 'a>> {
+        let json = json.to_vec();
+        let blob = self.select_blob.clone();
+        Box::pin(async move {
+            self.selects.lock().unwrap().push(json);
+            vec![blob]
+        })
     }
-    fn process_select_response(&self, blob: &[u8]) -> Vec<serde_json::Value> {
-        self.responses.lock().unwrap().push(blob.to_vec());
-        Vec::new()
+    fn process_select_response<'a>(
+        &'a self,
+        blob: &'a [u8],
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Vec<serde_json::Value>> + Send + 'a>>
+    {
+        let blob = blob.to_vec();
+        Box::pin(async move {
+            self.responses.lock().unwrap().push(blob);
+            Vec::new()
+        })
     }
     fn version_info(&self) -> (String, String) {
         ("8.4.3-rust".into(), "test".into())
@@ -274,17 +295,33 @@ async fn version_request_answered() {
         calls: Arc<Mutex<u32>>,
     }
     impl ContentProvider for V {
-        fn healths_for(&self, _t: u8) -> Vec<HealthInfo> {
-            vec![]
+        fn healths_for<'a>(
+            &'a self,
+            _t: u8,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Vec<HealthInfo>> + Send + 'a>>
+        {
+            Box::pin(async move { vec![] })
         }
-        fn process_health(&self, _h: &[HealthInfo]) -> Vec<[u8; 20]> {
-            vec![]
+        fn process_health<'a>(
+            &'a self,
+            _h: &'a [HealthInfo],
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Vec<[u8; 20]>> + Send + 'a>>
+        {
+            Box::pin(async move { vec![] })
         }
-        fn remote_select(&self, _j: &[u8]) -> Vec<Vec<u8>> {
-            vec![]
+        fn remote_select<'a>(
+            &'a self,
+            _j: &'a [u8],
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Vec<Vec<u8>>> + Send + 'a>>
+        {
+            Box::pin(async move { vec![] })
         }
-        fn process_select_response(&self, _b: &[u8]) -> Vec<serde_json::Value> {
-            Vec::new()
+        fn process_select_response<'a>(
+            &'a self,
+            _b: &'a [u8],
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Vec<serde_json::Value>> + Send + 'a>>
+        {
+            Box::pin(async move { Vec::new() })
         }
         fn version_info(&self) -> (String, String) {
             *self.calls.lock().unwrap() += 1;

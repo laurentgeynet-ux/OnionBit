@@ -40,7 +40,7 @@ redémarrage) — parité `set_session_limits` Python + services :
 | `libtorrent/max_download_rate`/`max_upload_rate` | `Session::ratelimits` rqbit sur toutes les lanes |
 | `libtorrent/active_downloads`/`active_seeds`/`active_limit` | relus par `enforce_queue_limits` au tick suivant |
 | `destination` (`PUT /api/downloads`) | `AddDownloadOptions.output_folder`, persisté en `downloads.output_dir` |
-| tout le reste | restart-only — comme Python (seul `set_session_limits` est à chaud chez Tribler) |
+| tout le reste | restart-only — comme Python (seul `set_session_limits` est à chaud chez Tribler) ; `GET /api/settings` reflète la valeur **postée** (en attente de redémarrage), pas l'état runtime — `ServiceOverrides` mémorise `ipv8`/`engine`/`torrent_checker` postés pour `effective_config()` |
 
 ## Écarts de comportement assumés
 
@@ -72,6 +72,24 @@ redémarrage) — parité `set_session_limits` Python + services :
   (`[hops-1]`, `0` = éphémère, repli éphémère + warn si occupé).
 - `tunnel_community/min_circuits`/`max_circuits` → cible et plafond du
   watchdog de circuits (clamp à la `monitor_downloads`).
+- `tunnel_community/max_joined_circuits` →
+  `TunnelSettings.max_joined_circuits` : plafond de jambes de relais +
+  sockets de sortie servies (`should_join_circuit` pyipv8, défaut 100)
+  — restart-only.
+- `tunnel_community/max_relayed_rate` → `Ipv8Config.max_relayed_bps`
+  (mode, `i64`) : extension Rust sans équivalent pyipv8 — **`-1` =
+  auto** (défaut produit : `bandwidth/share` × capacité upload
+  mesurée par l'estimateur, `floor_bps` plancher, `fallback_bps`
+  avant mesure), `0` = illimité, `>0` = plafond fixe. Seau à jetons
+  sur la pompe d'émission sérialisée (cellules relayées + datagrammes
+  de sortie), excédent perdu en sémantique UDP ; appliqué à chaud
+  (`set_relay_rate_bps`). Ne borne pas le trafic propre du nœud.
+- `tunnel_community/bandwidth/*` → `Ipv8Config.bandwidth` : paramètres
+  de l'estimateur de capacité upload (`services/bandwidth.rs`) —
+  débit WAN UPnP (`GetLinkLayerMaxBitRates`), sondes HTTP POST
+  opt-in (`probe_up_urls`), pic passif endpoint ; mesure à warmup +
+  `measure_interval_secs`, réappliquée à chaud en mode auto.
+  Exposée via `/api/statistics/ipv8` (`bandwidth`).
 - `ipv8/interfaces[UDPIPv6]` → second socket `UdpEndpoint` IPv6.
 - `ipv8/logger_level` → directive par-crate fusionnée dans l'`EnvFilter`.
 - `content_discovery_community/enabled` → gate de

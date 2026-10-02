@@ -182,13 +182,56 @@ class OnionbitStats {
 /// Compteurs d'octets de l'endpoint IPv8 (`GET /api/statistics/ipv8`
 /// → `ipv8_statistics`).
 class Ipv8Traffic {
-  const Ipv8Traffic({required this.up, required this.down});
+  const Ipv8Traffic({required this.up, required this.down, this.bandwidth});
 
   /// Octets émis par l'endpoint overlay depuis le démarrage.
   final int up;
 
   /// Octets reçus par l'endpoint overlay depuis le démarrage.
   final int down;
+
+  /// Mesure de capacité upload + plafond servi (`bandwidth` —
+  /// extension Rust, `tunnel_community/bandwidth`).
+  final RelayBandwidth? bandwidth;
+}
+
+/// Capacité upload mesurée et plafond du trafic servi aux autres
+/// pairs (`ipv8_statistics.bandwidth` — estimateur `services/
+/// bandwidth.rs`).
+class RelayBandwidth {
+  const RelayBandwidth({
+    required this.measuredUpBps,
+    required this.measuredDownBps,
+    required this.source,
+    required this.passivePeakUpBps,
+    required this.effectiveRelayBps,
+    required this.relayMode,
+    required this.relayDropped,
+  });
+
+  /// Capacité upload mesurée (octets/s) — 0 = pas encore mesurée.
+  final int measuredUpBps;
+
+  /// Capacité download mesurée (octets/s) — rempli par la sonde UPnP.
+  final int measuredDownBps;
+
+  /// Source de la mesure : `upnp`, `probe`, `passive` — `null` tant
+  /// que rien n'a été observé.
+  final String? source;
+
+  /// Pic passif upload observé (octets/s).
+  final int passivePeakUpBps;
+
+  /// Plafond servi actuellement appliqué au tunnel (octets/s).
+  final int effectiveRelayBps;
+
+  /// Mode de `tunnel_community/max_relayed_rate` : `auto` (-1),
+  /// `unlimited` (0), `fixed` (>0) — détermine l'affichage (« — » vs
+  /// « illimité ») quand `effectiveRelayBps` vaut 0.
+  final String relayMode;
+
+  /// Datagrammes servis perdus faute de budget.
+  final int relayDropped;
 }
 
 /// Échantillon de débit d'un speed test de circuit (MiB/s,

@@ -39,7 +39,11 @@ pub fn build(state: AppState) -> Router {
         .route("/api", any(api_not_found))
         .nest("/api", api_router(state.clone()));
     if let Some(dir) = &state.web_ui_dir {
-        app = app.merge(crate::webui::router(dir));
+        app = app.merge(crate::webui::router(
+            dir,
+            state.api_key.as_deref(),
+            state.web_ui_inject_key,
+        ));
     }
     app.with_state(state)
 }

@@ -186,44 +186,57 @@ pub async fn get_downloads(
     // ils n'existent dans le moteur qu'apres leur `add_torrent`. On les
     // emet en `WAITING_FOR_HASHCHECK` (statut Python 1 — « en file pour
     // le check ») pour qu'ils soient visibles immediatement au lieu
-    // d'apparaitre un a un.
-    let visible: std::collections::HashSet<String> = downloads
-        .iter()
-        .filter_map(|d| d.get("infohash").and_then(|v| v.as_str()).map(String::from))
-        .collect();
-    for r in row_map.values() {
-        let infohash = onionbit_crypto::hash::to_hex(&r.infohash);
-        if visible.contains(&infohash) {
-            continue;
+    // d'apparaitre un a un — uniquement tant que `load_checkpoint`
+    // tourne : une ligne encore absente apres la restauration ne
+    // reviendra pas avant le prochain run (lane anonyme inactive,
+    // source injoignable…), et la presenter « en verification »
+    // indéfiniment pretait a confusion (le `tribler_exception` emis
+    // au skip porte la raison).
+    let restore_done = state.session.restore_finished();
+    if !restore_done {
+        let visible: std::collections::HashSet<String> = downloads
+            .iter()
+            .filter_map(|d| d.get("infohash").and_then(|v| v.as_str()).map(String::from))
+            .collect();
+        for r in row_map.values() {
+            let infohash = onionbit_crypto::hash::to_hex(&r.infohash);
+            if visible.contains(&infohash) {
+                continue;
+            }
+            let stopped = r.paused || r.user_stopped;
+            downloads.push(serde_json::json!({
+                "infohash": infohash,
+                "name": r.name.clone().unwrap_or_default(),
+                "progress": 0.0,
+                "status": if stopped { "STOPPED" } else { "WAITING_FOR_HASHCHECK" },
+                "status_code": if stopped { 5 } else { 1 },
+                "size": 0,
+                "destination": r.output_dir.clone(),
+                "hops": r.anon_hops.max(0),
+                "anon_download": r.anon_hops > 0,
+                "safe_seeding": r.safe_seeding,
+                "upload_limit": u64::try_from(r.upload_limit).unwrap_or(0),
+                "download_limit": u64::try_from(r.download_limit).unwrap_or(0),
+                "seeding_ratio": r.seeding_ratio.unwrap_or(defaults.seeding_ratio),
+                "queue_position": r.queue_position,
+                "auto_managed": r.auto_managed,
+                "completed_dir": r.completed_dir.clone().unwrap_or_default(),
+                "time_added": r.added_on,
+                "time_finished": r.time_finished,
+                "user_stopped": r.user_stopped,
+            }));
         }
-        let stopped = r.paused || r.user_stopped;
-        downloads.push(serde_json::json!({
-            "infohash": infohash,
-            "name": r.name.clone().unwrap_or_default(),
-            "progress": 0.0,
-            "status": if stopped { "STOPPED" } else { "WAITING_FOR_HASHCHECK" },
-            "status_code": if stopped { 5 } else { 1 },
-            "size": 0,
-            "destination": r.output_dir.clone(),
-            "hops": r.anon_hops.max(0),
-            "anon_download": r.anon_hops > 0,
-            "safe_seeding": r.safe_seeding,
-            "upload_limit": u64::try_from(r.upload_limit).unwrap_or(0),
-            "download_limit": u64::try_from(r.download_limit).unwrap_or(0),
-            "seeding_ratio": r.seeding_ratio.unwrap_or(defaults.seeding_ratio),
-            "queue_position": r.queue_position,
-            "auto_managed": r.auto_managed,
-            "completed_dir": r.completed_dir.clone().unwrap_or_default(),
-            "time_added": r.added_on,
-            "time_finished": r.time_finished,
-            "user_stopped": r.user_stopped,
-        }));
     }
     Json(serde_json::json!({
         "downloads": downloads,
-        // `checkpoints` : champ Python emis pour compat. `clierrors`
+        // `checkpoints` Python : `all_loaded` reflete la fin du
+        // `load_checkpoint` (faux pendant la restauration). `clierrors`
         // = taille de la file d'erreurs CLI non lues (comme Python).
-        "checkpoints": { "total": downloads.len(), "loaded": downloads.len(), "all_loaded": true },
+        "checkpoints": {
+            "total": downloads.len(),
+            "loaded": downloads.len(),
+            "all_loaded": restore_done,
+        },
         "clierrors": state.unhandled_cli.lock().unwrap().len(),
     }))
 }

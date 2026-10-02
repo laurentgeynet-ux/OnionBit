@@ -82,12 +82,40 @@ pub async fn get_onionbit_stats(State(state): State<AppState>) -> Json<serde_jso
 }
 
 /// `GET /api/statistics/ipv8` — compteurs d'octets de l'endpoint
-/// (`total_up`/`total_down`).
+/// (`total_up`/`total_down`) + `bandwidth` : mesure de capacite
+/// upload et plafond servi applique (extension Rust,
+/// `tunnel_community/bandwidth` — mode auto de `max_relayed_rate`).
 pub async fn get_ipv8_stats(State(state): State<AppState>) -> Json<serde_json::Value> {
     let stats = match state.session.ipv8() {
         Some(stack) => {
             let (up, down) = stack.endpoint.bytes_counters();
-            serde_json::json!({ "total_up": up, "total_down": down })
+            let dropped = stack
+                .tunnel
+                .as_ref()
+                .map(|t| t.relay_rate_dropped())
+                .unwrap_or(0);
+            let snap = state.session.bandwidth().snapshot(dropped);
+            // `max_relayed_rate` : -1 = auto, 0 = illimite, >0 = fixe —
+            // publie pour que l'UI distingue « pas applique » de
+            // « illimite » (0 ambigu en valeur brute).
+            let relay_mode = match state.session.effective_config().ipv8.max_relayed_bps {
+                ..=-1 => "auto",
+                0 => "unlimited",
+                _ => "fixed",
+            };
+            serde_json::json!({
+                "total_up": up,
+                "total_down": down,
+                "bandwidth": {
+                    "measured_up_bps": snap.up_bps,
+                    "measured_down_bps": snap.down_bps,
+                    "source": snap.source,
+                    "passive_peak_up_bps": snap.passive_peak_up_bps,
+                    "effective_relay_bps": snap.effective_relay_bps,
+                    "relay_mode": relay_mode,
+                    "relay_dropped": snap.relay_dropped,
+                },
+            })
         }
         None => serde_json::json!({}),
     };

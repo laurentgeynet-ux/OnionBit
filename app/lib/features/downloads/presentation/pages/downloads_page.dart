@@ -60,7 +60,7 @@ class _DownloadsPageState extends ConsumerState<DownloadsPage> {
           child: async.when(
             loading: () => const Center(child: CircularProgressIndicator()),
             error: (e, _) => ErrorState(
-              message: '$e',
+              error: e,
               onRetry: () => ref.read(downloadsProvider.notifier).refresh(),
             ),
             data: (all) {
