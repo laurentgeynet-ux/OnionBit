@@ -3,6 +3,19 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Version 0.5.0-alpha (2026-10-02)
+
+- Release succédant à `v0.4.0-alpha` :
+  - **interface web Flutter** servie par le daemon en same-origin
+    (`http://127.0.0.1:<port>/`) — même codebase que le desktop,
+    étapes 31–35 du plan `web_ui_plan.md` (ADR-0012) ;
+  - transports web `fetch_client` (SSE + speed test streamés),
+    pickers/drop/connexion adaptés navigateur, dialogue clé API ;
+  - statiques sous `/` exemptes d'auth (parité `/ui`/`/static`),
+    `/api/*` inchangé derrière la clé ; `api/web_ui_*` + `--web-ui-dir` ;
+  - packaging : `dist/web/` intégré au bundle, systray « Ouvrir dans
+    le navigateur », streaming `/stream/{i}?key=` par fichier.
+
 ## Interface web Flutter servie par le daemon — Phase 7 (2026-10-02)
 
 - **Étapes 31–35** de `docs/plans/roadmap.md` — plan
