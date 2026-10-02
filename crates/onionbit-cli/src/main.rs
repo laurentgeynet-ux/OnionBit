@@ -91,7 +91,8 @@ enum Command {
     /// Circuits et guards tunnel (GET /api/ipv8/tunnel/*).
     Tunnel {
         /// `circuits` (defaut), `guards` (ADR-0010), `relays`,
-        /// `exits`, `swarms`, `peers`.
+        /// `exits`, `swarms`, `peers`, `downloads` (circuits par
+        /// telechargement anonyme, extension Rust).
         #[arg(long, default_value = "circuits")]
         show: String,
     },
@@ -254,15 +255,16 @@ async fn cmd_remove(
     Ok(())
 }
 
-/// `tunnel` — circuits/guards/relays/exits/swarms/peers.
+/// `tunnel` — circuits/guards/relays/exits/swarms/peers/downloads.
 async fn cmd_tunnel(client: &reqwest::Client, api: &str, show: &str) -> Result<(), String> {
     let path = match show {
         "circuits" | "guards" | "relays" | "exits" | "swarms" | "peers" => {
             format!("{api}/api/ipv8/tunnel/{show}")
         }
+        "downloads" => format!("{api}/api/ipv8/tunnel/debug/circuit-downloads"),
         other => {
             return Err(format!(
-                "vue inconnue « {other} » — attendu : circuits|guards|relays|exits|swarms|peers"
+                "vue inconnue « {other} » — attendu : circuits|guards|relays|exits|swarms|peers|downloads"
             ))
         }
     };
@@ -329,6 +331,37 @@ async fn cmd_tunnel(client: &reqwest::Client, api: &str, show: &str) -> Result<(
                     },
                     g["failures"].as_u64().unwrap_or(0),
                     g["adopted_at"].as_u64().unwrap_or(0),
+                );
+            }
+        }
+        "downloads" => {
+            let items = body["downloads"].as_array().cloned().unwrap_or_default();
+            if items.is_empty() {
+                println!("(aucun download anonyme)");
+                return Ok(());
+            }
+            println!(
+                "{:<42}  {:<14}  {:>4}  {:<6}  {:>5}  CIRCUITS",
+                "INFOHASH", "ETAT", "HOPS", "SEEDER", "PAIRS"
+            );
+            for d in items {
+                let cids = d["circuits"]
+                    .as_array()
+                    .map(|cs| {
+                        cs.iter()
+                            .filter_map(|c| c["circuit_id"].as_u64().map(|id| id.to_string()))
+                            .collect::<Vec<_>>()
+                            .join(",")
+                    })
+                    .unwrap_or_default();
+                println!(
+                    "{:<42}  {:<14}  {:>4}  {:<6}  {:>5}  {}",
+                    d["info_hash"].as_str().unwrap_or("?"),
+                    d["state"].as_str().unwrap_or("?"),
+                    d["hops"].as_u64().unwrap_or(0),
+                    d["seeder"].as_bool().unwrap_or(false),
+                    d["swarm_peers"].as_u64().unwrap_or(0),
+                    cids,
                 );
             }
         }

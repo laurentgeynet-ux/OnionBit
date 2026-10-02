@@ -867,6 +867,7 @@ async fn ipv8_et_search_sans_stack_retournent_erreur() {
         ("/api/ipv8/tunnel/swarms", "swarms"),
         ("/api/ipv8/tunnel/peers", "peers"),
         ("/api/ipv8/tunnel/guards", "guards"),
+        ("/api/ipv8/tunnel/debug/circuit-downloads", "downloads"),
         ("/api/ipv8/network", "peers"),
         ("/api/ipv8/overlays/statistics", "statistics"),
     ] {

@@ -980,6 +980,22 @@ const SWARM_MONITOR_INTERVAL: std::time::Duration = std::time::Duration::from_se
 /// caches (champ `swarm_lookup` de `Ipv8Stack`).
 type SwarmLookupMap = HashMap<[u8; 20], (usize, [u8; 20])>;
 
+/// Liaison download anonyme <-> swarm cache, exposee pour
+/// `GET /api/ipv8/tunnel/debug/circuit-downloads` (extension Rust —
+/// Python garde `download_states` interne sans endpoint dedie).
+#[derive(Debug, Clone)]
+pub struct SwarmDownload {
+    /// Info-hash de lookup du swarm — aussi `info_hash` porte par les
+    /// circuits `IP_*`/`RP_*` du swarm (cle de jointure).
+    pub lookup_info_hash: [u8; 20],
+    /// Info-hash reel du torrent (`infohash` du download).
+    pub info_hash: [u8; 20],
+    /// Lane de sauts du download (`anon_hops`).
+    pub hops: usize,
+    /// Dernier etat vu par `monitor_hidden_swarms`.
+    pub state: onionbit_bittorrent::DownloadState,
+}
+
 impl Ipv8Stack {
     /// Cree et demarre la stack : endpoint, communities, discovery
     /// bootstrap (tache de fond). `notifier` recoit le relais
@@ -1800,6 +1816,33 @@ impl Ipv8Stack {
             .values()
             .map(|l| l.engine.clone())
             .collect()
+    }
+
+    /// Liaisons download<->swarm connues du moniteur (equivalent du
+    /// `self.download_states` de `monitor_downloads` Python, joint a
+    /// `swarm_lookup` pour l'info-hash reel) — diagnostic des
+    /// telechargements anonymes. Triee par lookup pour une sortie
+    /// stable ; une entree sans etat encore vu (course d'insertion
+    /// d'un tick) est omise plutot que d'inventer un etat.
+    pub fn swarm_downloads(&self) -> Vec<SwarmDownload> {
+        let lookup = self.swarm_lookup.lock().unwrap();
+        let states = self.swarm_states.lock().unwrap();
+        let mut out: Vec<SwarmDownload> = lookup
+            .iter()
+            .filter_map(|(lookup_ih, (hops, real_ih))| {
+                states
+                    .get(&(*hops, *lookup_ih))
+                    .copied()
+                    .map(|state| SwarmDownload {
+                        lookup_info_hash: *lookup_ih,
+                        info_hash: *real_ih,
+                        hops: *hops,
+                        state,
+                    })
+            })
+            .collect();
+        out.sort_by_key(|d| d.lookup_info_hash);
+        out
     }
 
     /// Arret des moteurs anonymes et de la maintenance DHT

@@ -1,2 +1,7 @@
 ﻿date,commit,target,duree_s,execs,crashes,exit_code
 2026-10-01 22:39,9bc4a9d,raw_datagram,3600,170434846,0,0
+2026-10-01 22:39,9bc4a9d,tunnel_cell,3600,1832162135,0,0
+2026-10-01 22:39,9bc4a9d,unsigned_dispatch,3600,575435542,0,0
+2026-10-01 22:39,9bc4a9d,tunnel_payloads,3600,590848896,0,0
+2026-10-01 22:39,9bc4a9d,ipv8_packet,1800,1495599165,0,0
+2026-10-01 22:39,9bc4a9d,utp_datagram,1800,1616991390,0,0

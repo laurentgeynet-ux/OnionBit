@@ -556,6 +556,17 @@ Ajouter ici, au fil de l'avancement, tout écart constaté par rapport au
 plan initial (dépendance qui ne convient pas, étape scindée en deux,
 risque IPv8 sous/sur-estimé, etc.), avec la date.
 
+- 2026-10-02 : campagne libFuzzer de référence terminée — 6/6
+  cibles, 6,28 Md d'exécutions, 0 crash/timeout/OOM
+  (`docs/security/fuzz_journal.md`). Guard nodes expérimentaux
+  implémentés (ADR-0010, `guards_enabled=false` par défaut) :
+  `GuardSet` + persistance SQLite v11 via `GuardStore`/`DbGuardStore`,
+  `GET /api/ipv8/tunnel/guards`, CLI `tunnel --show`. Extension
+  observabilité : `GET /api/ipv8/tunnel/debug/circuit-downloads`
+  (corrélation circuits↔downloads anonymes, sans équivalent pyipv8).
+  Restes : rotation guards au watchdog, validation terrain avant
+  activation par défaut, campagne longue sur les cibles à fort
+  rendement, campagne Linux/ASan complémentaire.
 - 2026-10-01 : onglet Diagnostic « Statistiques » enrichi — sections
   Daemon (version, **uptime** nouveau champ `uptime_sec`, taille DB,
   espace disque du dossier de réception), Contenu (torrents connus,

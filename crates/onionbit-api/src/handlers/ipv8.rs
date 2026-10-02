@@ -372,6 +372,47 @@ pub async fn get_tunnel_guards(State(state): State<AppState>) -> Response {
     .into_response()
 }
 
+/// `GET /api/ipv8/tunnel/debug/circuit-downloads` — correlation
+/// circuits <-> downloads anonymes. **Extension Rust** sans
+/// equivalent pyipv8 (Python garde `download_states` interne) : pour
+/// chaque swarm cache lie a un download, l'info-hash reel,
+/// l'info-hash de lookup, la lane `hops`, l'etat du download et les
+/// circuits du tunnel dont `info_hash` correspond — plus
+/// `swarm_peers` (connexions e2e du swarm rejoint) et `seeder`.
+/// `{"downloads": []}` sans tunnel.
+pub async fn get_tunnel_circuit_downloads(State(state): State<AppState>) -> Response {
+    let Some(stack) = state.session.ipv8() else {
+        return Json(serde_json::json!({ "downloads": [] })).into_response();
+    };
+    let Some(tunnel) = tunnel_of(&state) else {
+        return Json(serde_json::json!({ "downloads": [] })).into_response();
+    };
+    let circuits = tunnel.circuits_info();
+    let swarms = tunnel.swarms_info();
+    let downloads: Vec<serde_json::Value> = stack
+        .swarm_downloads()
+        .into_iter()
+        .map(|d| {
+            let lookup_hex = hex::encode(d.lookup_info_hash);
+            let bound: Vec<&onionbit_tunnel::community::CircuitInfo> = circuits
+                .iter()
+                .filter(|c| c.info_hash.as_deref() == Some(lookup_hex.as_str()))
+                .collect();
+            let swarm = swarms.iter().find(|s| s.info_hash == lookup_hex);
+            serde_json::json!({
+                "info_hash": hex::encode(d.info_hash),
+                "lookup_info_hash": lookup_hex,
+                "hops": d.hops,
+                "state": format!("{:?}", d.state).to_uppercase(),
+                "seeder": swarm.map(|s| s.seeder).unwrap_or(false),
+                "swarm_peers": swarm.map(|s| s.num_connections).unwrap_or(0),
+                "circuits": bound,
+            })
+        })
+        .collect();
+    Json(serde_json::json!({ "downloads": downloads })).into_response()
+}
+
 /// `GET /api/ipv8/tunnel/peers` — pairs tunnel connus + flags.
 pub async fn get_tunnel_peers(State(state): State<AppState>) -> Response {
     let Some(tunnel) = tunnel_of(&state) else {

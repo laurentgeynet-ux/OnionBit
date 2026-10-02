@@ -3,6 +3,20 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Observabilité circuits↔downloads anonymes (2026-10-02)
+
+- `GET /api/ipv8/tunnel/debug/circuit-downloads` — **extension Rust**
+  (Python garde `download_states` interne au `monitor_downloads`, pas
+  d'endpoint) : par liaison download↔swarm — `info_hash` réel,
+  `lookup_info_hash` (cle swarm), `hops`, `state`, `seeder`,
+  `swarm_peers` (connexions e2e) et les circuits tunnel portant ce
+  lookup (`circuits_info` filtré). `{"downloads": []}` sans tunnel.
+- `Ipv8Stack::swarm_downloads()` — snapshot join `swarm_lookup` +
+  `swarm_states`, trié stable ; entrée sans état omise (course
+  d'insertion d'un tick, pas d'état inventé).
+- CLI `tunnel --show downloads` : infohash, état, hops, seeder, pairs
+  e2e, ids des circuits liés.
+
 ## Campagne libFuzzer de référence complète — 0 crash (2026-10-02)
 
 - ~5 h de fuzzing coverage-guidé natif Windows/MSVC (`-s none`),
