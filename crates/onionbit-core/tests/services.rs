@@ -165,6 +165,73 @@ async fn torrent_checker_udp_scrape() {
     assert!(healths[0].self_checked);
 }
 
+/// Invariant de non-fuite (docs/security/threat_model.md) : un
+/// infohash en telechargement/seeding anonyme (`downloads.anon_hops >
+/// 0`) ne doit JAMAIS etre scrape en clair — le tracker apprendrait
+/// IP reelle <-> contenu. `check_tracker` ignore l'infohash et
+/// `check_oldest` saute la ligne : zero datagramme vers le tracker.
+#[tokio::test(flavor = "multi_thread")]
+async fn torrent_checker_never_scrapes_anonymous_infohash() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    // Tracker BEP-15 espion : compte tout datagramme recu.
+    let tracker = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let tracker_addr = tracker.local_addr().unwrap();
+    let received = Arc::new(AtomicUsize::new(0));
+    {
+        let received = received.clone();
+        tokio::spawn(async move {
+            let mut buf = [0u8; 2048];
+            while tracker.recv_from(&mut buf).await.is_ok() {
+                received.fetch_add(1, Ordering::SeqCst);
+            }
+        });
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    let db = Arc::new(Database::open(&dir.path().join("t.db")).unwrap());
+    let mut ih = [0u8; 20];
+    ih[0] = 0x42;
+    let tracker_url = format!("udp://{tracker_addr}");
+    // Download anonyme persiste + entree de sante (comme si le
+    // torrent avait ete vu dans un catalogue) + lien tracker.
+    db.with(|c| {
+        onionbit_db::downloads::upsert(
+            c,
+            &onionbit_db::models::DownloadRow {
+                infohash: ih.to_vec(),
+                name: Some("secret.bin".to_string()),
+                anon_hops: 2,
+                ..Default::default()
+            },
+        )?;
+        onionbit_db::health::link_tracker(c, &ih, &tracker_url)
+    })
+    .unwrap();
+
+    let checker = TorrentChecker::new(
+        db,
+        Notifier::new(),
+        onionbit_network_policy::IpPolicy::permissive(),
+    )
+    .await
+    .unwrap();
+
+    // Chemin API (`GET /metadata/torrents/{ih}/health?refresh=1`).
+    let healths = checker.check_tracker(&tracker_url, &[ih]).await.unwrap();
+    assert!(healths.is_empty(), "un swarm anonyme n'est pas scrape");
+
+    // Chemin periodique : la ligne anonyme est sautee.
+    let checked = checker.check_oldest().await.unwrap();
+    assert_eq!(checked, 0, "la rotation ne doit pas retenir l'anonyme");
+
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    assert_eq!(
+        received.load(Ordering::SeqCst),
+        0,
+        "le tracker a recu un datagramme — fuite IP <-> infohash"
+    );
+}
+
 /// RSS : un flux annoncant un `.torrent` -> `TorrentMetadataCreated`.
 #[tokio::test(flavor = "multi_thread")]
 async fn rss_discovers_torrent_and_notifies() {

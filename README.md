@@ -10,7 +10,7 @@
 [![Made with Rust](https://img.shields.io/badge/Made%20with-Rust-orange.svg)](https://www.rust-lang.org/)
 [![UI: Flutter](https://img.shields.io/badge/UI-Flutter-02569B.svg)](https://flutter.dev/)
 [![CI](https://github.com/laurentgeynet-ux/OnionBit/actions/workflows/ci.yml/badge.svg)](https://github.com/laurentgeynet-ux/OnionBit/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/Version-0.3.1--alpha-red.svg)](https://github.com/laurentgeynet-ux/OnionBit/releases)
+[![Version](https://img.shields.io/badge/Version-0.4.0--alpha-red.svg)](https://github.com/laurentgeynet-ux/OnionBit/releases)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%C2%B7%20Linux%20%C2%B7%20macOS%20%C2%B7%20Android%20%C2%B7%20iOS%20%C2%B7%20Web-lightgrey.svg)]()
 
 </div>
@@ -100,7 +100,7 @@ reproduction scripts: [**interoperability evidence**](docs/interop/README.md).
 
 > **Windows x64 alpha zip** is on the
 > [Releases](https://github.com/laurentgeynet-ux/OnionBit/releases) page
-> (`OnionBit-0.3.1-alpha-windows-x64.zip`): unzip, run `onionbit_ui.exe` —
+> (`OnionBit-0.4.0-alpha-windows-x64.zip`): unzip, run `onionbit_ui.exe` —
 > it starts the daemon automatically. Other platforms: build from source
 > (see [docs/BUILDING.md](docs/BUILDING.md)).
 
@@ -144,7 +144,7 @@ See [SECURITY.md](SECURITY.md) for reporting and the threat model.
 | Onion circuits + hidden seeding | ✅ |
 | Live interop with Tribler 8.x nodes | ✅ |
 | Flutter UI (desktop first) | ✅ |
-| First tagged alpha release | ✅ [`v0.3.1-alpha`](https://github.com/laurentgeynet-ux/OnionBit/releases/tag/v0.3.1-alpha) |
+| First tagged alpha release | ✅ [`v0.4.0-alpha`](https://github.com/laurentgeynet-ux/OnionBit/releases/tag/v0.4.0-alpha) |
 | Mobile execution model (Android/iOS) | 📋 |
 | Linux / macOS packages | 📋 |
 

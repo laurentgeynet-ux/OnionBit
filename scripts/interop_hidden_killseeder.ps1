@@ -81,6 +81,13 @@ function Verdict([bool]$ok, [string]$label, [string]$detail = '') {
     $line = ('{0} {1} {2}' -f $tag, $label, $detail).TrimEnd()
     $script:verdicts.Add($line); Log $line
 }
+# Etat informational : visible dans le rapport, ne fait jamais echouer
+# le run. Reserve aux signaux transitoires dont le vrai gate est
+# fonctionnel plus bas (acceptation du download, data plane, integrite).
+function Info([string]$label, [string]$detail = '') {
+    $line = ('{0} {1} {2}' -f 'INFO', $label, $detail).TrimEnd()
+    $script:verdicts.Add($line); Log $line
+}
 function ApiKey([string]$dir) {
     $cfg = Join-Path $dir 'configuration.json'
     if (-not (Test-Path $cfg)) { return $null }
@@ -181,6 +188,8 @@ function Dht-IntroValues([int]$port, $key, [string]$lookup, $sha1) {
                 2 { $l = ([int]$b[$o+1] -shl 8) -bor [int]$b[$o+2]; $o += 3 + $l + 2 }
                 default { continue }
             }
+            if ($o + 4 -gt $b.Length) { continue }
+            $lastSeen = ([int]$b[$o] -shl 24) -bor ([int]$b[$o+1] -shl 16) -bor ([int]$b[$o+2] -shl 8) -bor [int]$b[$o+3]
             $o += 4               # last_seen
             if ($o + 2 -gt $b.Length) { continue }
             $li = ([int]$b[$o] -shl 8) -bor [int]$b[$o+1]; $o += 2
@@ -194,6 +203,7 @@ function Dht-IntroValues([int]$port, $key, [string]$lookup, $sha1) {
             $out += @{
                 IntroMid   = ([BitConverter]::ToString($sha1.ComputeHash($fullIntro))).Replace('-','').ToLower()
                 SeederPkHex = ([BitConverter]::ToString($seederPk)).Replace('-','').ToLower()
+                LastSeen   = $lastSeen
             }
         } catch { continue }
     }
@@ -417,7 +427,10 @@ try {
             } catch { Start-Sleep -Seconds 3 }
             if (-not $tPeers) { Start-Sleep -Seconds 5 }
         }
-        Verdict $tPeers 'Tribler : bootstrap maillage controle' "peers=$nP tunnel=$nTunnel exits=$exits"
+        # Snapshot transitoire -> INFO : le vrai gate est fonctionnel
+        # (download accepte + octets verifies). Les flags exits de
+        # /ipv8/overlays convergent souvent apres le debut du transfert.
+        Info 'Tribler : bootstrap maillage (snapshot)' "peers=$nP tunnel=$nTunnel exits=$exits converge=$tPeers"
 
         $dest = [System.Uri]::EscapeDataString($dld)
         $putUri = "http://127.0.0.1:$($script:TApiPort)/api/downloads?anon_hops=$Hops&safe_seeding=true&destination=$dest"
@@ -452,7 +465,10 @@ try {
             } catch { Start-Sleep -Seconds 3 }
             if (-not $tPeers) { Start-Sleep -Seconds 5 }
         }
-        Verdict $tPeers 'Tribler : bootstrap maillage controle' "peers=$nP tunnel=$nTunnel exits=$exits"
+        # Snapshot transitoire -> INFO : le vrai gate est fonctionnel
+        # (download accepte + octets verifies). Les flags exits de
+        # /ipv8/overlays convergent souvent apres le debut du transfert.
+        Info 'Tribler : bootstrap maillage (snapshot)' "peers=$nP tunnel=$nTunnel exits=$exits converge=$tPeers"
 
         # PUT "seed" : destination = le dossier contenant deja donnee.bin
         # -> hashcheck -> SEEDING -> join_swarm -> IP_SEEDER.
@@ -619,6 +635,7 @@ try {
         Log ("DHT pre-kill : n=$($preVals.Count) annonce(s) seeder_pk=" +
              $(if ($seederPkHex) { $seederPkHex.Substring(0,[Math]::Min(12,$seederPkHex.Length)) + '…' } else { 'absent' }))
         $procs[$killedNode].Kill(); $procs[$killedNode].WaitForExit()
+        $killEpoch = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
         $cibleTxt = if ($KillTarget -eq 'anchor') { 'ancre A1' } else { 'intro point' }
         Log "KILL $cibleTxt : noeud $killedNode (mid=$($killedMid.Substring(0,12))…) a dl=$dlNow"
         Verdict $true "$cibleTxt tue en plein transfert" "noeud=$killedNode dl_au_kill=$dlNow"
@@ -715,10 +732,25 @@ try {
             foreach ($v in $vals) {
                 $sameSeeder = ($seederPkHex -and $v.SeederPkHex -eq $seederPkHex)
                 $newIntro = -not $preIntroMids.ContainsKey($v.IntroMid)
-                $introOk = if ($anchorInIpPath) { $newIntro -and (-not $newMid -or $v.IntroMid -eq $newMid) } else { $true }
+                # intro_mid est le mid du NOEUD hote de l'intro — si le
+                # circuit reconstruit atterrit sur un noeud qui
+                # hebergeait deja des intros pre-kill, le mid n'est pas
+                # "nouveau" : le critere porte alors sur la fraicheur
+                # (last_seen post-kill = l'intro point ACTUEL re-annonce,
+                # pas une valeur pre-kill stale).
+                $fresh = $v.LastSeen -ge $killEpoch
+                $introOk = if ($anchorInIpPath) {
+                    if ($newMid) { ($v.IntroMid -eq $newMid) -and $fresh }
+                    else { $newIntro -and $fresh }
+                } else { $true }
+                # Note : $anchorInIpPath=false -> aucune reconstruction
+                # exigible ; pyipv8 n annonce l intro qu une fois a
+                # l etablissement (pas de re-annonce periodique) donc
+                # last_seen reste pre-kill — on verifie seulement que
+                # l annonce du seeder reste lisible.
                 if ($sameSeeder -and $introOk) {
                     $dhtOk = $true
-                    $dhtDetail = "intro_mid=$($v.IntroMid.Substring(0,12))… seeder=identique"
+                    $dhtDetail = "intro_mid=$($v.IntroMid.Substring(0,12))… seeder=identique last_seen=post-kill"
                     break
                 }
             }

@@ -153,8 +153,13 @@ pub fn build(state: AppState) -> Router {
             get(ipv8::get_swarm_size),
         )
         .route("/api/ipv8/tunnel/peers", get(ipv8::get_tunnel_peers))
+        .route("/api/ipv8/tunnel/guards", get(ipv8::get_tunnel_guards))
         .route("/api/ipv8/tunnel/peers/dht", get(ipv8::get_dht_peers))
         .route("/api/ipv8/tunnel/peers/pex", get(ipv8::get_pex_peers))
+        .route(
+            "/api/ipv8/tunnel/debug/circuit-downloads",
+            get(ipv8::get_tunnel_circuit_downloads),
+        )
         .route(
             "/api/ipv8/tunnel/circuits/test",
             get(ipv8::speed_test_new_circuit),

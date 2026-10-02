@@ -376,6 +376,11 @@ pub struct TunnelCommunityConfig {
     /// Reserve aux bancs controles (point d'introduction joignable
     /// uniquement en loopback, NAT sans hairpin, ...).
     pub data_exit_peer: String,
+    /// Guard nodes (ADR-0010, experimentale) : premiers sauts
+    /// persistants bornant la loterie Sybil des reconstructions sous
+    /// `DESTROY`. `false` = selection pyipv8 exacte (defaut tant que la
+    /// feature n'est pas validee sur le terrain).
+    pub guards_enabled: bool,
     /// Clés tunnel additionnelles — préservées.
     #[serde(flatten)]
     pub extra: serde_json::Map<String, Value>,
@@ -390,6 +395,7 @@ impl Default for TunnelCommunityConfig {
             exitnode_enabled: false,
             intro_point_peer: String::new(),
             data_exit_peer: String::new(),
+            guards_enabled: false,
             extra: serde_json::Map::new(),
         }
     }
@@ -451,6 +457,18 @@ pub struct VersioningConfig {
     pub enabled: bool,
     /// Accepte les pré-versions.
     pub allow_pre: bool,
+    /// Dépôt GitHub `owner/repo` sondé pour les releases (vide = pas
+    /// de sonde GitHub).
+    pub github_repo: String,
+    /// Sondes additionnelles interrogées avant/après GitHub, dans
+    /// l'ordre — équivalent de `release.tribler.org` côté Python ;
+    /// `{current}` est substitué par la version courante et chaque
+    /// sonde doit répondre un JSON `{"name": "x.y.z"}` (ou un tableau
+    /// dont le premier élément porte `name`).
+    pub check_urls: Vec<String>,
+    /// Timeout d'une sonde de version en secondes
+    /// (`ClientTimeout(total=5)` Python).
+    pub check_timeout_secs: u64,
     /// Clés additionnelles.
     #[serde(flatten)]
     pub extra: serde_json::Map<String, Value>,
@@ -461,9 +479,21 @@ impl Default for VersioningConfig {
         Self {
             enabled: true,
             allow_pre: false,
+            github_repo: default_github_repo(),
+            check_urls: Vec::new(),
+            check_timeout_secs: 5,
             extra: serde_json::Map::new(),
         }
     }
+}
+
+/// `owner/repo` du projet, dérivé du champ `repository` du paquet
+/// (`https://github.com/<owner>/<repo>`) — vide hors GitHub.
+fn default_github_repo() -> String {
+    option_env!("CARGO_PKG_REPOSITORY")
+        .and_then(|u| u.trim_end_matches('/').strip_prefix("https://github.com/"))
+        .unwrap_or_default()
+        .to_owned()
 }
 
 /// Section `watch_folder`.
@@ -901,6 +931,7 @@ impl DaemonConfig {
             walker_interval: self.ipv8.walker_interval,
             min_circuits: self.tunnel_community.min_circuits,
             max_circuits: self.tunnel_community.max_circuits,
+            guards_enabled: self.tunnel_community.guards_enabled,
             socks_listen_ports: self.libtorrent.socks_listen_ports.clone(),
             enable_content_discovery: self.content_discovery_community.enabled,
             listen_addr_v6: listen_v6,

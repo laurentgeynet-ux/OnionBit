@@ -94,20 +94,47 @@ impl TorrentChecker {
 
     /// `create_tracker_session` : scrape un tracker pour les
     /// infohashes donnes et persiste les santes.
+    ///
+    /// Confidentialite : les infohashes des telechargements/seedings
+    /// anonymes (`downloads.anon_hops > 0`) sont exclus du scrape —
+    /// contacter le tracker depuis l'IP reelle lierait l'adresse du
+    /// daemon au contenu, exactement ce que le tunnel existe pour
+    /// eviter. La sante d'un swarm cache vient des points
+    /// d'introduction (`peers-request` via circuit), pas d'un scrape
+    /// direct. Ecart assume avec Tribler upstream, qui scrape en
+    /// clair (meme fuite).
     pub async fn check_tracker(
         &self,
         tracker_url: &str,
         infohashes: &[[u8; 20]],
     ) -> Result<Vec<HealthInfo>> {
+        let public: Vec<[u8; 20]> = infohashes
+            .iter()
+            .copied()
+            .filter(|ih| !self.is_anonymous_download(ih))
+            .collect();
+        if public.is_empty() {
+            return Ok(Vec::new());
+        }
         let healths = if tracker_url.starts_with("udp://") {
-            self.udp_scrape(tracker_url, infohashes).await
+            self.udp_scrape(tracker_url, &public).await
         } else if tracker_url.starts_with("http://") || tracker_url.starts_with("https://") {
-            self.http_scrape(tracker_url, infohashes).await
+            self.http_scrape(tracker_url, &public).await
         } else {
             return Err(CoreError::InvalidState("schema de tracker inconnu"));
         }?;
         self.record_healths(tracker_url, &healths);
         Ok(healths)
+    }
+
+    /// Vrai si l'infohash est un telechargement/seeding anonyme
+    /// persiste (`downloads.anon_hops > 0`) — jamais scrape en clair.
+    fn is_anonymous_download(&self, infohash: &[u8; 20]) -> bool {
+        self.db
+            .with(|c| onionbit_db::downloads::get(c, infohash))
+            .ok()
+            .flatten()
+            .is_some_and(|row| row.anon_hops > 0)
     }
 
     /// Persiste les santes et notifie (`process_torrents_health` +
@@ -295,9 +322,17 @@ impl TorrentChecker {
     /// (non controle depuis `MIN_TORRENT_CHECK_INTERVAL`), scrape de
     /// ses trackers connus.
     pub async fn check_oldest(&self) -> Result<usize> {
+        // Les swarms anonymes (`anon_hops > 0`) sont exclus de la
+        // rotation : ils ne doivent jamais etre scrapes en clair —
+        // leur sante vient du tunnel (`peers-request`).
         let row: std::result::Result<Vec<u8>, _> = self.db.with(|c| {
             c.query_row(
-                "SELECT infohash FROM torrent_state ORDER BY last_check ASC LIMIT 1",
+                "SELECT ts.infohash FROM torrent_state ts
+                 WHERE NOT EXISTS (
+                     SELECT 1 FROM downloads d
+                     WHERE d.infohash = ts.infohash AND d.anon_hops > 0
+                 )
+                 ORDER BY ts.last_check ASC LIMIT 1",
                 [],
                 |r| r.get::<_, Vec<u8>>(0),
             )

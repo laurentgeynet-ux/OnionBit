@@ -21,6 +21,7 @@ pub mod channel;
 pub mod db;
 pub mod downloads;
 pub mod error;
+pub mod guards;
 pub mod health;
 pub mod migrations;
 pub mod misc;
@@ -32,6 +33,7 @@ pub mod rss;
 
 pub use db::Database;
 pub use error::{DbError, Result};
+pub use guards::GuardRow;
 pub use models::{ChannelNodeRow, DownloadRow, TorrentStateRow, TrackerStateRow};
 pub use peers::Ipv8PeerRow;
 pub use pex::PexRow;

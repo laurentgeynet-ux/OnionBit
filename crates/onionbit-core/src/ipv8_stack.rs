@@ -133,6 +133,10 @@ pub struct Ipv8Config {
     /// (`required_exit` de `create_circuit` pyipv8). `None` =
     /// selection automatique `EXIT_BT`.
     pub data_exit_peer: Option<UdpAddress>,
+    /// Guard nodes (ADR-0010, experimentale) : premiers sauts
+    /// persistants bornant la loterie Sybil des reconstructions.
+    /// `false` = selection pyipv8 exacte.
+    pub guards_enabled: bool,
     /// Extension Rust (bancs loopback) : estimation WAN initiale.
     /// Sur un mesh 100 % loopback, `destination_address` des
     /// intro-responses est toujours en sous-reseau LAN →
@@ -179,6 +183,7 @@ impl Ipv8Config {
             enable_content_discovery: true,
             intro_point_peer: None,
             data_exit_peer: None,
+            guards_enabled: false,
             estimated_wan: None,
             listen_addr_v6: Some(format!("[::]:{}", DEFAULT_IPV8_PORT + 1)),
             peer_cache_max: DEFAULT_PEER_CACHE_MAX,
@@ -208,6 +213,7 @@ impl Default for Ipv8Config {
             enable_content_discovery: true,
             intro_point_peer: None,
             data_exit_peer: None,
+            guards_enabled: false,
             estimated_wan: None,
             listen_addr_v6: None,
             peer_cache_max: DEFAULT_PEER_CACHE_MAX,
@@ -974,6 +980,22 @@ const SWARM_MONITOR_INTERVAL: std::time::Duration = std::time::Duration::from_se
 /// caches (champ `swarm_lookup` de `Ipv8Stack`).
 type SwarmLookupMap = HashMap<[u8; 20], (usize, [u8; 20])>;
 
+/// Liaison download anonyme <-> swarm cache, exposee pour
+/// `GET /api/ipv8/tunnel/debug/circuit-downloads` (extension Rust —
+/// Python garde `download_states` interne sans endpoint dedie).
+#[derive(Debug, Clone)]
+pub struct SwarmDownload {
+    /// Info-hash de lookup du swarm — aussi `info_hash` porte par les
+    /// circuits `IP_*`/`RP_*` du swarm (cle de jointure).
+    pub lookup_info_hash: [u8; 20],
+    /// Info-hash reel du torrent (`infohash` du download).
+    pub info_hash: [u8; 20],
+    /// Lane de sauts du download (`anon_hops`).
+    pub hops: usize,
+    /// Dernier etat vu par `monitor_hidden_swarms`.
+    pub state: onionbit_bittorrent::DownloadState,
+}
+
 impl Ipv8Stack {
     /// Cree et demarre la stack : endpoint, communities, discovery
     /// bootstrap (tache de fond). `notifier` recoit le relais
@@ -1125,11 +1147,21 @@ impl Ipv8Stack {
                     max_circuits: config.max_circuits.max(1) as usize,
                     intro_point_peer: config.intro_point_peer.clone(),
                     data_exit_peer: config.data_exit_peer.clone(),
+                    guards: onionbit_tunnel::guards::GuardsConfig {
+                        enabled: config.guards_enabled,
+                        ..onionbit_tunnel::guards::GuardsConfig::default()
+                    },
                     ..onionbit_tunnel::settings::TunnelSettings::default()
                 },
                 community_id,
             )
             .await;
+            // ADR-0010 : persistance des guards dans `onionbit.db` —
+            // injectee seulement quand la feature est activee (set
+            // volatile sinon, selection pyipv8 exacte).
+            if config.guards_enabled {
+                t.set_guard_store(Arc::new(crate::guard_store::DbGuardStore::new(db.clone())));
+            }
             // `my_peer` Python est partage entre overlays : la
             // tunnel-community emprunte les estimations WAN/LAN de la
             // discovery pour ses introductions et punctures.
@@ -1784,6 +1816,33 @@ impl Ipv8Stack {
             .values()
             .map(|l| l.engine.clone())
             .collect()
+    }
+
+    /// Liaisons download<->swarm connues du moniteur (equivalent du
+    /// `self.download_states` de `monitor_downloads` Python, joint a
+    /// `swarm_lookup` pour l'info-hash reel) — diagnostic des
+    /// telechargements anonymes. Triee par lookup pour une sortie
+    /// stable ; une entree sans etat encore vu (course d'insertion
+    /// d'un tick) est omise plutot que d'inventer un etat.
+    pub fn swarm_downloads(&self) -> Vec<SwarmDownload> {
+        let lookup = self.swarm_lookup.lock().unwrap();
+        let states = self.swarm_states.lock().unwrap();
+        let mut out: Vec<SwarmDownload> = lookup
+            .iter()
+            .filter_map(|(lookup_ih, (hops, real_ih))| {
+                states
+                    .get(&(*hops, *lookup_ih))
+                    .copied()
+                    .map(|state| SwarmDownload {
+                        lookup_info_hash: *lookup_ih,
+                        info_hash: *real_ih,
+                        hops: *hops,
+                        state,
+                    })
+            })
+            .collect();
+        out.sort_by_key(|d| d.lookup_info_hash);
+        out
     }
 
     /// Arret des moteurs anonymes et de la maintenance DHT

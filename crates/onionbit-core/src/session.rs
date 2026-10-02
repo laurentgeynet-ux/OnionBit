@@ -1985,6 +1985,17 @@ impl CoreSession {
                 config.ipv8.min_circuits as usize,
                 config.ipv8.max_circuits as usize,
             );
+            // `tunnel_community/guards_enabled` (ADR-0010) : bascule a
+            // chaud — le store DB est injecte au premier armement et
+            // charge alors le set persistant de la table `guards`.
+            if let Some(tunnel) = stack.tunnel.as_ref() {
+                if config.ipv8.guards_enabled && !tunnel.guards.is_enabled() {
+                    tunnel.set_guard_store(Arc::new(crate::guard_store::DbGuardStore::new(
+                        self.inner.db.clone(),
+                    )));
+                }
+                tunnel.guards.set_enabled(config.ipv8.guards_enabled);
+            }
         }
         // `set_session_limits` Python : les bornes de debit de
         // session s'appliquent a chaud sur toutes les lanes

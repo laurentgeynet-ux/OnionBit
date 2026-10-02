@@ -3,6 +3,329 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Version 0.4.0-alpha (2026-10-02)
+
+- Release succédant à `v0.3.2-alpha` :
+  - **sonde de mise à jour réelle** (`versions/check` : releases GitHub +
+    sondes `check_urls`, anti-SSRF, timeout borné) ;
+  - guard nodes expérimentaux (ADR-0010, `guards_enabled=false` par
+    défaut : persistance premier saut, `GET /api/ipv8/tunnel/guards`,
+    bascule à chaud) ;
+  - fix `rendezvous-established` (WAN estimé) + pacing des réannonces DHT ;
+  - fix self dans le pool de candidats (auto-adoption guard) ;
+  - endpoint `debug/circuit-downloads` (observabilité circuits↔downloads) ;
+  - campagne libFuzzer de référence : 6,28 Md d'exécutions, 0 crash ;
+  - mesures fingerprinting de référence (`docs/security/fingerprinting.md`) ;
+  - anti-fuite : `torrent_checker` ne scrape plus les swarms anonymes.
+
+## Sonde de mise à jour réelle — `versions/check` (2026-10-02)
+
+- `GET /api/versioning/versions/check` interroge désormais réellement
+  les releases : port de `VersioningManager.check_version` Python dans
+  `onionbit_core::services::versioning` — `check_urls` (`{current}`
+  substitué, équivalent `release.tribler.org`) puis API GitHub
+  `releases?per_page=1` en tête si `allow_pre`, `releases/latest` en
+  queue sinon ; première réponse valide gagne, échec → sonde suivante.
+- Trafic direct via `fetch_checked_with` (nouvelle variante à
+  timeout/`User-Agent` paramétrables de `fetch_checked`) : anti-SSRF
+  `ip_policy` sur chaque adresse résolue, corps borné, UA
+  `OnionBit/{v} (os=…; arch=…)` exigé par l'API GitHub ; jamais par
+  les circuits onion. Config : `versioning/github_repo` (défaut =
+  champ `repository` du workspace), `versioning/check_urls`,
+  `versioning/check_timeout_secs` (défaut 5 = `ClientTimeout` Python).
+- Comparaison `packaging.Version` portée (segments numériques +
+  dev/a/b/rc/post) ; **divergence assumée** : le tableau
+  `releases?per_page=1` est accepté — `dict["name"]` Python lève
+  `TypeError` dessus, la sonde GitHub `allow_pre` de Tribler échoue
+  donc toujours.
+- Tests : unitaires `probe_urls`/`version_newer`/`release_name` +
+  sonde loopback (`core`), intégration `versioning_check_sonde_locale`
+  (api) ; le test existant neutralise `github_repo` (pas de trafic
+  externe en test).
+
+## Matrice interop guards — premier run terrain (2026-10-02)
+
+- Scripts `interop_hidden_tribler_download.ps1` /
+  `interop_hidden_tribler_seed.ps1` : switch `-Guards` injectant
+  `tunnel_community.guards_enabled` sur tous les noeuds Rust du
+  maillage + verdicts dédiés (`guard set actif`, `premier hop dans le
+  guard set` via `verified_hops[0]` vs `guards[].mid`) + snapshot
+  `/ipv8/tunnel/guards` dans le rapport.
+- **Sens A (Tribler télécharge depuis OnionBit, guards ON)** : vert —
+  SEEDING, 10 circuits IP_SEEDER READY, annonce DHT propagée,
+  téléchargement 2 Mio complet, SHA-256 correct, tous les premiers
+  hops multi-hop dans le guard set (0 hors-set).
+- **Sens B (OnionBit télécharge depuis Tribler, guards ON)** : le
+  téléchargement réussit (SHA-256 correct) mais le verdict premier-hop
+  échoue → deux défauts réels trouvés et corrigés :
+  - le `created-e2e` désignant le downloader comme RP (`rp=D`, choix
+    légitime de Tribler) réintroduisait la propre clé du noeud dans
+    l'annuaire → **auto-adoption comme guard**, circuits dégénérés
+    vers sa propre socket. `get_candidates`, `get_candidates_subset`
+    et `first_hop_pool` excluent désormais `my_pk`.
+  - `RP_DOWNLOADER`/`RP_SEEDER` contournaient l'ordonnancement guards
+    via `pick_first_hop` → passent par `first_hop_candidates`
+    (guards + alternates), repli permissif sur les pairs du service
+    tunnel quand le registre de flags est vide (comme `send_extend`).
+- Test de régression `soi_meme_exclu_des_candidats_guards_et_premiers_hops`.
+- Le repli `estimated_wan` forcé en loopback + écho
+  d'introduction-response rend ce cas accessible : exactement le type
+  de défaut que la validation terrain devait débusquer avant
+  l'activation par défaut.
+
+## ADR-0011 — messagerie anonyme e2e (proposée) (2026-10-02)
+
+- `docs/architecture/decisions/0011-messagerie-anonyme-e2e.md` :
+  contact = clé publique IPv8 du destinataire ; swarm de messagerie
+  `SHA1("onionbit messaging" || pk)` « seedé » par le destinataire
+  (IP_SEEDER + annonce DHT) ; l'expéditeur lie un circuit e2e
+  (`RP_DOWNLOADER` + `link-e2e`) puis trames bencode dans les
+  cellules `data` du circuit lié. En ligne seulement, persistance
+  `messages`, REST + SSE. VoIP/groupes/store-and-forward hors
+  périmètre v1. **Design uniquement** — implémentation après revue.
+
+## Guards : bascule à chaud via `POST /api/settings` (2026-10-02)
+
+- `GuardSet.enabled` devient un `AtomicBool` (`is_enabled`/
+  `set_enabled`) : `tunnel_community/guards_enabled` s'applique sans
+  redémarrage dans `apply_service_settings`, avec injection tardive du
+  `DbGuardStore` au premier armement (le set persistant est chargé
+  alors ; désactiver conserve le set pour un ré-armement ultérieur).
+- Test `bascule_a_chaud_sans_reconstruction` : tirage pyipv8 exact
+  quand désactivé à chaud, même guard après ré-armement.
+
+## Guards : maintenance proactive + persistance redémarrage (2026-10-02)
+
+- `do_guard_maintenance` dans `run_maintenance` (cadence
+  `guards.maintenance_interval`, défaut 60 s, no-op si désactivé) :
+  purge des guards expirés/injoignables, promotion de la réserve,
+  adoptions anticipées sur le pool courant — **jamais sous pression
+  d'un storm `DESTROY`**. Refactor : pool de candidats extrait en
+  `first_hop_pool` (partagé avec `first_hop_candidates`).
+- Test `CoreSession` fichier `guards_survivent_au_redemarrage_du_daemon`
+  : adoption → `stop` → nouvelle session même `state_dir` → guard
+  rechargé depuis `onionbit.db`. Contrepartie
+  `guards_desactivees_ne_chargent_pas_le_set` (repli pyipv8 strict).
+- ADR-0010 : statut des tests attendus mis à jour (tous ✅) + défaut
+  `guards_enabled=false` corrigé dans la section non-régression.
+
+## Observabilité circuits↔downloads anonymes (2026-10-02)
+
+- `GET /api/ipv8/tunnel/debug/circuit-downloads` — **extension Rust**
+  (Python garde `download_states` interne au `monitor_downloads`, pas
+  d'endpoint) : par liaison download↔swarm — `info_hash` réel,
+  `lookup_info_hash` (cle swarm), `hops`, `state`, `seeder`,
+  `swarm_peers` (connexions e2e) et les circuits tunnel portant ce
+  lookup (`circuits_info` filtré). `{"downloads": []}` sans tunnel.
+- `Ipv8Stack::swarm_downloads()` — snapshot join `swarm_lookup` +
+  `swarm_states`, trié stable ; entrée sans état omise (course
+  d'insertion d'un tick, pas d'état inventé).
+- CLI `tunnel --show downloads` : infohash, état, hops, seeder, pairs
+  e2e, ids des circuits liés.
+
+## Campagne libFuzzer de référence complète — 0 crash (2026-10-02)
+
+- ~5 h de fuzzing coverage-guidé natif Windows/MSVC (`-s none`),
+  6 cibles, **6,28 milliards d'exécutions cumulées, zéro crash,
+  zéro timeout, zéro OOM** : `raw_datagram` 170 M, `tunnel_cell`
+  1,83 Md, `unsigned_dispatch` 575 M, `tunnel_payloads` 591 M,
+  `ipv8_packet` 1,50 Md, `utp_datagram` 1,62 Md. Détail et corpus
+  dans `docs/security/fuzz_journal.md` / `fuzz_journal.csv`.
+- Corpus persistés sous `fuzz/corpus/<target>/` (636 entrées pour
+  `tunnel_payloads`, 372 `unsigned_dispatch`, 198 `utp_datagram`).
+- Provenance : `raw_datagram` fuzzée sur binaire `9bc4a9d` exact ;
+  cibles suivantes relinkées à HEAD (guards désactivées — hors
+  surface fuzzée), cf. note dans le journal.
+
+## Implémentation expérimentale des guard nodes (ADR-0010) (2026-10-01)
+
+- `onionbit-tunnel/guards.rs` : `GuardSet` (3 actifs + 2 réserve,
+  persistance 30 jours, injoignable 24 h, 3 échecs de handshake avant
+  rétrogradation, diversité /24 IPv4 et /64 IPv6 à l'admission),
+  trait `GuardStore` injectable (`onionbit-tunnel` ne dépend pas de
+  `onionbit-db` — sens des dépendances inversé, implémentation DB à
+  venir) + `InMemoryGuardStore` volatile.
+- Intégration `community.rs` : `first_hop_candidates` ordonne
+  `actifs ++ réserve ++ tirage libre` quand `guards.enabled` (le
+  `required_exit` reste exclu en amont, jamais adopté comme guard) ;
+  timeout du `create` initial → `mark_failure` sur `unverified_hop` ;
+  premier `created` vérifié (`hops_done == 1`) → `mark_alive` +
+  rafraîchissement d'adresse (le guard survit à un changement d'IP).
+- `GuardsConfig::enabled = false` par défaut : sélection pyipv8
+  **bit-exacte** sans le flag (test `desactive_est_le_tirage_pyipv8_exact`).
+  Jamais appliqué à `hops=1` `DATA` (premier hop = exit, choisi par
+  circuit) ni au mode direct `hops=0`.
+- Test d'intégration `guards_bornent_les_premiers_hops_sous_storm_destroy`
+  : storm de `DESTROY` hostile → reconstruction bornée au guard adopté,
+  set inchangé (sur loopback la dédup /24 n'admet qu'un guard —
+  assertion déterministe). 5 tests unitaires (adoption+diversité,
+  ordre, rétrogradation sans tirage sous pression, remise à zéro sur
+  preuve de vie, repli pyipv8).
+- Persistance SQLite (migration v11, table `guards` : clé publique,
+  dernière adresse, adoption/dernière vue, échecs, actif/réserve,
+  `position` = ordre sémantique du set) via `onionbit-db::guards`
+  (lignes brutes, snapshot `replace_all` ≤ 5 lignes) et adaptateur
+  `onionbit-core::guard_store::DbGuardStore` implémentant
+  `GuardStore` — `onionbit-tunnel`/`onionbit-db` ne dépendent pas l'un
+  de l'autre, la couture vit dans `core`. Injection dans
+  `ipv8_stack` quand `tunnel_community/guards_enabled` est vrai dans
+  `configuration.json` (défaut `false` partout).
+- Diagnostic : `GET /api/ipv8/tunnel/guards` (extension Rust —
+  `{guards: [{mid, address, reserve, failures, adopted_at,
+  last_seen}], enabled}`) ; documentée dans `api_rest_mapping.md`.
+- Reste à faire : activation par défaut après validation terrain.
+- Hors guards : `scripts/fingerprint_stats.ps1` +
+  `docs/security/fingerprinting.md` — échantillonneur de compteurs
+  REST (overlays/statistics + circuits) en CSV pour la mesure
+  comparative de fingerprinting vs Tribler officiel (agrégats,
+  jamais de PCAP).
+
+## Campagne libFuzzer native Windows + ADR guard nodes (2026-10-01)
+
+- **Coverage-guiding sous Windows/MSVC rendu possible** : rustc ne
+  livre aucun runtime sanitizer pour `windows-msvc` et l'instrumentation
+  sancov émet des bornes `__start_/__stop_` que lld-link ne synthétise
+  pas. Contournement validé : `fuzz/sancov_shim.c` (compilé par
+  `fuzz/build.rs`) définit les bornes de groupes `.SCOV$*`/`.SCOVP$*` ;
+  `CUSTOM_LIBFUZZER_PATH` utilise le runtime fuzzer précompilé de LLVM
+  (`clang_rt.fuzzer-x86_64.lib`) ; `LIB` pointe les libs MSVC/SDK.
+  Campagne coverage-guidée (`-s none`, sans ASan) fonctionnelle.
+- `scripts/fuzz_campaign.ps1` : détection automatique LLVM/MSVC,
+  plan de référence (5 h au total), journal CSV dans
+  `docs/security/fuzz_journal.csv`, doc `docs/security/fuzz_journal.md`.
+- Smoke run 6 cibles : ~98 M exécutions, zéro crash, corpus amorcé ;
+  campagne complète lancée sur commit `9bc4a9d`.
+- **ADR-0010 « guard nodes »** (`docs/architecture/decisions/`) :
+  persistance du premier saut contre la multiplication des tirages
+  d'entrée sous `DESTROY` storm — 3 actifs + 2 réserve, 30 jours,
+  diversité IP, bootstrap pool existant, écart pyipv8 comportemental
+  (aucun changement filaire), jamais sur `hops=0`. Proposée, aucune
+  implémentation avant acceptation.
+- `threat_model.md` : section « Déclaration de couverture » résumant
+  ce qui est démontré vs hors périmètre.
+
+## Anti-fuite : `torrent_checker` ne scrape jamais un swarm anonyme + invariant d'egress hidden-service (2026-10-01)
+
+- Audit statique des chemins d'egress (`UdpSocket::bind`, `send_to`,
+  `lookup_host`, `reqwest`, `TcpStream`) : le plan de contrôle IPv8
+  passe uniquement par `UdpEndpoint::send_to` ; les `peers-request`/
+  `create-e2e` transitent dans les cellules (`tunnel_data`/`send_cell`)
+  — c'est l'exit qui fait le lookup DHT du swarm.
+- **Fuite corrigée** : `TorrentChecker` scrapait les trackers en clair
+  depuis l'IP réelle pour tout infohash de `torrent_state` — dont ceux
+  en téléchargement/seeding anonyme (`anon_hops > 0`), liant IP ↔
+  contenu. `check_tracker` filtre désormais ces infohashes avant tout
+  egress et `check_oldest` les saute en SQL ; la santé d'un swarm caché
+  vient du tunnel (`peers-request`), comme Tribler — écart assumé avec
+  upstream qui scrape en clair.
+- Nouveau test `torrent_checker_never_scrapes_anonymous_infohash`
+  (`onionbit-core`) : tracker UDP espion en loopback — `check_tracker`
+  et `check_oldest` silencieux, zéro datagramme émis.
+- Nouveau test `hidden_service_egress_uniquement_vers_relais`
+  (`circuits_loopback`) : tap `UdpEndpoint::set_tap` sur 3 noeuds —
+  pendant `join_swarm`/`peers-request`/`create-e2e`/`link-e2e`/donnée
+  e2e à 2 sauts, tout egress du downloader est un datagramme à préfixe
+  tunnel vers ses seuls premiers sauts, et ni le point d'introduction
+  ni le seeder ne reçoivent de paquet sourcé de l'adresse du downloader.
+- Audit des bornes `hops` : production bornée 1..=3 par `anon_engine`
+  et `goal_hops` REST ; `swarm_circuit_hops` +1 sur `IP_SEEDER`/
+  `RP_DOWNLOADER` épinglé par assertion (`RP_DOWNLOADER.goal_hops == 2`
+  à `hops=1` — le RP ne voit jamais le downloader) ; `join_swarm(0,
+  non-seeder)` logue un WARN (échec fermé, parité pyipv8). Sémantique
+  `hops=0/1` documentée dans `docs/security/threat_model.md`.
+- Test d'injection négative `hidden_service_injection_paquets_forjes` :
+  forge sur socket brute de `peers-response`/`created-e2e`/`linked-e2e`
+  sans état et de `create-e2e` à clé inconnue → tous rejetés par les
+  caches (`peers_requests`, `e2e_requests`, `intro_point_for`,
+  whitelist du dispatch non signé) ; doublon `create-e2e` à clé connue
+  rejoué verbatim depuis `seen_e2e` sans second `RP_SEEDER`. Surface
+  résiduelle (coût RP par identifiant neuf, parité pyipv8) documentée
+  dans `docs/security/threat_model.md`.
+- Fuzzing des parsers (P1) : correctif DoS dans `cell.rs` —
+  `check_cell_flags`, `decrypt_cell`, `encrypt_cell` et
+  `Cell::swap_circuit_id` indexaient sans borne ; une cellule
+  déchiffrant à ≤ 29 octets crashait le process (injectable par un
+  relais du circuit). Gardes `Truncated` ajoutées. Harnais stable
+  `tests/fuzz_regression.rs` (proptest : bordures du format 22..46,
+  listes tronquées, dispatch non signé, DHT, uTP) + scaffold
+  `fuzz/` cargo-fuzz (6 cibles, dont `on_raw_datagram` complet) prêt
+  pour nightly+clang.
+- Storm `DESTROY` : test `destroy_storm_et_reconstruction_bornee` —
+  destroys signés arbitraires (parité pyipv8 : pas d'auth par saut)
+  sur circuits valides/cids inconnus → nettoyage idempotent, purge
+  symétrique des sorties, rebuild OK ; borne `ready+pending >= min`
+  de `build_circuits_if_needed` épinglée (rythme rebuild plafonné
+  par le watchdog 5 s, pas par le flux entrant). Épingle DNS
+  `adresse_domaine_ne_se_resout_pas_cote_client` : `UdpAddress::Domain`
+  opaque côté client, résolution uniquement côté exit.
+
+- `on_establish_rendezvous` répondait `local_addr` au lieu de
+  `my_estimated_wan` (pyipv8 `TunnelCommunity.on_establish_rendezvous`)
+  : le `RendezvousInfo` du `created-e2e` portait `0.0.0.0:0`, le
+  downloader pyipv8 ne pouvait pas créer sa jambe `RP_DOWNLOADER` —
+  `E2ERequestCache` expirait en boucle, download figé après kill.
+  Fix : WAN estimé + WARN si non spécifié.
+- Instrumentation du trajet retour `created-e2e` corrélée par
+  `identifier` (relais intro, création RP seeder, `exit_data` IPv8,
+  `exit_recv_data`) — le cycle `create-e2e`→`created-e2e`→`link-e2e`
+  est maintenant traçable de bout en bout.
+- `reannounce_intro_points` émettait ~10 `store_value` en rafale :
+  chaque store lance un `find_nodes` qui interroge les mêmes noeuds,
+  dépassant le `blocked()` pyipv8 (10 req / 5 s) — les annonces étaient
+  droppées. Les stores sont maintenant séquencés dans une seule tâche,
+  espacés de `dht_reannounce_stagger` (500 ms, `TunnelSettings`), avec
+  log par point d'introduction.
+- Test `hidden_seed_e2e_burst_integrity` : tolérance de pertes 99 %→
+  90 % (drop-tail attendu sous contention CPU de la suite parallèle).
+
+### Validation — banc `interop_hidden_killseeder -KillTarget anchor`
+
+Maillage : A1 = bootstrap + `EXIT_BT`, A2 = second `EXIT_BT`, A3 =
+relais (sans second exit, tuer A1 rend toute reconstruction DATA
+impossible par design — `select_exit` pyipv8 n'a plus de candidat ;
+limite de topologie de banc, pas de casse protocole). Binaire
+reconstruit incluant la pompe d'émission FIFO.
+
+| sens | hops | kill_target | flux_survit | octets post-kill | fenetre_morte | nouveau_circuit | nouvelle_annonce | completion | sha256 | fallback_direct | verdict |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| A (seeder Rust → Tribler 8.4.3) | 1 | anchor A1 | oui (+30 s) | 21 709 636 | 0 s | oui `43074219a86d…` (id hors snapshot pré-kill, dernier saut ≠ A1) | oui — `seeder_pk` identique, `intro_mid` = nouveau mid | 100 % | identique `f7c1cb3f…` | aucun | PASS |
+| B (seeder Tribler 8.4.3 → Rust) | 1 | anchor A1 | oui (+30 s) | 21 938 176 | 0 s | oui `cec559938f90…` (id hors snapshot pré-kill, dernier saut ≠ A1) | oui — seeder identique, `intro_mid` = nouveau mid | 100 % | identique `da0ea3ae…` | aucun | PASS |
+
+Artefacts : `target/interop-killseed-20261001-173905/` (A) et
+`target/interop-killseed-20261001-175315/` (B) — `report/verdicts.txt`
+pour le détail des 13-14 assertions chacun. FAIL résiduel cosmétique
+dans les deux runs : le gate `Tribler : bootstrap maillage` compte
+`exits=0` trop tôt au démarrage de T (le téléchargement anonyme
+fonctionne ensuite).
+
+### Suite complète de résilience (8 bancs, `target/bench-suite-20261001-191301/`)
+
+| banc | résultat |
+|---|---|
+| `killseed -KillTarget seeder` A | PASS — drain borné (+574 ko/2 s), fenêtre morte 30 s, restart+fastresume, reprise 56 s, SHA-256 |
+| `killseed -KillTarget seeder` B | PASS — restart Tribler, reprise Rust 15 s, SHA-256 |
+| `killseed -KillTarget intro` A | PASS (re-check : verdict DHT via `last_seen`, cf. `0485c57`) |
+| `killseed -KillTarget intro` B | PASS |
+| `killseed -KillTarget anchor -Hops 3` A | PASS — reconstruction 3 sauts, `intro_mid=550826de…` |
+| `killseed -KillTarget anchor -Hops 3` B | PASS (re-check : critère `intro intact` pour ancre hors chemin) |
+| `live_hidden_upload` (3 daemons full-Rust) | PASS — 8/8 verdicts |
+| `interop_public_dht` (réseau réel, Sintel magnet) | PASS — 589 687 octets vérifiés, route 3 sauts via exits Tribler réels |
+
+2 faux FAIL corrigés dans le script de banc (`0485c57`) : contradiction
+`intro_mid nouveau ∧ == newMid` quand l'intro reconstruit atterrissait
+sur un nœud ayant déjà des intros pré-kill (mid du nœud identique) —
+résolu par `last_seen` post-kill ; et BOM UTF-8 parasite dans
+`interop_public_dht.ps1`. Le gate `bootstrap Tribler exits=0` (snapshot
+`/ipv8/overlays` convergent souvent *après* le début du transfert) est
+devenu une ligne `INFO` non bloquante : les vrais critères sont
+fonctionnels — download accepté, `create-e2e` observé, octets vérifiés,
+intégrité finale.
+
+Frontière de confiance explicitée dans `docs/security/threat_model.md`
+(démontré vs non-démontré : pas de protection contre corrélation de
+trafic, adversaire global, Sybil massif, exit malveillant lisant le
+BitTorrent clair — même périmètre que Tribler upstream).
+
 ## Version 0.3.2-alpha (2026-10-01)
 
 - Release succédant à `v0.3.1-alpha` (supprimée — bundle incomplet et

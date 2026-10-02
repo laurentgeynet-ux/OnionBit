@@ -44,7 +44,12 @@ param(
     [string] $OutDir     = ("target\interop-hidden-seed-" + (Get-Date -Format 'yyyyMMdd-HHmmss')),
     # -DhtOnly : arreter apres le verdict DHT (publication de T
     # relue depuis A1) — pas de downloader.
-    [switch] $DhtOnly
+    [switch] $DhtOnly,
+    # -Guards : active tunnel_community.guards_enabled sur tous les
+    # noeuds Rust du maillage (selection de premier saut gardee) et
+    # ajoute les verdicts guard-set dans le rapport : set non vide et
+    # premier hop de chaque circuit multi-hop dans le set persiste.
+    [switch] $Guards
 )
 
 $ErrorActionPreference = 'Stop'
@@ -111,6 +116,22 @@ function Wait-ApiUp([int]$port, $key, [int]$sec = 60) {
         Start-Sleep -Milliseconds 700
     }
     throw "API 127.0.0.1:$port injoignable"
+}
+function Assert-Guards($p, $key) {
+    # Criteres de la matrice guards : set actif non vide + premier hop
+    # de chaque circuit multi-hop (`verified_hops[0]`, meme `mid` hex
+    # que `guards[].mid`) appartenant au set adopte. Sur loopback la
+    # dedup /24 n'admet qu'un guard — l'assertion reste exacte.
+    try {
+        $g = Api 'GET' $p.Api '/ipv8/tunnel/guards' $key $null 10
+        $mids = @($g.guards | ForEach-Object { $_.mid })
+        Verdict (($g.enabled -eq $true) -and ($mids.Count -gt 0)) "$($p.Name) : guard set actif" "n=$($mids.Count)"
+        $cs = Api 'GET' $p.Api '/ipv8/tunnel/circuits' $key $null 10
+        $multi = @($cs.circuits | Where-Object { $_.actual_hops -ge 2 -and @($_.verified_hops).Count -gt 0 })
+        if ($multi.Count -eq 0) { Verdict $true "$($p.Name) : premier hop dans le guard set (aucun circuit multi-hop)"; return }
+        $bad = @($multi | Where-Object { $mids -notcontains $_.verified_hops[0] })
+        Verdict ($bad.Count -eq 0) "$($p.Name) : premier hop dans le guard set" "multi=$($multi.Count) hors_set=$($bad.Count)"
+    } catch { Verdict $false "$($p.Name) : diagnostic guards" $_.Exception.Message }
 }
 function Start-Daemon($p, [string[]]$boot) {
     # Pas de --ipv8-port : ce flag ecrase listen_addr en 0.0.0.0. Le port
@@ -276,7 +297,7 @@ try {
         New-Item -ItemType Directory -Force -Path $p.Dir | Out-Null
     }
     [System.IO.File]::WriteAllText((Join-Path $P_A.Dir 'configuration.json'),
-        (@{ tunnel_community = @{ exitnode_enabled = $true };
+        (@{ tunnel_community = @{ exitnode_enabled = $true; guards_enabled = [bool]$Guards };
             ipv8 = @{ bootstrap = @{ override = @("127.0.0.1:$($P_A2.Ipv8)") };
                       interfaces = @( @{ interface = 'UDPIPv4'; ip = '127.0.0.1'; port = $P_A.Ipv8 } );
                       estimated_wan = "127.0.0.1:$($P_A.Ipv8)" } } |
@@ -286,7 +307,8 @@ try {
 
     foreach ($p in $relays) {
         [System.IO.File]::WriteAllText((Join-Path $p.Dir 'configuration.json'),
-            (@{ ipv8 = @{ bootstrap = @{ override = @("127.0.0.1:$($P_A.Ipv8)") };
+            (@{ tunnel_community = @{ guards_enabled = [bool]$Guards };
+                ipv8 = @{ bootstrap = @{ override = @("127.0.0.1:$($P_A.Ipv8)") };
                           interfaces = @( @{ interface = 'UDPIPv4'; ip = '127.0.0.1'; port = $p.Ipv8 } );
                           estimated_wan = "127.0.0.1:$($p.Ipv8)" } } |
                 ConvertTo-Json -Compress -Depth 5))
@@ -427,7 +449,8 @@ try {
     # ---------- Phase 4 : downloader Rust ----------
     Log '=== Phase 4 : downloader anonyme Rust D ==='
     [System.IO.File]::WriteAllText((Join-Path $P_D.Dir 'configuration.json'),
-        (@{ ipv8 = @{ bootstrap = @{ override = @("127.0.0.1:$($P_A.Ipv8)") };
+        (@{ tunnel_community = @{ guards_enabled = [bool]$Guards };
+            ipv8 = @{ bootstrap = @{ override = @("127.0.0.1:$($P_A.Ipv8)") };
                       interfaces = @( @{ interface = 'UDPIPv4'; ip = '127.0.0.1'; port = $P_D.Ipv8 } );
                       estimated_wan = "127.0.0.1:$($P_D.Ipv8)" } } |
             ConvertTo-Json -Compress -Depth 5))
@@ -522,10 +545,11 @@ finally {
         try {
             $k = ApiKey $p.Dir
             if ($k) {
-                foreach ($ep in @('/downloads','/ipv8/tunnel/circuits','/ipv8/tunnel/relays','/ipv8/tunnel/exits','/ipv8/tunnel/swarms','/ipv8/tunnel/peers')) {
+                foreach ($ep in @('/downloads','/ipv8/tunnel/circuits','/ipv8/tunnel/relays','/ipv8/tunnel/exits','/ipv8/tunnel/swarms','/ipv8/tunnel/peers','/ipv8/tunnel/guards')) {
                     $name = ($p.Name + ($ep -replace '/','_') + '.json')
                     try { Api 'GET' $p.Api $ep $k $null 5 | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $rep $name) -Encoding UTF8 } catch {}
                 }
+                if ($Guards) { Assert-Guards $p $k }
             }
         } catch {}
         if ($procs.ContainsKey($p.Name) -and -not $procs[$p.Name].HasExited) {

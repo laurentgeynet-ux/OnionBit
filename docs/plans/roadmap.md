@@ -556,6 +556,53 @@ Ajouter ici, au fil de l'avancement, tout écart constaté par rapport au
 plan initial (dépendance qui ne convient pas, étape scindée en deux,
 risque IPv8 sous/sur-estimé, etc.), avec la date.
 
+- 2026-10-02 (validation guards) : matrice interop réelle exécutée
+  via `-Guards` sur `interop_hidden_tribler_{download,seed}.ps1` —
+  sens A (Tribler←OnionBit) et sens B (OnionBit←Tribler) verts en
+  hops 1, 2 et 3 (SHA-256 exact, premiers hops des circuits
+  multi-hop ⊆ guard set). Deux défauts trouvés et corrigés : self dans
+  le pool de candidats (auto-adoption guard via `rp_info` nous
+  élisant RP) et bypass guards des circuits RP via `pick_first_hop`.
+  Persistance redémarrage vérifiée sur réseau public réel (set 3
+  actifs + 2 réserve rechargé à l'identique). Baseline sans guards
+  exécutée (`interop-noguards-B-h1`) : `enabled=false`, set vide,
+  premier hop libre (`beb1d983…`) — tirage pyipv8 inchangé. Reste :
+  session fingerprint Tribler (API affamée par la charge, à refaire
+  post-campagne), activation par défaut toujours différée.
+- 2026-10-02 (critères de sortie arrêtés) : séquence post-campagne
+  figée — (1) clôture journal fuzz, (2) fingerprint Tribler en mesh
+  contrôlé **et** réseau public (durée/rôle/charge/métriques alignés
+  avec les sessions OnionBit), (3) **test public guards** : ligne
+  verte seulement si `octets vérifiés > 0 ∧ route publique effective
+  ∧ guard set non vide ∧ premier hop ∈ GuardSet` — le guard doit
+  porter le circuit qui transporte les données, pas un circuit
+  proactif parallèle ; à consigner : MIDs des guards en début de run,
+  premier hop et route observés, exit public, compteurs BitTorrent
+  vérifiés, absence de fallback direct, durée/retries, état du set
+  final. (4) validation workspace complète, (5) décision
+  `guards_enabled` par défaut — seulement après (3)+(4) verts, avec
+  désactivation de diagnostic, migration sûre des profils, lecture
+  seule API, logs de pool trop petit, et communication « mesure
+  expérimentale de réduction d'exposition Sybil », jamais une
+  garantie d'anonymat. Interdictions pendant la campagne : pas de
+  modification logique tunnel, targets fuzz ou dépendances
+  (provenance des lignes du journal). Messagerie : séquence ADR
+  finalisée → tests de protocole (identité, ordre/compteur, replay,
+  malformé, taille, dédup, réouverture circuit, rien hors tunnel,
+  consentement, offline = non livré) → v1 online-only → preview
+  séparée. Campagne Linux/ASan : bloquante avant release avec guards
+  par défaut ou messagerie, pas avant.
+- 2026-10-02 : campagne libFuzzer de référence terminée — 6/6
+  cibles, 6,28 Md d'exécutions, 0 crash/timeout/OOM
+  (`docs/security/fuzz_journal.md`). Guard nodes expérimentaux
+  implémentés (ADR-0010, `guards_enabled=false` par défaut) :
+  `GuardSet` + persistance SQLite v11 via `GuardStore`/`DbGuardStore`,
+  `GET /api/ipv8/tunnel/guards`, CLI `tunnel --show`. Extension
+  observabilité : `GET /api/ipv8/tunnel/debug/circuit-downloads`
+  (corrélation circuits↔downloads anonymes, sans équivalent pyipv8).
+  Restes : rotation guards au watchdog, validation terrain avant
+  activation par défaut, campagne longue sur les cibles à fort
+  rendement, campagne Linux/ASan complémentaire.
 - 2026-10-01 : onglet Diagnostic « Statistiques » enrichi — sections
   Daemon (version, **uptime** nouveau champ `uptime_sec`, taille DB,
   espace disque du dossier de réception), Contenu (torrents connus,

@@ -308,6 +308,9 @@ pub struct TunnelCommunity {
     /// `TunnelSettings` Python (`self.settings`) : tous les seuils et
     /// cadences de la community (defauts = valeurs officielles).
     pub settings: TunnelSettings,
+    /// Guard nodes (ADR-0010) : premiers sauts persistants quand
+    /// `guards.is_enabled()` — selection pyipv8 inchangee sinon.
+    pub guards: crate::guards::GuardSet,
 }
 
 /// Detail d'un objet de routage detruit (`circuit_removed` pyipv8) —
@@ -464,6 +467,7 @@ impl TunnelCommunity {
         let (test_tx, _) =
             tokio::sync::broadcast::channel(crate::speedtest::SPEED_TEST_CHANNEL_CAP);
         let (relay_send_tx, mut send_rx) = tokio::sync::mpsc::channel::<SendJob>(SEND_QUEUE_CAP);
+        let guard_cfg = settings.guards.clone();
         // Pompe d'emission unique : conserve l'ordre des cellules sur
         // le fil (boucle asyncio unique de pyipv8) — un spawn par
         // datagramme reordonnait les cellules consecutives relayees.
@@ -520,6 +524,7 @@ impl TunnelCommunity {
             dht_provider: Mutex::new(None),
             relay_send_tx,
             settings,
+            guards: crate::guards::GuardSet::new(guard_cfg, None),
         });
         let weak = Arc::downgrade(&community);
         endpoint
@@ -535,6 +540,13 @@ impl TunnelCommunity {
             )
             .await;
         community
+    }
+
+    /// Injecte la persistance des guards (ADR-0010) — appele par
+    /// `core`/`daemon` quand le store DB est pret. Sans store, le set
+    /// reste volatile (meme comportement, rien ne survit au redemarrage).
+    pub fn set_guard_store(&self, store: Arc<dyn crate::guards::GuardStore>) {
+        self.guards.attach_store(store);
     }
 
     /// `number` du RequestCache Python (module 2**16).
@@ -1436,6 +1448,19 @@ impl TunnelCommunity {
             let retried = match candidates {
                 RetryCandidates::FirstHops(peers) if !peers.is_empty() && max_tries >= 1 => {
                     tracing::debug!(circuit_id, "retry du create sur un premier saut alternatif");
+                    // ADR-0010 : le premier saut qui vient de timeout
+                    // compte comme echec de handshake s'il est un guard.
+                    let timed_out = {
+                        let inner = this.inner.lock().unwrap();
+                        inner
+                            .circuits
+                            .get(&circuit_id)
+                            .and_then(|c| c.unverified_hop.as_ref())
+                            .map(|h| h.public_key_bin.clone())
+                    };
+                    if let Some(k) = &timed_out {
+                        this.guards.mark_failure(k);
+                    }
                     this.send_initial_create(circuit_id, peers, max_tries)
                         .await
                         .is_ok()
@@ -1659,15 +1684,17 @@ impl TunnelCommunity {
     /// (`set(requested) <= set(flags)`).
     pub fn get_candidates_subset(&self, flags: &[i32]) -> Vec<Peer> {
         let inner = self.inner.lock().unwrap();
+        let my_pk = self.key.public_key().to_bin();
         let candidates: Vec<Peer> = self
             .network
             .peers_for_service(&self.community_id)
             .into_iter()
             .filter(|p| {
-                inner
-                    .flag_registry
-                    .get(&p.public_key_bin)
-                    .is_some_and(|f| flags.iter().all(|flag| f & flag == *flag))
+                p.public_key_bin != my_pk
+                    && inner
+                        .flag_registry
+                        .get(&p.public_key_bin)
+                        .is_some_and(|f| flags.iter().all(|flag| f & flag == *flag))
             })
             .collect();
         self.filter_backup_exits(&inner, candidates, flags)
@@ -1806,6 +1833,21 @@ impl TunnelCommunity {
         ctype: &str,
         required_key: Option<&[u8]>,
     ) -> Vec<Peer> {
+        let candidates = self.first_hop_pool(ctype, required_key);
+        if !self.guards.is_enabled() {
+            return candidates;
+        }
+        // ADR-0010 : les guards actifs prennent la tete, suivis de la
+        // reserve puis du tirage libre — jamais de nouveau tirage
+        // d'entree sous pression (storm de DESTROY).
+        self.guards.ensure(&candidates);
+        self.guards.order_first_hops(candidates)
+    }
+
+    /// Pool brut des premiers hops possibles (`possible_first_hops`
+    /// pyipv8, avant ordonnancement guards) — partage entre
+    /// `first_hop_candidates` et la maintenance periodique des guards.
+    fn first_hop_pool(&self, ctype: &str, required_key: Option<&[u8]>) -> Vec<Peer> {
         let mut freq: Vec<(Peer, usize)> = Vec::new();
         let mut push = |p: Peer| match freq
             .iter_mut()
@@ -1835,10 +1877,27 @@ impl TunnelCommunity {
         ]) {
             push(p);
         }
+        let my_pk = self.key.public_key().to_bin();
         let mut possible: Vec<(Peer, usize)> = freq
             .into_iter()
-            .filter(|(p, _)| Some(p.public_key_bin.as_slice()) != required_key)
+            .filter(|(p, _)| {
+                Some(p.public_key_bin.as_slice()) != required_key && p.public_key_bin != my_pk
+            })
             .collect();
+        // Registre de flags vide (pairs appris sans `extra_bytes`,
+        // bancs ou petits maillages) : meme repli permissif que
+        // `send_extend` — tous les pairs du service tunnel, soi-meme
+        // et `required_key` exclus.
+        if possible.is_empty() {
+            return self
+                .network
+                .peers_for_service(&self.community_id)
+                .into_iter()
+                .filter(|p| {
+                    Some(p.public_key_bin.as_slice()) != required_key && p.public_key_bin != my_pk
+                })
+                .collect();
+        }
         possible.shuffle(&mut rand::rng());
         // Tri stable par frequence ascendante : les sauts deja utilises
         // passent en dernier, les egalites restent brassées.
@@ -2357,18 +2416,25 @@ impl TunnelCommunity {
     }
 
     /// `get_candidates(*flags)` : pairs connus portant `flag`
-    /// (`PEER_FLAG_*`) dans leur bitmask annonce.
+    /// (`PEER_FLAG_*`) dans leur bitmask annonce. Soi-meme exclu :
+    /// pyipv8 ne met jamais `my_peer` dans `verified_peers`, mais
+    /// notre annuaire peut apprendre notre propre couple cle/adresse
+    /// (echo d'une introduction-response, ou `rp_info` nous designant
+    /// comme point de rendez-vous) — sans ce filtre le noeud devient
+    /// candidat premier hop, exit elu et meme guard de lui-meme.
     pub fn get_candidates(&self, flag: i32) -> Vec<Peer> {
         let inner = self.inner.lock().unwrap();
+        let my_pk = self.key.public_key().to_bin();
         let candidates: Vec<Peer> = self
             .network
             .peers_for_service(&self.community_id)
             .into_iter()
             .filter(|p| {
-                inner
-                    .flag_registry
-                    .get(&p.public_key_bin)
-                    .is_some_and(|f| f & flag != 0)
+                p.public_key_bin != my_pk
+                    && inner
+                        .flag_registry
+                        .get(&p.public_key_bin)
+                        .is_some_and(|f| f & flag != 0)
             })
             .collect();
         self.filter_backup_exits(&inner, candidates, &[flag])
@@ -2512,13 +2578,20 @@ impl TunnelCommunity {
         let mut circuits_tick = tokio::time::interval(Duration::from_secs(5));
         let mut ping_tick = tokio::time::interval(self.settings.ping_interval);
         let mut discovery_tick = tokio::time::interval(Duration::from_secs(10));
-        for t in [&mut circuits_tick, &mut ping_tick, &mut discovery_tick] {
+        let mut guards_tick = tokio::time::interval(self.settings.guards.maintenance_interval);
+        for t in [
+            &mut circuits_tick,
+            &mut ping_tick,
+            &mut discovery_tick,
+            &mut guards_tick,
+        ] {
             t.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         }
         // Premier tick immediat absorbe (rien a faire au demarrage).
         circuits_tick.tick().await;
         ping_tick.tick().await;
         discovery_tick.tick().await;
+        guards_tick.tick().await;
         loop {
             tokio::select! {
                 _ = circuits_tick.tick() => {
@@ -2527,8 +2600,24 @@ impl TunnelCommunity {
                 }
                 _ = ping_tick.tick() => self.do_ping().await,
                 _ = discovery_tick.tick() => self.do_peer_discovery().await,
+                _ = guards_tick.tick() => self.do_guard_maintenance(),
             }
         }
+    }
+
+    /// ADR-0010 : maintien proactif du set de guards hors construction
+    /// de circuit — purge des expires/injoignables, promotion de la
+    /// reserve, adoption anticipee sur le pool courant et persistance.
+    /// Les adoptions ne se font alors jamais sous la pression d'un
+    /// storm de `DESTROY`. No-op quand la feature est desactivee.
+    fn do_guard_maintenance(&self) {
+        if !self.guards.is_enabled() {
+            return;
+        }
+        // Pool « de reference » : candidats `DATA` sans `required_exit`
+        // — la meme famille de relais que les premiers hops reels.
+        let candidates = self.first_hop_pool(crate::routing::CIRCUIT_TYPE_DATA, None);
+        self.guards.ensure(&candidates);
     }
 
     /// `do_remove` Python : retire les circuits/relais/sorties
@@ -3438,8 +3527,8 @@ impl TunnelCommunity {
                 return;
             };
             circuit.add_hop(Hop {
-                public_key_bin: hop_pk_bin,
-                address: hop_addr,
+                public_key_bin: hop_pk_bin.clone(),
+                address: hop_addr.clone(),
                 session_keys,
             });
             circuit.exit_flags = flags;
@@ -3447,6 +3536,11 @@ impl TunnelCommunity {
             let done = circuit.hops.len();
             (goal, done, goal.saturating_sub(1) == done)
         };
+        // ADR-0010 : premier saut verifie = preuve de vie du guard
+        // (adresse rafraichie au passage — il peut avoir change d'IP).
+        if hops_done == 1 {
+            self.guards.mark_alive(&hop_pk_bin, hop_addr);
+        }
         self.notify_circuits_changed();
 
         if hops_done < goal {
@@ -3665,7 +3759,21 @@ impl TunnelCommunity {
             );
             return;
         }
-        tracing::trace!(circuit_id, dest = ?p.dest_address, "exit_data");
+        // Les paquets IPv8 sortant par un exit socket sont quasi
+        // toujours du controle hidden-service (create-e2e vers
+        // l'intro, created-e2e vers le downloader...) — debug pour
+        // suivre le trajet retour e2e entre deux exits du meme noeud.
+        let looks_ipv8 = p.data.len() > prefix.len() && p.data[..prefix.len()] == prefix;
+        if looks_ipv8 {
+            tracing::debug!(
+                circuit_id,
+                dest = ?p.dest_address,
+                len = p.data.len(),
+                "exit_data : paquet ipv8 sorti vers l'exterieur"
+            );
+        } else {
+            tracing::trace!(circuit_id, dest = ?p.dest_address, "exit_data");
+        }
         let Some(dest_sa) = p.dest_address.to_socket_addr() else {
             return;
         };
@@ -3729,6 +3837,13 @@ impl TunnelCommunity {
                 None => return,
             }
         };
+        tracing::debug!(
+            circuit_id,
+            src = ?src,
+            upstream = ?upstream_addr,
+            len = data.len(),
+            "exit_recv_data : datagramme externe reencapsule vers l'amont"
+        );
         // `is_allowed` est applique dans les deux sens par pyipv8
         // (`sendto` ET `datagram_received`) : une reponse externe non
         // conforme ne doit pas non plus retourner dans le tunnel.

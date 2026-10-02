@@ -81,6 +81,8 @@ Convention générale :
 | `GET /api/ipv8/tunnel/swarms` | idem | ✅ | Swarms hidden services |
 | `GET /api/ipv8/tunnel/swarms/{infohash}/size` | idem | ✅ | `estimate_swarm_size` (crawl `peers-request` DHT→PEX, `seeder_pk` uniques source PEX) ; `{"swarms":[]}` sans tunnel ; hex invalide → 500 ; **quirk conservé** : `?hops=` arrive en chaîne → `swarm_size` 0 |
 | `GET /api/ipv8/tunnel/peers` | idem | ✅ | `{peers: [{ip, port, mid, is_key_compatible, flags[]}]}` — `flags` en **liste d'entiers** `PEER_FLAG_*` (set Python), pas bitmask |
+| `GET /api/ipv8/tunnel/guards` | — | ✅ | **Extension Rust** (ADR-0010, sans équivalent pyipv8) : `{guards: [{mid, address, reserve, failures, adopted_at, last_seen}], enabled}` ; `{"guards": [], "enabled": false}` sans tunnel ou feature désactivée |
+| `GET /api/ipv8/tunnel/debug/circuit-downloads` | — | ✅ | **Extension Rust** (Python garde `download_states` interne) : `{downloads: [{info_hash, lookup_info_hash, hops, state, seeder, swarm_peers, circuits[]}]}` — corrélation circuits↔downloads anonymes ; `{"downloads": []}` sans tunnel/stack |
 | `GET /api/ipv8/tunnel/peers/dht` | idem | ✅ | `DHTIntroPointPayload` décodé du `Storage` DHT local → `[{info_hash, peers: [IntroductionPoint.to_dict()]}]` ; `[]` brut sans tunnel/provider ; `PackError` ignorée |
 | `GET /api/ipv8/tunnel/peers/pex` | idem | ✅ | Store PEX par info_hash (annoncé par `on_establish_intro`) → même shape ; `[]` brut sans tunnel |
 | `GET /api/ipv8/tunnel/circuits/test` | idem | ✅ | Nouveau circuit `SPEED_TEST` + `run_speedtest` (cellules 21/22 u32 `ipv8-rust-tunnels` + 19/20 u16 pyipv8) ; flux `text/event-stream` `speed: {"up","down"} MiB/s` ; `goal_hops` 1..3 sinon 400 ; échec création → 500 ; **quirk conservé** : `request_size`/`response_size` présents → 500 (`TypeError` Python) ; `test_time_ms` 1..60000 |
@@ -109,7 +111,7 @@ Convention générale :
 | **Versioning** (`versioning_endpoint.py`) | | | |
 | `GET /api/versioning/versions` | idem | ✅ | Sous-répertoires `v*` de `state_dir` |
 | `GET /api/versioning/versions/current` | idem | ✅ | Version du crate |
-| `GET /api/versioning/versions/check` | idem | ✅ | `has_version: false` — pas de trafic implicite |
+| `GET /api/versioning/versions/check` | idem | ✅ | Sonde réelle : `versioning/check_urls` + releases GitHub `versioning/github_repo` (anti-SSRF `ip_policy`, timeout `check_timeout_secs`) |
 | `DELETE /api/versioning/versions/{v}` | idem | ✅ | Supprime un sous-répertoire `v*` (jamais le courant ; nom validé) |
 | `POST /api/versioning/upgrade` | idem | ✅ | `{"started": false}` — pas de migrateurs |
 | `GET /api/versioning/upgrade/available` | idem | ✅ | `{"can_upgrade": false}` |
