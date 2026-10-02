@@ -84,6 +84,41 @@ redémarrage) — parité `set_session_limits` Python + services :
   sur la pompe d'émission sérialisée (cellules relayées + datagrammes
   de sortie), excédent perdu en sémantique UDP ; appliqué à chaud
   (`set_relay_rate_bps`). Ne borne pas le trafic propre du nœud.
+- `tunnel_community/anon_dht_rate_pps` → `Ipv8Config.anon_dht_rate_pps`
+  (extension Rust, défaut 30) : plafond de débit de la socket DHT
+  tunnelisée de chaque lane anonyme, en datagrammes/s sortants — seau
+  à jetons, rafale bornée à 1 s, excédent perdu en sémantique UDP.
+  Le même budget borne le traitement des requêtes DHT entrantes
+  (`DhtConfig::inbound_queries_per_second`, vendored) : une requête
+  admise produit au plus une réponse, déjà plafonnée par le débit
+  socket. `0` = illimité (déconseillé : ~6 400 cellules/s mesurées en
+  mesh sur un magnet en stall).
+- `tunnel_community/anon_dht_client_only` → `Ipv8Config` (extension
+  Rust, défaut `true`) : posture client-only de la DHT anonyme — les
+  requêtes DHT entrantes non sollicitées (réinjectées par la socket
+  de sortie, suffixe bencode `1:y1:qe`) sont écartées à la frontière
+  de la socket au lieu d'être servies : la lane interroge la DHT mais
+  ne la sert pas. Coupe la boucle d'amplification requête/réponse à
+  travers le tunnel.
+- `tunnel_community/anon_dht_backoff_cap_secs` → `Ipv8Config`
+  (extension Rust, défaut 900) : plafond du backoff exponentiel des
+  re-lookups `get_peers` sans progrès — `REQUERY_INTERVAL × 2^idle`,
+  jitter −0..25 %, `0` = intervalle fixe de 60 s (comportement
+  librqbit brut). Un magnet sans swarm retombe à ~1 vague de requêtes
+  par quart d'heure ; la cadence nominale reprend au premier pair
+  livré.
+- `tunnel_community/exit_inbound_source_ttl_secs` →
+  `TunnelSettings.exit_inbound_source_ttl` (extension Rust, défaut
+  300) : sémantique conntrack sur les sockets de sortie —
+  `exit_recv_data` ne réencapsule vers l'amont que les datagrammes
+  **non-IPv8** provenant d'une destination passée en sortie dans la
+  fenêtre TTL (table bornée par `exit_inbound_max_sources`, défaut
+  2048). `0` désactive le filtre (comportement pyipv8 : tout
+  réinjecter). Sans lui, le bruit UDP adressé au port de sortie
+  traversait le tunnel puis recevait des réponses (RST uTP…) — la
+  moitié du flood mesh persistait après la seule discipline DHT. Le
+  trafic IPv8 e2e hidden-service est exempté : `create-e2e` arrive
+  sans contact préalable et ces messages sont signés.
 - `tunnel_community/bandwidth/*` → `Ipv8Config.bandwidth` : paramètres
   de l'estimateur de capacité upload (`services/bandwidth.rs`) —
   débit WAN UPnP (`GetLinkLayerMaxBitRates`), sondes HTTP POST

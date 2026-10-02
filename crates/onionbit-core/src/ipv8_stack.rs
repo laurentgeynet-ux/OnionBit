@@ -180,6 +180,37 @@ pub struct Ipv8Config {
     /// n'apporte rien et chaque requete SQL bloque la connexion
     /// partagee (mesure : jusqu'a 24 s d'attente mutex sous charge).
     pub content_healths_cache_secs: u64,
+    /// Extension Rust : plafond de debit de la socket DHT d'une lane
+    /// anonyme, en datagrammes/s sortants (seau a jetons, rafale de
+    /// 1 s). `0` = illimite. La DHT mainline tunnelisee d'un magnet
+    /// en stall mesurait ~6 400 cellules/s dans le mesh (~200x la
+    /// cadence Tribler equivalente — fingerprint + charge exit) ;
+    /// le plafond borne le pire cas quelle que soit la cadence
+    /// demandee par le client DHT.
+    pub anon_dht_rate_pps: u64,
+    /// Extension Rust : posture client-only de la DHT anonyme — les
+    /// requetes DHT entrantes (non sollicitees, reinjectees par la
+    /// socket de sortie) sont ecartees au lieu d'etre servies : la
+    /// lane interroge mais n'amplifie pas. `true` recommande.
+    pub anon_dht_client_only: bool,
+    /// Extension Rust : plafond (s) du backoff exponentiel applique
+    /// aux re-lookups `get_peers` sans progres (patch librqbit-dht
+    /// vendored). `0` = intervalle fixe de 60 s (comportement brut).
+    /// Avec le plafond, un magnet sans swarm decroit vers une cadence
+    /// jitteree plafonnee (`discovery degradee`).
+    pub anon_dht_backoff_cap_secs: u64,
+    /// Extension Rust : TTL (s) des sources WAN "contactees" par une
+    /// socket de sortie — `exit_recv_data` ne reencapsule vers
+    /// l'amont que les datagrammes non-IPv8 provenant d'une
+    /// destination passee par `exit_data` dans cette fenetre
+    /// (semantique conntrack). `0` desactive le filtre (comportement
+    /// pyipv8 : tout reinjecter). Sans ce filtre le bruit UDP
+    /// adresse au port de sortie etait reinjecte puis repondu
+    /// (amplification ~6 400 cellules/s mesuree en mesh).
+    pub exit_inbound_source_ttl_secs: u64,
+    /// Extension Rust : borne de la table des sources contactees par
+    /// socket de sortie (`exit_inbound_source_ttl_secs`).
+    pub exit_inbound_max_sources: usize,
 }
 
 impl Ipv8Config {
@@ -217,6 +248,11 @@ impl Ipv8Config {
             peer_cache_max_age_secs: DEFAULT_PEER_CACHE_MAX_AGE_SECS,
             peer_persist_interval_secs: DEFAULT_PEER_PERSIST_INTERVAL_SECS,
             content_healths_cache_secs: DEFAULT_CONTENT_HEALTHS_CACHE_SECS,
+            anon_dht_rate_pps: DEFAULT_ANON_DHT_RATE_PPS,
+            anon_dht_client_only: true,
+            anon_dht_backoff_cap_secs: DEFAULT_ANON_DHT_BACKOFF_CAP_SECS,
+            exit_inbound_source_ttl_secs: DEFAULT_EXIT_INBOUND_TTL_SECS,
+            exit_inbound_max_sources: DEFAULT_EXIT_INBOUND_MAX_SOURCES,
         }
     }
 }
@@ -251,6 +287,11 @@ impl Default for Ipv8Config {
             peer_cache_max_age_secs: DEFAULT_PEER_CACHE_MAX_AGE_SECS,
             peer_persist_interval_secs: DEFAULT_PEER_PERSIST_INTERVAL_SECS,
             content_healths_cache_secs: DEFAULT_CONTENT_HEALTHS_CACHE_SECS,
+            anon_dht_rate_pps: DEFAULT_ANON_DHT_RATE_PPS,
+            anon_dht_client_only: true,
+            anon_dht_backoff_cap_secs: DEFAULT_ANON_DHT_BACKOFF_CAP_SECS,
+            exit_inbound_source_ttl_secs: DEFAULT_EXIT_INBOUND_TTL_SECS,
+            exit_inbound_max_sources: DEFAULT_EXIT_INBOUND_MAX_SOURCES,
         }
     }
 }
@@ -269,6 +310,9 @@ struct AnonLane {
     /// service, les cellules `data` d'un circuit e2e `RP_SEEDER` lie
     /// y sont injectees (`inject_incoming` + `pin_circuit`).
     pub utp_transport: TunnelUdpSocket,
+    /// Socket DHT tunnelsee de la lane — exposee pour les compteurs
+    /// `stats()` (observabilite budget/cadence DHT anonyme).
+    pub dht_socket: TunnelUdpSocket,
     /// Arret du watchdog de circuits de la lane.
     circuit_watchdog_stop: Arc<tokio::sync::watch::Sender<bool>>,
 }
@@ -334,6 +378,27 @@ pub const DEFAULT_PEER_PERSIST_INTERVAL_SECS: u64 = 120;
 /// TTL du cache `healths_for` (30 s) — assez court pour rester
 /// pertinent, assez long pour absorber les rafales de requetes.
 pub const DEFAULT_CONTENT_HEALTHS_CACHE_SECS: u64 = 30;
+/// Plafond par defaut de la socket DHT d'une lane anonyme
+/// (datagrammes/s sortants). ~30 pps couvre bootstrap et passes
+/// `get_peers` (~8-32 datagrammes par vague) tout en bornant le
+/// pire cas a quelques Ko/s de cellules — deux ordres de grandeur
+/// sous le flux mesure en mesh sans discipline (~6 400 cellules/s
+/// pour un magnet en stall).
+pub const DEFAULT_ANON_DHT_RATE_PPS: u64 = 30;
+/// Plafond par defaut du backoff `get_peers` anonyme (15 min) : un
+/// infohash sans progres retombe a ~1 vague de requetes par quart
+/// d'heure avec jitter — cadence basse permanente au lieu d'une
+/// boucle a plein regime. `0` desactive (intervalle fixe librqbit).
+pub const DEFAULT_ANON_DHT_BACKOFF_CAP_SECS: u64 = 15 * 60;
+/// TTL par defaut (s) des sources WAN contactees par une socket de
+/// sortie (filtre conntrack de `exit_recv_data`) — couvre les
+/// reponses DHT/tracker/uTP (timeouts ~10-15 s) et les echanges e2e
+/// espaces, sans laisser le bruit WAN rentrer dans le tunnel.
+pub const DEFAULT_EXIT_INBOUND_TTL_SECS: u64 = 300;
+/// Borne par defaut de la table des sources contactees par socket de
+/// sortie — une lane qui interroge des milliers de noeuds DHT ne fait
+/// pas croitre la table sans limite.
+pub const DEFAULT_EXIT_INBOUND_MAX_SOURCES: usize = 2048;
 
 /// Tache de maintenance DHT (`PingChurn.take_step` +
 /// `node_maintenance`/`value_maintenance`/`token_maintenance` +
@@ -1074,6 +1139,14 @@ pub struct Ipv8Stack {
     circuit_bounds: Arc<(AtomicUsize, AtomicUsize)>,
     /// `libtorrent/socks_listen_ports` (ports SOCKS5 par lane).
     socks_listen_ports: Vec<u16>,
+    /// Discipline DHT des lanes anonymes (extensions Rust —
+    /// `Ipv8Config::anon_dht_*`) : plafond de debit socket, posture
+    /// client-only et plafond de backoff `get_peers`.
+    anon_dht_rate_pps: u64,
+    /// `anon_dht_client_only` (voir `Ipv8Config`).
+    anon_dht_client_only: bool,
+    /// `anon_dht_backoff_cap_secs` (voir `Ipv8Config`).
+    anon_dht_backoff_cap_secs: u64,
     /// `monitor_hidden_swarms` Python : dernier etat connu par
     /// `(hops, lookup_info_hash)` pour detecter les transitions
     /// join/leave des swarms caches.
@@ -1281,6 +1354,10 @@ impl Ipv8Stack {
                         enabled: config.guards_enabled,
                         ..onionbit_tunnel::guards::GuardsConfig::default()
                     },
+                    exit_inbound_source_ttl: std::time::Duration::from_secs(
+                        config.exit_inbound_source_ttl_secs,
+                    ),
+                    exit_inbound_max_sources: config.exit_inbound_max_sources,
                     ..onionbit_tunnel::settings::TunnelSettings::default()
                 },
                 community_id,
@@ -1660,6 +1737,9 @@ impl Ipv8Stack {
                 AtomicUsize::new(config.max_circuits.max(1) as usize),
             )),
             socks_listen_ports: config.socks_listen_ports.clone(),
+            anon_dht_rate_pps: config.anon_dht_rate_pps,
+            anon_dht_client_only: config.anon_dht_client_only,
+            anon_dht_backoff_cap_secs: config.anon_dht_backoff_cap_secs,
             swarm_states: Mutex::new(HashMap::new()),
             swarm_lookup: Mutex::new(HashMap::new()),
             hidden_tasks: Mutex::new(Vec::new()),
@@ -1811,16 +1891,33 @@ impl Ipv8Stack {
         // =False) — les pairs passent en uTP a travers le tunnel, la
         // DHT et les trackers UDP aussi ; seuls les trackers HTTP(S)
         // utilisent le SOCKS5 (`http-request` one-shot).
-        let udp_sockets = onionbit_tunnel::tunnel_udp_socket::TunnelUdpSockets::new(
+        let udp_sockets = onionbit_tunnel::tunnel_udp_socket::TunnelUdpSockets::with_dht_policy(
             tunnel.clone(),
             hops,
             socks_addr,
+            self.anon_dht_client_only,
         )
         .map_err(|e| CoreError::State(format!("socket uTP tunnel: {e}")))?;
+        // Discipline DHT de la lane (extension Rust — Tribler n'a pas
+        // de DHT mainline tunnelisee) : plafond de debit sortant sur
+        // la socket borne le pire cas quel que soit le client, quand
+        // le backoff `get_peers` (cote librqbit-dht vendored) reduit
+        // la cadence des lookups sans progres.
+        udp_sockets.dht.set_rate_limit_pps(self.anon_dht_rate_pps);
         let mut cfg = self.engine_config.clone();
         cfg.socks5_proxy = Some(format!("socks5://{socks_addr}"));
         cfg.utp_only = true;
         cfg.enable_dht = true;
+        cfg.dht_requery_backoff_cap_secs =
+            (self.anon_dht_backoff_cap_secs > 0).then_some(self.anon_dht_backoff_cap_secs);
+        // Defense en profondeur derriere le filtre client-only de la
+        // socket (et filet si celle-ci est desactivee) : le traitement
+        // des requetes DHT entrantes est borne par le meme budget
+        // par seconde — chaque requete admise produit au plus une
+        // reponse, deja plafonnee par le debit socket. `0` = illimite
+        // (meme semantique que `anon_dht_rate_pps`).
+        cfg.dht_inbound_queries_per_sec =
+            (self.anon_dht_rate_pps > 0).then_some(self.anon_dht_rate_pps as usize);
         // Le bootstrap DHT tunnel ne peut aboutir qu'une fois des
         // circuits READY — attendre la readiness ici bloquerait le
         // demarrage de la lane pour rien (le bootstrap retente en
@@ -1835,6 +1932,7 @@ impl Ipv8Stack {
         // `on_e2e_finished` pyipv8 est le chemin symetrique : cote
         // seeder, le pair arrive par l'ecoute uTP du tunnel.
         cfg.utp_listen_socket = Some(udp_sockets.utp);
+        let dht_socket = udp_sockets.dht.clone();
         cfg.dht_socket = Some(std::sync::Arc::new(udp_sockets.dht));
         cfg.udp_tracker_socket = Some(std::sync::Arc::new(udp_sockets.tracker));
         cfg.disable_lsd = true;
@@ -1868,6 +1966,7 @@ impl Ipv8Stack {
             socks,
             engine: engine.clone(),
             utp_transport,
+            dht_socket,
             circuit_watchdog_stop,
         };
         self.anon_lanes.lock().unwrap().insert(hops, lane);
@@ -1925,6 +2024,19 @@ impl Ipv8Stack {
             .unwrap()
             .get(&hops)
             .map(|l| (l.engine.clone(), l.utp_transport.clone()))
+    }
+
+    /// Compteurs de la socket DHT tunnelisee d'une lane (`TunnelUdpSocket::
+    /// stats`) : `(tx_msgs, tx_bytes, rx_msgs, rx_bytes, dropped,
+    /// rx_queries_dropped)` — surface d'observabilite du budget DHT
+    /// anonyme (mesures fingerprinting, tests de regression de
+    /// cadence). `None` si la lane `hops` n'existe pas.
+    pub fn anon_dht_stats(&self, hops: usize) -> Option<(u64, u64, u64, u64, u64, u64)> {
+        self.anon_lanes
+            .lock()
+            .unwrap()
+            .get(&hops)
+            .map(|l| l.dht_socket.stats())
     }
 
     /// Liste des lanes anonymes actives (statistiques API).

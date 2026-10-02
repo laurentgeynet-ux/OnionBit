@@ -429,6 +429,18 @@ pub struct DhtSessionConfig {
     /// used to route DHT through anonymity tunnels. When set, no real
     /// UDP socket is bound and `port`/`bind_device_name` are ignored.
     pub socket: Option<Arc<dyn DatagramSocket>>,
+    /// Tribler-Rust-Torrent vendored patch: cap of the exponential
+    /// backoff for `get_peers` lookups that make no progress
+    /// (`DhtConfig::get_peers_backoff_cap`). `None` = fixed interval.
+    pub get_peers_backoff_cap: Option<std::time::Duration>,
+    /// Tribler-Rust-Torrent vendored patch: global processing budget
+    /// for incoming DHT queries (`DhtConfig::inbound_queries_per_second`).
+    /// `None` = unlimited.
+    pub inbound_queries_per_second: Option<usize>,
+    /// Tribler-Rust-Torrent vendored patch: base interval between
+    /// `get_peers` re-lookup passes (`DhtConfig::requery_interval`).
+    /// `None` = default (`REQUERY_INTERVAL`).
+    pub requery_interval: Option<std::time::Duration>,
 }
 
 impl Default for DhtSessionConfig {
@@ -438,6 +450,9 @@ impl Default for DhtSessionConfig {
             port: None,
             persistence: Some(DhtPersistenceConfig::default()),
             socket: None,
+            get_peers_backoff_cap: None,
+            inbound_queries_per_second: None,
+            requery_interval: None,
         }
     }
 }
@@ -655,6 +670,9 @@ impl Session {
                         Some(token.clone()),
                         bind_device.as_ref(),
                         dht_config.socket,
+                        dht_config.get_peers_backoff_cap,
+                        dht_config.inbound_queries_per_second,
+                        dht_config.requery_interval,
                     )
                     .await
                     .context("error initializing persistent DHT")?
@@ -666,6 +684,9 @@ impl Session {
                         bind_device: bind_device.as_ref(),
                         listen_addr: Some(listen_addr),
                         socket: dht_config.socket,
+                        get_peers_backoff_cap: dht_config.get_peers_backoff_cap,
+                        inbound_queries_per_second: dht_config.inbound_queries_per_second,
+                        requery_interval: dht_config.requery_interval,
                         ..Default::default()
                     })
                     .await

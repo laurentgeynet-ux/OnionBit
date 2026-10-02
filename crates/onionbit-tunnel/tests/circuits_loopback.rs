@@ -2502,3 +2502,354 @@ async fn hidden_seed_e2e_burst_integrity() {
         N
     );
 }
+
+/// Datagrammes DHT BEP-5 canoniques : requete (`y=q` en fin de
+/// dictionnaire racine) vs reponse (`y=r`) — la distinction opere le
+/// filtre client-only de la socket de lane.
+fn dht_query_payload() -> Vec<u8> {
+    b"d1:ad2:id20:abcdefghij0123456789e1:q4:ping1:t2:aa1:y1:qe".to_vec()
+}
+
+/// Reponse DHT (`d1:r...1:y1:re`).
+fn dht_response_payload() -> Vec<u8> {
+    b"d1:rd2:id20:abcdefghij0123456789e1:t2:aa1:y1:re".to_vec()
+}
+
+/// Regression fingerprinting/budget DHT anonyme : en posture
+/// `client_only`, la socket DHT d'une lane ecarte les requetes
+/// entrantes reinjectees par l'exit (bruit internet vers la socket
+/// de sortie) — la lane interroge la DHT mais ne la sert pas, ce
+/// qui coupe la boucle d'amplification requete->reponse mesuree a
+/// ~6 400 cellules/s en mesh pour un magnet en stall. Les reponses
+/// a nos propres requetes restent livrees.
+#[tokio::test]
+async fn dht_client_only_ecarte_les_requetes_entrantes() {
+    let a = make_node().await;
+    let b = make_node_flags(PEER_FLAG_RELAY | PEER_FLAG_EXIT_BT).await;
+    let nodes = [a, b];
+    let (cid, _) = build_circuit(&nodes, 1).await;
+
+    // Socket DHT de lane en posture client-only.
+    let sock = TunnelUdpSocket::with_filters(
+        nodes[0].tunnel.clone(),
+        1,
+        TunnelUdpKind::Dht,
+        "127.0.0.1:9".parse().unwrap(),
+        false,
+        true,
+    );
+
+    // Amorcer la sortie : un premier datagramme sortant (la requete
+    // DHT "de la lane") pose `exit.enabled` — sans cela l'exit
+    // n'accepte aucun retour exterieur.
+    let ext = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let ext_addr = ext.local_addr().unwrap();
+    nodes[0]
+        .tunnel
+        .send_data(
+            cid,
+            &UdpAddress::from(ext_addr),
+            &UdpAddress::from(nodes[0].addr),
+            &dht_query_payload(),
+        )
+        .await
+        .unwrap();
+    // La requete sort vers la socket "monde exterieur".
+    let mut buf = [0u8; 512];
+    tokio::time::timeout(TEST_TIMEOUT, ext.recv_from(&mut buf))
+        .await
+        .expect("datagramme de sortie jamais recu")
+        .unwrap();
+
+    let exit_cid = nodes[1]
+        .tunnel
+        .exits_info()
+        .first()
+        .map(|e| e.circuit_id)
+        .expect("pas de socket de sortie");
+    let exit_addr = nodes[1]
+        .tunnel
+        .exit_socket_addr(exit_cid)
+        .expect("adresse socket de sortie");
+    // La socket de sortie est liee sur `0.0.0.0` — envoyer vers
+    // l'adresse wildcard echoue ; loopback atteint le meme port.
+    let exit_addr = SocketAddr::new(std::net::Ipv4Addr::LOCALHOST.into(), exit_addr.port());
+
+    // Depuis l'exterieur : une requete non sollicitee (ecartee) puis
+    // une reponse (livree), dans cet ordre — le fil est FIFO.
+    ext.send_to(&dht_query_payload(), exit_addr).await.unwrap();
+    ext.send_to(&dht_response_payload(), exit_addr)
+        .await
+        .unwrap();
+
+    use librqbit_dualstack_sockets::DatagramSocket;
+    let (n, _src) = tokio::time::timeout(TEST_TIMEOUT, DatagramSocket::recv_from(&sock, &mut buf))
+        .await
+        .expect("reponse jamais livree")
+        .expect("socket fermee");
+    assert_eq!(
+        &buf[..n],
+        dht_response_payload().as_slice(),
+        "le premier datagramme livre doit etre la reponse, pas la requete"
+    );
+
+    let stats = sock.stats();
+    assert_eq!(stats.5, 1, "requete entrante non ecartee");
+    assert_eq!(stats.2, 1, "rx_msgs : seule la reponse est livree");
+}
+
+/// Regression : meme socket sans `client_only` — les requetes
+/// entrantes sont livrees (comportement neutre hors lane anonyme).
+#[tokio::test]
+async fn dht_socket_sans_client_only_livre_les_requetes() {
+    let a = make_node().await;
+    let b = make_node_flags(PEER_FLAG_RELAY | PEER_FLAG_EXIT_BT).await;
+    let nodes = [a, b];
+    let (cid, _) = build_circuit(&nodes, 1).await;
+
+    let sock = TunnelUdpSocket::with_filters(
+        nodes[0].tunnel.clone(),
+        1,
+        TunnelUdpKind::Dht,
+        "127.0.0.1:9".parse().unwrap(),
+        false,
+        false,
+    );
+
+    let ext = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let ext_addr = ext.local_addr().unwrap();
+    nodes[0]
+        .tunnel
+        .send_data(
+            cid,
+            &UdpAddress::from(ext_addr),
+            &UdpAddress::from(nodes[0].addr),
+            &dht_query_payload(),
+        )
+        .await
+        .unwrap();
+    let mut buf = [0u8; 512];
+    tokio::time::timeout(TEST_TIMEOUT, ext.recv_from(&mut buf))
+        .await
+        .expect("datagramme de sortie jamais recu")
+        .unwrap();
+
+    let exit_cid = nodes[1]
+        .tunnel
+        .exits_info()
+        .first()
+        .map(|e| e.circuit_id)
+        .expect("pas de socket de sortie");
+    let exit_addr = nodes[1]
+        .tunnel
+        .exit_socket_addr(exit_cid)
+        .expect("adresse socket de sortie");
+    // La socket de sortie est liee sur `0.0.0.0` — envoyer vers
+    // l'adresse wildcard echoue ; loopback atteint le meme port.
+    let exit_addr = SocketAddr::new(std::net::Ipv4Addr::LOCALHOST.into(), exit_addr.port());
+
+    ext.send_to(&dht_query_payload(), exit_addr).await.unwrap();
+    use librqbit_dualstack_sockets::DatagramSocket;
+    let (n, _src) = tokio::time::timeout(TEST_TIMEOUT, DatagramSocket::recv_from(&sock, &mut buf))
+        .await
+        .expect("requete jamais livree")
+        .expect("socket fermee");
+    assert_eq!(&buf[..n], dht_query_payload().as_slice());
+    assert_eq!(sock.stats().5, 0);
+}
+
+/// Regression amplification : `exit_recv_data` ne reencapsule vers
+/// l'amont que les datagrammes non-IPv8 provenant d'une destination
+/// precedemment contactee en sortie (semantique conntrack,
+/// `exit_inbound_source_ttl`). Le bruit WAN adresse au port de sortie
+/// est ecarte (`inbound_rejected`) au lieu de traverser le tunnel.
+#[tokio::test]
+async fn exit_conntrack_ecarte_les_sources_non_contactees() {
+    let a = make_node().await;
+    let b = make_node_flags(PEER_FLAG_RELAY | PEER_FLAG_EXIT_BT).await;
+    let nodes = [a, b];
+    let (cid, _) = build_circuit(&nodes, 1).await;
+
+    // Socket DHT de lane SANS client_only : tout ce qui franchit le
+    // filtre de sortie est livre — le test isole le gate conntrack.
+    let sock = TunnelUdpSocket::with_filters(
+        nodes[0].tunnel.clone(),
+        1,
+        TunnelUdpKind::Dht,
+        "127.0.0.1:9".parse().unwrap(),
+        false,
+        false,
+    );
+
+    // Amorcer la sortie vers une premiere destination (`known`).
+    let known = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let known_addr = known.local_addr().unwrap();
+    nodes[0]
+        .tunnel
+        .send_data(
+            cid,
+            &UdpAddress::from(known_addr),
+            &UdpAddress::from(nodes[0].addr),
+            &dht_query_payload(),
+        )
+        .await
+        .unwrap();
+    let mut buf = [0u8; 512];
+    tokio::time::timeout(TEST_TIMEOUT, known.recv_from(&mut buf))
+        .await
+        .expect("datagramme de sortie jamais recu")
+        .unwrap();
+
+    let exit_cid = nodes[1]
+        .tunnel
+        .exits_info()
+        .first()
+        .map(|e| e.circuit_id)
+        .expect("pas de socket de sortie");
+    let exit_addr = nodes[1]
+        .tunnel
+        .exit_socket_addr(exit_cid)
+        .expect("adresse socket de sortie");
+    // La socket de sortie est liee sur `0.0.0.0` — envoyer vers
+    // l'adresse wildcard echoue ; loopback atteint le meme port.
+    let exit_addr = SocketAddr::new(std::net::Ipv4Addr::LOCALHOST.into(), exit_addr.port());
+
+    // Bruit non sollicite depuis une source JAMAIS contactee : doit
+    // etre ecarte a la sortie sans atteindre la lane.
+    let stranger = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    stranger
+        .send_to(&dht_query_payload(), exit_addr)
+        .await
+        .unwrap();
+
+    // Puis une reponse depuis la source contactee : livree.
+    known
+        .send_to(&dht_response_payload(), exit_addr)
+        .await
+        .unwrap();
+
+    use librqbit_dualstack_sockets::DatagramSocket;
+    let (n, _src) = tokio::time::timeout(TEST_TIMEOUT, DatagramSocket::recv_from(&sock, &mut buf))
+        .await
+        .expect("reponse jamais livree")
+        .expect("socket fermee");
+    assert_eq!(
+        &buf[..n],
+        dht_response_payload().as_slice(),
+        "le premier datagramme livre doit etre celui de la source contactee"
+    );
+
+    let rejected = nodes[1]
+        .tunnel
+        .exits_info()
+        .iter()
+        .find(|e| e.circuit_id == exit_cid)
+        .map(|e| e.inbound_rejected)
+        .unwrap_or(0);
+    assert_eq!(rejected, 1, "source non contactee non ecartee");
+    assert_eq!(
+        sock.stats().2,
+        1,
+        "rx_msgs : seule la source contactee livre"
+    );
+}
+
+/// Regression tempete ping/pong : le pong renvoye doit porter
+/// `msg_id=7` (`TunnelPong`) — un alias `TunnelPong = TunnelPing`
+/// emettait des `ping` (msg 6) en reponse, entretenant une boucle
+/// auto-alimentee entre extremites (~6 000 cellules/s mesurees en
+/// mesh). Un ping recu doit produire exactement UN pong, rien de
+/// plus.
+#[tokio::test]
+async fn ping_pong_ne_declenche_pas_de_tempete() {
+    use onionbit_tunnel::payload::msg;
+    let a = make_node().await;
+    let b = make_node().await;
+    let nodes = [a, b];
+    let (cid, _) = build_circuit(&nodes, 1).await;
+
+    nodes[0].tunnel.send_ping(cid).await.unwrap();
+    // Laisser largement le temps a une eventuelle boucle de
+    // s'installer (RTT loopback < ms — la moindre re-emission se
+    // multiplie immediatement).
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    // B a recu le ping une fois ; A n'a recu que le pong (aucun
+    // ping retour). Avec le bug d'alias, les deux compteurs
+    // exploseraient a des milliers dans cette fenetre.
+    assert_eq!(
+        nodes[1].tunnel.cell_type_count(msg::PING),
+        1,
+        "le ping doit arriver une fois"
+    );
+    assert_eq!(
+        nodes[0].tunnel.cell_type_count(msg::PONG),
+        1,
+        "le pong doit arriver une fois"
+    );
+    assert_eq!(
+        nodes[0].tunnel.cell_type_count(msg::PING),
+        0,
+        "pong mal type = ping retour : tempete"
+    );
+}
+
+/// Regression volume/cadence : le plafond `rate_limit_pps` borne le
+/// nombre de datagrammes emis quelle que soit la pression amont —
+/// l'excedent est perdu en semantique UDP (`dropped` le compte), le
+/// seau se recharge a ~pps/s et `0` desactive la borne.
+#[tokio::test]
+async fn socket_dht_plafond_debit_borne_la_rafale() {
+    let a = make_node().await;
+    let sock = TunnelUdpSocket::with_filters(
+        a.tunnel.clone(),
+        1,
+        TunnelUdpKind::Dht,
+        "127.0.0.1:9".parse().unwrap(),
+        false,
+        false,
+    );
+    let target: SocketAddr = "127.0.0.1:4242".parse().unwrap();
+    let payload = dht_response_payload();
+
+    use librqbit_dualstack_sockets::DatagramSocket;
+    sock.set_rate_limit_pps(10);
+    // Laisser le seau se remplir (~10 jetons, rafale max = 1 s de pps).
+    tokio::time::sleep(Duration::from_millis(1200)).await;
+    for _ in 0..100 {
+        DatagramSocket::send_to(&sock, &payload, target)
+            .await
+            .unwrap();
+    }
+    let s = sock.stats();
+    assert!(s.0 <= 20, "trop de datagrammes emis sous plafond : {}", s.0);
+    assert!(
+        s.4 >= 80,
+        "l'excedent doit etre compte en dropped : {}",
+        s.4
+    );
+
+    // Recharge : ~1 s plus tard, ~10 jetons supplementaires.
+    tokio::time::sleep(Duration::from_millis(1100)).await;
+    for _ in 0..30 {
+        DatagramSocket::send_to(&sock, &payload, target)
+            .await
+            .unwrap();
+    }
+    let s = sock.stats();
+    assert!(
+        s.0 <= 45,
+        "recharge trop genereuse : {} datagrammes emis",
+        s.0
+    );
+
+    // `0` = illimite : tout passe a nouveau.
+    sock.set_rate_limit_pps(0);
+    for _ in 0..20 {
+        DatagramSocket::send_to(&sock, &payload, target)
+            .await
+            .unwrap();
+    }
+    let s = sock.stats();
+    assert_eq!(s.0 + s.4, 150, "comptage tx+dropped incoherent");
+}

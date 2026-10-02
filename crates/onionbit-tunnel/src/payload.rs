@@ -294,8 +294,32 @@ impl Cellable for TunnelPing {
     }
 }
 
-/// `PongPayload` (msg 7) : `I, H`.
-pub type TunnelPong = TunnelPing;
+/// `PongPayload` (msg 7) : `I, H` — meme trame que `PingPayload`
+/// mais `msg_id` distinct : un alias de type re-emettrait la reponse
+/// comme un `ping`, entretenant une tempete ping/pong sans fin entre
+/// les extremites (mesure mesh : ~6 000 cellules/s symetriques).
+#[derive(Debug)]
+pub struct TunnelPong {
+    /// `circuit_id`.
+    pub circuit_id: u32,
+    /// `identifier` (repercute depuis le ping).
+    pub identifier: u16,
+}
+
+impl Cellable for TunnelPong {
+    const MSG_ID: u8 = msg::PONG;
+    fn pack(&self, w: &mut Writer) -> Result<(), Ipv8Error> {
+        w.u32(self.circuit_id);
+        w.u16(self.identifier);
+        Ok(())
+    }
+    fn unpack(r: &mut Reader<'_>) -> Result<Self, Ipv8Error> {
+        Ok(Self {
+            circuit_id: r.u32()?,
+            identifier: r.u16()?,
+        })
+    }
+}
 
 /// `DestroyPayload` (msg 8, paquet **signe** hors cellule) : `I, H`.
 #[derive(Debug)]

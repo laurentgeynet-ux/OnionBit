@@ -4,7 +4,7 @@ use std::{
     str::FromStr,
     sync::{
         Arc,
-        atomic::{AtomicU16, Ordering},
+        atomic::{AtomicU16, AtomicU64, AtomicUsize, Ordering},
     },
     task::Poll,
     time::{Duration, Instant},
@@ -54,6 +54,9 @@ pub struct DhtStats {
     pub outstanding_requests: usize,
     pub routing_table_size: usize,
     pub routing_table_size_v6: usize,
+    /// Tribler-Rust-Torrent vendored patch: inbound queries dropped
+    /// because the configured inbound budget was exhausted.
+    pub dropped_inbound_queries: usize,
 }
 
 struct OutstandingRequest {
@@ -77,21 +80,45 @@ struct MaybeUsefulNode {
     returned_peers: bool,
 }
 
-fn make_rate_limiter() -> RateLimiter {
-    // TODO: move to configuration, i'm lazy.
-    let dht_queries_per_second = std::env::var("DHT_QUERIES_PER_SECOND")
-        .map(|v| v.parse().expect("couldn't parse DHT_QUERIES_PER_SECOND"))
-        .unwrap_or(250usize);
-
-    let per_100_ms = dht_queries_per_second / 10;
+fn make_rate_limiter(dht_queries_per_second: usize) -> RateLimiter {
+    let per_100_ms = (dht_queries_per_second / 10).max(1);
 
     RateLimiter::builder()
         .initial(per_100_ms)
-        .max(dht_queries_per_second)
+        .max(dht_queries_per_second.max(per_100_ms))
         .interval(Duration::from_millis(100))
         .fair(false)
         .refill(per_100_ms)
         .build()
+}
+
+fn make_request_rate_limiter() -> RateLimiter {
+    // Tribler-Rust-Torrent vendored patch: keep the env var but never
+    // panic on a malformed value — fall back to the default.
+    let dht_queries_per_second = std::env::var("DHT_QUERIES_PER_SECOND")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(250usize);
+    make_rate_limiter(dht_queries_per_second)
+}
+
+/// Patch Tribler-Rust-Torrent : delai entre deux vagues de re-lookup
+/// `get_peers` sans progres — `base * 2^idle_passes`, plafonne a
+/// `cap` (jamais sous `base`), moins un jitter uniforme de 0 a 25 %
+/// pour casser la periodicite observable du flux. `pub` pour les
+/// tests du workspace hote (le crate vendored n'est pas membre du
+/// workspace — ses propres `#[cfg(test)]` ne sont jamais compiles).
+#[doc(hidden)]
+pub fn requery_backoff_delay(base: Duration, idle_passes: u32, cap: Duration) -> Duration {
+    let scaled = base.saturating_mul(1u32 << idle_passes.min(20));
+    let capped = scaled.min(cap.max(base));
+    let jitter_span = capped.as_millis() as u64 / 4;
+    let jitter = if jitter_span > 0 {
+        Duration::from_millis(rand::random::<u64>() % (jitter_span + 1))
+    } else {
+        Duration::ZERO
+    };
+    capped - jitter
 }
 
 trait RecursiveRequestCallbacks: Sized + Send + Sync + 'static {
@@ -195,6 +222,9 @@ struct RecursiveRequest<C: RecursiveRequestCallbacks> {
     peer_tx: tokio::sync::mpsc::UnboundedSender<SocketAddr>,
     node_tx: tokio::sync::mpsc::UnboundedSender<(Option<Id20>, SocketAddr, usize)>,
     callbacks: C,
+    /// Patch Tribler-Rust-Torrent : pairs livres au consommateur —
+    /// le backoff de `request_peers_forever` mesure le progres.
+    peers_yielded: AtomicU64,
 }
 
 pub struct RequestPeersStream {
@@ -224,6 +254,7 @@ impl RequestPeersStream {
                     .unwrap(),
                     announce_port,
                 },
+                peers_yielded: AtomicU64::new(0),
             });
             rp.request_peers_forever(node_rx, is_v4)
         };
@@ -275,6 +306,7 @@ impl RecursiveRequest<RecursiveRequestCallbacksFindNodes> {
             peer_tx: unbounded_channel().0,
             node_tx,
             callbacks: RecursiveRequestCallbacksFindNodes {},
+            peers_yielded: AtomicU64::new(0),
         };
 
         let request_one = |id, addr, depth| {
@@ -348,20 +380,62 @@ impl RecursiveRequest<RecursiveRequestCallbacksGetPeers> {
             async move {
                 let this = &this;
                 // Looper adds root nodes to the queue every 60 seconds.
+                // Patch Tribler-Rust-Torrent : quand
+                // `get_peers_backoff_cap` est configure, les passes
+                // sans progres (aucun pair livre) sont espacees par
+                // backoff exponentiel avec jitter — un infohash sans
+                // swarm (magnet en stall) retombe sur une cadence
+                // plafonnee au lieu d'un lookup plein regime en
+                // permanence.
                 let looper = {
                     async move {
-                        let mut iteration = 0;
+                        let mut iteration = 0u32;
+                        let mut idle_passes = 0u32;
+                        let mut last_yielded =
+                            this.peers_yielded.load(std::sync::atomic::Ordering::Relaxed);
+                        let mut degraded = false;
                         loop {
                             trace!("iteration {}", iteration);
-                            let sleep = match this.get_peers_root(is_v4) {
+                            if iteration > 0 {
+                                let yielded =
+                                    this.peers_yielded.load(std::sync::atomic::Ordering::Relaxed);
+                                idle_passes = if yielded > last_yielded {
+                                    0
+                                } else {
+                                    idle_passes.saturating_add(1)
+                                };
+                                last_yielded = yielded;
+                            }
+                            let requery_interval = this.dht.requery_interval;
+                            let base = match this.get_peers_root(is_v4) {
                                 Ok(0) => Duration::from_secs(1),
-                                Ok(n) if n < 8 => REQUERY_INTERVAL / 8 * (n as u32),
-                                Ok(_) => REQUERY_INTERVAL,
+                                Ok(n) if n < 8 => requery_interval / 8 * (n as u32),
+                                Ok(_) => requery_interval,
                                 Err(e) => {
                                     error!("dht: error in get_peers_root(): {e:#}");
                                     return Err::<(), crate::Error>(e);
                                 }
                             };
+                            let sleep = match this.dht.get_peers_backoff_cap {
+                                Some(cap) if idle_passes > 0 => {
+                                    if !degraded && idle_passes >= 3 {
+                                        degraded = true;
+                                        debug!(
+                                            info_hash = ?this.info_hash,
+                                            "get_peers sans progres — cadence reduite (discovery degradee)"
+                                        );
+                                    }
+                                    requery_backoff_delay(base, idle_passes, cap)
+                                }
+                                _ => base,
+                            };
+                            if degraded && idle_passes == 0 {
+                                degraded = false;
+                                debug!(
+                                    info_hash = ?this.info_hash,
+                                    "get_peers : progres repere — cadence nominale retablie"
+                                );
+                            }
                             tokio::time::sleep(sleep).await;
                             iteration += 1;
                         }
@@ -426,6 +500,10 @@ impl<C: RecursiveRequestCallbacks> RecursiveRequest<C> {
             self.callbacks.on_request_start(self, id, addr);
         }
 
+        // Patch Tribler-Rust-Torrent : une seule requete par noeud
+        // (le code d'origine envoyait `self.request` deux fois — la
+        // premiere pour le marquage de table, la seconde pour les
+        // peers/nodes — doublant le volume DHT sur le fil).
         let response = self
             .dht
             .request(self.request.clone(), addr)
@@ -447,7 +525,7 @@ impl<C: RecursiveRequestCallbacks> RecursiveRequest<C> {
             self.callbacks.on_request_end(self, id, addr, &response);
         }
 
-        let response = match self.dht.request(self.request.clone(), addr).await {
+        let response = match response {
             Ok(ResponseOrError::Response(r)) => r,
             Ok(ResponseOrError::Error(e)) => {
                 debug!("error response: {e:?}");
@@ -461,6 +539,10 @@ impl<C: RecursiveRequestCallbacks> RecursiveRequest<C> {
 
         if let Some(peers) = response.values {
             for peer in peers {
+                // Compteur de progres : alimente le backoff de
+                // `request_peers_forever` (patch Tribler-Rust-Torrent).
+                self.peers_yielded
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 self.peer_tx.send(peer.0).ok().ok_or(Error::ReceiverDead)?;
             }
         }
@@ -594,6 +676,25 @@ pub struct DhtState {
 
     // Sending requests to the worker.
     rate_limiter: RateLimiter,
+    /// Patch Tribler-Rust-Torrent : budget de traitement des requetes
+    /// DHT entrantes (`Some` = seau a jetons, excedent ignore en
+    /// semantique UDP). Sans lui, chaque requete entrante non
+    /// sollicitee — ex. reinjectee via une socket de sortie anonyme —
+    /// genere une reponse 1:1 plus du travail (table, peer_store,
+    /// token), ce qui entretient une boucle d'amplification et ouvre
+    /// une surface DoS. `None` = illimite (comportement d'origine).
+    inbound_query_limiter: Option<RateLimiter>,
+    /// Requetes entrantes ignorees faute de budget.
+    dropped_inbound_queries: AtomicUsize,
+    /// Patch Tribler-Rust-Torrent : plafond du backoff exponentiel
+    /// des re-lookups `get_peers` sans progres (`None` = intervalle
+    /// fixe `REQUERY_INTERVAL`, comportement d'origine).
+    get_peers_backoff_cap: Option<Duration>,
+    /// Patch Tribler-Rust-Torrent : intervalle de base entre vagues
+    /// de re-lookup `get_peers` (defaut `REQUERY_INTERVAL`) —
+    /// configurable pour les tests de cadence et les politiques de
+    /// lane anonyme.
+    requery_interval: Duration,
     // This is to send raw messages
     worker_sender: UnboundedSender<WorkerSendRequest>,
 
@@ -611,6 +712,9 @@ impl DhtState {
         listen_addr: SocketAddr,
         peer_store: PeerStore,
         cancellation_token: CancellationToken,
+        get_peers_backoff_cap: Option<Duration>,
+        inbound_queries_per_second: Option<usize>,
+        requery_interval: Duration,
     ) -> Self {
         let routing_table_v4 = routing_table_v4.unwrap_or_else(|| RoutingTable::new(id, None));
         let routing_table_v6 = routing_table_v6.unwrap_or_else(|| RoutingTable::new(id, None));
@@ -622,7 +726,11 @@ impl DhtState {
             routing_table_v6: RwLock::new(routing_table_v6),
             worker_sender: sender,
             listen_addr,
-            rate_limiter: make_rate_limiter(),
+            rate_limiter: make_request_rate_limiter(),
+            inbound_query_limiter: inbound_queries_per_second.map(make_rate_limiter),
+            dropped_inbound_queries: AtomicUsize::new(0),
+            get_peers_backoff_cap,
+            requery_interval,
             peer_store,
             cancellation_token,
         }
@@ -822,6 +930,21 @@ impl DhtState {
 
         trace!("received query from {addr}: {msg:?}");
 
+        // Patch Tribler-Rust-Torrent : budget global de traitement des
+        // requetes entrantes. Au-dela, la requete est ignoree avant
+        // tout travail (table, peer_store, token) — une requete DHT
+        // perdue est un evenement normal du protocole, le pair
+        // reessayera. Coupe la boucle d'amplification vue quand des
+        // datagrammes non sollicites sont reinjectes par un exit.
+        if let Some(limiter) = &self.inbound_query_limiter {
+            if !limiter.try_acquire(1) {
+                self.dropped_inbound_queries
+                    .fetch_add(1, Ordering::Relaxed);
+                trace!(?addr, "incoming DHT query dropped: inbound budget exhausted");
+                return Ok(());
+            }
+        }
+
         match &msg.kind {
             // Otherwise, respond to a query.
             MessageKind::PingRequest(req) => {
@@ -944,6 +1067,7 @@ impl DhtState {
             outstanding_requests: self.inflight_by_transaction_id.len(),
             routing_table_size: self.routing_table_v4.read().len(),
             routing_table_size_v6: self.routing_table_v6.read().len(),
+            dropped_inbound_queries: self.dropped_inbound_queries.load(Ordering::Relaxed),
         }
     }
 }
@@ -1297,6 +1421,24 @@ pub struct DhtConfig<'a> {
     /// when set, the DHT runs over this transport instead of binding a
     /// real UDP socket — used to route DHT through anonymity tunnels.
     pub socket: Option<Arc<dyn DatagramSocket>>,
+    /// Tribler-Rust-Torrent vendored patch: cap of the exponential
+    /// backoff applied to `get_peers` re-lookups that make no progress
+    /// (no peer ever yielded). `None` = fixed `REQUERY_INTERVAL`
+    /// (upstream behaviour). Anonymous lanes set this so that a
+    /// stalled magnet decays to a bounded, jittered cadence instead
+    /// of a permanent full-rate loop.
+    pub get_peers_backoff_cap: Option<Duration>,
+    /// Tribler-Rust-Torrent vendored patch: global processing budget
+    /// for *incoming* DHT queries (requests per second, bounded burst
+    /// — excess is dropped with UDP semantics). `None` = unlimited
+    /// (upstream behaviour). Anonymous tunnels set this so that
+    /// unsolicited queries re-injected by an exit socket cannot drive
+    /// a 1:1 response flood nor unbounded table/peer-store work.
+    pub inbound_queries_per_second: Option<usize>,
+    /// Tribler-Rust-Torrent vendored patch: base interval between
+    /// `get_peers` re-lookup passes (`REQUERY_INTERVAL` when `None`).
+    /// Configurable for cadence tests and anonymous lane policies.
+    pub requery_interval: Option<Duration>,
 }
 
 impl DhtState {
@@ -1352,6 +1494,9 @@ impl DhtState {
                 listen_addr,
                 config.peer_store.unwrap_or_else(|| PeerStore::new(peer_id)),
                 token,
+                config.get_peers_backoff_cap,
+                config.inbound_queries_per_second,
+                config.requery_interval.unwrap_or(REQUERY_INTERVAL),
             ));
 
             spawn_with_cancel(

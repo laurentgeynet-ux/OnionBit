@@ -33,6 +33,7 @@
 use std::collections::HashMap;
 use std::future::Future;
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 
@@ -82,6 +83,16 @@ impl TunnelUdpKind {
     }
 }
 
+/// Le datagramme est une REQUETE DHT (pas une reponse/erreur) :
+/// en bencode canonique BEP-5 le dictionnaire racine se termine par
+/// `1:y1:qe` (cle `y`, valeur `q`) — les reponses finissent en
+/// `1:y1:re`, les erreurs en `1:y1:ee`. Un encodage non canonique
+/// (cles non triees) echappe au predicat : il retombe alors sur le
+/// comportement sans filtre, pas sur un refus errone.
+fn is_dht_query(data: &[u8]) -> bool {
+    data.len() >= 7 && data.ends_with(b"1:y1:qe")
+}
+
 /// Etat partage d'une [`TunnelUdpSocket`] (les taches d'E/S et les
 /// clones du handle y accedent).
 struct Inner {
@@ -101,6 +112,37 @@ struct Inner {
     in_tx: mpsc::Sender<(Vec<u8>, SocketAddr)>,
     /// File de datagrammes sortants (drainee par la tache d'envoi).
     out_tx: mpsc::Sender<(Vec<u8>, SocketAddr)>,
+    /// Datagrammes emis vers le tunnel (post-file).
+    tx_msgs: AtomicU64,
+    /// Octets emis.
+    tx_bytes: AtomicU64,
+    /// Datagrammes recus du tunnel livres a l'application.
+    rx_msgs: AtomicU64,
+    /// Octets recus.
+    rx_bytes: AtomicU64,
+    /// Datagrammes sortants perdus faute de jeton
+    /// (`rate_limit_pps`) ou file pleine — observabilite du plafond.
+    dropped: AtomicU64,
+    /// Plafond de debit sortant (datagrammes/s, 0 = illimite) —
+    /// seau a jetons 1 s de rafale, excedent perdu (semantique UDP,
+    /// cf. `OUT_QUEUE_CAP`).
+    rate_limit_pps: AtomicU64,
+    /// Jetons disponibles + instant du dernier remplissage
+    /// (seau a jetons borne a 1 s de rafale).
+    rate_tokens: Mutex<(f64, std::time::Instant)>,
+    /// `kind == Dht` et posture client-only : les datagrammes
+    /// entrants qui sont des REQUETES DHT (suffixe canonique
+    /// `1:y1:qe` — `y=q` dans le dictionnaire de plus haut niveau
+    /// bencode) sont ecartes avant livraison. Sans cela, le bruit
+    /// DHT internet reinjecte par l'exit (datagrammes non sollicites
+    /// vers la socket de sortie) fait repondre le moteur a chaque
+    /// requete — amplification symetrique infinie au travers du
+    /// tunnel (observe : ~6 400 cellules/s en mesh pour un magnet
+    /// en stall). Les reponses a nos propres requetes (`y=r`) et les
+    /// erreurs (`y=e`) passent.
+    drop_inbound_dht_queries: bool,
+    /// Requetes DHT entrantes ecartees (observabilite).
+    rx_queries_dropped: AtomicU64,
 }
 
 /// Socket datagramme routee par les circuits `data` d'une
@@ -145,6 +187,20 @@ impl TunnelUdpSocket {
         bind_addr: SocketAddr,
         drop_wan_syn: bool,
     ) -> Self {
+        Self::with_filters(tunnel, hops, kind, bind_addr, drop_wan_syn, false)
+    }
+
+    /// `with_syn_filter` + posture DHT client-only : pour une socket
+    /// `Dht`, les requetes entrantes sont ecartees (la lane interroge
+    /// la DHT mais ne la sert pas — voir `drop_inbound_dht_queries`).
+    pub fn with_filters(
+        tunnel: Arc<TunnelCommunity>,
+        hops: usize,
+        kind: TunnelUdpKind,
+        bind_addr: SocketAddr,
+        drop_wan_syn: bool,
+        dht_client_only: bool,
+    ) -> Self {
         let (in_tx, in_rx) = mpsc::channel(IN_QUEUE_CAP);
         let (out_tx, mut out_rx) = mpsc::channel(OUT_QUEUE_CAP);
         let socket = Self {
@@ -157,12 +213,22 @@ impl TunnelUdpSocket {
                 incoming: tokio::sync::Mutex::new(in_rx),
                 in_tx: in_tx.clone(),
                 out_tx,
+                tx_msgs: AtomicU64::new(0),
+                tx_bytes: AtomicU64::new(0),
+                rx_msgs: AtomicU64::new(0),
+                rx_bytes: AtomicU64::new(0),
+                dropped: AtomicU64::new(0),
+                rate_limit_pps: AtomicU64::new(0),
+                rate_tokens: Mutex::new((0.0, std::time::Instant::now())),
+                drop_inbound_dht_queries: dht_client_only,
+                rx_queries_dropped: AtomicU64::new(0),
             }),
         };
 
         // Reception : broadcast `data_rx` -> filtrage par forme. La
         // tache meurt quand la socket est droppee (`in_tx` ferme).
         {
+            let inner = socket.inner.clone();
             let mut rx = tunnel.data_rx();
             tokio::spawn(async move {
                 loop {
@@ -184,11 +250,33 @@ impl TunnelUdpSocket {
                             {
                                 continue;
                             }
+                            if inner.drop_inbound_dht_queries
+                                && kind == TunnelUdpKind::Dht
+                                && is_dht_query(&msg.data)
+                            {
+                                inner.rx_queries_dropped.fetch_add(1, Ordering::Relaxed);
+                                continue;
+                            }
                             let Some(src) = msg.origin.to_socket_addr() else {
                                 continue;
                             };
                             // File pleine : perte UDP.
-                            let _ = in_tx.try_send((msg.data, src));
+                            let n = msg.data.len() as u64;
+                            // Instrumentation fingerprint : 1 datagramme
+                            // accepte sur 256 journalise tete de payload.
+                            if inner.rx_msgs.load(Ordering::Relaxed).is_multiple_of(256) {
+                                tracing::debug!(
+                                    ?kind,
+                                    %src,
+                                    len = n,
+                                    head = %hex::encode(&msg.data[..msg.data.len().min(24)]),
+                                    "socket tunnel: datagramme entrant accepte"
+                                );
+                            }
+                            if in_tx.try_send((msg.data, src)).is_ok() {
+                                inner.rx_msgs.fetch_add(1, Ordering::Relaxed);
+                                inner.rx_bytes.fetch_add(n, Ordering::Relaxed);
+                            }
                         }
                         Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
                             tracing::warn!(
@@ -241,7 +329,11 @@ impl TunnelUdpSocket {
     /// role du `serve` de `udp_relay` quand le service est une
     /// `TunnelUdpSocket` et non une vraie socket UDP.
     pub fn inject_incoming(&self, data: Vec<u8>, src: SocketAddr) {
-        let _ = self.inner.in_tx.try_send((data, src));
+        let n = data.len() as u64;
+        if self.inner.in_tx.try_send((data, src)).is_ok() {
+            self.inner.rx_msgs.fetch_add(1, Ordering::Relaxed);
+            self.inner.rx_bytes.fetch_add(n, Ordering::Relaxed);
+        }
     }
 
     /// Surface de test : circuit epingle pour `target`, si encore
@@ -258,16 +350,77 @@ impl TunnelUdpSocket {
 
     /// Datagramme sortant : enfile pour la tache d'envoi (`send_data`
     /// etant async, `poll_send_to` ne peut pas l'attendre — la file
-    /// preserve l'ordre FIFO). File pleine : perte UDP.
+    /// preserve l'ordre FIFO). File pleine ou plafond de debit :
+    /// perte UDP (les couches amont reessaient — un magnet en stall
+    /// ne peut pas accumuler de pression infinie dans le tunnel).
     fn enqueue(&self, data: Vec<u8>, target: SocketAddr) -> std::io::Result<usize> {
         let len = data.len();
+        if !self.inner.take_rate_token() {
+            self.inner.dropped.fetch_add(1, Ordering::Relaxed);
+            return Ok(len);
+        }
         match self.inner.out_tx.try_send((data, target)) {
-            Ok(()) => Ok(len),
-            Err(mpsc::error::TrySendError::Full(_)) => Ok(len),
+            Ok(()) => {
+                self.inner.tx_msgs.fetch_add(1, Ordering::Relaxed);
+                self.inner.tx_bytes.fetch_add(len as u64, Ordering::Relaxed);
+                Ok(len)
+            }
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                self.inner.dropped.fetch_add(1, Ordering::Relaxed);
+                Ok(len)
+            }
             Err(mpsc::error::TrySendError::Closed(_)) => Err(std::io::Error::new(
                 std::io::ErrorKind::BrokenPipe,
                 "socket tunnel fermee",
             )),
+        }
+    }
+
+    /// Compteurs d'observabilite de la socket :
+    /// `(tx_msgs, tx_bytes, rx_msgs, rx_bytes, dropped,
+    /// rx_queries_dropped)`. `dropped` = pertes par plafond de debit
+    /// ou file pleine ; `rx_queries_dropped` = requetes DHT
+    /// entrantes ecartees en posture client-only.
+    pub fn stats(&self) -> (u64, u64, u64, u64, u64, u64) {
+        (
+            self.inner.tx_msgs.load(Ordering::Relaxed),
+            self.inner.tx_bytes.load(Ordering::Relaxed),
+            self.inner.rx_msgs.load(Ordering::Relaxed),
+            self.inner.rx_bytes.load(Ordering::Relaxed),
+            self.inner.dropped.load(Ordering::Relaxed),
+            self.inner.rx_queries_dropped.load(Ordering::Relaxed),
+        )
+    }
+
+    /// Plafond de debit sortant en datagrammes/s (0 = illimite).
+    /// Applique a chaud — utilise pour discipliner les sockets
+    /// bavardes d'une lane (DHT anonyme en particulier : un magnet
+    /// en stall ne doit pas debiter des requetes en continu).
+    pub fn set_rate_limit_pps(&self, pps: u64) {
+        self.inner.rate_limit_pps.store(pps, Ordering::Relaxed);
+    }
+}
+
+impl Inner {
+    /// Un jeton du seau (`rate_limit_pps`, rafale max 1 s) ;
+    /// `false` = datagramme a perdre. `true` toujours si illimite.
+    fn take_rate_token(&self) -> bool {
+        let pps = self.rate_limit_pps.load(Ordering::Relaxed);
+        if pps == 0 {
+            return true;
+        }
+        let mut t = self.rate_tokens.lock().unwrap();
+        let now = std::time::Instant::now();
+        let elapsed = now.duration_since(t.1).as_secs_f64();
+        // Rafale bornee a 1 s de debit : pas d'accumulation de
+        // jetons au-dela — une socket inactive ne peut pas deferler.
+        t.0 = (t.0 + elapsed * pps as f64).min(pps as f64);
+        t.1 = now;
+        if t.0 >= 1.0 {
+            t.0 -= 1.0;
+            true
+        } else {
+            false
         }
     }
 }
@@ -474,6 +627,18 @@ impl TunnelUdpSockets {
         hops: usize,
         bind_addr: SocketAddr,
     ) -> Result<Self, librqbit_utp::Error> {
+        Self::with_dht_policy(tunnel, hops, bind_addr, false)
+    }
+
+    /// `new` + posture DHT client-only de la lane : les requetes DHT
+    /// entrantes (non sollicitees, reinjectees par l'exit) sont
+    /// ecartees — la lane interroge la DHT mais ne la sert pas.
+    pub fn with_dht_policy(
+        tunnel: Arc<TunnelCommunity>,
+        hops: usize,
+        bind_addr: SocketAddr,
+        dht_client_only: bool,
+    ) -> Result<Self, librqbit_utp::Error> {
         // Lane moteur (`utp_transport`) : les `ST_SYN` WAN livres par
         // l'exit via `data_rx` sont filtres — l'entrant anonyme n'est
         // legitime que via `inject_incoming` (hidden services e2e).
@@ -494,7 +659,14 @@ impl TunnelUdpSockets {
         Ok(Self {
             utp,
             utp_transport,
-            dht: TunnelUdpSocket::new(tunnel.clone(), hops, TunnelUdpKind::Dht, bind_addr),
+            dht: TunnelUdpSocket::with_filters(
+                tunnel.clone(),
+                hops,
+                TunnelUdpKind::Dht,
+                bind_addr,
+                false,
+                dht_client_only,
+            ),
             tracker: TunnelUdpSocket::new(tunnel, hops, TunnelUdpKind::UdpTracker, bind_addr),
         })
     }

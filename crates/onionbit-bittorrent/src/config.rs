@@ -143,6 +143,23 @@ pub struct EngineConfig {
     /// (`SessionOptions::udp_tracker_socket` — anti-fuite : sans elle,
     /// les annonces UDP tracker partiraient en UDP clair hors tunnel).
     pub udp_tracker_socket: Option<std::sync::Arc<dyn librqbit::DatagramSocket>>,
+    /// Plafond (s) du backoff exponentiel des re-lookups DHT
+    /// `get_peers` sans progres — patch librqbit-dht vendored
+    /// (`DhtSessionConfig::get_peers_backoff_cap`). `None` =
+    /// intervalle fixe (comportement librqbit brut). Les lanes
+    /// anonymes le configurent : un magnet sans swarm decroit vers
+    /// une cadence plafonnee + jitter au lieu d'interroger la DHT a
+    /// plein regime en permanence.
+    pub dht_requery_backoff_cap_secs: Option<u64>,
+    /// Budget global de traitement des requetes DHT entrantes
+    /// (requetes/s, rafale bornee — l'excedent est ignore avant tout
+    /// travail) — patch librqbit-dht vendored
+    /// (`DhtSessionConfig::inbound_queries_per_second`). `None` =
+    /// illimite (comportement librqbit brut). Defense en profondeur
+    /// quand la socket DHT n'est pas en posture client-only : une
+    /// requete entrante non sollicitee ne peut plus generer de
+    /// reponse 1:1 ni de travail illimite.
+    pub dht_inbound_queries_per_sec: Option<usize>,
     /// Borne du semaphore d'appels bloquants de librqbit
     /// (`SessionOptions::runtime_worker_threads`) : les I/O disque
     /// synchrones (hash de pieces, sparse marking, `ensure_file_length`)
@@ -186,6 +203,8 @@ impl Default for EngineConfig {
             dht_bootstrap_addrs: None,
             announce_port: None,
             udp_tracker_socket: None,
+            dht_requery_backoff_cap_secs: None,
+            dht_inbound_queries_per_sec: None,
             runtime_worker_threads: default_runtime_worker_threads(),
         }
     }
@@ -224,6 +243,8 @@ impl EngineConfig {
             dht_bootstrap_addrs: None,
             announce_port: None,
             udp_tracker_socket: None,
+            dht_requery_backoff_cap_secs: None,
+            dht_inbound_queries_per_sec: None,
             runtime_worker_threads: default_runtime_worker_threads(),
         }
     }
@@ -246,6 +267,10 @@ impl EngineConfig {
                 persistence: None,
                 socket: self.dht_socket.clone(),
                 bootstrap_addrs: self.dht_bootstrap_addrs.clone(),
+                get_peers_backoff_cap: self
+                    .dht_requery_backoff_cap_secs
+                    .map(std::time::Duration::from_secs),
+                inbound_queries_per_second: self.dht_inbound_queries_per_sec,
                 ..Default::default()
             })
         } else {

@@ -482,6 +482,37 @@ pub struct TunnelCommunityConfig {
     /// terrain (matrice interop + download public) — `true` par
     /// defaut ; reste desactivable a chaud via `POST /api/settings`.
     pub guards_enabled: bool,
+    /// Extension Rust : plafond de debit de la socket DHT tunnelisee
+    /// de chaque lane anonyme, en datagrammes/s sortants (seau a
+    /// jetons, rafale bornee a 1 s — l'excedent est perdu en
+    /// semantique UDP). `0` = illimite (non recommande : mesure mesh,
+    /// un magnet en stall produisait ~6 400 cellules/s). Defaut 30.
+    pub anon_dht_rate_pps: u64,
+    /// Extension Rust : posture client-only de la DHT anonyme — les
+    /// requetes DHT entrantes non sollicitees (reinjectees par la
+    /// socket de sortie) sont ecartees au lieu d'etre servies : la
+    /// lane interroge la DHT mais ne la sert pas — coupe la boucle
+    /// d'amplification requete/reponse a travers le tunnel.
+    /// `true` par defaut.
+    pub anon_dht_client_only: bool,
+    /// Extension Rust : plafond (s) du backoff exponentiel des
+    /// re-lookups `get_peers` sans progres (patch librqbit-dht
+    /// vendored, jitter ±25 %). `0` = intervalle fixe de 60 s
+    /// (comportement librqbit brut). Defaut 900 : un magnet sans
+    /// swarm retombe a ~1 vague de requetes par quart d'heure.
+    pub anon_dht_backoff_cap_secs: u64,
+    /// Extension Rust : TTL (s) des sources WAN "contactees" par une
+    /// socket de sortie — la reencapsulation entrante n'accepte que
+    /// les datagrammes non-IPv8 provenant d'une destination passee en
+    /// sortie dans cette fenetre (semantique conntrack ; le trafic
+    /// IPv8 e2e des services caches n'est pas soumis a ce filtre).
+    /// `0` desactive le filtre. Defaut 300 : sans lui, le bruit UDP
+    /// adresse au port de sortie etait reinjecte puis servi
+    /// (amplification mesuree ~6 400 cellules/s en mesh).
+    pub exit_inbound_source_ttl_secs: u64,
+    /// Extension Rust : borne de la table des sources contactees par
+    /// socket de sortie (`exit_inbound_source_ttl_secs`). Defaut 2048.
+    pub exit_inbound_max_sources: u64,
     /// Clés tunnel additionnelles — préservées.
     #[serde(flatten)]
     pub extra: serde_json::Map<String, Value>,
@@ -500,6 +531,11 @@ impl Default for TunnelCommunityConfig {
             intro_point_peer: String::new(),
             data_exit_peer: String::new(),
             guards_enabled: true,
+            anon_dht_rate_pps: crate::ipv8_stack::DEFAULT_ANON_DHT_RATE_PPS,
+            anon_dht_client_only: true,
+            anon_dht_backoff_cap_secs: crate::ipv8_stack::DEFAULT_ANON_DHT_BACKOFF_CAP_SECS,
+            exit_inbound_source_ttl_secs: crate::ipv8_stack::DEFAULT_EXIT_INBOUND_TTL_SECS,
+            exit_inbound_max_sources: crate::ipv8_stack::DEFAULT_EXIT_INBOUND_MAX_SOURCES as u64,
             extra: serde_json::Map::new(),
         }
     }
@@ -1049,6 +1085,11 @@ impl DaemonConfig {
             peer_cache_max_age_secs: crate::ipv8_stack::DEFAULT_PEER_CACHE_MAX_AGE_SECS,
             peer_persist_interval_secs: crate::ipv8_stack::DEFAULT_PEER_PERSIST_INTERVAL_SECS,
             content_healths_cache_secs: crate::ipv8_stack::DEFAULT_CONTENT_HEALTHS_CACHE_SECS,
+            anon_dht_rate_pps: self.tunnel_community.anon_dht_rate_pps,
+            anon_dht_client_only: self.tunnel_community.anon_dht_client_only,
+            anon_dht_backoff_cap_secs: self.tunnel_community.anon_dht_backoff_cap_secs,
+            exit_inbound_source_ttl_secs: self.tunnel_community.exit_inbound_source_ttl_secs,
+            exit_inbound_max_sources: self.tunnel_community.exit_inbound_max_sources as usize,
         };
 
         crate::CoreConfig {

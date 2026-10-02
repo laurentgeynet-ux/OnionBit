@@ -13,6 +13,10 @@ pub use error::{Error, Result};
 
 pub use crate::dht::DhtStats;
 pub use crate::dht::{DhtConfig, DhtState, RequestPeersStream};
+// Patch Tribler-Rust-Torrent : fonction de backoff testable depuis
+// le workspace hote (ce crate n'est pas membre du workspace).
+#[doc(hidden)]
+pub use crate::dht::requery_backoff_delay;
 pub use librqbit_core::hash_id::Id20;
 pub use persistence::{DhtPersistenceConfig, PersistentDht, dht_listen_addr};
 

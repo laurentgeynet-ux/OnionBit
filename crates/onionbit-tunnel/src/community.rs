@@ -253,6 +253,22 @@ pub(crate) struct ExitState {
     pub(crate) last_activity: std::time::Instant,
     /// `bytes_up + bytes_down` cumules (`max_traffic` Python).
     pub(crate) bytes_total: u64,
+    /// Extension Rust (sans equivalent pyipv8) : sources WAN
+    /// "contactees" par cette sortie — `exit_data` y inscrit chaque
+    /// destination et `exit_recv_data` n'accepte que les datagrammes
+    /// provenant d'une source connue et fraiche
+    /// (`settings.exit_inbound_source_ttl`). Sans ce filtre, tout le
+    /// bruit UDP adresse au port de sortie est reinjecte vers
+    /// l'amont — et chaque datagramme peut generer une reponse (RST
+    /// uTP, DHT) : amplification symetrique mesuree a ~6 400
+    /// cellules/s en mesh.
+    pub(crate) contacted_sources: HashMap<SocketAddr, std::time::Instant>,
+    /// Datagrammes externes ignores faute de contact prealable
+    /// (observabilite `exits_info`).
+    pub(crate) inbound_rejected: u64,
+    /// Datagrammes externes acceptes et reencapsules vers l'amont
+    /// (observabilite `exits_info` — attribution des flux).
+    pub(crate) inbound_accepted: u64,
 }
 
 /// `CreateRequestCache` Python (extend en attente d'un `created`).
@@ -373,6 +389,12 @@ pub struct TunnelCommunity {
     /// Limiteur de debit du trafic servi (`settings.max_relayed_bps`
     /// a la construction, `set_relay_rate_bps` a chaud).
     pub(crate) relay_rate: Arc<RelayRateLimiter>,
+    /// Compteur de cellules par `inner_msg_id` (attribution des flux
+    /// — observabilite fingerprint ; un echantillon est journalise
+    /// periodiquement).
+    pub(crate) cell_type_counts: [AtomicU64; 256],
+    /// Total des cellules decryptees (echantillonnage ci-dessus).
+    pub(crate) cells_received_total: AtomicU64,
     /// `TunnelSettings` Python (`self.settings`) : tous les seuils et
     /// cadences de la community (defauts = valeurs officielles).
     pub settings: TunnelSettings,
@@ -453,6 +475,18 @@ pub struct ExitInfo {
     pub circuit_id: u32,
     /// Sortie active.
     pub enabled: bool,
+    /// Datagrammes externes ecartes faute de contact prealable
+    /// (filtre conntrack `exit_inbound_source_ttl`) — metrique de
+    /// bruit WAN vu par le port de sortie.
+    pub inbound_rejected: u64,
+    /// Datagrammes externes acceptes (reencapsules vers l'amont).
+    pub inbound_accepted: u64,
+    /// Octets cumules dans les deux sens (`bytes_total` pyipv8).
+    pub bytes_total: u64,
+    /// Taille de la table conntrack (sources WAN contactees).
+    pub contacted_sources: usize,
+    /// Secondes depuis la derniere activite acceptee.
+    pub idle_secs: u64,
 }
 
 /// Instantane d'un swarm hidden (`/api/ipv8/tunnel/swarms`).
@@ -602,6 +636,8 @@ impl TunnelCommunity {
             dht_provider: Mutex::new(None),
             relay_send_tx,
             relay_rate,
+            cell_type_counts: std::array::from_fn(|_| AtomicU64::new(0)),
+            cells_received_total: AtomicU64::new(0),
             settings,
             guards: crate::guards::GuardSet::new(guard_cfg, None),
         });
@@ -769,12 +805,30 @@ impl TunnelCommunity {
             .lock()
             .unwrap()
             .exit_sockets
-            .keys()
-            .map(|cid| ExitInfo {
+            .iter()
+            .map(|(cid, e)| ExitInfo {
                 circuit_id: *cid,
-                enabled: true,
+                enabled: e.enabled,
+                inbound_rejected: e.inbound_rejected,
+                inbound_accepted: e.inbound_accepted,
+                bytes_total: e.bytes_total,
+                contacted_sources: e.contacted_sources.len(),
+                idle_secs: e.last_activity.elapsed().as_secs(),
             })
             .collect()
+    }
+
+    /// Surface de test : adresse locale de la socket UDP de sortie
+    /// d'un circuit (pour injecter des datagrammes "exterieurs" dans
+    /// les bancs — reponses et bruit non sollicite).
+    #[doc(hidden)]
+    pub fn exit_socket_addr(&self, circuit_id: u32) -> Option<SocketAddr> {
+        self.inner
+            .lock()
+            .unwrap()
+            .exit_sockets
+            .get(&circuit_id)
+            .and_then(|e| e.socket.local_addr().ok())
     }
 
     /// Instantane des swarms (hidden services) pour
@@ -2223,7 +2277,38 @@ impl TunnelCommunity {
         // Checks de flags post-decrypt (comme `process_cell` Python).
         cell::check_cell_flags(&decrypted, self.settings.max_relay_early)?;
         let cell = Cell::parse(&decrypted)?;
+        // Compteur par type de cellule (attribution des flux — un
+        // echantillon journalise toutes les 4096 cellules).
+        {
+            self.cell_type_counts[cell.inner_msg_id as usize].fetch_add(1, Ordering::Relaxed);
+            if self
+                .cells_received_total
+                .fetch_add(1, Ordering::Relaxed)
+                .is_multiple_of(4096)
+            {
+                let mut top: Vec<(usize, u64)> = self
+                    .cell_type_counts
+                    .iter()
+                    .enumerate()
+                    .map(|(i, c)| (i, c.load(Ordering::Relaxed)))
+                    .filter(|(_, c)| *c > 0)
+                    .collect();
+                top.sort_by_key(|(_, c)| std::cmp::Reverse(*c));
+                tracing::info!(
+                    top = ?top.iter().take(6).collect::<Vec<_>>(),
+                    "repartition des cellules par type"
+                );
+            }
+        }
         self.on_cell_message(src, &cell)
+    }
+
+    /// Compteur de cellules decryptees par `inner_msg_id`
+    /// (observabilite fingerprint / tests : la tempete ping/pong
+    /// issue de la reponse mal typee s'y lisait a ~6 000 `PING`/s).
+    #[doc(hidden)]
+    pub fn cell_type_count(&self, msg_id: u8) -> u64 {
+        self.cell_type_counts[msg_id as usize].load(Ordering::Relaxed)
     }
 
     /// `relay_cell` Python : transforme et reexpedie la cellule.
@@ -2360,7 +2445,7 @@ impl TunnelCommunity {
                 self.on_tunnel_ping(src, cell.circuit_id, p.identifier);
             }
             msg::PONG => {
-                let _ = tp::TunnelPing::unpack(&mut r)?;
+                let _ = tp::TunnelPong::unpack(&mut r)?;
             }
             msg::DATA => {
                 let p = tp::Data::unpack(&mut r)?;
@@ -3411,6 +3496,9 @@ impl TunnelCommunity {
                     creation_time: std::time::Instant::now(),
                     last_activity: std::time::Instant::now(),
                     bytes_total: 0,
+                    contacted_sources: HashMap::new(),
+                    inbound_rejected: 0,
+                    inbound_accepted: 0,
                 },
             );
         }
@@ -3868,6 +3956,32 @@ impl TunnelCommunity {
         let Some(dest_sa) = p.dest_address.to_socket_addr() else {
             return;
         };
+        // Semantique conntrack (`exit_inbound_source_ttl`) : memoriser
+        // la destination pour que `exit_recv_data` ne reencapsule que
+        // les reponses de sources effectivement contactees — le bruit
+        // UDP non sollicite vers le port de sortie ne remonte plus
+        // dans le tunnel. Table bornee (`exit_inbound_max_sources`) :
+        // a pleine capacite les entrees expirees sont purgees ; si
+        // tout est frais, la nouvelle destination est ignoree (la
+        // reponse eventuelle sera rejetee) plutot que de laisser la
+        // table croitre sans borne.
+        if !self.settings.exit_inbound_source_ttl.is_zero() {
+            let mut inner = self.inner.lock().unwrap();
+            if let Some(exit) = inner.exit_sockets.get_mut(&circuit_id) {
+                let now = std::time::Instant::now();
+                let cap = self.settings.exit_inbound_max_sources;
+                if exit.contacted_sources.len() >= cap {
+                    let ttl = self.settings.exit_inbound_source_ttl;
+                    exit.contacted_sources
+                        .retain(|_, t| now.duration_since(*t) < ttl);
+                }
+                if exit.contacted_sources.len() < cap
+                    || exit.contacted_sources.contains_key(&dest_sa)
+                {
+                    exit.contacted_sources.insert(dest_sa, now);
+                }
+            }
+        }
         let data = p.data.clone();
         // Pompe serialisee (meme raison que `relay_cell` : l'ordre
         // des datagrammes sortis vers l'exterieur est preserve).
@@ -3921,6 +4035,40 @@ impl TunnelCommunity {
             if !exit.enabled {
                 return;
             }
+            // Filtre conntrack (extension Rust) : pour les datagrammes
+            // non-IPv8 (uTP/DHT/tracker — le trafic de lane BT, ou
+            // l'entrant WAN n'est jamais legitime : l'entrant anonyme
+            // passe par les lanes e2e), seules les sources que cette
+            // sortie a contactees recemment sont reencapsulees — une
+            // source inconnue n'est meme pas une activite (sinon le
+            // bruit WAN empecherait le `"no activity"` de
+            // `do_remove`). Les datagrammes IPv8 (prefixe communaute)
+            // echappent au filtre : le trafic e2e hidden-service peut
+            // arriver sans contact prealable (`create-e2e`), et ces
+            // messages sont verifies cryptographiquement en amont.
+            let ttl = self.settings.exit_inbound_source_ttl;
+            let prefix = prefix_of(&self.community_id);
+            let ipv8 = data.len() > prefix.len() && data[..prefix.len()] == prefix[..];
+            if !ttl.is_zero() && !ipv8 {
+                let now = std::time::Instant::now();
+                let frais = exit
+                    .contacted_sources
+                    .get(&src)
+                    .is_some_and(|t| now.duration_since(*t) < ttl);
+                if !frais {
+                    exit.inbound_rejected += 1;
+                    if exit.inbound_rejected % 1024 == 1 {
+                        tracing::debug!(
+                            circuit_id,
+                            src = ?src,
+                            total = exit.inbound_rejected,
+                            "exit_recv_data : source non sollicitee ecartee (conntrack)"
+                        );
+                    }
+                    return;
+                }
+            }
+            exit.inbound_accepted += 1;
             exit.last_activity = std::time::Instant::now();
             exit.bytes_total += data.len() as u64;
             match exit.hop.address.clone() {
@@ -4017,16 +4165,31 @@ impl TunnelCommunity {
     /// `on_ping` : repond `pong` via `send_cell` (chiffrement selon
     /// le role local pour ce circuit — BACKWARD cote sortie).
     fn on_tunnel_ping(self: &Arc<Self>, src: SocketAddr, circuit_id: u32, identifier: u16) {
-        let known = {
+        let (known, role) = {
             let inner = self.inner.lock().unwrap();
-            inner.circuits.contains_key(&circuit_id)
-                || inner.exit_sockets.contains_key(&circuit_id)
-                || inner.relays.contains_key(&circuit_id)
+            let role = if inner.circuits.contains_key(&circuit_id) {
+                "initiateur"
+            } else if inner.exit_sockets.contains_key(&circuit_id) {
+                "exit"
+            } else if inner.relays.contains_key(&circuit_id) {
+                "relais"
+            } else {
+                "inconnu"
+            };
+            (role != "inconnu", role)
         };
+        // Sonde fingerprint : 1 ping sur 4096 journalise source+role.
+        if self
+            .cells_received_total
+            .load(Ordering::Relaxed)
+            .is_multiple_of(4096)
+        {
+            tracing::debug!(%src, circuit_id, role, "ping tunnel recu (echantillon)");
+        }
         if !known {
             return;
         }
-        let pong = tp::TunnelPing {
+        let pong = tp::TunnelPong {
             circuit_id,
             identifier,
         };

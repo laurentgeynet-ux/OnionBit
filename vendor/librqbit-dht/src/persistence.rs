@@ -110,6 +110,9 @@ impl PersistentDht {
         cancellation_token: Option<CancellationToken>,
         bind_device: Option<&'a BindDevice>,
         socket: Option<Arc<dyn librqbit_dualstack_sockets::DatagramSocket>>,
+        get_peers_backoff_cap: Option<Duration>,
+        inbound_queries_per_second: Option<usize>,
+        requery_interval: Option<Duration>,
     ) -> BoxFuture<'a, anyhow::Result<Dht>> {
         async move {
             let config_filename = match persistence_config.config_filename {
@@ -171,6 +174,9 @@ impl PersistentDht {
                 cancellation_token,
                 bind_device,
                 socket,
+                get_peers_backoff_cap,
+                inbound_queries_per_second,
+                requery_interval,
                 ..Default::default()
             };
             let dht = DhtState::with_config(dht_config).await?;

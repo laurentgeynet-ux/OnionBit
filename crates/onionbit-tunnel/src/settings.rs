@@ -116,6 +116,20 @@ pub struct TunnelSettings {
     /// n'est pas verifie, AUCUN circuit `DATA` n'est cree.
     /// `None` = selection automatique (`select_exit` / `EXIT_BT`).
     pub data_exit_peer: Option<UdpAddress>,
+    /// Extension Rust (sans equivalent pyipv8) : TTL d'une source WAN
+    /// "contactee" par une socket de sortie (semantique conntrack) —
+    /// `exit_recv_data` ne reencapsule vers l'amont que les
+    /// datagrammes provenant d'une destination passee par `exit_data`
+    /// dans cette fenetre. Sans elle, le bruit UDP internet adresse au
+    /// port de sortie etait reinjecte et pouvait generer une reponse
+    /// (RST uTP, DHT) — amplification mesuree a ~6 400 cellules/s en
+    /// mesh. `Duration::ZERO` desactive le filtre (comportement
+    /// pyipv8 : tout reinjecter).
+    pub exit_inbound_source_ttl: Duration,
+    /// Extension Rust : borne de la table des sources contactees par
+    /// socket de sortie — la table ne peut pas croitre sans limite
+    /// sous un flot de destinations distinctes.
+    pub exit_inbound_max_sources: usize,
     /// Intervalle entre deux republications DHT des points
     /// d'introduction d'un swarm seede (`reannounce_intro_points`) —
     /// extension Rust : pyipv8 ne re-annonce jamais, une annonce
@@ -163,6 +177,8 @@ impl Default for TunnelSettings {
             max_dht_lookup_interval: Duration::from_secs(120),
             intro_point_peer: None,
             data_exit_peer: None,
+            exit_inbound_source_ttl: Duration::from_secs(300),
+            exit_inbound_max_sources: 2048,
             intro_reannounce_interval: Duration::from_secs(60),
             dht_reannounce_stagger: Duration::from_millis(500),
             guards: GuardsConfig::default(),

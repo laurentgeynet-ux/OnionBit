@@ -186,3 +186,54 @@ aucun pair/metadonnee disponible)
   la plus marquante.
 - Reste : download public avec guards (critere de sortie consigne),
   puis validation workspace et decision guards par defaut.
+
+## Attribution finale + mitigation (2026-10-02, post-mesure)
+
+Attribution du signal ~6 400 `on_cell`/s — **par instrumentation des
+types de cellules** (`cell_type_counts`), pas par hypothese : le
+flood etait ~99 % de cellules `ping` (msg 6). Cause racine
+protocolaire : `TunnelPong` etait un alias de `TunnelPing`, donc la
+reponse au keepalive de circuit repartait etiquetee `ping` ; chaque
+extremite OnionBit repondait a ce « ping » par un nouveau ping →
+**tempete auto-entretenue a ~6 000 cellules/s** declenchee par le
+premier `do_ping` (7,5 s apres le premier circuit READY). Les pairs
+pyipv8 emettent un vrai `pong` : l'orage n'apparait qu'entre nœuds
+natifs — c'est pourquoi l'interop Tribler n'avait rien montre.
+
+Correction : vrai type `TunnelPong` (`msg_id=7`, trame `I, H`
+identique). Resultat en mesh (run `fingerprint-mesh-20261002-214456`,
+meme scenario magnet stall) : **~1 cellule/s residuelle** sur la
+lane — le signal fingerprint a disparu (~5 000× sous la baseline).
+Test de non-boucle ajoute (`ping_pong_ne_declenche_pas_de_tempete`).
+
+Note de methode : l'hypothese initiale « amplification DHT reinjectee
+par l'exit » etait plausible mais **fausse pour le volume observe** —
+les compteurs d'exits (`inbound_accepted` ~20-40 par socket) et les
+compteurs de sockets de lane (<256 datagrammes livres) ont montre
+que le flux n'atteignait ni les sockets de sortie ni les sockets de
+lane. L'instrumentation par type de cellule a tranche en un run.
+
+Durcissement DHT / exit conserve (mesures preventives reelles,
+independantes du flood — detail `docs/CHANGELOG.md`) :
+
+- posture client-only par defaut sur la socket DHT tunnelisee
+  (`anon_dht_client_only`) — les requetes entrantes sont ecartees a
+  la frontiere ;
+- budget de traitement des requetes entrantes dans librqbit-dht
+  (`inbound_queries_per_second`, filet si client-only est desactive) ;
+- plafond de debit sortant de la socket DHT de lane
+  (`anon_dht_rate_pps` = 30 datagrammes/s, rafale 1 s, drop-tail) ;
+- backoff exponentiel jittere des `get_peers` sans progres
+  (`anon_dht_backoff_cap_secs` = 900 s) — un magnet sans swarm
+  decroit vers ~1 vague/quart d'heure au lieu d'un regime permanent ;
+- correction du double envoi de requete vendored (`request_one`
+  envoyait deux fois) — -50 % de volume sur le chemin nominal ;
+- conntrack de sortie (`exit_inbound_source_ttl_secs` = 300 s, table
+  bornee a 2048 sources) : `exit_recv_data` ne reencapsule que les
+  datagrammes non-IPv8 venant d'une destination deja contactee — le
+  bruit WAN non sollicite n'entre plus dans le tunnel (IPv8 e2e
+  exempte : create-e2e sans contact prealable).
+
+L'ensemble est borne, teste et configure — mais le resultat
+fingerprint de cette etape vient du correctif `TunnelPong`, pas de
+la discipline DHT.

@@ -3,6 +3,79 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Tempête ping/pong + discipline DHT anonyme (2026-10-02)
+
+Réponse au signal fingerprint majeur mesuré en mesh : une lane
+anonyme sur un magnet en stall produisait ~6 400 `on_cell`/s
+symétriques (~365 Ko/s par sens) — ~200× la cadence Tribler.
+Attribution finale par compteurs par type de cellule : **le flood
+était une tempête `ping`/`pong` protocolaire, pas la DHT** —
+`TunnelPong` était un alias de `TunnelPing`, donc chaque réponse au
+keepalive de circuit repartait étiquetée `ping` ; entre deux nœuds
+OnionBit, chaque « ping » régénérait un ping en retour → boucle
+auto-entretenue à ~6 000 cellules/s (lancée par le premier
+`do_ping`, 7,5 s après le premier circuit READY). Les pairs pyipv8
+répondent un vrai `pong` — l'orage ne se produit qu'en mesh natif.
+La discipline DHT livrée dans la même passe est un durcissement
+mesuré à part entière (amplification entrante coupée, cadence de
+stall bornée) — même si la cause du flood était ailleurs.
+
+- **Bug protocolaire corrigé** : `TunnelPong` devient un vrai type
+  (`msg_id=7`, même trame `I, H`). Test de régression
+  `ping_pong_ne_declenche_pas_de_tempete` : un ping reçu produit
+  exactement un pong, rien de plus.
+- **Mesure après correction** (mesh 4 nœuds + Tribler, magnet en
+  stall, run `fingerprint-mesh-20261002-214456`) : ~1 cellule/s
+  résiduelle sur la lane, soit ~5 000× sous la baseline — le signal
+  fingerprint disparaît.
+- **Observabilité ajoutée** : compteurs de cellules par
+  `inner_msg_id` (`cell_type_counts`, échantillon journalisé toutes
+  les 4096) — c'est cet instrument qui a attribué le flood ; compteurs
+  par direction sur `TunnelUdpSocket` + `Ipv8Stack::anon_dht_stats` ;
+  `ExitInfo` étendu (`inbound_accepted`, `bytes_total`,
+  `contacted_sources`, `idle_secs`).
+
+Durcissement DHT / exit (conservé — budgets et cadence) :
+
+- **Bug vendored corrigé** : `RecursiveRequest::request_one`
+  (librqbit-dht) envoyait chaque requête deux fois — une seule
+  réponse sert désormais table, callback, peers et récursion.
+- **Posture client-only** (`tunnel_community/anon_dht_client_only`,
+  défaut `true`) : la socket DHT tunnelisée écarte les requêtes
+  entrantes (suffixe `1:y1:qe`) — la lane interroge la DHT sans la
+  servir.
+- **Budget de requêtes entrantes** (`DhtConfig::
+  inbound_queries_per_second`, vendored) : seau à jetons global avant
+  tout travail (table, peer_store, token) — l'excédent est ignoré en
+  sémantique UDP, comptabilisé dans `DhtStats.dropped_inbound_
+  queries`. Câblé sur `anon_dht_rate_pps` pour la lane anonyme.
+- **Plafond de débit socket** (`tunnel_community/anon_dht_rate_pps`,
+  défaut 30 datagrammes/s sortants, rafale 1 s, drop-tail) sur
+  `TunnelUdpSocket` — borne le pire cas quel que soit le client DHT.
+- **Backoff de stall** (`tunnel_community/anon_dht_backoff_cap_secs`,
+  défaut 900) : `get_peers` sans progrès espace ses vagues en
+  `REQUERY_INTERVAL × 2^idle` plafonné, jitter −0..25 %, état
+  « discovery dégradée » journalisé à ≥3 passes idle, retour nominal
+  au premier pair livré. `requery_interval` rendu configurable
+  (testabilité).
+- **Conntrack de sortie** (`tunnel_community/
+  exit_inbound_source_ttl_secs` = 300,
+  `exit_inbound_max_sources` = 2048) : `exit_recv_data` ne
+  réencapsule que les datagrammes **non-IPv8** venant d'une
+  destination contactée en sortie dans la fenêtre TTL — le bruit WAN
+  adressé au port de sortie est écarté avant d'entrer dans le tunnel
+  (sinon il pouvait générer des réponses uTP/DHT : amplification).
+  Le trafic IPv8 e2e des services cachés est exempté — `create-e2e`
+  arrive sans contact préalable et les messages sont signés.
+- **Limite env var** : `DHT_QUERIES_PER_SECOND` malformée ne panique
+  plus (repli 250 qps).
+- Tests : `dht_backoff.rs` (backoff math + jitter, budget inbound —
+  59/60 requêtes droppées, décroissance de cadence mesurée jusqu'au
+  plafond sur DHT réelle contre sonde factice) ; tunnel loopback —
+  filtre client-only, plafond de rafale, conntrack (source non
+  contactée écartée), non-boucle ping/pong. Anonymat non affaibli :
+  la DHT anonyme reste strictement sur la socket tunnelisée.
+
 ## Guard nodes activés par défaut (2026-10-02)
 
 - `tunnel_community/guards_enabled` passe à **`true` par défaut**

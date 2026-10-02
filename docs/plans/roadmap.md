@@ -669,6 +669,30 @@ risque IPv8 sous/sur-estimé, etc.), avec la date.
   couvre cellules relayées **et** datagrammes de sortie ; l'excédent
   est perdu (perte UDP, lissée par uTP aux extrémités). Appliqué à
   chaud (`set_relay_rate_bps`), UI « Débit servi maximum » en Kio/s.
+- 2026-10-02 (tempête ping/pong + discipline DHT anonyme) : le
+  fingerprint majeur du mesh v2 (~6 400 `on_cell`/s symétriques,
+  ~365 Ko/s par sens sur un magnet en stall, ~200× Tribler) avait
+  une **cause racine protocolaire** : `TunnelPong` était un alias de
+  `TunnelPing` — la réponse au keepalive de circuit repartait
+  étiquetée `ping`, et chaque extrémité répondait à ce « ping » par
+  un autre ping → boucle auto-entretenue à ~6 000 cellules/s dès le
+  premier keepalive entre deux nœuds OnionBit (les pairs pyipv8
+  répondent un vrai pong : l'orage n'apparaît qu'en mesh natif).
+  Correction : vrai type `TunnelPong` (`msg_id=7`) + test de
+  non-boucle. Vérifié en mesh : **~1 cellule/s résiduelle** sur le
+  même scénario (vs ~6 100/s avant). Durcissement DHT conservé
+  (mesures préventives + amplification théorique coupée) : bug
+  vendored de double envoi corrigé, posture client-only par défaut
+  (`anon_dht_client_only`), budget de requêtes entrantes
+  (`inbound_queries_per_second`), plafond de débit socket
+  (`anon_dht_rate_pps` = 30), backoff exponentiel jitteré des
+  re-lookups sans progrès (`anon_dht_backoff_cap_secs` = 900, état
+  « discovery dégradée » à ≥3 passes idle), conntrack de sortie
+  (`exit_inbound_source_ttl_secs` = 300, table
+  `exit_inbound_max_sources` = 2048 — non-IPv8 seulement, l'e2e
+  hidden-service exempté). Tests : `dht_backoff.rs` (backoff math,
+  budget inbound mesuré, décroissance de cadence), loopback
+  (client-only, rafale, conntrack, non-boucle ping/pong).
 - 2026-10-02 (critères de sortie arrêtés) : séquence post-campagne
   figée — (1) clôture journal fuzz, (2) fingerprint Tribler en mesh
   contrôlé **et** réseau public (durée/rôle/charge/métriques alignés
