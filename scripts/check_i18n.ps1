@@ -30,8 +30,10 @@ if (-not (Test-Path $libDir)) {
 # Plage Latin-1 supplementaire + ligatures (echappements u pour rester
 # ASCII dans ce fichier) : couvre tous les accents francais, ou mots
 # francais usuels d'UI sans accent (liste ciblee, faux positifs
-# limites sur l'anglais).
-$frPattern = '[\u00C0-\u00FF\u0152\u0153\u0178]' +
+# limites sur l'anglais). Signes mathematiques x (00D7) et
+# division (00F7) exclus de la plage : notation numerique, pas du
+# francais (ex. lanes de circuits dans diagnostic_page).
+$frPattern = '[\u00C0-\u00D6\u00D8-\u00F6\u00F8-\u00FF\u0152\u0153\u0178]' +
     '|\b(Annuler|Fermer|Valider|Supprimer|Enregistrer|Appliquer|' +
     'Telechargement|Rechercher|Demarrer|Arreter|Ajouter|Importer|' +
     'Exporter|Ouvrir|Reglages|Parametres|Erreur|Aucun|Aucune|' +
