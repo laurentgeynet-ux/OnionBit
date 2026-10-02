@@ -2039,6 +2039,10 @@ impl CoreSession {
                     )));
                 }
                 tunnel.guards.set_enabled(config.ipv8.guards_enabled);
+                // `tunnel_community/max_relayed_rate` (extension Rust)
+                // : seau a jetons de la pompe d'emission, reglage a
+                // chaud — 0 = illimite.
+                tunnel.set_relay_rate_bps(config.ipv8.max_relayed_bps);
             }
         }
         // `set_session_limits` Python : les bornes de debit de

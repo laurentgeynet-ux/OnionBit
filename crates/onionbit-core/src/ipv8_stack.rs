@@ -124,6 +124,10 @@ pub struct Ipv8Config {
     /// (`should_join_circuit`). Borne la charge de relai que le reseau
     /// peut imposer a ce noeud.
     pub max_joined_circuits: usize,
+    /// Extension Rust (sans equivalent pyipv8) : debit max des
+    /// trafics servis aux autres pairs — relais + sortie — en
+    /// octets/s. 0 = illimite (defaut, comportement pyipv8).
+    pub max_relayed_bps: u64,
     /// `libtorrent/socks_listen_ports` Python : ports des proxys
     /// SOCKS5 anonymes, index `[hops-1]` (0 = port ephemere attribue
     /// par l'OS, defaut Tribler `[0]*5`).
@@ -187,6 +191,7 @@ impl Ipv8Config {
             min_circuits: DEFAULT_MIN_CIRCUITS,
             max_circuits: DEFAULT_MAX_CIRCUITS,
             max_joined_circuits: DEFAULT_MAX_JOINED_CIRCUITS,
+            max_relayed_bps: 0,
             socks_listen_ports: vec![0; MAX_ANON_HOPS],
             enable_content_discovery: true,
             intro_point_peer: None,
@@ -218,6 +223,7 @@ impl Default for Ipv8Config {
             min_circuits: DEFAULT_MIN_CIRCUITS,
             max_circuits: DEFAULT_MAX_CIRCUITS,
             max_joined_circuits: DEFAULT_MAX_JOINED_CIRCUITS,
+            max_relayed_bps: 0,
             socks_listen_ports: vec![0; MAX_ANON_HOPS],
             enable_content_discovery: true,
             intro_point_peer: None,
@@ -1159,6 +1165,7 @@ impl Ipv8Stack {
                     min_circuits: config.min_circuits.max(1) as usize,
                     max_circuits: config.max_circuits.max(1) as usize,
                     max_joined_circuits: config.max_joined_circuits,
+                    max_relayed_bps: config.max_relayed_bps,
                     intro_point_peer: config.intro_point_peer.clone(),
                     data_exit_peer: config.data_exit_peer.clone(),
                     guards: onionbit_tunnel::guards::GuardsConfig {

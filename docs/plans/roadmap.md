@@ -630,10 +630,14 @@ risque IPv8 sous/sur-estimé, etc.), avec la date.
 - 2026-10-02 (plafond de relais) : `tunnel_community/max_joined_circuits`
   exposé (défaut 100 = `should_join_circuit` pyipv8) — borne la charge
   de relais imposée par le réseau, configurable dans l'UI
-  (« Relais servis maximum », restart-only comme ses voisins). Un
-  plafond de **débit** relayé n'existe pas non plus côté pyipv8
-  (`max_traffic` = budget de vie par objet de routage) — extension
-  possible à étudier si la limitation par nombre ne suffit pas.
+  (« Relais servis maximum », restart-only comme ses voisins).
+- 2026-10-02 (plafond de débit servi) : `tunnel_community/max_relayed_rate`
+  (octets/s, 0 = illimité = défaut pyipv8 — `max_traffic` Python borne
+  le budget de vie par objet, pas le débit ; extension Rust) —
+  seau à jetons (rafale 1 s) sur la pompe d'émission sérialisée,
+  couvre cellules relayées **et** datagrammes de sortie ; l'excédent
+  est perdu (perte UDP, lissée par uTP aux extrémités). Appliqué à
+  chaud (`set_relay_rate_bps`), UI « Débit servi maximum » en Kio/s.
 - 2026-10-02 (critères de sortie arrêtés) : séquence post-campagne
   figée — (1) clôture journal fuzz, (2) fingerprint Tribler en mesh
   contrôlé **et** réseau public (durée/rôle/charge/métriques alignés

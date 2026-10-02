@@ -290,6 +290,8 @@
   "circuitsMaxLabel": "Circuits maximum (défaut : 8)",
   "relaysMaxLabel": "Relais servis maximum (défaut : 100)",
   "relaysMaxNote": "Jambes de relais + sorties servies simultanément pour les autres pairs. Au-delà, les demandes de circuit entrantes sont refusées. Pris en compte au redémarrage.",
+  "relayRateMaxLabel": "Débit servi maximum (Kio/s, 0 = illimité)",
+  "relayRateMaxNote": "Plafond de débit pour le trafic relayé et sorti servi aux autres pairs. L'excédent est perdu (les extrémités lissent la charge). Appliqué immédiatement — extension OnionBit absente de Tribler.",
   "anonCircuitsNote": "Circuits maintenus en permanence par lane anonyme ; le détail en direct est visible dans Diagnostic → Circuits.",
 
   "netSaved": "Réglages réseau enregistrés",

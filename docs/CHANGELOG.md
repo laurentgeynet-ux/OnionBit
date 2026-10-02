@@ -3,6 +3,27 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Plafond de débit servi `max_relayed_rate` (2026-10-02)
+
+- `tunnel_community/max_relayed_rate` (octets/s, défaut **0 = illimité**
+  — comportement pyipv8 inchangé ; `max_traffic` Python est un budget
+  de vie par objet de routage, pas un débit : extension Rust).
+- Seau à jetons (`RelayRateLimiter`, rafale bornée à 1 s de débit)
+  dans la pompe d'émission sérialisée de la `TunnelCommunity` :
+  couvre les deux variantes de `SendJob` — cellules **relayées**
+  (`Endpoint`) et datagrammes de **sortie** (`ExitSocket`). Faute de
+  jetons le datagramme est perdu : sémantique UDP, la charge est
+  lissée par les retransmissions uTP aux extrémités plutôt que par
+  une file qui croît sans borne.
+- **Appliqué à chaud** via `POST /api/settings`
+  (`TunnelCommunity::set_relay_rate_bps`, contrairement à
+  `max_joined_circuits` qui reste restart-only) ; compteur
+  `relay_rate_dropped()` pour l'observabilité des pertes.
+- UI : champ « Débit servi maximum » (Kio/s) dans la section
+  « Anonymous tunnels », distingué des bornes BitTorrent
+  `libtorrent/max_*_rate` qui ne concernent que les téléchargements
+  locaux.
+
 ## Plafond de relais `max_joined_circuits` (2026-10-02)
 
 - `tunnel_community/max_joined_circuits` (défaut 100, valeur Python de

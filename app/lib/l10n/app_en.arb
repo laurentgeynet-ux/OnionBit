@@ -460,6 +460,8 @@
   "circuitsMaxLabel": "Maximum circuits (default: 8)",
   "relaysMaxLabel": "Maximum relays served (default: 100)",
   "relaysMaxNote": "Relay legs + exit sockets served simultaneously for other peers. Beyond this, incoming circuit requests are refused. Applied on restart.",
+  "relayRateMaxLabel": "Maximum served rate (KiB/s, 0 = unlimited)",
+  "relayRateMaxNote": "Bandwidth cap for relayed and exit traffic served to other peers. Excess datagrams are dropped (endpoints smooth the load). Applied immediately — OnionBit extension not present in Tribler.",
   "anonCircuitsNote": "Circuits maintained permanently per anonymous lane; live detail in Diagnostics → Circuits.",
 
   "netSaved": "Network settings saved",

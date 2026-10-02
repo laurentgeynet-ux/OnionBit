@@ -72,6 +72,17 @@ redémarrage) — parité `set_session_limits` Python + services :
   (`[hops-1]`, `0` = éphémère, repli éphémère + warn si occupé).
 - `tunnel_community/min_circuits`/`max_circuits` → cible et plafond du
   watchdog de circuits (clamp à la `monitor_downloads`).
+- `tunnel_community/max_joined_circuits` →
+  `TunnelSettings.max_joined_circuits` : plafond de jambes de relais +
+  sockets de sortie servies (`should_join_circuit` pyipv8, défaut 100)
+  — restart-only.
+- `tunnel_community/max_relayed_rate` →
+  `TunnelSettings.max_relayed_bps` : extension Rust sans équivalent
+  pyipv8 — débit max (octets/s, 0 = illimité) du trafic servi aux
+  autres pairs (cellules relayées + datagrammes de sortie), seau à
+  jetons sur la pompe d'émission sérialisée, excédent perdu en
+  sémantique UDP ; appliqué à chaud via `POST /api/settings`
+  (`set_relay_rate_bps`).
 - `ipv8/interfaces[UDPIPv6]` → second socket `UdpEndpoint` IPv6.
 - `ipv8/logger_level` → directive par-crate fusionnée dans l'`EnvFilter`.
 - `content_discovery_community/enabled` → gate de

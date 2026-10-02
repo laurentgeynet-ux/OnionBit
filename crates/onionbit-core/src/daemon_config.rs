@@ -388,6 +388,13 @@ pub struct TunnelCommunityConfig {
     /// pris en compte au redémarrage (settings figés à la
     /// construction de la communauté).
     pub max_joined_circuits: u32,
+    /// Extension Rust (sans équivalent pyipv8) : débit max du trafic
+    /// servi aux autres pairs — cellules relayées + datagrammes de
+    /// sortie — en octets/s. 0 = illimité (défaut). Appliqué à chaud
+    /// via `POST /api/settings` (seau à jetons sur la pompe d'émission
+    /// ; l'excédent est perdu en sémantique UDP, lissé par uTP aux
+    /// extrémités).
+    pub max_relayed_rate: u64,
     /// Accepte d'être noeud de sortie (`exitnode_enabled` Tribler).
     pub exitnode_enabled: bool,
     /// Point d'introduction impose `"ip:port"` — extension Rust
@@ -419,6 +426,7 @@ impl Default for TunnelCommunityConfig {
             min_circuits: 3,
             max_circuits: 8,
             max_joined_circuits: 100,
+            max_relayed_rate: 0,
             exitnode_enabled: false,
             intro_point_peer: String::new(),
             data_exit_peer: String::new(),
@@ -962,6 +970,7 @@ impl DaemonConfig {
             min_circuits: self.tunnel_community.min_circuits,
             max_circuits: self.tunnel_community.max_circuits,
             max_joined_circuits: self.tunnel_community.max_joined_circuits as usize,
+            max_relayed_bps: self.tunnel_community.max_relayed_rate,
             guards_enabled: self.tunnel_community.guards_enabled,
             socks_listen_ports: self.libtorrent.socks_listen_ports.clone(),
             enable_content_discovery: self.content_discovery_community.enabled,
@@ -1067,6 +1076,7 @@ impl DaemonConfig {
         self.tunnel_community.min_circuits = core.ipv8.min_circuits;
         self.tunnel_community.max_circuits = core.ipv8.max_circuits;
         self.tunnel_community.max_joined_circuits = core.ipv8.max_joined_circuits as u32;
+        self.tunnel_community.max_relayed_rate = core.ipv8.max_relayed_bps;
         self.libtorrent.socks_listen_ports = core.ipv8.socks_listen_ports.clone();
         self.dht_discovery.enabled = core.ipv8.enable_dht;
         self.content_discovery_community.enabled = core.ipv8.enable_content_discovery;
@@ -1114,5 +1124,23 @@ mod tests {
         dcfg.tunnel_community.max_joined_circuits = 12;
         let cfg = dcfg.to_core_config(Path::new("."));
         assert_eq!(cfg.ipv8.max_joined_circuits, 12);
+    }
+
+    /// `tunnel_community/max_relayed_rate` se propage dans
+    /// `Ipv8Config::max_relayed_bps` (extension Rust, defaut 0 =
+    /// illimite comme pyipv8).
+    #[test]
+    fn max_relayed_rate_se_propage() {
+        let cfg = DaemonConfig::default().to_core_config(Path::new("."));
+        assert_eq!(cfg.ipv8.max_relayed_bps, 0);
+
+        let mut dcfg = DaemonConfig::default();
+        dcfg.tunnel_community.max_relayed_rate = 256 * 1024;
+        let cfg = dcfg.to_core_config(Path::new("."));
+        assert_eq!(cfg.ipv8.max_relayed_bps, 256 * 1024);
+        // Aller-retour : `apply_runtime_view` restitue la valeur.
+        let mut back = DaemonConfig::default();
+        back.apply_runtime_view(&cfg);
+        assert_eq!(back.tunnel_community.max_relayed_rate, 256 * 1024);
     }
 }
