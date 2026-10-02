@@ -19,6 +19,39 @@ en haut.
   désormais le rôle de relais interne, « exit node » distingue la
   sortie vers l'Internet public sous l'IP de l'utilisateur.
 
+## Fix : réglages « restart-only » impossibles à commuter dans l'UI (2026-10-02)
+
+- **Symptôme** : les commutateurs `tunnel_community/enabled`,
+  `ipv8/enabled`, `dht_discovery`, `content_discovery_community`,
+  `torrent_checker`, `libtorrent/{dht,upnp,lsd,utp}` revenaient
+  immédiatement à leur position de démarrage. Le `POST /api/settings`
+  persistait bien la valeur dans `configuration.json`, mais `GET`
+  recouvrait ces clés avec l'état **runtime** (`apply_runtime_view`
+  ← `effective_config()`, qui n'avait d'overrides que pour les
+  réglages appliqués à chaud) — l'écran affichait donc l'état du boot
+  au lieu de la valeur en attente de redémarrage.
+- **`onionbit-core`** : `ServiceOverrides` mémorise désormais les
+  sections restart-only postées (`ipv8`, `engine`,
+  `enable_torrent_checker`) — `effective_config()` reflète la
+  configuration en attente (parité Python : `config.configuration`
+  est muté in-place par le `POST` et relu tel quel par le `GET`),
+  sans rien appliquer à la session en cours. `exitnode_enabled` et
+  `min/max_circuits` étaient déjà correctement reflétés.
+- **`peer_flags` tunnel** : `to_core_config` produisait `RELAY` seul
+  (=1) au lieu de `{RELAY, SPEED_TEST}` (=9, `TunnelSettings` pyipv8)
+  — le nœud ne répondait jamais aux `test-request` pyipv8 ; base
+  corrigée dans `to_core_config` et `Ipv8Config::production`
+  (`exitnode_enabled` ajoute toujours `EXIT_BT|EXIT_IPV8|EXIT_HTTP`).
+- Libellés : le sous-titre du nœud de sortie précise que la sortie
+  couvre aussi trackers UDP/DHT, requêtes HTTP de trackers et trafic
+  IPv8 (pas seulement BitTorrent), et qu'il est sans effet si la
+  TunnelCommunity est désactivée ; carte « État effectif » : clés
+  `listen_port`/`listen_interfaces` inexistantes → `port` +
+  `listen_interface[_v6]` réels.
+- Tests : `settings_restart_only_refletent_la_valeur_postee`
+  (`api.rs`, POST→GET restart-only) +
+  `peer_flags_refletent_exitnode_enabled` (`daemon_config.rs`).
+
 ## Fix : téléchargements anonymes « en vérification » figés (2026-10-02)
 
 - **Symptôme** : `tunnel_community.enabled=false` au démarrage du
@@ -53,6 +86,9 @@ en haut.
     pickers/drop/connexion adaptés navigateur, dialogue clé API ;
   - statiques sous `/` exemptes d'auth (parité `/ui`/`/static`),
     `/api/*` inchangé derrière la clé ; `api/web_ui_*` + `--web-ui-dir` ;
+  - **auto-connexion** : clé API injectée dans l'`index.html` servi
+    (`api/web_ui_inject_key`, défaut `true`) — pas de saisie ;
+    lanceur `OnionBit Web.cmd` qui démarre le daemon au besoin ;
   - packaging : `dist/web/` intégré au bundle, systray « Ouvrir dans
     le navigateur », streaming `/stream/{i}?key=` par fichier.
 

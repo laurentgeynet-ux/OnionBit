@@ -40,7 +40,7 @@ redémarrage) — parité `set_session_limits` Python + services :
 | `libtorrent/max_download_rate`/`max_upload_rate` | `Session::ratelimits` rqbit sur toutes les lanes |
 | `libtorrent/active_downloads`/`active_seeds`/`active_limit` | relus par `enforce_queue_limits` au tick suivant |
 | `destination` (`PUT /api/downloads`) | `AddDownloadOptions.output_folder`, persisté en `downloads.output_dir` |
-| tout le reste | restart-only — comme Python (seul `set_session_limits` est à chaud chez Tribler) |
+| tout le reste | restart-only — comme Python (seul `set_session_limits` est à chaud chez Tribler) ; `GET /api/settings` reflète la valeur **postée** (en attente de redémarrage), pas l'état runtime — `ServiceOverrides` mémorise `ipv8`/`engine`/`torrent_checker` postés pour `effective_config()` |
 
 ## Écarts de comportement assumés
 
