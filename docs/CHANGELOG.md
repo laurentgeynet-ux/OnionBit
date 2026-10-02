@@ -3,6 +3,21 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Version 0.4.0-alpha (2026-10-02)
+
+- Release succédant à `v0.3.2-alpha` :
+  - **sonde de mise à jour réelle** (`versions/check` : releases GitHub +
+    sondes `check_urls`, anti-SSRF, timeout borné) ;
+  - guard nodes expérimentaux (ADR-0010, `guards_enabled=false` par
+    défaut : persistance premier saut, `GET /api/ipv8/tunnel/guards`,
+    bascule à chaud) ;
+  - fix `rendezvous-established` (WAN estimé) + pacing des réannonces DHT ;
+  - fix self dans le pool de candidats (auto-adoption guard) ;
+  - endpoint `debug/circuit-downloads` (observabilité circuits↔downloads) ;
+  - campagne libFuzzer de référence : 6,28 Md d'exécutions, 0 crash ;
+  - mesures fingerprinting de référence (`docs/security/fingerprinting.md`) ;
+  - anti-fuite : `torrent_checker` ne scrape plus les swarms anonymes.
+
 ## Sonde de mise à jour réelle — `versions/check` (2026-10-02)
 
 - `GET /api/versioning/versions/check` interroge désormais réellement
