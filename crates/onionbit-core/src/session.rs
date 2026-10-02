@@ -478,7 +478,23 @@ impl CoreSession {
             Some(interval.as_secs_f64()),
         );
         tokio::spawn(async move {
-            let mut finished: std::collections::HashSet<String> = std::collections::HashSet::new();
+            // Pre-amorcage depuis le drapeau persistant `finished` : un
+            // telechargement restaure deja termine n'est pas une
+            // completion de cette session — l'alerte `torrent_finished`
+            // de libtorrent ne se rejoue pas au chargement d'un
+            // checkpoint. Sans cela, chaque demarrage re-notifiait tous
+            // les telechargements termines (et relancait leur recheck).
+            let mut finished: std::collections::HashSet<String> = session
+                .inner
+                .db
+                .with(|c| {
+                    Ok(onionbit_db::downloads::list(c)?
+                        .into_iter()
+                        .filter(|r| r.finished)
+                        .map(|r| onionbit_crypto::hash::to_hex(&r.infohash))
+                        .collect())
+                })
+                .unwrap_or_default();
             let mut queue_paused: std::collections::HashSet<String> =
                 std::collections::HashSet::new();
             let mut backed_up: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -487,56 +503,70 @@ impl CoreSession {
             loop {
                 tick.tick().await;
                 for stats in session.downloads() {
-                    let newly_done = stats.finished && !finished.contains(&stats.info_hash);
-                    if newly_done {
-                        finished.insert(stats.info_hash.clone());
-                        session
-                            .inner
-                            .notifier
-                            .notify(Notification::DownloadFinished {
-                                infohash: stats.info_hash.clone(),
-                                name: stats.name.clone(),
-                            });
-                        let ih = onionbit_crypto::hash::from_hex(&stats.info_hash);
-                        if let Some(ih) = ih {
+                    if stats.finished {
+                        // `insert` = passage a termine observe dans
+                        // cette session : notification + drapeau
+                        // persistant + recheck optionnel.
+                        if finished.insert(stats.info_hash.clone()) {
+                            session
+                                .inner
+                                .notifier
+                                .notify(Notification::DownloadFinished {
+                                    infohash: stats.info_hash.clone(),
+                                    name: stats.name.clone(),
+                                });
+                            let ih = onionbit_crypto::hash::from_hex(&stats.info_hash);
+                            if let Some(ih) = ih {
+                                let _ = session
+                                    .inner
+                                    .db
+                                    .with(|c| onionbit_db::downloads::set_finished(c, &ih, true));
+                                // `add_download_to_channel` Python : les
+                                // canaux ne sont pas portes — l'attribut
+                                // persiste en base et le manque est trace.
+                                let channel = session
+                                    .inner
+                                    .db
+                                    .with(|c| onionbit_db::downloads::get(c, &ih))
+                                    .ok()
+                                    .flatten()
+                                    .map(|r| r.add_download_to_channel)
+                                    .unwrap_or(false);
+                                if channel {
+                                    tracing::debug!(
+                                        infohash = %stats.info_hash,
+                                        "add_download_to_channel : les canaux ne sont pas implementes"
+                                    );
+                                }
+                            }
+                            // `libtorrent/check_after_complete` Python :
+                            // reverification des pieces a la fin
+                            // (`session.recheck` = remove + re-add, le
+                            // hash-check rqbit sert de recheck).
+                            if session.inner.config.check_after_complete {
+                                let session = session.clone();
+                                let ih = stats.info_hash.clone();
+                                tokio::spawn(async move {
+                                    if let Err(e) = session.recheck(&ih).await {
+                                        tracing::warn!(
+                                            error = %e,
+                                            infohash = %ih,
+                                            "check_after_complete en erreur"
+                                        );
+                                    }
+                                });
+                            }
+                        }
+                    } else if finished.remove(&stats.info_hash) {
+                        // Redevenu incomplet (selection de fichiers
+                        // etendue, pieces invalidees) : le drapeau
+                        // persistant suit pour que la prochaine
+                        // completion notifie a nouveau.
+                        if let Some(ih) = onionbit_crypto::hash::from_hex(&stats.info_hash) {
                             let _ = session
                                 .inner
                                 .db
-                                .with(|c| onionbit_db::downloads::set_finished(c, &ih, true));
-                            // `add_download_to_channel` Python : les
-                            // canaux ne sont pas portes — l'attribut
-                            // persiste en base et le manque est trace.
-                            let channel = session
-                                .inner
-                                .db
-                                .with(|c| onionbit_db::downloads::get(c, &ih))
-                                .ok()
-                                .flatten()
-                                .map(|r| r.add_download_to_channel)
-                                .unwrap_or(false);
-                            if channel {
-                                tracing::debug!(
-                                    infohash = %stats.info_hash,
-                                    "add_download_to_channel : les canaux ne sont pas implementes"
-                                );
-                            }
-                        }
-                        // `libtorrent/check_after_complete` Python :
-                        // reverification des pieces a la fin
-                        // (`session.recheck` = remove + re-add, le
-                        // hash-check rqbit sert de recheck).
-                        if session.inner.config.check_after_complete {
-                            let session = session.clone();
-                            let ih = stats.info_hash.clone();
-                            tokio::spawn(async move {
-                                if let Err(e) = session.recheck(&ih).await {
-                                    tracing::warn!(
-                                        error = %e,
-                                        infohash = %ih,
-                                        "check_after_complete en erreur"
-                                    );
-                                }
-                            });
+                                .with(|c| onionbit_db::downloads::set_finished(c, &ih, false));
                         }
                     }
                     session.enforce_seeding_policy(&stats);

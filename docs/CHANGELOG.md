@@ -3,6 +3,40 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## ADR-0011 acceptée + Phase 8 messagerie planifiée (2026-10-02)
+
+- `docs/architecture/decisions/0011-messagerie-anonyme-e2e.md` passe
+  de « Proposée » à **« Acceptée »** : les questions ouvertes sont
+  tranchées — trame bencode déterministe `{v,type,id,seq,ts,body,sig}`
+  ≤ 32 Kio, signature Ed25519 de l'émetteur, clés applicatives
+  HKDF domaine-séparé, **pas de ratchet en v1** (non-claim),
+  anti-replay par `seq` + fenêtre 64 + dédup `id`, taille/DoS
+  bornés, consentement explicite (`hello` → `pending` borné),
+  présence DHT assumée et mesurée, persistance en clair v1,
+  suppression réelle, offline = échec visible sans file.
+- Roadmap : nouvelle **Phase 8** (étapes 36-41) — codec/crypto,
+  transport e2e, consentement/anti-abus, persistance/livraison,
+  API/SSE/UI, validation sécurité bloquante.
+- `docs/plans/bancs_tests.md` §4.11 : 12 bancs `MS-1..MS-12`
+  (protocole négatif, replay, consentement, offline, non-fuite,
+  fingerprint) + SE-7 en §6.1 ; niveau « P0-msg » = bloque
+  l'activation par défaut de la messagerie.
+
+## Fusion colonnes Progression/État de la liste des téléchargements (2026-10-02)
+
+- UI : les colonnes « Progression » et « État » affichaient en double
+  le même pourcentage (« 100.0 % » + « Partage 100 % »). Elles sont
+  fusionnées en une seule barre `DownloadProgressBar`
+  (`app/lib/features/downloads/presentation/widgets/download_status.dart`)
+  qui affiche le libellé de statut localisé centré sur la barre, dont la
+  couleur suit la tonalité du statut (positif/avertissement/erreur) —
+  modèle de la colonne Progression de qBittorrent. La fusion s'applique
+  aux trois vues (table, liste compacte, grille) ; `DownloadStatusChip`
+  et la clé l10n `colStatus` sont supprimés, la largeur minimale de la
+  table passe à 1012 px. Le tri par état n'est plus exposé par en-tête
+  (la colonne fusionnée trie par progression) ; `DownloadSort.status`
+  reste valide pour les préférences persistées.
+
 ## Tempête ping/pong + discipline DHT anonyme (2026-10-02)
 
 Réponse au signal fingerprint majeur mesuré en mesh : une lane

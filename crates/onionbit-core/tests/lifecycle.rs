@@ -203,6 +203,130 @@ async fn restauration_anonyme_sans_ipv8_notifie_une_exception() {
     session.stop().await;
 }
 
+/// `.torrent` mono-fichier a hash de piece REEL : la fixture
+/// `test_torrent_bytes` (hash nuls) ne peut jamais etre complete ;
+/// ici le fichier ecrit dans le dossier de sortie valide le
+/// hash-check initial de rqbit.
+fn torrent_complet(name: &str, content: &[u8]) -> Vec<u8> {
+    use onionbit_format::bencode::{encode, BValue};
+    let mut info = std::collections::BTreeMap::new();
+    info.insert(b"length".to_vec(), BValue::Int(content.len() as i64));
+    info.insert(b"name".to_vec(), BValue::Bytes(name.as_bytes().to_vec()));
+    info.insert(b"piece length".to_vec(), BValue::Int(16384));
+    info.insert(
+        b"pieces".to_vec(),
+        BValue::Bytes(onionbit_crypto::hash::sha1(content).to_vec()),
+    );
+    let mut root = std::collections::BTreeMap::new();
+    root.insert(b"info".to_vec(), BValue::Dict(info));
+    encode(&BValue::Dict(root))
+}
+
+/// Regression : un telechargement restaure deja termine ne doit PAS
+/// redeclencher `torrent_finished` au demarrage — l'alerte libtorrent
+/// ne se rejoue pas au chargement d'un checkpoint. Sans le
+/// pre-amorcage du set `finished` depuis le drapeau persistant en
+/// base, chaque lancement re-notifiait tous les telechargements
+/// complets (et relancait leur `check_after_complete`).
+#[tokio::test]
+async fn torrent_fini_restaure_ne_renotifie_pas() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut cfg = CoreConfig::offline(dir.path().to_path_buf());
+    cfg.progress_interval_ms = 50;
+
+    let content = b"onionbit finished payload".to_vec();
+    let bytes = torrent_complet("done.bin", &content);
+    let meta = onionbit_format::torrent::TorrentMeta::parse(&bytes).unwrap();
+    let ih = meta.info_hash_hex();
+    let ih_bin = || onionbit_crypto::hash::from_hex(&ih).unwrap();
+
+    // Premiere session : les donnees sont deja sur disque — le
+    // hash-check initial complete le torrent, une notification est
+    // attendue (completion de CETTE session).
+    let notifier = Notifier::new();
+    let mut rx1 = notifier.subscribe();
+    let session = CoreSession::start(cfg.clone(), notifier)
+        .await
+        .expect("start #1");
+    std::fs::create_dir_all(&cfg.engine.output_dir).unwrap();
+    std::fs::write(cfg.engine.output_dir.join("done.bin"), &content).unwrap();
+    let dl = session
+        .add_torrent_bytes(bytes, false)
+        .await
+        .expect("add torrent");
+    assert_eq!(dl.info_hash_hex(), ih);
+
+    let done = onionbit_test_support::wait_for(std::time::Duration::from_secs(10), || {
+        session
+            .downloads()
+            .iter()
+            .find(|s| s.info_hash == ih)
+            .map(|s| s.finished)
+            .unwrap_or(false)
+    })
+    .await;
+    assert!(done, "torrent complet sur disque jamais vu finished");
+    // Attendre le tick qui persiste le drapeau `finished` (la
+    // notification precede l'ecriture dans le meme bloc).
+    let flagged = onionbit_test_support::wait_for(std::time::Duration::from_secs(5), || {
+        session
+            .db()
+            .with(|c| onionbit_db::downloads::get(c, &ih_bin()))
+            .ok()
+            .flatten()
+            .map(|r| r.finished)
+            .unwrap_or(false)
+    })
+    .await;
+    assert!(flagged, "drapeau finished non persiste");
+
+    let mut notified = 0;
+    while let Ok(n) = rx1.try_recv() {
+        if let onionbit_core::Notification::DownloadFinished { infohash, .. } = n {
+            if infohash == ih {
+                notified += 1;
+            }
+        }
+    }
+    assert_eq!(notified, 1, "completion de session non notifiee");
+    session.stop().await;
+
+    // Seconde session : la restauration retrouve les donnees, le
+    // hash-check re-complete le torrent — mais aucune notification ne
+    // doit repartir (drapeau `finished` persistant).
+    let notifier = Notifier::new();
+    let mut rx2 = notifier.subscribe();
+    let session = CoreSession::start(cfg, notifier).await.expect("start #2");
+    session.wait_restored().await;
+    let done = onionbit_test_support::wait_for(std::time::Duration::from_secs(10), || {
+        session
+            .downloads()
+            .iter()
+            .find(|s| s.info_hash == ih)
+            .map(|s| s.finished)
+            .unwrap_or(false)
+    })
+    .await;
+    assert!(done, "torrent restaure jamais revenu finished");
+    // Quelques ticks supplementaires : la notification eventuelle a eu
+    // le temps d'etre emise.
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+
+    let mut notified = 0;
+    while let Ok(n) = rx2.try_recv() {
+        if let onionbit_core::Notification::DownloadFinished { infohash, .. } = n {
+            if infohash == ih {
+                notified += 1;
+            }
+        }
+    }
+    assert_eq!(
+        notified, 0,
+        "torrent_finished re-emis pour un telechargement deja termine"
+    );
+    session.stop().await;
+}
+
 /// `pause_all`/`resume_all` : tous les telechargements d'une session
 /// basculent ensemble (suspension mobile / arret rapide — etape 19).
 #[tokio::test]

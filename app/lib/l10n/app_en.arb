@@ -654,7 +654,6 @@
     "placeholders": { "pos": { "type": "int" } }
   },
   "colProgress": "Progress",
-  "colStatus": "Status",
   "colPeers": "Peers",
   "colRatio": "Ratio",
   "colAdded": "Added",

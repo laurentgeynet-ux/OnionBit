@@ -424,7 +424,6 @@
   "privateTorrent": "Torrent privé (DHT/PEX désactivés)",
   "queuePosTip": "Position {pos} dans la file",
   "colProgress": "Progression",
-  "colStatus": "État",
   "colPeers": "Pairs",
   "colRatio": "Ratio",
   "colAdded": "Ajouté",

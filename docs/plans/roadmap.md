@@ -592,6 +592,70 @@ l'auth ni du bind loopback). Plan détaillé :
 Phase 7b optionnelle (exposition LAN, `api/cors_origins` dev, pilote
 mobile distant) : voir `web_ui_plan.md` — hors scope V1.
 
+## Phase 8 — Messagerie anonyme sur circuits e2e (ADR-0011)
+
+ADR-0011 **acceptée** (questions tranchées 2026-10-02). Séquence
+imposée : codec/signatures → transport e2e → consentement/anti-abus
+→ persistance → API/UI → bancs. Chaque étape livre ses tests
+négatifs **avec** la fonction — aucune classe de trames sans
+contrepartie hostile testée. Bancs : `docs/plans/bancs_tests.md`
+§4.11 (`MS-*`).
+
+- [ ] **Étape 36. Codec et crypto applicative.** Trame bencode
+  déterministe `{v, type, id, seq, ts, body, sig}` (≤ 32 Kio sur le
+  fil, `body` ≤ 30 Kio, rejet `v != 1` et champs critiques
+  inconnus) ; signature Ed25519 par la clé IPv8 de l'expéditeur
+  vérifiée contre la `pk` dont dérive `messaging_hash(pk)` ;
+  dérivation applicative HKDF-SHA256 domaine `"onionbit messaging
+  v1"` séparée de `hs_session_keys` ; compteur `seq` u64 + fenêtre
+  de réception 64 + dédup `id` 128 bits. Tests : roundtrip strict,
+  déterminisme de l'encodage, rejets (malformé, taille, version,
+  signature invalide, seq rejoué/hors fenêtre, `id` dupliqué),
+  fuzz `tunnel_payloads` étendu (MS-3, MS-4, MS-5).
+- [ ] **Étape 37. Transport e2e et démultiplexage.** `join_swarm`
+  sur `messaging_hash(pk)` côté destinataire ; résolution intro
+  points via `peers-request`/DHT + `RP_DOWNLOADER` + `link-e2e`
+  côté expéditeur ; démultiplexage des cellules `data` par
+  `info_hash` vers le service messagerie (un circuit e2e = une
+  conversation, jamais de mux avec uTP) ; clés applicatives posées
+  au `linked-e2e`. Tests : cycle complet loopback 2 nœuds,
+  réouverture de circuit (réémission honnête absorbée par la dédup),
+  trames messagerie jamais livrées à la lane BitTorrent (MS-1,
+  MS-2, MS-9).
+- [ ] **Étape 38. Consentement et anti-abus.** Première trame
+  `hello` → état `pending` borné (capacité fixe, TTL 10 min) ;
+  acceptation/refus par l'utilisateur ; `contacts.blocked` refuse
+  les trames et désarme l'acceptation e2e du swarm ; seaux à jetons
+  par contact et global (défauts ~2 trames/s/contact, ~10 trames/s
+  global, configurables) ; vérification taille+`v` avant tout parse
+  dans le demux. Tests : inconnu non-`hello` droppé, `pending`
+  borné sous rafale, blocage effectif, budget dépassé → drops
+  comptés (MS-6, MS-10).
+- [ ] **Étape 39. Persistance et livraison.** Migration
+  `onionbit.db` : `contacts` (pk, état pending/active/blocked,
+  rétention) + `messages` (id, contact_pk, direction, seq, ts, body,
+  delivered) ; suppression réelle (`DELETE`) + TTL optionnel par
+  contact (`retention_secs`, `secure_delete` si TTL) ; ACK
+  applicatif par trame ; contact hors ligne → `Undeliverable` borné
+  visible en API (`failed`, pas de file ni de réémission). Tests :
+  restart restore contacts+messages+seq, suppression physique,
+  offline borné sans boucle (MS-7, MS-11).
+- [ ] **Étape 40. API REST, SSE et UI.** `GET /api/messages?contact=
+  <pk_hex>`, `POST /api/messages`, `GET/POST/DELETE /api/contacts`
+  (extension documentée `api_rest_mapping.md`, hors chemin Tribler) ;
+  SSE `message_received`/`message_delivered` via le `Notifier` ;
+  onglet Messagerie Flutter (conversations, consentement entrant,
+  état d'échec visible). Tests : contrats API, 401 sans clé, SSE
+  émis à réception/ack (MS-12).
+- [ ] **Étape 41. Validation sécurité de la phase.** Bancs `MS-*`
+  complets ; mesh fingerprinting messagerie active (delta des
+  annonces de présence, MS-8) ; capture non-fuite (aucun datagramme
+  messagerie hors tunnel, MS-9) ; mise à jour
+  `docs/security/fingerprinting.md` + threat model (non-claims :
+  corrélation de trafic, intro points malveillants, compromission
+  endpoint, pas de forward secrecy sans ratchet). **Bloquant avant
+  toute activation par défaut.**
+
 ---
 
 ## Notes de suivi
@@ -710,11 +774,9 @@ risque IPv8 sous/sur-estimé, etc.), avec la date.
   expérimentale de réduction d'exposition Sybil », jamais une
   garantie d'anonymat. Interdictions pendant la campagne : pas de
   modification logique tunnel, targets fuzz ou dépendances
-  (provenance des lignes du journal). Messagerie : séquence ADR
-  finalisée → tests de protocole (identité, ordre/compteur, replay,
-  malformé, taille, dédup, réouverture circuit, rien hors tunnel,
-  consentement, offline = non livré) → v1 online-only → preview
-  séparée. Campagne Linux/ASan : bloquante avant release avec guards
+  (provenance des lignes du journal). Messagerie : ADR-0011 **acceptée** —
+  Phase 8 (étapes 36-41), tests de protocole catalogués en
+  `bancs_tests.md` §4.11 (`MS-*`). Campagne Linux/ASan : bloquante avant release avec guards
   par défaut ou messagerie, pas avant.
 - 2026-10-02 : campagne libFuzzer de référence terminée — 6/6
   cibles, 6,28 Md d'exécutions, 0 crash/timeout/OOM

@@ -20,7 +20,7 @@ import '../providers/downloads_providers.dart';
 import '../widgets/add_download_dialog.dart';
 import '../widgets/download_actions.dart';
 import '../widgets/download_detail_panel.dart';
-import '../widgets/download_status_chip.dart';
+import '../widgets/download_status.dart';
 
 /// Page « Téléchargements » — table + panneau de détail (desktop et
 /// web large) ; liste compacte + détail en bottom sheet (< 600 dp).
@@ -416,7 +416,7 @@ class _DesktopTable extends ConsumerWidget {
   final List<Download> downloads;
   final Set<String> selection;
 
-  static const double _minWidth = 1172;
+  static const double _minWidth = 1012;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -503,8 +503,7 @@ class _HeaderRow extends ConsumerWidget {
           const SizedBox(width: 36),
           h(l10n.colName, DownloadSort.name, flex: 4),
           h(l10n.colSize, DownloadSort.size, width: 80),
-          h(l10n.colProgress, DownloadSort.progress, flex: 2),
-          h(l10n.colStatus, DownloadSort.status, width: 160),
+          h(l10n.colProgress, DownloadSort.progress, flex: 3),
           h('↓', DownloadSort.down, width: 90),
           h('↑', DownloadSort.up, width: 90),
           h('ETA', DownloadSort.eta, width: 80),
@@ -576,15 +575,14 @@ class _DownloadRow extends ConsumerWidget {
                 child: Text(context.fmtBytes(d.size), style: small),
               ),
               Expanded(
-                flex: 2,
+                flex: 3,
                 child: Padding(
                   padding: const EdgeInsets.symmetric(
                     horizontal: AppSpacing.sm,
                   ),
-                  child: _ProgressBar(download: d),
+                  child: DownloadProgressBar(download: d),
                 ),
               ),
-              SizedBox(width: 160, child: DownloadStatusChip(download: d)),
               SizedBox(
                 width: 90,
                 child: Text(context.fmtRate(d.speedDown), style: small),
@@ -1024,16 +1022,15 @@ class _CompactList extends ConsumerWidget {
           subtitle: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              _ProgressBar(download: d),
+              DownloadProgressBar(download: d),
               const SizedBox(height: 2),
               Text(
-                '${d.status} · ↓${context.fmtRate(d.speedDown)}'
+                '↓${context.fmtRate(d.speedDown)}'
                 ' · ↑${context.fmtRate(d.speedUp)}',
                 style: Theme.of(context).textTheme.bodySmall,
               ),
             ],
           ),
-          trailing: DownloadStatusChip(download: d),
           onLongPress: () {
             final box = context.findRenderObject() as RenderBox?;
             final pos = box != null
@@ -1172,19 +1169,12 @@ class _GridCard extends ConsumerWidget {
                 ],
               ),
               const SizedBox(height: AppSpacing.xs),
-              _ProgressBar(download: d),
+              DownloadProgressBar(download: d),
               const Spacer(),
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      '↓${context.fmtRate(d.speedDown)}'
-                      ' · ↑${context.fmtRate(d.speedUp)}',
-                      style: small,
-                    ),
-                  ),
-                  DownloadStatusChip(download: d),
-                ],
+              Text(
+                '↓${context.fmtRate(d.speedDown)}'
+                ' · ↑${context.fmtRate(d.speedUp)}',
+                style: small,
               ),
             ],
           ),
@@ -1194,46 +1184,3 @@ class _GridCard extends ConsumerWidget {
   }
 }
 
-/// Barre de progression avec pourcentage toujours lisible : barre de
-/// 16 px et étiquette sur une pastille de surface translucide (le
-/// texte brut était invisible sur la portion remplie en thème sombre,
-/// et la barre fine le rendait flottant autour).
-class _ProgressBar extends StatelessWidget {
-  const _ProgressBar({required this.download});
-
-  final Download download;
-
-  @override
-  Widget build(BuildContext context) {
-    final d = download;
-    final scheme = Theme.of(context).colorScheme;
-    return SizedBox(
-      height: 16,
-      child: Stack(
-        alignment: Alignment.center,
-        children: [
-          ClipRRect(
-            borderRadius: BorderRadius.circular(8),
-            child: LinearProgressIndicator(
-              value: d.progress.clamp(0.0, 1.0),
-              minHeight: 16,
-              color: d.isError ? scheme.error : null,
-              backgroundColor: scheme.surfaceContainerHighest,
-            ),
-          ),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 4),
-            decoration: BoxDecoration(
-              color: scheme.surface.withAlpha(200),
-              borderRadius: BorderRadius.circular(4),
-            ),
-            child: Text(
-              '${(d.progress * 100).toStringAsFixed(1)} %',
-              style: Theme.of(context).textTheme.labelSmall,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
