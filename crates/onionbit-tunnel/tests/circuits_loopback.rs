@@ -2792,6 +2792,23 @@ async fn ping_pong_ne_declenche_pas_de_tempete() {
         0,
         "pong mal type = ping retour : tempete"
     );
+
+    // Quiescence : apres l'echange, le trafic est au repos — un
+    // second echantillon identique prouve qu'aucune cellule
+    // supplementaire n'a ete generee en reponse au pong.
+    let a_rest = nodes[0].tunnel.cells_received_total();
+    let b_rest = nodes[1].tunnel.cells_received_total();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(
+        nodes[0].tunnel.cells_received_total(),
+        a_rest,
+        "A continue de recevoir des cellules : trafic non au repos"
+    );
+    assert_eq!(
+        nodes[1].tunnel.cells_received_total(),
+        b_rest,
+        "B continue de recevoir des cellules : trafic non au repos"
+    );
 }
 
 /// Regression volume/cadence : le plafond `rate_limit_pps` borne le

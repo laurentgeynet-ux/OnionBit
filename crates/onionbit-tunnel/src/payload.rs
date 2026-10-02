@@ -947,10 +947,82 @@ impl Cellable for HttpResponse {
     }
 }
 
+/// Invariant de protocole verifie **a la compilation** : chaque
+/// type `Cellable` porte un `MSG_ID` distinct. Une collision
+/// silencieuse (alias de type, copier-coller d'impl) transformerait
+/// une reponse en requete et entretiendrait des boucles de
+/// protocole — c'est exactement la tempete ping/pong ~6 000
+/// cellules/s causee par `type TunnelPong = TunnelPing`.
+/// Toute collision refuse la compilation.
+const _: () = {
+    const IDS: &[u8] = &[
+        Data::MSG_ID,
+        Create::MSG_ID,
+        Created::MSG_ID,
+        Extend::MSG_ID,
+        Extended::MSG_ID,
+        TunnelPing::MSG_ID,
+        TunnelPong::MSG_ID,
+        EstablishIntro::MSG_ID,
+        IntroEstablished::MSG_ID,
+        EstablishRendezvous::MSG_ID,
+        RendezvousEstablished::MSG_ID,
+        LinkE2E::MSG_ID,
+        LinkedE2E::MSG_ID,
+        PeersRequest::MSG_ID,
+        PeersResponse::MSG_ID,
+        TestRequest::MSG_ID,
+        TestResponse::MSG_ID,
+        SpeedTestRequest::MSG_ID,
+        SpeedTestResponse::MSG_ID,
+        HttpRequest::MSG_ID,
+        HttpResponse::MSG_ID,
+    ];
+    let mut i = 0;
+    while i < IDS.len() {
+        let mut j = i + 1;
+        while j < IDS.len() {
+            assert!(IDS[i] != IDS[j], "deux types Cellable partagent un MSG_ID");
+            j += 1;
+        }
+        i += 1;
+    }
+};
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cell::Cell;
     use onionbit_ipv8::serializer::{Reader, Writer};
+
+    /// Le `msg_id` observe **sur le fil** pour un pong doit etre 7.
+    /// On reproduit le chemin de `send_cell` (`pack` du corps puis
+    /// `Cell::to_wire` avec `P::MSG_ID`) et on relit l'octet via
+    /// `Cell::parse` — c'est ce qui aurait detecte l'alias
+    /// `TunnelPong = TunnelPing` (le pong partait en `PING`).
+    #[test]
+    fn pong_porte_msg_id_7_sur_le_fil() {
+        let p = TunnelPong {
+            circuit_id: 0xAABBCCDD,
+            identifier: 0x1234,
+        };
+        let mut w = Writer::new();
+        p.pack(&mut w).unwrap();
+        let body = w.into_bytes();
+        let wire = Cell::to_wire(
+            &[0xAA; 22],
+            p.circuit_id,
+            TunnelPong::MSG_ID,
+            &body[4..],
+            false,
+            false,
+        );
+        let cell = Cell::parse(&wire).unwrap();
+        assert_eq!(cell.inner_msg_id, msg::PONG);
+        assert_eq!(cell.circuit_id, p.circuit_id);
+        assert_eq!(TunnelPing::MSG_ID, msg::PING);
+        assert_ne!(TunnelPing::MSG_ID, TunnelPong::MSG_ID);
+    }
 
     /// Roundtrip cellule 19 (`I, H, H, raw`) — format pyipv8 pur.
     #[test]

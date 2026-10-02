@@ -2311,6 +2311,13 @@ impl TunnelCommunity {
         self.cell_type_counts[msg_id as usize].load(Ordering::Relaxed)
     }
 
+    /// Total des cellules decryptees, tous types confondus (tests :
+    /// un echange sain se termine — les compteurs cessent de bouger).
+    #[doc(hidden)]
+    pub fn cells_received_total(&self) -> u64 {
+        self.cells_received_total.load(Ordering::Relaxed)
+    }
+
     /// `relay_cell` Python : transforme et reexpedie la cellule.
     fn relay_cell(
         self: &Arc<Self>,
