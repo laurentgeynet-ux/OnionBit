@@ -3,6 +3,17 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## ADR-0011 — messagerie anonyme e2e (proposée) (2026-10-02)
+
+- `docs/architecture/decisions/0011-messagerie-anonyme-e2e.md` :
+  contact = clé publique IPv8 du destinataire ; swarm de messagerie
+  `SHA1("onionbit messaging" || pk)` « seedé » par le destinataire
+  (IP_SEEDER + annonce DHT) ; l'expéditeur lie un circuit e2e
+  (`RP_DOWNLOADER` + `link-e2e`) puis trames bencode dans les
+  cellules `data` du circuit lié. En ligne seulement, persistance
+  `messages`, REST + SSE. VoIP/groupes/store-and-forward hors
+  périmètre v1. **Design uniquement** — implémentation après revue.
+
 ## Guards : bascule à chaud via `POST /api/settings` (2026-10-02)
 
 - `GuardSet.enabled` devient un `AtomicBool` (`is_enabled`/
