@@ -367,7 +367,7 @@ pub async fn get_tunnel_guards(State(state): State<AppState>) -> Response {
     };
     Json(serde_json::json!({
         "guards": tunnel.guards.guards_info(),
-        "enabled": tunnel.settings.guards.enabled,
+        "enabled": tunnel.guards.is_enabled(),
     }))
     .into_response()
 }

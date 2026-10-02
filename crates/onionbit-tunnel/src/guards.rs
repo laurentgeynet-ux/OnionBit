@@ -18,6 +18,7 @@
 //! : `anon_engine` rejette 0).
 
 use std::net::IpAddr;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
@@ -154,6 +155,10 @@ fn same_network(a: &UdpAddress, b: &UdpAddress) -> bool {
 /// la communaute ici.
 pub struct GuardSet {
     cfg: GuardsConfig,
+    /// `cfg.enabled` duplique en atomique : bascule a chaud via
+    /// `POST /api/settings` (`tunnel_community/guards_enabled`) sans
+    /// reconstruire la communaute.
+    enabled: AtomicBool,
     records: Mutex<Vec<GuardRecord>>,
     store: Mutex<Option<Arc<dyn GuardStore>>>,
 }
@@ -163,10 +168,22 @@ impl GuardSet {
     pub fn new(cfg: GuardsConfig, store: Option<Arc<dyn GuardStore>>) -> Self {
         let records = store.as_ref().map(|s| s.load_guards()).unwrap_or_default();
         Self {
+            enabled: AtomicBool::new(cfg.enabled),
             cfg,
             records: Mutex::new(records),
             store: Mutex::new(store),
         }
+    }
+
+    /// `true` = premieres hops ordonnees par le set de guards.
+    pub fn is_enabled(&self) -> bool {
+        self.enabled.load(Ordering::Relaxed)
+    }
+
+    /// Bascule a chaud : `false` = selection pyipv8 exacte (le set
+    /// persistant conserve, reutilise au re-armement).
+    pub fn set_enabled(&self, enabled: bool) {
+        self.enabled.store(enabled, Ordering::Relaxed);
     }
 
     /// Injection post-construction (la communaute est creee avant que
@@ -290,7 +307,7 @@ impl GuardSet {
     /// `last_address` — un `create` vers une vieille adresse echoue
     /// comme un timeout normal, sans cout special.
     pub fn order_first_hops(&self, candidates: Vec<Peer>) -> Vec<Peer> {
-        if !self.cfg.enabled {
+        if !self.is_enabled() {
             return candidates;
         }
         let records = self.records.lock().unwrap();
@@ -431,6 +448,39 @@ mod tests {
                 .map(|p| &p.public_key_bin)
                 .collect::<Vec<_>>(),
             cands.iter().map(|p| &p.public_key_bin).collect::<Vec<_>>(),
+        );
+    }
+
+    #[test]
+    fn bascule_a_chaud_sans_reconstruction() {
+        // `POST /api/settings` (`tunnel_community/guards_enabled`) :
+        // le set persistant est conserve entre les bascules.
+        let set = GuardSet::new(cfg(), None);
+        let cands: Vec<Peer> = (0..8).map(|i| peer_at([10, 0, i, 1], 7000)).collect();
+        set.ensure(&cands);
+        let guards = set.guard_keys();
+        assert_eq!(
+            set.order_first_hops(cands.clone())[0].public_key_bin,
+            guards[0],
+            "guard en tete quand active"
+        );
+        set.set_enabled(false);
+        assert_eq!(
+            set.order_first_hops(cands.clone())
+                .iter()
+                .map(|p| p.public_key_bin.clone())
+                .collect::<Vec<_>>(),
+            cands
+                .iter()
+                .map(|p| p.public_key_bin.clone())
+                .collect::<Vec<_>>(),
+            "tirage pyipv8 exact quand desactive a chaud"
+        );
+        set.set_enabled(true);
+        assert_eq!(
+            set.order_first_hops(cands.clone())[0].public_key_bin,
+            guards[0],
+            "meme guard apres re-armement (set conserve)"
         );
     }
 

@@ -3,6 +3,16 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Guards : bascule à chaud via `POST /api/settings` (2026-10-02)
+
+- `GuardSet.enabled` devient un `AtomicBool` (`is_enabled`/
+  `set_enabled`) : `tunnel_community/guards_enabled` s'applique sans
+  redémarrage dans `apply_service_settings`, avec injection tardive du
+  `DbGuardStore` au premier armement (le set persistant est chargé
+  alors ; désactiver conserve le set pour un ré-armement ultérieur).
+- Test `bascule_a_chaud_sans_reconstruction` : tirage pyipv8 exact
+  quand désactivé à chaud, même guard après ré-armement.
+
 ## Guards : maintenance proactive + persistance redémarrage (2026-10-02)
 
 - `do_guard_maintenance` dans `run_maintenance` (cadence

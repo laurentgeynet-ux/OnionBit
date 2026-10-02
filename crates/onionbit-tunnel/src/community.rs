@@ -309,7 +309,7 @@ pub struct TunnelCommunity {
     /// cadences de la community (defauts = valeurs officielles).
     pub settings: TunnelSettings,
     /// Guard nodes (ADR-0010) : premiers sauts persistants quand
-    /// `settings.guards.enabled` — selection pyipv8 inchangee sinon.
+    /// `guards.is_enabled()` — selection pyipv8 inchangee sinon.
     pub guards: crate::guards::GuardSet,
 }
 
@@ -1832,7 +1832,7 @@ impl TunnelCommunity {
         required_key: Option<&[u8]>,
     ) -> Vec<Peer> {
         let candidates = self.first_hop_pool(ctype, required_key);
-        if !self.settings.guards.enabled {
+        if !self.guards.is_enabled() {
             return candidates;
         }
         // ADR-0010 : les guards actifs prennent la tete, suivis de la
@@ -2585,7 +2585,7 @@ impl TunnelCommunity {
     /// Les adoptions ne se font alors jamais sous la pression d'un
     /// storm de `DESTROY`. No-op quand la feature est desactivee.
     fn do_guard_maintenance(&self) {
-        if !self.settings.guards.enabled {
+        if !self.guards.is_enabled() {
             return;
         }
         // Pool « de reference » : candidats `DATA` sans `required_exit`
