@@ -5,6 +5,8 @@
 
 CONTENU
   onionbit_ui.exe       Application graphique (lance le daemon auto)
+  OnionBit Web.cmd      Interface web : demarre le daemon au besoin
+                        puis ouvre le navigateur sur l'UI
   onionbit-daemon.exe   Daemon BitTorrent + API (peut tourner seul)
   onionbit-cli.exe      Pilotage en ligne de commande du daemon
   web\                  Interface web servie par le daemon
@@ -18,12 +20,14 @@ DEMARRAGE RAPIDE
   3. Premier lancement : l'etat est cree dans .onionbit\ a cote des
      executables (configuration.json, api key, base SQLite, logs).
 
-INTERFACE WEB (optionnel)
-  Le daemon sert la meme interface dans le navigateur :
-  http://127.0.0.1:8085/ une fois le daemon lance (ou l'entree systray
-  « Ouvrir dans le navigateur »). A la premiere ouverture, saisir la
-  cle API lue dans .onionbit\configuration.json (section api, cle
-  « key ») — ou ajouter ?key=<cle> a l'URL pour un favori direct.
+INTERFACE WEB
+  Double-cliquer « OnionBit Web.cmd » : il lance le daemon s'il ne
+  tourne pas deja puis ouvre le navigateur sur
+  http://127.0.0.1:8085/ (entree systray « Ouvrir dans le navigateur »
+  equivalente). La cle API est injectee automatiquement par le daemon
+  dans la page servie — rien a saisir. Pour la desactiver :
+  api/web_ui_inject_key = false dans state\configuration.json, et
+  saisir alors la cle « api/key » dans l'UI (ou ?key=<cle>).
 
 LIGNES DE COMMANDE (optionnel)
   onionbit-daemon.exe                 lance le daemon (API sur

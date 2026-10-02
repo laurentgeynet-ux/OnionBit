@@ -106,6 +106,10 @@ pub struct AppState {
     /// (`api/web_ui_*` de `DaemonConfig` — statiques exemptes d'auth,
     /// parite `/ui`/`/static` Python ; `None` = rien de servi).
     pub web_ui_dir: Option<PathBuf>,
+    /// Injecte `api_key` dans l'`index.html` servi (meta
+    /// `onionbit-api-key`) pour l'auto-connexion same-origin
+    /// (`api/web_ui_inject_key`, defaut `true`).
+    pub web_ui_inject_key: bool,
 }
 
 impl AppState {
@@ -122,6 +126,7 @@ impl AppState {
             shutdown_notify: None,
             downloads_rows: Arc::new(DownloadsRowsCache::default()),
             web_ui_dir: None,
+            web_ui_inject_key: true,
         }
     }
 
@@ -155,6 +160,13 @@ impl AppState {
     /// hors `/api`, exemptes d'authentification).
     pub fn with_web_ui_dir(mut self, dir: Option<PathBuf>) -> Self {
         self.web_ui_dir = dir;
+        self
+    }
+
+    /// Desactive l'injection de la cle API dans `index.html`
+    /// (`api/web_ui_inject_key = false`).
+    pub fn with_web_ui_inject_key(mut self, inject: bool) -> Self {
+        self.web_ui_inject_key = inject;
         self
     }
 

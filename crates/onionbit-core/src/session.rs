@@ -86,6 +86,18 @@ struct ServiceOverrides {
     /// `config.download_defaults`) — Python lit `download_defaults`
     /// depuis l'objet config mute in-place, donc a chaud.
     download_defaults: Option<crate::config::DownloadDefaults>,
+    /// Sections restart-only memorisees telles que configurees au
+    /// dernier `POST /api/settings` : elles ne sont PAS appliquees a
+    /// la session en cours (comme Python, qui ne relit ces cles qu'au
+    /// demarrage des composants), mais `effective_config()` — donc
+    /// `GET /api/settings` — doit refleter la valeur en attente de
+    /// redemarrage plutot que l'etat de demarrage (sinon les
+    /// commutateurs de l'UI reviennent a leur position initiale).
+    ipv8: Option<crate::ipv8_stack::Ipv8Config>,
+    /// Idem pour la section moteur (`dht`/`utp`/`proxy_*`/ports…).
+    engine: Option<onionbit_bittorrent::EngineConfig>,
+    /// Idem pour `torrent_checker/enabled`.
+    enable_torrent_checker: Option<bool>,
 }
 
 /// Parametres initiaux communs de `persist`/`persist_torrent`.
@@ -1924,6 +1936,17 @@ impl CoreSession {
     pub fn effective_config(&self) -> CoreConfig {
         let mut cfg = self.inner.config.clone();
         let ov = self.inner.overrides.read().unwrap();
+        // Sections restart-only : la valeur postee l'emporte sur
+        // l'etat de demarrage (effet reel au prochain lancement).
+        if let Some(ipv8) = &ov.ipv8 {
+            cfg.ipv8 = ipv8.clone();
+        }
+        if let Some(engine) = &ov.engine {
+            cfg.engine = engine.clone();
+        }
+        if let Some(enabled) = ov.enable_torrent_checker {
+            cfg.enable_torrent_checker = enabled;
+        }
         if let Some(urls) = &ov.rss_urls {
             cfg.rss_urls = urls.clone();
         }
@@ -1976,6 +1999,9 @@ impl CoreSession {
             queue: Some(config.queue.clone()),
             rate_limits: Some((config.engine.max_upload_bps, config.engine.max_download_bps)),
             download_defaults: Some(config.download_defaults.clone()),
+            ipv8: Some(config.ipv8.clone()),
+            engine: Some(config.engine.clone()),
+            enable_torrent_checker: Some(config.enable_torrent_checker),
         };
         // `min_circuits`/`max_circuits` : Python les lit dans
         // `self.settings` a chaque tick de `monitor_downloads` — le

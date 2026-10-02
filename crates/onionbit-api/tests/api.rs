@@ -458,6 +458,74 @@ async fn settings_get_post_roundtrip() {
     srv.session.stop().await;
 }
 
+/// Reglages restart-only (`tunnel_community/enabled`,
+/// `exitnode_enabled`, `ipv8/enabled`, `libtorrent/{dht,utp,lsd,upnp}`,
+/// `dht_discovery`, `content_discovery_community`,
+/// `torrent_checker`) : `POST /api/settings` les persiste pour le
+/// prochain demarrage — `GET` doit refleter la valeur postee et non
+/// l'etat runtime (session offline : tout inactif au boot), sinon les
+/// commutateurs de l'UI reviennent a leur position initiale.
+#[tokio::test]
+async fn settings_restart_only_refletent_la_valeur_postee() {
+    let srv = spawn_server().await;
+
+    // Etat de demarrage (session offline) : tout inactif.
+    let resp = srv
+        .client
+        .get(srv.url("/api/settings"))
+        .send()
+        .await
+        .unwrap();
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["settings"]["ipv8"]["enabled"], false);
+    assert_eq!(body["settings"]["tunnel_community"]["enabled"], false);
+
+    let resp = srv
+        .client
+        .post(srv.url("/api/settings"))
+        .json(&serde_json::json!({
+            "settings": {
+                "ipv8": { "enabled": true },
+                "tunnel_community": { "enabled": true, "exitnode_enabled": true },
+                "dht_discovery": { "enabled": true },
+                "content_discovery_community": { "enabled": true },
+                "torrent_checker": { "enabled": true },
+                "libtorrent": { "dht": true, "upnp": true, "lsd": true, "utp": true }
+            }
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let resp = srv
+        .client
+        .get(srv.url("/api/settings"))
+        .send()
+        .await
+        .unwrap();
+    let body: serde_json::Value = resp.json().await.unwrap();
+    for (section, key) in [
+        ("ipv8", "enabled"),
+        ("tunnel_community", "enabled"),
+        ("tunnel_community", "exitnode_enabled"),
+        ("dht_discovery", "enabled"),
+        ("content_discovery_community", "enabled"),
+        ("torrent_checker", "enabled"),
+        ("libtorrent", "dht"),
+        ("libtorrent", "upnp"),
+        ("libtorrent", "lsd"),
+        ("libtorrent", "utp"),
+    ] {
+        assert_eq!(
+            body["settings"][section][key],
+            serde_json::json!(true),
+            "{section}/{key} doit refleter la valeur postee (restart-only)"
+        );
+    }
+    srv.session.stop().await;
+}
+
 #[tokio::test]
 async fn rss_update_feeds() {
     let srv = spawn_server().await;
@@ -3078,7 +3146,11 @@ async fn web_ui_statiques_exemptes_d_auth() {
     let dir = tempfile::tempdir().unwrap();
     let web = dir.path().join("web");
     std::fs::create_dir_all(web.join("assets")).unwrap();
-    std::fs::write(web.join("index.html"), "<html>onionbit ui</html>").unwrap();
+    std::fs::write(
+        web.join("index.html"),
+        "<html><head></head><body>onionbit ui</body></html>",
+    )
+    .unwrap();
     std::fs::write(web.join("assets/app.js"), "// js").unwrap();
     // Secret hors de la racine servie : ne doit jamais fuiter.
     std::fs::write(dir.path().join("secret.txt"), "TOPSECRET").unwrap();
@@ -3107,7 +3179,16 @@ async fn web_ui_statiques_exemptes_d_auth() {
         "nosniff"
     );
     assert_eq!(resp.headers().get("cache-control").unwrap(), "no-cache");
-    assert_eq!(resp.text().await.unwrap(), "<html>onionbit ui</html>");
+    let html = resp.text().await.unwrap();
+    assert!(html.contains("onionbit ui"));
+    // Auto-connexion : la clé API est injectée en meta dans l'index
+    // servi (api/web_ui_inject_key = true par défaut).
+    assert!(html.contains("name=\"onionbit-api-key\" content=\"cle-test\""));
+
+    // /index.html direct et repli SPA servent la version injectée.
+    let resp = client.get(url("/index.html")).send().await.unwrap();
+    assert_eq!(resp.status(), 200);
+    assert!(resp.text().await.unwrap().contains("onionbit-api-key"));
 
     // Asset + repli SPA (route inconnue hors /api → index.html).
     let resp = client.get(url("/assets/app.js")).send().await.unwrap();
@@ -3115,7 +3196,7 @@ async fn web_ui_statiques_exemptes_d_auth() {
     assert_eq!(resp.text().await.unwrap(), "// js");
     let resp = client.get(url("/downloads/abc")).send().await.unwrap();
     assert_eq!(resp.status(), 200);
-    assert_eq!(resp.text().await.unwrap(), "<html>onionbit ui</html>");
+    assert!(resp.text().await.unwrap().contains("onionbit ui"));
 
     // Traversée de chemin : le secret hors racine n'est pas servi.
     let resp = client.get(url("/%2e%2e/secret.txt")).send().await.unwrap();
@@ -3136,6 +3217,43 @@ async fn web_ui_statiques_exemptes_d_auth() {
         .await
         .unwrap();
     assert_eq!(resp.status(), 200);
+
+    session.stop().await;
+}
+
+#[tokio::test]
+async fn web_ui_injection_cle_desactivable() {
+    // api/web_ui_inject_key = false : l'index servi est brut, la clé
+    // n'y apparait pas (saisie manuelle ou ?key= dans l'UI).
+    let dir = tempfile::tempdir().unwrap();
+    let web = dir.path().join("web");
+    std::fs::create_dir_all(&web).unwrap();
+    std::fs::write(web.join("index.html"), "<html>ui</html>").unwrap();
+
+    let session =
+        CoreSession::start_offline(CoreConfig::offline(dir.path().into()), Notifier::new())
+            .await
+            .unwrap();
+    let state = AppState::new(session.clone())
+        .with_api_key("cle-test")
+        .with_web_ui_dir(Some(web))
+        .with_web_ui_inject_key(false);
+    let app = build(state);
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let resp = reqwest::Client::new()
+        .get(format!("http://{addr}/"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let html = resp.text().await.unwrap();
+    assert!(!html.contains("onionbit-api-key"));
+    assert!(!html.contains("cle-test"));
 
     session.stop().await;
 }

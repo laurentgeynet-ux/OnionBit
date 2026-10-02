@@ -529,7 +529,8 @@ async fn async_main() -> ExitCode {
         AppState::new(session.clone())
             .with_daemon_config(daemon_config.clone(), Some(config_path.clone()))
             .with_shutdown_notify(shutdown_signal.notifier())
-            .with_web_ui_dir(web_ui_dir.clone()),
+            .with_web_ui_dir(web_ui_dir.clone())
+            .with_web_ui_inject_key(daemon_config.api.web_ui_inject_key),
     );
 
     // `api/https_*` Python : second site TLS du meme routeur
