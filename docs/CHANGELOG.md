@@ -19,6 +19,30 @@ en haut.
   désormais le rôle de relais interne, « exit node » distingue la
   sortie vers l'Internet public sous l'IP de l'utilisateur.
 
+## Fix : téléchargements anonymes « en vérification » figés (2026-10-02)
+
+- **Symptôme** : `tunnel_community.enabled=false` au démarrage du
+  daemon → `restore_downloads` sautait silencieusement chaque ligne
+  `anon_hops>0` (« moteur anonyme indisponible ») ; les lignes DB non
+  réinjectées restaient affichées `WAITING_FOR_HASHCHECK`
+  (« Vérification », 0 %) toute la session et tout `PATCH` répondait
+  `404 this download does not exist` (le téléchargement n'existe dans
+  aucun moteur).
+- **`onionbit-core`** : le skip de lane anonyme à la restauration est
+  désormais remonté au GUI via `Notification::TriblerException`
+  (parité `on_tribler_exception` Python, déjà utilisée pour les
+  échecs de re-add) et compté dans `failed` ; nouvel accesseur
+  `CoreSession::restore_finished()`.
+- **`onionbit-api`** : `GET /api/downloads` n'émet les lignes
+  persistées non restaurées en `WAITING_FOR_HASHCHECK`/`STOPPED` que
+  tant que `load_checkpoint` tourne — après `restore_done` elles sont
+  absentes de la liste (comme Python : `get_downloads` ne liste que
+  les téléchargements chargés) ; `checkpoints.all_loaded` reflète
+  désormais la fin réelle de la restauration.
+- Test : `restauration_anonyme_sans_ipv8_notifie_une_exception`
+  (`lifecycle.rs`) — ligne `anon_hops=3` persistée + session sans
+  ipv8 → download non restauré + `tribler_exception` émis.
+
 ## Version 0.5.0-alpha (2026-10-02)
 
 - Release succédant à `v0.4.0-alpha` :

@@ -144,6 +144,65 @@ async fn restauration_sortie_inaccessible_erreur_differee() {
     session.stop().await;
 }
 
+/// Un telechargement anonyme (`anon_hops > 0`) dont le moteur est
+/// indisponible a la restauration (ipv8 desactivee — config offline)
+/// est saute ET signale au GUI via `tribler_exception`
+/// (`on_tribler_exception` Python) : sans cette remontee la ligne DB
+/// restait affichee « en verification » toute la session et tout
+/// PATCH repondait 404.
+#[tokio::test]
+async fn restauration_anonyme_sans_ipv8_notifie_une_exception() {
+    let dir = tempfile::tempdir().unwrap();
+    let cfg = CoreConfig::offline(dir.path().to_path_buf());
+    let bytes = onionbit_test_support::test_torrent_bytes("anon.bin", 42);
+    let meta = onionbit_format::torrent::TorrentMeta::parse(&bytes).unwrap();
+    let ih = meta.info_hash_hex();
+
+    // Premiere session : ligne `downloads` anonyme persistee
+    // directement (l'ajout anon reel exige la stack ipv8, absente en
+    // offline — la ligne reproduit l'etat laisse par un run normal).
+    let session = CoreSession::start(cfg.clone(), Notifier::new())
+        .await
+        .expect("start #1");
+    session
+        .db()
+        .with(|c| {
+            onionbit_db::downloads::upsert(
+                c,
+                &onionbit_db::DownloadRow {
+                    infohash: onionbit_crypto::hash::from_hex(&ih).unwrap(),
+                    name: Some("anon.bin".into()),
+                    source_uri: format!("magnet:?xt=urn:btih:{ih}"),
+                    torrent_data: Some(bytes),
+                    anon_hops: 3,
+                    ..Default::default()
+                },
+            )
+        })
+        .expect("upsert downloads");
+    session.stop().await;
+
+    // Seconde session : la restauration saute la ligne (pas de
+    // moteur anonyme) et l'exception est diffusee.
+    let notifier = Notifier::new();
+    let mut rx = notifier.subscribe();
+    let session = CoreSession::start(cfg, notifier).await.expect("start #2");
+    session.wait_restored().await;
+    assert!(session.find_download(&ih).is_none());
+    assert!(session.restore_finished());
+
+    let mut reported = false;
+    while let Ok(n) = rx.try_recv() {
+        if let onionbit_core::Notification::TriblerException { error } = n {
+            if error.contains(&ih) {
+                reported = true;
+            }
+        }
+    }
+    assert!(reported, "aucun tribler_exception pour {ih}");
+    session.stop().await;
+}
+
 /// `pause_all`/`resume_all` : tous les telechargements d'une session
 /// basculent ensemble (suspension mobile / arret rapide — etape 19).
 #[tokio::test]

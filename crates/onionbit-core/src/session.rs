@@ -313,6 +313,16 @@ impl CoreSession {
         let _ = rx.changed().await;
     }
 
+    /// `true` quand la restauration des telechargements persistes
+    /// (`load_checkpoint` Python) est close — succes ou echecs
+    /// partiels. Les lignes `downloads` jamais reinjectees dans un
+    /// moteur ne doivent plus etre presentees comme « en file pour le
+    /// check » une fois ce point passe : elles ne reviendront pas
+    /// avant le prochain run.
+    pub fn restore_finished(&self) -> bool {
+        *self.inner.restore_done.borrow()
+    }
+
     /// Reinjecte dans les moteurs les telechargements persistes, avec
     /// tous leurs reglages (equivalent du `load_checkpoint` Python :
     /// selection de fichiers, trackers additionnels, limites,
@@ -338,11 +348,19 @@ impl CoreSession {
             let engine = match self.engine_for(row.anon_hops as u32).await {
                 Ok(e) => e,
                 Err(e) => {
+                    failed += 1;
                     tracing::warn!(
                         infohash = %hex::encode(&row.infohash),
                         error = %e,
                         "moteur anonyme indisponible a la restauration"
                     );
+                    // `on_tribler_exception` Python : sans remontee au
+                    // GUI le download resterait affiche « en
+                    // verification » toute la session (ligne DB non
+                    // reinjectee) sans explication visible.
+                    self.inner.notifier.notify(Notification::TriblerException {
+                        error: format!("restore {}: {e}", hex::encode(&row.infohash)),
+                    });
                     continue;
                 }
             };
