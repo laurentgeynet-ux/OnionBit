@@ -24,7 +24,6 @@ use onionbit_ipv8::packet::prefix_of;
 use onionbit_ipv8::peer::Peer;
 use onionbit_ipv8::serializer::{Reader, Writer};
 use onionbit_ipv8::{Ipv8Error, UdpAddress};
-use rand::seq::SliceRandom;
 
 use crate::community::{
     generate_diffie_secret, generate_diffie_shared_secret, verify_and_generate_shared_secret,
@@ -212,28 +211,6 @@ impl TunnelCommunity {
             hops += 1;
         }
         Some(hops)
-    }
-
-    /// Choisit un premier hop au hasard parmi les pairs du service
-    /// tunnel (hors nous-meme et hors `exclude`).
-    ///
-    /// `exclude` doit porter la cle du `required_exit` quand le
-    /// circuit vise un dernier saut impose (ex. `RP_DOWNLOADER`) :
-    /// sans cette exclusion, un tirage malheureux peut choisir CE
-    /// MEME pair comme premier saut, puis `on_extended` l'`EXTEND`
-    /// vers lui-meme pour satisfaire `required_exit` — un circuit a 2
-    /// "sauts" distincts vers le meme pair physique, dont le
-    /// etablissement crypto echoue de facon intermittente.
-    fn pick_first_hop(&self, exclude: Option<&[u8]>) -> Option<Peer> {
-        let my_pk = self.key.public_key().to_bin();
-        let mut peers: Vec<Peer> = self
-            .network
-            .peers_for_service(&self.community_id)
-            .into_iter()
-            .filter(|p| p.public_key_bin != my_pk && Some(p.public_key_bin.as_slice()) != exclude)
-            .collect();
-        peers.shuffle(&mut rand::rng());
-        peers.into_iter().next()
     }
 
     /// Attend qu'un circuit soit `READY` (borne `timeout_ms` passes en
@@ -729,16 +706,21 @@ impl TunnelCommunity {
         let hops = self
             .swarm_circuit_hops(&info_hash, CIRCUIT_TYPE_RP_SEEDER)
             .ok_or(Ipv8Error::Malformed("swarm inconnu"))?;
-        let first_hop = self
-            .pick_first_hop(None)
-            .ok_or(Ipv8Error::Malformed("aucun pair tunnel"))?;
+        // ADR-0010 : `first_hop_candidates` applique l'ordonnancement
+        // guards (actifs + reserve en tete) et fournit les alternates
+        // de retry — `pick_first_hop` ignorait les deux.
+        let first_hops = self.first_hop_candidates(CIRCUIT_TYPE_RP_SEEDER, None);
+        if first_hops.is_empty() {
+            return Err(Ipv8Error::Malformed("aucun pair tunnel"));
+        }
         let cid = self
-            .create_circuit_typed(
+            .create_circuit_inner(
                 hops,
-                &first_hop,
+                first_hops,
                 CIRCUIT_TYPE_RP_SEEDER,
                 None,
                 Some(info_hash),
+                Vec::new(),
             )
             .await?;
         self.wait_circuit_ready(cid, timeout_ms).await?;
@@ -1707,15 +1689,24 @@ impl TunnelCommunity {
         };
         // Le pair RP n'est pas forcement dans l'annuaire : on
         // l'apprend (son adresse vient du `rp_info` signe DH).
-        self.network.add_verified(required);
+        self.network.add_verified(required.clone());
         self.network
             .discover_service(&rp_info.key, self.community_id);
         // Exclut le RP du tirage du premier saut : sinon un circuit a
         // 2 sauts pourrait choisir le RP comme premier ET dernier
         // saut (etendu vers lui-meme pour satisfaire
         // `required_exit`), ce qui corrompt l'etablissement crypto.
-        let Some(first_hop) = self.pick_first_hop(Some(&rp_info.key)) else {
-            return;
+        // ADR-0010 : `first_hop_candidates` applique l'ordonnancement
+        // guards (actifs + reserve en tete) et fournit les alternates
+        // de retry — `pick_first_hop` ignorait les deux.
+        let first_hops = if hops == 1 {
+            vec![required]
+        } else {
+            let c = self.first_hop_candidates(CIRCUIT_TYPE_RP_DOWNLOADER, Some(&rp_info.key));
+            if c.is_empty() {
+                return;
+            }
+            c
         };
         tracing::info!(
             info_hash = hex::encode(req.info_hash),
@@ -1723,12 +1714,13 @@ impl TunnelCommunity {
             "created-e2e valide : construction du circuit RP_DOWNLOADER"
         );
         let cid = match self
-            .create_circuit_typed(
+            .create_circuit_inner(
                 hops,
-                &first_hop,
+                first_hops,
                 CIRCUIT_TYPE_RP_DOWNLOADER,
                 Some(rp_info.key.clone()),
                 Some(req.info_hash),
+                Vec::new(),
             )
             .await
         {

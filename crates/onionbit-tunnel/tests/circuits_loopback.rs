@@ -423,6 +423,91 @@ async fn guards_bornent_les_premiers_hops_sous_storm_destroy() {
     }
 }
 
+/// Regression interop sens B : le `rp_info` d'un `created-e2e` peut
+/// designer le downloader lui-meme comme point de rendez-vous (le
+/// seeder Tribler ne le distingue pas d'un relais). `add_verified`
+/// re-introduit alors notre propre cle dans l'annuaire — sans filtre,
+/// le noeud s'adoptait lui-meme comme guard et empruntait des
+/// premiers hops vers sa propre socket (circuits degeneres). Soi-meme
+/// ne doit JAMAIS figurer parmi les candidats, les guards ou les
+/// sauts d'un circuit.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn soi_meme_exclu_des_candidats_guards_et_premiers_hops() {
+    let a = make_node_settings(
+        PEER_FLAG_RELAY,
+        TunnelSettings {
+            guards: onionbit_tunnel::guards::GuardsConfig {
+                enabled: true,
+                ..GuardsConfig::default()
+            },
+            ..TunnelSettings::default()
+        },
+    )
+    .await;
+    let r1 = make_node_flags(PEER_FLAG_RELAY | PEER_FLAG_EXIT_BT).await;
+    let r2 = make_node_flags(PEER_FLAG_RELAY | PEER_FLAG_EXIT_BT).await;
+    for n in [&r1, &r2] {
+        learn(&a, n);
+        learn(n, &a);
+    }
+    a.tunnel.register_exit_peer(
+        &r1.key.public_key().to_bin(),
+        r1.addr,
+        PEER_FLAG_RELAY | PEER_FLAG_EXIT_BT,
+    );
+
+    // Echo de soi-meme : notre cle se retrouve dans l'annuaire comme
+    // un pair tunnel quelconque (meme mecanisme que `rp_info` self).
+    learn(&a, &a);
+    a.tunnel.register_exit_peer(
+        &a.key.public_key().to_bin(),
+        a.addr,
+        PEER_FLAG_RELAY | PEER_FLAG_EXIT_BT,
+    );
+
+    let my_pk = a.key.public_key().to_bin();
+    let my_mid = hex::encode(onionbit_crypto::hash::ipv8_mid(&my_pk));
+
+    // Aucun selecteur ne doit renvoyer soi-meme.
+    for p in a
+        .tunnel
+        .get_candidates(PEER_FLAG_RELAY)
+        .iter()
+        .chain(a.tunnel.get_candidates(PEER_FLAG_EXIT_BT).iter())
+    {
+        assert_ne!(p.public_key_bin, my_pk, "soi-meme parmi les candidats");
+    }
+
+    // Circuits a 2 sauts : premier hop jamais soi-meme.
+    let deadline = Instant::now() + TEST_TIMEOUT;
+    let mut built = Vec::new();
+    while Instant::now() < deadline {
+        a.tunnel.build_circuits_if_needed(2, 1).await.unwrap();
+        built = a.tunnel.circuits_info();
+        if built.iter().any(|c| c.state == "READY") {
+            break;
+        }
+        tokio::time::sleep(POLL).await;
+    }
+    assert!(
+        built.iter().any(|c| c.state == "READY"),
+        "aucun circuit READY"
+    );
+    for c in &built {
+        assert_ne!(
+            c.verified_hops.first().map(String::as_str),
+            Some(my_mid.as_str()),
+            "premier hop = soi-meme"
+        );
+    }
+
+    // Le guard set ne contient jamais notre propre cle.
+    assert!(
+        !a.tunnel.guards.guard_keys().contains(&my_pk),
+        "soi-meme adopte comme guard"
+    );
+}
+
 #[tokio::test]
 async fn tunnel_circuit_2_hops_becomes_ready() {
     let a = make_node().await;

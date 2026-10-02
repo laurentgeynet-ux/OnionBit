@@ -1684,15 +1684,17 @@ impl TunnelCommunity {
     /// (`set(requested) <= set(flags)`).
     pub fn get_candidates_subset(&self, flags: &[i32]) -> Vec<Peer> {
         let inner = self.inner.lock().unwrap();
+        let my_pk = self.key.public_key().to_bin();
         let candidates: Vec<Peer> = self
             .network
             .peers_for_service(&self.community_id)
             .into_iter()
             .filter(|p| {
-                inner
-                    .flag_registry
-                    .get(&p.public_key_bin)
-                    .is_some_and(|f| flags.iter().all(|flag| f & flag == *flag))
+                p.public_key_bin != my_pk
+                    && inner
+                        .flag_registry
+                        .get(&p.public_key_bin)
+                        .is_some_and(|f| flags.iter().all(|flag| f & flag == *flag))
             })
             .collect();
         self.filter_backup_exits(&inner, candidates, flags)
@@ -1875,10 +1877,27 @@ impl TunnelCommunity {
         ]) {
             push(p);
         }
+        let my_pk = self.key.public_key().to_bin();
         let mut possible: Vec<(Peer, usize)> = freq
             .into_iter()
-            .filter(|(p, _)| Some(p.public_key_bin.as_slice()) != required_key)
+            .filter(|(p, _)| {
+                Some(p.public_key_bin.as_slice()) != required_key && p.public_key_bin != my_pk
+            })
             .collect();
+        // Registre de flags vide (pairs appris sans `extra_bytes`,
+        // bancs ou petits maillages) : meme repli permissif que
+        // `send_extend` — tous les pairs du service tunnel, soi-meme
+        // et `required_key` exclus.
+        if possible.is_empty() {
+            return self
+                .network
+                .peers_for_service(&self.community_id)
+                .into_iter()
+                .filter(|p| {
+                    Some(p.public_key_bin.as_slice()) != required_key && p.public_key_bin != my_pk
+                })
+                .collect();
+        }
         possible.shuffle(&mut rand::rng());
         // Tri stable par frequence ascendante : les sauts deja utilises
         // passent en dernier, les egalites restent brassées.
@@ -2397,18 +2416,25 @@ impl TunnelCommunity {
     }
 
     /// `get_candidates(*flags)` : pairs connus portant `flag`
-    /// (`PEER_FLAG_*`) dans leur bitmask annonce.
+    /// (`PEER_FLAG_*`) dans leur bitmask annonce. Soi-meme exclu :
+    /// pyipv8 ne met jamais `my_peer` dans `verified_peers`, mais
+    /// notre annuaire peut apprendre notre propre couple cle/adresse
+    /// (echo d'une introduction-response, ou `rp_info` nous designant
+    /// comme point de rendez-vous) — sans ce filtre le noeud devient
+    /// candidat premier hop, exit elu et meme guard de lui-meme.
     pub fn get_candidates(&self, flag: i32) -> Vec<Peer> {
         let inner = self.inner.lock().unwrap();
+        let my_pk = self.key.public_key().to_bin();
         let candidates: Vec<Peer> = self
             .network
             .peers_for_service(&self.community_id)
             .into_iter()
             .filter(|p| {
-                inner
-                    .flag_registry
-                    .get(&p.public_key_bin)
-                    .is_some_and(|f| f & flag != 0)
+                p.public_key_bin != my_pk
+                    && inner
+                        .flag_registry
+                        .get(&p.public_key_bin)
+                        .is_some_and(|f| f & flag != 0)
             })
             .collect();
         self.filter_backup_exits(&inner, candidates, &[flag])
