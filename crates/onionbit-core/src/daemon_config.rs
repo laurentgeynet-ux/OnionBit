@@ -78,6 +78,13 @@ pub struct ApiConfig {
     /// detection automatique par le daemon (`<exe>/web`,
     /// `state_dir/web`, puis `app/build/web` du depot en dev).
     pub web_ui_dir: String,
+    /// Injecte la cle API dans `index.html` servi (meta
+    /// `onionbit-api-key`) : l'UI web se connecte sans saisie, comme
+    /// la GUI desktop qui lit `configuration.json`. Sans risque hors
+    /// loopback : le daemon ne bind que sur 127.0.0.1 et un autre
+    /// site ne peut pas lire la reponse (same-origin policy).
+    /// `false` = saisie manuelle de la cle dans l'UI.
+    pub web_ui_inject_key: bool,
 }
 
 impl Default for ApiConfig {
@@ -95,6 +102,7 @@ impl Default for ApiConfig {
             https_port_running: 0,
             web_ui_enabled: true,
             web_ui_dir: String::new(),
+            web_ui_inject_key: true,
         }
     }
 }
@@ -373,6 +381,13 @@ pub struct TunnelCommunityConfig {
     pub min_circuits: u32,
     /// Circuits maximum.
     pub max_circuits: u32,
+    /// `max_joined_circuits` Python (défaut 100) : plafond de jambes
+    /// de relais + sorties servies simultanément — au-delà les
+    /// `create` entrants sont refusés (`should_join_circuit`).
+    /// Borne la charge de relais que le réseau impose au nœud ;
+    /// pris en compte au redémarrage (settings figés à la
+    /// construction de la communauté).
+    pub max_joined_circuits: u32,
     /// Accepte d'être noeud de sortie (`exitnode_enabled` Tribler).
     pub exitnode_enabled: bool,
     /// Point d'introduction impose `"ip:port"` — extension Rust
@@ -403,6 +418,7 @@ impl Default for TunnelCommunityConfig {
             enabled: true,
             min_circuits: 3,
             max_circuits: 8,
+            max_joined_circuits: 100,
             exitnode_enabled: false,
             intro_point_peer: String::new(),
             data_exit_peer: String::new(),
@@ -871,7 +887,10 @@ impl DaemonConfig {
             .iter()
             .find(|i| i.interface == "UDPIPv6" && !i.ip.is_empty())
             .map(|i| format!("{}:{}", i.ip, i.port));
-        let mut peer_flags = flags::PEER_FLAG_RELAY;
+        // `TunnelSettings.peer_flags` pyipv8 : `{RELAY, SPEED_TEST}` ;
+        // `exitnode_enabled` ajoute les sorties BT/IPv8/HTTP
+        // (`TriblerTunnelCommunity.__init__`).
+        let mut peer_flags = flags::PEER_FLAG_RELAY | flags::PEER_FLAG_SPEED_TEST;
         if self.tunnel_community.exitnode_enabled {
             peer_flags |=
                 flags::PEER_FLAG_EXIT_BT | flags::PEER_FLAG_EXIT_IPV8 | flags::PEER_FLAG_EXIT_HTTP;
@@ -942,6 +961,7 @@ impl DaemonConfig {
             walker_interval: self.ipv8.walker_interval,
             min_circuits: self.tunnel_community.min_circuits,
             max_circuits: self.tunnel_community.max_circuits,
+            max_joined_circuits: self.tunnel_community.max_joined_circuits as usize,
             guards_enabled: self.tunnel_community.guards_enabled,
             socks_listen_ports: self.libtorrent.socks_listen_ports.clone(),
             enable_content_discovery: self.content_discovery_community.enabled,
@@ -1046,8 +1066,53 @@ impl DaemonConfig {
         self.tunnel_community.enabled = core.ipv8.enable_anonymity;
         self.tunnel_community.min_circuits = core.ipv8.min_circuits;
         self.tunnel_community.max_circuits = core.ipv8.max_circuits;
+        self.tunnel_community.max_joined_circuits = core.ipv8.max_joined_circuits as u32;
         self.libtorrent.socks_listen_ports = core.ipv8.socks_listen_ports.clone();
         self.dht_discovery.enabled = core.ipv8.enable_dht;
         self.content_discovery_community.enabled = core.ipv8.enable_content_discovery;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use onionbit_network_policy::exit_policy as flags;
+    use std::path::Path;
+
+    /// `peer_flags` de `TriblerTunnelCommunity` (`community.py` Python) :
+    /// `{RELAY, SPEED_TEST}` par defaut, plus les sorties
+    /// `EXIT_BT`/`EXIT_IPV8`/`EXIT_HTTP` quand `exitnode_enabled`.
+    #[test]
+    fn peer_flags_refletent_exitnode_enabled() {
+        let cfg = DaemonConfig::default().to_core_config(Path::new("."));
+        assert_eq!(
+            cfg.ipv8.peer_flags,
+            flags::PEER_FLAG_RELAY | flags::PEER_FLAG_SPEED_TEST
+        );
+
+        let mut dcfg = DaemonConfig::default();
+        dcfg.tunnel_community.exitnode_enabled = true;
+        let cfg = dcfg.to_core_config(Path::new("."));
+        assert_eq!(
+            cfg.ipv8.peer_flags,
+            flags::PEER_FLAG_RELAY
+                | flags::PEER_FLAG_SPEED_TEST
+                | flags::PEER_FLAG_EXIT_BT
+                | flags::PEER_FLAG_EXIT_IPV8
+                | flags::PEER_FLAG_EXIT_HTTP
+        );
+    }
+
+    /// `tunnel_community/max_joined_circuits` se propage dans
+    /// `Ipv8Config` (defaut 100 = `should_join_circuit` Python).
+    #[test]
+    fn max_joined_circuits_se_propage() {
+        let cfg = DaemonConfig::default().to_core_config(Path::new("."));
+        assert_eq!(cfg.ipv8.max_joined_circuits, 100);
+
+        let mut dcfg = DaemonConfig::default();
+        dcfg.tunnel_community.max_joined_circuits = 12;
+        let cfg = dcfg.to_core_config(Path::new("."));
+        assert_eq!(cfg.ipv8.max_joined_circuits, 12);
     }
 }

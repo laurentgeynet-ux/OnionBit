@@ -26,6 +26,7 @@ class _AnonymitySectionState extends ConsumerState<AnonymitySection> {
 
   final _minCircuits = TextEditingController();
   final _maxCircuits = TextEditingController();
+  final _maxRelays = TextEditingController();
   bool _initialized = false;
   bool _saving = false;
 
@@ -40,6 +41,7 @@ class _AnonymitySectionState extends ConsumerState<AnonymitySection> {
     _deferred.detach();
     _minCircuits.dispose();
     _maxCircuits.dispose();
+    _maxRelays.dispose();
     super.dispose();
   }
 
@@ -49,6 +51,8 @@ class _AnonymitySectionState extends ConsumerState<AnonymitySection> {
         '${settingsInt(settings, [..._t, 'min_circuits'], def: 3)}';
     _maxCircuits.text =
         '${settingsInt(settings, [..._t, 'max_circuits'], def: 8)}';
+    _maxRelays.text =
+        '${settingsInt(settings, [..._t, 'max_joined_circuits'], def: 100)}';
     _initialized = true;
   }
 
@@ -61,7 +65,8 @@ class _AnonymitySectionState extends ConsumerState<AnonymitySection> {
     setState(() => _saving = true);
     final min = int.tryParse(_minCircuits.text.trim()) ?? 3;
     final max = int.tryParse(_maxCircuits.text.trim()) ?? 8;
-    if (min < 0 || max < min) {
+    final relays = int.tryParse(_maxRelays.text.trim()) ?? 100;
+    if (min < 0 || max < min || relays < 0) {
       setState(() => _saving = false);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(context.l10n.anonMinMaxError)),
@@ -69,7 +74,11 @@ class _AnonymitySectionState extends ConsumerState<AnonymitySection> {
       return;
     }
     await applySettingsPatch(context, ref, {
-      'tunnel_community': {'min_circuits': min, 'max_circuits': max},
+      'tunnel_community': {
+        'min_circuits': min,
+        'max_circuits': max,
+        'max_joined_circuits': relays,
+      },
     }, successMessage: context.l10n.anonSaved);
     _deferred.markClean();
     if (mounted) setState(() => _saving = false);
@@ -137,6 +146,22 @@ class _AnonymitySectionState extends ConsumerState<AnonymitySection> {
                   ),
                 ),
               ],
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            TextField(
+              controller: _maxRelays,
+              onChanged: (_) => _deferred.markDirty(),
+              keyboardType: TextInputType.number,
+              decoration: InputDecoration(
+                labelText: l10n.relaysMaxLabel,
+                helperText: l10n.relaysMaxNote,
+                helperMaxLines: 3,
+                isDense: true,
+                suffixIcon: const KeyInfoIcon([
+                  'tunnel_community',
+                  'max_joined_circuits',
+                ]),
+              ),
             ),
             const SizedBox(height: AppSpacing.xs),
             Text(

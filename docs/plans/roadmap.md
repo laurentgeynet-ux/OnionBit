@@ -607,10 +607,13 @@ risque IPv8 sous/sur-estimé, etc.), avec la date.
   Décision same-origin consignée en ADR-0012. Écart du plan initial :
   `ServeDir` + fallback maison plutôt que `rust-embed` (build externe,
   `dist/web/` auto-détecté), et `fetch_client` retenu pour le
-  transport navigateur. **Reste manuel** : la passe UX
-  multi-navigateurs de l'étape 35 (drop HTML5, saisie clé,
-  player `/stream`, notifications) est à confirmer à la main — les
-  éléments automatisables sont verts.
+  transport navigateur. Suite au premier essai : clé API **injectée**
+  dans `index.html` servi (`api/web_ui_inject_key`, meta
+  `onionbit-api-key`) + lanceur `OnionBit Web.cmd` qui démarre le
+  daemon s'il ne tourne pas — parcours identique au desktop.
+  **Reste manuel** : la passe UX multi-navigateurs de l'étape 35
+  (drop HTML5, player `/stream`, notifications) est à confirmer à la
+  main — les éléments automatisables sont verts.
 - 2026-10-02 (validation guards) : matrice interop réelle exécutée
   via `-Guards` sur `interop_hidden_tribler_{download,seed}.ps1` —
   sens A (Tribler←OnionBit) et sens B (OnionBit←Tribler) verts en
@@ -624,6 +627,13 @@ risque IPv8 sous/sur-estimé, etc.), avec la date.
   premier hop libre (`beb1d983…`) — tirage pyipv8 inchangé. Reste :
   session fingerprint Tribler (API affamée par la charge, à refaire
   post-campagne), activation par défaut toujours différée.
+- 2026-10-02 (plafond de relais) : `tunnel_community/max_joined_circuits`
+  exposé (défaut 100 = `should_join_circuit` pyipv8) — borne la charge
+  de relais imposée par le réseau, configurable dans l'UI
+  (« Relais servis maximum », restart-only comme ses voisins). Un
+  plafond de **débit** relayé n'existe pas non plus côté pyipv8
+  (`max_traffic` = budget de vie par objet de routage) — extension
+  possible à étudier si la limitation par nombre ne suffit pas.
 - 2026-10-02 (critères de sortie arrêtés) : séquence post-campagne
   figée — (1) clôture journal fuzz, (2) fingerprint Tribler en mesh
   contrôlé **et** réseau public (durée/rôle/charge/métriques alignés

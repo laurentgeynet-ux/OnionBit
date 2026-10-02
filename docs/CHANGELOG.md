@@ -3,6 +3,22 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Plafond de relais `max_joined_circuits` (2026-10-02)
+
+- `tunnel_community/max_joined_circuits` (défaut 100, valeur Python de
+  `should_join_circuit` — `tunnel.py`) exposé jusqu'à
+  `TunnelSettings` : au-delà du plafond de jambes de relais + sockets
+  de sortie, les `create` entrants sont refusés. Borne la charge que
+  le réseau impose au nœud — un membre joignable et stable accumule
+  les relais d'autrui (observé : ~550 Mo relayés).
+- Configurable dans l'UI (section « Anonymous tunnels », champ
+  « Relais servis maximum ») — pris en compte au redémarrage, comme
+  `enabled`/`exitnode_enabled` (`TunnelSettings` figé à la
+  construction de la communauté).
+- Libellés anonymat corrigés : « TunnelCommunity enabled » mentionne
+  désormais le rôle de relais interne, « exit node » distingue la
+  sortie vers l'Internet public sous l'IP de l'utilisateur.
+
 ## Version 0.5.0-alpha (2026-10-02)
 
 - Release succédant à `v0.4.0-alpha` :

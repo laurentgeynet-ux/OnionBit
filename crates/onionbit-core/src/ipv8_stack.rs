@@ -118,6 +118,12 @@ pub struct Ipv8Config {
     /// min_circuits, max_circuits)` — `monitor_downloads` de
     /// `TriblerTunnelCommunity`).
     pub max_circuits: u32,
+    /// `TunnelSettings.max_joined_circuits` Python (defaut 100) :
+    /// plafond de jambes de relais + sockets de sortie servies — au-
+    /// dela, les `create` entrants sont refuses
+    /// (`should_join_circuit`). Borne la charge de relai que le reseau
+    /// peut imposer a ce noeud.
+    pub max_joined_circuits: usize,
     /// `libtorrent/socks_listen_ports` Python : ports des proxys
     /// SOCKS5 anonymes, index `[hops-1]` (0 = port ephemere attribue
     /// par l'OS, defaut Tribler `[0]*5`).
@@ -173,12 +179,14 @@ impl Ipv8Config {
                 .map(|s| s.to_string())
                 .collect(),
             enable_anonymity: true,
-            peer_flags: onionbit_network_policy::exit_policy::PEER_FLAG_RELAY,
+            peer_flags: onionbit_network_policy::exit_policy::PEER_FLAG_RELAY
+                | onionbit_network_policy::exit_policy::PEER_FLAG_SPEED_TEST,
             onionbit_tunnel_community: true,
             enable_dht: true,
             walker_interval: DEFAULT_WALKER_INTERVAL,
             min_circuits: DEFAULT_MIN_CIRCUITS,
             max_circuits: DEFAULT_MAX_CIRCUITS,
+            max_joined_circuits: DEFAULT_MAX_JOINED_CIRCUITS,
             socks_listen_ports: vec![0; MAX_ANON_HOPS],
             enable_content_discovery: true,
             intro_point_peer: None,
@@ -209,6 +217,7 @@ impl Default for Ipv8Config {
             walker_interval: DEFAULT_WALKER_INTERVAL,
             min_circuits: DEFAULT_MIN_CIRCUITS,
             max_circuits: DEFAULT_MAX_CIRCUITS,
+            max_joined_circuits: DEFAULT_MAX_JOINED_CIRCUITS,
             socks_listen_ports: vec![0; MAX_ANON_HOPS],
             enable_content_discovery: true,
             intro_point_peer: None,
@@ -267,6 +276,10 @@ pub const DEFAULT_MIN_CIRCUITS: u32 = 3;
 /// `TunnelSettings.max_circuits` pyipv8 (`tribler_config`
 /// `tunnel_community/max_circuits`).
 pub const DEFAULT_MAX_CIRCUITS: u32 = 8;
+
+/// `TunnelSettings.max_joined_circuits` pyipv8 (`tunnel.py` :
+/// `should_join_circuit` refuse au-dela — valeur par defaut 100).
+pub const DEFAULT_MAX_JOINED_CIRCUITS: usize = 100;
 
 /// Taille max du cache de pairs persists (`ipv8_peers`) — extension
 /// Rust : pyipv8 ne persiste pas `Network`, on borne a des centaines
@@ -1145,6 +1158,7 @@ impl Ipv8Stack {
                     peer_flags: config.peer_flags,
                     min_circuits: config.min_circuits.max(1) as usize,
                     max_circuits: config.max_circuits.max(1) as usize,
+                    max_joined_circuits: config.max_joined_circuits,
                     intro_point_peer: config.intro_point_peer.clone(),
                     data_exit_peer: config.data_exit_peer.clone(),
                     guards: onionbit_tunnel::guards::GuardsConfig {
