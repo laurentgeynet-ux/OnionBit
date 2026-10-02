@@ -107,6 +107,77 @@ d'endpoint hors périmètre du threat model).
 - Interop : aucun client Tribler ne parle ce protocole — fonction
   OnionBit↔OnionBit uniquement (écart assumé, nouveau service).
 
+## Questions ouvertes — à trancher avant toute implémentation
+
+Le tunnel e2e fournit la **connectivité privée** ; il ne fait pas à
+lui seul « une messagerie e2e sûre ». Chaque point ci-dessous doit
+recevoir une réponse explicite dans cette ADR (passage en Acceptée)
+avant le premier code applicatif.
+
+### Format et cryptographie applicative
+
+- **Format canonique versionné** : champ `v` obligatoire, encodage
+  bencode déterministe borné, règle de compatibilité (rejet des
+  versions inconnues, pas d'ignore silencieux des champs critiques).
+- **Authentification de l'émetteur** : la trame doit être signée par
+  la clé du contact (`pk` du swarm) ou adossée à un handshake
+  applicatif — sinon n'importe quel pair connaissant le swarm peut
+  écrire « au nom de » quiconque.
+- **Séparation des clés** : `hs_session_keys` chiffre le transport ;
+  la messagerie doit dériver ses propres clés applicatives (domaine
+  séparé) — une compromission/rotation du circuit ne doit pas
+  invalider la session applicative, et inversement.
+- **Ratchet** : v1 sans ratchet (clés dérivées du handshake e2e) ou
+  ratchet minimal type Signal — à trancher ; un ratchet change le
+  modèle de persistance et l'anti-replay.
+- **Anti-replay / ordre / doublons** : compteur monotone ou fenêtre
+  de réception par conversation ; politique explicite pour les
+  messages réémis (un circuit reconstruit peut rejouer des cellules
+  honnêtement chiffrées).
+
+### Limites et abus
+
+- **Taille maximale** de trame et de message (fragmentation ?) ;
+  comportement sur dépassement (rejet, pas de troncature silencieuse).
+- **Anti-DoS applicatif** : rate-limit par contact et global, coût
+  d'un `peers-request` vs coût de défense, protection du démultiplexeur
+  `data` (un pair lié ne doit pas pouvoir saturer le parseur — cf.
+  bornes `tunnel_payloads`).
+- **Modèle de signalement/abus** : au minimum blocage local d'un
+  contact (refus de ses trames + suppression de son swarm) ; pas de
+  fédération de signalement en v1.
+
+### Métadonnées et cycle de vie
+
+- **Consentement de contact** : première trame = demande
+  (`introduction`) que le destinataire peut refuser, ou envoi libre ?
+  Sans consentement, n'importe qui dérivant `messaging_hash(pk)`
+  inonde le destinataire.
+- **Présence** : le seul fait de « seeder » son swarm est une
+  métadonnée de présence observable par ses intro points et la DHT.
+  Définir ce qui est émis (annonce périodique = battement de cœur
+  visible) et l'assumer dans le threat model.
+- **Persistance chiffrée** : l'historique `messages` en clair
+  (proposition §4) est-il acceptable, ou SQLCipher/chiffrement par
+  contact ? La liste des contacts elle-même est une métadonnée
+  sensible — confidentialité du carnet d'adresses à définir
+  (chiffrement disque, ou non-persistée).
+- **Expiration/suppression locale** : TTL des messages, suppression
+  réelle (pas de `deleted=1` logique), interaction avec le WAL
+  SQLite.
+- **Comportement offline explicite** : file d'attente d'émission
+  bornée + échec visible, ou échec immédiat ? Aujourd'hui
+  « échoue proprement » — à formaliser en états UI/API.
+
+### Vocabulaire de garanties
+
+Les claims de sécurité de la messagerie seront limités à ce que les
+tests démontrent : confidentialité du **contenu** e2e, authentification
+de l'émetteur, anti-replay testé. Non-claims explicites : résistance à
+la corrélation de trafic, aux intro points malveillants observant la
+fréquence de contact, à la compromission d'endpoint, et (en l'absence
+de ratchet) à la compromission rétroactive des clés de session.
+
 ## Tests attendus à l'implémentation
 
 - Loopback 2 nœuds : join swarm → annonce → lookup → RP → link-e2e →
