@@ -601,11 +601,25 @@ try {
         Verdict ($dt.progress -ge 1.0) 'Tribler : telechargement termine (pieces verifiees)' ("progress={0:P1} peers={1} dl={2}" -f $dt.progress, $dt.num_peers, $dt.all_time_download)
     }
     if ($done) {
-        Start-Sleep -Seconds 3
-        $f = Get-ChildItem -Recurse -Filter 'donnee.bin' $dlDir -ErrorAction SilentlyContinue | Select-Object -First 1
-        if ($f) {
-            $h = (Get-FileHash -Algorithm SHA256 $f.FullName).Hash.ToLower()
+        # Le downloader peut garder le fichier ouvert quelques secondes
+        # apres progress=1.0 (flush/close asynchrone) : retry borne.
+        $f = $null; $h = $null
+        $hashDeadline = (Get-Date).AddSeconds(30)
+        while ((Get-Date) -lt $hashDeadline) {
+            if (-not $f) {
+                $f = Get-ChildItem -Recurse -Filter 'donnee.bin' $dlDir -ErrorAction SilentlyContinue | Select-Object -First 1
+            }
+            if ($f) {
+                try {
+                    $h = (Get-FileHash -Algorithm SHA256 $f.FullName).Hash.ToLower()
+                    break
+                } catch { Start-Sleep -Seconds 1 }
+            } else { Start-Sleep -Seconds 1 }
+        }
+        if ($h) {
             Verdict ($h -eq $srcHash) 'integrite : SHA256 du fichier recu' "got=$h want=$srcHash"
+        } elseif ($f) {
+            Verdict $false 'integrite : SHA256 du fichier recu' "donnee.bin encore verrouille apres 30 s"
         } else { Verdict $false 'integrite : SHA256 du fichier recu' 'donnee.bin introuvable dans la destination' }
     }
 }

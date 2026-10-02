@@ -532,11 +532,27 @@ try {
         Verdict ($ddE.progress -ge 1.0) 'D : telechargement termine (pieces verifiees)' ("progress={0:P1} dl={1}" -f $ddE.progress, $ddE.all_time_download)
     }
     if ($done) {
-        Start-Sleep -Seconds 3
-        $f = Get-ChildItem -Recurse -Filter 'donnee.bin' $dld -ErrorAction SilentlyContinue | Select-Object -First 1
-        if ($f) {
-            $h = (Get-FileHash -Algorithm SHA256 $f.FullName).Hash.ToLower()
+        # rqbit garde le fichier ouvert tant que le torrent est dans la
+        # session (re-seeding possible) : on retire le download SANS
+        # effacer les donnees pour liberer le handle, puis retry borne.
+        try { Api 'DELETE' $P_D.Api "/downloads/$ih" $kD @{ remove_data = $false } 15 | Out-Null } catch {}
+        $f = $null; $h = $null
+        $hashDeadline = (Get-Date).AddSeconds(30)
+        while ((Get-Date) -lt $hashDeadline) {
+            if (-not $f) {
+                $f = Get-ChildItem -Recurse -Filter 'donnee.bin' $dld -ErrorAction SilentlyContinue | Select-Object -First 1
+            }
+            if ($f) {
+                try {
+                    $h = (Get-FileHash -Algorithm SHA256 $f.FullName).Hash.ToLower()
+                    break
+                } catch { Start-Sleep -Seconds 1 }
+            } else { Start-Sleep -Seconds 1 }
+        }
+        if ($h) {
             Verdict ($h -eq $srcHash) 'integrite : SHA256 du fichier recu' "got=$h want=$srcHash"
+        } elseif ($f) {
+            Verdict $false 'integrite : SHA256 du fichier recu' "donnee.bin encore verrouille apres 30 s"
         } else { Verdict $false 'integrite : SHA256 du fichier recu' 'donnee.bin introuvable dans la destination de D' }
     }
 }

@@ -43,10 +43,14 @@ try {
 
     if ($proc.ExitCode -ne 0) {
         Write-Host "INTEROP PY RELAY ECHEC"
-        Select-String -Path $rustStderr -Pattern 'READY|ECHEC|timeout|extend' | Select-Object -Last 10 | ForEach-Object { $_.Line }
+        if (Test-Path $rustStderr) {
+            Select-String -Path $rustStderr -Pattern 'READY|ECHEC|timeout|extend' | Select-Object -Last 10 | ForEach-Object { $_.Line }
+        }
         exit $proc.ExitCode
     }
-    Select-String -Path $rustStderr -Pattern 'READY|INTEROP|ECHEC' | Select-Object -Last 5 | ForEach-Object { $_.Line }
+    if (Test-Path $rustStderr) {
+        Select-String -Path $rustStderr -Pattern 'READY|INTEROP|ECHEC' | Select-Object -Last 5 | ForEach-Object { $_.Line }
+    }
     Write-Host "INTEROP PY RELAY OK"
 }
 finally {
