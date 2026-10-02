@@ -3,6 +3,39 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Fix : warns « operation sqlite lente » en rafale (2026-10-02)
+
+Le seuil du warn de `Database::with` (`onionbit-db/db.rs`) était
+250 ms : toute contention du mutex de connexion produisait une ligne
+WARN par opération en attente (rafales de dizaines de lignes ~300 ms
+au même instant). Seuil porté à **1 s** (la contention usuelle n'est
+pas anormale) et cadence bornée à **1 warn/s** — les occurrences
+supprimées sont comptées et rapportées au warn suivant via le champ
+`suppressed`, le volume de la rafale reste observable sans inonder
+le journal.
+
+## Fix : `torrent_finished` réémis au démarrage pour les téléchargements déjà terminés (2026-10-02)
+
+À chaque lancement, tous les téléchargements restaurés déjà complets
+réémettaient `torrent_finished` — notifications + snackbar «
+Téléchargement terminé » pour des fichiers finis depuis longtemps.
+Cause : le `HashSet` de dédoublonnage de `spawn_progress_loop`
+(`onionbit-core/session.rs`) repartait vide alors que le drapeau
+`downloads.finished` est persisté en base. Le set est désormais
+pré-amorcé depuis la base : seules les complétions observées dans la
+session courante notifient — l'alerte `torrent_finished` de libtorrent
+ne se rejoue pas au chargement d'un checkpoint. Effet de bord corrigé
+au passage : `check_after_complete` ne relance plus un hash-check
+complet de chaque torrent fini à chaque démarrage.
+
+- Drapeau `finished` réinitialisé (`set_finished(false)`) si un
+  téléchargement redevient incomplet (sélection de fichiers étendue,
+  pièces invalidées) — la prochaine complétion notifie à nouveau.
+- Test de régression `torrent_fini_restaure_ne_renotifie_pas`
+  (`onionbit-core/tests/lifecycle.rs`) : torrent à hash de pièce réel
+  + données sur disque → notifié une fois à la première session, zéro
+  notification après restauration.
+
 ## ADR-0011 acceptée + Phase 8 messagerie planifiée (2026-10-02)
 
 - `docs/architecture/decisions/0011-messagerie-anonyme-e2e.md` passe

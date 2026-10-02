@@ -18,13 +18,26 @@ use rusqlite::Connection;
 use crate::{migrations, Result};
 
 /// Duree au-dela de laquelle une operation SQLite est loggee en
-/// `warn!` — diagnostic perf : les requetes lentes et la contention
-/// du mutex de connexion apparaissent ainsi dans les logs.
-const SLOW_QUERY_WARN: std::time::Duration = std::time::Duration::from_millis(250);
+/// `warn!` — diagnostic perf. 1 s : en dessous, la contention usuelle
+/// du mutex de connexion (rafales d'acces simultanes) n'a rien
+/// d'anormal et ne doit pas produire de warn.
+const SLOW_QUERY_WARN: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// Cadence max des warns « operation sqlite lente » : une contention
+/// prolongee produit une rafale d'operations lentes au meme instant —
+/// les warns supprimes sont comptes et rapportes au warn suivant
+/// (`suppressed`) plutot que d'inonder le journal.
+const SLOW_WARN_MIN_INTERVAL: std::time::Duration = std::time::Duration::from_secs(1);
 
 /// Handle de base partageable.
 pub struct Database {
     conn: Mutex<Connection>,
+    /// Instant du dernier warn « operation lente » emis (`None` =
+    /// aucun) — borne la cadence a [`SLOW_WARN_MIN_INTERVAL`].
+    last_slow_warn: Mutex<Option<std::time::Instant>>,
+    /// Warns « lente » supprimes depuis le dernier emis — rappeles au
+    /// warn suivant pour ne pas perdre le volume de la rafale.
+    suppressed_slow: std::sync::atomic::AtomicUsize,
 }
 
 impl std::fmt::Debug for Database {
@@ -46,6 +59,8 @@ impl Database {
         tracing::info!(path = %path.display(), "base sqlite ouverte");
         Ok(Self {
             conn: Mutex::new(conn),
+            last_slow_warn: Mutex::new(None),
+            suppressed_slow: std::sync::atomic::AtomicUsize::new(0),
         })
     }
 
@@ -56,13 +71,16 @@ impl Database {
         migrations::migrate(&mut conn)?;
         Ok(Self {
             conn: Mutex::new(conn),
+            last_slow_warn: Mutex::new(None),
+            suppressed_slow: std::sync::atomic::AtomicUsize::new(0),
         })
     }
 
     /// Execute `f` avec la connexion verrouillee.
     ///
     /// Log un `warn!` si l'operation (attente du mutex incluse) depasse
-    /// [`SLOW_QUERY_WARN`] — diagnostic des acces disque lents.
+    /// [`SLOW_QUERY_WARN`], cadence bornee a [`SLOW_WARN_MIN_INTERVAL`]
+    /// — diagnostic des acces disque lents sans rafale de logs.
     /// `caller` identifie le site appelant (`#[track_caller]`) pour
     /// savoir quelle operation sature quand des appels s'empilent.
     #[track_caller]
@@ -87,14 +105,43 @@ impl Database {
         let out = f(&conn);
         let elapsed = t0.elapsed();
         if elapsed >= SLOW_QUERY_WARN {
-            tracing::warn!(
-                elapsed_ms = elapsed.as_millis() as u64,
-                op,
-                caller = %caller,
-                "operation sqlite lente"
-            );
+            self.warn_slow(op, caller, elapsed);
         }
         out
+    }
+
+    /// Warn « operation sqlite lente » emis au plus une fois par
+    /// [`SLOW_WARN_MIN_INTERVAL`] ; les occurrences intermediaires sont
+    /// comptees et rapportees au warn suivant (`suppressed`).
+    fn warn_slow(
+        &self,
+        op: &'static str,
+        caller: &'static std::panic::Location<'static>,
+        elapsed: std::time::Duration,
+    ) {
+        // Mutex de diagnostic recupere meme empoisonne : une panique
+        // sous verrou ne doit pas masquer la metrique.
+        let mut last = self
+            .last_slow_warn
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let now = std::time::Instant::now();
+        if last.is_some_and(|t| now.duration_since(t) < SLOW_WARN_MIN_INTERVAL) {
+            self.suppressed_slow
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            return;
+        }
+        let suppressed = self
+            .suppressed_slow
+            .swap(0, std::sync::atomic::Ordering::Relaxed);
+        tracing::warn!(
+            elapsed_ms = elapsed.as_millis() as u64,
+            op,
+            caller = %caller,
+            suppressed,
+            "operation sqlite lente"
+        );
+        *last = Some(now);
     }
 
     /// Version async de [`Database::with`] : le travail SQLite est
