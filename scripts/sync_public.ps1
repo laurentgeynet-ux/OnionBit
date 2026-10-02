@@ -14,13 +14,17 @@
 #   Avec -Commit : commit + push automatiques (message passe en -Message).
 
 param(
-    [string]$DevRepo   = 'D:\Projet\Tribler-Rust-Torrent',
-    [string]$PublicRepo = 'D:\Projet\OnionBit',
+    [string]$DevRepo    = $env:ONIONBIT_DEV_REPO,
+    [string]$PublicRepo = $env:ONIONBIT_PUBLIC_REPO,
     [switch]$Commit,
     [string]$Message = 'sync from dev repo'
 )
 
 $ErrorActionPreference = 'Stop'
+
+if (-not $DevRepo -or -not $PublicRepo) {
+    throw 'definir ONIONBIT_DEV_REPO et ONIONBIT_PUBLIC_REPO (ou passer -DevRepo/-PublicRepo)'
+}
 
 # Fichiers trackes dans les DEUX repos mais volontairement divergents
 # (le depot public garde sa propre version, ex. README/AGENTS en anglais).
@@ -42,6 +46,17 @@ $PublicOnlyPatterns = @(
     '^scripts/gh_create_release\.ps1$',
     '^vendor/README\.md$'
 )
+
+# Motifs des fichiers dev-only : trackes dans le repo dev mais a NE JAMAIS
+# publier (outillage interne, chemins locaux). Ce script en fait partie.
+$DevOnlyPatterns = @(
+    '^scripts/sync_public\.ps1$'
+)
+
+function Test-DevOnly([string]$path) {
+    foreach ($p in $DevOnlyPatterns) { if ($path -match $p) { return $true } }
+    return $false
+}
 
 function Test-PublicOnly([string]$path) {
     foreach ($p in $PublicOnlyPatterns) { if ($path -match $p) { return $true } }
@@ -67,6 +82,13 @@ try {
     # --- 2. extraction par-dessus le working tree public -------------
     # -Force ecrase les fichiers communs, ajoute les nouveaux, ne supprime rien.
     Expand-Archive -Path $zip -DestinationPath $PublicRepo -Force
+
+    # --- 2b. retire les fichiers dev-only que l'archive vient de poser ---
+    foreach ($f in (git -C $DevRepo ls-files)) {
+        if (Test-DevOnly $f) {
+            Remove-Item (Join-Path $PublicRepo $f) -Force -ErrorAction SilentlyContinue
+        }
+    }
 } finally {
     Remove-Item $zip -ErrorAction SilentlyContinue
 }
@@ -77,12 +99,14 @@ foreach ($f in $PublicDivergent) {
 }
 
 # --- 4. supprime les fichiers retires du dev (sauf public-only) ------
+# + purge les fichiers dev-only deja trackes dans le public (fuites passees)
 $devFiles = @{}
 git -C $DevRepo ls-files | ForEach-Object { $devFiles[$_] = $true }
 $removed = @()
 foreach ($f in (git -C $PublicRepo ls-files)) {
-    if (-not $devFiles.ContainsKey($f) -and -not (Test-PublicOnly $f)) {
+    if ((-not $devFiles.ContainsKey($f) -or (Test-DevOnly $f)) -and -not (Test-PublicOnly $f)) {
         $removed += $f
+        git -C $PublicRepo rm -q --cached -- $f 2>$null
         Remove-Item (Join-Path $PublicRepo $f) -Force -ErrorAction SilentlyContinue
     }
 }
