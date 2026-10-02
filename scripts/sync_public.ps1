@@ -50,7 +50,8 @@ $PublicOnlyPatterns = @(
 # Motifs des fichiers dev-only : trackes dans le repo dev mais a NE JAMAIS
 # publier (outillage interne, chemins locaux). Ce script en fait partie.
 $DevOnlyPatterns = @(
-    '^scripts/sync_public\.ps1$'
+    '^scripts/sync_public\.ps1$',
+    '^branding/'
 )
 
 function Test-DevOnly([string]$path) {
