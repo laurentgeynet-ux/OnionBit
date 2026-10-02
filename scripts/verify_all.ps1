@@ -12,6 +12,7 @@
 # $LASTEXITCODE et le script echoue des la premiere non nulle.
 
 $ErrorActionPreference = "Stop"
+$root = Split-Path -Parent $PSScriptRoot
 
 function Invoke-Step {
     param(
@@ -44,6 +45,24 @@ Invoke-Step "cargo test (workspace)" {
 
 Invoke-Step "check_i18n (aucun litteral FR dans app/lib)" {
     powershell -NoProfile -ExecutionPolicy Bypass -File "$PSScriptRoot\check_i18n.ps1"
+}
+
+# Cibles de l'UI Flutter : l'analyseur et les tests garantissent le
+# code commun ; `build web` verrouille la cible web (imports
+# conditionnels dart.library.io, transport Fetch, pickers).
+Invoke-Step "flutter analyze (app)" {
+    Push-Location (Join-Path $root "app")
+    try { flutter analyze } finally { Pop-Location }
+}
+
+Invoke-Step "flutter test (app)" {
+    Push-Location (Join-Path $root "app")
+    try { flutter test } finally { Pop-Location }
+}
+
+Invoke-Step "flutter build web (app)" {
+    Push-Location (Join-Path $root "app")
+    try { flutter build web } finally { Pop-Location }
 }
 
 Write-Host "Validation complete OK." -ForegroundColor Green

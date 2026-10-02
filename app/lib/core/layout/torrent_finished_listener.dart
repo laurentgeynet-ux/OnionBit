@@ -9,6 +9,7 @@ import '../api/events.dart';
 import '../api/sse_client.dart';
 import '../di/providers.dart';
 import '../l10n/l10n_ext.dart';
+import '../notifications/web_notify.dart';
 
 /// Affiche un snackbar à chaque événement SSE `torrent_finished`
 /// (notification `notifications.torrent_finished` Python : `infohash`,
@@ -29,6 +30,9 @@ class TorrentFinishedListener extends ConsumerWidget {
           (event.data['name'] as String?) ??
           (event.data['infohash'] as String?) ??
           '';
+      // Notification navigateur quand l'onglet est en arrière-plan
+      // (no-op desktop : le snackbar ci-dessous suffit).
+      notifySystem(l10n.snackFinished, name);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Row(

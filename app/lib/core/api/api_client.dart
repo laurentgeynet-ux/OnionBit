@@ -7,6 +7,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import '../config/app_config.dart';
+import 'http_transport.dart';
 
 /// Erreur API au format Tribler : `{"error": {"handled": b, "message": m}}`.
 class ApiException implements Exception {
@@ -27,7 +28,7 @@ class ApiException implements Exception {
 /// erreurs au format Python `{"error": {"handled","message"}}`.
 class ApiClient {
   ApiClient(this._config, {http.Client? httpClient})
-    : _http = httpClient ?? http.Client();
+    : _http = httpClient ?? createHttpClient();
 
   final AppConfig _config;
   final http.Client _http;

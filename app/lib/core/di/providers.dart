@@ -10,6 +10,7 @@ import '../api/api_client.dart';
 import '../api/sse_client.dart';
 import '../config/app_config.dart';
 import '../config/connection_settings.dart';
+import '../platform/pick_file.dart';
 
 /// Configuration de connexion effective : persistée via
 /// `connectionSettingsProvider` (surchargeable pour les tests).
@@ -88,19 +89,40 @@ class SearchQueryNotifier extends Notifier<String> {
 /// `main()` via `ProviderScope(overrides: …)`.
 final startupFilesProvider = Provider<List<String>>((ref) => const []);
 
+/// Sonde d'authentification : `true` quand l'API répond 401 — daemon
+/// joignable mais clé absente ou invalide (cas nominal web : l'UI
+/// servie par le daemon n'a pas accès à `configuration.json`). La
+/// bannière bascule alors sur « clé API requise » au lieu de « daemon
+/// injoignable ».
+final apiUnauthorizedProvider = FutureProvider<bool>((ref) async {
+  // Sonde utile seulement quand le SSE est coupé.
+  if (ref.watch(sseConnectedProvider).value ?? false) return false;
+  try {
+    await ref.watch(apiClientProvider).get('/events/info');
+    return false;
+  } on ApiException catch (e) {
+    return e.statusCode == 401;
+  } catch (_) {
+    return false; // Daemon injoignable : pas une affaire de clé.
+  }
+});
+
 /// File des fichiers à importer : argv de démarrage + glisser-
 /// déposer. Chaque entrée ouvre le dialogue « Ajouter » à tour
 /// de rôle (`PendingFilesHandler` dans `app_shell.dart`).
 final pendingFilesProvider =
-    NotifierProvider<PendingFilesNotifier, List<String>>(
+    NotifierProvider<PendingFilesNotifier, List<PickedFile>>(
       PendingFilesNotifier.new,
     );
 
-class PendingFilesNotifier extends Notifier<List<String>> {
+class PendingFilesNotifier extends Notifier<List<PickedFile>> {
   @override
-  List<String> build() => List.of(ref.watch(startupFilesProvider));
+  List<PickedFile> build() => [
+    for (final p in ref.watch(startupFilesProvider))
+      PickedFile(name: p.split(RegExp(r'[\\/]')).last, path: p),
+  ];
 
-  void enqueue(Iterable<String> paths) => state = [...state, ...paths];
+  void enqueue(Iterable<PickedFile> files) => state = [...state, ...files];
 
   /// Retire le premier élément (après fermeture du dialogue).
   void pop() => state = state.sublist(1);

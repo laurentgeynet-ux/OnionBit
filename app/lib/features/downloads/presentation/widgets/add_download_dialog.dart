@@ -2,12 +2,16 @@
 // Copyright (C) 2026 Laurent Geynet <laurent.geynet@gmail.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-import 'package:file_selector/file_selector.dart';
+import 'dart:convert';
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/api/api_client.dart';
 import '../../../../core/l10n/l10n_ext.dart';
+import '../../../../core/platform/pick_directory.dart';
+import '../../../../core/platform/pick_file.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../settings/presentation/providers/settings_providers.dart';
 import '../../domain/torrent_preview.dart';
@@ -18,25 +22,25 @@ import '../providers/downloads_providers.dart';
 /// d'anonymat binaire+sauts (règle backend : `anon_hops>0` exige
 /// `safe_seeding`, envoyé automatiquement).
 class AddDownloadDialog extends ConsumerStatefulWidget {
-  const AddDownloadDialog({super.key, this.initialUri, this.initialFilePath});
+  const AddDownloadDialog({super.key, this.initialUri, this.initialFile});
 
   /// URI pré-remplie (ex. magnet d'un résultat de recherche).
   final String? initialUri;
 
-  /// Chemin d'un `.torrent` pré-sélectionné (association de
-  /// fichiers / glisser-déposer). `.magnet` → son URI est lue
-  /// dans le champ magnet.
-  final String? initialFilePath;
+  /// `.torrent`/`.magnet` pré-sélectionné (association de fichiers /
+  /// glisser-déposer / picker). `.magnet` → son URI est lue dans le
+  /// champ magnet.
+  final PickedFile? initialFile;
 
   static Future<void> show(
     BuildContext context, {
     String? initialUri,
-    String? initialFilePath,
+    PickedFile? initialFile,
   }) => showDialog(
     context: context,
     builder: (_) => AddDownloadDialog(
       initialUri: initialUri,
-      initialFilePath: initialFilePath,
+      initialFile: initialFile,
     ),
   );
 
@@ -49,7 +53,8 @@ class _AddDownloadDialogState extends ConsumerState<AddDownloadDialog> {
     text: widget.initialUri,
   );
   final _destController = TextEditingController();
-  XFile? _file;
+  String? _fileName;
+  Uint8List? _fileBytes;
   TorrentPreview? _preview;
 
   /// Sauts choisis — initialisés depuis `download_defaults` quand les
@@ -64,20 +69,24 @@ class _AddDownloadDialogState extends ConsumerState<AddDownloadDialog> {
   @override
   void initState() {
     super.initState();
-    final path = widget.initialFilePath;
-    if (path != null) {
-      if (path.toLowerCase().endsWith('.magnet')) {
-        // Fichier .magnet : contient l'URI en clair.
-        XFile(path)
-            .readAsString()
-            .then((uri) {
-              if (mounted) _uriController.text = uri.trim();
-            })
-            .catchError((_) {});
-      } else {
-        _file = XFile(path);
-        _loadPreview(_file!);
-      }
+    final file = widget.initialFile;
+    if (file != null) {
+      file
+          .readBytes()
+          .then((bytes) {
+            if (!mounted) return;
+            if (file.name.toLowerCase().endsWith('.magnet')) {
+              // Fichier .magnet : contient l'URI en clair.
+              _uriController.text = utf8.decode(bytes).trim();
+            } else {
+              setState(() {
+                _fileName = file.name;
+                _fileBytes = bytes;
+              });
+              _loadPreview(bytes);
+            }
+          })
+          .catchError((_) {});
     }
   }
 
@@ -89,7 +98,7 @@ class _AddDownloadDialogState extends ConsumerState<AddDownloadDialog> {
   }
 
   bool get _canSubmit =>
-      !_busy && (_uriController.text.trim().isNotEmpty || _file != null);
+      !_busy && (_uriController.text.trim().isNotEmpty || _fileBytes != null);
 
   /// Trackers connus avant ajout : metainfo du `.torrent` choisi via
   /// `/api/torrentinfo/file`, ou parametres `tr=` d'un magnet saisi.
@@ -107,27 +116,25 @@ class _AddDownloadDialogState extends ConsumerState<AddDownloadDialog> {
       _knownTrackers.every((t) => t.toLowerCase().startsWith('https://'));
 
   Future<void> _pickFile() async {
-    final file = await openFile(
-      acceptedTypeGroups: [
-        const XTypeGroup(label: 'torrent', extensions: ['torrent']),
-      ],
-    );
+    final file = await pickTorrentFile();
     if (file == null) return;
+    final bytes = await file.readBytes();
     setState(() {
-      _file = file;
+      _fileName = file.name;
+      _fileBytes = bytes;
       _preview = null;
     });
-    _loadPreview(file);
+    _loadPreview(bytes);
   }
 
   /// Aperçu des trackers pour l'avertissement HTTPS-only — echec
   /// silencieux : le torrent reste ajoutable sans l'alerte.
-  Future<void> _loadPreview(XFile file) async {
+  Future<void> _loadPreview(Uint8List bytes) async {
     try {
       final preview = await ref
           .read(downloadsRepositoryProvider)
-          .previewTorrentFile(await file.readAsBytes());
-      if (mounted && _file == file) setState(() => _preview = preview);
+          .previewTorrentFile(bytes);
+      if (mounted && _fileBytes == bytes) setState(() => _preview = preview);
     } catch (_) {
       // Metainfo illisible : l'ajout remontera l'erreur proprement.
     }
@@ -140,9 +147,9 @@ class _AddDownloadDialogState extends ConsumerState<AddDownloadDialog> {
     });
     final repo = ref.read(downloadsRepositoryProvider);
     try {
-      if (_file != null) {
+      if (_fileBytes != null) {
         await repo.addTorrentBytes(
-          await _file!.readAsBytes(),
+          _fileBytes!,
           destination: _destController.text.trim().isEmpty
               ? null
               : _destController.text.trim(),
@@ -205,7 +212,7 @@ class _AddDownloadDialogState extends ConsumerState<AddDownloadDialog> {
           children: [
             TextField(
               controller: _uriController,
-              enabled: _file == null,
+              enabled: _fileBytes == null,
               decoration: InputDecoration(
                 labelText: l10n.magnetOrUrl,
                 hintText: l10n.magnetHint,
@@ -219,13 +226,14 @@ class _AddDownloadDialogState extends ConsumerState<AddDownloadDialog> {
                 OutlinedButton.icon(
                   onPressed: _pickFile,
                   icon: const Icon(Icons.upload_file),
-                  label: Text(_file?.name ?? l10n.torrentFileBtn),
+                  label: Text(_fileName ?? l10n.torrentFileBtn),
                 ),
-                if (_file != null)
+                if (_fileBytes != null)
                   IconButton(
                     tooltip: l10n.removeFile,
                     onPressed: () => setState(() {
-                      _file = null;
+                      _fileName = null;
+                      _fileBytes = null;
                       _preview = null;
                     }),
                     icon: const Icon(Icons.close),
@@ -275,7 +283,10 @@ class _AddDownloadDialogState extends ConsumerState<AddDownloadDialog> {
                   tooltip: l10n.browse,
                   icon: const Icon(Icons.folder_open),
                   onPressed: () async {
-                    final dir = await getDirectoryPath();
+                    final dir = await pickDaemonDirectory(
+                      context,
+                      initialPath: _destController.text.trim(),
+                    );
                     if (dir != null) {
                       setState(() => _destController.text = dir);
                     }

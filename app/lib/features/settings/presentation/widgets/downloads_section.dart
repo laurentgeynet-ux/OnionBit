@@ -2,11 +2,11 @@
 // Copyright (C) 2026 Laurent Geynet <laurent.geynet@gmail.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/l10n/l10n_ext.dart';
+import '../../../../core/platform/pick_directory.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../providers/settings_providers.dart';
 import 'settings_section.dart';
@@ -48,7 +48,10 @@ class _DownloadsSectionState extends ConsumerState<DownloadsSection> {
   }
 
   Future<void> _pickDirectory() async {
-    final dir = await getDirectoryPath();
+    final dir = await pickDaemonDirectory(
+      context,
+      initialPath: _saveasController.text.trim(),
+    );
     if (dir != null) {
       setState(() {
         _saveasController.text = dir;

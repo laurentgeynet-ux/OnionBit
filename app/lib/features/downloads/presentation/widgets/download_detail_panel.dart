@@ -2,12 +2,15 @@
 // Copyright (C) 2026 Laurent Geynet <laurent.geynet@gmail.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../core/di/providers.dart';
 import '../../../../core/l10n/l10n_ext.dart';
 import '../../../../core/platform/desktop_shell.dart';
+import '../../../../core/platform/open_url.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../core/widgets/empty_state.dart';
 import '../../../../core/widgets/error_state.dart';
@@ -127,7 +130,9 @@ class _DetailsTabState extends ConsumerState<_DetailsTab> {
             spacing: AppSpacing.sm,
             runSpacing: AppSpacing.xs,
             children: [
-              if (d.destination.isNotEmpty)
+              // « Ouvrir le dossier » : explorateur natif — sans objet
+              // sur web (le chemin appartient à la machine du daemon).
+              if (!kIsWeb && d.destination.isNotEmpty)
                 OutlinedButton.icon(
                   icon: const Icon(Icons.folder_open, size: 16),
                   label: Text(l10n.openFolder),
@@ -486,11 +491,27 @@ class _FilesTab extends ConsumerWidget {
                           ),
                         ],
                       ),
-                      if (download.destination.isNotEmpty)
+                      if (!kIsWeb && download.destination.isNotEmpty)
                         IconButton(
                           icon: const Icon(Icons.folder_open, size: 18),
                           tooltip: context.l10n.openLocation,
                           onPressed: () => openPath(filePath),
+                        ),
+                      if (kIsWeb)
+                        // Streaming : le navigateur lit directement
+                        // `/api/downloads/{ih}/stream/{i}` (player
+                        // HTML5) — `?key=` car un onglet ne peut pas
+                        // poser `X-Api-Key` (accepté par auth.rs).
+                        IconButton(
+                          icon: const Icon(Icons.play_circle_outline, size: 18),
+                          tooltip: context.l10n.streamInTab,
+                          onPressed: () {
+                            final cfg = ref.read(appConfigProvider);
+                            openExternalUrl(
+                              '${cfg.baseUrl}/api/downloads/${download.infohash}'
+                              '/stream/${f.index}?key=${cfg.apiKey}',
+                            );
+                          },
                         ),
                     ],
                   ),
