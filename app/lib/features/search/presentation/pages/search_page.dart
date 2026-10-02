@@ -241,7 +241,7 @@ class SearchPage extends ConsumerWidget {
           child: local.when(
             loading: () => const Center(child: CircularProgressIndicator()),
             error: (e, _) => ErrorState(
-              message: '$e',
+              error: e,
               onRetry: () => ref.invalidate(searchResultsProvider),
             ),
             data: (_) => merged.isEmpty

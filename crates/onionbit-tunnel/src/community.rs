@@ -84,10 +84,10 @@ pub(crate) enum SendJob {
 /// — extension Rust sans equivalent pyipv8 (`max_traffic` est un
 /// budget de vie par objet de routage, pas un debit).
 ///
-/// Seau a jetons : `rate` octets/s (0 = illimite, defaut = comportement
-/// pyipv8), rafale bornee a une seconde de debit. Faute de jetons le
-/// datagramme est perdu — semantique UDP : les extremites uTP
-/// retransmettent et lissent la charge.
+/// Seau a jetons : `rate` octets/s (0 = illimite ; defaut produit
+/// 512 Kio/s — pyipv8 sert sans plafond), rafale bornee a une seconde
+/// de debit. Faute de jetons le datagramme est perdu — semantique UDP :
+/// les extremites uTP retransmettent et lissent la charge.
 pub(crate) struct RelayRateLimiter {
     /// Budget courant en octets/s — 0 = illimite.
     rate: AtomicU64,
@@ -623,7 +623,7 @@ impl TunnelCommunity {
 
     /// Debit max du trafic servi aux autres, a chaud
     /// (`tunnel_community/max_relayed_rate` → `POST /api/settings`) —
-    /// extension Rust : 0 = illimite (comportement pyipv8).
+    /// extension Rust : 0 = illimite, defaut produit 512 Kio/s.
     pub fn set_relay_rate_bps(&self, bps: u64) {
         self.relay_rate.set_rate(bps);
     }

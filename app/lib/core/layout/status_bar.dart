@@ -30,6 +30,10 @@ class StatusBar extends ConsumerWidget {
     ref.watch(connectionWatchdogProvider);
     final speeds = ref.watch(totalSpeedsProvider);
     final lane = ref.watch(anonLaneProvider).value;
+    // Plafond du debit servi aux autres pairs (estimateur de
+    // capacite upload — `tunnel_community/bandwidth`).
+    final relayBw =
+        ref.watch(ipv8TrafficProvider).value?.bandwidth;
     final small = theme.textTheme.bodySmall;
 
     return Container(
@@ -89,6 +93,18 @@ class StatusBar extends ConsumerWidget {
           Text('↓ ${context.fmtRate(speeds.down)}', style: small),
           const SizedBox(width: AppSpacing.md),
           Text('↑ ${context.fmtRate(speeds.up)}', style: small),
+          if (relayBw != null && relayBw.effectiveRelayBps > 0) ...[
+            const SizedBox(width: AppSpacing.md),
+            Tooltip(
+              message: context.l10n.statusRelayCapTip,
+              child: Text(
+                context.l10n.statusRelayCap(
+                  context.fmtRate(relayBw.effectiveRelayBps),
+                ),
+                style: small?.copyWith(color: scheme.outline),
+              ),
+            ),
+          ],
         ],
       ),
     );

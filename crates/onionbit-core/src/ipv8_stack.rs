@@ -124,10 +124,17 @@ pub struct Ipv8Config {
     /// (`should_join_circuit`). Borne la charge de relai que le reseau
     /// peut imposer a ce noeud.
     pub max_joined_circuits: usize,
-    /// Extension Rust (sans equivalent pyipv8) : debit max des
-    /// trafics servis aux autres pairs — relais + sortie — en
-    /// octets/s. 0 = illimite (defaut, comportement pyipv8).
-    pub max_relayed_bps: u64,
+    /// Mode du plafond de debit servi aux autres pairs — relais +
+    /// sortie (extension Rust sans equivalent pyipv8) : `-1` =
+    /// automatique (`bandwidth` : fraction de l'upload mesure),
+    /// `0` = illimite (comportement pyipv8), `>0` = plafond fixe en
+    /// octets/s. `TunnelSettings.max_relayed_bps` recoit la valeur
+    /// resolue a la construction (`bandwidth.fallback_bps` en auto).
+    pub max_relayed_bps: i64,
+    /// Parametres de l'estimateur de capacite upload
+    /// (`tunnel_community/bandwidth` — utilise quand
+    /// `max_relayed_bps = -1`).
+    pub bandwidth: crate::daemon_config::BandwidthConfig,
     /// `libtorrent/socks_listen_ports` Python : ports des proxys
     /// SOCKS5 anonymes, index `[hops-1]` (0 = port ephemere attribue
     /// par l'OS, defaut Tribler `[0]*5`).
@@ -167,6 +174,12 @@ pub struct Ipv8Config {
     pub peer_cache_max_age_secs: u64,
     /// Intervalle du snapshot `Network` -> `ipv8_peers` (s).
     pub peer_persist_interval_secs: u64,
+    /// Extension Rust : TTL du cache des santes publiees par
+    /// `healths_for` (s). Les requetes `HEALTH_REQUEST` distantes
+    /// arrivent en rafale ; une fraicheur inferieure a cette duree
+    /// n'apporte rien et chaque requete SQL bloque la connexion
+    /// partagee (mesure : jusqu'a 24 s d'attente mutex sous charge).
+    pub content_healths_cache_secs: u64,
 }
 
 impl Ipv8Config {
@@ -191,7 +204,8 @@ impl Ipv8Config {
             min_circuits: DEFAULT_MIN_CIRCUITS,
             max_circuits: DEFAULT_MAX_CIRCUITS,
             max_joined_circuits: DEFAULT_MAX_JOINED_CIRCUITS,
-            max_relayed_bps: 0,
+            max_relayed_bps: RELAY_RATE_AUTO,
+            bandwidth: crate::daemon_config::BandwidthConfig::default(),
             socks_listen_ports: vec![0; MAX_ANON_HOPS],
             enable_content_discovery: true,
             intro_point_peer: None,
@@ -202,6 +216,7 @@ impl Ipv8Config {
             peer_cache_max: DEFAULT_PEER_CACHE_MAX,
             peer_cache_max_age_secs: DEFAULT_PEER_CACHE_MAX_AGE_SECS,
             peer_persist_interval_secs: DEFAULT_PEER_PERSIST_INTERVAL_SECS,
+            content_healths_cache_secs: DEFAULT_CONTENT_HEALTHS_CACHE_SECS,
         }
     }
 }
@@ -223,7 +238,8 @@ impl Default for Ipv8Config {
             min_circuits: DEFAULT_MIN_CIRCUITS,
             max_circuits: DEFAULT_MAX_CIRCUITS,
             max_joined_circuits: DEFAULT_MAX_JOINED_CIRCUITS,
-            max_relayed_bps: 0,
+            max_relayed_bps: RELAY_RATE_AUTO,
+            bandwidth: crate::daemon_config::BandwidthConfig::default(),
             socks_listen_ports: vec![0; MAX_ANON_HOPS],
             enable_content_discovery: true,
             intro_point_peer: None,
@@ -234,6 +250,7 @@ impl Default for Ipv8Config {
             peer_cache_max: DEFAULT_PEER_CACHE_MAX,
             peer_cache_max_age_secs: DEFAULT_PEER_CACHE_MAX_AGE_SECS,
             peer_persist_interval_secs: DEFAULT_PEER_PERSIST_INTERVAL_SECS,
+            content_healths_cache_secs: DEFAULT_CONTENT_HEALTHS_CACHE_SECS,
         }
     }
 }
@@ -287,6 +304,23 @@ pub const DEFAULT_MAX_CIRCUITS: u32 = 8;
 /// `should_join_circuit` refuse au-dela — valeur par defaut 100).
 pub const DEFAULT_MAX_JOINED_CIRCUITS: usize = 100;
 
+/// Sentinelle `tunnel_community/max_relayed_rate` : plafond servi
+/// automatique — fraction `bandwidth/share` de la capacite upload
+/// mesuree (`BandwidthEstimator`), `bandwidth/fallback_bps` avant la
+/// premiere mesure.
+pub const RELAY_RATE_AUTO: i64 = -1;
+
+/// Debit servi applique a la construction de la community quand le
+/// mode est `-1` (auto) — `bandwidth/fallback_bps`, remplace a chaud
+/// des que l'estimateur mesure la capacite upload.
+pub fn initial_relay_bps(mode: i64, bandwidth: &crate::daemon_config::BandwidthConfig) -> u64 {
+    if mode < 0 {
+        bandwidth.fallback_bps
+    } else {
+        mode as u64
+    }
+}
+
 /// Taille max du cache de pairs persists (`ipv8_peers`) — extension
 /// Rust : pyipv8 ne persiste pas `Network`, on borne a des centaines
 /// d'entrees, les plus fraichement vues.
@@ -297,6 +331,9 @@ pub const DEFAULT_PEER_CACHE_MAX_AGE_SECS: u64 = 7 * 24 * 3600;
 /// Cadence du snapshot `Network` -> `ipv8_peers` (2 min) — un lot par
 /// intervalle plutot qu'une ecriture par pair decouvert.
 pub const DEFAULT_PEER_PERSIST_INTERVAL_SECS: u64 = 120;
+/// TTL du cache `healths_for` (30 s) — assez court pour rester
+/// pertinent, assez long pour absorber les rafales de requetes.
+pub const DEFAULT_CONTENT_HEALTHS_CACHE_SECS: u64 = 30;
 
 /// Tache de maintenance DHT (`PingChurn.take_step` +
 /// `node_maintenance`/`value_maintenance`/`token_maintenance` +
@@ -466,6 +503,15 @@ struct SessionContentProvider {
     /// `maximum_payload_size` Python (1300) : octets d'entrees max
     /// par chunk de reponse.
     max_payload_size: usize,
+    /// Cache des santes publiees (`healths_for`) indexe par
+    /// `request_type` — les requetes `HEALTH_REQUEST` distantes
+    /// arrivent en rafale et la jointure `channel_node`/`torrent_state`
+    /// n'a pas besoin d'une fraicheur inferieure a
+    /// `healths_cache_ttl` (extension : Python interroge la base a
+    /// chaque requete, ce qui sature la connexion unique sous charge).
+    healths_cache: Mutex<HashMap<u8, (std::time::Instant, Vec<HealthInfo>)>>,
+    /// TTL du cache ci-dessus (`Ipv8Config::content_healths_cache_secs`).
+    healths_cache_ttl: std::time::Duration,
 }
 
 /// `deprecated_parameters` Python : ces parametres de select sont
@@ -524,8 +570,9 @@ impl SessionContentProvider {
         })
     }
 
-    /// Corps du select distant (cf. `ContentProvider::remote_select`).
-    fn remote_select_inner(&self, query: &serde_json::Value) -> Vec<Vec<u8>> {
+    /// Corps du select distant (cf. `ContentProvider::remote_select`) —
+    /// la requete SQL est deportee sur le pool bloquant (`db.call`).
+    async fn remote_select_inner(&self, query: serde_json::Value) -> Vec<Vec<u8>> {
         // `sanitize_query` : `last` borne a `first + max_response_size`.
         let first = query.get("first").and_then(|v| v.as_u64()).unwrap_or(0);
         let last = query
@@ -536,7 +583,10 @@ impl SessionContentProvider {
 
         let rows = self
             .db
-            .with(|conn| select_rows(conn, query, first, last))
+            .call("content.remote_select", move |conn| {
+                select_rows(conn, &query, first, last)
+            })
+            .await
             .unwrap_or_default();
 
         // `entries_to_chunk` Python : entrees serialisees groupees
@@ -576,74 +626,106 @@ fn lz4_frame(data: &[u8]) -> Vec<u8> {
 
 impl ContentProvider for SessionContentProvider {
     /// `get_random_torrents`/`get_popular_torrents` : santes jointes
-    /// `channel_node`/`torrent_state`.
-    fn healths_for(&self, request_type: u8) -> Vec<HealthInfo> {
-        let popular = request_type == HEALTH_REQUEST_POPULAR;
-        self.db
-            .with(|conn| {
-                let sql = if popular {
-                    "SELECT n.infohash, t.seeders, t.leechers, t.last_check, n.tracker_info
-                     FROM channel_node n JOIN torrent_state t ON t.rowid = n.health_rowid
-                     WHERE n.infohash != '' ORDER BY t.seeders DESC LIMIT 20"
-                } else {
-                    "SELECT n.infohash, t.seeders, t.leechers, t.last_check, n.tracker_info
-                     FROM channel_node n JOIN torrent_state t ON t.rowid = n.health_rowid
-                     WHERE n.infohash != '' ORDER BY RANDOM() LIMIT 20"
-                };
-                let mut stmt = conn.prepare(sql)?;
-                let rows = stmt.query_map([], |r| {
-                    Ok((
-                        r.get::<_, Vec<u8>>(0)?,
-                        r.get::<_, i64>(1)?,
-                        r.get::<_, i64>(2)?,
-                        r.get::<_, i64>(3)?,
-                        r.get::<_, String>(4)?,
-                    ))
-                })?;
-                Ok(rows
-                    .filter_map(|r| r.ok())
-                    .filter_map(|(ih, s, l, lc, tr)| {
-                        let mut infohash = [0u8; 20];
-                        if ih.len() != 20 {
-                            return None;
-                        }
-                        infohash.copy_from_slice(&ih);
-                        Some(HealthInfo {
-                            infohash,
-                            seeders: s.max(0) as u32,
-                            leechers: l.max(0) as u32,
-                            last_check: lc.max(0) as u64,
-                            tracker: tr,
+    /// `channel_node`/`torrent_state`. Resultat mis en cache
+    /// `healths_cache_ttl` par `request_type` — sous une rafale de
+    /// `HEALTH_REQUEST` distants, une seule requete SQL est executee.
+    fn healths_for<'a>(
+        &'a self,
+        request_type: u8,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Vec<HealthInfo>> + Send + 'a>> {
+        Box::pin(async move {
+            if let Ok(cache) = self.healths_cache.lock() {
+                if let Some((at, cached)) = cache.get(&request_type) {
+                    if at.elapsed() < self.healths_cache_ttl {
+                        return cached.clone();
+                    }
+                }
+            }
+            let popular = request_type == HEALTH_REQUEST_POPULAR;
+            let fresh = self
+                .db
+                .call("content.healths_for", move |conn| {
+                    let sql = if popular {
+                        "SELECT n.infohash, t.seeders, t.leechers, t.last_check, n.tracker_info
+                         FROM channel_node n JOIN torrent_state t ON t.rowid = n.health_rowid
+                         WHERE n.infohash != '' ORDER BY t.seeders DESC LIMIT 20"
+                    } else {
+                        "SELECT n.infohash, t.seeders, t.leechers, t.last_check, n.tracker_info
+                         FROM channel_node n JOIN torrent_state t ON t.rowid = n.health_rowid
+                         WHERE n.infohash != '' ORDER BY RANDOM() LIMIT 20"
+                    };
+                    let mut stmt = conn.prepare(sql)?;
+                    let rows = stmt.query_map([], |r| {
+                        Ok((
+                            r.get::<_, Vec<u8>>(0)?,
+                            r.get::<_, i64>(1)?,
+                            r.get::<_, i64>(2)?,
+                            r.get::<_, i64>(3)?,
+                            r.get::<_, String>(4)?,
+                        ))
+                    })?;
+                    Ok(rows
+                        .filter_map(|r| r.ok())
+                        .filter_map(|(ih, s, l, lc, tr)| {
+                            let mut infohash = [0u8; 20];
+                            if ih.len() != 20 {
+                                return None;
+                            }
+                            infohash.copy_from_slice(&ih);
+                            Some(HealthInfo {
+                                infohash,
+                                seeders: s.max(0) as u32,
+                                leechers: l.max(0) as u32,
+                                last_check: lc.max(0) as u64,
+                                tracker: tr,
+                            })
                         })
-                    })
-                    .collect())
-            })
-            .unwrap_or_default()
+                        .collect::<Vec<_>>())
+                })
+                .await
+                .unwrap_or_default();
+            if let Ok(mut cache) = self.healths_cache.lock() {
+                cache.insert(request_type, (std::time::Instant::now(), fresh.clone()));
+            }
+            fresh
+        })
     }
 
     /// `process_torrents_health` : met a jour `torrent_state` ;
     /// retourne les infohashes inconnus (a resoudre par select).
-    fn process_health(&self, healths: &[HealthInfo]) -> Vec<[u8; 20]> {
-        self.db
-            .with(|conn| {
-                let mut unknown = Vec::new();
-                for h in healths {
-                    onionbit_db::health::upsert_torrent_state(conn, &h.infohash)?;
-                    onionbit_db::health::update_torrent_health(
-                        conn,
-                        &h.infohash,
-                        h.seeders as i64,
-                        h.leechers as i64,
-                        h.last_check as i64,
-                        false,
-                    )?;
-                    if onionbit_db::channel::get_by_infohash(conn, &h.infohash)?.is_none() {
-                        unknown.push(h.infohash);
+    fn process_health<'a>(
+        &'a self,
+        healths: &'a [HealthInfo],
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Vec<[u8; 20]>> + Send + 'a>> {
+        Box::pin(async move {
+            let healths = healths.to_vec();
+            self.db
+                .call("content.process_health", move |conn| {
+                    // Une seule transaction par payload recu : sinon
+                    // chaque entree autocommit (append WAL par ligne)
+                    // et la base reste verrouillee plus longtemps.
+                    let tx = conn.unchecked_transaction()?;
+                    let mut unknown = Vec::new();
+                    for h in &healths {
+                        onionbit_db::health::upsert_torrent_state(&tx, &h.infohash)?;
+                        onionbit_db::health::update_torrent_health(
+                            &tx,
+                            &h.infohash,
+                            h.seeders as i64,
+                            h.leechers as i64,
+                            h.last_check as i64,
+                            false,
+                        )?;
+                        if onionbit_db::channel::get_by_infohash(&tx, &h.infohash)?.is_none() {
+                            unknown.push(h.infohash);
+                        }
                     }
-                }
-                Ok(unknown)
-            })
-            .unwrap_or_default()
+                    tx.commit()?;
+                    Ok(unknown)
+                })
+                .await
+                .unwrap_or_default()
+        })
     }
 
     /// Select distant : parametres JSON (`txt_filter`, `infohash`,
@@ -651,86 +733,107 @@ impl ContentProvider for SessionContentProvider {
     /// `origin_id`, `max_rowid`, `hide_xxx`) → chunks `.mdblob`
     /// compresses LZ4 (`send_db_results` Python : un `SelectResponse`
     /// par chunk, archive vide si rien).
-    fn remote_select(&self, json: &[u8]) -> Vec<Vec<u8>> {
-        // `parse_parameters` Python : JSON invalide -> pas de
-        // reponse exploitable (archive vide = `LZ4_EMPTY_ARCHIVE`).
-        let Ok(query) = serde_json::from_slice::<serde_json::Value>(json) else {
-            return vec![lz4_frame(&[])];
-        };
-        // `deprecated_parameters` : rejet (Python renvoie l'archive vide).
-        if DEPRECATED_SELECT_PARAMS
-            .iter()
-            .any(|k| query.get(k).is_some())
-        {
-            tracing::warn!(%query, "remote select avec parametres deprecies");
-            return vec![lz4_frame(&[])];
-        }
-        // `process_rpc_query_rate_limited` : une seule requete
-        // `txt_filter` a la fois, les autres sont ignorees.
-        let rate_limited = query.get("txt_filter").is_some();
-        if rate_limited
-            && self
-                .remote_queries_in_progress
-                .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
-                > 0
-        {
-            self.remote_queries_in_progress
-                .fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
-            return vec![lz4_frame(&[])];
-        }
-        let result = self.remote_select_inner(&query);
-        if rate_limited {
-            self.remote_queries_in_progress
-                .fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
-        }
-        result
+    fn remote_select<'a>(
+        &'a self,
+        json: &'a [u8],
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Vec<Vec<u8>>> + Send + 'a>> {
+        Box::pin(async move {
+            // `parse_parameters` Python : JSON invalide -> pas de
+            // reponse exploitable (archive vide = `LZ4_EMPTY_ARCHIVE`).
+            let Ok(query) = serde_json::from_slice::<serde_json::Value>(json) else {
+                return vec![lz4_frame(&[])];
+            };
+            // `deprecated_parameters` : rejet (Python renvoie l'archive vide).
+            if DEPRECATED_SELECT_PARAMS
+                .iter()
+                .any(|k| query.get(k).is_some())
+            {
+                tracing::warn!(%query, "remote select avec parametres deprecies");
+                return vec![lz4_frame(&[])];
+            }
+            // `process_rpc_query_rate_limited` : une seule requete
+            // `txt_filter` a la fois, les autres sont ignorees.
+            let rate_limited = query.get("txt_filter").is_some();
+            if rate_limited
+                && self
+                    .remote_queries_in_progress
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+                    > 0
+            {
+                self.remote_queries_in_progress
+                    .fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+                return vec![lz4_frame(&[])];
+            }
+            let result = self.remote_select_inner(query).await;
+            if rate_limited {
+                self.remote_queries_in_progress
+                    .fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+            }
+            result
+        })
     }
 
     /// `process_compressed_mdblob` : decompresse LZ4, parse les
     /// entrees et les insere dans `channel_node`. Retourne les
     /// `to_simple_dict()` des objets NOUVEAUX (`ObjState.NEW_OBJECT` —
     /// la dedup `(public_key, id_)` de `channel::insert` fait foi).
-    fn process_select_response(&self, blob: &[u8]) -> Vec<serde_json::Value> {
-        use std::io::Read;
-        let mut data = Vec::new();
-        if lz4_flex::frame::FrameDecoder::new(blob)
-            .read_to_end(&mut data)
-            .is_err()
-        {
-            return Vec::new();
-        }
-        let Ok(entries) = onionbit_format::mdblob::parse_blob(&data) else {
-            return Vec::new();
-        };
-        let (results, new_titles) = self
-            .db
-            .with(|conn| {
-                let mut results = Vec::new();
-                let mut new_titles = Vec::new();
-                for e in &entries {
-                    let Some(row) = entry_to_row(e) else {
-                        continue;
-                    };
-                    if onionbit_db::channel::insert(conn, &row)?.is_none() {
-                        // `DUPLICATE_OBJECT` : exclu des `results`
-                        // (comme `notify_gui` Python).
-                        continue;
+    fn process_select_response<'a>(
+        &'a self,
+        blob: &'a [u8],
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Vec<serde_json::Value>> + Send + 'a>>
+    {
+        Box::pin(async move {
+            use std::io::Read;
+            let mut data = Vec::new();
+            if lz4_flex::frame::FrameDecoder::new(blob)
+                .read_to_end(&mut data)
+                .is_err()
+            {
+                return Vec::new();
+            }
+            let Ok(entries) = onionbit_format::mdblob::parse_blob(&data) else {
+                return Vec::new();
+            };
+            let (results, new_titles) = self
+                .db
+                .call("content.select_response", move |conn| {
+                    // Un blob peut contenir des centaines d'entrees :
+                    // une transaction unique evite un commit WAL par
+                    // ligne (le principal generateur d'I/O disque sous
+                    // rafale de reponses).
+                    let tx = conn.unchecked_transaction()?;
+                    let mut results = Vec::new();
+                    let mut new_titles = Vec::new();
+                    for e in &entries {
+                        let Some(row) = entry_to_row(e) else {
+                            continue;
+                        };
+                        if onionbit_db::channel::insert(&tx, &row)?.is_none() {
+                            // `DUPLICATE_OBJECT` : exclu des `results`
+                            // (comme `notify_gui` Python).
+                            continue;
+                        }
+                        results.push(simple_dict(&tx, &row)?);
+                        if !row.title.is_empty() {
+                            new_titles.push((hex::encode(&row.infohash), row.title.clone()));
+                        }
                     }
-                    results.push(simple_dict(conn, &row)?);
-                    if !row.title.is_empty() {
-                        new_titles.push((hex::encode(&row.infohash), row.title.clone()));
-                    }
-                }
-                Ok((results, new_titles))
-            })
-            .unwrap_or_default();
-        // `torrent_metadata_added` : le notifier consomme aussi les
-        // titres pour l'apprentissage de l'augmenteur.
-        for (infohash, title) in new_titles {
-            self.notifier
-                .notify(crate::notifier::Notification::TorrentMetadataCreated { infohash, title });
-        }
-        results
+                    tx.commit()?;
+                    Ok((results, new_titles))
+                })
+                .await
+                .unwrap_or_default();
+            // `torrent_metadata_added` : le notifier consomme aussi les
+            // titres pour l'apprentissage de l'augmenteur.
+            for (infohash, title) in new_titles {
+                self.notifier
+                    .notify(crate::notifier::Notification::TorrentMetadataCreated {
+                        infohash,
+                        title,
+                    });
+            }
+            results
+        })
     }
 
     /// `(version, plateforme)` pour `VersionResponse` —
@@ -1109,6 +1212,10 @@ impl Ipv8Stack {
                 remote_queries_in_progress: std::sync::atomic::AtomicUsize::new(0),
                 max_response_size: 100,
                 max_payload_size: 1300,
+                healths_cache: Mutex::new(HashMap::new()),
+                healths_cache_ttl: std::time::Duration::from_secs(
+                    config.content_healths_cache_secs,
+                ),
             });
             Some(
                 ContentDiscoveryCommunity::new(
@@ -1165,7 +1272,9 @@ impl Ipv8Stack {
                     min_circuits: config.min_circuits.max(1) as usize,
                     max_circuits: config.max_circuits.max(1) as usize,
                     max_joined_circuits: config.max_joined_circuits,
-                    max_relayed_bps: config.max_relayed_bps,
+                    // Mode auto (-1) : plafond provisoire
+                    // `bandwidth.fallback_bps` jusqu'a la mesure.
+                    max_relayed_bps: initial_relay_bps(config.max_relayed_bps, &config.bandwidth),
                     intro_point_peer: config.intro_point_peer.clone(),
                     data_exit_peer: config.data_exit_peer.clone(),
                     guards: onionbit_tunnel::guards::GuardsConfig {

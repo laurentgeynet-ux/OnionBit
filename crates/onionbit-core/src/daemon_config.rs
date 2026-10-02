@@ -371,6 +371,62 @@ impl Default for LibtorrentConfig {
     }
 }
 
+/// Estimateur de capacité upload (`tunnel_community/bandwidth`) —
+/// extension Rust. Le plafond servi en mode `max_relayed_rate = -1`
+/// est `max(capacité_mesurée × share, floor_bps)`. La capacité est
+/// estimée par meilleure source disponible : débit WAN remonté par
+/// UPnP (`GetLinkLayerMaxBitRates`, gratuit — même canal que la
+/// redirection de port), sonde HTTP `probe_up_urls` (opt-in, vide par
+/// défaut — aucun trafic sortant), pic de débit soutenu observé en
+/// passif sur l'endpoint (borne basse).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct BandwidthConfig {
+    /// Part de la capacité upload allouée au trafic servi (1/3).
+    pub share: f64,
+    /// Plancher du plafond servi une fois mesuré (octets/s) : un
+    /// relais sous ce débit n'apporte rien au réseau.
+    pub floor_bps: u64,
+    /// Plafond servi avant la première mesure (ou mesure impossible)
+    /// en mode auto (octets/s).
+    pub fallback_bps: u64,
+    /// Interroge le routeur UPnP (`WANCommonInterfaceConfig`) pour le
+    /// débit WAN provisionné — trafic LAN uniquement.
+    pub measure_upnp: bool,
+    /// Endpoints HTTP POST recevant un blob pour mesurer l'upload
+    /// (opt-in : liste vide = aucune sonde sortante).
+    pub probe_up_urls: Vec<String>,
+    /// Taille du blob de sonde upload (octets).
+    pub probe_bytes: u64,
+    /// Timeout d'une sonde ou de la découverte UPnP (s).
+    pub probe_timeout_secs: u64,
+    /// Cadence de re-mesure de la capacité (s).
+    pub measure_interval_secs: u64,
+    /// Délai avant la première mesure après le démarrage (s) — laisse
+    /// la stack IPv8 s'établir.
+    pub warmup_secs: u64,
+    /// Tick d'échantillonnage des compteurs endpoint pour le pic
+    /// passif (s).
+    pub sample_secs: u64,
+}
+
+impl Default for BandwidthConfig {
+    fn default() -> Self {
+        Self {
+            share: 1.0 / 3.0,
+            floor_bps: 64 * 1024,
+            fallback_bps: 512 * 1024,
+            measure_upnp: true,
+            probe_up_urls: Vec::new(),
+            probe_bytes: 4 * 1024 * 1024,
+            probe_timeout_secs: 15,
+            measure_interval_secs: 3600,
+            warmup_secs: 30,
+            sample_secs: 5,
+        }
+    }
+}
+
 /// Section `tunnel_community`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -390,11 +446,21 @@ pub struct TunnelCommunityConfig {
     pub max_joined_circuits: u32,
     /// Extension Rust (sans équivalent pyipv8) : débit max du trafic
     /// servi aux autres pairs — cellules relayées + datagrammes de
-    /// sortie — en octets/s. 0 = illimité (défaut). Appliqué à chaud
-    /// via `POST /api/settings` (seau à jetons sur la pompe d'émission
-    /// ; l'excédent est perdu en sémantique UDP, lissé par uTP aux
-    /// extrémités).
-    pub max_relayed_rate: u64,
+    /// sortie — en octets/s. **`-1` = automatique** (défaut : fraction
+    /// `bandwidth/share` de la capacité upload mesurée par
+    /// l'estimateur — voir `BandwidthConfig`), `0` = illimité
+    /// (comportement pyipv8), `>0` = plafond fixe. Le débit servi est
+    /// symétrique (1 datagramme relayé = 1 in + 1 out) : le plafond est
+    /// basé sur l'upload, toujours le facteur limitant — il borne
+    /// automatiquement le download consommé à la même valeur. Appliqué
+    /// à chaud via `POST /api/settings` (seau à jetons sur la pompe
+    /// d'émission ; l'excédent est perdu en sémantique UDP, lissé par
+    /// uTP aux extrémités).
+    pub max_relayed_rate: i64,
+    /// Paramètres de l'estimateur de capacité upload utilisé quand
+    /// `max_relayed_rate = -1` (extension Rust — pyipv8 n'a pas de
+    /// plafond de débit servi).
+    pub bandwidth: BandwidthConfig,
     /// Accepte d'être noeud de sortie (`exitnode_enabled` Tribler).
     pub exitnode_enabled: bool,
     /// Point d'introduction impose `"ip:port"` — extension Rust
@@ -426,7 +492,8 @@ impl Default for TunnelCommunityConfig {
             min_circuits: 3,
             max_circuits: 8,
             max_joined_circuits: 100,
-            max_relayed_rate: 0,
+            max_relayed_rate: -1,
+            bandwidth: BandwidthConfig::default(),
             exitnode_enabled: false,
             intro_point_peer: String::new(),
             data_exit_peer: String::new(),
@@ -971,6 +1038,7 @@ impl DaemonConfig {
             max_circuits: self.tunnel_community.max_circuits,
             max_joined_circuits: self.tunnel_community.max_joined_circuits as usize,
             max_relayed_bps: self.tunnel_community.max_relayed_rate,
+            bandwidth: self.tunnel_community.bandwidth.clone(),
             guards_enabled: self.tunnel_community.guards_enabled,
             socks_listen_ports: self.libtorrent.socks_listen_ports.clone(),
             enable_content_discovery: self.content_discovery_community.enabled,
@@ -978,6 +1046,7 @@ impl DaemonConfig {
             peer_cache_max: crate::ipv8_stack::DEFAULT_PEER_CACHE_MAX,
             peer_cache_max_age_secs: crate::ipv8_stack::DEFAULT_PEER_CACHE_MAX_AGE_SECS,
             peer_persist_interval_secs: crate::ipv8_stack::DEFAULT_PEER_PERSIST_INTERVAL_SECS,
+            content_healths_cache_secs: crate::ipv8_stack::DEFAULT_CONTENT_HEALTHS_CACHE_SECS,
         };
 
         crate::CoreConfig {
@@ -1127,12 +1196,13 @@ mod tests {
     }
 
     /// `tunnel_community/max_relayed_rate` se propage dans
-    /// `Ipv8Config::max_relayed_bps` (extension Rust, defaut 0 =
-    /// illimite comme pyipv8).
+    /// `Ipv8Config::max_relayed_bps` (extension Rust : `-1` = auto —
+    /// l'estimateur regle la fraction d'upload mesuree ; `0` =
+    /// illimite ; `>0` = fixe).
     #[test]
     fn max_relayed_rate_se_propage() {
         let cfg = DaemonConfig::default().to_core_config(Path::new("."));
-        assert_eq!(cfg.ipv8.max_relayed_bps, 0);
+        assert_eq!(cfg.ipv8.max_relayed_bps, -1);
 
         let mut dcfg = DaemonConfig::default();
         dcfg.tunnel_community.max_relayed_rate = 256 * 1024;

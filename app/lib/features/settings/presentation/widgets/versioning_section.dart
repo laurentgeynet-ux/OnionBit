@@ -55,7 +55,7 @@ class VersioningSection extends ConsumerWidget {
             versions.when(
               loading: () => const LinearProgressIndicator(),
               error: (e, _) => ErrorState(
-                message: '$e',
+                error: e,
                 onRetry: () => ref.invalidate(versionsProvider),
               ),
               data: (v) => Padding(

@@ -632,8 +632,10 @@ risque IPv8 sous/sur-estimé, etc.), avec la date.
   de relais imposée par le réseau, configurable dans l'UI
   (« Relais servis maximum », restart-only comme ses voisins).
 - 2026-10-02 (plafond de débit servi) : `tunnel_community/max_relayed_rate`
-  (octets/s, 0 = illimité = défaut pyipv8 — `max_traffic` Python borne
-  le budget de vie par objet, pas le débit ; extension Rust) —
+  en mode **auto par défaut** (`-1` : `bandwidth/share` = 1/3 de la
+  capacité upload mesurée — UPnP WAN `GetLinkLayerMaxBitRates`, sondes
+  POST opt-in, pic passif endpoint ; `0` = illimité, `>0` = fixe —
+  extension Rust, pyipv8 sert sans plafond) —
   seau à jetons (rafale 1 s) sur la pompe d'émission sérialisée,
   couvre cellules relayées **et** datagrammes de sortie ; l'excédent
   est perdu (perte UDP, lissée par uTP aux extrémités). Appliqué à

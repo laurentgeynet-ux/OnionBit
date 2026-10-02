@@ -76,13 +76,20 @@ redémarrage) — parité `set_session_limits` Python + services :
   `TunnelSettings.max_joined_circuits` : plafond de jambes de relais +
   sockets de sortie servies (`should_join_circuit` pyipv8, défaut 100)
   — restart-only.
-- `tunnel_community/max_relayed_rate` →
-  `TunnelSettings.max_relayed_bps` : extension Rust sans équivalent
-  pyipv8 — débit max (octets/s, 0 = illimité) du trafic servi aux
-  autres pairs (cellules relayées + datagrammes de sortie), seau à
-  jetons sur la pompe d'émission sérialisée, excédent perdu en
-  sémantique UDP ; appliqué à chaud via `POST /api/settings`
-  (`set_relay_rate_bps`).
+- `tunnel_community/max_relayed_rate` → `Ipv8Config.max_relayed_bps`
+  (mode, `i64`) : extension Rust sans équivalent pyipv8 — **`-1` =
+  auto** (défaut produit : `bandwidth/share` × capacité upload
+  mesurée par l'estimateur, `floor_bps` plancher, `fallback_bps`
+  avant mesure), `0` = illimité, `>0` = plafond fixe. Seau à jetons
+  sur la pompe d'émission sérialisée (cellules relayées + datagrammes
+  de sortie), excédent perdu en sémantique UDP ; appliqué à chaud
+  (`set_relay_rate_bps`). Ne borne pas le trafic propre du nœud.
+- `tunnel_community/bandwidth/*` → `Ipv8Config.bandwidth` : paramètres
+  de l'estimateur de capacité upload (`services/bandwidth.rs`) —
+  débit WAN UPnP (`GetLinkLayerMaxBitRates`), sondes HTTP POST
+  opt-in (`probe_up_urls`), pic passif endpoint ; mesure à warmup +
+  `measure_interval_secs`, réappliquée à chaud en mode auto.
+  Exposée via `/api/statistics/ipv8` (`bandwidth`).
 - `ipv8/interfaces[UDPIPv6]` → second socket `UdpEndpoint` IPv6.
 - `ipv8/logger_level` → directive par-crate fusionnée dans l'`EnvFilter`.
 - `content_discovery_community/enabled` → gate de

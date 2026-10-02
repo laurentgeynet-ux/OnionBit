@@ -63,6 +63,8 @@ struct Services {
     checker: Option<Arc<crate::services::torrent_checker::TorrentChecker>>,
     /// Arret de la boucle periodique du checker.
     checker_stop: Option<tokio::sync::watch::Sender<bool>>,
+    /// Arret de la tache de mesure de capacite (`bandwidth`).
+    bandwidth_stop: Option<tokio::sync::watch::Sender<bool>>,
 }
 
 /// Reglages applicables a chaud sans redemarrer la session.
@@ -161,6 +163,10 @@ struct Inner {
     /// titres de torrents, utilise par `local_search` (`augmenter`
     /// du `DatabaseEndpoint`).
     augmenter: Arc<crate::augmenter::Augmenter>,
+    /// Estimateur de capacite upload (`tunnel_community/bandwidth`) —
+    /// regle `max_relayed_rate` en mode auto ; consultable via
+    /// `/api/statistics/tribler` (`bandwidth`).
+    bandwidth: Arc<crate::services::bandwidth::BandwidthEstimator>,
     /// Horodatage de demarrage — expose via `uptime_secs`
     /// (`GET /api/statistics/tribler`).
     started_at: std::time::Instant,
@@ -214,6 +220,7 @@ impl CoreSession {
                 stopped: std::sync::atomic::AtomicBool::new(false),
                 restore_done: tokio::sync::watch::channel(false).0,
                 augmenter: augmenter.clone(),
+                bandwidth: Arc::new(crate::services::bandwidth::BandwidthEstimator::new()),
                 started_at: std::time::Instant::now(),
             }),
         };
@@ -270,6 +277,7 @@ impl CoreSession {
                 // marquee terminee d'emblee.
                 restore_done: tokio::sync::watch::channel(true).0,
                 augmenter,
+                bandwidth: Arc::new(crate::services::bandwidth::BandwidthEstimator::new()),
                 started_at: std::time::Instant::now(),
             }),
         };
@@ -1902,6 +1910,23 @@ impl CoreSession {
                 Err(e) => tracing::warn!(error = %e, "torrent checker indisponible"),
             }
         }
+        // Estimateur de capacite upload (`tunnel_community/bandwidth`) :
+        // mesure UPnP/sonde periodique + pic passif endpoint ; en mode
+        // `max_relayed_rate = -1` applique `upload × share` a chaud sur
+        // le limiteur tunnel. Sans IPv8 l'endpoint n'existe pas.
+        if config.ipv8.enabled {
+            let (stop_tx, mut stop_rx) = tokio::sync::watch::channel(false);
+            let this = self.clone();
+            tokio::spawn(async move {
+                crate::services::bandwidth::run_bandwidth_task(this, &mut stop_rx).await;
+            });
+            self.inner.asyncio.tasks.register(
+                Some("BandwidthEstimator"),
+                "measure",
+                Some(config.ipv8.bandwidth.sample_secs as f64),
+            );
+            services.bandwidth_stop = Some(stop_tx);
+        }
         *self.inner.services.lock().unwrap() = services;
     }
 
@@ -1919,6 +1944,12 @@ impl CoreSession {
     /// false` — equivalent de `session.ipv8` conditionnel Python).
     pub fn ipv8(&self) -> Option<Arc<crate::ipv8_stack::Ipv8Stack>> {
         self.inner.ipv8.clone()
+    }
+
+    /// Estimateur de capacite upload (`tunnel_community/bandwidth`) —
+    /// mesures + pic passif + plafond applique (diagnostics).
+    pub fn bandwidth(&self) -> Arc<crate::services::bandwidth::BandwidthEstimator> {
+        self.inner.bandwidth.clone()
     }
 
     /// Moniteur `/api/ipv8/asyncio/*` (drift, taches, debug).
@@ -2041,8 +2072,14 @@ impl CoreSession {
                 tunnel.guards.set_enabled(config.ipv8.guards_enabled);
                 // `tunnel_community/max_relayed_rate` (extension Rust)
                 // : seau a jetons de la pompe d'emission, reglage a
-                // chaud — 0 = illimite.
-                tunnel.set_relay_rate_bps(config.ipv8.max_relayed_bps);
+                // chaud — `-1` = auto (upload mesure × share, via
+                // l'estimateur), `0` = illimite, `>0` = fixe.
+                let rate = if config.ipv8.max_relayed_bps < 0 {
+                    self.inner.bandwidth.effective_bps(&config.ipv8.bandwidth)
+                } else {
+                    config.ipv8.max_relayed_bps as u64
+                };
+                tunnel.set_relay_rate_bps(rate);
             }
         }
         // `set_session_limits` Python : les bornes de debit de
@@ -2156,6 +2193,9 @@ impl CoreSession {
         if let Some(tx) = &services.checker_stop {
             let _ = tx.send(true);
         }
+        if let Some(tx) = &services.bandwidth_stop {
+            let _ = tx.send(true);
+        }
         // Arret des lanes anonymes puis de la stack IPv8 (overlays +
         // interface SOCKS5 locale des lanes).
         self.shutdown_state("Shutting down IPv8 peer-to-peer overlays.");
@@ -2169,6 +2209,11 @@ impl CoreSession {
         // `on_shutdown` de `AugmentedSearch` : persiste la fenetre de
         // titres en attente pour le prochain demarrage.
         self.inner.augmenter.flush_cache();
+        // Checkpoint WAL final : le journal est rejoue dans le fichier
+        // principal puis tronque — le prochain demarrage part d'une
+        // base compacte au lieu de rejouer plusieurs Mio de WAL.
+        let db = self.inner.db.clone();
+        let _ = tokio::task::spawn_blocking(move || db.checkpoint()).await;
         self.shutdown_state("Shutting down GUI connection. Going dark.");
     }
 }

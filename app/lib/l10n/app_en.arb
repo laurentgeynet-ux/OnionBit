@@ -46,6 +46,8 @@
     "placeholders": { "url": { "type": "String" } }
   },
   "retry": "Retry",
+  "daemonUnreachableTitle": "Daemon unreachable",
+  "daemonUnreachableBody": "OnionBit cannot reach the daemon at {url}. Make sure it is running, then retry.",
   "configure": "Configure…",
   "daemonKeyRequired": "Daemon reachable — API key required (see Configure…)",
   "@daemonKeyRequired": {
@@ -299,6 +301,17 @@
   "statLanes": "Anonymous lanes",
   "statDataCircuits": "Ready DATA circuits",
   "statExitsActive": "Active exits (relaying)",
+  "statBwUpload": "Measured upload capacity",
+  "statBwUploadValue": "{rate} · {source}",
+  "statBwServed": "Served peer traffic cap",
+  "statBwDropped": "Served datagrams dropped (cap)",
+  "bwSourceUpnp": "UPnP router",
+  "bwSourceProbe": "HTTP probe",
+  "bwSourcePassive": "observed peak",
+  "bwSourcePending": "measuring…",
+  "bwUnlimited": "unlimited",
+  "statusRelayCap": "relay ≤ {rate}",
+  "statusRelayCapTip": "Cap on relayed/exit traffic served to other peers — automatic: one third of measured upload capacity (Diagnostics → Statistics)",
   "statNone": "none",
 
   "logsDebugTooltip": "Logs detailed tunnel events (create/extend/destroy, e2e…)",
@@ -460,8 +473,7 @@
   "circuitsMaxLabel": "Maximum circuits (default: 8)",
   "relaysMaxLabel": "Maximum relays served (default: 100)",
   "relaysMaxNote": "Relay legs + exit sockets served simultaneously for other peers. Beyond this, incoming circuit requests are refused. Applied on restart.",
-  "relayRateMaxLabel": "Maximum served rate (KiB/s, 0 = unlimited)",
-  "relayRateMaxNote": "Bandwidth cap for relayed and exit traffic served to other peers. Excess datagrams are dropped (endpoints smooth the load). Applied immediately — OnionBit extension not present in Tribler.",
+  "relayRateAutoNote": "Served bandwidth is managed automatically: capped at one third of your measured upload capacity (UPnP WAN query, optional probes, observed peak — never throttling your own anonymous downloads). Force a fixed value via tunnel_community/max_relayed_rate in configuration.json (0 = unlimited, -1 = auto).",
   "anonCircuitsNote": "Circuits maintained permanently per anonymous lane; live detail in Diagnostics → Circuits.",
 
   "netSaved": "Network settings saved",

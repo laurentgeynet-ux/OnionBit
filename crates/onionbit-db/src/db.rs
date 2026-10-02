@@ -125,6 +125,17 @@ impl Database {
     pub fn schema_version(&self) -> Result<i64> {
         self.with(|c| Ok(c.pragma_query_value(None, "user_version", |r| r.get(0))?))
     }
+
+    /// Checkpoint WAL final (`TRUNCATE`) : rejoue le journal dans le
+    /// fichier principal puis le vide. A appeler a l'arret de la
+    /// session — evite de trainer un WAL de plusieurs Mio entre deux
+    /// sessions et accelere le prochain open.
+    pub fn checkpoint(&self) -> Result<()> {
+        self.with(|c| {
+            c.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")?;
+            Ok(())
+        })
+    }
 }
 
 /// Reglages de connexion communs (journal WAL, foreign keys,
@@ -138,6 +149,11 @@ fn configure(conn: &Connection) -> Result<()> {
     // Durabilite relachee mais sure en WAL : un checkpoint reste
     // atomique, on evite le fsync a chaque transaction.
     let _ = conn.pragma_update(None, "synchronous", "NORMAL");
+    // Checkpoint auto du WAL : le defaut (1000 pages ≈ 4 Mio)
+    // declenche le checkpoint en pleine rafale d'ecriture — on le
+    // decale a ~32 Mio ; le checkpoint TRUNCATE a l'arret borne le
+    // journal entre deux sessions.
+    let _ = conn.pragma_update(None, "wal_autocheckpoint", 8_000i64);
     // La connexion est serialisee par le `Mutex`, mais WAL autorise
     // des lecteurs externes (fichier) : ne jamais rendre SQLITE_BUSY
     // immediatement.

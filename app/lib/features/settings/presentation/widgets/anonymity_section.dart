@@ -27,7 +27,6 @@ class _AnonymitySectionState extends ConsumerState<AnonymitySection> {
   final _minCircuits = TextEditingController();
   final _maxCircuits = TextEditingController();
   final _maxRelays = TextEditingController();
-  final _maxRelayRate = TextEditingController();
   bool _initialized = false;
   bool _saving = false;
 
@@ -43,7 +42,6 @@ class _AnonymitySectionState extends ConsumerState<AnonymitySection> {
     _minCircuits.dispose();
     _maxCircuits.dispose();
     _maxRelays.dispose();
-    _maxRelayRate.dispose();
     super.dispose();
   }
 
@@ -55,9 +53,6 @@ class _AnonymitySectionState extends ConsumerState<AnonymitySection> {
         '${settingsInt(settings, [..._t, 'max_circuits'], def: 8)}';
     _maxRelays.text =
         '${settingsInt(settings, [..._t, 'max_joined_circuits'], def: 100)}';
-    // `max_relayed_rate` est en octets/s ; saisie en Kio/s.
-    _maxRelayRate.text =
-        '${settingsInt(settings, [..._t, 'max_relayed_rate'], def: 0) ~/ 1024}';
     _initialized = true;
   }
 
@@ -71,8 +66,7 @@ class _AnonymitySectionState extends ConsumerState<AnonymitySection> {
     final min = int.tryParse(_minCircuits.text.trim()) ?? 3;
     final max = int.tryParse(_maxCircuits.text.trim()) ?? 8;
     final relays = int.tryParse(_maxRelays.text.trim()) ?? 100;
-    final rateKib = int.tryParse(_maxRelayRate.text.trim()) ?? 0;
-    if (min < 0 || max < min || relays < 0 || rateKib < 0) {
+    if (min < 0 || max < min || relays < 0) {
       setState(() => _saving = false);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(context.l10n.anonMinMaxError)),
@@ -84,7 +78,6 @@ class _AnonymitySectionState extends ConsumerState<AnonymitySection> {
         'min_circuits': min,
         'max_circuits': max,
         'max_joined_circuits': relays,
-        'max_relayed_rate': rateKib * 1024,
       },
     }, successMessage: context.l10n.anonSaved);
     _deferred.markClean();
@@ -171,19 +164,12 @@ class _AnonymitySectionState extends ConsumerState<AnonymitySection> {
               ),
             ),
             const SizedBox(height: AppSpacing.sm),
-            TextField(
-              controller: _maxRelayRate,
-              onChanged: (_) => _deferred.markDirty(),
-              keyboardType: TextInputType.number,
-              decoration: InputDecoration(
-                labelText: l10n.relayRateMaxLabel,
-                helperText: l10n.relayRateMaxNote,
-                helperMaxLines: 3,
-                isDense: true,
-                suffixIcon: const KeyInfoIcon([
-                  'tunnel_community',
-                  'max_relayed_rate',
-                ]),
+            // `max_relayed_rate` est auto (`-1`) : fraction de
+            // l'upload mesure par l'estimateur — plus de saisie.
+            Text(
+              l10n.relayRateAutoNote,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
               ),
             ),
             const SizedBox(height: AppSpacing.xs),

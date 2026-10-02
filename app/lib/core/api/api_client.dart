@@ -21,6 +21,21 @@ class ApiException implements Exception {
   String toString() => 'ApiException($statusCode): $message';
 }
 
+/// Le daemon ne repond pas (eteint, port ferme, refus de connexion) —
+/// pas une erreur HTTP mais un echec de transport. `http.ClientException`
+/// enveloppe `SocketException` cote natif et le `TypeError` fetch cote
+/// web : ce type unique permet a l'UI d'afficher un message clair au
+/// lieu de la trace brute.
+class DaemonUnreachableException implements Exception {
+  DaemonUnreachableException(this.uri, this.cause);
+
+  final Uri uri;
+  final Object cause;
+
+  @override
+  String toString() => 'DaemonUnreachableException: $uri ($cause)';
+}
+
 /// Client REST de `onionbit-api`.
 ///
 /// Toutes les features passent par cette classe (comme `RpcClient`
@@ -43,10 +58,13 @@ class ApiClient {
 
   /// `GET` d'une réponse en texte brut (`/api/logging` n'est pas JSON).
   Future<String> getText(String path, {Map<String, String>? query}) async {
-    final resp = await _http.get(
-      _config.apiUri(path, query),
-      headers: _headers,
-    );
+    final uri = _config.apiUri(path, query);
+    final http.Response resp;
+    try {
+      resp = await _http.get(uri, headers: _headers);
+    } on http.ClientException catch (e) {
+      throw DaemonUnreachableException(uri, e);
+    }
     if (resp.statusCode >= 400) throw _decodeError(resp);
     return resp.body;
   }
@@ -107,9 +125,15 @@ class ApiClient {
     String path, {
     Map<String, String>? query,
   }) async* {
-    final request = http.Request('GET', _config.apiUri(path, query));
+    final uri = _config.apiUri(path, query);
+    final request = http.Request('GET', uri);
     request.headers.addAll(_headers);
-    final resp = await _http.send(request);
+    final http.StreamedResponse resp;
+    try {
+      resp = await _http.send(request);
+    } on http.ClientException catch (e) {
+      throw DaemonUnreachableException(uri, e);
+    }
     if (resp.statusCode >= 400) {
       final body = await resp.stream.bytesToString();
       var message = body;
@@ -136,7 +160,13 @@ class ApiClient {
     String path,
     Map<String, String>? query,
   ) async {
-    final resp = await call(_config.apiUri(path, query));
+    final uri = _config.apiUri(path, query);
+    final http.Response resp;
+    try {
+      resp = await call(uri);
+    } on http.ClientException catch (e) {
+      throw DaemonUnreachableException(uri, e);
+    }
     if (resp.statusCode >= 400) {
       throw _decodeError(resp);
     }

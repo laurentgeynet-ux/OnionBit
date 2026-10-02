@@ -169,9 +169,22 @@ fn init_tracing(state_dir: &std::path::Path, daemon_config: &DaemonConfig) {
 
     // Pont `PUT /debug` → `EnvFilter` : le hook vit dans
     // `onionbit-core` (la couche REST ne depend pas du daemon).
+    // En mode debug, les crates librqbit vendored restent a `info` :
+    // leurs journaux par pair/datagramme (manage_peer timeouts, DHT
+    // response_reader, udp_tracker, utp out-of-order) produisaient
+    // ~30-40k lignes/session et noyaient les logs metier. `RUST_LOG`
+    // redonne le controle total pour deboguer librqbit lui-meme.
     onionbit_core::asyncio::set_filter_reload(move |enable| {
         let directive = if enable {
-            "debug".to_string()
+            concat!(
+                "debug",
+                ",librqbit=info",
+                ",librqbit_dht=info",
+                ",librqbit_utp=info",
+                ",librqbit_tracker_comms=info",
+                ",librqbit_dualstack_sockets=info",
+            )
+            .to_string()
         } else {
             default_directive.clone()
         };
