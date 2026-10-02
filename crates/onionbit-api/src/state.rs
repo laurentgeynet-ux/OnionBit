@@ -102,6 +102,10 @@ pub struct AppState {
     /// Cache single-flight des lignes `downloads` + `torrent_states`
     /// lues par `GET /api/downloads` — voir `DownloadsRowsCache`.
     pub downloads_rows: Arc<DownloadsRowsCache>,
+    /// Repertoire du build Flutter web servi en fallback hors `/api`
+    /// (`api/web_ui_*` de `DaemonConfig` — statiques exemptes d'auth,
+    /// parite `/ui`/`/static` Python ; `None` = rien de servi).
+    pub web_ui_dir: Option<PathBuf>,
 }
 
 impl AppState {
@@ -117,6 +121,7 @@ impl AppState {
             sse_sessions: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             shutdown_notify: None,
             downloads_rows: Arc::new(DownloadsRowsCache::default()),
+            web_ui_dir: None,
         }
     }
 
@@ -143,6 +148,13 @@ impl AppState {
     /// terminera le processus, pas seulement la session).
     pub fn with_shutdown_notify(mut self, notify: Arc<tokio::sync::Notify>) -> Self {
         self.shutdown_notify = Some(notify);
+        self
+    }
+
+    /// Sert le build Flutter web de `dir` en same-origin (statiques
+    /// hors `/api`, exemptes d'authentification).
+    pub fn with_web_ui_dir(mut self, dir: Option<PathBuf>) -> Self {
+        self.web_ui_dir = dir;
         self
     }
 

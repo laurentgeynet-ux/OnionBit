@@ -26,6 +26,12 @@ pub struct TrayOptions {
     pub logs_dir: PathBuf,
     /// `onionbit_ui.exe` à côté du daemon (`None` → item désactivé).
     pub ui_exe: Option<PathBuf>,
+    /// Port HTTP réel de l'API (publié après le bind) — lu par
+    /// « Ouvrir dans le navigateur » au moment du clic.
+    pub api_port: std::sync::Arc<std::sync::atomic::AtomicU16>,
+    /// L'UI web est servie par le daemon (`api/web_ui_*` resolu) —
+    /// active l'item « Ouvrir dans le navigateur ».
+    pub web_ui_served: bool,
     /// Ligne de commande écrite dans la clé Run (autostart).
     pub autostart_cmd: String,
     /// Couleur d'icône personnalisée (`tray_icon_color` Python —
@@ -133,6 +139,7 @@ mod windows_impl {
         let thread_id = unsafe { GetCurrentThreadId() };
 
         let open_ui = MenuItem::new("Ouvrir OnionBit", opts.ui_exe.is_some(), None);
+        let open_browser = MenuItem::new("Ouvrir dans le navigateur", opts.web_ui_served, None);
         let autostart_item =
             CheckMenuItem::new("Démarrer avec Windows", true, autostart::is_enabled(), None);
         let open_logs = MenuItem::new("Ouvrir le dossier des logs", true, None);
@@ -142,6 +149,7 @@ mod windows_impl {
         if menu
             .append_items(&[
                 &open_ui,
+                &open_browser,
                 &autostart_item,
                 &open_logs,
                 &PredefinedMenuItem::separator(),
@@ -178,7 +186,14 @@ mod windows_impl {
             while GetMessageW(&mut msg, null_mut(), 0, 0) > 0 {
                 TranslateMessage(&msg);
                 DispatchMessageW(&msg);
-                drain_menu_events(&opts, &open_ui, &autostart_item, &open_logs, &quit);
+                drain_menu_events(
+                    &opts,
+                    &open_ui,
+                    &open_browser,
+                    &autostart_item,
+                    &open_logs,
+                    &quit,
+                );
                 if let Some(rx) = &opts.tooltip_rx {
                     while let Ok(tip) = rx.try_recv() {
                         let _ = tray.set_tooltip(Some(&tip));
@@ -193,6 +208,7 @@ mod windows_impl {
     fn drain_menu_events(
         opts: &TrayOptions,
         open_ui: &MenuItem,
+        open_browser: &MenuItem,
         autostart_item: &CheckMenuItem,
         open_logs: &MenuItem,
         quit: &MenuItem,
@@ -208,6 +224,16 @@ mod windows_impl {
                 if let Some(exe) = &opts.ui_exe {
                     if let Err(e) = Command::new(exe).spawn() {
                         tracing::warn!(error = %e, "lancement de onionbit_ui impossible");
+                    }
+                }
+            } else if id == open_browser.id() {
+                // UI web servie par le daemon : navigateur par défaut
+                // sur l'origine loopback (clé API demandée par l'UI).
+                let port = opts.api_port.load(std::sync::atomic::Ordering::Relaxed);
+                if port > 0 {
+                    let url = format!("http://127.0.0.1:{port}/");
+                    if let Err(e) = Command::new("cmd").args(["/c", "start", "", &url]).spawn() {
+                        tracing::warn!(error = %e, "ouverture du navigateur impossible");
                     }
                 }
             } else if id == autostart_item.id() {

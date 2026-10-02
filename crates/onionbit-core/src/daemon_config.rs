@@ -69,6 +69,15 @@ pub struct ApiConfig {
     pub http_port_running: u16,
     /// Port HTTPS réellement lié.
     pub https_port_running: u16,
+    /// Sert l'interface web Flutter sous `/` (statiques exemptes
+    /// d'authentification — parite des exemptions `/ui`/`/static` de
+    /// l'`ApiKeyMiddleware` Python ; `/api/*` reste derriere la cle).
+    /// Extension Rust : pas d'equivalent dans `TriblerConfig`.
+    pub web_ui_enabled: bool,
+    /// Repertoire du build web (`index.html` a la racine) ; vide =
+    /// detection automatique par le daemon (`<exe>/web`,
+    /// `state_dir/web`, puis `app/build/web` du depot en dev).
+    pub web_ui_dir: String,
 }
 
 impl Default for ApiConfig {
@@ -84,6 +93,8 @@ impl Default for ApiConfig {
             https_certfile: "https_certfile".into(),
             http_port_running: 0,
             https_port_running: 0,
+            web_ui_enabled: true,
+            web_ui_dir: String::new(),
         }
     }
 }

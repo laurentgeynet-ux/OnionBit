@@ -3069,3 +3069,73 @@ async fn logging_trouve_le_journal_rolle_par_date() {
     assert_eq!(text.trim(), "ligne recente");
     srv.session.stop().await;
 }
+
+#[tokio::test]
+async fn web_ui_statiques_exemptes_d_auth() {
+    // UI web servie par le daemon : statiques hors `/api` sans clé
+    // (parité exemptions `/ui`/`/static` Python), `/api/*` toujours
+    // protégé, repli SPA vers index.html, pas de sortie de racine.
+    let dir = tempfile::tempdir().unwrap();
+    let web = dir.path().join("web");
+    std::fs::create_dir_all(web.join("assets")).unwrap();
+    std::fs::write(web.join("index.html"), "<html>onionbit ui</html>").unwrap();
+    std::fs::write(web.join("assets/app.js"), "// js").unwrap();
+    // Secret hors de la racine servie : ne doit jamais fuiter.
+    std::fs::write(dir.path().join("secret.txt"), "TOPSECRET").unwrap();
+
+    let session =
+        CoreSession::start_offline(CoreConfig::offline(dir.path().into()), Notifier::new())
+            .await
+            .unwrap();
+    let state = AppState::new(session.clone())
+        .with_api_key("cle-test")
+        .with_web_ui_dir(Some(web));
+    let app = build(state);
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let client = reqwest::Client::new();
+    let url = |p: &str| format!("http://{addr}{p}");
+
+    // Statique racine sans clé : 200 + en-têtes de sécurité.
+    let resp = client.get(url("/")).send().await.unwrap();
+    assert_eq!(resp.status(), 200);
+    assert_eq!(
+        resp.headers().get("x-content-type-options").unwrap(),
+        "nosniff"
+    );
+    assert_eq!(resp.headers().get("cache-control").unwrap(), "no-cache");
+    assert_eq!(resp.text().await.unwrap(), "<html>onionbit ui</html>");
+
+    // Asset + repli SPA (route inconnue hors /api → index.html).
+    let resp = client.get(url("/assets/app.js")).send().await.unwrap();
+    assert_eq!(resp.status(), 200);
+    assert_eq!(resp.text().await.unwrap(), "// js");
+    let resp = client.get(url("/downloads/abc")).send().await.unwrap();
+    assert_eq!(resp.status(), 200);
+    assert_eq!(resp.text().await.unwrap(), "<html>onionbit ui</html>");
+
+    // Traversée de chemin : le secret hors racine n'est pas servi.
+    let resp = client.get(url("/%2e%2e/secret.txt")).send().await.unwrap();
+    assert_ne!(resp.text().await.unwrap(), "TOPSECRET");
+
+    // `/api/*` reste derrière la clé — même un chemin inconnu (401,
+    // pas 404 — parité ApiKeyMiddleware).
+    let resp = client.get(url("/api/downloads")).send().await.unwrap();
+    assert_eq!(resp.status(), 401);
+    let resp = client.get(url("/api/inconnu")).send().await.unwrap();
+    assert_eq!(resp.status(), 401);
+    let resp = client.get(url("/api")).send().await.unwrap();
+    assert_eq!(resp.status(), 401);
+    let resp = client
+        .get(url("/api/downloads"))
+        .header("X-Api-Key", "cle-test")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    session.stop().await;
+}

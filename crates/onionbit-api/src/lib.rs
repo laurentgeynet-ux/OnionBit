@@ -19,6 +19,7 @@ pub mod error;
 pub mod handlers;
 pub mod router;
 pub mod state;
+mod webui;
 
 pub use error::{ApiError, ApiErrorBody};
 pub use router::build;
