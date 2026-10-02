@@ -564,9 +564,11 @@ risque IPv8 sous/sur-estimé, etc.), avec la date.
   le pool de candidats (auto-adoption guard via `rp_info` nous
   élisant RP) et bypass guards des circuits RP via `pick_first_hop`.
   Persistance redémarrage vérifiée sur réseau public réel (set 3
-  actifs + 2 réserve rechargé à l'identique). Reste : run baseline
-  sans guards, session fingerprint Tribler (API affamée par la
-  charge), activation par défaut toujours différée.
+  actifs + 2 réserve rechargé à l'identique). Baseline sans guards
+  exécutée (`interop-noguards-B-h1`) : `enabled=false`, set vide,
+  premier hop libre (`beb1d983…`) — tirage pyipv8 inchangé. Reste :
+  session fingerprint Tribler (API affamée par la charge, à refaire
+  post-campagne), activation par défaut toujours différée.
 - 2026-10-02 : campagne libFuzzer de référence terminée — 6/6
   cibles, 6,28 Md d'exécutions, 0 crash/timeout/OOM
   (`docs/security/fuzz_journal.md`). Guard nodes expérimentaux
