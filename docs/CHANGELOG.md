@@ -3,6 +3,21 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Guards : maintenance proactive + persistance redémarrage (2026-10-02)
+
+- `do_guard_maintenance` dans `run_maintenance` (cadence
+  `guards.maintenance_interval`, défaut 60 s, no-op si désactivé) :
+  purge des guards expirés/injoignables, promotion de la réserve,
+  adoptions anticipées sur le pool courant — **jamais sous pression
+  d'un storm `DESTROY`**. Refactor : pool de candidats extrait en
+  `first_hop_pool` (partagé avec `first_hop_candidates`).
+- Test `CoreSession` fichier `guards_survivent_au_redemarrage_du_daemon`
+  : adoption → `stop` → nouvelle session même `state_dir` → guard
+  rechargé depuis `onionbit.db`. Contrepartie
+  `guards_desactivees_ne_chargent_pas_le_set` (repli pyipv8 strict).
+- ADR-0010 : statut des tests attendus mis à jour (tous ✅) + défaut
+  `guards_enabled=false` corrigé dans la section non-régression.
+
 ## Observabilité circuits↔downloads anonymes (2026-10-02)
 
 - `GET /api/ipv8/tunnel/debug/circuit-downloads` — **extension Rust**

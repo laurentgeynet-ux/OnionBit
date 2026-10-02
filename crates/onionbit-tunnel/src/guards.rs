@@ -45,6 +45,11 @@ pub struct GuardsConfig {
     /// Echecs de handshake `create` consecutifs avant retrogradation
     /// immediate — independante de l'horloge (3).
     pub max_failures: u32,
+    /// Cadence de la maintenance proactive du set (purge des expires,
+    /// adoptions anticipees sur le pool courant) — hors construction
+    /// de circuit, pour ne jamais adopter sous la pression d'un
+    /// storm (60 s).
+    pub maintenance_interval: Duration,
 }
 
 impl Default for GuardsConfig {
@@ -56,6 +61,7 @@ impl Default for GuardsConfig {
             lifetime: Duration::from_secs(30 * 24 * 60 * 60),
             unreachable_after: Duration::from_secs(24 * 60 * 60),
             max_failures: 3,
+            maintenance_interval: Duration::from_secs(60),
         }
     }
 }

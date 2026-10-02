@@ -1831,6 +1831,21 @@ impl TunnelCommunity {
         ctype: &str,
         required_key: Option<&[u8]>,
     ) -> Vec<Peer> {
+        let candidates = self.first_hop_pool(ctype, required_key);
+        if !self.settings.guards.enabled {
+            return candidates;
+        }
+        // ADR-0010 : les guards actifs prennent la tete, suivis de la
+        // reserve puis du tirage libre — jamais de nouveau tirage
+        // d'entree sous pression (storm de DESTROY).
+        self.guards.ensure(&candidates);
+        self.guards.order_first_hops(candidates)
+    }
+
+    /// Pool brut des premiers hops possibles (`possible_first_hops`
+    /// pyipv8, avant ordonnancement guards) — partage entre
+    /// `first_hop_candidates` et la maintenance periodique des guards.
+    fn first_hop_pool(&self, ctype: &str, required_key: Option<&[u8]>) -> Vec<Peer> {
         let mut freq: Vec<(Peer, usize)> = Vec::new();
         let mut push = |p: Peer| match freq
             .iter_mut()
@@ -1868,15 +1883,7 @@ impl TunnelCommunity {
         // Tri stable par frequence ascendante : les sauts deja utilises
         // passent en dernier, les egalites restent brassées.
         possible.sort_by_key(|(_, n)| *n);
-        let candidates: Vec<Peer> = possible.into_iter().map(|(p, _)| p).collect();
-        if !self.settings.guards.enabled {
-            return candidates;
-        }
-        // ADR-0010 : les guards actifs prennent la tete, suivis de la
-        // reserve puis du tirage libre — jamais de nouveau tirage
-        // d'entree sous pression (storm de DESTROY).
-        self.guards.ensure(&candidates);
-        self.guards.order_first_hops(candidates)
+        possible.into_iter().map(|(p, _)| p).collect()
     }
 
     /// `await circuit.ready` pyipv8 : attend que le circuit atteigne
@@ -2545,13 +2552,20 @@ impl TunnelCommunity {
         let mut circuits_tick = tokio::time::interval(Duration::from_secs(5));
         let mut ping_tick = tokio::time::interval(self.settings.ping_interval);
         let mut discovery_tick = tokio::time::interval(Duration::from_secs(10));
-        for t in [&mut circuits_tick, &mut ping_tick, &mut discovery_tick] {
+        let mut guards_tick = tokio::time::interval(self.settings.guards.maintenance_interval);
+        for t in [
+            &mut circuits_tick,
+            &mut ping_tick,
+            &mut discovery_tick,
+            &mut guards_tick,
+        ] {
             t.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         }
         // Premier tick immediat absorbe (rien a faire au demarrage).
         circuits_tick.tick().await;
         ping_tick.tick().await;
         discovery_tick.tick().await;
+        guards_tick.tick().await;
         loop {
             tokio::select! {
                 _ = circuits_tick.tick() => {
@@ -2560,8 +2574,24 @@ impl TunnelCommunity {
                 }
                 _ = ping_tick.tick() => self.do_ping().await,
                 _ = discovery_tick.tick() => self.do_peer_discovery().await,
+                _ = guards_tick.tick() => self.do_guard_maintenance(),
             }
         }
+    }
+
+    /// ADR-0010 : maintien proactif du set de guards hors construction
+    /// de circuit — purge des expires/injoignables, promotion de la
+    /// reserve, adoption anticipee sur le pool courant et persistance.
+    /// Les adoptions ne se font alors jamais sous la pression d'un
+    /// storm de `DESTROY`. No-op quand la feature est desactivee.
+    fn do_guard_maintenance(&self) {
+        if !self.settings.guards.enabled {
+            return;
+        }
+        // Pool « de reference » : candidats `DATA` sans `required_exit`
+        // — la meme famille de relais que les premiers hops reels.
+        let candidates = self.first_hop_pool(crate::routing::CIRCUIT_TYPE_DATA, None);
+        self.guards.ensure(&candidates);
     }
 
     /// `do_remove` Python : retire les circuits/relais/sorties

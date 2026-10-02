@@ -168,11 +168,11 @@ meilleur candidat restant et on logue `guards_diversite_partielle`.
 
 ### Non-régression `guards_enabled=false`
 
-Setting `tunnel.community.guards_enabled` (défaut `true` en anonyme).
-`false` → `first_hop_candidates` inchangé, aucune lecture/écriture de
-la table `guards` — repli strict pyipv8. Le test de régression compare
-la distribution des premiers hops avec/sans guards sur le même pool
-et vérifie l'absence totale d'effet de bord en mode `false`.
+Setting `tunnel_community/guards_enabled` (défaut `false` — feature
+expérimentale). `false` → `first_hop_candidates` inchangé, aucune
+lecture/écriture de la table `guards` — repli strict pyipv8. Le test
+de régression compare l'ordre des premiers hops avec/sans guards sur
+le même pool (`desactive_est_le_tirage_pyipv8_exact`).
 
 ## Point d'intégration
 
@@ -199,9 +199,18 @@ que l'entrée du circuit.
   reste un tirage par circuit (les guards de sortie Tor n'existent
   pas non plus).
 
-## Tests attendus à l'implémentation
+## Tests attendus à l'implémentation — statut
 
-- Persistance : redémarrage → mêmes guards rechargés depuis la base.
-- Storm : destroys en rafale → premiers hops ⊆ set de guards.
-- Rotation : guard en échec répété → remplacé par la réserve.
-- `guards_enabled=false` → comportement pyipv8 inchangé (régression).
+- Persistance : redémarrage → mêmes guards rechargés depuis la base
+  ✅ (`guards_survivent_au_redemarrage_du_daemon`, `CoreSession`
+  fichier ; aller-retour `DbGuardStore` en `onionbit-core`).
+- Storm : destroys en rafale → premiers hops ⊆ set de guards ✅
+  (`guards_bornent_les_premiers_hops_sous_storm_destroy`, loopback).
+- Rotation : guard en échec répété → rétrogradé puis remplacé par la
+  réserve ✅ (`echecs_retrogradent_sans_tirage_sous_pression`) ;
+  maintenance proactive périodique (`do_guard_maintenance`, cadence
+  `guards.maintenance_interval`) — purge des expirés/injoignables et
+  adoptions anticipées hors pression.
+- `guards_enabled=false` → comportement pyipv8 inchangé ✅
+  (`desactive_est_le_tirage_pyipv8_exact` + set vide au redémarrage,
+  `guards_desactivees_ne_chargent_pas_le_set`).
