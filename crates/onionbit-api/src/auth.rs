@@ -13,7 +13,9 @@
 //! Echec → 401 `{"error": {"handled": true, "message": "Unauthorized
 //! access"}}`. Cle configuree vide → tout passe (semantique Python :
 //! `not expected_api_key`). Les exemptions `/docs`, `/static`, `/ui`
-//! du Python n'ont pas d'equivalent ici (ces routes n'existent pas).
+//! du Python ont leur equivalent cote routeur : les statiques de l'UI
+//! web sont servies en fallback **hors `/api`** (`webui.rs`) et ne
+//! passent donc jamais par ce middleware — `/api/*` reste protege.
 
 use axum::extract::State;
 use axum::http::Request;
@@ -33,19 +35,24 @@ pub async fn api_key_auth(
         return next.run(req).await;
     };
 
-    let provided = req
-        .headers()
-        .get("x-api-key")
-        .and_then(|v| v.to_str().ok())
-        .map(str::to_owned)
-        .or_else(|| query_key(req.uri().query().unwrap_or("")))
-        .or_else(|| cookie_key(req.headers().get("cookie")?.to_str().ok()?));
-
-    if provided.as_deref() == Some(expected) {
+    if provided_key(&req).as_deref() == Some(expected) {
         next.run(req).await
     } else {
         ApiError::unauthorized().into_response()
     }
+}
+
+/// Cle fournie par la requete (`X-Api-Key`, `?key=`, cookie `api_key`)
+/// — factorisee pour `router::api_not_found` (parite 401/404 des
+/// chemins inconnus sous `/api`, que le fallback axum priverait du
+/// middleware).
+pub(crate) fn provided_key(req: &Request<axum::body::Body>) -> Option<String> {
+    req.headers()
+        .get("x-api-key")
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_owned)
+        .or_else(|| query_key(req.uri().query().unwrap_or("")))
+        .or_else(|| cookie_key(req.headers().get("cookie")?.to_str().ok()?))
 }
 
 /// Extrait `key=` de la query string (premier gagnant, comme

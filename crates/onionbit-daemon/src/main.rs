@@ -91,6 +91,11 @@ struct Args {
     /// interactives). Equivalent de `tray/enabled = false`.
     #[arg(long)]
     no_tray: bool,
+
+    /// Repertoire du build Flutter web servi sous `/` (override de
+    /// `api/web_ui_dir` ; `api/web_ui_enabled=false` desactive).
+    #[arg(long)]
+    web_ui_dir: Option<PathBuf>,
 }
 
 use tracing_subscriber::layer::SubscriberExt;
@@ -203,11 +208,56 @@ async fn wait_shutdown_sources(signal: &ShutdownSignal) {
 
 /// Cree l'icone systray si `tray.enabled` et pas `--no-tray`. `None`
 /// hors Windows ou si la creation a echoue (le daemon continue).
+/// Resout le repertoire du build web servi par l'API
+/// (`api/web_ui_*`) :
+/// 1. `--web-ui-dir` / `api/web_ui_dir` explicite (warn + desactive si
+///    `index.html` absent) ;
+/// 2. detection auto : `<exe>/web` (dist), `state_dir/web`, puis
+///    `app/build/web` du depot (dev).
+fn resolve_web_ui_dir(
+    args: &Args,
+    daemon_config: &DaemonConfig,
+    state_dir: &std::path::Path,
+) -> Option<PathBuf> {
+    if !daemon_config.api.web_ui_enabled {
+        return None;
+    }
+    if let Some(dir) = args.web_ui_dir.clone().or_else(|| {
+        (!daemon_config.api.web_ui_dir.is_empty())
+            .then(|| PathBuf::from(&daemon_config.api.web_ui_dir))
+    }) {
+        return if dir.join("index.html").is_file() {
+            Some(dir)
+        } else {
+            tracing::warn!(
+                dir = %dir.display(),
+                "web_ui_dir sans index.html — interface web non servie"
+            );
+            None
+        };
+    }
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.to_path_buf()));
+    let candidates = [
+        exe_dir.as_ref().map(|d| d.join("web")),
+        Some(state_dir.join("web")),
+        // Dev : <depot>/app/build/web depuis crates/onionbit-daemon.
+        Some(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../app/build/web")),
+    ];
+    candidates
+        .into_iter()
+        .flatten()
+        .find(|d| d.join("index.html").is_file())
+}
+
 fn spawn_tray(
     args: &Args,
     daemon_config: &DaemonConfig,
     tooltip: String,
     signal: &ShutdownSignal,
+    api_port: std::sync::Arc<std::sync::atomic::AtomicU16>,
+    web_ui_served: bool,
 ) -> Option<tray::TrayHandle> {
     // `headless` Python force l'absence de tray comme `--no-tray`.
     if args.no_tray || daemon_config.headless || !daemon_config.tray.enabled {
@@ -240,6 +290,8 @@ fn spawn_tray(
         tooltip,
         logs_dir: args.state_dir.join("logs"),
         ui_exe,
+        api_port,
+        web_ui_served,
         autostart_cmd,
         icon_color: parse_tray_icon_color(&daemon_config.tray_icon_color),
         shutdown: signal.clone(),
@@ -381,11 +433,26 @@ async fn async_main() -> ExitCode {
     // pendant le demarrage.
     let shutdown_signal = ShutdownSignal::new();
 
+    // Repertoire du build web servi par l'API (`api/web_ui_*`) —
+    // resolu avant le tray pour activer « Ouvrir dans le navigateur ».
+    let web_ui_dir = resolve_web_ui_dir(&args, &daemon_config, &args.state_dir);
+
+    // Port HTTP reel publie vers le tray (« Ouvrir dans le
+    // navigateur ») — 0 tant que l'API n'est pas bindée.
+    let api_port = std::sync::Arc::new(std::sync::atomic::AtomicU16::new(0));
+
     // Icone systray immediate (le GUI Python s'affiche avant que le
     // core soit pret) — la restauration des telechargements et le
     // peuplement DHT peuvent prendre ~1 min sur de gros fichiers ; le
     // tooltip est maj avec le port reel une fois l'API bindée.
-    let tray = spawn_tray(&args, &daemon_config, "OnionBit".into(), &shutdown_signal);
+    let tray = spawn_tray(
+        &args,
+        &daemon_config,
+        "OnionBit".into(),
+        &shutdown_signal,
+        api_port.clone(),
+        web_ui_dir.is_some(),
+    );
 
     let session = match CoreSession::start(config, Notifier::new()).await {
         Ok(s) => s,
@@ -455,10 +522,14 @@ async fn async_main() -> ExitCode {
         }
     };
 
+    if let Some(dir) = &web_ui_dir {
+        tracing::info!(dir = %dir.display(), "interface web servie en same-origin sur /");
+    }
     let app = build(
         AppState::new(session.clone())
             .with_daemon_config(daemon_config.clone(), Some(config_path.clone()))
-            .with_shutdown_notify(shutdown_signal.notifier()),
+            .with_shutdown_notify(shutdown_signal.notifier())
+            .with_web_ui_dir(web_ui_dir.clone()),
     );
 
     // `api/https_*` Python : second site TLS du meme routeur
@@ -493,6 +564,7 @@ async fn async_main() -> ExitCode {
     // Python fait de meme en fin de demarrage).
     if let Ok(addr) = listener.local_addr() {
         daemon_config.api.http_port_running = addr.port();
+        api_port.store(addr.port(), std::sync::atomic::Ordering::Relaxed);
     }
     if let Err(e) = daemon_config.write(&config_path) {
         tracing::warn!(error = %e, "reecriture de configuration.json impossible");

@@ -9,6 +9,7 @@ import 'package:http/http.dart' as http;
 
 import '../config/app_config.dart';
 import '../config/ui_log.dart';
+import 'http_transport.dart';
 
 /// Un événement SSE : `event: <topic>` + `data: <json>`.
 class SseEvent {
@@ -30,7 +31,7 @@ class SseEvent {
 /// l'ordre des événements.
 class SseClient {
   SseClient(this._config, {http.Client? httpClient})
-    : _http = httpClient ?? http.Client();
+    : _http = httpClient ?? createHttpClient();
 
   final AppConfig _config;
   final http.Client _http;

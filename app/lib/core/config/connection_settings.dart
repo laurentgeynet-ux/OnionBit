@@ -2,6 +2,9 @@
 // Copyright (C) 2026 Laurent Geynet <laurent.geynet@gmail.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+import 'dart:async';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -17,11 +20,15 @@ import 'ui_log.dart';
 /// Ordre de résolution (miroir de la session injectée d'eMule-Rust) :
 /// 1. réglage utilisateur pointant hors loopback (daemon distant) —
 ///    toujours respecté tel quel ;
-/// 2. daemon local garanti vivant puis découvert (`daemon_launcher` :
-///    lance `onionbit-daemon` s'il ne tourne pas, relit
-///    `configuration.json` — clé régénérée et port aléatoire
+/// 2. **web** : `Uri.base.origin` (l'UI est servie par le daemon —
+///    same-origin, zéro configuration) + `?key=` de l'URL s'il est
+///    présent (accepté par `auth.rs` comme `X-Api-Key`), sinon la clé
+///    persistée ;
+/// 3. desktop : daemon local garanti vivant puis découvert
+///    (`daemon_launcher` : lance `onionbit-daemon` s'il ne tourne pas,
+///    relit `configuration.json` — clé régénérée et port aléatoire
 ///    `http_port_running` se résolvent seuls) ;
-/// 3. préférences persistées puis défauts (`127.0.0.1:8085`, sans clé).
+/// 4. préférences persistées puis défauts (`127.0.0.1:8085`, sans clé).
 const _kKeyBaseUrl = 'api.baseUrl';
 const _kKeyApiKey = 'api.key';
 
@@ -43,14 +50,29 @@ class ConnectionSettingsNotifier extends AsyncNotifier<AppConfig> {
       return AppConfig(baseUrl: savedUrl, apiKey: savedKey);
     }
 
-    // 2. Daemon local : lancé s'il ne tourne pas (binaire voisin de
+    if (kIsWeb) {
+      // Same-origin par défaut : le daemon qui sert l'UI est l'API.
+      // `?key=` (bookmark) prime sur la clé persistée et y est
+      // mémorisé pour survivre aux navigations sans paramètre.
+      final urlKey = Uri.base.queryParameters['key']?.trim() ?? '';
+      final key = urlKey.isNotEmpty ? urlKey : savedKey;
+      if (urlKey.isNotEmpty && urlKey != savedKey) {
+        unawaited(prefs.setString(_kKeyApiKey, key));
+      }
+      return AppConfig(
+        baseUrl: savedUrl.isNotEmpty ? savedUrl : Uri.base.origin,
+        apiKey: key,
+      );
+    }
+
+    // 3. Daemon local : lancé s'il ne tourne pas (binaire voisin de
     //    l'exe), puis `configuration.json` (clé + port réel) prime sur
     //    les préférences — auto-cicatrisant si la clé est régénérée ou
     //    le port relancé en aléatoire.
     final discovered = await ensureDaemonRunning();
     if (discovered != null) return discovered;
 
-    // 3. Repli : préférences (loopback) puis défauts.
+    // 4. Repli : préférences (loopback) puis défauts.
     return AppConfig(
       baseUrl: savedUrl.isNotEmpty ? savedUrl : const AppConfig().baseUrl,
       apiKey: savedKey,

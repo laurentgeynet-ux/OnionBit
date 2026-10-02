@@ -47,6 +47,10 @@
   },
   "retry": "Retry",
   "configure": "Configure…",
+  "daemonKeyRequired": "Daemon reachable — API key required (see Configure…)",
+  "@daemonKeyRequired": {
+    "description": "Banner when the API answers 401 (web UI served by the daemon has no key yet)"
+  },
   "connectionDialogTitle": "Daemon connection",
   "daemonUrlLabel": "Daemon URL",
   "apiKeyLabel": "API key (if enabled)",
@@ -348,6 +352,14 @@
   "appliedOnRestart": "Applied on restart.",
   "appliedOnRestartDefaultOn": "Default: on. Applied on restart.",
   "browse": "Browse…",
+  "dirPickerTitle": "Browse the daemon's folders",
+  "@dirPickerTitle": {
+    "description": "Title of the daemon-side directory picker dialog (web)"
+  },
+  "dirPickerSelect": "Select this folder",
+  "@dirPickerSelect": {
+    "description": "Confirm button of the daemon-side directory picker"
+  },
   "apply": "Apply",
 
   "sectionDownloadsDefaults": "Default downloads",
@@ -441,9 +453,9 @@
   "anonSaved": "Tunnel settings saved",
   "anonMinMaxError": "min_circuits must be ≤ max_circuits",
   "anonEnabled": "TunnelCommunity enabled",
-  "anonEnabledSub": "Required for anonymous downloads. Applied on restart. Default: on.",
+  "anonEnabledSub": "Required for anonymous downloads. Your node also relays other peers' encrypted traffic inside the tunnel network (never exiting it to the public Internet). Applied on restart. Default: on.",
   "anonExit": "Act as exit node",
-  "anonExitSub": "Warning: your machine then relays other peers' BitTorrent traffic to the public Internet. Default: off. Applied on restart.",
+  "anonExitSub": "Warning: your machine then EXITS other peers' BitTorrent traffic to the public Internet under your own IP address. Without it, you only relay encrypted traffic between tunnel peers. Default: off. Applied on restart.",
   "circuitsMinLabel": "Minimum circuits (default: 3)",
   "circuitsMaxLabel": "Maximum circuits (default: 8)",
   "anonCircuitsNote": "Circuits maintained permanently per anonymous lane; live detail in Diagnostics → Circuits.",
@@ -717,6 +729,10 @@
   "prioNormal": "Normal",
   "prioHigh": "High priority",
   "openLocation": "Open location",
+  "streamInTab": "Stream in a new tab",
+  "@streamInTab": {
+    "description": "Per-file action (web) — opens the /stream endpoint in a browser tab"
+  },
   "addTracker": "Add tracker",
   "trackerUrl": "Tracker URL",
   "trackerAdded": "Tracker added: {url}",

@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../features/downloads/presentation/widgets/add_download_dialog.dart';
 import '../di/providers.dart';
+import '../platform/pick_file.dart';
 
 /// Ouvre le dialogue « Ajouter » pour chaque fichier de
 /// `pendingFilesProvider` (argv « Ouvrir avec », glisser-déposer)
@@ -25,10 +26,10 @@ class _PendingFilesHandlerState extends ConsumerState<PendingFilesHandler> {
 
   Future<void> _openNext() async {
     if (_dialogOpen) return;
-    final path = ref.read(pendingFilesProvider).firstOrNull;
-    if (path == null) return;
+    final file = ref.read(pendingFilesProvider).firstOrNull;
+    if (file == null) return;
     _dialogOpen = true;
-    await AddDownloadDialog.show(context, initialFilePath: path);
+    await AddDownloadDialog.show(context, initialFile: file);
     _dialogOpen = false;
     if (!mounted) return;
     ref.read(pendingFilesProvider.notifier).pop();
@@ -39,7 +40,7 @@ class _PendingFilesHandlerState extends ConsumerState<PendingFilesHandler> {
 
   @override
   Widget build(BuildContext context) {
-    ref.listen<List<String>>(pendingFilesProvider, (prev, next) {
+    ref.listen<List<PickedFile>>(pendingFilesProvider, (prev, next) {
       if (next.isNotEmpty) {
         WidgetsBinding.instance.addPostFrameCallback((_) => _openNext());
       }

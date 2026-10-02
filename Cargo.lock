@@ -1793,6 +1793,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "http-range-header"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9171a2ea8a68358193d15dd5d70c1c10a2afc3e7e4c5bc92bc9f025cebd7359c"
+
+[[package]]
 name = "httparse"
 version = "1.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2958,7 +2964,7 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
 name = "onionbit-api"
-version = "0.4.0-alpha"
+version = "0.5.0-alpha"
 dependencies = [
  "axum",
  "base64 0.23.1",
@@ -2983,13 +2989,14 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tokio-tungstenite 0.24.0",
+ "tower-http",
  "tracing",
  "uuid",
 ]
 
 [[package]]
 name = "onionbit-bittorrent"
-version = "0.4.0-alpha"
+version = "0.5.0-alpha"
 dependencies = [
  "base64 0.23.1",
  "bytes",
@@ -3014,7 +3021,7 @@ dependencies = [
 
 [[package]]
 name = "onionbit-cli"
-version = "0.4.0-alpha"
+version = "0.5.0-alpha"
 dependencies = [
  "axum",
  "clap",
@@ -3030,7 +3037,7 @@ dependencies = [
 
 [[package]]
 name = "onionbit-core"
-version = "0.4.0-alpha"
+version = "0.5.0-alpha"
 dependencies = [
  "bytes",
  "fs2",
@@ -3059,7 +3066,7 @@ dependencies = [
 
 [[package]]
 name = "onionbit-crypto"
-version = "0.4.0-alpha"
+version = "0.5.0-alpha"
 dependencies = [
  "chacha20poly1305",
  "ed25519-dalek",
@@ -3077,7 +3084,7 @@ dependencies = [
 
 [[package]]
 name = "onionbit-daemon"
-version = "0.4.0-alpha"
+version = "0.5.0-alpha"
 dependencies = [
  "axum",
  "axum-server",
@@ -3104,7 +3111,7 @@ dependencies = [
 
 [[package]]
 name = "onionbit-db"
-version = "0.4.0-alpha"
+version = "0.5.0-alpha"
 dependencies = [
  "rusqlite",
  "tempfile",
@@ -3115,7 +3122,7 @@ dependencies = [
 
 [[package]]
 name = "onionbit-format"
-version = "0.4.0-alpha"
+version = "0.5.0-alpha"
 dependencies = [
  "onionbit-crypto",
  "thiserror 2.0.21",
@@ -3123,7 +3130,7 @@ dependencies = [
 
 [[package]]
 name = "onionbit-ipv8"
-version = "0.4.0-alpha"
+version = "0.5.0-alpha"
 dependencies = [
  "hex 0.4.3",
  "onionbit-crypto",
@@ -3138,7 +3145,7 @@ dependencies = [
 
 [[package]]
 name = "onionbit-network-policy"
-version = "0.4.0-alpha"
+version = "0.5.0-alpha"
 dependencies = [
  "thiserror 2.0.21",
  "tracing",
@@ -3146,7 +3153,7 @@ dependencies = [
 
 [[package]]
 name = "onionbit-test-support"
-version = "0.4.0-alpha"
+version = "0.5.0-alpha"
 dependencies = [
  "onionbit-format",
  "tokio",
@@ -3154,7 +3161,7 @@ dependencies = [
 
 [[package]]
 name = "onionbit-tunnel"
-version = "0.4.0-alpha"
+version = "0.5.0-alpha"
 dependencies = [
  "futures-util",
  "hex 0.4.3",
@@ -4788,10 +4795,19 @@ checksum = "4cfcf7e2740e6fc6d4d688b4ef00650406bb94adf4731e43c096c3a19fe40840"
 dependencies = [
  "bitflags 2.13.2",
  "bytes",
+ "futures-core",
  "futures-util",
  "http",
  "http-body",
+ "http-body-util",
+ "http-range-header",
+ "httpdate",
+ "mime",
+ "mime_guess",
+ "percent-encoding",
  "pin-project-lite",
+ "tokio",
+ "tokio-util",
  "tower",
  "tower-layer",
  "tower-service",

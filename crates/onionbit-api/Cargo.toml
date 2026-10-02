@@ -26,6 +26,7 @@ librqbit.workspace = true
 rusqlite.workspace = true
 uuid.workspace = true
 tokio-stream = { version = "0.1", features = ["sync"] }
+tower-http.workspace = true
 hex.workspace = true
 base64.workspace = true
 

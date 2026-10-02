@@ -15,6 +15,8 @@
 # git) :
 #   onionbit-daemon.exe, onionbit-cli.exe   - backend Rust (plan de controle)
 #   onionbit_ui.exe + *.dll + data\        - interface Flutter Windows
+#   web\                                  - interface web Flutter, servie
+#                                           par le daemon sur http://127.0.0.1:<port>/
 #   build-manifest.json                   - version, commit, rustc, date UTC
 #
 # Pas de script de lancement : `onionbit_ui.exe` demarre le daemon tout
@@ -62,6 +64,10 @@ try {
         $flag = if ($Profile -eq "release") { "--release" } else { "--debug" }
         flutter build windows $flag
         if ($LASTEXITCODE -ne 0) { throw "flutter build windows a echoue ($LASTEXITCODE)" }
+        # Interface web : servie par le daemon en same-origin (etape 33
+        # — le meme codebase Flutter, transport Fetch pour le SSE).
+        flutter build web $flag
+        if ($LASTEXITCODE -ne 0) { throw "flutter build web a echoue ($LASTEXITCODE)" }
     } finally {
         Pop-Location
     }
@@ -83,6 +89,16 @@ try {
     # Payload Flutter : exe + DLLs + data\ (l'etat utilisateur n'y est pas).
     Copy-Item (Join-Path $flutterOut "*") -Destination $dist -Recurse -Force
 
+    # Interface web : dist\web\ est detecte automatiquement par le
+    # daemon (`<exe>/web`) et servi sur http://127.0.0.1:<port>/.
+    $webOut = Join-Path $app "build\web"
+    if (-not (Test-Path "$webOut\index.html")) {
+        throw "build web introuvable dans $webOut"
+    }
+    $webDist = Join-Path $dist "web"
+    if (Test-Path $webDist) { Remove-Item $webDist -Recurse -Force }
+    Copy-Item $webOut -Destination $webDist -Recurse -Force
+
     # -- 4) Nettoyage des lanceurs historiques ---------------------------
     # demarrer/arreter n'ont plus lieu d'etre (lancement par l'UI, arret
     # via le systray ou PUT /api/shutdown) — retirer les restes des
@@ -98,7 +114,7 @@ try {
     $manifest = @{
         profile   = $Profile
         daemon    = (cargo pkgid -p onionbit-daemon).Split("#")[-1]
-        ui        = "onionbit_ui (Flutter windows $Profile)"
+        ui        = "onionbit_ui (Flutter windows $Profile) + web/"
         api       = $listen
         commit    = (git rev-parse --short HEAD 2>$null)
         rustc     = (rustc -V)
@@ -142,6 +158,8 @@ try {
     Write-Host ""
     Write-Host "Build OK -> dist\" -ForegroundColor Green
     Write-Host "  Lancement  : dist\onionbit_ui.exe (demarre le daemon au besoin)"
+    Write-Host "  UI web     : http://127.0.0.1:8085/ une fois le daemon lance"
+    Write-Host "               (cle API : state\configuration.json)"
     Write-Host "  Arret      : systray « Quitter » ou PUT /api/shutdown"
     Write-Host "  Etat/datas : dist\state\ (conserve entre builds)"
     Get-ChildItem $dist -File | Format-Table Name, Length
