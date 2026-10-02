@@ -3,6 +3,20 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Campagne libFuzzer de référence complète — 0 crash (2026-10-02)
+
+- ~5 h de fuzzing coverage-guidé natif Windows/MSVC (`-s none`),
+  6 cibles, **6,28 milliards d'exécutions cumulées, zéro crash,
+  zéro timeout, zéro OOM** : `raw_datagram` 170 M, `tunnel_cell`
+  1,83 Md, `unsigned_dispatch` 575 M, `tunnel_payloads` 591 M,
+  `ipv8_packet` 1,50 Md, `utp_datagram` 1,62 Md. Détail et corpus
+  dans `docs/security/fuzz_journal.md` / `fuzz_journal.csv`.
+- Corpus persistés sous `fuzz/corpus/<target>/` (636 entrées pour
+  `tunnel_payloads`, 372 `unsigned_dispatch`, 198 `utp_datagram`).
+- Provenance : `raw_datagram` fuzzée sur binaire `9bc4a9d` exact ;
+  cibles suivantes relinkées à HEAD (guards désactivées — hors
+  surface fuzzée), cf. note dans le journal.
+
 ## Implémentation expérimentale des guard nodes (ADR-0010) (2026-10-01)
 
 - `onionbit-tunnel/guards.rs` : `GuardSet` (3 actifs + 2 réserve,

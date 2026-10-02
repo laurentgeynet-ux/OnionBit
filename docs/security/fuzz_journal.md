@@ -52,7 +52,35 @@ crash fuzz -> minimisation -> test de regression stable -> correctif
 | Date | Commit | Portee | Resultat |
 | :--- | :--- | :--- | :--- |
 | 2026-10-01 | `9bc4a9d` | smoke 30-60 s x6 cibles (MSVC, `-s none`) | ~98 M execs, 0 crash, corpus amorce |
-| (en cours) | `9bc4a9d` | campagne de reference complete | — |
+| 2026-10-01→02 | `9bc4a9d`* | campagne de reference complete (~5 h) | **6,28 Md execs, 0 crash, 0 timeout, 0 OOM** |
+
+Campagne de reference — detail par cible (journal machine :
+`fuzz_journal.csv`) :
+
+| Cible | Duree | Executions | Corpus final |
+| :--- | :--- | :--- | :--- |
+| `raw_datagram` | 3600 s | 170 434 846 | 8 |
+| `tunnel_cell` | 3600 s | 1 832 162 135 | 9 |
+| `unsigned_dispatch` | 3600 s | 575 435 542 | 372 |
+| `tunnel_payloads` | 3600 s | 590 848 896 | 636 |
+| `ipv8_packet` | 1800 s | 1 495 599 165 | 17 |
+| `utp_datagram` | 1800 s | 1 616 991 390 | 198 |
+
+*Commit journalise = HEAD au lancement du script. `raw_datagram` a
+ete fuzzee sur le binaire `9bc4a9d` exact ; les cibles suivantes ont
+ete relinkees a HEAD lors de leur build (`f5d503c`→`9141bf9` : code
+guard desactive par defaut, hors surfaces fuzzees — comportement des
+entrees fuzzees identique). Cf. note de provenance ci-dessous.
+
+Incident 2026-10-01 : une instance du script lancee en double a ete
+tuee avant son premier run ; sa ligne CSV parasite
+(`f5d503c,raw_datagram,exit=-1`) a ete retiree — aucun run valide
+n'existait pour elle. La campagne d'origine n'a pas ete interrompue.
+Note de provenance : les cibles lancees apres `77e2b2e`/`f5d503c`
+sont relinkees sur le HEAD courant (`cargo fuzz run` recompile si les
+sources changent) ; le code guard ajoute est desactive par defaut et
+inaccessible aux surfaces fuzzees — comportement identique, mais le
+commit journalise (capture au lancement) reste `9bc4a9d`.
 
 Incident 2026-10-01 : une instance du script lancee en double a ete
 tuee avant son premier run ; sa ligne CSV parasite

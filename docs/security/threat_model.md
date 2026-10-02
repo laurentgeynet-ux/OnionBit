@@ -144,7 +144,11 @@ OnionBit dispose de tests de regression pour les vecteurs suivants :
 egress direct hors relais, configuration a faible nombre de sauts,
 resolution DNS locale, reconstruction de circuit forcee (storm
 `DESTROY`), injection de messages e2e non signes, et entrees de
-parseurs hostiles. Ces tests **ne** protegent **pas** contre la
+parseurs hostiles — ces dernieres consolidées par une campagne
+libFuzzer coverage-guidee de ~5 h (6,28 Md d'executions, 0 crash,
+`docs/security/fuzz_journal.md` ; sans ASan — une campagne Linux
+avec sanitizers reste prevue en complement). Ces tests **ne**
+protegent **pas** contre la
 correlation de trafic globale, les attaques Sybil a grande echelle,
 l'analyse d'intersection a long terme, la compromission de l'endpoint,
 ni les vulnerabilites d'implementation futures. Les guard nodes
