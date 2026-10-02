@@ -7,6 +7,7 @@ CONTENU
   onionbit_ui.exe       Application graphique (lance le daemon auto)
   onionbit-daemon.exe   Daemon BitTorrent + API (peut tourner seul)
   onionbit-cli.exe      Pilotage en ligne de commande du daemon
+  web\                  Interface web servie par le daemon
   *.dll, data\          Runtime Flutter — ne pas separer de l'exe
   LICENSE               GPL-3.0-or-later
 
@@ -17,9 +18,17 @@ DEMARRAGE RAPIDE
   3. Premier lancement : l'etat est cree dans .onionbit\ a cote des
      executables (configuration.json, api key, base SQLite, logs).
 
+INTERFACE WEB (optionnel)
+  Le daemon sert la meme interface dans le navigateur :
+  http://127.0.0.1:8085/ une fois le daemon lance (ou l'entree systray
+  « Ouvrir dans le navigateur »). A la premiere ouverture, saisir la
+  cle API lue dans .onionbit\configuration.json (section api, cle
+  « key ») — ou ajouter ?key=<cle> a l'URL pour un favori direct.
+
 LIGNES DE COMMANDE (optionnel)
   onionbit-daemon.exe                 lance le daemon (API sur
                                       http://127.0.0.1:8085, loopback)
+  onionbit-daemon.exe --web-ui-dir D  sert une UI web depuis D
   onionbit-cli.exe --help             commandes disponibles
   Variables d'environnement utiles :
     ONIONBIT_DAEMON_EXE=<chemin>      force l'exe du daemon pour l'UI

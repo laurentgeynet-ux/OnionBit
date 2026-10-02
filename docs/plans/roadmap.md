@@ -548,6 +548,50 @@ roadmap est terminée**.
   formatteurs sensibles à la locale, pluriels ICU. Garde-fou
   `scripts/check_i18n.ps1`. Détails : ADR-0009, CHANGELOG.
 
+## Phase 7 — Interface web (Flutter web)
+
+Portage de `app/` vers la cible web, **servi par `onionbit-daemon` en
+same-origin** (modèle des exemptions `/ui`/`/static` de
+l'`ApiKeyMiddleware` Python — pas de CORS, aucun affaiblissement de
+l'auth ni du bind loopback). Plan détaillé :
+`docs/plans/web_ui_plan.md`.
+
+- [x] **Étape 31. Compatibilité de compilation et transports web.**
+  `fetch_client` derrière un import conditionnel (SSE `/api/events` et
+  speed test streamés — `BrowserClient` XHR bufferise tout) ;
+  abstraction `pick_file` (web = `<input type=file>` → octets pour
+  `putTorrent` ; desktop = `file_selector` inchangé) ; chemins de
+  dossier en saisie texte sur web (chemins du daemon, pas du
+  navigateur) ; `desktop_drop` no-op web ; guards `kIsWeb` résiduels ;
+  `flutter build web` (+ analyze/test) ajoutés à `verify_all.ps1`.
+- [x] **Étape 32. Connexion et authentification web.**
+  `baseUrl` = `Uri.base.origin` quand l'UI est servie par le daemon ;
+  dialogue de saisie de la clé API (lue dans `configuration.json`),
+  persistance `shared_preferences`, option `?key=`/cookie `api_key` ;
+  `ensureDaemonRunning`/`rediscover` no-op web ; masquage des
+  éléments desktop (lancement auto, bandeau daemon).
+- [x] **Étape 33. Service des statiques dans le daemon.**
+  `ServeDir`/`rust-embed` : `GET /` → `index.html`, assets Flutter,
+  fallback SPA pour les liens profonds `go_router` ; exemption d'auth
+  limitée aux statiques (parité Python `/ui`+`/static`), `/api/*`
+  toujours protégé ; config `api/web_ui_enabled` + `api/web_ui_dir` ;
+  en-têtes `nosniff`/`Cache-Control` ; tests (statique servi,
+  fallback, 401 `/api` sans clé, anti-traversée).
+- [x] **Étape 34. Adaptations UX web.** Drop HTML5 → `putTorrent` ;
+  sélecteur de dossiers côté daemon via `/api/files/browse`/`list`
+  (destination, watch folder, `move_storage`) ; streaming
+  `/stream/{i}?key=` dans un onglet (player HTML5) ; notifications
+  navigateur ; `manifest.json`/`index.html` réels (PWA) ; validation
+  responsive navigateur/mobile.
+- [x] **Étape 35. Packaging et parcours utilisateur.**
+  `build_dist.ps1`/`build_release.ps1` : `flutter build web` →
+  `dist/<target>/web/` ; systray « Ouvrir dans le navigateur » ;
+  docs utilisateur (clé API, `?key=`, UI locale vs web) ; validation
+  manuelle multi-navigateurs du parcours complet.
+
+Phase 7b optionnelle (exposition LAN, `api/cors_origins` dev, pilote
+mobile distant) : voir `web_ui_plan.md` — hors scope V1.
+
 ---
 
 ## Notes de suivi
@@ -556,6 +600,17 @@ Ajouter ici, au fil de l'avancement, tout écart constaté par rapport au
 plan initial (dépendance qui ne convient pas, étape scindée en deux,
 risque IPv8 sous/sur-estimé, etc.), avec la date.
 
+- 2026-10-02 (interface web — Phase 7 exécutée) : étapes 31–35
+  implémentées et validées (`verify_all` vert : workspace Rust +
+  i18n + analyze/test/build web Flutter ; fumée réelle sur daemon
+  — `/` 200, fallback SPA 200, `/api/*` 401 sans clé, SSE streamé).
+  Décision same-origin consignée en ADR-0012. Écart du plan initial :
+  `ServeDir` + fallback maison plutôt que `rust-embed` (build externe,
+  `dist/web/` auto-détecté), et `fetch_client` retenu pour le
+  transport navigateur. **Reste manuel** : la passe UX
+  multi-navigateurs de l'étape 35 (drop HTML5, saisie clé,
+  player `/stream`, notifications) est à confirmer à la main — les
+  éléments automatisables sont verts.
 - 2026-10-02 (validation guards) : matrice interop réelle exécutée
   via `-Guards` sur `interop_hidden_tribler_{download,seed}.ps1` —
   sens A (Tribler←OnionBit) et sens B (OnionBit←Tribler) verts en

@@ -3,6 +3,44 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Interface web Flutter servie par le daemon — Phase 7 (2026-10-02)
+
+- **Étapes 31–35** de `docs/plans/roadmap.md` — plan
+  `docs/plans/web_ui_plan.md`, décision **ADR-0012** : le daemon sert
+  le build Flutter web en **same-origin** sous `/` (modèle des
+  exemptions `/ui`/`/static` de l'`ApiKeyMiddleware` Python) — aucun
+  CORS ajouté, bind loopback inchangé, `onionbit-network-policy`
+  intouchée.
+- **Transports web** (`app/lib/core/api/http_transport*.dart`) :
+  import conditionnel `dart.library.io` — natif = `package:http`
+  classique, web = `fetch_client` (API Fetch) ; sans ça XHR bufferise
+  tout et le SSE `/api/events` + le speed test circuits ne streament
+  pas. `ApiClient`/`SseClient` passent par cette façade.
+- **Couches plateforme** : `pick_file` (natif `file_selector` / web
+  `<input>` → octets — le dialogue « Ajouter » est désormais
+  *bytes-first*, `.torrent` uploadé en brut, `.magnet` lu en texte),
+  `pick_directory` (natif / web → `/api/files/browse` côté daemon via
+  `DaemonDirectoryPicker`), `drop_zone` (`desktop_drop` / drag HTML5),
+  `open_url`, notifications navigateur (`web_notify`), découverte
+  daemon no-op sur web.
+- **Connexion web** : `baseUrl` = `Uri.base.origin` en build web ;
+  dialogue de connexion pour saisir la clé API (persistée
+  `shared_preferences`), bandeau basculant sur « clé requise » quand
+  l'API répond 401 ; bouton de re-découverte locale masqué sur web.
+- **Statiques côté Rust** : `onionbit-api` remodulé — routes sous
+  `/api` (middleware clé + fourre-tout `/api/*` inconnu → 401, parité
+  Python), `webui.rs` = `ServeDir` + fallback SPA `index.html` +
+  `nosniff`/`Cache-Control` ; config `api/web_ui_enabled` +
+  `api/web_ui_dir`, CLI `--web-ui-dir`, détection auto
+  `<exe>/web` → `state_dir/web` → `app/build/web`.
+- **Packaging** : `build_dist.ps1` produit `dist/web/` (+ manifest) ;
+  `verify_all.ps1` gagne `flutter analyze`/`test`/`build web` ;
+  systray « Ouvrir dans le navigateur » ; `dist_lisezmoi.txt`
+  documente le parcours (clé API, `?key=`).
+- Tests : `web_ui_statiques_exemptes_d_auth` (+ 57 tests API verts),
+  19 tests Flutter verts, `verify_all` complet OK ; fumée réelle :
+  `GET /` 200, fallback SPA 200, `/api/*` 401 sans clé, SSE streamé.
+
 ## Version 0.4.0-alpha (2026-10-02)
 
 - Release succédant à `v0.3.2-alpha` :
