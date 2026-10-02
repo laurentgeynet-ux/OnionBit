@@ -556,6 +556,17 @@ Ajouter ici, au fil de l'avancement, tout écart constaté par rapport au
 plan initial (dépendance qui ne convient pas, étape scindée en deux,
 risque IPv8 sous/sur-estimé, etc.), avec la date.
 
+- 2026-10-02 (validation guards) : matrice interop réelle exécutée
+  via `-Guards` sur `interop_hidden_tribler_{download,seed}.ps1` —
+  sens A (Tribler←OnionBit) et sens B (OnionBit←Tribler) verts en
+  hops 1, 2 et 3 (SHA-256 exact, premiers hops des circuits
+  multi-hop ⊆ guard set). Deux défauts trouvés et corrigés : self dans
+  le pool de candidats (auto-adoption guard via `rp_info` nous
+  élisant RP) et bypass guards des circuits RP via `pick_first_hop`.
+  Persistance redémarrage vérifiée sur réseau public réel (set 3
+  actifs + 2 réserve rechargé à l'identique). Reste : run baseline
+  sans guards, session fingerprint Tribler (API affamée par la
+  charge), activation par défaut toujours différée.
 - 2026-10-02 : campagne libFuzzer de référence terminée — 6/6
   cibles, 6,28 Md d'exécutions, 0 crash/timeout/OOM
   (`docs/security/fuzz_journal.md`). Guard nodes expérimentaux

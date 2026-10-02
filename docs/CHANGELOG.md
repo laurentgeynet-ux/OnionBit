@@ -3,6 +3,61 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Sonde de mise à jour réelle — `versions/check` (2026-10-02)
+
+- `GET /api/versioning/versions/check` interroge désormais réellement
+  les releases : port de `VersioningManager.check_version` Python dans
+  `onionbit_core::services::versioning` — `check_urls` (`{current}`
+  substitué, équivalent `release.tribler.org`) puis API GitHub
+  `releases?per_page=1` en tête si `allow_pre`, `releases/latest` en
+  queue sinon ; première réponse valide gagne, échec → sonde suivante.
+- Trafic direct via `fetch_checked_with` (nouvelle variante à
+  timeout/`User-Agent` paramétrables de `fetch_checked`) : anti-SSRF
+  `ip_policy` sur chaque adresse résolue, corps borné, UA
+  `OnionBit/{v} (os=…; arch=…)` exigé par l'API GitHub ; jamais par
+  les circuits onion. Config : `versioning/github_repo` (défaut =
+  champ `repository` du workspace), `versioning/check_urls`,
+  `versioning/check_timeout_secs` (défaut 5 = `ClientTimeout` Python).
+- Comparaison `packaging.Version` portée (segments numériques +
+  dev/a/b/rc/post) ; **divergence assumée** : le tableau
+  `releases?per_page=1` est accepté — `dict["name"]` Python lève
+  `TypeError` dessus, la sonde GitHub `allow_pre` de Tribler échoue
+  donc toujours.
+- Tests : unitaires `probe_urls`/`version_newer`/`release_name` +
+  sonde loopback (`core`), intégration `versioning_check_sonde_locale`
+  (api) ; le test existant neutralise `github_repo` (pas de trafic
+  externe en test).
+
+## Matrice interop guards — premier run terrain (2026-10-02)
+
+- Scripts `interop_hidden_tribler_download.ps1` /
+  `interop_hidden_tribler_seed.ps1` : switch `-Guards` injectant
+  `tunnel_community.guards_enabled` sur tous les noeuds Rust du
+  maillage + verdicts dédiés (`guard set actif`, `premier hop dans le
+  guard set` via `verified_hops[0]` vs `guards[].mid`) + snapshot
+  `/ipv8/tunnel/guards` dans le rapport.
+- **Sens A (Tribler télécharge depuis OnionBit, guards ON)** : vert —
+  SEEDING, 10 circuits IP_SEEDER READY, annonce DHT propagée,
+  téléchargement 2 Mio complet, SHA-256 correct, tous les premiers
+  hops multi-hop dans le guard set (0 hors-set).
+- **Sens B (OnionBit télécharge depuis Tribler, guards ON)** : le
+  téléchargement réussit (SHA-256 correct) mais le verdict premier-hop
+  échoue → deux défauts réels trouvés et corrigés :
+  - le `created-e2e` désignant le downloader comme RP (`rp=D`, choix
+    légitime de Tribler) réintroduisait la propre clé du noeud dans
+    l'annuaire → **auto-adoption comme guard**, circuits dégénérés
+    vers sa propre socket. `get_candidates`, `get_candidates_subset`
+    et `first_hop_pool` excluent désormais `my_pk`.
+  - `RP_DOWNLOADER`/`RP_SEEDER` contournaient l'ordonnancement guards
+    via `pick_first_hop` → passent par `first_hop_candidates`
+    (guards + alternates), repli permissif sur les pairs du service
+    tunnel quand le registre de flags est vide (comme `send_extend`).
+- Test de régression `soi_meme_exclu_des_candidats_guards_et_premiers_hops`.
+- Le repli `estimated_wan` forcé en loopback + écho
+  d'introduction-response rend ce cas accessible : exactement le type
+  de défaut que la validation terrain devait débusquer avant
+  l'activation par défaut.
+
 ## ADR-0011 — messagerie anonyme e2e (proposée) (2026-10-02)
 
 - `docs/architecture/decisions/0011-messagerie-anonyme-e2e.md` :

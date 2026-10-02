@@ -52,3 +52,49 @@ Comparer ensuite, par overlay/msg_id :
   public.
 - Le verdict attendu est **des donnees comparatives**, pas un booleen
   « fingerprintable ou non ».
+
+## Mesures de reference (2026-10-02)
+
+Sessions collectées sur le réseau public réel (Windows, machine sous
+charge : campagne fuzz + banc interop concurrents) :
+
+### OnionBit idle — 20 min (`onionbit_idle.csv`, 10 745 lignes)
+
+- ~15,8 Mo émis / ~13,1 Mo reçus → **~13 Ko/s up, ~11 Ko/s down**.
+- 28 types de messages ; dominants : `remote_select` (DHT
+  find-value, 8,5+4,9 Mo), `on_health` (4,8 Mo), `on_cell` (2,5 Mo —
+  le noeud relaye le trafic tunnel des autres même au repos),
+  similarity + introduction/puncture (discovery).
+- Taille moyenne ~240 B/message. Aucun circuit propre READY (0/0) —
+  le trafic observé est du service rendu au réseau (relai, DHT),
+  pas de la maintenance de circuits.
+- Signal notable : un daemon idle **sert deja de relais tunnel et de
+  noeud DHT** — son empreinte n'est pas nulle.
+
+### OnionBit transfert e2e — 10 min (`onionbit_e2e_active.csv`,
+4 165 lignes ; downloader D du banc interop sens B, circuit lie
+RP_DOWNLOADER, 8 Mio)
+
+- ~142 Mo émis / ~149 Mo reçus → **~236 Ko/s par sens**.
+- Quasi-totalité dans `on_cell` (4,97M messages, ~57 B en moyenne) :
+  uTP encapsule dans les cellules, beaucoup de petits ACK.
+- 4 circuits READY maintenus pendant le transfert.
+- Le basculement de mixte discovery/tunnel → presque tout `on_cell`
+  est un signal d'activité tres visible : un observateur du pair
+  voit immediatement la difference idle/transfert.
+
+### Tribler 8.4.3 — session C
+
+Non collectée : `Tribler.exe -s` joint bien le réseau réel (circuits
+établis, `too many relays`) mais son API REST ne répond pas sous la
+charge machine concurrente (timeouts >90 s même en warmup). À
+refaire une fois la campagne fuzz terminée.
+
+### Interpretation preliminaire
+
+- Les deltas up/down par msg_id sont exploitables ; la taille
+  moyenne des cellules (~57 B) reflète le transport uTP encapsule.
+- Rien d'anormal ne saute dans la distribution des types de messages
+  idle — le daemon se comporte comme un membre overlay ordinaire.
+- Une analyse comparative Tribler reste necessaire avant toute
+  conclusion sur le fingerprinting proprement dit.
