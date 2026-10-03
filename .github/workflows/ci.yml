@@ -61,7 +61,18 @@ jobs:
         run: cargo fmt --all -- --check
       - name: tests workspace
         timeout-minutes: 45
-        run: cargo test --workspace --all-features
+        run: cargo test --workspace --all-features -- --skip live_
+      # Banc live serialise : les 14 tests spawnent chacun relais +
+      # tunnels + moteurs ; en parallele la contention CPU sur le
+      # runner le plus lent (windows) ralentissait la construction de
+      # circuit au point que la resolution BEP 9 des magnets depassait
+      # son timeout sur 5 tests d'un coup. La serie supprime la
+      # variance sans toucher aux oracles (timeouts inchanges).
+      - name: live bench (serialise)
+        timeout-minutes: 45
+        run: >-
+          cargo test -p onionbit-core --test live_bench
+          -- --test-threads=1
 
   flutter:
     name: flutter (windows)
@@ -254,7 +265,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: tests workspace (nightly)
-        run: cargo test --workspace --all-features
+        run: cargo test --workspace --all-features -- --skip live_
+      - name: live bench (serialise)
+        timeout-minutes: 45
+        run: >-
+          cargo test -p onionbit-core --test live_bench
+          -- --test-threads=1
       # Banc d'endurance live (P1) : churn de flotte + restarts sur
       # reseau loopback reel, metriques CSV (RSS/taches/circuits) en
       # artefact. 30 min par defaut ; duration configurable via env.
