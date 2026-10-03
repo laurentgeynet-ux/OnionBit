@@ -103,12 +103,21 @@ reproduction scripts: [**interoperability evidence**](docs/interop/README.md).
 
 ## Getting started
 
-> **Windows x64 beta zip** is on the
-> [Releases](https://github.com/laurentgeynet-ux/OnionBit/releases) page
-> (`OnionBit-0.8.0-beta-windows-x64.zip`): unzip, run `onionbit_ui.exe` —
-> it starts the daemon automatically. Prefer a browser? The daemon serves the
-> same UI at `http://127.0.0.1:8085/` (API key in `state\configuration.json`).
-> Other platforms: build from source
+> Prebuilt packages are on the
+> [Releases](https://github.com/laurentgeynet-ux/OnionBit/releases) page:
+>
+> - **Windows x64** — `OnionBit-0.8.0-beta-windows-x64.zip`: unzip, run
+>   `onionbit_ui.exe` — it starts the daemon automatically. Prefer a browser?
+>   The daemon serves the same UI at `http://127.0.0.1:8085/` (API key in
+>   `state\configuration.json`).
+> - **Windows ARM64** — `OnionBit-0.8.0-beta-windows-arm64-headless.zip`: daemon + CLI
+>   (headless — no native Flutter ARM64 build yet; use the web UI in your
+>   browser).
+> - **Linux x64** — `onionbit_0.8.0-beta_amd64.deb` (Debian/Ubuntu/Mint) or
+>   `OnionBit-0.8.0-beta-linux-x64.tar.gz`: daemon + CLI + web UI, optional
+>   `systemctl --user enable --now onionbit-daemon`.
+>
+> Other platforms (macOS, Android, iOS): build from source
 > (see [docs/BUILDING.md](docs/BUILDING.md)).
 
 **Prerequisites:** Rust stable, Flutter stable (UI only).
@@ -154,8 +163,10 @@ See [SECURITY.md](SECURITY.md) for reporting and the threat model.
 | Web UI served by the daemon (same-origin) | ✅ |
 | In-app update check (GitHub releases probe) | ✅ |
 | Latest tagged release | ✅ [`v0.8.0-beta`](https://github.com/laurentgeynet-ux/OnionBit/releases/tag/v0.8.0-beta) |
+| Linux packages (.deb + tar.gz) | ✅ |
+| Windows ARM64 package (headless) | ✅ |
 | Mobile execution model (Android/iOS) | 📋 |
-| Linux / macOS packages | 📋 |
+| macOS package, native Linux UI | 📋 |
 
 ## Contributing
 
