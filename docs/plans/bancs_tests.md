@@ -312,8 +312,8 @@ défaut de la fonction (pas la release existante). Harness :
 |----|---------------|--------|--------|
 | SE-1 | `fingerprint_mesh.ps1`/`fingerprint_stats.ps1` : idle 20 min, e2e actif, mesh contrôle, lane anonyme | Cadences ≤ références `fingerprinting.md` ; cf. P0-15 | P0 |
 | SE-2 | `fuzz_campaign.ps1` + `fuzz_regression.rs` | 0 crash, corpus invariant, `fuzz_journal` mis à jour | P0 |
-| SE-3 | Fuite DNS/résolution sur lanes anonymes (capture pendant transfert) | 0 requête DNS/directe | P0 |
-| SE-4 | Kill switch OS réel (coupure interface / proxy tué, capture) | 0 paquet hors tunnel | P0 |
+| SE-3 | `sec_leak_capture.ps1` + `analyze_leak_capture.py` : capture pktmon complète pendant download anonyme réel, attribution par port local du banc (TAP = vérité fil) | 0 paquet INTERDIT depuis les ports du banc ; qnames DNS rapportés et revus | P0 |
+| SE-4 | Kill switch OS réel : rejouer `sec_leak_capture.ps1` pendant destruction de circuit proxy vivant, proxy tué, coupure/retour WAN | 0 paquet hors tunnel en fenêtre fail-closed | P0 |
 | SE-5 | `sec_anti_ssrf_live.ps1` : auth 401 + anti-SSRF live (link-local, `::1`, `localhost`, privé, `0.0.0.0`) sur daemon strict | Précondition politique stricte vérifiée par sonde témoin ; refus fermé avec raison exacte | P0 |
 | SE-6 | Auth API : chaque endpoint sans clé, fixation cookie | 401 systématique | P1 |
 | SE-7 | Messagerie e2e (Phase 8) : replay inter-circuits, usurpation de clé, fingerprint des annonces de présence — renvoie aux oracles MS-3/MS-5/MS-8/MS-9 | Les quatre oracles verts | P0-msg |
@@ -368,7 +368,7 @@ défaut de la fonction (pas la release existante). Harness :
 | P0-14 (`interop_public_dht.ps1` 2 sauts, Sintel) | 2026-10-03 | `fa24b6b` | **vert** — `INTEROP PUBLIC DHT OK`, **1 638 263 octets vérifiés** ≥ 1 Mio, 1er essai, route 2 sauts publics réels `605f9289…→0f6a1aee…` | `target/interop-public-dht/*.log` | overlay clairsemé ce soir (3 pairs, 1 exit) ; guards non observables par ce harness (prouvés par TR-3/TR-4) |
 | P0-16 (`fuzz_campaign.ps1 -Smoke`) | 2026-10-03 | `fa24b6b` | **vert** — 6/6 cibles, 0 crash, ~152 M execs (tunnel_cell 36,4 M ; tunnel_payloads 9,4 M) | `fuzz/artifacts/last-run-*.log`, `docs/security/fuzz_journal.csv` | non ; smoke ≠ campagne 5 h |
 | P0-17a (`sec_anti_ssrf_live.ps1` : auth + anti-SSRF live) | 2026-10-03 | `fa24b6b`+script | **vert** — EXIT=0, 11/11 verdicts : précondition stricte vérifiée par sonde témoin, 401 sans/mauvaise clé, 200 avec clé, refus fermés avec raison exacte (link-local, loopback, privé/CGNAT, unspecified) ; précondition prouvée discriminante sur daemon `--offline` | `target/ssrf-run.log`, `target/sec-ssrf-*/` | non |
-| P0-17b (fuites DNS/kill switch OS niveau paquets) | — | — | **à faire** — capture pktmon/Wireshark : destruction circuit proxy vivant, proxy tué, changement d'interface ; oracle : 0 paquet BT/DHT/DNS/UDP WAN hors tunnel en fail-closed ; distinguer résolutions bootstrap/versioning de celles de la lane anonyme. Moteur couvert par `kill_switch_midtransfer` (P0-9) | — | nécessite pktmon/Wireshark |
+| P0-17b (`sec_leak_capture.ps1` + `analyze_leak_capture.py`) | 2026-10-03 | `5f23a3b`+scripts | **vert** — download anonyme 2 sauts réel (1 113 975 o vérifiés, route `5a6f405d…→d84eb3cd…`) sous capture pktmon complète : **INTERDIT = 0** sur les ports du banc (attribution par port local, 181 770 paquets), 31 202 paquets overlay, fenêtre post-arrêt 20 s propre ; DNS : uniquement infra DHT (`dht.*`, `router.*`) + bruit OS — aucun hostname tracker/magnet. Reste : rejouer sous destruction circuit / proxy tué / coupure WAN (SE-4) | `target/leak-capture-20261003-093224/` (pcapng, manifest, rapport JSON) | non ; attribution port local (pktmon ne porte pas de PID) |
 
 ## 8. Trous de couverture assumés / hors scope
 

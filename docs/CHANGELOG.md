@@ -3,6 +3,31 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Banc de fuite niveau OS (P0-17b) — capture pktmon (2026-10-03)
+
+Nouveaux `scripts/sec_leak_capture.ps1` + `scripts/analyze_leak_capture.py`
+: capture pktmon complète (paquets entiers) pendant un téléchargement
+anonyme **réel** à sauts libres sur le réseau Tribler public, puis
+classification hors-ligne de chaque endpoint distant.
+
+- **Attribution par port local** : pktmon ne porte pas de PID ; le
+  classifieur scope par les ports UDP du processus de banc extraits du
+  journal (endpoint IPv8/tunnel + écoute uTP rqbit), le TAP servant de
+  vérité fil des endpoints overlay autorisés. Le trafic concurrent
+  (Tribler.exe hôte, OS) tombe en `AUTRE` sans fausser le verdict.
+- **Oracle** : tout paquet WAN depuis un port du banc hors endpoints
+  overlay = INTERDIT (BT/uTP direct, DHT mainline, TCP WAN) ; DNS
+  port 53 décodé et qnames rapportés (infra DHT admise et documentée,
+  aucun hostname de tracker/magnet).
+- **Run de référence** : 1 113 975 octets vérifiés sur route publique
+  2 sauts, 181 770 paquets capturés, **INTERDIT = 0**, fenêtre
+  post-arrêt 20 s sans trafic fantôme.
+- Auto-élévation UAC si lancé sans droits admin ; artefacts :
+  `capture.pcapng`, `manifest.json` (commit, PID, fenêtre
+  temporelle), `leak_report.json`, journaux du banc.
+- Reste pour itération suivante : rejouer sous destruction de circuit
+  proxy vivant, proxy tué, coupure/retour d'interface WAN (SE-4).
+
 ## Campagne de bancs P0 complète + harnais anti-SSRF live (2026-10-03)
 
 Passe de non-régression P0 exécutée de bout en bout après les
