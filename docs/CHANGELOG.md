@@ -3,6 +3,26 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Ouverture P1 : doc des ruptures + CI matricielle (2026-10-03)
+
+- **Nouveau `docs/ruptures/README.md`** : doc publique des bancs de
+  rupture — principe fail-closed (« silence admis, sortie directe
+  bloquante »), oracle `INTERDIT(t_failure, t_reprise) = 0`, recette
+  en 7 étapes (vrai chemin, observation OS, injection horodatée,
+  attribution, fenêtrage, reprise, archivage), exemples concrets
+  `kill`/`block` avec déroulés attendus et artefacts, lecture du
+  manifeste, pièges déjà rencontrés (`--offline` permissif, faux
+  positifs IPv8, injection post-complétion, timing magnets, sens
+  inbound/outbound).
+- **Nouveau `.github/workflows/ci.yml`** : matrice Rust
+  windows/ubuntu/macos (+ windows-11-arm en `continue-on-error`,
+  runner preview) — `check`/`clippy -D warnings`/`fmt`/tests ;
+  job Flutter (analyze/test/`check_i18n`) ; job release Windows x64
+  (`build_release.ps1` + smoke + artefact) ; job `nightly` planifié
+  comme point d'ancrage pour l'endurance automatisée. Les bancs
+  réseau réel (Tribler.exe, pyipv8, interop) restent volontairement
+  locaux — non reproductibles sur runner hébergé.
+
 ## Diagnostic mémoire charge réelle + garde-fou (2026-10-03)
 
 - **Diagnostic consigné** dans

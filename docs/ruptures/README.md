@@ -75,6 +75,71 @@ Tout nouveau banc de rupture suit ce squelette :
 \* Le worker proxy est in-process dans le banc : la mort du bootstrap +
 la mort du processus complet en sont les approximations validées.
 
+## Exemples concrets
+
+### Mort du processus (`kill`)
+
+```powershell
+pwsh -NoProfile -File scripts/sec_leak_capture.ps1 -Scenario kill -PostExitSec 25
+```
+
+Déroulé attendu :
+
+```
+[..] download anonyme 2 saut(s) scenario=kill (min 1048576 octets verifies)
+[..] INJECTION kill : taskkill pid=N a 262144 octets verifies
+[..] processus de banc termine (code -1, timeout=False)
+[..] fenetre post-arret 25s (tout paquet WAN = suspect)
+[..] OK   transfert actif a l'injection (>= 262144) dernier=262144
+[..] OK   panne kill injectee t=HH:MM:SS.mmm
+[..] OK   analyse de fuite (0 paquet interdit)
+[..] OK   INTERDIT dans la fenetre fail-closed = 0 n=0
+[..] SEC LEAK CAPTURE OK
+```
+
+Artefacts : `target/leak-capture-<ts>/` → `capture.pcapng`,
+`manifest.json` (`t_failure`, ports du banc, route, resolveurs),
+`leak_report.json` (`window.interdit`), journaux TAP du banc.
+
+### Mort de circuit, proxy vivant (`block`)
+
+```powershell
+pwsh -NoProfile -File scripts/sec_leak_capture.ps1 -Scenario block -FailWindowSec 45
+```
+
+Déroulé attendu :
+
+```
+[..] INJECTION block : pare-feu bloque les premiers sauts [IPs] a N octets verifies
+[..] regle pare-feu levee apres 45s -- observation reprise
+[..] OK   transfert actif a l'injection (>= 262144) dernier=M   # M > N : reprise prouvee
+[..] OK   panne block injectee t=HH:MM:SS.mmm
+[..] OK   INTERDIT dans la fenetre fail-closed = 0 n=0
+```
+
+Point clé : la règle pare-feu ne bloque **que** les endpoints overlay
+observés — toute tentative de fallback direct vers le WAN resterait
+visible et compterait comme `INTERDIT`. La règle est levée après
+`-FailWindowSec` (et dans le `finally` en cas de crash du script) pour
+observer la reprise.
+
+### Lecture du manifeste
+
+```json
+{
+  "scenario": "block",
+  "t_failure": "…T09:59:26.897…",
+  "fail_at_bytes": 262144,
+  "fail_window_sec": 45,
+  "capture": { "start": "…", "end": "…" },
+  "pid_bench": 6300
+}
+```
+
+Le verdict `INTERDIT(fenêtre)` est calculé dans
+`leak_report.json.window.interdit` — l'intervalle `[t_failure, fin de
+capture]` est passé à l'analyseur via `--window-start/--window-end`.
+
 ## Pièges classiques (déjà rencontrés)
 
 - **`--offline` = `IpPolicy::permissive()`** : un banc anti-SSRF ou de
