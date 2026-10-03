@@ -152,29 +152,32 @@ jobs:
           path: dist/OnionBit-*-windows-x64.zip
 
   package-windows-arm64:
-    name: package (windows arm64 — zip)
+    name: "package (windows arm64 : daemon+cli)"
     runs-on: windows-11-arm
-    continue-on-error: true   # runner preview + toolchain Flutter ARM64
-    needs: [rust, flutter]
+    continue-on-error: true   # runner preview
+    needs: [rust]
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-pc-windows-msvc
       - uses: Swatinem/rust-cache@v2
-      - uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-          cache: true
-          architecture: arm64
-      - name: build dist + zip release
-        run: ./scripts/build_dist.ps1 -SkipCheck -ZipRelease
+      # Pas d'UI Flutter ARM64 : aucune archive SDK windows_arm64
+      # n'est publiee dans le manifeste officiel (x64 seulement — le
+      # bundle UI complet reste produit en x64). Le daemon + cli
+      # natifs suffisent pour la lane ARM64 headless ; le zip UI
+      # complet ARM64 suivra quand Flutter le permettra.
+      - name: build release daemon + cli
+        run: ./scripts/build_release.ps1 -SkipCheck
       - name: smoke daemon
-        run: dist/onionbit-daemon.exe --help
+        run: dist/aarch64-pc-windows-msvc/onionbit-daemon.exe --help
+      - name: zip
+        run: |
+          $ver = (cargo pkgid -p onionbit-daemon).Split('#')[-1]
+          Compress-Archive -Path dist/aarch64-pc-windows-msvc `
+            -DestinationPath "dist/OnionBit-$ver-windows-arm64-headless.zip"
       - uses: actions/upload-artifact@v7
         with:
           name: onionbit-windows-arm64
-          path: dist/OnionBit-*-windows-arm64.zip
+          path: dist/OnionBit-*-windows-arm64-headless.zip
 
   # Publication : uniquement sur tag v*. Telecharge tous les artefacts
   # de package et cree la release GitHub marquee « Latest » (les tags
@@ -223,6 +226,7 @@ jobs:
           # Pas de --prerelease : les tags alpha/beta sont les releases
           # publiques du projet — le badge « Latest » doit les suivre.
           gh release create "$tag" \
+            --repo "${{ github.repository }}" \
             --title "$tag" \
             --notes-file notes.md \
             --latest \
