@@ -18,6 +18,9 @@ on:
   push:
     branches: [master]
   pull_request:
+  # Lancement manuel depuis l'onglet Actions — sert a valider le job
+  # nightly sans attendre le cron (et a rejouer les bancs longs).
+  workflow_dispatch:
   schedule:
     # Longevite automatisee (P1) : job nightly dedie ci-dessous.
     - cron: '0 3 * * *'
@@ -96,7 +99,7 @@ jobs:
   # banc local (Tribler.exe/pyipv8 indisponibles sur runner).
   nightly:
     name: nightly — endurance statique
-    if: github.event_name == 'schedule'
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
