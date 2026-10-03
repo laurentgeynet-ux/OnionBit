@@ -1,0 +1,106 @@
+# This file is part of OnionBit - a Rust port of the Tribler daemon.
+# Copyright (C) 2026 Laurent Geynet <laurent.geynet@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+# CI matricielle (P1) — socle de reproductibilite multi-OS.
+#
+# Ce qui tourne ici : checks statiques + tests workspace (loopback) +
+# Flutter analyze/test + build release Windows x64. Les bancs reseau
+# reel (interop pyipv8/Tribler, public, captures OS) restent locaux —
+# ils exigent Tribler.exe/pyipv8 et une stack reseau non emulee.
+#
+# windows-11-arm : runner en preview publique — non bloquant tant que
+# la disponibilite n'est pas stabilisee.
+
+name: ci
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  schedule:
+    # Longevite automatisee (P1) : job nightly dedie ci-dessous.
+    - cron: '0 3 * * *'
+
+permissions: {}
+
+defaults:
+  run:
+    shell: pwsh
+
+jobs:
+  rust:
+    name: rust (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+        include:
+          - os: windows-11-arm
+            experimental: true
+    runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.experimental || false }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: check
+        run: cargo check --workspace --all-targets --all-features
+      - name: clippy (zero warning)
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - name: fmt
+        run: cargo fmt --all -- --check
+      - name: tests workspace
+        run: cargo test --workspace --all-features
+
+  flutter:
+    name: flutter (windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: pub get
+        working-directory: app
+        run: flutter pub get
+      - name: analyze
+        working-directory: app
+        run: flutter analyze
+      - name: tests
+        working-directory: app
+        run: flutter test
+      - name: check i18n
+        run: ./scripts/check_i18n.ps1
+
+  release-windows:
+    name: release build (windows x64)
+    runs-on: windows-latest
+    needs: [rust, flutter]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: build release + manifest
+        run: ./scripts/build_release.ps1 -SkipCheck
+      - name: smoke daemon
+        run: dist/x86_64-pc-windows-msvc/onionbit-daemon.exe --help
+      - uses: actions/upload-artifact@v4
+        with:
+          name: onionbit-windows-x64
+          path: dist/x86_64-pc-windows-msvc/
+
+  # Longevite automatisee (P1) : la boucle fuzz smoke + les tests
+  # longs du workspace en nightly. Le mesh fingerprint reel reste un
+  # banc local (Tribler.exe/pyipv8 indisponibles sur runner).
+  nightly:
+    name: nightly — endurance statique
+    if: github.event_name == 'schedule'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: tests workspace (nightly)
+        run: cargo test --workspace --all-features
