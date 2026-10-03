@@ -171,7 +171,7 @@ impl SessionKeys {
 
 /// `crypto_auth` : HMAC-SHA512 tronque a 32 octets.
 pub fn crypto_auth(key: &[u8], message: &[u8]) -> Result<[u8; 32], CryptoError> {
-    let mut mac = <Hmac<sha2::Sha512> as Mac>::new_from_slice(key)
+    let mut mac = <Hmac<sha2::Sha512> as KeyInit>::new_from_slice(key)
         .map_err(|e| CryptoError::KeyDerivation(format!("HMAC: {e}")))?;
     mac.update(message);
     let tag = mac.finalize().into_bytes();
