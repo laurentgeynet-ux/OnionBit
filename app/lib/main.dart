@@ -4,6 +4,7 @@
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'app.dart';
@@ -16,6 +17,12 @@ Future<void> main(List<String> args) async {
     debugPrint('Démarrage (${kIsWeb ? 'web' : defaultTargetPlatform.name})');
   }
   await initDesktopShell();
+  // Web : supprime le menu contextuel natif du navigateur, qui sinon
+  // s'ouvre par-dessus les menus Flutter (`MenuAnchor`) au clic droit.
+  // Les champs de texte gardent leur menu Flutter (copier/coller).
+  if (kIsWeb) {
+    await BrowserContextMenu.disableContextMenu();
+  }
   // « Ouvrir avec » / association .torrent : le chemin arrive en argv.
   final startupFiles = args
       .map((a) => a.trim())
