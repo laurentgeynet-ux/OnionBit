@@ -41,6 +41,7 @@ chaque étape (cf. `AGENTS.md`, "Workflow par étape").
 | `docs/plans/app_settings_enrichissement.md` | Plan d'enrichissement de l'onglet Réglages (UI Flutter, 7 étapes) |
 | `docs/plans/app_sidebar_enrichissement.md` | Plan d'enrichissement de la sidebar (UI Flutter, 6 étapes) |
 | `docs/plans/bancs_tests.md` | Catalogue des bancs de test (matrice release P0, oracles, artefacts, journal des runs) |
+| `docs/P0-transport-manifest.md` | Manifeste de preuve figé — clôture P0 transport : scénarios 17a/17b/17c, commits de référence, limites assumées, bascule P1 |
 | `scripts/build_release.ps1` | Build release reproductible multi-cibles + `dist/<target>/` + manifest |
 | `docs/CHANGELOG.md` | Historique des étapes franchies |
 | `scripts/verify_all.ps1` | Validation complète (check/clippy/fmt/test) |
