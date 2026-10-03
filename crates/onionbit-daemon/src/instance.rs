@@ -8,7 +8,9 @@
 //! absolu pour ne pas bloquer des daemons de `state_dir` distincts
 //! (tests e2e en `tempdir`, instances parallèles).
 
+#[cfg(any(windows, test))]
 use std::collections::hash_map::DefaultHasher;
+#[cfg(any(windows, test))]
 use std::hash::{Hash, Hasher};
 use std::path::Path;
 
