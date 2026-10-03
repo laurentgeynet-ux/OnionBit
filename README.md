@@ -10,7 +10,7 @@
 [![Made with Rust](https://img.shields.io/badge/Made%20with-Rust-orange.svg)](https://www.rust-lang.org/)
 [![UI: Flutter](https://img.shields.io/badge/UI-Flutter-02569B.svg)](https://flutter.dev/)
 [![CI](https://github.com/laurentgeynet-ux/OnionBit/actions/workflows/ci.yml/badge.svg)](https://github.com/laurentgeynet-ux/OnionBit/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/Version-0.7.1--alpha-red.svg)](https://github.com/laurentgeynet-ux/OnionBit/releases)
+[![Version](https://img.shields.io/badge/Version-0.8.0--beta-red.svg)](https://github.com/laurentgeynet-ux/OnionBit/releases)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%C2%B7%20Linux%20%C2%B7%20macOS%20%C2%B7%20Android%20%C2%B7%20iOS%20%C2%B7%20Web-lightgrey.svg)]()
 
 </div>
@@ -35,10 +35,12 @@ same design Tribler pioneered:
 - 🛡️ **Kill switch & leak protection** — no clearnet fallback, no DNS/UDP leaks
 - 🦀 **Pure Rust core** — memory-safe, single binary, embeddable via REST API
 
-> **Status: alpha.** The engine is under active development and validated against the
-> real Tribler network (Tribler 8.x interop testbench). Not yet recommended for
-> high-stakes anonymity. Onion routing reduces network-level linkability; it does
-> not eliminate all privacy risks — see the [threat model](docs/THREAT-MODEL.md).
+> **Status: beta.** The engine is under active development and validated against the
+> real Tribler network (Tribler 8.x interop testbench) — including fail-closed
+> transport under injected failures (see `docs/P0-transport-manifest.md`). Not yet
+> recommended for high-stakes anonymity. Onion routing reduces network-level
+> linkability; it does not eliminate all privacy risks — see the
+> [threat model](docs/THREAT-MODEL.md).
 
 ## Proven interoperability
 
@@ -101,9 +103,9 @@ reproduction scripts: [**interoperability evidence**](docs/interop/README.md).
 
 ## Getting started
 
-> **Windows x64 alpha zip** is on the
+> **Windows x64 beta zip** is on the
 > [Releases](https://github.com/laurentgeynet-ux/OnionBit/releases) page
-> (`OnionBit-0.7.1-alpha-windows-x64.zip`): unzip, run `onionbit_ui.exe` —
+> (`OnionBit-0.8.0-beta-windows-x64.zip`): unzip, run `onionbit_ui.exe` —
 > it starts the daemon automatically. Prefer a browser? The daemon serves the
 > same UI at `http://127.0.0.1:8085/` (API key in `state\configuration.json`).
 > Other platforms: build from source
@@ -151,7 +153,7 @@ See [SECURITY.md](SECURITY.md) for reporting and the threat model.
 | Flutter UI (desktop first) | ✅ |
 | Web UI served by the daemon (same-origin) | ✅ |
 | In-app update check (GitHub releases probe) | ✅ |
-| Latest tagged release | ✅ [`v0.7.1-alpha`](https://github.com/laurentgeynet-ux/OnionBit/releases/tag/v0.7.1-alpha) |
+| Latest tagged release | ✅ [`v0.8.0-beta`](https://github.com/laurentgeynet-ux/OnionBit/releases/tag/v0.8.0-beta) |
 | Mobile execution model (Android/iOS) | 📋 |
 | Linux / macOS packages | 📋 |
 
