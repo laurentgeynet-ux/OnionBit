@@ -28,6 +28,11 @@ pub enum CoreError {
     /// Erreur d'etat avec message dynamique (services, stack ipv8).
     #[error("etat: {0}")]
     State(String),
+    /// Operation abandonnee volontairement : le magnet en resolution
+    /// a ete supprime entre-temps (`pending` retire) — pas une
+    /// defaillance, rien a remonter a l'utilisateur.
+    #[error("operation annulee: {0}")]
+    Cancelled(&'static str),
     /// Erreur cryptographique (cles IPv8).
     #[error("crypto: {0}")]
     Crypto(#[from] onionbit_crypto::CryptoError),

@@ -3,6 +3,52 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Résolution magnet anonyme : repli de sauts + pending opérationnel (2026-10-03)
+
+- **Tunnel — le repli `send_extend` est réellement atteint** : la garde
+  `!candidates.is_empty()` détruisait le circuit quand les `candidates`
+  offerts par le saut précédent étaient épuisés ; pyipv8 appelle
+  `send_extend` quels que soient les restes, ce qui déclenche le repli
+  `get_candidates(EXIT_BT|RELAY)` (pair du registre, adresse réelle
+  transmise au relais). Avec un pool de relais étroit dont la liste
+  offerte est périmée, les circuits ×3 ne se complétaient jamais et
+  les magnets anonymes restaient figés en METADATA sous le kill
+  switch — chaque reconstruction repassait par le même guard qui
+  re-servait les mêmes mids morts.
+- **Mémoire d'échec des sauts d'extension** (`extend_failures`, TTL =
+  `circuit_timeout` configuré) : un candidat qui expire en `extend`
+  est sauté — la liste offerte s'épuise vite et le repli registre est
+  atteint au lieu de brûler `max_tries` sur des mids morts.
+  Extension locale sans changement filaire ; sauts épinglés et
+  `required_exit` non concernés.
+- **Magnets en résolution (`pending`/METADATA) opérationnels** :
+  `PATCH anon_hops`, pause/reprise et suppression n'exigent plus
+  l'objet moteur (auparavant 404 alors que le download était listé).
+  `update_pending_hops` stocke la nouvelle cible et réveille la tâche
+  (`pending_notify` + `select!` abandonnent `add_uri_opts`/`readd_row`
+  en vol, relance sur la lane demandée) ; à la matérialisation une
+  cible encore différente converge via `update_hops` classique.
+  `CoreError::Cancelled` rend l'abandon silencieux quand le download
+  est supprimé pendant sa résolution.
+- **`download_exists` étendu à METADATA** : un re-`PUT` du même magnet
+  est refusé (`InvalidState` → 400) au lieu de respawner une seconde
+  tâche — les deux materialisaient un download moteur pour le même
+  infohash (lignes doublées partageant la même ligne `downloads`,
+  badge de lane trompeur, sélection par infohash groupée).
+- **Suppression multi-moteurs** : `remove()` retire l'infohash de tous
+  les engines détenteurs — un doublon historique laissait l'orphelin
+  dans l'autre lane, encore listé par `downloads()` mais sans ligne
+  persistée → réapparaissait affiché « Clair ».
+- **Badge `hops` adossé à la vérité moteur** : sans ligne `downloads`,
+  `GET /api/downloads` retombe sur `owner_engine_hops` (lane réelle du
+  moteur détenteur) au lieu de `0` — un download anonyme ne peut plus
+  être affiché « Clair » par défaut. La ligne persistée reste
+  prioritaire (intention configurée, parité Python).
+- Tests : `circuit_extend_replie_registre_quand_candidats_perimes`
+  (sortie morte offerte → circuit READY via le pair exit du registre)
+  et `operations_sur_magnet_en_resolution` (PATCH accepté + bornes,
+  dedup re-add, pause persistée, suppression qui réveille la tâche).
+
 ## Packaging multi-plateforme en CI (2026-10-03)
 
 - **Nouveau `scripts/package_posix.sh`** : assemble `dist/<target>/`

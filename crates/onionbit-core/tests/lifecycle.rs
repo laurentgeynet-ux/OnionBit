@@ -462,3 +462,101 @@ async fn pause_all_resume_all_basculent_tous_les_telechargements() {
 
     session.stop().await;
 }
+
+/// Regression : un magnet en resolution (`pending`, statut METADATA)
+/// n'a pas d'objet moteur — `find_download_hex` repondait donc 404 a
+/// `PATCH anon_hops`, pause et suppression, alors que le download etait
+/// visible dans la liste. Un re-`PUT` du meme magnet spawnait une
+/// seconde tache de resolution : les deux materialisaient un download
+/// moteur pour le meme infohash (lignes doublees ; l'orphelin restant
+/// apres suppression ressortait en lane par defaut, badge « Clair »).
+#[tokio::test]
+async fn operations_sur_magnet_en_resolution() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut cfg = CoreConfig::offline(dir.path().to_path_buf());
+    // Tracker injoignable : la resolution BEP 9 attend sans fin, le
+    // download reste en `pending` tout le long du test.
+    cfg.engine.disable_trackers = false;
+
+    let ih = "cd".repeat(20);
+    let uri = format!("magnet:?xt=urn:btih:{ih}&tr=udp%3A%2F%2F127.0.0.1%3A9");
+
+    // Ligne persistee sans metainfo → restauration differee (pending).
+    let session = CoreSession::start(cfg.clone(), Notifier::new())
+        .await
+        .expect("start #1");
+    session
+        .db()
+        .with(|c| {
+            onionbit_db::downloads::upsert(
+                c,
+                &onionbit_db::DownloadRow {
+                    infohash: onionbit_crypto::hash::from_hex(&ih).unwrap(),
+                    name: Some("pending.bin".into()),
+                    source_uri: uri.clone(),
+                    ..Default::default()
+                },
+            )
+        })
+        .expect("upsert downloads");
+    session.stop().await;
+
+    let session = CoreSession::start(cfg, Notifier::new())
+        .await
+        .expect("start #2");
+    tokio::time::timeout(std::time::Duration::from_secs(30), session.wait_restored())
+        .await
+        .expect("restauration figee");
+    let pending_seen = onionbit_test_support::wait_for(std::time::Duration::from_secs(10), || {
+        session.pending_downloads().iter().any(|p| p.infohash == ih)
+    })
+    .await;
+    assert!(pending_seen, "magnet en resolution absent du pending");
+
+    // `PATCH anon_hops` sur le pending : accepte (meme lane → no-op)
+    // au lieu du 404 precedent ; les bornes restent appliquees et
+    // une lane anonyme sans stack ipv8 est refusee proprement.
+    session
+        .update_hops(&ih, 0)
+        .await
+        .expect("update_hops pending");
+    assert!(
+        session.update_hops(&ih, 4).await.is_err(),
+        "anon_hops > MAX accepte sur pending"
+    );
+    assert!(
+        session.update_hops(&ih, 2).await.is_err(),
+        "lane anonyme acceptee sans stack ipv8"
+    );
+
+    // Re-`PUT` du meme magnet : refuse (`download_exists` etendu a
+    // METADATA) au lieu de respawner une seconde resolution.
+    let dup = session.add_download_anon(&uri, false, 0, false, None).await;
+    assert!(
+        matches!(dup, Err(onionbit_core::CoreError::InvalidState(_))),
+        "re-add d'un magnet en resolution accepte : {dup:?}"
+    );
+
+    // Pause/reprise sur le pending : portees par `pending.paused` et
+    // la ligne persistee (le Download METADATA Python est pausable).
+    session.pause(&ih).await.expect("pause pending");
+    let paused = session
+        .db()
+        .with(|c| onionbit_db::downloads::get(c, &onionbit_crypto::hash::from_hex(&ih).unwrap()))
+        .expect("get")
+        .map(|r| r.paused)
+        .unwrap_or(false);
+    assert!(paused, "pause pending non persistee");
+    session.resume(&ih).await.expect("resume pending");
+
+    // Suppression pendant la resolution : entree retiree, ligne
+    // effacee, tache de resolution reveillee puis abandonnee.
+    session.remove(&ih, false).await.expect("remove pending");
+    assert!(session.pending_downloads().is_empty());
+    let row = session
+        .db()
+        .with(|c| onionbit_db::downloads::get(c, &onionbit_crypto::hash::from_hex(&ih).unwrap()))
+        .expect("get downloads");
+    assert!(row.is_none(), "ligne persistee non supprimee");
+    session.stop().await;
+}

@@ -2061,6 +2061,18 @@ impl Ipv8Stack {
             .collect()
     }
 
+    /// Idem avec le nombre de sauts de chaque lane — la lane est la
+    /// verite moteur (contra a `downloads.anon_hops`, l'intention
+    /// persistee).
+    pub fn anon_engines_with_hops(&self) -> Vec<(usize, BtEngine)> {
+        self.anon_lanes
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(h, l)| (*h, l.engine.clone()))
+            .collect()
+    }
+
     /// Liaisons download<->swarm connues du moniteur (equivalent du
     /// `self.download_states` de `monitor_downloads` Python, joint a
     /// `swarm_lookup` pour l'info-hash reel) — diagnostic des

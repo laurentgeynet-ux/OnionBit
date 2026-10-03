@@ -154,6 +154,13 @@ struct Inner {
     /// Magnets en cours de resolution BEP 9 (cle : infohash hex) —
     /// visibles dans `GET /api/downloads` en statut `METADATA`.
     pending: std::sync::Mutex<std::collections::HashMap<String, PendingDownload>>,
+    /// Signal de re-ciblage par infohash hex : `update_hops` sur une
+    /// entree `pending` reveille la tache de resolution qui relance
+    /// `add_uri_opts`/`readd_row` sur la nouvelle lane (la resolution
+    /// BEP 9 en vol ne peut pas changer de lane — elle est abandonnee
+    /// puis recreee).
+    pending_notify:
+        std::sync::Mutex<std::collections::HashMap<String, std::sync::Arc<tokio::sync::Notify>>>,
     /// Fin de la restauration des telechargements persistes
     /// (`load_checkpoint` Python — asynchrone) : `false` → `true`
     /// quand la tache de fond a termine ; [`Self::wait_restored`]
@@ -217,6 +224,7 @@ impl CoreSession {
                 last_tracker_sync: std::sync::Mutex::new(None),
                 asyncio,
                 pending: std::sync::Mutex::new(std::collections::HashMap::new()),
+                pending_notify: std::sync::Mutex::new(std::collections::HashMap::new()),
                 stopped: std::sync::atomic::AtomicBool::new(false),
                 restore_done: tokio::sync::watch::channel(false).0,
                 augmenter: augmenter.clone(),
@@ -272,6 +280,7 @@ impl CoreSession {
                 last_tracker_sync: std::sync::Mutex::new(None),
                 asyncio,
                 pending: std::sync::Mutex::new(std::collections::HashMap::new()),
+                pending_notify: std::sync::Mutex::new(std::collections::HashMap::new()),
                 stopped: std::sync::atomic::AtomicBool::new(false),
                 // Base memoire : rien a restaurer — restauration
                 // marquee terminee d'emblee.
@@ -383,7 +392,7 @@ impl CoreSession {
                 // et tout PATCH repondait 404. Python cree le
                 // Download d'emblee (etat METADATA) — on deporte le
                 // re-add en tache de fond exposee via `pending`.
-                self.spawn_deferred_restore(engine, row);
+                self.spawn_deferred_restore(row);
                 deferred += 1;
                 continue;
             }
@@ -431,8 +440,14 @@ impl CoreSession {
     /// de la source, puis le metainfo resolu est backfille dans
     /// `torrent_data` — les demarrages suivants passent alors par la
     /// voie `.torrent` synchrone.
-    fn spawn_deferred_restore(&self, engine: BtEngine, row: DownloadRow) {
+    ///
+    /// La lane cible est relue a chaque tentative : un `PATCH
+    /// anon_hops` pendant la resolution abandonne l'attente en vol et
+    /// relance sur la nouvelle lane (`pending_notify`). Retirer
+    /// l'entree `pending` (DELETE) abandonne la restauration.
+    fn spawn_deferred_restore(&self, row: DownloadRow) {
         let ih_hex = onionbit_crypto::hash::to_hex(&row.infohash);
+        let notify = self.pending_notify(&ih_hex);
         self.inner.pending.lock().unwrap().insert(
             ih_hex.clone(),
             PendingDownload {
@@ -445,8 +460,52 @@ impl CoreSession {
         );
         let session = self.clone();
         tokio::spawn(async move {
-            let res = session.readd_row(&engine, &row).await;
-            session.inner.pending.lock().unwrap().remove(&ih_hex);
+            let mut notified = std::pin::pin!(notify.notified());
+            // Lane/pause effectivement tentees a la derniere
+            // iteration — convergence a la materialisation.
+            let mut used_hops = row.anon_hops.max(0) as u32;
+            let mut used_paused = row.paused || row.user_stopped;
+            let res = loop {
+                notified.as_mut().enable();
+                let Some((hops, paused)) = session
+                    .inner
+                    .pending
+                    .lock()
+                    .unwrap()
+                    .get(&ih_hex)
+                    .map(|p| (p.anon_hops, p.paused))
+                else {
+                    // Entree retiree entre-temps : suppression
+                    // utilisateur, rien a restaurer ni a signaler.
+                    break Err(CoreError::Cancelled("restauration abandonnee"));
+                };
+                used_hops = hops;
+                used_paused = paused;
+                let engine = match session.engine_for(hops).await {
+                    Ok(e) => e,
+                    Err(e) => break Err(e),
+                };
+                // `paused`/`user_stopped` ont pu changer pendant la
+                // resolution (`PATCH state`) — options relues.
+                let mut row = row.clone();
+                row.paused = paused;
+                row.user_stopped = paused;
+                let fut = session.readd_row(&engine, &row);
+                tokio::pin!(fut);
+                tokio::select! {
+                    r = &mut fut => break r,
+                    _ = notified.as_mut() => {
+                        notified.set(notify.notified());
+                        tracing::info!(
+                            infohash = %ih_hex,
+                            hops,
+                            "restauration differee relancee sur la nouvelle lane"
+                        );
+                    }
+                }
+            };
+            let removed = session.inner.pending.lock().unwrap().remove(&ih_hex);
+            session.inner.pending_notify.lock().unwrap().remove(&ih_hex);
             match res {
                 Ok(dl) => {
                     // `update_download_row` renvoie faux quand la
@@ -469,8 +528,37 @@ impl CoreSession {
                             .stopped
                             .load(std::sync::atomic::Ordering::SeqCst)
                     {
-                        let _ = engine.remove(&dl.info_hash_hex(), false).await;
+                        let _ = session.remove_engine_only(&dl.info_hash_hex(), false).await;
                     } else {
+                        // La cible `pending` a pu changer entre la
+                        // derniere relance et la materialisation :
+                        // le download etant desormais actif, le chemin
+                        // normal migre la lane et applique la pause.
+                        if let Some(p) = removed {
+                            if p.anon_hops != used_hops {
+                                if let Err(e) = session.update_hops(&ih_hex, p.anon_hops).await {
+                                    tracing::warn!(
+                                        infohash = %ih_hex,
+                                        error = %e,
+                                        "lane demandee pendant la resolution non appliquee"
+                                    );
+                                }
+                            }
+                            if p.paused != used_paused {
+                                let r = if p.paused {
+                                    session.pause(&ih_hex).await
+                                } else {
+                                    session.resume(&ih_hex).await
+                                };
+                                if let Err(e) = r {
+                                    tracing::warn!(
+                                        infohash = %ih_hex,
+                                        error = %e,
+                                        "etat pause demande pendant la resolution non applique"
+                                    );
+                                }
+                            }
+                        }
                         tracing::info!(
                             infohash = %ih_hex,
                             "telechargement restaure (resolution differee)"
@@ -483,6 +571,9 @@ impl CoreSession {
                             );
                         }
                     }
+                }
+                Err(CoreError::Cancelled(m)) => {
+                    tracing::debug!(infohash = %ih_hex, "restauration differee: {m}");
                 }
                 Err(e) => {
                     tracing::warn!(
@@ -1026,11 +1117,24 @@ impl CoreSession {
         // finished, reglages) du download existant.
         let magnet = onionbit_format::magnet::MagnetLink::parse(uri).ok();
         if let Some(m) = &magnet {
-            if let Some(existing) = self.find_download_hex(&m.info_hash_hex()) {
+            let ih_hex = m.info_hash_hex();
+            if let Some(existing) = self.find_download_hex(&ih_hex) {
                 return Ok(existing);
             }
+            // Dedup sur la resolution en vol (`download_exists`
+            // Python couvre aussi l'etat METADATA) : sans cela un
+            // second `PUT` ecrasait l'entree `pending` mais la
+            // premiere tache de resolution continuait — deux
+            // downloads moteur materialisaient le meme infohash
+            // (lignes doublees, badge de lane de la derniere
+            // persistance). Le `PATCH anon_hops` est la voie
+            // prevue pour changer la lane d'un magnet en cours.
+            if self.is_pending(&ih_hex) {
+                return Err(CoreError::InvalidState(
+                    "telechargement deja en cours de resolution",
+                ));
+            }
         }
-        let engine = self.engine_for(anon_hops).await?;
         // Trackers par defaut (`trackers_file`) : ajoutes a chaque
         // nouveau telechargement, comme le post-handle
         // `ADD_DEFAULT_TRACKERS` Python — et persistes dans
@@ -1041,43 +1145,126 @@ impl CoreSession {
         // download est visible dans `GET /api/downloads` pendant
         // l'attente au lieu de n'apparaitre qu'une fois resolu.
         let pending_key = magnet.as_ref().map(|m| m.info_hash_hex());
-        if let Some(k) = &pending_key {
+        // Lane effectivement tentee a la derniere iteration — relue
+        // depuis `pending` a chaque relance (`PATCH anon_hops`
+        // pendant la resolution).
+        let mut hops = anon_hops;
+        let mut paused_now = paused;
+        let add_res = if let Some(k) = &pending_key {
+            let notify = self.pending_notify(k);
             self.inner.pending.lock().unwrap().insert(
                 k.clone(),
                 PendingDownload {
                     infohash: k.clone(),
                     name: magnet.as_ref().and_then(|m| m.display_name.clone()),
-                    anon_hops,
+                    anon_hops: hops,
                     paused,
                     added_on: now_unix(),
                 },
             );
-        }
-        let add_res = engine
-            .add_uri_opts(
-                uri,
-                &AddDownloadOptions {
-                    paused,
-                    output_folder: self.effective_output_dir(destination),
+            let mut notified = std::pin::pin!(notify.notified());
+            loop {
+                notified.as_mut().enable();
+                let Some(cur) = self
+                    .inner
+                    .pending
+                    .lock()
+                    .unwrap()
+                    .get(k)
+                    .map(|p| (p.anon_hops, p.paused))
+                else {
+                    // Entree retiree entre-temps : suppression par
+                    // l'utilisateur — abandon silencieux.
+                    break Err(CoreError::Cancelled("resolution magnet abandonnee"));
+                };
+                (hops, paused_now) = cur;
+                let engine = match self.engine_for(hops).await {
+                    Ok(e) => e,
+                    Err(e) => break Err(e),
+                };
+                let opts = AddDownloadOptions {
+                    paused: paused_now,
+                    output_folder: self.effective_output_dir(destination.clone()),
                     trackers: trackers.clone(),
                     ..Default::default()
-                },
-            )
-            .await;
-        if let Some(k) = &pending_key {
-            self.inner.pending.lock().unwrap().remove(k);
-        }
+                };
+                let fut = engine.add_uri_opts(uri, &opts);
+                tokio::pin!(fut);
+                tokio::select! {
+                    res = &mut fut => break res.map_err(CoreError::from),
+                    _ = notified.as_mut() => {
+                        // `enable` avant la relecture evite de manquer
+                        // une notification arrivee entre les deux.
+                        notified.set(notify.notified());
+                        tracing::info!(
+                            infohash = %k,
+                            hops,
+                            "resolution magnet relancee apres changement de lane"
+                        );
+                    }
+                }
+            }
+        } else {
+            let engine = self.engine_for(hops).await?;
+            engine
+                .add_uri_opts(
+                    uri,
+                    &AddDownloadOptions {
+                        paused,
+                        output_folder: self.effective_output_dir(destination),
+                        trackers: trackers.clone(),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .map_err(CoreError::from)
+        };
+        let removed = pending_key.as_ref().and_then(|k| {
+            let r = self.inner.pending.lock().unwrap().remove(k);
+            self.inner.pending_notify.lock().unwrap().remove(k);
+            r
+        });
         let dl = add_res?;
         self.persist(
             &dl,
             uri,
             PersistParams {
-                paused,
-                anon_hops,
+                paused: paused_now,
+                anon_hops: hops,
                 safe_seeding,
                 extra_trackers: trackers,
             },
         )?;
+        // Un `PATCH` a pu arriver entre la fin de la derniere
+        // resolution et le retrait de `pending` : la derniere cible
+        // est appliquee via le chemin normal — le download vient
+        // d'etre materialise avec `hops`/`paused_now`.
+        if let Some(p) = removed {
+            let ih_hex = dl.info_hash_hex();
+            if p.anon_hops != hops {
+                if let Err(e) = self.update_hops(&ih_hex, p.anon_hops).await {
+                    tracing::warn!(
+                        infohash = %ih_hex,
+                        error = %e,
+                        "lane demandee pendant la resolution non appliquee"
+                    );
+                }
+            }
+            if p.paused != paused_now {
+                let r = if p.paused {
+                    self.pause(&ih_hex).await
+                } else {
+                    self.resume(&ih_hex).await
+                };
+                if let Err(e) = r {
+                    tracing::warn!(
+                        infohash = %ih_hex,
+                        error = %e,
+                        "etat pause demande pendant la resolution non applique"
+                    );
+                }
+            }
+        }
         Ok(dl)
     }
 
@@ -1477,15 +1664,45 @@ impl CoreSession {
         });
     }
 
+    /// Canal de re-ciblage d'une resolution `pending` (get-or-create).
+    fn pending_notify(&self, key: &str) -> std::sync::Arc<tokio::sync::Notify> {
+        self.inner
+            .pending_notify
+            .lock()
+            .unwrap()
+            .entry(key.to_string())
+            .or_default()
+            .clone()
+    }
+
+    /// `true` si l'infohash hex designe un magnet en cours de
+    /// resolution (`pending`, statut METADATA) — pas encore d'objet
+    /// moteur.
+    pub fn is_pending(&self, infohash_hex: &str) -> bool {
+        onionbit_crypto::hash::from_hex(infohash_hex).is_some_and(|ih| {
+            self.inner
+                .pending
+                .lock()
+                .unwrap()
+                .contains_key(&onionbit_crypto::hash::to_hex(&ih))
+        })
+    }
+
     /// `update_hops` Python (`DownloadManager.update_hops`) : retire le
     /// telechargement de son moteur actuel puis le recree sur le moteur
     /// a `new_hops` sauts — les donnees sur disque ET les reglages
     /// persistes sont conserves (comme le `checkpoint` Python survive
     /// a la recreation).
+    ///
+    /// Un magnet encore en resolution (`pending`, statut METADATA)
+    /// n'a pas d'objet moteur : la cible est mise a jour dans
+    /// `pending` et la tache de resolution relance `add_uri_opts` sur
+    /// la nouvelle lane — comme Python, ou le Download METADATA
+    /// accepte `update_hops` (remove + re-add).
     pub async fn update_hops(&self, id_or_hash: &str, new_hops: u32) -> Result<()> {
-        let dl = self
-            .find_download(id_or_hash)
-            .ok_or(CoreError::InvalidState("telechargement inconnu"))?;
+        let Some(dl) = self.find_download(id_or_hash) else {
+            return self.update_pending_hops(id_or_hash, new_hops);
+        };
         let ih = dl.info_hash();
         let mut row = self
             .row_of(&ih)?
@@ -1544,6 +1761,46 @@ impl CoreSession {
         }
     }
 
+    /// `update_hops` pour un magnet en resolution (`pending`) : la
+    /// cible est relue par la tache de resolution au reveil
+    /// (`pending_notify`), puis appliquee a la materialisation par le
+    /// chemin normal. La ligne `downloads` persistee suit aussi quand
+    /// elle existe (restauration differee) — un ajout magnet frais
+    /// n'a pas encore de ligne.
+    fn update_pending_hops(&self, id_or_hash: &str, new_hops: u32) -> Result<()> {
+        let ih = onionbit_crypto::hash::from_hex(id_or_hash)
+            .ok_or(CoreError::InvalidState("telechargement inconnu"))?;
+        let key = onionbit_crypto::hash::to_hex(&ih);
+        {
+            let mut pending = self.inner.pending.lock().unwrap();
+            let Some(p) = pending.get_mut(&key) else {
+                return Err(CoreError::InvalidState("telechargement inconnu"));
+            };
+            // Bornes identiques a `engine_for` : une lane invalide ne
+            // doit pas rester stockee comme cible de resolution.
+            if new_hops > crate::ipv8_stack::MAX_ANON_HOPS as u32 {
+                return Err(CoreError::State("anon_hops doit etre entre 1 et 3".into()));
+            }
+            if new_hops > 0 && self.inner.ipv8.is_none() {
+                return Err(CoreError::InvalidState(
+                    "anon_hops > 0 mais la stack ipv8 est inactive",
+                ));
+            }
+            if p.anon_hops == new_hops {
+                return Ok(());
+            }
+            p.anon_hops = new_hops;
+        }
+        if let Some(n) = self.inner.pending_notify.lock().unwrap().get(&key) {
+            n.notify_one();
+        }
+        // La ligne existe deja pour les restaurations differees —
+        // best-effort : absente pour un ajout frais (persistee a la
+        // materialisation).
+        let _ = self.update_download_row(&ih, |r| r.anon_hops = i64::from(new_hops));
+        Ok(())
+    }
+
     /// Liste les telechargements (moteur principal + lanes anonymes).
     pub fn downloads(&self) -> Vec<DownloadStats> {
         self.all_engines().iter().flat_map(|e| e.list()).collect()
@@ -1577,6 +1834,25 @@ impl CoreSession {
             .collect()
     }
 
+    /// Lane detenant reellement le telechargement (verite moteur,
+    /// contra `downloads.anon_hops` qui est l'intention persistee) :
+    /// `0` = moteur principal en clair, `1..=3` = lane anonyme. Sert
+    /// de repli au badge `hops` quand la ligne `downloads` est
+    /// absente — afficher « Clair » pour un download qui tourne
+    /// reellement en tunnel serait un mensonge sur l'anonymat.
+    pub fn owner_engine_hops(&self, infohash_hex: &str) -> Option<u32> {
+        let ih = onionbit_crypto::hash::from_hex(infohash_hex)?;
+        if self.inner.engine.get_by_hash(&ih).is_some() {
+            return Some(0);
+        }
+        self.inner.ipv8.as_ref().and_then(|s| {
+            s.anon_engines_with_hops()
+                .into_iter()
+                .find(|(_, e)| e.get_by_hash(&ih).is_some())
+                .map(|(h, _)| h as u32)
+        })
+    }
+
     /// `anon_hops` par info-hash hex, d'apres la persistance DB
     /// (utilise par `GET /api/downloads` pour `hops`/`anon_download`).
     pub fn anon_hops_map(&self) -> std::collections::HashMap<String, u32> {
@@ -1607,10 +1883,14 @@ impl CoreSession {
     /// Pause idempotente (`download.stop()` Python est un no-op sur
     /// un download deja arrete ; librqbit renvoie une erreur — on
     /// l'absorbe pour la parite).
+    ///
+    /// Un magnet en resolution (`pending`, etat METADATA) est
+    /// pausable comme le Download Python : l'intention est portee
+    /// par `pending.paused`, appliquee a la materialisation.
     pub async fn pause(&self, id_or_hash: &str) -> Result<()> {
-        let engine = self
-            .owner_engine(id_or_hash)
-            .ok_or(CoreError::InvalidState("telechargement inconnu"))?;
+        let Some(engine) = self.owner_engine(id_or_hash) else {
+            return self.set_pending_paused(id_or_hash, true);
+        };
         if !engine
             .get(id_or_hash)
             .map(|d| d.is_paused())
@@ -1624,9 +1904,9 @@ impl CoreSession {
 
     /// Reprend un telechargement (idempotent, comme `resume` Python).
     pub async fn resume(&self, id_or_hash: &str) -> Result<()> {
-        let engine = self
-            .owner_engine(id_or_hash)
-            .ok_or(CoreError::InvalidState("telechargement inconnu"))?;
+        let Some(engine) = self.owner_engine(id_or_hash) else {
+            return self.set_pending_paused(id_or_hash, false);
+        };
         if engine
             .get(id_or_hash)
             .map(|d| d.is_paused())
@@ -1635,6 +1915,29 @@ impl CoreSession {
             engine.resume(id_or_hash).await?;
         }
         self.notify_state(id_or_hash);
+        Ok(())
+    }
+
+    /// Pause/reprise sur un magnet en resolution : pas d'objet moteur
+    /// — `pending.paused` est relu par la tache de resolution
+    /// (`AddDownloadOptions.paused` a chaque relance) puis applique a
+    /// la materialisation. La ligne persistee suit quand elle existe
+    /// (restauration differee).
+    fn set_pending_paused(&self, id_or_hash: &str, paused: bool) -> Result<()> {
+        let ih = onionbit_crypto::hash::from_hex(id_or_hash)
+            .ok_or(CoreError::InvalidState("telechargement inconnu"))?;
+        let key = onionbit_crypto::hash::to_hex(&ih);
+        {
+            let mut pending = self.inner.pending.lock().unwrap();
+            let Some(p) = pending.get_mut(&key) else {
+                return Err(CoreError::InvalidState("telechargement inconnu"));
+            };
+            p.paused = paused;
+        }
+        let _ = self.update_download_row(&ih, |r| {
+            r.paused = paused;
+            r.user_stopped = paused;
+        });
         Ok(())
     }
 
@@ -1682,13 +1985,17 @@ impl CoreSession {
         let Some(dl) = self.find_download(id_or_hash) else {
             let ih = onionbit_crypto::hash::from_hex(id_or_hash)
                 .ok_or(CoreError::InvalidState("telechargement inconnu"))?;
-            let pending = self
-                .inner
-                .pending
-                .lock()
-                .unwrap()
-                .remove(&onionbit_crypto::hash::to_hex(&ih))
-                .is_some();
+            let key = onionbit_crypto::hash::to_hex(&ih);
+            let pending = self.inner.pending.lock().unwrap().remove(&key).is_some();
+            if pending {
+                // Reveille la tache de resolution : l'entree retiree
+                // lui fait abandonner `add_uri_opts`/`readd_row` en
+                // vol au lieu de materialiser puis persister un
+                // download supprime.
+                if let Some(n) = self.inner.pending_notify.lock().unwrap().remove(&key) {
+                    n.notify_one();
+                }
+            }
             let known = self.row_of(&ih)?.is_some();
             if !pending && !known {
                 return Err(CoreError::InvalidState("telechargement inconnu"));
@@ -1699,7 +2006,33 @@ impl CoreSession {
             return Ok(());
         };
         let infohash = dl.info_hash_hex();
-        self.remove_engine_only(id_or_hash, delete_files).await?;
+        // Un meme infohash a pu etre materialise sur plusieurs
+        // moteurs (lanes anonymes = sessions librqbit distinctes)
+        // par une course de resolution : ne retirer que le premier
+        // detenteur laissait l'orphelin liste par `downloads()`
+        // sans ligne persistee — reaffiche en lane par defaut.
+        let mut first_err = None;
+        for e in self.all_engines() {
+            if e.get(id_or_hash).is_none() {
+                continue;
+            }
+            if let Err(err) = e.remove(id_or_hash, delete_files).await {
+                first_err.get_or_insert_with(|| CoreError::from(err));
+            }
+        }
+        if let Some(err) = first_err {
+            return Err(err);
+        }
+        // Une entree `pending` residuelle coexistant avec l'objet
+        // moteur : la retirer aussi, sa tache de resolution doit
+        // abandonner au lieu de materialiser un download supprime.
+        {
+            let key = infohash.clone();
+            self.inner.pending.lock().unwrap().remove(&key);
+            if let Some(n) = self.inner.pending_notify.lock().unwrap().remove(&key) {
+                n.notify_one();
+            }
+        }
         {
             let h = infohash;
             // Source importee via le dossier surveille : la retirer
@@ -1988,8 +2321,21 @@ impl CoreSession {
     /// Marque l'intention pause/reprise dans la persistance
     /// (`user_stopped`/`paused` Python) — appele par le PATCH sur
     /// `state=stop|resume`.
+    ///
+    /// Magnet en resolution (`pending`) : `pause`/`resume` ont deja
+    /// porte l'intention dans `pending.paused` — et dans la ligne
+    /// quand elle existe. Sans ligne ni moteur : no-op.
     pub fn set_stopped_flag(&self, id_or_hash: &str, stopped: bool) -> Result<()> {
-        let (dl, _) = self.download_and_row(id_or_hash)?;
+        let (dl, _) = match self.download_and_row(id_or_hash) {
+            Ok(t) => t,
+            Err(e) => {
+                return if self.is_pending(id_or_hash) {
+                    Ok(())
+                } else {
+                    Err(e)
+                };
+            }
+        };
         self.update_download_row(&dl.info_hash(), |r| {
             r.paused = stopped;
             r.user_stopped = stopped;

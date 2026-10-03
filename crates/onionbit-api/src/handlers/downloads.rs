@@ -111,7 +111,15 @@ pub async fn get_downloads(
                     info.destination = r.output_dir.clone();
                 }
             }
-            let hops = hops_map.get(&s.info_hash).copied().unwrap_or(0);
+            // Ligne persistee prioritaire (intention configuree —
+            // parite Python) ; a defaut, la verite moteur : un
+            // orphelin sans ligne doit afficher sa lane reelle,
+            // pas « Clair » par defaut.
+            let hops = hops_map
+                .get(&s.info_hash)
+                .copied()
+                .or_else(|| state.session.owner_engine_hops(&s.info_hash))
+                .unwrap_or(0);
             info.hops = hops.max(info.hops);
             info.anon_download = info.hops > 0;
             if let Some(dl) = &dl {
@@ -571,6 +579,12 @@ pub async fn add_download(
                     .add_download_anon(&uri, paused, hops, safe_seeding, dest)
                     .await
                 {
+                    if matches!(e, onionbit_core::CoreError::Cancelled(_)) {
+                        // Suppression pendant la resolution : choix
+                        // utilisateur, pas une defaillance.
+                        tracing::debug!(error = %e, "ajout magnet abandonne");
+                        return;
+                    }
                     let msg = e.to_string();
                     if cli {
                         st.push_cli_error(msg.clone());
@@ -724,11 +738,20 @@ pub async fn update_download(
     Path(infohash): Path<String>,
     Json(req): Json<UpdateDownloadRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let dl = state
-        .session
-        .find_download_hex(&infohash)
-        .ok_or_else(|| ApiError::not_found(format!("this download does not exist: {infohash}")))?;
-    let ih_hex = dl.info_hash_hex();
+    // Un magnet en cours de resolution (statut METADATA) n'a pas
+    // encore d'objet moteur mais existe dans `pending` — seul
+    // `anon_hops` s'y applique ; toute autre operation exige le
+    // download materialise et repond alors 404 comme avant.
+    let dl = state.session.find_download_hex(&infohash);
+    if dl.is_none() && !state.session.is_pending(&infohash) {
+        return Err(ApiError::not_found(format!(
+            "this download does not exist: {infohash}"
+        )));
+    }
+    let ih_hex = dl
+        .as_ref()
+        .map(|d| d.info_hash_hex())
+        .unwrap_or_else(|| infohash.to_lowercase());
 
     // `anon_hops` doit etre le seul parametre (comptage brut des
     // cles du corps, cles inconnues comprises — `len(parameters)`).
@@ -749,6 +772,10 @@ pub async fn update_download(
             "infohash": ih_hex,
         })));
     }
+    // Magnet en resolution : les operations qui exigent un objet
+    // moteur echouent en `InvalidState` (400) cote session — un
+    // download METADATA existe, un 404 serait trompeur.
+    // (`state=stop|resume` fonctionne : porte par `pending.paused`.)
 
     if let Some(files) = &req.selected_files {
         state

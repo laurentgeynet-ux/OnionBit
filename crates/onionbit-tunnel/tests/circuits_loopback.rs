@@ -2036,6 +2036,68 @@ async fn build_circuits_1hop_refuse_relay_only() {
     }
 }
 
+/// Regression : quand les `candidates` offerts par le saut precedent
+/// sont epuises (liste de pairs perimee), le timeout doit quand meme
+/// relancer `send_extend` — pyipv8 replie alors sur un pair
+/// `EXIT_BT|RELAY` connu, dont l'adresse reelle est transmise au
+/// relais (`node_addr`). La garde `!candidates.is_empty()` detruisait
+/// le circuit sans jamais atteindre ce repli : avec un pool de
+/// relais etroit, les circuits multi-sauts ne completaient plus et
+/// les magnets anonymes restaient figes en METADATA (kill switch).
+/// Ici le premier saut n'offre qu'une sortie morte ; le circuit doit
+/// terminer sur le pair exit du registre local (repli).
+#[tokio::test]
+async fn circuit_extend_replie_registre_quand_candidats_perimes() {
+    let a = make_node_settings(
+        PEER_FLAG_RELAY,
+        TunnelSettings {
+            next_hop_timeout: Duration::from_millis(100),
+            ..TunnelSettings::default()
+        },
+    )
+    .await;
+    let b = make_node_flags(PEER_FLAG_RELAY).await;
+    let c = make_node_flags(PEER_FLAG_RELAY | PEER_FLAG_EXIT_BT).await;
+
+    // Sortie morte : cle publique valide, personne n'ecoute — c'est
+    // le seul candidat d'extension offert par B.
+    let dead_key = LibNaClSecretKey::generate();
+    let dead_pk = dead_key.public_key().to_bin();
+    b.tunnel.register_exit_peer(
+        &dead_pk,
+        "127.0.0.1:1".parse().unwrap(),
+        PEER_FLAG_RELAY | PEER_FLAG_EXIT_BT,
+    );
+    // Repli local de A : C est un exit connu du registre.
+    a.tunnel.register_exit_peer(
+        &c.key.public_key().to_bin(),
+        c.addr,
+        PEER_FLAG_RELAY | PEER_FLAG_EXIT_BT,
+    );
+
+    learn(&a, &b);
+    let cid = a
+        .tunnel
+        .create_circuit(2, &peer_of(&b))
+        .await
+        .expect("create_circuit");
+    assert!(
+        wait_ready(&a.tunnel, cid).await,
+        "circuit non READY : le repli registre n'a pas ete atteint"
+    );
+
+    // Le dernier saut est C (registre), pas le candidat mort offert.
+    let infos = a.tunnel.circuits_info();
+    let c_info = infos.iter().find(|i| i.circuit_id == cid).unwrap();
+    let mid_c = hex::encode(onionbit_crypto::hash::ipv8_mid(
+        &c.key.public_key().to_bin(),
+    ));
+    assert_eq!(
+        c_info.verified_hops.last().map(String::as_str),
+        Some(mid_c.as_str())
+    );
+}
+
 /// Regression : `build_circuits_if_needed` ne doit compter que les
 /// circuits `DATA`. Les circuits `IP_SEEDER`/`RP_*` des hidden
 /// services servent les lanes e2e et ne sont pas eligibles au

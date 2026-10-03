@@ -219,6 +219,14 @@ pub(crate) struct Inner {
     /// `reannounce_intro_points`) : borne la frequence des
     /// republications des points d'introduction cote seeder.
     pub(crate) ip_announced_at: HashMap<[u8; 20], std::time::Instant>,
+    /// Sauts d'extension en timeout recent (`public_key_bin` ->
+    /// instant de l'echec). Extension Rust : pyipv8 consomme les
+    /// `candidates` offerts dans l'ordre sans memoire d'echec — un
+    /// pool de relais etroit dont la liste offerte est perimee
+    /// epuisait `max_tries` avant d'atteindre le repli
+    /// `EXIT_BT|RELAY` du registre ; les candidats marques sont sautes
+    /// pendant `circuit_timeout`.
+    pub(crate) extend_failures: HashMap<Vec<u8>, std::time::Instant>,
 }
 
 /// Snapshot PEX d'un swarm pour `pex_dump`/`pex_restore` :
@@ -624,6 +632,7 @@ impl TunnelCommunity {
                 data_subscribers: HashMap::new(),
                 flag_registry: HashMap::new(),
                 ip_announced_at: HashMap::new(),
+                extend_failures: HashMap::new(),
             }),
             identifier: AtomicU16::new(0),
             global_time: AtomicU64::new(0),
@@ -1590,28 +1599,46 @@ impl TunnelCommunity {
             let Some((candidates, max_tries)) = retry else {
                 return;
             };
+            // Le saut qui vient d'expirer (`unverified_hop`) est
+            // marque : guard en echec de handshake pour un premier
+            // saut (ADR-0010), candidat d'extend perime sinon — les
+            // relais offrent parfois des listes de pairs morts.
+            let timed_out = {
+                let inner = this.inner.lock().unwrap();
+                inner
+                    .circuits
+                    .get(&circuit_id)
+                    .and_then(|c| c.unverified_hop.as_ref())
+                    .map(|h| h.public_key_bin.clone())
+            };
+            if let Some(k) = &timed_out {
+                match &candidates {
+                    RetryCandidates::FirstHops(_) => this.guards.mark_failure(k),
+                    RetryCandidates::ExtendKeys(_) => {
+                        let mut inner = this.inner.lock().unwrap();
+                        inner
+                            .extend_failures
+                            .insert(k.clone(), std::time::Instant::now());
+                        let ttl = this.settings.circuit_timeout;
+                        inner.extend_failures.retain(|_, t| t.elapsed() < ttl);
+                    }
+                }
+            }
             let retried = match candidates {
                 RetryCandidates::FirstHops(peers) if !peers.is_empty() && max_tries >= 1 => {
                     tracing::debug!(circuit_id, "retry du create sur un premier saut alternatif");
-                    // ADR-0010 : le premier saut qui vient de timeout
-                    // compte comme echec de handshake s'il est un guard.
-                    let timed_out = {
-                        let inner = this.inner.lock().unwrap();
-                        inner
-                            .circuits
-                            .get(&circuit_id)
-                            .and_then(|c| c.unverified_hop.as_ref())
-                            .map(|h| h.public_key_bin.clone())
-                    };
-                    if let Some(k) = &timed_out {
-                        this.guards.mark_failure(k);
-                    }
                     this.send_initial_create(circuit_id, peers, max_tries)
                         .await
                         .is_ok()
                 }
-                RetryCandidates::ExtendKeys(keys) if !keys.is_empty() && max_tries >= 1 => {
-                    tracing::debug!(circuit_id, "retry de l'extend sur un candidat alternatif");
+                // Liste vide comprise : `send_extend` replie alors sur
+                // un pair `EXIT_BT|RELAY` connu (adresse reelle) —
+                // `RetryRequestCache` Python appelle `send_extend`
+                // quels que soient les candidats restants ; sans cela
+                // un circuit dont l'offre est epusee etait detruit
+                // sans jamais atteindre le repli.
+                RetryCandidates::ExtendKeys(keys) if max_tries >= 1 => {
+                    tracing::debug!(circuit_id, "retry de l'extend (candidats/repli registre)");
                     this.send_extend(circuit_id, keys, max_tries).await.is_ok()
                 }
                 _ => false,
@@ -1644,7 +1671,8 @@ impl TunnelCommunity {
     ) -> Result<(), Ipv8Error> {
         let zero: UdpAddress = UdpAddress::from("0.0.0.0:0".parse::<SocketAddr>().unwrap());
         let my_pk = self.key.public_key().to_bin();
-        let (become_exit, required_exit, first_hop_addr, exclude, pinned) = {
+        let failure_ttl = self.settings.circuit_timeout;
+        let (become_exit, required_exit, first_hop_addr, exclude, pinned, extend_failed) = {
             let inner = self.inner.lock().unwrap();
             let Some(c) = inner.circuits.get(&circuit_id) else {
                 return Err(Ipv8Error::Malformed("circuit inconnu"));
@@ -1663,6 +1691,12 @@ impl TunnelCommunity {
                     .ok_or(Ipv8Error::Malformed("pas de premier hop"))?,
                 exclude,
                 c.pinned_hops.front().cloned(),
+                inner
+                    .extend_failures
+                    .iter()
+                    .filter(|(_, t)| t.elapsed() < failure_ttl)
+                    .map(|(k, _)| k.clone())
+                    .collect::<Vec<Vec<u8>>>(),
             )
         };
 
@@ -1702,10 +1736,16 @@ impl TunnelCommunity {
                 // l'offre concentre tous les derniers sauts sur le
                 // seul pair doublement flagge (l'ancre) : s'il meurt,
                 // aucune reconstruction d'IP_SEEDER n'est possible.
+                // Un candidat qui vient d'expirer en `extend` est
+                // saute : les listes offertes peuvent etre perimees
+                // (pool de relais etroit) — sans ce filtre les
+                // `max_tries` s'epuisent sur des mids morts avant le
+                // repli sur les pairs connus du registre.
                 let valid: Vec<Vec<u8>> = candidates
                     .iter()
                     .filter(|k| {
                         !exclude.contains(k)
+                            && !extend_failed.contains(*k)
                             && onionbit_crypto::ipv8::keys::LibNaClPublicKey::from_bin(k).is_ok()
                     })
                     .cloned()
@@ -1743,6 +1783,17 @@ impl TunnelCommunity {
                     .into_iter()
                     .filter(|p| !exclude.contains(&p.public_key_bin))
                     .collect();
+            }
+            // Preference (pas d'exclusion dure, cf. `filter_backup_exits`)
+            // : un pair du repli qui vient d'expirer en `extend` passe
+            // apres les autres — la liste complete reste le secours.
+            let alive: Vec<Peer> = choices
+                .iter()
+                .filter(|p| !extend_failed.contains(&p.public_key_bin))
+                .cloned()
+                .collect();
+            if !alive.is_empty() {
+                choices = alive;
             }
             // `thread_rng` n'est pas `Send` — borne a l'expression.
             let picked = {
