@@ -63,6 +63,14 @@ en haut.
 - **CH-1** : 50 `.torrent` distincts injectés en rafale via l'API
   (`--offline`) — 50/50 en 0,45 s, tous listés, RSS stable 31 MB. La
   variante swarm-actif reste un banc public.
+- **Longévité bornée (60 min)** : `fingerprint_mesh.ps1
+  -DurationMin 60 -WithAnonDownload` — ping/pong stable à
+  0,366→0,362 msg/s (dérive nulle), lane anonyme entretenue, circuits
+  reconstruits proactivement (1→3), daemon vivant après 718
+  échantillons. Pas de croissance de cadence sur la durée.
+- **PR-7** : sonde `versioning/versions/check` exécutée (daemon
+  `--no-ipv8`) — `{has_version:false}`, `current=0.6.0-alpha` ; la
+  notification nécessite une release distante plus récente.
 
 ## P0-17c — fail-closed observé par l'OS, 4 sous-runs verts (2026-10-03)
 
