@@ -3,6 +3,22 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Migration versionnée de `configuration.json` (2026-10-03)
+
+- `config_version` (extension Rust — `TriblerConfig` n'a pas de
+  marqueur) estampille le schéma persisté ; les fichiers legacy (v0)
+  migrent au chargement : les interrupteurs « Tunnels anonymes »
+  encore gelés à leur ancien défaut par l'écriture complète du
+  fichier sont réalignés — `tunnel_community/guards_enabled`
+  `false`→`true` (instals du 1er–2 oct. qui tournaient avec le flag
+  expérimental inactif sans choix explicite).
+- Choix explicites préservés (valeur ≠ ancien défaut) : `enabled`
+  et `exitnode_enabled` n'ont jamais glissé, rien n'y change.
+- Fichier réécrit estampillé une fois : migration non rejouée, choix
+  ultérieur vers l'ancienne valeur honoré ; `config_version` non
+  patchable via `POST /api/settings`. Tests unitaires : réalignement,
+  préservation des choix, idempotence, garde du merge.
+
 ## Bancs de maturité : PR-1, PR-3, CH-6 (2026-10-03)
 
 - **PR-1** : `scripts/build_release.ps1` rejoué — release

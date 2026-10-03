@@ -720,6 +720,17 @@ risque IPv8 sous/sur-estimé, etc.), avec la date.
   (absence de clé → nouveau défaut ; `false` explicite préservé).
   Communication : mesure expérimentale de réduction d'exposition
   Sybil, jamais garantie d'anonymat.
+- 2026-10-03 (migration des défauts gelés) : `config_version`
+  estampille le schéma de `configuration.json` (extension Rust —
+  `TriblerConfig` n'a pas de marqueur). Un fichier legacy (v0) voit
+  réalignée sur le défaut actuel toute valeur **encore égale à
+  l'ancien défaut** des interrupteurs « Tunnels anonymes » :
+  `guards_enabled` `false`→`true` (seul glissement réel —
+  `enabled`/`exitnode_enabled` n'ont jamais changé de défaut, une
+  valeur non défaut y est un choix explicite préservé). Fichier
+  réécrit estampillé une fois : la migration ne rejoue pas, un choix
+  posé après coup vers l'ancienne valeur est honoré ;
+  `config_version` non patchable via `POST /api/settings`.
 - 2026-10-02 (plafond de relais) : `tunnel_community/max_joined_circuits`
   exposé (défaut 100 = `should_join_circuit` pyipv8) — borne la charge
   de relais imposée par le réseau, configurable dans l'UI

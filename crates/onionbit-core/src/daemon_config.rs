@@ -28,6 +28,14 @@ use serde_json::Value;
 /// Nom du fichier de configuration dans `state_dir`.
 pub const CONFIG_FILENAME: &str = "configuration.json";
 
+/// Version courante du schéma de `configuration.json` — extension
+/// Rust (`TriblerConfig` Python n'a pas de marqueur : l'écriture
+/// complète du fichier y gèle les défauts de l'époque sans recours).
+/// Clé absente → fichier legacy `0` → migrations appliquées au
+/// chargement (`migrate_legacy_tree`), puis le fichier est réécrit
+/// estampillé. Incrémenter à chaque nouvelle table de migration.
+pub const CURRENT_CONFIG_VERSION: u32 = 1;
+
 /// Merge JSON profond (`_recursive_merge_settings` Python) : les objets
 /// se fusionnent clé par clé, toute autre valeur remplace.
 fn deep_merge(base: &mut Value, patch: &Value) {
@@ -687,6 +695,13 @@ impl Default for LoggingConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct DaemonConfig {
+    /// Version du schéma persisté (`CURRENT_CONFIG_VERSION`) —
+    /// extension Rust. `#[serde(default)]` au niveau champ : une clé
+    /// absente (fichier legacy) donne `0` et non le `Default` du
+    /// struct — sinon la migration ne s'appliquerait jamais. Jamais
+    /// patchable via `POST /api/settings` (`merge` la force).
+    #[serde(default)]
+    pub config_version: u32,
     /// Section `api`.
     pub api: ApiConfig,
     /// Section `ipv8`.
@@ -742,6 +757,7 @@ pub struct DaemonConfig {
 impl Default for DaemonConfig {
     fn default() -> Self {
         Self {
+            config_version: CURRENT_CONFIG_VERSION,
             api: ApiConfig::default(),
             ipv8: Ipv8FileConfig::default(),
             libtorrent: LibtorrentConfig::default(),
@@ -768,6 +784,60 @@ impl Default for DaemonConfig {
     }
 }
 
+/// Migrations de défauts v0 → v1 — interrupteurs « Tunnels anonymes ».
+/// L'écriture complète du fichier figeait les défauts de l'époque :
+/// une valeur **encore égale à l'ancien défaut** est réalignée sur le
+/// défaut actuel ; toute autre valeur est un choix explicite,
+/// préservé. `(section, clé, ancien défaut gelé, défaut actuel)`.
+const DEFAULT_MIGRATIONS_V0_V1: &[(&str, &str, bool, bool)] = &[
+    // `guards_enabled` est né avec le défaut `false` (feature
+    // expérimentale derrière flag) puis validé sur le terrain →
+    // `true` : les fichiers écrits entre-temps gardaient `false`
+    // indéfiniment.
+    ("tunnel_community", "guards_enabled", false, true),
+    // `enabled` (défaut `true`) et `exitnode_enabled` (défaut
+    // `false`) n'ont jamais glissé — aucune entrée : une valeur non
+    // défaut y est forcément un choix explicite.
+];
+
+/// Migrations de l'arbre brut, avant remplissage serde : seules les
+/// clés explicitement écrites sont candidates (une clé absente prend
+/// déjà le défaut actuel). Estampille `config_version`. Retourne
+/// `true` si l'arbre a changé — le fichier est alors réécrit.
+fn migrate_legacy_tree(tree: &mut Value) -> bool {
+    let Some(root) = tree.as_object_mut() else {
+        return false;
+    };
+    let version = root
+        .get("config_version")
+        .and_then(Value::as_u64)
+        .and_then(|v| u32::try_from(v).ok())
+        .unwrap_or(0);
+    if version >= CURRENT_CONFIG_VERSION {
+        return false;
+    }
+    for &(section, key, legacy, current) in DEFAULT_MIGRATIONS_V0_V1 {
+        if let Some(slot) = root
+            .get_mut(section)
+            .and_then(Value::as_object_mut)
+            .and_then(|o| o.get_mut(key))
+        {
+            if *slot == Value::Bool(legacy) {
+                tracing::info!(
+                    cle = %format!("{section}/{key}"),
+                    "configuration.json : ancien défaut gelé -> défaut actuel"
+                );
+                *slot = Value::Bool(current);
+            }
+        }
+    }
+    root.insert(
+        "config_version".to_string(),
+        Value::from(CURRENT_CONFIG_VERSION),
+    );
+    true
+}
+
 impl DaemonConfig {
     /// Charge `path` ; fichier absent ou corrompu → défauts
     /// (`Failed to load stored configuration. Falling back to
@@ -781,19 +851,26 @@ impl DaemonConfig {
     /// Retourne `(config, Some(erreur))` si le fichier existait mais
     /// n'etait pas un JSON valide.
     pub fn load_report(path: &Path) -> (Self, Option<String>) {
-        let (mut cfg, error) = match std::fs::read_to_string(path) {
-            Ok(text) => match serde_json::from_str(&text) {
-                Ok(cfg) => (cfg, None),
+        let (mut cfg, error, migrated) = match std::fs::read_to_string(path) {
+            Ok(text) => match serde_json::from_str::<Value>(&text)
+                .map_err(|e| e.to_string())
+                .and_then(|mut tree| {
+                    let migrated = migrate_legacy_tree(&mut tree);
+                    serde_json::from_value::<Self>(tree)
+                        .map(|cfg| (cfg, migrated))
+                        .map_err(|e| e.to_string())
+                }) {
+                Ok((cfg, migrated)) => (cfg, None, migrated),
                 Err(e) => {
                     tracing::warn!(
                         error = %e,
                         path = %path.display(),
                         "configuration.json corrompu, repli sur les valeurs par défaut"
                     );
-                    (Self::default(), Some(e.to_string()))
+                    (Self::default(), Some(e), false)
                 }
             },
-            Err(_) => (Self::default(), None),
+            Err(_) => (Self::default(), None, false),
         };
         cfg.ensure_api_key();
         // Migration : `http_port=0` (ancien defaut — port ephemere a
@@ -801,6 +878,23 @@ impl DaemonConfig {
         // en premier ; un port configure explicitement est preserve.
         if cfg.api.http_port == 0 {
             cfg.api.http_port = 8085;
+        }
+        if migrated {
+            // Fichier estampillé + valeurs migrées persistées : la
+            // migration ne rejoue pas — un choix posé après coup vers
+            // l'ancienne valeur est un choix explicite, préservé.
+            if let Err(e) = cfg.write(path) {
+                tracing::warn!(
+                    error = %e,
+                    path = %path.display(),
+                    "réécriture de configuration.json migré impossible"
+                );
+            } else {
+                tracing::info!(
+                    path = %path.display(),
+                    "configuration.json migré (v{CURRENT_CONFIG_VERSION})"
+                );
+            }
         }
         (cfg, error)
     }
@@ -835,6 +929,14 @@ impl DaemonConfig {
     pub fn merge(&mut self, patch: &Value) -> std::result::Result<(), serde_json::Error> {
         let mut merged = serde_json::to_value(&*self)?;
         deep_merge(&mut merged, patch);
+        // `config_version` est gérée par les migrations au chargement —
+        // un patch client ne peut pas redéclencher la migration.
+        if let Some(obj) = merged.as_object_mut() {
+            obj.insert(
+                "config_version".to_string(),
+                Value::from(CURRENT_CONFIG_VERSION),
+            );
+        }
         let next: Self = serde_json::from_value(merged)?;
         *self = next;
         Ok(())
@@ -1255,5 +1357,68 @@ mod tests {
         let mut back = DaemonConfig::default();
         back.apply_runtime_view(&cfg);
         assert_eq!(back.tunnel_community.max_relayed_rate, 256 * 1024);
+    }
+
+    /// Migration v0 → v1 : `guards_enabled` gelé à l'ancien défaut
+    /// `false` par l'écriture complète du fichier est réaligné sur le
+    /// défaut actuel, et le fichier est réécrit estampillé — la
+    /// migration ne rejoue pas ensuite.
+    #[test]
+    fn migration_v0_realigne_defaut_gele() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(CONFIG_FILENAME);
+        std::fs::write(&path, r#"{"tunnel_community":{"guards_enabled":false}}"#).unwrap();
+        let cfg = DaemonConfig::load(&path);
+        assert!(cfg.tunnel_community.guards_enabled);
+        let stored: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(stored["config_version"], CURRENT_CONFIG_VERSION);
+        assert_eq!(stored["tunnel_community"]["guards_enabled"], true);
+    }
+
+    /// Un `false` posé APRÈS migration (fichier estampillé) est un
+    /// choix explicite — préservé au rechargement.
+    #[test]
+    fn choix_post_migration_preserve() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(CONFIG_FILENAME);
+        std::fs::write(
+            &path,
+            r#"{"config_version":1,"tunnel_community":{"guards_enabled":false}}"#,
+        )
+        .unwrap();
+        let cfg = DaemonConfig::load(&path);
+        assert!(!cfg.tunnel_community.guards_enabled);
+    }
+
+    /// Choix explicites legacy préservés : `enabled` et
+    /// `exitnode_enabled` n'ont jamais changé de défaut — une valeur
+    /// non défaut y est toujours un choix, même dans un fichier v0.
+    #[test]
+    fn choix_explicites_tunnels_preserves() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(CONFIG_FILENAME);
+        std::fs::write(
+            &path,
+            r#"{"tunnel_community":{"enabled":false,"exitnode_enabled":true,"guards_enabled":true}}"#,
+        )
+        .unwrap();
+        let cfg = DaemonConfig::load(&path);
+        assert!(!cfg.tunnel_community.enabled);
+        assert!(cfg.tunnel_community.exitnode_enabled);
+        assert!(cfg.tunnel_community.guards_enabled);
+    }
+
+    /// `config_version` n'est pas patchable via `POST /api/settings`
+    /// (`merge`) — sinon un client pourrait redéclencher la migration.
+    #[test]
+    fn merge_ne_patch_pas_config_version() {
+        let mut cfg = DaemonConfig::default();
+        cfg.merge(&serde_json::json!({
+            "config_version": 0,
+            "tunnel_community": {"guards_enabled": false}
+        }))
+        .unwrap();
+        assert_eq!(cfg.config_version, CURRENT_CONFIG_VERSION);
+        assert!(!cfg.tunnel_community.guards_enabled);
     }
 }
