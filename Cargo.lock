@@ -2961,7 +2961,7 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
 name = "onionbit-api"
-version = "0.7.0-alpha"
+version = "0.7.1-alpha"
 dependencies = [
  "axum",
  "base64 0.23.1",
@@ -2993,7 +2993,7 @@ dependencies = [
 
 [[package]]
 name = "onionbit-bittorrent"
-version = "0.7.0-alpha"
+version = "0.7.1-alpha"
 dependencies = [
  "base64 0.23.1",
  "bytes",
@@ -3018,7 +3018,7 @@ dependencies = [
 
 [[package]]
 name = "onionbit-cli"
-version = "0.7.0-alpha"
+version = "0.7.1-alpha"
 dependencies = [
  "axum",
  "clap",
@@ -3034,7 +3034,7 @@ dependencies = [
 
 [[package]]
 name = "onionbit-core"
-version = "0.7.0-alpha"
+version = "0.7.1-alpha"
 dependencies = [
  "bytes",
  "fs2",
@@ -3064,7 +3064,7 @@ dependencies = [
 
 [[package]]
 name = "onionbit-crypto"
-version = "0.7.0-alpha"
+version = "0.7.1-alpha"
 dependencies = [
  "chacha20poly1305",
  "ed25519-dalek",
@@ -3082,7 +3082,7 @@ dependencies = [
 
 [[package]]
 name = "onionbit-daemon"
-version = "0.7.0-alpha"
+version = "0.7.1-alpha"
 dependencies = [
  "axum",
  "axum-server",
@@ -3109,7 +3109,7 @@ dependencies = [
 
 [[package]]
 name = "onionbit-db"
-version = "0.7.0-alpha"
+version = "0.7.1-alpha"
 dependencies = [
  "rusqlite",
  "tempfile",
@@ -3120,7 +3120,7 @@ dependencies = [
 
 [[package]]
 name = "onionbit-format"
-version = "0.7.0-alpha"
+version = "0.7.1-alpha"
 dependencies = [
  "onionbit-crypto",
  "thiserror 2.0.21",
@@ -3128,7 +3128,7 @@ dependencies = [
 
 [[package]]
 name = "onionbit-ipv8"
-version = "0.7.0-alpha"
+version = "0.7.1-alpha"
 dependencies = [
  "hex 0.4.3",
  "onionbit-crypto",
@@ -3143,7 +3143,7 @@ dependencies = [
 
 [[package]]
 name = "onionbit-network-policy"
-version = "0.7.0-alpha"
+version = "0.7.1-alpha"
 dependencies = [
  "thiserror 2.0.21",
  "tracing",
@@ -3151,7 +3151,7 @@ dependencies = [
 
 [[package]]
 name = "onionbit-test-support"
-version = "0.7.0-alpha"
+version = "0.7.1-alpha"
 dependencies = [
  "onionbit-format",
  "tokio",
@@ -3159,7 +3159,7 @@ dependencies = [
 
 [[package]]
 name = "onionbit-tunnel"
-version = "0.7.0-alpha"
+version = "0.7.1-alpha"
 dependencies = [
  "futures-util",
  "hex 0.4.3",
