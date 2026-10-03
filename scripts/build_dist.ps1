@@ -140,16 +140,18 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0web-launch.ps1" %*
 
     # -- 6) Bundle + zip de release GitHub (optionnel) ---------------------
     if ($ZipRelease) {
-        Write-Host "== bundle release OnionBit-<ver>-windows-x64 ==" -ForegroundColor Cyan
-        $ver     = (cargo pkgid -p onionbit-daemon).Split('#')[-1]
-        $bundle  = Join-Path $dist "OnionBit-$ver-windows-x64"
+        $ver = (cargo pkgid -p onionbit-daemon).Split('#')[-1]
+        # Suffixe d'archi depuis la cible hote — le runner windows-11-arm
+        # produit nativement du aarch64-pc-windows-msvc.
+        $hostTriple = (rustc -vV | Select-String "host:").ToString().Split(":")[1].Trim()
+        $winArch = if ($hostTriple -like "aarch64*") { "arm64" } else { "x64" }
+        Write-Host "== bundle release OnionBit-<ver>-windows-$winArch ==" -ForegroundColor Cyan
+        $bundle  = Join-Path $dist "OnionBit-$ver-windows-$winArch"
         $zipPath = "$bundle.zip"
         if (Test-Path $bundle)  { Remove-Item $bundle -Recurse -Force }
         if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
         New-Item -ItemType Directory -Force -Path $bundle | Out-Null
 
-        # Payload = contenu de dist\ (exe, dll, data\) — jamais l'etat
-        # utilisateur ni les artefacts de release eux-memes.
         Get-ChildItem $dist |
             Where-Object {
                 $_.Name -ne 'state' -and

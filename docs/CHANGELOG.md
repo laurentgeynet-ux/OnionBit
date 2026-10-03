@@ -3,6 +3,25 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Packaging multi-plateforme en CI (2026-10-03)
+
+- **Nouveau `scripts/package_posix.sh`** : assemble `dist/<target>/`
+  (daemon + cli + `web/` + LICENSE + manifest) puis produit le tarball
+  `OnionBit-<ver>-<os>-<arch>.tar.gz` et, sous Linux avec `dpkg-deb`,
+  le paquet `onionbit_<ver>_<arch>.deb` — layout `/opt/onionbit/` +
+  liens `/usr/bin` (l'auto-detection `<exe>/web` suit les liens
+  symboliques) + unite systemd utilisateur.
+- **Jobs CI de package** : `package-linux` (ubuntu-latest : tar.gz +
+  .deb + smoke `--help`), `package-windows-arm64` (windows-11-arm :
+  `build_dist.ps1 -ZipRelease` avec UI Flutter + web, non bloquant —
+  runner preview).
+- **Publication sur tag** : un push `v*` lance la matrice puis le job
+  `publish` cree la release GitHub avec tous les artefacts et leurs
+  SHA-256 (pre-release auto si le tag contient alpha/beta/rc). Le job
+  ARM64 est attendu mais non obligatoire.
+- `build_dist.ps1` : le suffixe du zip derive desormais de l'archi
+  hote (`windows-x64`/`windows-arm64`) au lieu d'etre code en dur.
+
 ## Réglage mémoire des buffers uTP (2026-10-03)
 
 - **Nouvelles clés persistées** `libtorrent/utp_rx_buf_size` et
