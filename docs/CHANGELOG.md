@@ -3,6 +3,27 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Création de lane anonyme atomique (2026-10-03)
+
+- **Course get-or-create dans `Ipv8Stack::anon_engine`** : deux adds
+  concurrents sur une lane neuve (ex. un magnet spawné et un
+  `.torrent` inline sur `hops=3`) créaient chacun un moteur — le
+  second `insert` écrasait le premier dans `anon_lanes` et le
+  download ajouté au moteur perdant devenait orphelin : invisible de
+  `owner_engine_hops`, `find_download_hex`, `downloads()` et de la
+  restauration, tout en continuant à tourner. Reproductible en prod
+  via deux `PUT /api/downloads` simultanés sur une lane jamais
+  utilisée. `anon_engine_lock` (mutex Tokio) sérialise la création
+  avec re-check sous verrou (échecs CI macOS `fleet7` → lane `None`,
+  stall Ubuntu).
+- **Banc** : les adds magnet du test flotte sont spawnés (l'add
+  attend la résolution BEP 9 inline, état `pending` voulu), avec
+  attente bornée de matérialisation sur la bonne lane ; le seeder
+  est réinjecté à chaque scrutation de progression pre-kill (les
+  `initial_peers` ne sont pas retentés en mode offline) ; le panic
+  de progression emporte stats complètes, lane observée et état
+  `pending` — compteurs de pairs pour trancher stall vs orphelin.
+
 ## Fastresume synchrone au stop + course pause/check (2026-10-03)
 
 - **Flush `.bitv` synchrone à `pause()`** (patch vendored librqbit) : le

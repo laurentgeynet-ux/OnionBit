@@ -1071,20 +1071,33 @@ async fn live_flotte_10_restart() {
     // retentee par le moteur : meme correction que la re-annonce
     // post-restart (`readd_bittorrent_peers`).
     for t in &fleet.torrents {
-        assert!(
-            wait_until(Duration::from_secs(60), || {
-                if let Some(d) = session.find_download_hex(&t.ih) {
-                    d.add_peer(fleet.seed_addr);
-                    let st = d.stats();
-                    st.progress_bytes > 0 || st.finished
-                } else {
-                    false
-                }
-            })
-            .await,
-            "{} n'a pas demarre",
-            t.name
-        );
+        let ok = wait_until(Duration::from_secs(60), || {
+            if let Some(d) = session.find_download_hex(&t.ih) {
+                d.add_peer(fleet.seed_addr);
+                let st = d.stats();
+                st.progress_bytes > 0 || st.finished
+            } else {
+                false
+            }
+        })
+        .await;
+        if !ok {
+            // Diagnostic complet avant panic : un stall peut etre un
+            // pair jamais injecte, un torrent encore en check, un
+            // download orphelin d'une creation de lane concurrente ou
+            // une erreur moteur — les compteurs de pairs tranchent.
+            let st = session
+                .find_download_hex(&t.ih)
+                .map(|d| format!("{:?}", d.stats()))
+                .unwrap_or_else(|| "ABSENT du moteur".into());
+            panic!(
+                "{} n'a pas demarre (hops={}, owner={:?}, pending={}, stats={st})",
+                t.name,
+                t.hops,
+                session.owner_engine_hops(&t.ih),
+                session.is_pending(&t.ih)
+            );
+        }
     }
     let before: Vec<u64> = fleet
         .torrents

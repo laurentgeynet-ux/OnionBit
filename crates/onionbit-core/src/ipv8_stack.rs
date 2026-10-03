@@ -1124,6 +1124,12 @@ pub struct Ipv8Stack {
     dht_maintenance_stop: Option<tokio::sync::watch::Sender<bool>>,
     /// Moteurs anonymes par nombre de sauts (1..=3).
     anon_lanes: Mutex<HashMap<usize, AnonLane>>,
+    /// Serialise le get-or-create de `anon_engine` : deux adds
+    /// concurrents sur une lane neuve creaient chacun un moteur, le
+    /// second insert ecrasait le premier — le download ajoute au
+    /// moteur perdant devenait orphelin (invisible de
+    /// `owner_engine_hops`/`downloads()`/restauration).
+    anon_engine_lock: tokio::sync::Mutex<()>,
     /// Config moteur de base (pour creer les lanes anonymes).
     engine_config: EngineConfig,
     /// Repertoire de telechargement par defaut.
@@ -1728,6 +1734,7 @@ impl Ipv8Stack {
             key,
             dht_maintenance_stop,
             anon_lanes: Mutex::new(HashMap::new()),
+            anon_engine_lock: tokio::sync::Mutex::new(()),
             engine_config: engine_config.clone(),
             downloads_dir: downloads_dir.to_path_buf(),
             state_dir: state_dir.to_path_buf(),
@@ -1851,6 +1858,22 @@ impl Ipv8Stack {
         if !(1..=MAX_ANON_HOPS).contains(&hops) {
             return Err(CoreError::State("anon_hops doit etre entre 1 et 3".into()));
         }
+        if let Some(engine) = self
+            .anon_lanes
+            .lock()
+            .unwrap()
+            .get(&hops)
+            .map(|l| l.engine.clone())
+        {
+            return Ok(engine);
+        }
+        // Creation serialisee : sans ce verrou, deux adds concurrents
+        // sur la meme lane creaient chacun un moteur et le second
+        // `insert` ecrasait le premier — orphelin invisible des
+        // lookups (`owner_engine_hops`, `find_download_hex`, restore).
+        let _create_guard = self.anon_engine_lock.lock().await;
+        // Re-check sous verrou : un create concurrent a pu finir
+        // pendant l'acquisition.
         if let Some(engine) = self
             .anon_lanes
             .lock()
