@@ -575,6 +575,15 @@ async fn tunnel_data_exits_1_hop() {
         .expect("aucun datagramme de sortie recu")
         .unwrap();
     assert_eq!(&buf[..n], payload);
+
+    // Compteurs d'observabilite de la sortie : la cellule `data` a ete
+    // vue, la gate IP a accepte le saut amont, l'activation a eu lieu.
+    let exits = nodes[1].tunnel.exits_info();
+    let exit = exits.iter().find(|e| e.circuit_id == cid).unwrap();
+    assert!(exit.enabled);
+    assert_eq!(exit.cells_seen, 1);
+    assert_eq!(exit.gate_rejected, 0);
+    assert!(exit.bytes_total >= payload.len() as u64);
 }
 
 #[tokio::test]

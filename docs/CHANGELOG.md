@@ -3,6 +3,20 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Compteurs d'observabilité de la gate de sortie (2026-10-03)
+
+- **`/api/ipv8/tunnel/exits` gagne `cells_seen` et `gate_rejected`** :
+  la question « 0 sortie active » n'était pas tranchable — une sortie
+  `enabled:false` peut être légitime (le distant n'a encore envoyé
+  aucune donnée tunnelée, mesh sans transferts anonymes sortants) ou
+  signaler une gate IP qui rejette tout. `cells_seen` compte les
+  cellules `data` reçues pour la sortie avant la gate ;
+  `gate_rejected` celles écartées faute de correspondance avec l'IP
+  du saut amont. `cells_seen=0` persistant = aucune data distante
+  (normal) ; `gate_rejected` qui monte = adresse de saut stale ou
+  spoof (à investiguer). Asserts ajoutés à
+  `tunnel_data_exits_1_hop`.
+
 ## Compteur `bytes_up` des routes relais (2026-10-03)
 
 - **`RelayRoute.bytes_up` restait à 0 en permanence** : le forwarding de

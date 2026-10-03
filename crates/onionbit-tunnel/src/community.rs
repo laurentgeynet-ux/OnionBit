@@ -277,6 +277,15 @@ pub(crate) struct ExitState {
     /// Datagrammes externes acceptes et reencapsules vers l'amont
     /// (observabilite `exits_info` — attribution des flux).
     pub(crate) inbound_accepted: u64,
+    /// Cellules `data` recues pour cette sortie, avant la gate
+    /// d'activation (observabilite `exits_info`) : distingue « aucune
+    /// donnee distante » (mesh sans trafic tunnel sortant) d'un rejet
+    /// de la gate IP.
+    pub(crate) cells_seen: u64,
+    /// Cellules `data` ecartees car l'IP source differe du saut
+    /// amont attendu (observabilite `exits_info` — une gate qui monte
+    /// sans activation signale un spoof ou une adresse de saut stale).
+    pub(crate) gate_rejected: u64,
 }
 
 /// `CreateRequestCache` Python (extend en attente d'un `created`).
@@ -489,6 +498,11 @@ pub struct ExitInfo {
     pub inbound_rejected: u64,
     /// Datagrammes externes acceptes (reencapsules vers l'amont).
     pub inbound_accepted: u64,
+    /// Cellules `data` recues pour cette sortie, avant la gate
+    /// d'activation.
+    pub cells_seen: u64,
+    /// Cellules `data` ecartees par la gate (IP source != saut amont).
+    pub gate_rejected: u64,
     /// Octets cumules dans les deux sens (`bytes_total` pyipv8).
     pub bytes_total: u64,
     /// Taille de la table conntrack (sources WAN contactees).
@@ -820,6 +834,8 @@ impl TunnelCommunity {
                 enabled: e.enabled,
                 inbound_rejected: e.inbound_rejected,
                 inbound_accepted: e.inbound_accepted,
+                cells_seen: e.cells_seen,
+                gate_rejected: e.gate_rejected,
                 bytes_total: e.bytes_total,
                 contacted_sources: e.contacted_sources.len(),
                 idle_secs: e.last_activity.elapsed().as_secs(),
@@ -3560,6 +3576,8 @@ impl TunnelCommunity {
                     contacted_sources: HashMap::new(),
                     inbound_rejected: 0,
                     inbound_accepted: 0,
+                    cells_seen: 0,
+                    gate_rejected: 0,
                 },
             );
         }
@@ -3969,6 +3987,7 @@ impl TunnelCommunity {
             let Some(exit) = inner.exit_sockets.get_mut(&circuit_id) else {
                 return;
             };
+            exit.cells_seen += 1;
             if !exit.enabled {
                 let hop_ip = exit
                     .hop
@@ -3981,6 +4000,7 @@ impl TunnelCommunity {
                 }
             }
             if !exit.enabled {
+                exit.gate_rejected += 1;
                 return;
             }
             exit.last_activity = std::time::Instant::now();
