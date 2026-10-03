@@ -3,6 +3,29 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Ids de torrents uniques sous adds concurrents (2026-10-03)
+
+- **TOCTOU sur `persistence.next_id()` dans
+  `Session::add_torrent_internal` (librqbit vendored)** : l'id du
+  torrent était alloué par une lecture `max+1` de la persistance,
+  sans réservation — avant le verrou par infohash, le sémaphore et
+  l'init disque. Deux `add_torrent` concurrents de hash différents
+  (verrous `add_locks` distincts, aucune exclusion) obtenaient le
+  même id ; le check `already_managed` (`*eid == id`) classait alors
+  le second `AlreadyManaged` **du torrent voisin** : le moteur
+  retournait `Ok` avec le handle d'un autre torrent et le vrai
+  n'entrait jamais dans la map — `get_by_hash`/`owner_engine_hops`
+  muets. Signature exacte du flake `live_flotte_10_restart`
+  (`fleet*.bin ajoute sur la mauvaise lane, left: None`) qui ne
+  mordait que sur les index `.bin` partageant leur lane avec un
+  magnet spawné en vol, et surtout macOS (init disque → fenêtre
+  large). Le compteur atomique `Session::next_id` sert désormais la
+  réservation (`fetch_add`), réaligné sur `max(ids vivants, ids
+  persistés)` pour rester au-dessus de tout id existant (restores
+  `preferred_id` compris). Test de régression déterministe
+  `adds_concurrents_ids_uniques` (barrière de 32 adds parallèles,
+  persistance activée) : rouge avant, vert après.
+
 ## Compteurs d'observabilité de la gate de sortie (2026-10-03)
 
 - **`/api/ipv8/tunnel/exits` gagne `cells_seen` et `gate_rejected`** :

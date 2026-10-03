@@ -1462,9 +1462,33 @@ impl Session {
 
         let id = if let Some(id) = opts.preferred_id {
             id
-        } else if let Some(p) = self.persistence.as_ref() {
-            p.next_id().await?
         } else {
+            // Tribler : `persistence.next_id()` lisait `max+1` sans
+            // reserver — deux `add_torrent` concurrents (verrous
+            // `add_locks` distincts par infohash) obtenaient le meme
+            // id et le second etait classe `AlreadyManaged` du
+            // torrent voisin par le check `*eid == id` : jamais
+            // insere, `get` muet par infohash. L'atomique est la
+            // reservation ; il est realigne sur les ids vivants et
+            // persistes pour rester au-dessus de tout id existant
+            // (restores `preferred_id` compris : leurs ids viennent
+            // des entrees persistees).
+            let persisted_next = match self.persistence.as_ref() {
+                Some(p) => p.next_id().await?,
+                None => 0,
+            };
+            let live_next = self
+                .db
+                .read()
+                .torrents
+                .keys()
+                .max()
+                .map(|m| m + 1)
+                .unwrap_or(0);
+            self.next_id.fetch_max(
+                persisted_next.max(live_next),
+                std::sync::atomic::Ordering::Relaxed,
+            );
             self.next_id
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         };
