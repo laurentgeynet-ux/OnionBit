@@ -413,7 +413,7 @@ async fn live_torrent_clair() {
     );
     let got = find_payload(&bench.dl_dir).expect("payload");
     assert_eq!(got, bench.payload);
-    bench.session.stop().await;
+    stop_bounded(&bench.session).await;
 }
 
 /// `.torrent` reel sur chaque lane anonyme 1, 2 et 3 sauts — le
@@ -463,7 +463,7 @@ async fn live_torrent_hops_1_2_3() {
             "residu moteur apres remove (hops={hops})"
         );
     }
-    bench.session.stop().await;
+    stop_bounded(&bench.session).await;
 }
 
 /// `magnet:` resolu a travers le tunnel : BEP 9 metainfo +
@@ -475,11 +475,22 @@ async fn live_magnet_hops_2() {
     let route = circuit_pinned(&bench, 2).await;
     let before = circuit_bytes(&bench, 2);
     let uri = format!("magnet:?xt=urn:btih:{}&dn=payload", bench.infohash_hex);
-    let dl = bench
-        .session
-        .add_download_anon_with_peers(&uri, false, 2, true, None, vec![bench.seed_addr])
-        .await
-        .expect("add magnet hops=2");
+    // L'add magnet attend la resolution BEP 9 inline — bornee : un
+    // stall de lane devient un panic localise, pas un hang CI.
+    let dl = tokio::time::timeout(
+        TRANSFER_WAIT,
+        bench.session.add_download_anon_with_peers(
+            &uri,
+            false,
+            2,
+            true,
+            None,
+            vec![bench.seed_addr],
+        ),
+    )
+    .await
+    .expect("add magnet hops=2 en timeout")
+    .expect("add magnet hops=2");
     tokio::time::timeout(TRANSFER_WAIT, dl.wait_completed())
         .await
         .expect("transfert magnet en timeout")
@@ -490,7 +501,7 @@ async fn live_magnet_hops_2() {
         circuit_bytes(&bench, 2) - before
     );
     assert_lane_transfer(&bench, 2, before).await;
-    bench.session.stop().await;
+    stop_bounded(&bench.session).await;
 }
 
 /// Le scenario utilisateur en live : magnet ajoute sur une lane
@@ -557,7 +568,7 @@ async fn live_magnet_patch_lane_pendant_resolution() {
         bench.session.pending_downloads().is_empty(),
         "pending residuel apres materialisation"
     );
-    bench.session.stop().await;
+    stop_bounded(&bench.session).await;
 }
 
 /// `update_hops` pendant un transfert actif : le download migre de la
@@ -648,7 +659,7 @@ async fn live_update_hops_en_transfert() {
         circuit_bytes(&bench, 3) - before
     );
     assert_lane_transfer(&bench, 3, before).await;
-    bench.session.stop().await;
+    stop_bounded(&bench.session).await;
 }
 
 /// Pause/reprise sur une lane anonyme : le trafic s'arrete puis
@@ -694,7 +705,7 @@ async fn live_pause_resume_tunnel() {
         .expect("transfert post-resume en timeout")
         .expect("wait_completed");
     assert_lane_transfer(&bench, 1, 0).await;
-    bench.session.stop().await;
+    stop_bounded(&bench.session).await;
 }
 
 /// Re-`PUT` du meme infohash pendant un transfert actif : le
@@ -748,7 +759,7 @@ async fn live_doublon_refuse_en_transfert() {
         .expect("transfert en timeout")
         .expect("wait_completed");
     assert_eq!(dl.info_hash(), dup.info_hash(), "meme download retourne");
-    bench.session.stop().await;
+    stop_bounded(&bench.session).await;
 }
 
 /// Suppression pendant un transfert actif sur lane anonyme :
@@ -812,7 +823,7 @@ async fn live_suppression_pendant_transfert() {
             .is_none(),
         "resurrection moteur apres remove"
     );
-    bench.session.stop().await;
+    stop_bounded(&bench.session).await;
 }
 
 // ----------------------------------------------------------------
@@ -951,6 +962,16 @@ async fn fleet_setup(specs: &[(u32, bool)], n_relays: usize) -> Fleet {
         _seed_dir: seed_dir,
         torrents,
     }
+}
+
+/// `stop()` borne par `TRANSFER_WAIT` : un arret qui bloque devient
+/// un panic localise au lieu d'un hang CI (meme discipline que
+/// `wait_restored` — le teardown ne doit jamais etre le point de
+/// blocage d'un test).
+async fn stop_bounded(session: &CoreSession) {
+    tokio::time::timeout(TRANSFER_WAIT, session.stop())
+        .await
+        .expect("session.stop() en timeout");
 }
 
 /// Attend que `ih` soit `finished` cote session (scrutation stats).
@@ -1142,6 +1163,17 @@ async fn live_flotte_10_restart() {
             "anon_hops persiste perdu pour {}",
             t.name
         );
+        // Attendre `Some(_)` avant de comparer : la materialisation
+        // peut suivre le signal restore d'un epsilon (None transitoire
+        // != mauvaise lane).
+        assert!(
+            wait_until(STATE_WAIT, || {
+                session.owner_engine_hops(&t.ih).is_some()
+            })
+            .await,
+            "{} jamais materialise dans un moteur",
+            t.name
+        );
         assert_eq!(
             session.owner_engine_hops(&t.ih),
             Some(t.hops),
@@ -1227,7 +1259,7 @@ async fn live_flotte_10_restart() {
         eprintln!("post-restart lane {hops}: {b} o sur circuits READY");
         assert!(b > 0, "aucun trafic observe sur la lane {hops}");
     }
-    session.stop().await;
+    stop_bounded(&session).await;
 }
 
 /// Variante de `circuit_pinned` operant sur un tunnel libre (hors
@@ -1296,17 +1328,19 @@ async fn live_magnet_pending_non_restaure_au_restart() {
     );
 
     // Arret alors que le magnet n'est jamais resolu.
-    session.stop().await;
+    stop_bounded(&session).await;
     drop(add_task); // tache liee a l'ancienne session
 
     let (session, _t2) = start_live_session(&fleet.state_dir).await;
-    session.wait_restored().await;
+    tokio::time::timeout(TRANSFER_WAIT, session.wait_restored())
+        .await
+        .expect("restauration en timeout");
     assert!(
         session.owner_engine_hops(&t.ih).is_none()
             && session.downloads().iter().all(|d| d.info_hash != t.ih),
         "un magnet jamais resolu ne devrait pas etre restaure (ecart Python documente)"
     );
-    session.stop().await;
+    stop_bounded(&session).await;
 }
 
 // ----------------------------------------------------------------
@@ -1314,27 +1348,42 @@ async fn live_magnet_pending_non_restaure_au_restart() {
 // ----------------------------------------------------------------
 
 /// Ajoute un `FleetTorrent` a la session (magnet ou `.torrent` selon
-/// `t.magnet`) avec le seeder en pair d'amorce.
+/// `t.magnet`) avec le seeder en pair d'amorce. L'add est borne par
+/// `TRANSFER_WAIT` : une resolution BEP 9 ou un add moteur qui stalle
+/// devient un panic localise au lieu d'un hang CI.
 async fn fleet_add(session: &CoreSession, t: &FleetTorrent, seed_addr: SocketAddr) {
-    if t.magnet {
-        let uri = format!("magnet:?xt=urn:btih:{}&dn={}", t.ih, t.name);
-        session
-            .add_download_anon_with_peers(&uri, false, t.hops, t.hops > 0, None, vec![seed_addr])
-            .await
-            .unwrap_or_else(|e| panic!("magnet {} hops={}: {e}", t.name, t.hops));
-    } else {
-        session
-            .add_torrent_bytes_anon_with_peers(
-                t.bytes.clone(),
-                false,
-                t.hops,
-                t.hops > 0,
-                None,
-                vec![seed_addr],
-            )
-            .await
-            .unwrap_or_else(|e| panic!("add {} hops={}: {e}", t.name, t.hops));
-    }
+    let fut = async {
+        if t.magnet {
+            let uri = format!("magnet:?xt=urn:btih:{}&dn={}", t.ih, t.name);
+            session
+                .add_download_anon_with_peers(
+                    &uri,
+                    false,
+                    t.hops,
+                    t.hops > 0,
+                    None,
+                    vec![seed_addr],
+                )
+                .await
+                .map(|_| ())
+        } else {
+            session
+                .add_torrent_bytes_anon_with_peers(
+                    t.bytes.clone(),
+                    false,
+                    t.hops,
+                    t.hops > 0,
+                    None,
+                    vec![seed_addr],
+                )
+                .await
+                .map(|_| ())
+        }
+    };
+    tokio::time::timeout(TRANSFER_WAIT, fut)
+        .await
+        .unwrap_or_else(|_| panic!("add {} hops={} en timeout", t.name, t.hops))
+        .unwrap_or_else(|e| panic!("add {} hops={}: {e}", t.name, t.hops));
 }
 
 /// Redemarrage complet : `stop()`, nouvelle session sur le meme
@@ -1343,37 +1392,56 @@ async fn fleet_add(session: &CoreSession, t: &FleetTorrent, seed_addr: SocketAdd
 /// 1..=3 — les lanes restent fail-closed tant que leur circuit n'est
 /// pas la.
 async fn fleet_restart(fleet: &Fleet, session: CoreSession) -> (CoreSession, Arc<TunnelCommunity>) {
-    session.stop().await;
+    stop_bounded(&session).await;
     let (session, tunnel) = start_live_session(&fleet.state_dir).await;
     let stack = session.ipv8().unwrap();
     wire_relays(&stack, &tunnel, &fleet.relays);
-    session.wait_restored().await;
+    tokio::time::timeout(TRANSFER_WAIT, session.wait_restored())
+        .await
+        .expect("restauration en timeout");
     for hops in 1..=3usize {
         circuit_pinned_fl(&tunnel, &fleet.relays, hops).await;
     }
     (session, tunnel)
 }
 
-/// Re-annonce le seeder a chaque download restaure non pausé et
-/// attend que l'injection ait pris (les pairs ne survivent pas au
-/// restart moteur — parite `readd_bittorrent_peers` Python).
-async fn fleet_reinject(session: &CoreSession, seed_addr: SocketAddr) {
-    for d in session.downloads() {
-        let dl = match session.find_download_hex(&d.info_hash) {
-            Some(d) => d,
-            None => continue,
-        };
-        if dl.is_paused() {
-            continue;
-        }
+/// Re-annonce le seeder a chaque torrent `expected` restaure non
+/// pause et attend que l'injection ait pris (les pairs ne survivent
+/// pas au restart moteur — parite `readd_bittorrent_peers` Python).
+/// Itere la liste attendue plutot que `downloads()` : un snapshot
+/// moteur manquerait un download dont la restauration se termine
+/// pendant la boucle.
+async fn fleet_reinject(session: &CoreSession, expected: &[&FleetTorrent], seed_addr: SocketAddr) {
+    let mut non_injectes: Vec<&str> = Vec::new();
+    for t in expected {
+        let mut traite = false;
         let t0 = Instant::now();
         while Instant::now() - t0 < STATE_WAIT {
-            dl.add_peer(seed_addr);
-            if dl.stats().peers_seen > 0 {
-                break;
+            if let Some(dl) = session.find_download_hex(&t.ih) {
+                if dl.is_paused() {
+                    traite = true;
+                    break;
+                }
+                dl.add_peer(seed_addr);
+                if dl.stats().peers_seen > 0 {
+                    traite = true;
+                    break;
+                }
             }
             tokio::time::sleep(POLL).await;
         }
+        if !traite {
+            non_injectes.push(&t.name);
+        }
+    }
+    // Pas d'assert dur : un magnet encore en resolution (pending) est
+    // un etat legitime — l'oracle reste l'attente de progression en
+    // aval. Le compte-rendu tranche un stall d'injection reel.
+    if !non_injectes.is_empty() {
+        tracing::warn!(
+            non_injectes = ?non_injectes,
+            "seeder jamais injecte sur ces torrents (pending ou stall)"
+        );
     }
 }
 
@@ -1381,7 +1449,7 @@ async fn fleet_reinject(session: &CoreSession, seed_addr: SocketAddr) {
 /// sur **sa** lane persistee, exactement une fois ; `absent` (si
 /// present) ne doit exister nulle part (ni DB, ni moteur) ; `paused`
 /// doivent etre restaures en pause.
-fn assert_fleet_state(
+async fn assert_fleet_state(
     session: &CoreSession,
     expected: &[&FleetTorrent],
     absent: Option<&FleetTorrent>,
@@ -1392,6 +1460,17 @@ fn assert_fleet_state(
             session.anon_hops_map().get(&t.ih),
             Some(&t.hops),
             "anon_hops persiste perdu pour {}",
+            t.name
+        );
+        // `None` transitoire != mauvaise lane : la materialisation
+        // moteur peut suivre la fin du signal restore d'un epsilon —
+        // attendre `Some(_)` avant de comparer la valeur.
+        assert!(
+            wait_until(STATE_WAIT, || {
+                session.owner_engine_hops(&t.ih).is_some()
+            })
+            .await,
+            "{} jamais materialise dans un moteur",
             t.name
         );
         assert_eq!(
@@ -1506,7 +1585,7 @@ async fn live_flotte_restart_3_cycles() {
     // ===== restart 1 : etat intact =====
     let (session, _tunnel) = fleet_restart(&fleet, session).await;
     let all: Vec<&FleetTorrent> = fleet.torrents.iter().collect();
-    assert_fleet_state(&session, &all, None, &[]);
+    assert_fleet_state(&session, &all, None, &[]).await;
     assert!(
         fleet_progress_conserved(&session, &all, &snap).await,
         "progression perdue au restart 1"
@@ -1539,7 +1618,7 @@ async fn live_flotte_restart_3_cycles() {
         .map(|(_, t)| t)
         .collect();
     let paused: Vec<&FleetTorrent> = paused_idx.iter().map(|&i| &fleet.torrents[i]).collect();
-    assert_fleet_state(&session, &survivors, Some(removed), &paused);
+    assert_fleet_state(&session, &survivors, Some(removed), &paused).await;
     let snap2: Vec<u64> = survivors
         .iter()
         .map(|t| {
@@ -1567,7 +1646,7 @@ async fn live_flotte_restart_3_cycles() {
         session.resume(&t.ih).await.expect("resume");
         session.set_stopped_flag(&t.ih, false).expect("resume flag");
     }
-    fleet_reinject(&session, fleet.seed_addr).await;
+    fleet_reinject(&session, &survivors, fleet.seed_addr).await;
     let ok = wait_until(Duration::from_secs(120), || {
         survivors.iter().zip(&snap2).all(|(t, &pre)| {
             session
@@ -1581,8 +1660,8 @@ async fn live_flotte_restart_3_cycles() {
 
     // ===== restart 3 : invariants puis completion + integrite =====
     let (session, _tunnel) = fleet_restart(&fleet, session).await;
-    assert_fleet_state(&session, &survivors, Some(removed), &[]);
-    fleet_reinject(&session, fleet.seed_addr).await;
+    assert_fleet_state(&session, &survivors, Some(removed), &[]).await;
+    fleet_reinject(&session, &survivors, fleet.seed_addr).await;
     let ok = wait_until(TRANSFER_WAIT, || {
         survivors.iter().all(|t| {
             session
@@ -1598,7 +1677,7 @@ async fn live_flotte_restart_3_cycles() {
         assert_eq!(got, t.payload, "{} : contenu corrompu", t.name);
         assert_eq!(session.owner_engine_hops(&t.ih), Some(t.hops));
     }
-    session.stop().await;
+    stop_bounded(&session).await;
 }
 
 /// Crash brutal pendant la resolution d'un magnet : la session vit
@@ -1714,7 +1793,9 @@ fn live_crash_pending_magnet_et_restart() {
 
         // ===== Redemarrage sur le state_dir post-crash =====
         let (session, _tunnel) = start_live_session(&fleet.state_dir).await;
-        session.wait_restored().await;
+        tokio::time::timeout(TRANSFER_WAIT, session.wait_restored())
+            .await
+            .expect("restauration post-crash en timeout");
 
         // Les 2 materialises restaurent sur leur lane (0).
         for t in &fleet.torrents[..2] {
@@ -1781,7 +1862,7 @@ fn live_crash_pending_magnet_et_restart() {
                 find_named(&fleet.dl_dir, &t.name).unwrap_or_else(|| panic!("{} absent", t.name));
             assert_eq!(got, t.payload, "{} : contenu corrompu", t.name);
         }
-        session.stop().await;
+        stop_bounded(&session).await;
     });
 }
 
@@ -2015,7 +2096,14 @@ async fn live_endurance_churn() {
             session = s;
             tunnel = t;
             restarts += 1;
-            fleet_reinject(&session, fleet.seed_addr).await;
+            let on: Vec<&FleetTorrent> = fleet
+                .torrents
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| present[*i])
+                .map(|(_, t)| t)
+                .collect();
+            fleet_reinject(&session, &on, fleet.seed_addr).await;
         }
         csv.push_str(&endurance_metrics_line(
             &session,
@@ -2044,7 +2132,14 @@ async fn live_endurance_churn() {
     for t in &fleet.torrents {
         let _ = session.set_stopped_flag(&t.ih, false);
     }
-    fleet_reinject(&session, fleet.seed_addr).await;
+    let on: Vec<&FleetTorrent> = fleet
+        .torrents
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| present[*i])
+        .map(|(_, t)| t)
+        .collect();
+    fleet_reinject(&session, &on, fleet.seed_addr).await;
 
     let survivors: Vec<usize> = (0..fleet.torrents.len()).filter(|&i| present[i]).collect();
     let ok = wait_until(TRANSFER_WAIT, || {
@@ -2129,5 +2224,5 @@ async fn live_endurance_churn() {
             rss_final.saturating_sub(rss_warmup)
         );
     }
-    session.stop().await;
+    stop_bounded(&session).await;
 }
