@@ -57,6 +57,7 @@ impl Drop for InstanceGuard {
 
 /// Hash stable du chemin absolu de `state_dir` (minuscules — Windows
 /// est insensible à la casse sur les chemins).
+#[cfg(any(windows, test))]
 fn state_hash(state_dir: &Path) -> u64 {
     let abs = std::path::absolute(state_dir).unwrap_or_else(|_| state_dir.to_path_buf());
     let mut h = DefaultHasher::new();

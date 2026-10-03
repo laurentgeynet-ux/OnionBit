@@ -26,6 +26,7 @@ impl ShutdownSignal {
 
     /// Déclenche l'arrêt (idempotent : le surplus de `notify_one` est
     /// sans effet une fois le permis consommé).
+    #[cfg(any(windows, test))]
     pub fn trigger(&self) {
         self.inner.notify_one();
     }

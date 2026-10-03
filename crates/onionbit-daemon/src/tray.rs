@@ -19,6 +19,7 @@ use crate::shutdown::ShutdownSignal;
 
 /// Paramètres de l'icône tray (le type existe sur toutes les
 /// plateformes pour que `main` reste sans `cfg`).
+#[cfg_attr(not(windows), allow(dead_code))]
 pub struct TrayOptions {
     /// Texte au survol (`OnionBit — 127.0.0.1:<port>`).
     pub tooltip: String,
@@ -288,6 +289,7 @@ pub fn spawn(_opts: TrayOptions) -> Option<TrayHandle> {
 
 impl TrayHandle {
     /// Met à jour le texte de survol (no-op hors Windows).
+    #[cfg_attr(not(windows), allow(unused_variables))]
     pub fn set_tooltip(&self, tooltip: String) {
         #[cfg(windows)]
         self.inner.set_tooltip(tooltip);

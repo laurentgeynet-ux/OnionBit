@@ -354,7 +354,6 @@ fn main() -> ExitCode {
 
 async fn async_main() -> ExitCode {
     let args = Args::parse();
-    #[cfg(windows)]
     if args.console {
         console::attach();
     }
