@@ -22,6 +22,13 @@ Commit de référence de la présente matrice : `60342bc` + `920501e`
 - **Nomenclature** : `run-<banc>-<date>-<commit>` sous `target/`.
 - Un banc est « vert » uniquement si **tous** ses oracles sont
   observables dans les artefacts — pas de validation « au ressenti ».
+- **Politique d'adresses** : les bancs anti-SSRF doivent démarrer un
+  daemon en politique **stricte** — jamais `--offline`, qui sélectionne
+  `IpPolicy::permissive()` et rend le rejet SSRF inerte (le refus
+  survient alors côté moteur, faux négatif). `sec_anti_ssrf_live.ps1`
+  vérifie cette précondition via une sonde témoin `127.0.0.1` : le
+  refus attendu est `politique reseau: destination refusee`, pas
+  `moteur bittorrent`.
 
 ## Format d'entrée
 
@@ -64,7 +71,7 @@ diffusion et tout nouveau développement (ADR-0011 incluse).
 | P0-14 | Public : bootstrap + download 2 hops + guards | daemon de banc réseau réel (cf. §5 D-94..97) | public | Octets vérifiés > 0 ; guard set non vide ; pinning sticky |
 | P0-15 | Mesh fingerprinting — non-régression PING/PONG | `scripts/fingerprint_mesh.ps1 -WithAnonDownload -DurationMin 15` | loopback/mesh | < 5 cellules contrôle/s hors payload ; aucune boucle ping/pong ; comparaison aux CSV de référence `docs/security/fingerprinting.md` |
 | P0-16 | Corpus fuzz régression | `scripts/fuzz_campaign.ps1` + `onionbit-tunnel/tests/fuzz_regression.rs` | loopback | 0 crash ; corpus invariant |
-| P0-17 | Fuites externes : DNS, kill switch OS, anti-SSRF | capture réseau + §5 E-103..105 | public | Aucun paquet/DNS hors politique ; refus fermés |
+| P0-17 | Fuites externes : DNS, kill switch OS, anti-SSRF | `sec_anti_ssrf_live.ps1` (P0-17a) + capture réseau (P0-17b, cf. §6.1 SE-3/SE-4) | loopback / public | Refus fermés avec politique stricte vérifiée ; aucun paquet/DNS hors politique |
 
 ## 2. Niveaux de priorité
 
@@ -307,7 +314,7 @@ défaut de la fonction (pas la release existante). Harness :
 | SE-2 | `fuzz_campaign.ps1` + `fuzz_regression.rs` | 0 crash, corpus invariant, `fuzz_journal` mis à jour | P0 |
 | SE-3 | Fuite DNS/résolution sur lanes anonymes (capture pendant transfert) | 0 requête DNS/directe | P0 |
 | SE-4 | Kill switch OS réel (coupure interface / proxy tué, capture) | 0 paquet hors tunnel | P0 |
-| SE-5 | Anti-SSRF live : 169.254.169.254, `::1`, DNS→privé | Refus fermé | P0 |
+| SE-5 | `sec_anti_ssrf_live.ps1` : auth 401 + anti-SSRF live (link-local, `::1`, `localhost`, privé, `0.0.0.0`) sur daemon strict | Précondition politique stricte vérifiée par sonde témoin ; refus fermé avec raison exacte | P0 |
 | SE-6 | Auth API : chaque endpoint sans clé, fixation cookie | 401 systématique | P1 |
 | SE-7 | Messagerie e2e (Phase 8) : replay inter-circuits, usurpation de clé, fingerprint des annonces de présence — renvoie aux oracles MS-3/MS-5/MS-8/MS-9 | Les quatre oracles verts | P0-msg |
 
@@ -353,14 +360,15 @@ défaut de la fonction (pas la release existante). Harness :
 | PY-4 (`interop_tunnel.ps1`) | 2026-10-02 | `920501e`+docs | **vert** — crypto par couches acceptée par le vrai `TunnelCommunity` | `target/interop` | non |
 | PY-5 (`interop_py_relay.ps1`) | 2026-10-02 | `920501e`+docs | **vert** — 3 sauts Rust→relais pyipv8→sortie Rust (script corrigé : `rust_stderr.log` tolérant) | `target/interop-py-relay*` | non |
 | PY-6 (`interop_exit_download.ps1`) | 2026-10-02 | `920501e`+docs | **vert** — 200 Ko via circuit 2 sauts, sortie pyipv8 `EXIT_BT`, octet à octet | `target/interop` | non |
-| PY-7 (`interop_hidden_py2py.ps1`) | 2026-10-02 | `920501e`+docs | **échec contrôlé (environnement)** — 2 Tribler 8.4.3 réels, seeder OK + `IP_SEEDER`, mais `swarm_ips_dht=0` pendant 38 min : le DHT public ne répond pas aux `peers-request` ce soir → non attribuable à OnionBit | `target/interop-hidden-py2py*` | réseau public |
+| PY-7 (`interop_hidden_py2py.ps1`) | 2026-10-02 | `920501e`+docs | **BLOCKED / ENVIRONMENTAL** — baseline Tribler↔Tribler échouée : `swarm_ips_dht=0` pendant 38 min, aucun OnionBit dans le chemin → aucun jugement sur l'interop hidden OnionBit. À réessayer lors d'une fenêtre où la baseline officielle est verte | `target/interop-hidden-py2py*` | réseau public |
 | TR-1 (`interop_tribler.ps1`) | 2026-10-02 | `920501e`+docs | **vert** — flags réels `9`, circuit 2 sauts via Tribler, écho uTP exact | `target/interop-tribler*` | non |
 | TR-3 (`interop_hidden_tribler_download.ps1 -Guards`) | 2026-10-02 | `920501e`+docs | **vert** hops 1/2/3 — SHA-256 exact, 6,3 Mo, `hors_set=0`, premiers hops ⊆ guard set | `target/interop-hidden-dl-*` | 1er run hops=2 pollué par un daemon orphelin (port 8097/17787), vert après nettoyage |
 | TR-4 (`interop_hidden_tribler_seed.ps1 -Guards`) | 2026-10-03 | `fa24b6b`+scripts corrigés | **vert** hops 1/2/3 — tous verdicts OK ; course fichier→handle corrigée (DELETE download `remove_data=false` avant hash + retry 30 s) ; **re-run hops=1 post-fix : EXIT=0, SHA-256 in-script OK** | `target/interop-hidden-seed-20261003-013948`, `target/seed-h1-rerun.log` | non |
 | P0-15 (`fingerprint_mesh.ps1 -WithAnonDownload 15 min`) | 2026-10-03 | `fa24b6b` | **vert** — pas de tempête PING/PONG : ping+pong Discovery ≈ 0,36 msg/s ; `on_cell` tunnel ≈ 1,28 msg/s ; kill switch engagé→désarmé ; 0 fallback | `target/fingerprint-mesh-20261003-004639/` (2 CSV 180 éch., manifest) | non ; le magnet factice ne transfère pas (voulu) |
 | P0-14 (`interop_public_dht.ps1` 2 sauts, Sintel) | 2026-10-03 | `fa24b6b` | **vert** — `INTEROP PUBLIC DHT OK`, **1 638 263 octets vérifiés** ≥ 1 Mio, 1er essai, route 2 sauts publics réels `605f9289…→0f6a1aee…` | `target/interop-public-dht/*.log` | overlay clairsemé ce soir (3 pairs, 1 exit) ; guards non observables par ce harness (prouvés par TR-3/TR-4) |
 | P0-16 (`fuzz_campaign.ps1 -Smoke`) | 2026-10-03 | `fa24b6b` | **vert** — 6/6 cibles, 0 crash, ~152 M execs (tunnel_cell 36,4 M ; tunnel_payloads 9,4 M) | `fuzz/artifacts/last-run-*.log`, `docs/security/fuzz_journal.csv` | non ; smoke ≠ campagne 5 h |
-| P0-17 (auth API + anti-SSRF live) | 2026-10-03 | `fa24b6b` | **vert (partiel)** — daemon réel mode strict : sans clé 401, mauvaise clé 401 ; `PUT /downloads` refusé fermé pour `169.254.169.254` (link-local), `[::1]`+`localhost` (loopback, résolution incluse), `10.0.0.1`+`192.168.0.1` (privé/CGNAT), `0.0.0.0` (unspecified). Reste à faire : capture pktmon/Wireshark pour fuite DNS/kill-switch au niveau paquets — moteur couvert par `kill_switch_midtransfer` (P0-9) | `target/p017-live/` | attention : `--offline` → `IpPolicy::permissive()` (test invalide pour l'anti-SSRF) |
+| P0-17a (`sec_anti_ssrf_live.ps1` : auth + anti-SSRF live) | 2026-10-03 | `fa24b6b`+script | **vert** — EXIT=0, 11/11 verdicts : précondition stricte vérifiée par sonde témoin, 401 sans/mauvaise clé, 200 avec clé, refus fermés avec raison exacte (link-local, loopback, privé/CGNAT, unspecified) ; précondition prouvée discriminante sur daemon `--offline` | `target/ssrf-run.log`, `target/sec-ssrf-*/` | non |
+| P0-17b (fuites DNS/kill switch OS niveau paquets) | — | — | **à faire** — capture pktmon/Wireshark : destruction circuit proxy vivant, proxy tué, changement d'interface ; oracle : 0 paquet BT/DHT/DNS/UDP WAN hors tunnel en fail-closed ; distinguer résolutions bootstrap/versioning de celles de la lane anonyme. Moteur couvert par `kill_switch_midtransfer` (P0-9) | — | nécessite pktmon/Wireshark |
 
 ## 8. Trous de couverture assumés / hors scope
 

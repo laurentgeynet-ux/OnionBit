@@ -3,6 +3,34 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Campagne de bancs P0 complète + harnais anti-SSRF live (2026-10-03)
+
+Passe de non-régression P0 exécutée de bout en bout après les
+changements tunnel/DHT/conntrack/guards, consignée dans
+`docs/plans/bancs_tests.md` §7 :
+
+- **Interop pyipv8** : PY-1..PY-6 verts (discovery, DHT signée,
+  tunnels crypto, relais, sortie `EXIT_BT` avec 200 Ko vérifiés).
+  PY-7 (py↔py baseline) : **BLOCKED/ENVIRONMENTAL** — deux Tribler
+  8.4.3 officiels n'ont résolu aucun `peers-request` en 38 min, aucun
+  OnionBit dans le chemin.
+- **Tribler.exe** : matrice hidden download/seed `-Guards` hops 1/2/3
+  verte dans les deux sens (SHA-256 exact, `hors_set=0`).
+- **Fingerprint mesh 15 min** : aucune tempête PING/PONG
+  (ping+pong ≈ 0,36 msg/s, cellules tunnel ≈ 1,28 msg/s), kill switch
+  engagé→désarmé, zéro fallback.
+- **Public** : 1 638 263 octets vérifiés sur route 2 sauts réelle.
+- **Fuzz smoke** : 6/6 cibles, ~152 M execs, 0 crash.
+- **Correctifs harnais** : race `Get-FileHash` (handle rqbit) corrigée
+  dans `interop_hidden_tribler_seed.ps1` (DELETE + retry, validée par
+  re-run) et en prévention dans `interop_hidden_tribler_download.ps1` ;
+  `interop_py_relay.ps1` tolère un stderr vide.
+- **Nouveau banc `sec_anti_ssrf_live.ps1` (P0-17a)** : daemon réel en
+  politique stricte, précondition vérifiée par sonde témoin, auth 401,
+  refus anti-SSRF fermés avec raison exacte (link-local, loopback,
+  privé/CGNAT, unspecified). Règle consignée : jamais `--offline`
+  pour ces bancs (`IpPolicy::permissive()` rendrait le test inerte).
+
 ## Fix : warns « operation sqlite lente » en rafale (2026-10-02)
 
 Le seuil du warn de `Database::with` (`onionbit-db/db.rs`) était
