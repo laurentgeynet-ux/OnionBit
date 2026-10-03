@@ -129,7 +129,10 @@ impl RssManager {
 
     /// Arrete tous les watchers.
     pub fn stop(&self) {
-        let _ = self.stop.send(true);
+        // `send_replace` : `send` echouerait si le watcher n'a pas
+        // encore souscrit (`subscribe` a lieu dans la tache spawnee) —
+        // le signal d'arret serait perdu et la tache tournerait encore.
+        self.stop.send_replace(true);
         self.watchers.lock().unwrap().clear();
     }
 

@@ -313,7 +313,13 @@ impl CoreSession {
             .register(Some("CoreSession"), "load_checkpoint", None);
         tokio::spawn(async move {
             session.restore_downloads().await;
-            let _ = session.inner.restore_done.send(true);
+            // `send_replace` et non `send` : le receveur initial du
+            // canal est detruit a la construction et `send` echoue
+            // sans receveur actif — une restauration plus rapide que
+            // le premier `wait_restored()` perdrait alors le signal et
+            // bloquerait l'attente pour toujours (base vide : chemin
+            // le plus rapide).
+            session.inner.restore_done.send_replace(true);
         });
     }
 

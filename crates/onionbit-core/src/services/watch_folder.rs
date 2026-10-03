@@ -85,7 +85,10 @@ impl WatchFolderService {
 
     /// Arrete le scan periodique.
     pub fn stop(&self) {
-        let _ = self.stop.send(true);
+        // `send_replace` : `send` echouerait si la tache n'a pas encore
+        // souscrit — le signal d'arret serait perdu (cf. session.rs,
+        // canal `restore_done`).
+        self.stop.send_replace(true);
     }
 
     /// Un cycle de scan : importe les fichiers eligibles nouveaux.

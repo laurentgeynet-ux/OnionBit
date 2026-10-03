@@ -3,6 +3,22 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Signal de fin de restauration non perdu (2026-10-03)
+
+- **`restore_done` pouvait perdre son basculement** : le canal
+  `watch` est construit sans receveur retenu et `watch::Sender::send`
+  échoue silencieusement (`let _ =`) quand aucun receveur n'existe.
+  Une restauration terminée avant le premier `wait_restored()` (base
+  vide : magnet jamais résolu non persisté — chemin le plus rapide)
+  perdait le signal : `wait_restored()` bloquait indéfiniment et
+  `restore_finished()` restait `false` pour toute la session
+  (`live_magnet_pending_non_restaure_au_restart` figé en CI Ubuntu,
+  ~146 s jusqu'au timeout du test). `send_replace` stocke la valeur
+  quelle que soit la présence de receveurs.
+- **Même défaut latent dans `services::rss` et
+  `services::watch_folder`** : `stop.send(true)` appelé avant que la
+  tâche ait souscrit perdait le signal d'arrêt → `send_replace`.
+
 ## Création de lane anonyme atomique (2026-10-03)
 
 - **Course get-or-create dans `Ipv8Stack::anon_engine`** : deux adds
