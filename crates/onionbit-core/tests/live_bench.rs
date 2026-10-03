@@ -1002,24 +1002,26 @@ async fn live_flotte_10_restart() {
 
     // Ajout des 10 downloads.
     for t in &fleet.torrents {
-        // Borne explicite : un add bloque (resolution magnet, moteur
-        // lane) devient un panic localise au lieu d'un hang muet.
+        // Borne explicite : un add bloque (moteur lane, persistance)
+        // devient un panic localise au lieu d'un hang muet.
         if t.magnet {
+            // L'add magnet attend la resolution BEP 9 inline (etat
+            // `pending` voulu) : sur lane anonyme elle peut
+            // legitiment trainer — on la deporte comme dans le test
+            // crash, la convergence reelle est bornee par le
+            // `wait_until` de progression par torrent en aval.
             let uri = format!("magnet:?xt=urn:btih:{}&dn={}", t.ih, t.name);
-            tokio::time::timeout(
-                TRANSFER_WAIT,
-                session.add_download_anon_with_peers(
-                    &uri,
-                    false,
-                    t.hops,
-                    t.hops > 0,
-                    None,
-                    vec![fleet.seed_addr],
-                ),
-            )
-            .await
-            .unwrap_or_else(|_| panic!("add magnet {} hops={} en timeout", t.name, t.hops))
-            .unwrap_or_else(|e| panic!("magnet {} hops={}: {e}", t.name, t.hops));
+            let s = session.clone();
+            let hops = t.hops;
+            let peers = vec![fleet.seed_addr];
+            tokio::spawn(async move {
+                if let Err(e) = s
+                    .add_download_anon_with_peers(&uri, false, hops, hops > 0, None, peers)
+                    .await
+                {
+                    tracing::warn!(error = %e, "add magnet flotte echoue");
+                }
+            });
         } else {
             tokio::time::timeout(
                 TRANSFER_WAIT,
@@ -1036,10 +1038,28 @@ async fn live_flotte_10_restart() {
             .unwrap_or_else(|_| panic!("add {} hops={} en timeout", t.name, t.hops))
             .unwrap_or_else(|e| panic!("add {} hops={}: {e}", t.name, t.hops));
         }
-        assert_eq!(
-            session.owner_engine_hops(&t.ih),
-            Some(t.hops),
-            "{} ajoute sur la mauvaise lane",
+        if !t.magnet {
+            assert_eq!(
+                session.owner_engine_hops(&t.ih),
+                Some(t.hops),
+                "{} ajoute sur la mauvaise lane",
+                t.name
+            );
+        }
+    }
+    // Les magnets spawnés ci-dessus materialisent leur download a la
+    // resolution : la lane n'est verifiable qu'une fois l'objet moteur
+    // cree — le `wait_until` de progression en couvre l'attente.
+    for t in fleet.torrents.iter().filter(|t| t.magnet) {
+        assert!(
+            wait_until(Duration::from_secs(60), || {
+                session
+                    .owner_engine_hops(&t.ih)
+                    .map(|h| h == t.hops)
+                    .unwrap_or(false)
+            })
+            .await,
+            "{} : magnet resolu sur la mauvaise lane",
             t.name
         );
     }
