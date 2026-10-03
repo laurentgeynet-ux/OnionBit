@@ -339,6 +339,7 @@ impl CoreSession {
         let t0 = std::time::Instant::now();
         let mut restored = 0usize;
         let mut failed = 0usize;
+        let mut deferred = 0usize;
         let rows = match self.inner.db.with(onionbit_db::downloads::list) {
             Ok(r) => r,
             Err(e) => {
@@ -372,6 +373,20 @@ impl CoreSession {
                     continue;
                 }
             };
+            if row.torrent_data.is_none() {
+                // Sans metainfo persistee (lignes laissees par un ajout
+                // magnet/URI des versions anterieures), `readd_row`
+                // attend la resolution BEP 9 ou le fetch HTTP de la
+                // source — potentiellement jamais sur une lane
+                // anonyme sans pair joignable, ce qui figeait la file
+                // : les lignes suivantes restaient « en verification »
+                // et tout PATCH repondait 404. Python cree le
+                // Download d'emblee (etat METADATA) — on deporte le
+                // re-add en tache de fond exposee via `pending`.
+                self.spawn_deferred_restore(engine, row);
+                deferred += 1;
+                continue;
+            }
             match self.readd_row(&engine, &row).await {
                 Ok(dl) => {
                     restored += 1;
@@ -405,9 +420,85 @@ impl CoreSession {
         tracing::info!(
             restored,
             failed,
+            deferred,
             total_elapsed_ms = t0.elapsed().as_millis() as u64,
             "restauration des telechargements terminee"
         );
+    }
+
+    /// Re-add deporte d'une ligne sans metainfo persistee : la ligne
+    /// apparait en `pending` (statut METADATA) pendant la resolution
+    /// de la source, puis le metainfo resolu est backfille dans
+    /// `torrent_data` — les demarrages suivants passent alors par la
+    /// voie `.torrent` synchrone.
+    fn spawn_deferred_restore(&self, engine: BtEngine, row: DownloadRow) {
+        let ih_hex = onionbit_crypto::hash::to_hex(&row.infohash);
+        self.inner.pending.lock().unwrap().insert(
+            ih_hex.clone(),
+            PendingDownload {
+                infohash: ih_hex.clone(),
+                name: row.name.clone(),
+                anon_hops: row.anon_hops.max(0) as u32,
+                paused: row.paused || row.user_stopped,
+                added_on: row.added_on,
+            },
+        );
+        let session = self.clone();
+        tokio::spawn(async move {
+            let res = session.readd_row(&engine, &row).await;
+            session.inner.pending.lock().unwrap().remove(&ih_hex);
+            match res {
+                Ok(dl) => {
+                    // `update_download_row` renvoie faux quand la
+                    // ligne a ete supprimee pendant la resolution :
+                    // pas de download orphelin dans le moteur (idem
+                    // apres `stop()`).
+                    let known = session
+                        .update_download_row(&dl.info_hash(), |r| {
+                            if r.torrent_data.is_none() {
+                                r.torrent_data = dl.torrent_bytes().map(|b| b.to_vec());
+                            }
+                            if r.name.is_none() {
+                                r.name = dl.name();
+                            }
+                        })
+                        .unwrap_or(false);
+                    if !known
+                        || session
+                            .inner
+                            .stopped
+                            .load(std::sync::atomic::Ordering::SeqCst)
+                    {
+                        let _ = engine.remove(&dl.info_hash_hex(), false).await;
+                    } else {
+                        tracing::info!(
+                            infohash = %ih_hex,
+                            "telechargement restaure (resolution differee)"
+                        );
+                        if let Some(name) = dl.name() {
+                            session.index_channel_node(
+                                &dl.info_hash(),
+                                &name,
+                                dl.stats().total_bytes,
+                            );
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        infohash = %ih_hex,
+                        error = %e,
+                        "restauration differee d'un telechargement echouee"
+                    );
+                    session
+                        .inner
+                        .notifier
+                        .notify(Notification::TriblerException {
+                            error: format!("restore {ih_hex}: {e}"),
+                        });
+                }
+            }
+        });
     }
 
     /// Options rqbit reconstruites depuis la ligne persistee — les
@@ -1306,6 +1397,11 @@ impl CoreSession {
                     infohash: dl.info_hash().to_vec(),
                     name: dl.name(),
                     source_uri: uri.to_string(),
+                    // `add_uri_opts` ne retourne qu'apres resolution
+                    // du metainfo — le persister evite de re-resoudre
+                    // le magnet a chaque demarrage (meme source que
+                    // le checkpoint Python : le `.torrent` sauvegarde).
+                    torrent_data: dl.torrent_bytes().map(|b| b.to_vec()),
                     output_dir: dl.output_folder().display().to_string(),
                     added_on: now_unix(),
                     paused: p.paused,
@@ -1576,10 +1672,36 @@ impl CoreSession {
 
     /// Supprime un telechargement (optionnellement ses fichiers) et
     /// sa ligne de persistance (`DELETE /api/downloads/{ih}`).
+    ///
+    /// Un telechargement sans objet moteur (magnet en resolution
+    /// `pending`, ligne pas encore reinjectee a la restauration) est
+    /// quand meme supprimable : un download Python en etat METADATA
+    /// l'est. La suppression porte alors sur l'entree `pending` et
+    /// la ligne `downloads`.
     pub async fn remove(&self, id_or_hash: &str, delete_files: bool) -> Result<()> {
-        let infohash = self.find_download(id_or_hash).map(|d| d.info_hash_hex());
+        let Some(dl) = self.find_download(id_or_hash) else {
+            let ih = onionbit_crypto::hash::from_hex(id_or_hash)
+                .ok_or(CoreError::InvalidState("telechargement inconnu"))?;
+            let pending = self
+                .inner
+                .pending
+                .lock()
+                .unwrap()
+                .remove(&onionbit_crypto::hash::to_hex(&ih))
+                .is_some();
+            let known = self.row_of(&ih)?.is_some();
+            if !pending && !known {
+                return Err(CoreError::InvalidState("telechargement inconnu"));
+            }
+            self.inner
+                .db
+                .with(|c| onionbit_db::downloads::delete(c, &ih))?;
+            return Ok(());
+        };
+        let infohash = dl.info_hash_hex();
         self.remove_engine_only(id_or_hash, delete_files).await?;
-        if let Some(h) = infohash {
+        {
+            let h = infohash;
             // Source importee via le dossier surveille : la retirer
             // aussi, sinon le prochain scan re-importerait le download.
             let watch_dir = self

@@ -203,6 +203,105 @@ async fn restauration_anonyme_sans_ipv8_notifie_une_exception() {
     session.stop().await;
 }
 
+/// Regression : une ligne `downloads` sans metainfo persistee
+/// (ajout magnet/URI — `persist` ne sauvegardait pas le metainfo
+/// resolu dans `torrent_data`) devait re-resoudre le magnet a la
+/// restauration. `resolve_magnet` (BEP 9) bloque indefiniment quand
+/// aucun pair n'est joignable et figeait la file sequentielle : les
+/// lignes suivantes restaient « en verification » et tout PATCH
+/// repondait 404. Le re-add est desormais deporte en tache de fond
+/// (visible en `pending`, statut METADATA) et la ligne reste
+/// supprimable pendant la resolution.
+#[tokio::test]
+async fn restauration_magnet_non_resolu_ne_bloque_pas_la_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut cfg = CoreConfig::offline(dir.path().to_path_buf());
+    // Un tracker injoignable garde le flux de pairs ouvert
+    // (`TrackerComms` retente a l'infini) : la resolution BEP 9
+    // attend sans fin au lieu d'echouer vite. `offline` desactive
+    // les trackers — on les reactive pour reproduire le blocage.
+    cfg.engine.disable_trackers = false;
+
+    let ih_dead = "ab".repeat(20);
+    let dead_uri = format!("magnet:?xt=urn:btih:{ih_dead}&tr=udp%3A%2F%2F127.0.0.1%3A9");
+    let bytes = onionbit_test_support::test_torrent_bytes("ok.bin", 42);
+    let meta = onionbit_format::torrent::TorrentMeta::parse(&bytes).unwrap();
+    let ih_ok = meta.info_hash_hex();
+
+    // Premiere session : les lignes sont inserees directement —
+    // le magnet sans `torrent_data` reproduit l'etat laisse par une
+    // version qui ne persistait pas le metainfo resolu. La ligne
+    // saine (avec `.torrent`) est inseree apres pour verifier qu'elle
+    // n'est plus prise en otage par la ligne qui precede.
+    let session = CoreSession::start(cfg.clone(), Notifier::new())
+        .await
+        .expect("start #1");
+    session
+        .db()
+        .with(|c| {
+            onionbit_db::downloads::upsert(
+                c,
+                &onionbit_db::DownloadRow {
+                    infohash: onionbit_crypto::hash::from_hex(&ih_dead).unwrap(),
+                    name: Some("dead.bin".into()),
+                    source_uri: dead_uri,
+                    ..Default::default()
+                },
+            )?;
+            onionbit_db::downloads::upsert(
+                c,
+                &onionbit_db::DownloadRow {
+                    infohash: onionbit_crypto::hash::from_hex(&ih_ok).unwrap(),
+                    name: Some("ok.bin".into()),
+                    source_uri: format!("magnet:?xt=urn:btih:{ih_ok}"),
+                    torrent_data: Some(bytes),
+                    ..Default::default()
+                },
+            )
+        })
+        .expect("upsert downloads");
+    session.stop().await;
+
+    // Seconde session : la restauration doit se terminer malgre le
+    // magnet mort — avant le correctif `wait_restored` ne revenait
+    // jamais.
+    let session = CoreSession::start(cfg, Notifier::new())
+        .await
+        .expect("start #2");
+    tokio::time::timeout(std::time::Duration::from_secs(30), session.wait_restored())
+        .await
+        .expect("restauration figee par un magnet non resolu");
+    assert!(session.restore_finished());
+    assert!(
+        session.find_download(&ih_ok).is_some(),
+        "ligne saine non restauree"
+    );
+    assert!(session.find_download(&ih_dead).is_none());
+    assert!(
+        session
+            .pending_downloads()
+            .iter()
+            .any(|p| p.infohash == ih_dead),
+        "magnet en resolution non expose en pending (METADATA)"
+    );
+
+    // Un download en resolution reste supprimable (etat METADATA
+    // Python) : entree pending retiree + ligne persistee effacee.
+    session
+        .remove(&ih_dead, false)
+        .await
+        .expect("remove pendant la resolution");
+    assert!(session.pending_downloads().is_empty());
+    let row = session
+        .db()
+        .with(|c| {
+            onionbit_db::downloads::get(c, &onionbit_crypto::hash::from_hex(&ih_dead).unwrap())
+        })
+        .expect("get downloads");
+    assert!(row.is_none(), "ligne persistee non supprimee");
+    session.stop().await;
+}
+
 /// `.torrent` mono-fichier a hash de piece REEL : la fixture
 /// `test_torrent_bytes` (hash nuls) ne peut jamais etre complete ;
 /// ici le fichier ecrit dans le dossier de sortie valide le
