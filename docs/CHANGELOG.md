@@ -3,6 +3,25 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Bancs de maturité : PR-1, PR-3, CH-6 (2026-10-03)
+
+- **PR-1** : `scripts/build_release.ps1` rejoué — release
+  `x86_64-pc-windows-msvc` reproductible (manifeste : commit `03a5307`,
+  rustc 1.98.1, 0.6.0-alpha) ; smoke du binaire : API montée, 401 sans
+  clé, arrêt propre.
+- **PR-3** : parcours lanceur web `OnionBit Web.cmd` → `web-launch.ps1`
+  — spawn du daemon dist avec son state-dir dédié, API joignable,
+  navigateur ouvert ; le parcours UI reste manuel.
+- **CH-6** : nouveau `scripts/bench_crash_recovery.ps1` — N cycles de
+  kill -9 à instant pseudo-aléatoire après un ajout `.torrent`, sur le
+  même state-dir. 5/5 cycles verts : API remontée, downloads persistés
+  restitués, `PRAGMA quick_check` = `ok`.
+  - Enseignement consigné : un **magnet non résolu n'est pas persisté**
+    (le spawn `add_download_anon` n'écrit qu'après retour du moteur) —
+    en `--offline` il ne l'est donc jamais ; le chemin de persistence
+    testable est `torrent_data`. Comportement cohérent avec Tribler
+    (checkpoint des torrents résolus).
+
 ## P0-17c — fail-closed observé par l'OS, 4 sous-runs verts (2026-10-03)
 
 Extension de `sec_leak_capture.ps1` : injection de panne contrôlée en
