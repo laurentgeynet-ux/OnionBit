@@ -3,6 +3,29 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Diagnostic mémoire charge réelle + garde-fou (2026-10-03)
+
+- **Diagnostic consigné** dans
+  `docs/diagnostics/memoire_charge_reelle.md` : l'empreinte privée
+  ~135 Mo d'un daemon public (8 torrents en seed, ~100 pairs BT, 81
+  circuits, 56 relais joints, 44 sorties, 4 sessions librqbit, 12 k
+  torrents en base) est une facture de charge, pas une fuite — vs
+  ~16 Mo d'un nœud idle du banc loopback. Postes reliés au code :
+  buffers uTP/connexion (jusqu'à 2 Mio), `ReadBuf`/`write_buf` par
+  pair, sessions par hop, état tunnel, SQLite. Les pages mmap
+  expliquent l'écart working set ↔ privé.
+- **Nouveau `scripts/mem_watchdog.ps1`** : échantillonne
+  périodiquement mémoire processus (privé, working set, handles) et
+  compteurs de charge API (circuits par type/état, relais, sorties,
+  pairs BT live, taille DB) dans un CSV ; alerte console + fichier
+  `.alerts.log` sur plafond privé, dérive vs baseline, et caps
+  (`max_joined_circuits`, `peer_limit` × sessions). Le signal pairs
+  retient `num_connected_peers` (connexions live) — `num_seeds`/
+  `num_peers` du DTO incluent le scrape swarm, non borné.
+- Validé en direct sur le daemon de production : résolution
+  `-StateDir` → clé API + port + PID, CSV invariant-culture, alertes
+  `PRIV_DEPASSE`/`CAP_*`/`DERIVE_MEM` fonctionnelles.
+
 ## Migration versionnée de `configuration.json` (2026-10-03)
 
 - `config_version` (extension Rust — `TriblerConfig` n'a pas de

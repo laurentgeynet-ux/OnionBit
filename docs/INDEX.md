@@ -34,6 +34,7 @@ chaque étape (cf. `AGENTS.md`, "Workflow par étape").
 | `docs/security/revue_garde_fous.md` | Inventaire des protections réseau (anti-SSRF, exit policy, kill switch, proxy guard, hidden seeding) + tests qui les couvrent |
 | `docs/security/threat_model.md` | Modèle de menace : ce que les bancs prouvent / ne prouvent pas (corrélation de trafic, Sybil, exits malveillants, endurance) |
 | `docs/interop/public_dht_runs.md` | Registre des runs du banc DHT publique (paramètres, route observée, octets vérifiés, échecs) |
+| `docs/diagnostics/memoire_charge_reelle.md` | Diagnostic empreinte mémoire d'un daemon public en charge (postes, caps, réfs code) + garde-fou `scripts/mem_watchdog.ps1` |
 | `docs/plans/mobile_execution_model.md` | Étape 18 — modèle d'exécution Android/iOS (façade FFI, foreground service, contraintes) |
 | `docs/plans/app_downloads_enrichissement.md` | Plan d'enrichissement de l'onglet Téléchargements (UI Flutter, 8 étapes) |
 | `docs/plans/app_search_enrichissement.md` | Plan d'enrichissement de l'onglet Rechercher (UI Flutter, 8 étapes) |
