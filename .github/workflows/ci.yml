@@ -177,9 +177,10 @@ jobs:
           path: dist/OnionBit-*-windows-arm64.zip
 
   # Publication : uniquement sur tag v*. Telecharge tous les artefacts
-  # de package et cree la release GitHub (prerelease si le tag contient
-  # « alpha »/« beta »/« rc »). Le job ARM64 (preview) est attendu mais
-  # non obligatoire : son echec ne bloque pas la release.
+  # de package et cree la release GitHub marquee « Latest » (les tags
+  # alpha/beta sont les releases publiques du projet). Le job ARM64
+  # (preview) est attendu mais non obligatoire : son echec ne bloque
+  # pas la release.
   publish:
     name: publish (release github)
     if: >-
@@ -219,14 +220,12 @@ jobs:
             done
             echo '```'
           } > notes.md
-          prerelease=""
-          case "$tag" in
-            *alpha*|*beta*|*rc*) prerelease="--prerelease" ;;
-          esac
+          # Pas de --prerelease : les tags alpha/beta sont les releases
+          # publiques du projet — le badge « Latest » doit les suivre.
           gh release create "$tag" \
             --title "$tag" \
             --notes-file notes.md \
-            $prerelease \
+            --latest \
             "${files[@]}"
   # Longevite automatisee (P1) : la boucle fuzz smoke + les tests
   # longs du workspace en nightly. Le mesh fingerprint reel reste un
