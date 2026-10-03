@@ -72,6 +72,11 @@ async fn make_relay() -> Relay {
         ep.clone(),
         TunnelSettings {
             peer_flags: PEER_FLAG_RELAY | PEER_FLAG_EXIT_BT,
+            // Relais de banc : `max_joined_circuits` reste la limite
+            // protocole Python (100) en prod ; en banc le mini-reseau
+            // concentre tout le churn sur 3 noeuds — on la monte pour
+            // ne pas mesurer la saturation plutot que le comportement.
+            max_joined_circuits: 10_000,
             ..TunnelSettings::default()
         },
         TUNNEL_COMMUNITY_ID,
@@ -96,6 +101,18 @@ fn peer_of(r: &Relay) -> Peer {
 /// Mid hex du relais — attendu dans `verified_hops` du circuit.
 fn mid_of(r: &Relay) -> String {
     hex::encode(ipv8_mid(&r.key.public_key().to_bin()))
+}
+
+/// Logs stderr (`RUST_LOG` ou defaut `onionbit=debug`) — idempotent.
+fn init_tracing() {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "onionbit=debug,librqbit=info".into()),
+        )
+        .with_writer(std::io::stderr)
+        .try_init()
+        .ok();
 }
 
 /// `true` quand `f` devient vrai avant `wait`.
@@ -959,14 +976,7 @@ async fn wait_finished(session: &CoreSession, ih: &str) -> bool {
 ///   contenu est identique a la source.
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 async fn live_flotte_10_restart() {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "onionbit=debug,librqbit=info".into()),
-        )
-        .with_writer(std::io::stderr)
-        .try_init()
-        .ok();
+    init_tracing();
     // (hops, magnet) — couvre les 4 lanes, magnets inclus.
     let specs: Vec<(u32, bool)> = vec![
         (0, false),
@@ -1236,5 +1246,812 @@ async fn live_magnet_pending_non_restaure_au_restart() {
             && session.downloads().iter().all(|d| d.info_hash != t.ih),
         "un magnet jamais resolu ne devrait pas etre restaure (ecart Python documente)"
     );
+    session.stop().await;
+}
+
+// ----------------------------------------------------------------
+// Chaos : cycles de restart repetes, crash pendant resolution.
+// ----------------------------------------------------------------
+
+/// Ajoute un `FleetTorrent` a la session (magnet ou `.torrent` selon
+/// `t.magnet`) avec le seeder en pair d'amorce.
+async fn fleet_add(session: &CoreSession, t: &FleetTorrent, seed_addr: SocketAddr) {
+    if t.magnet {
+        let uri = format!("magnet:?xt=urn:btih:{}&dn={}", t.ih, t.name);
+        session
+            .add_download_anon_with_peers(&uri, false, t.hops, t.hops > 0, None, vec![seed_addr])
+            .await
+            .unwrap_or_else(|e| panic!("magnet {} hops={}: {e}", t.name, t.hops));
+    } else {
+        session
+            .add_torrent_bytes_anon_with_peers(
+                t.bytes.clone(),
+                false,
+                t.hops,
+                t.hops > 0,
+                None,
+                vec![seed_addr],
+            )
+            .await
+            .unwrap_or_else(|e| panic!("add {} hops={}: {e}", t.name, t.hops));
+    }
+}
+
+/// Redemarrage complet : `stop()`, nouvelle session sur le meme
+/// `state_dir`, rewiring des relais (le pair session a une nouvelle
+/// adresse), attente de la restauration, puis circuits epingles
+/// 1..=3 — les lanes restent fail-closed tant que leur circuit n'est
+/// pas la.
+async fn fleet_restart(fleet: &Fleet, session: CoreSession) -> (CoreSession, Arc<TunnelCommunity>) {
+    session.stop().await;
+    let (session, tunnel) = start_live_session(&fleet.state_dir).await;
+    let stack = session.ipv8().unwrap();
+    wire_relays(&stack, &tunnel, &fleet.relays);
+    session.wait_restored().await;
+    for hops in 1..=3usize {
+        circuit_pinned_fl(&tunnel, &fleet.relays, hops).await;
+    }
+    (session, tunnel)
+}
+
+/// Re-annonce le seeder a chaque download restaure non pausé et
+/// attend que l'injection ait pris (les pairs ne survivent pas au
+/// restart moteur — parite `readd_bittorrent_peers` Python).
+async fn fleet_reinject(session: &CoreSession, seed_addr: SocketAddr) {
+    for d in session.downloads() {
+        let dl = match session.find_download_hex(&d.info_hash) {
+            Some(d) => d,
+            None => continue,
+        };
+        if dl.is_paused() {
+            continue;
+        }
+        let t0 = Instant::now();
+        while Instant::now() - t0 < STATE_WAIT {
+            dl.add_peer(seed_addr);
+            if dl.stats().peers_seen > 0 {
+                break;
+            }
+            tokio::time::sleep(POLL).await;
+        }
+    }
+}
+
+/// Invariants de restauration : chaque torrent attendu est present
+/// sur **sa** lane persistee, exactement une fois ; `absent` (si
+/// present) ne doit exister nulle part (ni DB, ni moteur) ; `paused`
+/// doivent etre restaures en pause.
+fn assert_fleet_state(
+    session: &CoreSession,
+    expected: &[&FleetTorrent],
+    absent: Option<&FleetTorrent>,
+    paused: &[&FleetTorrent],
+) {
+    for t in expected {
+        assert_eq!(
+            session.anon_hops_map().get(&t.ih),
+            Some(&t.hops),
+            "anon_hops persiste perdu pour {}",
+            t.name
+        );
+        assert_eq!(
+            session.owner_engine_hops(&t.ih),
+            Some(t.hops),
+            "{} restaure sur la mauvaise lane",
+            t.name
+        );
+    }
+    assert_eq!(
+        session.downloads().len(),
+        expected.len(),
+        "doublon/perte a la restauration"
+    );
+    if let Some(absent) = absent {
+        assert!(
+            session.owner_engine_hops(&absent.ih).is_none()
+                && session.downloads().iter().all(|d| d.info_hash != absent.ih),
+            "{} supprime a reapparu apres restart",
+            absent.name
+        );
+    }
+    for t in paused {
+        let d = session
+            .find_download_hex(&t.ih)
+            .unwrap_or_else(|| panic!("{} attendu apres restart", t.name));
+        assert!(d.is_paused(), "{} : pause non conservee au restart", t.name);
+    }
+}
+
+/// Progression non-regression : chaque torrent attendu a conserve au
+/// moins sa progression `snap` (ou est `finished`). Deadline globale
+/// — les verifications fastresume se serialisent.
+async fn fleet_progress_conserved(
+    session: &CoreSession,
+    expected: &[&FleetTorrent],
+    snap: &[u64],
+) -> bool {
+    wait_until(Duration::from_secs(120), || {
+        expected.iter().zip(snap).all(|(t, &pre)| {
+            session
+                .find_download_hex(&t.ih)
+                .map(|d| d.stats().progress_bytes >= pre || d.stats().finished)
+                .unwrap_or(false)
+        })
+    })
+    .await
+}
+
+/// 12 torrents mixtes (`.torrent` + magnets, lanes 0-3), **trois**
+/// redemarrages du daemon avec actions entre les cycles :
+///
+/// - cycle 1 : ajout de la flotte, progression reelle → stop ;
+/// - restart 1 : lanes/unicite/progression verifies → pause ciblee
+///   (lane 0 + magnet lane 3) + suppression ciblee → stop ;
+/// - restart 2 : 11 lignes, supprime absent, pauses conserves →
+///   reprise des pauses, progression reprend → stop ;
+/// - restart 3 : invariants → tous terminent, contenu identique
+///   octet par octet, toujours sur leur lane.
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+async fn live_flotte_restart_3_cycles() {
+    init_tracing();
+    let specs: Vec<(u32, bool)> = vec![
+        (0, false),
+        (1, false),
+        (2, false),
+        (3, true),
+        (0, false),
+        (1, true),
+        (2, false),
+        (3, false),
+        (1, false),
+        (2, true),
+        (0, false),
+        (3, false),
+    ];
+    let fleet = fleet_setup(&specs, 3).await;
+    let (session, tunnel) = start_live_session(&fleet.state_dir).await;
+    let stack = session.ipv8().unwrap();
+    wire_relays(&stack, &tunnel, &fleet.relays);
+    for hops in 1..=3usize {
+        circuit_pinned_fl(&tunnel, &fleet.relays, hops).await;
+    }
+
+    // ===== cycle 1 : ajout + progression reelle =====
+    for t in &fleet.torrents {
+        fleet_add(&session, t, fleet.seed_addr).await;
+        assert_eq!(session.owner_engine_hops(&t.ih), Some(t.hops));
+    }
+    let ok = wait_until(Duration::from_secs(120), || {
+        fleet.torrents.iter().all(|t| {
+            session
+                .find_download_hex(&t.ih)
+                .map(|d| d.stats().progress_bytes > 0 || d.stats().finished)
+                .unwrap_or(false)
+        })
+    })
+    .await;
+    assert!(ok, "un download n'a pas demarre (cycle 1)");
+    let snap: Vec<u64> = fleet
+        .torrents
+        .iter()
+        .map(|t| {
+            session
+                .find_download_hex(&t.ih)
+                .map(|d| d.stats().progress_bytes)
+                .unwrap_or(0)
+        })
+        .collect();
+    eprintln!("cycle 1 progression (octets): {snap:?}");
+
+    // ===== restart 1 : etat intact =====
+    let (session, _tunnel) = fleet_restart(&fleet, session).await;
+    let all: Vec<&FleetTorrent> = fleet.torrents.iter().collect();
+    assert_fleet_state(&session, &all, None, &[]);
+    assert!(
+        fleet_progress_conserved(&session, &all, &snap).await,
+        "progression perdue au restart 1"
+    );
+
+    // Pause ciblee : t[0] (lane 0) + t[3] (magnet lane 3) — le vrai
+    // chemin API : `pause()` moteur + `set_stopped_flag` (persiste
+    // `paused`/`user_stopped` dans tribler.db, parite PATCH
+    // `state=stop`). Suppression ciblee : t[5] (magnet lane 1).
+    let paused_idx = [0usize, 3];
+    let removed = &fleet.torrents[5];
+    for &i in &paused_idx {
+        session
+            .pause(&fleet.torrents[i].ih)
+            .await
+            .expect("pause ciblee");
+        session
+            .set_stopped_flag(&fleet.torrents[i].ih, true)
+            .expect("stopped flag");
+    }
+    session.remove(&removed.ih, true).await.expect("remove t5");
+
+    // ===== restart 2 : 11 lignes, supprime absent, pauses conserves =====
+    let (session, _tunnel) = fleet_restart(&fleet, session).await;
+    let survivors: Vec<&FleetTorrent> = fleet
+        .torrents
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| *i != 5)
+        .map(|(_, t)| t)
+        .collect();
+    let paused: Vec<&FleetTorrent> = paused_idx.iter().map(|&i| &fleet.torrents[i]).collect();
+    assert_fleet_state(&session, &survivors, Some(removed), &paused);
+    let snap2: Vec<u64> = survivors
+        .iter()
+        .map(|t| {
+            session
+                .find_download_hex(&t.ih)
+                .map(|d| d.stats().progress_bytes)
+                .unwrap_or(0)
+        })
+        .collect();
+    // Snap correspondant aux survivants (snap moins l'index 5).
+    let snap_surv: Vec<u64> = snap
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| *i != 5)
+        .map(|(_, &v)| v)
+        .collect();
+    assert!(
+        fleet_progress_conserved(&session, &survivors, &snap_surv).await,
+        "progression perdue au restart 2"
+    );
+
+    // Reprise des pauses (chemin API : `resume()` + flag) → la
+    // progression reprend sur les lanes.
+    for t in &paused {
+        session.resume(&t.ih).await.expect("resume");
+        session.set_stopped_flag(&t.ih, false).expect("resume flag");
+    }
+    fleet_reinject(&session, fleet.seed_addr).await;
+    let ok = wait_until(Duration::from_secs(120), || {
+        survivors.iter().zip(&snap2).all(|(t, &pre)| {
+            session
+                .find_download_hex(&t.ih)
+                .map(|d| d.stats().progress_bytes > pre || d.stats().finished)
+                .unwrap_or(false)
+        })
+    })
+    .await;
+    assert!(ok, "progression figee apres restart 2 + resume");
+
+    // ===== restart 3 : invariants puis completion + integrite =====
+    let (session, _tunnel) = fleet_restart(&fleet, session).await;
+    assert_fleet_state(&session, &survivors, Some(removed), &[]);
+    fleet_reinject(&session, fleet.seed_addr).await;
+    let ok = wait_until(TRANSFER_WAIT, || {
+        survivors.iter().all(|t| {
+            session
+                .find_download_hex(&t.ih)
+                .map(|d| d.stats().finished)
+                .unwrap_or(false)
+        })
+    })
+    .await;
+    assert!(ok, "un survivant n'a pas termine apres restart 3");
+    for t in survivors {
+        let got = find_named(&fleet.dl_dir, &t.name).unwrap_or_else(|| panic!("{} absent", t.name));
+        assert_eq!(got, t.payload, "{} : contenu corrompu", t.name);
+        assert_eq!(session.owner_engine_hops(&t.ih), Some(t.hops));
+    }
+    session.stop().await;
+}
+
+/// Crash brutal pendant la resolution d'un magnet : la session vit
+/// dans un **runtime Tokio dedie** sur un thread separe — le runtime
+/// est detruit par `shutdown_timeout(0)` sans `stop()` (tasks
+/// aborted en vol, pas de flush graceful — equivalent d'un kill de
+/// processus : ecritures SQLite/.bitv en vol perdues).
+///
+/// Avant le kill : 2 downloads `.torrent`+magnet **resolus** sur la
+/// lane 0 progressent, 1 magnet lane 2 reste `pending` (aucun
+/// circuit → jamais resolu).
+///
+/// Apres le kill + restart :
+/// - les 2 materialises restaurent sur leur lane ;
+/// - le pending n'est pas restaure (pas de ligne `downloads`
+///   persistee avant resolution — comportement honnete documente) ;
+/// - le meme magnet re-ajoute apres restart n'est pas bloque par un
+///   `pending` zombie et resout normalement.
+#[test]
+fn live_crash_pending_magnet_et_restart() {
+    init_tracing();
+    let main_rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(8)
+        .enable_all()
+        .build()
+        .unwrap();
+    main_rt.block_on(async {
+        // 2 materiels en clair + 1 magnet lane 2 sans circuit
+        // (resterait en pending indefiniment — kill garanti pendant
+        // la resolution).
+        let fleet = fleet_setup(&[(0, false), (0, true), (2, true)], 0).await;
+        let state_dir = fleet.state_dir.clone();
+        let seed_addr = fleet.seed_addr;
+        let add_specs: Vec<(String, Vec<u8>, bool, u32)> = fleet
+            .torrents
+            .iter()
+            .map(|t| (t.ih.clone(), t.bytes.clone(), t.magnet, t.hops))
+            .collect();
+        let pending_ih = fleet.torrents[2].ih.clone();
+
+        // Signaux child->main / main->child (std mpsc : agnostique au
+        // runtime Tokio, utilisable des deux cotes).
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel::<bool>();
+        let (kill_tx, kill_rx) = tokio::sync::oneshot::channel::<()>();
+
+        let worker = std::thread::spawn(move || {
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(4)
+                .enable_all()
+                .build()
+                .unwrap();
+            rt.block_on(async move {
+                let (session, _tunnel) = start_live_session(&state_dir).await;
+                for (ih, bytes, magnet, hops) in &add_specs {
+                    if *magnet {
+                        let uri = format!("magnet:?xt=urn:btih:{}&dn=fleet", ih);
+                        let s = session.clone();
+                        let u = uri.clone();
+                        let h = *hops;
+                        let peers = vec![seed_addr];
+                        // Spawn : le pending reste en cours.
+                        tokio::spawn(async move {
+                            let _ = s
+                                .add_download_anon_with_peers(&u, false, h, h > 0, None, peers)
+                                .await;
+                        });
+                    } else {
+                        session
+                            .add_torrent_bytes_anon_with_peers(
+                                bytes.clone(),
+                                false,
+                                *hops,
+                                *hops > 0,
+                                None,
+                                vec![seed_addr],
+                            )
+                            .await
+                            .expect("add torrent");
+                    }
+                }
+                // Pret a tuer : les 2 materiels progressent et le
+                // magnet lane 2 est en pending.
+                let ok = wait_until(Duration::from_secs(60), || {
+                    let materialized = session
+                        .downloads()
+                        .iter()
+                        .all(|d| d.progress_bytes > 0 || d.finished)
+                        && session.downloads().len() == 2;
+                    let pending = session.pending_downloads().iter().any(|p| p.anon_hops == 2);
+                    materialized && pending
+                })
+                .await;
+                ready_tx.send(ok).ok();
+                // Park jusqu'au kill : le select rend la main au
+                // runtime, `block_on` retourne puis le runtime est
+                // detruit sans `stop()`.
+                let _ = kill_rx.await;
+            });
+            // Crash : toutes les taches sont aborted a leur point
+            // d'attente — pas de `stop()`, pas de flush ordonne.
+            rt.shutdown_timeout(Duration::ZERO);
+        });
+
+        // Attend que le kill soit legitime (progression + pending
+        // reel) — 90 s max.
+        assert_eq!(
+            ready_rx.recv_timeout(Duration::from_secs(90)),
+            Ok(true),
+            "la session fille n'a pas atteint l'etat pre-kill"
+        );
+        kill_tx.send(()).ok();
+        worker.join().expect("thread fille");
+
+        // ===== Redemarrage sur le state_dir post-crash =====
+        let (session, _tunnel) = start_live_session(&fleet.state_dir).await;
+        session.wait_restored().await;
+
+        // Les 2 materialises restaurent sur leur lane (0).
+        for t in &fleet.torrents[..2] {
+            assert_eq!(
+                session.owner_engine_hops(&t.ih),
+                Some(0),
+                "{} non restaure apres crash",
+                t.name
+            );
+        }
+        assert_eq!(session.downloads().len(), 2, "doublon/perte post-crash");
+        // Le magnet pending n'a laisse ni ligne ni download.
+        assert!(
+            session.owner_engine_hops(&pending_ih).is_none()
+                && session
+                    .downloads()
+                    .iter()
+                    .all(|d| d.info_hash != pending_ih)
+                && session
+                    .pending_downloads()
+                    .iter()
+                    .all(|p| p.infohash != pending_ih),
+            "le magnet pending a ete restaure / a laisse un zombie"
+        );
+
+        // Le meme magnet se re-ajoute et resout sur la lane 0 —
+        // aucun blocage par un fantome du crash.
+        let uri = format!(
+            "magnet:?xt=urn:btih:{}&dn={}",
+            pending_ih, fleet.torrents[2].name
+        );
+        let dl = session
+            .add_download_anon_with_peers(&uri, false, 0, false, None, vec![fleet.seed_addr])
+            .await
+            .expect("re-add magnet post-crash");
+        tokio::time::timeout(TRANSFER_WAIT, dl.wait_completed())
+            .await
+            .expect("resolution/transfert post-crash en timeout")
+            .expect("wait_completed");
+        // Integrite des 3 contenus.
+        for t in &fleet.torrents {
+            assert!(
+                wait_finished(&session, &t.ih).await,
+                "{} n'a pas termine post-crash",
+                t.name
+            );
+            let got =
+                find_named(&fleet.dl_dir, &t.name).unwrap_or_else(|| panic!("{} absent", t.name));
+            assert_eq!(got, t.payload, "{} : contenu corrompu", t.name);
+        }
+        session.stop().await;
+    });
+}
+
+// ----------------------------------------------------------------
+// Endurance (nightly, `#[ignore]`) : churn long de la flotte avec
+// metriques CSV + seuils de sante.
+//
+//   LIVE_ENDURANCE_SECS            duree du churn (defaut 300)
+//   LIVE_ENDURANCE_CSV             fichier de sortie (defaut
+//                                  target/live_endurance.csv)
+//   LIVE_ENDURANCE_SEED            graine du PRNG (defaut fixe —
+//                                  rejouable)
+//   LIVE_ENDURANCE_RESTART_EVERY   actions entre restarts (defaut 30)
+//   LIVE_ENDURANCE_MAX_RSS_GROWTH_MB  croissance RSS toleree apres
+//                                  warmup (defaut 1024)
+//
+//   cargo test -p onionbit-core --test live_bench \
+//     live_endurance_churn -- --ignored --nocapture
+// ----------------------------------------------------------------
+
+/// PRNG xorshift64* — deterministe, sans dependance.
+struct Rng(u64);
+
+impl Rng {
+    fn next(&mut self) -> u64 {
+        let mut x = self.0;
+        x ^= x >> 12;
+        x ^= x << 25;
+        x ^= x >> 27;
+        self.0 = x;
+        x.wrapping_mul(0x2545F4914F6CDD1D)
+    }
+
+    fn below(&mut self, n: u64) -> usize {
+        (self.next() % n) as usize
+    }
+}
+
+fn env_u64(key: &str, default: u64) -> u64 {
+    std::env::var(key)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(default)
+}
+
+/// Instantane de sante exporte en CSV a chaque tick.
+fn endurance_metrics_line(
+    session: &CoreSession,
+    tunnel: Option<&TunnelCommunity>,
+    sys: &mut sysinfo::System,
+    pid: sysinfo::Pid,
+    t0: Instant,
+    actions: u64,
+    restarts: u64,
+) -> String {
+    sys.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[pid]), true);
+    let rss_mb = sys
+        .process(pid)
+        .map(|p| p.memory() / 1_048_576)
+        .unwrap_or(0);
+    let alive_tasks = tokio::runtime::Handle::current()
+        .metrics()
+        .num_alive_tasks();
+    let dls = session.downloads();
+    let mut init = 0usize;
+    let mut down = 0usize;
+    let mut seeding = 0usize;
+    let mut paused = 0usize;
+    let mut err = 0usize;
+    for d in &dls {
+        match d.state {
+            onionbit_bittorrent::DownloadState::Initializing
+            | onionbit_bittorrent::DownloadState::Checking => init += 1,
+            onionbit_bittorrent::DownloadState::Downloading => down += 1,
+            onionbit_bittorrent::DownloadState::Seeding => seeding += 1,
+            onionbit_bittorrent::DownloadState::Paused => paused += 1,
+            _ => err += 1,
+        }
+    }
+    let pending = session.pending_downloads().len();
+    let db = session.anon_hops_map().len();
+    let (c_ready, c_total) = tunnel
+        .map(|t| {
+            let cs = t.circuits_info();
+            (cs.iter().filter(|c| c.state == "READY").count(), cs.len())
+        })
+        .unwrap_or((0, 0));
+    format!(
+        "{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
+        t0.elapsed().as_secs(),
+        rss_mb,
+        alive_tasks,
+        c_ready,
+        c_total,
+        init,
+        down,
+        paused,
+        seeding,
+        err,
+        pending,
+        db,
+        actions,
+        restarts,
+    )
+}
+
+/// Churn long : ajouts/suppressions/pauses/reprises/migrations de
+/// lane aleatoires (graine fixe rejouable) + restarts periodiques,
+/// avec metriques CSV par tick et seuils de sante a la fin.
+///
+/// Invariants verifies en fin de run :
+/// - chaque survivant est sur sa lane attendue, une seule fois ;
+/// - `pending` vide, aucun download coince dans un etat transitoire
+///   au-dela de la deadline de drain ;
+/// - integrite octet par octet de tous les contenus termines ;
+/// - `num_alive_tasks` et RSS reviennent vers leur baseline apres
+///   suppression totale (seuil RSS configurable, genereux par defaut
+///   pour absorber le bruit de l'allocateur).
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+#[ignore = "endurance longue — job nightly / manuel"]
+async fn live_endurance_churn() {
+    init_tracing();
+    let secs = env_u64("LIVE_ENDURANCE_SECS", 300);
+    let restart_every = env_u64("LIVE_ENDURANCE_RESTART_EVERY", 30).max(1);
+    let max_rss_growth_mb = env_u64("LIVE_ENDURANCE_MAX_RSS_GROWTH_MB", 1024);
+    let seed = env_u64("LIVE_ENDURANCE_SEED", 0x9E37_79B9_7F4A_7C15);
+    let csv_path =
+        std::env::var("LIVE_ENDURANCE_CSV").unwrap_or_else(|_| "target/live_endurance.csv".into());
+    if let Some(parent) = std::path::Path::new(&csv_path).parent() {
+        std::fs::create_dir_all(parent).ok();
+    }
+
+    let specs: Vec<(u32, bool)> = vec![
+        (0, false),
+        (1, false),
+        (2, false),
+        (3, true),
+        (0, false),
+        (1, true),
+        (2, false),
+        (3, false),
+        (1, false),
+        (2, true),
+        (0, false),
+        (3, false),
+    ];
+    let fleet = fleet_setup(&specs, 3).await;
+    let (mut session, mut tunnel) = start_live_session(&fleet.state_dir).await;
+    {
+        let stack = session.ipv8().unwrap();
+        wire_relays(&stack, &tunnel, &fleet.relays);
+        for hops in 1..=3usize {
+            circuit_pinned_fl(&tunnel, &fleet.relays, hops).await;
+        }
+    }
+
+    let mut sys = sysinfo::System::new();
+    let pid = sysinfo::get_current_pid().expect("pid");
+    let t0 = Instant::now();
+    let deadline = t0 + Duration::from_secs(secs);
+    let mut rng = Rng(seed.max(1));
+    // Presence et lane attendues (la lane bouge apres migration).
+    let mut present = vec![false; fleet.torrents.len()];
+    let mut lane: Vec<u32> = fleet.torrents.iter().map(|t| t.hops).collect();
+    let mut actions = 0u64;
+    let mut restarts = 0u64;
+    let mut rss_warmup = 0u64;
+    let mut csv = String::from(
+        "t_s,rss_mb,alive_tasks,circuits_ready,circuits_total,init,downloading,paused,seeding,errors,pending,db_rows,actions,restarts\n",
+    );
+
+    // ===== boucle de churn =====
+    while Instant::now() < deadline {
+        match rng.below(8) {
+            // add un torrent absent.
+            0 | 1 => {
+                let absent: Vec<usize> =
+                    (0..fleet.torrents.len()).filter(|&i| !present[i]).collect();
+                if !absent.is_empty() {
+                    let i = absent[rng.below(absent.len() as u64)];
+                    fleet_add(&session, &fleet.torrents[i], fleet.seed_addr).await;
+                    present[i] = true;
+                    lane[i] = fleet.torrents[i].hops;
+                }
+            }
+            // remove un present.
+            2 => {
+                let on: Vec<usize> = (0..fleet.torrents.len()).filter(|&i| present[i]).collect();
+                if !on.is_empty() {
+                    let i = on[rng.below(on.len() as u64)];
+                    let _ = session.remove(&fleet.torrents[i].ih, true).await;
+                    present[i] = false;
+                }
+            }
+            // pause / resume (chemin API complet).
+            3 | 4 => {
+                let on: Vec<usize> = (0..fleet.torrents.len()).filter(|&i| present[i]).collect();
+                if !on.is_empty() {
+                    let i = on[rng.below(on.len() as u64)];
+                    let ih = &fleet.torrents[i].ih;
+                    if rng.below(2) == 0 {
+                        let _ = session.pause(ih).await;
+                        let _ = session.set_stopped_flag(ih, true);
+                    } else {
+                        let _ = session.resume(ih).await;
+                        let _ = session.set_stopped_flag(ih, false);
+                    }
+                }
+            }
+            // migration de lane aleatoire.
+            5 => {
+                let on: Vec<usize> = (0..fleet.torrents.len()).filter(|&i| present[i]).collect();
+                if !on.is_empty() {
+                    let i = on[rng.below(on.len() as u64)];
+                    let hops = rng.below(4) as u32;
+                    if session
+                        .update_hops(&fleet.torrents[i].ih, hops)
+                        .await
+                        .is_ok()
+                    {
+                        lane[i] = hops;
+                    }
+                }
+            }
+            _ => {}
+        }
+        actions += 1;
+        // Restart periodique.
+        if actions.is_multiple_of(restart_every) {
+            let (s, t) = fleet_restart(&fleet, session).await;
+            session = s;
+            tunnel = t;
+            restarts += 1;
+            fleet_reinject(&session, fleet.seed_addr).await;
+        }
+        csv.push_str(&endurance_metrics_line(
+            &session,
+            Some(&tunnel),
+            &mut sys,
+            pid,
+            t0,
+            actions,
+            restarts,
+        ));
+        csv.push('\n');
+        // Baseline RSS post-warmup : apres ~30 s de churn les
+        // structures residentes sont en place.
+        if rss_warmup == 0 && t0.elapsed() > Duration::from_secs(30) {
+            sys.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[pid]), true);
+            rss_warmup = sys
+                .process(pid)
+                .map(|p| p.memory() / 1_048_576)
+                .unwrap_or(0);
+        }
+        tokio::time::sleep(Duration::from_secs(2)).await;
+    }
+
+    // ===== drain : tout terminer, verifier l'etat final =====
+    let _ = session.resume_all().await;
+    for t in &fleet.torrents {
+        let _ = session.set_stopped_flag(&t.ih, false);
+    }
+    fleet_reinject(&session, fleet.seed_addr).await;
+
+    let survivors: Vec<usize> = (0..fleet.torrents.len()).filter(|&i| present[i]).collect();
+    let ok = wait_until(TRANSFER_WAIT, || {
+        survivors.iter().all(|&i| {
+            session
+                .find_download_hex(&fleet.torrents[i].ih)
+                .map(|d| d.stats().finished)
+                .unwrap_or(false)
+        })
+    })
+    .await;
+    if !ok {
+        for &i in &survivors {
+            let st = session
+                .find_download_hex(&fleet.torrents[i].ih)
+                .map(|d| format!("{:?}", d.stats()))
+                .unwrap_or_else(|| "ABSENT".into());
+            eprintln!(
+                "endurance drain: {} lane={} stats={st}",
+                fleet.torrents[i].name, lane[i]
+            );
+        }
+        panic!("des survivants n'ont pas termine (drain)");
+    }
+    for &i in &survivors {
+        let t = &fleet.torrents[i];
+        let got = find_named(&fleet.dl_dir, &t.name).unwrap_or_else(|| panic!("{} absent", t.name));
+        assert_eq!(got, t.payload, "{} : contenu corrompu", t.name);
+        assert_eq!(
+            session.owner_engine_hops(&t.ih),
+            Some(lane[i]),
+            "{} : mauvaise lane finale",
+            t.name
+        );
+    }
+    assert_eq!(
+        session.downloads().len(),
+        survivors.len(),
+        "doublon/perte apres churn"
+    );
+    assert!(
+        session.pending_downloads().is_empty(),
+        "pending residuel apres churn"
+    );
+
+    // ===== seuils ressources : suppression totale puis cooldown =====
+    for &i in &survivors {
+        let _ = session.remove(&fleet.torrents[i].ih, true).await;
+    }
+    tokio::time::sleep(Duration::from_secs(10)).await;
+    assert!(
+        session.downloads().is_empty(),
+        "residu moteur apres suppression totale"
+    );
+    sys.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[pid]), true);
+    let rss_final = sys
+        .process(pid)
+        .map(|p| p.memory() / 1_048_576)
+        .unwrap_or(0);
+    let alive_tasks = tokio::runtime::Handle::current()
+        .metrics()
+        .num_alive_tasks();
+    csv.push_str(&endurance_metrics_line(
+        &session,
+        Some(&tunnel),
+        &mut sys,
+        pid,
+        t0,
+        actions,
+        restarts,
+    ));
+    std::fs::write(&csv_path, &csv).expect("ecriture CSV");
+    eprintln!(
+        "endurance: {actions} actions, {restarts} restarts, \
+         rss warmup={rss_warmup} Mo final={rss_final} Mo, \
+         tasks vivantes={alive_tasks}, csv={csv_path}"
+    );
+    if rss_warmup > 0 {
+        assert!(
+            rss_final <= rss_warmup + max_rss_growth_mb,
+            "croissance RSS suspecte : +{} Mo apres warmup (seuil {max_rss_growth_mb})",
+            rss_final.saturating_sub(rss_warmup)
+        );
+    }
     session.stop().await;
 }

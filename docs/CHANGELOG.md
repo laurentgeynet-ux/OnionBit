@@ -3,6 +3,34 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Chaos/restart de flotte + endurance nightly (2026-10-03)
+
+- **`live_flotte_restart_3_cycles`** : 12 torrents mixtes
+  (`.torrent`/magnets, lanes 0–3), 3 restarts successifs, pause et
+  suppression d'un sous-ensemble entre cycles — lanes persistées,
+  fastresume, absence de résurrection après delete, intégrité octet
+  par octet finale. La pause passe par le chemin API complet
+  (`pause` + `set_stopped_flag`), comme le vrai client.
+- **`live_crash_pending_magnet_et_restart`** : runtime dédié arrêté
+  brutalement (`shutdown_timeout(0)`) pendant qu'un magnet est en
+  résolution — la ligne `downloads` n'existant qu'après résolution,
+  le restart restaure les téléchargements matérialisés, le pending
+  n'est pas fabriqué, et l'entrée reste honnête et supprimable.
+- **`live_endurance_churn`** (`#[ignore]`, job nightly) : churn
+  déterministe (graine rejouable) — adds/removes/pauses/resumes/
+  migrations aléatoires + restarts périodiques, métriques CSV par
+  tick (RSS, `num_alive_tasks`, circuits READY/total, états,
+  pending, lignes DB), seuil de croissance RSS post-warmup,
+  vérification finale lanes + intégrité + suppression totale.
+- **Relais de banc** : `max_joined_circuits` porté à 10 000 sur les
+  nœuds de test — la limite protocole Python (100) sature un
+  mini-réseau de 3 relais sous churn (intro-points safe_seeding ×N +
+  circuits proactifs), produisant des `create ignore` massifs qui
+  masquaient le comportement testé.
+- **CI nightly** : étape `endurance churn (live)` (30 min,
+  `LIVE_ENDURANCE_SECS`) dans le job `nightly`, CSV publié en
+  artefact `live-endurance-metrics`.
+
 ## Restauration unique au redémarrage + banc live loopback (2026-10-03)
 
 - **`session_restore` rqbit désactivée** (`SessionPersistenceConfig::Json

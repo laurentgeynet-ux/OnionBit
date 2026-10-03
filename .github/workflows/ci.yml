@@ -244,3 +244,26 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: tests workspace (nightly)
         run: cargo test --workspace --all-features
+      # Banc d'endurance live (P1) : churn de flotte + restarts sur
+      # reseau loopback reel, metriques CSV (RSS/taches/circuits) en
+      # artefact. 30 min par defaut ; duration configurable via env.
+      - name: endurance churn (live)
+        timeout-minutes: 45
+        env:
+          LIVE_ENDURANCE_SECS: '1800'
+          # Chemin absolu depuis le workspace : le CWD d'un test cargo
+          # est le dossier du crate — un chemin relatif serait resolu
+          # depuis crates/onionbit-core et non la racine.
+          LIVE_ENDURANCE_CSV: ${{ github.workspace }}/live_endurance.csv
+        run: >-
+          cargo test -p onionbit-core --test live_bench
+          live_endurance_churn -- --ignored --nocapture
+          *>&1 | Tee-Object -FilePath "${{ github.workspace }}/live_endurance.log"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: live-endurance-metrics
+          path: |
+            live_endurance.csv
+            live_endurance.log
+          if-no-files-found: warn
