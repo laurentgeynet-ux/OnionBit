@@ -115,7 +115,12 @@ fn init_tracing(state_dir: &std::path::Path, daemon_config: &DaemonConfig) {
     // `ipv8/logger_level` Tribler : niveau du logger `ipv8` Python —
     // applique aux crates overlay (`onionbit_ipv8`, `onionbit_tunnel`)
     // en plus du niveau global.
-    let mut default_directive = std::env::var("RUST_LOG").unwrap_or_else(|_| "info".to_string());
+    // Filtre par defaut : `RUST_LOG` redonne le controle total, sinon
+    // `info`. `librqbit_upnp` boucle un `warn` par tentative de mapping
+    // (routeurs qui refusent en 500) : on le bride en release, le
+    // toggle debug / RUST_LOG peuvent toujours le relacher.
+    let mut default_directive =
+        std::env::var("RUST_LOG").unwrap_or_else(|_| "info,librqbit_upnp=error".to_string());
     let ipv8_level = daemon_config.ipv8.logger_level.trim();
     let mut invalid_level = false;
     match ipv8_level.parse::<tracing::level_filters::LevelFilter>() {

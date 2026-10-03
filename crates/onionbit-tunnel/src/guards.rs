@@ -362,7 +362,7 @@ impl GuardSet {
             demoted.failures = 0;
             // Fin de reserve : les guards eprouves gardent leur rang.
             records.push(demoted);
-            tracing::info!(
+            tracing::debug!(
                 key = ?&key[..key.len().min(8)],
                 "guard retrograde en reserve (echecs de handshake)"
             );

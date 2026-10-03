@@ -387,7 +387,7 @@ impl TunnelCommunity {
                 .and_then(|c| c.first_hop().and_then(|h| h.address.clone()))
                 .ok_or(Ipv8Error::Malformed("circuit inconnu"))?
         };
-        tracing::info!(
+        tracing::debug!(
             circuit_id,
             identifier,
             first_hop = ?addr,
@@ -419,7 +419,7 @@ impl TunnelCommunity {
                 .intro_point_for
                 .insert(p.public_key.clone(), (cid, p.info_hash));
             // "Established introduction point for %s" (info).
-            tracing::info!(
+            tracing::debug!(
                 circuit_id = cid,
                 info_hash = hex::encode(p.info_hash),
                 "point d'introduction etabli (nous sommes l'intro point)"
@@ -457,7 +457,7 @@ impl TunnelCommunity {
             match inner.ip_requests.remove(&p.identifier) {
                 Some(tx) => {
                     // "Established introduction tunnel %s" (info).
-                    tracing::info!(circuit_id = p.circuit_id, "intro-established recu");
+                    tracing::debug!(circuit_id = p.circuit_id, "intro-established recu");
                     let _ = tx.send(());
                     // Annonce DHT redondante cote seeder : pyipv8
                     // s'en remet entierement au point d'introduction
@@ -1095,7 +1095,7 @@ impl TunnelCommunity {
                     last_seen_secs: crate::pex::epoch_secs(),
                 })
                 .collect();
-            tracing::info!(
+            tracing::debug!(
                 identifier = p.identifier,
                 n_total,
                 n_usable = ips.len(),
@@ -1292,7 +1292,7 @@ impl TunnelCommunity {
             .copied()
             .ok_or(Ipv8Error::Malformed("aucun circuit pour e2e"))?;
         // "Creating e2e circuit for introduction point %s" (info).
-        tracing::info!(
+        tracing::debug!(
             info_hash = hex::encode(info_hash),
             intro = ?intro_point.address,
             circuit_id = cid,
@@ -1425,7 +1425,7 @@ impl TunnelCommunity {
                 if let Some((relay_cid, _)) = fwd {
                     // "On create-e2e: forwarding message because
                     // received over socket" (info).
-                    tracing::info!(
+                    tracing::debug!(
                         circuit_id = relay_cid,
                         identifier = p.identifier,
                         src = ?src,
@@ -1490,7 +1490,7 @@ impl TunnelCommunity {
                     Dedup::New => {
                         // "On create-e2e: creating rendezvous point"
                         // (info).
-                        tracing::info!(
+                        tracing::debug!(
                             info_hash = hex::encode(p.info_hash),
                             circuit_id = cid,
                             identifier = p.identifier,
@@ -1528,7 +1528,7 @@ impl TunnelCommunity {
         {
             Ok(rp) => rp,
             Err(e) => {
-                tracing::info!(error = %e, "create_rendezvous_point echoue");
+                tracing::warn!(error = %e, "create_rendezvous_point echoue");
                 return;
             }
         };
@@ -1609,7 +1609,7 @@ impl TunnelCommunity {
                 }
             }
         }
-        tracing::info!(
+        tracing::debug!(
             circuit_id = intro_circuit,
             identifier = p.identifier,
             requester = ?requester,
@@ -1708,7 +1708,7 @@ impl TunnelCommunity {
             }
             c
         };
-        tracing::info!(
+        tracing::debug!(
             info_hash = hex::encode(req.info_hash),
             rp = ?rp_info.address,
             "created-e2e valide : construction du circuit RP_DOWNLOADER"
@@ -1726,7 +1726,7 @@ impl TunnelCommunity {
         {
             Ok(c) => c,
             Err(e) => {
-                tracing::info!(error = %e, "circuit RP_DOWNLOADER echoue");
+                tracing::warn!(error = %e, "circuit RP_DOWNLOADER echoue");
                 return;
             }
         };
@@ -1767,7 +1767,7 @@ impl TunnelCommunity {
             }
         }
         pending_guard.disarm();
-        tracing::info!(circuit_id = cid, "link-e2e envoye au point de rendez-vous");
+        tracing::debug!(circuit_id = cid, "link-e2e envoye au point de rendez-vous");
         let addr = {
             let inner = self.inner.lock().unwrap();
             match inner
@@ -1864,7 +1864,7 @@ impl TunnelCommunity {
         if !linked {
             return;
         }
-        tracing::info!(circuit_id, "circuits e2e lies au point de rendez-vous");
+        tracing::debug!(circuit_id, "circuits e2e lies au point de rendez-vous");
         let reply = tp::LinkedE2E {
             circuit_id,
             identifier: p.identifier,
@@ -1904,7 +1904,7 @@ impl TunnelCommunity {
                 c.base.beat_heart();
             }
         }
-        tracing::info!(
+        tracing::debug!(
             circuit_id = req.circuit_id,
             info_hash = hex::encode(req.info_hash),
             "linked-e2e : circuit e2e pret"

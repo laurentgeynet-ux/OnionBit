@@ -2476,7 +2476,7 @@ fn spawn_e2e_listener(
                             added = dl.add_peer(fake);
                         }
                     }
-                    tracing::info!(
+                    tracing::debug!(
                         circuit_id = cid,
                         ctype = %ctype,
                         %fake,

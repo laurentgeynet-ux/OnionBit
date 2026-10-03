@@ -1155,7 +1155,7 @@ impl TunnelCommunity {
         }
 
         if let Some(peer) = first_hops.first() {
-            tracing::info!(hops, peer = ?peer.address, "tentative de creation proactive de circuit");
+            tracing::debug!(hops, peer = ?peer.address, "tentative de creation proactive de circuit");
             self.create_circuit_inner(
                 hops,
                 first_hops,
@@ -2385,7 +2385,7 @@ impl TunnelCommunity {
                     .filter(|(_, c)| *c > 0)
                     .collect();
                 top.sort_by_key(|(_, c)| std::cmp::Reverse(*c));
-                tracing::info!(
+                tracing::debug!(
                     top = ?top.iter().take(6).collect::<Vec<_>>(),
                     "repartition des cellules par type"
                 );

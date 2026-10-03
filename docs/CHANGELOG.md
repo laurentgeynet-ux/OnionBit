@@ -3,6 +3,23 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Niveau `info` assaini pour la release (2026-10-03)
+
+- **Churn circuits/handshakes → `debug`** : `tentative de creation
+  proactive de circuit`, `repartition des cellules par type` (tous les
+  4096 cellules), `guard retrograde en reserve`, tout le chemin
+  hidden-services (`establish-intro`, `intro-established`,
+  `peers-response`, `create-e2e`, `created-e2e`, `link-e2e`,
+  `linked-e2e`, `e2e listener : lane branchee`) — événements par
+  circuit/cellule qui inondaient le log release en prod.
+- **Erreurs réelles remontées `info` → `warn`** :
+  `create_rendezvous_point echoue`, `circuit RP_DOWNLOADER echoue`.
+- **`librqbit_upnp=error` dans le filtre par défaut** : la dépendance
+  boucle un `warn` à chaque tentative de mapping refusée par le
+  routeur (« failed to bind port forwarding: 500 ») — bridée dans la
+  directive par défaut ; `RUST_LOG` et le toggle debug runtime
+  redonnent le contrôle total.
+
 ## Restauration après le premier circuit prêt (2026-10-03)
 
 - **`await_data_circuit_of_hops`** (`TunnelCommunity`) : attente
