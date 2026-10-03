@@ -232,6 +232,135 @@ async fn torrent_checker_never_scrapes_anonymous_infohash() {
     );
 }
 
+/// Rotation : un torrent ajoute par `.torrent`/magnet n'a aucun
+/// tracker lie (`torrent_state_tracker` n'est rempli qu'au retour
+/// d'un scrape) — `check_oldest` retombe sur les trackers propres de
+/// la ligne `downloads` (`tr` du magnet, announce du `.torrent`) et
+/// le scrape les lie ensuite.
+#[tokio::test(flavor = "multi_thread")]
+async fn torrent_checker_replie_sur_trackers_propres() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let tracker = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let tracker_addr = tracker.local_addr().unwrap();
+    let received = Arc::new(AtomicUsize::new(0));
+    {
+        let received = received.clone();
+        tokio::spawn(async move {
+            let mut buf = [0u8; 2048];
+            while let Ok((n, src)) = tracker.recv_from(&mut buf).await {
+                received.fetch_add(1, Ordering::SeqCst);
+                let data = &buf[..n];
+                let action = i32::from_be_bytes(data[8..12].try_into().unwrap());
+                let txn = &data[12..16];
+                let mut resp = Vec::new();
+                if action == 0 {
+                    resp.extend_from_slice(&0i32.to_be_bytes());
+                    resp.extend_from_slice(txn);
+                    resp.extend_from_slice(&42i64.to_be_bytes());
+                } else if action == 2 {
+                    resp.extend_from_slice(&2i32.to_be_bytes());
+                    resp.extend_from_slice(txn);
+                    let n_ih = (n - 16) / 20;
+                    for _ in 0..n_ih {
+                        resp.extend_from_slice(&9i32.to_be_bytes()); // seeders
+                        resp.extend_from_slice(&1i32.to_be_bytes()); // downloaded
+                        resp.extend_from_slice(&4i32.to_be_bytes()); // leechers
+                    }
+                }
+                let _ = tracker.send_to(&resp, src).await;
+            }
+        });
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    let db = Arc::new(Database::open(&dir.path().join("t.db")).unwrap());
+    let mut ih = [0u8; 20];
+    ih[0] = 0x43;
+    // Download en clair dont le magnet porte son propre tracker ;
+    // `torrent_state` existe (catalogue) mais aucun tracker lie.
+    db.with(|c| {
+        onionbit_db::downloads::upsert(
+            c,
+            &onionbit_db::models::DownloadRow {
+                infohash: ih.to_vec(),
+                name: Some("manuel.bin".to_string()),
+                source_uri: format!(
+                    "magnet:?xt=urn:btih:{}&tr=udp%3A%2F%2F127.0.0.1%3A{}",
+                    hex::encode(ih),
+                    tracker_addr.port()
+                ),
+                ..Default::default()
+            },
+        )?;
+        onionbit_db::health::upsert_torrent_state(c, &ih)?;
+        Ok(())
+    })
+    .unwrap();
+
+    let checker = TorrentChecker::new(
+        db.clone(),
+        Notifier::new(),
+        onionbit_network_policy::IpPolicy::permissive(),
+    )
+    .await
+    .unwrap();
+
+    let checked = checker.check_oldest().await.unwrap();
+    assert_eq!(checked, 1, "le tracker propre du torrent est scrape");
+    assert!(
+        received.load(Ordering::SeqCst) >= 2,
+        "connect + scrape emis vers le tracker du magnet"
+    );
+
+    // Sante enregistree et tracker desormais lie : les prochains
+    // passages de la rotation utiliseront `torrent_state_tracker`.
+    let (seeders, linked) = db
+        .with(|c| {
+            let st = onionbit_db::health::get_torrent_state(c, &ih)?.unwrap();
+            Ok((st.seeders, onionbit_db::health::trackers_of(c, &ih)?))
+        })
+        .unwrap();
+    assert_eq!(seeders, 9);
+    assert_eq!(linked, vec![format!("udp://{tracker_addr}")]);
+}
+
+/// Une ligne `torrent_state` orpheline (recue par gossip, jamais
+/// telechargee, aucun tracker connu) est marquee comme controlee
+/// plutot que repick a chaque tick — sinon `last_check=0` la rendait
+/// eternellement la plus vieille et affamait toute la rotation.
+#[tokio::test(flavor = "multi_thread")]
+async fn torrent_checker_consomme_ligne_sans_tracker() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = Arc::new(Database::open(&dir.path().join("t.db")).unwrap());
+    let mut ih = [0u8; 20];
+    ih[0] = 0x44;
+    db.with(|c| onionbit_db::health::upsert_torrent_state(c, &ih))
+        .unwrap();
+
+    let checker = TorrentChecker::new(
+        db.clone(),
+        Notifier::new(),
+        onionbit_network_policy::IpPolicy::permissive(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(checker.check_oldest().await.unwrap(), 0);
+    let last_check = db
+        .with(|c| {
+            Ok(onionbit_db::health::get_torrent_state(c, &ih)?
+                .unwrap()
+                .last_check)
+        })
+        .unwrap();
+    assert!(last_check > 0, "la ligne sans tracker est consommee");
+    assert_eq!(
+        checker.check_oldest().await.unwrap(),
+        0,
+        "plus rien d'eligible : la rotation n'est pas bloquee"
+    );
+}
+
 /// RSS : un flux annoncant un `.torrent` -> `TorrentMetadataCreated`.
 #[tokio::test(flavor = "multi_thread")]
 async fn rss_discovers_torrent_and_notifies() {

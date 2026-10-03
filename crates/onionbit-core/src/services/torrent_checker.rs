@@ -322,18 +322,20 @@ impl TorrentChecker {
     /// (non controle depuis `MIN_TORRENT_CHECK_INTERVAL`), scrape de
     /// ses trackers connus.
     pub async fn check_oldest(&self) -> Result<usize> {
+        let now = now_unix();
         // Les swarms anonymes (`anon_hops > 0`) sont exclus de la
         // rotation : ils ne doivent jamais etre scrapes en clair —
         // leur sante vient du tunnel (`peers-request`).
         let row: std::result::Result<Vec<u8>, _> = self.db.with(|c| {
             c.query_row(
                 "SELECT ts.infohash FROM torrent_state ts
-                 WHERE NOT EXISTS (
+                 WHERE ts.last_check < ?1
+                   AND NOT EXISTS (
                      SELECT 1 FROM downloads d
                      WHERE d.infohash = ts.infohash AND d.anon_hops > 0
                  )
                  ORDER BY ts.last_check ASC LIMIT 1",
-                [],
+                [now - MIN_TORRENT_CHECK_INTERVAL],
                 |r| r.get::<_, Vec<u8>>(0),
             )
             .map_err(onionbit_db::DbError::from)
@@ -341,11 +343,45 @@ impl TorrentChecker {
         let Ok(ih) = row else {
             return Ok(0);
         };
-        let trackers = self
+        let mut trackers = self
             .db
             .with(|c| onionbit_db::health::trackers_of(c, &ih))
             .unwrap_or_default();
         if trackers.is_empty() {
+            // Aucun tracker lie (`torrent_state_tracker` n'est rempli
+            // qu'au retour d'un scrape) : la rotation Python scrape
+            // les trackers propres du torrent — repli sur la ligne
+            // `downloads` (announce du `.torrent`, `tr=` du magnet,
+            // ajouts a chaud, moins les retraits).
+            trackers = self
+                .db
+                .with(|c| {
+                    let Some(row) = onionbit_db::downloads::get(c, &ih)? else {
+                        return Ok(Vec::new());
+                    };
+                    let mut set: std::collections::BTreeSet<String> =
+                        crate::trackers::source_trackers(&row).into_iter().collect();
+                    set.extend(crate::trackers::effective_trackers(&row));
+                    let removed: std::collections::BTreeSet<&str> =
+                        row.removed_trackers.iter().map(String::as_str).collect();
+                    Ok(set
+                        .into_iter()
+                        .filter(|u| !removed.contains(u.as_str()))
+                        .collect::<Vec<_>>())
+                })
+                .unwrap_or_default();
+        }
+        if trackers.is_empty() {
+            // Rien a scraper : le controle est consomme pour ne pas
+            // reprendre eternellement cette ligne `last_check=0` —
+            // sinon elle affamait toute la rotation.
+            let _ = self.db.with(|c| {
+                c.execute(
+                    "UPDATE torrent_state SET last_check = ?1 WHERE infohash = ?2",
+                    rusqlite::params![now, ih],
+                )
+                .map_err(onionbit_db::DbError::from)
+            });
             return Ok(0);
         }
         let mut infohash = [0u8; 20];
