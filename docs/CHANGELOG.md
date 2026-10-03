@@ -3,6 +3,22 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Métriques fichiers / tunnel séparées (2026-10-03)
+
+- **Carte « Trafic tunnel »** (Vue d'ensemble) : débit instantané
+  ↓/↑ de l'overlay IPv8, calculé par différence des compteurs
+  cumulés `total_up`/`total_down` entre deux sondages de
+  `/api/statistics/ipv8` (`tunnelTrafficRateProvider` — delta
+  négatif au redémarrage du daemon ramené à 0). Mesure le trafic
+  total : relais servis, protocole et téléchargements.
+- **Cartes renommées « Réception fichiers » / « Envoi fichiers »** :
+  la Σ `speed_down`/`speed_up` de `/api/downloads` ne mesure que le
+  trafic BitTorrent des téléchargements locaux — à 0 honnêtement
+  quand le daemon ne fait que relayer (prod : ~155 Kio/s d'upload
+  tunnel réel pour « Envoi 0 o/s » affiché).
+- `cardUpload`/`cardDownload` conservés pour la boîte de test de
+  bande passante (débit brut, pas « fichiers »).
+
 ## Niveau `info` assaini pour la release (2026-10-03)
 
 - **Churn circuits/handshakes → `debug`** : `tentative de creation

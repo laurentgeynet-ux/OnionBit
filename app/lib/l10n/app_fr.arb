@@ -209,6 +209,9 @@
   "cardKnownTorrents": "Torrents connus",
   "cardDownload": "Réception",
   "cardUpload": "Envoi",
+  "cardFilesDownload": "Réception fichiers",
+  "cardFilesUpload": "Envoi fichiers",
+  "cardTunnelTraffic": "Trafic tunnel",
   "cardDatabase": "Base de données",
 
   "speedTestCircuitTitle": "Test du circuit #{id}",

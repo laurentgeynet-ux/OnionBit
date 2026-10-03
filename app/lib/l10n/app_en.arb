@@ -336,6 +336,9 @@
   "cardKnownTorrents": "Known torrents",
   "cardDownload": "Download",
   "cardUpload": "Upload",
+  "cardFilesDownload": "File download",
+  "cardFilesUpload": "File upload",
+  "cardTunnelTraffic": "Tunnel traffic",
   "cardDatabase": "Database",
 
   "speedTestCircuitTitle": "Circuit #{id} test",

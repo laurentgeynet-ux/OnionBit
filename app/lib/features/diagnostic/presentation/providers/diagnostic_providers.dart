@@ -94,6 +94,44 @@ final ipv8TrafficProvider = FutureProvider.autoDispose<Ipv8Traffic>(
   },
 );
 
+/// Débit tunnel instantané (octets/s) — différence des compteurs
+/// cumulés `total_up`/`total_down` entre deux sondages de
+/// `/api/statistics/ipv8`. Mesure le trafic overlay total (relais,
+/// protocole, téléchargements), distinct des débits « fichiers »
+/// agrégés depuis `/api/downloads`.
+final tunnelTrafficRateProvider =
+    NotifierProvider<TunnelTrafficRateNotifier, ({int down, int up})>(
+      TunnelTrafficRateNotifier.new,
+    );
+
+class TunnelTrafficRateNotifier extends Notifier<({int down, int up})> {
+  ({int down, int up, DateTime at})? _prev;
+
+  @override
+  ({int down, int up}) build() {
+    final sample = ref.watch(ipv8TrafficProvider).value;
+    if (sample == null) {
+      return (down: 0, up: 0);
+    }
+    final now = DateTime.now();
+    final prev = _prev;
+    _prev = (down: sample.down, up: sample.up, at: now);
+    if (prev == null) {
+      return (down: 0, up: 0);
+    }
+    final secs = now.difference(prev.at).inMicroseconds / 1e6;
+    if (secs <= 0) {
+      return (down: 0, up: 0);
+    }
+    // Compteurs remis à zéro au redémarrage du daemon : un delta
+    // négatif est ramené à 0 plutôt qu'affiché.
+    return (
+      down: ((sample.down - prev.down) / secs).round().clamp(0, 1 << 62),
+      up: ((sample.up - prev.up) / secs).round().clamp(0, 1 << 62),
+    );
+  }
+}
+
 final daemonLogsProvider = FutureProvider.autoDispose<String>(
   (ref) {
     ref.watch(tickProvider(_kDiagnosticPoll));
