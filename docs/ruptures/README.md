@@ -166,5 +166,6 @@ capture]` est passé à l'analyseur via `--window-start/--window-end`.
   manifeste.
 - `scripts/analyze_leak_capture.py` — classification pcapng :
   `LOCAL/OVERLAY/DNS/AUTRE/INTERDIT`, fenêtrage, qnames DNS.
-- `docs/plans/bancs_tests.md` — catalogue complet et journal §7.
+- `docs/plans/bancs_tests.md` — catalogue complet et journal §7
+  (documentation interne, hors publication).
 - `docs/P0-transport-manifest.md` — preuve figée et limites assumées.

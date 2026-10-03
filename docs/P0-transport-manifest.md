@@ -86,8 +86,9 @@ Prochaine valeur ajoutée, par ordre :
    périodique ; extension vers 6–24 h avec churn de connectivité.
 3. **Documentation publique des scénarios de rupture** — la philosophie
    fail-closed (oracles, fenêtrage, signature IPv8) doit être lisible
-   par les contributeurs : `docs/plans/bancs_tests.md` §6.1 et ce
-   manifeste en sont la base.
+   par les contributeurs : `docs/ruptures/README.md` et ce manifeste en
+   sont la base (le catalogue détaillé `docs/plans/bancs_tests.md` §6.1
+   est interne, hors publication).
 
 Les bancs lourds restants (CH-2, CH-3, endurance > 1 h, NAT inter-NAT)
 s'ordonnancent dans ce cadre P1 — aucun ne bloque la clôture de P0.

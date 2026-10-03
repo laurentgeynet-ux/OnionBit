@@ -3,6 +3,10 @@
 Inventaire des fichiers/dossiers significatifs. À maintenir à jour à
 chaque étape (cf. `AGENTS.md`, "Workflow par étape").
 
+> `docs/plans/` (roadmap, faisabilité, catalogue de bancs, plans
+> d'enrichissement) est exclu de la publication — documentation
+> interne de pilotage. Les fichiers restent en local (gitignore).
+
 | Chemin | Contenu |
 | :--- | :--- |
 | `AGENTS.md` | Règles pour agents IA (règles critiques, conventions, workflow) |
@@ -22,8 +26,8 @@ chaque étape (cf. `AGENTS.md`, "Workflow par étape").
 | `crates/onionbit-test-support/` | Fixtures/helpers de tests partagés |
 | `vendor/` | `librqbit*` vendored+patchés (`[patch.crates-io]`) : `DatagramSocket` injectable, uTP/DHT/tracker-UDP sur tunnel (ADR-0007) |
 | `app/` | Interface Flutter desktop (Riverpod + go_router, consomme `onionbit-api` REST/SSE) |
-| `docs/plans/plan_faisabilite.md` | Analyse de faisabilité, risques, décisions |
-| `docs/plans/roadmap.md` | Plan d'implémentation détaillé (source de vérité de l'avancement) |
+| `docs/plans/plan_faisabilite.md` *(local)* | Analyse de faisabilité, risques, décisions |
+| `docs/plans/roadmap.md` *(local)* | Plan d'implémentation détaillé (source de vérité de l'avancement) |
 | `docs/architecture/architecture.md` | Vue d'ensemble de la clean architecture |
 | `docs/architecture/decisions/000X-*.md` | ADRs |
 | `docs/reference_tribler/correspondance_modules.md` | Correspondance Python Tribler ↔ Rust |
@@ -38,12 +42,12 @@ chaque étape (cf. `AGENTS.md`, "Workflow par étape").
 | `docs/THREAT-MODEL.md` | Modèle de menace public (EN, court) — version détaillée FR : `docs/security/threat_model.md` |
 | `docs/BUILDING.md` | Build & packaging publics (EN) : daemon/CLI/UI Flutter, zip Windows x64 |
 | `docs/diagnostics/memoire_charge_reelle.md` | Diagnostic empreinte mémoire d'un daemon public en charge (postes, caps, réfs code) + garde-fou `scripts/mem_watchdog.ps1` |
-| `docs/plans/mobile_execution_model.md` | Étape 18 — modèle d'exécution Android/iOS (façade FFI, foreground service, contraintes) |
-| `docs/plans/app_downloads_enrichissement.md` | Plan d'enrichissement de l'onglet Téléchargements (UI Flutter, 8 étapes) |
-| `docs/plans/app_search_enrichissement.md` | Plan d'enrichissement de l'onglet Rechercher (UI Flutter, 8 étapes) |
-| `docs/plans/app_settings_enrichissement.md` | Plan d'enrichissement de l'onglet Réglages (UI Flutter, 7 étapes) |
-| `docs/plans/app_sidebar_enrichissement.md` | Plan d'enrichissement de la sidebar (UI Flutter, 6 étapes) |
-| `docs/plans/bancs_tests.md` | Catalogue des bancs de test (matrice release P0, oracles, artefacts, journal des runs) |
+| `docs/plans/mobile_execution_model.md` *(local)* | Étape 18 — modèle d'exécution Android/iOS (façade FFI, foreground service, contraintes) |
+| `docs/plans/app_downloads_enrichissement.md` *(local)* | Plan d'enrichissement de l'onglet Téléchargements (UI Flutter, 8 étapes) |
+| `docs/plans/app_search_enrichissement.md` *(local)* | Plan d'enrichissement de l'onglet Rechercher (UI Flutter, 8 étapes) |
+| `docs/plans/app_settings_enrichissement.md` *(local)* | Plan d'enrichissement de l'onglet Réglages (UI Flutter, 7 étapes) |
+| `docs/plans/app_sidebar_enrichissement.md` *(local)* | Plan d'enrichissement de la sidebar (UI Flutter, 6 étapes) |
+| `docs/plans/bancs_tests.md` *(local)* | Catalogue des bancs de test (matrice release P0, oracles, artefacts, journal des runs) |
 | `docs/P0-transport-manifest.md` | Manifeste de preuve figé — clôture P0 transport : scénarios 17a/17b/17c, commits de référence, limites assumées, bascule P1 |
 | `docs/ruptures/README.md` | Philosophie fail-closed + recette d'un banc de rupture (injection, fenêtrage, attribution, oracle `INTERDIT=0`) |
 | `scripts/build_release.ps1` | Build release reproductible multi-cibles + `dist/<target>/` + manifest |

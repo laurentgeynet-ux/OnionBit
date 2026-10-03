@@ -19,3 +19,6 @@ dist/
 scripts/gh_create_release.ps1
 scripts/sync_public.ps1
 scripts/__pycache__/
+
+# Docs internes de dev (plans, roadmap, journal de bancs) — hors repo public
+docs/plans/
