@@ -1699,6 +1699,22 @@ fn live_crash_pending_magnet_et_restart() {
             "le magnet pending a ete restaure / a laisse un zombie"
         );
 
+        // Comme `readd_bittorrent_peers` Python : les pairs ne
+        // survivent pas au restart moteur — on re-annonce le seed
+        // sinon les restores restent sans source (le crash a pu
+        // emporter un telechargement partiellement recu).
+        for t in &fleet.torrents[..2] {
+            let dl = session.find_download_hex(&t.ih).expect("download restaure");
+            let t0 = Instant::now();
+            while Instant::now() - t0 < STATE_WAIT {
+                dl.add_peer(fleet.seed_addr);
+                if dl.stats().peers_seen > 0 {
+                    break;
+                }
+                tokio::time::sleep(POLL).await;
+            }
+        }
+
         // Le meme magnet se re-ajoute et resout sur la lane 0 —
         // aucun blocage par un fantome du crash.
         let uri = format!(
