@@ -3,6 +3,20 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Compteur `bytes_up` des routes relais (2026-10-03)
+
+- **`RelayRoute.bytes_up` restait à 0 en permanence** : le forwarding de
+  cellule n'incrémentait que `bytes_down` à la réception (`community.rs`),
+  jamais `bytes_up` au relais — alors que pyipv8 incrémente les deux
+  (`increase_bytes_received` + `increase_bytes_sent` sur la route).
+  Effets : `/api/ipv8/tunnel/relays` rapportait `bytes_up: 0` sur toutes
+  les routes, les événements `circuit_removed` sous-comptaient le
+  trafic servi, et le garde-fou `max_traffic` (`bytes_up + bytes_down`)
+  ne voyait que la moitié des octets relayés. Le compteur montant est
+  désormais incrémenté à la tentative de forward (sémantique pré-envoi
+  identique au Python ; les rares pertes de file pleine restent
+  tracées).
+
 ## Signal de fin de restauration non perdu (2026-10-03)
 
 - **`restore_done` pouvait perdre son basculement** : le canal

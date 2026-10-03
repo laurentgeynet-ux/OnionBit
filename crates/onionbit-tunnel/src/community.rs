@@ -2450,12 +2450,15 @@ impl TunnelCommunity {
             tracing::trace!(next_cid, ?addr, "cellule relayee");
             {
                 let mut inner = self.inner.lock().unwrap();
-                // beat_heart + compteur sur la route ENTRANTE (cle de
-                // la table = circuit_id recu).
+                // beat_heart + compteurs sur la route ENTRANTE (cle de
+                // la table = circuit_id recu) : `increase_bytes_received`
+                // + `increase_bytes_sent` Python — la cellule recue est
+                // relayee a taille quasiment identique.
                 let incoming_cid = parsed.circuit_id;
                 if let Some(r) = inner.relays.get_mut(&incoming_cid) {
                     r.base.beat_heart();
                     r.base.bytes_down += data.len() as u64;
+                    r.base.bytes_up += data.len() as u64;
                     r.relay_early_count += 1;
                 }
             }
