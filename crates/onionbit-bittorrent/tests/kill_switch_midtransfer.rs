@@ -281,10 +281,27 @@ async fn proxy_death_mid_transfer_engages_kill_switch_no_leak() {
         );
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
-    assert!(
-        proxy.connects.load(Ordering::Relaxed) > 0,
-        "aucune connexion passee par le proxy"
-    );
+    // Oracle fail-closed : le progres DOIT venir du proxy. On attend
+    // une connexion socks comptee (borne 10 s) plutot qu'un instantane
+    // — sur macOS le premier poll `stats()` rapportait un progres > 0
+    // quasi immediat, avant l'accept du stub. Si le progres continue
+    // de monter alors que `connects` reste a 0, c'est une vraie fuite
+    // directe : le panic emporte les stats pour diagnostic.
+    let t_conn = Instant::now();
+    loop {
+        if proxy.connects.load(Ordering::Relaxed) > 0 {
+            break;
+        }
+        let st = dl.stats();
+        assert!(
+            t_conn.elapsed() < Duration::from_secs(10),
+            "aucune connexion passee par le proxy alors que le transfert \
+             progresse — fuite directe ? progress={} finished={} stats={st:?}",
+            st.progress_bytes,
+            st.finished
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
 
     // 4. Panne en plein vol : le proxy meurt (listener + flux).
     assert!(
