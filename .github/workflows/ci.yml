@@ -40,7 +40,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-latest, macos-latest]
+        # ubuntu-24.04 epingle : `ubuntu-latest` basculera sur 26.04
+        # (annonce GitHub) — epingler fige le socle et la migration
+        # se fera par choix explicite avec un run de validation.
+        os: [windows-latest, ubuntu-24.04, macos-latest]
         include:
           - os: windows-11-arm
             experimental: true
@@ -105,7 +108,7 @@ jobs:
   # tag v*.
   package-linux:
     name: "package (linux x64 : tar.gz + .deb)"
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: [rust]
     steps:
       - uses: actions/checkout@v7
@@ -192,7 +195,7 @@ jobs:
       && needs.release-windows.result == 'success'
       && needs.package-linux.result == 'success'
       && needs.package-windows-x64.result == 'success'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: [release-windows, package-linux, package-windows-x64, package-windows-arm64]
     permissions:
       contents: write
@@ -224,13 +227,20 @@ jobs:
             done
             echo '```'
           } > notes.md
-          # Pas de --prerelease : les tags alpha/beta sont les releases
-          # publiques du projet — le badge « Latest » doit les suivre.
+          # Les tags alpha/beta/rc restent les releases publiques du
+          # projet : --latest conserve le badge « Latest », mais le
+          # suffixe `-xxx` du tag ajoute --prerelease pour etiqueter
+          # honnetement le statut (badge « Pre-release », pas de
+          # confusion avec une stable). Un tag sans suffixe (v0.9.0)
+          # reste une release stable.
+          pre=()
+          case "$tag" in *-*) pre=(--prerelease);; esac
           gh release create "$tag" \
             --repo "${{ github.repository }}" \
             --title "$tag" \
             --notes-file notes.md \
             --latest \
+            "${pre[@]}" \
             "${files[@]}"
   # Longevite automatisee (P1) : la boucle fuzz smoke + les tests
   # longs du workspace en nightly. Le mesh fingerprint reel reste un
