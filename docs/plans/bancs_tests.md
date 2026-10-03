@@ -373,6 +373,7 @@ défaut de la fonction (pas la release existante). Harness :
 | PR-1 (`build_release.ps1` + smoke release) | 2026-10-03 | `03a5307` | **vert** — release `x86_64-pc-windows-msvc` en 5 min 15 s, manifeste complet (commit, rustc 1.98.1, version 0.6.0-alpha) ; smoke du binaire `dist/x86_64-pc-windows-msvc/onionbit-daemon.exe` : API montée, 401 sans clé, arrêt propre | `dist/x86_64-pc-windows-msvc/` | non |
 | PR-3 (lanceur `OnionBit Web.cmd` → `web-launch.ps1`) | 2026-10-03 | dist alpha + `03a5307` | **vert partiel** — le lanceur démarre `onionbit-daemon.exe --state-dir dist\state`, API joignable, navigateur ouvert ; parcours UI complet reste manuel | `dist/OnionBit-0.6.0-alpha-windows-x64/state/` | daemon dist = ancien build |
 | CH-6 (`bench_crash_recovery.ps1`, 5 cycles) | 2026-10-03 | `03a5307`+script | **vert** — 5 × (démarrage `--offline` → PUT `.torrent` → taskkill -F à instant aléatoire) : API remontée à chaque crash, 2 downloads persistés restitués à chaque redémarrage, `PRAGMA quick_check` = `ok`. Leçon : un magnet non résolu n'est **pas** persisté (par design — `resolve_magnet` bloque) ; le chemin persisté est `torrent_data` | `target/crash-recovery-*/` | non |
+| CH-1 (50 torrents `.torrent` distincts, `--offline`) | 2026-10-03 | `fdc41f5` | **vert** — 50/50 PUT en 0,45 s, 50 listés, RSS 27→31 MB stable, aucune erreur ; variante forte (swarm actif) reste un banc public | `target/load-state/`, `target/load-torrents/` | non |
 
 ## 8. Trous de couverture assumés / hors scope
 

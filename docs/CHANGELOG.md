@@ -21,6 +21,9 @@ en haut.
     en `--offline` il ne l'est donc jamais ; le chemin de persistence
     testable est `torrent_data`. Comportement cohérent avec Tribler
     (checkpoint des torrents résolus).
+- **CH-1** : 50 `.torrent` distincts injectés en rafale via l'API
+  (`--offline`) — 50/50 en 0,45 s, tous listés, RSS stable 31 MB. La
+  variante swarm-actif reste un banc public.
 
 ## P0-17c — fail-closed observé par l'OS, 4 sous-runs verts (2026-10-03)
 
