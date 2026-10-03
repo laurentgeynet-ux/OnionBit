@@ -593,9 +593,11 @@ async fn live_update_hops_en_transfert() {
         )
         .await
         .expect("add hops=1");
-    // Attend le premier octet recu par le tunnel x1.
+    // Attend le premier octet recu par le tunnel x1. Fenetre large :
+    // le backoff du dial uTP peut trainer sur runner charge — le
+    // test porte sur `update_hops`, pas sur la latence du dial.
     assert!(
-        wait_until(STATE_WAIT, || {
+        wait_until(TRANSFER_WAIT, || {
             bench
                 .session
                 .find_download_hex(&bench.infohash_hex)
@@ -681,8 +683,10 @@ async fn live_pause_resume_tunnel() {
         )
         .await
         .expect("add hops=1");
+    // Fenetre large pour le premier octet (backoff uTP sous charge) —
+    // le test porte sur pause/reprise, pas sur la latence du dial.
     assert!(
-        wait_until(STATE_WAIT, || dl.stats().progress_bytes > 0).await,
+        wait_until(TRANSFER_WAIT, || dl.stats().progress_bytes > 0).await,
         "aucun octet avant pause"
     );
     bench
@@ -782,8 +786,11 @@ async fn live_suppression_pendant_transfert() {
         )
         .await
         .expect("add hops=1");
+    // Le premier octet peut trainer sur un runner charge (backoff du
+    // dial uTP a travers le circuit) : le test porte sur la
+    // suppression, pas sur la latence du dial — fenetre TRANSFER_WAIT.
     assert!(
-        wait_until(STATE_WAIT, || {
+        wait_until(TRANSFER_WAIT, || {
             bench
                 .session
                 .find_download_hex(&bench.infohash_hex)

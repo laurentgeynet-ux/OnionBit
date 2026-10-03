@@ -3,6 +3,17 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Banc live : fenetres premier-octet élargies (2026-10-03)
+
+- `live_suppression_pendant_transfert`, `live_update_hops_en_transfert`,
+  pause/reprise : l'attente du premier octet uTP passait `STATE_WAIT`
+  (30 s) — sous runner macOS chargé le backoff du dial à travers le
+  circuit la dépassait (« aucun octet avant suppression », CI #85).
+  Ces attentes passent à `TRANSFER_WAIT` (180 s) : le sujet des tests
+  est la suppression / migration / pause, pas la latence du dial.
+- Les `STATE_WAIT` restants (pending, `owner_engine_hops`) gardent
+  30 s — états internes sans réseau.
+
 ## Métriques fichiers / tunnel séparées (2026-10-03)
 
 - **Carte « Trafic tunnel »** (Vue d'ensemble) : débit instantané
