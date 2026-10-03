@@ -362,6 +362,10 @@ impl CoreSession {
                 return;
             }
         };
+        // Lanes anonymes deja temporisees : l'attente du premier
+        // circuit `DATA` pret se fait une fois par `anon_hops`, les
+        // downloads suivants de la meme lane passent directement.
+        let mut awaited_lanes: std::collections::HashSet<u32> = std::collections::HashSet::new();
         for row in rows {
             // `stop()` pendant la restauration : on abandonne — les
             // downloads non reinjectes seront relus au prochain run.
@@ -388,6 +392,34 @@ impl CoreSession {
                     continue;
                 }
             };
+            // Un download anonyme reajoute avant le premier circuit
+            // `DATA` pret de sa lane voit tous ses envois (dial uTP,
+            // trackers, DHT) tomber sur `select_circuit` (« aucun
+            // circuit pret ») — librqbit peut alors rester dormant
+            // jusqu'a un pause/reprise manuel. Attente bornee
+            // (`next_hop_timeout`) et best-effort : a l'echeance le
+            // re-add se fait quand meme (le Python restaure aussi
+            // sans garantie de circuit).
+            if row.anon_hops > 0 && awaited_lanes.insert(row.anon_hops as u32) {
+                if let Some(tunnel) = self.inner.ipv8.as_ref().and_then(|s| s.tunnel.as_ref()) {
+                    let ok = tunnel
+                        .await_data_circuit_of_hops(
+                            row.anon_hops as usize,
+                            tunnel.settings.next_hop_timeout,
+                        )
+                        .await;
+                    if !ok {
+                        tracing::warn!(
+                            anon_hops = row.anon_hops,
+                            "aucun circuit pret sous next_hop_timeout — restauration poursuivie"
+                        );
+                    }
+                }
+            }
+            if self.inner.stopped.load(std::sync::atomic::Ordering::SeqCst) {
+                tracing::info!("restauration interrompue par l'arret de la session");
+                return;
+            }
             if row.torrent_data.is_none() {
                 // Sans metainfo persistee (lignes laissees par un ajout
                 // magnet/URI des versions anterieures), `readd_row`
@@ -496,6 +528,22 @@ impl CoreSession {
                 let mut row = row.clone();
                 row.paused = paused;
                 row.user_stopped = paused;
+                // Meme garde que `restore_downloads` : resolution BEP 9
+                // et premiers dials passent par la lane — attendre le
+                // premier circuit pret evite les envois droppes sur
+                // `select_circuit`. Best-effort, borne `next_hop_timeout`.
+                if hops > 0 {
+                    if let Some(tunnel) =
+                        session.inner.ipv8.as_ref().and_then(|s| s.tunnel.as_ref())
+                    {
+                        tunnel
+                            .await_data_circuit_of_hops(
+                                hops as usize,
+                                tunnel.settings.next_hop_timeout,
+                            )
+                            .await;
+                    }
+                }
                 let fut = session.readd_row(&engine, &row);
                 tokio::pin!(fut);
                 tokio::select! {

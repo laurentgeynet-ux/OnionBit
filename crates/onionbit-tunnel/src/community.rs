@@ -2117,6 +2117,30 @@ impl TunnelCommunity {
         possible.into_iter().map(|(p, _)| p).collect()
     }
 
+    /// Attend qu'au moins un circuit `DATA` a `hops` sauts soit
+    /// `READY`, ou que `timeout` expire (`false` a l'echeance).
+    /// Utilise par la restauration de session : un download anonyme
+    /// reajoute avant le premier circuit pret de sa lane voit tous
+    /// ses envois (uTP, trackers, DHT) tomber sur `select_circuit`
+    /// (« aucun circuit pret ») et librqbit peut rester dormant.
+    pub async fn await_data_circuit_of_hops(
+        &self,
+        hops: usize,
+        timeout: std::time::Duration,
+    ) -> bool {
+        let mut rx = self.circuits_changed_tx.subscribe();
+        let deadline = std::time::Instant::now() + timeout;
+        loop {
+            if !self.ready_data_circuits_of_hops(hops).is_empty() {
+                return true;
+            }
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            if remaining.is_zero() || tokio::time::timeout(remaining, rx.changed()).await.is_err() {
+                return false;
+            }
+        }
+    }
+
     /// `await circuit.ready` pyipv8 : attend que le circuit atteigne
     /// `READY`, soit detruit, ou que `timeout` expire (borne —
     /// `next_hop_timeout` des settings).

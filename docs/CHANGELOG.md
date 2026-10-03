@@ -3,6 +3,23 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Restauration après le premier circuit prêt (2026-10-03)
+
+- **`await_data_circuit_of_hops`** (`TunnelCommunity`) : attente
+  bornée (`next_hop_timeout`) du premier circuit `DATA` `READY` à
+  `hops` sauts, réveillée par `circuits_changed`.
+- **Downloads anonymes reajoutés trop tôt au boot** : la
+  restauration tournait dès le démarrage, avant que les circuits
+  des lanes soient construits — les premiers envois (dial uTP,
+  trackers, DHT) tombaient sur `select_circuit` (« aucun circuit
+  prêt ») et librqbit restait dormant jusqu'à un pause/reprise
+  manuel (prod : 2 downloads sur 4 bloqués à 0 o/s après restart).
+  `restore_downloads` attend désormais le premier circuit prêt de
+  chaque lane (`awaited_lanes` — une fois par `anon_hops`) avant
+  les re-adds ; `spawn_deferred_restore` applique la même garde à
+  la résolution BEP 9 différée. Best-effort : à l'échéance le
+  re-add se fait quand même (Python restaure aussi sans garantie).
+
 ## Ids de torrents uniques sous adds concurrents (2026-10-03)
 
 - **TOCTOU sur `persistence.next_id()` dans
