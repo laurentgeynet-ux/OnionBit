@@ -1064,14 +1064,22 @@ async fn live_flotte_10_restart() {
         );
     }
 
-    // Tous progressent (ou terminent) avant le kill.
+    // Tous progressent (ou terminent) avant le kill : le seeder est
+    // re-injecte a chaque scrutation. En mode offline (pas de
+    // DHT/LSD/trackers) une tentative de connexion initiale perdue —
+    // handshake SOCKS/uTP transitoire sur le circuit — n'est jamais
+    // retentee par le moteur : meme correction que la re-annonce
+    // post-restart (`readd_bittorrent_peers`).
     for t in &fleet.torrents {
         assert!(
             wait_until(Duration::from_secs(60), || {
-                session
-                    .find_download_hex(&t.ih)
-                    .map(|d| d.stats().progress_bytes > 0 || d.stats().finished)
-                    .unwrap_or(false)
+                if let Some(d) = session.find_download_hex(&t.ih) {
+                    d.add_peer(fleet.seed_addr);
+                    let st = d.stats();
+                    st.progress_bytes > 0 || st.finished
+                } else {
+                    false
+                }
             })
             .await,
             "{} n'a pas demarre",
