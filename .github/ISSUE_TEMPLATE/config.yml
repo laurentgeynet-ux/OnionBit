@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/laurentgeynet-ux/OnionBit/security/advisories/new
+    about: Report privately — never open a public issue for security bugs.
+  - name: Tribler upstream
+    url: https://github.com/Tribler/tribler
+    about: Reference project OnionBit ports to Rust.

@@ -1,44 +1,184 @@
-# OnionBit
+<div align="center">
 
-Portage en Rust du daemon [Tribler](https://github.com/Tribler/tribler)
-(client BitTorrent avec réseau d'anonymisation IPv8/TunnelCommunity), avec
-interface Flutter multiplateforme (Windows x64/arm64, Linux, macOS,
-Android, iOS, Web) dans `app/`.
+<img src="assets/logo-horizontal.svg" alt="OnionBit" width="460"/>
 
-Version : **0.3.1-alpha** — l'interop avec Tribler 8.x est validée sur le
-banc (téléchargements anonymes via circuits, hidden seeding, résilience
-aux kills), cf. [`docs/CHANGELOG.md`](docs/CHANGELOG.md).
+### Anonymous BitTorrent client, native in Rust
 
-## Documentation
+**A full Rust port of [Tribler](https://github.com/Tribler/tribler) — BitTorrent over onion-routed, multi-hop circuits.**
 
-- [`docs/plans/plan_faisabilite.md`](docs/plans/plan_faisabilite.md) —
-  analyse de faisabilité, risques, décisions arbitrées.
-- [`docs/plans/roadmap.md`](docs/plans/roadmap.md) — plan d'implémentation
-  détaillé, étape par étape (source de vérité de l'avancement).
-- [`docs/architecture/architecture.md`](docs/architecture/architecture.md) —
-  vue d'ensemble de la clean architecture.
-- [`docs/architecture/decisions/`](docs/architecture/decisions/) — décisions
-  d'architecture actées (ADRs).
-- [`docs/reference_tribler/`](docs/reference_tribler/) — correspondance
-  entre les modules Python de Tribler et les crates Rust.
-- [`AGENTS.md`](AGENTS.md) — règles pour agents IA (workflow, conventions).
+[![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](LICENSE)
+[![Made with Rust](https://img.shields.io/badge/Made%20with-Rust-orange.svg)](https://www.rust-lang.org/)
+[![UI: Flutter](https://img.shields.io/badge/UI-Flutter-02569B.svg)](https://flutter.dev/)
+[![CI](https://github.com/laurentgeynet-ux/OnionBit/actions/workflows/ci.yml/badge.svg)](https://github.com/laurentgeynet-ux/OnionBit/actions/workflows/ci.yml)
+[![Version](https://img.shields.io/badge/Version-0.6.0--alpha-red.svg)](https://github.com/laurentgeynet-ux/OnionBit/releases)
+[![Platform](https://img.shields.io/badge/Platform-Windows%20%C2%B7%20Linux%20%C2%B7%20macOS%20%C2%B7%20Android%20%C2%B7%20iOS%20%C2%B7%20Web-lightgrey.svg)]()
 
-## Structure
+</div>
 
-Workspace Cargo, 12 crates sous `crates/` (`onionbit-format`,
-`onionbit-crypto`, `onionbit-bittorrent`, `onionbit-ipv8`, `onionbit-tunnel`,
-`onionbit-core`, `onionbit-db`, `onionbit-network-policy`, `onionbit-api`,
-`onionbit-cli`, `onionbit-daemon`, `onionbit-test-support`). Détail des
-responsabilités dans [`docs/architecture/architecture.md`](docs/architecture/architecture.md).
+---
 
-## Validation
+## What is OnionBit?
 
-```powershell
-powershell -NoProfile -ExecutionPolicy RemoteSigned -File scripts\verify_all.ps1
+OnionBit is a BitTorrent client where **anonymity is built into the protocol**, not bolted on.
+It is a native Rust port of [Tribler](https://github.com/Tribler/tribler) — the anonymous
+BitTorrent daemon originally written in Python — reimplemented as a fast, embeddable
+Rust engine with a cross-platform Flutter UI.
+
+Instead of connecting directly to the swarm, OnionBit can route all BitTorrent traffic
+through **multi-hop onion circuits** built on a port of the IPv8 overlay protocol, the
+same design Tribler pioneered:
+
+- 🔗 **Multi-hop encrypted circuits** — up to 3 hops between you and the swarm
+- 🧅 **Onion routing** — each relay only knows its neighbors, never the endpoints
+- 🌱 **Hidden seeding** — seed content without exposing your IP address
+- 🔍 **Decentralized search** — content discovery through the overlay, no central index
+- 🛡️ **Kill switch & leak protection** — no clearnet fallback, no DNS/UDP leaks
+- 🦀 **Pure Rust core** — memory-safe, single binary, embeddable via REST API
+
+> **Status: alpha.** The engine is under active development and validated against the
+> real Tribler network (Tribler 8.x interop testbench). Not yet recommended for
+> high-stakes anonymity. Onion routing reduces network-level linkability; it does
+> not eliminate all privacy risks — see the [threat model](docs/THREAT-MODEL.md).
+
+## Proven interoperability
+
+OnionBit has completed **bidirectional hidden-service transfers with unmodified
+Tribler 8.4.3**:
+
+- Tribler downloads from an OnionBit anonymous seeder — and vice versa.
+- Controlled **2-hop and 3-hop** transfers completed in both directions.
+- Seeder, introduction-point and bootstrap-node **kill/recovery scenarios**
+  completed with verified content integrity.
+- Real-network downloads over live Tribler relays and the public DHT.
+
+Every transfer is checked twice: BitTorrent piece hashing, then an independent
+SHA-256 of the received file. Full scenario table, failure semantics and
+reproduction scripts: [**interoperability evidence**](docs/interop/README.md).
+
+## Screenshots
+
+| Downloads — multi-hop anonymity badges | Diagnostics — live circuits & relays |
+| :---: | :---: |
+| ![Downloads](assets/screenshots/screenshot-downloads.png) | ![Diagnostics](assets/screenshots/screenshot-diagnostic.png) |
+
+| Decentralized search | Settings & dark mode |
+| :---: | :---: |
+| ![Search](assets/screenshots/screenshot-search.png) | ![Dark mode](assets/screenshots/screenshot-dark.png) |
+
+*UI in English and French (System / English / Français in Settings → Appearance).*
+
+## Architecture
+
+```
+┌─────────────────┐  ┌──────────────┐  ┌────────────────────┐
+│  Flutter UI     │  │     CLI      │  │  3rd-party tools   │
+│  (all platforms)│  │              │  │                    │
+└────────┬────────┘  └──────┬───────┘  └─────────┬──────────┘
+         └──────────────────┼────────────────────┘
+                            │ REST + SSE (loopback by default)
+┌───────────────────────────▼────────────────────────────────┐
+│                    Control plane (axum)                    │
+├────────────────────────────────────────────────────────────┤
+│  Domain core — sessions, discovery, channels, settings     │
+├──────────────┬──────────────┬───────────────┬──────────────┤
+│ BitTorrent   │ IPv8 overlay │ Tunnel comm.  │ SQLite store │
+│ (librqbit)   │ (port)       │ (onion rout.) │              │
+├──────────────┴──────────────┴───────────────┴──────────────┤
+│  Network policy — anti-SSRF · exit policy · kill switch    │
+└────────────────────────────────────────────────────────────┘
 ```
 
-## Licence
+- **BitTorrent engine** — built on [librqbit](https://github.com/ikatson/rqbit) (Apache-2.0):
+  bencode, peer-wire, mainline DHT (BEP 5), uTP, trackers.
+- **Anonymity layer** — a Rust port of `pyipv8` + `TunnelCommunity`: overlay discovery,
+  onion circuits, hidden services, verified against live Tribler nodes.
+- **Control plane** — REST + SSE API on loopback by default; the UI, CLI and any
+  third-party tool all go through the same door.
+- **UI** — Flutter, one codebase for Windows, Linux, macOS, Android, iOS and Web.
+  The web build is served **same-origin by the daemon itself**
+  (`http://127.0.0.1:<port>/`, ADR-0012) — same UI in your browser, no CORS,
+  `/api/*` still behind the API key.
 
-GPL-3.0-or-later — voir [`LICENSE`](LICENSE). Ce projet porte
-l'architecture et le comportement du logiciel Tribler (GPL-3.0) ; voir
-[ADR-0003](docs/architecture/decisions/0003-licence-gpl3.md).
+## Getting started
+
+> **Windows x64 alpha zip** is on the
+> [Releases](https://github.com/laurentgeynet-ux/OnionBit/releases) page
+> (`OnionBit-0.6.0-alpha-windows-x64.zip`): unzip, run `onionbit_ui.exe` —
+> it starts the daemon automatically. Prefer a browser? The daemon serves the
+> same UI at `http://127.0.0.1:8085/` (API key in `state\configuration.json`).
+> Other platforms: build from source
+> (see [docs/BUILDING.md](docs/BUILDING.md)).
+
+**Prerequisites:** Rust stable, Flutter stable (UI only).
+
+```bash
+# Daemon (control plane + engine)
+cargo build --release -p onionbit-daemon
+./onionbit-daemon
+
+# CLI
+cargo run -p onionbit-cli -- downloads list
+
+# Flutter UI
+cd app && flutter run -d windows   # or linux / chrome / android
+```
+
+The daemon exposes `http://127.0.0.1:8085` (loopback only by default) — the same
+endpoint the UI and CLI consume. Full build & packaging notes:
+[docs/BUILDING.md](docs/BUILDING.md).
+
+## Security model
+
+Anonymity tooling fails quietly. OnionBit treats leak prevention as a hard invariant:
+
+- **No clearnet fallback** — anonymous downloads never silently degrade to direct connections
+- **Kill switch** — traffic halts when circuits collapse
+- **Anti-SSRF & loopback isolation** — the API cannot be coerced into reaching internal services
+- **Exit policy enforcement** — exit nodes honor a strict policy
+- **Sandboxed trackers/DHT** — in anonymous mode, tracker and DHT traffic rides inside the tunnel
+
+See [SECURITY.md](SECURITY.md) for reporting and the threat model.
+
+## Roadmap
+
+| Milestone | Status |
+| :--- | :--- |
+| BitTorrent engine (librqbit integration) | ✅ |
+| REST + SSE control plane, CLI | ✅ |
+| IPv8 overlay port (discovery, communities, DHT) | ✅ |
+| Onion circuits + hidden seeding | ✅ |
+| Live interop with Tribler 8.x nodes | ✅ |
+| Flutter UI (desktop first) | ✅ |
+| Web UI served by the daemon (same-origin) | ✅ |
+| In-app update check (GitHub releases probe) | ✅ |
+| Latest tagged release | ✅ [`v0.6.0-alpha`](https://github.com/laurentgeynet-ux/OnionBit/releases/tag/v0.6.0-alpha) |
+| Mobile execution model (Android/iOS) | 📋 |
+| Linux / macOS packages | 📋 |
+
+## Contributing
+
+Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). Big-ticket items:
+IPv8 protocol conformance, circuit crypto, Flutter UI, interop testing.
+
+## Acknowledgements
+
+- **[Tribler](https://github.com/Tribler/tribler)** — the original anonymous BitTorrent
+  client (Delft University of Technology). OnionBit ports its architecture and
+  protocols; no Python source is copied verbatim.
+- **[librqbit / rqbit](https://github.com/ikatson/rqbit)** — the excellent Rust
+  BitTorrent engine underneath.
+- **[pyipv8](https://github.com/Tribler/py-ipv8)** — reference implementation of the
+  IPv8 overlay protocol.
+
+## License
+
+Copyright (C) 2026 Laurent Geynet ([@Loulach](https://github.com/Loulach))
+
+[GPL-3.0-or-later](LICENSE) — inherited from Tribler. OnionBit is a derivative work
+of Tribler's GPL-3.0 codebase at the architecture/behavior level.
+
+---
+
+<div align="center">
+<b>OnionBit</b> — peel the layers, not your privacy. 🧅
+</div>
