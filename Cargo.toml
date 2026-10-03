@@ -65,7 +65,7 @@ url = "2"
 bytes = "1"
 futures-util = "0.3"
 reqwest = { version = "0.13", features = ["json"] }
-tokio-tungstenite = "0.24"
+tokio-tungstenite = "0.29"
 tempfile = "3"
 proptest = "1"
 lz4_flex = "0.11"
