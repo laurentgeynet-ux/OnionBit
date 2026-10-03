@@ -3,6 +3,33 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## P0-17c — fail-closed observé par l'OS, 4 sous-runs verts (2026-10-03)
+
+Extension de `sec_leak_capture.ps1` : injection de panne contrôlée en
+plein transfert, fenêtrage `[t_failure, t_fin_capture]` dans
+`analyze_leak_capture.py`, manifeste enrichi. Chaque sous-run = capture
+neuve + manifeste séparé ; oracle strict `INTERDIT(fenêtre)=0`.
+
+- **`kill`** (17c-4) : taskkill du banc à 262 144 o vérifiés ; fenêtre
+  post-mortem 25 s sans paquet fantôme ni processus orphelin.
+- **`block`** (17c-1) : règles pare-feu entrantes+sortantes sur les
+  premiers sauts réels à 327 543 o — mort de circuit, proxy vivant ;
+  tout fallback direct aurait été VISIBLE ; reprise observée jusqu'à
+  982 903 o après levée de la règle.
+- **`wan`** (17c-3) : `Disable-NetAdapter` 45 s à 589 687 o ; reprise
+  propre du transfert jusqu'à 4 915 063 o après retour réseau.
+- **`kill-bootstrap`** (17c-2) : Tribler.exe tué à 851 831 o ; le
+  download a **complété** 1 638 263 o sur la route établie — la mort
+  du bootstrap n'affecte pas les tunnels en cours. (Le worker proxy
+  étant in-process, c'est le pendant OS injectable.)
+- **Correctif analyseur** : exemption par signature IPv8
+  (`00 02` + community-id) pour le trafic structurel du nœud vers ses
+  pairs candidats — le TAP ne couvre que les envois de lanes. Un faux
+  positif de 2 050 paquets (tous `0002a359…`/discovery) reclassé ; une
+  vraie fuite uTP/BT/DHT en clair resterait `INTERDIT`.
+- Reste : 17c-5 (réinstanciation de lane active) non injectable sans
+  hook daemon — consigné dans les trous de couverture.
+
 ## Banc de fuite niveau OS (P0-17b) — capture pktmon (2026-10-03)
 
 Nouveaux `scripts/sec_leak_capture.ps1` + `scripts/analyze_leak_capture.py`

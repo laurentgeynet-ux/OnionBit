@@ -71,7 +71,7 @@ diffusion et tout nouveau développement (ADR-0011 incluse).
 | P0-14 | Public : bootstrap + download 2 hops + guards | daemon de banc réseau réel (cf. §5 D-94..97) | public | Octets vérifiés > 0 ; guard set non vide ; pinning sticky |
 | P0-15 | Mesh fingerprinting — non-régression PING/PONG | `scripts/fingerprint_mesh.ps1 -WithAnonDownload -DurationMin 15` | loopback/mesh | < 5 cellules contrôle/s hors payload ; aucune boucle ping/pong ; comparaison aux CSV de référence `docs/security/fingerprinting.md` |
 | P0-16 | Corpus fuzz régression | `scripts/fuzz_campaign.ps1` + `onionbit-tunnel/tests/fuzz_regression.rs` | loopback | 0 crash ; corpus invariant |
-| P0-17 | Fuites externes : DNS, kill switch OS, anti-SSRF | `sec_anti_ssrf_live.ps1` (P0-17a) + capture réseau (P0-17b, cf. §6.1 SE-3/SE-4) | loopback / public | Refus fermés avec politique stricte vérifiée ; aucun paquet/DNS hors politique |
+| P0-17 | Fuites externes : DNS, kill switch OS, anti-SSRF | `sec_anti_ssrf_live.ps1` (P0-17a) + `sec_leak_capture.ps1` `-Scenario normal` (P0-17b) / `-Scenario kill\|block\|wan\|kill-bootstrap` (P0-17c, cf. §6.1 SE-4) | loopback / public | Refus fermés avec politique stricte vérifiée ; aucun paquet/DNS hors politique ; **INTERDIT=0 dans la fenêtre fail-closed** |
 
 ## 2. Niveaux de priorité
 
@@ -313,7 +313,7 @@ défaut de la fonction (pas la release existante). Harness :
 | SE-1 | `fingerprint_mesh.ps1`/`fingerprint_stats.ps1` : idle 20 min, e2e actif, mesh contrôle, lane anonyme | Cadences ≤ références `fingerprinting.md` ; cf. P0-15 | P0 |
 | SE-2 | `fuzz_campaign.ps1` + `fuzz_regression.rs` | 0 crash, corpus invariant, `fuzz_journal` mis à jour | P0 |
 | SE-3 | `sec_leak_capture.ps1` + `analyze_leak_capture.py` : capture pktmon complète pendant download anonyme réel, attribution par port local du banc (TAP = vérité fil) | 0 paquet INTERDIT depuis les ports du banc ; qnames DNS rapportés et revus | P0 |
-| SE-4 | Kill switch OS réel : rejouer `sec_leak_capture.ps1` pendant destruction de circuit proxy vivant, proxy tué, coupure/retour WAN | 0 paquet hors tunnel en fenêtre fail-closed | P0 |
+| SE-4 | Kill switch OS réel (P0-17c) : `sec_leak_capture.ps1 -Scenario {kill,block,wan,kill-bootstrap}` — kill du banc en plein transfert, pare-feu sur premiers sauts réels (mort de circuit, proxy vivant — un fallback direct resterait VISIBLE), Disable/Enable-NetAdapter, mort du bootstrap Tribler | INTERDIT=0 entre `t_failure` et `t_fin_capture` ; manifeste : `t_failure`, dernier octets, reprise observée | P0 |
 | SE-5 | `sec_anti_ssrf_live.ps1` : auth 401 + anti-SSRF live (link-local, `::1`, `localhost`, privé, `0.0.0.0`) sur daemon strict | Précondition politique stricte vérifiée par sonde témoin ; refus fermé avec raison exacte | P0 |
 | SE-6 | Auth API : chaque endpoint sans clé, fixation cookie | 401 systématique | P1 |
 | SE-7 | Messagerie e2e (Phase 8) : replay inter-circuits, usurpation de clé, fingerprint des annonces de présence — renvoie aux oracles MS-3/MS-5/MS-8/MS-9 | Les quatre oracles verts | P0-msg |
@@ -369,6 +369,7 @@ défaut de la fonction (pas la release existante). Harness :
 | P0-16 (`fuzz_campaign.ps1 -Smoke`) | 2026-10-03 | `fa24b6b` | **vert** — 6/6 cibles, 0 crash, ~152 M execs (tunnel_cell 36,4 M ; tunnel_payloads 9,4 M) | `fuzz/artifacts/last-run-*.log`, `docs/security/fuzz_journal.csv` | non ; smoke ≠ campagne 5 h |
 | P0-17a (`sec_anti_ssrf_live.ps1` : auth + anti-SSRF live) | 2026-10-03 | `fa24b6b`+script | **vert** — EXIT=0, 11/11 verdicts : précondition stricte vérifiée par sonde témoin, 401 sans/mauvaise clé, 200 avec clé, refus fermés avec raison exacte (link-local, loopback, privé/CGNAT, unspecified) ; précondition prouvée discriminante sur daemon `--offline` | `target/ssrf-run.log`, `target/sec-ssrf-*/` | non |
 | P0-17b (`sec_leak_capture.ps1` + `analyze_leak_capture.py`) | 2026-10-03 | `5f23a3b`+scripts | **vert** — download anonyme 2 sauts réel (1 113 975 o vérifiés, route `5a6f405d…→d84eb3cd…`) sous capture pktmon complète : **INTERDIT = 0** sur les ports du banc (attribution par port local, 181 770 paquets), 31 202 paquets overlay, fenêtre post-arrêt 20 s propre ; DNS : uniquement infra DHT (`dht.*`, `router.*`) + bruit OS — aucun hostname tracker/magnet. Reste : rejouer sous destruction circuit / proxy tué / coupure WAN (SE-4) | `target/leak-capture-20261003-093224/` (pcapng, manifest, rapport JSON) | non ; attribution port local (pktmon ne porte pas de PID) |
+| P0-17c — fail-closed OS, 4 sous-runs | 2026-10-03 | `a989b96`+scripts | **vert ×4** — `kill` : taskkill à 262 144 o vérifiés, 0 interdit fenêtre post-mortem 25 s (`target/leak-capture-20261003-095632/`) ; `block` : pare-feu premiers sauts `[127.0.0.1, 192.42.116.243]` à 327 543 o, 0 interdit, **reprise** jusqu'à 982 903 o (`…-095810/`) ; `wan` : `Ethernet` coupé 45 s à 589 687 o, 0 interdit, reprise → 4 915 063 o (`…-100702/`) ; `kill-bootstrap` : Tribler.exe tué à 851 831 o, download **complété** à 1 638 263 o, 0 interdit (`…-101015/`). Correctif analyseur en route : signature IPv8 (`00 02`+cid) = overlay structurel admis — le TAP ne couvre que les lanes, pas les paires candidates (run `…-093921/` : 2 050 faux positifs reclassés, DHT-tunnel en échec environnemental ce run). 17c-5 (réinstanciation de lane) : non injectable sans hook daemon — reste en trou §8 | pcapng+manifeste par run | non ; proxy/worker in-process (17c-2 ↦ kill-bootstrap), download parfois stalle côté DHT-tunnel |
 
 ## 8. Trous de couverture assumés / hors scope
 
@@ -380,3 +381,11 @@ défaut de la fonction (pas la release existante). Harness :
   7b, hors V1.
 - **FFI mobile embarqué** : abandonné (étape 19 remplacée), surface
   figée en référence.
+- **P0-17c-5** (réinstanciation d'une lane anonyme sous capture OS) :
+  non injectable depuis le banc `interop_public_download` — requiert un
+  hook daemon/API de reset de lane ; les 4 autres pannes (circuit,
+  worker/bootstrap, WAN, processus) sont couvertes.
+- **P0-17c-2 au sens strict** (tuer le worker SOCKS seul) : le proxy
+  tunnel est in-process dans le banc — pas de PID séparable ;
+  approximation validée = mort du bootstrap Tribler + mort du
+  processus complet (`kill`).

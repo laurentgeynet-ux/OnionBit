@@ -174,6 +174,10 @@ def main():
     ap.add_argument("--local-ip", action="append", default=[])
     ap.add_argument("--dns-resolvers", help="IPs des resolveurs systeme (admis pour bootstrap)")
     ap.add_argument("--dht-routers", help="IPs:port des routeurs DHT mainline (interdits en direct)")
+    ap.add_argument("--window-start", type=float, default=None,
+                    help="epoch s : debut de la fenetre fail-closed")
+    ap.add_argument("--window-end", type=float, default=None,
+                    help="epoch s : fin de la fenetre fail-closed")
     ap.add_argument("--report", help="sortie JSON")
     args = ap.parse_args()
 
@@ -207,12 +211,16 @@ def main():
     local_ips = set(args.local_ip)
 
     stats = {"LOCAL": 0, "OVERLAY": 0, "DNS": 0, "AUTRE": 0, "INTERDIT": 0}
+    window_interdit = 0
     forbidden = []   # (proto, remote, detail)
+    forbidden_in_window = []
     dns_queries = []
     endpoints = {}   # remote -> (classif, count)
+    w0 = args.window_start
+    w1 = args.window_end
 
     n_packets = 0
-    for lt, _ts, frame in iter_packets(args.pcapng):
+    for lt, ts, frame in iter_packets(args.pcapng):
         n_packets += 1
         p = parse_frame(lt, frame)
         if not p:
@@ -237,8 +245,19 @@ def main():
         lport = sp if dst_pub else dp
         benched = lport in bench_ports
 
+        # Signature IPv8 : version 0x0002 + community-id. Tout paquet
+        # issu d'un port du banc qui porte cette enveloppe est du
+        # trafic overlay par construction (discovery, circuits,
+        # cellules) — le TAP ne liste que les envois des lanes, pas
+        # le trafic structurel du noeud vers ses pairs candidats.
+        # Une vraie fuite (uTP/BT/DHT en clair) ne peut pas porter
+        # cette signature.
+        ipv8 = proto == 17 and len(l4) >= 22 and l4[0] == 0 and l4[1] == 2
+
         cls = None
         if rep in allowed_eps or str(remote) in allowed_ips:
+            cls = "OVERLAY"
+        elif benched and ipv8:
             cls = "OVERLAY"
         elif rport == 53 or str(remote) in resolvers:
             cls = "DNS"
@@ -257,12 +276,20 @@ def main():
             # mais non attribuable -- voir AUTRE dans le resume.
             cls = "AUTRE"
         stats[cls] += 1
+        if cls == "INTERDIT" and w0 is not None and w1 is not None \
+                and w0 <= ts <= w1:
+            window_interdit += 1
+            forbidden_in_window.append((prot, rep))
         c, n = endpoints.get(rep, (cls, 0))
         endpoints[rep] = (cls, n + 1)
 
     print(f"paquets={n_packets}")
     for k, v in stats.items():
         print(f"  {k:9s} : {v}")
+    if w0 is not None:
+        print(f"  INTERDIT dans la fenetre fail-closed [{w0:.0f}..{w1:.0f}] : {window_interdit}")
+        for p, r in dict.fromkeys(forbidden_in_window):
+            print(f"    {p} -> {r}")
     print()
     print("endpoints WAN observes :")
     for ep, (cls, n) in sorted(endpoints.items(), key=lambda kv: (kv[1][0], kv[0])):
@@ -283,7 +310,12 @@ def main():
             print(f"  {prot} -> {rep}  ({why})")
     if args.report:
         json.dump(
-            {"stats": stats, "endpoints": {e: [c, n] for e, (c, n) in endpoints.items()},
+            {"stats": stats, "window": {"start": w0, "end": w1,
+                                        "interdit": window_interdit,
+                                        "forbidden": [
+                                            {"proto": p, "remote": r}
+                                            for p, r in dict.fromkeys(forbidden_in_window)]},
+             "endpoints": {e: [c, n] for e, (c, n) in endpoints.items()},
              "dns_queries": sorted(set(dns_queries)),
              "forbidden": [{"proto": p, "remote": r, "why": w}
                             for p, r, w in dict.fromkeys(forbidden)]},

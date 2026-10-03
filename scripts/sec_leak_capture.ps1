@@ -37,6 +37,24 @@ param(
     [int]$MaxCircuits = 4,
     [int]$PostExitSec = 30,
     [int]$TriblerWaitSec = 180,
+    # P0-17c : injection de panne en plein transfert.
+    #   normal         : chemin heureux + fenetre post-arret (P0-17b)
+    #   kill           : tue le processus de banc a -FailAtBytes recus
+    #                    (17c-4 : ports silencieux, 0 fantome)
+    #   block          : regle pare-feu sortante+entrante sur les
+    #                    premiers sauts reels observes (17c-1 : mort de
+    #                    circuit, proxy vivant ; un fallback direct
+    #                    resterait VISIBLE car seuls les endpoints
+    #                    overlay sont bloques)
+    #   wan            : Disable-NetAdapter sur l'interface physique
+    #                    active puis retablissement (17c-3)
+    #   kill-bootstrap : mort de Tribler.exe local en plein transfert
+    #                    (17c-2 : le worker proxy est in-process, la
+    #                    mort d'infrastructure en est le pendant OS)
+    [ValidateSet('normal','kill','block','wan','kill-bootstrap')]
+    [string]$Scenario = 'normal',
+    [long]$FailAtBytes = 262144,
+    [int]$FailWindowSec = 45,
     [string]$OutDir = "",
     [switch]$NoElevate,
     [switch]$Inner
@@ -75,6 +93,9 @@ if (-not $isAdmin) {
         '-DownloadTimeoutSec', "$DownloadTimeoutSec",
         '-MaxCircuits', "$MaxCircuits",
         '-PostExitSec', "$PostExitSec",
+        '-Scenario', "$Scenario",
+        '-FailAtBytes', "$FailAtBytes",
+        '-FailWindowSec', "$FailWindowSec",
         '-TriblerWaitSec', "$TriblerWaitSec",
         '-OutDir', "`"$OutDir`""
     )
@@ -169,8 +190,11 @@ try {
     Log "capture pktmon demarree -> $etl"
 
     # ---------- Banc : download anonyme reel ----------
+    # stderr en fichier vivant : permet d'injecter la panne au bon
+    # moment ET conserve le diagnostic meme en cas de kill.
     $rsLog = Join-Path $OutDir 'public_download.log'
     $rsErr = Join-Path $OutDir 'public_download_err.log'
+    Remove-Item -Force -ErrorAction SilentlyContinue $rsLog, $rsErr
     $rsArgs = @(
         '--bootstrap', "127.0.0.1:$triblerPort",
         '--hops', "$Hops", '--walk-seconds', "$WalkSeconds",
@@ -178,34 +202,84 @@ try {
         '--min-bytes', "$MinBytes", '--max-circuits', "$MaxCircuits",
         '--magnet', $Magnet, '--tap'
     )
-    Log "download anonyme $Hops saut(s) (min $MinBytes octets verifies)"
-    $psi = [System.Diagnostics.ProcessStartInfo]::new()
-    $psi.FileName = $exe
-    $psi.Arguments = ($rsArgs | ForEach-Object {
-        if ($_ -match '[\s"]') { '"' + ($_ -replace '"', '\"') + '"' } else { $_ }
-    }) -join ' '
-    $psi.RedirectStandardOutput = $true
-    $psi.RedirectStandardError = $true
-    $psi.UseShellExecute = $false
-    $rsProc = [System.Diagnostics.Process]::Start($psi)
+    Log "download anonyme $Hops saut(s) scenario=$Scenario (min $MinBytes octets verifies)"
+    $rsProc = Start-Process -FilePath $exe -PassThru -NoNewWindow `
+        -ArgumentList ($rsArgs -join ' ') `
+        -RedirectStandardOutput $rsLog -RedirectStandardError $rsErr
     $pidBench = $rsProc.Id
-    $stdoutTask = $rsProc.StandardOutput.ReadToEndAsync()
-    $stderrTask = $rsProc.StandardError.ReadToEndAsync()
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
     $totalSec = ($WalkSeconds + $MaxCircuits * ($Hops + 1) * 30 + $DownloadTimeoutSec)
     $timedOut = $false
-    while (-not $rsProc.HasExited) {
+    $tFailure = $null
+    $injected = $false
+    $fwRule = "OnionBitLeakCapture-$pidBench"
+    $blockedIps = @()
+
+    while ($true) {
+        # Injection de panne quand le transfert a demarre.
+        if (-not $injected -and $Scenario -ne 'normal' -and -not $rsProc.HasExited `
+                -and (Test-Path $rsErr)) {
+            $tail = [string](Get-Content $rsErr -Raw -ErrorAction SilentlyContinue)
+            $mLast = [regex]::Matches($tail, 'progression : (\d+)/')
+            $got = if ($mLast.Count) { [int64]$mLast[$mLast.Count-1].Groups[1].Value } else { 0 }
+            if ($got -ge $FailAtBytes) {
+                $tFailure = Get-Date
+                if ($Scenario -eq 'kill') {
+                    Log "INJECTION kill : taskkill pid=$pidBench a ${got} octets verifies"
+                    Stop-Process -Id $pidBench -Force -ErrorAction SilentlyContinue
+                } elseif ($Scenario -eq 'wan') {
+                    $nic = Get-NetAdapter -Physical -ErrorAction SilentlyContinue |
+                        Where-Object Status -eq 'Up' | Select-Object -First 1
+                    if (-not $nic) { throw "aucune interface physique active pour -Scenario wan" }
+                    $nicName = $nic.Name
+                    Disable-NetAdapter -Name $nicName -Confirm:$false
+                    Log "INJECTION wan : interface '$nicName' coupee a $got octets verifies"
+                } elseif ($Scenario -eq 'kill-bootstrap') {
+                    if ($startedTribler -and $triblerProc -and -not $triblerProc.HasExited) {
+                        Stop-Process -Id $triblerProc.Id -Force -ErrorAction SilentlyContinue
+                    }
+                    Log "INJECTION kill-bootstrap : Tribler.exe tue a $got octets verifies"
+                } elseif ($Scenario -eq 'block') {
+                    $hops1 = [regex]::Matches($tail, 'premier saut Ipv4\((\d+\.\d+\.\d+\.\d+):\d+\)') |
+                        ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique
+                    foreach ($ip in $hops1) {
+                        & netsh advfirewall firewall add rule "name=$fwRule" dir=out action=block protocol=UDP "remoteip=$ip" enable=yes | Out-Null
+                        & netsh advfirewall firewall add rule "name=$fwRule" dir=in action=block protocol=UDP "remoteip=$ip" enable=yes | Out-Null
+                    }
+                    $blockedIps = $hops1
+                    Log ("INJECTION block : pare-feu bloque les premiers sauts [{0}] a {1} octets verifies" -f ($hops1 -join ', '), $got)
+                }
+                $injected = $true
+            }
+        }
+        if ($rsProc.HasExited) { break }
         if ($sw.Elapsed.TotalSeconds -gt $totalSec) {
             $timedOut = $true
             Stop-Process -Id $rsProc.Id -Force -ErrorAction SilentlyContinue
             break
         }
-        Start-Sleep -Seconds 5
+        # Scenarios recuperables : apres la fenetre morte, lever la
+        # panne pour observer la reprise puis laisser le banc conclure.
+        if ($Scenario -eq 'block' -and $tFailure -and `
+                ((Get-Date) - $tFailure).TotalSeconds -ge $FailWindowSec -and $blockedIps.Count) {
+            & netsh advfirewall firewall delete rule "name=$fwRule" | Out-Null
+            Log "regle pare-feu levee apres ${FailWindowSec}s -- observation reprise"
+            $blockedIps = @()
+        }
+        if ($Scenario -eq 'wan' -and $tFailure -and $nicName -and `
+                ((Get-Date) - $tFailure).TotalSeconds -ge $FailWindowSec) {
+            Enable-NetAdapter -Name $nicName -Confirm:$false
+            Log "interface '$nicName' retablie apres ${FailWindowSec}s -- observation reprise"
+            $nicName = $null
+        }
+        Start-Sleep -Seconds 1
     }
     $rsProc.WaitForExit()
-    [System.IO.File]::WriteAllText($rsLog, $stdoutTask.Result)
-    [System.IO.File]::WriteAllText($rsErr, $stderrTask.Result)
     Log "processus de banc termine (code $($rsProc.ExitCode), timeout=$timedOut)"
+    if ($blockedIps.Count) {
+        & netsh advfirewall firewall delete rule "name=$fwRule" | Out-Null
+        $blockedIps = @()
+    }
 
     # ---------- Fenetre post-arret : trafic fantome ----------
     if ($PostExitSec -gt 0) {
@@ -245,10 +319,19 @@ try {
 
     # ---------- Verdicts ----------
     $verified = [regex]::Match($stderr, 'octets_verifies=(\d+)')
-    $okBytes = $verified.Success -and [int64]$verified.Groups[1].Value -ge $MinBytes
-    Verdict (-not $timedOut -and $rsProc.ExitCode -eq 0) 'download anonyme termine' "exit=$($rsProc.ExitCode)"
-    $vBytes = if ($verified.Success) { $verified.Groups[1].Value } else { 'absent' }
-    Verdict $okBytes 'octets verifies >= MinBytes' $vBytes
+    if ($Scenario -eq 'normal') {
+        $okBytes = $verified.Success -and [int64]$verified.Groups[1].Value -ge $MinBytes
+        Verdict (-not $timedOut -and $rsProc.ExitCode -eq 0) 'download anonyme termine' "exit=$($rsProc.ExitCode)"
+        $vBytes = if ($verified.Success) { $verified.Groups[1].Value } else { 'absent' }
+        Verdict $okBytes 'octets verifies >= MinBytes' $vBytes
+    } else {
+        # Sous panne, le banc n'est pas cense finir : l'oracle est que
+        # le transfert etait REELLEMENT en cours a l'injection.
+        $mLast = [regex]::Matches($stderr, 'progression : (\d+)/')
+        $got = if ($mLast.Count) { [int64]$mLast[$mLast.Count-1].Groups[1].Value } else { 0 }
+        Verdict ($got -ge $FailAtBytes) "transfert actif a l'injection (>= $FailAtBytes)" "dernier=$got"
+        Verdict $injected "panne $Scenario injectee" $(if ($tFailure) { "t=$($tFailure.ToString('HH:mm:ss.fff'))" } else { 'jamais' })
+    }
     ($stderr -split "`n" | Select-String 'route observee' | Select-Object -Last 1) |
         ForEach-Object { Log $_.Line }
 
@@ -257,12 +340,22 @@ try {
     $analyzer = Join-Path $root 'scripts\analyze_leak_capture.py'
     $report = Join-Path $OutDir 'leak_report.json'
     $anArgs = @($analyzer, $pcap, '--allowed', $allowedFile, '--bench-ports', $benchPortsFile, '--report', $report)
+    if ($tFailure) {
+        # Fenetre fail-closed : de l'injection a la fin de capture.
+        $w0 = [double]([DateTimeOffset]$tFailure).ToUnixTimeMilliseconds() / 1000
+        $w1 = [double]([DateTimeOffset]$capEnd).ToUnixTimeMilliseconds() / 1000
+        $anArgs += @('--window-start', "$w0", '--window-end', "$w1")
+    }
     if ($resolvers.Count) { $anArgs += @('--dns-resolvers', ($resolvers -join ',')) }
     if ($dhtForbidden.Count) { $anArgs += @('--dht-routers', ($dhtForbidden -join ',')) }
     $anOut = & $py @anArgs 2>&1
     $anOut | Out-File (Join-Path $OutDir 'leak_analysis.txt')
     $anOut | Select-Object -Last 30 | ForEach-Object { Log $_ }
     Verdict ($LASTEXITCODE -eq 0) 'analyse de fuite (0 paquet interdit)'
+    if ($tFailure -and (Test-Path $report)) {
+        $rep = Get-Content $report -Raw | ConvertFrom-Json
+        Verdict ($rep.window.interdit -eq 0) 'INTERDIT dans la fenetre fail-closed = 0' "n=$($rep.window.interdit)"
+    }
 
     # ---------- Manifeste ----------
     @{
@@ -271,6 +364,9 @@ try {
         commit     = (git -C $root rev-parse --short HEAD)
         hops       = $Hops; min_bytes = $MinBytes; magnet = $Magnet
         pid_bench  = $pidBench
+        scenario   = $Scenario
+        t_failure  = if ($tFailure) { $tFailure.ToUniversalTime().ToString('o') } else { $null }
+        fail_at_bytes = $FailAtBytes; fail_window_sec = $FailWindowSec
         tribler    = @{ exe = $triblerExe; port_ipv8 = $triblerPort; started_by_bench = $startedTribler }
         capture    = @{ etl = $etl; pcapng = $pcap; start = $capStart.ToString('o'); end = $capEnd.ToString('o'); post_exit_sec = $PostExitSec }
         resolvers  = $resolvers
@@ -283,7 +379,18 @@ try {
     Log "SEC LEAK CAPTURE ECHEC ($($script:fails) verdict(s))"
     exit 1
 }
+catch {
+    Log "ERREUR: $_"
+    Log ($_.ScriptStackTrace)
+    exit 1
+}
 finally {
+    if ($nicName) {
+        Enable-NetAdapter -Name $nicName -Confirm:$false -ErrorAction SilentlyContinue
+    }
+    if ($blockedIps -and $blockedIps.Count) {
+        & netsh advfirewall firewall delete rule "name=$fwRule" 2>&1 | Out-Null
+    }
     if ($captureStarted) { & pktmon stop 2>&1 | Out-Null }
     if ($rsProc -and -not $rsProc.HasExited) { Stop-Process -Id $rsProc.Id -Force -ErrorAction SilentlyContinue }
     if ($startedTribler -and $triblerProc) { Stop-Process -Id $triblerProc.Id -Force -ErrorAction SilentlyContinue }
