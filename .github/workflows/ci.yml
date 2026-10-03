@@ -57,6 +57,7 @@ jobs:
       - name: fmt
         run: cargo fmt --all -- --check
       - name: tests workspace
+        timeout-minutes: 45
         run: cargo test --workspace --all-features
 
   flutter:

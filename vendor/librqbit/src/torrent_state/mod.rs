@@ -392,6 +392,13 @@ impl ManagedTorrent {
 
                                     g.state = ManagedTorrentState::Paused(paused);
                                     t.state_change_notify.notify_waiters();
+                                    // Une pause demandee pendant le check doit
+                                    // survivre a son terme : sinon le torrent
+                                    // repart Live avec `paused=true` pose —
+                                    // `unpause` echouerait "already live".
+                                    if init.is_pause_requested() {
+                                        return Ok(());
+                                    }
                                     _start(&t, peer_rx, start_paused, session, Some(g), token)
                                 }
                                 Err(err) => {

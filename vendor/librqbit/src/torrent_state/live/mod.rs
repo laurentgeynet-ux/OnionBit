@@ -776,6 +776,13 @@ impl TorrentStateLive {
         // It should be impossible to make a fatal error after pausing.
         g.fatal_errors_tx.take();
 
+        // Flush synchrone du fastresume : `Session::stop` ne fait que
+        // pauser les torrents — sans ecriture disque terminee ici, la
+        // progression depuis le dernier flush 16 MiB n'etait persistee
+        // que par le drop-flush asynchrone, que la restauration peut
+        // devancer (progression perdue au restart).
+        g.try_flush_bitv(self.shared.as_ref(), false);
+
         let piece_tracker = g
             .pieces
             .take()

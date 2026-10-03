@@ -3,6 +3,28 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Fastresume synchrone au stop + course pause/check (2026-10-03)
+
+- **Flush `.bitv` synchrone à `pause()`** (patch vendored librqbit) : le
+  bitfield n'était persisté que tous les 16 Mio
+  (`FLUSH_BITV_EVERY_BYTES`) puis par le drop-flush asynchrone — un
+  torrent de taille modeste arrêté proprement pouvait voir sa
+  restauration devancer l'écriture finale et repartir à zéro
+  (`live_flotte_10_restart`, pseudo-hang ubuntu en CI = épuisement des
+  timeouts). `pause()` (sur lequel `Session::stop` s'appuie) attend
+  désormais l'accusé d'écriture+fsync via un `SyncSender`, borné 5 s et
+  replié en asynchrone sur runtime mono-thread.
+- **Course pause pendant `Initializing`** (vendored) : une pause
+  demandée pendant le check initial était perdue si le check se
+  terminait ensuite — le torrent repartait `Live` avec le drapeau
+  `paused` posé, et `resume` échouait en « torrent is already live »
+  (échec macOS `live_pause_resume_tunnel`). La fin de check honore
+  `is_pause_requested()` ; `Engine::resume` tolère « already live »
+  (reprise idempotente, l'état visé est déjà atteint).
+- **Banc** : marqueurs de phase `tracing` et bornes explicites sur
+  `stop`/`wait_restored`/adds dans `live_flotte_10_restart` ; step CI
+  `tests workspace` borné à 45 min — un hang devient un échec localisé.
+
 ## Chaos/restart de flotte + endurance nightly (2026-10-03)
 
 - **`live_flotte_restart_3_cycles`** : 12 torrents mixtes

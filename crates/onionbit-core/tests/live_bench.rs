@@ -1002,31 +1002,39 @@ async fn live_flotte_10_restart() {
 
     // Ajout des 10 downloads.
     for t in &fleet.torrents {
+        // Borne explicite : un add bloque (resolution magnet, moteur
+        // lane) devient un panic localise au lieu d'un hang muet.
         if t.magnet {
             let uri = format!("magnet:?xt=urn:btih:{}&dn={}", t.ih, t.name);
-            session
-                .add_download_anon_with_peers(
+            tokio::time::timeout(
+                TRANSFER_WAIT,
+                session.add_download_anon_with_peers(
                     &uri,
                     false,
                     t.hops,
                     t.hops > 0,
                     None,
                     vec![fleet.seed_addr],
-                )
-                .await
-                .unwrap_or_else(|e| panic!("magnet {} hops={}: {e}", t.name, t.hops));
+                ),
+            )
+            .await
+            .unwrap_or_else(|_| panic!("add magnet {} hops={} en timeout", t.name, t.hops))
+            .unwrap_or_else(|e| panic!("magnet {} hops={}: {e}", t.name, t.hops));
         } else {
-            session
-                .add_torrent_bytes_anon_with_peers(
+            tokio::time::timeout(
+                TRANSFER_WAIT,
+                session.add_torrent_bytes_anon_with_peers(
                     t.bytes.clone(),
                     false,
                     t.hops,
                     t.hops > 0,
                     None,
                     vec![fleet.seed_addr],
-                )
-                .await
-                .unwrap_or_else(|e| panic!("add {} hops={}: {e}", t.name, t.hops));
+                ),
+            )
+            .await
+            .unwrap_or_else(|_| panic!("add {} hops={} en timeout", t.name, t.hops))
+            .unwrap_or_else(|e| panic!("add {} hops={}: {e}", t.name, t.hops));
         }
         assert_eq!(
             session.owner_engine_hops(&t.ih),
@@ -1063,15 +1071,26 @@ async fn live_flotte_10_restart() {
     eprintln!("pre-kill progression (octets): {before:?}");
 
     // ===== Arret du daemon (quitte l'app) =====
-    session.stop().await;
+    // Marqueurs via tracing (stderr direct) : visibles en direct dans
+    // le journal CI meme si le test ne se termine jamais — eprintln
+    // serait capture par le harness jusqu'au verdict.
+    tracing::info!("flotte: stop() session 1");
+    tokio::time::timeout(TRANSFER_WAIT, session.stop())
+        .await
+        .expect("arret session 1 en timeout");
+    tracing::info!("flotte: session 1 arretee, restart");
 
     // ===== Redemarrage sur le meme state_dir =====
     let (session, tunnel) = start_live_session(&fleet.state_dir).await;
+    tracing::info!("flotte: session 2 demarree");
     let stack = session.ipv8().unwrap();
     // Le pair session a une nouvelle adresse : les relais le
     // re-apprennent (meme cle persistee, nouvelle socket).
     wire_relays(&stack, &tunnel, &fleet.relays);
-    session.wait_restored().await;
+    tokio::time::timeout(TRANSFER_WAIT, session.wait_restored())
+        .await
+        .expect("restauration en timeout");
+    tracing::info!("flotte: restauration terminee");
 
     // Restauration : les 10 lignes, chacune sur sa lane persistee.
     let rows = session.anon_hops_map();

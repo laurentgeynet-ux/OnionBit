@@ -18,6 +18,11 @@ pub type BoxBitV = Box<dyn BitV>;
 
 struct DiskFlushRequest {
     snapshot: BitBox<u8, Msb0>,
+    /// Accuse de fin d'ecriture+fsync : le flush synchrone (`pause`,
+    /// arret session) attend que le snapshot soit reellement sur
+    /// disque — sinon le drop-flush asynchrone peut etre lu trop tot
+    /// par la restauration suivante (progression perdue).
+    ack: Option<std::sync::mpsc::SyncSender<()>>,
 }
 
 pub struct DiskBackedBitV {
@@ -31,6 +36,7 @@ impl Drop for DiskBackedBitV {
             .flush_tx
             .send(DiskFlushRequest {
                 snapshot: self.bv.clone(),
+                ack: None,
             })
             .is_err()
         {
@@ -70,7 +76,14 @@ impl DiskBackedBitV {
                     let Some(mut req) = rx.recv().await else {
                         break;
                     };
-                    while let Ok(r) = rx.try_recv() {
+                    let mut acks = Vec::new();
+                    if let Some(a) = req.ack.take() {
+                        acks.push(a);
+                    }
+                    while let Ok(mut r) = rx.try_recv() {
+                        if let Some(a) = r.ack.take() {
+                            acks.push(a);
+                        }
                         req = r;
                     }
 
@@ -92,6 +105,12 @@ impl DiskBackedBitV {
                         .await
                     {
                         tracing::error!(?filename, "error fsyncing bitv: {e:#}");
+                    }
+                    // Les snapshots fusionnes ci-dessus sont inclus
+                    // dans l'ecriture qui vient de se terminer : tous
+                    // les attenteurs sont liberes ensemble.
+                    for a in acks {
+                        let _ = a.send(());
                     }
                 }
 
@@ -138,11 +157,42 @@ impl BitV for DiskBackedBitV {
         self.bv.as_raw_slice()
     }
 
-    fn flush(&mut self, _flush_async: bool) -> anyhow::Result<()> {
-        let req = DiskFlushRequest {
-            snapshot: self.bv.clone(),
-        };
-        self.flush_tx.send(req).context("flusher task is dead")
+    fn flush(&mut self, flush_async: bool) -> anyhow::Result<()> {
+        if flush_async {
+            let req = DiskFlushRequest {
+                snapshot: self.bv.clone(),
+                ack: None,
+            };
+            return self.flush_tx.send(req).context("flusher task is dead");
+        }
+        // Flush synchrone : la requete passe par le meme canal (ordre
+        // preserve avec les ecritures en vol) puis on bloque sur
+        // l'accuse — appele depuis `pause`, bref et borne. Sur runtime
+        // mono-thread le flusher partagerait le fil bloque : on garde
+        // le chemin asynchrone (meme comportement qu'avant) plutot
+        // qu'un deadlock.
+        let multi = matches!(
+            tokio::runtime::Handle::try_current().map(|h| h.runtime_flavor()),
+            Ok(tokio::runtime::RuntimeFlavor::MultiThread)
+        );
+        if !multi {
+            let req = DiskFlushRequest {
+                snapshot: self.bv.clone(),
+                ack: None,
+            };
+            return self.flush_tx.send(req).context("flusher task is dead");
+        }
+        let (tx, rx) = std::sync::mpsc::sync_channel(0);
+        self.flush_tx
+            .send(DiskFlushRequest {
+                snapshot: self.bv.clone(),
+                ack: Some(tx),
+            })
+            .context("flusher task is dead")?;
+        // Borne de securite : un flusher sain repond en quelques ms ;
+        // au-dela on ne bloque pas la pause plus longtemps.
+        rx.recv_timeout(std::time::Duration::from_secs(5))
+            .context("flush bitv synchrone en timeout (5s)")
     }
 
     fn into_dyn(self) -> Box<dyn BitV> {

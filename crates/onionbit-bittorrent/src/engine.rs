@@ -382,10 +382,16 @@ impl BtEngine {
         let d = self
             .get(id_or_hash)
             .ok_or_else(|| BtError::NotFound(id_or_hash.to_string()))?;
-        self.session
-            .unpause(&d.inner)
-            .await
-            .map_err(|e| BtError::Engine(e.to_string()))
+        self.session.unpause(&d.inner).await.or_else(|e| {
+            // « already live » = une pause demandee pendant le check
+            // initial a ete perdue en course — l'etat est deja celui
+            // vise, la reprise reste idempotente.
+            if e.to_string().contains("already live") {
+                Ok(())
+            } else {
+                Err(BtError::Engine(e.to_string()))
+            }
+        })
     }
 
     /// Met en pause tous les telechargements (suspension mobile /
