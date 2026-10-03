@@ -611,6 +611,8 @@ impl CoreSession {
             trackers: crate::trackers::effective_trackers(row),
             upload_limit_bps: u64::try_from(row.upload_limit).ok().filter(|&v| v > 0),
             download_limit_bps: u64::try_from(row.download_limit).ok().filter(|&v| v > 0),
+            // Ephemere : pairs d'amorce d'ajout, non persistes.
+            initial_peers: Vec::new(),
         }
     }
 
@@ -1107,6 +1109,49 @@ impl CoreSession {
         safe_seeding: bool,
         destination: Option<std::path::PathBuf>,
     ) -> Result<Download> {
+        self.add_download_anon_inner(
+            uri,
+            paused,
+            anon_hops,
+            safe_seeding,
+            destination,
+            Vec::new(),
+        )
+        .await
+    }
+
+    /// `add_download_anon` avec `initial_peers` rqbit injectes a
+    /// l'ajout — utilise par les bancs live (seeder loopback annonce
+    /// comme pair d'amorce, sans DHT ni trackers).
+    pub async fn add_download_anon_with_peers(
+        &self,
+        uri: &str,
+        paused: bool,
+        anon_hops: u32,
+        safe_seeding: bool,
+        destination: Option<std::path::PathBuf>,
+        initial_peers: Vec<std::net::SocketAddr>,
+    ) -> Result<Download> {
+        self.add_download_anon_inner(
+            uri,
+            paused,
+            anon_hops,
+            safe_seeding,
+            destination,
+            initial_peers,
+        )
+        .await
+    }
+
+    async fn add_download_anon_inner(
+        &self,
+        uri: &str,
+        paused: bool,
+        anon_hops: u32,
+        safe_seeding: bool,
+        destination: Option<std::path::PathBuf>,
+        initial_peers: Vec<std::net::SocketAddr>,
+    ) -> Result<Download> {
         if anon_hops == 0 {
             self.check_uri_policy(uri).await?;
         }
@@ -1186,6 +1231,7 @@ impl CoreSession {
                     paused: paused_now,
                     output_folder: self.effective_output_dir(destination.clone()),
                     trackers: trackers.clone(),
+                    initial_peers: initial_peers.clone(),
                     ..Default::default()
                 };
                 let fut = engine.add_uri_opts(uri, &opts);
@@ -1213,6 +1259,7 @@ impl CoreSession {
                         paused,
                         output_folder: self.effective_output_dir(destination),
                         trackers: trackers.clone(),
+                        initial_peers: initial_peers.clone(),
                         ..Default::default()
                     },
                 )
@@ -1458,15 +1505,65 @@ impl CoreSession {
         safe_seeding: bool,
         destination: Option<std::path::PathBuf>,
     ) -> Result<Download> {
+        self.add_torrent_bytes_anon_inner(
+            bytes,
+            paused,
+            anon_hops,
+            safe_seeding,
+            destination,
+            Vec::new(),
+        )
+        .await
+    }
+
+    /// `add_torrent_bytes_anon` avec `initial_peers` rqbit — banc
+    /// live (amorcage deterministe du seeder loopback).
+    pub async fn add_torrent_bytes_anon_with_peers(
+        &self,
+        bytes: Vec<u8>,
+        paused: bool,
+        anon_hops: u32,
+        safe_seeding: bool,
+        destination: Option<std::path::PathBuf>,
+        initial_peers: Vec<std::net::SocketAddr>,
+    ) -> Result<Download> {
+        self.add_torrent_bytes_anon_inner(
+            bytes,
+            paused,
+            anon_hops,
+            safe_seeding,
+            destination,
+            initial_peers,
+        )
+        .await
+    }
+
+    async fn add_torrent_bytes_anon_inner(
+        &self,
+        bytes: Vec<u8>,
+        paused: bool,
+        anon_hops: u32,
+        safe_seeding: bool,
+        destination: Option<std::path::PathBuf>,
+        initial_peers: Vec<std::net::SocketAddr>,
+    ) -> Result<Download> {
         // Parsing borne en amont pour extraire l'info-hash a persister.
         let meta = onionbit_format::torrent::TorrentMeta::parse(&bytes)?;
         self.check_low_space();
         // `download_exists` Python : idem magnet — pas de doublon
         // cross-lane qui ecraserait la ligne persistee de l'existant.
-        if let Some(existing) =
-            self.find_download_hex(&onionbit_crypto::hash::to_hex(&meta.info_hash))
-        {
+        let ih_hex = onionbit_crypto::hash::to_hex(&meta.info_hash);
+        if let Some(existing) = self.find_download_hex(&ih_hex) {
             return Ok(existing);
+        }
+        // Idem `add_download_anon` : un magnet du meme infohash en
+        // resolution materialiserait un second download moteur a la
+        // fin de sa tache (doublon cross-lane) — le `download_exists`
+        // Python couvre aussi l'etat METADATA.
+        if self.is_pending(&ih_hex) {
+            return Err(CoreError::InvalidState(
+                "telechargement deja en cours de resolution",
+            ));
         }
         let engine = self.engine_for(anon_hops).await?;
         // Pas de trackers par defaut sur un torrent prive (condition
@@ -1483,6 +1580,7 @@ impl CoreSession {
                     paused,
                     output_folder: self.effective_output_dir(destination),
                     trackers: trackers.clone(),
+                    initial_peers,
                     ..Default::default()
                 },
             )

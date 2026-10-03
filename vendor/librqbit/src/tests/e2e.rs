@@ -212,6 +212,7 @@ async fn _test_e2e_download(mode: ListenerMode, drop_checks: &DropChecks) {
                 dht: None,
                 persistence: Some(SessionPersistenceConfig::Json {
                     folder: Some(session_persistence),
+                    restore: true,
                 }),
                 listen: if mode.utp_enabled() {
                     Some(ListenerOptions {

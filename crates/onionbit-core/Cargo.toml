@@ -40,4 +40,6 @@ onionbit-test-support = { path = "../onionbit-test-support" }
 onionbit-crypto = { path = "../onionbit-crypto" }
 onionbit-ipv8 = { path = "../onionbit-ipv8" }
 onionbit-tunnel = { path = "../onionbit-tunnel" }
+# Banc live (`tests/live_bench.rs`) : `create_torrent` et options rqbit.
+librqbit.workspace = true
 

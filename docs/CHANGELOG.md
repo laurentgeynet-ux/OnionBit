@@ -3,6 +3,29 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Restauration unique au redémarrage + banc live loopback (2026-10-03)
+
+- **`session_restore` rqbit désactivée** (`SessionPersistenceConfig::Json
+  { restore }`, patch vendored) : la relecture de `session.json` au
+  démarrage rejouait les adds en concurrence du checkpoint tribler.db —
+  la course pouvait abandonner la tâche (`no torrent found`) en laissant
+  des torrents insérés mais jamais démarrés, figés en `Initializing`.
+  Le `.bitv` fastresume reste écrit et relu par infohash ; seule la
+  liste n'est plus rejouée — tribler.db est l'unique autorité.
+- **`AddDownloadOptions.initial_peers`** + variantes
+  `add_download_anon_with_peers` / `add_torrent_bytes_anon_with_peers` :
+  pairs d'amorce éphémères (non persistés) injectés à l'ajout —
+  équivalent du bootstrap contrôlé, signatures publiques inchangées.
+- **Banc `tests/live_bench.rs`** : vrais transferts UDP loopback —
+  seeder rqbit réel, relais autonomes `RELAY|EXIT_BT`, circuits
+  épinglés dont chaque saut est confirmé par `verified_hops`, trafic
+  mesuré sur les circuits. 10 tests : `.torrent` clair et ×1/×2/×3,
+  magnet résolu à travers le tunnel, PATCH de lane pendant résolution,
+  migration ×1→×3 en transfert avec réinjection du pair, pause sans
+  trafic résiduel, doublon refusé, suppression purgeant tous les
+  moteurs, flotte de 10 torrents mixtes avec arrêt + restart +
+  fastresume validé, magnet pending non restauré au restart.
+
 ## Résolution magnet anonyme : repli de sauts + pending opérationnel (2026-10-03)
 
 - **Tunnel — le repli `send_extend` est réellement atteint** : la garde
@@ -31,10 +54,11 @@ en haut.
   `CoreError::Cancelled` rend l'abandon silencieux quand le download
   est supprimé pendant sa résolution.
 - **`download_exists` étendu à METADATA** : un re-`PUT` du même magnet
-  est refusé (`InvalidState` → 400) au lieu de respawner une seconde
-  tâche — les deux materialisaient un download moteur pour le même
-  infohash (lignes doublées partageant la même ligne `downloads`,
-  badge de lane trompeur, sélection par infohash groupée).
+  (ou un `.torrent` du même infohash pendant la résolution) est refusé
+  (`InvalidState` → 400) au lieu de respawner une seconde tâche — les
+  deux materialisaient un download moteur pour le même infohash
+  (lignes doublées partageant la même ligne `downloads`, badge de lane
+  trompeur, sélection par infohash groupée).
 - **Suppression multi-moteurs** : `remove()` retire l'infohash de tous
   les engines détenteurs — un doublon historique laissait l'orphelin
   dans l'autre lane, encore listé par `downloads()` mais sans ligne
@@ -45,9 +69,14 @@ en haut.
   être affiché « Clair » par défaut. La ligne persistée reste
   prioritaire (intention configurée, parité Python).
 - Tests : `circuit_extend_replie_registre_quand_candidats_perimes`
-  (sortie morte offerte → circuit READY via le pair exit du registre)
-  et `operations_sur_magnet_en_resolution` (PATCH accepté + bornes,
-  dedup re-add, pause persistée, suppression qui réveille la tâche).
+  (sortie morte offerte → circuit READY via le pair exit du registre),
+  `operations_sur_magnet_en_resolution` (PATCH accepté + bornes, dedup
+  re-add, pause persistée, suppression qui réveille la tâche) et le
+  nouveau banc `tests/scenarios.rs` — session ipv8 loopback, lanes
+  anonymes réelles : ajouts ×0/×1/×2/×3 sur la bonne lane, migration
+  de lane en cours sans doublon, dedup materialisé + pending avec
+  abandon `Cancelled`, PATCH/pause/delete sur magnet en résolution,
+  restauration par lane au redémarrage.
 
 ## Packaging multi-plateforme en CI (2026-10-03)
 

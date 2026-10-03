@@ -356,6 +356,14 @@ impl EngineConfig {
                 self.persistence_dir.clone().map(|folder| {
                     librqbit::SessionPersistenceConfig::Json {
                         folder: Some(folder),
+                        // Tribler : la relecture de `session.json` au
+                        // demarrage est desactivee — le checkpoint
+                        // tribler.db est l'unique autorite qui reajoute
+                        // les torrents (sinon les deux restaurations
+                        // tournent en concurrence et figent des
+                        // torrents en `Initializing`). Les `.bitv`
+                        // fastresume restent ecrits et relus.
+                        restore: false,
                     }
                 })
             } else {

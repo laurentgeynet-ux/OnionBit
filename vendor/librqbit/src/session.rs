@@ -399,7 +399,18 @@ impl<'a> AddTorrent<'a> {
 
 pub enum SessionPersistenceConfig {
     /// The filename for persistence. By default uses an OS-specific folder.
-    Json { folder: Option<PathBuf> },
+    /// `restore` (Tribler-Rust-Torrent patch) : quand `false`, le contenu
+    /// persiste (`.bitv` fastresume, `.torrent`, `session.json`) est ecrit
+    /// et relu, mais la liste des torrents n'est PAS reajoutee au
+    /// demarrage — la restauration est alors deleguee a l'appelant
+    /// (checkpoint Tribler), qui reste l'unique autorite sur l'ensemble
+    /// des torrents. Sans ca, les deux chemins de restauration s'ajoutent
+    /// en concurrence et la course peut laisser des torrents figes en
+    /// `Initializing`.
+    Json {
+        folder: Option<PathBuf>,
+        restore: bool,
+    },
     #[cfg(feature = "postgres")]
     Postgres { connection_string: String },
 }
@@ -721,7 +732,7 @@ impl Session {
                 }
 
                 match &opts.persistence {
-                    Some(SessionPersistenceConfig::Json { folder }) => {
+                    Some(SessionPersistenceConfig::Json { folder, .. }) => {
                         let folder = match folder.as_ref() {
                             Some(f) => f.clone(),
                             None => SessionPersistenceConfig::default_json_persistence_folder()?,
@@ -957,7 +968,18 @@ impl Session {
                 }
             }
 
-            if let Some(persistence) = session.persistence.as_ref() {
+            // Tribler : `restore: false` desactive la tache
+            // `session_restore` — le checkpoint Tribler (tribler.db)
+            // est l'unique autorite de restauration ; rejouer aussi
+            // `session.json` ici ferait doublon et la course entre les
+            // deux chemins verrouillait des torrents en `Initializing`.
+            let restore_session = match &opts.persistence {
+                Some(SessionPersistenceConfig::Json { restore, .. }) => *restore,
+                #[cfg(feature = "postgres")]
+                Some(SessionPersistenceConfig::Postgres { .. }) => true,
+                None => false,
+            };
+            if restore_session && let Some(persistence) = session.persistence.as_ref() {
                 info!("will use {persistence:?} for session persistence");
 
                 // Tribler: la restauration se fait en tache de fond

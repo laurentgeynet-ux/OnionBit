@@ -567,6 +567,7 @@ fn rqbit_opts(o: &crate::add_options::AddDownloadOptions) -> AddTorrentOptions {
         name_subfolder: !o.output_includes_name,
         only_files: o.only_files.clone(),
         trackers: (!o.trackers.is_empty()).then(|| o.trackers.clone()),
+        initial_peers: (!o.initial_peers.is_empty()).then(|| o.initial_peers.clone()),
         ratelimits: librqbit::limits::LimitsConfig {
             upload_bps: to_nz(o.upload_limit_bps),
             download_bps: to_nz(o.download_limit_bps),

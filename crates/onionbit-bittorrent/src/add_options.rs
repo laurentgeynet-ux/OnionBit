@@ -40,4 +40,9 @@ pub struct AddDownloadOptions {
     pub upload_limit_bps: Option<u64>,
     /// Limite de download par torrent en octets/s.
     pub download_limit_bps: Option<u64>,
+    /// Pairs d'amorcage injectes a l'ajout (`initial_peers` rqbit) :
+    /// le telechargement demarre avec ces adresses, avant tout
+    /// resultat DHT/tracker — utilise par les bancs live (seeder
+    /// loopback injecte) et le hidden seeding d'introduction.
+    pub initial_peers: Vec<std::net::SocketAddr>,
 }
