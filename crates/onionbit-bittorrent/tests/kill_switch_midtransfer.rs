@@ -245,6 +245,11 @@ async fn proxy_death_mid_transfer_engages_kill_switch_no_leak() {
     let dl_dir = tempfile::tempdir().unwrap();
     let mut dl_cfg = EngineConfig::offline(dl_dir.path().to_path_buf());
     dl_cfg.socks5_proxy = Some(format!("socks5://{}", proxy.addr));
+    // uTP coupe : le proxy ne relaie que du TCP — si uTP reste actif,
+    // rqbit peut monter une connexion uTP directe vers le seeder en
+    // loopback (progres sans passage par le proxy — flaky observe sur
+    // macOS CI) et l'oracle "connexion via proxy" devient aleatoire.
+    dl_cfg.enable_utp = false;
     dl_cfg.listen_port = Some(0);
     let downloader = BtEngine::start(dl_cfg).await.expect("downloader engine");
     let ks = downloader
