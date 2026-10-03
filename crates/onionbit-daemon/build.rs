@@ -9,6 +9,14 @@
 //! tray a un fallback `Icon::from_rgba`), jamais en erreur de build.
 
 fn main() {
+    embed_icon();
+}
+
+/// Embarque `resources.rc` dans l'exe. Compile-temps *et* runtime
+/// conditions sur Windows : la build-dep `embed-resource` n'est liee
+/// que si l'hote de compilation est Windows.
+#[cfg(windows)]
+fn embed_icon() {
     if std::env::var_os("CARGO_CFG_WINDOWS").is_some() {
         match embed_resource::compile("resources.rc", embed_resource::NONE) {
             embed_resource::CompilationResult::Ok
@@ -17,3 +25,6 @@ fn main() {
         }
     }
 }
+
+#[cfg(not(windows))]
+fn embed_icon() {}
