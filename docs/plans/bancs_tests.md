@@ -377,6 +377,7 @@ défaut de la fonction (pas la release existante). Harness :
 | Longévité bornée (`fingerprint_mesh.ps1 -DurationMin 60 -WithAnonDownload`) | 2026-10-03 | `402753e` | **en cours** — mesh OnionBit+Tribler échantillonné 60 min, lane anonyme en stall ; oracles : cadences bornées, pas de croissance RSS/tâches, kill switch engagé→désarmé | `target/fingerprint-*/`, `target/endurance-60min.log` | — |
 | CH-4 (rafales UDP entrantes) | 2026-10-03 | tests | **couvert** — `inject_incoming_burst_drop_tail` + `inject_incoming_soak` (tunnel) + `budget_requetes_entrantes_borne_les_reponses` (DHT) verts dans la passe P0 ; pas de banc OS dédié supplémentaire | tests tunnel/bittorrent | non |
 | PR-2 (systray / autostart) | 2026-10-03 | `fdc41f5` | **vérifié statiquement** — `autostart.rs` écrit/lit `HKCU\…\Run\TriblerRustDaemon`, `is_enabled()` pilote la case tray ; le toggle est un clic menu → parcours complet manuel | `crates/onionbit-daemon/src/autostart.rs` | manuel |
+| PR-7 (`versioning/versions/check`, daemon `--no-ipv8`) | 2026-10-03 | `402753e` | **vert partiel** — sonde exécutée : `{has_version:false, new_version:""}`, `current=0.6.0-alpha` ; la notification `tribler_new_version` n'est observable que si une release distante plus récente existe | `target/ver-*.log` | non |
 
 ## 8. Trous de couverture assumés / hors scope
 
