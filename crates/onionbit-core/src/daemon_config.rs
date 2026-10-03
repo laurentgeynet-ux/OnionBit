@@ -286,6 +286,19 @@ pub struct LibtorrentConfig {
     pub max_upload_rate: u64,
     /// Transport uTP.
     pub utp: bool,
+    /// Plafond du buffer de réception uTP par connexion, en octets
+    /// (extension Rust — pas de réglage libtorrent équivalent) : uTP
+    /// bufferise en espace utilisateur, ce buffer est aussi la
+    /// fenêtre de réception annoncée au pair et donc le débit maximal
+    /// d'une connexion (`fenêtre / RTT`). `0` = défaut librqbit-utp
+    /// (1 Mio). S'applique à la session en clair et aux lanes
+    /// anonymes — cf. `docs/diagnostics/memoire_charge_reelle.md`.
+    pub utp_rx_buf_size: u64,
+    /// Plafond du buffer d'émission uTP par connexion, en octets
+    /// (extension Rust) : borne les données non acquittées stockées
+    /// (mémoire TX pire cas par connexion). `0` = défaut
+    /// librqbit-utp (croissance 32 Kio → 1 Mio).
+    pub utp_tx_buf_max: u64,
     /// DHT mainline BEP 5.
     pub dht: bool,
     /// Timeout de readiness DHT (s).
@@ -353,6 +366,8 @@ impl Default for LibtorrentConfig {
             max_download_rate: 0,
             max_upload_rate: 0,
             utp: true,
+            utp_rx_buf_size: 0,
+            utp_tx_buf_max: 0,
             dht: true,
             dht_readiness_timeout: 30,
             upnp: true,
@@ -987,6 +1002,13 @@ impl DaemonConfig {
             listen_ip,
             listen_addr_v6,
             enable_utp: self.libtorrent.utp,
+            // Buffers uTP par connexion (extensions Rust, 0 = defaut
+            // librqbit-utp) — propagés aussi aux sockets uTP des
+            // lanes anonymes via `Ipv8Stack::anon_engine`.
+            utp_rx_buf_size: (self.libtorrent.utp_rx_buf_size > 0)
+                .then_some(self.libtorrent.utp_rx_buf_size),
+            utp_tx_buf_max: (self.libtorrent.utp_tx_buf_max > 0)
+                .then_some(self.libtorrent.utp_tx_buf_max),
             enable_upnp: self.libtorrent.upnp,
             // `max_connections_download` Python : -1 = illimité.
             peer_limit: (self.libtorrent.max_connections_download >= 0)

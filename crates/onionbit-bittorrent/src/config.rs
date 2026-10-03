@@ -9,6 +9,7 @@
 //! logique.
 
 use std::net::SocketAddr;
+use std::num::NonZeroUsize;
 use std::path::PathBuf;
 
 /// Port TCP/uTP d'ecoute par defaut (0 = aleatoire attribue par l'OS).
@@ -20,6 +21,11 @@ pub const DEFAULT_PEER_LIMIT: usize = 64;
 /// Nom de client annonce aux pairs/trackers (peer-id et User-Agent).
 /// Aligné sur le format Azureus `-XX1234-` via `librqbit`.
 pub const CLIENT_NAME: &str = "Tribler 8.3.0-rust";
+
+/// `TX_BUF_SIZE_PER_VSOCK_INITIAL_DEFAULT` de librqbit-utp (le module
+/// `constants` du vendored n'est pas public) — utilise uniquement
+/// pour borner `initial <= max` quand un plafond TX est configure.
+const UTP_TX_INITIAL_DEFAULT_BYTES: usize = 32 * 1024;
 
 /// Configuration d'une session BitTorrent.
 #[derive(Debug, Clone)]
@@ -160,6 +166,22 @@ pub struct EngineConfig {
     /// requete entrante non sollicitee ne peut plus generer de
     /// reponse 1:1 ni de travail illimite.
     pub dht_inbound_queries_per_sec: Option<usize>,
+    /// Plafond du buffer de reception uTP par connexion, en octets
+    /// (extension Rust — pas de reglage libtorrent equivalent) : uTP
+    /// bufferise en espace utilisateur — ce buffer est aussi la
+    /// fenetre de reception annoncee au pair, donc le debit maximal
+    /// d'une connexion (`fenetre / RTT`). `None` = defaut
+    /// librqbit-utp (1 Mio). Poste memoire dominant identifie dans
+    /// `docs/diagnostics/memoire_charge_reelle.md` — baisser borne la
+    /// memoire RX pire cas par connexion, au prix du debit par
+    /// connexion sur les lanes a RTT eleve.
+    pub utp_rx_buf_size: Option<u64>,
+    /// Plafond du buffer d'emission uTP par connexion, en octets
+    /// (extension Rust) : borne les donnees non acquittees stockees
+    /// (memoire TX pire cas par connexion). `None` = defaut
+    /// librqbit-utp (croissance 32 Kio -> 1 Mio). Le buffer demarre
+    /// au minimum du plafond et de l'initial vendored (32 Kio).
+    pub utp_tx_buf_max: Option<u64>,
     /// Borne du semaphore d'appels bloquants de librqbit
     /// (`SessionOptions::runtime_worker_threads`) : les I/O disque
     /// synchrones (hash de pieces, sparse marking, `ensure_file_length`)
@@ -205,6 +227,8 @@ impl Default for EngineConfig {
             udp_tracker_socket: None,
             dht_requery_backoff_cap_secs: None,
             dht_inbound_queries_per_sec: None,
+            utp_rx_buf_size: None,
+            utp_tx_buf_max: None,
             runtime_worker_threads: default_runtime_worker_threads(),
         }
     }
@@ -245,8 +269,42 @@ impl EngineConfig {
             udp_tracker_socket: None,
             dht_requery_backoff_cap_secs: None,
             dht_inbound_queries_per_sec: None,
+            utp_rx_buf_size: None,
+            utp_tx_buf_max: None,
             runtime_worker_threads: default_runtime_worker_threads(),
         }
+    }
+
+    /// Options `librqbit_utp::SocketOpts` deduites de la config :
+    /// plafonds de buffers par connexion. `SocketOpts::default()`
+    /// quand rien n'est configure — strictement le comportement
+    /// vendored (RX 1 Mio, TX 32 Kio -> 1 Mio par stream). Le meme
+    /// objet est applique aux sockets uTP reelles de la session
+    /// (`ListenerOptions::utp_opts` — ecoute + connexions sortantes,
+    /// qui retombent sur la socket d'ecoute) et aux sockets uTP
+    /// tunnelsees des lanes anonymes (`TunnelUdpSockets`).
+    pub fn utp_socket_opts(&self) -> librqbit_utp::SocketOpts {
+        let mut opts = librqbit_utp::SocketOpts::default();
+        if let Some(rx) = self
+            .utp_rx_buf_size
+            .and_then(|v| usize::try_from(v).ok())
+            .and_then(NonZeroUsize::new)
+        {
+            opts.vsock_rx_bufsize_bytes = Some(rx);
+        }
+        if let Some(max) = self
+            .utp_tx_buf_max
+            .and_then(|v| usize::try_from(v).ok())
+            .and_then(NonZeroUsize::new)
+        {
+            opts.vsock_tx_bufsize_bytes_max = Some(max);
+            // Coherence : le ring buffer TX demarre a `initial`
+            // (32 Kio vendored) puis croit vers `max` — un plafond
+            // sous l'initial demarrerait deja au-dessus de lui.
+            opts.vsock_tx_bufsize_bytes_initial =
+                NonZeroUsize::new(max.get().min(UTP_TX_INITIAL_DEFAULT_BYTES));
+        }
+        opts
     }
 
     /// Traduit la config en `librqbit::SessionOptions`.
@@ -339,6 +397,10 @@ impl EngineConfig {
                         listen_addr: addr,
                         enable_upnp_port_forwarding: self.enable_upnp,
                         announce_port: self.announce_port,
+                        // Plafonds de buffers uTP par connexion —
+                        // `Some(defauts)` valide exactement comme
+                        // `None` quand rien n'est configure.
+                        utp_opts: Some(self.utp_socket_opts()),
                         ..Default::default()
                     })
             },
@@ -420,6 +482,78 @@ mod tests {
             listen.listen_addr.ip().is_loopback(),
             "bind non loopback : {:?}",
             listen.listen_addr
+        );
+    }
+
+    /// Plafonds uTP (`utp_rx_buf_size`/`utp_tx_buf_max`) : les
+    /// `SocketOpts` produits portent les valeurs — et le buffer TX
+    /// initial reste borne au plafond quand celui-ci descend sous
+    /// l'initial vendored (32 Kio). Rien configure = strictement les
+    /// defauts vendored.
+    #[test]
+    fn utp_socket_opts_plafonds() {
+        // Defauts : aucun champ pose -> SocketOpts brut vide (le
+        // `validate()` librqbit-utp appliquera ses defauts).
+        let opts = EngineConfig::default().utp_socket_opts();
+        assert!(opts.vsock_rx_bufsize_bytes.is_none());
+        assert!(opts.vsock_tx_bufsize_bytes_max.is_none());
+        assert!(opts.vsock_tx_bufsize_bytes_initial.is_none());
+
+        let cfg = EngineConfig {
+            utp_rx_buf_size: Some(256 * 1024),
+            utp_tx_buf_max: Some(64 * 1024),
+            ..Default::default()
+        };
+        let opts = cfg.utp_socket_opts();
+        assert_eq!(
+            opts.vsock_rx_bufsize_bytes.map(NonZeroUsize::get),
+            Some(256 * 1024)
+        );
+        assert_eq!(
+            opts.vsock_tx_bufsize_bytes_max.map(NonZeroUsize::get),
+            Some(64 * 1024)
+        );
+        // Plafond > 32 Kio : l'initial reste la valeur vendored.
+        assert_eq!(
+            opts.vsock_tx_bufsize_bytes_initial.map(NonZeroUsize::get),
+            Some(32 * 1024)
+        );
+
+        // Plafond < 32 Kio : l'initial est ramene au plafond.
+        let cfg = EngineConfig {
+            utp_tx_buf_max: Some(8 * 1024),
+            ..Default::default()
+        };
+        let opts = cfg.utp_socket_opts();
+        assert_eq!(
+            opts.vsock_tx_bufsize_bytes_initial.map(NonZeroUsize::get),
+            Some(8 * 1024)
+        );
+    }
+
+    /// Les plafonds uTP arrivent dans `ListenerOptions::utp_opts` de
+    /// la session non injectee — la meme socket sert l'ecoute et les
+    /// connexions sortantes (`StreamConnector` retombe sur la socket
+    /// d'ecoute quand aucune n'est injectee).
+    #[test]
+    fn utp_opts_propagees_au_listener() {
+        let cfg = EngineConfig {
+            utp_rx_buf_size: Some(256 * 1024),
+            utp_tx_buf_max: Some(128 * 1024),
+            ..Default::default()
+        };
+        let listen = cfg
+            .to_session_options()
+            .listen
+            .expect("listener attendu (listen_port par defaut)");
+        let opts = listen.utp_opts.expect("utp_opts absents");
+        assert_eq!(
+            opts.vsock_rx_bufsize_bytes.map(NonZeroUsize::get),
+            Some(256 * 1024)
+        );
+        assert_eq!(
+            opts.vsock_tx_bufsize_bytes_max.map(NonZeroUsize::get),
+            Some(128 * 1024)
         );
     }
 }

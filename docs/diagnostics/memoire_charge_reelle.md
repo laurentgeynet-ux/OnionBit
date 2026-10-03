@@ -93,7 +93,7 @@ d'une fuite :
 |---|---|---|
 | Jambes de relais servies | `tunnel_community/max_joined_circuits` (100) | `daemon_config.rs` |
 | Pairs BT | `peer_limit` = 64 **par session** (×4) | `onionbit-bittorrent/src/config.rs` (`DEFAULT_PEER_LIMIT`) |
-| Buffers uTP | 2 Mio/connexion (RX 1 Mio + TX 1 Mio max) | `vendor/librqbit-utp/src/constants.rs` |
+| Buffers uTP | 2 Mio/connexion (RX 1 Mio + TX 1 Mio max), réglables via `libtorrent/utp_rx_buf_size` + `libtorrent/utp_tx_buf_max` | `vendor/librqbit-utp/src/constants.rs`, `EngineConfig::utp_socket_opts` |
 | Circuits propres | `min/max_circuits` pour `DATA` ; `IP_SEEDER` dimensionné par nb de torrents anonymes × lanes × intro points | `daemon_config.rs`, `community.rs` |
 
 Point de vigilance : le nombre de circuits `IP_SEEDER` doit
@@ -121,3 +121,22 @@ sorties, pairs BT, taille DB) dans un CSV, puis signale :
 Corréler `priv_mb` avec les colonnes de charge : une hausse de
 `priv_mb` parallèle à `bt_peers`/`relays` est de la charge ; une
 hausse de `priv_mb` à compteurs stables est suspecte.
+
+## Réglage mémoire uTP (ajouté)
+
+Les plafonds de buffers uTP sont configurables dans
+`configuration.json` (restart-only) :
+
+```jsonc
+"libtorrent": {
+  "utp_rx_buf_size": 262144,  // 0 = défaut librqbit-utp (1 Mio)
+  "utp_tx_buf_max": 262144    // 0 = défaut (32 Kio initial → 1 Mio)
+}
+```
+
+Appliqués à la session en clair **et** aux lanes anonymes via
+`EngineConfig::utp_socket_opts` → `ListenerOptions::utp_opts` /
+`TunnelUdpSockets::with_dht_policy`. Attention : le buffer RX est la
+fenêtre annoncée — il borne aussi le débit d'une connexion
+(`fenêtre / RTT` ; sur lane anonyme à RTT ~2 s, 256 Kio ≈ 128 Kio/s
+par connexion). Ne pas baisser sous ~2× le BDP visé par connexion.

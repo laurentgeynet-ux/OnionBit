@@ -1896,6 +1896,7 @@ impl Ipv8Stack {
             hops,
             socks_addr,
             self.anon_dht_client_only,
+            self.engine_config.utp_socket_opts(),
         )
         .map_err(|e| CoreError::State(format!("socket uTP tunnel: {e}")))?;
         // Discipline DHT de la lane (extension Rust — Tribler n'a pas

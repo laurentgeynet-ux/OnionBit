@@ -63,6 +63,17 @@ redémarrage) — parité `set_session_limits` Python + services :
   → `ListenerOptions` rqbit (dual-stack si IPv6 configurée).
 - `libtorrent/utp`/`upnp`/`max_connections_download`/`proxy_*`/
   `max_*_rate` → `EngineConfig` → `SessionOptions`/`ListenerOptions`.
+- `libtorrent/utp_rx_buf_size`/`utp_tx_buf_max` (extensions Rust, `0` =
+  défaut librqbit-utp) → `EngineConfig.utp_socket_opts()` →
+  `ListenerOptions::utp_opts` (session en clair : même socket uTP pour
+  l'écoute et les connexions sortantes) **et** `TunnelUdpSockets::
+  with_dht_policy` (lanes anonymes) : plafonds des buffers uTP par
+  connexion en octets — RX = fenêtre de réception annoncée (borne aussi
+  le débit max d'une connexion : `fenêtre / RTT`), TX = non-acquittés
+  stockés (croissance 32 Kio → 1 Mio par défaut, l'initial est ramené
+  au plafond si celui-ci est plus petit). Mémoire pire cas par
+  connexion : `utp_rx_buf_size + utp_tx_buf_max` — restart-only —
+  cf. `docs/diagnostics/memoire_charge_reelle.md`.
 - `libtorrent/active_checking` → `SessionOptions.concurrent_init_limit`.
 - `libtorrent/active_downloads`/`active_seeds`/`active_limit` →
   `QueueLimits` du gestionnaire de file.

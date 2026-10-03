@@ -627,17 +627,26 @@ impl TunnelUdpSockets {
         hops: usize,
         bind_addr: SocketAddr,
     ) -> Result<Self, librqbit_utp::Error> {
-        Self::with_dht_policy(tunnel, hops, bind_addr, false)
+        Self::with_dht_policy(
+            tunnel,
+            hops,
+            bind_addr,
+            false,
+            librqbit_utp::SocketOpts::default(),
+        )
     }
 
     /// `new` + posture DHT client-only de la lane : les requetes DHT
     /// entrantes (non sollicitees, reinjectees par l'exit) sont
     /// ecartees — la lane interroge la DHT mais ne la sert pas.
+    /// `utp_opts` : plafonds de buffers uTP par connexion de la lane
+    /// (deduits d'`EngineConfig::utp_socket_opts` cote core).
     pub fn with_dht_policy(
         tunnel: Arc<TunnelCommunity>,
         hops: usize,
         bind_addr: SocketAddr,
         dht_client_only: bool,
+        utp_opts: librqbit_utp::SocketOpts,
     ) -> Result<Self, librqbit_utp::Error> {
         // Lane moteur (`utp_transport`) : les `ST_SYN` WAN livres par
         // l'exit via `data_rx` sont filtres — l'entrant anonyme n'est
@@ -654,7 +663,7 @@ impl TunnelUdpSockets {
         let utp = librqbit_utp::UtpSocket::new_with_opts(
             utp_transport.clone(),
             librqbit_utp::DefaultUtpEnvironment {},
-            librqbit_utp::SocketOpts::default(),
+            utp_opts,
         )?;
         Ok(Self {
             utp,

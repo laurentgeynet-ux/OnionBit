@@ -3,6 +3,30 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Réglage mémoire des buffers uTP (2026-10-03)
+
+- **Nouvelles clés persistées** `libtorrent/utp_rx_buf_size` et
+  `libtorrent/utp_tx_buf_max` (extensions Rust — pas d'équivalent
+  libtorrent ; `0` = défauts librqbit-utp : RX 1 Mio, TX 32 Kio → 1 Mio
+  par connexion) : plafonds des buffers uTP en espace utilisateur, poste
+  mémoire dominant identifié dans
+  `docs/diagnostics/memoire_charge_reelle.md` (~10-60 Mo pour ~100
+  pairs). Mémoire pire cas par connexion : `rx + tx_max`.
+- **Plombage bout-en-bout** : `LibtorrentConfig` →
+  `EngineConfig::utp_socket_opts()` (nouveau helper — `SocketOpts` du
+  vendored, inchangés par défaut) → `ListenerOptions::utp_opts` pour la
+  session en clair (une seule socket uTP sert écoute **et** connexions
+  sortantes, `StreamConnector` retombe sur l'écoute) **et**
+  `TunnelUdpSockets::with_dht_policy` (nouveau paramètre `utp_opts`,
+  propagé par `Ipv8Stack::anon_engine` à chaque lane). Le ring buffer
+  TX est borné `initial <= max` quand le plafond descend sous 32 Kio.
+- **Attention débit** : le buffer RX est la fenêtre annoncée au pair —
+  il borne aussi le débit d'une connexion (`fenêtre / RTT`). Documenté
+  dans `configuration_cablage.md` et dans le diagnostic.
+- Tests : `utp_socket_opts` (défauts intacts, plafonds propagés,
+  clamp `initial <= max`), propagation vers `ListenerOptions`, et
+  transfert loopback e2e complet sous fenêtres 16 Kio RX/TX.
+
 ## Ouverture P1 : doc des ruptures + CI matricielle (2026-10-03)
 
 - **Nouveau `docs/ruptures/README.md`** : doc publique des bancs de
