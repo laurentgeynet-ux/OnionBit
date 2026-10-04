@@ -303,6 +303,13 @@
   "statExitsActive": "Active exits (relaying)",
   "statBwRtt": "Peer RTT signal",
   "statBwRttValue": "{median} ms · base {base} ms · {count} pongs",
+  "@statBwRttValue": {
+    "placeholders": {
+      "median": { "type": "String" },
+      "base": { "type": "String" },
+      "count": { "type": "int" }
+    }
+  },
   "statBwServed": "Served peer traffic cap",
   "statBwDropped": "Served datagrams dropped (cap)",
   "bwSourcePending": "measuring…",

@@ -3,6 +3,21 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Onglet Statistiques : « Signal RTT des pairs » affichait des valeurs permutées (2026-10-04)
+
+- **Bug d'affichage** : la ligne `statBwRttValue` affichait des
+  valeurs incohérentes (ex. « 8 ms · base 289 ms · 49 pongs » alors
+  que l'API renvoyait `median=285,7`, `base=49,4`, `samples=8`). Cause :
+  `gen-l10n` trie les paramètres par ordre alphabétique en l'absence de
+  bloc `@placeholders` → signature générée `(base, count, median)` ≠
+  ordre du call site `(median, base, count)`. Chaque slot affichait le
+  champ voisin : median→samples, base→median, count→base.
+- **Fix** : bloc `@statBwRttValue` ajouté à `app_en.arb` déclarant les
+  placeholders dans l'ordre `(median, base, count)` — l'ordre de
+  déclaration pilote la signature générée, comme pour `statTrafficValue`.
+  Audit des 14 autres méthodes l10n multi-paramètres : aucun autre
+  décalage.
+
 ## Carte « Trafic tunnel » : débit calculé par le daemon (2026-10-04)
 
 - **Bug web confirmé** : la carte restait à `0 o/s` sur l'UI web alors
