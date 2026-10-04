@@ -209,7 +209,7 @@
   "cardUpload": "Envoi",
   "cardFilesDownload": "Réception fichiers",
   "cardFilesUpload": "Envoi fichiers",
-  "cardTunnelTraffic": "Trafic tunnel",
+  "cardTunnelTraffic": "Trafic overlay IPv8",
   "cardDatabase": "Base de données",
 
   "speedTestCircuitTitle": "Test du circuit #{id}",
