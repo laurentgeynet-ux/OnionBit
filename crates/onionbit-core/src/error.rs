@@ -36,6 +36,11 @@ pub enum CoreError {
     /// Erreur cryptographique (cles IPv8).
     #[error("crypto: {0}")]
     Crypto(#[from] onionbit_crypto::CryptoError),
+    /// Le tracker a repondu par un refus (`failure reason` HTTP ou
+    /// action error UDP BEP-15, ex. « scrape disabled » sur les
+    /// trackers prives) — il est **joignable** : pas une panne.
+    #[error("refus du tracker: {0}")]
+    ScrapeRefused(String),
     /// Refus impose par une politique reseau (anti-SSRF).
     #[error("politique reseau: {0}")]
     Policy(#[from] onionbit_network_policy::PolicyError),

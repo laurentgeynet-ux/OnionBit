@@ -3,6 +3,17 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Statut tracker : refus de scrape ≠ panne (2026-10-04)
+
+- **Diagnostic** : les trackers privés type Gazelle (C411) répondent
+  `d14:failure reason34:Scrape disabled on private trackere` en 403 —
+  le tracker est **joignable**, seul le scrape est désactivé ; les
+  afficher `Error` mentait.
+- **Nouveau** `CoreError::ScrapeRefused` : `failure reason` HTTP et
+  `action=3` UDP BEP-15 → tracker marqué `alive` (`Working`,
+  compteurs `-1` inconnus) ; seules les vraies pannes (DNS, TCP,
+  timeout, réponse invalide) incrémentent `failures` → `Error`.
+
 ## Page « À propos » — mise en page + forum (2026-10-04)
 
 - **Lien** : entrée « Forum de discussion » → GitHub Discussions

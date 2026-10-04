@@ -32,6 +32,9 @@ const UDP_TRACKER_INIT_CONNECTION_ID: i64 = 0x41727101980;
 const TRACKER_ACTION_CONNECT: i32 = 0;
 /// Action `scrape`.
 const TRACKER_ACTION_SCRAPE: i32 = 2;
+/// Reponse d'erreur BEP-15 (`action=3`, message en clair dans le
+/// corps) — le tracker est joignable mais refuse la requete.
+const TRACKER_ACTION_ERROR: i32 = 3;
 /// Timeout d'une session de scrape.
 const SCRAPE_TIMEOUT: Duration = Duration::from_secs(10);
 /// Nombre max d'infohashes par requete UDP scrape (borne de paquet).
@@ -135,12 +138,21 @@ impl TorrentChecker {
                 Ok(healths)
             }
             Err(e) => {
+                // `ScrapeRefused` = le tracker a **repondu** (ex.
+                // scrape desactive sur les trackers prives) : il est
+                // vivant — l'afficher en `Error` mentirait. Seules
+                // les pannes (DNS, TCP, timeout) comptent un echec.
+                let alive = matches!(e, CoreError::ScrapeRefused(_));
                 let _ = self.db.with(|c| {
                     onionbit_db::health::upsert_tracker(c, tracker_url)?;
-                    let failures = onionbit_db::health::get_tracker(c, tracker_url)?
-                        .map(|t| t.failures + 1)
-                        .unwrap_or(1);
-                    onionbit_db::health::update_tracker(c, tracker_url, false, now_unix(), failures)
+                    let failures = if alive {
+                        0
+                    } else {
+                        onionbit_db::health::get_tracker(c, tracker_url)?
+                            .map(|t| t.failures + 1)
+                            .unwrap_or(1)
+                    };
+                    onionbit_db::health::update_tracker(c, tracker_url, alive, now_unix(), failures)
                 });
                 Err(e)
             }
@@ -216,6 +228,11 @@ impl TorrentChecker {
         }
         let action = i32::from_be_bytes(resp[0..4].try_into().unwrap());
         let rtxn = i32::from_be_bytes(resp[4..8].try_into().unwrap());
+        if action == TRACKER_ACTION_ERROR {
+            return Err(CoreError::ScrapeRefused(
+                String::from_utf8_lossy(&resp[8..]).into_owned(),
+            ));
+        }
         if action != TRACKER_ACTION_CONNECT || rtxn != txn {
             return Err(CoreError::InvalidState("connect refuse par le tracker"));
         }
@@ -237,6 +254,11 @@ impl TorrentChecker {
         }
         let action = i32::from_be_bytes(resp[0..4].try_into().unwrap());
         let rtxn = i32::from_be_bytes(resp[4..8].try_into().unwrap());
+        if action == TRACKER_ACTION_ERROR {
+            return Err(CoreError::ScrapeRefused(
+                String::from_utf8_lossy(&resp[8..]).into_owned(),
+            ));
+        }
         if action != TRACKER_ACTION_SCRAPE || rtxn != txn2 {
             return Err(CoreError::InvalidState("scrape refuse par le tracker"));
         }
@@ -306,6 +328,12 @@ impl TorrentChecker {
         let resp = super::fetch_checked(&full, &self.ip_policy).await?;
         let body = super::read_body_limited(resp).await?;
         let value = onionbit_format::bencode::decode(&body)?;
+        // `failure reason` (trackers prives qui refusent le scrape :
+        // « Scrape disabled on private tracker » sur Gazelle) — le
+        // tracker a repondu, il est joignable.
+        if let Some(reason) = value.get(b"failure reason").and_then(|v| v.as_str()) {
+            return Err(CoreError::ScrapeRefused(reason.to_string()));
+        }
         let Some(files) = value.get(b"files").and_then(|v| v.as_dict()) else {
             return Err(CoreError::InvalidState("reponse scrape sans `files`"));
         };
