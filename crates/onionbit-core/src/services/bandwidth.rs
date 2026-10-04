@@ -13,9 +13,13 @@
 //! d'attente du routeur gonfle, le RTT vers les pairs s'inflate.
 //!
 //! À chaque tick `sample_secs` : rafale de `ping` Discovery vers
-//! `probe_peers` pairs vérifiés, médiane des RTT collectés, retard
-//! de file = médiane − baseline (min glissant sur
-//! `base_window_secs`). AIMD :
+//! `probe_peers` pairs vérifiés, **minimum** des RTT collectés,
+//! retard de file = min − baseline (min glissant sur
+//! `base_window_secs`). Le min isole la congestion *locale* : la
+//! file d'émission est commune à tous les paquets sortants — si
+//! notre uplink sature, tous les RTT s'inflatent, y compris le
+//! meilleur ; un pair lointain ou saturé de son côté ne fausse
+//! plus le signal. AIMD :
 //!
 //! - retard ≤ `target_delay_ms` → `cap += max(cap / increase_div,
 //!   increase_min_bps)` (montée progressive) ;
@@ -99,11 +103,11 @@ impl RttProbe {
 pub struct BandwidthSnapshot {
     /// Plafond servi actuellement appliqué au tunnel (octets/s).
     pub effective_relay_bps: u64,
-    /// Baseline RTT (ms) — min glissant des médianes sur
+    /// Baseline RTT (ms) — min glissant des minimums de rafale sur
     /// `base_window_secs` ; `None` tant qu'aucun pong n'a été reçu.
     pub base_rtt_ms: Option<f64>,
-    /// Médiane RTT du dernier tick (ms) ; `None` idem.
-    pub median_rtt_ms: Option<f64>,
+    /// RTT minimum de la dernière rafale (ms) ; `None` idem.
+    pub min_rtt_ms: Option<f64>,
     /// Nombre de pongs exploités au dernier tick.
     pub rtt_samples: usize,
     /// Datagrammes servis perdus faute de budget (`relay_rate_dropped`).
@@ -114,9 +118,9 @@ pub struct BandwidthSnapshot {
 pub struct CongestionController {
     /// Plafond actuellement appliqué (octets/s) — `0` = pas encore.
     applied: AtomicU64,
-    /// Médianes RTT par tick pour la baseline `(instant, ms)`.
-    medians: Mutex<VecDeque<(Instant, f64)>>,
-    /// Médiane + nombre d'échantillons du dernier tick (diagnostic).
+    /// RTT minimum par tick pour la baseline `(instant, ms)`.
+    mins: Mutex<VecDeque<(Instant, f64)>>,
+    /// Minimum + nombre d'échantillons du dernier tick (diagnostic).
     last: Mutex<Option<(f64, usize)>>,
 }
 
@@ -130,7 +134,7 @@ impl CongestionController {
     pub fn new() -> Self {
         Self {
             applied: AtomicU64::new(0),
-            medians: Mutex::new(VecDeque::new()),
+            mins: Mutex::new(VecDeque::new()),
             last: Mutex::new(None),
         }
     }
@@ -161,24 +165,28 @@ impl CongestionController {
     }
 
     /// Décision d'un tick : `samples` = RTT (ms) de la rafale de
-    /// pings. Sans échantillon, le plafond courant est conservé (un
-    /// pair muet n'est pas une preuve de congestion). Renvoie le
-    /// plafond à appliquer.
+    /// pings. Le signal retenu est le **minimum** : la file
+    /// d'émission locale étant commune à tous les paquets, notre
+    /// congestion gonfle tous les RTT, tandis qu'un pair lointain
+    /// ou saturé de son côté n'affecte pas le meilleur échantillon.
+    /// Sans échantillon, le plafond courant est conservé (un pair
+    /// muet n'est pas une preuve de congestion). Renvoie le plafond
+    /// à appliquer.
     pub fn update(&self, samples: &[f64], cfg: &BandwidthConfig) -> u64 {
         let cur = self.current_bps(cfg);
-        let Some(median) = median_of(samples) else {
+        let Some(min_rtt) = min_of(samples) else {
             self.applied.store(cur, Ordering::Relaxed);
             return cur;
         };
 
-        let mut window = self.medians.lock().unwrap();
-        window.push_back((Instant::now(), median));
+        let mut window = self.mins.lock().unwrap();
+        window.push_back((Instant::now(), min_rtt));
         let horizon = Duration::from_secs(cfg.base_window_secs);
         while window.front().is_some_and(|(t, _)| t.elapsed() > horizon) {
             window.pop_front();
         }
         let base = window.iter().map(|(_, m)| *m).fold(f64::INFINITY, f64::min);
-        let queue_delay = (median - base).max(0.0);
+        let queue_delay = (min_rtt - base).max(0.0);
 
         let cap = if queue_delay <= cfg.target_delay_ms as f64 {
             // Ligne tranquille : montée additive.
@@ -189,7 +197,7 @@ impl CongestionController {
         }
         .clamp(cfg.floor_bps, cfg.max_bps);
 
-        *self.last.lock().unwrap() = Some((median, samples.len()));
+        *self.last.lock().unwrap() = Some((min_rtt, samples.len()));
         self.applied.store(cap, Ordering::Relaxed);
         cap
     }
@@ -197,32 +205,22 @@ impl CongestionController {
     /// Vue pour `/api/statistics` — `dropped` est le compteur de
     /// pertes du limiteur tunnel (passé par l'appelant).
     pub fn snapshot(&self, dropped: u64) -> BandwidthSnapshot {
-        let window = self.medians.lock().unwrap();
+        let window = self.mins.lock().unwrap();
         let base = window.iter().map(|(_, m)| *m).fold(f64::INFINITY, f64::min);
         let last = *self.last.lock().unwrap();
         BandwidthSnapshot {
             effective_relay_bps: self.applied.load(Ordering::Relaxed),
             base_rtt_ms: base.is_finite().then_some(base),
-            median_rtt_ms: last.map(|(m, _)| m),
+            min_rtt_ms: last.map(|(m, _)| m),
             rtt_samples: last.map(|(_, n)| n).unwrap_or(0),
             relay_dropped: dropped,
         }
     }
 }
 
-/// Médiane d'un lot d'échantillons (copie triée — `None` si vide).
-fn median_of(samples: &[f64]) -> Option<f64> {
-    if samples.is_empty() {
-        return None;
-    }
-    let mut v = samples.to_vec();
-    v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-    let mid = v.len() / 2;
-    Some(if v.len() % 2 == 1 {
-        v[mid]
-    } else {
-        (v[mid - 1] + v[mid]) / 2.0
-    })
+/// Minimum d'un lot d'échantillons (`None` si vide).
+fn min_of(samples: &[f64]) -> Option<f64> {
+    samples.iter().copied().reduce(f64::min)
 }
 
 /// Boucle périodique du contrôleur — spawnée par la session quand
@@ -395,29 +393,45 @@ mod tests {
         assert!(cap >= bw.fallback_bps);
     }
 
-    /// Jitter autour de la baseline : seul un dépassement franc de
-    /// `target_delay_ms` déclenche le repli.
+    /// Pairs hétérogènes : seul le min compte — des pairs lointains
+    /// ou saturés (gros RTT propres) ne déclenchent pas de repli
+    /// tant qu'un chemin reste fluide.
     #[test]
-    fn jitter_sous_cible_ne_replie_pas() {
+    fn pairs_lointains_ne_penalisent_pas() {
         let ctrl = CongestionController::new();
         let bw = cfg();
-        ctrl.update(&[50.0], &bw);
-        let mut cap = 0;
-        // ±40 ms de jitter : dépassement 40 < cible 50 → montée.
-        for _ in 0..6 {
-            cap = ctrl.update(&[50.0, 90.0, 10.0, 90.0], &bw);
+        // Baseline établie sur un chemin à ~30 ms.
+        let mut cap = ctrl.update(&[30.0, 300.0, 450.0], &bw);
+        // Les pairs lointains dérivent encore plus haut : leur
+        // congestion à eux ne doit pas couler le plafond.
+        for _ in 0..10 {
+            let next = ctrl.update(&[30.0, 380.0, 900.0], &bw);
+            assert!(next > cap);
+            cap = next;
         }
-        assert!(cap > bw.fallback_bps);
     }
 
-    /// La médiane ignore les valeurs extrêmes (pair lointain ou
-    /// réponse parasite).
+    /// Congestion réelle : tous les échantillons s'inflatent — la
+    /// file locale est commune, même le meilleur chemin est retardé.
     #[test]
-    fn mediane_robuste() {
-        assert_eq!(median_of(&[10.0, 12.0, 500.0]), Some(12.0));
-        assert_eq!(median_of(&[]), None);
-        let m = median_of(&[10.0, 20.0, 30.0, 40.0]).unwrap();
-        assert_eq!(m, 25.0);
+    fn inflation_globale_replie() {
+        let ctrl = CongestionController::new();
+        let bw = cfg();
+        let mut cap = 0;
+        for _ in 0..8 {
+            cap = ctrl.update(&[30.0, 45.0, 60.0], &bw);
+        }
+        // Tous les pairs voient +100 ms → congestion locale.
+        let next = ctrl.update(&[130.0, 145.0, 160.0], &bw);
+        assert!(next < cap);
+    }
+
+    /// Minimum d'un lot : le pire pair n'influe pas ; vide → None.
+    #[test]
+    fn min_d_echantillons() {
+        assert_eq!(min_of(&[10.0, 12.0, 500.0]), Some(10.0));
+        assert_eq!(min_of(&[]), None);
+        assert_eq!(min_of(&[42.0]), Some(42.0));
     }
 
     /// `RttProbe` : seuls les `(adresse, id)` enregistrés produisent

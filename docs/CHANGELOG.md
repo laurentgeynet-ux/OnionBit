@@ -3,6 +3,26 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Contrôleur de congestion : signal RTT = minimum de la rafale (2026-10-04)
+
+- **Problème** : le signal de congestion était la **médiane** des RTT
+  vers 8 pairs vérifiés, comparée à un min glissant. Un pair lointain
+  ou dont l'uplink est saturé gonflait la médiane (~285 ms vs base
+  ~49 ms) → repli ×0,75 répété → `effective_relay_bps` collé au
+  plancher (64 Ko/s) et `relay_dropped` en hausse, sans charge locale.
+- **Fix** : le signal est désormais le **minimum** des RTT de la
+  rafale. La file d'émission locale étant commune à tous les
+  paquets sortants, notre congestion sature tous les RTT — y compris
+  le meilleur — tandis qu'un pair lointain/saturé n'affecte pas le
+  min. `retard = min_rtt − baseline` isole donc le gonflement de
+  *notre* file.
+- **Renommage API** : `bandwidth.median_rtt_ms` →
+  `bandwidth.min_rtt_ms` dans `/api/statistics/ipv8` (modèle Dart
+  `RelayBandwidth.minRttMs` aligné).
+- Tests : `pairs_lointains_ne_penalisent_pas` (pairs à 380-900 ms
+  ignorés tant qu'un chemin reste à 30 ms), `inflation_globale_replie`
+  (tous les échantillons +100 ms → repli), `min_d_echantillons`.
+
 ## Onglet Statistiques : « Signal RTT des pairs » affichait des valeurs permutées (2026-10-04)
 
 - **Bug d'affichage** : la ligne `statBwRttValue` affichait des

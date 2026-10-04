@@ -217,7 +217,7 @@ class RelayBandwidth {
   const RelayBandwidth({
     required this.effectiveRelayBps,
     required this.baseRttMs,
-    required this.medianRttMs,
+    required this.minRttMs,
     required this.rttSamples,
     required this.relayMode,
     required this.relayDropped,
@@ -226,12 +226,12 @@ class RelayBandwidth {
   /// Plafond servi actuellement appliqué au tunnel (octets/s).
   final int effectiveRelayBps;
 
-  /// Baseline RTT (ms) — min glissant des médianes ; `null` tant
-  /// qu'aucun pong n'a été reçu.
+  /// Baseline RTT (ms) — min glissant des minimums de rafale ;
+  /// `null` tant qu'aucun pong n'a été reçu.
   final double? baseRttMs;
 
-  /// Médiane RTT du dernier tick (ms) ; `null` idem.
-  final double? medianRttMs;
+  /// RTT minimum de la dernière rafale (ms) ; `null` idem.
+  final double? minRttMs;
 
   /// Pongs exploités au dernier tick.
   final int rttSamples;

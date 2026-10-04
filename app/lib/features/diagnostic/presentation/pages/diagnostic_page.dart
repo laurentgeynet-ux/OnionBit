@@ -572,9 +572,9 @@ class _StatsTab extends ConsumerWidget {
           _stat(
             context,
             l10n.statBwRtt,
-            bw.medianRttMs != null
+            bw.minRttMs != null
                 ? l10n.statBwRttValue(
-                    bw.medianRttMs!.toStringAsFixed(0),
+                    bw.minRttMs!.toStringAsFixed(0),
                     bw.baseRttMs?.toStringAsFixed(0) ?? '—',
                     bw.rttSamples,
                   )

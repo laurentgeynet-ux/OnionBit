@@ -302,10 +302,10 @@
   "statDataCircuits": "Ready DATA circuits",
   "statExitsActive": "Active exits (relaying)",
   "statBwRtt": "Peer RTT signal",
-  "statBwRttValue": "{median} ms · base {base} ms · {count} pongs",
+  "statBwRttValue": "{rtt} ms · base {base} ms · {count} pongs",
   "@statBwRttValue": {
     "placeholders": {
-      "median": { "type": "String" },
+      "rtt": { "type": "String" },
       "base": { "type": "String" },
       "count": { "type": "int" }
     }

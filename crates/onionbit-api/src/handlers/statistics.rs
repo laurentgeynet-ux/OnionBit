@@ -115,7 +115,7 @@ pub async fn get_ipv8_stats(State(state): State<AppState>) -> Json<serde_json::V
                 "bandwidth": {
                     "effective_relay_bps": snap.effective_relay_bps,
                     "base_rtt_ms": snap.base_rtt_ms,
-                    "median_rtt_ms": snap.median_rtt_ms,
+                    "min_rtt_ms": snap.min_rtt_ms,
                     "rtt_samples": snap.rtt_samples,
                     "relay_mode": relay_mode,
                     "relay_dropped": snap.relay_dropped,

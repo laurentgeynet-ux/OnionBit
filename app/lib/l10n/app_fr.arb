@@ -178,7 +178,7 @@
   "statDataCircuits": "Circuits DATA prêts",
   "statExitsActive": "Sorties actives (relais)",
   "statBwRtt": "Signal RTT des pairs",
-  "statBwRttValue": "{median} ms · base {base} ms · {count} pongs",
+  "statBwRttValue": "{rtt} ms · base {base} ms · {count} pongs",
   "statBwServed": "Plafond débit servi aux pairs",
   "statBwDropped": "Datagrammes servis perdus (plafond)",
   "bwSourcePending": "mesure en cours…",
