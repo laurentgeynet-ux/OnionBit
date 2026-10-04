@@ -89,10 +89,6 @@
   "notifDownloadError": "Download error",
 
   "snackFinished": "Download finished",
-  "snackFinishedName": "\"{name}\" finished — seeding",
-  "@snackFinishedName": {
-    "placeholders": { "name": { "type": "String" } }
-  },
 
   "searchPopular": "Trending on the network",
   "searchResultsFor": "Results for \"{query}\"",

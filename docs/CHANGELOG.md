@@ -3,6 +3,20 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Snackbar « téléchargement terminé » supprimé (2026-10-04)
+
+- **Constat** : le toast en bas d'écran à chaque `torrent_finished`
+  doublonnait le centre de notifications (cloche) — gênant et
+  redondant.
+- **UI** : `TorrentFinishedListener` supprimé ; l'événement alimente
+  désormais uniquement la cloche via `NotificationsListener`. La
+  notification **navigateur** (`notifySystem`, onglet en
+  arrière-plan) est conservée — déplacée dans
+  `NotificationsListener._finished`. Les snackbars de retour d'action
+  (copie magnet, sauvegardes, erreurs) ne sont pas touchés.
+- **Nettoyage** : clé `snackFinishedName` retirée des deux arb
+  (`snackFinished` reste le titre de la notif navigateur).
+
 ## Badge « Clair » : visuel d'avertissement (2026-10-04)
 
 - **Constat** : le badge des téléchargements en clair (contour gris,

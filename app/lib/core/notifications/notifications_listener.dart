@@ -12,11 +12,12 @@ import '../di/providers.dart';
 import '../l10n/l10n_ext.dart';
 import 'app_notification.dart';
 import 'notifications_provider.dart';
+import 'web_notify.dart';
 
 /// Traduit les événements SSE `/api/events` en entrées du centre de
 /// notifications (session). Vit dans le shell — actif sur toutes les
-/// pages. Ne rend rien. Les snackbars restent gérés par
-/// `TorrentFinishedListener`.
+/// pages. Ne rend rien. `torrent_finished` déclenche aussi la
+/// notification navigateur quand l'onglet est en arrière-plan.
 class NotificationsListener extends ConsumerStatefulWidget {
   const NotificationsListener({super.key});
 
@@ -32,14 +33,7 @@ class _NotificationsListenerState extends ConsumerState<NotificationsListener> {
 
   void _onEvent(AppLocalizations l10n, SseEvent event) {
     final n = switch (event.topic) {
-      EventTopics.torrentFinished => AppNotification(
-        title: l10n.notifDownloadFinished,
-        message:
-            (event.data['name'] as String?) ??
-            (event.data['infohash'] as String?) ??
-            '',
-        severity: AppNotificationSeverity.success,
-      ),
+      EventTopics.torrentFinished => _finished(l10n, event),
       EventTopics.downloadStateChanged => _downloadChanged(l10n, event),
       'tribler_exception' => AppNotification(
         title: l10n.notifDaemonError,
@@ -59,6 +53,21 @@ class _NotificationsListenerState extends ConsumerState<NotificationsListener> {
       _ => null,
     };
     if (n != null) ref.read(notificationsProvider.notifier).push(n);
+  }
+
+  /// `torrent_finished` : entrée au centre + notification navigateur
+  /// quand l'onglet est en arrière-plan (no-op desktop).
+  AppNotification _finished(AppLocalizations l10n, SseEvent event) {
+    final name =
+        (event.data['name'] as String?) ??
+        (event.data['infohash'] as String?) ??
+        '';
+    notifySystem(l10n.snackFinished, name);
+    return AppNotification(
+      title: l10n.notifDownloadFinished,
+      message: name,
+      severity: AppNotificationSeverity.success,
+    );
   }
 
   /// `download_state_changed` porte un `DownloadInfo` complet — on ne

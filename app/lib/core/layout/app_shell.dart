@@ -17,7 +17,6 @@ import '../notifications/notifications_listener.dart';
 import 'pending_files_handler.dart';
 import 'status_bar.dart';
 import 'top_bar.dart';
-import 'torrent_finished_listener.dart';
 
 /// Coquille responsive de l'application.
 ///
@@ -71,7 +70,6 @@ class AppShell extends ConsumerWidget {
             children: [
               Positioned.fill(child: body),
               const Positioned.fill(child: PendingFilesHandler()),
-              const Positioned.fill(child: TorrentFinishedListener()),
               const Positioned.fill(child: NotificationsListener()),
             ],
           ),
@@ -102,7 +100,6 @@ class AppShell extends ConsumerWidget {
                 children: [
                   Positioned.fill(child: body),
                   const Positioned.fill(child: PendingFilesHandler()),
-                  const Positioned.fill(child: TorrentFinishedListener()),
                   const Positioned.fill(child: NotificationsListener()),
                 ],
               ),

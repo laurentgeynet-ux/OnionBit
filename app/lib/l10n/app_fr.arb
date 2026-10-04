@@ -62,7 +62,6 @@
   "notifDownloadError": "Téléchargement en erreur",
 
   "snackFinished": "Téléchargement terminé",
-  "snackFinishedName": "« {name} » terminé — seed en cours",
 
   "searchPopular": "Populaires sur le réseau",
   "searchResultsFor": "Résultats pour « {query} »",
