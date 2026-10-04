@@ -3,6 +3,19 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Réglages : section « Configuration avancée » retirée (2026-10-04)
+
+- L'éditeur brut de `configuration.json` (sections avancée + import/
+  export JSON) est supprimé de l'UI — trop dangereux : clé API et
+  chemins d'identité visibles en clair, et un JSON malformé ou un
+  réglage corrompu pouvait casser le démarrage du daemon. Le endpoint
+  `POST /api/settings` reste disponible pour les usages en ligne de
+  commande ; tous les réglages exposés passent par les sections dédiées.
+- Clés l10n exclusives à cette section retirées
+  (`sectionAdvanced`, `advWarning`, `advSaved`, `jsonInvalid`,
+  `jsonNotObject`, `import*`, `export`, `reload`, `configCopied`) ;
+  `apply`/`cancel` conservées (partagées).
+
 ## Contrôleur de congestion : exclusion des chemins non-WAN (2026-10-04)
 
 - **Bug observé** : « base 0 ms » et plafond retombé à 64 Ko/s — un

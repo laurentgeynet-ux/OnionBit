@@ -9,7 +9,6 @@ import '../../../../core/l10n/l10n_ext.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../l10n/app_localizations.dart' show AppLocalizations;
 import '../providers/settings_providers.dart';
-import '../widgets/advanced_section.dart';
 import '../widgets/anonymity_section.dart';
 import '../widgets/appearance_section.dart';
 import '../widgets/automation_section.dart';
@@ -35,7 +34,6 @@ enum _SectionId {
   automation,
   versioning,
   connection,
-  advanced,
   daemon,
 }
 
@@ -52,7 +50,6 @@ extension on _SectionId {
     _SectionId.automation => l10n.sectionAutomation,
     _SectionId.versioning => l10n.sectionVersioning,
     _SectionId.connection => l10n.sectionConnection,
-    _SectionId.advanced => l10n.sectionAdvanced,
     _SectionId.daemon => l10n.sectionDaemon,
   };
 }
@@ -149,12 +146,6 @@ final _kSections = <_SectionEntry>[
     id: _SectionId.connection,
     keywords: 'daemon clé api port http connexion key url',
     child: const ConnectionSection(),
-  ),
-  _SectionEntry(
-    id: _SectionId.advanced,
-    sectionId: 'advanced',
-    keywords: 'json arbre brut expert toutes les clés configuration raw',
-    child: const AdvancedSection(),
   ),
   _SectionEntry(
     id: _SectionId.daemon,

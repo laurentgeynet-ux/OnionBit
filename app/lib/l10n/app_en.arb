@@ -403,7 +403,6 @@
   "sectionAutomation": "Automation",
   "sectionVersioning": "Updates",
   "sectionConnection": "Connection",
-  "sectionAdvanced": "Advanced configuration",
   "sectionDaemon": "Daemon",
   "settingsDirtyBanner": "{count, plural, =1{{count} modified section not saved} other{{count} modified sections not saved}}",
   "@settingsDirtyBanner": {
@@ -550,25 +549,6 @@
   "rssUrlLabel": "Feed URL",
   "rssAddTooltip": "Add feed",
   "rssLastItems": "Latest discovered items",
-
-  "advSaved": "Advanced configuration applied",
-  "jsonNotObject": "The document must be a JSON object.",
-  "jsonInvalid": "Invalid JSON: {message}",
-  "@jsonInvalid": {
-    "placeholders": { "message": { "type": "String" } }
-  },
-  "configCopied": "Configuration copied",
-  "advWarning": "Raw editing of the `configuration.json` tree. Sensitive keys (API keys, identity paths) are visible — handle with care.",
-  "export": "Export",
-  "import": "Import",
-  "reload": "Reload",
-  "importTitle": "Import a configuration",
-  "importSections": "Detected sections: {sections}",
-  "@importSections": {
-    "placeholders": { "sections": { "type": "String" } }
-  },
-  "importNote": "Content will replace the editor — nothing is sent until \"Apply\" is pressed.",
-  "importLoad": "Load into editor",
 
   "apiUrlLabel": "API URL",
   "apiKeyLabelShort": "API key",
