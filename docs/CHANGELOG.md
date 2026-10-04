@@ -3,6 +3,24 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Carte « Trafic tunnel » : provider aligné sur le patron tick (2026-10-04)
+
+- **Bug web réel** : la carte restait à 0 sur l'UI web alors que le
+  bundle était frais (prouvé en fenêtre privée — même daemon, mêmes
+  compteurs, débits vivants sur desktop). Cause : l'ancien
+  `StreamProvider` maison exigeait **deux sondages** dans la durée de
+  vie d'un même générateur ; or `connectionWatchdogProvider`
+  re-résout la config tant que le SSE est coupé (fetch-SSE web moins
+  stable) → `apiClientProvider`/dépôt recréés en boucle → baseline
+  reperdue avant chaque 2ᵉ sondage → jamais d'émission.
+- `tunnelTrafficRateProvider` suit désormais le patron commun :
+  `FutureProvider.autoDispose` + `ref.watch(tickProvider(5 s))` —
+  une valeur émise à chaque tick. L'échantillon précédent vit dans
+  `_tunnelTrafficPrevProvider` (Provider **sans dépendances**) :
+  seul endroit immunisé contre les rebuilds en chaîne.
+- `dart analyze` propre ; `tunnel_rate_test` adapté à la valeur
+  initiale `(0,0)` ; 20/20 tests verts.
+
 ## UI web : suppression du service worker (2026-10-04)
 
 - Le `flutter_service_worker.js` générait un cache agressif du bundle

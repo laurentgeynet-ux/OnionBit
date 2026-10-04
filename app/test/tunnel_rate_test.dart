@@ -60,19 +60,20 @@ void main() {
       );
       addTearDown(sub.close);
 
-      // Baseline posée par le premier sondage ; les compteurs ont
-      // grandi -> un débit est émis.
+      // `build()` émet d'abord la valeur initiale (0,0) ; le premier
+      // sondage pose la baseline sans débit. Les compteurs ont grandi
+      // -> un débit positif finit par être émis.
       await repo.polled.future;
       repo.sample = const Ipv8Traffic(up: 30000, down: 60000);
-      await _until(() => rates.isNotEmpty);
-      expect(rates, hasLength(1));
-      expect(rates.single.up, greaterThan(0));
-      expect(rates.single.down, greaterThan(rates.single.up));
+      await _until(() => rates.any((r) => r.up > 0));
+      final positive = rates.firstWhere((r) => r.up > 0);
+      expect(positive.down, greaterThan(positive.up));
 
       // Compteurs remis à zéro (restart du daemon) -> pas de débit
       // négatif.
+      final seen = rates.length;
       repo.sample = const Ipv8Traffic(up: 10, down: 20);
-      await _until(() => rates.length > 1);
+      await _until(() => rates.length > seen);
       expect(rates.last.up, 0);
       expect(rates.last.down, 0);
     },
