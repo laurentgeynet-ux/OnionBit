@@ -697,7 +697,7 @@
   "colProgress": "Progress",
   "colPeers": "Peers",
   "colRatio": "Ratio",
-  "colUlTotal": "UL total",
+  "colUlTotal": "Uploaded",
   "colAdded": "Added",
 
   "statusError": "Error",
