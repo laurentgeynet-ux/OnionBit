@@ -88,10 +88,12 @@ final onionbitStatsProvider = FutureProvider.autoDispose<OnionbitStats>(
 /// Compteurs d'octets de l'endpoint overlay
 /// (`/api/statistics/ipv8` — `total_up`/`total_down`) + débits
 /// mesurés par le daemon (`rate_up`/`rate_down`, fenêtre glissante
-/// côté Rust — plus rien à dériver côté client).
+/// côté Rust — plus rien à dériver côté client). Sondé à la cadence
+/// commune `_kDiagnosticPoll` (2 s) : la carte « Trafic tunnel »,
+/// l'onglet Statistiques et la barre d'état partagent la requête.
 final ipv8TrafficProvider = FutureProvider.autoDispose<Ipv8Traffic>(
   (ref) {
-    ref.watch(tickProvider(const Duration(seconds: 5)));
+    ref.watch(tickProvider(_kDiagnosticPoll));
     return ref.watch(diagnosticRepositoryProvider).ipv8Traffic();
   },
 );
