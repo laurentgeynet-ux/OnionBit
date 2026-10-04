@@ -17,12 +17,4 @@ class TorrentPreview {
   final String name;
   final List<String> trackers;
   final bool isPrivate;
-
-  /// Tous les trackers connus sont en HTTPS — injoignables via les
-  /// sorties anonymes, qui ne relaient que du HTTP en clair one-shot
-  /// (`http-request`/`http-response`). En mode anonyme, aucun pair ne
-  /// sera découvert par ce biais.
-  bool get httpsOnlyTrackers =>
-      trackers.isNotEmpty &&
-      trackers.every((t) => t.toLowerCase().startsWith('https://'));
 }

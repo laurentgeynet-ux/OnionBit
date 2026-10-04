@@ -100,26 +100,11 @@ class _AddDownloadDialogState extends ConsumerState<AddDownloadDialog> {
   bool get _canSubmit =>
       !_busy && (_uriController.text.trim().isNotEmpty || _fileBytes != null);
 
-  /// Trackers connus avant ajout : metainfo du `.torrent` choisi via
-  /// `/api/torrentinfo/file`, ou parametres `tr=` d'un magnet saisi.
-  List<String> get _knownTrackers {
-    if (_preview != null) return _preview!.trackers;
-    final uri = Uri.tryParse(_uriController.text.trim());
-    if (uri == null || uri.scheme != 'magnet') return const [];
-    return uri.queryParametersAll['tr'] ?? const [];
-  }
-
   /// Torrent privé détecté via l'aperçu metainfo (`private=1`) : le
   /// tracker exige une connexion directe (passkey liée à l'IP) et le
   /// flag interdit DHT/PEX — aucun chemin anonyme n'existe. Le
   /// choix de sauts est alors verrouillé sur « Clair ».
   bool get _privateTorrent => _preview?.isPrivate ?? false;
-
-  /// Tous les trackers connus sont HTTPS → injoignables via les
-  /// sorties anonymes (relai HTTP clair one-shot uniquement).
-  bool get _httpsOnlyTrackers =>
-      _knownTrackers.isNotEmpty &&
-      _knownTrackers.every((t) => t.toLowerCase().startsWith('https://'));
 
   Future<void> _pickFile() async {
     final file = await pickTorrentFile();
@@ -327,32 +312,6 @@ class _AddDownloadDialogState extends ConsumerState<AddDownloadDialog> {
                 color: theme.colorScheme.outline,
               ),
             ),
-            if (_hops > 0 && _httpsOnlyTrackers && !_privateTorrent) ...[
-              const SizedBox(height: AppSpacing.xs),
-              // Note informative (pas une alerte) : pour un torrent
-              // public la decouverte par DHT/PEX via les tunnels
-              // fonctionne — seules les annonces trackers HTTPS sont
-              // ignorees.
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Icon(
-                    Icons.info_outline,
-                    color: theme.colorScheme.outline,
-                    size: 16,
-                  ),
-                  const SizedBox(width: AppSpacing.xs),
-                  Expanded(
-                    child: Text(
-                      l10n.httpsOnlyWarn,
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: theme.colorScheme.outline,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ],
             const SizedBox(height: AppSpacing.md),
             TextField(
               controller: _destController,

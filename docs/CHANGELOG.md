@@ -3,6 +3,21 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Dialogue « Ajouter » : note HTTPS supprimée (2026-10-04)
+
+- **Constat** : même discrète, la note « trackers HTTPS ignorés »
+  donnait l'impression qu'un torrent public HTTPS n'était pas
+  téléchargeable en anonyme — alors que la découverte DHT/PEX via les
+  tunnels fonctionne (vérifié : 31 pairs, ~1,7 Mo/s en Anon ×3).
+- **UI** : note et bloc retirés ; les torrents publics (HTTP, mixtes ou
+  HTTPS-only) n'affichent plus aucun message spécifique — sauts
+  anonymes libres partout. Le bandeau rouge reste réservé aux torrents
+  `private=1`.
+- **Nettoyage** : `_httpsOnlyTrackers`/`_knownTrackers` (dialogue) et
+  `TorrentPreview.httpsOnlyTrackers` (domaine) supprimés ; clé
+  `httpsOnlyWarn` retirée des deux arb. `TorrentPreview.trackers`
+  conservé (champ du DTO metainfo).
+
 ## Dialogue « Ajouter » : note HTTPS discrète et factuelle (2026-10-04)
 
 - **Constat** : un torrent public à trackers HTTPS se télécharge
