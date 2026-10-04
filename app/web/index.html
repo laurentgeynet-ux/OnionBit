@@ -31,23 +31,6 @@
 
   <title>OnionBit</title>
   <link rel="manifest" href="manifest.json">
-  <script>
-    // L'UI est servie en same-origin par le daemon local : le mode
-    // hors-ligne d'une PWA n'a pas de sens (sans daemon, l'app est
-    // inutilisable). Le service worker Flutter cache agressivement
-    // le bundle et peut servir une UI périmée après une mise à
-    // jour — désenregistrement immédiat puis périodique (le
-    // bootstrap en ré-enregistre un au chargement de l'app).
-    if ('serviceWorker' in navigator) {
-      var onionbitDropSW = function () {
-        navigator.serviceWorker.getRegistrations().then(function (rs) {
-          rs.forEach(function (r) { r.unregister(); });
-        });
-      };
-      onionbitDropSW();
-      setInterval(onionbitDropSW, 15000);
-    }
-  </script>
 </head>
 <body>
   <!--

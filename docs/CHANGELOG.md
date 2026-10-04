@@ -21,21 +21,6 @@ en haut.
 - `dart analyze` propre ; `tunnel_rate_test` adapté à la valeur
   initiale `(0,0)` ; 20/20 tests verts.
 
-## UI web : suppression du service worker (2026-10-04)
-
-- Le `flutter_service_worker.js` générait un cache agressif du bundle
-  : après une mise à jour l'interface web continuait à servir
-  **l'ancien JS** (carte « Trafic tunnel » à 0 alors que le fix était
-  déployé — symptôme constaté en prod). `Cache-Control: no-cache`
-  existait déjà mais ne couvre pas le CacheStorage du SW.
-- `app/web/index.html` désenregistre désormais tout service worker au
-  chargement **puis toutes les 15 s** (le bootstrap en ré-enregistre
-  un au démarrage). Le mode hors-ligne n'a aucun sens ici : l'UI est
-  inutilisable sans le daemon local.
-- `flutter build web --pwa-strategy=none` testé puis écarté : option
-  dépréciée sans effet dans la version de Flutter utilisée (le SW
-  est généré quand même) — commentaire dans `build_dist.ps1`.
-
 ## Débit servi : contrôle de congestion AIMD (2026-10-04)
 
 - **L'estimateur de capacité est remplacé par un contrôleur de
