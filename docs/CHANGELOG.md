@@ -3,6 +3,12 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Sidebar : logo agrandi (2026-10-04)
+
+- Logo horizontal 44 → 56 px (icône collapsed 36 → 40 px) : mieux
+  visible, taille plafond avant que la largeur de la sidebar ne
+  contraigne le rendu (viewBox 640×160 → ~57 px max utile).
+
 ## Barre d'état : volume de session fichiers (2026-10-04)
 
 - **Besoin** : voir le volume total ↑/↓ de la session courante, tous
