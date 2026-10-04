@@ -18,6 +18,7 @@ const String kAppLicenseUrl = 'https://www.gnu.org/licenses/gpl-3.0.html';
 const String kGitHubUrl = 'https://github.com/laurentgeynet-ux/OnionBit';
 const String kGitHubIssuesUrl = '$kGitHubUrl/issues';
 const String kGitHubDocsUrl = '$kGitHubUrl/tree/master/docs';
+const String kGitHubDiscussionsUrl = '$kGitHubUrl/discussions';
 
 const String kAuthor = 'Laurent Geynet';
 const int kCopyrightYear = 2026;

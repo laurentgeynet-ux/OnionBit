@@ -3,6 +3,15 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Page « À propos » — mise en page + forum (2026-10-04)
+
+- **Lien** : entrée « Forum de discussion » → GitHub Discussions
+  (`kGitHubDiscussionsUrl`) dans la section Projet.
+- **Mise en page** : bandeau hero pleine largeur (dégradé
+  `primaryContainer`, logo + badge version/licence) puis grille
+  réactive — Versions ∥ Licences côte à côte au-delà de 760 px,
+  empilées en dessous ; Projet pleine largeur.
+
 ## Statut tracker réel dans `tracker_info` (2026-10-04)
 
 - **Problème** : chaque tracker réel affichait `peers: -1` /

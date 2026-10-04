@@ -40,6 +40,8 @@
   "aboutIssues": "Report a bug",
   "aboutIssuesSub": "Opens the GitHub issue tracker",
   "aboutDocs": "Documentation",
+  "aboutCommunity": "Discussion forum",
+  "aboutCommunitySub": "Questions and announcements — GitHub Discussions",
   "aboutLicenses": "Third-party licenses",
   "aboutLicensesSub": "Flutter dependencies used by the app.",
 

@@ -35,6 +35,8 @@
   "aboutIssues": "Signaler un bug",
   "aboutIssuesSub": "Ouvre le suivi des anomalies GitHub",
   "aboutDocs": "Documentation",
+  "aboutCommunity": "Forum de discussion",
+  "aboutCommunitySub": "Questions et annonces — GitHub Discussions",
   "aboutLicenses": "Licences tierces",
   "aboutLicensesSub": "Dépendances Flutter utilisées par l'application.",
 

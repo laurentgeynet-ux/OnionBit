@@ -25,68 +25,148 @@ class AboutPage extends ConsumerWidget {
     // — provider partage avec la page Diagnostic).
     final stats = ref.watch(onionbitStatsProvider).value;
 
+    // Bandeau hero pleine largeur + grille de cartes qui remplit
+    // l'espace (2 colonnes en large, empilees en etroit).
     return ListView(
       padding: const EdgeInsets.all(AppSpacing.lg),
       children: [
-        Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 640),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
+        // Hero : fond teinte `primaryContainer`, logo + badge version.
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(
+            vertical: AppSpacing.xl,
+            horizontal: AppSpacing.lg,
+          ),
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                theme.colorScheme.primaryContainer.withValues(alpha: 0.55),
+                theme.colorScheme.surfaceContainerLowest,
+              ],
+            ),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(
+              color: theme.colorScheme.outlineVariant.withValues(alpha: 0.5),
+            ),
+          ),
+          child: Column(
+            children: [
+              SvgPicture.asset(
+                'assets/branding/logo-horizontal.svg',
+                height: 96,
+                fit: BoxFit.contain,
+                placeholderBuilder: (_) => Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.shield_outlined,
+                      size: 40,
+                      color: theme.colorScheme.primary,
+                    ),
+                    const SizedBox(width: AppSpacing.sm),
+                    Text(kAppName, style: theme.textTheme.headlineMedium),
+                  ],
+                ),
+              ),
+              const SizedBox(height: AppSpacing.md),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: AppSpacing.md,
+                  vertical: AppSpacing.xs,
+                ),
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.primary.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Text(
+                  'v$kAppVersion — $kAppLicense',
+                  style: theme.textTheme.labelMedium?.copyWith(
+                    color: theme.colorScheme.primary,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: AppSpacing.md),
+
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final wide = constraints.maxWidth >= 760;
+            final versions = _Section(
+              icon: Icons.tag_outlined,
+              title: l10n.aboutVersions,
               children: [
-                // Banniere logo (asset branding partage avec la
-                // sidebar — icone SVG en secours).
-                Card(
-                  child: Padding(
-                    padding: const EdgeInsets.all(AppSpacing.lg),
-                    child: Center(
-                      child: SvgPicture.asset(
-                        'assets/branding/logo-horizontal.svg',
-                        height: 96,
-                        fit: BoxFit.contain,
-                        placeholderBuilder: (_) => Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              Icons.shield_outlined,
-                              size: 40,
-                              color: theme.colorScheme.primary,
-                            ),
-                            const SizedBox(width: AppSpacing.sm),
-                            Text(
-                              kAppName,
-                              style: theme.textTheme.headlineMedium,
-                            ),
-                          ],
-                        ),
-                      ),
+                _infoRow(theme, l10n.aboutApp, 'v$kAppVersion'),
+                _infoRow(
+                  theme,
+                  l10n.aboutDaemon,
+                  stats == null || stats.version.isEmpty
+                      ? '—'
+                      : 'v${stats.version}',
+                ),
+                if (stats != null && stats.uptimeSec >= 0)
+                  _infoRow(
+                    theme,
+                    l10n.aboutDaemonUptime,
+                    context.fmtDuration(Duration(seconds: stats.uptimeSec)),
+                  ),
+              ],
+            );
+            final licenses = _Section(
+              icon: Icons.receipt_long_outlined,
+              title: l10n.aboutLicenses,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: AppSpacing.md,
+                    vertical: AppSpacing.sm,
+                  ),
+                  child: OutlinedButton.icon(
+                    icon: const Icon(Icons.receipt_long_outlined),
+                    label: Text(l10n.aboutLicenses),
+                    onPressed: () => showLicensePage(
+                      context: context,
+                      applicationName: kAppName,
+                      applicationVersion: 'v$kAppVersion',
+                      applicationLegalese:
+                          '© $kCopyrightYear $kAuthor — $kAppLicense',
                     ),
                   ),
                 ),
-                const SizedBox(height: AppSpacing.md),
-
-                _Section(
-                  icon: Icons.tag_outlined,
-                  title: l10n.aboutVersions,
-                  children: [
-                    _infoRow(theme, l10n.aboutApp, 'v$kAppVersion'),
-                    _infoRow(
-                      theme,
-                      l10n.aboutDaemon,
-                      stats == null || stats.version.isEmpty
-                          ? '—'
-                          : 'v${stats.version}',
-                    ),
-                    if (stats != null && stats.uptimeSec >= 0)
-                      _infoRow(
-                        theme,
-                        l10n.aboutDaemonUptime,
-                        context.fmtDuration(
-                          Duration(seconds: stats.uptimeSec),
-                        ),
-                      ),
-                  ],
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(
+                    AppSpacing.md,
+                    0,
+                    AppSpacing.md,
+                    AppSpacing.sm,
+                  ),
+                  child: Text(
+                    l10n.aboutLicensesSub,
+                    style: theme.textTheme.bodySmall
+                        ?.copyWith(color: theme.colorScheme.outline),
+                  ),
                 ),
+              ],
+            );
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                if (wide)
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(child: versions),
+                      const SizedBox(width: AppSpacing.md),
+                      Expanded(child: licenses),
+                    ],
+                  )
+                else ...[
+                  versions,
+                  licenses,
+                ],
 
                 _Section(
                   icon: Icons.public_outlined,
@@ -108,6 +188,13 @@ class AboutPage extends ConsumerWidget {
                     ),
                     _linkTile(
                       context,
+                      icon: Icons.forum_outlined,
+                      title: l10n.aboutCommunity,
+                      subtitle: l10n.aboutCommunitySub,
+                      url: kGitHubDiscussionsUrl,
+                    ),
+                    _linkTile(
+                      context,
                       icon: Icons.bug_report_outlined,
                       title: l10n.aboutIssues,
                       subtitle: l10n.aboutIssuesSub,
@@ -122,46 +209,9 @@ class AboutPage extends ConsumerWidget {
                     ),
                   ],
                 ),
-
-                _Section(
-                  icon: Icons.receipt_long_outlined,
-                  title: l10n.aboutLicenses,
-                  children: [
-                    Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: AppSpacing.md,
-                        vertical: AppSpacing.sm,
-                      ),
-                      child: OutlinedButton.icon(
-                        icon: const Icon(Icons.receipt_long_outlined),
-                        label: Text(l10n.aboutLicenses),
-                        onPressed: () => showLicensePage(
-                          context: context,
-                          applicationName: kAppName,
-                          applicationVersion: 'v$kAppVersion',
-                          applicationLegalese:
-                              '© $kCopyrightYear $kAuthor — $kAppLicense',
-                        ),
-                      ),
-                    ),
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(
-                        AppSpacing.md,
-                        0,
-                        AppSpacing.md,
-                        AppSpacing.sm,
-                      ),
-                      child: Text(
-                        l10n.aboutLicensesSub,
-                        style: theme.textTheme.bodySmall
-                            ?.copyWith(color: theme.colorScheme.outline),
-                      ),
-                    ),
-                  ],
-                ),
               ],
-            ),
-          ),
+            );
+          },
         ),
       ],
     );
