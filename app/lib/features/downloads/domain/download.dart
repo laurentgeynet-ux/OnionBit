@@ -101,6 +101,49 @@ class Download {
   /// anonyme » (jumeau public).
   final bool isPrivate;
 
+  /// Fusionne l'instantané `download_state_changed` (payload SSE =
+  /// `DownloadInfo::from_stats` brut) dans cette entrée. Seuls les
+  /// champs volatils de progression sont repris de l'événement ; les
+  /// champs enrichis par `GET /api/downloads` (anonymat, limites,
+  /// scrape, trackers, pairs, horodatages, destination…) sont
+  /// préservés — absents ou à zéro dans l'événement.
+  Download mergeProgressStats(Download ev) => Download(
+    infohash: infohash,
+    name: ev.name.isNotEmpty ? ev.name : name,
+    progress: ev.progress,
+    size: ev.size > 0 ? ev.size : size,
+    speedDown: ev.speedDown,
+    speedUp: ev.speedUp,
+    status: ev.status.isNotEmpty ? ev.status : status,
+    statusCode: ev.statusCode,
+    etaSeconds: ev.etaSeconds,
+    numSeeds: numSeeds,
+    // `num_peers` REST = max(pairs vivants, scrape) — le max garde
+    // la même sémantique entre deux sondages.
+    numPeers: ev.numPeers > numPeers ? ev.numPeers : numPeers,
+    numConnectedPeers: ev.numConnectedPeers,
+    hops: hops,
+    anonDownload: anonDownload,
+    safeSeeding: safeSeeding,
+    uploaded: ev.uploaded,
+    downloaded: ev.downloaded,
+    ratio: ev.ratio,
+    error: ev.error,
+    destination: destination,
+    streamable: streamable,
+    queuePosition: queuePosition,
+    autoManaged: autoManaged,
+    userStopped: userStopped,
+    uploadLimit: uploadLimit,
+    downloadLimit: downloadLimit,
+    seedingRatio: seedingRatio,
+    timeAdded: timeAdded,
+    timeFinished: timeFinished,
+    trackers: trackers,
+    peers: peers,
+    isPrivate: isPrivate,
+  );
+
   bool get isActive => status == 'DOWNLOADING' || status == 'SEEDING';
   bool get isPaused => status == 'STOPPED';
   bool get isError => status == 'STOPPED_ON_ERROR' || error.isNotEmpty;

@@ -9,6 +9,7 @@ abstract final class EventTopics {
   static const eventsStart = 'events_start';
   static const triblerShutdownStarted = 'tribler_shutdown_started';
   static const downloadStateChanged = 'download_state_changed';
+  static const torrentStatusChanged = 'torrent_status_changed';
   static const torrentFinished = 'torrent_finished';
   static const newTorrentMetadataCreated = 'new_torrent_metadata_created';
   static const torrentHealthUpdated = 'torrent_health_updated';

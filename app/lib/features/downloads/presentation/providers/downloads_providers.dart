@@ -9,6 +9,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/api/events.dart';
 import '../../../../core/config/ui_prefs.dart';
 import '../../../../core/di/providers.dart';
+import '../../data/download_dto.dart';
 import '../../data/rest_downloads_repository.dart';
 import '../../domain/download.dart';
 import '../../domain/download_file.dart';
@@ -32,6 +33,7 @@ final downloadsProvider =
 
 class DownloadsNotifier extends AsyncNotifier<List<Download>> {
   Timer? _timer;
+  bool _refreshing = false;
 
   @override
   Future<List<Download>> build() async {
@@ -39,18 +41,49 @@ class DownloadsNotifier extends AsyncNotifier<List<Download>> {
     _timer = Timer.periodic(_kPollInterval, (_) => _refresh());
     ref.onDispose(() => _timer?.cancel());
     ref.listen(daemonEventsProvider, (_, next) {
-      final topic = next.value?.topic;
-      if (topic == EventTopics.downloadStateChanged ||
-          topic == EventTopics.torrentFinished) {
-        _refresh();
+      final ev = next.value;
+      if (ev == null) return;
+      switch (ev.topic) {
+        // Publie pour CHAQUE telechargement a chaque tick du daemon
+        // (~1 Hz par torrent) — un re-poll par evenement
+        // genererait ~N requetes `GET /downloads` par seconde. La
+        // charge utile transporte deja le `DownloadInfo` : fusion
+        // directe dans la ligne concernee, aucun fetch.
+        case EventTopics.downloadStateChanged:
+          _mergeProgress(ev.data);
+        case EventTopics.torrentStatusChanged ||
+             EventTopics.torrentFinished:
+          unawaited(_refresh());
       }
     });
     return repo.list();
   }
 
+  /// Fusionne l'instantane `download_state_changed` dans la ligne
+  /// concernee. Infohash inconnu = nouveau telechargement →
+  /// re-poll complet (ajout rare).
+  void _mergeProgress(Map<String, dynamic> data) {
+    final list = state.value;
+    if (list == null) return;
+    final ev = data.toDownload();
+    final i = list.indexWhere((d) => d.infohash == ev.infohash);
+    if (i < 0) {
+      unawaited(_refresh());
+      return;
+    }
+    final next = [...list];
+    next[i] = list[i].mergeProgressStats(ev);
+    state = AsyncData(next);
+  }
+
   Future<void> _refresh() async {
-    if (!ref.mounted) return;
-    state = await AsyncValue.guard(ref.read(downloadsRepositoryProvider).list);
+    if (!ref.mounted || _refreshing) return;
+    _refreshing = true;
+    try {
+      state = await AsyncValue.guard(ref.read(downloadsRepositoryProvider).list);
+    } finally {
+      _refreshing = false;
+    }
   }
 
   Future<void> refresh() => _refresh();

@@ -3,6 +3,28 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Téléchargements : spam de requêtes `GET /api/downloads` éliminé (2026-10-04)
+
+- **Bug** : ~11 requêtes `GET /api/downloads?get_peers=1` par seconde
+  (~520 en 45 s) dans l'interface. Cause : `spawn_progress_loop`
+  publie `download_state_changed` **pour chaque téléchargement à
+  chaque tick** (~1 Hz par torrent) et le listener SSE de
+  `DownloadsNotifier` lançait un re-poll complet par événement —
+  soit ~N requêtes/s pour N torrents, sans garde anti-recouvrement.
+- **Fix** : l'événement transporte déjà le `DownloadInfo` complet —
+  `Download.mergeProgressStats` fusionne les champs volatils
+  (progression, débits, statut, compteurs, ETA, cumuls, ratio,
+  erreur) dans la ligne concernée sans aucune requête, en
+  préservant les champs enrichis par le handler (anonymat, limites,
+  scrape, trackers, pairs, horodatages). Infohash inconnu → re-poll
+  complet (nouveau téléchargement). `torrent_status_changed` et
+  `torrent_finished` (transitions rares) gardent le re-poll
+  immédiat, le timer 2 s reste la source de vérité pour les champs
+  enrichis, et `_refresh` a désormais un garde anti-recouvrement.
+- Résultat : trafic de ~11 req/s à ~0,5 req/s, tout en rendant les
+  barres de progression **plus** réactives (mise à jour ~1 Hz poussée
+  par SSE au lieu du poll 2 s).
+
 ## Web : plus de 401 au démarrage (clé API résolue avant `runApp`) (2026-10-04)
 
 - **Bug** : la console navigateur affichait des 401 sur
