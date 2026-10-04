@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'app.dart';
+import 'core/config/connection_settings.dart';
 import 'core/di/providers.dart';
 import 'core/platform/desktop_shell.dart';
 
@@ -29,11 +30,27 @@ Future<void> main(List<String> args) async {
       .where((a) => a.toLowerCase().endsWith('.torrent') ||
           a.toLowerCase().endsWith('.magnet'))
       .toList();
+  final container = ProviderContainer(
+    overrides: [startupFilesProvider.overrideWithValue(startupFiles)],
+  );
+  // Web : la résolution de la connexion (same-origin + clé injectée
+  // dans index.html + localStorage) est quasi immédiate — l'attendre
+  // ici évite que `appConfigProvider` émette la config par défaut
+  // **sans clé** pendant le chargement asynchrone : les premières
+  // requêtes (`/api/events`, `/api/downloads`…) partaient sans
+  // `X-Api-Key` → 401 visibles dans la console navigateur. Sur
+  // desktop la résolution peut lancer le daemon : pas d'attente
+  // bloquante au démarrage.
+  if (kIsWeb) {
+    try {
+      await container.read(connectionSettingsProvider.future);
+    } catch (_) {
+      // Résolution impossible : l'app démarre sur les défauts.
+    }
+  }
   runApp(
-    ProviderScope(
-      overrides: [
-        startupFilesProvider.overrideWithValue(startupFiles),
-      ],
+    UncontrolledProviderScope(
+      container: container,
       child: const OnionbitApp(),
     ),
   );

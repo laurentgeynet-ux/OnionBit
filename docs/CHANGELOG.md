@@ -3,6 +3,21 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Web : plus de 401 au démarrage (clé API résolue avant `runApp`) (2026-10-04)
+
+- **Bug** : la console navigateur affichait des 401 sur
+  `/api/events`, `/api/downloads`, `/api/versioning/versions` au
+  chargement. Cause : `appConfigProvider` émettait la config par
+  défaut **sans clé** pendant que `connectionSettingsProvider`
+  résolvait la clé injectée (meta `onionbit-api-key`) — les
+  premières requêtes partaient sans `X-Api-Key`.
+- **Fix** : `main()` crée le `ProviderContainer`, attend
+  `connectionSettingsProvider.future` (quasi immédiat sur web :
+  localStorage + meta), puis monte l'app en
+  `UncontrolledProviderScope` — le premier client API/SSE est créé
+  directement avec la vraie clé. Desktop inchangé (la résolution
+  peut lancer le daemon — pas d'attente bloquante).
+
 ## Réglages : section « Configuration avancée » retirée (2026-10-04)
 
 - L'éditeur brut de `configuration.json` (sections avancée + import/
