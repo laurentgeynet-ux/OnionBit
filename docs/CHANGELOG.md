@@ -3,6 +3,28 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Statut tracker réel dans `tracker_info` (2026-10-04)
+
+- **Problème** : chaque tracker réel affichait `peers: -1` /
+  `status: "Not contacted yet"` en dur — « forcer l'annonce » rendait
+  `forced: true` sans jamais changer le statut.
+- **Source de vérité** : `tracker_state` (`alive`/`failures`/
+  `last_check`) alimenté par le scrape du torrent checker — le seul
+  canal observable fiable (librqbit n'expose pas l'annonce par
+  tracker).
+- **Checker** : `check_tracker` met à jour `tracker_state` au succès
+  (`alive`, `failures=0`) et à l'échec (`alive=false`, `failures+1`).
+- **API** : `trackers_json` prend `states`+santé d'essaim → statut
+  `Working` (avec `seeds`/`leeches` scrapés) / `Error` /
+  `Not contacted yet` ; `GET /api/downloads` précharge les états dans
+  le cache `downloads_rows` (pas de N+1) ; `GET .../trackers` lit les
+  états des URLs du torrent.
+- **Force announce** : scrape opportuniste en arrière-plan après
+  `force_announce` — l'annonce librqbit part, puis le checker met à
+  jour `tracker_state` pour que le statut reflète l'observation.
+- **Anonymat préservé** : les téléchargements `anon_hops > 0` ne sont
+  jamais scrapés en clair (garde existante du checker).
+
 ## Création de torrent depuis l'UI (2026-10-04)
 
 - **Besoin** : `POST /api/createtorrent` existait côté daemon mais

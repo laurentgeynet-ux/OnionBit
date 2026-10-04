@@ -29,7 +29,7 @@ pub async fn get_downloads(
     // single-flight `downloads_rows` coalesce les requetes
     // concurrentes (les evenements SSE de la restauration declenchent
     // ~10 GET/s) et absorbe la contention sqlite.
-    let (dl_rows, ts_rows) = state
+    let (dl_rows, ts_rows, tr_rows) = state
         .downloads_rows
         .get_or_fetch(async {
             state
@@ -39,6 +39,7 @@ pub async fn get_downloads(
                     Ok((
                         onionbit_db::downloads::list(c)?,
                         onionbit_db::health::list_torrent_states(c)?,
+                        onionbit_db::health::list_trackers(c)?,
                     ))
                 })
                 .await
@@ -53,6 +54,8 @@ pub async fn get_downloads(
         .into_iter()
         .map(|r| (r.infohash, (r.seeders, r.leechers)))
         .collect();
+    let tracker_states: std::collections::HashMap<String, onionbit_db::models::TrackerStateRow> =
+        tr_rows.into_iter().map(|r| (r.url.clone(), r)).collect();
     let hops_map: std::collections::HashMap<String, u32> = row_map
         .values()
         .map(|r| {
@@ -137,6 +140,8 @@ pub async fn get_downloads(
                 info.trackers = crate::handlers::downloads_extra::trackers_json(
                     dl.trackers(),
                     state.session.engine().config().enable_dht,
+                    &tracker_states,
+                    ih_bytes.as_ref().and_then(|ih| health_map.get(ih).copied()),
                 );
                 if let Some(n) = dl.total_pieces() {
                     info.total_pieces = n as usize;

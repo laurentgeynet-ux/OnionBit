@@ -88,6 +88,23 @@ pub fn upsert_tracker(conn: &Connection, url: &str) -> Result<TrackerStateRow> {
         .ok_or_else(|| crate::DbError::Corrupt("tracker_state absent apres upsert".into()))
 }
 
+/// Liste tous les trackers connus (`tracker_state`) — evite le
+/// N+1 des listings (`tracker_info` par telechargement).
+pub fn list_trackers(conn: &Connection) -> Result<Vec<TrackerStateRow>> {
+    let mut stmt =
+        conn.prepare("SELECT rowid, url, last_check, alive, failures FROM tracker_state")?;
+    let rows = stmt.query_map([], |r| {
+        Ok(TrackerStateRow {
+            rowid: r.get("rowid")?,
+            url: r.get("url")?,
+            last_check: r.get("last_check")?,
+            alive: r.get::<_, i64>("alive")? != 0,
+            failures: r.get("failures")?,
+        })
+    })?;
+    Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+}
+
 /// Lit un tracker par URL.
 pub fn get_tracker(conn: &Connection, url: &str) -> Result<Option<TrackerStateRow>> {
     Ok(conn

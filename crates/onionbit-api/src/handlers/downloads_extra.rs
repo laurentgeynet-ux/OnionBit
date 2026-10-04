@@ -154,7 +154,7 @@ pub async fn tracker_force_announce(
     Json(req): Json<TrackerRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     find(&state, &infohash)?;
-    let _url = req
+    let url = req
         .url
         .filter(|u| !u.is_empty())
         .ok_or_else(|| ApiError::bad_request("url parameter missing"))?;
@@ -163,19 +163,55 @@ pub async fn tracker_force_announce(
         .force_announce(&infohash)
         .await
         .map_err(|e| ApiError::internal_handled(e.to_string()))?;
+    // Scrape opportuniste en arriere-plan : librqbit re-annonce
+    // mais n'expose pas le resultat par tracker — le checker scrape
+    // l'URL pour que `tracker_state` (le statut affiche) reflete une
+    // observation reelle. Les telechargements anonymes sont exclus
+    // par le checker lui-meme (jamais scrapes en clair).
+    if let Some(checker) = state.session.torrent_checker() {
+        let ih_bytes = onionbit_crypto::hash::from_hex(&infohash).unwrap_or_default();
+        tokio::spawn(async move {
+            if ih_bytes.len() == 20 {
+                let mut ih = [0u8; 20];
+                ih.copy_from_slice(&ih_bytes);
+                let _ = checker.check_tracker(&url, &[ih]).await;
+            }
+        });
+    }
     Ok(Json(serde_json::json!({ "forced": true })))
 }
 
 /// `TrackerStatusDict` Python : `{url, peers, seeds, leeches,
-/// status}` — valeurs par defaut de `get_tracker_status` tant que le
-/// tracker n'a pas ete scrape (`peers=-1`, `"Not contacted yet"`).
-fn tracker_status_json(url: String) -> serde_json::Value {
+/// status}`. Le statut vient de `tracker_state` (`alive`/`failures`
+/// alimentes par le scrape du torrent checker) : `"Working"` si le
+/// tracker a repondu, `"Error"` s'il a ete tente en vain, sinon
+/// `"Not contacted yet"`. `seeds`/`leeches` = la sante scrapee de
+/// l'essaim (`torrent_state`) quand le tracker est joignable.
+fn tracker_status_json(
+    url: String,
+    state: Option<&onionbit_db::models::TrackerStateRow>,
+    health: Option<(i64, i64)>,
+) -> serde_json::Value {
+    let (status, seeds, leeches) = match state {
+        Some(s) if s.alive => (
+            "Working",
+            health.map(|(sd, _)| sd).unwrap_or(-1),
+            health.map(|(_, l)| l).unwrap_or(-1),
+        ),
+        Some(s) if s.last_check > 0 || s.failures > 0 => ("Error", -1, -1),
+        _ => ("Not contacted yet", -1, -1),
+    };
+    let peers = if seeds < 0 {
+        -1
+    } else {
+        seeds + leeches.max(0)
+    };
     serde_json::json!({
         "url": url,
-        "peers": -1,
-        "seeds": -1,
-        "leeches": -1,
-        "status": "Not contacted yet",
+        "peers": peers,
+        "seeds": seeds,
+        "leeches": leeches,
+        "status": status,
     })
 }
 
@@ -183,8 +219,16 @@ fn tracker_status_json(url: String) -> serde_json::Value {
 /// `[DHT]`/`[PeX]` ajoutees par `get_tracker_status` Python.
 /// `dht_running` pilote le statut `[DHT]` (`Working`/`Disabled`) ;
 /// librqbit n'expose pas les compteurs de pairs par source (`0`).
-pub(crate) fn trackers_json(urls: Vec<String>, dht_running: bool) -> Vec<serde_json::Value> {
-    let mut out: Vec<_> = urls.into_iter().map(tracker_status_json).collect();
+pub(crate) fn trackers_json(
+    urls: Vec<String>,
+    dht_running: bool,
+    states: &std::collections::HashMap<String, onionbit_db::models::TrackerStateRow>,
+    health: Option<(i64, i64)>,
+) -> Vec<serde_json::Value> {
+    let mut out: Vec<_> = urls
+        .into_iter()
+        .map(|u| tracker_status_json(u.clone(), states.get(&u), health))
+        .collect();
     out.push(serde_json::json!({
         "url": "[DHT]",
         "peers": 0,
@@ -211,8 +255,29 @@ pub async fn get_trackers(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let dl = find(&state, &infohash)?;
     let dht = state.session.engine().config().enable_dht;
+    let urls = dl.trackers();
+    let ih = onionbit_crypto::hash::from_hex(&infohash).unwrap_or_default();
+    // `tracker_state` (scrape du torrent checker) + sante de
+    // l'essaim : les vrais statuts/compteurs par tracker.
+    let q_urls = urls.clone();
+    let (states, health) = state
+        .session
+        .db()
+        .call("downloads.tracker_states", move |c| {
+            let mut m = std::collections::HashMap::new();
+            for u in &q_urls {
+                if let Some(t) = onionbit_db::health::get_tracker(c, u)? {
+                    m.insert(u.clone(), t);
+                }
+            }
+            let h =
+                onionbit_db::health::get_torrent_state(c, &ih)?.map(|r| (r.seeders, r.leechers));
+            Ok((m, h))
+        })
+        .await
+        .unwrap_or_default();
     Ok(Json(
-        serde_json::json!({ "tracker_info": trackers_json(dl.trackers(), dht) }),
+        serde_json::json!({ "tracker_info": trackers_json(urls, dht, &states, health) }),
     ))
 }
 

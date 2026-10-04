@@ -116,15 +116,35 @@ impl TorrentChecker {
         if public.is_empty() {
             return Ok(Vec::new());
         }
-        let healths = if tracker_url.starts_with("udp://") {
+        let result = if tracker_url.starts_with("udp://") {
             self.udp_scrape(tracker_url, &public).await
         } else if tracker_url.starts_with("http://") || tracker_url.starts_with("https://") {
             self.http_scrape(tracker_url, &public).await
         } else {
             return Err(CoreError::InvalidState("schema de tracker inconnu"));
-        }?;
-        self.record_healths(tracker_url, &healths);
-        Ok(healths)
+        };
+        // `tracker_state` Python (`alive`/`failures`/`last_check`) —
+        // alimente le statut affiche par tracker dans l'API.
+        match result {
+            Ok(healths) => {
+                let _ = self.db.with(|c| {
+                    onionbit_db::health::upsert_tracker(c, tracker_url)?;
+                    onionbit_db::health::update_tracker(c, tracker_url, true, now_unix(), 0)
+                });
+                self.record_healths(tracker_url, &healths);
+                Ok(healths)
+            }
+            Err(e) => {
+                let _ = self.db.with(|c| {
+                    onionbit_db::health::upsert_tracker(c, tracker_url)?;
+                    let failures = onionbit_db::health::get_tracker(c, tracker_url)?
+                        .map(|t| t.failures + 1)
+                        .unwrap_or(1);
+                    onionbit_db::health::update_tracker(c, tracker_url, false, now_unix(), failures)
+                });
+                Err(e)
+            }
+        }
     }
 
     /// Vrai si l'infohash est un telechargement/seeding anonyme

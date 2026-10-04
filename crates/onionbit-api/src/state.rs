@@ -10,10 +10,12 @@ use std::sync::{Arc, Mutex};
 
 use onionbit_core::{CoreSession, DaemonConfig};
 
-/// Lignes `downloads` + `torrent_states` relues par `GET /api/downloads`.
+/// Lignes `downloads` + `torrent_states` + `tracker_state` relues par
+/// `GET /api/downloads`.
 pub type DownloadsRows = (
     Vec<onionbit_db::DownloadRow>,
     Vec<onionbit_db::TorrentStateRow>,
+    Vec<onionbit_db::models::TrackerStateRow>,
 );
 
 /// Fraicheur du cache `DownloadsRowsCache` — bien en dessous du tick
