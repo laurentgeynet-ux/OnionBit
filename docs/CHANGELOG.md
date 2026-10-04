@@ -3,6 +3,16 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Compteur « session ↓ » : octets réseau réels (2026-10-05)
+
+- **Symptôme** : `session ↓` affichait ~61 Go au démarrage — la somme
+  de `progress_bytes` incluait les pièces vérifiées par le contrôle
+  de hash du fastresume, pas seulement le téléchargement réseau.
+- **Backend** : `DownloadStats.fetched_bytes` expose le compteur
+  rqbit des octets réellement reçus ; `/api/statistics` (`total_recv`)
+  et `session_download` (DTO) l'utilisent. `progress_bytes` conserve
+  la progression (%) et les cumuls persistants.
+
 ## Parité réseau : retry séquentiel IPv8, plage standard BT 6881..=6891 et client NAT-PMP (2026-10-04)
 
 - **Ports UDP IPv8** : remplacement du repli direct vers un port éphémère (`0.0.0.0:0`) par `bind_dual_with_retry` (`MAX_PORT_RETRY_ATTEMPTS = 1000`), fidèle à `create_socket_with_retry` de Tribler (incrémentation séquentielle `port + 1` en cas de collision sur IPv4 et IPv6).

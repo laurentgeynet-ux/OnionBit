@@ -167,7 +167,7 @@ impl DownloadInfo {
                 s.uploaded_bytes as f64 / s.progress_bytes as f64
             },
             session_upload: s.uploaded_bytes,
-            session_download: s.progress_bytes,
+            session_download: s.fetched_bytes,
             trackers: Vec::new(),
             hops: 0,
             anon_download: false,

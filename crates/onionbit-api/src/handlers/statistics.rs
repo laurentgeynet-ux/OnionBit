@@ -40,9 +40,12 @@ pub async fn get_onionbit_stats(State(state): State<AppState>) -> Json<serde_jso
     // Totaux session : somme des stats de tous les moteurs
     // (principal + lanes anonymes) — equivalent des compteurs
     // `libtorrent.sessions` Python, remis a zero au redemarrage.
+    // `fetched_bytes` (reseau reel) plutot que `progress_bytes` : la
+    // verification de hash au demarrage ne doit pas gonfler le
+    // compteur « session ».
     let (mut total_recv, mut total_sent) = (0u64, 0u64);
     for d in state.session.downloads() {
-        total_recv = total_recv.saturating_add(d.progress_bytes);
+        total_recv = total_recv.saturating_add(d.fetched_bytes);
         total_sent = total_sent.saturating_add(d.uploaded_bytes);
     }
 

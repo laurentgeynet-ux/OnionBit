@@ -46,6 +46,11 @@ pub struct DownloadStats {
     pub state: DownloadState,
     /// Octets utiles deja verifies/ecrits.
     pub progress_bytes: u64,
+    /// Octets reellement recus du reseau cette session
+    /// (`fetched_bytes` rqbit — exclut les pieces verifiees par le
+    /// controle de hash au demarrage, contrairement a
+    /// `progress_bytes`).
+    pub fetched_bytes: u64,
     /// Taille totale du contenu.
     pub total_bytes: u64,
     /// Octets envoyes aux pairs.
@@ -185,6 +190,7 @@ impl Download {
             peers_seen,
             peers_dead,
             eta_human,
+            fetched_bytes,
         ) = match &s.live {
             Some(live) => (
                 live.download_speed.as_bytes(),
@@ -195,8 +201,9 @@ impl Download {
                 live.snapshot.peer_stats.seen,
                 live.snapshot.peer_stats.dead,
                 live.time_remaining.as_ref().map(|t| t.to_string()),
+                live.snapshot.fetched_bytes,
             ),
-            None => (0, 0, 0, 0, 0, 0, 0, None),
+            None => (0, 0, 0, 0, 0, 0, 0, None, 0),
         };
         DownloadStats {
             id: self.id(),
@@ -204,6 +211,7 @@ impl Download {
             name: self.name(),
             state,
             progress_bytes: s.progress_bytes,
+            fetched_bytes,
             total_bytes: s.total_bytes,
             uploaded_bytes: s.uploaded_bytes,
             file_progress: s.file_progress,
