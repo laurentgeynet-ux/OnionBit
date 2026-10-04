@@ -3,6 +3,25 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## `torrent_finished` ne se rejoue plus au démarrage (2026-10-04)
+
+- **Bug** : à chaque boot, tous les téléchargements déjà terminés
+  re-notifiaient « téléchargement terminé » (cloche + notif
+  navigateur). Le pré-amorçage du set `finished` depuis le drapeau
+  persistant existait, mais une fenêtre le cassait : restauré, un
+  téléchargement complet rapporte `finished=false` pendant son
+  `Initializing`/`Checking` (hashcheck) → la branche « redevenu
+  incomplet » retirait le drapeau (mémoire **et** base) → la
+  completion suivante repassait pour une nouvelle.
+- **Fix** (`spawn_progress_loop`) : le retrait du drapeau est ignoré
+  pendant `Initializing`/`Checking` — seul un état stabilisé
+  (`Downloading`, `Paused`…) peut invalider la completion. Une vraie
+  régression (sélection de fichiers étendue) continue de notifier la
+  re-completion.
+- **Test** : `torrent_fini_restaure_ne_renotifie_pas` vert (le cas
+  réel n'apparaissait qu'avec un hashcheck plus long qu'un tick — un
+  ISO de plusieurs Go, pas le petit fichier du test).
+
 ## Snackbar « téléchargement terminé » supprimé (2026-10-04)
 
 - **Constat** : le toast en bas d'écran à chaque `torrent_finished`

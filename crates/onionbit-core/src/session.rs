@@ -795,11 +795,21 @@ impl CoreSession {
                                 });
                             }
                         }
-                    } else if finished.remove(&stats.info_hash) {
+                    } else if !matches!(
+                        stats.state,
+                        DownloadState::Initializing | DownloadState::Checking
+                    ) && finished.remove(&stats.info_hash)
+                    {
                         // Redevenu incomplet (selection de fichiers
                         // etendue, pieces invalidees) : le drapeau
                         // persistant suit pour que la prochaine
-                        // completion notifie a nouveau.
+                        // completion notifie a nouveau. Les etats
+                        // transitoires `Initializing`/`Checking` sont
+                        // exclus : au demarrage, un telechargement
+                        // termine restaure rapporte brievement
+                        // `finished=false` pendant son hashcheck —
+                        // retirer le drapeau ici redeclenchait
+                        // `torrent_finished` a chaque boot.
                         if let Some(ih) = onionbit_crypto::hash::from_hex(&stats.info_hash) {
                             let _ = session
                                 .inner
