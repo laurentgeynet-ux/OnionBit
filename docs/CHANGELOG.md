@@ -41,6 +41,11 @@ en haut.
   `/api/statistics/ipv8` (`tunnelTrafficRateProvider` — delta
   négatif au redémarrage du daemon ramené à 0). Mesure le trafic
   total : relais servis, protocole et téléchargements.
+  Sondage autonome toutes les 5 s (`StreamProvider` +
+  `Stream.periodic`, `prev` dans la clôture du générateur) ; le
+  repository est capturé dans la phase synchrone du corps du
+  provider — `ref.watch` n'est pas valide dans un générateur
+  `async*` différé (erreur avalée → stream jamais émise).
 - **Cartes renommées « Réception fichiers » / « Envoi fichiers »** :
   la Σ `speed_down`/`speed_up` de `/api/downloads` ne mesure que le
   trafic BitTorrent des téléchargements locaux — à 0 honnêtement

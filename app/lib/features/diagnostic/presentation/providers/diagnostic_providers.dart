@@ -102,34 +102,39 @@ final ipv8TrafficProvider = FutureProvider.autoDispose<Ipv8Traffic>(
 /// `prev` vit dans la clôture du générateur — immunisé aux rebuilds
 /// de providers (les notifiers Riverpod 3 peuvent être recréés).
 final tunnelTrafficRateProvider =
-    StreamProvider.autoDispose<({int down, int up})>((ref) async* {
-      ({int down, int up, DateTime at})? prev;
-      for (;;) {
-        try {
-          final s = await ref
-              .watch(diagnosticRepositoryProvider)
-              .ipv8Traffic();
-          final now = DateTime.now();
-          final p = prev;
-          prev = (down: s.down, up: s.up, at: now);
-          if (p != null) {
-            final secs = now.difference(p.at).inMicroseconds / 1e6;
-            if (secs > 0) {
-              // Compteurs remis à zéro au redémarrage du daemon :
-              // un delta négatif est ramené à 0 plutôt qu'affiché.
-              yield (
-                down: ((s.down - p.down) / secs)
-                    .round()
-                    .clamp(0, 1 << 62),
-                up: ((s.up - p.up) / secs).round().clamp(0, 1 << 62),
-              );
+    StreamProvider.autoDispose<({int down, int up})>((ref) {
+      // `ref` n'est valide que pendant l'exécution synchrone du corps
+      // du provider — dans le générateur différé `async*` il peut
+      // lever (Riverpod 3) : le repository est donc capturé ici, en
+      // dehors du flux.
+      final repo = ref.watch(diagnosticRepositoryProvider);
+      return () async* {
+        ({int down, int up, DateTime at})? prev;
+        for (;;) {
+          try {
+            final s = await repo.ipv8Traffic();
+            final now = DateTime.now();
+            final p = prev;
+            prev = (down: s.down, up: s.up, at: now);
+            if (p != null) {
+              final secs = now.difference(p.at).inMicroseconds / 1e6;
+              if (secs > 0) {
+                // Compteurs remis à zéro au redémarrage du daemon :
+                // un delta négatif est ramené à 0 plutôt qu'affiché.
+                yield (
+                  down: ((s.down - p.down) / secs)
+                      .round()
+                      .clamp(0, 1 << 62),
+                  up: ((s.up - p.up) / secs).round().clamp(0, 1 << 62),
+                );
+              }
             }
+          } catch (_) {
+            // Daemon injoignable : on retente au prochain tour.
           }
-        } catch (_) {
-          // Daemon injoignable : on retente au prochain tour.
+          await Future<void>.delayed(const Duration(seconds: 5));
         }
-        await Future<void>.delayed(const Duration(seconds: 5));
-      }
+      }();
     });
 
 final daemonLogsProvider = FutureProvider.autoDispose<String>(

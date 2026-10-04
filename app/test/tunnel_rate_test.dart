@@ -10,9 +10,10 @@ import 'package:onionbit_ui/features/diagnostic/domain/diagnostic_models.dart';
 import 'package:onionbit_ui/features/diagnostic/domain/diagnostic_repository.dart';
 import 'package:onionbit_ui/features/diagnostic/presentation/providers/diagnostic_providers.dart';
 
-/// Репозиторий с подменёнными счётчиками: отмечает первый опрос, чтобы
-/// тест детерминированно ставил baseline. Остальные методы тесту не
-/// нужны — `noSuchMethod` вернёт null при случайном вызове.
+/// Dépôt factice à compteurs pilotés : le premier sondage est
+/// signalé pour que le test pose sa baseline de façon déterministe.
+/// Les autres méthodes sont inutilisées — `noSuchMethod` renvoie
+/// null si le hasard les appelait.
 class _FakeDiagnosticRepo implements DiagnosticRepository {
   var sample = const Ipv8Traffic(up: 0, down: 0);
   final polled = Completer<void>();
@@ -37,7 +38,7 @@ Future<void> _until(bool Function() ok, {int tries = 300}) async {
 
 void main() {
   test(
-    'tunnelTrafficRateProvider diff сондирований: дебит, сброс счётчиков -> 0',
+    'tunnelTrafficRateProvider : diff de sondages, compteurs remis à zéro -> 0',
     () async {
       final repo = _FakeDiagnosticRepo();
       final container = ProviderContainer.test(
@@ -59,7 +60,8 @@ void main() {
       );
       addTearDown(sub.close);
 
-      // Baseline поставлен первым опросом; счётчики выросли -> дебит.
+      // Baseline posée par le premier sondage ; les compteurs ont
+      // grandi -> un débit est émis.
       await repo.polled.future;
       repo.sample = const Ipv8Traffic(up: 30000, down: 60000);
       await _until(() => rates.isNotEmpty);
@@ -67,7 +69,8 @@ void main() {
       expect(rates.single.up, greaterThan(0));
       expect(rates.single.down, greaterThan(rates.single.up));
 
-      // Счётчики обнулились (restart daemon) -> без отрицательного дебита.
+      // Compteurs remis à zéro (restart du daemon) -> pas de débit
+      // négatif.
       repo.sample = const Ipv8Traffic(up: 10, down: 20);
       await _until(() => rates.length > 1);
       expect(rates.last.up, 0);
