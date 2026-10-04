@@ -3172,6 +3172,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "onionbit-messaging"
+version = "0.9.1-beta"
+dependencies = [
+ "chacha20poly1305",
+ "hkdf",
+ "onionbit-crypto",
+ "onionbit-format",
+ "proptest",
+ "rand 0.10.3",
+ "sha2",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "onionbit-network-policy"
 version = "0.9.1-beta"
 dependencies = [

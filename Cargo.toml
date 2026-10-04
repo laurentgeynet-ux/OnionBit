@@ -6,6 +6,7 @@ members = [
     "crates/onionbit-bittorrent",
     "crates/onionbit-ipv8",
     "crates/onionbit-tunnel",
+    "crates/onionbit-messaging",
     "crates/onionbit-core",
     "crates/onionbit-db",
     "crates/onionbit-network-policy",

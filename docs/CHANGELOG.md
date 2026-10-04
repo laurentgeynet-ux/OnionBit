@@ -3,6 +3,30 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Messagerie ADR-0011, étape 36 — codec de trame + crypto applicative (2026-10-05)
+
+- **Nouveau crate `onionbit-messaging`** (propriétaire unique du
+  protocole) : `Frame {v,type,id,seq,ts,body,sig}` en bencode
+  canonique strict — ensemble de clés exact, rejet `v != 1`,
+  `body` ≤ 30 Kio, trame ≤ 32 Kio, borne de taille **avant** tout
+  parse (anti-DoS).
+- **Authentification** : chaque trame est signée Ed25519 par la clé
+  IPv8 de l'émetteur (encrypt-then-sign sur la forme canonique sans
+  `sig`) et vérifiée contre la `pk` du contact — distinct de la
+  confidentialité du tunnel.
+- **Clés applicatives** : HKDF-SHA256 sur le secret e2e, domaine
+  `"onionbit messaging v1"` disjoint de `key_generation` — une clé
+  par direction, miroir initiateur/répondant. Non-claim assumé :
+  pas de ratchet/FS en v1.
+- **Anti-replay** : `seq` monotone + fenêtre bitmap 64 (modèle
+  IPsec) + dédup par `id` 128 bits borné FIFO — absorbe les
+  réémissions honnêtes d'un circuit e2e reconstruit.
+- **Fuzz** : cible `messaging_frame` (cargo-fuzz) + miroir stable
+  proptest (`tests/fuzz_regression.rs`) — jamais de panic sur
+  trame hostile.
+- **Bancs couverts** : MS-3/MS-4/MS-5 côté codec+auth+replay ;
+  transport (MS-1/MS-2), consentement et API = étapes 37-41.
+
 ## Compteur « session ↓ » : octets réseau réels (2026-10-05)
 
 - **Symptôme** : `session ↓` affichait ~61 Go au démarrage — la somme
