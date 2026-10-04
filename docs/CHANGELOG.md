@@ -3,6 +3,13 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Barre d'état : RTT minimum affiché à côté du plafond relais (2026-10-04)
+
+- La barre d'état affiche désormais « relais ≤ {débit} · {rtt} ms » :
+  le RTT minimum de la dernière rafale de sondage est visible en
+  permanence à côté du plafond qu'il pilote (`statusRelayCapRtt`).
+  Tooltip précisé : le « ms » est le RTT minimum des pairs sondés.
+
 ## Contrôleur de congestion : signal RTT = minimum de la rafale (2026-10-04)
 
 - **Problème** : le signal de congestion était la **médiane** des RTT

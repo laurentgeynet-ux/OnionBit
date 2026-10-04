@@ -184,7 +184,8 @@
   "bwSourcePending": "mesure en cours…",
   "bwUnlimited": "illimité",
   "statusRelayCap": "relais ≤ {rate}",
-  "statusRelayCapTip": "Plafond du trafic relayé/sorti servi aux autres pairs — automatique : s'ajuste à la congestion de votre upload (sonde RTT — Diagnostic → Statistiques)",
+  "statusRelayCapRtt": "relais ≤ {rate} · {rtt} ms",
+  "statusRelayCapTip": "Plafond du trafic relayé/sorti servi aux autres pairs — automatique : s'ajuste à la congestion de votre upload. Le « ms » est le RTT minimum mesuré sur les pairs sondés.",
   "statNone": "aucun",
 
   "logsDebugTooltip": "Journalise les événements tunnel détaillés (create/extend/destroy, e2e…)",

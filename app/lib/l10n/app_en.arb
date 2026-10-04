@@ -315,7 +315,19 @@
   "bwSourcePending": "measuring…",
   "bwUnlimited": "unlimited",
   "statusRelayCap": "relay ≤ {rate}",
-  "statusRelayCapTip": "Cap on relayed/exit traffic served to other peers — automatic: adapts to your uplink congestion (peer RTT probe — Diagnostics → Statistics)",
+  "@statusRelayCap": {
+    "placeholders": {
+      "rate": { "type": "String" }
+    }
+  },
+  "statusRelayCapRtt": "relay ≤ {rate} · {rtt} ms",
+  "@statusRelayCapRtt": {
+    "placeholders": {
+      "rate": { "type": "String" },
+      "rtt": { "type": "String" }
+    }
+  },
+  "statusRelayCapTip": "Cap on relayed/exit traffic served to other peers — automatic: adapts to your uplink congestion. The ms value is the lowest RTT measured on the probed peers.",
   "statNone": "none",
 
   "logsDebugTooltip": "Logs detailed tunnel events (create/extend/destroy, e2e…)",

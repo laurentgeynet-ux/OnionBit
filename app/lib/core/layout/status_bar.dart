@@ -98,9 +98,14 @@ class StatusBar extends ConsumerWidget {
             Tooltip(
               message: context.l10n.statusRelayCapTip,
               child: Text(
-                context.l10n.statusRelayCap(
-                  context.fmtRate(relayBw.effectiveRelayBps),
-                ),
+                relayBw.minRttMs != null
+                    ? context.l10n.statusRelayCapRtt(
+                        context.fmtRate(relayBw.effectiveRelayBps),
+                        relayBw.minRttMs!.toStringAsFixed(0),
+                      )
+                    : context.l10n.statusRelayCap(
+                        context.fmtRate(relayBw.effectiveRelayBps),
+                      ),
                 style: small?.copyWith(color: scheme.outline),
               ),
             ),
