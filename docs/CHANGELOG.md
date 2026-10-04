@@ -3,6 +3,14 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Colonne « UL tot. » dans la table (2026-10-04)
+
+- **Besoin** : le cumul upload all-time n'était visible que dans le
+  panneau détail.
+- **UI** : colonne triable « UL tot. » entre « Ratio » et « Ajouté » —
+  `d.uploaded` (`total_uploaded` persisté, cumul toutes sessions),
+  `DownloadSort.ulTotal`.
+
 ## Statut tracker : refus de scrape ≠ panne (2026-10-04)
 
 - **Diagnostic** : les trackers privés type Gazelle (C411) répondent

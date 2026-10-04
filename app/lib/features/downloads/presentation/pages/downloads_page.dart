@@ -509,6 +509,7 @@ class _HeaderRow extends ConsumerWidget {
           h('ETA', DownloadSort.eta, width: 80),
           h(l10n.colPeers, DownloadSort.peers, width: 80),
           h(l10n.colRatio, DownloadSort.ratio, width: 70),
+          h(l10n.colUlTotal, DownloadSort.ulTotal, width: 90),
           h(l10n.colAdded, DownloadSort.added, width: 100),
           const SizedBox(width: 130),
         ],
@@ -611,6 +612,12 @@ class _DownloadRow extends ConsumerWidget {
               SizedBox(
                 width: 70,
                 child: Text(d.ratio.toStringAsFixed(2), style: small),
+              ),
+              SizedBox(
+                width: 90,
+                // Cumul all-time persiste (`total_uploaded` DB) —
+                // distinct des compteurs session des colonnes ↓/↑.
+                child: Text(context.fmtBytes(d.uploaded), style: small),
               ),
               SizedBox(
                 width: 100,

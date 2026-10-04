@@ -455,6 +455,7 @@
   "colProgress": "Progression",
   "colPeers": "Pairs",
   "colRatio": "Ratio",
+  "colUlTotal": "UL tot.",
   "colAdded": "Ajouté",
 
   "statusError": "Erreur",

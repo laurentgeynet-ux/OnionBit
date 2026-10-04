@@ -197,6 +197,7 @@ enum DownloadSort {
   eta,
   peers,
   ratio,
+  ulTotal,
   added,
 }
 
@@ -264,6 +265,7 @@ int Function(Download, Download) downloadComparator(DownloadSort col) {
       b.numConnectedPeers,
     ),
     DownloadSort.ratio => (a, b) => a.ratio.compareTo(b.ratio),
+    DownloadSort.ulTotal => (a, b) => a.uploaded.compareTo(b.uploaded),
     DownloadSort.added => (a, b) => a.timeAdded.compareTo(b.timeAdded),
   };
 }
