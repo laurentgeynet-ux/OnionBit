@@ -505,8 +505,9 @@
   "noPeersHint": "Le client recherche des pairs via trackers et DHT.",
 
   "addDownload": "Ajouter un téléchargement",
-  "magnetOrUrl": "Magnet ou URL",
-  "magnetHint": "magnet:?xt=… ou https://…",
+  "magnetOrUrl": "Magnet",
+  "magnetHint": "magnet:?xt=…",
+  "uriMustBeMagnet": "Lien magnet requis — une URL http(s) exposerait votre IP au serveur du .torrent ; choisissez le fichier à la place.",
   "torrentFileBtn": "Fichier .torrent…",
   "removeFile": "Retirer le fichier",
   "anonDirectWarn": "Votre IP est visible par les pairs.",

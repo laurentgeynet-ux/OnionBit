@@ -3,6 +3,19 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Dialogue « Ajouter » : champ magnet-only (2026-10-04)
+
+- **Décision** : le champ « Magnet ou URL » n'accepte plus que les
+  liens `magnet:` — une URL `http(s)` déclenche un GET en clair du
+  metainfo qui expose l'intérêt pour ce `.torrent` au serveur (le
+  magnet, lui, se résout via la DHT tunnélisée : zéro trafic clair).
+  L'alternative privée existe déjà : télécharger le `.torrent` dans
+  le navigateur puis le choisir via le picker.
+- **UI** : libellé « Magnet » + hint `magnet:?xt=…` ; saisie non
+  magnet → erreur inline expliquant la raison et l'alternative.
+- **API** : `PUT /api/downloads` avec une URL `http(s)` reste
+  accepté (scripts/CLI) — fetch `fetch_checked` anti-SSRF documenté.
+
 ## URL `http(s)://…​.torrent` fonctionnelle en mode anonyme (2026-10-04)
 
 - **Bug** : coller une URL `.torrent` dans le dialogue Ajouter

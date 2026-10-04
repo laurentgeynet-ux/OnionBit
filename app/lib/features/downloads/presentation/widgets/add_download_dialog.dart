@@ -156,8 +156,17 @@ class _AddDownloadDialogState extends ConsumerState<AddDownloadDialog> {
           paused: _paused,
         );
       } else {
+        final uri = _uriController.text.trim();
+        // Magnet uniquement : une URL http(s) exposerait l'interet
+        // pour ce .torrent en clair (GET du metainfo). Le fichier
+        // telecharge separement se choisit via le picker — zero
+        // reseau a l'ajout.
+        if (!uri.startsWith('magnet:')) {
+          setState(() => _error = context.l10n.uriMustBeMagnet);
+          return;
+        }
         await repo.add(
-          uri: _uriController.text.trim(),
+          uri: uri,
           destination: _destController.text.trim().isEmpty
               ? null
               : _destController.text.trim(),

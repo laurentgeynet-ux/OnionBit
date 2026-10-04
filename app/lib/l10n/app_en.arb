@@ -804,8 +804,9 @@
   "noPeersHint": "The client is searching for peers via trackers and DHT.",
 
   "addDownload": "Add download",
-  "magnetOrUrl": "Magnet or URL",
-  "magnetHint": "magnet:?xt=… or https://…",
+  "magnetOrUrl": "Magnet",
+  "magnetHint": "magnet:?xt=…",
+  "uriMustBeMagnet": "Magnet link required — an http(s) URL would expose your IP to the .torrent server; pick the file instead.",
   "torrentFileBtn": ".torrent file…",
   "removeFile": "Remove file",
   "anonDirectWarn": "Your IP is visible to peers.",
