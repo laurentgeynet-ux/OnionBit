@@ -3,6 +3,13 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Dialogue « Ajouter » : avertissement « Clair » en rouge (2026-10-04)
+
+- Le texte « Votre IP est visible par les pairs. » sous le sélecteur
+  de sauts passe en `error` quand **Clair** est choisi — cohérent
+  avec le badge d'avertissement de la liste. En `Anon ×N`, le texte
+  d'information reste en `outline`.
+
 ## `torrent_finished` ne se rejoue plus au démarrage (2026-10-04)
 
 - **Bug** : à chaque boot, tous les téléchargements déjà terminés

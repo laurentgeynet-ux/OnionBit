@@ -309,7 +309,12 @@ class _AddDownloadDialogState extends ConsumerState<AddDownloadDialog> {
             Text(
               _hops == 0 ? l10n.anonDirectWarn : l10n.anonRelaysInfo(_hops),
               style: theme.textTheme.bodySmall?.copyWith(
-                color: theme.colorScheme.outline,
+                // Mode clair : IP exposee — avertissement en rouge,
+                // pas une simple note (meme palette que le badge
+                // « Clair » de la liste).
+                color: _hops == 0
+                    ? theme.colorScheme.error
+                    : theme.colorScheme.outline,
               ),
             ),
             const SizedBox(height: AppSpacing.md),
