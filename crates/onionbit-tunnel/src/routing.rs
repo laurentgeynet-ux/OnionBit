@@ -410,7 +410,14 @@ impl Swarm {
             seeder_sk,
             connections: HashMap::new(),
             intro_points: Vec::new(),
-            last_lookup: Instant::now(),
+            // `last_lookup = 0` Python (jamais fait de lookup) : instant
+            // tres ancien pour que le prochain tick `do_peer_discovery`
+            // prenne le swarm tout de suite — sinon un swarm frais
+            // (restauration, re-join) attendrait `swarm_lookup_interval`
+            // avant meme de chercher des pairs.
+            last_lookup: Instant::now()
+                .checked_sub(Duration::from_secs(24 * 3600))
+                .unwrap_or_else(Instant::now),
             // `last_dht_response = 0` Python (jamais eu de reponse) :
             // instant tres ancien pour que la condition
             // `now - last_dht_response > min_dht_lookup_interval`

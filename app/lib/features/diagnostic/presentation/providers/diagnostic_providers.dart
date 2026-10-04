@@ -98,39 +98,39 @@ final ipv8TrafficProvider = FutureProvider.autoDispose<Ipv8Traffic>(
 /// cumulés `total_up`/`total_down` entre deux sondages de
 /// `/api/statistics/ipv8`. Mesure le trafic overlay total (relais,
 /// protocole, téléchargements), distinct des débits « fichiers »
-/// agrégés depuis `/api/downloads`.
+/// agrégés depuis `/api/downloads`. Boucle de sondage propre : le
+/// `prev` vit dans la clôture du générateur — immunisé aux rebuilds
+/// de providers (les notifiers Riverpod 3 peuvent être recréés).
 final tunnelTrafficRateProvider =
-    NotifierProvider<TunnelTrafficRateNotifier, ({int down, int up})>(
-      TunnelTrafficRateNotifier.new,
-    );
-
-class TunnelTrafficRateNotifier extends Notifier<({int down, int up})> {
-  ({int down, int up, DateTime at})? _prev;
-
-  @override
-  ({int down, int up}) build() {
-    final sample = ref.watch(ipv8TrafficProvider).value;
-    if (sample == null) {
-      return (down: 0, up: 0);
-    }
-    final now = DateTime.now();
-    final prev = _prev;
-    _prev = (down: sample.down, up: sample.up, at: now);
-    if (prev == null) {
-      return (down: 0, up: 0);
-    }
-    final secs = now.difference(prev.at).inMicroseconds / 1e6;
-    if (secs <= 0) {
-      return (down: 0, up: 0);
-    }
-    // Compteurs remis à zéro au redémarrage du daemon : un delta
-    // négatif est ramené à 0 plutôt qu'affiché.
-    return (
-      down: ((sample.down - prev.down) / secs).round().clamp(0, 1 << 62),
-      up: ((sample.up - prev.up) / secs).round().clamp(0, 1 << 62),
-    );
-  }
-}
+    StreamProvider.autoDispose<({int down, int up})>((ref) async* {
+      ({int down, int up, DateTime at})? prev;
+      for (;;) {
+        try {
+          final s = await ref
+              .watch(diagnosticRepositoryProvider)
+              .ipv8Traffic();
+          final now = DateTime.now();
+          final p = prev;
+          prev = (down: s.down, up: s.up, at: now);
+          if (p != null) {
+            final secs = now.difference(p.at).inMicroseconds / 1e6;
+            if (secs > 0) {
+              // Compteurs remis à zéro au redémarrage du daemon :
+              // un delta négatif est ramené à 0 plutôt qu'affiché.
+              yield (
+                down: ((s.down - p.down) / secs)
+                    .round()
+                    .clamp(0, 1 << 62),
+                up: ((s.up - p.up) / secs).round().clamp(0, 1 << 62),
+              );
+            }
+          }
+        } catch (_) {
+          // Daemon injoignable : on retente au prochain tour.
+        }
+        await Future<void>.delayed(const Duration(seconds: 5));
+      }
+    });
 
 final daemonLogsProvider = FutureProvider.autoDispose<String>(
   (ref) {

@@ -3,6 +3,25 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Premier lookup de swarm immédiat + débit tunnel vivant (2026-10-04)
+
+- **`Swarm::new` : `last_lookup` initialisé « jamais »** — comme le
+  `last_lookup = 0` de pyipv8 (`tunnel.py:316`). Avant : instant de
+  création → un swarm frais (restauration, re-join au changement
+  d'état) attendait `swarm_lookup_interval` (30 s) avant son premier
+  lookup, puis autant à chaque tentative vide — les downloads
+  restaurés restaient sans pairs des minutes en prod (1/4 reparti
+  vite, les autres ~10 min). Désormais le prochain tick
+  `do_peer_discovery` (10 s) les prend tout de suite — fidélité
+  protocole restaurée, pas écart.
+- **`tunnelTrafficRateProvider` refait sans notifier** : sous
+  Riverpod 3.x le notifier peut être recréé à chaque rebuild par
+  dépendance — `_prev` repartait à `null`, la carte « Trafic
+  tunnel » restait à `↓ 0 · ↑ 0` malgré le trafic. Boucle de
+  sondage autonome en `StreamProvider` (le `prev` vit dans la
+  clôture du générateur) + test unitaire du diff et du clamp sur
+  compteurs remis à zéro.
+
 ## Banc live : fenetres premier-octet élargies (2026-10-03)
 
 - `live_suppression_pendant_transfert`, `live_update_hops_en_transfert`,

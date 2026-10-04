@@ -786,7 +786,8 @@ class _OverviewTabState extends ConsumerState<_OverviewTab> {
     final peers = ref.watch(tunnelPeersProvider).value;
     final stats = ref.watch(onionbitStatsProvider).value;
     final speeds = ref.watch(totalSpeedsProvider);
-    final tunnelRate = ref.watch(tunnelTrafficRateProvider);
+    final tunnelRate =
+        ref.watch(tunnelTrafficRateProvider).value ?? (down: 0, up: 0);
 
     final ready = circuits?.where((c) => c.ready).length ?? 0;
     final exitsOn = exits?.where((e) => e.enabled).length ?? 0;
