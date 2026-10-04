@@ -22,4 +22,8 @@ abstract final class EventTopics {
   /// Poussé par `POST /api/settings` — les clients doivent recharger
   /// l'arbre de configuration (boucle multi-clients).
   static const settingsChanged = 'settings_changed';
+
+  /// Un download sur lane anonyme s'est révélé `private=1` après
+  /// résolution du metainfo (le flag n'est pas dans le magnet).
+  static const privateTorrentDetected = 'private_torrent_detected';
 }

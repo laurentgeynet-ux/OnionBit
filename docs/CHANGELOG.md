@@ -3,6 +3,23 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Torrent privé détecté post-résolution (magnet) (2026-10-04)
+
+- **Cas** : le flag `private` n'est pas dans un magnet — il n'est
+  lisible qu'après résolution BEP 9 du metainfo. Un magnet privé
+  ajouté en Anon ×N restait silencieusement à l'arrêt sans pairs
+  (sans fuite, mais sans explication).
+- **Daemon** : `Notification::PrivateTorrentDetected` — émise après
+  `add_download_anon` quand le metainfo résolu est `private=1` sur
+  une lane anonyme, et dans `add_torrent_bytes_anon` (`.torrent`
+  privé ajouté en anonyme via l'API en contournant le verrou UI).
+- **API** : topic SSE `private_torrent_detected` (extension locale,
+  comme `download_state_changed`).
+- **UI** : la cloche affiche un avertissement « Torrent privé
+  détecté — « nom » est privé : l'anonymat est impossible,
+  basculez-le en Clair ». Le download n'est pas bloqué côté daemon
+  — l'UI informe, l'utilisateur décide (`PATCH anon_hops`).
+
 ## Dialogue « Ajouter » : champ magnet-only (2026-10-04)
 
 - **Décision** : le champ « Magnet ou URL » n'accepte plus que les

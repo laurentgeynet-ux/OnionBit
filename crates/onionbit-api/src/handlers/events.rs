@@ -156,6 +156,10 @@ fn notification_to_event(
             serde_json::json!({"version": version}),
         ),
         Notification::SettingsChanged => ("settings_changed".into(), serde_json::json!({})),
+        Notification::PrivateTorrentDetected { infohash, name } => (
+            "private_torrent_detected".into(),
+            serde_json::json!({"infohash": infohash, "name": name}),
+        ),
     };
     Some((topic, kwargs))
 }

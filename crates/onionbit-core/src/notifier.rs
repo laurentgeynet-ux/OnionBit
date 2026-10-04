@@ -141,6 +141,18 @@ pub enum Notification {
     /// (boucle multi-clients : l'editeur avance d'un client
     /// resynchronise les sections dediees des autres).
     SettingsChanged,
+    /// `private_torrent_detected` (extension locale) : un download sur
+    /// une lane anonyme s'est revele `private=1` — flag invisible
+    /// dans un magnet, detecte apres resolution BEP 9 (ou ajout
+    /// `.torrent` via l'API en contournant le verrou UI). Le download
+    /// ne trouvera jamais de pairs anonymes — l'UI invite a passer
+    /// en Clair.
+    PrivateTorrentDetected {
+        /// Info-hash hex.
+        infohash: String,
+        /// Nom du contenu resolu.
+        name: Option<String>,
+    },
 }
 
 /// Bus de notifications. `Clone` : chaque service detient un

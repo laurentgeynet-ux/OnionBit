@@ -87,6 +87,11 @@
     "placeholders": { "version": { "type": "String" } }
   },
   "notifDownloadError": "Download error",
+  "notifPrivateTorrent": "Private torrent detected",
+  "notifPrivateTorrentMsg": "«{name}» is private: anonymity is impossible — switch it to Direct (menu ⋯ → hops).",
+  "@notifPrivateTorrentMsg": {
+    "placeholders": { "name": { "type": "String" } }
+  },
 
   "snackFinished": "Download finished",
 

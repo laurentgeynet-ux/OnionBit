@@ -1371,6 +1371,7 @@ impl CoreSession {
                 extra_trackers: trackers,
             },
         )?;
+        self.notify_if_private(&dl, hops);
         // Un `PATCH` a pu arriver entre la fin de la derniere
         // resolution et le retrait de `pending` : la derniere cible
         // est appliquee via le chemin normal — le download vient
@@ -1685,7 +1686,43 @@ impl CoreSession {
                 extra_trackers: trackers,
             },
         )?;
+        if meta.private {
+            self.notify_private(&dl, anon_hops);
+        }
         Ok(dl)
+    }
+
+    /// `private` decouvert **apres** l'ajout d'un magnet/URI sur une
+    /// lane anonyme : le flag n'est pas dans l'URI — il n'est lisible
+    /// qu'apres resolution BEP 9 du metainfo. Notifie l'UI
+    /// (`private_torrent_detected`) : aucun chemin anonyme n'existe,
+    /// le download doit passer en Clair.
+    fn notify_if_private(&self, dl: &Download, anon_hops: u32) {
+        let Some(meta) = dl
+            .torrent_bytes()
+            .and_then(|b| onionbit_format::torrent::TorrentMeta::parse(&b).ok())
+        else {
+            return;
+        };
+        if meta.private {
+            self.notify_private(dl, anon_hops);
+        }
+    }
+
+    /// Emet [`Notification::PrivateTorrentDetected`] si la lane est
+    /// anonyme — le download ne trouvera jamais de pairs (DHT/PEX
+    /// interdits par `private=1`, tracker passkey non relayable).
+    /// Aucun blocage : le daemon reste permissif, l'UI avertit.
+    fn notify_private(&self, dl: &Download, anon_hops: u32) {
+        if anon_hops == 0 {
+            return;
+        }
+        self.inner
+            .notifier
+            .notify(Notification::PrivateTorrentDetected {
+                infohash: dl.info_hash_hex(),
+                name: dl.name(),
+            });
     }
 
     /// Cree un jumeau public du download : `private` et trackers

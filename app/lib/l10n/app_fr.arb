@@ -60,6 +60,8 @@
   "notifNewVersion": "Mise à jour disponible",
   "notifNewVersionMsg": "Version {version} disponible.",
   "notifDownloadError": "Téléchargement en erreur",
+  "notifPrivateTorrent": "Torrent privé détecté",
+  "notifPrivateTorrentMsg": "« {name} » est privé : l'anonymat est impossible — basculez-le en Clair (menu ⋯ → sauts).",
 
   "snackFinished": "Téléchargement terminé",
 

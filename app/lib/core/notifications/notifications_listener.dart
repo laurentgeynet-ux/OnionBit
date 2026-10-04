@@ -35,6 +35,15 @@ class _NotificationsListenerState extends ConsumerState<NotificationsListener> {
     final n = switch (event.topic) {
       EventTopics.torrentFinished => _finished(l10n, event),
       EventTopics.downloadStateChanged => _downloadChanged(l10n, event),
+      EventTopics.privateTorrentDetected => AppNotification(
+        title: l10n.notifPrivateTorrent,
+        message: l10n.notifPrivateTorrentMsg(
+          (event.data['name'] as String?) ??
+              (event.data['infohash'] as String?) ??
+              '',
+        ),
+        severity: AppNotificationSeverity.warning,
+      ),
       'tribler_exception' => AppNotification(
         title: l10n.notifDaemonError,
         message: '${event.data['error'] ?? ''}',
