@@ -3,6 +3,20 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Dialogue « Ajouter » : alerte torrent privé, sauts verrouillés (2026-10-04)
+
+- **Besoin** : un torrent `private=1` (tracker à passkey, DHT/PEX
+  interdits) ne peut pas passer par les tunnels — le seul indice
+  était la note HTTPS discrète, facile à rater.
+- **UI** : quand l'aperçu metainfo détecte `private`, un bandeau
+  `errorContainer` (icône + titre « Torrent privé — anonymat
+  impossible » + explication passkey/IP et DHT/PEX) s'affiche au-
+  dessus du choix d'anonymat ; les segments `Anon ×N` sont
+  **désactivés** et le choix est forcé à « Clair » (aussi à l'init
+  tardive des réglages). Le message indique explicitement que le
+  téléchargement se fera en clair, IP visible du tracker et de
+  l'essaim.
+
 ## Débit servi mesuré exactement au limiteur (2026-10-04)
 
 - **Besoin** : distinguer le trafic relayé/sorti pour les autres

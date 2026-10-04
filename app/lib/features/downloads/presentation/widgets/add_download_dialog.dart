@@ -109,6 +109,12 @@ class _AddDownloadDialogState extends ConsumerState<AddDownloadDialog> {
     return uri.queryParametersAll['tr'] ?? const [];
   }
 
+  /// Torrent privé détecté via l'aperçu metainfo (`private=1`) : le
+  /// tracker exige une connexion directe (passkey liée à l'IP) et le
+  /// flag interdit DHT/PEX — aucun chemin anonyme n'existe. Le
+  /// choix de sauts est alors verrouillé sur « Clair ».
+  bool get _privateTorrent => _preview?.isPrivate ?? false;
+
   /// Tous les trackers connus sont HTTPS → injoignables via les
   /// sorties anonymes (relai HTTP clair one-shot uniquement).
   bool get _httpsOnlyTrackers =>
@@ -134,7 +140,14 @@ class _AddDownloadDialogState extends ConsumerState<AddDownloadDialog> {
       final preview = await ref
           .read(downloadsRepositoryProvider)
           .previewTorrentFile(bytes);
-      if (mounted && _fileBytes == bytes) setState(() => _preview = preview);
+      if (mounted && _fileBytes == bytes) {
+        setState(() {
+          _preview = preview;
+          // Torrent privé : l'anonymat est impossible — le choix
+          // repasse sur « Clair » immédiatement.
+          if (preview.isPrivate) _hops = 0;
+        });
+      }
     } catch (_) {
       // Metainfo illisible : l'ajout remontera l'erreur proprement.
     }
@@ -202,6 +215,10 @@ class _AddDownloadDialogState extends ConsumerState<AddDownloadDialog> {
     final theme = Theme.of(context);
     final l10n = context.l10n;
     _initHops(ref.watch(daemonSettingsProvider).value);
+    // Torrent privé : l'anonymat est structurellement impossible —
+    // les sauts restent verrouillés sur « Clair » quelle que soit
+    // l'init tardive des réglages ou un choix antérieur.
+    if (_privateTorrent) _hops = 0;
     return AlertDialog(
       title: Text(l10n.addDownload),
       content: SizedBox(
@@ -240,6 +257,48 @@ class _AddDownloadDialogState extends ConsumerState<AddDownloadDialog> {
                   ),
               ],
             ),
+            if (_privateTorrent) ...[
+              const SizedBox(height: AppSpacing.sm),
+              Container(
+                padding: const EdgeInsets.all(AppSpacing.sm),
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.errorContainer,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: theme.colorScheme.error),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(
+                      Icons.gpp_bad_outlined,
+                      color: theme.colorScheme.error,
+                      size: 22,
+                    ),
+                    const SizedBox(width: AppSpacing.sm),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            l10n.privateTorrentTitle,
+                            style: theme.textTheme.labelLarge?.copyWith(
+                              color: theme.colorScheme.onErrorContainer,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            l10n.privateTorrentWarn,
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: theme.colorScheme.onErrorContainer,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
             const SizedBox(height: AppSpacing.md),
             Text(l10n.rowAnon, style: theme.textTheme.labelMedium),
             const SizedBox(height: AppSpacing.xs),
@@ -247,7 +306,11 @@ class _AddDownloadDialogState extends ConsumerState<AddDownloadDialog> {
               segments: [
                 ButtonSegment(value: 0, label: Text(l10n.anonDirect)),
                 for (final n in const [1, 2, 3])
-                  ButtonSegment(value: n, label: Text(l10n.ctxHops(n))),
+                  ButtonSegment(
+                    value: n,
+                    enabled: !_privateTorrent,
+                    label: Text(l10n.ctxHops(n)),
+                  ),
               ],
               selected: {_hops},
               // Le choix explicite verrouille `_hops` : les réglages

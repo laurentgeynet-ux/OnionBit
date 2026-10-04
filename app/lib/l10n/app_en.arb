@@ -818,6 +818,8 @@
     "placeholders": { "count": { "type": "int" } }
   },
   "httpsOnlyWarn": "All trackers of this torrent use HTTPS: they are unreachable through anonymous exits (cleartext HTTP relay only). In anonymous mode this torrent will find no peers — choose \"Direct\".",
+  "privateTorrentTitle": "Private torrent — anonymity unavailable",
+  "privateTorrentWarn": "Its tracker requires a direct connection (passkey bound to your IP) and the 'private' flag forbids DHT/PEX: no anonymous path exists. It will be downloaded in the clear — your IP will be visible to the tracker and the swarm.",
   "destFolderOpt": "Destination folder (optional)",
   "addPaused": "Add paused",
   "emptyUnlimited": "empty = unlimited",
