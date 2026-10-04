@@ -587,6 +587,12 @@ class _StatsTab extends ConsumerWidget {
                 ? l10n.bwUnlimited
                 : '—',
           ),
+          _stat(
+            context,
+            l10n.statBwMeasuredRate,
+            '${context.fmtRate(bw.servedBps)} '
+            '(${context.fmtBytes(bw.servedBytes)})',
+          ),
           if (bw.relayDropped > 0)
             _stat(context, l10n.statBwDropped, '${bw.relayDropped}'),
         ],
@@ -855,10 +861,20 @@ class _OverviewTab extends ConsumerWidget {
                           '↑ ${context.fmtRate(tunnel.rateUp)}',
                 caption: tunnel == null
                     ? null
-                    : context.l10n.statTrafficValue(
-                        context.fmtBytes(tunnel.up),
-                        context.fmtBytes(tunnel.down),
-                      ),
+                    : [
+                        // Debit servi aux autres pairs, mesure exacte
+                        // au limiteur (extension Rust) — repond a
+                        // « combien je relaye » sans soustraire le
+                        // trafic propre.
+                        if (tunnel.bandwidth case final bw?)
+                          context.l10n.cardRelayServed(
+                            context.fmtRate(bw.servedBps),
+                          ),
+                        context.l10n.statTrafficValue(
+                          context.fmtBytes(tunnel.up),
+                          context.fmtBytes(tunnel.down),
+                        ),
+                      ].join('\n'),
               ),
               _StatCard(
                 icon: Icons.storage_outlined,

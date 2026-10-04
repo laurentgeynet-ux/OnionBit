@@ -311,6 +311,7 @@
     }
   },
   "statBwServed": "Served peer traffic cap",
+  "statBwMeasuredRate": "Measured served rate (total)",
   "statBwDropped": "Served datagrams dropped (cap)",
   "bwSourcePending": "measuring…",
   "bwUnlimited": "unlimited",
@@ -355,6 +356,7 @@
   "cardFilesDownload": "File download",
   "cardFilesUpload": "File upload",
   "cardTunnelTraffic": "IPv8 overlay traffic",
+  "cardRelayServed": "relay served: ↑ {rate}",
   "cardDatabase": "Database",
 
   "speedTestCircuitTitle": "Circuit #{id} test",

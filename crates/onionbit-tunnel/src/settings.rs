@@ -142,6 +142,12 @@ pub struct TunnelSettings {
     /// drope. 500 ms garde ~10 req/5 s par noeud cible au maximum.
     pub dht_reannounce_stagger: Duration,
 
+    /// Extension Rust : profondeur de la fenetre glissante du debit
+    /// servi (`RelayRateLimiter::served_rate` → `relay_served_bps`
+    /// dans `/api/statistics/ipv8`). Assez longue pour lisser la
+    /// rafale autorisee d'une seconde du seau a jetons.
+    pub served_rate_window: Duration,
+
     /// Guard nodes (ADR-0010) : premiers sauts persistants bornant la
     /// loterie Sybil des reconstructions. `enabled=false` par defaut
     /// (feature experimentale) = selection pyipv8 exacte.
@@ -181,6 +187,7 @@ impl Default for TunnelSettings {
             exit_inbound_max_sources: 2048,
             intro_reannounce_interval: Duration::from_secs(60),
             dht_reannounce_stagger: Duration::from_millis(500),
+            served_rate_window: Duration::from_secs(5),
             guards: GuardsConfig::default(),
         }
     }

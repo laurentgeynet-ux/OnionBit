@@ -221,6 +221,8 @@ class RelayBandwidth {
     required this.rttSamples,
     required this.relayMode,
     required this.relayDropped,
+    required this.servedBps,
+    required this.servedBytes,
   });
 
   /// Plafond servi actuellement appliqué au tunnel (octets/s).
@@ -243,6 +245,13 @@ class RelayBandwidth {
 
   /// Datagrammes servis perdus faute de budget.
   final int relayDropped;
+
+  /// Débit servi mesuré au limiteur (octets/s) — la valeur exacte du
+  /// trafic relayé/sorti pour les autres, sans soustraction.
+  final int servedBps;
+
+  /// Octets servis cumulés depuis le démarrage.
+  final int servedBytes;
 }
 
 /// Échantillon de débit d'un speed test de circuit (MiB/s,

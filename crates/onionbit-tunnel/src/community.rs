@@ -95,14 +95,27 @@ pub(crate) struct RelayRateLimiter {
     bucket: Mutex<(Instant, u64)>,
     /// Datagrammes perdus faute de budget (diagnostic).
     dropped: AtomicU64,
+    /// Octets servis cumules (cellules relayees + envois des sockets
+    /// de sortie — la pompe d'emission ne transporte que le trafic
+    /// servi, la mesure est exacte).
+    served_bytes: AtomicU64,
+    /// Fenêtre glissante du debit servi : buckets agreges a la
+    /// seconde, tronques a `window_span`. Comptabilisation au fil de
+    /// `allow` — pas de tache d'echantillonnage dediee.
+    served_window: Mutex<std::collections::VecDeque<(Instant, u64)>>,
+    /// Profondeur de la fenêtre de debit (`served_rate_window`).
+    window_span: Duration,
 }
 
 impl RelayRateLimiter {
-    fn new(rate_bps: u64) -> Self {
+    fn new(rate_bps: u64, window_span: Duration) -> Self {
         Self {
             rate: AtomicU64::new(rate_bps),
             bucket: Mutex::new((Instant::now(), rate_bps)),
             dropped: AtomicU64::new(0),
+            served_bytes: AtomicU64::new(0),
+            served_window: Mutex::new(std::collections::VecDeque::new()),
+            window_span,
         }
     }
 
@@ -121,11 +134,56 @@ impl RelayRateLimiter {
         self.dropped.load(Ordering::Relaxed)
     }
 
+    /// Octets servis cumules depuis le demarrage.
+    pub(crate) fn served_bytes(&self) -> u64 {
+        self.served_bytes.load(Ordering::Relaxed)
+    }
+
+    /// Debit servi (octets/s) sur la fenetre glissante — `0` tant
+    /// qu'aucun datagramme n'est passé. Le diviseur est planchonne a
+    /// 1 s : le premier bucket couvre un instant trop court pour un
+    /// debit stable.
+    pub(crate) fn served_rate(&self) -> u64 {
+        let w = self.served_window.lock().unwrap();
+        let Some(&(t0, _)) = w.front() else {
+            return 0;
+        };
+        let total: u64 = w.iter().map(|(_, b)| *b).sum();
+        let secs = t0
+            .elapsed()
+            .as_secs_f64()
+            .clamp(1.0, self.window_span.as_secs_f64().max(1.0));
+        (total as f64 / secs) as u64
+    }
+
+    /// Comptabilise `len` octets servis (cumul + bucket courant).
+    fn note_served(&self, len: usize) {
+        self.served_bytes.fetch_add(len as u64, Ordering::Relaxed);
+        let now = Instant::now();
+        let mut w = self.served_window.lock().unwrap();
+        match w.back_mut() {
+            Some((t, b)) if now.duration_since(*t) < Duration::from_secs(1) => {
+                *b += len as u64;
+            }
+            _ => w.push_back((now, len as u64)),
+        }
+        while w.len() > 1 {
+            let Some(&(t, _)) = w.front() else {
+                break;
+            };
+            if now.duration_since(t) <= self.window_span {
+                break;
+            }
+            w.pop_front();
+        }
+    }
+
     /// `true` si `len` octets peuvent partir maintenant ; sinon le
     /// datagramme est compte comme perdu (`dropped`).
     fn allow(&self, len: usize) -> bool {
         let rate = self.rate();
         if rate == 0 {
+            self.note_served(len);
             return true;
         }
         let mut b = self.bucket.lock().unwrap();
@@ -136,6 +194,7 @@ impl RelayRateLimiter {
         *last = Instant::now();
         if *tokens >= len as u64 {
             *tokens -= len as u64;
+            self.note_served(len);
             true
         } else {
             self.dropped.fetch_add(1, Ordering::Relaxed);
@@ -592,7 +651,10 @@ impl TunnelCommunity {
             tokio::sync::broadcast::channel(crate::speedtest::SPEED_TEST_CHANNEL_CAP);
         let (relay_send_tx, mut send_rx) = tokio::sync::mpsc::channel::<SendJob>(SEND_QUEUE_CAP);
         let guard_cfg = settings.guards.clone();
-        let relay_rate = Arc::new(RelayRateLimiter::new(settings.max_relayed_bps));
+        let relay_rate = Arc::new(RelayRateLimiter::new(
+            settings.max_relayed_bps,
+            settings.served_rate_window,
+        ));
         // Pompe d'emission unique : conserve l'ordre des cellules sur
         // le fil (boucle asyncio unique de pyipv8) — un spawn par
         // datagramme reordonnait les cellules consecutives relayees.
@@ -690,6 +752,17 @@ impl TunnelCommunity {
     /// Datagrammes servis perdus faute de budget debit (diagnostic).
     pub fn relay_rate_dropped(&self) -> u64 {
         self.relay_rate.dropped()
+    }
+
+    /// `(debit servi o/s, octets servis cumules)` — mesure exacte au
+    /// limiteur : la pompe d'emission ne transporte que le trafic
+    /// servi aux autres (cellules relayees + envois des sockets de
+    /// sortie), le debit propre de l'hote ne l'emprunte pas.
+    pub fn relay_served(&self) -> (u64, u64) {
+        (
+            self.relay_rate.served_rate(),
+            self.relay_rate.served_bytes(),
+        )
     }
 
     /// Injecte la persistance des guards (ADR-0010) — appele par
@@ -4467,14 +4540,14 @@ mod tests {
     /// l'excedent, et `set_rate` bascule a chaud.
     #[test]
     fn relay_rate_limiter_borne_et_illimite() {
-        let unlimited = RelayRateLimiter::new(0);
+        let unlimited = RelayRateLimiter::new(0, std::time::Duration::from_secs(5));
         for _ in 0..1000 {
             assert!(unlimited.allow(1024));
         }
         assert_eq!(unlimited.dropped(), 0);
 
         // 1 Kio/s : la rafale initiale (1024 o) passe, le reste perd.
-        let capped = RelayRateLimiter::new(1024);
+        let capped = RelayRateLimiter::new(1024, std::time::Duration::from_secs(5));
         assert!(capped.allow(1024));
         assert!(!capped.allow(1024));
         assert!(!capped.allow(1));
@@ -4489,9 +4562,31 @@ mod tests {
 
         // Baisse a chaud : le budget residuel (rafale 1 s) autorise
         // encore les petits datagrammes.
-        let slow = RelayRateLimiter::new(512);
+        let slow = RelayRateLimiter::new(512, std::time::Duration::from_secs(5));
         assert!(!slow.allow(1024));
         assert!(slow.allow(512));
         assert_eq!(slow.dropped(), 1);
+    }
+
+    /// Les octets acceptes alimentent le cumul et le debit servi —
+    /// les datagrammes perdues n'y entrent jamais.
+    #[test]
+    fn relay_rate_limiter_mesure_servi() {
+        let l = RelayRateLimiter::new(0, std::time::Duration::from_secs(5));
+        assert_eq!(l.served_bytes(), 0);
+        assert_eq!(l.served_rate(), 0);
+        l.allow(1500);
+        l.allow(500);
+        assert_eq!(l.served_bytes(), 2000);
+        // Diviseur planchonne a 1 s : la fenetre fraiche expose le
+        // cumul courant comme debit.
+        assert_eq!(l.served_rate(), 2000);
+
+        // Mode borne : seul ce qui passe compte.
+        let capped = RelayRateLimiter::new(1024, std::time::Duration::from_secs(5));
+        assert!(capped.allow(1024));
+        assert!(!capped.allow(64));
+        assert_eq!(capped.served_bytes(), 1024);
+        assert_eq!(capped.served_rate(), 1024);
     }
 }

@@ -3,6 +3,27 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Débit servi mesuré exactement au limiteur (2026-10-04)
+
+- **Besoin** : distinguer le trafic relayé/sorti pour les autres
+  pairs du trafic propre — « trafic overlay − trafic fichiers »
+  aurait été approximatif (overhead cellules ~15-20 %, fenêtres de
+  mesure différentes, trafic direct non overlay).
+- **Implémentation** : `RelayRateLimiter` compte les octets servis —
+  la pompe d'émission `relay_send_tx` ne transporte que
+  `SendJob::Endpoint` (cellules relayées) et `SendJob::ExitSocket`
+  (envois de sortie), donc le point de mesure est exact par
+  construction. Fenêtre glissante par buckets d'une seconde
+  (`served_rate_window`, défaut 5 s) sans tâche dédiée — la
+  comptabilisation se fait au fil de `allow()`.
+- **API** : `bandwidth.relay_served_bps` (débit) +
+  `relay_served_bytes` (cumul) dans `GET /api/statistics/ipv8`.
+- **UI** : carte « Trafic overlay IPv8 » → ligne « relais servi :
+  ↑ X » ; onglet Statistiques → « Débit servi mesuré (cumul) » à
+  côté du plafond appliqué.
+- Tests : `relay_rate_limiter_mesure_servi` (acceptés comptés,
+  perdus exclus, diviseur planchonné à 1 s).
+
 ## Diagnostic : double sondage supprimé, cadence alignée sur 5 s (2026-10-04)
 
 - **Bug** : sur l'onglet Diagnostic, ~5-6 requêtes/s. Deux mécanismes

@@ -176,6 +176,8 @@ class RestDiagnosticRepository implements DiagnosticRepository {
               rttSamples: (bw['rtt_samples'] as num?)?.toInt() ?? 0,
               relayMode: (bw['relay_mode'] as String?) ?? 'auto',
               relayDropped: (bw['relay_dropped'] as num?)?.toInt() ?? 0,
+              servedBps: (bw['relay_served_bps'] as num?)?.toInt() ?? 0,
+              servedBytes: (bw['relay_served_bytes'] as num?)?.toInt() ?? 0,
             ),
     );
   }

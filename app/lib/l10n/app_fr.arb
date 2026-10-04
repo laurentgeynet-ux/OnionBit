@@ -180,6 +180,7 @@
   "statBwRtt": "Signal RTT des pairs",
   "statBwRttValue": "{rtt} ms · base {base} ms · {count} pongs",
   "statBwServed": "Plafond débit servi aux pairs",
+  "statBwMeasuredRate": "Débit servi mesuré (cumul)",
   "statBwDropped": "Datagrammes servis perdus (plafond)",
   "bwSourcePending": "mesure en cours…",
   "bwUnlimited": "illimité",
@@ -210,6 +211,7 @@
   "cardFilesDownload": "Réception fichiers",
   "cardFilesUpload": "Envoi fichiers",
   "cardTunnelTraffic": "Trafic overlay IPv8",
+  "cardRelayServed": "relais servi : ↑ {rate}",
   "cardDatabase": "Base de données",
 
   "speedTestCircuitTitle": "Test du circuit #{id}",

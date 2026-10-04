@@ -98,6 +98,15 @@ pub async fn get_ipv8_stats(State(state): State<AppState>) -> Json<serde_json::V
                 .as_ref()
                 .map(|t| t.relay_rate_dropped())
                 .unwrap_or(0);
+            // Debit servi mesure au limiteur de la pompe d'emission —
+            // qui ne transporte que le trafic servi aux autres
+            // (cellules relayees + sorties) : la valeur exacte du
+            // relais, sans soustraction approximative cote client.
+            let (served_bps, served_bytes) = stack
+                .tunnel
+                .as_ref()
+                .map(|t| t.relay_served())
+                .unwrap_or((0, 0));
             let snap = state.session.bandwidth().snapshot(dropped);
             // `max_relayed_rate` : -1 = auto, 0 = illimite, >0 = fixe —
             // publie pour que l'UI distingue « pas applique » de
@@ -119,6 +128,8 @@ pub async fn get_ipv8_stats(State(state): State<AppState>) -> Json<serde_json::V
                     "rtt_samples": snap.rtt_samples,
                     "relay_mode": relay_mode,
                     "relay_dropped": snap.relay_dropped,
+                    "relay_served_bps": served_bps,
+                    "relay_served_bytes": served_bytes,
                 },
             })
         }
