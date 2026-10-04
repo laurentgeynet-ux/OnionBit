@@ -78,6 +78,19 @@ fn guess_gateway_candidates() -> Vec<Ipv4Addr> {
     candidates
 }
 
+/// Traduction des codes de retour d'erreur RFC 6886.
+fn rfc6886_result_desc(code: u16) -> &'static str {
+    match code {
+        0 => "Succès",
+        1 => "Version protocole non supportée",
+        2 => "Non autorisé / refusé par la passerelle",
+        3 => "Échec réseau de la passerelle",
+        4 => "Ressources épuisées sur la passerelle",
+        5 => "Opcode non supporté",
+        _ => "Code retour inconnu",
+    }
+}
+
 /// Envoie une requête de mapping de port selon RFC 6886.
 /// `opcode`: 1 pour UDP, 2 pour TCP.
 async fn send_mapping_request(
@@ -89,8 +102,9 @@ async fn send_mapping_request(
     lifetime: u32,
     timeout: Duration,
 ) -> Option<NatPmpMappingResult> {
+    let proto = if opcode == 1 { "UDP" } else { "TCP" };
     let mut packet = [0u8; 12];
-    packet[0] = 0; // Version
+    packet[0] = 0; // Version 0 (RFC 6886)
     packet[1] = opcode; // 1 = UDP, 2 = TCP
     packet[2] = 0; // Réservé
     packet[3] = 0;
@@ -99,7 +113,8 @@ async fn send_mapping_request(
     packet[8..12].copy_from_slice(&lifetime.to_be_bytes());
 
     let dest = SocketAddr::V4(SocketAddrV4::new(gateway, NAT_PMP_PORT));
-    if socket.send_to(&packet, dest).await.is_err() {
+    if let Err(e) = socket.send_to(&packet, dest).await {
+        tracing::warn!(gateway = %gateway, port = internal_port, proto, error = %e, "NAT-PMP : échec de l'envoi du paquet UDP vers la passerelle");
         return None;
     }
 
@@ -109,19 +124,57 @@ async fn send_mapping_request(
         Ok(Ok((len, src))) if len >= 16 && src.ip() == IpAddr::V4(gateway) => {
             let resp_op = buf[1];
             let result_code = u16::from_be_bytes([buf[2], buf[3]]);
-            if resp_op == 128 + opcode && result_code == 0 {
-                let resp_int = u16::from_be_bytes([buf[8], buf[9]]);
-                let resp_ext = u16::from_be_bytes([buf[10], buf[11]]);
-                let resp_lifetime = u32::from_be_bytes([buf[12], buf[13], buf[14], buf[15]]);
-                return Some(NatPmpMappingResult {
-                    internal_port: resp_int,
-                    mapped_external_port: resp_ext,
-                    lifetime_secs: resp_lifetime,
-                });
+            if resp_op == 128 + opcode {
+                if result_code == 0 {
+                    let resp_int = u16::from_be_bytes([buf[8], buf[9]]);
+                    let resp_ext = u16::from_be_bytes([buf[10], buf[11]]);
+                    let resp_lifetime = u32::from_be_bytes([buf[12], buf[13], buf[14], buf[15]]);
+                    tracing::info!(
+                        gateway = %gateway,
+                        proto,
+                        internal_port = resp_int,
+                        mapped_external_port = resp_ext,
+                        lifetime_secs = resp_lifetime,
+                        "NAT-PMP : port mappé avec succès sur la passerelle (code 0: Succès)"
+                    );
+                    return Some(NatPmpMappingResult {
+                        internal_port: resp_int,
+                        mapped_external_port: resp_ext,
+                        lifetime_secs: resp_lifetime,
+                    });
+                } else {
+                    tracing::warn!(
+                        gateway = %gateway,
+                        proto,
+                        internal_port,
+                        result_code,
+                        description = rfc6886_result_desc(result_code),
+                        "NAT-PMP : la passerelle a refusé le mappage de port"
+                    );
+                }
+            } else {
+                tracing::debug!(gateway = %gateway, resp_op, "NAT-PMP : opcode de réponse inattendu");
             }
             None
         }
-        _ => None,
+        Ok(Ok((len, src))) => {
+            tracing::debug!(gateway = %gateway, from = %src, len, "NAT-PMP : réponse inattendue reçue");
+            None
+        }
+        Ok(Err(e)) => {
+            tracing::warn!(gateway = %gateway, proto, error = %e, "NAT-PMP : erreur de réception sur socket");
+            None
+        }
+        Err(_) => {
+            tracing::debug!(
+                gateway = %gateway,
+                proto,
+                internal_port,
+                timeout_secs = timeout.as_secs(),
+                "NAT-PMP : pas de réponse sur UDP 5351 (délai dépassé / passerelle muette)"
+            );
+            None
+        }
     }
 }
 
@@ -132,7 +185,7 @@ pub async fn run_natpmp_forwarder(
     mut shutdown: watch::Receiver<bool>,
 ) {
     let Ok(socket) = UdpSocket::bind("0.0.0.0:0").await else {
-        tracing::debug!("NAT-PMP : impossible d'ouvrir un socket UDP client");
+        tracing::warn!("NAT-PMP : impossible d'ouvrir un socket UDP client");
         return;
     };
 
@@ -140,22 +193,22 @@ pub async fn run_natpmp_forwarder(
     let timeout = Duration::from_secs(config.timeout_secs);
     let mut active_gateway: Option<Ipv4Addr> = None;
 
+    tracing::info!(
+        port,
+        candidates = ?gateways,
+        "NAT-PMP : démarrage du forwarder, recherche d'une passerelle compatible"
+    );
+
     // Phase 1 : Détection de la passerelle répondant en NAT-PMP
     for &gw in &gateways {
         if *shutdown.borrow() {
             return;
         }
         // Test sur UDP d'abord
-        if let Some(res) =
-            send_mapping_request(&socket, gw, 1, port, port, config.lifetime_secs, timeout).await
+        if send_mapping_request(&socket, gw, 1, port, port, config.lifetime_secs, timeout)
+            .await
+            .is_some()
         {
-            tracing::info!(
-                gateway = %gw,
-                port,
-                mapped_port = res.mapped_external_port,
-                lifetime = res.lifetime_secs,
-                "NAT-PMP UDP : port mappe avec succes"
-            );
             // Mappe également TCP
             let _ = send_mapping_request(&socket, gw, 2, port, port, config.lifetime_secs, timeout)
                 .await;
@@ -165,7 +218,10 @@ pub async fn run_natpmp_forwarder(
     }
 
     let Some(gw) = active_gateway else {
-        tracing::debug!("NAT-PMP : aucune passerelle locale n'a repondu (passerelle incompatible ou desactivee)");
+        tracing::info!(
+            port,
+            "NAT-PMP : aucune passerelle locale n'a répondu sur UDP 5351 (passerelle incompatible ou NAT-PMP désactivé, UPnP prend le relais)"
+        );
         return;
     };
 
