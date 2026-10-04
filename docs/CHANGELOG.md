@@ -3,6 +3,19 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Badge « Clair » : visuel d'avertissement (2026-10-04)
+
+- **Constat** : le badge des téléchargements en clair (contour gris,
+  icône globe) était trop discret face au risque réel — IP exposée au
+  tracker et à l'essaim — et passait inaperçu dans une liste dominée
+  par les badges « Anon ×N ».
+- **UI** (`AnonBadge`) : les téléchargements directs affichent
+  désormais un badge rempli `errorContainer`/bordure `error` avec
+  icône `no_encryption` — immédiatement identifiable, cohérent avec
+  le bandeau « torrent privé » du dialogue Ajouter. Les lanes
+  anonymes gardent contour primaire (×N) / tertiaire (attente
+  circuit) ; le tooltip « Trafic direct » est inchangé.
+
 ## Dialogue « Ajouter » : note HTTPS supprimée (2026-10-04)
 
 - **Constat** : même discrète, la note « trackers HTTPS ignorés »

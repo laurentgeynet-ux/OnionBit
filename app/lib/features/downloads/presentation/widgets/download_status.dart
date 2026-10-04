@@ -85,10 +85,10 @@ class DownloadProgressBar extends StatelessWidget {
   };
 }
 
-/// Badge d'anonymat explicite : « Clair » (trafic direct) ou
-/// « Anon ×N » (N sauts de circuit). Contour plein = lane anonyme
-/// établie ; contour pointillé = « en attente de circuit » (le kill
-/// switch bloque le trafic sans circuit).
+/// Badge d'anonymat explicite : « Clair » (trafic direct, badge
+/// d'avertissement rempli — IP exposée) ou « Anon ×N » (N sauts de
+/// circuit, contour primaire). Couleur tertiaire = « en attente de
+/// circuit » (le kill switch bloque le trafic sans circuit).
 class AnonBadge extends StatelessWidget {
   const AnonBadge({super.key, required this.download});
 
@@ -105,7 +105,7 @@ class AnonBadge extends StatelessWidget {
         (download.status == 'METADATA' ||
             (download.speedDown == 0 && download.speedUp == 0));
     final color = !anon
-        ? scheme.outline
+        ? scheme.onErrorContainer
         : waiting
         ? scheme.tertiary
         : scheme.primary;
@@ -116,16 +116,18 @@ class AnonBadge extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
         decoration: BoxDecoration(
-          border: Border.all(color: color),
+          border: Border.all(color: !anon ? scheme.error : color),
           borderRadius: BorderRadius.circular(6),
-          color: anon ? color.withAlpha(18) : null,
+          // « Clair » = IP exposee : badge rempli d'avertissement,
+          // immediatement distinguable des lanes anonymes.
+          color: !anon ? scheme.errorContainer : color.withAlpha(18),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(
               !anon
-                  ? Icons.public
+                  ? Icons.no_encryption_outlined
                   : waiting
                   ? Icons.shield_outlined
                   : Icons.shield,
