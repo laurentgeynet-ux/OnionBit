@@ -543,6 +543,8 @@
   "proxySocks5Auth": "SOCKS5 + authentication",
   "proxyHttpAuth": "HTTP + authentication",
   "netDiscovery": "Discovery & transport",
+  "netListenPort": "BitTorrent listen port",
+  "netListenPortHint": "0 = random on every start. Set a fixed port to forward it on your router (required to be reachable while seeding).",
   "appliedOnRestartOn": "Default: on. Applied on restart.",
   "lsdTitle": "Local discovery (LSD)",
   "proxySection": "Outgoing proxy",

@@ -355,6 +355,8 @@
   "proxySocks5Auth": "SOCKS5 + authentification",
   "proxyHttpAuth": "HTTP + authentification",
   "netDiscovery": "Découverte & transport",
+  "netListenPort": "Port d'écoute BitTorrent",
+  "netListenPortHint": "0 = aléatoire à chaque démarrage. Fixez-le pour créer une redirection de port sur votre box (requis pour être joignable en seeding).",
   "appliedOnRestartOn": "Défaut : activé. Pris en compte au redémarrage.",
   "lsdTitle": "Découverte locale (LSD)",
   "proxySection": "Proxy sortant",

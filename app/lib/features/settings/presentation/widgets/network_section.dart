@@ -42,6 +42,7 @@ class _NetworkSectionState extends ConsumerState<NetworkSection> {
       };
 
   int _proxyType = 0;
+  final _port = TextEditingController();
   final _proxyServer = TextEditingController();
   final _proxyAuth = TextEditingController();
   bool _initialized = false;
@@ -56,6 +57,7 @@ class _NetworkSectionState extends ConsumerState<NetworkSection> {
   @override
   void dispose() {
     _deferred.detach();
+    _port.dispose();
     _proxyServer.dispose();
     _proxyAuth.dispose();
     super.dispose();
@@ -63,6 +65,7 @@ class _NetworkSectionState extends ConsumerState<NetworkSection> {
 
   void _sync(Map<String, dynamic> settings) {
     if (_initialized) return;
+    _port.text = '${settingsInt(settings, const ['libtorrent', 'port'])}';
     _proxyType = settingsInt(settings, const ['libtorrent', 'proxy_type']);
     if (!_proxyTypeValues.contains(_proxyType)) _proxyType = 0;
     _proxyServer.text = settingsString(settings, const [
@@ -85,6 +88,7 @@ class _NetworkSectionState extends ConsumerState<NetworkSection> {
     setState(() => _saving = true);
     await applySettingsPatch(context, ref, {
       'libtorrent': {
+        'port': (int.tryParse(_port.text.trim()) ?? 0).clamp(0, 65535),
         'proxy_type': _proxyType,
         'proxy_server': _proxyServer.text.trim(),
         'proxy_auth': _proxyAuth.text,
@@ -112,6 +116,22 @@ class _NetworkSectionState extends ConsumerState<NetworkSection> {
             _EffectiveState(settings: settings),
             const Divider(height: AppSpacing.lg),
             Text(l10n.netDiscovery, style: theme.textTheme.labelMedium),
+            const SizedBox(height: AppSpacing.sm),
+            SizedBox(
+              width: 220,
+              child: TextField(
+                controller: _port,
+                onChanged: (_) => _deferred.markDirty(),
+                keyboardType: TextInputType.number,
+                decoration: InputDecoration(
+                  labelText: l10n.netListenPort,
+                  helperText: l10n.netListenPortHint,
+                  helperMaxLines: 2,
+                  suffixIcon: const KeyInfoIcon(['libtorrent', 'port']),
+                ),
+              ),
+            ),
+            const SizedBox(height: AppSpacing.sm),
             SettingsSwitch(
               path: [...lt, 'dht'],
               value: settingsBool(settings, [...lt, 'dht'], def: true),

@@ -3,6 +3,17 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Port d'écoute éditable + diagnostic seeding (2026-10-04)
+
+- **Symptôme** : les pairs disparaissent entre les annonces —
+  `libtorrent.port = 0` (port aléatoire à chaque démarrage) et la box
+  refuse le mapping UPnP (erreur 718/714) → aucun pair ne peut se
+  connecter en entrant ; seules les annonces sortantes ramènent des
+  pairs.
+- **UI** : champ « Port d'écoute BitTorrent » dans Réglages → Réseau
+  (`libtorrent/port`, 0 = aléatoire) — à fixer pour permettre une
+  redirection de port manuelle sur la box.
+
 ## Colonne « UL tot. » dans la table (2026-10-04)
 
 - **Besoin** : le cumul upload all-time n'était visible que dans le
