@@ -34,7 +34,12 @@ pub const CONFIG_FILENAME: &str = "configuration.json";
 /// Clé absente → fichier legacy `0` → migrations appliquées au
 /// chargement (`migrate_legacy_tree`), puis le fichier est réécrit
 /// estampillé. Incrémenter à chaque nouvelle table de migration.
-pub const CURRENT_CONFIG_VERSION: u32 = 1;
+///
+/// v1 : migrations de booléens gelés (`guards_enabled`). v2 :
+/// écriture **sparse** — le fichier ne persiste que les écarts aux
+/// défauts (`DaemonConfig::write` → `deep_diff`) — + réalignement de
+/// `tunnel_community/bandwidth/target_delay_ms` (50 → 25 ms).
+pub const CURRENT_CONFIG_VERSION: u32 = 2;
 
 /// Merge JSON profond (`_recursive_merge_settings` Python) : les objets
 /// se fusionnent clé par clé, toute autre valeur remplace.
@@ -46,6 +51,35 @@ fn deep_merge(base: &mut Value, patch: &Value) {
             }
         }
         (base, patch) => *base = patch.clone(),
+    }
+}
+
+/// Diff JSON profond contre les défauts : `None` quand `current`
+/// vaut `default` (rien à persister), sinon la sous-arborescence des
+/// écarts. Un objet qui ne diffère en rien produit `None` — les clés
+/// absentes sont remplies par `#[serde(default)]` au chargement.
+fn deep_diff(current: &Value, default: &Value) -> Option<Value> {
+    match (current, default) {
+        (Value::Object(cur), Value::Object(def)) => {
+            let mut out = serde_json::Map::new();
+            for (k, v) in cur {
+                match def.get(k) {
+                    Some(dv) => {
+                        if let Some(d) = deep_diff(v, dv) {
+                            out.insert(k.clone(), d);
+                        }
+                    }
+                    // Clé inconnue du défaut (section `extra`,
+                    // `ui` libre) : choix explicite → persistée.
+                    None => {
+                        out.insert(k.clone(), v.clone());
+                    }
+                }
+            }
+            (!out.is_empty()).then_some(Value::Object(out))
+        }
+        (cur, def) if cur == def => None,
+        (cur, _) => Some(cur.clone()),
     }
 }
 
@@ -811,21 +845,74 @@ impl Default for DaemonConfig {
     }
 }
 
-/// Migrations de défauts v0 → v1 — interrupteurs « Tunnels anonymes ».
-/// L'écriture complète du fichier figeait les défauts de l'époque :
-/// une valeur **encore égale à l'ancien défaut** est réalignée sur le
-/// défaut actuel ; toute autre valeur est un choix explicite,
-/// préservé. `(section, clé, ancien défaut gelé, défaut actuel)`.
-const DEFAULT_MIGRATIONS_V0_V1: &[(&str, &str, bool, bool)] = &[
-    // `guards_enabled` est né avec le défaut `false` (feature
-    // expérimentale derrière flag) puis validé sur le terrain →
-    // `true` : les fichiers écrits entre-temps gardaient `false`
-    // indéfiniment.
-    ("tunnel_community", "guards_enabled", false, true),
-    // `enabled` (défaut `true`) et `exitnode_enabled` (défaut
-    // `false`) n'ont jamais glissé — aucune entrée : une valeur non
-    // défaut y est forcément un choix explicite.
-];
+/// Migrations de défauts gelés par l'ancienne écriture complète du
+/// fichier : une valeur **encore égale à l'ancien défaut** est
+/// réalignée sur le défaut actuel ; toute autre valeur est un choix
+/// explicite, préservé. `(chemin, ancien défaut gelé, défaut actuel)`.
+/// Les tables sont indexées par version : une migration ne rejoue
+/// jamais sur un fichier qui l'a déjà vue (un choix posé après coup
+/// vers l'ancienne valeur est explicite).
+fn default_migrations_v0_v1() -> Vec<(&'static [&'static str], Value, Value)> {
+    vec![
+        // `guards_enabled` est né avec le défaut `false` (feature
+        // expérimentale derrière flag) puis validé sur le terrain →
+        // `true` : les fichiers écrits entre-temps gardaient `false`
+        // indéfiniment.
+        (
+            &["tunnel_community", "guards_enabled"],
+            serde_json::json!(false),
+            serde_json::json!(true),
+        ),
+        // `enabled` (défaut `true`) et `exitnode_enabled` (défaut
+        // `false`) n'ont jamais glissé — aucune entrée : une valeur
+        // non défaut y est forcément un choix explicite.
+    ]
+}
+
+fn default_migrations_v1_v2() -> Vec<(&'static [&'static str], Value, Value)> {
+    vec![
+        // `target_delay_ms` né à 50 ms (seuil LEDBAT mass-transit) →
+        // 25 ms : la réactivité des applications interactives prime
+        // sur le débit servi aux pairs.
+        (
+            &["tunnel_community", "bandwidth", "target_delay_ms"],
+            serde_json::json!(50),
+            serde_json::json!(25),
+        ),
+    ]
+}
+
+/// Descend `path` dans `root` et renvoie le slot terminal mutable
+/// (dernier segment), `None` si un maillon est absent ou non objet.
+fn path_slot_mut<'a>(
+    root: &'a mut serde_json::Map<String, Value>,
+    path: &[&str],
+) -> Option<&'a mut Value> {
+    let (last, parents) = path.split_last()?;
+    let mut node = root;
+    for key in parents {
+        node = node.get_mut(*key)?.as_object_mut()?;
+    }
+    node.get_mut(*last)
+}
+
+/// Applique une table de migrations à l'arbre brut.
+fn apply_migrations(
+    root: &mut serde_json::Map<String, Value>,
+    migrations: &[(&[&str], Value, Value)],
+) {
+    for (path, legacy, current) in migrations {
+        if let Some(slot) = path_slot_mut(root, path) {
+            if *slot == *legacy {
+                tracing::info!(
+                    cle = %path.join("/"),
+                    "configuration.json : ancien défaut gelé -> défaut actuel"
+                );
+                *slot = current.clone();
+            }
+        }
+    }
+}
 
 /// Migrations de l'arbre brut, avant remplissage serde : seules les
 /// clés explicitement écrites sont candidates (une clé absente prend
@@ -843,20 +930,11 @@ fn migrate_legacy_tree(tree: &mut Value) -> bool {
     if version >= CURRENT_CONFIG_VERSION {
         return false;
     }
-    for &(section, key, legacy, current) in DEFAULT_MIGRATIONS_V0_V1 {
-        if let Some(slot) = root
-            .get_mut(section)
-            .and_then(Value::as_object_mut)
-            .and_then(|o| o.get_mut(key))
-        {
-            if *slot == Value::Bool(legacy) {
-                tracing::info!(
-                    cle = %format!("{section}/{key}"),
-                    "configuration.json : ancien défaut gelé -> défaut actuel"
-                );
-                *slot = Value::Bool(current);
-            }
-        }
+    if version < 1 {
+        apply_migrations(root, &default_migrations_v0_v1());
+    }
+    if version < 2 {
+        apply_migrations(root, &default_migrations_v1_v2());
     }
     root.insert(
         "config_version".to_string(),
@@ -926,12 +1004,34 @@ impl DaemonConfig {
         (cfg, error)
     }
 
-    /// Réécrit le fichier de configuration (`config.write()` Python).
+    /// Réécrit le fichier de configuration (`config.write()` Python)
+    /// en **sparse** : seules les valeurs différentes des défauts sont
+    /// persistées (+ `config_version`, qui pilote les migrations). Un
+    /// défaut corrigé dans une version ultérieure se propage ainsi aux
+    /// fichiers existants ; une clé explicitement écrite mais égale au
+    /// défaut courant est omise (re-réglable via `POST /api/settings`).
     pub fn write(&self, path: &Path) -> std::io::Result<()> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        std::fs::write(path, serde_json::to_string_pretty(self)?)
+        std::fs::write(path, serde_json::to_string_pretty(&self.sparse_value())?)
+    }
+
+    /// Arbre des seuls écarts par rapport à `Self::default()` —
+    /// `config_version` est toujours écrit (migration au chargement)
+    /// et `api.key` y figure naturellement (défaut `""` ≠ clé générée).
+    fn sparse_value(&self) -> Value {
+        let current = serde_json::to_value(self).unwrap_or_default();
+        let defaults = serde_json::to_value(Self::default()).unwrap_or_default();
+        let mut sparse =
+            deep_diff(&current, &defaults).unwrap_or_else(|| Value::Object(serde_json::Map::new()));
+        if let Some(obj) = sparse.as_object_mut() {
+            obj.insert(
+                "config_version".to_string(),
+                Value::from(CURRENT_CONFIG_VERSION),
+            );
+        }
+        sparse
     }
 
     /// Génère `api.key` (32 hex) si vide — comme l'installeur Python.
@@ -1411,7 +1511,65 @@ mod tests {
         assert!(cfg.tunnel_community.guards_enabled);
         let stored: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(stored["config_version"], CURRENT_CONFIG_VERSION);
-        assert_eq!(stored["tunnel_community"]["guards_enabled"], true);
+        // Écriture sparse : la valeur migrée vaut le défaut actuel →
+        // omise du fichier (le défaut la résout au prochain chargement).
+        assert!(stored.pointer("/tunnel_community/guards_enabled").is_none());
+    }
+
+    /// Écriture « sparse » : seules les valeurs différentes des
+    /// défauts sont persistées (+ `config_version` toujours et
+    /// `api.key`, générée ≠ défaut vide). Un défaut corrigé dans une
+    /// version ultérieure se propage alors aux fichiers existants.
+    #[test]
+    fn write_ne_persiste_que_les_ecarts_aux_defauts() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(CONFIG_FILENAME);
+        let mut cfg = DaemonConfig::default();
+        cfg.api.key = "clef-test".to_string();
+        cfg.tunnel_community.bandwidth.target_delay_ms = 12;
+        cfg.write(&path).unwrap();
+        let stored: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(stored["config_version"], CURRENT_CONFIG_VERSION);
+        assert_eq!(stored["api"]["key"], "clef-test");
+        assert_eq!(
+            stored["tunnel_community"]["bandwidth"]["target_delay_ms"],
+            12
+        );
+        // Valeurs au défaut → absentes du fichier.
+        assert!(stored
+            .pointer("/tunnel_community/bandwidth/floor_bps")
+            .is_none());
+        assert!(stored.get("libtorrent").is_none());
+        // Aller-retour : le fichier sparse recharge une config complète.
+        let back = DaemonConfig::load(&path);
+        assert_eq!(back.tunnel_community.bandwidth.target_delay_ms, 12);
+        assert_eq!(back.tunnel_community.bandwidth.floor_bps, 64 * 1024);
+        assert_eq!(back.api.key, "clef-test");
+    }
+
+    /// Migration v1 → v2 : `target_delay_ms` gelé à l'ancien défaut
+    /// `50` (fichier complet hérité de l'écriture dense) est réaligné
+    /// sur `25` — un `90` explicite est préservé.
+    #[test]
+    fn migration_v2_realigne_target_delay_gele() {
+        let dir = tempfile::tempdir().unwrap();
+        let frozen = dir.path().join("frozen.json");
+        std::fs::write(
+            &frozen,
+            r#"{"config_version":1,"tunnel_community":{"bandwidth":{"target_delay_ms":50}}}"#,
+        )
+        .unwrap();
+        let cfg = DaemonConfig::load(&frozen);
+        assert_eq!(cfg.tunnel_community.bandwidth.target_delay_ms, 25);
+
+        let explicit = dir.path().join("explicit.json");
+        std::fs::write(
+            &explicit,
+            r#"{"config_version":1,"tunnel_community":{"bandwidth":{"target_delay_ms":90}}}"#,
+        )
+        .unwrap();
+        let cfg = DaemonConfig::load(&explicit);
+        assert_eq!(cfg.tunnel_community.bandwidth.target_delay_ms, 90);
     }
 
     /// Un `false` posé APRÈS migration (fichier estampillé) est un

@@ -3,6 +3,27 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## `configuration.json` sparse : seuls les écarts aux défauts persistés (2026-10-04)
+
+- **Problème** : `DaemonConfig::write()` dumpait l'arbre complet —
+  les défauts de l'époque étaient gelés dans le fichier et une
+  correction de défaut dans une release ne se propageait jamais
+  (ex. `target_delay_ms` resté à 50 malgré le passage à 25).
+- **Décision (ADR-0014)** : le fichier ne persiste que les écarts
+  aux défauts (`deep_diff` vs `DaemonConfig::default()`), +
+  `config_version` toujours écrit. `#[serde(default)]` remplit les
+  clés absentes au chargement → tout futur changement de défaut se
+  propage automatiquement.
+- **Migration v2** : `config_version` passe à 2 ; les fichiers écrits
+  en dense voient `tunnel_community/bandwidth/target_delay_ms == 50`
+  réaligné sur 25 (choix explicites ≠ 50 préservés). Tables de
+  migration désormais indexées par version et à chemins imbriqués.
+- Tests : `write_ne_persiste_que_les_ecarts_aux_defauts`,
+  `migration_v2_realigne_target_delay_gele` — 9/9 verts.
+- Note : la référence des défauts est désormais le code
+  (`*Config::default()`) et `GET /api/settings` ; le fichier n'est
+  plus auto-documenté.
+
 ## Contrôleur de congestion : `target_delay_ms` 50 → 25 ms (2026-10-04)
 
 - Le seuil de retard de file toléré passe à 25 ms : 50 ms de buffer
