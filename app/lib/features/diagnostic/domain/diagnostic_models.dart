@@ -180,15 +180,30 @@ class OnionbitStats {
 }
 
 /// Compteurs d'octets de l'endpoint IPv8 (`GET /api/statistics/ipv8`
-/// → `ipv8_statistics`).
+/// → `ipv8_statistics`) + débits calculés par le daemon
+/// (`rate_up`/`rate_down`, extension Rust).
 class Ipv8Traffic {
-  const Ipv8Traffic({required this.up, required this.down, this.bandwidth});
+  const Ipv8Traffic({
+    required this.up,
+    required this.down,
+    this.rateUp = 0,
+    this.rateDown = 0,
+    this.bandwidth,
+  });
 
   /// Octets émis par l'endpoint overlay depuis le démarrage.
   final int up;
 
   /// Octets reçus par l'endpoint overlay depuis le démarrage.
   final int down;
+
+  /// Débit montant instantané mesuré par le daemon (o/s,
+  /// fenêtre glissante de l'endpoint — `rate_up`).
+  final int rateUp;
+
+  /// Débit descendant instantané mesuré par le daemon (o/s —
+  /// `rate_down`).
+  final int rateDown;
 
   /// Mesure de capacité upload + plafond servi (`bandwidth` —
   /// extension Rust, `tunnel_community/bandwidth`).

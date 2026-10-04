@@ -782,7 +782,7 @@ class _OverviewTabState extends ConsumerState<_OverviewTab> {
     final peers = ref.watch(tunnelPeersProvider).value;
     final stats = ref.watch(onionbitStatsProvider).value;
     final speeds = ref.watch(totalSpeedsProvider);
-    final tunnel = ref.watch(tunnelTrafficProvider);
+    final tunnel = ref.watch(ipv8TrafficProvider).value;
 
     final ready = circuits?.where((c) => c.ready).length ?? 0;
     final exitsOn = exits?.where((e) => e.enabled).length ?? 0;
@@ -876,14 +876,16 @@ class _OverviewTabState extends ConsumerState<_OverviewTab> {
               _StatCard(
                 icon: Icons.swap_vert,
                 label: context.l10n.cardTunnelTraffic,
-                value: tunnel.hasRate
-                    ? '↓ ${context.fmtRate(tunnel.rateDown!)} · '
-                          '↑ ${context.fmtRate(tunnel.rateUp!)}'
-                    : '—',
-                caption: context.l10n.statTrafficValue(
-                  context.fmtBytes(tunnel.totalUp),
-                  context.fmtBytes(tunnel.totalDown),
-                ),
+                value: tunnel == null
+                    ? '—'
+                    : '↓ ${context.fmtRate(tunnel.rateDown)} · '
+                          '↑ ${context.fmtRate(tunnel.rateUp)}',
+                caption: tunnel == null
+                    ? null
+                    : context.l10n.statTrafficValue(
+                        context.fmtBytes(tunnel.up),
+                        context.fmtBytes(tunnel.down),
+                      ),
               ),
               _StatCard(
                 icon: Icons.storage_outlined,

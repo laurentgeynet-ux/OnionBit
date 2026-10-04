@@ -173,7 +173,7 @@
   "statDownloadsValue": "{active} actifs · {paused} en pause · {error} en échec",
   "statIpv8Traffic": "Trafic overlay (session)",
   "statSessionTraffic": "Trafic BitTorrent (session)",
-  "statTrafficValue": "↑ {up} · ↓ {down}",
+  "statTrafficValue": "↓ {down} · ↑ {up}",
   "statLanes": "Lanes anonymes",
   "statDataCircuits": "Circuits DATA prêts",
   "statExitsActive": "Sorties actives (relais)",

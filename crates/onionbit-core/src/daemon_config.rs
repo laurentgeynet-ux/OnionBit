@@ -1222,6 +1222,11 @@ impl DaemonConfig {
             anon_dht_backoff_cap_secs: self.tunnel_community.anon_dht_backoff_cap_secs,
             exit_inbound_source_ttl_secs: self.tunnel_community.exit_inbound_source_ttl_secs,
             exit_inbound_max_sources: self.tunnel_community.exit_inbound_max_sources as usize,
+            // Parametres internes du debit `rate_*` de
+            // `/api/statistics/ipv8` — pas exposes dans le fichier de
+            // config (comme `peer_cache_max`).
+            stats_rate_sample_ms: crate::ipv8_stack::DEFAULT_STATS_RATE_SAMPLE_MS,
+            stats_rate_window_secs: crate::ipv8_stack::DEFAULT_STATS_RATE_WINDOW_SECS,
         };
 
         crate::CoreConfig {

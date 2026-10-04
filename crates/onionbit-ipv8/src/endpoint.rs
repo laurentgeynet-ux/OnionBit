@@ -7,9 +7,10 @@
 //! dispatch des datagrammes vers les communities par prefixe de 22
 //! octets, envoi.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use tokio::net::UdpSocket;
 use tokio::sync::Mutex;
@@ -97,6 +98,54 @@ impl NetworkStat {
     }
 }
 
+/// Fenetre glissante d'echantillons `(instant, bytes_up, bytes_down)`
+/// pour le debit instantane `bytes_rates()` (extension Rust : pyipv8
+/// n'expose que les compteurs cumules — Tribler derive le debit cote
+/// GUI, ce qui rend la mesure dependante du sondage client).
+#[derive(Debug, Default)]
+struct RateWindow {
+    /// Echantillons tries par instant croissant, tronques a `span`.
+    samples: VecDeque<(Instant, u64, u64)>,
+}
+
+impl RateWindow {
+    /// Pousse un releve et expire les echantillons plus vieux que
+    /// `span` (au moins un echantillon est toujours conserve : la
+    /// baseline du prochain debit).
+    fn push(&mut self, at: Instant, up: u64, down: u64, span: Duration) {
+        self.samples.push_back((at, up, down));
+        while self.samples.len() > 1 {
+            let Some((t, ..)) = self.samples.front() else {
+                break;
+            };
+            if at.duration_since(*t) <= span {
+                break;
+            }
+            self.samples.pop_front();
+        }
+    }
+
+    /// Debit `(up, down)` en octets/s entre le premier et le dernier
+    /// echantillon. `(0, 0)` si moins de deux instants distincts.
+    /// `saturating_sub` : un compteur remis a zero ne produit pas de
+    /// debit negatif.
+    fn rates(&self) -> (u64, u64) {
+        let (Some(&(t0, up0, down0)), Some(&(t1, up1, down1))) =
+            (self.samples.front(), self.samples.back())
+        else {
+            return (0, 0);
+        };
+        let secs = t1.duration_since(t0).as_secs_f64();
+        if secs <= 0.0 {
+            return (0, 0);
+        }
+        (
+            (up1.saturating_sub(up0) as f64 / secs) as u64,
+            (down1.saturating_sub(down0) as f64 / secs) as u64,
+        )
+    }
+}
+
 /// `get_aggregate_statistics(prefix)` pyipv8.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct AggregateStats {
@@ -145,6 +194,9 @@ pub struct UdpEndpoint {
     bytes_up: std::sync::atomic::AtomicU64,
     /// Octets recus (`IPv8StatsEndpoint.bytes_down` Python).
     bytes_down: std::sync::atomic::AtomicU64,
+    /// Fenetre glissante de compteurs alimentee par
+    /// `run_rate_sampler` — sert `bytes_rates()`.
+    rate_window: Mutex<RateWindow>,
     /// `StatisticsEndpoint.statistics` : prefixes actives ->
     /// `msg_id` -> compteurs. Un prefixe absent n'est pas compte
     /// (`enable_community_statistics` Python).
@@ -164,6 +216,7 @@ impl UdpEndpoint {
             tap: Mutex::new(None),
             bytes_up: std::sync::atomic::AtomicU64::new(0),
             bytes_down: std::sync::atomic::AtomicU64::new(0),
+            rate_window: Mutex::new(RateWindow::default()),
             statistics: Mutex::new(HashMap::new()),
         }))
     }
@@ -172,6 +225,32 @@ impl UdpEndpoint {
     pub fn bytes_counters(&self) -> (u64, u64) {
         use std::sync::atomic::Ordering::Relaxed;
         (self.bytes_up.load(Relaxed), self.bytes_down.load(Relaxed))
+    }
+
+    /// Debit instantane `(up, down)` en octets/s, mesure sur la
+    /// fenetre glissante (`run_rate_sampler`) — champ `rate_up` /
+    /// `rate_down` de `/api/statistics/ipv8`. `(0, 0)` tant que le
+    /// sampler n'a pas pose deux releves distincts.
+    pub async fn bytes_rates(&self) -> (u64, u64) {
+        self.rate_window.lock().await.rates()
+    }
+
+    /// Tache d'echantillonnage des compteurs alimentant
+    /// `bytes_rates()` : un releve toutes les `interval`, tronque a
+    /// `span`. Tache dediee plutot qu'une diff a la lecture : la
+    /// mesure ne depend ni du nombre ni de la cadence des clients
+    /// HTTP (desktop et web sondent differemment).
+    pub async fn run_rate_sampler(self: &Arc<Self>, interval: Duration, span: Duration) {
+        let mut tick = tokio::time::interval(interval);
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            tick.tick().await;
+            let (up, down) = self.bytes_counters();
+            self.rate_window
+                .lock()
+                .await
+                .push(Instant::now(), up, down, span);
+        }
     }
 
     /// `enable_community_statistics` pyipv8 : active/desactive le
@@ -275,6 +354,7 @@ impl UdpEndpoint {
             tap: Mutex::new(None),
             bytes_up: std::sync::atomic::AtomicU64::new(0),
             bytes_down: std::sync::atomic::AtomicU64::new(0),
+            rate_window: Mutex::new(RateWindow::default()),
             statistics: Mutex::new(HashMap::new()),
         }))
     }
@@ -469,5 +549,41 @@ impl UdpEndpoint {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `RateWindow` : debit mesure entre premier et dernier
+    /// echantillon, expiration hors `span`, compteur remis a zero
+    /// borne a 0.
+    #[test]
+    fn rate_window_rates() {
+        let span = Duration::from_secs(6);
+        let t0 = Instant::now();
+        let mut w = RateWindow::default();
+
+        // Vide ou echantillon unique : pas de mesure.
+        assert_eq!(w.rates(), (0, 0));
+        w.push(t0, 1_000, 2_000, span);
+        assert_eq!(w.rates(), (0, 0));
+
+        // +10 Ko up / +30 Ko down en 2 s -> 5 Ko/s / 15 Ko/s.
+        w.push(t0 + Duration::from_secs(2), 11_000, 32_000, span);
+        assert_eq!(w.rates(), (5_000, 15_000));
+
+        // Compteur remis a zero (redemarrage) : delta negatif borne
+        // a 0 plutot qu'en debit negatif geant.
+        w.push(t0 + Duration::from_secs(4), 10, 20, span);
+        assert_eq!(w.rates(), (0, 0));
+
+        // Expiration : les releves plus vieux que `span` sortent de
+        // la mesure (t0+4 expire a t0+12 — 8 s > 6 s).
+        w.push(t0 + Duration::from_secs(12), 610, 620, span);
+        assert_eq!(w.rates(), (0, 0));
+        w.push(t0 + Duration::from_secs(14), 2_610, 4_620, span);
+        assert_eq!(w.rates(), (1_000, 2_000));
     }
 }

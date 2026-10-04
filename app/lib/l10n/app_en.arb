@@ -291,7 +291,7 @@
   },
   "statIpv8Traffic": "Overlay traffic (session)",
   "statSessionTraffic": "BitTorrent traffic (session)",
-  "statTrafficValue": "↑ {up} · ↓ {down}",
+  "statTrafficValue": "↓ {down} · ↑ {up}",
   "@statTrafficValue": {
     "placeholders": {
       "up": { "type": "String" },

@@ -211,6 +211,15 @@ pub struct Ipv8Config {
     /// Extension Rust : borne de la table des sources contactees par
     /// socket de sortie (`exit_inbound_source_ttl_secs`).
     pub exit_inbound_max_sources: usize,
+    /// Extension Rust : intervalle d'echantillonnage des compteurs de
+    /// l'endpoint (ms) pour le debit `rate_up`/`rate_down` de
+    /// `/api/statistics/ipv8` — calcule cote daemon pour que toutes
+    /// les UI (desktop, web) affichent la meme valeur.
+    pub stats_rate_sample_ms: u64,
+    /// Extension Rust : profondeur (s) de la fenetre glissante du
+    /// debit — doit couvrir le sondage UI (~5 s) pour une mesure
+    /// non nulle entre deux ticks.
+    pub stats_rate_window_secs: u64,
 }
 
 impl Ipv8Config {
@@ -253,6 +262,8 @@ impl Ipv8Config {
             anon_dht_backoff_cap_secs: DEFAULT_ANON_DHT_BACKOFF_CAP_SECS,
             exit_inbound_source_ttl_secs: DEFAULT_EXIT_INBOUND_TTL_SECS,
             exit_inbound_max_sources: DEFAULT_EXIT_INBOUND_MAX_SOURCES,
+            stats_rate_sample_ms: DEFAULT_STATS_RATE_SAMPLE_MS,
+            stats_rate_window_secs: DEFAULT_STATS_RATE_WINDOW_SECS,
         }
     }
 }
@@ -292,6 +303,8 @@ impl Default for Ipv8Config {
             anon_dht_backoff_cap_secs: DEFAULT_ANON_DHT_BACKOFF_CAP_SECS,
             exit_inbound_source_ttl_secs: DEFAULT_EXIT_INBOUND_TTL_SECS,
             exit_inbound_max_sources: DEFAULT_EXIT_INBOUND_MAX_SOURCES,
+            stats_rate_sample_ms: DEFAULT_STATS_RATE_SAMPLE_MS,
+            stats_rate_window_secs: DEFAULT_STATS_RATE_WINDOW_SECS,
         }
     }
 }
@@ -353,6 +366,15 @@ pub const DEFAULT_MAX_JOINED_CIRCUITS: usize = 100;
 /// file mesuré par ping des pairs (`bandwidth/*`),
 /// `bandwidth/fallback_bps` avant le premier échantillon.
 pub const RELAY_RATE_AUTO: i64 = -1;
+
+/// Intervalle par defaut d'echantillonnage des compteurs endpoint
+/// pour `rate_up`/`rate_down` (`/api/statistics/ipv8`, extension
+/// Rust).
+pub const DEFAULT_STATS_RATE_SAMPLE_MS: u64 = 1_000;
+
+/// Profondeur par defaut (s) de la fenetre glissante du debit
+/// endpoint — couvre le sondage UI (5 s) avec une marge.
+pub const DEFAULT_STATS_RATE_WINDOW_SECS: u64 = 6;
 
 /// Debit servi applique a la construction de la community quand le
 /// mode est `-1` (auto) — `bandwidth/fallback_bps`, remplace a chaud
@@ -1513,6 +1535,18 @@ impl Ipv8Stack {
             if let Err(e) = ep.run().await {
                 tracing::error!(error = %e, "endpoint ipv8 termine");
             }
+        });
+
+        // Echantillonnage des compteurs de l'endpoint pour le debit
+        // `rate_up`/`rate_down` de `/api/statistics/ipv8` (extension
+        // Rust) : cadence interne au daemon — aucune mesure a faire
+        // cote client, toutes les UI affichent la meme valeur.
+        tasks.register(None, "endpoint_rates", None);
+        let ep = endpoint.clone();
+        let rate_interval = std::time::Duration::from_millis(config.stats_rate_sample_ms);
+        let rate_span = std::time::Duration::from_secs(config.stats_rate_window_secs);
+        tokio::spawn(async move {
+            ep.run_rate_sampler(rate_interval, rate_span).await;
         });
 
         // Maintenance DHT en tache de fond (arret via `stop`).

@@ -3,6 +3,33 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Carte « Trafic tunnel » : débit calculé par le daemon (2026-10-04)
+
+- **Bug web confirmé** : la carte restait à `0 o/s` sur l'UI web alors
+  que tout le reste est temps réel. Cause structurelle : c'était la
+  seule carte à *mesurer* un débit (diff de compteurs
+  `total_up`/`total_down` entre deux échantillons ≥ 1 s côté Dart) au
+  lieu d'afficher une valeur du daemon — or Chrome échoue des sondages
+  en rafale (`net::ERR_INSUFFICIENT_RESOURCES`) et la fenêtre de
+  mesure client ne tenait pas.
+- **Alignée sur le patron « Fichiers »** : le daemon calcule et publie
+  `rate_up`/`rate_down` dans `ipv8_statistics` (`UdpEndpoint` :
+  tâche `run_rate_sampler` + fenêtre glissante `RateWindow`,
+  `stats_rate_sample_ms` = 1 s / `stats_rate_window_secs` = 6 s dans
+  `Ipv8Config`). Une mesure unique côté daemon → desktop et web
+  affichent la même valeur, quel que soit le sondage client.
+- Dart : `Ipv8Traffic.rateUp`/`rateDown` ; suppression de
+  `TunnelTraffic`, `TunnelTrafficNotifier`, `tunnelTrafficProvider`,
+  `_kMinSampleWindow` — la carte lit `ipv8TrafficProvider` comme les
+  autres cartes (implantation visuelle inchangée : ligne débit
+  `↓ · ↑` + caption cumuls). `statTrafficValue` réordonné
+  `↓ {down} · ↑ {up}` (cohérent avec la ligne principale).
+- Tests : `rate_window_rates` (fenêtre, expiration, reset borné à 0)
+  côté `onionbit-ipv8` ; `tunnel_traffic_test.dart` supprimé — plus
+  de logique de mesure côté client à tester.
+- `cargo check`/`clippy` propres, 8/8 tests `onionbit-ipv8` verts ;
+  `dart analyze` propre ; 19/19 tests Flutter verts.
+
 ## Carte « Trafic tunnel » recréée (2026-10-04)
 
 - Nouvelle implémentation : `tunnelTrafficProvider` =

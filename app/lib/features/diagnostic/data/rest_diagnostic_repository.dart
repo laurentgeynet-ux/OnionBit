@@ -164,6 +164,8 @@ class RestDiagnosticRepository implements DiagnosticRepository {
     return Ipv8Traffic(
       up: (s['total_up'] as num?)?.toInt() ?? 0,
       down: (s['total_down'] as num?)?.toInt() ?? 0,
+      rateUp: (s['rate_up'] as num?)?.toInt() ?? 0,
+      rateDown: (s['rate_down'] as num?)?.toInt() ?? 0,
       bandwidth: bw == null
           ? null
           : RelayBandwidth(
