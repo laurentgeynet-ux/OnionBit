@@ -11,6 +11,26 @@
   "navSettings": "Settings",
   "@navSettings": { "description": "Sidebar/nav label — Settings page" },
   "navAbout": "About",
+  "createTorrent": "Create a torrent",
+  "ctSource": "Source file or folder",
+  "ctSourceHint": "Path on the daemon machine (file or folder)",
+  "ctBrowseDir": "Browse daemon folders",
+  "ctName": "Torrent name (optional)",
+  "ctTracker": "Tracker (optional)",
+  "ctDesc": "Description (optional)",
+  "ctExport": ".torrent export directory (optional)",
+  "ctExportHint": "Default: source file's folder",
+  "ctSeed": "Add to seeding after creation",
+  "ctCreate": "Create",
+  "ctSourceRequired": "Source path required",
+  "ctSuccess": "Torrent created: {path}",
+  "@ctSuccess": {
+    "placeholders": {"path": {}}
+  },
+  "ctSeededSuccess": "Torrent created and added to seeding: {path}",
+  "@ctSeededSuccess": {
+    "placeholders": {"path": {}}
+  },
   "aboutVersions": "Versions",
   "aboutApp": "App",
   "aboutDaemon": "Daemon",

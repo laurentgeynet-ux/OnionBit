@@ -245,4 +245,38 @@ class RestDownloadsRepository implements DownloadsRepository {
   @override
   Future<void> remove(String infohash, {bool deleteFiles = false}) =>
       _api.delete('/downloads/$infohash', body: {'remove_data': deleteFiles});
+
+  @override
+  Future<({String infohash, String path})> createTorrent({
+    required List<String> files,
+    String? name,
+    String? description,
+    String? tracker,
+    String? exportDir,
+  }) async {
+    try {
+      final resp = await _api.post(
+        '/createtorrent',
+        body: {
+          'files': files,
+          'name': ?name,
+          'description': ?description,
+          'tracker': ?tracker,
+          'export_dir': ?exportDir,
+        },
+      ) as Map<String, dynamic>;
+      final results = resp['results'] as List<dynamic>? ?? const [];
+      final first =
+          results.isNotEmpty && results.first is Map<String, dynamic>
+              ? results.first as Map<String, dynamic>
+              : const <String, dynamic>{};
+      final infohash = (first['infohash'] as String?) ?? '';
+      final path = (first['path'] as String?) ?? '';
+      uiLog('creation torrent infohash=$infohash path=$path');
+      return (infohash: infohash, path: path);
+    } catch (e) {
+      uiLog('creation torrent en echec : $e');
+      rethrow;
+    }
+  }
 }

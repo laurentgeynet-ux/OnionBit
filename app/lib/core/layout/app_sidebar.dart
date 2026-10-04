@@ -12,6 +12,7 @@ import 'package:go_router/go_router.dart';
 import '../../features/downloads/domain/download_filter.dart';
 import '../../features/downloads/presentation/providers/downloads_providers.dart';
 import '../../features/downloads/presentation/widgets/add_download_dialog.dart';
+import '../../features/downloads/presentation/widgets/create_torrent_dialog.dart';
 import '../../features/settings/presentation/providers/settings_providers.dart';
 import '../di/providers.dart';
 import '../l10n/l10n_ext.dart';
@@ -132,7 +133,7 @@ class AppSidebar extends ConsumerWidget {
                     ),
                   ),
                   const SizedBox(height: AppSpacing.md),
-                  if (collapsed)
+                  if (collapsed) ...[
                     Tooltip(
                       message: l10n.sidebarAddDownloadTooltip,
                       child: FilledButton(
@@ -143,12 +144,39 @@ class AppSidebar extends ConsumerWidget {
                         onPressed: () => AddDownloadDialog.show(context),
                         child: const Icon(Icons.add),
                       ),
-                    )
-                  else
-                    FilledButton.icon(
-                      onPressed: () => AddDownloadDialog.show(context),
-                      icon: const Icon(Icons.add),
-                      label: Text(l10n.add),
+                    ),
+                    Tooltip(
+                      message: l10n.createTorrent,
+                      child: IconButton(
+                        visualDensity: VisualDensity.compact,
+                        icon: const Icon(Icons.post_add, size: 20),
+                        onPressed: () => CreateTorrentDialog.show(context),
+                      ),
+                    ),
+                  ] else
+                    Row(
+                      children: [
+                        Expanded(
+                          child: FilledButton.icon(
+                            onPressed: () => AddDownloadDialog.show(context),
+                            icon: const Icon(Icons.add),
+                            label: Text(l10n.add),
+                          ),
+                        ),
+                        const SizedBox(width: AppSpacing.xs),
+                        Tooltip(
+                          message: l10n.createTorrent,
+                          child: OutlinedButton(
+                            style: OutlinedButton.styleFrom(
+                              padding: EdgeInsets.zero,
+                              minimumSize: const Size(40, 40),
+                            ),
+                            onPressed: () =>
+                                CreateTorrentDialog.show(context),
+                            child: const Icon(Icons.post_add, size: 18),
+                          ),
+                        ),
+                      ],
                     ),
                   if (!collapsed) ...[
                     const SizedBox(height: AppSpacing.sm),

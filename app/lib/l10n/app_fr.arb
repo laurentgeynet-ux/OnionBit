@@ -6,6 +6,26 @@
   "navDiagnostic": "Diagnostic",
   "navSettings": "Réglages",
   "navAbout": "À propos",
+  "createTorrent": "Créer un torrent",
+  "ctSource": "Fichier ou dossier source",
+  "ctSourceHint": "Chemin sur la machine du daemon (fichier ou dossier)",
+  "ctBrowseDir": "Parcourir les dossiers du daemon",
+  "ctName": "Nom du torrent (optionnel)",
+  "ctTracker": "Tracker (optionnel)",
+  "ctDesc": "Description (optionnelle)",
+  "ctExport": "Dossier d'export du .torrent (optionnel)",
+  "ctExportHint": "Par défaut : dossier du fichier source",
+  "ctSeed": "Ajouter au partage après création",
+  "ctCreate": "Créer",
+  "ctSourceRequired": "Chemin source requis",
+  "ctSuccess": "Torrent créé : {path}",
+  "@ctSuccess": {
+    "placeholders": {"path": {}}
+  },
+  "ctSeededSuccess": "Torrent créé et ajouté au partage : {path}",
+  "@ctSeededSuccess": {
+    "placeholders": {"path": {}}
+  },
   "aboutVersions": "Versions",
   "aboutApp": "Application",
   "aboutDaemon": "Daemon",

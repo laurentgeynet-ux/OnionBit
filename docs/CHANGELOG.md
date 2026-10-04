@@ -3,6 +3,20 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Création de torrent depuis l'UI (2026-10-04)
+
+- **Besoin** : `POST /api/createtorrent` existait côté daemon mais
+  aucun accès UI — impossible de créer un `.torrent` depuis ses
+  propres fichiers.
+- **UI** : bouton « créer un torrent » (icône `post_add`) accolé à
+  « Ajouter » dans la sidebar → dialogue : chemin source (fichier
+  ou dossier, avec navigateur de dossiers daemon), nom, tracker,
+  description, dossier d'export — puis case « ajouter au partage »
+  qui enchaîne `PUT /api/downloads torrent=…` avec le sélecteur
+  Clair / Anon ×1/×2/×3 pour seeder anonymement dès la création.
+- **Repo** : `DownloadsRepository.createTorrent` →
+  `POST /createtorrent`, retourne `(infohash, path)`.
+
 ## Page « À propos » (2026-10-04)
 
 - **Navigation** : nouvelle destination `/about` (icône info),

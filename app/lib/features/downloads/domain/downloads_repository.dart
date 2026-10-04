@@ -125,5 +125,16 @@ abstract interface class DownloadsRepository {
   Future<void> setFilePriority(String infohash, int index, int priority);
 
   Future<void> remove(String infohash, {bool deleteFiles = false});
+
+  /// Crée un `.torrent` depuis des fichiers de la machine du daemon
+  /// (`POST /api/createtorrent` — un torrent par chemin source, comme
+  /// Python). Retourne `(infohash, chemin)` du premier résultat.
+  Future<({String infohash, String path})> createTorrent({
+    required List<String> files,
+    String? name,
+    String? description,
+    String? tracker,
+    String? exportDir,
+  });
 }
 
