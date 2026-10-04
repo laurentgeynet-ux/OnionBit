@@ -3,6 +3,37 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Débit servi : contrôle de congestion AIMD (2026-10-04)
+
+- **L'estimateur de capacité est remplacé par un contrôleur de
+  congestion** (ADR-0013) — famille LEDBAT / « Upload Speed
+  Sense » d'eMule. L'ancien système était structurellement caduque :
+  le pic passif est censuré par son propre plafond (l'estimation se
+  verrouillait à ~200 Kio/s alors que la sonde mesurait ~111
+  Mbit/s), l'UPnP dépend d'un IGD qui ne répond pas partout, et la
+  sonde HTTP impose un tiers qu'un daemon d'anonymat ne devrait pas
+  contacter sans opt-in.
+- **Principe** : toutes les `bandwidth/sample_secs` (5 s), rafale de
+  `ping` Discovery vers les 8 pairs vérifiés les plus frais ;
+  retard de file = médiane RTT − baseline (min glissant 10 min).
+  En dessous de `target_delay_ms` (50 ms) le plafond croît
+  additivement (`cap/8`, min 32 Kio/s), au-dessus il chute ×0,75.
+  Sans échantillon : plafond inchangé ; sans pair : `fallback_bps`.
+  Borné `[floor_bps, max_bps]` = [64 Kio/s, 32 Mio/s].
+- **Câblage** : `DiscoveryCommunity::set_pong_probe` notifie
+  `(adresse, identifier)` de chaque `pong` — la `RttProbe` apparie
+  aux pings de la tâche (pongs churn/keepalive ignorés).
+- **Config** : `tunnel_community/bandwidth` ne garde que les
+  paramètres du contrôleur (`floor/fallback/max_bps`,
+  `sample_secs`, `probe_peers`, `probe_wait_ms`,
+  `base_window_secs`, `target_delay_ms`, `increase_*`,
+  `decrease_pct`) — `share`, `measure_upnp`, `probe_*`,
+  `measure_interval_secs`, `warmup_secs` supprimés (ignorés par
+  `serde(default)` dans les anciens fichiers).
+- **API/UI** : `bandwidth` expose `effective_relay_bps`,
+  `base_rtt_ms`, `median_rtt_ms`, `rtt_samples` — la page
+  Statistiques affiche « Signal RTT des pairs ».
+
 ## Premier lookup de swarm immédiat + débit tunnel vivant (2026-10-04)
 
 - **`Swarm::new` : `last_lookup` initialisé « jamais »** — comme le

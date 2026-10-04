@@ -394,58 +394,66 @@ impl Default for LibtorrentConfig {
     }
 }
 
-/// Estimateur de capacité upload (`tunnel_community/bandwidth`) —
-/// extension Rust. Le plafond servi en mode `max_relayed_rate = -1`
-/// est `max(capacité_mesurée × share, floor_bps)`. La capacité est
-/// estimée par meilleure source disponible : débit WAN remonté par
-/// UPnP (`GetLinkLayerMaxBitRates`, gratuit — même canal que la
-/// redirection de port), sonde HTTP `probe_up_urls` (opt-in, vide par
-/// défaut — aucun trafic sortant), pic de débit soutenu observé en
-/// passif sur l'endpoint (borne basse).
+/// Contrôleur de congestion du débit servi (`tunnel_community/
+/// bandwidth`) — extension Rust, famille LEDBAT/USS : le plafond
+/// servi en mode `max_relayed_rate = -1` n'est PAS une fraction de
+/// capacité mesurée (l'estimation de capacité est impossible sans
+/// sonde externe : le pic passif est censuré par son propre
+/// plafond). À chaque tick `sample_secs`, on ping `probe_peers`
+/// pairs vérifiés ; la médiane des RTT moins la baseline (min sur
+/// `base_window_secs`) donne le retard de file d'attente montante.
+/// En dessous de `target_delay_ms` le plafond croît de façon
+/// additive, au-dessus il décroît multiplicativement — le tunnel
+/// occupe l'upload disponible et cède la place dès qu'une autre
+/// application (ou le téléchargement local) charge la ligne.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct BandwidthConfig {
-    /// Part de la capacité upload allouée au trafic servi (1/3).
-    pub share: f64,
-    /// Plancher du plafond servi une fois mesuré (octets/s) : un
-    /// relais sous ce débit n'apporte rien au réseau.
+    /// Plancher du plafond servi (octets/s) : un relais sous ce
+    /// débit n'apporte rien au réseau.
     pub floor_bps: u64,
-    /// Plafond servi avant la première mesure (ou mesure impossible)
-    /// en mode auto (octets/s).
+    /// Plafond servi initial, avant le premier échantillon RTT
+    /// (octets/s).
     pub fallback_bps: u64,
-    /// Interroge le routeur UPnP (`WANCommonInterfaceConfig`) pour le
-    /// débit WAN provisionné — trafic LAN uniquement.
-    pub measure_upnp: bool,
-    /// Endpoints HTTP POST recevant un blob pour mesurer l'upload
-    /// (opt-in : liste vide = aucune sonde sortante).
-    pub probe_up_urls: Vec<String>,
-    /// Taille du blob de sonde upload (octets).
-    pub probe_bytes: u64,
-    /// Timeout d'une sonde ou de la découverte UPnP (s).
-    pub probe_timeout_secs: u64,
-    /// Cadence de re-mesure de la capacité (s).
-    pub measure_interval_secs: u64,
-    /// Délai avant la première mesure après le démarrage (s) — laisse
-    /// la stack IPv8 s'établir.
-    pub warmup_secs: u64,
-    /// Tick d'échantillonnage des compteurs endpoint pour le pic
-    /// passif (s).
+    /// Borne supérieure absolue du plafond servi (octets/s) —
+    /// sécurité, indépendante du contrôleur.
+    pub max_bps: u64,
+    /// Cadence du tick contrôleur et de la rafale de pings (s).
     pub sample_secs: u64,
+    /// Pairs vérifiés pingés par tick (médiane des RTT).
+    pub probe_peers: usize,
+    /// Attente des pongs avant la décision du tick (ms).
+    pub probe_wait_ms: u64,
+    /// Fenêtre glissante de la baseline RTT (s) — le retard de file
+    /// est mesuré par rapport au minimum observé dans cette fenêtre.
+    pub base_window_secs: u64,
+    /// Retard de file toléré (ms) : le plafond augmente tant que le
+    /// dépassement est nul, recule sinon.
+    pub target_delay_ms: u64,
+    /// Croissance additive : `cap += max(cap / increase_div,
+    /// increase_min_bps)`.
+    pub increase_div: u64,
+    /// Croissance additive minimale par tick (octets/s).
+    pub increase_min_bps: u64,
+    /// Multiplicateur de réduction en congestion (pourcent gardé :
+    /// 75 = cap × 0.75).
+    pub decrease_pct: u64,
 }
 
 impl Default for BandwidthConfig {
     fn default() -> Self {
         Self {
-            share: 1.0 / 3.0,
             floor_bps: 64 * 1024,
             fallback_bps: 512 * 1024,
-            measure_upnp: true,
-            probe_up_urls: Vec::new(),
-            probe_bytes: 4 * 1024 * 1024,
-            probe_timeout_secs: 15,
-            measure_interval_secs: 3600,
-            warmup_secs: 30,
+            max_bps: 32 * 1024 * 1024,
             sample_secs: 5,
+            probe_peers: 8,
+            probe_wait_ms: 1200,
+            base_window_secs: 600,
+            target_delay_ms: 50,
+            increase_div: 8,
+            increase_min_bps: 32 * 1024,
+            decrease_pct: 75,
         }
     }
 }
@@ -469,9 +477,9 @@ pub struct TunnelCommunityConfig {
     pub max_joined_circuits: u32,
     /// Extension Rust (sans équivalent pyipv8) : débit max du trafic
     /// servi aux autres pairs — cellules relayées + datagrammes de
-    /// sortie — en octets/s. **`-1` = automatique** (défaut : fraction
-    /// `bandwidth/share` de la capacité upload mesurée par
-    /// l'estimateur — voir `BandwidthConfig`), `0` = illimité
+    /// sortie — en octets/s. **`-1` = automatique** (défaut : AIMD
+    /// sur le retard de file mesuré par ping des pairs vérifiés —
+    /// voir `BandwidthConfig`), `0` = illimité
     /// (comportement pyipv8), `>0` = plafond fixe. Le débit servi est
     /// symétrique (1 datagramme relayé = 1 in + 1 out) : le plafond est
     /// basé sur l'upload, toujours le facteur limitant — il borne
@@ -480,7 +488,7 @@ pub struct TunnelCommunityConfig {
     /// d'émission ; l'excédent est perdu en sémantique UDP, lissé par
     /// uTP aux extrémités).
     pub max_relayed_rate: i64,
-    /// Paramètres de l'estimateur de capacité upload utilisé quand
+    /// Paramètres du contrôleur de congestion utilisé quand
     /// `max_relayed_rate = -1` (extension Rust — pyipv8 n'a pas de
     /// plafond de débit servi).
     pub bandwidth: BandwidthConfig,

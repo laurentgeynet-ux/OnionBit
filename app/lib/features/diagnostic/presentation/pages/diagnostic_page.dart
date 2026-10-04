@@ -566,21 +566,17 @@ class _StatsTab extends ConsumerWidget {
         ),
         _stat(context, l10n.statDataCircuits, dataReadyText),
         _stat(context, l10n.statExitsActive, '$activeExits'),
-        // Débit servi aux autres pairs (estimateur de capacité
-        // upload — `tunnel_community/bandwidth`, extension Rust).
+        // Débit servi aux autres pairs (contrôleur de congestion —
+        // `tunnel_community/bandwidth`, extension Rust).
         if (traffic?.bandwidth case final bw?) ...[
           _stat(
             context,
-            l10n.statBwUpload,
-            bw.measuredUpBps > 0
-                ? l10n.statBwUploadValue(
-                    context.fmtRate(bw.measuredUpBps),
-                    switch (bw.source) {
-                      'upnp' => l10n.bwSourceUpnp,
-                      'probe' => l10n.bwSourceProbe,
-                      'passive' => l10n.bwSourcePassive,
-                      _ => l10n.bwSourcePending,
-                    },
+            l10n.statBwRtt,
+            bw.medianRttMs != null
+                ? l10n.statBwRttValue(
+                    bw.medianRttMs!.toStringAsFixed(0),
+                    bw.baseRttMs?.toStringAsFixed(0) ?? '—',
+                    bw.rttSamples,
                   )
                 : l10n.bwSourcePending,
           ),

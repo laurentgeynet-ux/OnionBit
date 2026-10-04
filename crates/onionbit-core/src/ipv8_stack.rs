@@ -349,14 +349,14 @@ pub const DEFAULT_MAX_CIRCUITS: u32 = 8;
 pub const DEFAULT_MAX_JOINED_CIRCUITS: usize = 100;
 
 /// Sentinelle `tunnel_community/max_relayed_rate` : plafond servi
-/// automatique — fraction `bandwidth/share` de la capacite upload
-/// mesuree (`BandwidthEstimator`), `bandwidth/fallback_bps` avant la
-/// premiere mesure.
+/// automatique — AIMD du `CongestionController` sur le retard de
+/// file mesuré par ping des pairs (`bandwidth/*`),
+/// `bandwidth/fallback_bps` avant le premier échantillon.
 pub const RELAY_RATE_AUTO: i64 = -1;
 
 /// Debit servi applique a la construction de la community quand le
 /// mode est `-1` (auto) — `bandwidth/fallback_bps`, remplace a chaud
-/// des que l'estimateur mesure la capacite upload.
+/// des le premier tick du controleur de congestion.
 pub fn initial_relay_bps(mode: i64, bandwidth: &crate::daemon_config::BandwidthConfig) -> u64 {
     if mode < 0 {
         bandwidth.fallback_bps

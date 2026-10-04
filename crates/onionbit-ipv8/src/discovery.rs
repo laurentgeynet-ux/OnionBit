@@ -88,6 +88,11 @@ pub fn is_lan_subnet(ip: std::net::Ipv4Addr) -> bool {
         || (o[0] == 169 && o[1] == 254)
 }
 
+/// Callback de sonde RTT branchée sur les `pong` reçus —
+/// `(adresse_source, identifier)` (extension Rust, contrôleur de
+/// congestion `services/bandwidth.rs`).
+pub type PongProbe = Arc<dyn Fn(&UdpAddress, u16) + Send + Sync>;
+
 /// Community de decouverte (overlay generique : marche aleatoire +
 /// puncture + Lamport — les autres communities reutilisent les memes
 /// primitives via `packet`/`payloads`).
@@ -126,6 +131,11 @@ pub struct DiscoveryCommunity {
     intro_requests_seen: std::sync::atomic::AtomicUsize,
     intro_responses_seen: std::sync::atomic::AtomicUsize,
     punctures_seen: std::sync::atomic::AtomicUsize,
+    /// Sonde RTT externe (extension Rust — contrôleur de congestion
+    /// `services/bandwidth.rs`) : appelée sur chaque `pong` reçu
+    /// avec `(adresse_source, identifier)` ; les ids inconnus du
+    /// registre sont ignorés — simple observation, jamais bloquante.
+    pong_probe: Mutex<Option<PongProbe>>,
 }
 
 impl DiscoveryCommunity {
@@ -155,6 +165,7 @@ impl DiscoveryCommunity {
             intro_requests_seen: std::sync::atomic::AtomicUsize::new(0),
             intro_responses_seen: std::sync::atomic::AtomicUsize::new(0),
             punctures_seen: std::sync::atomic::AtomicUsize::new(0),
+            pong_probe: Mutex::new(None),
         });
         let prefix = prefix_of(&DISCOVERY_COMMUNITY_ID);
         let c = community.clone();
@@ -326,6 +337,9 @@ impl DiscoveryCommunity {
                 }
                 msg::PONG => {
                     self.update_global_time(pkt.global_time);
+                    let mut r = Reader::new(&pkt.payload);
+                    let p = crate::payloads::Pong::unpack(&mut r)?;
+                    self.notify_pong(&src_addr, p.identifier);
                     Ok(())
                 }
                 _ => self.on_puncture_request(src_addr, &pkt),
@@ -360,7 +374,10 @@ impl DiscoveryCommunity {
             }
             msg::PONG => {
                 // `on_pong` : le pair est deja verifie (signature OK) —
-                // Python met a jour `last_response` ; rien d'autre.
+                // Python met a jour `last_response`. On notifie en
+                // plus la sonde RTT du contrôleur de congestion.
+                let p = crate::payloads::Pong::unpack(&mut r)?;
+                self.notify_pong(&src_addr, p.identifier);
             }
             msg::SIMILARITY_REQUEST => {
                 let p = SimilarityRequest::unpack(&mut r)?;
@@ -718,6 +735,22 @@ impl DiscoveryCommunity {
         let pkt = self.make_puncture_request(lan_walker, wan_walker, id, new_style);
         self.endpoint.send_to(addr, &pkt).await?;
         Ok(id)
+    }
+
+    /// Enregistre la sonde RTT du contrôleur de congestion
+    /// (`services/bandwidth.rs`) : `(adresse source, identifier)`
+    /// de chaque `pong` reçu. Un seul abonné — le dernier posé
+    /// l'emporte.
+    pub fn set_pong_probe(&self, f: PongProbe) {
+        *self.pong_probe.lock().unwrap() = Some(f);
+    }
+
+    /// Notifie la sonde RTT si enregistrée (appel interne aux deux
+    /// branches `PONG`, signée et non signée).
+    fn notify_pong(&self, src: &UdpAddress, identifier: u16) {
+        if let Some(f) = self.pong_probe.lock().unwrap().as_ref() {
+            f(src, identifier);
+        }
     }
 
     /// Envoie un `ping` (msg 3).

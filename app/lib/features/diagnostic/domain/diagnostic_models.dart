@@ -195,35 +195,31 @@ class Ipv8Traffic {
   final RelayBandwidth? bandwidth;
 }
 
-/// Capacité upload mesurée et plafond du trafic servi aux autres
-/// pairs (`ipv8_statistics.bandwidth` — estimateur `services/
-/// bandwidth.rs`).
+/// Plafond du trafic servi aux autres pairs + signal RTT du
+/// contrôleur de congestion (`ipv8_statistics.bandwidth` —
+/// `services/bandwidth.rs`, extension Rust).
 class RelayBandwidth {
   const RelayBandwidth({
-    required this.measuredUpBps,
-    required this.measuredDownBps,
-    required this.source,
-    required this.passivePeakUpBps,
     required this.effectiveRelayBps,
+    required this.baseRttMs,
+    required this.medianRttMs,
+    required this.rttSamples,
     required this.relayMode,
     required this.relayDropped,
   });
 
-  /// Capacité upload mesurée (octets/s) — 0 = pas encore mesurée.
-  final int measuredUpBps;
-
-  /// Capacité download mesurée (octets/s) — rempli par la sonde UPnP.
-  final int measuredDownBps;
-
-  /// Source de la mesure : `upnp`, `probe`, `passive` — `null` tant
-  /// que rien n'a été observé.
-  final String? source;
-
-  /// Pic passif upload observé (octets/s).
-  final int passivePeakUpBps;
-
   /// Plafond servi actuellement appliqué au tunnel (octets/s).
   final int effectiveRelayBps;
+
+  /// Baseline RTT (ms) — min glissant des médianes ; `null` tant
+  /// qu'aucun pong n'a été reçu.
+  final double? baseRttMs;
+
+  /// Médiane RTT du dernier tick (ms) ; `null` idem.
+  final double? medianRttMs;
+
+  /// Pongs exploités au dernier tick.
+  final int rttSamples;
 
   /// Mode de `tunnel_community/max_relayed_rate` : `auto` (-1),
   /// `unlimited` (0), `fixed` (>0) — détermine l'affichage (« — » vs

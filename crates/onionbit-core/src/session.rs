@@ -171,9 +171,9 @@ struct Inner {
     /// du `DatabaseEndpoint`).
     augmenter: Arc<crate::augmenter::Augmenter>,
     /// Estimateur de capacite upload (`tunnel_community/bandwidth`) —
-    /// regle `max_relayed_rate` en mode auto ; consultable via
-    /// `/api/statistics/tribler` (`bandwidth`).
-    bandwidth: Arc<crate::services::bandwidth::BandwidthEstimator>,
+    /// regle `max_relayed_rate` en mode auto (AIMD sur le retard de
+    /// file) ; consultable via `/api/statistics/ipv8` (`bandwidth`).
+    bandwidth: Arc<crate::services::bandwidth::CongestionController>,
     /// Horodatage de demarrage — expose via `uptime_secs`
     /// (`GET /api/statistics/tribler`).
     started_at: std::time::Instant,
@@ -228,7 +228,7 @@ impl CoreSession {
                 stopped: std::sync::atomic::AtomicBool::new(false),
                 restore_done: tokio::sync::watch::channel(false).0,
                 augmenter: augmenter.clone(),
-                bandwidth: Arc::new(crate::services::bandwidth::BandwidthEstimator::new()),
+                bandwidth: Arc::new(crate::services::bandwidth::CongestionController::new()),
                 started_at: std::time::Instant::now(),
             }),
         };
@@ -286,7 +286,7 @@ impl CoreSession {
                 // marquee terminee d'emblee.
                 restore_done: tokio::sync::watch::channel(true).0,
                 augmenter,
-                bandwidth: Arc::new(crate::services::bandwidth::BandwidthEstimator::new()),
+                bandwidth: Arc::new(crate::services::bandwidth::CongestionController::new()),
                 started_at: std::time::Instant::now(),
             }),
         };
@@ -2562,8 +2562,8 @@ impl CoreSession {
         }
         // Estimateur de capacite upload (`tunnel_community/bandwidth`) :
         // mesure UPnP/sonde periodique + pic passif endpoint ; en mode
-        // `max_relayed_rate = -1` applique `upload × share` a chaud sur
-        // le limiteur tunnel. Sans IPv8 l'endpoint n'existe pas.
+        // `max_relayed_rate = -1` applique le plafond AIMD a chaud
+        // sur le limiteur tunnel. Sans IPv8 l'endpoint n'existe pas.
         if config.ipv8.enabled {
             let (stop_tx, mut stop_rx) = tokio::sync::watch::channel(false);
             let this = self.clone();
@@ -2571,7 +2571,7 @@ impl CoreSession {
                 crate::services::bandwidth::run_bandwidth_task(this, &mut stop_rx).await;
             });
             self.inner.asyncio.tasks.register(
-                Some("BandwidthEstimator"),
+                Some("CongestionController"),
                 "measure",
                 Some(config.ipv8.bandwidth.sample_secs as f64),
             );
@@ -2596,9 +2596,10 @@ impl CoreSession {
         self.inner.ipv8.clone()
     }
 
-    /// Estimateur de capacite upload (`tunnel_community/bandwidth`) —
-    /// mesures + pic passif + plafond applique (diagnostics).
-    pub fn bandwidth(&self) -> Arc<crate::services::bandwidth::BandwidthEstimator> {
+    /// Contrôleur de congestion du débit servi
+    /// (`tunnel_community/bandwidth`) — état RTT + plafond appliqué
+    /// (diagnostics).
+    pub fn bandwidth(&self) -> Arc<crate::services::bandwidth::CongestionController> {
         self.inner.bandwidth.clone()
     }
 
@@ -2725,7 +2726,7 @@ impl CoreSession {
                 // chaud — `-1` = auto (upload mesure × share, via
                 // l'estimateur), `0` = illimite, `>0` = fixe.
                 let rate = if config.ipv8.max_relayed_bps < 0 {
-                    self.inner.bandwidth.effective_bps(&config.ipv8.bandwidth)
+                    self.inner.bandwidth.current_bps(&config.ipv8.bandwidth)
                 } else {
                     config.ipv8.max_relayed_bps as u64
                 };

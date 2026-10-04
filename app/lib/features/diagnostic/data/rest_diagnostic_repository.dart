@@ -167,14 +167,11 @@ class RestDiagnosticRepository implements DiagnosticRepository {
       bandwidth: bw == null
           ? null
           : RelayBandwidth(
-              measuredUpBps: (bw['measured_up_bps'] as num?)?.toInt() ?? 0,
-              measuredDownBps:
-                  (bw['measured_down_bps'] as num?)?.toInt() ?? 0,
-              source: bw['source'] as String?,
-              passivePeakUpBps:
-                  (bw['passive_peak_up_bps'] as num?)?.toInt() ?? 0,
               effectiveRelayBps:
                   (bw['effective_relay_bps'] as num?)?.toInt() ?? 0,
+              baseRttMs: (bw['base_rtt_ms'] as num?)?.toDouble(),
+              medianRttMs: (bw['median_rtt_ms'] as num?)?.toDouble(),
+              rttSamples: (bw['rtt_samples'] as num?)?.toInt() ?? 0,
               relayMode: (bw['relay_mode'] as String?) ?? 'auto',
               relayDropped: (bw['relay_dropped'] as num?)?.toInt() ?? 0,
             ),

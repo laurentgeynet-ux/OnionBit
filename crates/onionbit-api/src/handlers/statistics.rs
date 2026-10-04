@@ -82,8 +82,8 @@ pub async fn get_onionbit_stats(State(state): State<AppState>) -> Json<serde_jso
 }
 
 /// `GET /api/statistics/ipv8` — compteurs d'octets de l'endpoint
-/// (`total_up`/`total_down`) + `bandwidth` : mesure de capacite
-/// upload et plafond servi applique (extension Rust,
+/// (`total_up`/`total_down`) + `bandwidth` : plafond servi applique
+/// et signal RTT du controleur de congestion (extension Rust,
 /// `tunnel_community/bandwidth` — mode auto de `max_relayed_rate`).
 pub async fn get_ipv8_stats(State(state): State<AppState>) -> Json<serde_json::Value> {
     let stats = match state.session.ipv8() {
@@ -107,11 +107,10 @@ pub async fn get_ipv8_stats(State(state): State<AppState>) -> Json<serde_json::V
                 "total_up": up,
                 "total_down": down,
                 "bandwidth": {
-                    "measured_up_bps": snap.up_bps,
-                    "measured_down_bps": snap.down_bps,
-                    "source": snap.source,
-                    "passive_peak_up_bps": snap.passive_peak_up_bps,
                     "effective_relay_bps": snap.effective_relay_bps,
+                    "base_rtt_ms": snap.base_rtt_ms,
+                    "median_rtt_ms": snap.median_rtt_ms,
+                    "rtt_samples": snap.rtt_samples,
                     "relay_mode": relay_mode,
                     "relay_dropped": snap.relay_dropped,
                 },
