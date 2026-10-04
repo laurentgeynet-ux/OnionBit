@@ -991,7 +991,10 @@ class _DownloadsContextMenuState extends ConsumerState<_DownloadsContextMenu> {
           size: 18,
           color: Theme.of(context).colorScheme.error,
         ),
-        onPressed: () => _act(l10n.actRemove, notifier.remove(d.infohash)),
+        // Meme dialogue de confirmation que la poubelle de la barre
+        // d'actions (option « supprimer aussi les donnees ») — un
+        // menu contextuel ne doit pas supprimer sans garde-fou.
+        onPressed: () => confirmRemoveSelected(context, ref, {d.infohash}),
         child: Text(
           l10n.delete,
           style: TextStyle(color: Theme.of(context).colorScheme.error),

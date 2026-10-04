@@ -3,6 +3,15 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## « Supprimer » du menu contextuel : confirmation unifiée (2026-10-04)
+
+- **Bug** : l'entrée « Supprimer » du menu contextuel d'un
+  téléchargement le retirait **immédiatement**, sans confirmation ni
+  option « supprimer aussi les données » — contrairement à la
+  poubelle de la barre d'actions.
+- **UI** : l'entrée route désormais sur `confirmRemoveSelected` —
+  même dialogue (compteur + case données disque), même chemin.
+
 ## Torrent privé détecté post-résolution (magnet) (2026-10-04)
 
 - **Cas** : le flag `private` n'est pas dans un magnet — il n'est
