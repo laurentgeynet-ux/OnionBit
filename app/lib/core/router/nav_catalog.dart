@@ -36,4 +36,12 @@ const List<NavDestinationSpec> kNavCatalog = [
     icon: Icons.settings_outlined,
     selectedIcon: Icons.settings,
   ),
+  // Secondaire : sidebar uniquement (hors barre de nav compacte).
+  NavDestinationSpec(
+    path: '/about',
+    id: NavId.about,
+    icon: Icons.info_outline,
+    selectedIcon: Icons.info,
+    primary: false,
+  ),
 ];

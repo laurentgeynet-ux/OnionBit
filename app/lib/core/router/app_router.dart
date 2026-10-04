@@ -5,6 +5,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../features/about/presentation/pages/about_page.dart';
 import '../../features/diagnostic/presentation/pages/diagnostic_page.dart';
 import '../../features/downloads/domain/download_filter.dart';
 import '../../features/downloads/presentation/pages/downloads_page.dart';
@@ -43,6 +44,10 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           GoRoute(
             path: '/settings',
             builder: (context, state) => const SettingsPage(),
+          ),
+          GoRoute(
+            path: '/about',
+            builder: (context, state) => const AboutPage(),
           ),
         ],
       ),

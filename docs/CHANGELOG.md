@@ -3,6 +3,19 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Page « À propos » (2026-10-04)
+
+- **Navigation** : nouvelle destination `/about` (icône info),
+  sidebar uniquement (`primary: false` — hors nav compacte).
+- **Contenu** : bannière logo SVG, bloc « Versions » (app
+  `pubspec` + version/uptime daemon via
+  `/api/statistics/tribler`), bloc « Projet » (licence
+  GPL-3.0-or-later + copyright, code source GitHub, rapport de bug,
+  docs), bloc « Crédits » (portage Tribler + `showLicensePage` des
+  dépendances Flutter).
+- `core/app_info.dart` : métadonnées produit centralisées
+  (version, licence, URLs — à synchroniser avec `pubspec.yaml`).
+
 ## Sidebar : logo agrandi (2026-10-04)
 
 - Logo horizontal 44 → 56 px (icône collapsed 36 → 40 px) : mieux

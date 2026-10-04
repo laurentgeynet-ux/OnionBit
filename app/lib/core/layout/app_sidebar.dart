@@ -215,6 +215,11 @@ class AppSidebar extends ConsumerWidget {
                     collapsed: collapsed,
                     selected: currentPath == '/diagnostic',
                   ),
+                  _NavItem(
+                    d: kNavCatalog[4],
+                    collapsed: collapsed,
+                    selected: currentPath == '/about',
+                  ),
                 ],
               ),
             ),
