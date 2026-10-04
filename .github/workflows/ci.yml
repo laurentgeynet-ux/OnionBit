@@ -239,18 +239,22 @@ jobs:
             echo '```'
           } > notes.md
           # Les tags alpha/beta/rc restent les releases publiques du
-          # projet : --latest conserve le badge « Latest », mais le
-          # suffixe `-xxx` du tag ajoute --prerelease pour etiqueter
-          # honnetement le statut (badge « Pre-release », pas de
-          # confusion avec une stable). Un tag sans suffixe (v0.9.0)
-          # reste une release stable.
+          # projet : le suffixe `-xxx` du tag ajoute --prerelease pour
+          # etiqueter honnetement le statut (badge « Pre-release », pas
+          # de confusion avec une stable). GitHub refuse `--latest` sur
+          # une prerelease (« Latest release cannot be draft or
+          # prerelease ») : il n'est passe que pour un tag sans suffixe
+          # (v0.9.0 = release stable marquee Latest).
           pre=()
-          case "$tag" in *-*) pre=(--prerelease);; esac
+          latest=(--latest)
+          case "$tag" in
+            *-*) pre=(--prerelease); latest=();;
+          esac
           gh release create "$tag" \
             --repo "${{ github.repository }}" \
             --title "$tag" \
             --notes-file notes.md \
-            --latest \
+            "${latest[@]}" \
             "${pre[@]}" \
             "${files[@]}"
   # Longevite automatisee (P1) : la boucle fuzz smoke + les tests

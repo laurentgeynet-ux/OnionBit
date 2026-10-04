@@ -10,7 +10,7 @@
 [![Made with Rust](https://img.shields.io/badge/Made%20with-Rust-orange.svg)](https://www.rust-lang.org/)
 [![UI: Flutter](https://img.shields.io/badge/UI-Flutter-02569B.svg)](https://flutter.dev/)
 [![CI](https://github.com/laurentgeynet-ux/OnionBit/actions/workflows/ci.yml/badge.svg)](https://github.com/laurentgeynet-ux/OnionBit/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/Version-0.8.0--beta-red.svg)](https://github.com/laurentgeynet-ux/OnionBit/releases)
+[![Version](https://img.shields.io/badge/Version-0.9.1--beta-red.svg)](https://github.com/laurentgeynet-ux/OnionBit/releases)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%C2%B7%20Linux%20%C2%B7%20macOS%20%C2%B7%20Android%20%C2%B7%20iOS%20%C2%B7%20Web-lightgrey.svg)]()
 
 </div>
@@ -106,15 +106,15 @@ reproduction scripts: [**interoperability evidence**](docs/interop/README.md).
 > Prebuilt packages are on the
 > [Releases](https://github.com/laurentgeynet-ux/OnionBit/releases) page:
 >
-> - **Windows x64** — `OnionBit-0.8.0-beta-windows-x64.zip`: unzip, run
+> - **Windows x64** — `OnionBit-0.9.1-beta-windows-x64.zip`: unzip, run
 >   `onionbit_ui.exe` — it starts the daemon automatically. Prefer a browser?
 >   The daemon serves the same UI at `http://127.0.0.1:8085/` (API key in
 >   `state\configuration.json`).
-> - **Windows ARM64** — `OnionBit-0.8.0-beta-windows-arm64-headless.zip`: daemon + CLI
+> - **Windows ARM64** — `OnionBit-0.9.1-beta-windows-arm64-headless.zip`: daemon + CLI
 >   (headless — no native Flutter ARM64 build yet; use the web UI in your
 >   browser).
-> - **Linux x64** — `onionbit_0.8.0-beta_amd64.deb` (Debian/Ubuntu/Mint) or
->   `OnionBit-0.8.0-beta-linux-x64.tar.gz`: daemon + CLI + web UI, optional
+> - **Linux x64** — `onionbit_0.9.1-beta_amd64.deb` (Debian/Ubuntu/Mint) or
+>   `OnionBit-0.9.1-beta-linux-x64.tar.gz`: daemon + CLI + web UI, optional
 >   `systemctl --user enable --now onionbit-daemon`.
 >
 > Other platforms (macOS, Android, iOS): build from source
@@ -162,7 +162,7 @@ See [SECURITY.md](SECURITY.md) for reporting and the threat model.
 | Flutter UI (desktop first) | ✅ |
 | Web UI served by the daemon (same-origin) | ✅ |
 | In-app update check (GitHub releases probe) | ✅ |
-| Latest tagged release | ✅ [`v0.8.0-beta`](https://github.com/laurentgeynet-ux/OnionBit/releases/tag/v0.8.0-beta) |
+| Latest tagged release | ✅ [`v0.9.1-beta`](https://github.com/laurentgeynet-ux/OnionBit/releases/tag/v0.9.1-beta) |
 | Linux packages (.deb + tar.gz) | ✅ |
 | Windows ARM64 package (headless) | ✅ |
 | Mobile execution model (Android/iOS) | 📋 |
