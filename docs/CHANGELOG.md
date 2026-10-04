@@ -18,6 +18,13 @@ en haut.
   rafraîchissement re-porte l'ancienne valeur).
 - Débit `—` tant que deux échantillons n'ont pas été observés ;
   compteurs remis à zéro (restart daemon) bornés à 0.
+- **Fenêtre minimale d'échantillonnage (1 s)** : les émissions
+  d'`ipv8TrafficProvider` arrivent parfois groupées (tick 5 s +
+  invalidation par le `Timer` de l'onglet + recréation du client
+  HTTP par le watchdog SSE, fréquent sur l'UI web) — un delta
+  mesuré sur quelques millisecondes ≈ 0 écrasait le vrai débit
+  jusqu'au tick suivant. Échantillon trop proche → ignoré, la
+  baseline reste posée.
 - `test/tunnel_traffic_test.dart` : baseline → débit positif →
   reset borné à 0, compteurs pilotés via override.
 - `flutter analyze` propre ; 20/20 tests verts.

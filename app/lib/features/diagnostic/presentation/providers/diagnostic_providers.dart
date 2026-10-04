@@ -132,6 +132,14 @@ final tunnelTrafficProvider =
       TunnelTrafficNotifier.new,
     );
 
+/// Fenêtre minimale entre deux échantillons de compteurs pour
+/// publier un débit. Les émissions d'`ipv8TrafficProvider` arrivent
+/// parfois groupées (tick 5 s + invalidation du `Timer` de
+/// l'onglet + recréation du client HTTP par le watchdog) : mesurer
+/// sur quelques millisecondes donne un delta ~0 qui écrase le
+/// vrai débit jusqu'au tick suivant.
+const _kMinSampleWindow = Duration(seconds: 1);
+
 class TunnelTrafficNotifier extends Notifier<TunnelTraffic> {
   ({int down, int up, DateTime at})? _sample;
 
@@ -156,13 +164,19 @@ class TunnelTrafficNotifier extends Notifier<TunnelTraffic> {
   void _ingest(Ipv8Traffic s) {
     final now = DateTime.now();
     final prev = _sample;
-    _sample = (down: s.down, up: s.up, at: now);
     if (prev == null) {
+      _sample = (down: s.down, up: s.up, at: now);
       state = TunnelTraffic(totalDown: s.down, totalUp: s.up);
       return;
     }
+    if (now.difference(prev.at) < _kMinSampleWindow) {
+      // Émission groupée : on garde la baseline — le prochain
+      // échantillon mesurera sur une fenêtre plus longue, et le
+      // débit publié n'est pas écrasé par du bruit.
+      return;
+    }
+    _sample = (down: s.down, up: s.up, at: now);
     final secs = now.difference(prev.at).inMicroseconds / 1e6;
-    if (secs <= 0) return;
     // Compteurs remis à zéro au redémarrage du daemon : un delta
     // négatif est ramené à 0 plutôt qu'affiché.
     state = TunnelTraffic(
