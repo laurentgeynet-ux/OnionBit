@@ -1220,6 +1220,31 @@ impl CoreSession {
             self.check_uri_policy(uri).await?;
         }
         self.check_low_space();
+        // URI `http(s)` pointant un `.torrent` : le metainfo est
+        // public — fetch en clair sous `ip_policy` (anti-SSRF,
+        // timeout, taille bornee), puis ajout des octets par le
+        // chemin fichier. Ne PAS deleguer le fetch a l'engine : sur
+        // une lane anonyme, son client reqwest passe par le SOCKS5
+        // du tunnel, dont `CONNECT` n'est pas un tunnel TCP — il ne
+        // relaie qu'une requete HTTP claire one-shot (cellule
+        // `http-request` vers une sortie `PEER_FLAG_EXIT_HTTP`), donc
+        // TLS echoue et meme le HTTP clair exige un circuit deja
+        // pret. Bonus : `private`/`removed_trackers` sont traites
+        // comme pour un `.torrent` choisi en fichier.
+        if uri.starts_with("http://") || uri.starts_with("https://") {
+            let resp = crate::services::fetch_checked(uri, &self.inner.config.ip_policy).await?;
+            let bytes = crate::services::read_body_limited(resp).await?;
+            return self
+                .add_torrent_bytes_anon_inner(
+                    bytes.to_vec(),
+                    paused,
+                    anon_hops,
+                    safe_seeding,
+                    destination,
+                    initial_peers,
+                )
+                .await;
+        }
         // `download_exists` Python : un infohash deja gere (sur
         // n'importe quelle lane) n'est pas re-ajoute — sinon le
         // doublon ecrasait la ligne `downloads` partagee (anon_hops,

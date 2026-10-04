@@ -3,6 +3,28 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## URL `http(s)://…​.torrent` fonctionnelle en mode anonyme (2026-10-04)
+
+- **Bug** : coller une URL `.torrent` dans le dialogue Ajouter
+  échouait en Anon ×N (« error downloading torrent metadata »).
+  Le fetch était délégué à l'engine — sur une lane anonyme son
+  client reqwest passe par le SOCKS5 du tunnel, dont `CONNECT`
+  n'est **pas** un tunnel TCP : il ne relaie qu'une requête HTTP
+  claire one-shot (cellule `http-request` vers une sortie
+  `PEER_FLAG_EXIT_HTTP`). TLS échoue donc toujours, et même le
+  HTTP clair exige un circuit déjà prêt.
+- **Fix** (`add_download_anon_inner`) : les URI `http(s)` sont
+  fetchées en clair côté session via `fetch_checked` (anti-SSRF
+  `ip_policy`, timeout, taille bornée) puis ajoutées par le chemin
+  `.torrent` — fonctionne sur toutes les lanes, http **et** https,
+  sans dépendre des circuits au moment de l'ajout. Bonus :
+  `private`/trackers par défaut traités comme un fichier choisi.
+- **Correction de doc** : les annonces tracker **HTTPS** ne passent
+  pas par le tunnel (contrairement à une assertion précédente) —
+  seuls UDP (`udp_tracker_socket`) et HTTP clair (`http-request`)
+  sont relayables ; HTTPS et WebSocket ne le sont pas. DHT/PEX
+  reste le chemin de découverte universel en anonyme.
+
 ## Dialogue « Ajouter » : texte Anon raccourci (2026-10-04)
 
 - `anonRelaysInfo` remplacé par « **IP masquée par {N} relais — le
