@@ -3,6 +3,29 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Recherche distante sans persistance + purge du catalogue (2026-10-04)
+
+- **Symptôme** : la page Recherche affichait par défaut les « torrents
+  populaires » — un catalogue de ~26k entrées `channel_node` (+ index
+  FTS) accumulé par le gossip content-discovery, et ~178k lignes
+  `torrent_state` d'historique de santé ; les scans figeaient la
+  connexion sqlite partagée (opérations > 1 s en boucle).
+- **Backend** : `process_select_response` décode les `.mdblob` et
+  renvoie les résultats via `remote_query_results` (SSE) **sans**
+  écrire `channel_node` — dédup mémoire `(public_key, id_)` au lieu de
+  `channel::insert` ; `process_health` garde les infohashes vus en
+  mémoire, plus d'écriture `torrent_state` depuis le gossip.
+- **Migration v14** : purge unique — `channel_node` ne conserve que
+  nos propres torrents (`public_key` à zéro, servis aux selects
+  entrants), `torrent_state`/`torrent_state_tracker` ne gardent que
+  les santés des téléchargements actifs (le checker les repeuple) ;
+  `FtsIndex` vidé via les triggers.
+- **UI** : requête vide → liste vide (appel `popular()` supprimé du
+  dépôt) ; fin du re-sondage local `_collectRemote` — les résultats
+  distants arrivent exclusivement en push SSE, fenêtre de collecte
+  12 s ; libellés « Recherche sur le réseau » / « Saisissez un terme
+  de recherche… ».
+
 ## Port d'écoute éditable + diagnostic seeding (2026-10-04)
 
 - **Symptôme** : les pairs disparaissent entre les annonces —

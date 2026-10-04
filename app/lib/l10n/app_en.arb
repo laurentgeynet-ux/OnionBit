@@ -129,7 +129,7 @@
 
   "snackFinished": "Download finished",
 
-  "searchPopular": "Trending on the network",
+  "searchPopular": "Search the network",
   "searchResultsFor": "Results for \"{query}\"",
   "@searchResultsFor": {
     "placeholders": { "query": { "type": "String" } }
@@ -168,7 +168,7 @@
   "searchMinSeeds": "≥ 10 seeds",
   "emptyNoTorrents": "No known torrents",
   "emptyNoResults": "No results",
-  "emptyDiscovering": "The daemon is still discovering the network — trending torrents will appear here.",
+  "emptyDiscovering": "Type a search term — network peers will answer here.",
   "emptyTryOther": "Try other terms, or wait for network replies.",
   "batchAdded": "{added, plural, =1{{added} download added} other{{added} downloads added}}",
   "@batchAdded": {

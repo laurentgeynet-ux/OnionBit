@@ -15,7 +15,7 @@
 //! semantique du schema, pas l'interoperabilite binaire).
 
 /// Version courante du schema de ce crate.
-pub const SCHEMA_VERSION: i64 = 13;
+pub const SCHEMA_VERSION: i64 = 14;
 
 /// Script SQL de chaque migration, dans l'ordre (index 0 = v1).
 pub const MIGRATIONS: &[&str] = &[
@@ -264,6 +264,31 @@ CREATE INDEX idx_torrent_state_seeders ON torrent_state(seeders);
     "
 ALTER TABLE downloads ADD COLUMN total_uploaded INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE downloads ADD COLUMN total_downloaded INTEGER NOT NULL DEFAULT 0;
+",
+    // v14 : les reponses de recherche distante et les santes de
+    // gossip ne sont plus persistees (`process_select_response` /
+    // `process_health` travaillent en memoire). Purge du catalogue
+    // accumule : `channel_node` ne conserve que nos propres torrents
+    // (`public_key` tout a zero, inseres a l'ajout d'un
+    // telechargement pour les servir aux selects entrants) — les
+    // triggers `fts_ad` vident `FtsIndex` — et `torrent_state` ne
+    // garde que les santes de nos telechargements (le checker les
+    // repeuplera).
+    "
+DELETE FROM channel_node WHERE public_key <> zeroblob(64);
+-- `torrent_state` : on garde les santes de nos telechargements ET
+-- les lignes encore referencees par `channel_node.health_rowid`
+-- (nos propres entrees conservees ci-dessus) — sinon la suppression
+-- violerait la contrainte FK.
+DELETE FROM torrent_state_tracker WHERE torrent_state_rowid NOT IN
+    (SELECT rowid FROM torrent_state
+     WHERE infohash IN (SELECT infohash FROM downloads)
+        OR rowid IN (SELECT health_rowid FROM channel_node
+                     WHERE health_rowid IS NOT NULL));
+DELETE FROM torrent_state WHERE infohash NOT IN
+    (SELECT infohash FROM downloads)
+   AND rowid NOT IN (SELECT health_rowid FROM channel_node
+                     WHERE health_rowid IS NOT NULL);
 ",
 ];
 

@@ -99,7 +99,7 @@
 
   "snackFinished": "Téléchargement terminé",
 
-  "searchPopular": "Populaires sur le réseau",
+  "searchPopular": "Recherche sur le réseau",
   "searchResultsFor": "Résultats pour « {query} »",
   "searchAddSelected": "Ajouter ({count})",
   "searchDeselect": "Désélectionner",
@@ -120,7 +120,7 @@
   "searchMinSeeds": "≥ 10 seeds",
   "emptyNoTorrents": "Aucun torrent connu",
   "emptyNoResults": "Aucun résultat",
-  "emptyDiscovering": "Le daemon découvre encore le réseau — les torrents populaires apparaîtront ici.",
+  "emptyDiscovering": "Saisissez un terme de recherche — les pairs du réseau répondront ici.",
   "emptyTryOther": "Essayez d'autres termes, ou attendez les réponses du réseau.",
   "batchAdded": "{added, plural, =1{{added} téléchargement ajouté} other{{added} téléchargements ajoutés}}",
   "batchAddedFailed": "{added, plural, =1{{added} ajouté} other{{added} ajoutés}}, {failed, plural, =1{{failed} en échec} other{{failed} en échec}}",

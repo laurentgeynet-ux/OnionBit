@@ -46,17 +46,6 @@ class RestSearchRepository implements SearchRepository {
   ];
 
   @override
-  Future<List<TorrentResult>> popular({int limit = 50}) async => [
-    for (final j in _results(
-      await _api.get(
-        '/metadata/torrents/popular',
-        query: {'first': '1', 'last': '$limit'},
-      ),
-    ))
-      _parse(j, TorrentSource.local),
-  ];
-
-  @override
   Future<List<TorrentResult>> searchLocal(
     String query, {
     String? sortBy,

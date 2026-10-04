@@ -18,10 +18,6 @@ class RemoteQuery {
 
 /// Contrat du dépôt recherche (`/api/metadata/*`, `/api/search/remote`).
 abstract interface class SearchRepository {
-  /// Torrents les plus populaires connus (contenu initial de la page
-  /// recherche quand la requête est vide).
-  Future<List<TorrentResult>> popular({int limit = 50});
-
   /// Recherche FTS locale dans `metadata.db`. `sortBy`/`sortDesc`
   /// suivent `sort_by`/`sort_desc` du backend (`HEALTH`, `name`,
   /// `size`, `date`…, `null` = tri de pertinence FTS).

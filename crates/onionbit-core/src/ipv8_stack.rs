@@ -590,15 +590,21 @@ struct SessionContentProvider {
     /// `maximum_payload_size` Python (1300) : octets d'entrees max
     /// par chunk de reponse.
     max_payload_size: usize,
-    /// Cache des santes publiees (`healths_for`) indexe par
-    /// `request_type` — les requetes `HEALTH_REQUEST` distantes
-    /// arrivent en rafale et la jointure `channel_node`/`torrent_state`
-    /// n'a pas besoin d'une fraicheur inferieure a
-    /// `healths_cache_ttl` (extension : Python interroge la base a
-    /// chaque requete, ce qui sature la connexion unique sous charge).
+    /// Cache des santes publiees (`healths_cache_ttl` : la jointure
+    /// `channel_node`/`torrent_state` n'a pas besoin d'une fraicheur
+    /// inferieure a cette duree).
     healths_cache: Mutex<HashMap<u8, (std::time::Instant, Vec<HealthInfo>)>>,
     /// TTL du cache ci-dessus (`Ipv8Config::content_healths_cache_secs`).
     healths_cache_ttl: std::time::Duration,
+    /// Dedup memoire des entrees recues (`public_key`, `id_`) —
+    /// remplace la dedup persistee `channel::insert` : les resultats
+    /// de recherche distants ne sont plus stockes en base, seuls les
+    /// nouveaux objets de la session sont notifies a l'UI.
+    seen_nodes: Mutex<std::collections::HashSet<(Vec<u8>, i64)>>,
+    /// Infohashes deja vus dans les santes recues — remplace la
+    /// recherche `channel::get_by_infohash` qui decidait quels
+    /// torrents restaient a resoudre par select.
+    seen_health_infohashes: Mutex<std::collections::HashSet<[u8; 20]>>,
 }
 
 /// `deprecated_parameters` Python : ces parametres de select sont
@@ -785,33 +791,20 @@ impl ContentProvider for SessionContentProvider {
         healths: &'a [HealthInfo],
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Vec<[u8; 20]>> + Send + 'a>> {
         Box::pin(async move {
-            let healths = healths.to_vec();
-            self.db
-                .call("content.process_health", move |conn| {
-                    // Une seule transaction par payload recu : sinon
-                    // chaque entree autocommit (append WAL par ligne)
-                    // et la base reste verrouillee plus longtemps.
-                    let tx = conn.unchecked_transaction()?;
-                    let mut unknown = Vec::new();
-                    for h in &healths {
-                        onionbit_db::health::upsert_torrent_state(&tx, &h.infohash)?;
-                        onionbit_db::health::update_torrent_health(
-                            &tx,
-                            &h.infohash,
-                            h.seeders as i64,
-                            h.leechers as i64,
-                            h.last_check as i64,
-                            false,
-                        )?;
-                        if onionbit_db::channel::get_by_infohash(&tx, &h.infohash)?.is_none() {
-                            unknown.push(h.infohash);
-                        }
-                    }
-                    tx.commit()?;
-                    Ok(unknown)
-                })
-                .await
-                .unwrap_or_default()
+            // Santes recues gardees en memoire uniquement — plus de
+            // persistance `torrent_state` : la table grossissait de
+            // ~178k lignes d'historique de gossip et chaque rafale
+            // monopolisait la connexion sqlite plusieurs secondes.
+            let Ok(mut seen) = self.seen_health_infohashes.lock() else {
+                return Vec::new();
+            };
+            let mut unknown = Vec::new();
+            for h in healths {
+                if seen.insert(h.infohash) {
+                    unknown.push(h.infohash);
+                }
+            }
+            unknown
         })
     }
 
@@ -861,9 +854,11 @@ impl ContentProvider for SessionContentProvider {
     }
 
     /// `process_compressed_mdblob` : decompresse LZ4, parse les
-    /// entrees et les insere dans `channel_node`. Retourne les
-    /// `to_simple_dict()` des objets NOUVEAUX (`ObjState.NEW_OBJECT` —
-    /// la dedup `(public_key, id_)` de `channel::insert` fait foi).
+    /// entrees et retourne les `to_simple_dict()` des objets
+    /// NOUVEAUX (`ObjState.NEW_OBJECT` — dedup `(public_key, id_)`
+    /// en memoire). Les entrees ne sont PAS persistees dans
+    /// `channel_node` : la table reste reservee a la reponse aux
+    /// selects entrants (nos propres torrents).
     fn process_select_response<'a>(
         &'a self,
         blob: &'a [u8],
@@ -881,35 +876,31 @@ impl ContentProvider for SessionContentProvider {
             let Ok(entries) = onionbit_format::mdblob::parse_blob(&data) else {
                 return Vec::new();
             };
-            let (results, new_titles) = self
-                .db
-                .call("content.select_response", move |conn| {
-                    // Un blob peut contenir des centaines d'entrees :
-                    // une transaction unique evite un commit WAL par
-                    // ligne (le principal generateur d'I/O disque sous
-                    // rafale de reponses).
-                    let tx = conn.unchecked_transaction()?;
-                    let mut results = Vec::new();
-                    let mut new_titles = Vec::new();
-                    for e in &entries {
-                        let Some(row) = entry_to_row(e) else {
-                            continue;
-                        };
-                        if onionbit_db::channel::insert(&tx, &row)?.is_none() {
-                            // `DUPLICATE_OBJECT` : exclu des `results`
-                            // (comme `notify_gui` Python).
-                            continue;
-                        }
-                        results.push(simple_dict(&tx, &row)?);
-                        if !row.title.is_empty() {
-                            new_titles.push((hex::encode(&row.infohash), row.title.clone()));
-                        }
+            // Les resultats ne sont plus persistes dans `channel_node`
+            // (la table accumulait ~26k entrees de gossip et ses scans
+            // figeaient la connexion sqlite partagee). Dedup en
+            // memoire sur `(public_key, id_)` — meme semantique
+            // `NEW_OBJECT` que `channel::insert`.
+            let (results, new_titles) = {
+                let Ok(mut seen) = self.seen_nodes.lock() else {
+                    return Vec::new();
+                };
+                let mut results = Vec::new();
+                let mut new_titles = Vec::new();
+                for e in &entries {
+                    let Some(row) = entry_to_row(e) else {
+                        continue;
+                    };
+                    if !seen.insert((row.public_key.clone(), row.id_)) {
+                        continue;
                     }
-                    tx.commit()?;
-                    Ok((results, new_titles))
-                })
-                .await
-                .unwrap_or_default();
+                    results.push(simple_dict_mem(&row));
+                    if !row.title.is_empty() {
+                        new_titles.push((hex::encode(&row.infohash), row.title.clone()));
+                    }
+                }
+                (results, new_titles)
+            };
             // `torrent_metadata_added` : le notifier consomme aussi les
             // titres pour l'apprentissage de l'augmenteur.
             for (infohash, title) in new_titles {
@@ -977,34 +968,20 @@ fn entry_to_row(
     })
 }
 
-/// `TorrentMetadata.to_simple_dict()` Python : la forme JSON envoyee
-/// dans `remote_query_results.results`/`local_query_results.results`.
-fn simple_dict(
-    conn: &rusqlite::Connection,
-    row: &onionbit_db::models::ChannelNodeRow,
-) -> rusqlite::Result<serde_json::Value> {
-    let (seeders, leechers, last_check) = conn
-        .query_row(
-            "SELECT seeders, leechers, last_check FROM torrent_state
-             WHERE infohash = ?1",
-            rusqlite::params![&row.infohash],
-            |r| {
-                Ok((
-                    r.get::<_, i64>(0)?,
-                    r.get::<_, i64>(1)?,
-                    r.get::<_, i64>(2)?,
-                ))
-            },
-        )
-        .unwrap_or((0, 0, 0));
-    Ok(serde_json::json!({
+/// `TorrentMetadata.to_simple_dict()` Python pour les resultats de
+/// recherche distants : meme forme JSON que `remote_query_results`,
+/// mais sans `channel_node` ni `torrent_state` — les santes sont
+/// inconnues au moment du parse (0/0/0, actualisees par l'UI via
+/// les evenements de sante ulterieurs le cas echeant).
+fn simple_dict_mem(row: &onionbit_db::models::ChannelNodeRow) -> serde_json::Value {
+    serde_json::json!({
         "name": row.title,
         "category": row.tags,
         "infohash": hex::encode(&row.infohash),
         "size": row.size,
-        "num_seeders": seeders,
-        "num_leechers": leechers,
-        "last_tracker_check": last_check,
+        "num_seeders": 0,
+        "num_leechers": 0,
+        "last_tracker_check": 0,
         "created": row.torrent_date,
         "tag_processor_version": row.tag_processor_version,
         "type": row.metadata_type,
@@ -1012,10 +989,8 @@ fn simple_dict(
         "origin_id": row.origin_id,
         "public_key": hex::encode(&row.public_key),
         "status": row.status,
-        // `tracker_info_list` Python : vide cote metadonnees distantes
-        // (`tracker_info` est deprecie en 8.x).
         "trackers": [],
-    }))
+    })
 }
 
 /// Secondes Unix courantes.
@@ -1317,6 +1292,8 @@ impl Ipv8Stack {
                 healths_cache_ttl: std::time::Duration::from_secs(
                     config.content_healths_cache_secs,
                 ),
+                seen_nodes: Mutex::new(std::collections::HashSet::new()),
+                seen_health_infohashes: Mutex::new(std::collections::HashSet::new()),
             });
             Some(
                 ContentDiscoveryCommunity::new(

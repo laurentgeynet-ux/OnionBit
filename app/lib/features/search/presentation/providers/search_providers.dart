@@ -210,21 +210,28 @@ class SearchSelectionNotifier extends Notifier<Set<String>> {
   void clear() => state = const {};
 }
 
-/// Résultats « de base » : populaires quand la requête est vide,
-/// recherche locale sinon. La recherche distante est lancée ici, ses
-/// résultats arrivent dans [remoteResultsProvider] via SSE.
+/// Résultats « de base » : liste vide quand la requête est vide (les
+/// résultats distants ne sont plus persistés — pas de catalogue
+/// populaire local), recherche locale sinon. La recherche distante
+/// est lancée ici, ses résultats arrivent dans [remoteResultsProvider]
+/// via SSE `remote_query_results`.
 final searchResultsProvider =
     AsyncNotifierProvider<SearchResultsNotifier, List<TorrentResult>>(
       SearchResultsNotifier.new,
     );
 
 class SearchResultsNotifier extends AsyncNotifier<List<TorrentResult>> {
+  /// Fenêtre de collecte des réponses distantes : le backend ne
+  /// signale pas de fin explicite, on clot la phase « en cours »
+  /// après ce délai (les résultats restent affichés).
+  static const _collectWindow = Duration(seconds: 12);
+
   @override
   Future<List<TorrentResult>> build() async {
     final query = ref.watch(searchQueryProvider);
     final sort = ref.watch(searchSortProvider);
     final repo = ref.watch(searchRepositoryProvider);
-    if (query.isEmpty) return repo.popular();
+    if (query.isEmpty) return const [];
     ref.read(searchHistoryProvider.notifier).record(query);
     unawaited(_launchRemote(query));
     return repo.searchLocal(query, sortBy: sort.param);
@@ -242,27 +249,17 @@ class SearchResultsNotifier extends AsyncNotifier<List<TorrentResult>> {
     }
   }
 
-  /// Le backend Rust intègre les `SelectResponse` dans `channel_node`
-  /// sans pousser `remote_query_results` : on re-sonde la recherche
-  /// locale tant que la requête distante est en vol pour capter les
-  /// nouvelles entrées (marquées « réseau »).
+  /// Les `SelectResponse` arrivent en push via `remote_query_results`
+  /// (callback `send_search_request` → SSE) et sont accumulées par
+  /// [RemoteResultsNotifier] ; rien n'est persisté côté daemon, donc
+  /// il n'y a plus de re-sondage local à faire — on attend juste la
+  /// fin de la fenêtre de collecte.
   Future<void> _collectRemote(String query) async {
-    const attempts = 5;
-    const gap = Duration(seconds: 2);
-    final repo = ref.read(searchRepositoryProvider);
-    for (var i = 0; i < attempts; i++) {
-      await Future<void>.delayed(gap);
-      if (!ref.mounted ||
-          ref.read(searchQueryProvider) != query ||
-          !ref.read(remoteResultsProvider).state.running) {
-        return;
-      }
-      try {
-        final fresh = await repo.searchLocal(query);
-        ref.read(remoteResultsProvider.notifier).absorb(fresh);
-      } catch (_) {
-        return;
-      }
+    await Future<void>.delayed(_collectWindow);
+    if (!ref.mounted ||
+        ref.read(searchQueryProvider) != query ||
+        !ref.read(remoteResultsProvider).state.running) {
+      return;
     }
     ref.read(remoteResultsProvider.notifier).finish();
   }
@@ -340,23 +337,6 @@ class RemoteResultsNotifier extends Notifier<RemoteResults> {
       ),
       results: const [],
     );
-  }
-
-  /// Absorbe des candidats issus d'un re-sondage de la base locale
-  /// (réponses distantes intégrées à `channel_node`) — les nouveaux
-  /// info-hashes sont marqués « réseau ».
-  void absorb(List<TorrentResult> candidates) {
-    final known = state.results.map((r) => r.infohash).toSet();
-    final fresh = [
-      for (final r in candidates)
-        if (r.infohash.isNotEmpty && !known.contains(r.infohash)) r.asRemote(),
-    ];
-    if (fresh.isNotEmpty) {
-      state = RemoteResults(
-        state: state.state,
-        results: [...state.results, ...fresh],
-      );
-    }
   }
 
   /// Fin de la fenêtre de collecte (les résultats restent affichés).
