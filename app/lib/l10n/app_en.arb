@@ -809,7 +809,7 @@
   "torrentFileBtn": ".torrent file…",
   "removeFile": "Remove file",
   "anonDirectWarn": "Your IP is visible to peers.",
-  "anonRelaysInfo": "{count, plural, =1{{count} relay between you and the swarm} other{{count} relays between you and the swarm}}. If no circuit is ready, the download will wait (never falls back to direct). Seeding will also be anonymized (safe seeding).",
+  "anonRelaysInfo": "{count, plural, =1{IP hidden behind {count} relay} other{IP hidden behind {count} relays}} — traffic goes through the tunnel or nowhere (seeding included).",
   "@anonRelaysInfo": {
     "placeholders": { "count": { "type": "int" } }
   },

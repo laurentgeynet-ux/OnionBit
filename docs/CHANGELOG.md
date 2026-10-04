@@ -3,6 +3,14 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Dialogue « Ajouter » : texte Anon raccourci (2026-10-04)
+
+- `anonRelaysInfo` remplacé par « **IP masquée par {N} relais — le
+  trafic passe par le tunnel ou nulle part (seeding inclus).** » —
+  une seule phrase, centrée sur la garantie kill-switch ; les
+  détails (attente de circuit, safe seeding) restent couverts par
+  « ou nulle part ».
+
 ## Dialogue « Ajouter » : avertissement « Clair » en rouge (2026-10-04)
 
 - Le texte « Votre IP est visible par les pairs. » sous le sélecteur
