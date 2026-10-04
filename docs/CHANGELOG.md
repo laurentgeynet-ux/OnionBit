@@ -3,6 +3,21 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Carte « Trafic tunnel » supprimée (2026-10-04)
+
+- La carte « Trafic tunnel » de l'onglet Vue d'ensemble est retirée :
+  le débit dérivé côté client (diff de compteurs `total_up`/`total_down`
+  entre sondages) restait à 0 malgré deux réécritures — l'état `prev`
+  caché casse le patron commun des autres cartes et survit mal aux
+  rebuilds en chaîne (watchdog SSE).
+- Suppressions UI uniquement (daemon inchangé) :
+  `tunnelTrafficRateProvider`, `_tunnelTrafficPrevProvider`,
+  `_TrafficSample`, la `_StatCard` de la grille, les clés l10n
+  `cardTunnelTraffic` (fr/en) et `test/tunnel_rate_test.dart`.
+- `ipv8TrafficProvider` (compteurs cumulés + `bandwidth`) reste utilisé
+  par l'onglet Statistiques et la barre d'état.
+- `flutter analyze` propre ; 19/19 tests verts.
+
 ## Carte « Trafic tunnel » : provider aligné sur le patron tick (2026-10-04)
 
 - **Bug web réel** : la carte restait à 0 sur l'UI web alors que le

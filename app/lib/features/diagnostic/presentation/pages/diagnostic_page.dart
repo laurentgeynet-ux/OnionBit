@@ -782,8 +782,6 @@ class _OverviewTabState extends ConsumerState<_OverviewTab> {
     final peers = ref.watch(tunnelPeersProvider).value;
     final stats = ref.watch(onionbitStatsProvider).value;
     final speeds = ref.watch(totalSpeedsProvider);
-    final tunnelRate =
-        ref.watch(tunnelTrafficRateProvider).value ?? (down: 0, up: 0);
 
     final ready = circuits?.where((c) => c.ready).length ?? 0;
     final exitsOn = exits?.where((e) => e.enabled).length ?? 0;
@@ -873,13 +871,6 @@ class _OverviewTabState extends ConsumerState<_OverviewTab> {
                 icon: Icons.arrow_upward,
                 label: context.l10n.cardFilesUpload,
                 value: context.fmtRate(speeds.up),
-              ),
-              _StatCard(
-                icon: Icons.swap_vert,
-                label: context.l10n.cardTunnelTraffic,
-                value:
-                    '↓ ${context.fmtRate(tunnelRate.down)} · '
-                    '↑ ${context.fmtRate(tunnelRate.up)}',
               ),
               _StatCard(
                 icon: Icons.storage_outlined,

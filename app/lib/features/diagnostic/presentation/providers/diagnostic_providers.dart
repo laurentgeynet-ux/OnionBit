@@ -94,43 +94,6 @@ final ipv8TrafficProvider = FutureProvider.autoDispose<Ipv8Traffic>(
   },
 );
 
-/// Dernier échantillon cumulé pour le débit tunnel — Provider sans
-/// dépendance : l'instance survit à tous les rebuilds (le watchdog
-/// de connexion recrée `apiClientProvider` → le dépôt quand le SSE
-/// est coupé ; `prev` logé dans le dépôt ou un notifier rebuildé
-/// serait reperdu à chaque fois).
-final _tunnelTrafficPrevProvider =
-    Provider<_TrafficSample>((ref) => _TrafficSample());
-
-class _TrafficSample {
-  ({int down, int up, DateTime at})? prev;
-}
-
-/// Débit tunnel instantané (octets/s) — différence des compteurs
-/// cumulés `total_up`/`total_down` entre deux sondages de
-/// `/api/statistics/ipv8`. Mesure le trafic overlay total (relais,
-/// protocole, téléchargements), distinct des débits « fichiers »
-/// agrégés depuis `/api/downloads`. Même patron tick+FutureProvider
-/// que les autres cartes ; chaque tick émet une valeur.
-final tunnelTrafficRateProvider =
-    FutureProvider.autoDispose<({int down, int up})>((ref) async {
-      ref.watch(tickProvider(const Duration(seconds: 5)));
-      final holder = ref.watch(_tunnelTrafficPrevProvider);
-      final s = await ref.watch(diagnosticRepositoryProvider).ipv8Traffic();
-      final now = DateTime.now();
-      final p = holder.prev;
-      holder.prev = (down: s.down, up: s.up, at: now);
-      if (p == null) return (down: 0, up: 0);
-      final secs = now.difference(p.at).inMicroseconds / 1e6;
-      if (secs <= 0) return (down: 0, up: 0);
-      // Compteurs remis à zéro au redémarrage du daemon : un delta
-      // négatif est ramené à 0 plutôt qu'affiché.
-      return (
-        down: ((s.down - p.down) / secs).round().clamp(0, 1 << 62),
-        up: ((s.up - p.up) / secs).round().clamp(0, 1 << 62),
-      );
-    });
-
 final daemonLogsProvider = FutureProvider.autoDispose<String>(
   (ref) {
     ref.watch(tickProvider(_kDiagnosticPoll));
