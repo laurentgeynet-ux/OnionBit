@@ -336,6 +336,10 @@ impl UdpEndpoint {
         }
     }
 
+    /// Nombre maximal de tentatives d'incrementation de port en cas de
+    /// collision (fidele a `create_socket_with_retry` de Tribler).
+    pub const MAX_PORT_RETRY_ATTEMPTS: u16 = 1000;
+
     /// `bind` + socket IPv6 secondaire (`ipv8/interfaces[UDPIPv6]`
     /// pyipv8 — meme keypair, memes listeners, envoi route par
     /// famille d'adresse). Erreur de bind v6 propagee ; l'appelant
@@ -357,6 +361,84 @@ impl UdpEndpoint {
             rate_window: Mutex::new(RateWindow::default()),
             statistics: Mutex::new(HashMap::new()),
         }))
+    }
+
+    /// Lie un socket UDP IPv4 (et optionnellement IPv6) avec incrementation
+    /// sequentielle de port en cas de conflit (`create_socket_with_retry` Tribler :
+    /// tente `port, port + 1, ...` jusqu'a `max_attempts`).
+    /// Si le port initial vaut 0 ou si l'adresse n'est pas un `SocketAddr`, bind direct.
+    /// Si le bind IPv6 echoue pour toute raison, il est ignore avec repli IPv4 seul.
+    /// Si toutes les tentatives echouent, repli ultime sur `"0.0.0.0:0"` (port ephemere).
+    pub async fn bind_dual_with_retry(
+        bind: &str,
+        bind_v6: Option<&str>,
+        max_attempts: u16,
+    ) -> Result<Arc<Self>, Ipv8Error> {
+        let parsed_v4 = bind.parse::<SocketAddr>().ok();
+        let parsed_v6 = bind_v6.and_then(|s| s.parse::<SocketAddr>().ok());
+
+        // Si le port de depart est 0 ou adresse non parseable, bind direct sans boucle.
+        let (mut addr_v4, mut addr_v6) = match parsed_v4 {
+            Some(v4) if v4.port() != 0 => (Some(v4), parsed_v6),
+            _ => {
+                return Self::bind_dual(bind, bind_v6).await;
+            }
+        };
+
+        let attempts = max_attempts.max(1);
+        let mut last_err = None;
+
+        for _ in 0..attempts {
+            let v4_str = addr_v4
+                .map(|a| a.to_string())
+                .unwrap_or_else(|| bind.to_string());
+            let v6_str = addr_v6.map(|a| a.to_string());
+
+            // Tente dual-stack si v6 configure, sinon IPv4 seul
+            let res = match v6_str.as_deref() {
+                Some(v6) => match Self::bind_dual(&v4_str, Some(v6)).await {
+                    Ok(ep) => return Ok(ep),
+                    Err(e) => {
+                        // Si l'echec est du au v6 indisponible sur l'hote, tente v4 seul sur ce port
+                        match Self::bind(&v4_str).await {
+                            Ok(ep) => {
+                                tracing::debug!(
+                                    listen_v4 = %v4_str,
+                                    listen_v6 = %v6,
+                                    "bind UDP IPv8 v6 echoue, repli IPv4 seul retenu"
+                                );
+                                return Ok(ep);
+                            }
+                            Err(_) => Err(e),
+                        }
+                    }
+                },
+                None => Self::bind(&v4_str).await,
+            };
+
+            match res {
+                Ok(ep) => return Ok(ep),
+                Err(e) => {
+                    last_err = Some(e);
+                    if let Some(ref mut a4) = addr_v4 {
+                        a4.set_port(a4.port().saturating_add(1));
+                    }
+                    if let Some(ref mut a6) = addr_v6 {
+                        a6.set_port(a6.port().saturating_add(1));
+                    }
+                }
+            }
+        }
+
+        if let Some(e) = last_err {
+            tracing::warn!(
+                error = %e,
+                bind,
+                attempts,
+                "echec des tentatives d'incrementation de port UDP IPv8, repli sur port ephemere 0.0.0.0:0"
+            );
+        }
+        Self::bind("0.0.0.0:0").await
     }
 
     /// Adresse locale du socket.
@@ -585,5 +667,24 @@ mod tests {
         assert_eq!(w.rates(), (0, 0));
         w.push(t0 + Duration::from_secs(14), 2_610, 4_620, span);
         assert_eq!(w.rates(), (1_000, 2_000));
+    }
+
+    /// Verifie que `bind_dual_with_retry` incrémente le port séquentiellement
+    /// quand le port initial est déjà pris par un autre socket.
+    #[tokio::test]
+    async fn bind_retry_incremente_le_port_si_deja_pris() {
+        let occupied = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        let port = occupied.local_addr().unwrap().port();
+
+        let bind_v4 = format!("127.0.0.1:{port}");
+        let ep = UdpEndpoint::bind_dual_with_retry(&bind_v4, None, 10)
+            .await
+            .expect("bind_dual_with_retry doit reussir sur le port suivant");
+
+        let bound_port = ep.local_addr().unwrap().port();
+        assert!(
+            bound_port > port && bound_port <= port + 10,
+            "L'endpoint aurait du sauter le port occupé ({port}) et se lier à un port incrémenté (reçu: {bound_port})"
+        );
     }
 }

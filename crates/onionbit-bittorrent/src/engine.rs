@@ -41,6 +41,8 @@ pub struct BtEngine {
     kill_switch: Option<Arc<KillSwitch>>,
     /// Arret du watchdog de sondage du proxy.
     watchdog_stop: Option<Arc<tokio::sync::watch::Sender<bool>>>,
+    /// Arret du client de port-forwarding NAT-PMP.
+    natpmp_stop: Option<Arc<tokio::sync::watch::Sender<bool>>>,
     /// Trackers ajoutes a chaud par info-hash (rqbit ne permet pas de
     /// muter `shared.trackers` apres initialisation). Un `Arc` par
     /// torrent, partage entre tous les clones `Download`.
@@ -105,11 +107,28 @@ impl BtEngine {
             }
             None => (None, None),
         };
+        // Port-forwarding NAT-PMP (RFC 6886) en session claire
+        let natpmp_stop = if config.enable_natpmp
+            && !config.utp_only
+            && config.listen_port.is_some_and(|p| p > 0)
+        {
+            let port = config.listen_port.unwrap();
+            let (tx, rx) = tokio::sync::watch::channel(false);
+            tokio::spawn(crate::natpmp::run_natpmp_forwarder(
+                port,
+                crate::natpmp::NatPmpConfig::default(),
+                rx,
+            ));
+            Some(Arc::new(tx))
+        } else {
+            None
+        };
         tracing::info!(
             output_dir = %config.output_dir.display(),
             dht = config.enable_dht,
             listen = ?config.listen_port,
             proxy = ?proxy_addr,
+            natpmp = config.enable_natpmp,
             "session bittorrent demarree"
         );
         Ok(Self {
@@ -117,6 +136,7 @@ impl BtEngine {
             config,
             kill_switch,
             watchdog_stop,
+            natpmp_stop,
             extra_trackers: Default::default(),
         })
     }
@@ -169,6 +189,9 @@ impl BtEngine {
     /// Arret propre de la session et de toutes ses taches.
     pub async fn stop(&self) {
         if let Some(tx) = &self.watchdog_stop {
+            let _ = tx.send(true);
+        }
+        if let Some(tx) = &self.natpmp_stop {
             let _ = tx.send(true);
         }
         if self.config.clear_orphaned_parts {

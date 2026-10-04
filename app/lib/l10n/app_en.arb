@@ -544,7 +544,7 @@
   "proxyHttpAuth": "HTTP + authentication",
   "netDiscovery": "Discovery & transport",
   "netListenPort": "BitTorrent listen port",
-  "netListenPortHint": "0 = random on every start. Set a fixed port to forward it on your router (required to be reachable while seeding).",
+  "netListenPortHint": "0 = standard BitTorrent range (6881-6891) or random if busy. Set a fixed port to forward it on your router (required to be reachable while seeding).",
   "appliedOnRestartOn": "Default: on. Applied on restart.",
   "lsdTitle": "Local discovery (LSD)",
   "proxySection": "Outgoing proxy",

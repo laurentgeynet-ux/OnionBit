@@ -3,6 +3,13 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Parité réseau : retry séquentiel IPv8, plage standard BT 6881..=6891 et client NAT-PMP (2026-10-04)
+
+- **Ports UDP IPv8** : remplacement du repli direct vers un port éphémère (`0.0.0.0:0`) par `bind_dual_with_retry` (`MAX_PORT_RETRY_ATTEMPTS = 1000`), fidèle à `create_socket_with_retry` de Tribler (incrémentation séquentielle `port + 1` en cas de collision sur IPv4 et IPv6).
+- **Plage BitTorrent standard** : lorsque `libtorrent.port == 0`, pré-sélection de la plage standard `6881..=6891` (parité `ltsession.listen_on(port, port + 10)` de Tribler) avant repli sur un port éphémère si toute la plage locale est saturée.
+- **Support NAT-PMP / PCP** : implémentation native du protocole NAT-PMP (RFC 6886) dans `onionbit-bittorrent::natpmp` pour l'ouverture des ports TCP et UDP (uTP) auprès des passerelles compatibles, avec renouvellement périodique du bail et libération propre (`lifetime = 0`) à l'arrêt.
+- **Tests** : tests unitaires d'incrémentation séquentielle (`bind_retry_incremente_le_port_si_deja_pris`), de détection de plage BitTorrent (`to_core_config_sonde_plage_bittorrent_standard`), et de négociation de paquets RFC 6886 (`simulation_reponse_passerelle_natpmp`).
+
 ## Recherche distante sans persistance + purge du catalogue (2026-10-04)
 
 - **Symptôme** : la page Recherche affichait par défaut les « torrents

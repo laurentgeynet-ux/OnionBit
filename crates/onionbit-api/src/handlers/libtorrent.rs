@@ -75,7 +75,7 @@ pub async fn get_libtorrent_settings(
             "enable_lsd": !engine_cfg.disable_lsd,
             "enable_upnp": engine_cfg.enable_upnp,
             "enable_utp": engine_cfg.enable_utp,
-            "enable_natpmp": false,
+            "enable_natpmp": engine_cfg.enable_natpmp,
             "utp_only": engine_cfg.utp_only,
             "peer_connections_limit": engine_cfg.peer_limit.map(|v| v as i64).unwrap_or(-1),
             "user_agent": onionbit_bittorrent::config::CLIENT_NAME,

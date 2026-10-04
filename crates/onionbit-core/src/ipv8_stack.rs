@@ -1212,47 +1212,13 @@ impl Ipv8Stack {
         // optionnel (socket secondaire du meme endpoint, partage des
         // listeners — `DispatcherEndpoint`).
         let bind_v6 = config.listen_addr_v6.as_deref();
-        let endpoint = match UdpEndpoint::bind_dual(&config.listen_addr, bind_v6).await {
-            Ok(ep) => ep,
-            Err(e) if bind_v6.is_some() => {
-                tracing::warn!(
-                    error = %e,
-                    listen_v6 = %bind_v6.unwrap_or_default(),
-                    "bind UDP IPv8 v6 echoue, repli IPv4 seul"
-                );
-                match UdpEndpoint::bind(&config.listen_addr).await {
-                    Ok(ep) => ep,
-                    Err(e) => {
-                        if config.listen_addr != "0.0.0.0:0" {
-                            tracing::warn!(
-                                error = %e,
-                                listen = %config.listen_addr,
-                                "bind UDP IPv8 echoue sur l'adresse configuree, repli sur 0.0.0.0:0 (port ephemere)"
-                            );
-                            UdpEndpoint::bind("0.0.0.0:0").await.map_err(|e2| {
-                                CoreError::State(format!("bind ipv8 port ephemere: {e2}"))
-                            })?
-                        } else {
-                            return Err(CoreError::State(format!("bind ipv8: {e}")));
-                        }
-                    }
-                }
-            }
-            Err(e) => {
-                if config.listen_addr != "0.0.0.0:0" {
-                    tracing::warn!(
-                        error = %e,
-                        listen = %config.listen_addr,
-                        "bind UDP IPv8 echoue sur l'adresse configuree, repli sur 0.0.0.0:0 (port ephemere)"
-                    );
-                    UdpEndpoint::bind("0.0.0.0:0")
-                        .await
-                        .map_err(|e2| CoreError::State(format!("bind ipv8 port ephemere: {e2}")))?
-                } else {
-                    return Err(CoreError::State(format!("bind ipv8: {e}")));
-                }
-            }
-        };
+        let endpoint = UdpEndpoint::bind_dual_with_retry(
+            &config.listen_addr,
+            bind_v6,
+            onionbit_ipv8::endpoint::UdpEndpoint::MAX_PORT_RETRY_ATTEMPTS,
+        )
+        .await
+        .map_err(|e| CoreError::State(format!("bind ipv8: {e}")))?;
         let endpoint: Arc<UdpEndpoint> = endpoint;
         let network = Arc::new(Network::default());
         let discovery = DiscoveryCommunity::new(

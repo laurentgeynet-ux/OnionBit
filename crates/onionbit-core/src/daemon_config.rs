@@ -1112,11 +1112,23 @@ impl DaemonConfig {
                 .ok()
                 .map(|ip| std::net::SocketAddr::new(ip, self.libtorrent.port_v6))
         };
+        // Port d'écoute BitTorrent en clair : Tribler sonde la plage 6881..=6891
+        // (`listen_on(port, port + 10)` avec repli 6881 si port == 0).
+        let effective_bt_port = if self.libtorrent.port == 0 {
+            (6881..=6891)
+                .find(|&p| {
+                    std::net::TcpListener::bind((listen_ip, p)).is_ok()
+                        && std::net::UdpSocket::bind((listen_ip, p)).is_ok()
+                })
+                .unwrap_or(0)
+        } else {
+            self.libtorrent.port
+        };
         let mut engine = onionbit_bittorrent::EngineConfig {
             output_dir: downloads_dir.clone(),
             enable_dht: self.libtorrent.dht,
             disable_lsd: !self.libtorrent.lsd,
-            listen_port: Some(self.libtorrent.port),
+            listen_port: Some(effective_bt_port),
             listen_ip,
             listen_addr_v6,
             enable_utp: self.libtorrent.utp,
@@ -1128,6 +1140,7 @@ impl DaemonConfig {
             utp_tx_buf_max: (self.libtorrent.utp_tx_buf_max > 0)
                 .then_some(self.libtorrent.utp_tx_buf_max),
             enable_upnp: self.libtorrent.upnp,
+            enable_natpmp: self.libtorrent.natpmp,
             // `max_connections_download` Python : -1 = illimité.
             peer_limit: (self.libtorrent.max_connections_download >= 0)
                 .then_some(self.libtorrent.max_connections_download as usize),
@@ -1175,12 +1188,6 @@ impl DaemonConfig {
                 }
                 _ => {}
             }
-        }
-        // Réglages sans équivalent librqbit : écart explicite tracé
-        // plutôt que champ silencieusement ignoré (cf.
-        // `docs/reference_tribler/`).
-        if self.libtorrent.natpmp {
-            tracing::debug!("libtorrent/natpmp : non supporte par librqbit (upnp seul)");
         }
         if !self.libtorrent.announce_to_all_tiers || !self.libtorrent.announce_to_all_trackers {
             tracing::debug!(
@@ -1396,7 +1403,9 @@ impl DaemonConfig {
         self.libtorrent.download_defaults.saveas = core.engine.output_dir.display().to_string();
         self.libtorrent.dht = core.engine.enable_dht;
         self.libtorrent.lsd = !core.engine.disable_lsd;
-        self.libtorrent.port = core.engine.listen_port.unwrap_or(0);
+        if self.libtorrent.port != 0 {
+            self.libtorrent.port = core.engine.listen_port.unwrap_or(0);
+        }
         self.libtorrent.listen_interface = core.engine.listen_ip.to_string();
         self.libtorrent.listen_interface_v6 = core
             .engine
@@ -1406,6 +1415,7 @@ impl DaemonConfig {
         self.libtorrent.port_v6 = core.engine.listen_addr_v6.map(|a| a.port()).unwrap_or(0);
         self.libtorrent.utp = core.engine.enable_utp;
         self.libtorrent.upnp = core.engine.enable_upnp;
+        self.libtorrent.natpmp = core.engine.enable_natpmp;
         self.libtorrent.max_connections_download =
             core.engine.peer_limit.map(|v| v as i64).unwrap_or(-1);
         self.libtorrent.active_checking = core
@@ -1623,5 +1633,27 @@ mod tests {
         .unwrap();
         assert_eq!(cfg.config_version, CURRENT_CONFIG_VERSION);
         assert!(!cfg.tunnel_community.guards_enabled);
+    }
+
+    /// Verifie que to_core_config sonde la plage 6881..=6891 quand le port configuré vaut 0.
+    #[test]
+    fn to_core_config_sonde_plage_bittorrent_standard() {
+        let cfg = DaemonConfig::default();
+        let core_cfg = cfg.to_core_config(std::path::Path::new("."));
+        let port = core_cfg.engine.listen_port.unwrap_or(0);
+        // Doit soit appartenir à 6881..=6891, soit 0 si toute la plage locale est saturée
+        assert!(
+            (6881..=6891).contains(&port) || port == 0,
+            "port effectif {port} inattendu"
+        );
+    }
+
+    /// Verifie qu'un port explicite est respecté tel quel.
+    #[test]
+    fn to_core_config_respecte_port_explicite() {
+        let mut cfg = DaemonConfig::default();
+        cfg.libtorrent.port = 12345;
+        let core_cfg = cfg.to_core_config(std::path::Path::new("."));
+        assert_eq!(core_cfg.engine.listen_port, Some(12345));
     }
 }

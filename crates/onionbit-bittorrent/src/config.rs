@@ -58,6 +58,8 @@ pub struct EngineConfig {
     /// Redirection de port UPnP (`libtorrent/upnp` Tribler ->
     /// `enable_upnp_port_forwarding` librqbit).
     pub enable_upnp: bool,
+    /// Redirection de port NAT-PMP / PCP (`libtorrent/natpmp` Tribler).
+    pub enable_natpmp: bool,
     /// Limite de pairs par torrent (`libtorrent/
     /// max_connections_download` ; `None` = illimite, le `-1` Python).
     pub peer_limit: Option<usize>,
@@ -207,6 +209,7 @@ impl Default for EngineConfig {
             listen_addr_v6: None,
             enable_utp: true,
             enable_upnp: true,
+            enable_natpmp: true,
             peer_limit: Some(DEFAULT_PEER_LIMIT),
             concurrent_init_limit: None,
             socks5_proxy: None,
@@ -249,6 +252,7 @@ impl EngineConfig {
             listen_addr_v6: None,
             enable_utp: true,
             enable_upnp: false,
+            enable_natpmp: false,
             peer_limit: Some(DEFAULT_PEER_LIMIT),
             concurrent_init_limit: None,
             socks5_proxy: None,
