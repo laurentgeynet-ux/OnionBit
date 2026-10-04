@@ -736,11 +736,39 @@ impl CoreSession {
             let mut queue_paused: std::collections::HashSet<String> =
                 std::collections::HashSet::new();
             let mut backed_up: std::collections::HashSet<String> = std::collections::HashSet::new();
+            // Derniere lecture des compteurs de session librqbit —
+            // `uploaded_bytes`/`progress_bytes` repartent a zero au
+            // (re-)add moteur : l'accumulation par delta les convertit
+            // en cumuls tous-temps (`total_uploaded`/`total_downloaded`).
+            let mut transferred: std::collections::HashMap<String, (u64, u64)> =
+                std::collections::HashMap::new();
             let mut tick = tokio::time::interval(interval);
             tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
                 tick.tick().await;
                 for stats in session.downloads() {
+                    // `all_time_upload`/`all_time_download` Python :
+                    // cumuls persistants par delta de session.
+                    // Premiere vue : le delta vaut le compteur courant
+                    // (toute la session jusqu'ici) ; re-add moteur
+                    // (compteur revenu a 0) : `saturating_sub` evite
+                    // de soustraire du cumul.
+                    let (prev_up, prev_down) = transferred
+                        .insert(
+                            stats.info_hash.clone(),
+                            (stats.uploaded_bytes, stats.progress_bytes),
+                        )
+                        .unwrap_or_default();
+                    let du = stats.uploaded_bytes.saturating_sub(prev_up);
+                    let dd = stats.progress_bytes.saturating_sub(prev_down);
+                    if du > 0 || dd > 0 {
+                        if let Some(ih) = onionbit_crypto::hash::from_hex(&stats.info_hash) {
+                            let _ = session
+                                .inner
+                                .db
+                                .with(|c| onionbit_db::downloads::add_transferred(c, &ih, du, dd));
+                        }
+                    }
                     if stats.finished {
                         // `insert` = passage a termine observe dans
                         // cette session : notification + drapeau

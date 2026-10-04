@@ -18,7 +18,8 @@ const COLS: &str = "rowid, infohash, name, source_uri, torrent_data,
                     seeding_ratio, auto_managed, queue_position, completed_dir,
                     selected_files, file_priorities, extra_trackers,
                     removed_trackers, time_finished, channel_download,
-                    add_download_to_channel";
+                    add_download_to_channel, total_uploaded,
+                    total_downloaded";
 
 /// Encode une liste d'entiers en CSV (`"0,2,3,"` — format du champ
 /// `download_defaults/files` des checkpoints Python).
@@ -84,6 +85,8 @@ fn from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<DownloadRow> {
         time_finished: r.get("time_finished")?,
         channel_download: r.get::<_, i64>("channel_download")? != 0,
         add_download_to_channel: r.get::<_, i64>("add_download_to_channel")? != 0,
+        total_uploaded: r.get("total_uploaded")?,
+        total_downloaded: r.get("total_downloaded")?,
     })
 }
 
@@ -104,8 +107,8 @@ pub fn upsert(conn: &Connection, row: &DownloadRow) -> Result<i64> {
             seeding_ratio, auto_managed, queue_position, completed_dir,
             selected_files, file_priorities, extra_trackers,
             removed_trackers, time_finished, channel_download,
-            add_download_to_channel
-         ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24)
+            add_download_to_channel, total_uploaded, total_downloaded
+         ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24,?25,?26)
          ON CONFLICT(infohash) DO UPDATE SET
             name = excluded.name,
             torrent_data = excluded.torrent_data,
@@ -128,7 +131,9 @@ pub fn upsert(conn: &Connection, row: &DownloadRow) -> Result<i64> {
             removed_trackers = excluded.removed_trackers,
             time_finished = excluded.time_finished,
             channel_download = excluded.channel_download,
-            add_download_to_channel = excluded.add_download_to_channel",
+            add_download_to_channel = excluded.add_download_to_channel,
+            total_uploaded = excluded.total_uploaded,
+            total_downloaded = excluded.total_downloaded",
         params![
             row.infohash,
             row.name,
@@ -154,6 +159,8 @@ pub fn upsert(conn: &Connection, row: &DownloadRow) -> Result<i64> {
             row.time_finished,
             row.channel_download as i64,
             row.add_download_to_channel as i64,
+            row.total_uploaded,
+            row.total_downloaded,
         ],
     )?;
     Ok(conn.last_insert_rowid())
@@ -182,6 +189,25 @@ pub fn delete(conn: &Connection, infohash: &[u8]) -> Result<()> {
     conn.execute(
         "DELETE FROM downloads WHERE infohash = ?1",
         params![infohash],
+    )?;
+    Ok(())
+}
+
+/// Accumule le trafic du tick dans les compteurs tous-temps
+/// (`all_time_upload`/`all_time_download` du checkpoint Python).
+/// Appele par la boucle de progression avec les deltas observes
+/// entre deux lectures des compteurs de session librqbit.
+pub fn add_transferred(
+    conn: &Connection,
+    infohash: &[u8],
+    uploaded: u64,
+    downloaded: u64,
+) -> Result<()> {
+    conn.execute(
+        "UPDATE downloads SET total_uploaded = total_uploaded + ?2,
+             total_downloaded = total_downloaded + ?3
+         WHERE infohash = ?1",
+        params![infohash, uploaded as i64, downloaded as i64],
     )?;
     Ok(())
 }

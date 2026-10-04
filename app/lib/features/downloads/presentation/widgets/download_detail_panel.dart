@@ -223,6 +223,11 @@ class _DetailsTabState extends ConsumerState<_DetailsTab> {
           _row(context, l10n.rowLimits, formatLimits(d, context.uiLang)),
           _row(
             context,
+            l10n.rowTotalTraffic,
+            '↑ ${context.fmtBytes(d.uploaded)} · ↓ ${context.fmtBytes(d.downloaded)}',
+          ),
+          _row(
+            context,
             l10n.rowSeedRatio,
             d.seedingRatio > 0 ? d.seedingRatio.toString() : l10n.defaultValue,
           ),

@@ -107,6 +107,15 @@ pub async fn get_downloads(
                 info.completed_dir = r.completed_dir.clone().unwrap_or_default();
                 info.time_added = r.added_on;
                 info.time_finished = r.time_finished;
+                // `all_time_*` : cumuls persistants toutes sessions
+                // (le DTO porte sinon les compteurs de session).
+                info.all_time_upload = r.total_uploaded.max(0) as u64;
+                info.all_time_download = r.total_downloaded.max(0) as u64;
+                info.all_time_ratio = if info.all_time_download == 0 {
+                    0.0
+                } else {
+                    info.all_time_upload as f64 / info.all_time_download as f64
+                };
                 if info.destination.is_empty() {
                     info.destination = r.output_dir.clone();
                 }

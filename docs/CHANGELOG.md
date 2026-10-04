@@ -3,6 +3,23 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Totaux all-time persistés : upload/download cumulés (2026-10-04)
+
+- **Besoin** : `all_time_upload`/`all_time_download` portaient les
+  compteurs de **session** librqbit — remis à zéro à chaque
+  redémarrage du daemon, ratio et volume affichés sans mémoire.
+- **DB (v13)** : colonnes `total_uploaded`/`total_downloaded` sur
+  `downloads` + helper `add_transferred`.
+- **Core** : la boucle de progression accumule les deltas des
+  compteurs de session à chaque tick (`saturating_sub` : le re-add
+  moteur qui remet les compteurs à zéro ne soustrait rien).
+- **API** : `GET /api/downloads` émet les cumuls persistés
+  (`all_time_upload`/`all_time_download`/`all_time_ratio`) — le
+  payload SSE conserve les compteurs de session, que le client ne
+  merge plus dans ces champs.
+- **UI** : ligne « Trafic total » (`↑ X · ↓ Y`) dans le panneau
+  détail ; la colonne Ratio affiche désormais le ratio all-time.
+
 ## Badge « jumeau » : contenu dupliqué repérable (2026-10-04)
 
 - **Besoin** : `clone_public` crée un jumeau anonyme d'un torrent

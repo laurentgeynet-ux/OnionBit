@@ -15,7 +15,7 @@
 //! semantique du schema, pas l'interoperabilite binaire).
 
 /// Version courante du schema de ce crate.
-pub const SCHEMA_VERSION: i64 = 12;
+pub const SCHEMA_VERSION: i64 = 13;
 
 /// Script SQL de chaque migration, dans l'ordre (index 0 = v1).
 pub const MIGRATIONS: &[&str] = &[
@@ -256,6 +256,14 @@ CREATE TABLE guards (
     // complet de la jointure a chaque cache-miss du cache applicatif.
     "
 CREATE INDEX idx_torrent_state_seeders ON torrent_state(seeders);
+",
+    // v13 : cumuls tous-temps `all_time_upload`/`all_time_download`
+    // (le checkpoint `DownloadConfig` Python persiste les memes
+    // compteurs). Les compteurs librqbit sont par session : la boucle
+    // de progression accumule les deltas observes a chaque tick.
+    "
+ALTER TABLE downloads ADD COLUMN total_uploaded INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE downloads ADD COLUMN total_downloaded INTEGER NOT NULL DEFAULT 0;
 ",
 ];
 

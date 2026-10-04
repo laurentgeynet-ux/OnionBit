@@ -726,6 +726,7 @@
     "placeholders": { "pos": { "type": "int" } }
   },
   "rowLimits": "Limits",
+  "rowTotalTraffic": "All-time traffic",
   "rowSeedRatio": "Seed ratio",
   "defaultValue": "default",
   "rowAdded": "Added on",

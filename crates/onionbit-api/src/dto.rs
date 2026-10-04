@@ -71,9 +71,11 @@ pub struct DownloadInfo {
     pub num_connected_peers: u32,
     /// Seeds connectes (non distingues par librqbit).
     pub num_connected_seeds: u32,
-    /// Upload cumule.
+    /// Upload cumule toutes sessions (`GET /api/downloads` =
+    /// `total_uploaded` persiste ; l'evenement SSE porte le compteur
+    /// de session — le client doit le preserver au merge).
     pub all_time_upload: u64,
-    /// Download cumule.
+    /// Download cumule toutes sessions (idem).
     pub all_time_download: u64,
     /// Ratio all-time upload/download.
     pub all_time_ratio: f64,

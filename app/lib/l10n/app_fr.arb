@@ -454,6 +454,7 @@
   "queueManual": "manuelle",
   "queuePosSuffix": " · position {pos}",
   "rowLimits": "Limites",
+  "rowTotalTraffic": "Trafic total",
   "rowSeedRatio": "Ratio de seed",
   "defaultValue": "défaut",
   "rowAdded": "Ajouté le",

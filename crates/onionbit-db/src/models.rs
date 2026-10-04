@@ -159,4 +159,11 @@ pub struct DownloadRow {
     /// Ajouter le telechargement termine au canal de l'utilisateur
     /// (`add_download_to_channel` Python — meme reserve).
     pub add_download_to_channel: bool,
+    /// Octets uploades cumules toutes sessions (`all_time_upload`
+    /// Python) — alimente par les deltas de la boucle de progression.
+    pub total_uploaded: i64,
+    /// Octets telecharges cumules toutes sessions
+    /// (`all_time_download` Python — octets verifies utiles,
+    /// `progress_bytes` cote rqbit).
+    pub total_downloaded: i64,
 }

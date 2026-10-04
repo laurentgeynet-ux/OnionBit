@@ -60,6 +60,8 @@ class Download {
   final int hops;
   final bool anonDownload;
   final bool safeSeeding;
+  /// Cumuls toutes sessions (`all_time_upload`/`all_time_download`
+  /// REST — persistés côté daemon).
   final int uploaded;
   final int downloaded;
   final double ratio;
@@ -105,8 +107,10 @@ class Download {
   /// `DownloadInfo::from_stats` brut) dans cette entrée. Seuls les
   /// champs volatils de progression sont repris de l'événement ; les
   /// champs enrichis par `GET /api/downloads` (anonymat, limites,
-  /// scrape, trackers, pairs, horodatages, destination…) sont
-  /// préservés — absents ou à zéro dans l'événement.
+  /// scrape, trackers, pairs, horodatages, destination, totaux
+  /// all-time…) sont préservés — absents ou à zéro dans l'événement.
+  /// `uploaded`/`downloaded`/`ratio` sont les cumuls all-time : le
+  /// payload SSE porte les compteurs de session, ils sont préservés.
   Download mergeProgressStats(Download ev) => Download(
     infohash: infohash,
     name: ev.name.isNotEmpty ? ev.name : name,
@@ -125,9 +129,9 @@ class Download {
     hops: hops,
     anonDownload: anonDownload,
     safeSeeding: safeSeeding,
-    uploaded: ev.uploaded,
-    downloaded: ev.downloaded,
-    ratio: ev.ratio,
+    uploaded: uploaded,
+    downloaded: downloaded,
+    ratio: ratio,
     error: ev.error,
     destination: destination,
     streamable: streamable,
