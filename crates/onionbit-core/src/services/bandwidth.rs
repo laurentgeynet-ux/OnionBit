@@ -169,12 +169,17 @@ impl CongestionController {
     /// d'émission locale étant commune à tous les paquets, notre
     /// congestion gonfle tous les RTT, tandis qu'un pair lointain
     /// ou saturé de son côté n'affecte pas le meilleur échantillon.
-    /// Sans échantillon, le plafond courant est conservé (un pair
-    /// muet n'est pas une preuve de congestion). Renvoie le plafond
-    /// à appliquer.
+    /// Les échantillons sous `probe_min_rtt_ms` sont écartés (chemin
+    /// court-circuitant la file WAN : auto-ping hairpin, lien local)
+    /// — un min ~0 ms y figerait la baseline et déclencherait un
+    /// repli permanent. Sans échantillon exploitable, le plafond
+    /// courant est conservé (un pair muet n'est pas une preuve de
+    /// congestion). Renvoie le plafond à appliquer.
     pub fn update(&self, samples: &[f64], cfg: &BandwidthConfig) -> u64 {
         let cur = self.current_bps(cfg);
-        let Some(min_rtt) = min_of(samples) else {
+        let floor = cfg.probe_min_rtt_ms as f64;
+        let usable: Vec<f64> = samples.iter().copied().filter(|r| *r >= floor).collect();
+        let Some(min_rtt) = min_of(&usable) else {
             self.applied.store(cur, Ordering::Relaxed);
             return cur;
         };
@@ -221,6 +226,30 @@ impl CongestionController {
 /// Minimum d'un lot d'échantillons (`None` si vide).
 fn min_of(samples: &[f64]) -> Option<f64> {
     samples.iter().copied().reduce(f64::min)
+}
+
+/// Adresse sondable pour mesurer la congestion WAN : loopback,
+/// non spécifiée et site-local (LAN) court-circuitent la file
+/// d'émission internet — leur RTT quasi nul ne reflète pas la
+/// congestion montante (il empoisonne la baseline) et ne la signale
+/// jamais (le trajet LAN ne passe pas par la queue du routeur WAN).
+/// `Domain` est admis : impossible à classifier sans résolution.
+fn probe_eligible(addr: &UdpAddress) -> bool {
+    let site_local = |ip: &std::net::IpAddr| match ip {
+        std::net::IpAddr::V4(v4) => {
+            v4.is_loopback() || v4.is_unspecified() || v4.is_private() || v4.is_link_local()
+        }
+        std::net::IpAddr::V6(v6) => {
+            v6.is_loopback()
+                || v6.is_unspecified()
+                || v6.is_unique_local()
+                || v6.is_unicast_link_local()
+        }
+    };
+    match addr.to_socket_addr() {
+        Some(sa) => !site_local(&sa.ip()),
+        None => true,
+    }
 }
 
 /// Boucle périodique du contrôleur — spawnée par la session quand
@@ -282,6 +311,7 @@ pub async fn run_bandwidth_task(
         let addrs: Vec<UdpAddress> = peers
             .into_iter()
             .filter_map(|(_, addr)| seen.insert(addr.clone()).then_some(addr))
+            .filter(probe_eligible)
             .take(cfg.bandwidth.probe_peers)
             .collect();
         if addrs.is_empty() {
@@ -424,6 +454,57 @@ mod tests {
         // Tous les pairs voient +100 ms → congestion locale.
         let next = ctrl.update(&[130.0, 145.0, 160.0], &bw);
         assert!(next < cap);
+    }
+
+    /// Un échantillon sous-millisecondique (auto-ping hairpin, pair
+    /// résiduel en lien local) est écarté : sinon le min ~0 figerait
+    /// la baseline et tout signal normal lirait « congestion ».
+    #[test]
+    fn echantillon_sous_plancher_ecarte() {
+        let ctrl = CongestionController::new();
+        let bw = cfg();
+        let mut cap = ctrl.update(&[0.2, 30.0, 45.0], &bw);
+        for _ in 0..6 {
+            cap = ctrl.update(&[0.1, 30.0, 60.0], &bw);
+        }
+        // Le signal est 30 ms (pas 0,1) → pas de repli.
+        assert!(cap > bw.fallback_bps);
+    }
+
+    /// Tous les échantillons sous le plancher = pas de signal
+    /// exploitable → plafond inchangé (comme une rafale muette).
+    #[test]
+    fn tous_sous_plancher_pas_de_signal() {
+        let ctrl = CongestionController::new();
+        let bw = cfg();
+        ctrl.update(&[30.0], &bw);
+        let before = ctrl.applied_bps();
+        assert_eq!(ctrl.update(&[0.2, 0.5, 0.9], &bw), before);
+    }
+
+    /// Seules des adresses routables WAN sont sondées : loopback,
+    /// privé, lien-local et non spécifié court-circuitent la file
+    /// montante — `Domain` (non classifiable) est admis.
+    #[test]
+    fn adresses_sondables_wan_uniquement() {
+        let v4 = |s: &str| UdpAddress::from(s.parse::<std::net::SocketAddr>().unwrap());
+        assert!(!probe_eligible(&v4("127.0.0.1:7759")));
+        assert!(!probe_eligible(&v4("10.0.0.5:7759")));
+        assert!(!probe_eligible(&v4("192.168.1.20:7759")));
+        assert!(!probe_eligible(&v4("172.16.3.4:7759")));
+        assert!(!probe_eligible(&v4("169.254.10.1:7759")));
+        assert!(!probe_eligible(&v4("0.0.0.0:7759")));
+        assert!(probe_eligible(&v4("8.8.8.8:7759")));
+        assert!(probe_eligible(&v4("203.0.113.7:7759")));
+        let v6 = |s: &str| UdpAddress::from(s.parse::<std::net::SocketAddr>().unwrap());
+        assert!(!probe_eligible(&v6("[::1]:7759")));
+        assert!(!probe_eligible(&v6("[fd00::1]:7759")));
+        assert!(!probe_eligible(&v6("[fe80::1]:7759")));
+        assert!(probe_eligible(&v6("[2001:4860:4860::8888]:7759")));
+        assert!(probe_eligible(&UdpAddress::Domain(
+            "pair.example".into(),
+            7759
+        )));
     }
 
     /// Minimum d'un lot : le pire pair n'influe pas ; vide → None.

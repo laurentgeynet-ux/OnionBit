@@ -460,6 +460,11 @@ pub struct BandwidthConfig {
     pub probe_peers: usize,
     /// Attente des pongs avant la décision du tick (ms).
     pub probe_wait_ms: u64,
+    /// Plancher de plausibilité d'un échantillon RTT (ms) : un pong
+    /// plus rapide a court-circuité la file WAN (auto-ping hairpin,
+    /// pair résiduel sur lien local) et empoisonnerait la baseline
+    /// — ignoré. `0` = filtre inactif (tests sur réseau local).
+    pub probe_min_rtt_ms: u64,
     /// Fenêtre glissante de la baseline RTT (s) — le retard de file
     /// est mesuré par rapport au minimum observé dans cette fenêtre.
     pub base_window_secs: u64,
@@ -487,6 +492,7 @@ impl Default for BandwidthConfig {
             sample_secs: 5,
             probe_peers: 8,
             probe_wait_ms: 1200,
+            probe_min_rtt_ms: 1,
             base_window_secs: 600,
             target_delay_ms: 25,
             increase_div: 8,

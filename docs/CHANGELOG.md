@@ -3,6 +3,26 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Contrôleur de congestion : exclusion des chemins non-WAN (2026-10-04)
+
+- **Bug observé** : « base 0 ms » et plafond retombé à 64 Ko/s — un
+  échantillon RTT quasi nul (pair loopback/LAN ou auto-ping hairpin
+  dans la liste des pairs vérifiés) entrait dans la fenêtre, figeait
+  la baseline à ~0 et lisait tout signal normal comme « congestion ».
+  Symétriquement, un chemin LAN ne traverse jamais la file WAN : il
+  aurait aussi pu masquer une congestion réelle.
+- **Double défense** :
+  - sélection : seules des adresses routables WAN sont sondées
+    (`probe_eligible` — loopback, non spécifié, privé, lien-local
+    exclus ; `Domain` admis faute de classification possible) ;
+  - échantillon : RTT < `probe_min_rtt_ms` (défaut 1 ms, nouveau
+    paramètre `BandwidthConfig` ; `0` = filtre inactif pour les
+    tests sur réseau local) écartés avant le calcul du min.
+- Tests : `adresses_sondables_wan_uniquement`,
+  `echantillon_sous_plancher_ecarte`, `tous_sous_plancher_pas_de_signal`
+  — 21/21 verts. La clé nouvelle profite immédiatement du format de
+  config sparse : absente des fichiers existants → défaut appliqué.
+
 ## `configuration.json` sparse : seuls les écarts aux défauts persistés (2026-10-04)
 
 - **Problème** : `DaemonConfig::write()` dumpait l'arbre complet —
