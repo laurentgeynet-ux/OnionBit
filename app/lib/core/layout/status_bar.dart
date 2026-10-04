@@ -29,6 +29,7 @@ class StatusBar extends ConsumerWidget {
     // coupe (port `http_port_running` périmé au redémarrage).
     ref.watch(connectionWatchdogProvider);
     final speeds = ref.watch(totalSpeedsProvider);
+    final sessionTraffic = ref.watch(sessionTrafficProvider);
     final lane = ref.watch(anonLaneProvider).value;
     // Plafond du debit servi aux autres pairs (estimateur de
     // capacite upload — `tunnel_community/bandwidth`).
@@ -93,6 +94,20 @@ class StatusBar extends ConsumerWidget {
           Text('↓ ${context.fmtRate(speeds.down)}', style: small),
           const SizedBox(width: AppSpacing.md),
           Text('↑ ${context.fmtRate(speeds.up)}', style: small),
+          const SizedBox(width: AppSpacing.md),
+          Flexible(
+            child: Tooltip(
+              message: context.l10n.statusSessionTrafficTip,
+              child: Text(
+                context.l10n.statusSessionTraffic(
+                  context.fmtBytes(sessionTraffic.down),
+                  context.fmtBytes(sessionTraffic.up),
+                ),
+                style: small?.copyWith(color: scheme.outline),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ),
           if (relayBw != null && relayBw.effectiveRelayBps > 0) ...[
             const SizedBox(width: AppSpacing.md),
             Tooltip(

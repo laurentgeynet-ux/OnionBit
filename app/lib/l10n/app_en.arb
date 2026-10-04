@@ -316,6 +316,11 @@
   "statBwDropped": "Served datagrams dropped (cap)",
   "bwSourcePending": "measuring…",
   "bwUnlimited": "unlimited",
+  "statusSessionTraffic": "session ↓ {down} · ↑ {up}",
+  "@statusSessionTraffic": {
+    "placeholders": {"down": {}, "up": {}}
+  },
+  "statusSessionTrafficTip": "File traffic accumulated since daemon startup — tunnel relay excluded.",
   "statusRelayCap": "relay ≤ {rate}",
   "@statusRelayCap": {
     "placeholders": {

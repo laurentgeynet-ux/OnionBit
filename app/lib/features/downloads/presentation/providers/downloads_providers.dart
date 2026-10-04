@@ -372,6 +372,19 @@ final totalSpeedsProvider = Provider<({int down, int up})>((ref) {
   return (down: down, up: up);
 });
 
+/// Volumes de la session daemon (trafic fichiers uniquement —
+/// relai tunnel exclu ; remis à zéro au redémarrage). Barre d'état.
+final sessionTrafficProvider = Provider<({int down, int up})>((ref) {
+  final downloads = ref.watch(downloadsProvider).value ?? const [];
+  var down = 0;
+  var up = 0;
+  for (final d in downloads) {
+    down += d.sessionDownloaded;
+    up += d.sessionUploaded;
+  }
+  return (down: down, up: up);
+});
+
 /// Fichiers du téléchargement sélectionné (onglet « Fichiers »).
 final downloadFilesProvider = FutureProvider.autoDispose
     .family<List<DownloadFile>, String>(

@@ -3,6 +3,17 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Barre d'état : volume de session fichiers (2026-10-04)
+
+- **Besoin** : voir le volume total ↑/↓ de la session courante, tous
+  téléchargements confondus, sans le trafic de relai tunnel.
+- **API** : `session_upload`/`session_download` dans `DownloadInfo`
+  (compteurs moteur — trafic fichiers uniquement ; émis par GET et
+  SSE, contrairement aux `all_time_*` persistés).
+- **UI** : `sessionTrafficProvider` (somme) + bloc « session
+  ↓ X · ↑ Y » dans la barre d'état, tooltip explicatif ; flexible
+  avec ellipsis sur les fenêtres étroites.
+
 ## Totaux all-time persistés : upload/download cumulés (2026-10-04)
 
 - **Besoin** : `all_time_upload`/`all_time_download` portaient les

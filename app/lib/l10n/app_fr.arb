@@ -185,6 +185,11 @@
   "statBwDropped": "Datagrammes servis perdus (plafond)",
   "bwSourcePending": "mesure en cours…",
   "bwUnlimited": "illimité",
+  "statusSessionTraffic": "session ↓ {down} · ↑ {up}",
+  "@statusSessionTraffic": {
+    "placeholders": {"down": {}, "up": {}}
+  },
+  "statusSessionTrafficTip": "Volume fichiers cumulé depuis le démarrage du daemon — relai tunnel exclu.",
   "statusRelayCap": "relais ≤ {rate}",
   "statusRelayCapRtt": "relais ≤ {rate} · {rtt} ms",
   "statusRelayCapTip": "Plafond du trafic relayé/sorti servi aux autres pairs — automatique : s'ajuste à la congestion de votre upload. Le « ms » est le RTT minimum mesuré sur les pairs sondés.",

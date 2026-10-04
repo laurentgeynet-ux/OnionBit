@@ -31,6 +31,8 @@ extension DownloadJson on Map<String, dynamic> {
     uploaded: (this['all_time_upload'] as num?)?.toInt() ?? 0,
     downloaded: (this['all_time_download'] as num?)?.toInt() ?? 0,
     ratio: (this['all_time_ratio'] as num?)?.toDouble() ?? 0,
+    sessionUploaded: (this['session_upload'] as num?)?.toInt() ?? 0,
+    sessionDownloaded: (this['session_download'] as num?)?.toInt() ?? 0,
     error: (this['error'] as String?) ?? '',
     destination: (this['destination'] as String?) ?? '',
     streamable: this['streamable'] == true,

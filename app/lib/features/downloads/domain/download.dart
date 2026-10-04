@@ -27,6 +27,8 @@ class Download {
     required this.uploaded,
     required this.downloaded,
     required this.ratio,
+    this.sessionUploaded = 0,
+    this.sessionDownloaded = 0,
     required this.error,
     required this.destination,
     required this.streamable,
@@ -65,6 +67,12 @@ class Download {
   final int uploaded;
   final int downloaded;
   final double ratio;
+
+  /// Cumuls de la session daemon courante (compteurs moteur —
+  /// trafic fichiers uniquement, relai tunnel exclu ; remis à zéro
+  /// au redémarrage).
+  final int sessionUploaded;
+  final int sessionDownloaded;
   final String error;
   final String destination;
   final bool streamable;
@@ -132,6 +140,8 @@ class Download {
     uploaded: uploaded,
     downloaded: downloaded,
     ratio: ratio,
+    sessionUploaded: ev.sessionUploaded,
+    sessionDownloaded: ev.sessionDownloaded,
     error: ev.error,
     destination: destination,
     streamable: streamable,

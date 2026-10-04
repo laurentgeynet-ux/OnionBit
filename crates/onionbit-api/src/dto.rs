@@ -79,6 +79,12 @@ pub struct DownloadInfo {
     pub all_time_download: u64,
     /// Ratio all-time upload/download.
     pub all_time_ratio: f64,
+    /// Upload de la session courante (compteur moteur, remis a
+    /// zero au demarrage — trafic fichiers uniquement, relais
+    /// tunnel exclus).
+    pub session_upload: u64,
+    /// Download de la session courante (octets verifies).
+    pub session_download: u64,
     /// Liste des trackers (non implemente — toujours `[]`).
     pub trackers: Vec<serde_json::Value>,
     /// Nombre de sauts anonymes (0 = non anonyme, tunnels a l'etape 12).
@@ -160,6 +166,8 @@ impl DownloadInfo {
             } else {
                 s.uploaded_bytes as f64 / s.progress_bytes as f64
             },
+            session_upload: s.uploaded_bytes,
+            session_download: s.progress_bytes,
             trackers: Vec::new(),
             hops: 0,
             anon_download: false,
