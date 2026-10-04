@@ -782,6 +782,7 @@ class _OverviewTabState extends ConsumerState<_OverviewTab> {
     final peers = ref.watch(tunnelPeersProvider).value;
     final stats = ref.watch(onionbitStatsProvider).value;
     final speeds = ref.watch(totalSpeedsProvider);
+    final tunnel = ref.watch(tunnelTrafficProvider);
 
     final ready = circuits?.where((c) => c.ready).length ?? 0;
     final exitsOn = exits?.where((e) => e.enabled).length ?? 0;
@@ -873,6 +874,18 @@ class _OverviewTabState extends ConsumerState<_OverviewTab> {
                 value: context.fmtRate(speeds.up),
               ),
               _StatCard(
+                icon: Icons.swap_vert,
+                label: context.l10n.cardTunnelTraffic,
+                value: tunnel.hasRate
+                    ? '↓ ${context.fmtRate(tunnel.rateDown!)} · '
+                          '↑ ${context.fmtRate(tunnel.rateUp!)}'
+                    : '—',
+                caption: context.l10n.statTrafficValue(
+                  context.fmtBytes(tunnel.totalUp),
+                  context.fmtBytes(tunnel.totalDown),
+                ),
+              ),
+              _StatCard(
                 icon: Icons.storage_outlined,
                 label: context.l10n.cardDatabase,
                 value: stats != null ? context.fmtBytes(stats.dbSize) : '—',
@@ -885,17 +898,20 @@ class _OverviewTabState extends ConsumerState<_OverviewTab> {
   }
 }
 
-/// Carte compteur du tableau de bord « Vue d'ensemble ».
+/// Carte compteur du tableau de bord « Vue d'ensemble » — `caption`
+/// optionnelle en seconde ligne (cumuls, détails).
 class _StatCard extends StatelessWidget {
   const _StatCard({
     required this.icon,
     required this.label,
     required this.value,
+    this.caption,
   });
 
   final IconData icon;
   final String label;
   final String value;
+  final String? caption;
 
   @override
   Widget build(BuildContext context) {
@@ -924,6 +940,14 @@ class _StatCard extends StatelessWidget {
             ),
             const SizedBox(height: AppSpacing.xs),
             Text(value, style: theme.textTheme.titleMedium),
+            if (caption case final c?)
+              Text(
+                c,
+                style: theme.textTheme.labelSmall?.copyWith(
+                  color: theme.colorScheme.outline,
+                ),
+                overflow: TextOverflow.ellipsis,
+              ),
           ],
         ),
       ),

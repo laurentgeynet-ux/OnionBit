@@ -3,6 +3,25 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Carte « Trafic tunnel » recréée (2026-10-04)
+
+- Nouvelle implémentation : `tunnelTrafficProvider` =
+  `NotifierProvider.autoDispose` + `TunnelTrafficNotifier` qui
+  `ref.listen(ipv8TrafficProvider)` — le débit ↓/↑ est la différence
+  des compteurs `total_up`/`total_down` entre deux émissions, les
+  cumuls sont affichés en sous-ligne (`caption` de `_StatCard`).
+- Une seule requête `/api/statistics/ipv8` (5 s) partagée par la
+  carte, l'onglet Statistiques et la barre d'état ; aucune
+  dépendance au dépôt/`apiClientProvider` → le notifier survit aux
+  recréations du client HTTP par le watchdog SSE. Seuls les
+  `AsyncData` sont échantillonnés (l'`AsyncLoading` de
+  rafraîchissement re-porte l'ancienne valeur).
+- Débit `—` tant que deux échantillons n'ont pas été observés ;
+  compteurs remis à zéro (restart daemon) bornés à 0.
+- `test/tunnel_traffic_test.dart` : baseline → débit positif →
+  reset borné à 0, compteurs pilotés via override.
+- `flutter analyze` propre ; 20/20 tests verts.
+
 ## Carte « Trafic tunnel » supprimée (2026-10-04)
 
 - La carte « Trafic tunnel » de l'onglet Vue d'ensemble est retirée :
