@@ -3,7 +3,21 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
-## Dialogue « Ajouter » : avertissement HTTPS transformé en alerte info précise (2026-10-04)
+## Dialogue « Ajouter » : note HTTPS discrète et factuelle (2026-10-04)
+
+- **Constat** : un torrent public à trackers HTTPS se télécharge
+  parfaitement en anonyme (vérifié : 31 pairs, ~1,7 Mo/s en Anon ×3)
+  — la découverte par **DHT/PEX à travers les tunnels** fonctionne,
+  seules les annonces tracker HTTPS sont ignorées. L'alerte bandeau
+  était donc du bruit ; le texte précédent (« ne trouvera aucun
+  pair ») était faux.
+- **UI** : retour à une note discrète (icône ⓘ, texte `outline`) :
+  « Trackers HTTPS ignorés en mode anonyme — les pairs seront
+  découverts via DHT/PEX à travers les tunnels ». L'alerte rouge
+  reste réservée aux torrents `private=1`, seuls à être
+  structurellement impossibles en anonyme.
+
+## Dialogue « Ajouter » : alerte torrent privé, sauts verrouillés (2026-10-04)
 
 - Le texte cyan « trackers HTTPS injoignables… ne trouvera aucun
   pair » était trop absolu pour un torrent **public** : les trackers

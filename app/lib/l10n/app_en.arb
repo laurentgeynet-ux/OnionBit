@@ -817,7 +817,7 @@
   "@anonRelaysInfo": {
     "placeholders": { "count": { "type": "int" } }
   },
-  "httpsOnlyWarn": "All trackers of this torrent use HTTPS — unreachable through anonymous exits (cleartext HTTP relay only). In anonymous mode, only the anonymized swarm (DHT/PEX over tunnels) can provide peers: without anonymous peers sharing this content, the download will stay stalled.",
+  "httpsOnlyWarn": "HTTPS trackers are skipped in anonymous mode (cleartext HTTP relay only): peers will be discovered via DHT/PEX over the tunnels.",
   "privateTorrentTitle": "Private torrent — anonymity unavailable",
   "privateTorrentWarn": "Its tracker requires a direct connection (passkey bound to your IP) and the 'private' flag forbids DHT/PEX: no anonymous path exists. It will be downloaded in the clear — your IP will be visible to the tracker and the swarm.",
   "destFolderOpt": "Destination folder (optional)",

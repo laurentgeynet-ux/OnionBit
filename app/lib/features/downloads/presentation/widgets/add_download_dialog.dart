@@ -328,33 +328,29 @@ class _AddDownloadDialogState extends ConsumerState<AddDownloadDialog> {
               ),
             ),
             if (_hops > 0 && _httpsOnlyTrackers && !_privateTorrent) ...[
-              const SizedBox(height: AppSpacing.sm),
-              Container(
-                padding: const EdgeInsets.all(AppSpacing.sm),
-                decoration: BoxDecoration(
-                  color: theme.colorScheme.tertiaryContainer,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: theme.colorScheme.tertiary),
-                ),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Icon(
-                      Icons.info_outline,
-                      color: theme.colorScheme.tertiary,
-                      size: 20,
-                    ),
-                    const SizedBox(width: AppSpacing.sm),
-                    Expanded(
-                      child: Text(
-                        l10n.httpsOnlyWarn,
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: theme.colorScheme.onTertiaryContainer,
-                        ),
+              const SizedBox(height: AppSpacing.xs),
+              // Note informative (pas une alerte) : pour un torrent
+              // public la decouverte par DHT/PEX via les tunnels
+              // fonctionne — seules les annonces trackers HTTPS sont
+              // ignorees.
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(
+                    Icons.info_outline,
+                    color: theme.colorScheme.outline,
+                    size: 16,
+                  ),
+                  const SizedBox(width: AppSpacing.xs),
+                  Expanded(
+                    child: Text(
+                      l10n.httpsOnlyWarn,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.outline,
                       ),
                     ),
-                  ],
-                ),
+                  ),
+                ],
               ),
             ],
             const SizedBox(height: AppSpacing.md),
