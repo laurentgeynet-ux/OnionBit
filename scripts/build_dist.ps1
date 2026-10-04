@@ -68,6 +68,10 @@ try {
         if ($LASTEXITCODE -ne 0) { throw "flutter build windows a echoue ($LASTEXITCODE)" }
         # Interface web : servie par le daemon en same-origin (etape 33
         # — le meme codebase Flutter, transport Fetch pour le SSE).
+        # Note : `flutter_service_worker.js` est genere quand meme
+        # (`--pwa-strategy` deprecie) — index.html desenregistre les
+        # service workers en boucle pour qu'aucun bundle perime ne
+        # soit servi apres une mise a jour.
         flutter build web $flag
         if ($LASTEXITCODE -ne 0) { throw "flutter build web a echoue ($LASTEXITCODE)" }
     } finally {
