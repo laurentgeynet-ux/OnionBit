@@ -3,6 +3,15 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Contrôleur de congestion : `target_delay_ms` 50 → 25 ms (2026-10-04)
+
+- Le seuil de retard de file toléré passe à 25 ms : 50 ms de buffer
+  ajouté pénalisait les applications interactives (jeu, visio). 25 ms
+  reste au-dessus du jitter naturel du RTT minimum sur un lien stable.
+  Attention : la valeur est sérialisée dans `configuration.json` —
+  les configs existantes doivent être éditées (clé
+  `tunnel_community.bandwidth.target_delay_ms`) pour en bénéficier.
+
 ## Barre d'état : RTT minimum affiché à côté du plafond relais (2026-10-04)
 
 - La barre d'état affiche désormais « relais ≤ {débit} · {rtt} ms » :

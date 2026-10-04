@@ -400,8 +400,10 @@ impl Default for LibtorrentConfig {
 /// capacité mesurée (l'estimation de capacité est impossible sans
 /// sonde externe : le pic passif est censuré par son propre
 /// plafond). À chaque tick `sample_secs`, on ping `probe_peers`
-/// pairs vérifiés ; la médiane des RTT moins la baseline (min sur
-/// `base_window_secs`) donne le retard de file d'attente montante.
+/// pairs vérifiés ; le minimum des RTT moins la baseline (min sur
+/// `base_window_secs`) donne le retard de file d'attente montante —
+/// la file d'émission locale étant commune à tous les paquets, le
+/// min isole notre congestion de la distance/congestion des pairs.
 /// En dessous de `target_delay_ms` le plafond croît de façon
 /// additive, au-dessus il décroît multiplicativement — le tunnel
 /// occupe l'upload disponible et cède la place dès qu'une autre
@@ -420,7 +422,7 @@ pub struct BandwidthConfig {
     pub max_bps: u64,
     /// Cadence du tick contrôleur et de la rafale de pings (s).
     pub sample_secs: u64,
-    /// Pairs vérifiés pingés par tick (médiane des RTT).
+    /// Pairs vérifiés pingés par tick (minimum des RTT retenu).
     pub probe_peers: usize,
     /// Attente des pongs avant la décision du tick (ms).
     pub probe_wait_ms: u64,
@@ -428,7 +430,9 @@ pub struct BandwidthConfig {
     /// est mesuré par rapport au minimum observé dans cette fenêtre.
     pub base_window_secs: u64,
     /// Retard de file toléré (ms) : le plafond augmente tant que le
-    /// dépassement est nul, recule sinon.
+    /// dépassement est nul, recule sinon. 25 ms préserve la
+    /// réactivité des applications interactives (jeu, visio) tout
+    /// en restant au-dessus du jitter naturel du RTT minimum.
     pub target_delay_ms: u64,
     /// Croissance additive : `cap += max(cap / increase_div,
     /// increase_min_bps)`.
@@ -450,7 +454,7 @@ impl Default for BandwidthConfig {
             probe_peers: 8,
             probe_wait_ms: 1200,
             base_window_secs: 600,
-            target_delay_ms: 50,
+            target_delay_ms: 25,
             increase_div: 8,
             increase_min_bps: 32 * 1024,
             decrease_pct: 75,
