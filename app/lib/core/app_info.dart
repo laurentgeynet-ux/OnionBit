@@ -19,8 +19,5 @@ const String kGitHubUrl = 'https://github.com/laurentgeynet-ux/OnionBit';
 const String kGitHubIssuesUrl = '$kGitHubUrl/issues';
 const String kGitHubDocsUrl = '$kGitHubUrl/tree/master/docs';
 
-/// Projet d'origine (credit — portage natif Rust).
-const String kTriblerUrl = 'https://github.com/Tribler/tribler';
-
 const String kAuthor = 'Laurent Geynet';
 const int kCopyrightYear = 2026;

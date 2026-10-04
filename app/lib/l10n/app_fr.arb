@@ -35,8 +35,6 @@
   "aboutIssues": "Signaler un bug",
   "aboutIssuesSub": "Ouvre le suivi des anomalies GitHub",
   "aboutDocs": "Documentation",
-  "aboutCredits": "Crédits",
-  "aboutCreditsTribler": "Portage natif du daemon Tribler en Rust",
   "aboutLicenses": "Licences tierces",
   "aboutLicensesSub": "Dépendances Flutter utilisées par l'application.",
 

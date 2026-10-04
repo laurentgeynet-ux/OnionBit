@@ -124,17 +124,9 @@ class AboutPage extends ConsumerWidget {
                 ),
 
                 _Section(
-                  icon: Icons.handshake_outlined,
-                  title: l10n.aboutCredits,
+                  icon: Icons.receipt_long_outlined,
+                  title: l10n.aboutLicenses,
                   children: [
-                    ListTile(
-                      dense: true,
-                      leading: const Icon(Icons.hub_outlined),
-                      title: Text(l10n.aboutCreditsTribler),
-                      subtitle: Text('github.com/Tribler/tribler'),
-                      trailing: const Icon(Icons.open_in_new, size: 16),
-                      onTap: () => openExternalUrl(kTriblerUrl),
-                    ),
                     Padding(
                       padding: const EdgeInsets.symmetric(
                         horizontal: AppSpacing.md,

@@ -40,8 +40,6 @@
   "aboutIssues": "Report a bug",
   "aboutIssuesSub": "Opens the GitHub issue tracker",
   "aboutDocs": "Documentation",
-  "aboutCredits": "Credits",
-  "aboutCreditsTribler": "Native Rust port of the Tribler daemon",
   "aboutLicenses": "Third-party licenses",
   "aboutLicensesSub": "Flutter dependencies used by the app.",
 
