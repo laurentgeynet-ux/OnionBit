@@ -512,7 +512,7 @@
   "removeFile": "Retirer le fichier",
   "anonDirectWarn": "Votre IP est visible par les pairs.",
   "anonRelaysInfo": "{count, plural, =1{{count} relais entre vous et l'essaim} other{{count} relais entre vous et l'essaim}}. Si aucun circuit n'est prêt, le téléchargement attendra (jamais de repli en direct). Le seeding sera aussi anonymisé (safe seeding).",
-  "httpsOnlyWarn": "Tous les trackers de ce torrent sont en HTTPS : ils sont injoignables via les sorties anonymes (relai HTTP en clair uniquement). En mode anonyme, ce torrent ne trouvera aucun pair — choisissez « Direct ».",
+  "httpsOnlyWarn": "Tous les trackers de ce torrent sont en HTTPS — injoignables via les sorties anonymes (relai HTTP en clair uniquement). En mode anonyme, seul l'essaim anonymisé (DHT/PEX via les tunnels) pourra fournir des pairs : sans pair anonyme partageant ce contenu, le téléchargement restera en attente.",
   "privateTorrentTitle": "Torrent privé — anonymat impossible",
   "privateTorrentWarn": "Son tracker exige une connexion directe (passkey liée à votre IP) et le flag « private » interdit DHT/PEX : aucun chemin anonyme n'existe. Ce téléchargement se fera en clair — votre IP sera visible du tracker et de l'essaim.",
   "destFolderOpt": "Dossier de destination (optionnel)",

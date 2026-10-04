@@ -3,6 +3,19 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Dialogue « Ajouter » : avertissement HTTPS transformé en alerte info précise (2026-10-04)
+
+- Le texte cyan « trackers HTTPS injoignables… ne trouvera aucun
+  pair » était trop absolu pour un torrent **public** : les trackers
+  sont bien hors de portée des sorties (HTTP clair one-shot
+  uniquement), mais la découverte peut encore fonctionner via
+  l'essaim anonymisé (DHT/PEX à travers les tunnels).
+- Nouveau bandeau info `tertiaryContainer` (icône ⓘ, même style que
+  l'alerte privée mais non bloquante) ; formulation corrigée :
+  « seul l'essaim anonymisé pourra fournir des pairs : sans pair
+  anonyme, le téléchargement restera en attente ». L'anonymat reste
+  sélectionnable — c'est une dégradation, pas une impossibilité.
+
 ## Dialogue « Ajouter » : alerte torrent privé, sauts verrouillés (2026-10-04)
 
 - **Besoin** : un torrent `private=1` (tracker à passkey, DHT/PEX

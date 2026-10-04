@@ -327,12 +327,33 @@ class _AddDownloadDialogState extends ConsumerState<AddDownloadDialog> {
                 color: theme.colorScheme.outline,
               ),
             ),
-            if (_hops > 0 && _httpsOnlyTrackers) ...[
-              const SizedBox(height: AppSpacing.xs),
-              Text(
-                l10n.httpsOnlyWarn,
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: theme.colorScheme.tertiary,
+            if (_hops > 0 && _httpsOnlyTrackers && !_privateTorrent) ...[
+              const SizedBox(height: AppSpacing.sm),
+              Container(
+                padding: const EdgeInsets.all(AppSpacing.sm),
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.tertiaryContainer,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: theme.colorScheme.tertiary),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(
+                      Icons.info_outline,
+                      color: theme.colorScheme.tertiary,
+                      size: 20,
+                    ),
+                    const SizedBox(width: AppSpacing.sm),
+                    Expanded(
+                      child: Text(
+                        l10n.httpsOnlyWarn,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.onTertiaryContainer,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ],
