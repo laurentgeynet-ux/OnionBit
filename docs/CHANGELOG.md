@@ -3,6 +3,17 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Badge « jumeau » : contenu dupliqué repérable (2026-10-04)
+
+- **Besoin** : `clone_public` crée un jumeau anonyme d'un torrent
+  privé — même nom, même taille, infohash différent. Dans une longue
+  liste, impossible de relier les deux entrées.
+- **UI** : icône lien (`Icons.link`, tertiaire) dans les badges de
+  fin de ligne (table + grille) et dans le titre (vue compacte)
+  quand un autre download porte le même nom non vide et la même
+  taille — couvre le jumeau privé→public comme les vrais doublons.
+  Tooltip explicite.
+
 ## « Supprimer » du menu contextuel : confirmation unifiée (2026-10-04)
 
 - **Bug** : l'entrée « Supprimer » du menu contextuel d'un

@@ -820,6 +820,7 @@
     "placeholders": { "count": { "type": "int" } }
   },
 
+  "twinBadgeTip": "Same content as another entry in the list (twin — e.g. public copy of a private torrent).",
   "privateTorrentTitle": "Private torrent — anonymity unavailable",
   "privateTorrentWarn": "Its tracker requires a direct connection (passkey bound to your IP) and the 'private' flag forbids DHT/PEX: no anonymous path exists. It will be downloaded in the clear — your IP will be visible to the tracker and the swarm.",
   "destFolderOpt": "Destination folder (optional)",

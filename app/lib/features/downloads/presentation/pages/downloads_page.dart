@@ -616,7 +616,10 @@ class _DownloadRow extends ConsumerWidget {
                 width: 100,
                 child: Text(_formatDate(d.timeAdded), style: small),
               ),
-              SizedBox(width: 130, child: _RowBadges(download: d)),
+              SizedBox(
+                width: 130,
+                child: _RowBadges(download: d, twin: _isTwin(ordered, d)),
+              ),
             ],
           ),
         ),
@@ -656,9 +659,13 @@ class _HealthDot extends StatelessWidget {
 /// file, anonymat. 88 px fixes — les icônes absentes ne prennent pas de
 /// place.
 class _RowBadges extends StatelessWidget {
-  const _RowBadges({required this.download});
+  const _RowBadges({required this.download, this.twin = false});
 
   final Download download;
+
+  /// `true` si un autre download porte le meme contenu (jumeau
+  /// public d'un torrent prive, doublon) — icone lien.
+  final bool twin;
 
   @override
   Widget build(BuildContext context) {
@@ -668,6 +675,14 @@ class _RowBadges extends StatelessWidget {
     return Row(
       mainAxisAlignment: MainAxisAlignment.end,
       children: [
+        if (twin)
+          Tooltip(
+            message: context.l10n.twinBadgeTip,
+            child: Padding(
+              padding: const EdgeInsets.only(right: 2),
+              child: Icon(Icons.link, size: 15, color: scheme.tertiary),
+            ),
+          ),
         if (d.isError)
           Tooltip(
             message: d.error.isEmpty ? context.l10n.stoppedOnError : d.error,
@@ -704,6 +719,18 @@ String _formatDate(int epoch) {
   final dt = DateTime.fromMillisecondsSinceEpoch(epoch * 1000);
   String two(int v) => v.toString().padLeft(2, '0');
   return '${dt.year}-${two(dt.month)}-${two(dt.day)}';
+}
+
+/// `true` si un autre download de la liste porte le meme contenu —
+/// meme nom non vide + meme taille, infohash different. Cas typique :
+/// le jumeau public (`clone_public`) d'un torrent prive, ou un vrai
+/// ajout en doublon (clairs/anonymes melanges).
+bool _isTwin(List<Download> all, Download d) {
+  if (d.name.isEmpty) return false;
+  return all.any(
+    (o) =>
+        o.infohash != d.infohash && o.name == d.name && o.size == d.size,
+  );
 }
 
 /// Menu contextuel d'un téléchargement (`MenuAnchor` Material 3 +
@@ -1018,9 +1045,24 @@ class _CompactList extends ConsumerWidget {
         final d = downloads[i];
         return ListTile(
           leading: AnonBadge(download: d),
-          title: Text(
-            d.name.isEmpty ? d.infohash : d.name,
-            overflow: TextOverflow.ellipsis,
+          title: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  d.name.isEmpty ? d.infohash : d.name,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              if (_isTwin(downloads, d))
+                Tooltip(
+                  message: context.l10n.twinBadgeTip,
+                  child: Icon(
+                    Icons.link,
+                    size: 15,
+                    color: Theme.of(context).colorScheme.tertiary,
+                  ),
+                ),
+            ],
           ),
           subtitle: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -1168,7 +1210,7 @@ class _GridCard extends ConsumerWidget {
                       style: Theme.of(context).textTheme.titleSmall,
                     ),
                   ),
-                  _RowBadges(download: d),
+                  _RowBadges(download: d, twin: _isTwin(ordered, d)),
                 ],
               ),
               const SizedBox(height: AppSpacing.xs),

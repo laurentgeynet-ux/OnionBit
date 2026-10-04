@@ -515,6 +515,7 @@
   "anonDirectWarn": "Votre IP est visible par les pairs.",
   "anonRelaysInfo": "{count, plural, =1{IP masquée par {count} relais} other{IP masquée par {count} relais}} — le trafic passe par le tunnel ou nulle part (seeding inclus).",
 
+  "twinBadgeTip": "Même contenu qu'une autre entrée de la liste (jumeau — ex. version publique d'un torrent privé).",
   "privateTorrentTitle": "Torrent privé — anonymat impossible",
   "privateTorrentWarn": "Son tracker exige une connexion directe (passkey liée à votre IP) et le flag « private » interdit DHT/PEX : aucun chemin anonyme n'existe. Ce téléchargement se fera en clair — votre IP sera visible du tracker et de l'essaim.",
   "destFolderOpt": "Dossier de destination (optionnel)",
