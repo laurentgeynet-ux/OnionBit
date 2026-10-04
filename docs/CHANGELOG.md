@@ -3,6 +3,22 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Diagnostic : double sondage supprimé, cadence alignée sur 5 s (2026-10-04)
+
+- **Bug** : sur l'onglet Diagnostic, ~5-6 requêtes/s. Deux mécanismes
+  se superposaient : chaque provider sondait à **2 s** via
+  `tickProvider`, ET `_OverviewTab` avait son propre
+  `Timer.periodic(5 s)` qui invalidait 6 providers en rafale —
+  l'« auto-refresh 5 s » affiché tournait en fait à 2 s + bursts.
+- **Fix** : `_kDiagnosticPoll` 2 s → **5 s** (listes structurelles :
+  overlays, circuits, relais, sorties, pairs, journaux — cadence
+  affichée par l'UI) ; `_kTrafficPoll` à 2 s conservé pour
+  `ipv8TrafficProvider` (débit live carte « Trafic tunnel » + barre
+  d'état). Le timer doublon de `_OverviewTab` est supprimé —
+  `ConsumerStatefulWidget` → `ConsumerWidget`, le bouton rafraîchir
+  invalide toujours manuellement.
+- Résultat : ~6 req/s → ~2 req/s sur l'onglet.
+
 ## Téléchargements : spam de requêtes `GET /api/downloads` éliminé (2026-10-04)
 
 - **Bug** : ~11 requêtes `GET /api/downloads?get_peers=1` par seconde

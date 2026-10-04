@@ -2,8 +2,6 @@
 // Copyright (C) 2026 Laurent Geynet <laurent.geynet@gmail.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -731,39 +729,14 @@ class _LogsTab extends ConsumerWidget {
 
 /// Onglet « Vue d'ensemble » — tableau de bord des compteurs clés du
 /// daemon (overlays, circuits, relais, sorties, pairs tunnel,
-/// torrents, débits globaux) + pastille de santé. Auto-refresh 5 s —
-/// la page diagnostic est faite pour être surveillée.
-class _OverviewTab extends ConsumerStatefulWidget {
+/// torrents, débits globaux) + pastille de santé. Le refresh vient
+/// du `tickProvider` interne des providers (5 s) — pas de timer
+/// local (doublon historique qui ajoutait une rafale d'invalidations
+/// par-dessus le sondage de chaque provider).
+class _OverviewTab extends ConsumerWidget {
   const _OverviewTab();
 
-  @override
-  ConsumerState<_OverviewTab> createState() => _OverviewTabState();
-}
-
-class _OverviewTabState extends ConsumerState<_OverviewTab> {
-  Timer? _timer;
-
-  @override
-  void initState() {
-    super.initState();
-    _timer = Timer.periodic(const Duration(seconds: 5), (_) {
-      if (!mounted) return;
-      ref.invalidate(overlaysProvider);
-      ref.invalidate(tunnelCircuitsProvider);
-      ref.invalidate(tunnelRelaysProvider);
-      ref.invalidate(tunnelExitsProvider);
-      ref.invalidate(tunnelPeersProvider);
-      ref.invalidate(onionbitStatsProvider);
-    });
-  }
-
-  @override
-  void dispose() {
-    _timer?.cancel();
-    super.dispose();
-  }
-
-  void _refresh() {
+  void _refresh(WidgetRef ref) {
     ref.invalidate(overlaysProvider);
     ref.invalidate(tunnelCircuitsProvider);
     ref.invalidate(tunnelRelaysProvider);
@@ -774,7 +747,7 @@ class _OverviewTabState extends ConsumerState<_OverviewTab> {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final overlays = ref.watch(overlaysProvider).value;
     final circuits = ref.watch(tunnelCircuitsProvider).value;
     final relays = ref.watch(tunnelRelaysProvider).value;
@@ -821,7 +794,7 @@ class _OverviewTabState extends ConsumerState<_OverviewTab> {
             IconButton(
               tooltip: context.l10n.refresh,
               icon: const Icon(Icons.refresh, size: 18),
-              onPressed: _refresh,
+              onPressed: () => _refresh(ref),
             ),
           ],
         ),

@@ -10,10 +10,17 @@ import '../../data/rest_diagnostic_repository.dart';
 import '../../domain/diagnostic_models.dart';
 import '../../domain/diagnostic_repository.dart';
 
-/// Intervalle de sondage des sondes diagnostic — comme le poll 2 s
-/// de `GET /api/downloads` (la GUI Tribler rafraîchit ces vues en
-/// continu).
-const _kDiagnosticPoll = Duration(seconds: 2);
+/// Intervalle de sondage des sondes structurelles (overlays,
+/// circuits, relais, sorties, pairs, journaux) — la cadence
+/// « auto-refresh 5 s » affichée par l'onglet Vue d'ensemble. Ces
+/// listes évoluent lentement : 2 s multipliait les requêtes par ~2,5
+/// sans gain visible.
+const _kDiagnosticPoll = Duration(seconds: 5);
+
+/// Cadence plus vive pour les débits live (carte « Trafic tunnel »,
+/// barre d'état) — le daemon maintient la fenêtre glissante, le
+/// client ne fait que lire.
+const _kTrafficPoll = Duration(seconds: 2);
 
 final diagnosticRepositoryProvider = Provider<DiagnosticRepository>(
   (ref) => RestDiagnosticRepository(ref.watch(apiClientProvider)),
@@ -88,12 +95,12 @@ final onionbitStatsProvider = FutureProvider.autoDispose<OnionbitStats>(
 /// Compteurs d'octets de l'endpoint overlay
 /// (`/api/statistics/ipv8` — `total_up`/`total_down`) + débits
 /// mesurés par le daemon (`rate_up`/`rate_down`, fenêtre glissante
-/// côté Rust — plus rien à dériver côté client). Sondé à la cadence
-/// commune `_kDiagnosticPoll` (2 s) : la carte « Trafic tunnel »,
-/// l'onglet Statistiques et la barre d'état partagent la requête.
+/// côté Rust — plus rien à dériver côté client). Sondé à
+/// `_kTrafficPoll` (2 s) : la carte « Trafic tunnel », l'onglet
+/// Statistiques et la barre d'état partagent la requête.
 final ipv8TrafficProvider = FutureProvider.autoDispose<Ipv8Traffic>(
   (ref) {
-    ref.watch(tickProvider(_kDiagnosticPoll));
+    ref.watch(tickProvider(_kTrafficPoll));
     return ref.watch(diagnosticRepositoryProvider).ipv8Traffic();
   },
 );
