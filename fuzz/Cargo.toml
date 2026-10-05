@@ -91,3 +91,9 @@ name = "raw_datagram"
 path = "fuzz_targets/raw_datagram.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "ext_packet"
+path = "fuzz_targets/ext_packet.rs"
+test = false
+doc = false

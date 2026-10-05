@@ -482,6 +482,43 @@ Clôture campagne et gates sanitizers :
   toolchain nightly + cargo-fuzz, `SEC=300` × 8 cibles × 2
   sanitizers, artefacts (journal CSV + `fuzz/artifacts/`) remontés.
 
+## Phase 9b — `OnionbitExtCommunity` : transport d'extension OnionBit-only (ADR-0015, étape 44, 2026-10-05)
+
+- **`onionbit-ipv8::ext`** : communauté sur `community_id` dédié
+  `922d2ad9…` = `sha1("OnionBit extension community")` — constante
+  de domaine documentée (aucune clé maîtresse), impossible à
+  collisionner avec les ID Tribler figés ; un pair legacy droppe le
+  préfixe silencieusement, zéro casse.
+- **Découverte lazy/opportuniste** — jamais de walk dédié (un walk
+  sur préfixe inconnu annoncerait « OnionBit ici » à tout sniffer) :
+  à chaque tick (`ext/hello_interval_secs`, 60 s) jusqu'à
+  `ext/hello_fanout` (5) pairs **déjà vérifiés** des communautés
+  legacy reçoivent un `hello`. Réponse à un `hello` reçu bornée par
+  le même cooldown sortant → pas de ping-pong. Un pair muet (Tribler)
+  n'est plus sollicité pendant `ext/hello_cooldown_secs` (1 h). Le
+  peer set marqué `EXT_COMMUNITY_ID` *est* la population OnionBit —
+  négociation de capacités implicite par `msg_id`, complétée par le
+  bitmap `caps` (v1 : aucun bit, réservé obfuscation Phase 9e).
+- **Filaire** : trames `{v, …}` versionnées, toutes signées
+  `ez_send` (`WIRE_EXT` : `unsigned`/`dist` vides — pas de marche,
+  pas de puncture ; `global_time` absent du fil). `hello` =
+  `{v: u8, caps: u64}` (9 octets), trailing toléré pour les
+  extensions futures ; version inconnue → drop + suppression de
+  re-sondage, `msg_id` inconnu → ignoré.
+- **Config** : section `ext` (`enabled` défaut **off** — nouveau
+  protocole observable sur le mesh partagé, promotion après
+  validation des bancs, même discipline que `messaging`) ; prise en
+  compte au redémarrage. Overlay visible dans
+  `GET /api/ipv8/overlays` (nom `OnionbitExtCommunity`, `strategies`
+  vide — c'est voulu, `ext_msg_name` → `on_hello`).
+- **Tests** : 7 unitaires/loopback — aller-retour `hello` bilatéral
+  (marquage mutuel + exactement une réponse par cooldown), sondage
+  limité aux pairs vérifiés et borné par `fanout`, pair muet non
+  re-sollicité, version inconnue non marquée, datagrammes
+  tronqués/signature fausse/`msg_id` inconnu droppés — + cible fuzz
+  `ext_packet` (parse `WIRE_EXT` + `Hello::unpack`) et surface
+  ajoutée à la régression stable `fuzz_regression`.
+
 ## Phase 9a — comptabilité locale par pair `peer_stats` (ADR-0015, 2026-10-05)
 
 - **`onionbit-tunnel::peer_stats`** (étapes 42–43) : livre de comptes

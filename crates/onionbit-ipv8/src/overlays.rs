@@ -141,6 +141,16 @@ pub fn content_discovery_msg_name(msg_id: u8) -> Option<&'static str> {
     }
 }
 
+/// `decode_map` de `OnionbitExtCommunity` (ADR-0015 — extension
+/// OnionBit-only ; les `msg_id` futurs `ledger_*`/`attest_*` s'y
+/// ajouteront, les inconnus ne remontent pas de nom).
+pub fn ext_msg_name(msg_id: u8) -> Option<&'static str> {
+    match msg_id {
+        1 => Some("on_hello"),
+        _ => None,
+    }
+}
+
 /// `decode_map` de `DHTDiscoveryCommunity` pyipv8.
 pub fn dht_msg_name(msg_id: u8) -> Option<&'static str> {
     match msg_id {

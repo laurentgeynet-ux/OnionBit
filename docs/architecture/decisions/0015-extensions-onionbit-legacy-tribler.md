@@ -1,9 +1,10 @@
 # ADR-0015 — Extensions OnionBit : stratégie « legacy Tribler + ext OnionBit »
 
 Statut : Acceptée (2026-10-05). Cadre de la Phase 9 de
-`docs/plans/roadmap.md`. La Phase 9a (comptabilité locale par pair)
-est livrée avec cette ADR ; les phases 9b+ appliquent les décisions
-posées ici sans être encore implémentées.
+`docs/plans/roadmap.md`. Phase 9a (comptabilité locale par pair) et
+Phase 9b (`OnionbitExtCommunity` + `hello` lazy) livrées ; les phases
+9c+ appliquent les décisions posées ici sans être encore
+implémentées.
 
 ## Contexte
 
@@ -48,7 +49,7 @@ n'est ajouté aux formats partagés (`extra_bytes` des introductions,
 flags tunnel, trames de cellules) : un tel bit serait un tag de
 capacité visible par tout sniffer et tout pair legacy.
 
-### 2. Découverte lazy/opportuniste — pas de walk dédié
+### 2. Découverte lazy/opportuniste — pas de walk dédié (Phase 9b — livrée)
 
 Une marche aléatoire sur un préfixe inconnu annonce littéralement
 « OnionBit tourne sur cette IP » à tout observateur passif. En v1,
@@ -66,6 +67,15 @@ Une **seule** communauté d'extension avec `msg_id` par fonction
 (`hello`, `ledger_*`, `attest_*`, `obf_*`), trames `{v, ...}`
 versionnées façon messagerie — plutôt que N communautés à peer sets et
 surfaces de fuzzing distincts.
+
+Implémentation (`onionbit-ipv8::ext`) : `EXT_COMMUNITY_ID` =
+`922d2ad9ce00b0d84952638cfc227dc1343c1aa4` =
+`sha1("OnionBit extension community")` (constante de domaine, aucune
+clé maîtresse) ; `hello` = `{v: u8, caps: u64}` signé `ez_send`,
+cooldown par pair pour la re-sollicitation comme pour la réponse
+(pas de ping-pong) ; `ext/enabled` défaut **off** — nouveau
+protocole observable, promotion après validation (discipline
+`messaging`).
 
 ### 3. Comptabilité locale d'abord (Phase 9a — livrée)
 
@@ -169,3 +179,14 @@ introduit pour l'extension.
 - admission : crédit de démarrage (pair inconnu admis), refus au
   déficit sous pression, `enforce = false` → comportement pyipv8
   exact.
+
+## Tests attendus (Phase 9b — livrés)
+
+- `hello` bilatéral loopback : marquage mutuel des deux pairs,
+  `caps` propagé, une seule réponse par cooldown (pas de ping-pong) ;
+- sondage limité aux pairs vérifiés, borné par `fanout` ; pair muet
+  (Tribler) non re-sollicité pendant `hello_cooldown` ;
+- version inconnue → drop sans marquage ext ; `msg_id` inconnu →
+  ignoré ; datagrammes tronqués/signature fausse → drop sans panic ;
+- fuzz : cible `ext_packet` + surface dans la régression stable ;
+- `community_id` sans collision avec les ID Tribler figés.

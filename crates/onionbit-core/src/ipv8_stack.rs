@@ -252,6 +252,19 @@ pub struct Ipv8Config {
     /// Nombre de comptes conserves en memoire / en base (`0` =
     /// borne par defaut).
     pub ledger_max_peers: usize,
+    /// Extension Rust (ADR-0015 §1–2) : cree la `OnionbitExtCommunity`
+    /// — communaute OnionBit-only (`hello` lazy vers pairs deja
+    /// connus, jamais de walk). `false` par defaut : nouveau protocole
+    /// observable sur le mesh partage, a activer apres validation des
+    /// bancs (meme discipline que `messaging`).
+    pub ext_enabled: bool,
+    /// Cadence du sondage `hello` ext (s).
+    pub ext_hello_interval_secs: u64,
+    /// Pairs sondes par tick ext au maximum.
+    pub ext_hello_fanout: u32,
+    /// Cooldown anti-tempete des `hello` ext par pair (s) — un pair
+    /// muet n'est plus sollicite dans cette fenetre.
+    pub ext_hello_cooldown_secs: u64,
 }
 
 impl Ipv8Config {
@@ -304,6 +317,10 @@ impl Ipv8Config {
             ledger_max_deficit_bytes: DEFAULT_LEDGER_MAX_DEFICIT_BYTES,
             ledger_tick_secs: DEFAULT_LEDGER_TICK_SECS,
             ledger_max_peers: DEFAULT_LEDGER_MAX_PEERS as usize,
+            ext_enabled: false,
+            ext_hello_interval_secs: DEFAULT_EXT_HELLO_INTERVAL_SECS,
+            ext_hello_fanout: DEFAULT_EXT_HELLO_FANOUT,
+            ext_hello_cooldown_secs: DEFAULT_EXT_HELLO_COOLDOWN_SECS,
         }
     }
 }
@@ -353,6 +370,10 @@ impl Default for Ipv8Config {
             ledger_max_deficit_bytes: DEFAULT_LEDGER_MAX_DEFICIT_BYTES,
             ledger_tick_secs: DEFAULT_LEDGER_TICK_SECS,
             ledger_max_peers: DEFAULT_LEDGER_MAX_PEERS as usize,
+            ext_enabled: false,
+            ext_hello_interval_secs: DEFAULT_EXT_HELLO_INTERVAL_SECS,
+            ext_hello_fanout: DEFAULT_EXT_HELLO_FANOUT,
+            ext_hello_cooldown_secs: DEFAULT_EXT_HELLO_COOLDOWN_SECS,
         }
     }
 }
@@ -490,6 +511,15 @@ pub const DEFAULT_LEDGER_TICK_SECS: u64 = 30;
 /// Borne de la table `peer_stats` — au-dela les nouvelles cles ne
 /// sont plus suivies (protection contre un flot de cles fraiches).
 pub const DEFAULT_LEDGER_MAX_PEERS: u32 = 8192;
+
+/// Cadence par defaut du sondage `hello` ext (ADR-0015 §2).
+pub const DEFAULT_EXT_HELLO_INTERVAL_SECS: u64 = 60;
+/// Pairs sondes par tick ext au maximum (fanout borne — le `hello`
+/// est un signal observable, on minimise son exposition).
+pub const DEFAULT_EXT_HELLO_FANOUT: u32 = 5;
+/// Cooldown par defaut des `hello` ext par pair : un pair muet
+/// (Tribler) n'est plus sollicite pendant 1 h.
+pub const DEFAULT_EXT_HELLO_COOLDOWN_SECS: u64 = 3600;
 
 /// Tache de maintenance DHT (`PingChurn.take_step` +
 /// `node_maintenance`/`value_maintenance`/`token_maintenance` +
@@ -1300,6 +1330,9 @@ pub struct Ipv8Stack {
     /// `dht_discovery/enabled` Python). Sert aussi de `DHTCommunity`
     /// pour les routes `/api/ipv8/dht/*`.
     pub dht: Option<Arc<DhtCommunity>>,
+    /// `OnionbitExtCommunity` (ADR-0015, presente si `ext_enabled`) —
+    /// communaute OnionBit-only, `hello` lazy vers pairs deja connus.
+    pub ext: Option<Arc<onionbit_ipv8::ext::OnionbitExtCommunity>>,
     /// Cle IPv8 de la session (persistee dans `state_dir`).
     key: LibNaClSecretKey,
     /// Arret de la tache de maintenance DHT.
@@ -1475,6 +1508,37 @@ impl Ipv8Stack {
                 )
                 .await,
             )
+        } else {
+            None
+        };
+        // ADR-0015 §1–2 : `OnionbitExtCommunity` — extension
+        // OnionBit-only sur `community_id` dedie. `hello` lazy vers
+        // les pairs deja verifies (aucune marche : la liste de
+        // bootstrap n'est jamais sondee sur ce prefixe) ; le peer set
+        // de l'overlay *est* la population OnionBit visible.
+        let ext = if config.ext_enabled {
+            let e = onionbit_ipv8::ext::OnionbitExtCommunity::new(
+                key.clone(),
+                network.clone(),
+                endpoint.clone(),
+                onionbit_ipv8::ext::ExtSettings {
+                    hello_interval: std::time::Duration::from_secs(
+                        config.ext_hello_interval_secs.max(1),
+                    ),
+                    hello_fanout: config.ext_hello_fanout as usize,
+                    hello_cooldown: std::time::Duration::from_secs(
+                        config.ext_hello_cooldown_secs.max(1),
+                    ),
+                    ..onionbit_ipv8::ext::ExtSettings::default()
+                },
+            )
+            .await;
+            tasks.register(Some("OnionbitExtCommunity"), "hello", None);
+            let e2 = e.clone();
+            tokio::spawn(async move {
+                e2.run().await;
+            });
+            Some(e)
         } else {
             None
         };
@@ -1950,6 +2014,7 @@ impl Ipv8Stack {
             content_discovery,
             tunnel,
             dht,
+            ext,
             key,
             messaging,
             dht_maintenance_stop,
@@ -1998,6 +2063,9 @@ impl Ipv8Stack {
         }
         if let Some(t) = &self.tunnel {
             out.push(t.overlay_info(false));
+        }
+        if let Some(e) = &self.ext {
+            out.push(e.overlay_info(false));
         }
         out
     }

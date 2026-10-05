@@ -32,6 +32,17 @@ fn exercise_all(data: &[u8]) {
     // Enveloppe IPv8 signee/non signee.
     let _ = Packet::parse(data, None, &WIRE_DEFAULT);
     let _ = Packet::parse(data, Some(&TUNNEL_COMMUNITY_ID), &WIRE_DEFAULT);
+    // Communaute d'extension OnionBit-only (ADR-0015) : politique
+    // `WIRE_EXT` (tout signe, pas de dist) + trame `hello`.
+    let _ = Packet::parse(
+        data,
+        Some(&onionbit_ipv8::ext::EXT_COMMUNITY_ID),
+        &onionbit_ipv8::ext::WIRE_EXT,
+    )
+    .map(|pkt| {
+        let mut r = Reader::new(&pkt.payload);
+        let _ = onionbit_ipv8::ext::Hello::unpack(&mut r);
+    });
 
     // Cellule tunnel : parse, flags, transform et crypto de couche.
     let _ = Cell::parse(data);

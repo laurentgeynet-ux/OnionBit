@@ -38,6 +38,7 @@ pub mod dht;
 pub mod discovery;
 pub mod endpoint;
 pub mod error;
+pub mod ext;
 pub mod overlays;
 pub mod packet;
 pub mod payloads;

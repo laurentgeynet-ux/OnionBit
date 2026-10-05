@@ -513,6 +513,45 @@ impl Default for BandwidthConfig {
     }
 }
 
+/// Section `ext` — communaute d'extension OnionBit-only (ADR-0015,
+/// extension Rust sans equivalent Python : la section n'existe pas
+/// dans `TriblerConfig`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ExtConfig {
+    /// Cree la `OnionbitExtCommunity` — `hello` lazy vers les pairs
+    /// deja decouverts, jamais de marche dediee. `false` par defaut :
+    /// le protocole est observable sur le mesh partage ; a activer
+    /// apres validation (meme discipline que `messaging`). Pris en
+    /// compte au redemarrage.
+    pub enabled: bool,
+    /// Cadence du sondage `hello` (s) — a chaque tick, jusqu'a
+    /// `hello_fanout` pairs verifies pas encore connus-ext sont
+    /// sondes. Defaut 60.
+    pub hello_interval_secs: u64,
+    /// Pairs sondes par tick au maximum. Defaut 5.
+    pub hello_fanout: u32,
+    /// Cooldown anti-tempete par pair (s) — un pair muet n'est plus
+    /// sollicite dans cette fenetre (borne aussi la reponse a un
+    /// `hello` recu). Defaut 3600.
+    pub hello_cooldown_secs: u64,
+    /// Clés ext additionnelles — préservées.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, Value>,
+}
+
+impl Default for ExtConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            hello_interval_secs: crate::ipv8_stack::DEFAULT_EXT_HELLO_INTERVAL_SECS,
+            hello_fanout: crate::ipv8_stack::DEFAULT_EXT_HELLO_FANOUT,
+            hello_cooldown_secs: crate::ipv8_stack::DEFAULT_EXT_HELLO_COOLDOWN_SECS,
+            extra: serde_json::Map::new(),
+        }
+    }
+}
+
 /// Section `tunnel_community`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -835,6 +874,9 @@ pub struct DaemonConfig {
     pub libtorrent: LibtorrentConfig,
     /// Section `tunnel_community`.
     pub tunnel_community: TunnelCommunityConfig,
+    /// Section `ext` — communaute d'extension OnionBit-only
+    /// (ADR-0015).
+    pub ext: ExtConfig,
     /// Section `database`.
     pub database: EnabledSection,
     /// Section `dht_discovery`.
@@ -887,6 +929,7 @@ impl Default for DaemonConfig {
             ipv8: Ipv8FileConfig::default(),
             libtorrent: LibtorrentConfig::default(),
             tunnel_community: TunnelCommunityConfig::default(),
+            ext: ExtConfig::default(),
             database: EnabledSection::enabled(),
             dht_discovery: EnabledSection::enabled(),
             content_discovery_community: EnabledSection::enabled(),
@@ -1424,6 +1467,10 @@ impl DaemonConfig {
             ledger_max_deficit_bytes: self.tunnel_community.ledger_max_deficit_bytes,
             ledger_tick_secs: self.tunnel_community.ledger_tick_secs,
             ledger_max_peers: self.tunnel_community.ledger_max_peers as usize,
+            ext_enabled: self.ext.enabled,
+            ext_hello_interval_secs: self.ext.hello_interval_secs,
+            ext_hello_fanout: self.ext.hello_fanout,
+            ext_hello_cooldown_secs: self.ext.hello_cooldown_secs,
         };
 
         crate::CoreConfig {
