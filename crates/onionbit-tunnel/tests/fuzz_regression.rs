@@ -42,6 +42,8 @@ fn exercise_all(data: &[u8]) {
     .map(|pkt| {
         let mut r = Reader::new(&pkt.payload);
         let _ = onionbit_ipv8::ext::Hello::unpack(&mut r);
+        let mut r = Reader::new(&pkt.payload);
+        let _ = onionbit_ipv8::ext::Attestation::unpack(&mut r);
     });
 
     // Cellule tunnel : parse, flags, transform et crypto de couche.

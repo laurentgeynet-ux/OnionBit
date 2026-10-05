@@ -265,6 +265,14 @@ pub struct Ipv8Config {
     /// Cooldown anti-tempete des `hello` ext par pair (s) — un pair
     /// muet n'est plus sollicite dans cette fenetre.
     pub ext_hello_cooldown_secs: u64,
+    /// Curateurs suivis (cles publiques LibNaCl binaires,
+    /// `ext/curators` decodees hex) — seules leurs attestations sont
+    /// stockees, re-emises et comptees dans le score local.
+    pub ext_curators: Vec<Vec<u8>>,
+    /// Derive d'horloge toleree sur `ts` des attestations recues (s).
+    pub ext_attest_max_future_skew_secs: u64,
+    /// Borne de la liste `latest` exposee par l'API ext.
+    pub ext_attest_list_max: u32,
 }
 
 impl Ipv8Config {
@@ -321,6 +329,9 @@ impl Ipv8Config {
             ext_hello_interval_secs: DEFAULT_EXT_HELLO_INTERVAL_SECS,
             ext_hello_fanout: DEFAULT_EXT_HELLO_FANOUT,
             ext_hello_cooldown_secs: DEFAULT_EXT_HELLO_COOLDOWN_SECS,
+            ext_curators: Vec::new(),
+            ext_attest_max_future_skew_secs: DEFAULT_EXT_ATTEST_MAX_FUTURE_SKEW_SECS,
+            ext_attest_list_max: DEFAULT_EXT_ATTEST_LIST_MAX,
         }
     }
 }
@@ -374,6 +385,9 @@ impl Default for Ipv8Config {
             ext_hello_interval_secs: DEFAULT_EXT_HELLO_INTERVAL_SECS,
             ext_hello_fanout: DEFAULT_EXT_HELLO_FANOUT,
             ext_hello_cooldown_secs: DEFAULT_EXT_HELLO_COOLDOWN_SECS,
+            ext_curators: Vec::new(),
+            ext_attest_max_future_skew_secs: DEFAULT_EXT_ATTEST_MAX_FUTURE_SKEW_SECS,
+            ext_attest_list_max: DEFAULT_EXT_ATTEST_LIST_MAX,
         }
     }
 }
@@ -520,6 +534,12 @@ pub const DEFAULT_EXT_HELLO_FANOUT: u32 = 5;
 /// Cooldown par defaut des `hello` ext par pair : un pair muet
 /// (Tribler) n'est plus sollicite pendant 1 h.
 pub const DEFAULT_EXT_HELLO_COOLDOWN_SECS: u64 = 3600;
+/// Derive d'horloge toleree par defaut sur `ts` des attestations
+/// ext (10 min — au-dela, le « latest wins » serait gagne pour
+/// toujours).
+pub const DEFAULT_EXT_ATTEST_MAX_FUTURE_SKEW_SECS: u64 = 600;
+/// Borne par defaut de la liste `latest` exposee par l'API ext.
+pub const DEFAULT_EXT_ATTEST_LIST_MAX: u32 = 256;
 
 /// Tache de maintenance DHT (`PingChurn.take_step` +
 /// `node_maintenance`/`value_maintenance`/`token_maintenance` +
@@ -1529,10 +1549,18 @@ impl Ipv8Stack {
                     hello_cooldown: std::time::Duration::from_secs(
                         config.ext_hello_cooldown_secs.max(1),
                     ),
+                    curators: config.ext_curators.iter().cloned().collect(),
+                    attest_max_future_skew: std::time::Duration::from_secs(
+                        config.ext_attest_max_future_skew_secs.max(1),
+                    ),
+                    attest_list_max: config.ext_attest_list_max as usize,
                     ..onionbit_ipv8::ext::ExtSettings::default()
                 },
             )
             .await;
+            e.set_attestation_store(Arc::new(crate::attestation_store::DbAttestationStore::new(
+                db.clone(),
+            )));
             tasks.register(Some("OnionbitExtCommunity"), "hello", None);
             let e2 = e.clone();
             tokio::spawn(async move {
@@ -2075,6 +2103,36 @@ impl Ipv8Stack {
     /// false` (communaute non creee).
     pub fn ext_info(&self) -> Option<onionbit_ipv8::ext::ExtInfo> {
         self.ext.as_ref().map(|e| e.info())
+    }
+
+    /// `POST /api/ipv8/ext/attest` : publie une attestation signee
+    /// par la cle du noeud et la pousse aux pairs ext. `None` si la
+    /// communaute ext n'est pas creee.
+    pub async fn ext_attest(
+        &self,
+        kind: u8,
+        subject: &[u8],
+        verdict: u8,
+    ) -> Option<std::result::Result<onionbit_ipv8::ext::Attestation, onionbit_ipv8::Ipv8Error>>
+    {
+        match &self.ext {
+            Some(e) => Some(e.publish_attestation(kind, subject, verdict).await),
+            None => None,
+        }
+    }
+
+    /// `GET /api/ipv8/ext/attestations` : les attestations stockees
+    /// les plus recentes (borne `attest_list_max` interne), `None` si
+    /// ext desactive.
+    pub fn ext_attestations(&self) -> Option<Vec<onionbit_ipv8::ext::Attestation>> {
+        self.ext.as_ref().map(|e| e.attestations_latest(usize::MAX))
+    }
+
+    /// `GET /api/ipv8/ext/trust/{kind}/{subject}` : score de
+    /// confiance local du sujet (curateurs suivis + soi), `None` si
+    /// ext desactive.
+    pub fn ext_trust(&self, kind: u8, subject: &[u8]) -> Option<onionbit_ipv8::ext::TrustInfo> {
+        self.ext.as_ref().map(|e| e.trust_info(kind, subject))
     }
 
     /// `enable_overlay_statistics` de `OverlaysEndpoint` : active ou

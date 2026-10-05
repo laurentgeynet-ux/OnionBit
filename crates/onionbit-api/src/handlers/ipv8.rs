@@ -21,6 +21,7 @@ use base64::Engine;
 use onionbit_ipv8::overlays::{addr_parts, OverlayInfo};
 use onionbit_ipv8::{AggregateStats, NetworkStat, UdpAddress};
 
+use crate::error::ApiError;
 use crate::state::AppState;
 
 /// Exception non geree Python → `error_middleware` :
@@ -456,6 +457,126 @@ pub async fn get_ext(State(state): State<AppState>) -> Response {
         }
     }))
     .into_response()
+}
+
+/// `kind` textuel d'une attestation → `subject_kind` filaire.
+fn ext_kind(s: &str) -> Option<u8> {
+    match s {
+        "infohash" => Some(onionbit_ipv8::ext::attest_kind::INFOHASH),
+        "channel" => Some(onionbit_ipv8::ext::attest_kind::CHANNEL),
+        _ => None,
+    }
+}
+
+/// `verdict` textuel → `verdict` filaire.
+fn ext_verdict(s: &str) -> Option<u8> {
+    match s {
+        "endorse" => Some(onionbit_ipv8::ext::attest_verdict::ENDORSE),
+        "flag" => Some(onionbit_ipv8::ext::attest_verdict::FLAG),
+        _ => None,
+    }
+}
+
+/// Forme JSON d'une attestation (cle hex + `mid` — jamais d'adresse).
+fn attestation_json(a: &onionbit_ipv8::ext::Attestation) -> serde_json::Value {
+    serde_json::json!({
+        "curator": hex::encode(&a.curator),
+        "curator_mid": a.curator_mid(),
+        "kind": match a.kind {
+            onionbit_ipv8::ext::attest_kind::INFOHASH => "infohash",
+            onionbit_ipv8::ext::attest_kind::CHANNEL => "channel",
+            _ => "unknown",
+        },
+        "subject": hex::encode(&a.subject),
+        "verdict": match a.verdict {
+            onionbit_ipv8::ext::attest_verdict::ENDORSE => "endorse",
+            onionbit_ipv8::ext::attest_verdict::FLAG => "flag",
+            _ => "unknown",
+        },
+        "ts": a.ts,
+    })
+}
+
+/// Corps de `POST /api/ipv8/ext/attest`.
+#[derive(serde::Deserialize)]
+pub struct ExtAttestRequest {
+    /// `"infohash"` | `"channel"`.
+    pub kind: String,
+    /// Sujet hex (info-hash 40 chars ou `LibNaClPK` hex du canal).
+    pub subject: String,
+    /// `"endorse"` | `"flag"`.
+    pub verdict: String,
+}
+
+/// `POST /api/ipv8/ext/attest` — publie une attestation de curation
+/// signee par la cle du noeud (ADR-0015 §6, extension Rust) : stockee
+/// puis poussee aux pairs ext. 404 si `ext/enabled` est off.
+pub async fn post_ext_attest(
+    State(state): State<AppState>,
+    Json(req): Json<ExtAttestRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let kind = ext_kind(&req.kind)
+        .ok_or_else(|| ApiError::bad_request("kind attendu : infohash | channel"))?;
+    let verdict = ext_verdict(&req.verdict)
+        .ok_or_else(|| ApiError::bad_request("verdict attendu : endorse | flag"))?;
+    let subject =
+        hex::decode(&req.subject).map_err(|_| ApiError::bad_request("subject hex attendu"))?;
+    let Some(stack) = state.session.ipv8() else {
+        return Err(ApiError::not_found("communaute ext desactivee"));
+    };
+    match stack.ext_attest(kind, &subject, verdict).await {
+        Some(Ok(att)) => Ok(Json(serde_json::json!({
+            "attestation": attestation_json(&att),
+        }))),
+        Some(Err(e)) => Err(ApiError::bad_request(format!("attestation refusee : {e}"))),
+        None => Err(ApiError::not_found("communaute ext desactivee")),
+    }
+}
+
+/// `GET /api/ipv8/ext/attestations` — les attestations stockees les
+/// plus recentes (borne `attest_list_max`), toutes curatrices
+/// confondues. 404 si `ext/enabled` est off.
+pub async fn get_ext_attestations(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let Some(stack) = state.session.ipv8() else {
+        return Err(ApiError::not_found("communaute ext desactivee"));
+    };
+    let Some(atts) = stack.ext_attestations() else {
+        return Err(ApiError::not_found("communaute ext desactivee"));
+    };
+    let list: Vec<serde_json::Value> = atts.iter().map(attestation_json).collect();
+    Ok(Json(serde_json::json!({ "attestations": list })))
+}
+
+/// `GET /api/ipv8/ext/trust/{kind}/{subject}` — score de confiance
+/// local du sujet : +1/-1 par curateur suivi (dernier verdict) —
+/// independant de toute reputation bande passante (ADR-0015 §6).
+/// 404 si `ext/enabled` est off.
+pub async fn get_ext_trust(
+    State(state): State<AppState>,
+    Path((kind_s, subject_s)): Path<(String, String)>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let kind = ext_kind(&kind_s)
+        .ok_or_else(|| ApiError::bad_request("kind attendu : infohash | channel"))?;
+    let subject =
+        hex::decode(&subject_s).map_err(|_| ApiError::bad_request("subject hex attendu"))?;
+    let Some(stack) = state.session.ipv8() else {
+        return Err(ApiError::not_found("communaute ext desactivee"));
+    };
+    let Some(t) = stack.ext_trust(kind, &subject) else {
+        return Err(ApiError::not_found("communaute ext desactivee"));
+    };
+    Ok(Json(serde_json::json!({
+        "trust": {
+            "kind": kind_s,
+            "subject": subject_s,
+            "score": t.score,
+            "endorsements": t.endorsements,
+            "flags": t.flags,
+            "attestation_count": t.attestation_count,
+        }
+    })))
 }
 
 /// `GET /api/ipv8/tunnel/debug/circuit-downloads` — correlation

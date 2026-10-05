@@ -1009,6 +1009,52 @@ async fn ipv8_ext_sans_stack_retourne_desactive() {
     srv.session.stop().await;
 }
 
+/// ADR-0015 §6 : les sous-routes operatoires de `/api/ipv8/ext`
+/// repondent 404 quand la communaute n'existe pas — et les corps
+/// invalides 400 avant meme la verification de stack.
+#[tokio::test]
+async fn ipv8_ext_attest_sans_stack_404_et_400() {
+    let srv = spawn_server().await;
+    // 404 partout : ext desactive.
+    for (method, path) in [
+        ("POST", "/api/ipv8/ext/attest".to_string()),
+        ("GET", "/api/ipv8/ext/attestations".to_string()),
+        (
+            "GET",
+            format!("/api/ipv8/ext/trust/infohash/{}", "aa".repeat(20)),
+        ),
+    ] {
+        let req = srv.client.request(method.parse().unwrap(), srv.url(&path));
+        let req = if method == "POST" {
+            req.json(&serde_json::json!({
+                "kind": "infohash",
+                "subject": "aa".repeat(20),
+                "verdict": "endorse",
+            }))
+        } else {
+            req
+        };
+        let resp = req.send().await.unwrap();
+        assert_eq!(resp.status(), 404, "{method} {path}");
+    }
+    // 400 avant la verification de stack : kind/verdict inconnus.
+    for body in [
+        serde_json::json!({"kind": "nope", "subject": "aa", "verdict": "endorse"}),
+        serde_json::json!({"kind": "infohash", "subject": "aa", "verdict": "nope"}),
+        serde_json::json!({"kind": "infohash", "subject": "zz", "verdict": "flag"}),
+    ] {
+        let resp = srv
+            .client
+            .post(srv.url("/api/ipv8/ext/attest"))
+            .json(&body)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 400, "{body}");
+    }
+    srv.session.stop().await;
+}
+
 #[tokio::test]
 async fn messaging_desactivee_repond_404_sur_tous_les_endpoints() {
     let srv = spawn_server().await;

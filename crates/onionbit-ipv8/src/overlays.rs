@@ -147,6 +147,7 @@ pub fn content_discovery_msg_name(msg_id: u8) -> Option<&'static str> {
 pub fn ext_msg_name(msg_id: u8) -> Option<&'static str> {
     match msg_id {
         1 => Some("on_hello"),
+        2 => Some("on_attest"),
         _ => None,
     }
 }

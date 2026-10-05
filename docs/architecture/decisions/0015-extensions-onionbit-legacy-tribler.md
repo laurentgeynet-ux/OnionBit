@@ -1,10 +1,11 @@
 # ADR-0015 — Extensions OnionBit : stratégie « legacy Tribler + ext OnionBit »
 
 Statut : Acceptée (2026-10-05). Cadre de la Phase 9 de
-`docs/plans/roadmap.md`. Phase 9a (comptabilité locale par pair) et
-Phase 9b (`OnionbitExtCommunity` + `hello` lazy) livrées ; les phases
-9c+ appliquent les décisions posées ici sans être encore
-implémentées.
+`docs/plans/roadmap.md`. Phase 9a (comptabilité locale par pair),
+Phase 9b (`OnionbitExtCommunity` + `hello` lazy) et Phase 9d
+(curation par attestations signées) livrées ; Phase 9c (ledger
+bilatéral) reste conditionnelle et Phase 9e (obfuscation) en attente
+de la mesure d'empreinte.
 
 ## Contexte
 
@@ -137,12 +138,30 @@ La seule chose que la comptabilité locale ne peut pas faire :
   forks — le *bandwidth crawler* passif de Tribler 7.x (reconstitution
   du graphe social et des heures d'activité) est un anti-patron.
 
-### 6. Curation — indépendante du ledger
+### 6. Curation — indépendante du ledger (Phase 9d — livrée)
 
 Attestations signées Ed25519 sur `channel_node` (déjà supporté par le
 schéma) + listes de curateurs suivis ; score de confiance calculé
 **localement**. Pas de dépendance à la réputation bande passante —
 une chaîne IPTV est une clé publique, pas un portefeuille.
+
+Implémentation (`onionbit-ipv8::ext::attest`) : l'`Attestation` est
+**auto-portante** — `curator` et `signature` voyagent dans le payload
+(domaine de signature séparé `onionbit/attest/v1`), donc ré-émissible
+par un tiers et reverifiable depuis le stockage. Propagation `ATTEST`
+par gossip borné : stockage et re-émission réservés aux curateurs
+suivis (`ext/curators` + soi) — borne Sybil : un flot de signatures
+valides de curateurs inconnus est vérifié puis droppé. Conséquence
+assumée en v1 : une attestation ne chemine que par les nœuds qui
+suivent son curateur — la qualité de propagation croît avec
+l'adoption des curateurs, jamais l'inverse ; la découverte de
+curateurs reste hors bande (config). Dedup `(curateur, kind, sujet)`
+*latest-wins* (`ts` strictement plus récent, `ts` futur borné par
+`attest_max_future_skew`) — un vieux verdict rejoué ne ré-écrit pas.
+Persistance : table `attestations` (v17), trait `AttestationStore`
+injecté, `DbAttestationStore` (core). Score `+1`/`-1` par curateur
+suivi exposé par `GET /api/ipv8/ext/trust/{kind}/{subject}` ;
+publication `POST /api/ipv8/ext/attest`.
 
 ### 7. Anti-DPI — dernier, négocié, mesuré
 
@@ -190,3 +209,19 @@ introduit pour l'extension.
   ignoré ; datagrammes tronqués/signature fausse → drop sans panic ;
 - fuzz : cible `ext_packet` + surface dans la régression stable ;
 - `community_id` sans collision avec les ID Tribler figés.
+
+## Tests attendus (Phase 9d — livrés)
+
+- `Attestation` : round-trip sign/verify, domaine de signature
+  séparé (rejeu croisé impossible), formes rejetées (kind/verdict/
+  longueur sujet, troncature) ;
+- gossip loopback A→B→C : propagation aux suiveurs, ré-émission par
+  un non-curateur, drop chez un pair qui ne suit pas le curateur ;
+- signature corrompue / `ts` futur au-delà de la dérive → jamais
+  stockée ; rejeu identique → absorbé sans ré-émission ; verdict
+  plus récent → remplace et inverse le score ;
+- store mémoire + DB : dedup latest-wins, `latest` ordonné, borne
+  d'éviction ; adaptateur `DbAttestationStore` aller-retour ;
+- API : 404 ext désactivée, 400 corps invalide avant stack ;
+- fuzz : `Attestation::unpack` dans `ext_packet` + régression
+  stable.

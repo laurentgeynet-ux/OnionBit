@@ -10,8 +10,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use onionbit_ipv8::ext::{EXT_COMMUNITY_ID, WIRE_EXT};
-use onionbit_ipv8::ext::Hello;
+use onionbit_ipv8::ext::{Attestation, Hello, EXT_COMMUNITY_ID, WIRE_EXT};
 use onionbit_ipv8::packet::Packet;
 use onionbit_ipv8::serializer::Reader;
 
@@ -19,5 +18,7 @@ fuzz_target!(|data: &[u8]| {
     if let Ok(pkt) = Packet::parse(data, Some(&EXT_COMMUNITY_ID), &WIRE_EXT) {
         let mut r = Reader::new(&pkt.payload);
         let _ = Hello::unpack(&mut r);
+        let mut r = Reader::new(&pkt.payload);
+        let _ = Attestation::unpack(&mut r);
     }
 });

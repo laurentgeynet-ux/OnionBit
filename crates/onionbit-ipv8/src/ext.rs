@@ -33,7 +33,7 @@
 //! `hello` recu n'est repondu qu'une fois par cooldown → pas de
 //! ping-pong entre nœuds OnionBit.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -47,6 +47,10 @@ use crate::packet::{prefix_of, Packet, WirePolicy};
 use crate::peer::{Network, Peer};
 use crate::serializer::{Reader, Writer};
 use crate::CommunityId;
+
+pub mod attest;
+
+pub use attest::{kind as attest_kind, verdict as attest_verdict, Attestation};
 
 /// `community_id` de l'extension OnionBit :
 /// `sha1(b"OnionBit extension community")` — constante de domaine
@@ -75,6 +79,10 @@ pub mod msg {
     /// Annonce de capacites `{v, caps}` — emise opportunistement vers
     /// les pairs deja connus et en reponse a un `hello` recu.
     pub const HELLO: u8 = 1;
+    /// Attestation de curation (`Attestation` packee, ADR-0015 §6) —
+    /// poussee a la publication et re-emise aux autres pairs ext
+    /// quand elle est nouvelle (gossip borne par deduplication).
+    pub const ATTEST: u8 = 2;
 }
 
 /// Capacites transport annoncees dans `hello.caps` — bitmap extensible.
@@ -83,6 +91,84 @@ pub mod msg {
 /// pas un `msg_id` l'ignore). Les bits de transport (obfuscation
 /// opt-in) seront assignes en Phase 9e.
 pub const LOCAL_CAPS: u64 = 0;
+
+/// Persistance des attestations verifiees (trait injecte — pattern
+/// `GuardStore`/`PeerStatsStore` : `onionbit-ipv8` definit le contrat
+/// sans dependre de `onionbit-db`, `onionbit-core` fournit
+/// l'adaptateur SQLite).
+pub trait AttestationStore: Send + Sync {
+    /// Persiste une attestation deja verifiee. Retourne `true` si elle
+    /// est nouvelle ou strictement plus recente (`ts`) que la version
+    /// stockee pour la meme cle `(curator, kind, subject)` — la
+    /// dedup gouverne aussi la re-emission : `false` = deja connue,
+    /// pas de re-gossip.
+    fn put(&self, att: &Attestation) -> bool;
+    /// Attestations stockees pour un sujet (`kind`, `subject`) —
+    /// une par curateur au plus (latest-wins).
+    fn by_subject(&self, kind: u8, subject: &[u8]) -> Vec<Attestation>;
+    /// Les `limit` attestations les plus recentes (`ts` decroissant).
+    fn latest(&self, limit: usize) -> Vec<Attestation>;
+}
+
+/// Cle de deduplication des attestations : `(curateur, kind, sujet)`.
+type AttestKey = (Vec<u8>, u8, Vec<u8>);
+
+/// `AttestationStore` en memoire — defaut sans persistance et pour
+/// les tests ; borne par `max` (les plus vieilles cles sont evictees).
+#[derive(Default)]
+pub struct InMemoryAttestationStore {
+    inner: Mutex<HashMap<AttestKey, Attestation>>,
+    /// Borne de la table (`0` = illimitee — tests uniquement).
+    max: usize,
+}
+
+impl InMemoryAttestationStore {
+    /// Cree un store borne (`max` cles `(curateur,kind,sujet)`).
+    pub fn bounded(max: usize) -> Self {
+        Self {
+            inner: Mutex::new(HashMap::new()),
+            max,
+        }
+    }
+}
+
+impl AttestationStore for InMemoryAttestationStore {
+    fn put(&self, att: &Attestation) -> bool {
+        let mut m = self.inner.lock().unwrap();
+        let k = (att.curator.clone(), att.kind, att.subject.clone());
+        match m.get(&k) {
+            Some(old) if old.ts >= att.ts => return false,
+            _ => {}
+        }
+        if self.max > 0 && m.len() >= self.max && !m.contains_key(&k) {
+            // Eviction de la plus vieille entree — approximation LRU
+            // suffisante : la table est bornee, jamais de croissance
+            // libre face a un flot d'attestations.
+            if let Some(oldest) = m.iter().min_by_key(|(_, a)| a.ts).map(|(k, _)| k.clone()) {
+                m.remove(&oldest);
+            }
+        }
+        m.insert(k, att.clone());
+        true
+    }
+
+    fn by_subject(&self, kind: u8, subject: &[u8]) -> Vec<Attestation> {
+        self.inner
+            .lock()
+            .unwrap()
+            .values()
+            .filter(|a| a.kind == kind && a.subject == subject)
+            .cloned()
+            .collect()
+    }
+
+    fn latest(&self, limit: usize) -> Vec<Attestation> {
+        let mut v: Vec<Attestation> = self.inner.lock().unwrap().values().cloned().collect();
+        v.sort_by_key(|a| std::cmp::Reverse(a.ts));
+        v.truncate(limit);
+        v
+    }
+}
 
 /// Reglages de la communaute d'extension (aucune valeur en dur
 /// ailleurs).
@@ -100,6 +186,18 @@ pub struct ExtSettings {
     pub hello_cooldown: Duration,
     /// Bitmap `caps` annonce dans nos `hello`.
     pub caps: u64,
+    /// Curateurs suivis (cles publiques LibNaCl binaires) : seules
+    /// leurs attestations sont stockees et re-emises — borne Sybil :
+    /// un flot d'attestations signees de cles inconnues est verifie
+    /// puis droppe sans stockage (ADR-0015 §6 — confiance locale).
+    pub curators: HashSet<Vec<u8>>,
+    /// Derive d'horloge toleree sur `ts` des attestations recues :
+    /// une attestation datee dans le futur au-dela de cette marge est
+    /// rejetee (sinon elle dominerait le « latest wins » pour
+    /// toujours). Le passe n'est pas borne — dedup par `ts` max.
+    pub attest_max_future_skew: Duration,
+    /// Borne de la liste `latest` exposee par l'API.
+    pub attest_list_max: usize,
 }
 
 impl Default for ExtSettings {
@@ -109,6 +207,9 @@ impl Default for ExtSettings {
             hello_fanout: 5,
             hello_cooldown: Duration::from_secs(3600),
             caps: LOCAL_CAPS,
+            curators: HashSet::new(),
+            attest_max_future_skew: Duration::from_secs(600),
+            attest_list_max: 256,
         }
     }
 }
@@ -162,6 +263,21 @@ pub struct ExtPeerInfo {
     pub last_hello_secs: u64,
 }
 
+/// Score de confiance local d'un sujet (`trust_info`) — seuls les
+/// curateurs suivis (+ soi) contribuent ; +1 endorse, -1 flag.
+#[derive(Debug, Clone)]
+pub struct TrustInfo {
+    /// Somme des verdicts des curateurs suivis sur ce sujet.
+    pub score: i64,
+    /// `mid` hex des curateurs suivis ayant endorse.
+    pub endorsements: Vec<String>,
+    /// `mid` hex des curateurs suivis ayant flague.
+    pub flags: Vec<String>,
+    /// Attestations stockees sur le sujet (toutes curatrices —
+    /// metrique de visibilite, ne compte pas dans `score`).
+    pub attestation_count: usize,
+}
+
 /// Instantane de la communaute (`info` — reglages effectifs +
 /// pairs ext, pour `GET /api/ipv8/ext`).
 #[derive(Debug, Clone)]
@@ -198,6 +314,10 @@ pub struct OnionbitExtCommunity {
     probed: Mutex<HashMap<Vec<u8>, Instant>>,
     /// `caps`/activite observes par pair ext (indexe par cle publique).
     ext_peers: Mutex<HashMap<Vec<u8>, ExtPeer>>,
+    /// Persistance des attestations (injectee — `None` = store
+    /// memoire non borne installe a la creation ; `set_*` avant tout
+    /// trafic).
+    attest_store: Mutex<Arc<dyn AttestationStore>>,
 }
 
 impl OnionbitExtCommunity {
@@ -217,6 +337,7 @@ impl OnionbitExtCommunity {
             settings,
             probed: Mutex::new(HashMap::new()),
             ext_peers: Mutex::new(HashMap::new()),
+            attest_store: Mutex::new(Arc::new(InMemoryAttestationStore::default())),
         });
         let prefix = prefix_of(&EXT_COMMUNITY_ID);
         let c = community.clone();
@@ -275,6 +396,138 @@ impl OnionbitExtCommunity {
                 c.send_hello(&addr, &pk).await;
             });
         }
+    }
+
+    /// Injecte le store d'attestations persistant (pattern
+    /// `set_peer_stats_store` — a appeler avant tout trafic).
+    pub fn set_attestation_store(&self, store: Arc<dyn AttestationStore>) {
+        *self.attest_store.lock().unwrap() = store;
+    }
+
+    /// Curateur pris en compte : `ext/curators` ou notre propre cle
+    /// (on est toujours son propre curateur).
+    fn is_followed(&self, curator: &[u8]) -> bool {
+        curator == self.key.public_key().to_bin() || self.settings.curators.contains(curator)
+    }
+
+    /// Envoie un `ATTEST` a `addr` — pas de cooldown : le volume est
+    /// borne par la dedup (chaque attestation n'est re-emise qu'une
+    /// fois par noeud) et par le filtre « curateur suivi ».
+    async fn send_attest_to(&self, addr: &UdpAddress, payload: &[u8]) {
+        let pkt = Packet::sign_no_dist(&EXT_COMMUNITY_ID, msg::ATTEST, &self.key, payload);
+        if let Err(e) = self.endpoint.send_to(addr, &pkt).await {
+            tracing::debug!(error = %e, target = ?addr, "attest ext perdu");
+        }
+    }
+
+    /// Pousse `att` a tous les pairs ext connus sauf `except` (cle du
+    /// relayeur quand on re-emet — il l'a deja).
+    async fn gossip_attest(self: &Arc<Self>, att: &Attestation, except: Option<&[u8]>) {
+        let payload = att.pack();
+        let my_pk = self.key.public_key().to_bin();
+        for p in self.network.peers_for_service(&EXT_COMMUNITY_ID) {
+            if p.public_key_bin == my_pk || except == Some(p.public_key_bin.as_slice()) {
+                continue;
+            }
+            if let Some(addr) = p.address.clone() {
+                self.send_attest_to(&addr, &payload).await;
+            }
+        }
+    }
+
+    /// Publie une attestation signee par notre cle
+    /// (`POST /api/ipv8/ext/attest`) : stockee puis poussee aux
+    /// pairs ext. `ts` = horloge locale (createur = seule source
+    /// legitime de son `ts`).
+    pub async fn publish_attestation(
+        self: &Arc<Self>,
+        kind: u8,
+        subject: &[u8],
+        verdict: u8,
+    ) -> Result<Attestation, Ipv8Error> {
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let att = Attestation::sign(&self.key, kind, subject, verdict, ts)?;
+        self.attest_store.lock().unwrap().put(&att);
+        self.gossip_attest(&att, None).await;
+        Ok(att)
+    }
+
+    /// `on_attest` : attestation recue — signature Ed25519 + futur
+    /// borne + curateur suivi exiges avant stockage ; nouvelle (ou
+    /// plus recente) → re-emise aux autres pairs ext (gossip borne
+    /// par deduplication : un cycle sans nouvelle entree s'eteint).
+    fn on_attest(self: &Arc<Self>, pkt: &Packet) -> Result<(), Ipv8Error> {
+        let mut r = Reader::new(&pkt.payload);
+        let att = Attestation::unpack(&mut r)?;
+        if !att.verify() {
+            return Err(Ipv8Error::InvalidSignature);
+        }
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        if att.ts > now.saturating_add(self.settings.attest_max_future_skew.as_secs()) {
+            // Futur au-dela de la derive toleree : dominerait le
+            // « latest wins » pour toujours — drop.
+            return Ok(());
+        }
+        if !self.is_followed(&att.curator) {
+            // Borne Sybil : verifie puis droppe sans stockage — le
+            // stockage et la re-emission sont reserves aux curateurs
+            // suivis (+ soi).
+            return Ok(());
+        }
+        if self.attest_store.lock().unwrap().put(&att) {
+            let c = self.clone();
+            let sender = pkt.public_key_bin.clone();
+            tokio::spawn(async move {
+                c.gossip_attest(&att, Some(&sender)).await;
+            });
+        }
+        Ok(())
+    }
+
+    /// Score de confiance local d'un sujet : +1 endorse / -1 flag par
+    /// curateur suivi (+ soi), dernier verdict seul comptant (dedup
+    /// `(curateur, kind, sujet)` du store — un curateur ne pese
+    /// qu'une fois).
+    pub fn trust_info(&self, kind: u8, subject: &[u8]) -> TrustInfo {
+        let atts = self.attest_store.lock().unwrap().by_subject(kind, subject);
+        let mut t = TrustInfo {
+            score: 0,
+            endorsements: Vec::new(),
+            flags: Vec::new(),
+            attestation_count: atts.len(),
+        };
+        for a in atts {
+            if !self.is_followed(&a.curator) {
+                continue;
+            }
+            match a.verdict {
+                attest_verdict::ENDORSE => {
+                    t.score += 1;
+                    t.endorsements.push(a.curator_mid());
+                }
+                attest_verdict::FLAG => {
+                    t.score -= 1;
+                    t.flags.push(a.curator_mid());
+                }
+                _ => {}
+            }
+        }
+        t
+    }
+
+    /// `latest` attestations stockees (API — borne
+    /// `attest_list_max`).
+    pub fn attestations_latest(&self, limit: usize) -> Vec<Attestation> {
+        self.attest_store
+            .lock()
+            .unwrap()
+            .latest(limit.min(self.settings.attest_list_max))
     }
 
     /// Tick de sondage : jusqu'a `hello_fanout` pairs verifies non
@@ -336,31 +589,35 @@ impl OnionbitExtCommunity {
         if !pkt.signed {
             return Ok(());
         }
-        // Un `msg_id` ext inconnu (version plus recente) tombe en
-        // dehors du `if` : ignore silencieusement — c'est le point
+        // Un `msg_id` ext inconnu (version plus recente) tombe dans
+        // le `_` : ignore silencieusement — c'est le point
         // d'extension prevu par ADR-0015.
-        if pkt.msg_id == msg::HELLO {
-            let mut r = Reader::new(&pkt.payload);
-            let hello = Hello::unpack(&mut r)?;
-            // Version inconnue : drop, et ne pas re-sonder ce
-            // pair avec du v1 qu'il ignorerait — mais ne pas le
-            // marquer ext non plus (on ne lui parlerait rien
-            // d'autre).
-            if hello.version != EXT_PROTO_VERSION {
-                self.probed
-                    .lock()
-                    .unwrap()
-                    .insert(pkt.public_key_bin.clone(), Instant::now());
-                return Ok(());
+        match pkt.msg_id {
+            msg::HELLO => {
+                let mut r = Reader::new(&pkt.payload);
+                let hello = Hello::unpack(&mut r)?;
+                // Version inconnue : drop, et ne pas re-sonder ce
+                // pair avec du v1 qu'il ignorerait — mais ne pas le
+                // marquer ext non plus (on ne lui parlerait rien
+                // d'autre).
+                if hello.version != EXT_PROTO_VERSION {
+                    self.probed
+                        .lock()
+                        .unwrap()
+                        .insert(pkt.public_key_bin.clone(), Instant::now());
+                    return Ok(());
+                }
+                let Some(peer) = Peer::new(pkt.public_key_bin.clone(), Some(UdpAddress::from(src)))
+                else {
+                    return Ok(());
+                };
+                self.network.add_verified(peer.clone());
+                self.network
+                    .discover_service(&pkt.public_key_bin, EXT_COMMUNITY_ID);
+                self.on_hello(&peer, hello);
             }
-            let Some(peer) = Peer::new(pkt.public_key_bin.clone(), Some(UdpAddress::from(src)))
-            else {
-                return Ok(());
-            };
-            self.network.add_verified(peer.clone());
-            self.network
-                .discover_service(&pkt.public_key_bin, EXT_COMMUNITY_ID);
-            self.on_hello(&peer, hello);
+            msg::ATTEST => self.on_attest(&pkt)?,
+            _ => {}
         }
         Ok(())
     }
@@ -479,6 +736,19 @@ mod tests {
         UdpAddress,
         LibNaClSecretKey,
     ) {
+        node_ext(caps, HashSet::new()).await
+    }
+
+    /// `node` avec curateurs suivis (curation ADR-0015 §6).
+    async fn node_ext(
+        caps: u64,
+        curators: HashSet<Vec<u8>>,
+    ) -> (
+        Arc<OnionbitExtCommunity>,
+        Arc<UdpEndpoint>,
+        UdpAddress,
+        LibNaClSecretKey,
+    ) {
         let ep = UdpEndpoint::bind("127.0.0.1:0").await.unwrap();
         let SocketAddr::V4(sa) = ep.local_addr().unwrap() else {
             panic!("bind v4");
@@ -492,6 +762,7 @@ mod tests {
             ep.clone(),
             ExtSettings {
                 caps,
+                curators,
                 ..ExtSettings::default()
             },
         )
@@ -501,6 +772,23 @@ mod tests {
             let _ = e.run().await;
         });
         (c, ep, addr, key)
+    }
+
+    /// Etablit le lien ext `a -> b` (hello + reponse) : attend que
+    /// les deux cotes se connaissent comme pairs ext.
+    async fn link_ext(
+        a: &Arc<OnionbitExtCommunity>,
+        b: &Arc<OnionbitExtCommunity>,
+        addr_b: &UdpAddress,
+        pk_b: &[u8],
+    ) {
+        let pk_a = a.key.public_key().to_bin();
+        a.send_hello(addr_b, pk_b).await;
+        let b2 = b.clone();
+        wait_until(move || b2.ext_peers.lock().unwrap().contains_key(&pk_a)).await;
+        let a2 = a.clone();
+        let pk_b = pk_b.to_vec();
+        wait_until(move || a2.ext_peers.lock().unwrap().contains_key(&pk_b)).await;
     }
 
     /// Attend `pred` jusqu'a ~2 s (sondage 10 ms) — les datagrammes
@@ -622,6 +910,200 @@ mod tests {
         }
         tokio::time::sleep(Duration::from_millis(150)).await;
         assert_eq!(a.ext_peer_count(), 0);
+    }
+
+    /// Gossip `ATTEST` : A publie → B (suiveur de A) stocke et
+    /// re-emet → C stocke via B (B n'est pas le curateur —
+    /// l'attestation est auto-portante) ; D qui ne suit pas A droppe.
+    /// La dedup eteint le cycle : aucune re-emission au second
+    /// exemplaire.
+    #[tokio::test]
+    async fn attest_gossip_propague_aux_suiveurs() {
+        let (a, _ea, _aa, key_a) = node(0).await;
+        let pk_a = key_a.public_key().to_bin();
+        let followed_a = HashSet::from([pk_a.clone()]);
+        let (b, _eb, addr_b, key_b) = node_ext(0, followed_a.clone()).await;
+        let (c, _ec, addr_c, key_c) = node_ext(0, followed_a).await;
+        // D ne suit personne : son store doit rester vide.
+        let (d, _ed, addr_d, key_d) = node(0).await;
+
+        link_ext(&a, &b, &addr_b, &key_b.public_key().to_bin()).await;
+        link_ext(&b, &c, &addr_c, &key_c.public_key().to_bin()).await;
+        link_ext(&b, &d, &addr_d, &key_d.public_key().to_bin()).await;
+
+        let subject = [0xab; 20];
+        a.publish_attestation(attest_kind::INFOHASH, &subject, attest_verdict::ENDORSE)
+            .await
+            .unwrap();
+
+        // B a stocke (curateur suivi) puis re-emis vers C et D.
+        let b2 = b.clone();
+        let pk_a2 = pk_a.clone();
+        wait_until(move || !b2.attestations_latest(10).is_empty()).await;
+        let c2 = c.clone();
+        wait_until(move || !c2.attestations_latest(10).is_empty()).await;
+        // D : verifie puis droppe (curateur non suivi) — borne Sybil.
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        assert!(d.attestations_latest(10).is_empty());
+
+        // Contenu + score : C suit A → +1 endorse sur le sujet.
+        let atts = c.attestations_latest(10);
+        assert_eq!(atts.len(), 1);
+        assert_eq!(atts[0].curator, pk_a2);
+        assert!(atts[0].verify());
+        let t = c.trust_info(attest_kind::INFOHASH, &subject);
+        assert_eq!(t.score, 1);
+        assert_eq!(t.endorsements.len(), 1);
+        // B a le meme score (meme curateur suivi).
+        assert_eq!(b.trust_info(attest_kind::INFOHASH, &subject).score, 1);
+        // D : sujet inconnu → score 0.
+        assert_eq!(d.trust_info(attest_kind::INFOHASH, &subject).score, 0);
+    }
+
+    /// Une attestation a signature corrompue ou `ts` trop lointain
+    /// n'est jamais stockee — meme d'un curateur suivi.
+    #[tokio::test]
+    async fn attest_invalide_ou_future_dropee() {
+        let (a, _ea, addr_a, key_a) = node(0).await;
+        let pk_a = key_a.public_key().to_bin();
+        // B suit A : seuls les defauts cryptographiques/temporels
+        // peuvent encore faire droper.
+        let (_b, ep_b, _ab, _kb) = node_ext(0, HashSet::from([pk_a.clone()])).await;
+        let send = |payload: Vec<u8>, key: &LibNaClSecretKey| {
+            let ep = ep_b.clone();
+            let addr = addr_a.clone();
+            let key = key.clone();
+            async move {
+                let pkt = Packet::sign_no_dist(&EXT_COMMUNITY_ID, msg::ATTEST, &key, &payload);
+                ep.send_to(&addr, &pkt).await.unwrap();
+            }
+        };
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        // Signature corrompue.
+        let mut att = Attestation::sign(
+            &key_a,
+            attest_kind::INFOHASH,
+            &[0x11; 20],
+            attest_verdict::ENDORSE,
+            now,
+        )
+        .unwrap();
+        att.signature[0] ^= 0xff;
+        send(att.pack(), &key_a).await;
+        // `ts` dans le futur au-dela de la derive (600 s par defaut).
+        let fut = Attestation::sign(
+            &key_a,
+            attest_kind::INFOHASH,
+            &[0x22; 20],
+            attest_verdict::ENDORSE,
+            now + 3600,
+        )
+        .unwrap();
+        send(fut.pack(), &key_a).await;
+
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        assert!(a.attestations_latest(10).is_empty());
+        let _ = pk_a;
+    }
+
+    /// Re-emission d'une attestation deja connue : absorbe par la
+    /// dedup du store, aucune nouvelle vague de gossip.
+    #[tokio::test]
+    async fn attest_rejeu_sans_reemission() {
+        let (a, _ea, _aa, key_a) = node(0).await;
+        let pk_a = key_a.public_key().to_bin();
+        let (b, ep_b, addr_b, key_b) = node_ext(0, HashSet::from([pk_a])).await;
+        let mut tap = ep_b.set_tap().await;
+        link_ext(&a, &b, &addr_b, &key_b.public_key().to_bin()).await;
+
+        let subject = [0xcd; 20];
+        a.publish_attestation(attest_kind::INFOHASH, &subject, attest_verdict::FLAG)
+            .await
+            .unwrap();
+        let b2 = b.clone();
+        wait_until(move || !b2.attestations_latest(10).is_empty()).await;
+        // Vider le tap (ATTEST initial A→B).
+        while tap.try_recv().is_ok() {}
+        // Rejeu identique A→B : dedup → B ne re-emet rien.
+        let att = a.attestations_latest(1)[0].clone();
+        let pkt = Packet::sign_no_dist(&EXT_COMMUNITY_ID, msg::ATTEST, &key_a, &att.pack());
+        a.endpoint.send_to(&addr_b, &pkt).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        let mut reemitted = 0usize;
+        while let Ok((dir, _dst, data)) = tap.try_recv() {
+            if matches!(dir, TapDir::Tx)
+                && data.get(crate::packet::PREFIX_LEN) == Some(&msg::ATTEST)
+            {
+                reemitted += 1;
+            }
+        }
+        assert_eq!(reemitted, 0);
+        // Verdict plus recent (remplace) : stocke, score retourne.
+        let newer = Attestation::sign(
+            &key_a,
+            attest_kind::INFOHASH,
+            &subject,
+            attest_verdict::ENDORSE,
+            att.ts + 10,
+        )
+        .unwrap();
+        let pkt = Packet::sign_no_dist(&EXT_COMMUNITY_ID, msg::ATTEST, &key_a, &newer.pack());
+        a.endpoint.send_to(&addr_b, &pkt).await.unwrap();
+        let b3 = b.clone();
+        wait_until(move || b3.trust_info(attest_kind::INFOHASH, &subject).score == 1).await;
+    }
+
+    /// `InMemoryAttestationStore` : dedup latest-wins + `latest`
+    /// ordonne, isole du reseau.
+    #[test]
+    fn store_memoire_dedup_latest() {
+        let s = InMemoryAttestationStore::default();
+        let key = LibNaClSecretKey::generate();
+        let mk = |subject: u8, ts: u64, v: u8| {
+            Attestation::sign(&key, attest_kind::INFOHASH, &[subject; 20], v, ts).unwrap()
+        };
+        let a1 = mk(1, 10, attest_verdict::ENDORSE);
+        assert!(s.put(&a1));
+        assert!(!s.put(&a1)); // meme objet : absorbe
+                              // Plus ancien : refuse.
+        assert!(!s.put(&mk(1, 5, attest_verdict::FLAG)));
+        // Plus recent : remplace.
+        let a2 = mk(1, 20, attest_verdict::FLAG);
+        assert!(s.put(&a2));
+        assert_eq!(s.by_subject(attest_kind::INFOHASH, &[1; 20])[0].ts, 20);
+        // Autre sujet : ligne separee + tri latest.
+        let b1 = mk(2, 15, attest_verdict::ENDORSE);
+        assert!(s.put(&b1));
+        let latest = s.latest(10);
+        assert_eq!(latest.len(), 2);
+        assert_eq!(latest[0].ts, 20);
+        // Borne : eviction de la plus vieille entree.
+        let s2 = InMemoryAttestationStore::bounded(1);
+        let k2 = LibNaClSecretKey::generate();
+        let e1 = Attestation::sign(
+            &k2,
+            attest_kind::INFOHASH,
+            &[7; 20],
+            attest_verdict::ENDORSE,
+            1,
+        )
+        .unwrap();
+        let e2 = Attestation::sign(
+            &k2,
+            attest_kind::INFOHASH,
+            &[8; 20],
+            attest_verdict::ENDORSE,
+            2,
+        )
+        .unwrap();
+        assert!(s2.put(&e1));
+        assert!(s2.put(&e2));
+        assert_eq!(s2.latest(10).len(), 1);
+        assert_eq!(s2.latest(10)[0].subject, vec![8; 20]);
     }
 
     /// `hello_tick` ne sonde que les pairs verifies, pas encore

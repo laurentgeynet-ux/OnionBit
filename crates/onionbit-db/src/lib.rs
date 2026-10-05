@@ -17,6 +17,7 @@
 //! pour information mais la compatibilite binaire avec les bases
 //! Python n'est **pas** un objectif.
 
+pub mod attestations;
 pub mod channel;
 pub mod db;
 pub mod downloads;

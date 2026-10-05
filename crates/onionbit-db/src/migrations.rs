@@ -341,6 +341,25 @@ CREATE TABLE peer_stats (
     last_seen       INTEGER NOT NULL
 );
 ",
+    // v18 : attestations de curation (ADR-0015 §6) — verdicts signes
+    // Ed25519 des curateurs suivis sur des sujets (info-hash ou cle
+    // de canal). Auto-portantes (curateur + signature dans la ligne)
+    // et dedupliquees par (curateur, kind, sujet) : seule la plus
+    // recente (`ts` max) compte — l'upsert n'ecrase que si `ts`
+    // strictement plus recent (anti-replay d'un vieux verdict).
+    "
+CREATE TABLE attestations (
+    curator     BLOB NOT NULL,
+    kind        INTEGER NOT NULL,
+    subject     BLOB NOT NULL,
+    verdict     INTEGER NOT NULL,
+    ts          INTEGER NOT NULL,
+    signature   BLOB NOT NULL,
+    added_on    INTEGER NOT NULL,
+    PRIMARY KEY (curator, kind, subject)
+);
+CREATE INDEX idx_attestations_subject ON attestations(kind, subject);
+",
 ];
 
 /// Applique les migrations en attente sur une connexion ouverte.

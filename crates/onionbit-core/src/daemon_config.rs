@@ -535,6 +535,17 @@ pub struct ExtConfig {
     /// sollicite dans cette fenetre (borne aussi la reponse a un
     /// `hello` recu). Defaut 3600.
     pub hello_cooldown_secs: u64,
+    /// Curateurs suivis (cles publiques LibNaCl hex, ADR-0015 §6) :
+    /// seules leurs attestations sont stockees, re-emises et prises
+    /// en compte dans le score de confiance local. Vide par defaut —
+    /// un noeud qui ne suit personne ne stocke rien d'etranger.
+    pub curators: Vec<String>,
+    /// Derive d'horloge toleree sur `ts` des attestations recues
+    /// (s) — au-dela, elles domineraient le « latest wins » pour
+    /// toujours : rejet. Defaut 600.
+    pub attest_max_future_skew_secs: u64,
+    /// Borne de la liste `latest` exposee par l'API. Defaut 256.
+    pub attest_list_max: u32,
     /// Clés ext additionnelles — préservées.
     #[serde(flatten)]
     pub extra: serde_json::Map<String, Value>,
@@ -547,6 +558,9 @@ impl Default for ExtConfig {
             hello_interval_secs: crate::ipv8_stack::DEFAULT_EXT_HELLO_INTERVAL_SECS,
             hello_fanout: crate::ipv8_stack::DEFAULT_EXT_HELLO_FANOUT,
             hello_cooldown_secs: crate::ipv8_stack::DEFAULT_EXT_HELLO_COOLDOWN_SECS,
+            curators: Vec::new(),
+            attest_max_future_skew_secs: crate::ipv8_stack::DEFAULT_EXT_ATTEST_MAX_FUTURE_SKEW_SECS,
+            attest_list_max: crate::ipv8_stack::DEFAULT_EXT_ATTEST_LIST_MAX,
             extra: serde_json::Map::new(),
         }
     }
@@ -1471,6 +1485,28 @@ impl DaemonConfig {
             ext_hello_interval_secs: self.ext.hello_interval_secs,
             ext_hello_fanout: self.ext.hello_fanout,
             ext_hello_cooldown_secs: self.ext.hello_cooldown_secs,
+            // `ext/curators` : cles publiques LibNaCl hex — les
+            // entrees invalides sont loggees puis ignorees (jamais de
+            // refus de demarrage pour une cle mal tapee, coherent
+            // avec `bootstrap_peers`).
+            ext_curators: self
+                .ext
+                .curators
+                .iter()
+                .filter_map(|h| match hex::decode(h) {
+                    Ok(b)
+                        if onionbit_crypto::ipv8::keys::LibNaClPublicKey::from_bin(&b).is_ok() =>
+                    {
+                        Some(b)
+                    }
+                    _ => {
+                        tracing::warn!(curator = h, "cle curateur ext invalide — ignoree");
+                        None
+                    }
+                })
+                .collect(),
+            ext_attest_max_future_skew_secs: self.ext.attest_max_future_skew_secs,
+            ext_attest_list_max: self.ext.attest_list_max,
         };
 
         crate::CoreConfig {

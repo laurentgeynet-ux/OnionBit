@@ -481,6 +481,48 @@ Clôture campagne et gates sanitizers :
 - **Job CI `fuzz-san`** (`ci.yml`, nightly/manual, ubuntu-24.04) :
   toolchain nightly + cargo-fuzz, `SEC=300` × 8 cibles × 2
   sanitizers, artefacts (journal CSV + `fuzz/artifacts/`) remontés.
+## Phase 9d — curation signée : attestations Ed25519 + score local (ADR-0015, étape 46, 2026-10-05)
+
+- **`onionbit-ipv8::ext::attest`** : `Attestation` auto-portante —
+  `{v, kind, verdict, ts, varlenH(subject), varlenH(curator), sig}`
+  ; la signature Ed25519 couvre `SIG_DOMAIN || champs` (domaine
+  séparé : aucune trame signée par la même clé ne peut être rejouée
+  en attestation). `kind` : `infohash` (20 B) ou `channel`
+  (`LibNaClPK`, 42 B) ; `verdict` : `endorse`/`flag`. L'objet reste
+  vérifiable après re-émission par un tiers ou relecture depuis le
+  stockage — c'est ce qui rend le gossip possible.
+- **Gossip borné** (`msg::ATTEST` = 2) : publication poussée à tous
+  les pairs ext ; à réception, signature + `ts` non futur au-delà de
+  `ext/attest_max_future_skew_secs` (600 s) + **curateur suivi**
+  exigés ; nouvelle (ou plus récente) → ré-émise aux autres pairs
+  ext. La dedup `(curateur, kind, sujet)` éteint les cycles — une
+  attestation ne voyage qu'une fois par nœud.
+- **Borne Sybil** : seules les attestations de curateurs suivis
+  (`ext/curators`, clés hex dans la config — invalides loggées et
+  ignorées) et les nôtres sont stockées/ré-émises ; le reste est
+  vérifié puis droppé sans stockage. Conséquence v1 assumée : la
+  propagation ne chemine que par les nœuds qui suivent le curateur
+  (documenté ADR §6).
+- **Persistance** : table `attestations` (migration v18), PK
+  `(curator, kind, subject)`, upsert *latest-wins* (`ts` strictement
+  plus récent — un vieux verdict rejoué est absorbé sans
+  ré-écriture) ; trait `AttestationStore` injecté (pattern
+  `PeerStatsStore`), adaptateur `DbAttestationStore` dans core,
+  `InMemoryAttestationStore` borné par défaut.
+- **Score de confiance local** : `trust_info` = +1/−1 par curateur
+  suivi (+ soi) sur le sujet — indépendant de toute réputation bande
+  passante (ADR §6). API : `POST /api/ipv8/ext/attest`
+  (`{kind, subject hex, verdict}` → signe + publie),
+  `GET /api/ipv8/ext/attestations` (latest borné),
+  `GET /api/ipv8/ext/trust/{kind}/{subject}` → score + mid hex des
+  endorsements/flags — 404 quand `ext/enabled` est off.
+- **Tests** : 3 unitaires `attest` (round-trip sign/verify, domaine
+  séparé, formes rejetées) + store mémoire (dedup, latest, borne) +
+  DB upsert + adaptateur core + 3 loopback (gossip A→B→C avec drop
+  D non-suiveur, signature corrompue/`ts` futur rejetés, rejeu sans
+  ré-émission et remplacement par verdict plus récent) + API
+  (404/400) ; surface `Attestation::unpack` ajoutée à `ext_packet`
+  et à la régression stable.
 
 ## Phase 9b — `OnionbitExtCommunity` : transport d'extension OnionBit-only (ADR-0015, étape 44, 2026-10-05)
 
