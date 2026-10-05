@@ -13,6 +13,7 @@
 use onionbit_crypto::ipv8::keys::LibNaClSecretKey;
 use onionbit_messaging::{Frame, MessagingConfig};
 use proptest::prelude::*;
+use std::path::Path;
 use std::sync::OnceLock;
 
 /// Cle de test fixe : l'objectif est la robustesse du parseur, la
@@ -60,6 +61,24 @@ fn frontieres_trame_ne_paniquent_pas() {
     exercise_frame(b"d1:ai2147483647ee");
     exercise_frame(b"le");
     exercise_frame(b"d1:ali1ei2elieee");
+}
+
+/// Rejoue le corpus minimise de la campagne `messaging_frame`
+/// (merge libFuzzer : chaque input couvre des features que les
+/// autres n'atteignent pas). Versionne sous `tests/fuzz_corpus/` —
+/// aucun de ces inputs ne doit jamais paniquer.
+#[test]
+fn corpus_campagne_ne_panique_pas() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fuzz_corpus");
+    let mut n = 0usize;
+    for entry in std::fs::read_dir(&dir).expect("corpus de campagne lisible") {
+        let path = entry.expect("entree corpus lisible").path();
+        if path.is_file() {
+            exercise_frame(&std::fs::read(&path).expect("input corpus lisible"));
+            n += 1;
+        }
+    }
+    assert!(n > 0, "corpus de campagne vide");
 }
 
 proptest! {
