@@ -2166,6 +2166,65 @@ async fn build_circuits_ne_compte_pas_les_ip_seeder() {
     }
 }
 
+/// Regression prod : `resolve` messagerie sur un swarm fraichement
+/// joint echouait en `aucun circuit pour peers-request` avant que le
+/// tick `circuits_tick` ait construit le vivier DATA.
+/// `wait_ready_circuit_of_hops` doit declencher la construction et
+/// attendre le `READY` (borne `circuit_timeout`), pas echouer
+/// instantanement.
+#[tokio::test]
+async fn wait_ready_circuit_declenche_la_construction() {
+    let a = make_node().await;
+    let b = make_node_flags(PEER_FLAG_RELAY | PEER_FLAG_EXIT_BT).await;
+    // Flags de B appris par A (necessaire a la sortie 1 saut).
+    a.tunnel
+        .send_introduction_request(&UdpAddress::from(b.addr))
+        .await
+        .unwrap();
+    let deadline = Instant::now() + TEST_TIMEOUT;
+    loop {
+        if a.tunnel.peer_flags_of(&b.key.public_key().to_bin()) & PEER_FLAG_EXIT_BT != 0 {
+            break;
+        }
+        assert!(Instant::now() < deadline, "flags de B non appris");
+        tokio::time::sleep(POLL).await;
+    }
+
+    // Swarm joint, aucun circuit : l'appel seul doit provoquer la
+    // construction puis rendre le circuit READY.
+    a.tunnel.join_swarm([9u8; 20], 1, false);
+    let cid = a
+        .tunnel
+        .wait_ready_circuit_of_hops(1, "test")
+        .await
+        .expect("circuit DATA apres attente bornee");
+    assert!(a.tunnel.ready_data_circuits_of_hops(1).contains(&cid));
+}
+
+/// Le meme appel sans aucun pair candidat doit rendre `NotReady`
+/// borne (pas de boucle infinie) — `circuit_timeout` regle court.
+#[tokio::test]
+async fn wait_ready_circuit_sans_pair_notready() {
+    let a = make_node_settings(
+        PEER_FLAG_RELAY,
+        TunnelSettings {
+            circuit_timeout: Duration::from_millis(300),
+            ..TunnelSettings::default()
+        },
+    )
+    .await;
+    a.tunnel.join_swarm([9u8; 20], 1, false);
+    let err = a
+        .tunnel
+        .wait_ready_circuit_of_hops(1, "aucun circuit pour peers-request")
+        .await
+        .expect_err("sans pair, aucun circuit ne se construit");
+    assert!(
+        matches!(err, onionbit_ipv8::Ipv8Error::NotReady(_)),
+        "NotReady attendu, recu {err}"
+    );
+}
+
 /// Deux lanes SOCKS5 sur la meme community (`data_rx` broadcast) :
 /// chaque association ne recoit que les reponses de SES circuits
 /// (filtrage `return_map`), meme en trafic simultane.

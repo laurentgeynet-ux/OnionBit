@@ -851,6 +851,50 @@ impl TunnelCommunity {
         }
     }
 
+    /// Attente bornee d'un circuit `READY` de `hops` sauts : declenche
+    /// la construction (`build_circuits_if_needed` — le tick
+    /// `circuits_tick` la fait aussi toutes les 5 s) puis scrute
+    /// jusqu'a `circuit_timeout`. Sans elle, `resolve`/`create_e2e`
+    /// sur un swarm fraichement joint echouaient instantanement alors
+    /// que le circuit n'etait simplement pas encore monte
+    /// (`aucun circuit pour peers-request` en prod). Les chemins
+    /// periodiques (`swarm_lookup`, `estimate_swarm_size`) gardent
+    /// l'echec immediat de `select_circuit` Python — ils retentent
+    /// naturellement au tick suivant.
+    pub async fn wait_ready_circuit_of_hops(
+        self: &Arc<Self>,
+        hops: usize,
+        context: &'static str,
+    ) -> Result<u32, Ipv8Error> {
+        if self.ready_circuits_of_hops(hops).is_empty() {
+            let _ = self.build_circuits_if_needed(hops, 1).await;
+        }
+        let deadline = std::time::Instant::now() + self.settings.circuit_timeout;
+        loop {
+            if let Some(cid) = self.ready_circuits_of_hops(hops).first().copied() {
+                return Ok(cid);
+            }
+            if std::time::Instant::now() >= deadline {
+                return Err(Ipv8Error::NotReady(context));
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(READY_POLL_MS)).await;
+        }
+    }
+
+    /// `send_peers_request` precede de l'attente d'un circuit `READY`
+    /// — variante pour les chemins a lancement explicite (resolve
+    /// messagerie, connect) ou Python retentait au tick suivant.
+    pub async fn send_peers_request_when_ready(
+        self: &Arc<Self>,
+        info_hash: [u8; 20],
+        target: Option<&IntroductionPoint>,
+        hops: usize,
+    ) -> Result<Vec<IntroductionPoint>, Ipv8Error> {
+        self.wait_ready_circuit_of_hops(hops, "aucun circuit pour peers-request")
+            .await?;
+        self.send_peers_request(info_hash, target, hops).await
+    }
+
     /// `send_peers_request` : demande de peers via un point
     /// d'introduction (`Some`) ou via la sortie d'un circuit (`None` —
     /// chemin DHT, non implemente sans `dht_provider`). `hops` est le
@@ -865,7 +909,7 @@ impl TunnelCommunity {
             .ready_circuits_of_hops(hops)
             .first()
             .copied()
-            .ok_or(Ipv8Error::Malformed("aucun circuit pour peers-request"))?;
+            .ok_or(Ipv8Error::NotReady("aucun circuit pour peers-request"))?;
         let identifier = self.next_id();
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.inner
@@ -1316,10 +1360,8 @@ impl TunnelCommunity {
         }
         .ok_or(Ipv8Error::Malformed("swarm inconnu"))?;
         let cid = self
-            .ready_circuits_of_hops(hops)
-            .first()
-            .copied()
-            .ok_or(Ipv8Error::Malformed("aucun circuit pour e2e"))?;
+            .wait_ready_circuit_of_hops(hops, "aucun circuit pour e2e")
+            .await?;
         // "Creating e2e circuit for introduction point %s" (info).
         tracing::debug!(
             info_hash = hex::encode(info_hash),

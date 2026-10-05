@@ -396,7 +396,7 @@ impl MessagingService {
         self.require_not_blocked(contact_pk)?;
         let mh = self.ensure_contact_swarm(&pk, contact_pk);
         self.tunnel
-            .send_peers_request(mh, None, self.hops)
+            .send_peers_request_when_ready(mh, None, self.hops)
             .await
             .map_err(|e| CoreError::State(format!("peers-request messagerie: {e}")))
     }

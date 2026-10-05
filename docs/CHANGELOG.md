@@ -3,6 +3,24 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Messagerie : résolution robuste sans circuit prêt (2026-10-06)
+
+Bug prod au premier « connect » sur un daemon frais : `resolve()` exigeait
+un circuit `READY` à `messaging_hops` sauts dans la milliseconde suivant le
+joint du swarm — `aucun circuit pour peers-request`, alors que le tick
+`circuits_tick` n'avait pas encore construit le vivier `DATA` (5 s).
+
+- `wait_ready_circuit_of_hops` : attente bornée (`circuit_timeout`, 60 s
+  pyipv8) qui déclenche `build_circuits_if_needed` puis scrute — utilisée
+  par `send_peers_request_when_ready` (resolve messagerie) et `create_e2e`
+  (connect). Les chemins périodiques (`swarm_lookup`, `estimate_swarm_size`)
+  gardent l'échec immédiat de `select_circuit` Python : ils retentent au
+  tick suivant.
+- `Ipv8Error::NotReady` : « pas encore prêt » distingué de `Malformed`
+  (ce n'est pas une erreur de wire — le demandeur peut retenter).
+- 2 tests de régression loopback : l'attente déclenche la construction
+  (circuit `READY` rendu), et `NotReady` borné sans pair candidat.
+
 ## 17c-5 revalidé : 2 Mio, 0 interdit — + deux durcissements harnais (2026-10-06)
 
 Second run vert complet (`leak-capture-20261006-011656`) : 2 097 152 o

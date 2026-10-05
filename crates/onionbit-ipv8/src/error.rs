@@ -21,6 +21,11 @@ pub enum Ipv8Error {
     /// Message inconnu pour cette community.
     #[error("message inconnu : id {0}")]
     UnknownMessage(u8),
+    /// Ressource pas encore prete (ex. circuit en construction) —
+    /// distinct de `Malformed` : ce n'est pas une erreur de wire, le
+    /// demandeur peut retenter plus tard.
+    #[error("ressource non prete : {0}")]
+    NotReady(&'static str),
     /// Erreur crypto sous-jacente.
     #[error(transparent)]
     Crypto(#[from] onionbit_crypto::CryptoError),
