@@ -361,6 +361,18 @@ impl MessagingService {
         self.events_tx.subscribe()
     }
 
+    /// Cle publique `pk_bin` de notre identite messagerie
+    /// (= cle d'identite du demon — exposition API).
+    pub fn public_key_bin(&self) -> Vec<u8> {
+        self.key.public_key().to_bin()
+    }
+
+    /// `messaging_hash` de notre propre swarm de presence
+    /// (exposition API : c'est l'adresse que nos contacts resolvent).
+    pub fn own_messaging_hash(&self) -> [u8; 20] {
+        self.own_mh
+    }
+
     /// Arret du service : quitte les swarms messagerie et stoppe les
     /// taches (les circuits e2e meurent avec leurs circuits tunnels).
     pub fn stop(&self) {

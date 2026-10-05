@@ -25,6 +25,12 @@ const List<NavDestinationSpec> kNavCatalog = [
     selectedIcon: Icons.search,
   ),
   NavDestinationSpec(
+    path: '/messages',
+    id: NavId.messages,
+    icon: Icons.forum_outlined,
+    selectedIcon: Icons.forum,
+  ),
+  NavDestinationSpec(
     path: '/diagnostic',
     id: NavId.diagnostic,
     icon: Icons.monitor_heart_outlined,

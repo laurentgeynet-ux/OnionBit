@@ -30,10 +30,14 @@ class SseEvent {
 /// doivent se rafraîchir (pull) sur réception plutôt que dépendre de
 /// l'ordre des événements.
 class SseClient {
-  SseClient(this._config, {http.Client? httpClient})
+  SseClient(this._config, {this.path = '/events', http.Client? httpClient})
     : _http = httpClient ?? createHttpClient();
 
   final AppConfig _config;
+
+  /// Chemin SSE sous `/api` (`/events` global,
+  /// `/messaging/events` messagerie — ADR-0011).
+  final String path;
   final http.Client _http;
 
   StreamSubscription<dynamic>? _sub;
@@ -59,7 +63,7 @@ class SseClient {
   void _connect() {
     if (_stopped) return;
     _sub?.cancel();
-    final request = http.Request('GET', _config.apiUri('/events'));
+    final request = http.Request('GET', _config.apiUri(path));
     if (_config.apiKey.isNotEmpty) {
       request.headers['X-Api-Key'] = _config.apiKey;
     }

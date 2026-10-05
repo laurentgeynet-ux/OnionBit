@@ -182,6 +182,41 @@ fn api_router(state: AppState) -> Router<AppState> {
             get(ipv8::get_swarm_size),
         )
         .route("/ipv8/tunnel/peers", get(ipv8::get_tunnel_peers))
+        // Messagerie e2e (ADR-0011 — extension Rust, pas de parite
+        // Python ; tout repond 404 quand `enable_messaging` est off).
+        .route("/messaging/stats", get(messaging::get_stats))
+        .route("/messaging/contacts", get(messaging::get_contacts))
+        .route(
+            "/messaging/contacts/{pk}",
+            delete(messaging::delete_contact),
+        )
+        .route("/messaging/contacts/pending", get(messaging::get_pending))
+        .route("/messaging/contacts/connect", post(messaging::post_connect))
+        .route(
+            "/messaging/contacts/{pk}/accept",
+            post(messaging::post_accept),
+        )
+        .route(
+            "/messaging/contacts/{pk}/refuse",
+            post(messaging::post_refuse),
+        )
+        .route(
+            "/messaging/contacts/{pk}/block",
+            post(messaging::post_block).delete(messaging::delete_block),
+        )
+        .route(
+            "/messaging/contacts/{pk}/messages",
+            get(messaging::get_messages).post(messaging::post_message),
+        )
+        .route(
+            "/messaging/contacts/{pk}/retention",
+            post(messaging::post_retention),
+        )
+        .route(
+            "/messaging/messages/{id}",
+            delete(messaging::delete_message),
+        )
+        .route("/messaging/events", get(messaging::get_events))
         .route("/ipv8/tunnel/guards", get(ipv8::get_tunnel_guards))
         .route("/ipv8/tunnel/peers/dht", get(ipv8::get_dht_peers))
         .route("/ipv8/tunnel/peers/pex", get(ipv8::get_pex_peers))

@@ -3,6 +3,37 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Messagerie ADR-0011, étape 40 — API REST/SSE + UI (2026-10-05)
+
+- **REST `/api/messaging/*`** (extension Rust — pas de parité
+  Python) : `stats` (clé publique locale, `messaging_hash`,
+  compteurs de drops), `contacts` + `contacts/pending`,
+  `contacts/connect` (résolution points d'introduction + liaison
+  e2e), `accept`/`refuse`/`block`/`unblock`/`DELETE contact`,
+  `GET/POST contacts/{pk}/messages` (historique borné, envoi —
+  `404` hors ligne = enregistré `failed`), `DELETE messages/{id}`,
+  `contacts/{pk}/retention`. Toutes les routes répondent
+  `404 « messagerie desactivee »` quand le service n'est pas
+  démarré — jamais de réponse partielle.
+- **SSE dédié** `GET /api/messaging/events` : relaie le
+  `broadcast` du service (`messaging_frame`, `messaging_bound`,
+  `messaging_pending`, `messaging_consent`, `messaging_undeliverable`)
+  — volontairement hors `Notifier` global : la messagerie reste un
+  flux opt-in.
+- **Accesseurs service** : `public_key_bin`, `own_messaging_hash`
+  (exposition identité/adresse à l'API).
+- **UI Flutter** `features/messaging` : nouvel onglet « Messages »
+  (`/messages`) — adresse locale copiable, demandes `pending`
+  actionnables (accepter/refuser/bloquer), liste contacts (état,
+  circuit lié, menus blocage/rétention/suppression), conversation
+  (historique inversé, statuts envoyé/livré/non livré, suppression
+  réelle au clic long), dialogue d'ajout par clé publique.
+  `SseClient` généralisé par `path` ; pont SSE → invalidation pull
+  (le flux est un indice de fraîcheur, pas une source fiable).
+  Clés l10n en/fr ; `flutter analyze` propre.
+- **Tests** : `messaging_desactivee_repond_404_sur_tous_les_
+  endpoints` couvre les 14 routes (MS-12 côté « off »).
+
 ## Messagerie ADR-0011, étape 39 — persistance + livraison (2026-10-05)
 
 - **Migration v15** : `msg_contacts` (pk, état, `send_seq`,

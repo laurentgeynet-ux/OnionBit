@@ -8,7 +8,7 @@ import '../../l10n/app_localizations.dart' show AppLocalizations;
 
 /// Identifiants des destinations top-level — les libellés affichés
 /// sont localisés via [NavDestinationSpecX.label] (ARB).
-enum NavId { downloads, search, diagnostic, settings, about }
+enum NavId { downloads, search, messages, diagnostic, settings, about }
 
 /// Description d'une destination de navigation top-level, partagée
 /// entre la sidebar, la `NavigationBar` compacte et le routeur —
@@ -42,6 +42,7 @@ extension NavDestinationSpecX on NavDestinationSpec {
   String label(AppLocalizations l10n) => switch (id) {
     NavId.downloads => l10n.navDownloads,
     NavId.search => l10n.navSearch,
+    NavId.messages => l10n.navMessages,
     NavId.diagnostic => l10n.navDiagnostic,
     NavId.settings => l10n.navSettings,
     NavId.about => l10n.navAbout,

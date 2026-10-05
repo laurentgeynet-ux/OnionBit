@@ -14,6 +14,7 @@ pub mod files;
 pub mod ipv8;
 pub mod libtorrent;
 pub mod logging;
+pub mod messaging;
 pub mod metadata;
 pub mod rss;
 pub mod search;
