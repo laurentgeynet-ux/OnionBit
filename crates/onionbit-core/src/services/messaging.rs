@@ -25,6 +25,8 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use onionbit_crypto::ipv8::keys::{LibNaClPublicKey, LibNaClSecretKey};
+use onionbit_db::messaging as dbm;
+use onionbit_db::Database;
 use onionbit_ipv8::UdpAddress;
 use onionbit_messaging::{
     derive_messaging_keys, messaging_hash, preflight, Frame, MessagingConfig, MessagingError,
@@ -98,6 +100,15 @@ pub enum MessagingEvent {
         contact: Vec<u8>,
         /// `circuit_id` lie.
         circuit_id: u32,
+    },
+    /// Echec de livraison borne et visible (ADR-0011 : online-only,
+    /// pas de file ni de re-emission — le message est enregistre
+    /// `failed` dans l'historique).
+    Undeliverable {
+        /// `pk_bin` du contact visé.
+        contact: Vec<u8>,
+        /// `id` de la trame perdue.
+        id: [u8; 16],
     },
 }
 
@@ -253,6 +264,9 @@ pub struct MessagingService {
     /// Seau a jetons global (toutes trames entrantes confondues —
     /// borne le cout codec+verification, MS-10).
     global_bucket: Mutex<Option<TokenBucket>>,
+    /// Persistance contacts+messages (`None` = memoire seule,
+    /// tests). En clair v1 — assume dans l'ADR.
+    db: Option<Arc<Database>>,
     /// Compteurs de drops (oracle des bancs + API).
     stats: MessagingStats,
     /// Emetteur d'evenements applicatifs.
@@ -269,11 +283,13 @@ impl MessagingService {
     ///
     /// `hops` = sauts des circuits `IP_SEEDER`/`RP_DOWNLOADER`
     /// (hors +1 swarm automatique — comme les `anon_hops` BT).
+    /// `db` = persistance (`None` = memoire seule, tests).
     pub fn start(
         tunnel: Arc<TunnelCommunity>,
         key: LibNaClSecretKey,
         cfg: MessagingConfig,
         hops: usize,
+        db: Option<Arc<Database>>,
     ) -> Arc<Self> {
         let own_mh = messaging_hash(&key.public_key());
         // `seeder_sk` = cle d'identite : le `seeder_pk` annonce par
@@ -293,13 +309,51 @@ impl MessagingService {
             swarms: Mutex::new(HashMap::new()),
             contacts: Mutex::new(HashMap::new()),
             circuits: Mutex::new(HashMap::new()),
+            db,
             stats: MessagingStats::default(),
             events_tx,
             stops: Mutex::new(Vec::new()),
         });
+        svc.load_state();
         svc.spawn_e2e_listener();
         svc.spawn_presence_monitor();
         svc
+    }
+
+    /// Restauration au restart (MS-11) : etat de consentement,
+    /// compteur `send_seq` et `recv_top` (fenetre reprise en
+    /// conservateur) de chaque contact persiste.
+    fn load_state(&self) {
+        let Some(db) = &self.db else { return };
+        let rows = match db.with(dbm::list_contacts) {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::warn!(error = %e, "restauration messagerie impossible");
+                return;
+            }
+        };
+        let mut contacts = self.contacts.lock().unwrap();
+        for row in rows {
+            let Ok(pk) = LibNaClPublicKey::from_bin(&row.public_key) else {
+                continue;
+            };
+            let mut c = Contact::active(pk, &self.cfg);
+            c.send_seq = row.send_seq.max(0) as u64;
+            if row.recv_top > 0 {
+                c.recv_window = RecvWindow::resume(&self.cfg, row.recv_top as u64);
+            }
+            match row.state.as_str() {
+                "blocked" => c.state = ContactState::Blocked,
+                "pending" => {
+                    c.state = ContactState::Pending;
+                    // Le TTL repart a la restauration (le pair peut
+                    // renvoyer un `hello` — le pending redevient utile).
+                    c.pending_since = now_secs();
+                }
+                _ => {}
+            }
+            contacts.insert(row.public_key, c);
+        }
     }
 
     /// Abonne un receveur aux evenements applicatifs.
@@ -380,9 +434,23 @@ impl MessagingService {
     /// sont `refuse_contact`/`block_contact`).
     pub async fn send(&self, contact_pk: &[u8], body: Vec<u8>) -> Result<[u8; 16]> {
         self.require_state(contact_pk, ContactState::Active)?;
-        let cid = self
-            .contact_circuit(contact_pk)
-            .ok_or(CoreError::InvalidState("messagerie : contact non lie"))?;
+        let Some(cid) = self.contact_circuit(contact_pk) else {
+            // Online-only : pas de file — le message est enregistre
+            // `failed` (visible en historique) et signale
+            // `Undeliverable` (MS-7).
+            let seq = self.peek_send_seq(contact_pk);
+            let f = Frame::new(MsgKind::Msg, seq, now_secs(), body);
+            self.persist_message(Self::msg_row(
+                contact_pk, "out", f.seq, f.ts, &f.body, "failed", &f.id,
+            ));
+            let _ = self.events_tx.send(MessagingEvent::Undeliverable {
+                contact: contact_pk.to_vec(),
+                id: f.id,
+            });
+            return Err(CoreError::InvalidState(
+                "messagerie : contact hors ligne — non delivre",
+            ));
+        };
         if !self.is_greeted(contact_pk) {
             self.send_frame(
                 contact_pk,
@@ -412,6 +480,7 @@ impl MessagingService {
             c.state = ContactState::Active;
             c.circuit
         };
+        self.persist_contact(contact_pk, ContactState::Active);
         if let Some(cid) = cid {
             // Notification au pair (best effort — le circuit peut
             // mourir entre-temps sans invalider l'acceptation).
@@ -453,6 +522,7 @@ impl MessagingService {
             c.pending_since = 0;
             messaging_hash(&c.pk)
         };
+        self.persist_contact(contact_pk, ContactState::Blocked);
         // Desarme l'acceptation e2e du swarm du contact.
         self.tunnel.leave_swarm(&mh);
         self.swarms.lock().unwrap().remove(&mh);
@@ -494,6 +564,50 @@ impl MessagingService {
             .map(|c| c.state)
     }
 
+    /// Retention des messages d'un contact : `retention_secs=0` =
+    /// conservation illimitee ; `secure_delete` zeroise le corps en
+    /// base avant le `DELETE` d'expiration (purge au tick du
+    /// moniteur de presence).
+    pub fn set_retention(
+        &self,
+        contact_pk: &[u8],
+        retention_secs: u64,
+        secure_delete: bool,
+    ) -> Result<()> {
+        if self.contact_state(contact_pk).is_none() {
+            return Err(CoreError::InvalidState("messagerie : contact inconnu"));
+        }
+        let Some(db) = &self.db else { return Ok(()) };
+        let now = now_secs() as i64;
+        db.with(|c| dbm::set_retention(c, contact_pk, retention_secs as i64, secure_delete, now))
+            .map_err(|e| CoreError::State(format!("retention messagerie: {e}")))
+    }
+
+    /// Historique borne d'un contact (le plus recent d'abord).
+    pub fn history(&self, contact_pk: &[u8], limit: u32) -> Result<Vec<dbm::MsgMessageRow>> {
+        let Some(db) = &self.db else {
+            return Ok(Vec::new());
+        };
+        db.with(|c| dbm::list_messages(c, contact_pk, limit))
+            .map_err(|e| CoreError::State(format!("historique messagerie: {e}")))
+    }
+
+    /// Suppression reelle d'un message (`DELETE` — pas de marqueur).
+    pub fn delete_message(&self, id: &[u8; 16]) -> Result<()> {
+        let Some(db) = &self.db else { return Ok(()) };
+        db.with(|c| dbm::delete_message(c, id))
+            .map_err(|e| CoreError::State(format!("suppression message: {e}")))
+    }
+
+    /// Contacts persistes (passe relais vers l'API — etape 40).
+    pub fn stored_contacts(&self) -> Result<Vec<dbm::MsgContactRow>> {
+        let Some(db) = &self.db else {
+            return Ok(Vec::new());
+        };
+        db.with(dbm::list_contacts)
+            .map_err(|e| CoreError::State(format!("liste contacts: {e}")))
+    }
+
     /// Compteurs de drops (instantane).
     pub fn stats_snapshot(&self) -> [(&'static str, u64); 7] {
         [
@@ -519,6 +633,95 @@ impl MessagingService {
         ]
     }
 
+    /// Persiste l'etat de consentement d'un contact (upsert — les
+    /// compteurs `seq` conserves cote DB par l'`ON CONFLICT`).
+    fn persist_contact(&self, pk_bin: &[u8], state: ContactState) {
+        let Some(db) = &self.db else { return };
+        let st = match state {
+            ContactState::Active => "active",
+            ContactState::Pending => "pending",
+            ContactState::Blocked => "blocked",
+        };
+        let (send_seq, recv_top) = {
+            let contacts = self.contacts.lock().unwrap();
+            contacts
+                .get(pk_bin)
+                .map(|c| (c.send_seq, c.recv_window.top().unwrap_or(0)))
+                .unwrap_or_default()
+        };
+        let now = now_secs() as i64;
+        let row = dbm::MsgContactRow {
+            public_key: pk_bin.to_vec(),
+            state: st.into(),
+            send_seq: send_seq as i64,
+            recv_top: recv_top as i64,
+            retention_secs: 0,
+            secure_delete: false,
+            created_at: now,
+            updated_at: now,
+        };
+        if let Err(e) = db.with(|c| dbm::upsert_contact(c, &row)) {
+            tracing::warn!(error = %e, "persistance contact messagerie");
+        }
+    }
+
+    /// Persiste les compteurs `seq` du contact (apres chaque trame
+    /// emise/admise — la reprise au restart est exacte).
+    fn persist_seqs(&self, pk_bin: &[u8]) {
+        let Some(db) = &self.db else { return };
+        let (send_seq, recv_top) = {
+            let contacts = self.contacts.lock().unwrap();
+            match contacts.get(pk_bin) {
+                Some(c) => (c.send_seq, c.recv_window.top().unwrap_or(0)),
+                None => return,
+            }
+        };
+        let now = now_secs() as i64;
+        if let Err(e) = db.with(|c| dbm::set_seqs(c, pk_bin, send_seq as i64, recv_top as i64, now))
+        {
+            tracing::warn!(error = %e, "persistance seqs messagerie");
+        }
+    }
+
+    /// Persiste un message (`direction` `in`/`out`, `status` de
+    /// livraison — voir [`dbm::MsgMessageRow`]).
+    fn persist_message(&self, row: dbm::MsgMessageRow) {
+        let Some(db) = &self.db else { return };
+        if let Err(e) = db.with(|c| dbm::insert_message(c, &row)) {
+            tracing::warn!(error = %e, "persistance message");
+        }
+    }
+
+    /// Ligne `msg_messages` prete a inserer.
+    fn msg_row(
+        contact_pk: &[u8],
+        direction: &'static str,
+        seq: u64,
+        ts: u64,
+        body: &[u8],
+        status: &'static str,
+        id: &[u8; 16],
+    ) -> dbm::MsgMessageRow {
+        dbm::MsgMessageRow {
+            id: id.to_vec(),
+            contact_pk: contact_pk.to_vec(),
+            direction: direction.into(),
+            seq: seq as i64,
+            ts: ts as i64,
+            body: body.to_vec(),
+            status: status.into(),
+            created_at: now_secs() as i64,
+        }
+    }
+
+    /// Statut de livraison d'un message emis (`acked`/`failed`).
+    fn set_msg_status(&self, id: &[u8; 16], status: &'static str) {
+        let Some(db) = &self.db else { return };
+        if let Err(e) = db.with(|c| dbm::set_message_status(c, id, status)) {
+            tracing::warn!(error = %e, "persistance statut message");
+        }
+    }
+
     /// Erreur si le contact existe et est `blocked`.
     fn require_not_blocked(&self, contact_pk: &[u8]) -> Result<()> {
         if self.contact_state(contact_pk) == Some(ContactState::Blocked) {
@@ -541,8 +744,14 @@ impl MessagingService {
         }
     }
 
-    /// Oublie completement un contact : etat, liaison, swarm.
+    /// Oublie completement un contact : etat, liaison, swarm,
+    /// persistance (`DELETE` reel — messages en cascade).
     async fn remove_contact(&self, contact_pk: &[u8]) {
+        if let Some(db) = &self.db {
+            if let Err(e) = db.with(|c| dbm::delete_contact(c, contact_pk)) {
+                tracing::warn!(error = %e, "suppression contact messagerie");
+            }
+        }
         let removed = self.contacts.lock().unwrap().remove(contact_pk);
         if let Some(c) = removed {
             let mh = messaging_hash(&c.pk);
@@ -574,6 +783,13 @@ impl MessagingService {
                 .filter_map(|pk| contacts.remove(&pk).map(|c| (pk, c.circuit)))
                 .collect()
         };
+        if let Some(db) = &self.db {
+            for (pk, _) in &expired {
+                if let Err(e) = db.with(|c| dbm::delete_contact(c, pk)) {
+                    tracing::warn!(error = %e, "purge contact expire");
+                }
+            }
+        }
         for (_, cid) in expired {
             if let Some(cid) = cid {
                 self.unbind_circuit(cid);
@@ -604,6 +820,17 @@ impl MessagingService {
             .and_then(|c| c.circuit)
     }
 
+    /// `send_seq` courant du contact (sans consommer — sert a
+    /// dater les messages `failed` hors ligne).
+    fn peek_send_seq(&self, contact_pk: &[u8]) -> u64 {
+        self.contacts
+            .lock()
+            .unwrap()
+            .get(contact_pk)
+            .map(|c| c.send_seq)
+            .unwrap_or_default()
+    }
+
     /// `hello` deja emis pour ce contact.
     fn is_greeted(&self, contact_pk: &[u8]) -> bool {
         self.contacts
@@ -619,13 +846,17 @@ impl MessagingService {
     /// jamais son swarm (acceptation e2e desarmee).
     fn ensure_contact_swarm(&self, pk: &LibNaClPublicKey, pk_bin: &[u8]) -> [u8; 20] {
         let mh = messaging_hash(pk);
-        let blocked = {
+        let (blocked, created) = {
             let mut contacts = self.contacts.lock().unwrap();
+            let existed = contacts.contains_key(pk_bin);
             let c = contacts
                 .entry(pk_bin.to_vec())
                 .or_insert_with(|| Contact::active(pk.clone(), &self.cfg));
-            c.state == ContactState::Blocked
+            (c.state == ContactState::Blocked, !existed)
         };
+        if created {
+            self.persist_contact(pk_bin, ContactState::Active);
+        }
         if !blocked {
             let mut swarms = self.swarms.lock().unwrap();
             if let std::collections::hash_map::Entry::Vacant(e) = swarms.entry(mh) {
@@ -659,13 +890,33 @@ impl MessagingService {
         let wire = frame
             .seal(&self.key, &send_key, &self.cfg)
             .map_err(|e| CoreError::State(format!("seal trame: {e}")))?;
+        if kind == MsgKind::Msg {
+            self.persist_message(Self::msg_row(
+                contact_pk,
+                "out",
+                seq,
+                frame.ts,
+                &frame.body,
+                "sent",
+                &frame.id,
+            ));
+        }
+        self.persist_seqs(contact_pk);
         if let Err(e) = self
             .tunnel
             .send_data(cid, &unspecified(), &unspecified(), &wire)
             .await
         {
             // Le circuit est mort entre-temps : delier pour que le
-            // prochain envoi retente une liaison.
+            // prochain envoi retente une liaison ; le message passe
+            // `failed` (visible — pas de file).
+            if kind == MsgKind::Msg {
+                self.set_msg_status(&frame.id, "failed");
+                let _ = self.events_tx.send(MessagingEvent::Undeliverable {
+                    contact: contact_pk.to_vec(),
+                    id: frame.id,
+                });
+            }
             self.unbind_circuit(cid);
             return Err(CoreError::State(format!("send_data messagerie: {e}")));
         }
@@ -805,7 +1056,7 @@ impl MessagingService {
     /// parse ([`preflight`]) -> seau global -> codec+AEAD ->
     /// identification/signature -> etat de consentement -> seau
     /// du contact -> anti-replay.
-    fn handle_incoming(&self, cid: u32, keys: &MessagingKeys, data: &[u8]) {
+    fn handle_incoming(self: &Arc<Self>, cid: u32, keys: &MessagingKeys, data: &[u8]) {
         if let Err(e) = preflight(data, &self.cfg) {
             self.stats.codec.fetch_add(1, Ordering::Relaxed);
             tracing::debug!(circuit_id = cid, error = %e, "trame messagerie rejetee au prefiltre");
@@ -891,7 +1142,13 @@ impl MessagingService {
                     if c.recv_window.seen_id(&raw.id) {
                         self.stats.replay.fetch_add(1, Ordering::Relaxed);
                         false
-                    } else if c.bucket.as_mut().is_some_and(|b| !b.take()) {
+                    } else if raw.kind != MsgKind::Ack
+                        && c.bucket.as_mut().is_some_and(|b| !b.take())
+                    {
+                        // `ack` exempte du seau : trame de controle
+                        // verifiee/dedupe — elle ne doit pas faire
+                        // perdre de `msg` sous rafale (le seau global
+                        // borne toujours son cout codec+signature).
                         self.stats.rate_contact.fetch_add(1, Ordering::Relaxed);
                         false
                     } else {
@@ -908,6 +1165,32 @@ impl MessagingService {
             }
         };
         if admitted {
+            self.persist_seqs(&pk_bin);
+            match raw.kind {
+                // ACK applicatif : `body` = `id` de la trame
+                // acquittee -> statut `acked` de notre `out`.
+                MsgKind::Ack => {
+                    if let Ok(id) = <[u8; 16]>::try_from(raw.body.as_slice()) {
+                        self.set_msg_status(&id, "acked");
+                    }
+                }
+                // Message : historique `received` + ACK applicatif
+                // en retour (`body` = `id` de cette trame).
+                MsgKind::Msg => {
+                    self.persist_message(Self::msg_row(
+                        &pk_bin, "in", raw.seq, raw.ts, &raw.body, "received", &raw.id,
+                    ));
+                    let svc = self.clone();
+                    let pk = pk_bin.clone();
+                    let ack_id = raw.id;
+                    tokio::spawn(async move {
+                        let _ = svc
+                            .send_frame(&pk, cid, MsgKind::Ack, ack_id.to_vec())
+                            .await;
+                    });
+                }
+                _ => {}
+            }
             let _ = self.events_tx.send(MessagingEvent::Frame {
                 contact: pk_bin,
                 kind: raw.kind,
@@ -962,6 +1245,7 @@ impl MessagingService {
                     c.circuit = Some(cid);
                     contacts.insert(pk_bin.to_vec(), c);
                 }
+                self.persist_contact(pk_bin, ContactState::Pending);
                 self.bind_circuit(cid, pk_bin, keys);
                 let _ = self.events_tx.send(MessagingEvent::Consent {
                     contact: pk_bin.to_vec(),
@@ -1049,6 +1333,14 @@ impl MessagingService {
                 }
                 crate::ipv8_stack::ensure_introduction_points(&svc.tunnel, svc.own_mh);
                 svc.purge_expired_pending();
+                // Retention : purge des messages expires (DELETE
+                // reel, `secure_delete` zeroise le corps avant).
+                if let Some(db) = &svc.db {
+                    let now = now_secs() as i64;
+                    if let Err(e) = db.with(|c| dbm::prune_expired(c, now)) {
+                        tracing::warn!(error = %e, "purge retention messagerie");
+                    }
+                }
                 let t = svc.tunnel.clone();
                 let mh = svc.own_mh;
                 tokio::spawn(async move {
@@ -1071,32 +1363,15 @@ mod tests {
     /// depend pas du transport : les liaisons sont injectees a la
     /// main et `handle_incoming` est pilote directement).
     async fn make_service(hops: usize) -> (Arc<MessagingService>, LibNaClSecretKey) {
-        let key = LibNaClSecretKey::generate();
-        let ep = UdpEndpoint::bind("127.0.0.1:0").await.unwrap();
-        let ep_run = ep.clone();
-        tokio::spawn(async move {
-            let _ = ep_run.run().await;
-        });
-        let tunnel = TunnelCommunity::new_with_id(
-            key.clone(),
-            Arc::new(Network::default()),
-            ep,
-            TunnelSettings {
-                // Pas de points d'introduction automatiques en test.
-                max_intro_points: 0,
-                ..TunnelSettings::default()
-            },
-            TUNNEL_COMMUNITY_ID,
-        )
-        .await;
+        let (tunnel, key) = bare_tunnel().await;
         (
-            MessagingService::start(tunnel, key.clone(), MessagingConfig::default(), hops),
+            MessagingService::start(tunnel, key.clone(), MessagingConfig::default(), hops, None),
             key,
         )
     }
 
-    /// `make_service` avec une `MessagingConfig` explicite.
-    async fn make_service_cfg(cfg: MessagingConfig) -> Arc<MessagingService> {
+    /// Tunnel loopback de test (sans service — pour `start` manuel).
+    async fn bare_tunnel() -> (Arc<TunnelCommunity>, LibNaClSecretKey) {
         let key = LibNaClSecretKey::generate();
         let ep = UdpEndpoint::bind("127.0.0.1:0").await.unwrap();
         let ep_run = ep.clone();
@@ -1114,7 +1389,19 @@ mod tests {
             TUNNEL_COMMUNITY_ID,
         )
         .await;
-        MessagingService::start(tunnel, key, cfg, 0)
+        (tunnel, key)
+    }
+
+    /// `make_service` avec une `MessagingConfig` explicite.
+    async fn make_service_cfg(cfg: MessagingConfig) -> Arc<MessagingService> {
+        let (tunnel, key) = bare_tunnel().await;
+        MessagingService::start(tunnel, key, cfg, 0, None)
+    }
+
+    /// `make_service` sur une `Database` memoire (persistance).
+    async fn make_service_db(db: Arc<Database>) -> Arc<MessagingService> {
+        let (tunnel, key) = bare_tunnel().await;
+        MessagingService::start(tunnel, key, MessagingConfig::default(), 0, Some(db))
     }
 
     /// Injecte un circuit non lie (`contact: None`) — le repondant
@@ -1155,6 +1442,8 @@ mod tests {
         c.circuit = Some(cid);
         c.greeted = true;
         svc.contacts.lock().unwrap().insert(pk_bin.clone(), c);
+        // La FK `msg_messages.contact_pk` exige la ligne contact.
+        svc.persist_contact(&pk_bin, ContactState::Active);
         pk_bin
     }
 
@@ -1552,6 +1841,174 @@ mod tests {
         let peer = LibNaClSecretKey::generate();
         let w = wire(&peer, 0, &[1u8; 32], b"ok");
         preflight(&w, &cfg).expect("trame valide au prefiltre");
+    }
+
+    /// MS-7 — offline borne et visible : `send` sans circuit ->
+    /// erreur + evenement `Undeliverable` + ligne `failed` dans
+    /// l'historique (pas de file, pas de re-emission).
+    #[tokio::test]
+    async fn offline_undeliverable_visible_en_historique() {
+        let db = Arc::new(Database::memory().unwrap());
+        let svc = make_service_db(db.clone()).await;
+        let peer = LibNaClSecretKey::generate();
+        // Contact Active sans circuit lie (offline).
+        let pk_bin = bind(
+            &svc,
+            0,
+            &peer,
+            &MessagingKeys {
+                send: [1u8; 32],
+                recv: [2u8; 32],
+            },
+        );
+        svc.contacts
+            .lock()
+            .unwrap()
+            .get_mut(&pk_bin)
+            .expect("contact")
+            .circuit = None;
+        svc.circuits.lock().unwrap().remove(&0);
+        let mut events = svc.subscribe();
+
+        assert!(svc.send(&pk_bin, b"perdu".to_vec()).await.is_err());
+        let ev = events.try_recv().expect("Undeliverable attendu");
+        let id = match ev {
+            MessagingEvent::Undeliverable { contact, id } => {
+                assert_eq!(contact, pk_bin);
+                id
+            }
+            _ => panic!("Undeliverable attendu, recu {ev:?}"),
+        };
+        let hist = svc.history(&pk_bin, 10).unwrap();
+        assert_eq!(hist.len(), 1);
+        assert_eq!(hist[0].status, "failed");
+        assert_eq!(hist[0].id, id.to_vec());
+    }
+
+    /// MS-11 — restart : etat de consentement, `send_seq` et
+    /// `recv_top` restaures — un `seq` rejoue sous `recv_top` est
+    /// refuse par la fenetre reprise (conservateur).
+    #[tokio::test]
+    async fn restart_restaure_contacts_et_seqs() {
+        let db = Arc::new(Database::memory().unwrap());
+        let peer = LibNaClSecretKey::generate();
+        let keys = MessagingKeys {
+            send: [1u8; 32],
+            recv: [2u8; 32],
+        };
+        let pk_bin = {
+            let svc = make_service_db(db.clone()).await;
+            let pk_bin = bind(&svc, 7, &peer, &keys);
+            // Livre une trame entrante : `recv_top` + historique.
+            let w = wire(&peer, 5, &keys.recv, b"avant restart");
+            svc.handle_incoming(7, &keys, &w);
+            // Un `seq` sortant persiste via `persist_seqs`.
+            {
+                let mut contacts = svc.contacts.lock().unwrap();
+                contacts.get_mut(&pk_bin).expect("contact").send_seq = 3;
+            }
+            svc.persist_seqs(&pk_bin);
+            svc.persist_contact(&pk_bin, ContactState::Active);
+            pk_bin
+        };
+        // Nouveau service sur la meme base : restaure l'etat.
+        let svc2 = make_service_db(db).await;
+        assert_eq!(
+            svc2.contact_state(&pk_bin),
+            Some(ContactState::Active),
+            "contact restaure"
+        );
+        assert_eq!(svc2.history(&pk_bin, 10).unwrap().len(), 1);
+        unbound(&svc2, 9, &keys);
+        // `seq <= recv_top` hors dedup (cache vide au restart) ->
+        // refuse par la fenetre reprise.
+        let old = wire(&peer, 5, &keys.recv, b"rejeu");
+        svc2.handle_incoming(9, &keys, &old);
+        assert_eq!(svc2.stats.replay.load(Ordering::Relaxed), 1);
+        // `seq` neuf : admis (historique -> 2 lignes entrantes).
+        let new = wire(&peer, 6, &keys.recv, b"apres restart");
+        svc2.handle_incoming(9, &keys, &new);
+        let hist = svc2.history(&pk_bin, 10).unwrap();
+        assert_eq!(hist.len(), 2, "trame post-restart persistee");
+    }
+
+    /// MS-11 — ACK applicatif : un `ack` entrant passe le `out`
+    /// correspondant a `acked` ; un `msg` entrant est persiste
+    /// `received`.
+    #[tokio::test]
+    async fn ack_applicatif_et_historique() {
+        let db = Arc::new(Database::memory().unwrap());
+        let svc = make_service_db(db).await;
+        let peer = LibNaClSecretKey::generate();
+        let keys = MessagingKeys {
+            send: [1u8; 32],
+            recv: [2u8; 32],
+        };
+        let pk_bin = bind(&svc, 11, &peer, &keys);
+
+        // `msg` entrant -> ligne `received`.
+        let w = wire(&peer, 0, &keys.recv, b"recu");
+        svc.handle_incoming(11, &keys, &w);
+        let hist = svc.history(&pk_bin, 10).unwrap();
+        assert_eq!(hist.len(), 1);
+        assert_eq!(hist[0].status, "received");
+        assert_eq!(hist[0].direction, "in");
+
+        // `ack` entrant -> notre `out` passe `acked`.
+        let our_id = [7u8; 16];
+        svc.persist_message(MessagingService::msg_row(
+            &pk_bin, "out", 0, 1, b"emis", "sent", &our_id,
+        ));
+        let ack = Frame::new(MsgKind::Ack, 1, 1, our_id.to_vec())
+            .seal(&peer, &keys.recv, &MessagingConfig::default())
+            .unwrap();
+        svc.handle_incoming(11, &keys, &ack);
+        let hist = svc.history(&pk_bin, 10).unwrap();
+        let out = hist.iter().find(|m| m.direction == "out").unwrap();
+        assert_eq!(out.status, "acked");
+    }
+
+    /// MS-11 — retention : expiration -> `DELETE` reel (le corps
+    /// est zeroise avant en `secure_delete` — verifie via la purge
+    /// DB directe) ; `delete_message` supprime sans marqueur.
+    #[tokio::test]
+    async fn retention_et_suppression_reelle() {
+        let db = Arc::new(Database::memory().unwrap());
+        let svc = make_service_db(db.clone()).await;
+        let peer = LibNaClSecretKey::generate();
+        let keys = MessagingKeys {
+            send: [1u8; 32],
+            recv: [2u8; 32],
+        };
+        let pk_bin = bind(&svc, 13, &peer, &keys);
+        svc.persist_contact(&pk_bin, ContactState::Active);
+        svc.set_retention(&pk_bin, 60, true).unwrap();
+
+        // Message date -> insere avec `created_at` ancien en DB.
+        svc.persist_message(MessagingService::msg_row(
+            &pk_bin, "in", 0, 1, b"vieux", "received", &[1u8; 16],
+        ));
+        svc.persist_message(MessagingService::msg_row(
+            &pk_bin, "in", 1, 1, b"neuf", "received", &[2u8; 16],
+        ));
+        // Vieillit artificiellement le premier message.
+        db.with(|c| {
+            c.execute(
+                "UPDATE msg_messages SET created_at=1 WHERE id=?1",
+                rusqlite::params![[1u8; 16]],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+        let now = now_secs() as i64;
+        db.with(|c| dbm::prune_expired(c, now)).unwrap();
+        let hist = svc.history(&pk_bin, 10).unwrap();
+        assert_eq!(hist.len(), 1, "le message expire est supprime");
+        assert_eq!(hist[0].id, vec![2u8; 16]);
+
+        // Suppression explicite reelle.
+        svc.delete_message(&[2u8; 16]).unwrap();
+        assert!(svc.history(&pk_bin, 10).unwrap().is_empty());
     }
 
     /// `IntroductionPoint` factice pour `connect` (jamais atteint —

@@ -157,8 +157,8 @@ async fn messaging_cycle_complet_a_vers_b() {
         announce_interval: Duration::from_secs(1),
         ..Default::default()
     };
-    let b_svc = MessagingService::start(b.tunnel.clone(), b.key.clone(), cfg.clone(), 0);
-    let a_svc = MessagingService::start(a.tunnel.clone(), a.key.clone(), cfg, 1);
+    let b_svc = MessagingService::start(b.tunnel.clone(), b.key.clone(), cfg.clone(), 0, None);
+    let a_svc = MessagingService::start(a.tunnel.clone(), a.key.clone(), cfg, 1, None);
     let mut b_events = b_svc.subscribe();
     let mut a_events = a_svc.subscribe();
 

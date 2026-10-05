@@ -3,6 +3,32 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Messagerie ADR-0011, étape 39 — persistance + livraison (2026-10-05)
+
+- **Migration v15** : `msg_contacts` (pk, état, `send_seq`,
+  `recv_top`, `retention_secs`, `secure_delete`) et `msg_messages`
+  (id, FK cascade, direction, seq, ts, body, statut
+  `received|sent|acked|failed`) — persistance en clair v1 assumée
+  dans l'ADR. Module `onionbit-db::messaging` (propriétaire des
+  tables).
+- **Suppression réelle** : `DELETE` partout (contact → cascade
+  messages) ; rétention optionnelle par contact purgée au tick du
+  moniteur — `secure_delete` zeroise `body` avant le `DELETE`.
+- **ACK applicatif** : chaque `msg` livré renvoie `ack(id)` ; un
+  `ack` entrant passe le `out` correspondant à `acked` — exempté
+  du seau contact (contrôle vérifié et dédupé : il ne doit pas
+  faire perdre de `msg` sous rafale).
+- **Offline borné** : `send` sans circuit → erreur + événement
+  `Undeliverable` + ligne `failed` visible dans `history()` —
+  jamais de file ni de réémission automatique (MS-7).
+- **Restart (MS-11)** : `load_state` restaure état de
+  consentement, `send_seq` et `recv_top` (`RecvWindow::resume` —
+  bitmap reconstruit conservateur : `top` marqué vu).
+- **API service** : `history`, `stored_contacts`, `set_retention`,
+  `delete_message` — relais REST/SSE = étape 40.
+- **Tests** : 15 tests messagerie verts (offline, restart,
+  ack, rétention) + loopback à jour.
+
 ## Messagerie ADR-0011, étape 38 — consentement + anti-abus (2026-10-05)
 
 - **`ContactState { Active, Pending, Blocked }`** : un `hello`

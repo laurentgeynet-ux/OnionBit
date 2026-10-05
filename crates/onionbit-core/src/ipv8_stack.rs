@@ -1737,6 +1737,7 @@ impl Ipv8Stack {
                     key.clone(),
                     onionbit_messaging::MessagingConfig::default(),
                     config.messaging_hops,
+                    Some(db.clone()),
                 )),
                 None => {
                     tracing::warn!(

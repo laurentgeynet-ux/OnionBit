@@ -290,6 +290,33 @@ DELETE FROM torrent_state WHERE infohash NOT IN
    AND rowid NOT IN (SELECT health_rowid FROM channel_node
                      WHERE health_rowid IS NOT NULL);
 ",
+    // v15 : messagerie ADR-0011 — contacts (consentement, seq
+    // sortant, retention) et messages (direction, seq, statut de
+    // livraison). Persistance en clair v1 (assume dans l'ADR) ;
+    // `secure_delete` zeroise le corps avant le DELETE a l'expiration.
+    "
+CREATE TABLE msg_contacts (
+    public_key     BLOB PRIMARY KEY,
+    state          TEXT NOT NULL CHECK (state IN ('active','pending','blocked')),
+    send_seq       INTEGER NOT NULL DEFAULT 0,
+    recv_top       INTEGER NOT NULL DEFAULT 0,
+    retention_secs INTEGER NOT NULL DEFAULT 0,
+    secure_delete  INTEGER NOT NULL DEFAULT 0,
+    created_at     INTEGER NOT NULL,
+    updated_at     INTEGER NOT NULL
+);
+CREATE TABLE msg_messages (
+    id          BLOB PRIMARY KEY,
+    contact_pk  BLOB NOT NULL REFERENCES msg_contacts(public_key) ON DELETE CASCADE,
+    direction   TEXT NOT NULL CHECK (direction IN ('in','out')),
+    seq         INTEGER NOT NULL,
+    ts          INTEGER NOT NULL,
+    body        BLOB NOT NULL,
+    status      TEXT NOT NULL CHECK (status IN ('received','sent','acked','failed')),
+    created_at  INTEGER NOT NULL
+);
+CREATE INDEX idx_msg_messages_contact ON msg_messages(contact_pk, ts);
+",
 ];
 
 /// Applique les migrations en attente sur une connexion ouverte.

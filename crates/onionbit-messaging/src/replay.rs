@@ -54,6 +54,25 @@ impl RecvWindow {
         }
     }
 
+    /// Fenetre reprise apres restart (ADR-0011, etape 39) : `top`
+    /// est le plus grand `seq` admis avant l'arret — le bitmap ne
+    /// survit pas, donc `top` est marque vu (conservateur : un rejeu
+    /// de `top` est refuse, les `seq` plus anciens repassent une
+    /// fois dans la fenetre — compromis documente, la dedup `id`
+    /// absorbant les re-emissions honnetes tant que son cache tient).
+    pub fn resume(cfg: &MessagingConfig, top: u64) -> Self {
+        let mut w = Self::new(cfg);
+        w.top = Some(top);
+        w.bitmap = 1;
+        w
+    }
+
+    /// Plus grand `seq` admis (`None` avant la premiere trame) —
+    /// persiste pour la reprise au restart.
+    pub fn top(&self) -> Option<u64> {
+        self.top
+    }
+
     /// `id` deja accepte ? — prefiltre de dedup sans consommer la
     /// fenetre : une re-emission honnete ne doit pas consommer le
     /// budget de debit du contact (le budget se prend APRES ce
