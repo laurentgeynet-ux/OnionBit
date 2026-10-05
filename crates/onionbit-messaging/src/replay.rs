@@ -103,10 +103,15 @@ impl RecvWindow {
                 self.bitmap |= bit;
             }
             Some(top) => {
-                // seq > top : la fenetre avance (saturer le decalage
-                // — un saut au-dela de 64 vide simplement le bitmap).
-                let shift = (seq - top).min(64);
-                self.bitmap = (self.bitmap << shift) | 1;
+                // seq > top : la fenetre avance (un saut au-dela de
+                // la fenetre vide simplement le bitmap — pas de
+                // troncature de decalage possible).
+                let shift = seq - top;
+                self.bitmap = if shift >= 64 {
+                    1
+                } else {
+                    (self.bitmap << shift) | 1
+                };
                 self.top = Some(seq);
             }
             None => {
@@ -206,6 +211,23 @@ mod tests {
         assert!(matches!(
             w.admit(0, &[0u8; MSG_ID_LEN]),
             Err(MessagingError::Replayed)
+        ));
+    }
+
+    /// Un saut de seq >= 64 ne doit pas paniquer par overflow de
+    /// decalage de bits ; un saut > u32::MAX vide aussi le bitmap
+    /// (un ancien seq dans la plage tronquee ne doit pas revenir).
+    #[test]
+    fn grand_saut_seq_ne_panique_pas() {
+        let mut w = window();
+        w.admit(0, &[1; MSG_ID_LEN]).unwrap();
+        w.admit(64, &[2; MSG_ID_LEN]).unwrap();
+        w.admit(200, &[3; MSG_ID_LEN]).unwrap();
+        w.admit(0xffff_ffff_ffff_ffff, &[4; MSG_ID_LEN]).unwrap();
+        // Apres le saut geant, un seq de l'ancienne fenetre est trop vieux.
+        assert!(matches!(
+            w.admit(200, &[5; MSG_ID_LEN]),
+            Err(MessagingError::TooOld)
         ));
     }
 }
