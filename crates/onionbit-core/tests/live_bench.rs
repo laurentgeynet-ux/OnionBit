@@ -1077,21 +1077,10 @@ async fn live_flotte_10_restart() {
     }
     // Les magnets spawnés ci-dessus materialisent leur download a la
     // resolution : la lane n'est verifiable qu'une fois l'objet moteur
-    // cree — le `wait_until` de progression en couvre l'attente.
-    for t in fleet.torrents.iter().filter(|t| t.magnet) {
-        assert!(
-            wait_until(Duration::from_secs(60), || {
-                session
-                    .owner_engine_hops(&t.ih)
-                    .map(|h| h == t.hops)
-                    .unwrap_or(false)
-            })
-            .await,
-            "{} : magnet resolu sur la mauvaise lane",
-            t.name
-        );
-    }
-
+    // cree. La verification des hops est fusionnee dans la boucle de
+    // progression ci-dessous — son `wait_until` couvre l'attente de
+    // materialisation (sous charge CI, 60 s seuls peuvent ne pas
+    // suffire a la resolution magnet + spawn moteur).
     // Tous progressent (ou terminent) avant le kill : le seeder est
     // re-injecte a chaque scrutation. En mode offline (pas de
     // DHT/LSD/trackers) une tentative de connexion initiale perdue —
@@ -1124,6 +1113,16 @@ async fn live_flotte_10_restart() {
                 t.hops,
                 session.owner_engine_hops(&t.ih),
                 session.is_pending(&t.ih)
+            );
+        }
+        // Lane verifiee post-materialisation : le moteur existe
+        // forcement ici (progress > 0 ou finished).
+        if t.magnet {
+            assert_eq!(
+                session.owner_engine_hops(&t.ih),
+                Some(t.hops),
+                "{} : magnet resolu sur la mauvaise lane",
+                t.name
             );
         }
     }
@@ -1766,13 +1765,26 @@ fn live_crash_pending_magnet_et_restart() {
                     }
                 }
                 // Pret a tuer : les 2 materiels progressent et le
-                // magnet lane 2 est en pending.
+                // magnet lane 2 est en pending. Le seed est
+                // re-injecte a chaque scrutation : en mode offline
+                // une tentative de connexion initiale perdue
+                // (handshake SOCKS/uTP transitoire) n'est jamais
+                // retentee par le moteur — meme correction que la
+                // boucle de progression de live_flotte_10_restart.
                 let ok = wait_until(Duration::from_secs(60), || {
-                    let materialized = session
-                        .downloads()
+                    let dls: Vec<_> = add_specs
                         .iter()
-                        .all(|d| d.progress_bytes > 0 || d.finished)
-                        && session.downloads().len() == 2;
+                        .filter(|(_, _, m, _)| !*m)
+                        .filter_map(|(ih, _, _, _)| session.find_download_hex(ih))
+                        .collect();
+                    for d in &dls {
+                        d.add_peer(seed_addr);
+                    }
+                    let materialized = dls.len() == 2
+                        && dls.iter().all(|d| {
+                            let st = d.stats();
+                            st.progress_bytes > 0 || st.finished
+                        });
                     let pending = session.pending_downloads().iter().any(|p| p.anon_hops == 2);
                     materialized && pending
                 })
