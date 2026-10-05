@@ -353,6 +353,13 @@ pub struct ExtInfo {
     /// Datagrammes `ATTEST` emis (publication + re-emission
     /// gossip) — doit retomber a zero quand le gossip s'eteint.
     pub attest_tx: u64,
+    /// Datagrammes `hello` emis (sondage + reponse) — l'envoi vers
+    /// un pair muet est borne par `hello_cooldown`.
+    pub hello_tx: u64,
+    /// Pairs distincts sondes dans la fenetre de cooldown courante
+    /// (`probed`) — les pairs legacy verifies y figurent : un pair
+    /// Tribler recoit au plus un `hello` par cooldown.
+    pub hello_probed: usize,
 }
 
 /// Communaute d'extension OnionBit-only : `hello` lazy + peer set
@@ -389,6 +396,8 @@ pub struct OnionbitExtCommunity {
     attest_stored: AtomicU64,
     /// Compteurs du chemin `ATTEST` (`ExtInfo` — oracles de banc).
     attest_tx: AtomicU64,
+    /// Compteur `hello` emis (`ExtInfo` — oracle « sondage borne »).
+    hello_tx: AtomicU64,
 }
 
 impl OnionbitExtCommunity {
@@ -414,6 +423,7 @@ impl OnionbitExtCommunity {
             attest_dropped: AtomicU64::new(0),
             attest_stored: AtomicU64::new(0),
             attest_tx: AtomicU64::new(0),
+            hello_tx: AtomicU64::new(0),
         });
         let prefix = prefix_of(&EXT_COMMUNITY_ID);
         let c = community.clone();
@@ -449,6 +459,7 @@ impl OnionbitExtCommunity {
         }
         .pack(&mut w);
         let pkt = Packet::sign_no_dist(&EXT_COMMUNITY_ID, msg::HELLO, &self.key, &w.into_bytes());
+        self.hello_tx.fetch_add(1, Ordering::Relaxed);
         if let Err(e) = self.endpoint.send_to(addr, &pkt).await {
             tracing::debug!(error = %e, target = ?addr, "hello ext perdu");
         }
@@ -805,6 +816,8 @@ impl OnionbitExtCommunity {
             attest_dropped: self.attest_dropped.load(Ordering::Relaxed),
             attest_stored: self.attest_stored.load(Ordering::Relaxed),
             attest_tx: self.attest_tx.load(Ordering::Relaxed),
+            hello_tx: self.hello_tx.load(Ordering::Relaxed),
+            hello_probed: self.probed.lock().unwrap().len(),
         }
     }
 

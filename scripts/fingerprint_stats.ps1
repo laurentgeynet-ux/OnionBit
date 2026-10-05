@@ -29,7 +29,10 @@ param(
     [string]$ApiKey = "",
     [int]$DurationMin = 20,
     [int]$IntervalSec = 5,
-    [string]$OutCsv = ""
+    [string]$OutCsv = "",
+    # ADR-0015 : si fourni, chaque tick echantillonne aussi
+    # GET /api/ipv8/ext (compteurs hello/attest) vers ce CSV.
+    [string]$ExtCsv = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -43,6 +46,11 @@ if ($ApiKey -ne "") { $headers["X-Api-Key"] = $ApiKey }
 
 "ts,overlay,msg,num_up,num_down,bytes_up,bytes_down,circuits_ready,circuits_total" |
     Out-File $OutCsv -Encoding utf8
+
+if ($ExtCsv -ne "") {
+    "ts,peer_count,hello_tx,hello_probed,attest_rx,attest_dropped,attest_stored,attest_tx" |
+        Out-File $ExtCsv -Encoding utf8
+}
 
 $deadline = (Get-Date).AddMinutes($DurationMin)
 $samples = 0
@@ -112,6 +120,26 @@ while ((Get-Date) -lt $deadline) {
         "$ts,(db),size,0,0,$($ts2.tribler_statistics.db_size),0,$ready,$total" |
             Out-File $OutCsv -Append -Encoding utf8
     } catch {}
+
+    # Compteurs ext (ADR-0015) — memes lignes quelle que soit la
+    # cible ; quand ext est desactive l'endpoint repond `enabled:false`
+    # avec des compteurs a zero.
+    if ($ExtCsv -ne "") {
+        try {
+            $x = Invoke-RestMethod -Uri "$ApiBase/api/ipv8/ext" `
+                -Headers $headers -TimeoutSec $IntervalSec
+            $e = $x.ext
+            $pc = if ($null -ne $e.peer_count) { $e.peer_count } else { 0 }
+            $ht = if ($null -ne $e.hello_tx) { $e.hello_tx } else { 0 }
+            $hp = if ($null -ne $e.hello_probed) { $e.hello_probed } else { 0 }
+            $ar = if ($null -ne $e.attest_rx) { $e.attest_rx } else { 0 }
+            $ad = if ($null -ne $e.attest_dropped) { $e.attest_dropped } else { 0 }
+            $as = if ($null -ne $e.attest_stored) { $e.attest_stored } else { 0 }
+            $at = if ($null -ne $e.attest_tx) { $e.attest_tx } else { 0 }
+            "$ts,$pc,$ht,$hp,$ar,$ad,$as,$at" |
+                Out-File $ExtCsv -Append -Encoding utf8
+        } catch {}
+    }
 
     $elapsed = ((Get-Date) - $t0).TotalSeconds
     $wait = $IntervalSec - $elapsed

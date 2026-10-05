@@ -36,6 +36,12 @@ param(
     [int]   $IntervalSec = 5,
     [switch]$WithAnonDownload,
     [switch]$WithMessaging,
+    # ADR-0015 (banc T4) : active `ext/enabled` sur les 4 noeuds
+    # OnionBit ; les suiveurs de curateur pointent sur A1, qui publie
+    # une attestation ~60 s apres le debut de l'echantillonnage —
+    # le delta publish puis extinction du gossip est mesure dans
+    # ext_onionbit.csv (compteurs rx/dropped/stored/tx, hello_*).
+    [switch]$WithExt,
     [string]$OutDir     = ("target\fingerprint-mesh-" + (Get-Date -Format 'yyyyMMdd-HHmmss')),
     [string]$TriblerExe = $(if ($env:TRIBLER_EXE) { $env:TRIBLER_EXE } else { 'C:\Program Files (x86)\Tribler\Tribler.exe' })
 )
@@ -99,26 +105,40 @@ try {
     # forcee pour que `on_node_discovered` accepte les pairs LAN.
     # A1 : racine + seul exit (EXIT_BT) — sortie imposee des circuits.
     New-Item -ItemType Directory -Force -Path $A1.Dir | Out-Null
+    $cfgA1 = @{ tunnel_community = @{ enabled = $true; exitnode_enabled = $true;
+                                      messaging_enabled = [bool]$WithMessaging };
+                ipv8 = @{ bootstrap = @{ override = @() };
+                          interfaces = @( @{ interface = 'UDPIPv4'; ip = '127.0.0.1'; port = $A1.Ipv8 } );
+                          estimated_wan = "127.0.0.1:$($A1.Ipv8)" } }
+    if ($WithExt) { $cfgA1['ext'] = @{ enabled = $true } }
     [System.IO.File]::WriteAllText((Join-Path $A1.Dir 'configuration.json'),
-        (@{ tunnel_community = @{ enabled = $true; exitnode_enabled = $true;
-                                  messaging_enabled = [bool]$WithMessaging };
-            ipv8 = @{ bootstrap = @{ override = @() };
-                      interfaces = @( @{ interface = 'UDPIPv4'; ip = '127.0.0.1'; port = $A1.Ipv8 } );
-                      estimated_wan = "127.0.0.1:$($A1.Ipv8)" } } |
-            ConvertTo-Json -Compress -Depth 6))
+        ($cfgA1 | ConvertTo-Json -Compress -Depth 6))
     $procs['A1'] = Start-OnionBit $A1
     $kA1 = Wait-ApiKey $A1.Dir; Wait-ApiUp $A1.Api $kA1
+
+    # Cle publique ext de A1 -> `ext.curators` des autres noeuds
+    # (curation ADR-0015 §6 : tout le mesh suit A1).
+    $a1pk = $null
+    if ($WithExt) {
+        $ovA1 = Invoke-RestMethod -Uri "http://127.0.0.1:$($A1.Api)/api/ipv8/overlays" `
+            -Headers @{ 'X-Api-Key' = $kA1 } -TimeoutSec 10
+        $a1pk = (@($ovA1.overlays) |
+            Where-Object { $_.overlay_name -eq 'OnionbitExtCommunity' }).my_peer
+        if (-not $a1pk) { throw "overlay OnionbitExtCommunity absent sur A1 (ext non active ?)" }
+        Log "ext active : curateur A1 = $($a1pk.Substring(0, 16))..."
+    }
 
     $boot = @("127.0.0.1:$($A1.Ipv8)")
     foreach ($p in @($A2, $A3, $D)) {
         New-Item -ItemType Directory -Force -Path $p.Dir | Out-Null
+        $cfg = @{ tunnel_community = @{ enabled = $true;
+                                        messaging_enabled = [bool]$WithMessaging };
+                  ipv8 = @{ bootstrap = @{ override = $boot };
+                            interfaces = @( @{ interface = 'UDPIPv4'; ip = '127.0.0.1'; port = $p.Ipv8 } );
+                            estimated_wan = "127.0.0.1:$($p.Ipv8)" } }
+        if ($WithExt) { $cfg['ext'] = @{ enabled = $true; curators = @($a1pk) } }
         [System.IO.File]::WriteAllText((Join-Path $p.Dir 'configuration.json'),
-            (@{ tunnel_community = @{ enabled = $true;
-                                      messaging_enabled = [bool]$WithMessaging };
-                ipv8 = @{ bootstrap = @{ override = $boot };
-                          interfaces = @( @{ interface = 'UDPIPv4'; ip = '127.0.0.1'; port = $p.Ipv8 } );
-                          estimated_wan = "127.0.0.1:$($p.Ipv8)" } } |
-                ConvertTo-Json -Compress -Depth 6))
+            ($cfg | ConvertTo-Json -Compress -Depth 6))
         $procs[$p.Name] = Start-OnionBit $p
         $k = Wait-ApiKey $p.Dir; Wait-ApiUp $p.Api $k
         if ($p.Name -eq 'D') { $kD = $k }
@@ -217,6 +237,7 @@ try {
         duration_min = $DurationMin
         anon_download = [bool]$WithAnonDownload
         messaging = [bool]$WithMessaging
+        ext = [bool]$WithExt
         nodes = @(
             @{ name = 'D';  api = $D.Api;  ipv8 = $D.Ipv8;  role = 'onionbit echantillonne' },
             @{ name = 'A1'; api = $A1.Api; ipv8 = $A1.Ipv8; role = 'ancre + exit' },
@@ -233,19 +254,39 @@ try {
     $tBase = "http://127.0.0.1:$TApi"
     $csvD = Join-Path $out 'fp_onionbit_mesh.csv'
     $csvT = Join-Path $out 'fp_tribler_mesh.csv'
+    $csvExt = Join-Path $out 'ext_onionbit.csv'
     $jobD = Start-Job -ScriptBlock {
         & $using:fpScript -ApiBase $using:dBase `
             -ApiKey $using:kD -DurationMin $using:DurationMin `
-            -IntervalSec $using:IntervalSec -OutCsv $using:csvD
+            -IntervalSec $using:IntervalSec -OutCsv $using:csvD `
+            -ExtCsv $using:csvExt
     }
     $jobT = Start-Job -ScriptBlock {
         & $using:fpScript -ApiBase $using:tBase `
             -ApiKey $using:TKey -DurationMin $using:DurationMin `
             -IntervalSec $using:IntervalSec -OutCsv $using:csvT
     }
+    # ADR-0015 : une attestation publiee par A1 a t+60 s — mesure le
+    # pic de gossip et son extinction (attest_tx -> 0) dans le CSV ext.
+    if ($WithExt) {
+        $a1Api = $A1.Api
+        Start-Job -ScriptBlock {
+            Start-Sleep -Seconds 60
+            try {
+                Invoke-RestMethod -Method Post `
+                    -Uri "http://127.0.0.1:$using:a1Api/api/ipv8/ext/attest" `
+                    -Headers @{ 'X-Api-Key' = $using:kA1 } `
+                    -Body (@{ kind = 'infohash';
+                              subject = (-join ((1..20) | ForEach-Object { 'cd' }));
+                              verdict = 'endorse' } | ConvertTo-Json -Compress) `
+                    -ContentType 'application/json' -TimeoutSec 15 | Out-Null
+            } catch {}
+        } | Out-Null
+    }
     $jobD, $jobT | Wait-Job | Out-Null
     $jobD, $jobT | Receive-Job
-    Log "== termine : $(Join-Path $out 'fp_onionbit_mesh.csv'), $(Join-Path $out 'fp_tribler_mesh.csv') =="
+    $extra = if ($WithExt) { ", $(Join-Path $out 'ext_onionbit.csv')" } else { "" }
+    Log "== termine : $(Join-Path $out 'fp_onionbit_mesh.csv'), $(Join-Path $out 'fp_tribler_mesh.csv')$extra =="
 }
 finally {
     foreach ($kv in $procs.GetEnumerator()) {

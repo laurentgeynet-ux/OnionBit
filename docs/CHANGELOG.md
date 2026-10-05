@@ -481,6 +481,28 @@ Clôture campagne et gates sanitizers :
 - **Job CI `fuzz-san`** (`ci.yml`, nightly/manual, ubuntu-24.04) :
   toolchain nightly + cargo-fuzz, `SEC=300` × 8 cibles × 2
   sanitizers, artefacts (journal CSV + `fuzz/artifacts/`) remontés.
+## Phase 9 — bancs ADR-0015 : T1 legacy silence + T2/T3/T4 (2026-10-05)
+
+- **`ext_bench.rs`** (intégration loopback) : `t2_mesh_curation`
+  (valide/rejeu/non-suivi/conflit/nouveau verdict/unfollow),
+  `t3_flood_controle` (300 trames mono-clé → 256 stockés + 44 droppés ;
+  multi-clés au-delà de la table bornée), `t4_cadence_ext_s_eteint`
+  (hello figé, `attest_tx → 0` après convergence).
+- **`scripts/bench_ext_silence.ps1`** — banc T1 processus réel :
+  mesh fermé A1+D (ext) + Tribler.exe. **8/8 oracles PASS** :
+  T jamais promu pair ext ⇒ aucun `ATTEST` adressé à Tribler ;
+  `hello_probed=2` borné ; gossip OnionBit-seul (`D.stored=1,
+  score=1`) ; overlays de T legacy-seuls ; log T propre.
+- **`fingerprint_mesh.ps1 -WithExt` / `fingerprint_stats.ps1
+  -ExtCsv`** : extension de l'harnais d'empreinte — `ext.enabled` +
+  `curators=[A1pk]` sur les 4 nœuds OnionBit, publication différée à
+  t+60 s, CSV `ext_onionbit.csv` (compteurs `hello_*`/`attest_*`).
+  Run 3 min : pic à t+60 s puis **compteurs figés** (extinction).
+- **Observabilité** : `hello_tx`/`hello_probed` exposés par
+  `GET /api/ipv8/ext` (borne « hello opportuniste » mesurable).
+- **Journal privé** : `docs/plans/bench_adr0015/` (gitignoré) +
+  `bench_adr0015.md` (scénarios, résultats, reste terrain).
+
 ## Phase 9d — durcissement du chemin `ATTEST` (ADR-0015 §6, revue, 2026-10-05)
 
 - **Pipeline de réception ordonné du moins au plus coûteux** :

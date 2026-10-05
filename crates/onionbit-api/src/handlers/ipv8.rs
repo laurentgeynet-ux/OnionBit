@@ -460,6 +460,8 @@ pub async fn get_ext(State(state): State<AppState>) -> Response {
             "attest_dropped": info.attest_dropped,
             "attest_stored": info.attest_stored,
             "attest_tx": info.attest_tx,
+            "hello_tx": info.hello_tx,
+            "hello_probed": info.hello_probed,
         }
     }))
     .into_response()

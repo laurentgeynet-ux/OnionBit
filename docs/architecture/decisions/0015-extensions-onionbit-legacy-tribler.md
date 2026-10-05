@@ -168,11 +168,16 @@ publication `POST /api/ipv8/ext/attest`.
 (`ext/attest_rate_*` — borne CPU face aux rafales, table bornée
 contre les clés Sybil fraîches) → borne de taille
 (`ATTEST_FRAME_MAX`) → parse borné → **préfiltre curateur suivi**
-(un curateur inconnu est droppé *avant* toute crypto — la
-vérification Ed25519 n'est payée que pour du potentiellement
-nouveau d'un curateur suivi) → lookup dedup (Ed25519 déterministe :
-mêmes champs = octets déjà vérifiés — rejeu/stale absorbé sans
-`verify`) → borne `ts` futur → `verify` → **conflit d'équivoque** :
+(un curateur inconnu est droppé avant toute crypto *applicative* —
+la vérification Ed25519 de l'attestation n'est payée que pour du
+potentiellement nouveau d'un curateur suivi ; la signature
+**transport** `ez_send` du paquet, nécessaire à l'identification de
+l'émetteur pour le budget par clé, est vérifiée au parse comme pour
+tout message signé — le gain porte sur la crypto de l'objet
+métier, pas sur celle du transport) → lookup dedup (Ed25519
+déterministe : mêmes champs = octets déjà vérifiés — rejeu/stale
+absorbé sans `verify`) → borne `ts` futur → `verify` → **conflit
+d'équivoque** :
 même `(curateur, kind, sujet)` + même `ts` + verdict différent est
 rejeté — ni écrasement ni ré-émission (deux signatures valides pour
 le même `ts` = équivoque avérée, logguée) → stockage → ré-émission.
