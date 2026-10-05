@@ -162,6 +162,24 @@ pub struct ExtPeerInfo {
     pub last_hello_secs: u64,
 }
 
+/// Instantane de la communaute (`info` — reglages effectifs +
+/// pairs ext, pour `GET /api/ipv8/ext`).
+#[derive(Debug, Clone)]
+pub struct ExtInfo {
+    /// Cadence effective du sondage `hello` (s).
+    pub hello_interval_secs: u64,
+    /// Pairs sondes par tick au maximum.
+    pub hello_fanout: usize,
+    /// Cooldown des `hello` par pair (s).
+    pub hello_cooldown_secs: u64,
+    /// Bitmap `caps` annonce localement.
+    pub caps: u64,
+    /// Population OnionBit connue (`ext_peers`).
+    pub peer_count: usize,
+    /// Pairs ext (mid hex, caps, dernier `hello` recu).
+    pub peers: Vec<ExtPeerInfo>,
+}
+
 /// Communaute d'extension OnionBit-only : `hello` lazy + peer set
 /// implicite (les pairs marques sous `EXT_COMMUNITY_ID`).
 pub struct OnionbitExtCommunity {
@@ -350,6 +368,18 @@ impl OnionbitExtCommunity {
     /// Nombre de pairs connus comme ext (population OnionBit visible).
     pub fn ext_peer_count(&self) -> usize {
         self.ext_peers.lock().unwrap().len()
+    }
+
+    /// Instantane complet (reglages + pairs) pour `GET /api/ipv8/ext`.
+    pub fn info(&self) -> ExtInfo {
+        ExtInfo {
+            hello_interval_secs: self.settings.hello_interval.as_secs(),
+            hello_fanout: self.settings.hello_fanout,
+            hello_cooldown_secs: self.settings.hello_cooldown.as_secs(),
+            caps: self.settings.caps,
+            peer_count: self.ext_peer_count(),
+            peers: self.peers_info(),
+        }
     }
 
     /// Instantane des pairs ext pour l'API (`mid`, `caps`, activite).

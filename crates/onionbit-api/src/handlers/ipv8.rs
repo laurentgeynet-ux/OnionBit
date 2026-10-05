@@ -414,6 +414,50 @@ pub async fn get_tunnel_ledger(State(state): State<AppState>) -> Response {
     Json(serde_json::json!({ "ledger": tunnel.ledger_info() })).into_response()
 }
 
+/// `GET /api/ipv8/ext` — communaute d'extension OnionBit-only
+/// (ADR-0015, extension Rust sans equivalent pyipv8) : reglages
+/// effectifs du sondage `hello`, population ext connue et `caps`
+/// annonces par pair (mid hex, jamais d'adresse). `enabled: false`
+/// sans stack IPv8 ou `ext/enabled = false`.
+pub async fn get_ext(State(state): State<AppState>) -> Response {
+    let disabled = serde_json::json!({
+        "ext": {
+            "enabled": false,
+            "peer_count": 0,
+            "peers": [],
+        }
+    });
+    let Some(stack) = state.session.ipv8() else {
+        return Json(disabled).into_response();
+    };
+    let Some(info) = stack.ext_info() else {
+        return Json(disabled).into_response();
+    };
+    let peers: Vec<serde_json::Value> = info
+        .peers
+        .iter()
+        .map(|p| {
+            serde_json::json!({
+                "mid": p.mid,
+                "caps": p.caps,
+                "last_hello_secs": p.last_hello_secs,
+            })
+        })
+        .collect();
+    Json(serde_json::json!({
+        "ext": {
+            "enabled": true,
+            "hello_interval_secs": info.hello_interval_secs,
+            "hello_fanout": info.hello_fanout,
+            "hello_cooldown_secs": info.hello_cooldown_secs,
+            "caps": info.caps,
+            "peer_count": info.peer_count,
+            "peers": peers,
+        }
+    }))
+    .into_response()
+}
+
 /// `GET /api/ipv8/tunnel/debug/circuit-downloads` — correlation
 /// circuits <-> downloads anonymes. **Extension Rust** sans
 /// equivalent pyipv8 (Python garde `download_states` interne) : pour

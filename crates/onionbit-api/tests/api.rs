@@ -989,6 +989,26 @@ async fn tunnel_ledger_sans_stack_retourne_desactive() {
     srv.session.stop().await;
 }
 
+/// ADR-0015 : `GET /api/ipv8/ext` repond 200 avec la communaute
+/// marquee desactivee sans stack IPv8 (ou `ext/enabled = false`) —
+/// meme convention 200+vide que `/ipv8/tunnel/ledger`.
+#[tokio::test]
+async fn ipv8_ext_sans_stack_retourne_desactive() {
+    let srv = spawn_server().await;
+    let resp = srv
+        .client
+        .get(srv.url("/api/ipv8/ext"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["ext"]["enabled"], false);
+    assert_eq!(body["ext"]["peer_count"], 0);
+    assert_eq!(body["ext"]["peers"], serde_json::json!([]));
+    srv.session.stop().await;
+}
+
 #[tokio::test]
 async fn messaging_desactivee_repond_404_sur_tous_les_endpoints() {
     let srv = spawn_server().await;

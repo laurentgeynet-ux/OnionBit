@@ -2070,6 +2070,13 @@ impl Ipv8Stack {
         out
     }
 
+    /// `GET /api/ipv8/ext` : reglages effectifs et pairs de la
+    /// communaute d'extension (ADR-0015), `None` si `ext_enabled =
+    /// false` (communaute non creee).
+    pub fn ext_info(&self) -> Option<onionbit_ipv8::ext::ExtInfo> {
+        self.ext.as_ref().map(|e| e.info())
+    }
+
     /// `enable_overlay_statistics` de `OverlaysEndpoint` : active ou
     /// desactive le comptage pour tous les overlays (`all`) ou celui
     /// nomme `overlay_name` (`__class__.__name__`).
