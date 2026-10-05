@@ -3,6 +3,35 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Messagerie ADR-0011, étape 38 — consentement + anti-abus (2026-10-05)
+
+- **`ContactState { Active, Pending, Blocked }`** : un `hello`
+  vérifié d'un inconnu crée un `pending` borné (`pending_cap=64`,
+  `pending_ttl=600 s`, purgé au tick du moniteur et avant chaque
+  admission) et émet `Consent` ; ses trames sont vérifiées puis
+  écartées (`pending_drop`) — jamais livrées avant décision.
+- **Transitions utilisateur** : `accept_contact` → `Active` + trame
+  `accept` au pair + `Bound` ; `refuse_contact` → `reject` + oubli
+  (un nouveau `hello` repropose) ; `block_contact` → drops comptés,
+  circuit détruit à l'identification, swarm du contact quitté et
+  jamais rejoint (`resolve`/`connect`/`send` refusés) ;
+  `unblock_contact` réinitialise. `send` exige `Active`.
+- **Budgets (MS-10)** : `preflight` (taille + suffixe canonique
+  `1:vi<ver>ee`, coût constant) → seau global (`global_rate=10/s`,
+  borne le coût codec+signature) → codec+AEAD → signature →
+  consentement → seau contact (`per_contact_rate=2/s`) →
+  anti-replay. La dédup `id` est consultée **avant** le seau et
+  `admit` **après** : les réémissions honnêtes restent gratuites,
+  une trame écartée au budget reste livrable plus tard.
+- **Observabilité** : `MessagingStats` (codec, rate_global,
+  rate_contact, blocked, pending_full, replay, pending_drop) +
+  `pending_contacts()`/`contact_state()` pour l'API (étape 40).
+- **Tests** : cycle pending→accept→livraison, refus puis
+  re-proposition, blocage persistant + swarm désarmé, `pending`
+  plein et TTL, seaux contact/global, préfiltre version — 11
+  tests messagerie verts, loopback 2 nœuds mis à jour sur le flux
+  de consentement (MS-6, MS-10).
+
 ## Messagerie ADR-0011, étape 37 — transport e2e + démultiplexage (2026-10-05)
 
 - **`MessagingService` (`onionbit-core::services`)** — présence :

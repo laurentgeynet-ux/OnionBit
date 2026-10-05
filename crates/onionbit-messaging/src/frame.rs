@@ -157,6 +157,46 @@ impl RawFrame {
     }
 }
 
+/// Prefiltre du demux (ADR-0011, etape 38) : verifie la borne de
+/// taille et la version **avant** tout parse bencode — le seul cout
+/// par datagramme hostile ecarte ici est constant.
+///
+/// La forme canonique trie les cles, donc `v` est la derniere et la
+/// trame se termine par `1:vi<ver>ee`. Une entree qui ne revele pas
+/// ce suffixe n'est pas une trame v1 canonique : rejet `Malformed`.
+pub fn preflight(data: &[u8], cfg: &MessagingConfig) -> Result<(), MessagingError> {
+    if data.len() > cfg.max_frame_len {
+        return Err(MessagingError::FrameTooLarge(data.len(), cfg.max_frame_len));
+    }
+    if data.first() != Some(&b'd') {
+        return Err(MessagingError::Malformed(
+            "la trame n'est pas un dictionnaire",
+        ));
+    }
+    // Cherche `1:vi` dans les derniers octets, puis exige
+    // `<ver>` entier suivi exactement de `ee` (fin du dict).
+    let tail = &data[data.len().saturating_sub(16)..];
+    let Some(pos) = tail.windows(4).position(|w| w == b"1:vi") else {
+        return Err(MessagingError::Malformed("suffixe de version absent"));
+    };
+    let rest = &tail[pos + 4..];
+    let Some(end) = rest.iter().position(|b| *b == b'e') else {
+        return Err(MessagingError::Malformed("version non terminee"));
+    };
+    let v: i64 = std::str::from_utf8(&rest[..end])
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .ok_or(MessagingError::Malformed("version non entiere"))?;
+    // L'`e` terminant l'entier doit etre suivi du `e` final du dict.
+    if rest.len() != end + 2 || rest[end + 1] != b'e' {
+        return Err(MessagingError::Malformed("version non terminale"));
+    }
+    if v != PROTO_VERSION {
+        return Err(MessagingError::UnknownVersion(v));
+    }
+    Ok(())
+}
+
 /// Champs bruts d'une trame filaire (corps encore chiffre).
 struct WireFields {
     kind: MsgKind,
@@ -361,6 +401,18 @@ impl Frame {
         cfg: &MessagingConfig,
     ) -> Result<Self, MessagingError> {
         RawFrame::parse(data, recv_key, cfg)?.verify(peer)
+    }
+}
+
+impl RawFrame {
+    /// [`preflight`] + parse complet — point d'entree du demux.
+    pub fn parse_checked(
+        data: &[u8],
+        recv_key: &[u8; 32],
+        cfg: &MessagingConfig,
+    ) -> Result<Self, MessagingError> {
+        preflight(data, cfg)?;
+        Self::parse(data, recv_key, cfg)
     }
 }
 

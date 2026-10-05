@@ -54,6 +54,14 @@ impl RecvWindow {
         }
     }
 
+    /// `id` deja accepte ? — prefiltre de dedup sans consommer la
+    /// fenetre : une re-emission honnete ne doit pas consommer le
+    /// budget de debit du contact (le budget se prend APRES ce
+    /// test, avant `admit`).
+    pub fn seen_id(&self, id: &[u8; MSG_ID_LEN]) -> bool {
+        self.seen.contains(id)
+    }
+
     /// Admet ou rejette une trame `(seq, id)`.
     ///
     /// A appeler **apres** `Frame::open` (authenticite prouvee) :

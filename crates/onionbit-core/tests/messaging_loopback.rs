@@ -219,14 +219,55 @@ async fn messaging_cycle_complet_a_vers_b() {
         .await
         .expect("envoi a->b");
 
-    // B : l'expediteur s'identifie par le `hello` (Bound) puis le
-    // message arrive authentifie.
+    // B : l'expediteur s'identifie par le `hello` -> demande de
+    // consentement (Consent). Le `msg` parti dans le meme souffle
+    // est ecarte (pending non livre) — consentement requis (MS-6).
+    let ev = wait_event(
+        &mut b_events,
+        |e| matches!(e, MessagingEvent::Consent { contact, .. } if *contact == a_pk),
+    )
+    .await;
+    assert!(matches!(ev, MessagingEvent::Consent { .. }));
+    assert_eq!(
+        b_svc.contact_state(&a_pk),
+        Some(onionbit_core::services::messaging::ContactState::Pending)
+    );
+    assert!(
+        b_svc.send(&a_pk, b"trop tot".to_vec()).await.is_err(),
+        "send sur pending refuse"
+    );
+
+    // B accepte -> Bound + trame `accept` vers A.
+    b_svc.accept_contact(&a_pk).await.expect("acceptation");
     let ev = wait_event(
         &mut b_events,
         |e| matches!(e, MessagingEvent::Bound { contact, .. } if *contact == a_pk),
     )
     .await;
     assert!(matches!(ev, MessagingEvent::Bound { .. }));
+
+    // A voit passer le `accept` (trame de controle livree — le
+    // contact est deja Active cote initiateur).
+    let ev = wait_event(&mut a_events, |e| {
+        matches!(
+            e,
+            MessagingEvent::Frame {
+                kind: MsgKind::Accept,
+                ..
+            }
+        )
+    })
+    .await;
+    match ev {
+        MessagingEvent::Frame { contact, .. } => assert_eq!(contact, b_pk),
+        _ => unreachable!(),
+    }
+
+    // Re-emission honnete post-consentement : livree, authentifiee.
+    a_svc
+        .send(&b_pk, b"bonjour B".to_vec())
+        .await
+        .expect("re-envoi a->b");
     let ev = wait_event(&mut b_events, |e| {
         matches!(
             e,
