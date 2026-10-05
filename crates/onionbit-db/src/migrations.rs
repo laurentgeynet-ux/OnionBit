@@ -14,8 +14,10 @@
 //! compatible octet-pour-octet avec la DB Python (l'objectif est la
 //! semantique du schema, pas l'interoperabilite binaire).
 
-/// Version courante du schema de ce crate.
-pub const SCHEMA_VERSION: i64 = 14;
+/// Version courante du schema de ce crate — **doit etre egal a
+/// `MIGRATIONS.len()`** : un ecart fait refuser au demon la
+/// reouverture de sa propre base (`SchemaTooNew` au redemarrage).
+pub const SCHEMA_VERSION: i64 = MIGRATIONS.len() as i64;
 
 /// Script SQL de chaque migration, dans l'ordre (index 0 = v1).
 pub const MIGRATIONS: &[&str] = &[

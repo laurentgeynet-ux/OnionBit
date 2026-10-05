@@ -2258,6 +2258,10 @@ impl TunnelCommunity {
         let ev = {
             let mut inner = self.inner.lock().unwrap();
             inner.retry_requests.remove(&circuit_id);
+            // Ferme le canal `subscribe_circuit_data` : la suppression
+            // du `Sender` termine le `Receiver` du consommateur, qui
+            // peut alors delier le circuit (messagerie ADR-0011).
+            inner.data_subscribers.remove(&circuit_id);
             // `hidden_services.remove_circuit` : un `RP_DOWNLOADER`
             // retire est detache de son swarm (sans le fermer ici).
             if let Some(c) = inner.circuits.get(&circuit_id) {
@@ -2313,7 +2317,13 @@ impl TunnelCommunity {
         let prefix = prefix_of(&self.community_id);
         if cell::is_cell(&prefix, data) {
             if let Err(e) = self.process_cell(src, data) {
-                tracing::debug!(error = %e, "cellule rejetee");
+                // En-tete cellule : prefix(22) | 0 (1) | circuit_id u32BE (4).
+                let cid = if data.len() >= 27 {
+                    u32::from_be_bytes([data[23], data[24], data[25], data[26]])
+                } else {
+                    0
+                };
+                tracing::debug!(error = %e, %src, circuit_id = cid, "cellule rejetee");
             }
             return;
         }
@@ -2388,7 +2398,7 @@ impl TunnelCommunity {
     fn process_cell(self: &Arc<Self>, src: SocketAddr, data: &[u8]) -> Result<(), Ipv8Error> {
         let parsed = Cell::parse(data)?;
         let circuit_id = parsed.circuit_id;
-        tracing::trace!(circuit_id, ?src, "cellule recue");
+        tracing::trace!(circuit_id, ?src, len = data.len(), "cellule recue");
         // Relais d'abord (comme `process_cell` Python : `relay_cell`
         // avant `incoming_crypto`). Le guard est libere avant
         // `relay_cell` (sinon self-deadlock du Mutex).
@@ -3988,6 +3998,13 @@ impl TunnelCommunity {
             tracing::debug!("candidat d'extension inconnu");
             return;
         };
+        // Ne jamais s'etendre vers soi-meme : le circuit bouclerait
+        // (le create reviendrait sur notre propre socket) et la
+        // topologie attendue par l'initiateur serait corrompue.
+        if extend_peer.public_key_bin == self.key.public_key().to_bin() {
+            tracing::debug!("extend refuse : cible = nous-memes");
+            return;
+        }
         let Some(down_addr) = extend_peer.address.clone() else {
             return;
         };
@@ -4336,6 +4353,10 @@ impl TunnelCommunity {
             });
         }
         if let Some(circuit) = inner.circuits.remove(&circuit_id) {
+            // Ferme le canal `subscribe_circuit_data` : le
+            // consommateur (messagerie) delie le circuit a la
+            // fermeture du `Receiver`.
+            inner.data_subscribers.remove(&circuit_id);
             events.push(CircuitRemovedEvent {
                 circuit_id,
                 circuit_class: "Circuit",

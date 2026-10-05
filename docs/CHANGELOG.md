@@ -3,6 +3,41 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## MS-13 — banc inter-demon messagerie e2e reel (2026-10-05)
+
+- **`scripts/interop_messaging_e2e.ps1`** : deux demons OnionBit
+  independants (processus, state dirs, cles API distincts) dans un
+  mesh loopback ancre/relai/exit. La sequence assertee couvre tout le
+  cycle applicatif : connect (resolve DHT + `create-e2e`), hello,
+  consentement `pending` -> `active` (rien livre avant, pas de faux
+  ack), livraison exactly-once + `acked`, reemission = nouvelle
+  ligne, **restart A** (identite/contacts/historique restaures,
+  liaison e2e perdue), kill B -> mort du circuit -> `404` + `failed`
+  (pas de file offline), restart B sans retransmission, reconnect
+  explicite, cleanup DELETE. Manifeste JSON a chaque run.
+- **Resultats** : vert en `messaging_hops=1` (circuit RP 2 sauts) et
+  `hops=2` (3 sauts). Duree ~1 min.
+- **Bugs reels trouves par le banc, corriges** :
+  - `onionbit-db` : `SCHEMA_VERSION` restee a 14 alors que la
+    migration v15 (tables messagerie) existait -> le demon refusait
+    de rouvrir sa propre DB au restart (`SchemaTooNew`). La
+    constante est desormais `MIGRATIONS.len()` — plus jamais de
+    derive.
+  - `onionbit-tunnel` : `remove_circuit`/destroy ne fermaient pas
+    `data_subscribers[cid]` -> le canal `subscribe_circuit_data`
+    restait ouvert, la messagerie ne deliait jamais un circuit mort.
+  - `onionbit-tunnel` : `on_extend` acceptait de s'etendre vers
+    soi-meme (boucle de routage) -> refus desormais. Exclusion du
+    point de rendez-vous comme premier hop renforcee par adresse en
+    plus de la cle.
+  - `onionbit-messaging` : la presence (`ensure_introduction_points`)
+    n'etait retentee qu'a `announce_interval` (300 s) apres un premier
+    essai avant verification des pairs -> nouvelle cadence
+    `ip_check_interval` (10 s) ; la reannonce DHT reste lente.
+- Diagnostics gardes : contexte `src`/`circuit_id` sur « cellule
+  rejetee », erreur d'envoi du `link-e2e` loggee, `first_hops` du
+  circuit `RP_DOWNLOADER` tracees en debug.
+
 ## Messagerie ADR-0011, étape 41 — validation sécurité (2026-10-05)
 
 - **Inventaire MS-1..MS-12** : couverture vérifiée banc par banc

@@ -1328,16 +1328,20 @@ impl MessagingService {
     }
 
     /// Presence : maintient des points d'introduction sur notre
-    /// swarm et re-publie l'annonce DHT a `announce_interval`
-    /// (pendant de `ensure_introduction_points`+`reannounce` du
-    /// moniteur de swarms BitTorrent).
+    /// swarm a `ip_check_interval` (rapide — un premier essai peut
+    /// echouer tant que les pairs ne sont pas verifies) et re-publie
+    /// l'annonce DHT a `announce_interval` (pendant de
+    /// `ensure_introduction_points`+`reannounce` du moniteur de
+    /// swarms BitTorrent).
     fn spawn_presence_monitor(self: &Arc<Self>) {
         let (tx, mut rx_stop) = watch::channel(false);
         self.stops.lock().unwrap().push(tx);
         let svc = self.clone();
         tokio::spawn(async move {
-            let mut tick = tokio::time::interval(svc.cfg.announce_interval);
+            let mut tick = tokio::time::interval(svc.cfg.ip_check_interval);
             tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            // Reannonce immediate au demarrage puis a cadence lente.
+            let mut next_announce = std::time::Instant::now();
             loop {
                 tokio::select! {
                     _ = rx_stop.changed() => break,
@@ -1353,11 +1357,14 @@ impl MessagingService {
                         tracing::warn!(error = %e, "purge retention messagerie");
                     }
                 }
-                let t = svc.tunnel.clone();
-                let mh = svc.own_mh;
-                tokio::spawn(async move {
-                    t.reannounce_intro_points(mh).await;
-                });
+                if std::time::Instant::now() >= next_announce {
+                    next_announce = std::time::Instant::now() + svc.cfg.announce_interval;
+                    let t = svc.tunnel.clone();
+                    let mh = svc.own_mh;
+                    tokio::spawn(async move {
+                        t.reannounce_intro_points(mh).await;
+                    });
+                }
             }
         });
     }

@@ -30,6 +30,13 @@ pub struct MessagingConfig {
     pub global_rate: u32,
     /// Cadence de reannonce DHT du swarm de presence.
     pub announce_interval: Duration,
+    /// Cadence de verification des points d'introduction
+    /// (`ensure_introduction_points` est idempotent — il complete
+    /// seulement ce qui manque). Bien plus rapide que
+    /// `announce_interval` : le premier appel peut echouer tant que
+    /// le pair epingle n'est pas verifie, et sans retry rapide la
+    /// presence resterait absente jusqu'a 5 min (MS-13).
+    pub ip_check_interval: Duration,
 }
 
 impl Default for MessagingConfig {
@@ -44,6 +51,7 @@ impl Default for MessagingConfig {
             per_contact_rate: 2,
             global_rate: 10,
             announce_interval: Duration::from_secs(300),
+            ip_check_interval: Duration::from_secs(10),
         }
     }
 }
