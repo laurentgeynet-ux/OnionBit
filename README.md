@@ -31,6 +31,8 @@ same design Tribler pioneered:
 - 🔗 **Multi-hop encrypted circuits** — up to 3 hops between you and the swarm
 - 🧅 **Onion routing** — each relay only knows its neighbors, never the endpoints
 - 🌱 **Hidden seeding** — seed content without exposing your IP address
+- 💬 **Decentralized anonymous messaging** — end-to-end encrypted chat riding
+  the same onion fabric: no server, no account, your public key is your address
 - 🔍 **Decentralized search** — content discovery through the overlay, no central index
 - 🛡️ **Kill switch & leak protection** — no clearnet fallback, no DNS/UDP leaks
 - 🦀 **Pure Rust core** — memory-safe, single binary, embeddable via REST API
@@ -56,6 +58,50 @@ Tribler 8.4.3**:
 Every transfer is checked twice: BitTorrent piece hashing, then an independent
 SHA-256 of the received file. Full scenario table, failure semantics and
 reproduction scripts: [**interoperability evidence**](docs/interop/README.md).
+
+## Decentralized anonymous messaging
+
+Beyond torrents, OnionBit carries **end-to-end messaging over the same onion
+fabric** — an OnionBit-only extension
+([ADR-0011](docs/architecture/decisions/0011-messagerie-anonyme-e2e.md)).
+No server, no account, no phone number: **your public key is your address.**
+
+```
+        you                                            contact
+         │  announce intro points on swarm                │
+         │  messaging_hash(own_pk) ──────────► (DHT)      │
+         │                                                │
+         │  ◄─── resolve pk → intro point ──── connect(pk)
+         │  ◄══════ create-e2e rendezvous circuit ════════►│
+         │  ◄── hello lands in `pending` ─── accept ─────▶│
+         │  ◄════════ signed, e2e-encrypted frames ════════►
+```
+
+- 🔑 **Identity = your IPv8 keypair** — an Ed25519 (`libnacl`) key generated
+  once and stored in `state/ipv8_keypair.bin`. Sharing a contact means
+  exchanging public keys, nothing else.
+- 🧅 **Reachable without an IP** — each identity announces introduction
+  points on its own hidden swarm (`messaging_hash(pk)`); contacts resolve it
+  through DHT/PEX and open a rendezvous e2e circuit. Relays forward cells
+  without learning who talks to whom.
+- 🔐 **Two independent crypto layers** — the e2e handshake yields *transport*
+  session keys; the application derives its own directional `send`/`recv`
+  keys via HKDF-SHA256 (domain `"onionbit messaging v1"`). Compromising one
+  layer does not unlock the other.
+- ✍️ **Every frame signed** — versioned canonical bencode (32 KiB bound),
+  Ed25519-signed by the sender and verified against the key that defines the
+  swarm: nobody who merely knows the swarm can write in your name.
+- ✋ **Consent before anything** — an unknown sender lands in a bounded
+  `pending` queue: accept, refuse or block. No consent → no circuit → no
+  delivery.
+- 📬 **Honest delivery semantics** — offline contact ⇒ immediate visible
+  `failed` state, never a silent queue. Contacts and messages persist
+  locally in plaintext SQLite (endpoint compromise is outside the threat
+  model); optional per-contact retention with real deletion
+  (`secure_delete` wipes bodies before `DELETE`).
+
+Toggle: *Settings → Anonymity → Anonymous messaging* (on by default; applied
+on restart). REST surface: `GET/POST /api/messaging/*` + SSE events.
 
 ## Screenshots
 
@@ -162,6 +208,7 @@ See [SECURITY.md](SECURITY.md) for reporting and the threat model.
 | Flutter UI (desktop first) | ✅ |
 | Web UI served by the daemon (same-origin) | ✅ |
 | In-app update check (GitHub releases probe) | ✅ |
+| Anonymous e2e messaging over hidden services (ADR-0011) | ✅ |
 | Latest tagged release | ✅ [`v0.9.2-beta`](https://github.com/laurentgeynet-ux/OnionBit/releases/tag/v0.9.2-beta) |
 | Linux packages (.deb + tar.gz) | ✅ |
 | Windows ARM64 package (headless) | ✅ |
