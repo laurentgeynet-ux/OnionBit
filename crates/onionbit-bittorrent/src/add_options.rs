@@ -12,6 +12,12 @@
 
 use std::path::PathBuf;
 
+/// Receveur de pairs partageable jusqu'a sa consommation par
+/// `rqbit_opts` (`Option` interne videe a la traduction).
+pub type SharedPeerRx = std::sync::Arc<
+    std::sync::Mutex<Option<tokio::sync::mpsc::UnboundedReceiver<std::net::SocketAddr>>>,
+>;
+
 /// Reglages par telechargement appliques a l'ajout.
 #[derive(Debug, Clone, Default)]
 pub struct AddDownloadOptions {
@@ -45,4 +51,9 @@ pub struct AddDownloadOptions {
     /// resultat DHT/tracker — utilise par les bancs live (seeder
     /// loopback injecte) et le hidden seeding d'introduction.
     pub initial_peers: Vec<std::net::SocketAddr>,
+    /// Flux de pairs alimente pendant la resolution magnet — la
+    /// couche core y pousse les pairs e2e du swarm cache decouverts
+    /// avant la materialisation du torrent (`initial_peers` est fige
+    /// a l'ajout, ce flux reste ouvert tant que le sender vit).
+    pub extra_peers_rx: Option<SharedPeerRx>,
 }

@@ -301,6 +301,14 @@ pub struct AddTorrentOptions {
     /// Initial peers to start of with.
     pub initial_peers: Option<Vec<SocketAddr>>,
 
+    /// Flux de pairs supplementaires alimente par l'appelant,
+    /// fusionne dans le `peer_rx` de resolution. OnionBit y pousse
+    /// les pairs e2e du swarm cache decouverts pendant la
+    /// resolution magnet — avant que le torrent soit materialise
+    /// (`initial_peers` est fige a l'ajout, ce flux reste ouvert).
+    #[serde(skip)]
+    pub extra_peers_rx: Option<PeerStream>,
+
     /// Max concurrent connected peers.
     pub peer_limit: Option<usize>,
 
@@ -1368,7 +1376,8 @@ impl Session {
 
         let private = metadata.as_ref().is_some_and(|m| m.info.info().private);
 
-        let make_peer_rx = || {
+        let mut extra_peers_rx = opts.extra_peers_rx.take();
+        let mut make_peer_rx = || {
             self.make_peer_rx(
                 info_hash,
                 trackers.clone(),
@@ -1376,6 +1385,7 @@ impl Session {
                 opts.force_tracker_interval,
                 opts.initial_peers.clone().unwrap_or_default(),
                 private,
+                extra_peers_rx.take(),
             )
         };
 
@@ -1733,6 +1743,7 @@ impl Session {
             t.shared().options.force_tracker_interval,
             t.shared().options.initial_peers.clone(),
             is_private,
+            None,
         )
     }
 
@@ -1745,6 +1756,7 @@ impl Session {
         force_tracker_interval: Option<Duration>,
         initial_peers: Vec<SocketAddr>,
         is_private: bool,
+        extra_peers_rx: Option<PeerStream>,
     ) -> Option<PeerStream> {
         let dht_rx = if is_private {
             None
@@ -1798,10 +1810,13 @@ impl Session {
         };
         merge_two_optional_streams(
             merge_two_optional_streams(
-                merge_two_optional_streams(dht_rx, tracker_rx),
-                initial_peers_rx,
+                merge_two_optional_streams(
+                    merge_two_optional_streams(dht_rx, tracker_rx),
+                    initial_peers_rx,
+                ),
+                lsd_rx,
             ),
-            lsd_rx,
+            extra_peers_rx,
         )
     }
 

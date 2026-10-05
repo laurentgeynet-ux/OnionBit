@@ -202,9 +202,19 @@ impl TunnelCommunity {
         hops: usize,
         seeder_sk: Option<LibNaClSecretKey>,
     ) {
-        self.inner
-            .lock()
-            .unwrap()
+        let mut inner = self.inner.lock().unwrap();
+        // Re-joindre un swarm identique reinitialiserait son etat
+        // (points d'introduction decouverts, `last_lookup`,
+        // connexions e2e) : le moniteur rejoint a la
+        // materialisation d'un magnet dont le swarm `pending` a deja
+        // ete cree par `register_pending_swarm` — ce re-join doit
+        // etre un no-op pour ne pas perdre la decouverte en cours.
+        if let Some(s) = inner.swarms.get(&info_hash) {
+            if s.hops == hops && s.seeding() == seeder_sk.is_some() {
+                return;
+            }
+        }
+        inner
             .swarms
             .insert(info_hash, Swarm::new(info_hash, hops, seeder_sk));
     }

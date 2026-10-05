@@ -597,6 +597,22 @@ fn rqbit_opts(o: &crate::add_options::AddDownloadOptions) -> AddTorrentOptions {
         only_files: o.only_files.clone(),
         trackers: (!o.trackers.is_empty()).then(|| o.trackers.clone()),
         initial_peers: (!o.initial_peers.is_empty()).then(|| o.initial_peers.clone()),
+        // Flux de pairs dynamique (swarm cache, resolution magnet en
+        // vol) : consomme ici — le receveur n'est utilisable qu'une
+        // fois, d'ou le `take` sous verrou.
+        extra_peers_rx: o.extra_peers_rx.as_ref().and_then(|shared| {
+            shared
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .take()
+                .map(|rx| {
+                    let s: futures_util::stream::BoxStream<'static, std::net::SocketAddr> =
+                        Box::pin(futures_util::stream::unfold(rx, |mut rx| async move {
+                            rx.recv().await.map(|addr| (addr, rx))
+                        }));
+                    s
+                })
+        }),
         ratelimits: librqbit::limits::LimitsConfig {
             upload_bps: to_nz(o.upload_limit_bps),
             download_bps: to_nz(o.download_limit_bps),

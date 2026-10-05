@@ -1177,6 +1177,12 @@ pub struct Ipv8Stack {
     /// e2e notifies par `e2e_ready` portent l'info-hash de LOOKUP du
     /// swarm, ce mapping retrouve le download correspondant.
     swarm_lookup: Mutex<SwarmLookupMap>,
+    /// Sinks de pairs des magnets encore en resolution (`pending`),
+    /// `info_hash reel -> sender` : `spawn_e2e_listener` y pousse
+    /// l'adresse factice quand `get_by_hash` ne trouve pas encore le
+    /// torrent — sinon le pair e2e etait perdu et la resolution
+    /// magnet restait bloquee sans jamais voir le seeder cache.
+    pending_peer_sinks: Mutex<HashMap<[u8; 20], tokio::sync::mpsc::UnboundedSender<SocketAddr>>>,
     /// Service messagerie e2e (ADR-0011) — present si
     /// `enable_messaging` et `enable_anonymity` : joints le swarm
     /// `messaging_hash(pk)` et demultiplexe les cellules `data` de
@@ -1246,19 +1252,25 @@ impl Ipv8Stack {
         .map_err(|e| CoreError::State(format!("bind ipv8: {e}")))?;
         let endpoint: Arc<UdpEndpoint> = endpoint;
         let network = Arc::new(Network::default());
-        let discovery = DiscoveryCommunity::new(
-            key.clone(),
-            network.clone(),
-            endpoint.clone(),
-            UdpAddress::Ipv4(std::net::SocketAddrV4::new(
-                std::net::Ipv4Addr::UNSPECIFIED,
-                endpoint
-                    .local_addr()
-                    .map_err(|e| CoreError::State(format!("addr ipv8: {e}")))?
-                    .port(),
-            )),
-        )
-        .await;
+        // `my_estimated_lan` : l'adresse d'ecoute reelle quand elle
+        // est specifiee (127.0.0.1 du banc, NIC LAN en prod) — pyipv8
+        // la resout via `get_lan_addresses()`. Declarer `0.0.0.0`
+        // faisait wrapper `peer.address = (0.0.0.0, port)` chez les
+        // pairs pyipv8 : le `destination_address` renvoye restait
+        // non specifie et la DHT s'affamait meme face a Tribler.
+        let lan = {
+            let local = endpoint
+                .local_addr()
+                .map_err(|e| CoreError::State(format!("addr ipv8: {e}")))?;
+            let lan_ip = match local {
+                std::net::SocketAddr::V4(a) if !a.ip().is_unspecified() => *a.ip(),
+                _ => std::net::Ipv4Addr::UNSPECIFIED,
+            };
+            UdpAddress::Ipv4(std::net::SocketAddrV4::new(lan_ip, local.port()))
+        };
+        let discovery =
+            DiscoveryCommunity::new(key.clone(), network.clone(), endpoint.clone(), lan.clone())
+                .await;
         // Extension Rust (bancs loopback) : `ipv8.estimated_wan` —
         // sur un mesh 100 % loopback `my_estimated_wan` ne s'apprend
         // jamais (`address_in_lan_subnets`), ce qui figerait le DHT
@@ -1303,14 +1315,7 @@ impl Ipv8Stack {
         let dht = if config.enable_dht {
             // `DHTDiscoveryCommunity` Python : `my_estimated_wan`
             // commence non-specifie et est appris par introduction ;
-            // `my_estimated_lan` = notre adresse d'ecoute.
-            let lan = UdpAddress::Ipv4(std::net::SocketAddrV4::new(
-                std::net::Ipv4Addr::UNSPECIFIED,
-                endpoint
-                    .local_addr()
-                    .map_err(|e| CoreError::State(format!("addr ipv8: {e}")))?
-                    .port(),
-            ));
+            // `my_estimated_lan` = adresse d'ecoute (ci-dessus).
             Some(
                 DhtCommunity::new(
                     key.clone(),
@@ -1776,6 +1781,7 @@ impl Ipv8Stack {
             anon_dht_backoff_cap_secs: config.anon_dht_backoff_cap_secs,
             swarm_states: Mutex::new(HashMap::new()),
             swarm_lookup: Mutex::new(HashMap::new()),
+            pending_peer_sinks: Mutex::new(HashMap::new()),
             hidden_tasks: Mutex::new(Vec::new()),
             self_weak: Mutex::new(std::sync::Weak::new()),
         });
@@ -2121,6 +2127,52 @@ impl Ipv8Stack {
             .iter()
             .map(|(h, l)| (*h, l.engine.clone()))
             .collect()
+    }
+
+    /// Enregistre le swarm cache d'un magnet encore `pending` : la
+    /// decouverte (`do_peer_discovery` -> `swarm_lookup` -> e2e)
+    /// demarre avant la materialisation. Sans cela un magnet anonyme
+    /// ne pouvait jamais rencontrer un seeder cache : le moniteur
+    /// n'observe que les torrents deja crees par le moteur, or rqbit
+    /// resout les metadonnees AVANT de creer le torrent — deadlock.
+    /// `join_swarm` est idempotent (`join_swarm_with_key` ignore un
+    /// re-join identique pour preserver les points d'introduction).
+    pub fn register_pending_swarm(&self, real_ih: [u8; 20], hops: usize) {
+        let lookup = lookup_info_hash(&real_ih);
+        self.swarm_lookup
+            .lock()
+            .unwrap()
+            .insert(lookup, (hops, real_ih));
+        if let Some(t) = &self.tunnel {
+            t.join_swarm(lookup, hops, false);
+        }
+    }
+
+    /// Remplace le sink de pairs d'un magnet `pending` — appele a
+    /// chaque tentative de resolution (le receveur precedent a ete
+    /// consomme par le `peer_rx` rqbit de l'essai en cours).
+    pub fn set_pending_peer_sink(
+        &self,
+        real_ih: [u8; 20],
+        tx: tokio::sync::mpsc::UnboundedSender<SocketAddr>,
+    ) {
+        self.pending_peer_sinks.lock().unwrap().insert(real_ih, tx);
+    }
+
+    /// Retire les enregistrements `pending` d'un info-hash reel.
+    /// `materialized` = le torrent existe dans le moteur : le
+    /// moniteur de swarm reprend le relais (join/leave officiels),
+    /// on ne demonte ni le swarm ni le mapping.
+    pub fn clear_pending_swarm(&self, real_ih: &[u8; 20], materialized: bool) {
+        self.pending_peer_sinks.lock().unwrap().remove(real_ih);
+        if materialized {
+            return;
+        }
+        let lookup = lookup_info_hash(real_ih);
+        self.swarm_lookup.lock().unwrap().remove(&lookup);
+        if let Some(t) = &self.tunnel {
+            t.leave_swarm(&lookup);
+        }
     }
 
     /// Liaisons download<->swarm connues du moniteur (equivalent du
@@ -2532,6 +2584,14 @@ fn spawn_e2e_listener(
                     if ctype == onionbit_tunnel::routing::CIRCUIT_TYPE_RP_DOWNLOADER {
                         if let Some(dl) = engine.get_by_hash(&real_ih) {
                             added = dl.add_peer(fake);
+                        } else if let Some(tx) =
+                            stack.pending_peer_sinks.lock().unwrap().get(&real_ih)
+                        {
+                            // Magnet encore en resolution : le torrent
+                            // n'existe pas dans le moteur — l'adresse
+                            // factice part dans le `peer_rx` de
+                            // `resolve_magnet` via `extra_peers_rx`.
+                            added = tx.send(fake).is_ok();
                         }
                     }
                     tracing::debug!(

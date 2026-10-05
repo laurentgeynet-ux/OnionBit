@@ -1885,6 +1885,249 @@ fn live_crash_pending_magnet_et_restart() {
     });
 }
 
+/// Regression bug prod : un magnet anonyme restait bloque en
+/// `METADATA` indefiniment — `spawn_swarm_monitor` n'observe que
+/// les torrents materialises, or librqbit resout les metadonnees
+/// AVANT de creer le handle : le swarm cache n'etait jamais rejoint
+/// et aucun pair e2e ne pouvait alimenter la resolution. Le
+/// `pending` doit desormais apparaitre dans `swarms_info` pendant
+/// la resolution, et le swarm doit etre demonte si le magnet est
+/// supprime avant sa materialisation.
+#[test]
+fn live_magnet_pending_rejoint_swarm_cache() {
+    init_tracing();
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(4)
+        .enable_all()
+        .build()
+        .unwrap();
+    rt.block_on(async {
+        let dir = tempfile::tempdir().unwrap();
+        let (session, tunnel) = start_live_session(dir.path()).await;
+        // Magnet invente, impossible a resoudre (aucun seeder) : le
+        // pending persiste tant que le download n'est pas supprime —
+        // exactement l'etat bloque observe en production.
+        let ih = [0xabu8; 20];
+        let ih_hex = onionbit_crypto::hash::to_hex(&ih);
+        let uri = format!("magnet:?xt=urn:btih:{ih_hex}&dn=pending");
+        let s = session.clone();
+        tokio::spawn(async move {
+            let _ = s.add_download_anon(&uri, false, 1, true, None).await;
+        });
+        let lookup = onionbit_tunnel::hidden_services::lookup_info_hash(&ih);
+        let lookup_hex = hex::encode(lookup);
+        assert!(
+            wait_until(STATE_WAIT, || {
+                tunnel
+                    .swarms_info()
+                    .iter()
+                    .any(|s| s.info_hash == lookup_hex && !s.seeder)
+            })
+            .await,
+            "le swarm cache du magnet pending n'a pas ete rejoint"
+        );
+        // Suppression pendant la resolution : le pending part et le
+        // swarm est demonte avec lui (pas de swarm orphelin).
+        session
+            .remove(&ih_hex, false)
+            .await
+            .expect("remove pending");
+        assert!(
+            wait_until(STATE_WAIT, || {
+                !tunnel
+                    .swarms_info()
+                    .iter()
+                    .any(|s| s.info_hash == lookup_hex)
+            })
+            .await,
+            "le swarm cache du pending supprime n'a pas ete demonte"
+        );
+        stop_bounded(&session).await;
+    });
+}
+
+/// E2E du fix : seed cache (points d'introduction annonces sur la
+/// DHT IPv8) <- magnet anonyme encore `pending` -> resolution BEP 9
+/// via le pair e2e -> transfert du contenu.
+///
+/// Avant le fix le magnet restait en `METADATA` indefiniment : le
+/// moniteur de swarm n'observe que les torrents materialises, or
+/// librqbit resout les metadonnees AVANT de creer le handle —
+/// deadlock architectural (pas de `join_swarm`, pas de pair e2e,
+/// pas de `read_metainfo`). Ici le seeder n'est JOIGNABLE QUE par
+/// le hidden swarm (aucun pair public injecte) : la resolution ne
+/// peut reussir que via `register_pending_swarm` + le sink e2e.
+#[test]
+fn live_magnet_anon_resout_via_seed_cache() {
+    init_tracing();
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(8)
+        .enable_all()
+        .build()
+        .unwrap();
+    rt.block_on(async {
+        // ---- contenu + torrent ----
+        let seed_dir = tempfile::tempdir().unwrap();
+        let name = "payload.bin";
+        let payload: Vec<u8> = (0..120_000u32).map(|i| (i % 251) as u8).collect();
+        std::fs::write(seed_dir.path().join(name), &payload).unwrap();
+        let torrent = librqbit::create_torrent(
+            &seed_dir.path().join(name),
+            librqbit::CreateTorrentOptions {
+                piece_length: Some(16384),
+                ..Default::default()
+            },
+            &librqbit::spawn_utils::BlockingSpawner::new(1),
+        )
+        .await
+        .expect("create_torrent");
+        let bytes = torrent.as_bytes().unwrap().to_vec();
+        let meta = onionbit_format::torrent::TorrentMeta::parse(&bytes).unwrap();
+        let ih_hex = onionbit_crypto::hash::to_hex(&meta.info_hash);
+
+        // ---- deux sessions + relais ----
+        let state_a = tempfile::tempdir().unwrap();
+        let state_b = tempfile::tempdir().unwrap();
+        let dl_dir = tempfile::tempdir().unwrap();
+        let (seed_session, seed_tunnel) = start_live_session(state_a.path()).await;
+        let (dl_session, dl_tunnel) = start_live_session(state_b.path()).await;
+        let mut relays = Vec::new();
+        for _ in 0..3 {
+            relays.push(make_relay().await);
+        }
+        let seed_stack = seed_session.ipv8().unwrap();
+        let dl_stack = dl_session.ipv8().unwrap();
+        let seed_peer = Peer::new(
+            hex::decode(seed_stack.public_key_hex()).unwrap(),
+            Some(UdpAddress::from(seed_stack.endpoint.local_addr().unwrap())),
+        )
+        .unwrap();
+        let dl_peer = Peer::new(
+            hex::decode(dl_stack.public_key_hex()).unwrap(),
+            Some(UdpAddress::from(dl_stack.endpoint.local_addr().unwrap())),
+        )
+        .unwrap();
+        // Cablage complet : les deux sessions et tous les relais se
+        // connaissent mutuellement (services tunnel + DHT annonces).
+        for (stack, peer) in [(&seed_stack, &dl_peer), (&dl_stack, &seed_peer)] {
+            stack.network.add_verified(peer.clone());
+            stack
+                .network
+                .discover_service(&peer.public_key_bin, TUNNEL_COMMUNITY_ID);
+            stack
+                .network
+                .discover_service(&peer.public_key_bin, onionbit_ipv8::DHT_COMMUNITY_ID);
+        }
+        for r in &relays {
+            let rp = peer_of(r);
+            // Sessions -> relais (candidats de saut + sortie).
+            for (stack, tunnel) in [(&seed_stack, &seed_tunnel), (&dl_stack, &dl_tunnel)] {
+                stack.network.add_verified(rp.clone());
+                stack
+                    .network
+                    .discover_service(&rp.public_key_bin, TUNNEL_COMMUNITY_ID);
+                tunnel.register_exit_peer(
+                    &r.key.public_key().to_bin(),
+                    r.addr,
+                    PEER_FLAG_RELAY | PEER_FLAG_EXIT_BT,
+                );
+            }
+            // Relais -> sessions (reponses de circuit + DHT : le
+            // seeder annonce ses points d'introduction aux pairs DHT
+            // connus — les relais n'ont pas de DHTCommunity, les deux
+            // sessions sont les seuls noeuds DHT du mini-reseau).
+            r.network.add_verified(seed_peer.clone());
+            r.network.add_verified(dl_peer.clone());
+            r.network
+                .discover_service(&seed_peer.public_key_bin, TUNNEL_COMMUNITY_ID);
+            r.network
+                .discover_service(&dl_peer.public_key_bin, TUNNEL_COMMUNITY_ID);
+        }
+        // Relais entre eux (chaines multi-sauts disjointes).
+        for (i, ra) in relays.iter().enumerate() {
+            for (j, rb) in relays.iter().enumerate() {
+                if i == j {
+                    continue;
+                }
+                let p = peer_of(rb);
+                ra.network.add_verified(p.clone());
+                ra.network
+                    .discover_service(&p.public_key_bin, TUNNEL_COMMUNITY_ID);
+                ra.tunnel.register_exit_peer(
+                    &rb.key.public_key().to_bin(),
+                    rb.addr,
+                    PEER_FLAG_RELAY | PEER_FLAG_EXIT_BT,
+                );
+            }
+        }
+        // Tables DHT : en maillage manuel il n'y a ni bootstrap ni
+        // walker (`walk_run` n'est lance qu'avec des pairs
+        // d'amorcage) — `on_node_discovered` refuse tout noeud tant
+        // que `my_wan` est unspecified. On injecte l'estimation WAN
+        // puis on force l'echange introduction-request/response sous
+        // le prefixe DHT dans les deux sens : chaque cote ajoute
+        // l'autre a sa table de routage (seuls noeuds DHT du
+        // mini-reseau — les relais n'en ont pas).
+        let seed_addr = UdpAddress::from(seed_stack.endpoint.local_addr().unwrap());
+        let dl_addr = UdpAddress::from(dl_stack.endpoint.local_addr().unwrap());
+        seed_stack
+            .dht
+            .as_ref()
+            .unwrap()
+            .set_my_wan(seed_addr.clone());
+        dl_stack.dht.as_ref().unwrap().set_my_wan(dl_addr.clone());
+        seed_stack
+            .dht
+            .as_ref()
+            .unwrap()
+            .walk_to(&dl_addr)
+            .await
+            .expect("walk_to seed->dl");
+        dl_stack
+            .dht
+            .as_ref()
+            .unwrap()
+            .walk_to(&seed_addr)
+            .await
+            .expect("walk_to dl->seed");
+        // ---- seed cache : hops=1, safe_seeding (hidden service) ----
+        seed_session
+            .add_torrent_bytes_anon(
+                bytes.clone(),
+                false,
+                1,
+                true,
+                Some(seed_dir.path().to_path_buf()),
+            )
+            .await
+            .expect("seed anon");
+
+        // ---- magnet anonyme cote leecher : resolution attendue via
+        // le pair e2e du swarm cache (aucun pair public injecte) ----
+        let uri = format!("magnet:?xt=urn:btih:{ih_hex}&dn={name}");
+        let s = dl_session.clone();
+        let out = dl_dir.path().to_path_buf();
+        let add =
+            tokio::spawn(
+                async move { s.add_download_anon(&uri, false, 1, false, Some(out)).await },
+            );
+        let dl = tokio::time::timeout(TRANSFER_WAIT, add)
+            .await
+            .expect("resolution magnet via seed cache en timeout")
+            .expect("task add")
+            .expect("resolution magnet");
+        tokio::time::timeout(TRANSFER_WAIT, dl.wait_completed())
+            .await
+            .expect("transfert e2e en timeout")
+            .expect("wait_completed");
+        let got = std::fs::read(dl_dir.path().join(name))
+            .unwrap_or_else(|_| panic!("{name} absent du dossier de destination"));
+        assert_eq!(got, payload, "contenu corrompu via seed cache");
+        stop_bounded(&dl_session).await;
+        stop_bounded(&seed_session).await;
+    });
+}
+
 // ----------------------------------------------------------------
 // Endurance (nightly, `#[ignore]`) : churn long de la flotte avec
 // metriques CSV + seuils de sante.

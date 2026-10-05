@@ -3,6 +3,42 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Fix — magnet anonyme bloqué en METADATA + famine DHT loopback (2026-10-05)
+
+Bug production : un magnet ajouté avec `anon_hops > 0` restait parfois
+indéfiniment en « recherche metadata » (observé en prod sur
+`3b88beb6…`, aucun `join_swarm` ni `dht_lookup` dans les logs).
+
+- **Cause racine** : rqbit résout le magnet *avant* de matérialiser le
+  torrent — `monitor_hidden_swarms` ne voyait que les torrents
+  matérialisés → jamais de `join_swarm` → jamais de pairs e2e.
+  `session.rs` enregistre désormais le swarm caché dès le `pending`
+  (`register_pending_swarm`) et alimente la résolution via un canal
+  `pending_peer_sinks` → `extra_peers_rx` (nouveau champ vendored
+  `AddTorrentOptions`, fusionné dans `make_peer_rx`). `join_swarm`
+  devient idempotent pour préserver les points d'introduction lors de
+  la transition pending → matérialisé.
+- **Famine DHT loopback** : divergence avec pyipv8 — la
+  `destination_address` de l'introduction-response recopiait
+  `source_wan_address` auto-déclaré (`0.0.0.0:0` quand le WAN est
+  inconnu) au lieu de l'adresse source observée ; `DhtCommunity`
+  n'apprenait pas `my_wan` depuis les réponses d'introduction (la
+  classe de base le fait pour tous les overlays) ; `my_estimated_lan`
+  valait `0.0.0.0:port` au lieu de l'adresse d'endpoint réelle.
+- **Oracle `sec_leak_capture`** : `analyze_leak_capture.py`
+  dédoublonne les duplicatas NDIS de pktmon (×4) et reclasse en
+  `BRUIT` un paquet d'un port banc dont le motif appartient à une
+  inondation ambiante (≥25 ports non-bancs, même proto+taille — un
+  port éphémère libéré peut être réutilisé par un autre processus).
+  Robustesse élevée : `cmd /c` sur les natifs stderr-sensibles,
+  manifeste `seeder`/`mesh_helper` corrects, `-MagnetDownload` pour le
+  rejeu du scénario prod.
+- Preuve : `live_magnet_anon_resout_via_seed_cache` (e2e complet,
+  cellules rendez-vous) + `live_magnet_pending_rejoint_swarm_cache`
+  + `onionbit-ipv8` 24/24 + run `lane-reset` réel : 2 228 224 octets
+  fichier transférés en hidden-service avant injection, 0 paquet
+  interdit dans la fenêtre fail-closed.
+
 ## Gates transversaux — préparation post-campagne (2026-10-05)
 
 Préparation à froid des gates `messaging_window`, sanitizers et

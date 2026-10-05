@@ -667,6 +667,9 @@ impl CoreSession {
             download_limit_bps: u64::try_from(row.download_limit).ok().filter(|&v| v > 0),
             // Ephemere : pairs d'amorce d'ajout, non persistes.
             initial_peers: Vec::new(),
+            // Ephemere aussi : le flux de pairs pending est recree
+            // par la boucle de resolution magnet si besoin.
+            extra_peers_rx: None,
         }
     }
 
@@ -1344,11 +1347,35 @@ impl CoreSession {
                     Ok(e) => e,
                     Err(e) => break Err(e),
                 };
+                // Magnet anonyme `pending` : le moniteur de swarm
+                // n'observe que les torrents materialises — or rqbit
+                // resout les metadonnees AVANT de creer le torrent.
+                // Sans ce join anticipe, un magnet vers un seeder
+                // cache restait en METADATA indefiniment : aucun pair
+                // e2e ne pouvait jamais arriver (decouverte pas
+                // demarree + `get_by_hash` retournait None).
+                let mut extra_peers_rx = None;
+                if let (Some(stack), Some(ih)) = (
+                    self.inner.ipv8.as_ref(),
+                    magnet.as_ref().and_then(|m| m.info_hash_v1),
+                ) {
+                    if hops > 0 {
+                        stack.register_pending_swarm(ih, hops as usize);
+                        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+                        stack.set_pending_peer_sink(ih, tx);
+                        extra_peers_rx = Some(std::sync::Arc::new(std::sync::Mutex::new(Some(rx))));
+                    } else {
+                        // Lane repassee en clair en vol (`PATCH`) :
+                        // demonter un eventuel join precedent.
+                        stack.clear_pending_swarm(&ih, false);
+                    }
+                }
                 let opts = AddDownloadOptions {
                     paused: paused_now,
                     output_folder: self.effective_output_dir(destination.clone()),
                     trackers: trackers.clone(),
                     initial_peers: initial_peers.clone(),
+                    extra_peers_rx,
                     ..Default::default()
                 };
                 let fut = engine.add_uri_opts(uri, &opts);
@@ -1383,6 +1410,15 @@ impl CoreSession {
                 .await
                 .map_err(CoreError::from)
         };
+        // Demontage du swarm `pending` enregistre dans la boucle :
+        // conserve si le torrent est materialise (le moniteur de
+        // swarm reprend le relais), retire sinon — echec ou
+        // annulation sans laisser de swarm orphelin.
+        if let (Some(stack), Some(m)) = (self.inner.ipv8.as_ref(), magnet.as_ref()) {
+            if let Some(ih) = m.info_hash_v1 {
+                stack.clear_pending_swarm(&ih, add_res.is_ok());
+            }
+        }
         let removed = pending_key.as_ref().and_then(|k| {
             let r = self.inner.pending.lock().unwrap().remove(k);
             self.inner.pending_notify.lock().unwrap().remove(k);
