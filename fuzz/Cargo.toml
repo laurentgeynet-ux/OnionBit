@@ -81,6 +81,12 @@ test = false
 doc = false
 
 [[bin]]
+name = "messaging_window"
+path = "fuzz_targets/messaging_window.rs"
+test = false
+doc = false
+
+[[bin]]
 name = "raw_datagram"
 path = "fuzz_targets/raw_datagram.rs"
 test = false

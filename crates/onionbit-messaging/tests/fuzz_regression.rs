@@ -11,8 +11,10 @@
 //! reglage que `crates/onionbit-tunnel/tests/fuzz_regression.rs`.
 
 use onionbit_crypto::ipv8::keys::LibNaClSecretKey;
-use onionbit_messaging::{Frame, MessagingConfig};
+use onionbit_messaging::frame::MSG_ID_LEN;
+use onionbit_messaging::{Frame, MessagingConfig, MessagingError, RecvWindow};
 use proptest::prelude::*;
+use std::collections::{HashSet, VecDeque};
 use std::path::Path;
 use std::sync::OnceLock;
 
@@ -79,6 +81,173 @@ fn corpus_campagne_ne_panique_pas() {
         }
     }
     assert!(n > 0, "corpus de campagne vide");
+}
+
+// ---------------------------------------------------------------------
+// Machine d'etat anti-rejeu — miroir stable de la cible cargo-fuzz
+// `messaging_window` : meme modele de reference, memes invariants.
+// ---------------------------------------------------------------------
+
+/// Modele de reference : ensemble borne de seqs vus + cache FIFO
+/// d'`id`, sans bitmap — la spec naive contre laquelle `admit` est
+/// comparee evenement par evenement.
+struct WindowModel {
+    top: Option<u64>,
+    seen: HashSet<u64>,
+    ids: HashSet<u8>,
+    order: VecDeque<u8>,
+    window: u64,
+    dedup_cap: usize,
+}
+
+impl WindowModel {
+    fn new(cfg: &MessagingConfig) -> Self {
+        Self {
+            top: None,
+            seen: HashSet::new(),
+            ids: HashSet::new(),
+            order: VecDeque::new(),
+            window: u64::from(cfg.recv_window.min(63)),
+            dedup_cap: cfg.dedup_cap,
+        }
+    }
+
+    fn resume(&mut self, cfg: &MessagingConfig, top: u64) {
+        *self = Self::new(cfg);
+        self.top = Some(top);
+        self.seen.insert(top);
+    }
+
+    fn admit(&mut self, seq: u64, id: u8) -> Result<(), u8> {
+        if self.ids.contains(&id) {
+            return Err(3);
+        }
+        match self.top {
+            Some(top) if seq <= top => {
+                let age = top - seq;
+                if age >= self.window {
+                    return Err(2);
+                }
+                if self.seen.contains(&seq) {
+                    return Err(1);
+                }
+                self.seen.insert(seq);
+            }
+            _ => {
+                if self.window > 0 {
+                    self.seen.retain(|&s| seq - s < self.window);
+                } else {
+                    self.seen.clear();
+                }
+                self.seen.insert(seq);
+                self.top = Some(seq);
+            }
+        }
+        if self.ids.insert(id) {
+            self.order.push_back(id);
+            if self.order.len() > self.dedup_cap {
+                if let Some(old) = self.order.pop_front() {
+                    self.ids.remove(&old);
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Discriminant du resultat d'`admit` (1=Replayed, 2=TooOld,
+/// 3=DuplicateId) — toute autre variante est hors contrat.
+fn admit_outcome(r: Result<(), MessagingError>) -> Result<(), u8> {
+    match r {
+        Ok(()) => Ok(()),
+        Err(MessagingError::Replayed) => Err(1),
+        Err(MessagingError::TooOld) => Err(2),
+        Err(MessagingError::DuplicateId) => Err(3),
+        Err(e) => panic!("admit a rendu une erreur hors contrat : {e}"),
+    }
+}
+
+/// Operations de la machine d'etat fuzzee.
+#[derive(Debug, Clone)]
+enum WindowOp {
+    Admit { seq: u64, id: u8 },
+    Resume { top: u64 },
+    Reset,
+}
+
+/// `seq` arbres de proptest : melange dense/petit, moyen et
+/// frontieres explicites (dont > u32::MAX et u64::MAX).
+fn seq_strategy() -> impl Strategy<Value = u64> {
+    prop_oneof![
+        4 => 0u64..256,
+        2 => 0u64..(1 << 40),
+        1 => any::<u64>(),
+        3 => prop::sample::select(vec![
+            0u64,
+            1,
+            62,
+            63,
+            64,
+            65,
+            u32::MAX as u64 - 1,
+            u32::MAX as u64,
+            u32::MAX as u64 + 1,
+            u64::MAX - 1,
+            u64::MAX,
+        ]),
+    ]
+}
+
+fn op_strategy() -> impl Strategy<Value = WindowOp> {
+    prop_oneof![
+        7 => (seq_strategy(), any::<u8>()).prop_map(|(seq, id)| WindowOp::Admit { seq, id }),
+        1 => seq_strategy().prop_map(|top| WindowOp::Resume { top }),
+        1 => Just(WindowOp::Reset),
+    ]
+}
+
+proptest! {
+    /// Differenciel impl vs modele : pour toute sequence
+    /// d'operations et toute config (fenetre/cap dedup bornees),
+    /// `admit`, `seen_id` et `top` doivent coincider exactement.
+    #[test]
+    fn recv_window_equivaut_au_modele(
+        recv_window in 0u32..96,
+        dedup_cap in 0usize..24,
+        ops in proptest::collection::vec(op_strategy(), 0..200),
+    ) {
+        let cfg = MessagingConfig {
+            recv_window,
+            dedup_cap,
+            ..Default::default()
+        };
+        let mut w = RecvWindow::new(&cfg);
+        let mut m = WindowModel::new(&cfg);
+        for op in ops {
+            match op {
+                WindowOp::Admit { seq, id } => {
+                    let id_arr = [id; MSG_ID_LEN];
+                    prop_assert_eq!(
+                        admit_outcome(w.admit(seq, &id_arr)),
+                        m.admit(seq, id),
+                        "divergence admit(seq={}, id={})",
+                        seq,
+                        id
+                    );
+                    prop_assert_eq!(w.seen_id(&id_arr), m.ids.contains(&id));
+                }
+                WindowOp::Resume { top } => {
+                    w = RecvWindow::resume(&cfg, top);
+                    m.resume(&cfg, top);
+                }
+                WindowOp::Reset => {
+                    w = RecvWindow::new(&cfg);
+                    m = WindowModel::new(&cfg);
+                }
+            }
+            prop_assert_eq!(w.top(), m.top);
+        }
+    }
 }
 
 proptest! {

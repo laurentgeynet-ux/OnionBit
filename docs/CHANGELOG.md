@@ -3,6 +3,27 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Fuzz messagerie — campagne `messaging_frame` + cible `messaging_window` (2026-10-05)
+
+- **Campagne `messaging_frame` 14 400 s** (`802c752`, Windows MSVC,
+  sanitizer none) : 629 865 040 execs, ~43 737 exec/s moyens, pic
+  RSS 35 Mo, **0 crash**. Corpus 37 seeds -> 647 -> **458 minimises**
+  (merge libFuzzer, 1 734 features preservees), versionne sous
+  `onionbit-messaging/tests/fuzz_corpus/` et rejoue en CI stable par
+  `corpus_campagne_ne_panique_pas` (`.gitattributes` : corpus marque
+  binaire — aucune normalisation EOL).
+- **`RecvWindow::admit` : decalage >= 64 corrige** — `bitmap << 64`
+  paniquait en debug et devenait un no-op en release (masque mod 64),
+  corrompant la fenetre anti-rejeu apres un grand saut de `seq`.
+  Branche explicite `shift >= 64 -> bitmap = 1`, sans troncature
+  `as u32`. Trouve en revue post-merge ADR-0011 (hors surface
+  `messaging_frame` : `admit` n'est pas dans `Frame::open`).
+- **Nouvelle cible `messaging_window`** : fuzzing differentiel de la
+  machine d'etat anti-rejeu — chaque sequence `admit`/`resume`/reset
+  est comparee a un modele de reference (ensemble borne + FIFO dedup).
+  Miroir proptest `recv_window_equivaut_au_modele` en CI stable.
+  Smoke 90 s : 1,09 M execs, 1 453 features, 0 divergence.
+
 ## Correctifs — recherche locale et fan-out distant (2026-10-05)
 
 - **Recherche locale sans filtre quand l'augmenteur rend 0 rowid**
