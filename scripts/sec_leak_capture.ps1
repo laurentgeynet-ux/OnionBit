@@ -632,7 +632,7 @@ try {
         # Par defaut on prend donc max(octets fichier, octets circuits
         # DATA READY) ; -RequireFileBytes (rejeu 17c-5 avec seed
         # dedie) exige les octets payload reels.
-        $tFailure = $null; $lanePorts = @(); $tLaneGone = $null
+        $tFailure = $null; $lanePorts = @(); $exitPorts = @(); $tLaneGone = $null
         $tResume = $null; $tNewReady = $null
         $laneSocks = @(); $newSocks = @()
         $got = 0
@@ -684,7 +684,22 @@ try {
             if ($got -ge $FailAtBytes -and $laneSocks.Count -gt 0) {
                 $now = @(Get-NetUDPEndpoint -OwningProcess $pidBench -ErrorAction SilentlyContinue `
                     | Where-Object { $_.LocalAddress -match '^\d+\.\d+\.\d+\.\d+$' } | ForEach-Object { $_.LocalPort } | Sort-Object -Unique)
-                $lanePorts = @($now | Where-Object { $portsBefore -notcontains $_ })
+                # Attribution fine : une socket de sortie reelle
+                # (0.0.0.0:0 par circuit `created` dont NOUS sommes le
+                # dernier saut) n'est PAS une socket de lane — elle
+                # sert l'egress IPv8-e2e des pairs distants et survit
+                # legitimement a la destruction de notre lane (le
+                # circuit `created` est independant ; run 2121xx :
+                # e2e relayes vers un point d'intro WAN reclasses
+                # « port mort »). Exclues via /ipv8/tunnel/exits.
+                $exitPorts = @()
+                try {
+                    $exitPorts = @((DApiGet '/ipv8/tunnel/exits').exits |
+                        ForEach-Object { [int]$_.local_port } |
+                        Where-Object { $_ -gt 0 })
+                } catch {}
+                $lanePorts = @($now | Where-Object { $portsBefore -notcontains $_ `
+                    -and $exitPorts -notcontains $_ })
                 $bytesAtFailure = @{
                     progress = if ($mine0) { [double]$mine0[0].progress } else { $null }
                     size_selected = if ($mine0) { [int64]$mine0[0].size } else { $null }
@@ -847,8 +862,11 @@ try {
             Set-Content $benchPortsFile -Encoding ascii
         Log "ports du banc : $((Get-Content $benchPortsFile) -join ', ')"
         # Ports UDP morts : la lane n'a pas de socket UDP reelle
-        # (TunnelUdpSocket virtuelle) - la liste est vide par
-        # construction mais le fichier doit exister pour l'analyseur.
+        # (TunnelUdpSocket virtuelle) et les sockets de sortie des
+        # circuits `created` distants sont exclues de $lanePorts —
+        # la liste est donc vide par construction sauf anomalie
+        # reelle (socket UDP inattendue apparue avec la lane). Le
+        # fichier doit exister pour l'analyseur.
         $deadPortsFile = Join-Path $OutDir 'dead_ports.txt'
         [System.IO.File]::WriteAllLines($deadPortsFile, [string[]]$lanePorts)
         $allowedFile = Join-Path $OutDir 'allowed_endpoints.txt'
@@ -952,6 +970,7 @@ try {
                           else { $null }
             mesh_helpers = @($helperProcs | ForEach-Object { $_.Id })
             ports     = @{ before = $portsBefore; lane = $lanePorts; final = $portsFinal;
+                           exits = $exitPorts;
                            socks_lane = $laneSocks; socks_new_lane = $newSocks }
             t_failure = if ($tFailure) { $tFailure.ToUniversalTime().ToString('o') } else { $null }
             t_lane_gone = if ($tLaneGone) { $tLaneGone.ToUniversalTime().ToString('o') } else { $null }

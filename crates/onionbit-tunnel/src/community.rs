@@ -568,6 +568,13 @@ pub struct ExitInfo {
     pub contacted_sources: usize,
     /// Secondes depuis la derniere activite acceptee.
     pub idle_secs: u64,
+    /// Port UDP local de la socket de sortie (`0.0.0.0:X` ephemere) —
+    /// attribution des sockets reelles du processus : une socket de
+    /// sortie sert l'egress d'un circuit `created` DISTANT et vit
+    /// avec lui, independamment des lanes anonymes locales (le banc
+    /// P0-17c-5 les exclut des « ports de lane » sous peine de
+    /// reclasser le drain d'un circuit distant en fuite de lane).
+    pub local_port: Option<u16>,
 }
 
 /// Instantane d'un swarm hidden (`/api/ipv8/tunnel/swarms`).
@@ -925,6 +932,7 @@ impl TunnelCommunity {
                 bytes_total: e.bytes_total,
                 contacted_sources: e.contacted_sources.len(),
                 idle_secs: e.last_activity.elapsed().as_secs(),
+                local_port: e.socket.local_addr().ok().map(|a| a.port()),
             })
             .collect()
     }

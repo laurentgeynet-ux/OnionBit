@@ -3,6 +3,30 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Attribution des sockets de sortie — faux positif 17c-5 résolu (2026-10-06)
+
+La « fuite dead-port » du run 2121xx (4 paquets UDP d'un port dit « mort »
+vers `213.31.154.144`) est **reclassée faux positif d'attribution** après
+inventaire exhaustif des sockets réelles du daemon :
+
+- Une lane anonyme ne possède **aucune socket UDP réelle** (uTP/DHT/
+  tracker = `TunnelUdpSocket` virtuelle, cellules via l'endpoint IPv8
+  partagé) — une émission WAN directe depuis une lane est
+  structurellement impossible.
+- Les ~10 ports observés étaient des **sockets de sortie** (`0.0.0.0:0`
+  bindée à la réception d'un `created` dont nous sommes le dernier
+  saut, `community.rs::on_create`). Elles servent l'égress des pairs
+  **distants** — leur circuit `created` survit légitimement à la
+  destruction de notre lane — et relaient du e2e IPv8 via l'exemption
+  préfixe-communauté de `is_exit_data_allowed` (fidèle pyipv8, actif
+  même avec `exitnode_enabled=false`).
+- La règle dead-port de l'analyseur reclassait leur trafic OVERLAY en
+  INTERDIT — correctif dans le harnais, pas dans le produit :
+  `ExitInfo.local_port` exposé via `GET /api/ipv8/tunnel/exits`, le
+  script exclut ces ports de `lanePorts` et les consigne au manifeste.
+  L'oracle dead-port reste strict pour les sockets réellement liées à
+  la lane.
+
 ## P0-17c-5 lane-reset OK — payload réel + 0 paquet interdit (2026-10-06)
 
 Le scénario `lane-reset` a enfin pu s'exécuter de bout en bout avec des
@@ -18,9 +42,10 @@ octets fichier réels (`-DedicatedSeed -RequireFileBytes -MeshHelper
 - **0 paquet INTERDIT** dans la fenêtre fail-closed, **0 émission
   depuis les ports morts** de la lane détruite. Un paquet
   `UDP → 175.112.151.78:27549` correctement classé bruit ambiant.
-- La fuite réelle observée au run 2121xx (4 paquets UDP sortants d'un
-  port de lane détruite vers `213.31.154.144`) ne s'est pas reproduite
-  — gardée sous observation, non clôturée.
+- La fuite supposée du run 2121xx (4 paquets UDP vers
+  `213.31.154.144`) est reclassée faux positif d'attribution —
+  sockets de sortie de circuits `created` distants, cf. l'entrée
+  « Attribution des sockets de sortie » ci-dessus.
 
 Chaîne de déblocage (3 causes distinctes, diagnostic live) :
 
