@@ -79,13 +79,15 @@ fn unspecified() -> UdpAddress {
 /// `true` si l'IPv4 est dans un sous-reseau LAN prive
 /// (`address_in_lan_subnets` Python : 10/8, 172.16/12, 192.168/16,
 /// 127/8, 169.254/16).
+/// `address_in_lan_subnets` pyipv8 : uniquement 10/8, 172.16/12,
+/// 192.168/16. **Ni 127/8 ni 169.254/16** — upstream apprend
+/// `my_estimated_wan = (127.0.0.1, port)` sur maillage tout-loopback
+/// (c'est comme cela que sa suite de tests peuple la DHT). Les
+/// exclure ici bloquait `on_node_discovered` indefiniment et
+/// laissait la DHT sans aucun noeud.
 pub fn is_lan_subnet(ip: std::net::Ipv4Addr) -> bool {
     let o = ip.octets();
-    o[0] == 10
-        || (o[0] == 172 && (16..=31).contains(&o[1]))
-        || (o[0] == 192 && o[1] == 168)
-        || o[0] == 127
-        || (o[0] == 169 && o[1] == 254)
+    o[0] == 10 || (o[0] == 172 && (16..=31).contains(&o[1])) || (o[0] == 192 && o[1] == 168)
 }
 
 /// Callback de sonde RTT branchée sur les `pong` reçus —
@@ -206,10 +208,8 @@ impl DiscoveryCommunity {
     }
 
     /// Injecte une estimation WAN initiale (`my_estimated_wan` Python
-    /// est aussi assignable en test). Utile sur un banc 100 % loopback :
-    /// `destination_address` d'une intro-response en 127/8 n'est jamais
-    /// retenue comme WAN (`address_in_lan_subnets`), ce qui laisse le
-    /// DHT muet (`on_node_discovered` refuse tout noeud sans WAN).
+    /// est aussi assignable en test). Reste utile sur un banc dont
+    /// les pairs ne renverraient jamais d'intro-response.
     pub fn set_estimated_wan(&self, wan: UdpAddress) {
         *self.my_estimated_wan.lock().unwrap() = wan;
     }
@@ -486,7 +486,21 @@ impl DiscoveryCommunity {
         } else {
             self.my_estimated_wan()
         };
-        let dest = req.source_wan_address.clone();
+        // `destination_address` de la reponse = `peer.address`
+        // Python : la LAN declaree (`UDPv4LANAddress`) quand le
+        // demandeur annonce une vraie adresse LAN, sinon la source
+        // OBSERVEE du paquet — c'est l'oracle qui permet au
+        // demandeur d'apprendre `my_estimated_wan`. Avant on
+        // repercussait `source_wan_address` (auto-declaree, donc
+        // `0.0.0.0:0` tant que le WAN est inconnu) : la reponse
+        // n'apprenait rien et la DHT du demandeur restait affamee
+        // — famine structurelle du banc 17c-5 tout-loopback.
+        let dest = match &req.source_lan_address {
+            UdpAddress::Ipv4(a) if !a.ip().is_unspecified() && is_lan_subnet(*a.ip()) => {
+                UdpAddress::Ipv4(*a)
+            }
+            _ => src_addr.clone(),
+        };
         let limit = self.network.len() >= DEFAULT_MAX_PEERS;
         let intro_new_style = introduction
             .as_ref()

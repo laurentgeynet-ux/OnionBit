@@ -108,9 +108,8 @@ async fn dht_ping_et_token() {
     let _ = b;
 }
 
-/// Cree un noeud DHT sans WAN estime — le cas du banc 100 % loopback
-/// (`destination_address` des intros est toujours en sous-reseau LAN,
-/// donc `my_estimated_wan` ne s'apprend jamais).
+/// Cree un noeud DHT sans WAN estime — le cas initial du banc
+/// 100 % loopback (rien d'appris avant le premier echange).
 async fn node_sans_wan() -> (Arc<UdpEndpoint>, Arc<DhtCommunity>, UdpAddress) {
     let ep = UdpEndpoint::bind("127.0.0.1:0").await.unwrap();
     let local = UdpAddress::from(ep.local_addr().unwrap());
@@ -128,29 +127,29 @@ async fn node_sans_wan() -> (Arc<UdpEndpoint>, Arc<DhtCommunity>, UdpAddress) {
     (ep, dht, local)
 }
 
-/// Regression interop : sur un mesh loopback pur, les deux noeuds ont
-/// un WAN indetermine → `on_node_discovered` refuse l'autre chez les
-/// deux (comme pyipv8) → personne ne ping personne (blocage observe
-/// dans le banc ferme : tables vides, `dht_announce` sans noeud).
-/// Une fois le WAN injecte (`set_my_wan`, propage depuis la
-/// discovery via `ipv8.estimated_wan`), les tables se peuplent et
-/// `store_value`/`find_values` fonctionnent.
+/// Regression interop : la porte WAN de `on_node_discovered` est
+/// fidele a pyipv8 — elle ne filtre que les noeuds DECOUVERTS
+/// (walk sortant), jamais les noeuds qui nous requetent
+/// (`get_requesting_node` n'a pas de porte WAN cote Python non
+/// plus). L'apprentissage l'est aussi : la reponse porte
+/// `destination_address` = source OBSERVEE, donc le demandeur
+/// apprend `my_estimated_wan` meme en 127/8 — pas de famine
+/// structurelle comme avant le correctif. Consequence attendue :
+/// A marche → A apprend son WAN → B admis chez A → A ping B → A
+/// admis chez B comme requesting node (porte inapplicable).
 #[tokio::test]
 async fn dht_gate_wan_puis_peuplement() {
-    let (_ep_a, a, local_a) = node_sans_wan().await;
+    let (_ep_a, a, _local_a) = node_sans_wan().await;
     let (_ep_b, b, addr_b) = node_sans_wan().await;
 
-    // Sans WAN estime des deux cotes, l'introduction reussit mais les
-    // tables restent vides : personne n'est admis, personne ne ping.
+    // A marche vers B : la reponse porte l'adresse observee de A →
+    // A apprend son WAN → B admis → ping de A peuple B (requesting
+    // node, porte inapplicable — comme pyipv8).
     a.walk_to(&addr_b).await.unwrap();
-    tokio::time::sleep(Duration::from_millis(400)).await;
-    assert_eq!(a.node_count(), 0, "B devrait etre refuse sans WAN estime");
-    assert_eq!(b.node_count(), 0, "A devrait etre refuse sans WAN estime");
-
-    // Injection de l'estimation : la decouverte suivante est admise.
-    a.set_my_wan(local_a);
-    b.set_my_wan(addr_b.clone());
-    a.walk_to(&addr_b).await.unwrap();
+    let deadline = Instant::now() + Duration::from_secs(8);
+    while (a.node_count() < 1 || b.node_count() < 1) && Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
     let deadline = Instant::now() + Duration::from_secs(8);
     while (a.node_count() < 1 || b.node_count() < 1) && Instant::now() < deadline {
         tokio::time::sleep(Duration::from_millis(20)).await;

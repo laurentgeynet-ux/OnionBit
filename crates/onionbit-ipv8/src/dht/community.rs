@@ -644,6 +644,10 @@ impl DhtCommunity {
     /// source est blacklistee (non implemente : pas de blacklist ici).
     fn on_node_discovered(&self, public_key_bin: Vec<u8>, address: UdpAddress) {
         if self.my_wan().is_unspecified() {
+            tracing::debug!(
+                address = ?address,
+                "noeud DHT ignore : estimation WAN inconnue (introduction discovery en attente)"
+            );
             return;
         }
         let mid = sha1(&public_key_bin);
@@ -654,6 +658,7 @@ impl DhtCommunity {
         });
         if !existed {
             if let Some(n) = added {
+                tracing::debug!(address = ?n.address(), "noeud DHT ajoute a la table");
                 let c = self.weak.upgrade();
                 if let Some(c) = c {
                     tokio::spawn(async move {
@@ -1544,6 +1549,7 @@ impl DhtCommunity {
             }
         };
         if let Some(addr) = target {
+            tracing::debug!(target = ?addr, "walk DHT vers cible");
             self.walk_to(&addr).await?;
         }
         Ok(())
@@ -1857,10 +1863,22 @@ impl DhtCommunity {
                 self.network
                     .discover_service(&peer.public_key_bin, DHT_COMMUNITY_ID);
                 self.on_node_discovered(peer.public_key_bin.clone(), src_addr.clone());
+                // `destination_address` = `peer.address` Python : la
+                // LAN declaree si elle est une vraie adresse LAN,
+                // sinon la source OBSERVEE — oracle d'apprentissage
+                // de `my_estimated_wan` chez le demandeur.
+                let dest = match &p.source_lan_address {
+                    UdpAddress::Ipv4(a)
+                        if !a.ip().is_unspecified() && crate::discovery::is_lan_subnet(*a.ip()) =>
+                    {
+                        UdpAddress::Ipv4(*a)
+                    }
+                    _ => src_addr.clone(),
+                };
                 self.reply_result(src_addr, crate::payloads::msg::NEW_INTRODUCTION_RESPONSE, {
                     let mut w = Writer::new();
                     let _ = crate::payloads::NewIntroductionResponse {
-                        destination_address: p.source_wan_address.clone(),
+                        destination_address: dest,
                         source_lan_address: self.my_lan(),
                         source_wan_address: self.my_wan(),
                         lan_introduction_address: UdpAddress::unspecified(),
@@ -1900,10 +1918,20 @@ impl DhtCommunity {
                     Some(a) => (a.clone(), a.clone()),
                     None => (UdpAddress::unspecified(), UdpAddress::unspecified()),
                 };
+                // Meme oracle : source observee si pas de vraie LAN
+                // declaree (sinon `0.0.0.0:0` auto-declaree = famine).
+                let dest = match &p.source_lan_address {
+                    UdpAddress::Ipv4(a)
+                        if !a.ip().is_unspecified() && crate::discovery::is_lan_subnet(*a.ip()) =>
+                    {
+                        UdpAddress::Ipv4(*a)
+                    }
+                    _ => src_addr.clone(),
+                };
                 self.reply_result(src_addr, crate::payloads::msg::INTRODUCTION_RESPONSE, {
                     let mut w = Writer::new();
                     let _ = crate::payloads::IntroductionResponse {
-                        destination_address: p.source_wan_address.clone(),
+                        destination_address: dest,
                         source_lan_address: self.my_lan(),
                         source_wan_address: self.my_wan(),
                         lan_introduction_address: lan_i,
@@ -1937,6 +1965,19 @@ impl DhtCommunity {
                 // sans cela `peers_for_service` reste vide (marche,
                 // intros et affichage `overlays` a 0).
                 peer.new_style_intro = p.supports_new_style;
+                // `on_introduction_response` de la classe de base
+                // Python : `my_estimated_wan = destination_address`
+                // si IPv4 hors sous-reseaux LAN — chaque overlay
+                // apprend son WAN de SES reponses, sans dependre de
+                // la propagation depuis la DiscoveryCommunity (la
+                // famine DHT du banc loopback venait de la).
+                if let UdpAddress::Ipv4(d) = &p.destination_address {
+                    if !crate::discovery::is_lan_subnet(*d.ip()) {
+                        self.set_my_wan(UdpAddress::Ipv4(*d));
+                    }
+                } else if !p.destination_address.is_unspecified() {
+                    self.set_my_wan(p.destination_address.clone());
+                }
                 self.network.add_verified(peer.clone());
                 self.network
                     .discover_service(&peer.public_key_bin, DHT_COMMUNITY_ID);
@@ -1953,6 +1994,13 @@ impl DhtCommunity {
             crate::payloads::msg::NEW_INTRODUCTION_RESPONSE => {
                 let p = crate::payloads::NewIntroductionResponse::unpack(&mut r)?;
                 peer.new_style_intro = true;
+                if let UdpAddress::Ipv4(d) = &p.destination_address {
+                    if !crate::discovery::is_lan_subnet(*d.ip()) {
+                        self.set_my_wan(UdpAddress::Ipv4(*d));
+                    }
+                } else if !p.destination_address.is_unspecified() {
+                    self.set_my_wan(p.destination_address.clone());
+                }
                 self.network.add_verified(peer.clone());
                 self.network
                     .discover_service(&peer.public_key_bin, DHT_COMMUNITY_ID);
