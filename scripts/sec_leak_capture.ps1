@@ -86,6 +86,12 @@ param(
     [switch]$MeshHelper,
     [int]$HelperApiPort = 28710,
     [int]$HelperIpv8Port = 28810,
+    # Nombre de helpers de maillage (ports api/ipv8 = base + 10*i).
+    # >=2 rend les sauts loopback<->loopback possibles : les circuits
+    # restent READY en permanence et les points d'introduction du seed
+    # ne pointent plus vers le downloader (diag e2e : IPs annonces =
+    # {daemon, Tribler} sur maillage a 2 pairs -> handshake perdu).
+    [int]$MeshHelpers = 1,
     # Budget d'attente des circuits prets (DATA cote daemon, IP_SEEDER
     # cote seed cache). Sur maillage clairseme les sauts WAN mettent
     # plusieurs minutes a converger (run 23:23 : 1er READY a ~6 min
@@ -141,6 +147,7 @@ if (-not $isAdmin) {
         '-DaemonIpv8Port', "$DaemonIpv8Port",
         '-HelperApiPort', "$HelperApiPort",
         '-HelperIpv8Port', "$HelperIpv8Port",
+        '-MeshHelpers', "$MeshHelpers",
         '-CircuitReadyTimeoutSec', "$CircuitReadyTimeoutSec",
         '-OutDir', "`"$OutDir`""
     )
@@ -267,10 +274,24 @@ try {
         # >=2 pairs tunnel au daemon de banc, un second daemon local
         # (tunnel_community relais, libtorrent desactive) le complete :
         # il bootstrap sur Tribler, le banc bootstrap sur les deux.
+        # $MeshHelpers >= 2 : les helpers se connaissent mutuellement
+        # (ports deterministes) — sauts helper<->helper stables en
+        # loopback et points d'introduction qui ne retombent pas sur
+        # le downloader.
+        $helperProcs = @()
         $helperProc = $null
-        if ($MeshHelper) {
-            $hstate = Join-Path $OutDir 'helper-state'
+        $nHelpers = if ($MeshHelper) { [Math]::Max(1, $MeshHelpers) } else { 0 }
+        $helperStates = @()
+        for ($hi = 0; $hi -lt $nHelpers; $hi++) {
+            $hstate = Join-Path $OutDir ('helper-state' + $(if ($hi -gt 0) { "$hi" } else { '' }))
+            $helperStates += $hstate
             New-Item -ItemType Directory -Force -Path $hstate | Out-Null
+            $hApi  = $HelperApiPort  + 10 * $hi
+            $hIpv8 = $HelperIpv8Port + 10 * $hi
+            $hboot = @("127.0.0.1:$triblerPort", "127.0.0.1:$DaemonIpv8Port")
+            for ($hj = 0; $hj -lt $nHelpers; $hj++) {
+                if ($hj -ne $hi) { $hboot += "127.0.0.1:$($HelperIpv8Port + 10 * $hj)" }
+            }
             $hcfg = @{
                 tunnel_community = @{
                     enabled          = $true
@@ -288,9 +309,8 @@ try {
                     # Tribler comme noeud) et `dht_announce` echoue
                     # « pas de noeud pour stocker » — le seed cache est
                     # alors indestructible pour le telechargeur.
-                    bootstrap  = @{ override = @("127.0.0.1:$triblerPort",
-                                                 "127.0.0.1:$DaemonIpv8Port") }
-                    interfaces = @( @{ interface = 'UDPIPv4'; ip = '127.0.0.1'; port = $HelperIpv8Port } )
+                    bootstrap  = @{ override = $hboot }
+                    interfaces = @( @{ interface = 'UDPIPv4'; ip = '127.0.0.1'; port = $hIpv8 } )
                 }
                 # DHT communaute IPv8 : transport des annonces de pairs
                 # torrent — indispensable pour que le banc decouvre le
@@ -301,18 +321,25 @@ try {
             }
             [System.IO.File]::WriteAllText((Join-Path $hstate 'configuration.json'),
                 ($hcfg | ConvertTo-Json -Depth 8), [System.Text.UTF8Encoding]::new($false))
-            $hLog = Join-Path $OutDir 'helper.log'
-            $hErr = Join-Path $OutDir 'helper_err.log'
-            $helperProc = Start-Process -FilePath $daemonExe -PassThru -NoNewWindow `
-                -ArgumentList "--state-dir `"$hstate`" --listen 127.0.0.1:$HelperApiPort --no-tray" `
+            $hLog = Join-Path $OutDir ('helper' + $(if ($hi -gt 0) { "$hi" } else { '' }) + '.log')
+            $hErr = Join-Path $OutDir ('helper' + $(if ($hi -gt 0) { "$hi" } else { '' }) + '_err.log')
+            $p = Start-Process -FilePath $daemonExe -PassThru -NoNewWindow `
+                -ArgumentList "--state-dir `"$hstate`" --listen 127.0.0.1:$hApi --no-tray" `
                 -RedirectStandardOutput $hLog -RedirectStandardError $hErr
-            Log "helper maillage demarre pid=$($helperProc.Id) ipv8=$HelperIpv8Port"
+            $helperProcs += $p
+            Log "helper maillage #$hi demarre pid=$($p.Id) ipv8=$hIpv8 api=$hApi"
         }
+        if ($helperProcs.Count -gt 0) { $helperProc = $helperProcs[0] }
+        $hstate = if ($helperStates.Count -gt 0) { $helperStates[0] } else { $null }
 
         $dstate = Join-Path $OutDir 'daemon-state'
         New-Item -ItemType Directory -Force -Path $dstate | Out-Null
         $bootAddrs = @("127.0.0.1:$triblerPort")
-        if ($MeshHelper) { $bootAddrs += "127.0.0.1:$HelperIpv8Port" }
+        if ($MeshHelper) {
+            for ($hi = 0; $hi -lt $nHelpers; $hi++) {
+                $bootAddrs += "127.0.0.1:$($HelperIpv8Port + 10 * $hi)"
+            }
+        }
         $dcfg = @{
             tunnel_community = @{
                 enabled          = $true
@@ -920,8 +947,10 @@ try {
             # interpretable (le pcap loopback n'est pas capture).
             mesh_helper = if ($helperProc) { @{ pid = $helperProc.Id;
                                                ipv8_port = $HelperIpv8Port;
+                                               count = $nHelpers;
                                                seed = ($seedTarget -eq 'helper') } }
                           else { $null }
+            mesh_helpers = @($helperProcs | ForEach-Object { $_.Id })
             ports     = @{ before = $portsBefore; lane = $lanePorts; final = $portsFinal;
                            socks_lane = $laneSocks; socks_new_lane = $newSocks }
             t_failure = if ($tFailure) { $tFailure.ToUniversalTime().ToString('o') } else { $null }
@@ -1151,7 +1180,8 @@ try {
         t_failure  = if ($tFailure) { $tFailure.ToUniversalTime().ToString('o') } else { $null }
         fail_at_bytes = $FailAtBytes; fail_window_sec = $FailWindowSec
         tribler    = @{ exe = $triblerExe; port_ipv8 = $triblerPort; started_by_bench = $startedTribler }
-        mesh_helper = if ($helperProc) { @{ pid = $helperProc.Id; ipv8_port = $HelperIpv8Port } } else { $null }
+        mesh_helper = if ($helperProc) { @{ pid = $helperProc.Id; ipv8_port = $HelperIpv8Port; count = $nHelpers } } else { $null }
+        mesh_helpers = @($helperProcs | ForEach-Object { $_.Id })
         capture    = @{ etl = $etl; pcapng = $pcap; start = $capStart.ToString('o'); end = $capEnd.ToString('o'); post_exit_sec = $PostExitSec }
         resolvers  = $resolvers
         dht_routers_forbidden = $dhtForbidden
@@ -1177,7 +1207,9 @@ finally {
     }
     if ($captureStarted) { & cmd /c "pktmon stop >nul 2>&1" }
     if ($daemonProc -and -not $daemonProc.HasExited) { Stop-Process -Id $daemonProc.Id -Force -ErrorAction SilentlyContinue }
-    if ($helperProc -and -not $helperProc.HasExited) { Stop-Process -Id $helperProc.Id -Force -ErrorAction SilentlyContinue }
+    foreach ($hp in $helperProcs) {
+        if ($hp -and -not $hp.HasExited) { Stop-Process -Id $hp.Id -Force -ErrorAction SilentlyContinue }
+    }
     if ($rsProc -and -not $rsProc.HasExited) { Stop-Process -Id $rsProc.Id -Force -ErrorAction SilentlyContinue }
     if ($startedTribler -and $triblerProc) { Stop-Process -Id $triblerProc.Id -Force -ErrorAction SilentlyContinue }
     Get-Process -Name 'interop_public_download' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue

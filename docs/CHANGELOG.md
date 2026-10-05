@@ -3,6 +3,45 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## P0-17c-5 lane-reset OK — payload réel + 0 paquet interdit (2026-10-06)
+
+Le scénario `lane-reset` a enfin pu s'exécuter de bout en bout avec des
+octets fichier réels (`-DedicatedSeed -RequireFileBytes -MeshHelper
+-MeshHelpers 2`, run `leak-capture-20261006-002746`) :
+
+- **2 097 152 octets vérifiés** (`progress=0,5` × 4 Mio) avant injection
+  — le déclencheur octets-fichier a mordu, pas du trafic tunnel.
+- `DELETE /ipv8/tunnel/anon_lanes/2` en plein transfert → listener
+  SOCKS libéré, session de lane en 404, daemon vivant.
+- Nouvelle lane recréée sur des ports différents (SOCKS 50669 vs
+  57612), circuit DATA 2 sauts READY en ~4 s, trafic repris.
+- **0 paquet INTERDIT** dans la fenêtre fail-closed, **0 émission
+  depuis les ports morts** de la lane détruite. Un paquet
+  `UDP → 175.112.151.78:27549` correctement classé bruit ambiant.
+- La fuite réelle observée au run 2121xx (4 paquets UDP sortants d'un
+  port de lane détruite vers `213.31.154.144`) ne s'est pas reproduite
+  — gardée sous observation, non clôturée.
+
+Chaîne de déblocage (3 causes distinctes, diagnostic live) :
+
+- **Famine DHT loopback** (commit `437949c`) : les helpers peuvent
+  publier leurs points d'intro (`stored_on=8`) et le downloader les
+  trouve (`dht_lookup n=1`).
+- **Budget octets erodé** : armé au premier circuit DATA READY —
+  mesuré en run réel (`budget octets 240s arme` après READY).
+- **Instabilité de maillage à 2 pairs** : les circuits 2-sauts mouraient
+  en EXTENDING sur des relais WAN avant la fin du handshake e2e, et les
+  points d'intro annoncés retombaient sur le downloader lui-même
+  (`intro_addr=127.0.0.1:28830` = le daemon de banc). `-MeshHelpers 2`
+  rend les sauts helper↔helper loopback possibles : circuits READY en
+  ~10 s, IP_SEEDER ×10 instantanés, e2e établi en secondes.
+
+Durcissements harnais associés : `-MeshHelpers N` (N helpers avec
+bootstrap croisé, ports base+10·i), `-CircuitReadyTimeoutSec`
+(paramétrable), précondition `IP_SEEDER READY` côté seed caché,
+propagation UAC de `-MagnetDownload`/ports helper. Le manifeste
+documente `mesh_helpers` (pids) pour l'interprétabilité de la preuve.
+
 ## Messagerie activée par défaut + toggle réglages (2026-10-05)
 
 - `tunnel_community.messaging_enabled` passe à `true` par défaut

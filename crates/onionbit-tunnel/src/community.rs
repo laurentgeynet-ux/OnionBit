@@ -1856,7 +1856,7 @@ impl TunnelCommunity {
                     Some((pk, rest)) => {
                         tracing::debug!(
                             circuit_id,
-                            hop_pk = hex::encode(&pk[..8.min(pk.len())]),
+                            hop_pk = hex::encode(pk.as_slice()),
                             "extend : saut issu des candidates du created"
                         );
                         (pk.clone(), zero.clone(), rest.to_vec())
@@ -1906,7 +1906,7 @@ impl TunnelCommunity {
                 Some(p) => {
                     tracing::debug!(
                         circuit_id,
-                        hop_pk = hex::encode(&p.public_key_bin[..8.min(p.public_key_bin.len())]),
+                        hop_pk = hex::encode(&p.public_key_bin),
                         addr = ?p.address,
                         "extend : saut issu du registre local (repli)"
                     );
