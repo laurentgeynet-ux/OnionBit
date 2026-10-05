@@ -86,6 +86,11 @@ param(
     [switch]$MeshHelper,
     [int]$HelperApiPort = 28710,
     [int]$HelperIpv8Port = 28810,
+    # Budget d'attente des circuits prets (DATA cote daemon, IP_SEEDER
+    # cote seed cache). Sur maillage clairseme les sauts WAN mettent
+    # plusieurs minutes a converger (run 23:23 : 1er READY a ~6 min
+    # alors que la borne de 120 s expirait -> INVALID_PRECONDITION).
+    [int]$CircuitReadyTimeoutSec = 300,
     # Force le download par magnet meme quand -DedicatedSeed a produit
     # un .torrent : rejoue le chemin prod (resolution metadonnees via
     # pairs e2e du swarm cache, pre-materalisation).
@@ -134,6 +139,9 @@ if (-not $isAdmin) {
         '-TriblerWaitSec', "$TriblerWaitSec",
         '-DaemonApiPort', "$DaemonApiPort",
         '-DaemonIpv8Port', "$DaemonIpv8Port",
+        '-HelperApiPort', "$HelperApiPort",
+        '-HelperIpv8Port', "$HelperIpv8Port",
+        '-CircuitReadyTimeoutSec', "$CircuitReadyTimeoutSec",
         '-OutDir', "`"$OutDir`""
     )
     if ($DedicatedSeed)     { $psArgs += '-DedicatedSeed' }
@@ -141,6 +149,7 @@ if (-not $isAdmin) {
     if ($SeedFile -ne "")   { $psArgs += @('-SeedFile', "`"$SeedFile`"") }
     if ($SeedAnonHops -ne 1){ $psArgs += @('-SeedAnonHops', "$SeedAnonHops") }
     if ($MeshHelper)        { $psArgs += '-MeshHelper' }
+    if ($MagnetDownload)    { $psArgs += '-MagnetDownload' }
     $p = Start-Process -FilePath 'pwsh' -Verb RunAs -Wait -PassThru `
         -ArgumentList $psArgs -WindowStyle Normal
     Write-Host "code de sortie du processus eleve : $($p.ExitCode)"
@@ -457,6 +466,32 @@ try {
             }
             Precond $seedingConfirmed "seeder $seedTarget en etat seeding" `
                 "ih=$seedIh lt_port=$(if ($seedTarget -eq 'helper') { 0 } else { $triblerLtPort })"
+            # Precondition seed-cache cote tunnel : un point
+            # d'introduction n'est publiable (dht_announce) que depuis
+            # un circuit IP_SEEDER READY. Le run 23:23 a montre le
+            # trou : SEEDING confirme a 1 s, mais les circuits intro
+            # n'ont ete READY qu'a ~8 min -> announce tardif ->
+            # e2e jamais etabli dans la fenetre. On attend donc >=1
+            # IP_SEEDER READY avant d'ajouter le download. Ne s'applique
+            # qu'au seeding cache (hops>0) sur le helper (schema API
+            # connu ; Tribler n'est pas introspecte ici).
+            if ($SeedAnonHops -gt 0 -and $seedTarget -eq 'helper') {
+                $ipReady = $false; $ipN = 0
+                $ipDeadline = (Get-Date).AddSeconds($CircuitReadyTimeoutSec)
+                while ((Get-Date) -lt $ipDeadline -and -not $ipReady) {
+                    try {
+                        $hc = Invoke-RestMethod `
+                            -Uri "$seedApiBase/ipv8/tunnel/circuits" `
+                            -Headers @{ 'X-Api-Key' = $seedKey } -TimeoutSec 10
+                        $ipN = @(@($hc.circuits) | Where-Object {
+                            $_.type -eq 'IP_SEEDER' -and $_.state -eq 'READY' }).Count
+                        if ($ipN -gt 0) { $ipReady = $true }
+                    } catch {}
+                    if (-not $ipReady) { Start-Sleep -Seconds 3 }
+                }
+                Precond $ipReady 'seeder helper : circuit IP_SEEDER READY' `
+                    "ip_seeder_ready=$ipN"
+            }
             Log ("seed dedie : ih={0} sha256={1}... size={2}" -f `
                 $seedIh, $seedSha.Substring(0, 16), $seedSize)
             $Magnet = "magnet:?xt=urn:btih:$seedIh"
@@ -549,7 +584,7 @@ try {
         # lane n=1 mais kill switch engage, aucune cellule relayee) -
         # verifier le state via l'API, pas seulement le port.
         $cReady = $false
-        $cDeadline = (Get-Date).AddSeconds(120)
+        $cDeadline = (Get-Date).AddSeconds($CircuitReadyTimeoutSec)
         while ((Get-Date) -lt $cDeadline -and -not $cReady) {
             try {
                 $cir0 = DApiGet '/ipv8/tunnel/circuits'
@@ -558,7 +593,8 @@ try {
             } catch { Start-Sleep -Seconds 2 }
             if (-not $cReady) { Start-Sleep -Seconds 2 }
         }
-        Precond $cReady 'circuit tunnel READY avant trigger' "hops=$Hops"
+        Precond $cReady 'circuit tunnel READY avant trigger' `
+            "hops=$Hops budget=${CircuitReadyTimeoutSec}s"
 
         # Declencheur "mid-transfer" : la lane transporte du trafic
         # reel des que ses circuits DATA shuttent des cellules
