@@ -9,6 +9,7 @@ import '../../features/about/presentation/pages/about_page.dart';
 import '../../features/diagnostic/presentation/pages/diagnostic_page.dart';
 import '../../features/downloads/domain/download_filter.dart';
 import '../../features/downloads/presentation/pages/downloads_page.dart';
+import '../../features/messaging/presentation/pages/messaging_page.dart';
 import '../../features/search/presentation/pages/search_page.dart';
 import '../../features/settings/presentation/pages/settings_page.dart';
 import '../layout/app_shell.dart';
@@ -36,6 +37,10 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           GoRoute(
             path: '/search',
             builder: (context, state) => const SearchPage(),
+          ),
+          GoRoute(
+            path: '/messages',
+            builder: (context, state) => const MessagingPage(),
           ),
           GoRoute(
             path: '/diagnostic',

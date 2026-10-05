@@ -14,8 +14,10 @@
 //! compatible octet-pour-octet avec la DB Python (l'objectif est la
 //! semantique du schema, pas l'interoperabilite binaire).
 
-/// Version courante du schema de ce crate.
-pub const SCHEMA_VERSION: i64 = 14;
+/// Version courante du schema de ce crate — **doit etre egal a
+/// `MIGRATIONS.len()`** : un ecart fait refuser au demon la
+/// reouverture de sa propre base (`SchemaTooNew` au redemarrage).
+pub const SCHEMA_VERSION: i64 = MIGRATIONS.len() as i64;
 
 /// Script SQL de chaque migration, dans l'ordre (index 0 = v1).
 pub const MIGRATIONS: &[&str] = &[
@@ -289,6 +291,33 @@ DELETE FROM torrent_state WHERE infohash NOT IN
     (SELECT infohash FROM downloads)
    AND rowid NOT IN (SELECT health_rowid FROM channel_node
                      WHERE health_rowid IS NOT NULL);
+",
+    // v15 : messagerie ADR-0011 — contacts (consentement, seq
+    // sortant, retention) et messages (direction, seq, statut de
+    // livraison). Persistance en clair v1 (assume dans l'ADR) ;
+    // `secure_delete` zeroise le corps avant le DELETE a l'expiration.
+    "
+CREATE TABLE msg_contacts (
+    public_key     BLOB PRIMARY KEY,
+    state          TEXT NOT NULL CHECK (state IN ('active','pending','blocked')),
+    send_seq       INTEGER NOT NULL DEFAULT 0,
+    recv_top       INTEGER NOT NULL DEFAULT 0,
+    retention_secs INTEGER NOT NULL DEFAULT 0,
+    secure_delete  INTEGER NOT NULL DEFAULT 0,
+    created_at     INTEGER NOT NULL,
+    updated_at     INTEGER NOT NULL
+);
+CREATE TABLE msg_messages (
+    id          BLOB PRIMARY KEY,
+    contact_pk  BLOB NOT NULL REFERENCES msg_contacts(public_key) ON DELETE CASCADE,
+    direction   TEXT NOT NULL CHECK (direction IN ('in','out')),
+    seq         INTEGER NOT NULL,
+    ts          INTEGER NOT NULL,
+    body        BLOB NOT NULL,
+    status      TEXT NOT NULL CHECK (status IN ('received','sent','acked','failed')),
+    created_at  INTEGER NOT NULL
+);
+CREATE INDEX idx_msg_messages_contact ON msg_messages(contact_pk, ts);
 ",
 ];
 

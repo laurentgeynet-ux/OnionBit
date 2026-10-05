@@ -188,6 +188,12 @@ pub struct Circuit {
     /// posee a la liaison `linked-e2e` — `crypto.py` `outgoing_crypto`
     /// /`incoming_crypto`).
     pub hs_session_keys: Option<SessionKeys>,
+    /// Secret DH e2e (`shared` de `generate_diffie_shared_secret` /
+    /// `verify_and_generate_shared_secret`, 64 octets) — materiau de
+    /// derivation pour les cles applicatives (messagerie ADR-0011 :
+    /// HKDF domaine-separe, distinct de `hs_session_keys`). Pose au
+    /// `created-e2e` (seeder) / `linked-e2e` (downloader).
+    pub e2e_shared_secret: Option<[u8; 64]>,
     /// `exit_flags` (`ipv8-rust-tunnels` `Circuit.exit_flags`) : flags
     /// de service du dernier saut, si connus (selection des circuits
     /// compatibles HTTP).
@@ -221,6 +227,7 @@ impl Circuit {
             required_exit: None,
             relay_early_count: 0,
             hs_session_keys: None,
+            e2e_shared_secret: None,
             exit_flags: 0,
             pinned_hops: std::collections::VecDeque::new(),
             closing: None,

@@ -967,6 +967,90 @@ async fn ipv8_et_search_sans_stack_retournent_erreur() {
 }
 
 #[tokio::test]
+async fn messaging_desactivee_repond_404_sur_tous_les_endpoints() {
+    let srv = spawn_server().await;
+    // Session offline : `enable_messaging` off et pas de stack IPv8 —
+    // chaque endpoint repond 404 « messagerie desactivee » (MS-12 :
+    // jamais de reponse partielle quand la fonctionnalite est off).
+    let pk = hex::encode([0u8; 64]);
+    for (method, path, body) in [
+        ("GET", "/api/messaging/stats".to_string(), "".to_string()),
+        ("GET", "/api/messaging/contacts".to_string(), "".to_string()),
+        (
+            "GET",
+            "/api/messaging/contacts/pending".to_string(),
+            "".to_string(),
+        ),
+        (
+            "GET",
+            format!("/api/messaging/contacts/{pk}/messages"),
+            "".to_string(),
+        ),
+        ("GET", "/api/messaging/events".to_string(), "".to_string()),
+        (
+            "POST",
+            "/api/messaging/contacts/connect".to_string(),
+            format!("{{\"public_key\":\"{pk}\"}}"),
+        ),
+        (
+            "POST",
+            format!("/api/messaging/contacts/{pk}/accept"),
+            "{}".to_string(),
+        ),
+        (
+            "POST",
+            format!("/api/messaging/contacts/{pk}/refuse"),
+            "{}".to_string(),
+        ),
+        (
+            "POST",
+            format!("/api/messaging/contacts/{pk}/block"),
+            "{}".to_string(),
+        ),
+        (
+            "DELETE",
+            format!("/api/messaging/contacts/{pk}/block"),
+            "".to_string(),
+        ),
+        (
+            "DELETE",
+            format!("/api/messaging/contacts/{pk}"),
+            "".to_string(),
+        ),
+        (
+            "POST",
+            format!("/api/messaging/contacts/{pk}/messages"),
+            "{\"body\":\"test\"}".to_string(),
+        ),
+        (
+            "POST",
+            format!("/api/messaging/contacts/{pk}/retention"),
+            "{\"retention_secs\":0}".to_string(),
+        ),
+        (
+            "DELETE",
+            format!("/api/messaging/messages/{}", hex::encode([0u8; 16])),
+            "".to_string(),
+        ),
+    ] {
+        let resp = match method {
+            "GET" => srv.client.get(srv.url(&path)),
+            "POST" => srv
+                .client
+                .post(srv.url(&path))
+                .header("content-type", "application/json")
+                .body(body),
+            _ => srv.client.delete(srv.url(&path)),
+        }
+        .send()
+        .await
+        .unwrap();
+        assert_eq!(resp.status(), 404, "{method} {path}");
+    }
+    srv.session.stop().await;
+}
+
+#[tokio::test]
 async fn torrentinfo_file_et_uri() {
     let srv = spawn_server().await;
     let bytes = test_torrent_bytes();
@@ -1377,6 +1461,18 @@ async fn auth_cle_api_header_query_cookie() {
         .await
         .unwrap();
     assert_eq!(resp.status(), 401);
+
+    // Routes messagerie sans cle -> 401 (MS-12 : le middleware
+    // s'applique a l'extension comme aux endpoints Python — jamais
+    // de fuite d'etat avant authentification).
+    for path in [
+        "/api/messaging/contacts",
+        "/api/messaging/events",
+        "/api/messaging/stats",
+    ] {
+        let resp = srv.client.get(srv.url(path)).send().await.unwrap();
+        assert_eq!(resp.status(), 401, "{path}");
+    }
 
     // En-tete `X-Api-Key`.
     let resp = srv

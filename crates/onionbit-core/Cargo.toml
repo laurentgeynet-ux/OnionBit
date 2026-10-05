@@ -15,6 +15,7 @@ onionbit-crypto = { path = "../onionbit-crypto" }
 onionbit-network-policy = { path = "../onionbit-network-policy" }
 onionbit-ipv8 = { path = "../onionbit-ipv8" }
 onionbit-tunnel = { path = "../onionbit-tunnel" }
+onionbit-messaging = { path = "../onionbit-messaging" }
 rusqlite.workspace = true
 lz4_flex.workspace = true
 url.workspace = true
@@ -40,6 +41,7 @@ onionbit-test-support = { path = "../onionbit-test-support" }
 onionbit-crypto = { path = "../onionbit-crypto" }
 onionbit-ipv8 = { path = "../onionbit-ipv8" }
 onionbit-tunnel = { path = "../onionbit-tunnel" }
+onionbit-messaging = { path = "../onionbit-messaging" }
 # Banc live (`tests/live_bench.rs`) : `create_torrent` et options rqbit.
 librqbit.workspace = true
 sysinfo = "0.32"

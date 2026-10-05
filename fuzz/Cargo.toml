@@ -24,6 +24,7 @@ libfuzzer-sys = "0.4"
 onionbit-ipv8 = { path = "../crates/onionbit-ipv8" }
 onionbit-crypto = { path = "../crates/onionbit-crypto" }
 onionbit-tunnel = { path = "../crates/onionbit-tunnel" }
+onionbit-messaging = { path = "../crates/onionbit-messaging" }
 librqbit-utp = { path = "../vendor/librqbit-utp" }
 tokio = { version = "1", features = ["full"] }
 
@@ -70,6 +71,12 @@ doc = false
 [[bin]]
 name = "utp_datagram"
 path = "fuzz_targets/utp_datagram.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "messaging_frame"
+path = "fuzz_targets/messaging_frame.rs"
 test = false
 doc = false
 

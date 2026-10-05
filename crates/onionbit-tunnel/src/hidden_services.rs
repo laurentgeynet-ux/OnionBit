@@ -145,6 +145,9 @@ pub(crate) struct LinkRequest {
     pub(crate) info_hash: [u8; 20],
     /// Cles e2e a poser sur le circuit au `linked-e2e`.
     pub(crate) hs_session_keys: SessionKeys,
+    /// Secret DH e2e (`shared` 64 octets) — pose sur le circuit au
+    /// `linked-e2e` pour la derivation applicative (messagerie).
+    pub(crate) shared: [u8; 64],
     /// `cookie` de rendez-vous — permet la re-emission du `link-e2e`
     /// lors d'une retentative idempotente.
     pub(crate) cookie: [u8; 20],
@@ -183,6 +186,22 @@ impl TunnelCommunity {
             );
         }
         let seeder_sk = seeding.then(LibNaClSecretKey::generate);
+        self.join_swarm_with_key(info_hash, hops, seeder_sk);
+    }
+
+    /// `join_swarm` avec une cle de seeder explicite : la messagerie
+    /// (ADR-0011) pose la cle d'identite du contact comme
+    /// `seeder_sk` — le `seeder_pk` publie dans les annonces de
+    /// points d'introduction est alors la cle publique du contact et
+    /// le handshake `created-e2e` l'authentifie au niveau transport
+    /// (le downloader verifie `auth` contre `seeder_pk.crypt_pk`).
+    /// `Some(sk)` = seeder ; `None` = downloader.
+    pub fn join_swarm_with_key(
+        &self,
+        info_hash: [u8; 20],
+        hops: usize,
+        seeder_sk: Option<LibNaClSecretKey>,
+    ) {
         self.inner
             .lock()
             .unwrap()
@@ -1562,6 +1581,7 @@ impl TunnelCommunity {
             let mut inner = self.inner.lock().unwrap();
             if let Some(c) = inner.circuits.get_mut(&rp.circuit) {
                 c.hs_session_keys = Some(session_keys.clone());
+                c.e2e_shared_secret = Some(ds.shared);
             }
         }
         // Adresse du RP = `rendezvous_point_addr` de la reponse (le
@@ -1702,7 +1722,14 @@ impl TunnelCommunity {
         let first_hops = if hops == 1 {
             vec![required]
         } else {
-            let c = self.first_hop_candidates(CIRCUIT_TYPE_RP_DOWNLOADER, Some(&rp_info.key));
+            // Exclusion du RP : par cle (nominal) ET par adresse —
+            // un premier saut identique au point de rendez-vous
+            // demanderait au RP de s'etendre vers lui-meme.
+            let c: Vec<Peer> = self
+                .first_hop_candidates(CIRCUIT_TYPE_RP_DOWNLOADER, Some(&rp_info.key))
+                .into_iter()
+                .filter(|p| p.address.as_ref() != Some(&rp_info.address))
+                .collect();
             if c.is_empty() {
                 return;
             }
@@ -1711,6 +1738,12 @@ impl TunnelCommunity {
         tracing::debug!(
             info_hash = hex::encode(req.info_hash),
             rp = ?rp_info.address,
+            rp_key = hex::encode(&rp_info.key),
+            hops,
+            first_hops = ?first_hops
+                .iter()
+                .map(|p| (hex::encode(&p.public_key_bin), p.address.clone()))
+                .collect::<Vec<_>>(),
             "created-e2e valide : construction du circuit RP_DOWNLOADER"
         );
         let cid = match self
@@ -1753,6 +1786,7 @@ impl TunnelCommunity {
                     circuit_id: cid,
                     info_hash: req.info_hash,
                     hs_session_keys: session_keys,
+                    shared,
                     cookie: rp_info.cookie,
                 },
             );
@@ -1767,7 +1801,6 @@ impl TunnelCommunity {
             }
         }
         pending_guard.disarm();
-        tracing::debug!(circuit_id = cid, "link-e2e envoye au point de rendez-vous");
         let addr = {
             let inner = self.inner.lock().unwrap();
             match inner
@@ -1776,10 +1809,13 @@ impl TunnelCommunity {
                 .and_then(|c| c.first_hop().and_then(|h| h.address.clone()))
             {
                 Some(a) => a,
-                None => return,
+                None => {
+                    tracing::debug!(circuit_id = cid, "link-e2e : premier hop sans adresse");
+                    return;
+                }
             }
         };
-        let _ = self
+        match self
             .send_cell(
                 &addr,
                 &tp::LinkE2E {
@@ -1788,7 +1824,15 @@ impl TunnelCommunity {
                     cookie: rp_info.cookie,
                 },
             )
-            .await;
+            .await
+        {
+            Ok(_) => {
+                tracing::debug!(circuit_id = cid, addr = ?addr, "link-e2e envoye au point de rendez-vous")
+            }
+            Err(e) => {
+                tracing::debug!(circuit_id = cid, error = %e, "link-e2e : envoi echoue")
+            }
+        }
     }
 
     /// `on_link_e2e` (point de rendez-vous) : lie les deux sockets de
@@ -1811,6 +1855,10 @@ impl TunnelCommunity {
                 true
             } else {
                 let Some(exit_dl) = inner.exit_sockets.get(&circuit_id) else {
+                    tracing::debug!(
+                        circuit_id,
+                        "link-e2e : pas de socket de sortie pour ce circuit"
+                    );
                     return;
                 };
                 if exit_dl.enabled {
@@ -1818,9 +1866,11 @@ impl TunnelCommunity {
                     return;
                 }
                 let Some(exit_rp) = inner.exit_sockets.get(&relay_cid) else {
+                    tracing::debug!(relay_cid, "link-e2e : circuit RP sans socket de sortie");
                     return;
                 };
                 if exit_rp.enabled {
+                    tracing::debug!(relay_cid, "link-e2e : exit RP deja active");
                     return;
                 }
                 // Detache les deux exits et installe les routes de
@@ -1901,6 +1951,7 @@ impl TunnelCommunity {
             if let Some(c) = inner.circuits.get_mut(&req.circuit_id) {
                 c.e2e = true;
                 c.hs_session_keys = Some(req.hs_session_keys);
+                c.e2e_shared_secret = Some(req.shared);
                 c.base.beat_heart();
             }
         }

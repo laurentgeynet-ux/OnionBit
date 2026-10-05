@@ -3,6 +3,202 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## MS-13 — banc inter-demon messagerie e2e reel (2026-10-05)
+
+- **`scripts/interop_messaging_e2e.ps1`** : deux demons OnionBit
+  independants (processus, state dirs, cles API distincts) dans un
+  mesh loopback ancre/relai/exit. La sequence assertee couvre tout le
+  cycle applicatif : connect (resolve DHT + `create-e2e`), hello,
+  consentement `pending` -> `active` (rien livre avant, pas de faux
+  ack), livraison exactly-once + `acked`, reemission = nouvelle
+  ligne, **restart A** (identite/contacts/historique restaures,
+  liaison e2e perdue), kill B -> mort du circuit -> `404` + `failed`
+  (pas de file offline), restart B sans retransmission, reconnect
+  explicite, cleanup DELETE. Manifeste JSON a chaque run.
+- **Resultats** : vert en `messaging_hops=1` (circuit RP 2 sauts) et
+  `hops=2` (3 sauts). Duree ~1 min.
+- **Bugs reels trouves par le banc, corriges** :
+  - `onionbit-db` : `SCHEMA_VERSION` restee a 14 alors que la
+    migration v15 (tables messagerie) existait -> le demon refusait
+    de rouvrir sa propre DB au restart (`SchemaTooNew`). La
+    constante est desormais `MIGRATIONS.len()` — plus jamais de
+    derive.
+  - `onionbit-tunnel` : `remove_circuit`/destroy ne fermaient pas
+    `data_subscribers[cid]` -> le canal `subscribe_circuit_data`
+    restait ouvert, la messagerie ne deliait jamais un circuit mort.
+  - `onionbit-tunnel` : `on_extend` acceptait de s'etendre vers
+    soi-meme (boucle de routage) -> refus desormais. Exclusion du
+    point de rendez-vous comme premier hop renforcee par adresse en
+    plus de la cle.
+  - `onionbit-messaging` : la presence (`ensure_introduction_points`)
+    n'etait retentee qu'a `announce_interval` (300 s) apres un premier
+    essai avant verification des pairs -> nouvelle cadence
+    `ip_check_interval` (10 s) ; la reannonce DHT reste lente.
+- Diagnostics gardes : contexte `src`/`circuit_id` sur « cellule
+  rejetee », erreur d'envoi du `link-e2e` loggee, `first_hops` du
+  circuit `RP_DOWNLOADER` tracees en debug.
+
+## Messagerie ADR-0011, étape 41 — validation sécurité (2026-10-05)
+
+- **Inventaire MS-1..MS-12** : couverture vérifiée banc par banc
+  (cycle e2e + réouverture + séparation de lane, auth Ed25519,
+  codec hostile + cible fuzz `messaging_frame`, anti-replay,
+  consentement borné, budgets + drops comptés, offline `failed`,
+  restart + DELETE physique). MS-12 complété : 401 sans clé sur les
+  routes messagerie ajouté au test d'auth.
+- **MS-8 mesuré** : nouveau switch `-WithMessaging` de
+  `fingerprint_mesh.ps1` (active `messaging_enabled` sur les 4
+  nœuds OnionBit). Run mesh 15 min : présence seule = 2 975
+  cellules tunnel (~3,3/s) vs 1 116 (~1,24/s) baseline —
+  **+1 859 cellules (+167 %)** pour les circuits `IP_SEEDER` de
+  présence + re-annonces DHT (+360 messages DHT). Aucune boucle de
+  contrôle ; surcoût structurel borné, documenté dans
+  `fingerprinting.md`.
+- **Threat model** : section « Messagerie e2e » — propriétés
+  démontrées par banc vs non-claims explicites (métadonnée de
+  présence DHT assumée, intro points privilégiés, **pas de forward
+  secrecy** sans ratchet, persistance en clair, identité IPv8
+  partagée, corrélation de trafic hors périmètre).
+
+## Messagerie ADR-0011, étape 40 — API REST/SSE + UI (2026-10-05)
+
+- **REST `/api/messaging/*`** (extension Rust — pas de parité
+  Python) : `stats` (clé publique locale, `messaging_hash`,
+  compteurs de drops), `contacts` + `contacts/pending`,
+  `contacts/connect` (résolution points d'introduction + liaison
+  e2e), `accept`/`refuse`/`block`/`unblock`/`DELETE contact`,
+  `GET/POST contacts/{pk}/messages` (historique borné, envoi —
+  `404` hors ligne = enregistré `failed`), `DELETE messages/{id}`,
+  `contacts/{pk}/retention`. Toutes les routes répondent
+  `404 « messagerie desactivee »` quand le service n'est pas
+  démarré — jamais de réponse partielle.
+- **SSE dédié** `GET /api/messaging/events` : relaie le
+  `broadcast` du service (`messaging_frame`, `messaging_bound`,
+  `messaging_pending`, `messaging_consent`, `messaging_undeliverable`)
+  — volontairement hors `Notifier` global : la messagerie reste un
+  flux opt-in.
+- **Accesseurs service** : `public_key_bin`, `own_messaging_hash`
+  (exposition identité/adresse à l'API).
+- **UI Flutter** `features/messaging` : nouvel onglet « Messages »
+  (`/messages`) — adresse locale copiable, demandes `pending`
+  actionnables (accepter/refuser/bloquer), liste contacts (état,
+  circuit lié, menus blocage/rétention/suppression), conversation
+  (historique inversé, statuts envoyé/livré/non livré, suppression
+  réelle au clic long), dialogue d'ajout par clé publique.
+  `SseClient` généralisé par `path` ; pont SSE → invalidation pull
+  (le flux est un indice de fraîcheur, pas une source fiable).
+  Clés l10n en/fr ; `flutter analyze` propre.
+- **Tests** : `messaging_desactivee_repond_404_sur_tous_les_
+  endpoints` couvre les 14 routes (MS-12 côté « off »).
+
+## Messagerie ADR-0011, étape 39 — persistance + livraison (2026-10-05)
+
+- **Migration v15** : `msg_contacts` (pk, état, `send_seq`,
+  `recv_top`, `retention_secs`, `secure_delete`) et `msg_messages`
+  (id, FK cascade, direction, seq, ts, body, statut
+  `received|sent|acked|failed`) — persistance en clair v1 assumée
+  dans l'ADR. Module `onionbit-db::messaging` (propriétaire des
+  tables).
+- **Suppression réelle** : `DELETE` partout (contact → cascade
+  messages) ; rétention optionnelle par contact purgée au tick du
+  moniteur — `secure_delete` zeroise `body` avant le `DELETE`.
+- **ACK applicatif** : chaque `msg` livré renvoie `ack(id)` ; un
+  `ack` entrant passe le `out` correspondant à `acked` — exempté
+  du seau contact (contrôle vérifié et dédupé : il ne doit pas
+  faire perdre de `msg` sous rafale).
+- **Offline borné** : `send` sans circuit → erreur + événement
+  `Undeliverable` + ligne `failed` visible dans `history()` —
+  jamais de file ni de réémission automatique (MS-7).
+- **Restart (MS-11)** : `load_state` restaure état de
+  consentement, `send_seq` et `recv_top` (`RecvWindow::resume` —
+  bitmap reconstruit conservateur : `top` marqué vu).
+- **API service** : `history`, `stored_contacts`, `set_retention`,
+  `delete_message` — relais REST/SSE = étape 40.
+- **Tests** : 15 tests messagerie verts (offline, restart,
+  ack, rétention) + loopback à jour.
+
+## Messagerie ADR-0011, étape 38 — consentement + anti-abus (2026-10-05)
+
+- **`ContactState { Active, Pending, Blocked }`** : un `hello`
+  vérifié d'un inconnu crée un `pending` borné (`pending_cap=64`,
+  `pending_ttl=600 s`, purgé au tick du moniteur et avant chaque
+  admission) et émet `Consent` ; ses trames sont vérifiées puis
+  écartées (`pending_drop`) — jamais livrées avant décision.
+- **Transitions utilisateur** : `accept_contact` → `Active` + trame
+  `accept` au pair + `Bound` ; `refuse_contact` → `reject` + oubli
+  (un nouveau `hello` repropose) ; `block_contact` → drops comptés,
+  circuit détruit à l'identification, swarm du contact quitté et
+  jamais rejoint (`resolve`/`connect`/`send` refusés) ;
+  `unblock_contact` réinitialise. `send` exige `Active`.
+- **Budgets (MS-10)** : `preflight` (taille + suffixe canonique
+  `1:vi<ver>ee`, coût constant) → seau global (`global_rate=10/s`,
+  borne le coût codec+signature) → codec+AEAD → signature →
+  consentement → seau contact (`per_contact_rate=2/s`) →
+  anti-replay. La dédup `id` est consultée **avant** le seau et
+  `admit` **après** : les réémissions honnêtes restent gratuites,
+  une trame écartée au budget reste livrable plus tard.
+- **Observabilité** : `MessagingStats` (codec, rate_global,
+  rate_contact, blocked, pending_full, replay, pending_drop) +
+  `pending_contacts()`/`contact_state()` pour l'API (étape 40).
+- **Tests** : cycle pending→accept→livraison, refus puis
+  re-proposition, blocage persistant + swarm désarmé, `pending`
+  plein et TTL, seaux contact/global, préfiltre version — 11
+  tests messagerie verts, loopback 2 nœuds mis à jour sur le flux
+  de consentement (MS-6, MS-10).
+
+## Messagerie ADR-0011, étape 37 — transport e2e + démultiplexage (2026-10-05)
+
+- **`MessagingService` (`onionbit-core::services`)** — présence :
+  `join_swarm_with_key(messaging_hash(pk), hops, sk_identité)`
+  publie la clé d'identité comme `seeder_pk`, donc le handshake
+  `created-e2e` authentifie le destinataire au niveau transport ;
+  moniteur d'introduction-points (`ensure_introduction_points`,
+  re-annonce périodique `reannounce_intro_points`).
+- **Liaison** : `send_peers_request` (PEX direct ou DHT) →
+  `create_e2e` sur circuit `RP_DOWNLOADER` → `linked-e2e` ; le
+  secret DH e2e est désormais conservé sur le circuit
+  (`e2e_shared_secret`) et exposé — les clés applicatives
+  `MessagingKeys` sont dérivées HKDF domaine-séparé, jamais de
+  `hs_session_keys` en clé applicative.
+- **Démultiplexage** : un dispatcher par circuit e2e messagerie
+  via `subscribe_circuit_data`, indexé par `info_hash` des swarms
+  messagerie ; `hello` lie l'émetteur (corps `pk` + signature
+  vérifiée), les autres trames sont éprouvées contre les contacts
+  connus puis ouvertes (AEAD + Ed25519) et admises par la fenêtre
+  `seq`+dédup `id`. Un circuit e2e = une conversation ; la lane
+  BitTorrent (`swarm_lookup` + `could_be_utp`) ne voit jamais ces
+  trames — vérifié au niveau wire.
+- **Config** : `tunnel.enable_messaging` (défaut off) +
+  `messaging_hops` (défaut 1) ; nécessite `enable_anonymity`.
+- **Tests** : loopback 2 nœuds complet (présence → IP → liaison →
+  trames bidirectionnelles authentifiées), dédup à travers
+  réouverture de circuit, usurpation `hello`, trames hostiles,
+  rejet `could_be_utp` (MS-1, MS-2, MS-9).
+
+## Messagerie ADR-0011, étape 36 — codec de trame + crypto applicative (2026-10-05)
+
+- **Nouveau crate `onionbit-messaging`** (propriétaire unique du
+  protocole) : `Frame {v,type,id,seq,ts,body,sig}` en bencode
+  canonique strict — ensemble de clés exact, rejet `v != 1`,
+  `body` ≤ 30 Kio, trame ≤ 32 Kio, borne de taille **avant** tout
+  parse (anti-DoS).
+- **Authentification** : chaque trame est signée Ed25519 par la clé
+  IPv8 de l'émetteur (encrypt-then-sign sur la forme canonique sans
+  `sig`) et vérifiée contre la `pk` du contact — distinct de la
+  confidentialité du tunnel.
+- **Clés applicatives** : HKDF-SHA256 sur le secret e2e, domaine
+  `"onionbit messaging v1"` disjoint de `key_generation` — une clé
+  par direction, miroir initiateur/répondant. Non-claim assumé :
+  pas de ratchet/FS en v1.
+- **Anti-replay** : `seq` monotone + fenêtre bitmap 64 (modèle
+  IPsec) + dédup par `id` 128 bits borné FIFO — absorbe les
+  réémissions honnêtes d'un circuit e2e reconstruit.
+- **Fuzz** : cible `messaging_frame` (cargo-fuzz) + miroir stable
+  proptest (`tests/fuzz_regression.rs`) — jamais de panic sur
+  trame hostile.
+- **Bancs couverts** : MS-3/MS-4/MS-5 côté codec+auth+replay ;
+  transport (MS-1/MS-2), consentement et API = étapes 37-41.
+
 ## Compteur « session ↓ » : octets réseau réels (2026-10-05)
 
 - **Symptôme** : `session ↓` affichait ~61 Go au démarrage — la somme
