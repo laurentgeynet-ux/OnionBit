@@ -3,6 +3,26 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## 17c-5 revalidé : 2 Mio, 0 interdit — + deux durcissements harnais (2026-10-06)
+
+Second run vert complet (`leak-capture-20261006-011656`) : 2 097 152 o
+vérifiés en ~90 s, `DELETE anon_lanes/2`, nouvelle lane SOCKS 54074
+READY en ~4 s, **0 INTERDIT**, `dead_ports` vide, `lane` ports vide par
+construction (attribution exits en place).
+
+Deux courses corrigées en route :
+
+- **Sonde d'écoute API** : la clé est écrite dans `configuration.json`
+  avant que l'écoute HTTP soit effective (migrations + moteur) —
+  `/createtorrent` tombait en connexion refusée ~3 s post-spawn (run
+  010106). Sondes TCP sur les API daemon et helper avant tout appel.
+- **Vivier `>= hops+1`** : la précondition `>= Hops` pairs tunnel
+  suffisait aux circuits DATA mais pas au rendez-vous —
+  `RP_DOWNLOADER` se construit à `swarm.hops+1` (pyipv8). À 2 pairs il
+  reste `EXTENDING`, l'e2e reste half-open (`conns=1/0`) et
+  `verified=0` malgré 600 s de budget (runs 005227, 010335). Avec
+  `minPeers = Hops+1`, l'e2e converge en ~90 s.
+
 ## Attribution des sockets de sortie — faux positif 17c-5 résolu (2026-10-06)
 
 La « fuite dead-port » du run 2121xx (4 paquets UDP d'un port dit « mort »
