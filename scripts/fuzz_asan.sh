@@ -5,9 +5,12 @@
 
 # fuzz_asan.sh — campagne sanitizers du harnais fuzz.
 #
-# Rejoue les corpus avec AddressSanitizer (inclut Leak) et
-# UndefinedBehaviorSanitizer pour traquer UAF/overflows/UB que le fuzz
-# coverage-only ne detecte pas.
+# Rejoue les corpus avec AddressSanitizer (inclut LeakSanitizer) pour
+# traquer UAF/overflows/leaks que le fuzz coverage-only ne detecte
+# pas. `undefined` n'est PAS une valeur de `--sanitizer` cargo-fuzz
+# (address/leak/memory/thread/none) et rustc n'expose pas de UBSan
+# general via -Zsanitizer — la jambe UBSan initiale echouait en exit 2
+# avant tout fuzzing (CI 37341222562).
 #
 # Linux/WSL (ASan + UBSan, runtime fourni par rustup) :
 #   rustup toolchain install nightly --profile minimal
@@ -41,7 +44,8 @@ set -u
 cd "$(dirname "$0")/.."
 
 SEC="${SEC:-600}"
-SAN_LIST="${SAN:-address undefined}"
+# `undefined` retire : non supporte par cargo-fuzz/rustc (voir entete).
+SAN_LIST="${SAN:-address}"
 ONLY="${1:-}"
 COMMIT="$(git rev-parse --short HEAD 2>/dev/null || echo '?')"
 JOURNAL="fuzz/artifacts/fuzz_journal_san.csv"
