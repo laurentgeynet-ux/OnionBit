@@ -165,9 +165,18 @@ mod tests {
         let mon = AsyncioMonitor::new(0.01);
         assert!(mon.drift_history().is_none());
         assert!(mon.enable_drift());
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        let history = mon.drift_history().unwrap();
-        assert!(!history.is_empty());
+        // Poll jusqu'a 2 s : un sleep fixe de 50 ms est flaky quand la
+        // machine est chargee (la tache spawnée n'est pas ordonnan-cée
+        // assez vite pour produire un tick de 10 ms).
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        let history = loop {
+            let h = mon.drift_history().unwrap();
+            if !h.is_empty() {
+                break h;
+            }
+            assert!(std::time::Instant::now() < deadline);
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        };
         assert!(history.iter().all(|(t, d)| *t > 0.0 && *d >= 0.0));
         assert!(mon.disable_drift());
         // `strategy = None` → l'historique n'est plus exposee.
