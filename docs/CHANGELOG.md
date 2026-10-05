@@ -3,6 +3,49 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Gates transversaux — préparation post-campagne (2026-10-05)
+
+Préparation à froid des gates `messaging_window`, sanitizers et
+P0-17c-5 pendant que la campagne longue `messaging_window` tourne —
+aucun corpus vivant touché, aucun `cargo fuzz` lancé.
+
+- **`corpus_window_ne_diverge_pas`** (`onionbit-messaging/tests/
+  fuzz_regression.rs`) : replay stable du corpus `messaging_window`
+  — decodeur identique à la cible fuzz (`wb%96`, `cb%24`, tags
+  Admit/Resume/Reset/Admit-court, `decode_seq` aux mêmes bornes) qui
+  compare `RecvWindow` au `WindowModel` événement par événement
+  (`admit`, `seen_id`, `top`). S'abstient tant que
+  `tests/fuzz_corpus_window/` n'existe pas ; devient strict dès que
+  le corpus minimisé est versionné.
+- **`scripts/fuzz_corpus_replay.ps1`** — chaîne post-campagne :
+  `cargo +nightly fuzz run -s none <target> <corpus> -- -merge=1
+  <min>` → copie vers `crates/<crate>/tests/fuzz_corpus[_window]/` →
+  `cargo test -p <crate> --test fuzz_regression`. Mappe
+  `messaging_frame`/`messaging_window`, `-DestDir` pour les autres.
+- **`scripts/fuzz_asan.sh`** — campagne sanitizers Linux/WSL (ASan
+  + UBSan, `SEC`/`SAN` paramétrables) : les runtimes clang complets
+  n'existent pas sous MSVC — le shim sancov Windows reste
+  couverture-seule.
+- **P0-17c-5 rejeu** (`sec_leak_capture.ps1 -Scenario lane-reset`) :
+  `-DedicatedSeed` crée un torrent local via `/api/createtorrent`
+  du daemon banc et le fait seeder par le `Tribler.exe` bootstrap
+  (peer réel joignable par les exits), avec attente de l'état
+  `seeding` avant l'ajout du download anonyme ; `-RequireFileBytes`
+  rend le déclencheur strict sur les octets **vérifiés**
+  (`progress × size`, pas `session_download` qui compte les octets
+  reçus non hashés). Le fallback `max(fichier, tunnel)` reste le
+  défaut. Manifeste : `trigger_mode`, `seed_dedie` (infohash,
+  SHA-256 + taille source, seeder pid/ports, `seeding_confirmed`,
+  `bytes_at_failure`, `bytes_after_rebuild` — snapshots à
+  `progress`/`size`/`verified_estimated`/`session_download`/`tunnel`,
+  `payload_hash_match`) ; verdicts « aucun download direct » et
+  « SHA-256 reçu == seedé » quand le téléchargement dédié est
+  complet. **Verdict `INVALID_PRECONDITION`** (exit 2) : une
+  précondition non remplie (seeding non confirmé, trigger payload
+  jamais atteint, lane absente, download direct détecté, capture
+  inanalysable) invalide le résultat sécurité — le manifeste est
+  écrit quand même et un `INTERDIT=0` ne suffit plus à faire `OK`.
+
 ## Fuzz messagerie — campagne `messaging_frame` + cible `messaging_window` (2026-10-05)
 
 - **Campagne `messaging_frame` 14 400 s** (`802c752`, Windows MSVC,

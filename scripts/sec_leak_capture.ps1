@@ -63,6 +63,15 @@ param(
     [string]$Scenario = 'normal',
     [long]$FailAtBytes = 262144,
     [int]$FailWindowSec = 45,
+    # lane-reset (17c-5, rejeu) : -DedicatedSeed cree un torrent local
+    # via /api/createtorrent du daemon et le fait seeder par le
+    # Tribler.exe bootstrap - les octets FICHIER circulent
+    # reellement ; -RequireFileBytes rend le declencheur strict sur le
+    # payload (sinon max(fichier, trafic tunnel), fallback documente
+    # du run initial ou la resolution magnet avait stalle).
+    [switch]$DedicatedSeed,
+    [string]$SeedFile = "",
+    [switch]$RequireFileBytes,
     [string]$OutDir = "",
     [switch]$NoElevate,
     [switch]$Inner
@@ -109,6 +118,9 @@ if (-not $isAdmin) {
         '-DaemonIpv8Port', "$DaemonIpv8Port",
         '-OutDir', "`"$OutDir`""
     )
+    if ($DedicatedSeed)     { $psArgs += '-DedicatedSeed' }
+    if ($RequireFileBytes)  { $psArgs += '-RequireFileBytes' }
+    if ($SeedFile -ne "")   { $psArgs += @('-SeedFile', "`"$SeedFile`"") }
     $p = Start-Process -FilePath 'pwsh' -Verb RunAs -Wait -PassThru `
         -ArgumentList $psArgs -WindowStyle Normal
     Write-Host "code de sortie du processus eleve : $($p.ExitCode)"
@@ -120,6 +132,22 @@ $script:fails = 0
 function Verdict([bool]$ok, [string]$name, [string]$detail = "") {
     if ($ok) { Log ("OK   {0} {1}" -f $name, $detail) }
     else     { Log ("FAIL {0} {1}" -f $name, $detail); $script:fails++ }
+}
+
+# Preconditions du banc (distinctes des oracles) : leur echec
+# invalide le RESULTAT SECURITE sans etre un bug du code - le
+# manifeste affiche alors INVALID_PRECONDITION meme si INTERDIT=0,
+# car la fenetre observee n'a pas les preuves requises (ex. trigger
+# payload jamais atteint, seeder absent, capture inanalysable).
+$script:precond = [System.Collections.Generic.List[string]]::new()
+$script:precondFails = 0
+function Precond([bool]$ok, [string]$name, [string]$detail = "") {
+    if ($ok) { Log ("OK   PRECOND {0} {1}" -f $name, $detail) }
+    else {
+        Log ("FAIL PRECOND {0} {1}" -f $name, $detail)
+        $script:precondFails++
+        $script:precond.Add("$name - $detail")
+    }
 }
 
 $triblerExe = "C:\Program Files (x86)\Tribler\Tribler.exe"
@@ -251,6 +279,77 @@ try {
         }
         Verdict (-not $daemonProc.HasExited) 'daemon vivant' "pid=$pidBench"
 
+        # ---------- Seed dedie (17c-5, rejeu optionnel) -------------
+        # Le declencheur payload-reel exige que les octets FICHIER
+        # circulent : on cree un torrent local puis on le fait seeder
+        # par le Tribler.exe bootstrap (peer reel, joignable par les
+        # exits via son adresse overlay). Sans seed dedie, la
+        # resolution magnet sur mesh clairseme peut n'amener que du
+        # trafic tunnel - le fallback max(fichier, tunnel) du run
+        # initial masquait alors l'absence de payload.
+        $seedIh = $null; $seedSha = $null; $seedSize = $null
+        $seedingConfirmed = $false; $triblerLtPort = $null
+        $bytesAtFailure = $null; $bytesAfter = $null; $payloadHashMatch = $null
+        if ($DedicatedSeed) {
+            $seedDir = Join-Path $OutDir 'seed'
+            New-Item -ItemType Directory -Force -Path $seedDir | Out-Null
+            if ($SeedFile -eq "") {
+                $SeedFile = Join-Path $seedDir 'payload.bin'
+                $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+                $buf = New-Object byte[] (4MB)
+                $rng.GetBytes($buf)
+                [System.IO.File]::WriteAllBytes($SeedFile, $buf)
+            }
+            # Empreinte de la source : le manifeste lie le verdict au
+            # contenu exact seede (SHA-256 + taille attendue).
+            $seedSize = (Get-Item $SeedFile).Length
+            $seedSha = (Get-FileHash $SeedFile -Algorithm SHA256).Hash.ToLower()
+            $cr = Invoke-RestMethod -Method Post -Uri "$apiBase/createtorrent" `
+                -Headers $H -ContentType 'application/json' `
+                -Body (@{ files = @($SeedFile); name = 'onionbit-17c5-seed';
+                          export_dir = $seedDir } | ConvertTo-Json -Compress) `
+                -TimeoutSec 60
+            $torPath = $cr.results[0].path; $seedIh = $cr.results[0].infohash
+            Verdict ($null -ne $seedIh) 'torrent dedie cree' "ih=$seedIh"
+            try {
+                $uri = 'file:///' + ($torPath -replace '\\', '/')
+                Invoke-RestMethod -Method Put `
+                    -Uri "http://127.0.0.1:$apiPort/api/downloads" `
+                    -Headers @{ 'X-Api-Key' = $apiKey } -ContentType 'application/json' `
+                    -Body (@{ uri = $uri; anon_hops = 0; safe_seeding = $false;
+                              destination = $seedDir } | ConvertTo-Json -Compress) `
+                    -TimeoutSec 15 | Out-Null
+                Verdict $true 'seed dedie ajoute sur Tribler' "ih=$seedIh"
+            } catch {
+                Verdict $false 'seed dedie ajoute sur Tribler' $_.Exception.Message
+            }
+            try { $triblerLtPort = $conf.libtorrent.port } catch {}
+            # Le seeder doit etre en etat seeding (verification
+            # terminee) AVANT l'ajout du download anonyme - sinon les
+            # octets < fichier > ne seraient que des metadonnees.
+            $seedDeadline = (Get-Date).AddSeconds(60)
+            while ((Get-Date) -lt $seedDeadline -and -not $seedingConfirmed) {
+                try {
+                    $td = Invoke-RestMethod `
+                        -Uri "http://127.0.0.1:$apiPort/api/downloads" `
+                        -Headers @{ 'X-Api-Key' = $apiKey } -TimeoutSec 10
+                    $mine = @($td.downloads) | Where-Object { $_.infohash -eq $seedIh }
+                    if ($mine) {
+                        if ([double]$mine[0].progress -ge 1 `
+                            -or [string]$mine[0].status -match 'seed') {
+                            $seedingConfirmed = $true
+                        }
+                    }
+                } catch {}
+                if (-not $seedingConfirmed) { Start-Sleep -Seconds 2 }
+            }
+            Precond $seedingConfirmed 'seeder Tribler en etat seeding' `
+                "ih=$seedIh lt_port=$triblerLtPort"
+            Log ("seed dedie : ih={0} sha256={1}... size={2}" -f `
+                $seedIh, $seedSha.Substring(0, 16), $seedSize)
+            $Magnet = "magnet:?xt=urn:btih:$seedIh"
+        }
+
         # Attente de pairs overlay reels via le bootstrap Tribler.
         $deadline = (Get-Date).AddSeconds($TriblerWaitSec)
         $peersOk = $false
@@ -284,7 +383,7 @@ try {
         $dlDir = Join-Path $OutDir 'dl'
         # Les sockets datagramme d'une lane anonyme sont VIRTUELLES
         # (TunnelUdpSocket : le trafic est encapsule en cellules IPv8
-        # sur le port ipv8 partage) — la seule socket OS reelle creee
+        # sur le port ipv8 partage) - la seule socket OS reelle creee
         # par la lane est le listener TCP SOCKS5 loopback. C'est le
         # mapping OS a observer : il doit mourir avec la lane et la
         # lane recreee doit binder un port DIFFERENT.
@@ -295,8 +394,10 @@ try {
         $addResp = Invoke-RestMethod -Method Put -Uri "$apiBase/downloads" -Headers $H `
             -ContentType 'application/json' -Body $body -TimeoutSec 15
         $infohashHex = [string]$addResp.infohash
+        $triggerDesc = if ($RequireFileBytes) { 'octets FICHIER (strict)' }
+                       else { 'max(fichier, trafic tunnel)' }
         Log (("download anonyme {0} saut(s) ajoute (ih={1}) - attente de {2} octets " +
-            "(fichier ou trafic tunnel de la lane)") -f $Hops, $infohashHex, $FailAtBytes)
+            "[{3}]") -f $Hops, $infohashHex, $FailAtBytes, $triggerDesc)
 
         # Declencheur "mid-transfer" : la lane transporte du trafic
         # reel des que ses circuits DATA shuttent des cellules
@@ -304,11 +405,15 @@ try {
         # mesh clairseme les octets FICHIER peuvent tarder des minutes
         # alors que la lane transfere deja : l'oracle INTERDIT=0 porte
         # sur la lane detruite, pas sur la progression du torrent.
-        # On prend donc max(octets fichier, octets circuits DATA READY).
+        # Par defaut on prend donc max(octets fichier, octets circuits
+        # DATA READY) ; -RequireFileBytes (rejeu 17c-5 avec seed
+        # dedie) exige les octets payload reels.
         $tFailure = $null; $lanePorts = @(); $tLaneGone = $null
         $tResume = $null; $tNewReady = $null
         $laneSocks = @(); $newSocks = @()
         $got = 0
+        $fileBytes = 0; $verifiedBytes = 0; $tunnelBytes = 0
+        $mine0 = @()
         $deadline = (Get-Date).AddSeconds($DownloadTimeoutSec)
         while ((Get-Date) -lt $deadline -and -not $tFailure) {
             try {
@@ -326,12 +431,26 @@ try {
                         -and $_.goal_hops -eq $Hops } |
                     ForEach-Object { [int64]$_.bytes_up + [int64]$_.bytes_down } |
                     Measure-Object -Sum).Sum
-                $got = [Math]::Max($fileBytes, $tunnelBytes)
+                        # Octets < verifies > = progress * size de NOTRE
+                # download (session_download = recus, non verifies -
+                # une piece encore non hashee ne compte pas comme
+                # payload livre).
+                $mine0 = @($dls) | Where-Object { $_.infohash -eq $infohashHex }
+                $verifiedBytes = [int64]($mine0 | ForEach-Object {
+                    [double]$_.progress * [int64]$_.size } | Measure-Object -Sum).Sum
+                $got = if ($RequireFileBytes) { $verifiedBytes }
+                       else { [Math]::Max($fileBytes, $tunnelBytes) }
             } catch {}
             if ($got -ge $FailAtBytes -and $laneSocks.Count -gt 0) {
                 $now = @(Get-NetUDPEndpoint -OwningProcess $pidBench -ErrorAction SilentlyContinue `
                     | Where-Object { $_.LocalAddress -match '^\d+\.\d+\.\d+\.\d+$' } | ForEach-Object { $_.LocalPort } | Sort-Object -Unique)
                 $lanePorts = @($now | Where-Object { $portsBefore -notcontains $_ })
+                $bytesAtFailure = @{
+                    progress = if ($mine0) { [double]$mine0[0].progress } else { $null }
+                    size_selected = if ($mine0) { [int64]$mine0[0].size } else { $null }
+                    verified_estimated = $verifiedBytes
+                    session_download = $fileBytes
+                    tunnel = $tunnelBytes }
                 $tFailure = Get-Date
                 Log ("INJECTION lane-reset : DELETE anon_lanes/{0} a {1} octets ; socks=[{2}]" -f `
                     $Hops, $got, ($laneSocks -join ', '))
@@ -348,11 +467,16 @@ try {
                 }
             } else { Start-Sleep -Seconds 1 }
         }
-        Verdict ($got -ge $FailAtBytes) "transfert actif a l'injection (>= $FailAtBytes)" "dernier=$got"
-        Verdict ($null -ne $tFailure) 'panne lane-reset injectee' `
+        Precond ($laneSocks.Count -gt 0) 'lane anonyme active avant injection (SOCKS)' `
+            "n=$($laneSocks.Count)"
+        Precond ($got -ge $FailAtBytes) "transfert actif a l'injection (>= $FailAtBytes)" `
+            "dernier=$got file=$fileBytes verified=$verifiedBytes tunnel=$tunnelBytes"
+        Precond ($null -ne $tFailure) 'panne lane-reset injectee' `
             $(if ($tFailure) { "t=$($tFailure.ToString('HH:mm:ss.fff'))" } else { 'jamais' })
-        if (-not $tFailure) { throw "transfert jamais atteint $FailAtBytes octets ou listener SOCKS absent" }
-
+        # Toute la section destructive n'a de sens que si l'injection
+        # a eu lieu ; sinon on saute directement a l'arret de capture
+        # et le manifeste portera INVALID_PRECONDITION.
+        if ($tFailure) {
         # Liberation effective : le listener TCP de la lane detruite
         # doit mourir ET l'API doit annoncer la lane absente.
         $deadline = (Get-Date).AddSeconds(20)
@@ -379,7 +503,7 @@ try {
         Start-Sleep -Seconds 2
         Verdict (-not $daemonProc.HasExited) 'daemon vivant apres destruction' "pid=$pidBench"
 
-        # Suppression explicite du download (spec : lane + download) —
+        # Suppression explicite du download (spec : lane + download) -
         # libere le marqueur `pending` ; la tache de resolution du
         # magnet encore en vol avorte silencieusement au lieu de
         # materialiser une lane fantome plus tard.
@@ -433,8 +557,17 @@ try {
                 $dls = @(DApiGet '/downloads' | ForEach-Object { $_.downloads })
                 $fileBytes = [int64]($dls | ForEach-Object { [int64]$_.session_download } |
                     Measure-Object -Sum).Sum
+                $mine0 = @($dls) | Where-Object { $_.infohash -eq $infohashHex }
+                $verifiedBytes = [int64]($mine0 | ForEach-Object {
+                    [double]$_.progress * [int64]$_.size } | Measure-Object -Sum).Sum
                 if ($fileBytes0 -eq 0) { $fileBytes0 = $fileBytes }
                 if ($tNewReady -and ($newBytes -gt $cirBase -or $fileBytes -gt $fileBytes0)) {
+                    $bytesAfter = @{
+                    progress = if ($mine0) { [double]$mine0[0].progress } else { $null }
+                    size_selected = if ($mine0) { [int64]$mine0[0].size } else { $null }
+                    verified_estimated = $verifiedBytes
+                    session_download = $fileBytes
+                    tunnel = $newBytes }
                     $tResume = Get-Date; $got = $fileBytes; break
                 }
             } catch {}
@@ -452,14 +585,21 @@ try {
             Log "fenetre post-mortem lane ${PostExitSec}s"
             Start-Sleep -Seconds $PostExitSec
         }
+        }
         & pktmon stop 2>&1 | Out-Null
         $captureStarted = $false
         $capEnd = Get-Date
         & pktmon etl2pcap $etl -o $pcap 2>&1 | Out-Null
-        if (-not (Test-Path $pcap)) { throw "etl2pcap a echoue" }
-        Log "pcapng : $pcap"
+        $pcapOk = Test-Path $pcap
+        Precond $pcapOk 'capture PCAP analysable' $pcap
+        if ($pcapOk) { Log "pcapng : $pcap" }
+        $report = Join-Path $OutDir 'leak_report.json'
 
-        # ---------- Attribution ----------
+        # ---------- Attribution + analyse --------------------------
+        # L'analyse de fuite n'est interpretee que si l'injection a
+        # reellement eu lieu ET que le pcap est convertible : la
+        # fenetre [t_failure, t_fin] est le coeur de l'oracle.
+        if ($tFailure -and $pcapOk) {
         $portsFinal = @(Get-NetUDPEndpoint -OwningProcess $pidBench -ErrorAction SilentlyContinue `
             | Where-Object { $_.LocalAddress -match '^\d+\.\d+\.\d+\.\d+$' } | ForEach-Object { $_.LocalPort })
         $benchPortsFile = Join-Path $OutDir 'bench_ports.txt'
@@ -467,7 +607,7 @@ try {
             Set-Content $benchPortsFile -Encoding ascii
         Log "ports du banc : $((Get-Content $benchPortsFile) -join ', ')"
         # Ports UDP morts : la lane n'a pas de socket UDP reelle
-        # (TunnelUdpSocket virtuelle) — la liste est vide par
+        # (TunnelUdpSocket virtuelle) - la liste est vide par
         # construction mais le fichier doit exister pour l'analyseur.
         $deadPortsFile = Join-Path $OutDir 'dead_ports.txt'
         [System.IO.File]::WriteAllLines($deadPortsFile, [string[]]$lanePorts)
@@ -477,7 +617,6 @@ try {
         $py = 'python'
         if ($env:TRIBLER_INTEROP_PY -and (Test-Path $env:TRIBLER_INTEROP_PY)) { $py = $env:TRIBLER_INTEROP_PY }
         $analyzer = Join-Path $root 'scripts\analyze_leak_capture.py'
-        $report = Join-Path $OutDir 'leak_report.json'
         $w0 = [double]([DateTimeOffset]$tFailure).ToUnixTimeMilliseconds() / 1000
         $w1 = [double]([DateTimeOffset]$capEnd).ToUnixTimeMilliseconds() / 1000
         $anArgs = @($analyzer, $pcap, '--allowed', $allowedFile,
@@ -495,6 +634,42 @@ try {
             Verdict ($rep.window.interdit -eq 0) 'INTERDIT dans la fenetre fail-closed = 0' "n=$($rep.window.interdit)"
             Verdict ($rep.dead_ports.tx -eq 0) 'paquets sortants de ports morts = 0' "n=$($rep.dead_ports.tx)"
         }
+        }
+
+        # ---------- Invariants de fin de run -----------------------
+        # Aucun download direct (hops=0) ne doit exister cote daemon
+        # banc : tout le trafic BitTorrent passe par les lanes
+        # anonymes, sinon le pcap temoignerait d'un clair.
+        # PRECONDITION : sa violation invalide l'interpretation de la
+        # capture (un download en clair rend le pcap bruite).
+        $dlsEnd = @()
+        try {
+            $dlsEnd = @(DApiGet '/downloads' | ForEach-Object { $_.downloads })
+            $directDl = @($dlsEnd | Where-Object { -not $_.anon_download })
+            Precond ($directDl.Count -eq 0) 'aucun download direct sur le daemon banc' `
+                "n_direct=$($directDl.Count)"
+        } catch { Log "verif downloads directs : $($_.Exception.Message)" }
+
+        # Seed dedie : si le download anonyme est termine, le fichier
+        # recu doit avoir le SHA-256 de la source seedee - preuve que
+        # le payload a reellement transite (pas seulement des
+        # metadonnees ou du trafic de cellules).
+        if ($DedicatedSeed) {
+            try {
+                $mineEnd = @($dlsEnd) | Where-Object { $_.infohash -eq $seedIh }
+                if ($mineEnd -and [double]$mineEnd[0].progress -ge 1) {
+                    $f = Get-ChildItem $dlDir -Recurse -File -ErrorAction SilentlyContinue |
+                        Where-Object { $_.Length -eq $seedSize } | Select-Object -First 1
+                    if ($f) {
+                        $payloadHashMatch = ((Get-FileHash $f.FullName -Algorithm SHA256).Hash.ToLower() -eq $seedSha)
+                        Verdict $payloadHashMatch 'payload recu == payload seede (SHA-256)' `
+                            "file=$($f.Name)"
+                    }
+                } else {
+                    Log "download dedie non termine (progress inconnue) - hash final non verifiable"
+                }
+            } catch { Log "hash-match seed dedie : $($_.Exception.Message)" }
+        }
 
         @{
             run_utc   = $t0.ToUniversalTime().ToString('o')
@@ -502,10 +677,24 @@ try {
             commit    = (git -C $root rev-parse --short HEAD)
             scenario  = $Scenario
             hops      = $Hops; magnet = $Magnet
+            trigger_mode = $(if ($RequireFileBytes) { 'file_bytes_verified' }
+                             else { 'max_file_tunnel' })
+            seed_dedie = @{
+                infohash = $seedIh
+                source_sha256 = $seedSha
+                size_bytes = $seedSize
+                seeder = @{ proc = 'Tribler.exe'; pid = $triblerProc.Id;
+                            ipv8_port = $triblerPort;
+                            libtorrent_port = $triblerLtPort }
+                seeding_confirmed = $seedingConfirmed
+                bytes_at_failure = $bytesAtFailure
+                bytes_after_rebuild = $bytesAfter
+                payload_hash_match = $payloadHashMatch
+            }
             pid_bench = $pidBench
             ports     = @{ before = $portsBefore; lane = $lanePorts; final = $portsFinal;
                            socks_lane = $laneSocks; socks_new_lane = $newSocks }
-            t_failure = $tFailure.ToUniversalTime().ToString('o')
+            t_failure = if ($tFailure) { $tFailure.ToUniversalTime().ToString('o') } else { $null }
             t_lane_gone = if ($tLaneGone) { $tLaneGone.ToUniversalTime().ToString('o') } else { $null }
             t_first_new_ready = if ($tNewReady) { $tNewReady.ToUniversalTime().ToString('o') } else { $null }
             t_resume_payload = if ($tResume) { $tResume.ToUniversalTime().ToString('o') } else { $null }
@@ -522,11 +711,21 @@ try {
             tribler   = @{ exe = $triblerExe; port_ipv8 = $triblerPort; started_by_bench = $startedTribler }
             capture   = @{ etl = $etl; pcapng = $pcap; start = $capStart.ToString('o'); end = $capEnd.ToString('o'); post_exit_sec = $PostExitSec }
             resolvers = $resolvers
-            verdict   = if ($script:fails -eq 0) { 'OK' } else { "FAIL($($script:fails))" }
+            # INVALID_PRECONDITION : la fenetre n'a pas les preuves
+            # requises (trigger payload, seeder, lane prete, capture) -
+            # un INTERDIT=0 ne suffit pas a valider le run.
+            verdict   = if ($script:precondFails -gt 0) { 'INVALID_PRECONDITION' }
+                        elseif ($script:fails -eq 0) { 'OK' }
+                        else { "FAIL($($script:fails))" }
+            preconditions = $script:precond
             artifacts = @{ daemon_log = $dLog; daemon_err = $dErr; analysis = 'leak_analysis.txt'; report = 'leak_report.json' }
         } | ConvertTo-Json -Depth 6 | Set-Content (Join-Path $OutDir 'manifest.json') -Encoding UTF8
 
         Log ""
+        if ($script:precondFails -gt 0) {
+            Log "SEC LEAK CAPTURE INVALID_PRECONDITION ($($script:precondFails) precondition(s))"
+            exit 2
+        }
         if ($script:fails -eq 0) { Log "SEC LEAK CAPTURE OK"; exit 0 }
         Log "SEC LEAK CAPTURE ECHEC ($($script:fails) verdict(s))"
         exit 1

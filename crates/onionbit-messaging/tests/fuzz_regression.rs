@@ -88,6 +88,129 @@ fn corpus_campagne_ne_panique_pas() {
 // `messaging_window` : meme modele de reference, memes invariants.
 // ---------------------------------------------------------------------
 
+/// Frontieres de sequence — identiques a `fuzz/fuzz_targets/
+/// messaging_window.rs` (decode_seq).
+const SEQ_BOUNDARIES: &[u64] = &[
+    0,
+    1,
+    62,
+    63,
+    64,
+    65,
+    u32::MAX as u64 - 1,
+    u32::MAX as u64,
+    u32::MAX as u64 + 1,
+    u64::MAX - 1,
+    u64::MAX,
+];
+
+/// `decode_seq` de la cible fuzz : meme repartition dense/long/
+/// frontieres.
+fn decode_seq(raw: u64) -> u64 {
+    match raw % 8 {
+        0..=3 => raw % 256,
+        4 | 5 => raw % (1 << 40),
+        6 => raw,
+        _ => SEQ_BOUNDARIES[((raw >> 8) & 0xff) as usize % SEQ_BOUNDARIES.len()],
+    }
+}
+
+fn take<'a>(it: &mut &'a [u8], n: usize) -> Option<&'a [u8]> {
+    if it.len() < n {
+        return None;
+    }
+    let (h, t) = it.split_at(n);
+    *it = t;
+    Some(h)
+}
+
+fn take1(it: &mut &[u8]) -> Option<u8> {
+    take(it, 1).map(|b| b[0])
+}
+
+fn u64_le(b: &[u8]) -> u64 {
+    u64::from_le_bytes(b.try_into().unwrap_or([0; 8]))
+}
+
+/// Rejoue une sequence d'evenements encodee comme dans la cible
+/// `messaging_window` et compare `RecvWindow` a `WindowModel`
+/// evenement par evenement — miroir stable du `fuzz_target!`.
+fn exercise_window(data: &[u8]) {
+    let mut it = data;
+    let (Some(wb), Some(cb)) = (take1(&mut it), take1(&mut it)) else {
+        return;
+    };
+    let cfg = MessagingConfig {
+        recv_window: u32::from(wb % 96),
+        dedup_cap: usize::from(cb % 24),
+        ..Default::default()
+    };
+    let mut w = RecvWindow::new(&cfg);
+    let mut m = WindowModel::new(&cfg);
+
+    while let Some(tag) = take1(&mut it) {
+        match tag % 4 {
+            0 => {
+                let (Some(s), Some(i)) = (take(&mut it, 8), take1(&mut it)) else {
+                    break;
+                };
+                let seq = decode_seq(u64_le(s));
+                let impl_res = admit_outcome(w.admit(seq, &[i; MSG_ID_LEN]));
+                let model_res = m.admit(seq, i);
+                assert_eq!(
+                    impl_res, model_res,
+                    "divergence admit(seq={seq}, id={i}) : impl={impl_res:?} model={model_res:?}"
+                );
+                assert_eq!(w.seen_id(&[i; MSG_ID_LEN]), m.ids.contains(&i));
+            }
+            1 => {
+                let Some(t) = take(&mut it, 8) else { break };
+                let top = u64_le(t);
+                w = RecvWindow::resume(&cfg, top);
+                m.resume(&cfg, top);
+            }
+            2 => {
+                w = RecvWindow::new(&cfg);
+                m = WindowModel::new(&cfg);
+            }
+            _ => {
+                let Some(i) = take1(&mut it) else { break };
+                let seq = u64::from(tag);
+                assert_eq!(
+                    admit_outcome(w.admit(seq, &[i; MSG_ID_LEN])),
+                    m.admit(seq, i)
+                );
+                assert_eq!(w.seen_id(&[i; MSG_ID_LEN]), m.ids.contains(&i));
+            }
+        }
+        assert_eq!(w.top(), m.top, "top diverge");
+    }
+}
+
+/// Rejoue le corpus minimise de la campagne `messaging_window`
+/// versionne sous `tests/fuzz_corpus_window/` (merge libFuzzer post-
+/// campagne — `scripts/fuzz_corpus_replay.ps1 -Target messaging_window`).
+/// Tant que la campagne longue n'est pas cloturee le repertoire
+/// n'existe pas : le test s'abstient plutot que d'echouer — il devient
+/// strict des que le corpus minimise est commite.
+#[test]
+fn corpus_window_ne_diverge_pas() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fuzz_corpus_window");
+    if !dir.is_dir() {
+        eprintln!("corpus messaging_window absent — en attente de fin de campagne");
+        return;
+    }
+    let mut n = 0usize;
+    for entry in std::fs::read_dir(&dir).expect("corpus window lisible") {
+        let path = entry.expect("entree corpus lisible").path();
+        if path.is_file() {
+            exercise_window(&std::fs::read(&path).expect("input corpus lisible"));
+            n += 1;
+        }
+    }
+    assert!(n > 0, "corpus window vide");
+}
+
 /// Modele de reference : ensemble borne de seqs vus + cache FIFO
 /// d'`id`, sans bitmap — la spec naive contre laquelle `admit` est
 /// comparee evenement par evenement.
