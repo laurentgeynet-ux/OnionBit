@@ -37,7 +37,7 @@ pub mod replay;
 
 pub use config::MessagingConfig;
 pub use error::MessagingError;
-pub use frame::{Frame, MsgKind};
+pub use frame::{Frame, MsgKind, RawFrame};
 pub use hash::messaging_hash;
 pub use keys::{derive_messaging_keys, MessagingKeys, HKDF_INFO_MESSAGING};
 pub use replay::RecvWindow;

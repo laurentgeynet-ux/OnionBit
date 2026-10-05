@@ -3075,6 +3075,7 @@ dependencies = [
  "onionbit-db",
  "onionbit-format",
  "onionbit-ipv8",
+ "onionbit-messaging",
  "onionbit-network-policy",
  "onionbit-test-support",
  "onionbit-tunnel",

@@ -809,6 +809,19 @@ impl TunnelCommunity {
         rx
     }
 
+    /// Secret DH e2e pose sur un circuit lie (`created-e2e`/
+    /// `linked-e2e`) — materiau de derivation pour les cles
+    /// applicatives par HKDF domaine-separe (messagerie ADR-0011 ;
+    /// ne sert JAMAIS de cle de transport directement).
+    pub fn e2e_shared_secret(&self, circuit_id: u32) -> Option<[u8; 64]> {
+        self.inner
+            .lock()
+            .unwrap()
+            .circuits
+            .get(&circuit_id)
+            .and_then(|c| c.e2e_shared_secret)
+    }
+
     /// Retire l'abonnement de donnees d'un circuit.
     pub fn unsubscribe_circuit_data(&self, circuit_id: u32) {
         self.inner

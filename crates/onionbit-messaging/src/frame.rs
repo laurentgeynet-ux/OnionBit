@@ -85,6 +85,166 @@ impl MsgKind {
     }
 }
 
+/// Trame dechiffree mais **pas encore authentifiee** — utile cote
+/// repondant, qui ne sait pas quelle cle publique verifier avant
+/// la premiere trame d'un circuit (`hello` declare l'expediteur ;
+/// sinon on essaie les contacts connus).
+///
+/// INVARIANT : `body` est accessible mais la trame n'a prouve ni
+/// son emetteur ni son integrite — ne jamais la livrer a
+/// l'application avant [`RawFrame::verify`].
+#[derive(Debug)]
+pub struct RawFrame {
+    /// Type de trame.
+    pub kind: MsgKind,
+    /// Identifiant (dedup).
+    pub id: [u8; MSG_ID_LEN],
+    /// `seq` — anti-replay applique APRES verification.
+    pub seq: u64,
+    /// Horodatage emetteur.
+    pub ts: u64,
+    /// Corps dechiffre (non authentifie).
+    pub body: Vec<u8>,
+    /// Forme canonique signee (chiffre inclus) — entree de `verify`.
+    unsigned: Vec<u8>,
+    /// Signature Ed25519 lue sur le fil.
+    sig: [u8; SIGNATURE_LENGTH],
+}
+
+impl RawFrame {
+    /// Codec + dechiffrement sans verification d'emetteur : borne,
+    /// bencode, ensemble de cles, champs, puis AEAD sous `recv_key`.
+    /// Une signature invalide ou un corps non dechiffrable sont
+    /// rejetes comme `open` (`Decrypt` couvre aussi une `recv_key`
+    /// fausse — impossible de distinguer avant la cle).
+    pub fn parse(
+        data: &[u8],
+        recv_key: &[u8; 32],
+        cfg: &MessagingConfig,
+    ) -> Result<Self, MessagingError> {
+        let f = parse_fields(data, cfg)?;
+        let unsigned = unsigned_form(f.kind, &f.id, f.seq, f.ts, &f.body_ct);
+        let (cipher, nonce) = chacha(recv_key, f.seq);
+        let body = cipher
+            .decrypt(&nonce, f.body_ct.as_slice())
+            .map_err(|_| MessagingError::Decrypt)?;
+        let mut sig = [0u8; SIGNATURE_LENGTH];
+        sig.copy_from_slice(&f.sig);
+        Ok(Self {
+            kind: f.kind,
+            id: f.id,
+            seq: f.seq,
+            ts: f.ts,
+            body,
+            unsigned,
+            sig,
+        })
+    }
+
+    /// Verifie la signature contre `peer` et livre la trame
+    /// authentifiee. `BadSignature` si la preuve echoue.
+    pub fn verify(&self, peer: &LibNaClPublicKey) -> Result<Frame, MessagingError> {
+        if !peer.verify(&self.unsigned, &self.sig) {
+            return Err(MessagingError::BadSignature);
+        }
+        Ok(Frame {
+            kind: self.kind,
+            id: self.id,
+            seq: self.seq,
+            ts: self.ts,
+            body: self.body.clone(),
+        })
+    }
+}
+
+/// Champs bruts d'une trame filaire (corps encore chiffre).
+struct WireFields {
+    kind: MsgKind,
+    id: [u8; MSG_ID_LEN],
+    seq: u64,
+    ts: u64,
+    body_ct: Vec<u8>,
+    sig: Vec<u8>,
+}
+
+/// Codec strict de la trame filaire : borne -> bencode -> ensemble
+/// de cles exact -> types/tailles de champs. Ne verifie ni `sig`
+/// ni AEAD — c'est le role des phases suivantes.
+fn parse_fields(data: &[u8], cfg: &MessagingConfig) -> Result<WireFields, MessagingError> {
+    // Borne avant tout parse : le seul cout par trame hostile
+    // est lineaire et borne (anti-DoS, ADR-0011).
+    if data.len() > cfg.max_frame_len {
+        return Err(MessagingError::FrameTooLarge(data.len(), cfg.max_frame_len));
+    }
+    let value = decode(data)?;
+    let dict = value.as_dict().ok_or(MessagingError::Malformed(
+        "la trame n'est pas un dictionnaire",
+    ))?;
+    // Ensemble de cles strict : ni champ critique absent, ni
+    // champ inconnu ignore.
+    if dict.len() != FRAME_KEYS.len() || !FRAME_KEYS.iter().all(|k| dict.contains_key(*k)) {
+        return Err(MessagingError::Malformed(
+            "ensemble de cles different de la trame v1",
+        ));
+    }
+    let get = |k: &'static str| dict.get(k.as_bytes()).unwrap();
+
+    let v = get("v")
+        .as_int()
+        .ok_or(MessagingError::Malformed("v non entier"))?;
+    if v != PROTO_VERSION {
+        return Err(MessagingError::UnknownVersion(v));
+    }
+    let kind = MsgKind::from_bytes(
+        get("type")
+            .as_bytes()
+            .ok_or(MessagingError::Malformed("type non chaine"))?,
+    )?;
+    let id_raw = get("id")
+        .as_bytes()
+        .ok_or(MessagingError::Malformed("id non chaine"))?;
+    if id_raw.len() != MSG_ID_LEN {
+        return Err(MessagingError::Malformed("id != 16 octets"));
+    }
+    let mut id = [0u8; MSG_ID_LEN];
+    id.copy_from_slice(id_raw);
+
+    let seq = get("seq")
+        .as_int()
+        .ok_or(MessagingError::Malformed("seq non entier"))?;
+    let ts = get("ts")
+        .as_int()
+        .ok_or(MessagingError::Malformed("ts non entier"))?;
+    if seq < 0 || ts < 0 {
+        return Err(MessagingError::Malformed("seq/ts negatif"));
+    }
+    let sig = get("sig")
+        .as_bytes()
+        .ok_or(MessagingError::Malformed("sig non chaine"))?;
+    if sig.len() != SIGNATURE_LENGTH {
+        return Err(MessagingError::Malformed("sig != 64 octets"));
+    }
+    let body_ct = get("body")
+        .as_bytes()
+        .ok_or(MessagingError::Malformed("body non chaine"))?;
+    // Corps chiffre = clair + tag : la borne filaire est
+    // `max_body_len + TAG_LEN`.
+    if body_ct.len() > cfg.max_body_len + TAG_LEN {
+        return Err(MessagingError::BodyTooLarge(
+            body_ct.len(),
+            cfg.max_body_len + TAG_LEN,
+        ));
+    }
+    Ok(WireFields {
+        kind,
+        id,
+        seq: seq as u64,
+        ts: ts as u64,
+        body_ct: body_ct.to_vec(),
+        sig: sig.to_vec(),
+    })
+}
+
 /// Trame de messagerie decodee (corps en clair apres `open`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Frame {
@@ -187,8 +347,9 @@ impl Frame {
     }
 
     /// Parse une trame recue : borne de taille **avant** tout parse,
-    /// ensemble de cles strict, verification de signature contre la
-    /// `pk` du contact puis dechiffrement de `body` sous `recv_key`.
+    /// ensemble de cles strict, dechiffrement de `body` sous
+    /// `recv_key` puis verification de signature contre la `pk` du
+    /// contact.
     ///
     /// L'anti-replay (`seq`/`id`) est applique par l'appelant via
     /// [`crate::replay::RecvWindow`] — cette fonction ne fait que
@@ -199,89 +360,7 @@ impl Frame {
         recv_key: &[u8; 32],
         cfg: &MessagingConfig,
     ) -> Result<Self, MessagingError> {
-        // Borne avant tout parse : le seul cout par trame hostile
-        // est lineaire et borne (anti-DoS, ADR-0011).
-        if data.len() > cfg.max_frame_len {
-            return Err(MessagingError::FrameTooLarge(data.len(), cfg.max_frame_len));
-        }
-        let value = decode(data)?;
-        let dict = value.as_dict().ok_or(MessagingError::Malformed(
-            "la trame n'est pas un dictionnaire",
-        ))?;
-        // Ensemble de cles strict : ni champ critique absent, ni
-        // champ inconnu ignore.
-        if dict.len() != FRAME_KEYS.len() || !FRAME_KEYS.iter().all(|k| dict.contains_key(*k)) {
-            return Err(MessagingError::Malformed(
-                "ensemble de cles different de la trame v1",
-            ));
-        }
-        let get = |k: &'static str| dict.get(k.as_bytes()).unwrap();
-
-        let v = get("v")
-            .as_int()
-            .ok_or(MessagingError::Malformed("v non entier"))?;
-        if v != PROTO_VERSION {
-            return Err(MessagingError::UnknownVersion(v));
-        }
-        let kind = MsgKind::from_bytes(
-            get("type")
-                .as_bytes()
-                .ok_or(MessagingError::Malformed("type non chaine"))?,
-        )?;
-        let id_raw = get("id")
-            .as_bytes()
-            .ok_or(MessagingError::Malformed("id non chaine"))?;
-        if id_raw.len() != MSG_ID_LEN {
-            return Err(MessagingError::Malformed("id != 16 octets"));
-        }
-        let mut id = [0u8; MSG_ID_LEN];
-        id.copy_from_slice(id_raw);
-
-        let seq = get("seq")
-            .as_int()
-            .ok_or(MessagingError::Malformed("seq non entier"))?;
-        let ts = get("ts")
-            .as_int()
-            .ok_or(MessagingError::Malformed("ts non entier"))?;
-        if seq < 0 || ts < 0 {
-            return Err(MessagingError::Malformed("seq/ts negatif"));
-        }
-        let sig = get("sig")
-            .as_bytes()
-            .ok_or(MessagingError::Malformed("sig non chaine"))?;
-        if sig.len() != SIGNATURE_LENGTH {
-            return Err(MessagingError::Malformed("sig != 64 octets"));
-        }
-        let body_ct = get("body")
-            .as_bytes()
-            .ok_or(MessagingError::Malformed("body non chaine"))?;
-        // Corps chiffre = clair + tag : la borne filaire est
-        // `max_body_len + TAG_LEN`.
-        if body_ct.len() > cfg.max_body_len + TAG_LEN {
-            return Err(MessagingError::BodyTooLarge(
-                body_ct.len(),
-                cfg.max_body_len + TAG_LEN,
-            ));
-        }
-
-        let seq_u = seq as u64;
-        // Verification de la signature sur la forme canonique
-        // **telle que recue** (chiffre, puis signe).
-        let unsigned = unsigned_form(kind, &id, seq_u, ts as u64, body_ct);
-        if !peer.verify(&unsigned, sig) {
-            return Err(MessagingError::BadSignature);
-        }
-        let (cipher, nonce) = chacha(recv_key, seq_u);
-        let body = cipher
-            .decrypt(&nonce, body_ct)
-            .map_err(|_| MessagingError::Decrypt)?;
-        Ok(Self {
-            kind,
-            id,
-            seq: seq_u,
-            ts: ts as u64,
-            body,
-        })
+        RawFrame::parse(data, recv_key, cfg)?.verify(peer)
     }
 }
 

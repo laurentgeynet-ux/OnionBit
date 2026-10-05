@@ -220,6 +220,17 @@ pub struct Ipv8Config {
     /// debit — doit couvrir le sondage UI (~5 s) pour une mesure
     /// non nulle entre deux ticks.
     pub stats_rate_window_secs: u64,
+    /// Extension Rust (ADR-0011) : demarre le service messagerie e2e
+    /// — le demon joint le swarm `messaging_hash(pk)` (seeder avec
+    /// la cle d'identite), maintient des points d'introduction et
+    /// accepte les liaisons de contacts. Desactive par defaut tant
+    /// que les bancs `MS-*` (docs/plans/bancs_tests.md SS4.11)
+    /// n'ont pas valide l'ensemble. Necessite `enable_anonymity`.
+    pub enable_messaging: bool,
+    /// Extension Rust (ADR-0011) : sauts des circuits messagerie
+    /// (`hops` de `join_swarm` — meme echelle que `anon_hops` : 1 =
+    /// 1 relais + 1 saut intro/rendez-vous automatique).
+    pub messaging_hops: usize,
 }
 
 impl Ipv8Config {
@@ -264,6 +275,8 @@ impl Ipv8Config {
             exit_inbound_max_sources: DEFAULT_EXIT_INBOUND_MAX_SOURCES,
             stats_rate_sample_ms: DEFAULT_STATS_RATE_SAMPLE_MS,
             stats_rate_window_secs: DEFAULT_STATS_RATE_WINDOW_SECS,
+            enable_messaging: false,
+            messaging_hops: DEFAULT_MESSAGING_HOPS,
         }
     }
 }
@@ -305,6 +318,8 @@ impl Default for Ipv8Config {
             exit_inbound_max_sources: DEFAULT_EXIT_INBOUND_MAX_SOURCES,
             stats_rate_sample_ms: DEFAULT_STATS_RATE_SAMPLE_MS,
             stats_rate_window_secs: DEFAULT_STATS_RATE_WINDOW_SECS,
+            enable_messaging: false,
+            messaging_hops: DEFAULT_MESSAGING_HOPS,
         }
     }
 }
@@ -375,6 +390,10 @@ pub const DEFAULT_STATS_RATE_SAMPLE_MS: u64 = 1_000;
 /// Profondeur par defaut (s) de la fenetre glissante du debit
 /// endpoint — couvre le sondage UI (5 s) avec une marge.
 pub const DEFAULT_STATS_RATE_WINDOW_SECS: u64 = 6;
+/// Extension Rust (ADR-0011) : sauts par defaut des circuits
+/// messagerie — 1 saut de swarm (+1 automatique `IP_SEEDER`/
+/// `RP_DOWNLOADER`), comme un telechargement `anon_hops=1`.
+pub const DEFAULT_MESSAGING_HOPS: usize = 1;
 
 /// Debit servi applique a la construction de la community quand le
 /// mode est `-1` (auto) — `bandwidth/fallback_bps`, remplace a chaud
@@ -1158,6 +1177,12 @@ pub struct Ipv8Stack {
     /// e2e notifies par `e2e_ready` portent l'info-hash de LOOKUP du
     /// swarm, ce mapping retrouve le download correspondant.
     swarm_lookup: Mutex<SwarmLookupMap>,
+    /// Service messagerie e2e (ADR-0011) — present si
+    /// `enable_messaging` et `enable_anonymity` : joints le swarm
+    /// `messaging_hash(pk)` et demultiplexe les cellules `data` de
+    /// ses circuits e2e (separe de la lane uTP — `spawn_e2e_listener`
+    /// ignore les swarms hors `swarm_lookup`).
+    pub messaging: Option<Arc<crate::services::messaging::MessagingService>>,
     /// Arrets des taches hidden-services (monitor des swarms +
     /// relais `e2e_ready`), creees a la premiere lane anonyme.
     hidden_tasks: Mutex<Vec<tokio::sync::watch::Sender<bool>>>,
@@ -1701,6 +1726,29 @@ impl Ipv8Stack {
             });
         }
 
+        // ADR-0011 : service messagerie — joint le swarm
+        // `messaging_hash(pk)` en seeder (cle d'identite) et branche
+        // son propre relais `e2e_ready` (demux par info-hash : les
+        // circuits BT continuent vers `spawn_e2e_listener`/uTP).
+        let messaging = if config.enable_messaging {
+            match &tunnel {
+                Some(t) => Some(crate::services::messaging::MessagingService::start(
+                    t.clone(),
+                    key.clone(),
+                    onionbit_messaging::MessagingConfig::default(),
+                    config.messaging_hops,
+                )),
+                None => {
+                    tracing::warn!(
+                        "enable_messaging sans enable_anonymity : messagerie non demarree"
+                    );
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
         let stack = Arc::new(Self {
             endpoint,
             network,
@@ -1709,6 +1757,7 @@ impl Ipv8Stack {
             tunnel,
             dht,
             key,
+            messaging,
             dht_maintenance_stop,
             anon_lanes: Mutex::new(HashMap::new()),
             anon_engine_lock: tokio::sync::Mutex::new(()),
@@ -2109,6 +2158,9 @@ impl Ipv8Stack {
         for tx in self.hidden_tasks.lock().unwrap().drain(..) {
             let _ = tx.send(true);
         }
+        if let Some(m) = &self.messaging {
+            m.stop();
+        }
         // `exitnode_cache` Python : persiste les noeuds de sortie
         // connus (re-pinges au prochain demarrage).
         if let Some(t) = &self.tunnel {
@@ -2287,7 +2339,7 @@ fn spawn_swarm_monitor(
 /// Cree des points d'introduction jusqu'a `max_intro_points`
 /// circuits `IP_SEEDER` prets/en cours pour le swarm (`new_state ==
 /// SEEDING` de `monitor_hidden_swarms`).
-fn ensure_introduction_points(tunnel: &Arc<TunnelCommunity>, lookup: [u8; 20]) {
+pub(crate) fn ensure_introduction_points(tunnel: &Arc<TunnelCommunity>, lookup: [u8; 20]) {
     let lookup_hex = hex::encode(lookup);
     let existing = tunnel
         .circuits_info()

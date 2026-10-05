@@ -145,6 +145,9 @@ pub(crate) struct LinkRequest {
     pub(crate) info_hash: [u8; 20],
     /// Cles e2e a poser sur le circuit au `linked-e2e`.
     pub(crate) hs_session_keys: SessionKeys,
+    /// Secret DH e2e (`shared` 64 octets) — pose sur le circuit au
+    /// `linked-e2e` pour la derivation applicative (messagerie).
+    pub(crate) shared: [u8; 64],
     /// `cookie` de rendez-vous — permet la re-emission du `link-e2e`
     /// lors d'une retentative idempotente.
     pub(crate) cookie: [u8; 20],
@@ -183,6 +186,22 @@ impl TunnelCommunity {
             );
         }
         let seeder_sk = seeding.then(LibNaClSecretKey::generate);
+        self.join_swarm_with_key(info_hash, hops, seeder_sk);
+    }
+
+    /// `join_swarm` avec une cle de seeder explicite : la messagerie
+    /// (ADR-0011) pose la cle d'identite du contact comme
+    /// `seeder_sk` — le `seeder_pk` publie dans les annonces de
+    /// points d'introduction est alors la cle publique du contact et
+    /// le handshake `created-e2e` l'authentifie au niveau transport
+    /// (le downloader verifie `auth` contre `seeder_pk.crypt_pk`).
+    /// `Some(sk)` = seeder ; `None` = downloader.
+    pub fn join_swarm_with_key(
+        &self,
+        info_hash: [u8; 20],
+        hops: usize,
+        seeder_sk: Option<LibNaClSecretKey>,
+    ) {
         self.inner
             .lock()
             .unwrap()
@@ -1562,6 +1581,7 @@ impl TunnelCommunity {
             let mut inner = self.inner.lock().unwrap();
             if let Some(c) = inner.circuits.get_mut(&rp.circuit) {
                 c.hs_session_keys = Some(session_keys.clone());
+                c.e2e_shared_secret = Some(ds.shared);
             }
         }
         // Adresse du RP = `rendezvous_point_addr` de la reponse (le
@@ -1753,6 +1773,7 @@ impl TunnelCommunity {
                     circuit_id: cid,
                     info_hash: req.info_hash,
                     hs_session_keys: session_keys,
+                    shared,
                     cookie: rp_info.cookie,
                 },
             );
@@ -1901,6 +1922,7 @@ impl TunnelCommunity {
             if let Some(c) = inner.circuits.get_mut(&req.circuit_id) {
                 c.e2e = true;
                 c.hs_session_keys = Some(req.hs_session_keys);
+                c.e2e_shared_secret = Some(req.shared);
                 c.base.beat_heart();
             }
         }

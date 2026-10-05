@@ -3,6 +3,35 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Messagerie ADR-0011, étape 37 — transport e2e + démultiplexage (2026-10-05)
+
+- **`MessagingService` (`onionbit-core::services`)** — présence :
+  `join_swarm_with_key(messaging_hash(pk), hops, sk_identité)`
+  publie la clé d'identité comme `seeder_pk`, donc le handshake
+  `created-e2e` authentifie le destinataire au niveau transport ;
+  moniteur d'introduction-points (`ensure_introduction_points`,
+  re-annonce périodique `reannounce_intro_points`).
+- **Liaison** : `send_peers_request` (PEX direct ou DHT) →
+  `create_e2e` sur circuit `RP_DOWNLOADER` → `linked-e2e` ; le
+  secret DH e2e est désormais conservé sur le circuit
+  (`e2e_shared_secret`) et exposé — les clés applicatives
+  `MessagingKeys` sont dérivées HKDF domaine-séparé, jamais de
+  `hs_session_keys` en clé applicative.
+- **Démultiplexage** : un dispatcher par circuit e2e messagerie
+  via `subscribe_circuit_data`, indexé par `info_hash` des swarms
+  messagerie ; `hello` lie l'émetteur (corps `pk` + signature
+  vérifiée), les autres trames sont éprouvées contre les contacts
+  connus puis ouvertes (AEAD + Ed25519) et admises par la fenêtre
+  `seq`+dédup `id`. Un circuit e2e = une conversation ; la lane
+  BitTorrent (`swarm_lookup` + `could_be_utp`) ne voit jamais ces
+  trames — vérifié au niveau wire.
+- **Config** : `tunnel.enable_messaging` (défaut off) +
+  `messaging_hops` (défaut 1) ; nécessite `enable_anonymity`.
+- **Tests** : loopback 2 nœuds complet (présence → IP → liaison →
+  trames bidirectionnelles authentifiées), dédup à travers
+  réouverture de circuit, usurpation `hello`, trames hostiles,
+  rejet `could_be_utp` (MS-1, MS-2, MS-9).
+
 ## Messagerie ADR-0011, étape 36 — codec de trame + crypto applicative (2026-10-05)
 
 - **Nouveau crate `onionbit-messaging`** (propriétaire unique du

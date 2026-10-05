@@ -8,6 +8,7 @@
 //! `onionbit-ipv8::content_discovery`).
 
 pub mod bandwidth;
+pub mod messaging;
 pub mod rss;
 pub mod torrent_checker;
 pub mod versioning;
