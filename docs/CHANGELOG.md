@@ -3,6 +3,16 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Fix — prédicat pre-kill de `live_crash_pending_magnet_et_restart` (2026-10-05)
+
+Le « flake » de l'issue #16 était un prédicat structurellement faux :
+`dls` filtrait les specs par `!magnet`, or la flotte
+`[(0,false),(0,true),(2,true)]` ne contient qu'un seul non-magnet →
+`dls.len() == 2` impossible → `wait_until` retournait `false` à chaque
+run. Le filtre sélectionne désormais les specs matérialisables
+(`hops == 0` : le direct + le magnet lane 0 résolu via le seed).
+Validation : 5/5 runs isolés (~2 s), suite `live_bench` 14/14.
+
 ## Fix — magnet anonyme bloqué en METADATA + famine DHT loopback (2026-10-05)
 
 Bug production : un magnet ajouté avec `anon_hops > 0` restait parfois

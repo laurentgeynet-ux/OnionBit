@@ -1772,9 +1772,13 @@ fn live_crash_pending_magnet_et_restart() {
                 // retentee par le moteur — meme correction que la
                 // boucle de progression de live_flotte_10_restart.
                 let ok = wait_until(Duration::from_secs(60), || {
+                    // Les 2 torrents lane 0 (le direct + le magnet
+                    // resolu) doivent materialiser — `hops == 0`, pas
+                    // `!magnet` : le second « materiel » EST un magnet
+                    // (resolu via le pair seed re-injecte).
                     let dls: Vec<_> = add_specs
                         .iter()
-                        .filter(|(_, _, m, _)| !*m)
+                        .filter(|(_, _, _, h)| *h == 0)
                         .filter_map(|(ih, _, _, _)| session.find_download_hex(ih))
                         .collect();
                     for d in &dls {
