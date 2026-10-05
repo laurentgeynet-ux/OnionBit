@@ -85,8 +85,11 @@ pub struct ContentDiscoverySettings {
     pub select_packets_limit: u8,
     /// `RandomWalk` du launcher pyipv8 (`target_peers = 20`).
     pub walk_target_peers: usize,
-    /// `max_query_peers` Python (20) : pairs interroges par
-    /// `send_search_request`.
+    /// `max_query_peers` Python : pairs interroges par
+    /// `send_search_request`. Ecart documente : 60 au lieu de 20 —
+    /// l'overlay content-discovery connait typiquement >200 pairs
+    /// (la cible `RandomWalk` est un plancher), borner a 20 ne
+    /// touchait que ~10 % des pairs disponibles par requete.
     pub max_query_peers: usize,
 }
 
@@ -100,7 +103,7 @@ impl Default for ContentDiscoverySettings {
             select_ttl: Duration::from_secs(10),
             select_packets_limit: 10,
             walk_target_peers: 20,
-            max_query_peers: 20,
+            max_query_peers: 60,
         }
     }
 }

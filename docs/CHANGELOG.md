@@ -3,6 +3,25 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Correctifs — recherche locale et fan-out distant (2026-10-05)
+
+- **Recherche locale sans filtre quand l'augmenteur rend 0 rowid**
+  (`/api/metadata/search/local`) : `local_search` vidait `txt_filter`
+  et `terms` au profit de `rowids`, mais une liste vide ne posait
+  aucune clause `WHERE` — la requête retournait les 50 premières
+  lignes de `channel_node` quel que soit le texte cherché (ex. une
+  recherche « french » listait des torrents sans rapport). Garde-fou :
+  `rowids` vide => résultat vide.
+- **`OFFSET` augmenteur décalé de 1** : `offset = max(1, first)` était
+  passé tel quel à `LIMIT/OFFSET` SQL (0-base) — la première ligne de
+  résultat était sautée pour `first=1`. Corrigé en `first - 1`.
+- **`max_query_peers` 20 -> 60** (écart protocole assumé, non
+  configurable) : Tribler/Python borne à 20, mais l'overlay
+  content-discovery connaît typiquement >200 pairs (la cible
+  `RandomWalk` est un plancher) — à 20, une recherche ne touchait que
+  ~10 % des pairs disponibles. Tirage sans remise inchangé, borné par
+  `len(peers)`.
+
 ## P0-17c-5 — fail-closed OS : destruction/recreation de lane anonyme (2026-10-05)
 
 - **`DELETE /api/ipv8/tunnel/anon_lanes/{hops}`** : hook de destruction

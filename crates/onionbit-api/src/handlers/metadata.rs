@@ -373,11 +373,12 @@ pub async fn local_search(
     // en sous-mots appris et rend des rowids (`LIMIT/OFFSET` propres
     // a l'augmenteur), puis `apply_sort_by_option` trie les entrees.
     // `query_with_augmenter` Python : `limit = max(1, last-first)`,
-    // `offset = max(1, first)`.
+    // `offset = max(1, first)`. L'`OFFSET` SQL est 0-base : `first=1`
+    // doit commencer a la premiere ligne (sinon elle est sautee).
     let limit = (params.last.unwrap_or(50))
         .saturating_sub(params.first)
         .max(1) as usize;
-    let offset = params.first.max(1) as usize;
+    let offset = params.first.max(1).saturating_sub(1) as usize;
     let (aug_sql, aug_params) = state.session.augmenter().augment(&fts, limit, offset);
     let rowids: Vec<i64> = state
         .session
@@ -399,13 +400,21 @@ pub async fn local_search(
     p2.rowids = rowids;
     p2.first = 1;
     p2.last = None;
-    let rows = state
-        .session
-        .db()
-        .call("metadata.select_entries", move |c| {
-            onionbit_db::channel::select_entries(c, &p2)
-        })
-        .await?;
+    // L'augmenteur n'a retenu aucun rowid -> aucun resultat. Sans ce
+    // garde-fou, `build_where` ne pose aucune clause et
+    // `select_entries` retournerait toute la table (le filtre texte
+    // a ete retire au profit de `rowids`).
+    let rows = if p2.rowids.is_empty() {
+        Vec::new()
+    } else {
+        state
+            .session
+            .db()
+            .call("metadata.select_entries", move |c| {
+                onionbit_db::channel::select_entries(c, &p2)
+            })
+            .await?
+    };
 
     // `include_total` Python : compte sans pagination via la
     // branche FTS (`get_total_count`) + `get_max_rowid` — une seule
