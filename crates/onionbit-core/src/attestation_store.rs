@@ -92,6 +92,21 @@ impl AttestationStore for DbAttestationStore {
         }
     }
 
+    fn get(&self, curator: &[u8], kind: u8, subject: &[u8]) -> Option<Attestation> {
+        let curator = curator.to_vec();
+        let subject = subject.to_vec();
+        match self
+            .db
+            .with(move |c| onionbit_db::attestations::get(c, &curator, i64::from(kind), &subject))
+        {
+            Ok(row) => row.and_then(from_row),
+            Err(e) => {
+                tracing::warn!(error = %e, "lecture d'attestation impossible");
+                None
+            }
+        }
+    }
+
     fn by_subject(&self, kind: u8, subject: &[u8]) -> Vec<Attestation> {
         let subject = subject.to_vec();
         match self

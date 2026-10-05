@@ -481,6 +481,40 @@ Clôture campagne et gates sanitizers :
 - **Job CI `fuzz-san`** (`ci.yml`, nightly/manual, ubuntu-24.04) :
   toolchain nightly + cargo-fuzz, `SEC=300` × 8 cibles × 2
   sanitizers, artefacts (journal CSV + `fuzz/artifacts/`) remontés.
+## Phase 9d — durcissement du chemin `ATTEST` (ADR-0015 §6, revue, 2026-10-05)
+
+- **Pipeline de réception ordonné du moins au plus coûteux** :
+  budget `ATTEST` par émetteur → borne `ATTEST_FRAME_MAX` (1024) →
+  parse borné → **préfiltre curateur suivi avant toute crypto** →
+  lookup dedup (`AttestationStore::get` — rejeu/stale absorbé sans
+  `verify`, Ed25519 étant déterministe) → borne `ts` futur →
+  `verify` → conflit → stockage → ré-émission. Un flot
+  d'attestations de curateurs inconnus ne coûte plus qu'un parse
+  borné — la vérification Ed25519 n'est payée que pour du
+  potentiellement nouveau d'un curateur suivi.
+- **Conflit d'équivoque** : même `(curateur, kind, sujet)` + même
+  `ts` + verdict différent → rejet sans écrasement ni ré-émission
+  (deux signatures valides au même `ts` = équivoque avérée,
+  logguée en `warn`) ; `put` reste latest-wins comme dernier filet.
+- **Budget par émetteur** : `ext/attest_rate_window_secs` (60),
+  `ext/attest_rate_max` (256), `ext/attest_rate_table_max` (4096 —
+  borne mémoire de la table face aux clés Sybil fraîches).
+- **Observabilité de banc** : compteurs `attest_rx/dropped/stored/tx`
+  exposés par `GET /api/ipv8/ext` — drops visibles, extinction du
+  gossip mesurable (`tx → 0`).
+- **`AttestationStore::get`** : accès cle exacte (surchargé en
+  accès primaire par `InMemory` et `DbAttestationStore` via
+  `attestations::get` SQL).
+- **Sémantique unfollow** documentée (ADR §6) : unfollow conserve
+  les attestations en base (visibles dans `attestation_count`) mais
+  les exclut du `score` — ré-ajouter le curateur les réintègre.
+- **Tests** : `attest_conflit_meme_ts_sans_ecrasement` (scénario de
+  revue : endorse accepté → flag même ts rejeté — store/score
+  inchangés, aucune ré-émission), `attest_prefiltre_curateur_non_suivi`
+  (drops comptés sans crypto, signature corrompue incluse),
+  `attest_budget_par_pair` (cap 2/4 → 2 stockés + 2 droppés),
+  lookups `get` mémoire + SQL.
+
 ## Phase 9d — curation signée : attestations Ed25519 + score local (ADR-0015, étape 46, 2026-10-05)
 
 - **`onionbit-ipv8::ext::attest`** : `Attestation` auto-portante —

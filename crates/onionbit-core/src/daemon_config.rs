@@ -546,6 +546,16 @@ pub struct ExtConfig {
     pub attest_max_future_skew_secs: u64,
     /// Borne de la liste `latest` exposee par l'API. Defaut 256.
     pub attest_list_max: u32,
+    /// Fenetre du budget `ATTEST` par emetteur (s) — borne le cout
+    /// du chemin de reception face aux rafales. Defaut 60.
+    pub attest_rate_window_secs: u64,
+    /// Messages `ATTEST` acceptes par emetteur et par fenetre
+    /// (large : un backfill legitime peut en relayer des centaines).
+    /// Defaut 256.
+    pub attest_rate_max: u32,
+    /// Borne memoire de la table de budget `ATTEST` — un flot de
+    /// cles Sybil fraiches ne fait pas grossir la table. Defaut 4096.
+    pub attest_rate_table_max: u32,
     /// Clés ext additionnelles — préservées.
     #[serde(flatten)]
     pub extra: serde_json::Map<String, Value>,
@@ -561,6 +571,9 @@ impl Default for ExtConfig {
             curators: Vec::new(),
             attest_max_future_skew_secs: crate::ipv8_stack::DEFAULT_EXT_ATTEST_MAX_FUTURE_SKEW_SECS,
             attest_list_max: crate::ipv8_stack::DEFAULT_EXT_ATTEST_LIST_MAX,
+            attest_rate_window_secs: crate::ipv8_stack::DEFAULT_EXT_ATTEST_RATE_WINDOW_SECS,
+            attest_rate_max: crate::ipv8_stack::DEFAULT_EXT_ATTEST_RATE_MAX,
+            attest_rate_table_max: crate::ipv8_stack::DEFAULT_EXT_ATTEST_RATE_TABLE_MAX,
             extra: serde_json::Map::new(),
         }
     }
@@ -1507,6 +1520,9 @@ impl DaemonConfig {
                 .collect(),
             ext_attest_max_future_skew_secs: self.ext.attest_max_future_skew_secs,
             ext_attest_list_max: self.ext.attest_list_max,
+            ext_attest_rate_window_secs: self.ext.attest_rate_window_secs,
+            ext_attest_rate_max: self.ext.attest_rate_max,
+            ext_attest_rate_table_max: self.ext.attest_rate_table_max,
         };
 
         crate::CoreConfig {

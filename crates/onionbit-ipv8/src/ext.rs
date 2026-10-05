@@ -35,6 +35,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -73,6 +74,11 @@ pub const WIRE_EXT: WirePolicy = WirePolicy {
 /// Version de la trame d'extension (`{v, ...}`) — v1.
 pub const EXT_PROTO_VERSION: u8 = 1;
 
+/// Borne du payload `ATTEST` avant parse : v1 fait ~119 octets utiles
+/// (champs varlen bornes a 255) ; la marge couvre des champs futurs
+/// sans ouvrir un buffer arbitraire au decodeur.
+pub const ATTEST_FRAME_MAX: usize = 1024;
+
 /// `msg_id` de la communaute d'extension (OnionBit-only — espace
 /// libre, les valeurs 1-255 n'ont pas a eviter les ID pyipv8).
 pub mod msg {
@@ -103,6 +109,18 @@ pub trait AttestationStore: Send + Sync {
     /// dedup gouverne aussi la re-emission : `false` = deja connue,
     /// pas de re-gossip.
     fn put(&self, att: &Attestation) -> bool;
+    /// Attestation stockee pour la cle exacte
+    /// `(curator, kind, subject)` — lookup de dedup/consultation
+    /// **avant** verification Ed25519 : un rejeu ou une version plus
+    /// ancienne est absorbe sans payer la crypto (Ed25519 est
+    /// deterministe — champs identiques = octets deja verifies).
+    /// Implementation par defaut via `by_subject` ; les stores
+    /// indexees la surchargent par un acces cle primaire.
+    fn get(&self, curator: &[u8], kind: u8, subject: &[u8]) -> Option<Attestation> {
+        self.by_subject(kind, subject)
+            .into_iter()
+            .find(|a| a.curator == curator)
+    }
     /// Attestations stockees pour un sujet (`kind`, `subject`) —
     /// une par curateur au plus (latest-wins).
     fn by_subject(&self, kind: u8, subject: &[u8]) -> Vec<Attestation>;
@@ -136,6 +154,10 @@ impl AttestationStore for InMemoryAttestationStore {
     fn put(&self, att: &Attestation) -> bool {
         let mut m = self.inner.lock().unwrap();
         let k = (att.curator.clone(), att.kind, att.subject.clone());
+        // `old.ts >= att.ts` absorbe : un `ts` egal n'ecrase jamais
+        // (meme ts + verdict different = equivoque — la couche
+        // protocole la rejette comme conflit avant `put` ; le store
+        // reste le dernier filet).
         match m.get(&k) {
             Some(old) if old.ts >= att.ts => return false,
             _ => {}
@@ -150,6 +172,14 @@ impl AttestationStore for InMemoryAttestationStore {
         }
         m.insert(k, att.clone());
         true
+    }
+
+    fn get(&self, curator: &[u8], kind: u8, subject: &[u8]) -> Option<Attestation> {
+        self.inner
+            .lock()
+            .unwrap()
+            .get(&(curator.to_vec(), kind, subject.to_vec()))
+            .cloned()
     }
 
     fn by_subject(&self, kind: u8, subject: &[u8]) -> Vec<Attestation> {
@@ -198,6 +228,19 @@ pub struct ExtSettings {
     pub attest_max_future_skew: Duration,
     /// Borne de la liste `latest` exposee par l'API.
     pub attest_list_max: usize,
+    /// Fenetre du budget `ATTEST` par emetteur : borne le cout CPU
+    /// du chemin de reception (parse + dedup) face a un pair qui
+    /// rafale — le compteur se remet a zero a chaque fenetre.
+    pub attest_rate_window: Duration,
+    /// Messages `ATTEST` acceptes par emetteur (cle de transport)
+    /// et par fenetre `attest_rate_window` — au-dela : drop
+    /// silencieux. Assez large pour absorber un backfill legitime.
+    pub attest_rate_max: u32,
+    /// Borne memoire de la table de budget : pleine de fenetres
+    /// actives, un emetteur inconnu est droppe sans insertion (un
+    /// flot de cles Sybil fraiches ne fait pas grossir la table).
+    /// `0` = illimitee (deconseille hors tests).
+    pub attest_rate_table_max: usize,
 }
 
 impl Default for ExtSettings {
@@ -210,6 +253,9 @@ impl Default for ExtSettings {
             curators: HashSet::new(),
             attest_max_future_skew: Duration::from_secs(600),
             attest_list_max: 256,
+            attest_rate_window: Duration::from_secs(60),
+            attest_rate_max: 256,
+            attest_rate_table_max: 4096,
         }
     }
 }
@@ -279,7 +325,7 @@ pub struct TrustInfo {
 }
 
 /// Instantane de la communaute (`info` — reglages effectifs +
-/// pairs ext, pour `GET /api/ipv8/ext`).
+/// pairs ext + compteurs ATTEST, pour `GET /api/ipv8/ext`).
 #[derive(Debug, Clone)]
 pub struct ExtInfo {
     /// Cadence effective du sondage `hello` (s).
@@ -294,6 +340,19 @@ pub struct ExtInfo {
     pub peer_count: usize,
     /// Pairs ext (mid hex, caps, dernier `hello` recu).
     pub peers: Vec<ExtPeerInfo>,
+    /// Messages `ATTEST` recus (toutes causes confondues, avant
+    /// tout filtre) — oracle des bancs : le budget et les drops
+    /// doivent rester visibles.
+    pub attest_rx: u64,
+    /// `ATTEST` dropees (budget depasse, trame trop grande,
+    /// curateur non suivi, rejeu/stale, `ts` futur, signature
+    /// invalide, conflit a `ts` egal).
+    pub attest_dropped: u64,
+    /// `ATTEST` stockees (nouvelles ou strictement plus recentes).
+    pub attest_stored: u64,
+    /// Datagrammes `ATTEST` emis (publication + re-emission
+    /// gossip) — doit retomber a zero quand le gossip s'eteint.
+    pub attest_tx: u64,
 }
 
 /// Communaute d'extension OnionBit-only : `hello` lazy + peer set
@@ -318,6 +377,18 @@ pub struct OnionbitExtCommunity {
     /// memoire non borne installe a la creation ; `set_*` avant tout
     /// trafic).
     attest_store: Mutex<Arc<dyn AttestationStore>>,
+    /// Budget `ATTEST` par emetteur (cle de transport) :
+    /// `(debut de fenetre, compte)` — borne le cout du chemin de
+    /// reception face aux rafales.
+    attest_rate: Mutex<HashMap<Vec<u8>, (Instant, u32)>>,
+    /// Compteurs du chemin `ATTEST` (`ExtInfo` — oracles de banc).
+    attest_rx: AtomicU64,
+    /// Compteurs du chemin `ATTEST` (`ExtInfo` — oracles de banc).
+    attest_dropped: AtomicU64,
+    /// Compteurs du chemin `ATTEST` (`ExtInfo` — oracles de banc).
+    attest_stored: AtomicU64,
+    /// Compteurs du chemin `ATTEST` (`ExtInfo` — oracles de banc).
+    attest_tx: AtomicU64,
 }
 
 impl OnionbitExtCommunity {
@@ -338,6 +409,11 @@ impl OnionbitExtCommunity {
             probed: Mutex::new(HashMap::new()),
             ext_peers: Mutex::new(HashMap::new()),
             attest_store: Mutex::new(Arc::new(InMemoryAttestationStore::default())),
+            attest_rate: Mutex::new(HashMap::new()),
+            attest_rx: AtomicU64::new(0),
+            attest_dropped: AtomicU64::new(0),
+            attest_stored: AtomicU64::new(0),
+            attest_tx: AtomicU64::new(0),
         });
         let prefix = prefix_of(&EXT_COMMUNITY_ID);
         let c = community.clone();
@@ -415,6 +491,7 @@ impl OnionbitExtCommunity {
     /// fois par noeud) et par le filtre « curateur suivi ».
     async fn send_attest_to(&self, addr: &UdpAddress, payload: &[u8]) {
         let pkt = Packet::sign_no_dist(&EXT_COMMUNITY_ID, msg::ATTEST, &self.key, payload);
+        self.attest_tx.fetch_add(1, Ordering::Relaxed);
         if let Err(e) = self.endpoint.send_to(addr, &pkt).await {
             tracing::debug!(error = %e, target = ?addr, "attest ext perdu");
         }
@@ -450,37 +527,124 @@ impl OnionbitExtCommunity {
             .map(|d| d.as_secs())
             .unwrap_or(0);
         let att = Attestation::sign(&self.key, kind, subject, verdict, ts)?;
-        self.attest_store.lock().unwrap().put(&att);
+        if self.attest_store.lock().unwrap().put(&att) {
+            self.attest_stored.fetch_add(1, Ordering::Relaxed);
+        }
         self.gossip_attest(&att, None).await;
         Ok(att)
     }
 
-    /// `on_attest` : attestation recue — signature Ed25519 + futur
-    /// borne + curateur suivi exiges avant stockage ; nouvelle (ou
-    /// plus recente) → re-emise aux autres pairs ext (gossip borne
-    /// par deduplication : un cycle sans nouvelle entree s'eteint).
+    /// `on_attest` : attestation recue — pipeline ordonne du moins
+    /// couteux au plus couteux (ADR-0015 §6, durcissement post-revue) :
+    ///
+    /// 1. budget `ATTEST` par emetteur (cle de transport) ;
+    /// 2. borne de taille avant parse (`ATTEST_FRAME_MAX`) ;
+    /// 3. `unpack` borne + controle de forme ;
+    /// 4. **prefiltre curateur suivi** — le stockage/re-emission etant
+    ///    reserves aux curateurs suivis, une attestation de curateur
+    ///    inconnu est dropee *avant* toute crypto (borne Sybil : un
+    ///    flot de signatures valides de cles inconnues ne coute qu'un
+    ///    parse borne) ;
+    /// 5. lookup dedup — Ed25519 est deterministe : meme
+    ///    `(curateur, kind, sujet, ts, verdict)` = octets identiques
+    ///    deja verifies → rejeu/stale absorbe sans `verify` ;
+    /// 6. `ts` futur borne ;
+    /// 7. `verify` Ed25519 — n'est atteint que pour une attestation
+    ///    potentiellement nouvelle d'un curateur suivi ;
+    /// 8. **conflit** : meme cle + meme `ts` + verdict different
+    ///    (signature valide → equivoque averee du curateur) → rejet
+    ///    sans ecrasement ni re-emission ;
+    /// 9. `put` → re-emission aux autres pairs ext si nouvelle.
     fn on_attest(self: &Arc<Self>, pkt: &Packet) -> Result<(), Ipv8Error> {
+        self.attest_rx.fetch_add(1, Ordering::Relaxed);
+        // (1) Budget par emetteur avant tout travail utile.
+        {
+            let mut rates = self.attest_rate.lock().unwrap();
+            let over = match rates.get_mut(&pkt.public_key_bin) {
+                Some((start, n)) => {
+                    if start.elapsed() >= self.settings.attest_rate_window {
+                        *start = Instant::now();
+                        *n = 0;
+                    }
+                    *n += 1;
+                    *n > self.settings.attest_rate_max
+                }
+                None => {
+                    if rates.len() >= self.settings.attest_rate_table_max
+                        && self.settings.attest_rate_table_max > 0
+                    {
+                        true
+                    } else {
+                        rates.insert(pkt.public_key_bin.clone(), (Instant::now(), 1));
+                        false
+                    }
+                }
+            };
+            if over {
+                self.attest_dropped.fetch_add(1, Ordering::Relaxed);
+                return Ok(());
+            }
+        }
+        // (2) Trop grande pour etre une v1 : drop sans lecture.
+        if pkt.payload.len() > ATTEST_FRAME_MAX {
+            self.attest_dropped.fetch_add(1, Ordering::Relaxed);
+            return Ok(());
+        }
+        // (3) Parse borne (Reader echoue vite sur troncature).
         let mut r = Reader::new(&pkt.payload);
         let att = Attestation::unpack(&mut r)?;
-        if !att.verify() {
-            return Err(Ipv8Error::InvalidSignature);
+        // (4) Prefiltre curateur — avant la crypto.
+        if !self.is_followed(&att.curator) {
+            self.attest_dropped.fetch_add(1, Ordering::Relaxed);
+            return Ok(());
         }
+        // (5) Dedup avant crypto : l'entree stockee est deja verifiee ;
+        //     `ts` plus ancien ou identique+meme verdict = rien a faire.
+        let existing = self
+            .attest_store
+            .lock()
+            .unwrap()
+            .get(&att.curator, att.kind, &att.subject);
+        if let Some(old) = &existing {
+            if old.ts > att.ts || (old.ts == att.ts && old.verdict == att.verdict) {
+                self.attest_dropped.fetch_add(1, Ordering::Relaxed);
+                return Ok(());
+            }
+        }
+        // (6) Futur au-dela de la derive toleree : dominerait le
+        //     « latest wins » pour toujours — drop.
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
         if att.ts > now.saturating_add(self.settings.attest_max_future_skew.as_secs()) {
-            // Futur au-dela de la derive toleree : dominerait le
-            // « latest wins » pour toujours — drop.
+            self.attest_dropped.fetch_add(1, Ordering::Relaxed);
             return Ok(());
         }
-        if !self.is_followed(&att.curator) {
-            // Borne Sybil : verifie puis droppe sans stockage — le
-            // stockage et la re-emission sont reserves aux curateurs
-            // suivis (+ soi).
-            return Ok(());
+        // (7) Crypto — seulement pour du potentiellement nouveau
+        //     d'un curateur suivi.
+        if !att.verify() {
+            self.attest_dropped.fetch_add(1, Ordering::Relaxed);
+            return Err(Ipv8Error::InvalidSignature);
         }
+        // (8) Equivoque averee : deux signatures valides du meme
+        //     curateur, meme `ts`, verdicts opposes — conflit : ni
+        //     ecrasement ni re-emission (preuve conservee en log).
+        if let Some(old) = &existing {
+            if old.ts == att.ts && old.verdict != att.verdict {
+                tracing::warn!(
+                    curator = %att.curator_mid(),
+                    kind = att.kind,
+                    ts = att.ts,
+                    "attestations contradictoires a ts identique — curateur equivoque"
+                );
+                self.attest_dropped.fetch_add(1, Ordering::Relaxed);
+                return Ok(());
+            }
+        }
+        // (9) Stockage → re-emission borne par dedup.
         if self.attest_store.lock().unwrap().put(&att) {
+            self.attest_stored.fetch_add(1, Ordering::Relaxed);
             let c = self.clone();
             let sender = pkt.public_key_bin.clone();
             tokio::spawn(async move {
@@ -627,7 +791,8 @@ impl OnionbitExtCommunity {
         self.ext_peers.lock().unwrap().len()
     }
 
-    /// Instantane complet (reglages + pairs) pour `GET /api/ipv8/ext`.
+    /// Instantane complet (reglages + pairs + compteurs ATTEST)
+    /// pour `GET /api/ipv8/ext`.
     pub fn info(&self) -> ExtInfo {
         ExtInfo {
             hello_interval_secs: self.settings.hello_interval.as_secs(),
@@ -636,6 +801,10 @@ impl OnionbitExtCommunity {
             caps: self.settings.caps,
             peer_count: self.ext_peer_count(),
             peers: self.peers_info(),
+            attest_rx: self.attest_rx.load(Ordering::Relaxed),
+            attest_dropped: self.attest_dropped.load(Ordering::Relaxed),
+            attest_stored: self.attest_stored.load(Ordering::Relaxed),
+            attest_tx: self.attest_tx.load(Ordering::Relaxed),
         }
     }
 
@@ -749,6 +918,23 @@ mod tests {
         UdpAddress,
         LibNaClSecretKey,
     ) {
+        node_full(ExtSettings {
+            caps,
+            curators,
+            ..ExtSettings::default()
+        })
+        .await
+    }
+
+    /// `node` avec des reglages complets (budgets, stores...).
+    async fn node_full(
+        settings: ExtSettings,
+    ) -> (
+        Arc<OnionbitExtCommunity>,
+        Arc<UdpEndpoint>,
+        UdpAddress,
+        LibNaClSecretKey,
+    ) {
         let ep = UdpEndpoint::bind("127.0.0.1:0").await.unwrap();
         let SocketAddr::V4(sa) = ep.local_addr().unwrap() else {
             panic!("bind v4");
@@ -756,17 +942,7 @@ mod tests {
         let addr = UdpAddress::Ipv4(sa);
         let network = Arc::new(Network::default());
         let key = LibNaClSecretKey::generate();
-        let c = OnionbitExtCommunity::new(
-            key.clone(),
-            network,
-            ep.clone(),
-            ExtSettings {
-                caps,
-                curators,
-                ..ExtSettings::default()
-            },
-        )
-        .await;
+        let c = OnionbitExtCommunity::new(key.clone(), network, ep.clone(), settings).await;
         let e = ep.clone();
         tokio::spawn(async move {
             let _ = e.run().await;
@@ -1075,6 +1251,15 @@ mod tests {
         let a2 = mk(1, 20, attest_verdict::FLAG);
         assert!(s.put(&a2));
         assert_eq!(s.by_subject(attest_kind::INFOHASH, &[1; 20])[0].ts, 20);
+        // Lookup cle exacte `get` (dedup avant crypto cote
+        // protocole) : trouve pour (curateur, kind, sujet), `None`
+        // pour un autre sujet ou un autre curateur.
+        let g = s.get(&a2.curator, attest_kind::INFOHASH, &[1; 20]).unwrap();
+        assert_eq!(g.ts, 20);
+        assert!(s
+            .get(&a2.curator, attest_kind::INFOHASH, &[9; 20])
+            .is_none());
+        assert!(s.get(&[0; 42], attest_kind::INFOHASH, &[1; 20]).is_none());
         // Autre sujet : ligne separee + tri latest.
         let b1 = mk(2, 15, attest_verdict::ENDORSE);
         assert!(s.put(&b1));
@@ -1149,5 +1334,157 @@ mod tests {
         a.hello_tick().await;
         assert_eq!(a.probed.lock().unwrap().len(), 1);
         assert_eq!(a.ext_peer_count(), 0);
+    }
+
+    /// Conflit d'equivoque a `ts` identique : `endorse(ts)` accepte,
+    /// `flag(meme ts)` rejete — ni ecrasement ni re-emission, score
+    /// et base inchanges (deux signatures valides du meme curateur
+    /// pour le meme `ts` = equivoque averee, logguee en `warn`).
+    #[tokio::test]
+    async fn attest_conflit_meme_ts_sans_ecrasement() {
+        let (a, _ea, _aa, key_a) = node(0).await;
+        let pk_a = key_a.public_key().to_bin();
+        let followed = HashSet::from([pk_a]);
+        let (b, ep_b, addr_b, _kb) = node_ext(0, followed.clone()).await;
+        let (c, _ec, addr_c, key_c) = node_ext(0, followed).await;
+        let mut tap = ep_b.set_tap().await;
+        link_ext(&b, &c, &addr_c, &key_c.public_key().to_bin()).await;
+
+        let subject = [0x77; 20];
+        let send = |att: &Attestation| {
+            let ep = a.endpoint.clone();
+            let addr = addr_b.clone();
+            let key = key_a.clone();
+            let payload = att.pack();
+            async move {
+                let pkt = Packet::sign_no_dist(&EXT_COMMUNITY_ID, msg::ATTEST, &key, &payload);
+                ep.send_to(&addr, &pkt).await.unwrap();
+            }
+        };
+        // `endorse` ts=100 : stocke par B, re-emis vers C (suiveur).
+        let endorse = Attestation::sign(
+            &key_a,
+            attest_kind::INFOHASH,
+            &subject,
+            attest_verdict::ENDORSE,
+            100,
+        )
+        .unwrap();
+        send(&endorse).await;
+        let b2 = b.clone();
+        wait_until(move || b2.trust_info(attest_kind::INFOHASH, &subject).score == 1).await;
+        let c2 = c.clone();
+        wait_until(move || !c2.attestations_latest(10).is_empty()).await;
+        while tap.try_recv().is_ok() {}
+
+        // `flag` meme ts=100, meme cle : rejet comme conflit.
+        let flag = Attestation::sign(
+            &key_a,
+            attest_kind::INFOHASH,
+            &subject,
+            attest_verdict::FLAG,
+            100,
+        )
+        .unwrap();
+        send(&flag).await;
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        // B : le verdict stocke reste `endorse` — rien n'a bouge.
+        assert_eq!(b.trust_info(attest_kind::INFOHASH, &subject).score, 1);
+        assert_eq!(b.attestations_latest(10).len(), 1);
+        let info = b.info();
+        assert_eq!(info.attest_stored, 1);
+        assert!(info.attest_dropped >= 1);
+        // Aucune re-emission du flag : le tap ne montre aucun
+        // ATTEST sortant depuis sa purge.
+        let mut reemitted = 0usize;
+        while let Ok((dir, _dst, data)) = tap.try_recv() {
+            if matches!(dir, TapDir::Tx)
+                && data.get(crate::packet::PREFIX_LEN) == Some(&msg::ATTEST)
+            {
+                reemitted += 1;
+            }
+        }
+        assert_eq!(reemitted, 0);
+        // C : toujours un seul verdict `endorse` — le conflit n'a
+        // pas voyage.
+        assert_eq!(c.trust_info(attest_kind::INFOHASH, &subject).score, 1);
+        assert_eq!(c.attestations_latest(10).len(), 1);
+    }
+
+    /// Prefiltre curateur avant crypto : un curateur non suivi est
+    /// droppe — y compris quand sa signature est corrompue (le
+    /// `verify` Ed25519 n'est jamais paye) ; les compteurs rendent
+    /// le drop observable aux bancs.
+    #[tokio::test]
+    async fn attest_prefiltre_curateur_non_suivi() {
+        let (_a, ep_a, _aa, key_a) = node(0).await;
+        // B ne suit personne : tout curateur est non suivi.
+        let (b, _eb, addr_b, _kb) = node(0).await;
+        // Attestation *valide* d'un curateur non suivi.
+        let valid = Attestation::sign(
+            &key_a,
+            attest_kind::INFOHASH,
+            &[0x55; 20],
+            attest_verdict::ENDORSE,
+            100,
+        )
+        .unwrap();
+        let pkt = Packet::sign_no_dist(&EXT_COMMUNITY_ID, msg::ATTEST, &key_a, &valid.pack());
+        ep_a.send_to(&addr_b, &pkt).await.unwrap();
+        // Signature corrompue d'un second curateur non suivi.
+        let key_e = LibNaClSecretKey::generate();
+        let mut bad = Attestation::sign(
+            &key_e,
+            attest_kind::INFOHASH,
+            &[0x66; 20],
+            attest_verdict::FLAG,
+            100,
+        )
+        .unwrap();
+        bad.signature[0] ^= 0xff;
+        let pkt = Packet::sign_no_dist(&EXT_COMMUNITY_ID, msg::ATTEST, &key_a, &bad.pack());
+        ep_a.send_to(&addr_b, &pkt).await.unwrap();
+
+        // Les deux dropees au prefiltre — la crypto n'a pas tourne.
+        let b2 = b.clone();
+        wait_until(move || b2.info().attest_rx == 2).await;
+        let info = b.info();
+        assert_eq!(info.attest_dropped, 2);
+        assert_eq!(info.attest_stored, 0);
+        assert!(b.attestations_latest(10).is_empty());
+    }
+
+    /// Budget `ATTEST` par emetteur : au-dela de `attest_rate_max`
+    /// par fenetre, les messages sont droppes avant tout travail —
+    /// borne CPU du chemin de reception meme pour un curateur suivi.
+    #[tokio::test]
+    async fn attest_budget_par_pair() {
+        let (a, _ea, _aa, key_a) = node(0).await;
+        let pk_a = key_a.public_key().to_bin();
+        let (b, _eb, addr_b, _kb) = node_full(ExtSettings {
+            curators: HashSet::from([pk_a]),
+            attest_rate_max: 2,
+            ..ExtSettings::default()
+        })
+        .await;
+        for i in 0..4u8 {
+            let att = Attestation::sign(
+                &key_a,
+                attest_kind::INFOHASH,
+                &[i; 20],
+                attest_verdict::ENDORSE,
+                100 + u64::from(i),
+            )
+            .unwrap();
+            let pkt = Packet::sign_no_dist(&EXT_COMMUNITY_ID, msg::ATTEST, &key_a, &att.pack());
+            a.endpoint.send_to(&addr_b, &pkt).await.unwrap();
+        }
+        let b2 = b.clone();
+        wait_until(move || b2.info().attest_rx == 4).await;
+        let info = b.info();
+        // Seuls les 2 premiers ont traverse le budget.
+        assert_eq!(info.attest_stored, 2);
+        assert_eq!(info.attest_dropped, 2);
     }
 }

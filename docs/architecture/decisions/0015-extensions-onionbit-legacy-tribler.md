@@ -151,7 +151,7 @@ Implémentation (`onionbit-ipv8::ext::attest`) : l'`Attestation` est
 par un tiers et reverifiable depuis le stockage. Propagation `ATTEST`
 par gossip borné : stockage et re-émission réservés aux curateurs
 suivis (`ext/curators` + soi) — borne Sybil : un flot de signatures
-valides de curateurs inconnus est vérifié puis droppé. Conséquence
+valides de curateurs inconnus est droppé. Conséquence
 assumée en v1 : une attestation ne chemine que par les nœuds qui
 suivent son curateur — la qualité de propagation croît avec
 l'adoption des curateurs, jamais l'inverse ; la découverte de
@@ -162,6 +162,30 @@ Persistance : table `attestations` (v17), trait `AttestationStore`
 injecté, `DbAttestationStore` (core). Score `+1`/`-1` par curateur
 suivi exposé par `GET /api/ipv8/ext/trust/{kind}/{subject}` ;
 publication `POST /api/ipv8/ext/attest`.
+
+**Chemin de réception ordonné du moins coûteux au plus coûteux**
+(durcissement post-revue) : budget `ATTEST` par émetteur
+(`ext/attest_rate_*` — borne CPU face aux rafales, table bornée
+contre les clés Sybil fraîches) → borne de taille
+(`ATTEST_FRAME_MAX`) → parse borné → **préfiltre curateur suivi**
+(un curateur inconnu est droppé *avant* toute crypto — la
+vérification Ed25519 n'est payée que pour du potentiellement
+nouveau d'un curateur suivi) → lookup dedup (Ed25519 déterministe :
+mêmes champs = octets déjà vérifiés — rejeu/stale absorbé sans
+`verify`) → borne `ts` futur → `verify` → **conflit d'équivoque** :
+même `(curateur, kind, sujet)` + même `ts` + verdict différent est
+rejeté — ni écrasement ni ré-émission (deux signatures valides pour
+le même `ts` = équivoque avérée, logguée) → stockage → ré-émission.
+Compteurs `attest_rx/dropped/stored/tx` exposés par
+`GET /api/ipv8/ext` — oracles des bancs (drops visibles, extinction
+du gossip : `tx → 0`).
+
+**Suppression d'un curateur suivi** : ses attestations *restent* en
+base (rien n'est purgé — elles restent vérifiables et visibles dans
+`attestation_count`) mais cessent de compter dans `score` — le filtre
+`is_followed` s'applique au calcul, pas au stockage ; ré-ajouter le
+curateur réintègre ses verdicts. `ext/curators` est pris en compte à
+la création de la stack (redémarrage).
 
 ### 7. Anti-DPI — dernier, négocié, mesuré
 
@@ -224,4 +248,8 @@ introduit pour l'extension.
   d'éviction ; adaptateur `DbAttestationStore` aller-retour ;
 - API : 404 ext désactivée, 400 corps invalide avant stack ;
 - fuzz : `Attestation::unpack` dans `ext_packet` + régression
-  stable.
+  stable ;
+- durcissement : conflit même `ts` (`endorse` accepté puis `flag`
+  rejeté — store/score inchangés, aucune ré-émission), préfiltre
+  curateur non suivi observable par compteurs, budget `ATTEST`
+  par émetteur (au-delà du cap : drops comptés, stores bornés).

@@ -81,6 +81,24 @@ pub fn upsert(conn: &Connection, row: &AttestationRow) -> Result<bool> {
     Ok(n > 0)
 }
 
+/// Attestation stockee pour la cle exacte
+/// `(curator, kind, subject)` — acces cle primaire utilise comme
+/// lookup de dedup **avant** verification cryptographique cote
+/// protocole (un rejeu est absorbe sans Ed25519).
+pub fn get(
+    conn: &Connection,
+    curator: &[u8],
+    kind: i64,
+    subject: &[u8],
+) -> Result<Option<AttestationRow>> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {COLS} FROM attestations
+         WHERE curator = ?1 AND kind = ?2 AND subject = ?3"
+    ))?;
+    let mut rows = stmt.query_map(params![curator, kind, subject], from_row)?;
+    Ok(rows.next().transpose()?)
+}
+
 /// Attestations stockees pour un sujet (une par curateur au plus).
 pub fn by_subject(conn: &Connection, kind: i64, subject: &[u8]) -> Result<Vec<AttestationRow>> {
     let mut stmt = conn.prepare(&format!(
@@ -132,6 +150,12 @@ mod tests {
             assert!(upsert(c, &row(2, 150, 1))?);
             assert_eq!(by_subject(c, 1, &[0x5a; 20])?.len(), 2);
             assert_eq!(latest(c, 1)?[0].ts, 200);
+            // Lookup cle primaire : le dernier verdict du curateur 1.
+            let g = get(c, &[1u8; 42], 1, &[0x5a; 20])?.expect("row");
+            assert_eq!(g.ts, 200);
+            assert_eq!(g.verdict, 2);
+            // Cle absente : `None`, pas d'erreur.
+            assert!(get(c, &[9u8; 42], 1, &[0x5a; 20])?.is_none());
             Ok(())
         })
         .unwrap();

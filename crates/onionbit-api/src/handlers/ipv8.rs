@@ -454,6 +454,12 @@ pub async fn get_ext(State(state): State<AppState>) -> Response {
             "caps": info.caps,
             "peer_count": info.peer_count,
             "peers": peers,
+            // Compteurs du chemin ATTEST — oracles des bancs
+            // (drops visibles, extinction du gossip : `tx` → 0).
+            "attest_rx": info.attest_rx,
+            "attest_dropped": info.attest_dropped,
+            "attest_stored": info.attest_stored,
+            "attest_tx": info.attest_tx,
         }
     }))
     .into_response()

@@ -273,6 +273,14 @@ pub struct Ipv8Config {
     pub ext_attest_max_future_skew_secs: u64,
     /// Borne de la liste `latest` exposee par l'API ext.
     pub ext_attest_list_max: u32,
+    /// Fenetre du budget `ATTEST` par emetteur (s) — borne le cout
+    /// du chemin de reception face aux rafales.
+    pub ext_attest_rate_window_secs: u64,
+    /// Messages `ATTEST` acceptes par emetteur et par fenetre.
+    pub ext_attest_rate_max: u32,
+    /// Borne memoire de la table de budget `ATTEST` (emetteurs
+    /// simultanes suivis).
+    pub ext_attest_rate_table_max: u32,
 }
 
 impl Ipv8Config {
@@ -332,6 +340,9 @@ impl Ipv8Config {
             ext_curators: Vec::new(),
             ext_attest_max_future_skew_secs: DEFAULT_EXT_ATTEST_MAX_FUTURE_SKEW_SECS,
             ext_attest_list_max: DEFAULT_EXT_ATTEST_LIST_MAX,
+            ext_attest_rate_window_secs: DEFAULT_EXT_ATTEST_RATE_WINDOW_SECS,
+            ext_attest_rate_max: DEFAULT_EXT_ATTEST_RATE_MAX,
+            ext_attest_rate_table_max: DEFAULT_EXT_ATTEST_RATE_TABLE_MAX,
         }
     }
 }
@@ -388,6 +399,9 @@ impl Default for Ipv8Config {
             ext_curators: Vec::new(),
             ext_attest_max_future_skew_secs: DEFAULT_EXT_ATTEST_MAX_FUTURE_SKEW_SECS,
             ext_attest_list_max: DEFAULT_EXT_ATTEST_LIST_MAX,
+            ext_attest_rate_window_secs: DEFAULT_EXT_ATTEST_RATE_WINDOW_SECS,
+            ext_attest_rate_max: DEFAULT_EXT_ATTEST_RATE_MAX,
+            ext_attest_rate_table_max: DEFAULT_EXT_ATTEST_RATE_TABLE_MAX,
         }
     }
 }
@@ -540,6 +554,13 @@ pub const DEFAULT_EXT_HELLO_COOLDOWN_SECS: u64 = 3600;
 pub const DEFAULT_EXT_ATTEST_MAX_FUTURE_SKEW_SECS: u64 = 600;
 /// Borne par defaut de la liste `latest` exposee par l'API ext.
 pub const DEFAULT_EXT_ATTEST_LIST_MAX: u32 = 256;
+/// Fenetre par defaut du budget `ATTEST` par emetteur (s).
+pub const DEFAULT_EXT_ATTEST_RATE_WINDOW_SECS: u64 = 60;
+/// Messages `ATTEST` par emetteur et par fenetre (large : un
+/// backfill legitime peut en relayer des centaines d'un coup).
+pub const DEFAULT_EXT_ATTEST_RATE_MAX: u32 = 256;
+/// Borne memoire par defaut de la table de budget `ATTEST`.
+pub const DEFAULT_EXT_ATTEST_RATE_TABLE_MAX: u32 = 4096;
 
 /// Tache de maintenance DHT (`PingChurn.take_step` +
 /// `node_maintenance`/`value_maintenance`/`token_maintenance` +
@@ -1554,6 +1575,11 @@ impl Ipv8Stack {
                         config.ext_attest_max_future_skew_secs.max(1),
                     ),
                     attest_list_max: config.ext_attest_list_max as usize,
+                    attest_rate_window: std::time::Duration::from_secs(
+                        config.ext_attest_rate_window_secs.max(1),
+                    ),
+                    attest_rate_max: config.ext_attest_rate_max,
+                    attest_rate_table_max: config.ext_attest_rate_table_max as usize,
                     ..onionbit_ipv8::ext::ExtSettings::default()
                 },
             )
