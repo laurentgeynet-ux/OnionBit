@@ -3,6 +3,28 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Messagerie ADR-0011, étape 41 — validation sécurité (2026-10-05)
+
+- **Inventaire MS-1..MS-12** : couverture vérifiée banc par banc
+  (cycle e2e + réouverture + séparation de lane, auth Ed25519,
+  codec hostile + cible fuzz `messaging_frame`, anti-replay,
+  consentement borné, budgets + drops comptés, offline `failed`,
+  restart + DELETE physique). MS-12 complété : 401 sans clé sur les
+  routes messagerie ajouté au test d'auth.
+- **MS-8 mesuré** : nouveau switch `-WithMessaging` de
+  `fingerprint_mesh.ps1` (active `messaging_enabled` sur les 4
+  nœuds OnionBit). Run mesh 15 min : présence seule = 2 975
+  cellules tunnel (~3,3/s) vs 1 116 (~1,24/s) baseline —
+  **+1 859 cellules (+167 %)** pour les circuits `IP_SEEDER` de
+  présence + re-annonces DHT (+360 messages DHT). Aucune boucle de
+  contrôle ; surcoût structurel borné, documenté dans
+  `fingerprinting.md`.
+- **Threat model** : section « Messagerie e2e » — propriétés
+  démontrées par banc vs non-claims explicites (métadonnée de
+  présence DHT assumée, intro points privilégiés, **pas de forward
+  secrecy** sans ratchet, persistance en clair, identité IPv8
+  partagée, corrélation de trafic hors périmètre).
+
 ## Messagerie ADR-0011, étape 40 — API REST/SSE + UI (2026-10-05)
 
 - **REST `/api/messaging/*`** (extension Rust — pas de parité

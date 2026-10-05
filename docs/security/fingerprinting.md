@@ -237,3 +237,38 @@ independantes du flood — detail `docs/CHANGELOG.md`) :
 L'ensemble est borne, teste et configure — mais le resultat
 fingerprint de cette etape vient du correctif `TunnelPong`, pas de
 la discipline DHT.
+
+## Banc MS-8 — fingerprint de presence messagerie (2026-10-05)
+
+Scenario : `fingerprint_mesh.ps1 -WithMessaging -WithAnonDownload`,
+mesh ferme 4 OnionBit + 1 Tribler, 15 min, echantillonnage 5 s. La
+messagerie est activee sur les **quatre** noeuds OnionBit — chacun
+joint son swarm de presence `messaging_hash(pk)`, epingle un point
+d'introduction (`IP_SEEDER`) et le re-annonce
+(`announce_interval` = 300 s). Aucune trame applicative echangee :
+le delta mesure le cout de **presence seule**.
+
+| Mesure | Baseline `214456` (messaging off) | Run `20261005-024443` (messaging on) |
+|---|---|---|
+| Cellules tunnel `on_cell` (up+down) | 1 116 (~1,24/s) | 2 975 (~3,3/s) |
+| Volume tunnel | ~132 Ko | ~287 Ko |
+| Messages DHT community | 11 399 | 11 759 (+360) |
+
+Delta attribue : **+1 859 cellules tunnel (+167 %, ~2,1 cellules/s
+supplementaires)** — circuits `IP_SEEDER` de presence maintenus sur
+4 noeuds (keepalive, establish-intro, re-annonces DHT) + cellules
+relayees pour les circuits de presence des autres noeuds. Le
+trafic DHT n'augmente que marginalement (+3 % : les annonces
+periodiques d'intro points).
+
+Proprietes verifiees par le meme banc :
+
+- **aucune boucle de controle** : aucun `msg_id` ne domine ; les
+  ecarts sur les categories de controle (introduction, puncture)
+  restent dans le bruit de mesh (+57..+348, meme ordre que la
+  variance inter-runs) — pas de signal type tempete ping/pong ;
+- **borne** : le surcout est structurel (1 circuit IP par noeud,
+  re-annonce toutes les 5 min) et ne croit pas dans la duree ;
+- **assumee** : la periodicite d'annonce rend un nœud messagerie
+  detectable par un observateur DHT — metadonnee documentee dans
+  `threat_model.md`, pas dissimulee (v1).

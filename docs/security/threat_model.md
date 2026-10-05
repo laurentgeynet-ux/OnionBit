@@ -92,6 +92,75 @@ et sur le reseau public Tribler :
   exit Tor. **Residu documente** : bootstrap configure et
   `check_uri_policy` resolvent en clair (amorcage et URI utilisateur).
 
+## Messagerie e2e (ADR-0011, etape 41)
+
+Proprietes **demontrees** par les bancs `MS-*` (loopback 2 demons,
+tests hostiles, persistance, API) :
+
+- **Authenticite par trame** (MS-3) : signature Ed25519 de l'emetteur
+  verifiee contre la cle publique du contact ; trame signee par une
+  autre cle, `sig` tronquee ou corps modifie post-signature → rejet
+  systematique, zero ecriture.
+- **Anti-replay et ordre** (MS-5) : compteur `seq` + fenetre glissante
+  de 64 + dedup borne sur `id` ; les rejoues sont droppes sans
+  reponse, le desordre en fenetre est livre une fois ; la dedup ne
+  consomme pas de budget (reemission honnete absorbee a la
+  reouverture de circuit, MS-2).
+- **Codec borne** (MS-4) : trame bencode deterministe `{v,type,id,
+  seq,ts,body,sig}` ≤ 32 Kio, `body` ≤ 30 Kio, `v != 1` et champs
+  inconnus rejetes ; prefiltre taille+version avant tout parse ;
+  cible fuzz `messaging_frame` + miroir stable — zero panic.
+- **Consentement borne** (MS-6) : premier `hello` verifie →
+  `pending` (capacite + TTL), decision explicite
+  accept/refuse/block ; `blocked` → trames ignorees + circuits
+  detruits ; non-`hello` d'inconnu droppé avant livraison.
+- **Anti-DoS applicatif** (MS-10) : seaux a jetons par contact et
+  global ; les drops sont comptes par cause (`stats_snapshot`).
+- **Separation de lane** (MS-9) : les swarms `messaging_hash(pk)`
+  n'entrent jamais dans `swarm_lookup` ; aucune trame `v=1` ne passe
+  `could_be_utp` ; les trames n'empruntent que des cellules `data`
+  sur circuits e2e — zero datagramme direct (invariant egress
+  inchange).
+- **Livraison bornee** (MS-7) : contact hors ligne → erreur
+  `Undeliverable` + ligne `failed` visible ; jamais de file ni de
+  reemission.
+- **Persistance et effacement** (MS-11) : contacts/messages
+  restaures au restart (`seq` + `recv_top` repris en conservateur),
+  `DELETE` physique, retention optionnelle avec zeroisation du
+  corps (`secure_delete`).
+- **API** (MS-12) : extension `/api/messaging/*` derriere la cle
+  API (401 sans cle), 404 quand le service est desactive.
+
+### Ce que la messagerie ne prouve PAS
+
+- **Metadonnee de presence** : rejoindre le swarm
+  `messaging_hash(pk)` publie des annonces DHT periodiques
+  d'intro points (`announce_interval`, defaut 300 s). Un observateur
+  DHT apprend qu'une identite `pk` utilise la messagerie et quand —
+  c'est une metadonnee **assume et mesuree** (MS-8, delta
+  consigne dans `fingerprinting.md`), pas dissimulee.
+- **Intro point de l'expediteur privilegie** : le point
+  d'introduction choisi par le destinataire voit les `create-e2e`
+  de ses correspondants (parite hidden services — le contact reste
+  derriere `hops` sauts, l'IP de l'expediteur n'est pas exposee).
+- **Pas de forward secrecy** : v1 derive les cles applicatives par
+  HKDF du secret e2e du circuit, sans ratchet. La compromission
+  ulterieure de la cle d'identite ne permet pas de rejouer les
+  trames (signatures), mais un secret e2e capture pendant le
+  handshake + les trames enregistrees rendent le contenu
+  dechiffrable — le ratchet est un travail futur explicite.
+- **Persistance en clair** : `msg_messages.body` et les contacts
+  sont stockes en clair dans `onionbit.db` (assume dans l'ADR ;
+  `secure_delete` zeroise a l'expiration de retention seulement).
+  Le chiffrement du volume d'etat n'est pas couvert.
+- **Identite partagee** : la cle messagerie est la cle d'identite
+  IPv8 du demon — les contacts messagerie peuvent correlater
+  l'identite de presence avec les autres usages IPv8 du noeud
+  (deliberer pour v1 : un seul trousseau).
+- **Correlation de trafic** : les non-claims globaux ci-dessous
+  s'appliquent integralement a la messagerie (pas de padding, pas
+  de resistance a un adversaire observant les deux extremites).
+
 ## Ce qui n'est PAS demontre
 
 Les points suivants sont hors perimetre de preuve des bancs actuels.

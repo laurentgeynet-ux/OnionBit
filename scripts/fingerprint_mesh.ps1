@@ -24,12 +24,18 @@
 # proactivement : comparaison de cadence de circuits a perimetre
 # egal.
 #
+# -WithMessaging : active `tunnel_community.messaging_enabled` sur
+# les 4 noeuds OnionBit (ADR-0011) — chaque noeud joint son swarm de
+# presence (messaging_hash(pk)), epingle un point d'introduction et
+# le re-annonce periodiquement : c'est le delta mesure par MS-8.
+#
 # NOTE encodage : fichier volontairement ASCII.
 param(
     [string]$Daemon     = "",
     [int]   $DurationMin = 15,
     [int]   $IntervalSec = 5,
     [switch]$WithAnonDownload,
+    [switch]$WithMessaging,
     [string]$OutDir     = ("target\fingerprint-mesh-" + (Get-Date -Format 'yyyyMMdd-HHmmss')),
     [string]$TriblerExe = $(if ($env:TRIBLER_EXE) { $env:TRIBLER_EXE } else { 'C:\Program Files (x86)\Tribler\Tribler.exe' })
 )
@@ -94,7 +100,8 @@ try {
     # A1 : racine + seul exit (EXIT_BT) — sortie imposee des circuits.
     New-Item -ItemType Directory -Force -Path $A1.Dir | Out-Null
     [System.IO.File]::WriteAllText((Join-Path $A1.Dir 'configuration.json'),
-        (@{ tunnel_community = @{ enabled = $true; exitnode_enabled = $true };
+        (@{ tunnel_community = @{ enabled = $true; exitnode_enabled = $true;
+                                  messaging_enabled = [bool]$WithMessaging };
             ipv8 = @{ bootstrap = @{ override = @() };
                       interfaces = @( @{ interface = 'UDPIPv4'; ip = '127.0.0.1'; port = $A1.Ipv8 } );
                       estimated_wan = "127.0.0.1:$($A1.Ipv8)" } } |
@@ -106,7 +113,8 @@ try {
     foreach ($p in @($A2, $A3, $D)) {
         New-Item -ItemType Directory -Force -Path $p.Dir | Out-Null
         [System.IO.File]::WriteAllText((Join-Path $p.Dir 'configuration.json'),
-            (@{ tunnel_community = @{ enabled = $true };
+            (@{ tunnel_community = @{ enabled = $true;
+                                      messaging_enabled = [bool]$WithMessaging };
                 ipv8 = @{ bootstrap = @{ override = $boot };
                           interfaces = @( @{ interface = 'UDPIPv4'; ip = '127.0.0.1'; port = $p.Ipv8 } );
                           estimated_wan = "127.0.0.1:$($p.Ipv8)" } } |
@@ -208,6 +216,7 @@ try {
         tribler = $TriblerExe
         duration_min = $DurationMin
         anon_download = [bool]$WithAnonDownload
+        messaging = [bool]$WithMessaging
         nodes = @(
             @{ name = 'D';  api = $D.Api;  ipv8 = $D.Ipv8;  role = 'onionbit echantillonne' },
             @{ name = 'A1'; api = $A1.Api; ipv8 = $A1.Ipv8; role = 'ancre + exit' },

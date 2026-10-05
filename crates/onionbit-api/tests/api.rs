@@ -1462,6 +1462,18 @@ async fn auth_cle_api_header_query_cookie() {
         .unwrap();
     assert_eq!(resp.status(), 401);
 
+    // Routes messagerie sans cle -> 401 (MS-12 : le middleware
+    // s'applique a l'extension comme aux endpoints Python — jamais
+    // de fuite d'etat avant authentification).
+    for path in [
+        "/api/messaging/contacts",
+        "/api/messaging/events",
+        "/api/messaging/stats",
+    ] {
+        let resp = srv.client.get(srv.url(path)).send().await.unwrap();
+        assert_eq!(resp.status(), 401, "{path}");
+    }
+
     // En-tete `X-Api-Key`.
     let resp = srv
         .client
