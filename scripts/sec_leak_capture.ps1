@@ -71,7 +71,25 @@ param(
     # du run initial ou la resolution magnet avait stalle).
     [switch]$DedicatedSeed,
     [string]$SeedFile = "",
+    # Nb de sauts du seed Tribler dedie. 0 = seed public : son port
+    # libtorrent doit etre joignable en entrant (NAT/UPnP) — sinon les
+    # exits n'y connectent jamais et verified reste a 0 (vu au run
+    # 18:33 : tunnel=61 Ko mais file=0). >=1 = hidden seeding : tout
+    # sortant, decouvrable sur la DHT du tunnel — sans dependance NAT.
+    [int]$SeedAnonHops = 1,
     [switch]$RequireFileBytes,
+    # Pair d'appoint local : un second onionbit-daemon rejoint le
+    # vivier tunnel du daemon de banc (bootstrap croise) quand le
+    # maillage IPv8 public est trop clairseme pour >=2 pairs —
+    # precondition "vivier tunnel" du 17c-5. Documente dans le
+    # manifeste : les sauts de la lane peuvent alors etre locaux.
+    [switch]$MeshHelper,
+    [int]$HelperApiPort = 28710,
+    [int]$HelperIpv8Port = 28810,
+    # Force le download par magnet meme quand -DedicatedSeed a produit
+    # un .torrent : rejoue le chemin prod (resolution metadonnees via
+    # pairs e2e du swarm cache, pre-materalisation).
+    [switch]$MagnetDownload,
     [string]$OutDir = "",
     [switch]$NoElevate,
     [switch]$Inner
@@ -121,6 +139,8 @@ if (-not $isAdmin) {
     if ($DedicatedSeed)     { $psArgs += '-DedicatedSeed' }
     if ($RequireFileBytes)  { $psArgs += '-RequireFileBytes' }
     if ($SeedFile -ne "")   { $psArgs += @('-SeedFile', "`"$SeedFile`"") }
+    if ($SeedAnonHops -ne 1){ $psArgs += @('-SeedAnonHops', "$SeedAnonHops") }
+    if ($MeshHelper)        { $psArgs += '-MeshHelper' }
     $p = Start-Process -FilePath 'pwsh' -Verb RunAs -Wait -PassThru `
         -ArgumentList $psArgs -WindowStyle Normal
     Write-Host "code de sortie du processus eleve : $($p.ExitCode)"
@@ -194,8 +214,11 @@ try {
 
     # ---------- Build du banc ----------
     Log "build interop_public_download"
-    cargo build -p onionbit-bittorrent --example interop_public_download 2>&1 |
-        Out-File (Join-Path $OutDir 'build.log')
+    # `cmd /c` gere la redirection : sous ErrorActionPreference=Stop,
+    # la moindre ligne stderr de cargo (« Compiling … ») devient un
+    # NativeCommandError terminal si elle transite par PowerShell.
+    $buildLog = Join-Path $OutDir 'build.log'
+    & cmd /c "cargo build -p onionbit-bittorrent --example interop_public_download 1> `"$buildLog`" 2>&1"
     if ($LASTEXITCODE -ne 0) { throw "build echoue (voir build.log)" }
     $exe = Join-Path $root "target\debug\examples\interop_public_download.exe"
 
@@ -225,12 +248,62 @@ try {
     # une lane recreee. Attribution : les ports UDP du PID du daemon.
     if ($Scenario -eq 'lane-reset') {
         Log "build onionbit-daemon"
-        cargo build -p onionbit-daemon 2>&1 | Out-File (Join-Path $OutDir 'build_daemon.log')
+        $buildLogD = Join-Path $OutDir 'build_daemon.log'
+        & cmd /c "cargo build -p onionbit-daemon 1> `"$buildLogD`" 2>&1"
         if ($LASTEXITCODE -ne 0) { throw "build daemon echoue (voir build_daemon.log)" }
         $daemonExe = Join-Path $root 'target\debug\onionbit-daemon.exe'
 
+        # ---------- Helper de maillage (17c-5, optionnel) ----------
+        # Quand le maillage IPv8 public est trop clairseme pour fournir
+        # >=2 pairs tunnel au daemon de banc, un second daemon local
+        # (tunnel_community relais, libtorrent desactive) le complete :
+        # il bootstrap sur Tribler, le banc bootstrap sur les deux.
+        $helperProc = $null
+        if ($MeshHelper) {
+            $hstate = Join-Path $OutDir 'helper-state'
+            New-Item -ItemType Directory -Force -Path $hstate | Out-Null
+            $hcfg = @{
+                tunnel_community = @{
+                    enabled          = $true
+                    # Exit autorise sur le helper : sans aucun noeud de
+                    # sortie dans le mini-maillage, la DHT tunnelle du
+                    # banc ne bootstrappait jamais (WARN "no successful
+                    # lookups") et la resolution magnet restait pendante.
+                    exitnode_enabled = $true
+                    min_circuits     = 1
+                    max_circuits     = 2
+                }
+                ipv8 = @{
+                    # Le helper doit aussi connaitre le daemon de banc :
+                    # sinon sa table de routage DHT reste vide (seul
+                    # Tribler comme noeud) et `dht_announce` echoue
+                    # « pas de noeud pour stocker » — le seed cache est
+                    # alors indestructible pour le telechargeur.
+                    bootstrap  = @{ override = @("127.0.0.1:$triblerPort",
+                                                 "127.0.0.1:$DaemonIpv8Port") }
+                    interfaces = @( @{ interface = 'UDPIPv4'; ip = '127.0.0.1'; port = $HelperIpv8Port } )
+                }
+                # DHT communaute IPv8 : transport des annonces de pairs
+                # torrent — indispensable pour que le banc decouvre le
+                # seed cache sans exit public.
+                dht_discovery = @{ enabled = $true }
+                libtorrent = @{ port = 0; dht = $false; upnp = $false
+                                natpmp = $false; lsd = $false }
+            }
+            [System.IO.File]::WriteAllText((Join-Path $hstate 'configuration.json'),
+                ($hcfg | ConvertTo-Json -Depth 8), [System.Text.UTF8Encoding]::new($false))
+            $hLog = Join-Path $OutDir 'helper.log'
+            $hErr = Join-Path $OutDir 'helper_err.log'
+            $helperProc = Start-Process -FilePath $daemonExe -PassThru -NoNewWindow `
+                -ArgumentList "--state-dir `"$hstate`" --listen 127.0.0.1:$HelperApiPort --no-tray" `
+                -RedirectStandardOutput $hLog -RedirectStandardError $hErr
+            Log "helper maillage demarre pid=$($helperProc.Id) ipv8=$HelperIpv8Port"
+        }
+
         $dstate = Join-Path $OutDir 'daemon-state'
         New-Item -ItemType Directory -Force -Path $dstate | Out-Null
+        $bootAddrs = @("127.0.0.1:$triblerPort")
+        if ($MeshHelper) { $bootAddrs += "127.0.0.1:$HelperIpv8Port" }
         $dcfg = @{
             tunnel_community = @{
                 enabled          = $true
@@ -239,7 +312,7 @@ try {
                 max_circuits     = 4
             }
             ipv8 = @{
-                bootstrap  = @{ override = @("127.0.0.1:$triblerPort") }
+                bootstrap  = @{ override = $bootAddrs }
                 interfaces = @( @{ interface = 'UDPIPv4'; ip = '127.0.0.1'; port = $DaemonIpv8Port } )
             }
             dht_discovery = @{ enabled = $true }
@@ -304,24 +377,63 @@ try {
             # contenu exact seede (SHA-256 + taille attendue).
             $seedSize = (Get-Item $SeedFile).Length
             $seedSha = (Get-FileHash $SeedFile -Algorithm SHA256).Hash.ToLower()
+            # Torrent mono-fichier : info.name doit etre le basename du
+            # fichier et `destination` son dossier parent - sinon
+            # Tribler cherche <dest>/<name> et ne trouve rien (le run
+            # 18:06 a montre seeding_confirmed=false exactement pour
+            # cette raison : name='onionbit-17c5-seed' vs payload.bin).
+            $seedName   = [IO.Path]::GetFileName($SeedFile)
+            $seedParent = Split-Path -Parent $SeedFile
             $cr = Invoke-RestMethod -Method Post -Uri "$apiBase/createtorrent" `
                 -Headers $H -ContentType 'application/json' `
-                -Body (@{ files = @($SeedFile); name = 'onionbit-17c5-seed';
+                -Body (@{ files = @($SeedFile); name = $seedName;
                           export_dir = $seedDir } | ConvertTo-Json -Compress) `
                 -TimeoutSec 60
             $torPath = $cr.results[0].path; $seedIh = $cr.results[0].infohash
             Verdict ($null -ne $seedIh) 'torrent dedie cree' "ih=$seedIh"
+            # Cible du seeding : le helper local (stack OnionBit des
+            # deux bouts, interop deja validee) quand -MeshHelper, sinon
+            # le Tribler bootstrap. Le seeding cache Tribler exige un
+            # maillage tunnel plus dense que celui observe (points
+            # d'introduction sur plusieurs noeuds distincts).
+            $seedApiBase = "http://127.0.0.1:$apiPort/api"
+            $seedKey = $apiKey
+            $seedTarget = 'Tribler'
+            if ($MeshHelper -and $helperProc -and -not $helperProc.HasExited) {
+                $seedTarget = 'helper'
+                $seedApiBase = "http://127.0.0.1:$HelperApiPort/api"
+                $seedKey = $null
+                $hkDeadline = (Get-Date).AddSeconds(30)
+                while ((Get-Date) -lt $hkDeadline -and -not $seedKey) {
+                    try {
+                        $hc = Get-Content (Join-Path $hstate 'configuration.json') -Raw | ConvertFrom-Json
+                        if ($hc.api -and $hc.api.key) { $seedKey = $hc.api.key }
+                    } catch {}
+                    if (-not $seedKey) { Start-Sleep -Milliseconds 500 }
+                }
+            }
             try {
-                $uri = 'file:///' + ($torPath -replace '\\', '/')
+                # Corps : `uri=file:///...` pour Tribler ; chemin local
+                # via le champ `torrent` pour le helper (son `uri`
+                # n'accepte que magnet/http — 400 sinon).
+                $seedBody = @{ anon_hops = $SeedAnonHops;
+                               # Tribler exige safe_seeding des que
+                               # anon_hops>0 (400 sinon).
+                               safe_seeding = ($SeedAnonHops -gt 0);
+                               destination = $seedParent }
+                if ($seedTarget -eq 'helper') {
+                    $seedBody.torrent = $torPath
+                } else {
+                    $seedBody.uri = 'file:///' + ($torPath -replace '\\', '/')
+                }
                 Invoke-RestMethod -Method Put `
-                    -Uri "http://127.0.0.1:$apiPort/api/downloads" `
-                    -Headers @{ 'X-Api-Key' = $apiKey } -ContentType 'application/json' `
-                    -Body (@{ uri = $uri; anon_hops = 0; safe_seeding = $false;
-                              destination = $seedDir } | ConvertTo-Json -Compress) `
+                    -Uri "$seedApiBase/downloads" `
+                    -Headers @{ 'X-Api-Key' = $seedKey } -ContentType 'application/json' `
+                    -Body ($seedBody | ConvertTo-Json -Compress) `
                     -TimeoutSec 15 | Out-Null
-                Verdict $true 'seed dedie ajoute sur Tribler' "ih=$seedIh"
+                Verdict $true "seed dedie ajoute sur $seedTarget" "ih=$seedIh"
             } catch {
-                Verdict $false 'seed dedie ajoute sur Tribler' $_.Exception.Message
+                Verdict $false "seed dedie ajoute sur $seedTarget" $_.Exception.Message
             }
             try { $triblerLtPort = $conf.libtorrent.port } catch {}
             # Le seeder doit etre en etat seeding (verification
@@ -331,8 +443,8 @@ try {
             while ((Get-Date) -lt $seedDeadline -and -not $seedingConfirmed) {
                 try {
                     $td = Invoke-RestMethod `
-                        -Uri "http://127.0.0.1:$apiPort/api/downloads" `
-                        -Headers @{ 'X-Api-Key' = $apiKey } -TimeoutSec 10
+                        -Uri "$seedApiBase/downloads" `
+                        -Headers @{ 'X-Api-Key' = $seedKey } -TimeoutSec 10
                     $mine = @($td.downloads) | Where-Object { $_.infohash -eq $seedIh }
                     if ($mine) {
                         if ([double]$mine[0].progress -ge 1 `
@@ -343,8 +455,8 @@ try {
                 } catch {}
                 if (-not $seedingConfirmed) { Start-Sleep -Seconds 2 }
             }
-            Precond $seedingConfirmed 'seeder Tribler en etat seeding' `
-                "ih=$seedIh lt_port=$triblerLtPort"
+            Precond $seedingConfirmed "seeder $seedTarget en etat seeding" `
+                "ih=$seedIh lt_port=$(if ($seedTarget -eq 'helper') { 0 } else { $triblerLtPort })"
             Log ("seed dedie : ih={0} sha256={1}... size={2}" -f `
                 $seedIh, $seedSha.Substring(0, 16), $seedSize)
             $Magnet = "magnet:?xt=urn:btih:$seedIh"
@@ -363,6 +475,22 @@ try {
         }
         if (-not $peersOk) { throw "le daemon n'a decouvert aucun pair en ${TriblerWaitSec}s" }
 
+        # Precondition vivier de circuits : /ipv8/network ne compte
+        # que les pairs discovery - le reservoir de sauts est la
+        # communaute tunnel (/ipv8/tunnel/peers). Un circuit a $Hops
+        # sauts exige au moins $Hops pairs tunnel distincts.
+        $ovDeadline = (Get-Date).AddSeconds($TriblerWaitSec)
+        $ovOk = $false; $ovN = 0
+        while ((Get-Date) -lt $ovDeadline -and -not $ovOk) {
+            try {
+                $ovN = @((DApiGet '/ipv8/tunnel/peers').peers).Count
+                if ($ovN -ge $Hops) { $ovOk = $true }
+            } catch { Start-Sleep -Seconds 3 }
+            if (-not $ovOk) { Start-Sleep -Seconds 3 }
+        }
+        Precond $ovOk "vivier tunnel daemon >= $Hops pairs" `
+            "dernier=$ovN"
+
         # Ports UDP du daemon AVANT la lane (baseline : ipv8 + dht +
         # libtorrent). Les nouveaux ports apres `add` = sockets de lane.
         $portsBefore = @(Get-NetUDPEndpoint -OwningProcess $pidBench -ErrorAction SilentlyContinue `
@@ -372,8 +500,14 @@ try {
         # ---------- Capture ----------
         $etl = Join-Path $OutDir 'capture.etl'
         $pcap = Join-Path $OutDir 'capture.pcapng'
-        & pktmon filter remove 2>&1 | Out-Null
-        & pktmon start --capture --pkt-size 0 --file-name $etl --file-size 512 2>&1 | Out-Null
+        # Un run avorte peut laisser une session pilote active :
+        # `pktmon stop` idempotent avant start sinon ce dernier echoue.
+        # `cmd /c` : sous ErrorActionPreference=Stop, stderr d'un natif
+        # (« n'est pas en cours d'execution ») devient une erreur
+        # terminale — cmd absorbe la redirection sans y toucher.
+        & cmd /c "pktmon stop >nul 2>&1"
+        & cmd /c "pktmon filter remove >nul 2>&1"
+        & cmd /c "pktmon start --capture --pkt-size 0 --file-name `"$etl`" --file-size 512 >nul 2>&1"
         if ($LASTEXITCODE -ne 0) { throw "pktmon start a echoue" }
         $captureStarted = $true
         $capStart = Get-Date
@@ -389,8 +523,19 @@ try {
         # lane recreee doit binder un port DIFFERENT.
         $tcpBefore = @(Get-NetTCPConnection -OwningProcess $pidBench -State Listen `
             -ErrorAction SilentlyContinue | ForEach-Object { $_.LocalPort } | Sort-Object -Unique)
-        $body = @{ uri = $Magnet; anon_hops = $Hops; safe_seeding = $true; destination = $dlDir } |
-            ConvertTo-Json -Compress
+        # Avec seed dedie : ajout par chemin .torrent (metainfo fournie
+        # -> materialisation immediate -> join_swarm -> pairs e2e). Le
+        # magnet pur resterait en METADATA : un download en resolution
+        # n'est pas visible de `monitor_hidden_swarms` (pas encore
+        # dans engine.list()) et ne recoit donc jamais les pairs e2e
+        # des points d'introduction du seed cache.
+        $body = if ($torPath -and -not $MagnetDownload) {
+            @{ torrent = $torPath; anon_hops = $Hops; safe_seeding = $true; destination = $dlDir } |
+                ConvertTo-Json -Compress
+        } else {
+            @{ uri = $Magnet; anon_hops = $Hops; safe_seeding = $true; destination = $dlDir } |
+                ConvertTo-Json -Compress
+        }
         $addResp = Invoke-RestMethod -Method Put -Uri "$apiBase/downloads" -Headers $H `
             -ContentType 'application/json' -Body $body -TimeoutSec 15
         $infohashHex = [string]$addResp.infohash
@@ -398,6 +543,22 @@ try {
                        else { 'max(fichier, trafic tunnel)' }
         Log (("download anonyme {0} saut(s) ajoute (ih={1}) - attente de {2} octets " +
             "[{3}]") -f $Hops, $infohashHex, $FailAtBytes, $triggerDesc)
+
+        # Precondition : >=1 circuit READY avant d'armer le compteur
+        # d'octets. Le listener SOCKS existe sans circuit (run 18:25 :
+        # lane n=1 mais kill switch engage, aucune cellule relayee) -
+        # verifier le state via l'API, pas seulement le port.
+        $cReady = $false
+        $cDeadline = (Get-Date).AddSeconds(120)
+        while ((Get-Date) -lt $cDeadline -and -not $cReady) {
+            try {
+                $cir0 = DApiGet '/ipv8/tunnel/circuits'
+                $cReady = [bool](@($cir0.circuits) | Where-Object {
+                    $_.state -eq 'READY' -and $_.goal_hops -eq $Hops })
+            } catch { Start-Sleep -Seconds 2 }
+            if (-not $cReady) { Start-Sleep -Seconds 2 }
+        }
+        Precond $cReady 'circuit tunnel READY avant trigger' "hops=$Hops"
 
         # Declencheur "mid-transfer" : la lane transporte du trafic
         # reel des que ses circuits DATA shuttent des cellules
@@ -586,10 +747,10 @@ try {
             Start-Sleep -Seconds $PostExitSec
         }
         }
-        & pktmon stop 2>&1 | Out-Null
+        & cmd /c "pktmon stop >nul 2>&1"
         $captureStarted = $false
         $capEnd = Get-Date
-        & pktmon etl2pcap $etl -o $pcap 2>&1 | Out-Null
+        & cmd /c "pktmon etl2pcap `"$etl`" -o `"$pcap`" >nul 2>&1"
         $pcapOk = Test-Path $pcap
         Precond $pcapOk 'capture PCAP analysable' $pcap
         if ($pcapOk) { Log "pcapng : $pcap" }
@@ -661,9 +822,14 @@ try {
                     $f = Get-ChildItem $dlDir -Recurse -File -ErrorAction SilentlyContinue |
                         Where-Object { $_.Length -eq $seedSize } | Select-Object -First 1
                     if ($f) {
-                        $payloadHashMatch = ((Get-FileHash $f.FullName -Algorithm SHA256).Hash.ToLower() -eq $seedSha)
-                        Verdict $payloadHashMatch 'payload recu == payload seede (SHA-256)' `
-                            "file=$($f.Name)"
+                        $fh = Get-FileHash $f.FullName -Algorithm SHA256 -ErrorAction SilentlyContinue
+                        if ($fh) {
+                            $payloadHashMatch = ($fh.Hash.ToLower() -eq $seedSha)
+                            Verdict $payloadHashMatch 'payload recu == payload seede (SHA-256)' `
+                                "file=$($f.Name)"
+                        } else {
+                            Log "hash final non calculable (fichier verrouille) - non verifiable"
+                        }
                     }
                 } else {
                     Log "download dedie non termine (progress inconnue) - hash final non verifiable"
@@ -683,15 +849,27 @@ try {
                 infohash = $seedIh
                 source_sha256 = $seedSha
                 size_bytes = $seedSize
-                seeder = @{ proc = 'Tribler.exe'; pid = $triblerProc.Id;
-                            ipv8_port = $triblerPort;
-                            libtorrent_port = $triblerLtPort }
+                seeder = if ($seedTarget -eq 'helper') {
+                    @{ proc = 'onionbit-daemon (helper)'; pid = $helperProc.Id;
+                       ipv8_port = $HelperIpv8Port; libtorrent_port = 0 }
+                } else {
+                    @{ proc = 'Tribler.exe'; pid = $triblerProc.Id;
+                       ipv8_port = $triblerPort;
+                       libtorrent_port = $triblerLtPort }
+                }
                 seeding_confirmed = $seedingConfirmed
                 bytes_at_failure = $bytesAtFailure
                 bytes_after_rebuild = $bytesAfter
                 payload_hash_match = $payloadHashMatch
             }
             pid_bench = $pidBench
+            # Sauts potentiellement locaux quand -MeshHelper : le
+            # manifeste doit le dire pour que la preuve reste
+            # interpretable (le pcap loopback n'est pas capture).
+            mesh_helper = if ($helperProc) { @{ pid = $helperProc.Id;
+                                               ipv8_port = $HelperIpv8Port;
+                                               seed = ($seedTarget -eq 'helper') } }
+                          else { $null }
             ports     = @{ before = $portsBefore; lane = $lanePorts; final = $portsFinal;
                            socks_lane = $laneSocks; socks_new_lane = $newSocks }
             t_failure = if ($tFailure) { $tFailure.ToUniversalTime().ToString('o') } else { $null }
@@ -734,8 +912,9 @@ try {
     # ---------- Demarrage capture pktmon ----------
     $etl = Join-Path $OutDir 'capture.etl'
     $pcap = Join-Path $OutDir 'capture.pcapng'
-    & pktmon filter remove 2>&1 | Out-Null
-    & pktmon start --capture --pkt-size 0 --file-name $etl --file-size 512 2>&1 | Out-Null
+    & cmd /c "pktmon stop >nul 2>&1"
+    & cmd /c "pktmon filter remove >nul 2>&1"
+    & cmd /c "pktmon start --capture --pkt-size 0 --file-name `"$etl`" --file-size 512 >nul 2>&1"
     if ($LASTEXITCODE -ne 0) { throw "pktmon start a echoue" }
     $captureStarted = $true
     $capStart = Get-Date
@@ -838,12 +1017,12 @@ try {
         Log "fenetre post-arret ${PostExitSec}s (tout paquet WAN = suspect)"
         Start-Sleep -Seconds $PostExitSec
     }
-    & pktmon stop 2>&1 | Out-Null
+    & cmd /c "pktmon stop >nul 2>&1"
     $captureStarted = $false
     $capEnd = Get-Date
     Log "capture arretee"
 
-    & pktmon etl2pcap $etl -o $pcap 2>&1 | Out-Null
+    & cmd /c "pktmon etl2pcap `"$etl`" -o `"$pcap`" >nul 2>&1"
     if (-not (Test-Path $pcap)) { throw "etl2pcap a echoue" }
     Log "pcapng : $pcap"
 
@@ -920,6 +1099,7 @@ try {
         t_failure  = if ($tFailure) { $tFailure.ToUniversalTime().ToString('o') } else { $null }
         fail_at_bytes = $FailAtBytes; fail_window_sec = $FailWindowSec
         tribler    = @{ exe = $triblerExe; port_ipv8 = $triblerPort; started_by_bench = $startedTribler }
+        mesh_helper = if ($helperProc) { @{ pid = $helperProc.Id; ipv8_port = $HelperIpv8Port } } else { $null }
         capture    = @{ etl = $etl; pcapng = $pcap; start = $capStart.ToString('o'); end = $capEnd.ToString('o'); post_exit_sec = $PostExitSec }
         resolvers  = $resolvers
         dht_routers_forbidden = $dhtForbidden
@@ -941,10 +1121,11 @@ finally {
         Enable-NetAdapter -Name $nicName -Confirm:$false -ErrorAction SilentlyContinue
     }
     if ($blockedIps -and $blockedIps.Count) {
-        & netsh advfirewall firewall delete rule "name=$fwRule" 2>&1 | Out-Null
+        & cmd /c "netsh advfirewall firewall delete rule `"name=$fwRule`" >nul 2>&1"
     }
-    if ($captureStarted) { & pktmon stop 2>&1 | Out-Null }
+    if ($captureStarted) { & cmd /c "pktmon stop >nul 2>&1" }
     if ($daemonProc -and -not $daemonProc.HasExited) { Stop-Process -Id $daemonProc.Id -Force -ErrorAction SilentlyContinue }
+    if ($helperProc -and -not $helperProc.HasExited) { Stop-Process -Id $helperProc.Id -Force -ErrorAction SilentlyContinue }
     if ($rsProc -and -not $rsProc.HasExited) { Stop-Process -Id $rsProc.Id -Force -ErrorAction SilentlyContinue }
     if ($startedTribler -and $triblerProc) { Stop-Process -Id $triblerProc.Id -Force -ErrorAction SilentlyContinue }
     Get-Process -Name 'interop_public_download' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue

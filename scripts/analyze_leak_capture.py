@@ -11,11 +11,22 @@ Classe chaque endpoint distant observe sur le fil :
   OVERLAY  : endpoint present dans le fichier --allowed (verite fil
              extraite du journal TAP du processus teste)
   DNS      : port 53 -- les qnames sont decodes et listes
+  BRUIT    : paquet d'un port du banc vers un hote WAN recevant le
+             meme motif (proto + taille) depuis de nombreux ports
+             NON banc — bruit ambiant d'un autre processus qui a
+             reutilise un port ephemere (attribution impossible)
   INTERDIT : TCP vers WAN, UDP vers WAN hors overlay, DHT mainline
              direct (routeurs publics resolus au lancement)
 
 Verdict : exit 1 si au moins un paquet INTERDIT (hors --dns-ok).
 Stdlib uniquement -- parse pcapng a la main (EPB + IDB).
+
+Attribution : pktmon capture le meme datagramme sur plusieurs couches
+NDIS (duplicatas a ~1 us) et ne porte pas de PID — l'appartenance au
+processus teste est deduite du port local. Un port ephemere libere
+peut etre reutilise par un autre processus dans la fenetre d'analyse :
+d'ou le dedoublonnage (meme paquet a <1 ms = une seule capture) et le
+reclassement BRUIT des collisions avec le trafic ambiant.
 """
 import argparse
 import ipaddress
@@ -138,6 +149,41 @@ def proto_none(src, dst):
     return None, src, dst, None, None, b""
 
 
+# Fenetre de dedoublonnage des duplicatas NDIS pktmon : les copies
+# d'un meme datagramme arrivent a ~1 us d'intervalle ; 1 ms conserve
+# les retransmissions applicatives reelles.
+DEDUP_WINDOW_S = 0.001
+# Nombre minimal de ports locaux distincts NON bancs envoyant le meme
+# motif (proto, taille) vers un hote WAN pour que le paquet d'un port
+# banc vers cet hote soit considere comme bruit ambiant plutot que
+# fuite. Un processus qui reutilise un port ephemere libere n'a pas
+# de raison d'etre le seul emetteur vers cet hote.
+AMBIENT_PORTS_MIN = 25
+
+
+def packets_dedup(path):
+    """Paquets parses dedoublonnes : (ts, proto, src, dst, sp, dp, l4).
+
+    pktmon capture le meme paquet sur plusieurs couches NDIS (le
+    comptage brut gonfle tout d'un facteur ~4). Cle = 5-tuple +
+    payload ; deux occurrences identiques a <1 ms = meme datagramme.
+    """
+    seen = {}
+    for lt, ts, frame in iter_packets(path):
+        p = parse_frame(lt, frame)
+        if not p:
+            continue
+        proto, src, dst, sp, dp, l4 = p
+        if sp is None:
+            continue
+        key = (proto, src, dst, sp, dp, l4)
+        last = seen.get(key)
+        seen[key] = ts
+        if last is not None and ts - last < DEDUP_WINDOW_S:
+            continue
+        yield ts, proto, src, dst, sp, dp, l4
+
+
 def dns_qnames(payload):
     """Decode les qnames d'un paquet DNS (req ou rep)."""
     names = []
@@ -222,10 +268,12 @@ def main():
             dht_forbidden_ips.add(e)
     local_ips = set(args.local_ip)
 
-    stats = {"LOCAL": 0, "OVERLAY": 0, "DNS": 0, "AUTRE": 0, "INTERDIT": 0}
+    stats = {"LOCAL": 0, "OVERLAY": 0, "DNS": 0, "AUTRE": 0, "BRUIT": 0, "INTERDIT": 0}
     window_interdit = 0
+    window_bruit = 0
     forbidden = []   # (proto, remote, detail)
     forbidden_in_window = []
+    bruit = []       # (proto, remote, detail) — reclasse ambiant
     dns_queries = []
     dns_queries_window = []
     endpoints = {}   # remote -> (classif, count)
@@ -236,17 +284,29 @@ def main():
     t_first_new_overlay = None  # 1er OVERLAY post-w0 vers endpoint nouveau
     pre_window_eps = set()      # endpoints vus <= w0
     dead_tx = []                # paquets sortants de ports morts post-death
+    dead_tx_ambient = []        # idem mais motif de bruit ambiant (inattribuable)
     dead_rx = 0                 # drain entrant vers ports morts (info seul)
 
+    # Passe 1 : signature de bruit ambiant par hote WAN. Pour chaque
+    # destination publique, on retient les ports locaux NON bancs
+    # ayant emis un motif (proto, taille de payload) donne : une
+    # inondation venue d'un autre processus rend inattribuable le
+    # paquet d'un port banc vers ce meme hote (le port ephemere
+    # libere par la lane detruite peut etre reutilise pendant la
+    # fenetre — pktmon ne porte pas de PID). Les ports du banc sont
+    # exclus de la signature : si le processus teste etait lui-meme
+    # l'emetteur, aucune excuse ambiante ne se formerait.
+    ambient = {}   # remote_ip -> {(proto, len): set(ports non bancs)}
     n_packets = 0
-    for lt, ts, frame in iter_packets(args.pcapng):
+    for ts, proto, src, dst, sp, dp, l4 in packets_dedup(args.pcapng):
         n_packets += 1
-        p = parse_frame(lt, frame)
-        if not p:
-            continue
-        proto, src, dst, sp, dp, l4 = p
-        if sp is None:
-            continue
+        if is_public(dst) and not is_public(src) \
+                and sp not in bench_ports and sp not in dead_ports:
+            ambient.setdefault(dst, {}).setdefault((proto, len(l4)), set()).add(sp)
+
+    n_packets = 0
+    for ts, proto, src, dst, sp, dp, l4 in packets_dedup(args.pcapng):
+        n_packets += 1
         # Remote = le cote public ; deux prives -> trafic local.
         src_pub, dst_pub = is_public(src), is_public(dst)
         if not src_pub and not dst_pub:
@@ -263,6 +323,11 @@ def main():
         # (pktmon ne porte pas de PID ; le port UDP/TCP local l'identifie).
         lport = sp if dst_pub else dp
         benched = lport in bench_ports
+        # Le paquet, s'il venait d'un port banc, reproduit-il le motif
+        # d'une inondation ambiante vers cet hote ?
+        bruit_ambiant = len(
+            ambient.get(remote, {}).get((proto, len(l4)), ())
+        ) >= AMBIENT_PORTS_MIN
 
         # Signature IPv8 : version 0x0002 + community-id. Tout paquet
         # issu d'un port du banc qui porte cette enveloppe est du
@@ -286,12 +351,18 @@ def main():
                     dns_queries_window.append(q)
         elif benched:
             # Attribution certaine : paquet du processus de banc vers le
-            # WAN. Le motif precise la nature de la fuite.
+            # WAN. Le motif precise la nature de la fuite — sauf si le
+            # motif appartient a une inondation ambiante vers cet hote
+            # (port ephemere reutilise par un autre processus).
             why = f"{prot} WAN sur port local {lport} du banc"
             if rep in dht_forbidden or str(remote) in dht_forbidden_ips:
                 why = "DHT mainline direct (port du banc)"
-            cls = "INTERDIT"
-            forbidden.append((prot, rep, why))
+            if bruit_ambiant:
+                cls = "BRUIT"
+                bruit.append((prot, rep, why))
+            else:
+                cls = "INTERDIT"
+                forbidden.append((prot, rep, why))
         else:
             # trafic d'un autre processus (Tribler hote, OS) : rapporte
             # mais non attribuable -- voir AUTRE dans le resume.
@@ -302,16 +373,25 @@ def main():
         # port mort est du drain remote — rapporte, pas compte.
         if dead_since is not None and ts > dead_since:
             if sp in dead_ports and not src_pub:
-                dead_tx.append((prot, rep))
-                cls = "INTERDIT"
-                forbidden.append((prot, rep, "port de lane detruite (mapping survivant)"))
+                if bruit_ambiant:
+                    # Port ephemere de la lane reutilise par un autre
+                    # processus : non attributable (mapping incertain).
+                    cls = "BRUIT"
+                    dead_tx_ambient.append((prot, rep))
+                    bruit.append((prot, rep, "port mort reuse par le bruit ambiant"))
+                else:
+                    dead_tx.append((prot, rep))
+                    cls = "INTERDIT"
+                    forbidden.append((prot, rep, "port de lane detruite (mapping survivant)"))
             elif dp in dead_ports and not dst_pub:
                 dead_rx += 1
         stats[cls] += 1
-        if cls == "INTERDIT" and w0 is not None and w1 is not None \
-                and w0 <= ts <= w1:
-            window_interdit += 1
-            forbidden_in_window.append((prot, rep))
+        if w0 is not None and w1 is not None and w0 <= ts <= w1:
+            if cls == "INTERDIT":
+                window_interdit += 1
+                forbidden_in_window.append((prot, rep))
+            elif cls == "BRUIT":
+                window_bruit += 1
         # Jalons 17c-5 : chronologie overlay autour de la panne.
         if w0 is not None:
             if ts <= w0:
@@ -340,6 +420,10 @@ def main():
         print(f"  paquets sortants de ports morts : {len(dead_tx)}")
         for p, r in dict.fromkeys(dead_tx):
             print(f"    {p} -> {r}")
+        if dead_tx_ambient:
+            print(f"  ports morts reuses par bruit ambiant : {len(dead_tx_ambient)}")
+            for p, r in dict.fromkeys(dead_tx_ambient):
+                print(f"    {p} -> {r}")
         print(f"  drain entrant vers ports morts  : {dead_rx}")
     print()
     print("endpoints WAN observes :")
@@ -359,10 +443,20 @@ def main():
                 continue
             seen.add((prot, rep, why))
             print(f"  {prot} -> {rep}  ({why})")
+    if bruit:
+        print()
+        print("BRUIT AMBIANT (ports bancs, attribution impossible) :")
+        seen = set()
+        for prot, rep, why in bruit:
+            if (prot, rep, why) in seen:
+                continue
+            seen.add((prot, rep, why))
+            print(f"  {prot} -> {rep}  ({why})")
     if args.report:
         json.dump(
             {"stats": stats, "window": {"start": w0, "end": w1,
                                         "interdit": window_interdit,
+                                        "bruit": window_bruit,
                                         "forbidden": [
                                             {"proto": p, "remote": r}
                                             for p, r in dict.fromkeys(forbidden_in_window)],
@@ -372,11 +466,14 @@ def main():
              "dead_ports": {"ports": sorted(dead_ports),
                             "since": dead_since,
                             "tx": len(dead_tx),
+                            "tx_ambient": len(dead_tx_ambient),
                             "rx": dead_rx},
              "endpoints": {e: [c, n] for e, (c, n) in endpoints.items()},
              "dns_queries": sorted(set(dns_queries)),
              "forbidden": [{"proto": p, "remote": r, "why": w}
-                            for p, r, w in dict.fromkeys(forbidden)]},
+                            for p, r, w in dict.fromkeys(forbidden)],
+             "bruit": [{"proto": p, "remote": r, "why": w}
+                        for p, r, w in dict.fromkeys(bruit)]},
             open(args.report, "w", encoding="utf-8"), indent=2)
 
     if stats["INTERDIT"]:
