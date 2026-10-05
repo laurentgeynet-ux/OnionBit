@@ -17,6 +17,7 @@ extension MessagingContactJson on Map<String, dynamic> {
     },
     circuitId: (this['circuit_id'] as num?)?.toInt(),
     pendingSinceSecs: (this['pending_since_secs'] as num?)?.toInt(),
+    alias: (this['alias'] as String?) ?? '',
   );
 }
 

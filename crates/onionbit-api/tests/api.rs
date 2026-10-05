@@ -1024,6 +1024,11 @@ async fn messaging_desactivee_repond_404_sur_tous_les_endpoints() {
         ),
         (
             "POST",
+            format!("/api/messaging/contacts/{pk}/alias"),
+            "{\"alias\":\"alice\"}".to_string(),
+        ),
+        (
+            "POST",
             format!("/api/messaging/contacts/{pk}/retention"),
             "{\"retention_secs\":0}".to_string(),
         ),

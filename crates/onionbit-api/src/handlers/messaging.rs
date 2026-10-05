@@ -100,6 +100,7 @@ pub async fn get_contacts(
                 "public_key": hexs(&pk),
                 "state": svc.contact_state(&pk).map(state_str).unwrap_or("unknown"),
                 "circuit_id": cid,
+                "alias": svc.contact_alias(&pk).unwrap_or_default(),
             })
         })
         .collect();
@@ -119,6 +120,7 @@ pub async fn get_pending(
             serde_json::json!({
                 "public_key": hexs(&pk),
                 "pending_since_secs": since,
+                "alias": svc.contact_alias(&pk).unwrap_or_default(),
             })
         })
         .collect();
@@ -275,6 +277,24 @@ pub struct RetentionBody {
     /// Zeroiser le corps avant suppression a l'expiration.
     #[serde(default)]
     pub secure_delete: bool,
+}
+
+/// Corps `{alias: "<texte>"}` du pseudonyme local.
+#[derive(serde::Deserialize)]
+pub struct AliasBody {
+    /// Pseudonyme local (`""` = effacer — retour a la cle abregee).
+    pub alias: String,
+}
+
+/// `POST /api/messaging/contacts/{pk}/alias` — pseudonyme local du
+/// contact (affichage UI ; `""` efface).
+pub async fn post_alias(
+    State(state): State<AppState>,
+    Path(pk): Path<String>,
+    Json(body): Json<AliasBody>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    svc(&state)?.set_alias(&pk_hex(&pk)?, &body.alias)?;
+    Ok(Json(serde_json::json!({})))
 }
 
 /// `POST /api/messaging/contacts/{pk}/retention` — retention des

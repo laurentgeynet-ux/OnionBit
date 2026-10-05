@@ -209,6 +209,10 @@ fn api_router(state: AppState) -> Router<AppState> {
             get(messaging::get_messages).post(messaging::post_message),
         )
         .route(
+            "/messaging/contacts/{pk}/alias",
+            post(messaging::post_alias),
+        )
+        .route(
             "/messaging/contacts/{pk}/retention",
             post(messaging::post_retention),
         )

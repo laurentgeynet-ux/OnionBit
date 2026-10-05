@@ -40,6 +40,8 @@
   "msgStatePending": "Pending",
   "msgStateBlocked": "Blocked",
   "msgSendFailed": "Contact offline — message not delivered",
+  "msgRename": "Rename",
+  "msgAliasLabel": "Local alias (empty = public key)",
   "createTorrent": "Create a torrent",
   "ctSource": "Source file or folder",
   "ctSourceHint": "Path on the daemon machine (file or folder)",

@@ -31,6 +31,10 @@ pub struct MsgContactRow {
     pub retention_secs: i64,
     /// Zeroiser le corps avant suppression a l'expiration.
     pub secure_delete: bool,
+    /// Pseudonyme local (`''` = aucun — la liste affiche alors la
+    /// cle abregee). Jamais ecrase par `upsert_contact` : la colonne
+    /// n'appartient pas au consentement.
+    pub alias: String,
     /// Creation de la fiche.
     pub created_at: i64,
     /// Derniere modification.
@@ -97,7 +101,7 @@ pub fn contact_state(conn: &Connection, pk: &[u8]) -> Result<Option<String>> {
 pub fn get_contact(conn: &Connection, pk: &[u8]) -> Result<Option<MsgContactRow>> {
     conn.query_row(
         "SELECT public_key, state, send_seq, recv_top, retention_secs,
-                secure_delete, created_at, updated_at
+                secure_delete, alias, created_at, updated_at
          FROM msg_contacts WHERE public_key=?1",
         params![pk],
         row_to_contact,
@@ -110,7 +114,7 @@ pub fn get_contact(conn: &Connection, pk: &[u8]) -> Result<Option<MsgContactRow>
 pub fn list_contacts(conn: &Connection) -> Result<Vec<MsgContactRow>> {
     let mut stmt = conn.prepare(
         "SELECT public_key, state, send_seq, recv_top, retention_secs,
-                secure_delete, created_at, updated_at
+                secure_delete, alias, created_at, updated_at
          FROM msg_contacts ORDER BY created_at",
     )?;
     let rows = stmt.query_map([], row_to_contact)?;
@@ -147,6 +151,17 @@ pub fn set_retention(
                 updated_at=?4
          WHERE public_key=?1",
         params![pk, retention_secs, secure_delete as i64, now],
+    )?;
+    Ok(())
+}
+
+/// Pseudonyme local du contact (`""` = effacer — retour a la cle
+/// abregee cote UI). La colonne est hors `upsert_contact` : elle ne
+/// depend pas du consentement.
+pub fn set_alias(conn: &Connection, pk: &[u8], alias: &str, now: i64) -> Result<()> {
+    conn.execute(
+        "UPDATE msg_contacts SET alias=?2, updated_at=?3 WHERE public_key=?1",
+        params![pk, alias, now],
     )?;
     Ok(())
 }
@@ -243,8 +258,9 @@ fn row_to_contact(r: &rusqlite::Row) -> rusqlite::Result<MsgContactRow> {
         recv_top: r.get(3)?,
         retention_secs: r.get(4)?,
         secure_delete: r.get::<_, i64>(5)? != 0,
-        created_at: r.get(6)?,
-        updated_at: r.get(7)?,
+        alias: r.get(6)?,
+        created_at: r.get(7)?,
+        updated_at: r.get(8)?,
     })
 }
 
@@ -273,6 +289,7 @@ mod tests {
             recv_top: 0,
             retention_secs: 0,
             secure_delete: false,
+            alias: String::new(),
             created_at: 100,
             updated_at: 100,
         }
@@ -303,6 +320,14 @@ mod tests {
             set_seqs(c, &pk, 3, 9, 110)?;
             let row = get_contact(c, &pk)?.unwrap();
             assert_eq!((row.send_seq, row.recv_top), (3, 9));
+
+            // Pseudonyme : pose, conserve par `upsert_contact`
+            // (hors ON CONFLICT), effacable par chaine vide.
+            set_alias(c, &pk, "alice", 111)?;
+            upsert_contact(c, &contact(&pk))?;
+            assert_eq!(get_contact(c, &pk)?.unwrap().alias, "alice");
+            set_alias(c, &pk, "", 112)?;
+            assert!(get_contact(c, &pk)?.unwrap().alias.is_empty());
 
             insert_message(c, &msg(&pk, 1, 100))?;
             // Doublon d'id : ignore.

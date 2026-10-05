@@ -82,6 +82,10 @@ class RestMessagingRepository implements MessagingRepository {
       _api.delete('/messaging/contacts/$publicKey');
 
   @override
+  Future<void> setAlias(String publicKey, String alias) =>
+      _api.post('/messaging/contacts/$publicKey/alias', body: {'alias': alias});
+
+  @override
   Future<List<MessagingMessage>> history(
     String publicKey, {
     int limit = 100,

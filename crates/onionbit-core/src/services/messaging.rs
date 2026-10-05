@@ -45,6 +45,9 @@ const EVENTS_CAP: usize = 256;
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 /// Granularite de scrutation de la liaison dans `connect`.
 const CONNECT_POLL: Duration = Duration::from_millis(50);
+/// Borne du pseudonyme local d'un contact (caracteres) — label UI,
+/// pas un identifiant.
+const MAX_CONTACT_ALIAS_CHARS: usize = 64;
 
 /// Secondes Unix courantes.
 fn now_secs() -> u64 {
@@ -595,6 +598,36 @@ impl MessagingService {
             .map_err(|e| CoreError::State(format!("retention messagerie: {e}")))
     }
 
+    /// Pseudonyme local du contact (`""` = aucun — l'UI retombe
+    /// sur la cle abregee). Trime et borne a
+    /// [`MAX_CONTACT_ALIAS_CHARS`] caracteres ; un contact inconnu
+    /// est refuse (`InvalidState`). Le pseudonyme n'appartient pas
+    /// au consentement : il survit aux transitions d'etat
+    /// (`upsert_contact` ne touche pas la colonne).
+    pub fn set_alias(&self, contact_pk: &[u8], alias: &str) -> Result<()> {
+        if self.contact_state(contact_pk).is_none() {
+            return Err(CoreError::InvalidState("messagerie : contact inconnu"));
+        }
+        let trimmed = alias.trim();
+        if trimmed.chars().count() > MAX_CONTACT_ALIAS_CHARS {
+            return Err(CoreError::InvalidState("messagerie : pseudonyme trop long"));
+        }
+        let Some(db) = &self.db else { return Ok(()) };
+        let now = now_secs() as i64;
+        db.with(|c| dbm::set_alias(c, contact_pk, trimmed, now))
+            .map_err(|e| CoreError::State(format!("pseudonyme messagerie: {e}")))
+    }
+
+    /// Pseudonyme local du contact (`None` = inconnu ou non defini).
+    pub fn contact_alias(&self, contact_pk: &[u8]) -> Option<String> {
+        let db = self.db.as_ref()?;
+        db.with(|c| dbm::get_contact(c, contact_pk))
+            .ok()
+            .flatten()
+            .map(|r| r.alias)
+            .filter(|a| !a.is_empty())
+    }
+
     /// Historique borne d'un contact (le plus recent d'abord).
     pub fn history(&self, contact_pk: &[u8], limit: u32) -> Result<Vec<dbm::MsgMessageRow>> {
         let Some(db) = &self.db else {
@@ -669,6 +702,7 @@ impl MessagingService {
             recv_top: recv_top as i64,
             retention_secs: 0,
             secure_delete: false,
+            alias: String::new(),
             created_at: now,
             updated_at: now,
         };
@@ -1949,6 +1983,41 @@ mod tests {
         svc2.handle_incoming(9, &keys, &new);
         let hist = svc2.history(&pk_bin, 10).unwrap();
         assert_eq!(hist.len(), 2, "trame post-restart persistee");
+    }
+
+    /// Pseudonyme local : pose/persiste au restart/efface ; refuse
+    /// sur contact inconnu ou trop long. La colonne survit aux
+    /// transitions d'etat (`upsert_contact` hors champ).
+    #[tokio::test]
+    async fn alias_contact_persiste_et_borne() {
+        let db = Arc::new(Database::memory().unwrap());
+        let svc = make_service_db(db.clone()).await;
+        let peer = LibNaClSecretKey::generate();
+        let pk_bin = bind(
+            &svc,
+            0,
+            &peer,
+            &MessagingKeys {
+                send: [1u8; 32],
+                recv: [2u8; 32],
+            },
+        );
+
+        // Inconnu refuse.
+        assert!(svc.set_alias(&[9u8; 64], "bob").is_err());
+        // Trop long refuse (> MAX_CONTACT_ALIAS_CHARS caracteres).
+        assert!(svc.set_alias(&pk_bin, &"x".repeat(65)).is_err());
+
+        svc.set_alias(&pk_bin, "  alice  ").unwrap();
+        assert_eq!(svc.contact_alias(&pk_bin).as_deref(), Some("alice"));
+
+        // Persiste au restart sur la meme base.
+        let svc2 = make_service_db(db).await;
+        assert_eq!(svc2.contact_alias(&pk_bin).as_deref(), Some("alice"));
+
+        // Vide = efface (retour a la cle abregee cote UI).
+        svc2.set_alias(&pk_bin, " ").unwrap();
+        assert_eq!(svc2.contact_alias(&pk_bin), None);
     }
 
     /// MS-11 — ACK applicatif : un `ack` entrant passe le `out`

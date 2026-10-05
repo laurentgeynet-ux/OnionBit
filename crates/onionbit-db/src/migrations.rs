@@ -319,6 +319,12 @@ CREATE TABLE msg_messages (
 );
 CREATE INDEX idx_msg_messages_contact ON msg_messages(contact_pk, ts);
 ",
+    // v16 : pseudonyme local des contacts messagerie — la liste
+    // n'affichait que la cle publique hex (illisible). `''` = pas
+    // de pseudonyme, le client retombe sur la cle abregee.
+    "
+ALTER TABLE msg_contacts ADD COLUMN alias TEXT NOT NULL DEFAULT '';
+",
 ];
 
 /// Applique les migrations en attente sur une connexion ouverte.

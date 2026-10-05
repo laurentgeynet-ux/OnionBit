@@ -3,6 +3,17 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Messagerie : pseudonyme local des contacts (2026-10-06)
+
+La liste des contacts n'affichait que la clé publique hex (illisible).
+Chaîne complète : migration v16 (`msg_contacts.alias`, hors
+`upsert_contact` — survit aux transitions de consentement), service
+`set_alias`/`contact_alias` (trim, borne 64 caractères, contact inconnu
+refusé), `POST /api/messaging/contacts/{pk}/alias`, champ `alias` dans
+`GET /contacts` et `/contacts/pending`. UI : titre = pseudonyme ou clé
+abrégée, menu « Renommer » par contact, clé abrégée en sous-titre quand
+un pseudonyme existe. `""` = effacement (retour à la clé abrégée).
+
 ## Messagerie : résolution robuste sans circuit prêt (2026-10-06)
 
 Bug prod au premier « connect » sur un daemon frais : `resolve()` exigeait

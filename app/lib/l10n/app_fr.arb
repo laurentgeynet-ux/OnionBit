@@ -34,6 +34,8 @@
   "msgStatePending": "En attente",
   "msgStateBlocked": "Bloqué",
   "msgSendFailed": "Contact hors ligne — message non livré",
+  "msgRename": "Renommer",
+  "msgAliasLabel": "Pseudonyme (vide = clé publique)",
   "createTorrent": "Créer un torrent",
   "ctSource": "Fichier ou dossier source",
   "ctSourceHint": "Chemin sur la machine du daemon (fichier ou dossier)",

@@ -252,8 +252,12 @@ class _PendingTile extends ConsumerWidget {
       dense: true,
       leading: const Icon(Icons.person_add_alt_1_outlined, size: 20),
       title: Text(
-        contact.shortKey,
-        style: const TextStyle(fontFamily: 'monospace'),
+        contact.displayName,
+        style: contact.alias.isNotEmpty
+            ? null
+            : const TextStyle(fontFamily: 'monospace'),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
       ),
       subtitle: contact.pendingSinceSecs != null
           ? Text('${contact.pendingSinceSecs} s')
@@ -319,13 +323,29 @@ class _ContactTile extends ConsumerWidget {
             : theme.colorScheme.outline,
       ),
       title: Text(
-        contact.shortKey,
-        style: const TextStyle(fontFamily: 'monospace'),
+        contact.displayName,
+        style: contact.alias.isNotEmpty
+            ? null
+            : const TextStyle(fontFamily: 'monospace'),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
       ),
-      subtitle: stateLabel != null ? Text(stateLabel) : null,
+      subtitle: stateLabel != null
+          ? Text(
+              contact.alias.isNotEmpty
+                  ? '${contact.shortKey} · $stateLabel'
+                  : stateLabel,
+            )
+          : contact.alias.isNotEmpty
+          ? Text(
+              contact.shortKey,
+              style: const TextStyle(fontFamily: 'monospace'),
+            )
+          : null,
       trailing: PopupMenuButton<String>(
         iconSize: 18,
         itemBuilder: (ctx) => [
+          PopupMenuItem(value: 'rename', child: Text(l10n.msgRename)),
           if (contact.state == MessagingContactState.blocked)
             PopupMenuItem(value: 'unblock', child: Text(l10n.msgUnblock))
           else
@@ -337,6 +357,7 @@ class _ContactTile extends ConsumerWidget {
           PopupMenuItem(value: 'delete', child: Text(l10n.msgDeleteContact)),
         ],
         onSelected: (v) => switch (v) {
+          'rename' => _renameDialog(context, ref),
           'block' => _act(context, ref, () => repo.block(contact.publicKey)),
           'unblock' => _act(
             context,
@@ -349,6 +370,47 @@ class _ContactTile extends ConsumerWidget {
       ),
       onTap: onTap,
     );
+  }
+
+  /// Dialogue renommage — pseudonyme local (`''` = effacer, retour
+  /// à la clé abrégée).
+  Future<void> _renameDialog(BuildContext context, WidgetRef ref) async {
+    final l10n = context.l10n;
+    final repo = ref.read(messagingRepositoryProvider);
+    final controller = TextEditingController(text: contact.alias);
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(l10n.msgRename),
+        content: TextField(
+          controller: controller,
+          decoration: InputDecoration(
+            labelText: l10n.msgAliasLabel,
+            border: const OutlineInputBorder(),
+          ),
+          autofocus: true,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(l10n.cancel),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(l10n.msgRename),
+          ),
+        ],
+      ),
+    );
+    final alias = controller.text.trim();
+    controller.dispose();
+    if (ok != true || !context.mounted) return;
+    try {
+      await repo.setAlias(contact.publicKey, alias);
+      ref.invalidate(messagingContactsProvider);
+    } catch (e) {
+      if (context.mounted) _showError(context, e);
+    }
   }
 
   /// Dialogue rétention — secondes + suppression sécurisée.

@@ -37,6 +37,9 @@ abstract class MessagingRepository {
   /// `DELETE /messaging/contacts/{pk}` — oublie le contact.
   Future<void> remove(String publicKey);
 
+  /// `POST …/alias` — pseudonyme local (`''` = effacer).
+  Future<void> setAlias(String publicKey, String alias);
+
   /// `GET …/messages` — historique borné (le plus récent d'abord).
   Future<List<MessagingMessage>> history(String publicKey, {int limit = 100});
 

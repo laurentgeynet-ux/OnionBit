@@ -26,6 +26,7 @@ class MessagingContact {
     required this.state,
     this.circuitId,
     this.pendingSinceSecs,
+    this.alias = '',
   });
 
   /// Clé publique du contact en hex (`pk_bin` de l'identité daemon).
@@ -40,7 +41,13 @@ class MessagingContact {
   /// Ancienneté d'une demande `pending` en secondes.
   final int? pendingSinceSecs;
 
+  /// Pseudonyme local (`''` = aucun — repli sur la clé abrégée).
+  final String alias;
+
   /// Raccourci lisible de la clé (8 premiers caractères hex).
   String get shortKey =>
       publicKey.length > 8 ? publicKey.substring(0, 8) : publicKey;
+
+  /// Nom affiché : pseudonyme s'il existe, sinon clé abrégée.
+  String get displayName => alias.isNotEmpty ? alias : shortKey;
 }
