@@ -2857,6 +2857,19 @@ impl CoreSession {
                     )));
                 }
                 tunnel.guards.set_enabled(config.ipv8.guards_enabled);
+                // `tunnel_community/ledger_*` (ADR-0015) : bascule a
+                // chaud de la collecte et de la gate — les compteurs
+                // sont conserves, simplement plus alimentes quand la
+                // collecte retombe (la gate exige les deux). Le store
+                // DB est injecte au premier armement comme les
+                // guards.
+                if config.ipv8.ledger_enabled && !tunnel.ledger.is_enabled() {
+                    tunnel.set_peer_stats_store(Arc::new(
+                        crate::peer_stats_store::DbPeerStatsStore::new(self.inner.db.clone()),
+                    ));
+                }
+                tunnel.ledger.set_enabled(config.ipv8.ledger_enabled);
+                tunnel.ledger.set_enforce(config.ipv8.ledger_enforce);
                 // `tunnel_community/max_relayed_rate` (extension Rust)
                 // : seau a jetons de la pompe d'emission, reglage a
                 // chaud — `-1` = auto (upload mesure × share, via

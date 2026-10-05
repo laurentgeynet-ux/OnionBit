@@ -325,6 +325,22 @@ CREATE INDEX idx_msg_messages_contact ON msg_messages(contact_pk, ts);
     "
 ALTER TABLE msg_contacts ADD COLUMN alias TEXT NOT NULL DEFAULT '';
 ",
+    // v17 : comptabilite locale par pair (ADR-0015) — octets servis
+    // aux circuits joints par `create` direct vs octets transportes
+    // par les sauts verifies de nos circuits. Identite = cle publique
+    // (le pair peut changer d'IP, pas de cle). Flush par upsert des
+    // seules lignes modifiees.
+    "
+CREATE TABLE peer_stats (
+    public_key      BLOB PRIMARY KEY,
+    bytes_served    INTEGER NOT NULL DEFAULT 0,
+    bytes_used      INTEGER NOT NULL DEFAULT 0,
+    circuits_served INTEGER NOT NULL DEFAULT 0,
+    circuits_used   INTEGER NOT NULL DEFAULT 0,
+    first_seen      INTEGER NOT NULL,
+    last_seen       INTEGER NOT NULL
+);
+",
 ];
 
 /// Applique les migrations en attente sur une connexion ouverte.

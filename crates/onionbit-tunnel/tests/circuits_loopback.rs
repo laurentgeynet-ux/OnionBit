@@ -547,6 +547,177 @@ async fn circuit_info_expose_route_et_creation() {
     assert!(c.creation_time > 0 && c.creation_time <= now);
 }
 
+/// ADR-0015 : comptabilite locale par pair — la sortie/relais
+/// compte `served` pour le `requester` du `create` (seul le premier
+/// saut connait l'initiateur), l'initiateur compte `used` pour
+/// chaque saut verifie. Cloture au retrait, jamais de double
+/// comptage.
+#[tokio::test]
+async fn ledger_compte_octets_servis_et_utilises_par_pair() {
+    let a = make_node_settings(
+        PEER_FLAG_RELAY,
+        TunnelSettings {
+            // Cloture immediate : `remove_tunnel_delay` Python (5 s)
+            // ne sert qu'a retarder l'evenement `circuit_removed`.
+            remove_tunnel_delay: Duration::ZERO,
+            ..TunnelSettings::default()
+        },
+    )
+    .await;
+    let b = make_node_flags(PEER_FLAG_RELAY | PEER_FLAG_EXIT_BT).await;
+    let nodes = [a, b];
+    let (cid, _) = build_circuit(&nodes, 1).await;
+
+    let a_mid = hex::encode(onionbit_crypto::hash::ipv8_mid(
+        &nodes[0].key.public_key().to_bin(),
+    ));
+    let b_mid = hex::encode(onionbit_crypto::hash::ipv8_mid(
+        &nodes[1].key.public_key().to_bin(),
+    ));
+    let stat =
+        |t: &TunnelCommunity, mid: &str| t.ledger_info().peers.into_iter().find(|p| p.mid == mid);
+
+    // B a servi le `create` de A : `circuits_served = 1` des le join.
+    assert_eq!(
+        stat(&nodes[1].tunnel, &a_mid).map(|p| p.circuits_served),
+        Some(1),
+        "le `create` de A doit etre impute a sa cle publique"
+    );
+
+    // Des octets traversent : A -> destination UDP via B (sortie).
+    let dest = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let dest_addr = dest.local_addr().unwrap();
+    let payload = utp_payload(b"ledger bytes");
+    nodes[0]
+        .tunnel
+        .send_data(
+            cid,
+            &UdpAddress::from(dest_addr),
+            &UdpAddress::from(nodes[0].addr),
+            &payload,
+        )
+        .await
+        .unwrap();
+    let mut buf = [0u8; 256];
+    let (delivered, _) = tokio::time::timeout(TEST_TIMEOUT, dest.recv_from(&mut buf))
+        .await
+        .expect("donnees jamais livrees par la sortie")
+        .unwrap();
+    assert!(delivered >= payload.len());
+
+    // Cloture comptable des deux cotes : A clot son circuit
+    // (`ledger_close_own`), B recoit le destroy (`ledger_close_joined`).
+    nodes[0].tunnel.remove_circuit(cid, "ledger test").await;
+    nodes[0]
+        .tunnel
+        .send_destroy(
+            &UdpAddress::from(nodes[1].addr),
+            cid,
+            DESTROY_REASON_UNNEEDED,
+        )
+        .await
+        .unwrap();
+    let deadline = Instant::now() + TEST_TIMEOUT;
+    while nodes[0].tunnel.circuit_count() > 0 || !nodes[1].tunnel.exits_info().is_empty() {
+        assert!(Instant::now() < deadline, "circuit/sortie residuel");
+        tokio::time::sleep(POLL).await;
+    }
+
+    // Cote A : B est credite du volume transporte (`used`) et du saut.
+    let sa = stat(&nodes[0].tunnel, &b_mid).expect("aucun compte pour B");
+    assert_eq!(sa.circuits_used, 1);
+    assert!(
+        sa.bytes_used >= payload.len() as u64,
+        "bytes_used sous-compte : {} < {}",
+        sa.bytes_used,
+        payload.len()
+    );
+
+    // Cote B : le meme volume est debite sur le compte de A (`served`).
+    let sb = stat(&nodes[1].tunnel, &a_mid).expect("aucun compte pour A");
+    assert_eq!(sb.circuits_served, 1);
+    assert!(
+        sb.bytes_served >= payload.len() as u64,
+        "bytes_served sous-compte : {} < {}",
+        sb.bytes_served,
+        payload.len()
+    );
+}
+
+/// ADR-0015 : gate d'admission — sous pression (`enforce` +
+/// `joined >= soft_cap`), le `create` d'un pair dont la dette
+/// depasse `max_deficit_bytes` reste sans reponse (meme silence
+/// filaire que tout autre refus `should_join_circuit` — le
+/// protocole est inchange). Un pair inconnu garde son credit de
+/// demarrage (dette nulle) et est admis.
+#[tokio::test]
+async fn ledger_gate_refuse_un_pair_en_dette_sous_pression() {
+    // B : gate armee, pression permanente (soft_cap = 0), credit
+    // quasiment nul.
+    let b = make_node_settings(
+        PEER_FLAG_RELAY,
+        TunnelSettings {
+            ledger: onionbit_tunnel::peer_stats::LedgerConfig {
+                enabled: true,
+                enforce: true,
+                soft_cap: 0,
+                max_deficit_bytes: 10,
+                ..onionbit_tunnel::peer_stats::LedgerConfig::default()
+            },
+            ..TunnelSettings::default()
+        },
+    )
+    .await;
+    let debtor = make_node().await; // pair en dette
+    let fresh = make_node().await; // pair inconnu -> credit de depart
+    for n in [&debtor, &fresh] {
+        learn(&b, n);
+        learn(n, &b);
+    }
+    learn(&debtor, &fresh);
+    learn(&fresh, &debtor);
+
+    // La dette du debiteur depasse le credit : son `create` est refuse.
+    let debtor_pk = debtor.key.public_key().to_bin();
+    b.tunnel.ledger.note_served(&debtor_pk, 100);
+    let cid = debtor
+        .tunnel
+        .create_circuit(1, &peer_of(&b))
+        .await
+        .expect("create_circuit debiteur");
+    assert!(
+        !wait_ready(&debtor.tunnel, cid).await,
+        "circuit admis malgre une dette > credit"
+    );
+    assert!(
+        b.tunnel.exits_info().is_empty(),
+        "sortie creee pour un pair en dette"
+    );
+    assert_eq!(
+        b.tunnel.ledger.stat(&debtor_pk).map(|s| s.circuits_served),
+        Some(0),
+        "un `create` refuse ne doit pas etre impute comme servi"
+    );
+
+    // L'inconnu conserve son credit de demarrage : admis.
+    let cid2 = fresh
+        .tunnel
+        .create_circuit(1, &peer_of(&b))
+        .await
+        .expect("create_circuit inconnu");
+    assert!(
+        wait_ready(&fresh.tunnel, cid2).await,
+        "pair inconnu refuse malgre le credit de depart"
+    );
+    assert_eq!(
+        b.tunnel
+            .ledger
+            .stat(&fresh.key.public_key().to_bin())
+            .map(|s| s.circuits_served),
+        Some(1)
+    );
+}
+
 #[tokio::test]
 async fn tunnel_data_exits_1_hop() {
     let a = make_node().await;

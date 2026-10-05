@@ -76,7 +76,10 @@ fil. Ce que le filaire permet d'attribuer honnêtement :
   `create` direct : le `requester` du `create` **est** l'initiateur
   (seul le premier saut connaît son identité ; un saut intermédiaire
   ne voit que ses voisins). Volume = `exit_sockets[cid].bytes_total`
-  ou la route relais amont (`relays[from_cid]`, direction FORWARD).
+  ou, pour une paire de relais, la somme des deux routes divisée par
+  2 (`relay_cell` incrémente `bytes_up` **et** `bytes_down` du même
+  datagramme sur la route entrante — chaque route porte 2× son
+  volume réel).
 - `bytes_used[pk]` — octets transportés par chaque **saut vérifié de
   nos propres circuits** : l'initiateur connaît toute la route, et
   chaque saut a réellement porté le volume (`bytes_up + bytes_down`).

@@ -32,6 +32,7 @@ pub mod guards;
 pub mod hidden_services;
 pub mod http_tunnel;
 pub mod payload;
+pub mod peer_stats;
 pub(crate) mod pex;
 pub mod routing;
 pub mod settings;

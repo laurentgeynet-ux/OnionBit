@@ -286,6 +286,17 @@ pub(crate) struct Inner {
     /// `EXIT_BT|RELAY` du registre ; les candidats marques sont sautes
     /// pendant `circuit_timeout`.
     pub(crate) extend_failures: HashMap<Vec<u8>, std::time::Instant>,
+    /// ADR-0015 : `circuit_id` du join -> cle publique de
+    /// l'initiateur du `create` (le `requester` — seul le premier
+    /// saut connait son identite). Retenu pour le comptage `served`
+    /// des objets de routage joints ; retire au demantelement.
+    pub(crate) joined_initiator: HashMap<u32, Vec<u8>>,
+    /// Volume deja impute par circuit joint (comptage par deltas —
+    /// jamais de double comptage entre tick et retrait).
+    pub(crate) ledger_seen_joined: HashMap<u32, u64>,
+    /// (volume impute, sauts deja comptes) par circuit propre
+    /// (comptage par deltas du cote `used`).
+    pub(crate) ledger_seen_own: HashMap<u32, (u64, usize)>,
 }
 
 /// Snapshot PEX d'un swarm pour `pex_dump`/`pex_restore` :
@@ -477,6 +488,9 @@ pub struct TunnelCommunity {
     /// Guard nodes (ADR-0010) : premiers sauts persistants quand
     /// `guards.is_enabled()` — selection pyipv8 inchangee sinon.
     pub guards: crate::guards::GuardSet,
+    /// Comptabilite locale par pair (ADR-0015) : `served`/`used` et
+    /// gate d'admission des `create` sous pression (`enforce`).
+    pub ledger: crate::peer_stats::PeerStatsBook,
 }
 
 /// Detail d'un objet de routage detruit (`circuit_removed` pyipv8) —
@@ -658,6 +672,7 @@ impl TunnelCommunity {
             tokio::sync::broadcast::channel(crate::speedtest::SPEED_TEST_CHANNEL_CAP);
         let (relay_send_tx, mut send_rx) = tokio::sync::mpsc::channel::<SendJob>(SEND_QUEUE_CAP);
         let guard_cfg = settings.guards.clone();
+        let ledger_cfg = settings.ledger.clone();
         let relay_rate = Arc::new(RelayRateLimiter::new(
             settings.max_relayed_bps,
             settings.served_rate_window,
@@ -716,6 +731,9 @@ impl TunnelCommunity {
                 flag_registry: HashMap::new(),
                 ip_announced_at: HashMap::new(),
                 extend_failures: HashMap::new(),
+                joined_initiator: HashMap::new(),
+                ledger_seen_joined: HashMap::new(),
+                ledger_seen_own: HashMap::new(),
             }),
             identifier: AtomicU16::new(0),
             global_time: AtomicU64::new(0),
@@ -732,6 +750,7 @@ impl TunnelCommunity {
             cells_received_total: AtomicU64::new(0),
             settings,
             guards: crate::guards::GuardSet::new(guard_cfg, None),
+            ledger: crate::peer_stats::PeerStatsBook::new(ledger_cfg, None),
         });
         let weak = Arc::downgrade(&community);
         endpoint
@@ -777,6 +796,19 @@ impl TunnelCommunity {
     /// reste volatile (meme comportement, rien ne survit au redemarrage).
     pub fn set_guard_store(&self, store: Arc<dyn crate::guards::GuardStore>) {
         self.guards.attach_store(store);
+    }
+
+    /// Injecte la persistance du ledger par pair (ADR-0015) — appele
+    /// par `core`/`daemon` quand la base est prete. Sans store, les
+    /// compteurs restent volatils.
+    pub fn set_peer_stats_store(&self, store: Arc<dyn crate::peer_stats::PeerStatsStore>) {
+        self.ledger.attach_store(store);
+    }
+
+    /// Instantane du ledger local pour
+    /// `GET /api/ipv8/tunnel/ledger` (ADR-0015).
+    pub fn ledger_info(&self) -> crate::peer_stats::LedgerInfo {
+        self.ledger.info()
     }
 
     /// `number` du RequestCache Python (module 2**16).
@@ -2366,14 +2398,12 @@ impl TunnelCommunity {
         let info = additional_info.to_string();
         tokio::spawn(async move {
             tokio::time::sleep(this.settings.remove_tunnel_delay).await;
-            if this
-                .inner
-                .lock()
-                .unwrap()
-                .circuits
-                .remove(&circuit_id)
-                .is_some()
-            {
+            let removed = {
+                let mut inner = this.inner.lock().unwrap();
+                this.ledger_close_own(&mut inner, circuit_id);
+                inner.circuits.remove(&circuit_id).is_some()
+            };
+            if removed {
                 this.notify_circuits_changed();
                 this.emit_circuit_removed(ev);
                 tracing::debug!(circuit_id, info, "circuit retire");
@@ -3024,11 +3054,15 @@ impl TunnelCommunity {
         let mut ping_tick = tokio::time::interval(self.settings.ping_interval);
         let mut discovery_tick = tokio::time::interval(Duration::from_secs(10));
         let mut guards_tick = tokio::time::interval(self.settings.guards.maintenance_interval);
+        // `interval` panique sur une periode nulle — plancher de 1 s.
+        let mut ledger_tick =
+            tokio::time::interval(self.settings.ledger.tick.max(Duration::from_secs(1)));
         for t in [
             &mut circuits_tick,
             &mut ping_tick,
             &mut discovery_tick,
             &mut guards_tick,
+            &mut ledger_tick,
         ] {
             t.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         }
@@ -3037,6 +3071,7 @@ impl TunnelCommunity {
         ping_tick.tick().await;
         discovery_tick.tick().await;
         guards_tick.tick().await;
+        ledger_tick.tick().await;
         loop {
             tokio::select! {
                 _ = circuits_tick.tick() => {
@@ -3046,6 +3081,107 @@ impl TunnelCommunity {
                 _ = ping_tick.tick() => self.do_ping().await,
                 _ = discovery_tick.tick() => self.do_peer_discovery().await,
                 _ = guards_tick.tick() => self.do_guard_maintenance(),
+                _ = ledger_tick.tick() => self.do_ledger_accounting(),
+            }
+        }
+    }
+
+    /// ADR-0015 : comptage par deltas des compteurs par pair.
+    ///
+    /// - `served` : volume des objets de routage joints (`create`
+    ///   direct — l'initiateur est identifie dans `joined_initiator`).
+    /// - `used` : volume de nos propres circuits, credite a chaque
+    ///   saut verifie (l'initiateur connait toute la route).
+    ///
+    /// Les soldes sont clotures definitivement au retrait des objets
+    /// (`ledger_close_*`) — jamais de double comptage.
+    fn do_ledger_accounting(&self) {
+        if !self.ledger.is_enabled() {
+            return;
+        }
+        let mut inner = self.inner.lock().unwrap();
+        let joined: Vec<(u32, Vec<u8>)> = inner
+            .joined_initiator
+            .iter()
+            .map(|(cid, pk)| (*cid, pk.clone()))
+            .collect();
+        for (cid, pk) in joined {
+            let vol = joined_volume(&inner, cid);
+            let seen = inner.ledger_seen_joined.entry(cid).or_insert(0);
+            let delta = vol.saturating_sub(*seen);
+            if delta > 0 {
+                *seen = vol;
+                self.ledger.note_served(&pk, delta);
+            }
+        }
+        let own: Vec<(u32, u64, Vec<Vec<u8>>)> = inner
+            .circuits
+            .iter()
+            .map(|(cid, c)| {
+                (
+                    *cid,
+                    c.base.bytes_up + c.base.bytes_down,
+                    c.hops.iter().map(|h| h.public_key_bin.clone()).collect(),
+                )
+            })
+            .collect();
+        for (cid, vol, hops) in own {
+            let entry = inner.ledger_seen_own.entry(cid).or_insert((0, 0));
+            let delta = vol.saturating_sub(entry.0);
+            if delta > 0 {
+                entry.0 = vol;
+                for pk in &hops {
+                    self.ledger.note_used(pk, delta);
+                }
+            }
+            while entry.1 < hops.len() {
+                self.ledger.note_used_hop(&hops[entry.1]);
+                entry.1 += 1;
+            }
+        }
+        drop(inner);
+        self.ledger.flush();
+    }
+
+    /// Cloture le comptage `served` d'un circuit joint dont l'objet de
+    /// routage (relais ou sortie) est sur le point d'etre retire.
+    /// `cid` peut etre le circuit joint (amont) ou son pendant aval —
+    /// la paire de relais partage le sort.
+    fn ledger_close_joined(&self, inner: &mut Inner, circuit_id: u32) {
+        let join_cid = if inner.joined_initiator.contains_key(&circuit_id) {
+            Some(circuit_id)
+        } else {
+            inner
+                .relays
+                .get(&circuit_id)
+                .map(|r| r.base.circuit_id)
+                .filter(|c| inner.joined_initiator.contains_key(c))
+        };
+        let Some(jcid) = join_cid else { return };
+        let Some(pk) = inner.joined_initiator.remove(&jcid) else {
+            return;
+        };
+        let vol = joined_volume(inner, jcid);
+        let seen = inner.ledger_seen_joined.remove(&jcid).unwrap_or(0);
+        let delta = vol.saturating_sub(seen);
+        self.ledger.note_served(&pk, delta);
+    }
+
+    /// Cloture le comptage `used` d'un circuit propre : dernier delta
+    /// credite aux sauts verifies + comptage des sauts jamais vus par
+    /// le tick (circuit mort avant le premier comptage).
+    fn ledger_close_own(&self, inner: &mut Inner, circuit_id: u32) {
+        let Some(c) = inner.circuits.get(&circuit_id) else {
+            return;
+        };
+        let vol = c.base.bytes_up + c.base.bytes_down;
+        let hops: Vec<Vec<u8>> = c.hops.iter().map(|h| h.public_key_bin.clone()).collect();
+        let (seen, counted) = inner.ledger_seen_own.remove(&circuit_id).unwrap_or((0, 0));
+        let delta = vol.saturating_sub(seen);
+        for (i, pk) in hops.iter().enumerate() {
+            self.ledger.note_used(pk, delta);
+            if i >= counted {
+                self.ledger.note_used_hop(pk);
             }
         }
     }
@@ -3175,6 +3311,7 @@ impl TunnelCommunity {
     fn remove_relay(&self, circuit_id: u32, additional_info: &str) {
         let ev = {
             let mut inner = self.inner.lock().unwrap();
+            self.ledger_close_joined(&mut inner, circuit_id);
             inner.relays.remove(&circuit_id).map(|route| {
                 // La route correspondante disparait avec
                 // (`relay_from_to` Python : les deux directions
@@ -3200,6 +3337,7 @@ impl TunnelCommunity {
     fn remove_exit_socket(&self, circuit_id: u32, additional_info: &str) {
         let ev = {
             let mut inner = self.inner.lock().unwrap();
+            self.ledger_close_joined(&mut inner, circuit_id);
             inner.exit_sockets.remove(&circuit_id).map(|exit| {
                 cleanup_exit_socket(&mut inner, circuit_id);
                 CircuitRemovedEvent {
@@ -3676,6 +3814,16 @@ impl TunnelCommunity {
             tracing::debug!("create ignore circuit {}", p.circuit_id);
             return;
         }
+        // ADR-0015 : gate de deficit — ne s'applique que sous pression
+        // (`enforce` + `joined >= soft_cap`) ; sinon comportement
+        // pyipv8 exact.
+        if !self.ledger.admit(&p.node_public_key, joined) {
+            tracing::debug!(
+                circuit_id = p.circuit_id,
+                "create refuse : deficit du pair au-dela du credit (ledger)"
+            );
+            return;
+        }
         let c = self.clone();
         tokio::spawn(async move {
             if let Err(e) = c.join_circuit(src, p).await {
@@ -3772,7 +3920,13 @@ impl TunnelCommunity {
                     gate_rejected: 0,
                 },
             );
+            // ADR-0015 : le `requester` du `create` est l'initiateur —
+            // seul le premier saut peut lui imputer le service rendu.
+            inner
+                .joined_initiator
+                .insert(circuit_id, requester.public_key_bin.clone());
         }
+        self.ledger.note_join_served(&requester.public_key_bin);
         self.spawn_exit_recv(circuit_id, exit_socket, stop_rx);
 
         let reply = tp::Created {
@@ -4399,6 +4553,8 @@ impl TunnelCommunity {
     fn on_destroy(&self, _src: SocketAddr, circuit_id: u32, reason: u16) {
         let mut events = Vec::new();
         let mut inner = self.inner.lock().unwrap();
+        self.ledger_close_joined(&mut inner, circuit_id);
+        self.ledger_close_own(&mut inner, circuit_id);
         if let Some(route) = inner.relays.remove(&circuit_id) {
             inner.relays.remove(&route.base.circuit_id);
             events.push(CircuitRemovedEvent {
@@ -4575,6 +4731,27 @@ fn cleanup_exit_socket(inner: &mut Inner, circuit_id: u32) {
     inner
         .rendezvous_point_for
         .retain(|_, cid| *cid != circuit_id);
+}
+
+/// ADR-0015 : volume reel transporte pour un circuit joint —
+/// `exit_sockets[cid].bytes_total` quand on en est la sortie, ou la
+/// paire de routes relais quand il est prolonge a travers nous.
+/// Compteurs `relay_cell` : `bytes_up += len` **et** `bytes_down +=
+/// len` sur la route entrante — chaque route porte donc `2 x` son
+/// volume, d'ou le `/ 2`.
+fn joined_volume(inner: &Inner, circuit_id: u32) -> u64 {
+    if let Some(r) = inner.relays.get(&circuit_id) {
+        let other = inner
+            .relays
+            .get(&r.base.circuit_id)
+            .map_or(0, |o| o.base.bytes_up + o.base.bytes_down);
+        (r.base.bytes_up + r.base.bytes_down + other) / 2
+    } else {
+        inner
+            .exit_sockets
+            .get(&circuit_id)
+            .map_or(0, |e| e.bytes_total)
+    }
 }
 
 /// `generate_diffie_secret` : nouvelle paire X25519 ephemere —

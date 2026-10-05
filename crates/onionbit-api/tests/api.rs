@@ -966,6 +966,29 @@ async fn ipv8_et_search_sans_stack_retournent_erreur() {
     srv.session.stop().await;
 }
 
+/// ADR-0015 : `GET /api/ipv8/tunnel/ledger` repond 200 avec le
+/// ledger marque desactive quand la stack IPv8 n'existe pas —
+/// meme convention 200+vide que les autres GET tunnel.
+#[tokio::test]
+async fn tunnel_ledger_sans_stack_retourne_desactive() {
+    let srv = spawn_server().await;
+    let resp = srv
+        .client
+        .get(srv.url("/api/ipv8/tunnel/ledger"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["ledger"]["enabled"], false);
+    assert_eq!(body["ledger"]["enforce"], false);
+    assert_eq!(body["ledger"]["peer_count"], 0);
+    assert_eq!(body["ledger"]["total_served"], 0);
+    assert_eq!(body["ledger"]["total_used"], 0);
+    assert_eq!(body["ledger"]["peers"], serde_json::json!([]));
+    srv.session.stop().await;
+}
+
 #[tokio::test]
 async fn messaging_desactivee_repond_404_sur_tous_les_endpoints() {
     let srv = spawn_server().await;

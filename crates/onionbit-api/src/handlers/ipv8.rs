@@ -391,6 +391,29 @@ pub async fn get_tunnel_guards(State(state): State<AppState>) -> Response {
     .into_response()
 }
 
+/// `GET /api/ipv8/tunnel/ledger` — comptabilite locale par pair
+/// (ADR-0015, extension Rust sans equivalent pyipv8) : reglages
+/// effectifs (`enabled`/`enforce`/`soft_cap`/`max_deficit_bytes`),
+/// totaux et top comptes par volume. Agregats locaux uniquement —
+/// aucun graphe TrustChain, aucune transaction detaillee exposee.
+/// `enabled: false` sans stack IPv8 ou collecte desactivee.
+pub async fn get_tunnel_ledger(State(state): State<AppState>) -> Response {
+    let Some(tunnel) = tunnel_of(&state) else {
+        return Json(serde_json::json!({
+            "ledger": {
+                "enabled": false,
+                "enforce": false,
+                "peer_count": 0,
+                "total_served": 0,
+                "total_used": 0,
+                "peers": [],
+            }
+        }))
+        .into_response();
+    };
+    Json(serde_json::json!({ "ledger": tunnel.ledger_info() })).into_response()
+}
+
 /// `GET /api/ipv8/tunnel/debug/circuit-downloads` — correlation
 /// circuits <-> downloads anonymes. **Extension Rust** sans
 /// equivalent pyipv8 (Python garde `download_states` interne) : pour

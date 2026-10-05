@@ -185,6 +185,7 @@ fn api_router(state: AppState) -> Router<AppState> {
             get(ipv8::get_swarm_size),
         )
         .route("/ipv8/tunnel/peers", get(ipv8::get_tunnel_peers))
+        .route("/ipv8/tunnel/ledger", get(ipv8::get_tunnel_ledger))
         // Messagerie e2e (ADR-0011 — extension Rust, pas de parite
         // Python ; tout repond 404 quand `enable_messaging` est off).
         .route("/messaging/stats", get(messaging::get_stats))

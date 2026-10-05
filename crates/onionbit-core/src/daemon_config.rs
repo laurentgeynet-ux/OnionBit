@@ -610,6 +610,34 @@ pub struct TunnelCommunityConfig {
     /// Defaut 1 — augmente l'anonymat de la liaison au prix de
     /// latence (comme les lanes anonymes).
     pub messaging_hops: u32,
+    /// Extension Rust (ADR-0015) : comptabilite locale des octets de
+    /// tunnel servis/utilises par pair — persistance `peer_stats` et
+    /// exposition `/api/ipv8/tunnel/ledger`. `true` par defaut :
+    /// pure mesure, aucun mecanisme filaire. `false` = aucune
+    /// comptabilite (comportement pyipv8 exact).
+    pub ledger_enabled: bool,
+    /// Extension Rust (ADR-0015) : gate d'admission des `create`
+    /// entrants — sous pression (`joined >= ledger_soft_cap`), un
+    /// pair dont la dette `servi - utilise` excede
+    /// `ledger_max_deficit_bytes` est refuse. `false` par defaut
+    /// (mesure experimentale : collection seule, promotion apres
+    /// validation terrain comme les guards ADR-0010). Sans effet si
+    /// `ledger_enabled = false`.
+    pub ledger_enforce: bool,
+    /// Seuil `joined` (relais + sorties servis) de declenchement de
+    /// la gate — borne a `max_joined_circuits - 1` a la construction.
+    /// Defaut 80.
+    pub ledger_soft_cap: u32,
+    /// Dette maximale toleree par pair (octets) — double role :
+    /// credit de demarrage accorde a tout pair inconnu et plafond de
+    /// deficit. Defaut 256 Mio.
+    pub ledger_max_deficit_bytes: u64,
+    /// Cadence (s) du comptage par deltas + flush persistant.
+    /// Defaut 30.
+    pub ledger_tick_secs: u64,
+    /// Nombre de comptes `peer_stats` conserves — au-dela, les
+    /// nouvelles cles ne sont plus suivies. Defaut 8192.
+    pub ledger_max_peers: u32,
     /// Clés tunnel additionnelles — préservées.
     #[serde(flatten)]
     pub extra: serde_json::Map<String, Value>,
@@ -635,6 +663,12 @@ impl Default for TunnelCommunityConfig {
             exit_inbound_max_sources: crate::ipv8_stack::DEFAULT_EXIT_INBOUND_MAX_SOURCES as u64,
             messaging_enabled: true,
             messaging_hops: crate::ipv8_stack::DEFAULT_MESSAGING_HOPS as u32,
+            ledger_enabled: true,
+            ledger_enforce: false,
+            ledger_soft_cap: crate::ipv8_stack::DEFAULT_LEDGER_SOFT_CAP,
+            ledger_max_deficit_bytes: crate::ipv8_stack::DEFAULT_LEDGER_MAX_DEFICIT_BYTES,
+            ledger_tick_secs: crate::ipv8_stack::DEFAULT_LEDGER_TICK_SECS,
+            ledger_max_peers: crate::ipv8_stack::DEFAULT_LEDGER_MAX_PEERS,
             extra: serde_json::Map::new(),
         }
     }
@@ -1384,6 +1418,12 @@ impl DaemonConfig {
             enable_messaging: self.tunnel_community.messaging_enabled
                 && self.tunnel_community.enabled,
             messaging_hops: self.tunnel_community.messaging_hops as usize,
+            ledger_enabled: self.tunnel_community.ledger_enabled,
+            ledger_enforce: self.tunnel_community.ledger_enforce,
+            ledger_soft_cap: self.tunnel_community.ledger_soft_cap as usize,
+            ledger_max_deficit_bytes: self.tunnel_community.ledger_max_deficit_bytes,
+            ledger_tick_secs: self.tunnel_community.ledger_tick_secs,
+            ledger_max_peers: self.tunnel_community.ledger_max_peers as usize,
         };
 
         crate::CoreConfig {

@@ -13,6 +13,7 @@ use std::time::Duration;
 use onionbit_ipv8::UdpAddress;
 
 use crate::guards::GuardsConfig;
+use crate::peer_stats::LedgerConfig;
 
 /// `TunnelSettings` pyipv8 (+ extensions `TriblerTunnelSettings`).
 ///
@@ -152,6 +153,11 @@ pub struct TunnelSettings {
     /// loterie Sybil des reconstructions. `enabled=false` par defaut
     /// (feature experimentale) = selection pyipv8 exacte.
     pub guards: GuardsConfig,
+    /// Comptabilite locale par pair (ADR-0015) : `served`/`used` par
+    /// cle publique + gate d'admission des `create` sous pression.
+    /// `enabled` collecte (defaut), `enforce` arme la gate (defaut
+    /// off — extension Rust, aucun changement filaire).
+    pub ledger: LedgerConfig,
 }
 
 impl Default for TunnelSettings {
@@ -189,6 +195,7 @@ impl Default for TunnelSettings {
             dht_reannounce_stagger: Duration::from_millis(500),
             served_rate_window: Duration::from_secs(5),
             guards: GuardsConfig::default(),
+            ledger: LedgerConfig::default(),
         }
     }
 }

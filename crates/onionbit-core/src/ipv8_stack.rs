@@ -231,6 +231,27 @@ pub struct Ipv8Config {
     /// (`hops` de `join_swarm` — meme echelle que `anon_hops` : 1 =
     /// 1 relais + 1 saut intro/rendez-vous automatique).
     pub messaging_hops: usize,
+    /// Extension Rust (ADR-0015) : comptabilite locale par pair des
+    /// octets servis/utilises sur les tunnels — persistance
+    /// `peer_stats` et exposition `/api/ipv8/tunnel/ledger`.
+    /// `enforce` = porte d'admission active sur les `create`
+    /// entrants (deficit > `max_deficit_bytes` apres la gratuite
+    /// `soft_cap`). Local et consultatif : aucun mecanisme filaire.
+    pub ledger_enabled: bool,
+    /// Porte d'admission (voir `ledger_enabled`). `false` (defaut)
+    /// = collection seule.
+    pub ledger_enforce: bool,
+    /// Octets servis gratuitement avant tout refus (periode de
+    /// gratuite pour les nouveaux pairs).
+    pub ledger_soft_cap: usize,
+    /// Deficit `served - used` au-dela duquel un `create` entrant est
+    /// refuse (s'il n'y a plus de gratuite).
+    pub ledger_max_deficit_bytes: u64,
+    /// Cadence de flush `peer_stats` vers SQLite (s).
+    pub ledger_tick_secs: u64,
+    /// Nombre de comptes conserves en memoire / en base (`0` =
+    /// borne par defaut).
+    pub ledger_max_peers: usize,
 }
 
 impl Ipv8Config {
@@ -277,6 +298,12 @@ impl Ipv8Config {
             stats_rate_window_secs: DEFAULT_STATS_RATE_WINDOW_SECS,
             enable_messaging: false,
             messaging_hops: DEFAULT_MESSAGING_HOPS,
+            ledger_enabled: true,
+            ledger_enforce: false,
+            ledger_soft_cap: DEFAULT_LEDGER_SOFT_CAP as usize,
+            ledger_max_deficit_bytes: DEFAULT_LEDGER_MAX_DEFICIT_BYTES,
+            ledger_tick_secs: DEFAULT_LEDGER_TICK_SECS,
+            ledger_max_peers: DEFAULT_LEDGER_MAX_PEERS as usize,
         }
     }
 }
@@ -320,6 +347,12 @@ impl Default for Ipv8Config {
             stats_rate_window_secs: DEFAULT_STATS_RATE_WINDOW_SECS,
             enable_messaging: false,
             messaging_hops: DEFAULT_MESSAGING_HOPS,
+            ledger_enabled: true,
+            ledger_enforce: false,
+            ledger_soft_cap: DEFAULT_LEDGER_SOFT_CAP as usize,
+            ledger_max_deficit_bytes: DEFAULT_LEDGER_MAX_DEFICIT_BYTES,
+            ledger_tick_secs: DEFAULT_LEDGER_TICK_SECS,
+            ledger_max_peers: DEFAULT_LEDGER_MAX_PEERS as usize,
         }
     }
 }
@@ -440,6 +473,23 @@ pub const DEFAULT_EXIT_INBOUND_TTL_SECS: u64 = 300;
 /// sortie — une lane qui interroge des milliers de noeuds DHT ne fait
 /// pas croitre la table sans limite.
 pub const DEFAULT_EXIT_INBOUND_MAX_SOURCES: usize = 2048;
+
+/// Seuil `joined` par defaut de la gate d'admission du ledger
+/// (ADR-0015) : la pression est mesuree sur les objets de routage
+/// servis ; sous ce seuil, tout `create` est admis (pyipv8 exact).
+/// 80 < `DEFAULT_MAX_JOINED_CIRCUITS` (100) — la gate est active
+/// avant que la borne dure ne sature.
+pub const DEFAULT_LEDGER_SOFT_CAP: u32 = 80;
+/// Credit de demarrage / dette maximale toleree par pair quand la
+/// gate est active (octets). 256 Mio ≈ un telechargement modeste en
+/// 3 sauts — assez pour qu'un nouveau pair prouve sa bonne foi, pas
+/// assez pour un free-riding durable.
+pub const DEFAULT_LEDGER_MAX_DEFICIT_BYTES: u64 = 256 * 1024 * 1024;
+/// Cadence de comptage par deltas + flush `peer_stats` (s).
+pub const DEFAULT_LEDGER_TICK_SECS: u64 = 30;
+/// Borne de la table `peer_stats` — au-dela les nouvelles cles ne
+/// sont plus suivies (protection contre un flot de cles fraiches).
+pub const DEFAULT_LEDGER_MAX_PEERS: u32 = 8192;
 
 /// Tache de maintenance DHT (`PingChurn.take_step` +
 /// `node_maintenance`/`value_maintenance`/`token_maintenance` +
@@ -1475,6 +1525,20 @@ impl Ipv8Stack {
                         config.exit_inbound_source_ttl_secs,
                     ),
                     exit_inbound_max_sources: config.exit_inbound_max_sources,
+                    // ADR-0015 : comptabilite locale par pair —
+                    // `soft_cap` borne par `max_joined_circuits` (la
+                    // gate ne doit jamais empecher `max_joined`
+                    // d'etre la limite effective).
+                    ledger: onionbit_tunnel::peer_stats::LedgerConfig {
+                        enabled: config.ledger_enabled,
+                        enforce: config.ledger_enforce,
+                        soft_cap: config
+                            .ledger_soft_cap
+                            .min(config.max_joined_circuits.saturating_sub(1)),
+                        max_deficit_bytes: config.ledger_max_deficit_bytes,
+                        tick: std::time::Duration::from_secs(config.ledger_tick_secs.max(1)),
+                        max_peers: config.ledger_max_peers,
+                    },
                     ..onionbit_tunnel::settings::TunnelSettings::default()
                 },
                 community_id,
@@ -1485,6 +1549,14 @@ impl Ipv8Stack {
             // volatile sinon, selection pyipv8 exacte).
             if config.guards_enabled {
                 t.set_guard_store(Arc::new(crate::guard_store::DbGuardStore::new(db.clone())));
+            }
+            // ADR-0015 : persistance du ledger par pair dans
+            // `peer_stats` — injectee des que la collecte est
+            // activee (le store recharge les comptes au boot).
+            if config.ledger_enabled {
+                t.set_peer_stats_store(Arc::new(crate::peer_stats_store::DbPeerStatsStore::new(
+                    db.clone(),
+                )));
             }
             // `my_peer` Python est partage entre overlays : la
             // tunnel-community emprunte les estimations WAN/LAN de la

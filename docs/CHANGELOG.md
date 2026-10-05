@@ -482,6 +482,37 @@ Clôture campagne et gates sanitizers :
   toolchain nightly + cargo-fuzz, `SEC=300` × 8 cibles × 2
   sanitizers, artefacts (journal CSV + `fuzz/artifacts/`) remontés.
 
+## Phase 9a — comptabilité locale par pair `peer_stats` (ADR-0015, 2026-10-05)
+
+- **`onionbit-tunnel::peer_stats`** (étapes 42–43) : livre de comptes
+  local par clé publique LibNaCl — mesure pure, zéro octet sur le
+  fil. `bytes_served` = volume des objets de routage joints par
+  `create` direct (le `requester` est l'initiateur — seul le premier
+  saut le connaît) ; `bytes_used` = volume de nos propres circuits
+  crédité à chaque saut vérifié. Comptage par deltas au tick
+  (`ledger_tick_secs`, 30 s) + clôture au retrait
+  (`remove_circuit`/`remove_relay`/`remove_exit_socket`/`on_destroy`)
+  — jamais de double comptage, table bornée (`max_peers`, 8 192).
+- **Persistance** : trait `PeerStatsStore` injecté (pattern
+  `GuardStore`), `DbPeerStatsStore` (core) sur la table `peer_stats`
+  (migration v17, flush upsert des seules lignes modifiées).
+- **Gate d'admission** : sous pression (`ledger_enforce` et
+  `joined >= ledger_soft_cap`), `on_create` n'admet que si
+  `served - used <= ledger_max_deficit_bytes` — le crédit de
+  démarrage *est* le déficit max (un pair inconnu a dette nulle →
+  admis ; remboursement possible en servant nos circuits, aucun
+  deadlock). `enforce = false` **par défaut** : mesure
+  expérimentale, même discipline de promotion que les guards.
+  Config `tunnel_community/ledger_*`, bascule à chaud via
+  `POST /api/settings` ; désactivé = comportement pyipv8 exact.
+- **`GET /api/ipv8/tunnel/ledger`** : réglages effectifs, totaux,
+  top 64 comptes par volume (mid hex, jamais d'adresse) — agrégats
+  locaux, aucun graphe ni transaction détaillée.
+- **Tests** : 8 unitaires (crédit, dette sous/hors pression, borne,
+  flush dirty-only, chargement boot) + aller-retour DB + adaptateur
+  core + 2 loopback (comptage servi/utilisé 1 saut, refus pair en
+  dette vs admission pair inconnu sous pression) + API sans stack.
+
 ## Fuzz messagerie — campagne `messaging_frame` + cible `messaging_window` (2026-10-05)
 
 - **Campagne `messaging_frame` 14 400 s** (`802c752`, Windows MSVC,
