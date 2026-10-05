@@ -611,8 +611,18 @@ try {
         $got = 0
         $fileBytes = 0; $verifiedBytes = 0; $tunnelBytes = 0
         $mine0 = @()
-        $deadline = (Get-Date).AddSeconds($DownloadTimeoutSec)
+        # Le budget octets court depuis le premier circuit DATA READY,
+        # pas depuis l'ajout du download : sur mesh clairseme la
+        # construction des circuits mange la fenetre (run 23:42 : READY
+        # a ~7 min sur 10 -> 2 min pour tout e2e+payload -> verified=0
+        # alors que la chaine convergent). $tDataReady est reevalue en
+        # boucle car le READY peut arriver apres la deadline de
+        # precondition.
+        $tDataReady = if ($cReady) { Get-Date } else { $null }
+        $deadline = (Get-Date).AddSeconds($CircuitReadyTimeoutSec + $DownloadTimeoutSec)
         while ((Get-Date) -lt $deadline -and -not $tFailure) {
+            if ($tDataReady -and `
+                (Get-Date) -gt $tDataReady.AddSeconds($DownloadTimeoutSec)) { break }
             try {
                 if (-not $laneSocks) {
                     $tcpNow = @(Get-NetTCPConnection -OwningProcess $pidBench -State Listen `
@@ -623,9 +633,15 @@ try {
                 $fileBytes = [int64]($dls | ForEach-Object { [int64]$_.session_download } |
                     Measure-Object -Sum).Sum
                 $cir = DApiGet '/ipv8/tunnel/circuits'
-                $tunnelBytes = [int64](@($cir.circuits) |
+                $readyData = @(@($cir.circuits) |
                     Where-Object { $_.type -eq 'DATA' -and $_.state -eq 'READY' `
-                        -and $_.goal_hops -eq $Hops } |
+                        -and $_.goal_hops -eq $Hops })
+                if (-not $tDataReady -and $readyData.Count -gt 0) {
+                    $tDataReady = Get-Date
+                    Log ("circuit DATA READY a {0} - budget octets {1}s arme" -f `
+                        $tDataReady.ToString('HH:mm:ss'), $DownloadTimeoutSec)
+                }
+                $tunnelBytes = [int64]($readyData |
                     ForEach-Object { [int64]$_.bytes_up + [int64]$_.bytes_down } |
                     Measure-Object -Sum).Sum
                         # Octets < verifies > = progress * size de NOTRE
