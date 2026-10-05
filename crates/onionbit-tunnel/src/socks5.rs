@@ -68,16 +68,29 @@ pub struct Socks5Server {
     /// `circuit_id -> (socket d'association, adresse client)` : pour
     /// le chemin retour.
     return_map: Mutex<HashMap<u32, (Arc<UdpSocket>, SocketAddr)>>,
+    /// Arret du listener : la boucle `accept` detient un clone de
+    /// l'`Arc` et le `TcpListener` — sans signal explicite, le port
+    /// d'une lane detruite resterait ouvert et accepterait encore
+    /// des connexions (P0-17c : aucun mapping de lane morte).
+    stop_tx: tokio::sync::watch::Sender<bool>,
 }
 
 impl Socks5Server {
     /// Nouveau serveur.
     pub fn new(tunnel: Arc<TunnelCommunity>, hops: usize) -> Arc<Self> {
+        let (stop_tx, _) = tokio::sync::watch::channel(false);
         Arc::new(Self {
             tunnel,
             hops,
             return_map: Mutex::new(HashMap::new()),
+            stop_tx,
         })
+    }
+
+    /// Ferme le listener (`remove_anon_lane`) : la boucle `accept`
+    /// sort au prochain tour et le port TCP est libere.
+    pub fn shutdown(&self) {
+        let _ = self.stop_tx.send(true);
     }
 
     /// Ecoute TCP SOCKS5 sur `bind` (ex. `"127.0.0.1:0"`) et lance le
@@ -88,20 +101,24 @@ impl Socks5Server {
         let local = listener.local_addr()?;
         self.spawn_return_dispatcher();
         let this = self.clone();
+        let mut stop_rx = self.stop_tx.subscribe();
         tokio::spawn(async move {
             loop {
-                match listener.accept().await {
-                    Ok((conn, _)) => {
-                        let c = this.clone();
-                        tokio::spawn(async move {
-                            if let Err(e) = c.handle_connection(conn).await {
-                                tracing::debug!(error = %e, "connexion socks5 en erreur");
-                            }
-                        });
-                    }
-                    Err(e) => {
-                        tracing::warn!(error = %e, "accept socks5");
-                    }
+                tokio::select! {
+                    _ = stop_rx.changed() => break,
+                    res = listener.accept() => match res {
+                        Ok((conn, _)) => {
+                            let c = this.clone();
+                            tokio::spawn(async move {
+                                if let Err(e) = c.handle_connection(conn).await {
+                                    tracing::debug!(error = %e, "connexion socks5 en erreur");
+                                }
+                            });
+                        }
+                        Err(e) => {
+                            tracing::warn!(error = %e, "accept socks5");
+                        }
+                    },
                 }
             }
         });
@@ -115,23 +132,27 @@ impl Socks5Server {
     fn spawn_return_dispatcher(self: &Arc<Self>) {
         let mut rx = self.tunnel.data_rx();
         let this = self.clone();
+        let mut stop_rx = self.stop_tx.subscribe();
         tokio::spawn(async move {
             loop {
-                match rx.recv().await {
-                    Ok(msg) => this.dispatch_incoming(msg).await,
-                    // Retard de lecture : les cellules sautees sont
-                    // perdues pour cette lane (comme un drop UDP) —
-                    // logue en warn pour distinguer une saturation du
-                    // canal d'une panne de circuit dans le diagnostic.
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                        tracing::warn!(
-                            hops = this.hops,
-                            skipped = n,
-                            "socks5: retour tunnel en retard, cellules sautees"
-                        );
-                        continue;
-                    }
-                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                tokio::select! {
+                    _ = stop_rx.changed() => break,
+                    res = rx.recv() => match res {
+                        Ok(msg) => this.dispatch_incoming(msg).await,
+                        // Retard de lecture : les cellules sautees sont
+                        // perdues pour cette lane (comme un drop UDP) —
+                        // logue en warn pour distinguer une saturation du
+                        // canal d'une panne de circuit dans le diagnostic.
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                            tracing::warn!(
+                                hops = this.hops,
+                                skipped = n,
+                                "socks5: retour tunnel en retard, cellules sautees"
+                            );
+                            continue;
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                    },
                 }
             }
         });

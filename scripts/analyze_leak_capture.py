@@ -178,6 +178,11 @@ def main():
                     help="epoch s : debut de la fenetre fail-closed")
     ap.add_argument("--window-end", type=float, default=None,
                     help="epoch s : fin de la fenetre fail-closed")
+    ap.add_argument("--dead-ports",
+                    help="ports locaux d'une lane detruite (17c-5) : "
+                         "aucun paquet SORTANT de ces ports apres --dead-since")
+    ap.add_argument("--dead-since", type=float, default=None,
+                    help="epoch s : instant de destruction de la lane")
     ap.add_argument("--report", help="sortie JSON")
     args = ap.parse_args()
 
@@ -187,6 +192,13 @@ def main():
             line = line.strip()
             if line.isdigit():
                 bench_ports.add(int(line))
+    dead_ports = set()
+    if args.dead_ports:
+        for line in open(args.dead_ports, encoding="utf-8"):
+            line = line.strip()
+            if line.isdigit():
+                dead_ports.add(int(line))
+    dead_since = args.dead_since
 
     allowed_ips = set()
     allowed_eps = set()
@@ -215,9 +227,16 @@ def main():
     forbidden = []   # (proto, remote, detail)
     forbidden_in_window = []
     dns_queries = []
+    dns_queries_window = []
     endpoints = {}   # remote -> (classif, count)
     w0 = args.window_start
     w1 = args.window_end
+    # 17c-5 : jalons temporels de la fenetre fail-closed.
+    t_last_overlay = None       # dernier paquet OVERLAY <= w0
+    t_first_new_overlay = None  # 1er OVERLAY post-w0 vers endpoint nouveau
+    pre_window_eps = set()      # endpoints vus <= w0
+    dead_tx = []                # paquets sortants de ports morts post-death
+    dead_rx = 0                 # drain entrant vers ports morts (info seul)
 
     n_packets = 0
     for lt, ts, frame in iter_packets(args.pcapng):
@@ -263,6 +282,8 @@ def main():
             cls = "DNS"
             for q in dns_qnames(l4):
                 dns_queries.append(q)
+                if w0 is not None and w1 is not None and w0 <= ts <= w1:
+                    dns_queries_window.append(q)
         elif benched:
             # Attribution certaine : paquet du processus de banc vers le
             # WAN. Le motif precise la nature de la fuite.
@@ -275,11 +296,31 @@ def main():
             # trafic d'un autre processus (Tribler hote, OS) : rapporte
             # mais non attribuable -- voir AUTRE dans le resume.
             cls = "AUTRE"
+        # Lane morte : un paquet sortant d'un port detruit est un
+        # mapping survivant -> violation fail-closed (reclasse
+        # INTERDIT quel que soit le endpoint). L'entrant vers un
+        # port mort est du drain remote — rapporte, pas compte.
+        if dead_since is not None and ts > dead_since:
+            if sp in dead_ports and not src_pub:
+                dead_tx.append((prot, rep))
+                cls = "INTERDIT"
+                forbidden.append((prot, rep, "port de lane detruite (mapping survivant)"))
+            elif dp in dead_ports and not dst_pub:
+                dead_rx += 1
         stats[cls] += 1
         if cls == "INTERDIT" and w0 is not None and w1 is not None \
                 and w0 <= ts <= w1:
             window_interdit += 1
             forbidden_in_window.append((prot, rep))
+        # Jalons 17c-5 : chronologie overlay autour de la panne.
+        if w0 is not None:
+            if ts <= w0:
+                pre_window_eps.add(rep)
+                if cls == "OVERLAY" and (t_last_overlay is None or ts > t_last_overlay):
+                    t_last_overlay = ts
+            elif cls == "OVERLAY" and rep not in pre_window_eps \
+                    and t_first_new_overlay is None:
+                t_first_new_overlay = ts
         c, n = endpoints.get(rep, (cls, 0))
         endpoints[rep] = (cls, n + 1)
 
@@ -290,6 +331,16 @@ def main():
         print(f"  INTERDIT dans la fenetre fail-closed [{w0:.0f}..{w1:.0f}] : {window_interdit}")
         for p, r in dict.fromkeys(forbidden_in_window):
             print(f"    {p} -> {r}")
+        if t_last_overlay is not None:
+            print(f"  t_last_overlay    : {t_last_overlay:.3f}")
+        if t_first_new_overlay is not None:
+            print(f"  t_first_new_overlay : {t_first_new_overlay:.3f}")
+    if dead_ports:
+        print(f"  dead_ports        : {sorted(dead_ports)} (depuis {dead_since})")
+        print(f"  paquets sortants de ports morts : {len(dead_tx)}")
+        for p, r in dict.fromkeys(dead_tx):
+            print(f"    {p} -> {r}")
+        print(f"  drain entrant vers ports morts  : {dead_rx}")
     print()
     print("endpoints WAN observes :")
     for ep, (cls, n) in sorted(endpoints.items(), key=lambda kv: (kv[1][0], kv[0])):
@@ -314,7 +365,14 @@ def main():
                                         "interdit": window_interdit,
                                         "forbidden": [
                                             {"proto": p, "remote": r}
-                                            for p, r in dict.fromkeys(forbidden_in_window)]},
+                                            for p, r in dict.fromkeys(forbidden_in_window)],
+                                        "dns_queries": sorted(set(dns_queries_window))},
+             "milestones": {"t_last_overlay": t_last_overlay,
+                            "t_first_new_overlay": t_first_new_overlay},
+             "dead_ports": {"ports": sorted(dead_ports),
+                            "since": dead_since,
+                            "tx": len(dead_tx),
+                            "rx": dead_rx},
              "endpoints": {e: [c, n] for e, (c, n) in endpoints.items()},
              "dns_queries": sorted(set(dns_queries)),
              "forbidden": [{"proto": p, "remote": r, "why": w}

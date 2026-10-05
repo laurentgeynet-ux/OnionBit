@@ -225,6 +225,10 @@ fn api_router(state: AppState) -> Router<AppState> {
             get(ipv8::get_tunnel_circuit_downloads),
         )
         .route(
+            "/ipv8/tunnel/anon_lanes/{hops}",
+            delete(ipv8::delete_anon_lane),
+        )
+        .route(
             "/ipv8/tunnel/circuits/test",
             get(ipv8::speed_test_new_circuit),
         )

@@ -2941,3 +2941,28 @@ async fn socket_dht_plafond_debit_borne_la_rafale() {
     let s = sock.stats();
     assert_eq!(s.0 + s.4, 150, "comptage tx+dropped incoherent");
 }
+
+/// P0-17c-5 : `shutdown()` ferme le listener SOCKS5 de la lane. Sans
+/// le signal d'arret, la boucle `accept` retenait son clone d'`Arc`
+/// et le `TcpListener` indefiniment — le port d'une lane "detruite"
+/// restait ouvert et servait encore des connexions (fuite de mapping
+/// observee au banc `sec_leak_capture -Scenario lane-reset`).
+#[tokio::test]
+async fn socks5_shutdown_libere_le_listener() {
+    let node = make_node().await;
+    let socks = Socks5Server::new(node.tunnel.clone(), 1);
+    let addr = socks.listen("127.0.0.1:0").await.unwrap();
+    // Le listener repond avant l'arret.
+    TcpStream::connect(addr).await.unwrap();
+    socks.shutdown();
+    let deadline = Instant::now() + TEST_TIMEOUT;
+    let mut freed = false;
+    while Instant::now() < deadline {
+        if TcpStream::connect(addr).await.is_err() {
+            freed = true;
+            break;
+        }
+        tokio::time::sleep(POLL).await;
+    }
+    assert!(freed, "listener socks5 encore ouvert apres shutdown()");
+}

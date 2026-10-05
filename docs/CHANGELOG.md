@@ -3,6 +3,36 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## P0-17c-5 — fail-closed OS : destruction/recreation de lane anonyme (2026-10-05)
+
+- **`DELETE /api/ipv8/tunnel/anon_lanes/{hops}`** : hook de destruction
+  de lane (`Ipv8Stack::remove_anon_lane`) — extension Rust sans
+  equivalent pyipv8, surface diagnostic/test ; 404 hors lane.
+- **`sec_leak_capture.ps1 -Scenario lane-reset`** : sous-run dedie sur
+  le **daemon** (la lane `AnonLane` n'existe que la — l'exemple de
+  banc n'en a pas). Le mapping OS d'une lane est son **listener TCP
+  SOCKS5 loopback** (les sockets datagramme de lane sont virtuelles :
+  `TunnelUdpSocket` encapsule tout en cellules IPv8 sur le port ipv8
+  partage) — le banc verifie sa liberation, l'absence API
+  (`session?hop` -> 404), la recreation sur un **nouveau** port, puis
+  la reprise de trafic. Un PCAP + un manifeste par sous-run, comme les
+  autres pannes 17c.
+- **Bug reel trouve par le banc, corrige** : la boucle `accept` de
+  `Socks5Server::listen` retenait un clone d'`Arc<Socks5Server>` et le
+  `TcpListener` — le port SOCKS d'une lane detruite restait ouvert
+  indefiniment et acceptait encore des connexions (fuite de mapping
+  apres « destruction »). Ajout de `Socks5Server::shutdown()` (canal
+  `watch` + `select!` dans `accept` et dans le dispatcher de retour),
+  appele par `remove_anon_lane` et `stop`. Test de regression
+  `socks5_shutdown_libere_le_listener` (loopback reel).
+- **Run vert** (`target/leak-capture-17c5f/`, daemon `acaa607` + ce
+  changeset) : injection a 26 713 o de trafic tunnel, lane detruite en
+  1,4 s, nouvelle lane sur nouveau port a +5,2 s, reprise a +8,2 s ;
+  **INTERDIT = 0** dans la fenetre fail-closed, 0 paquet sortant de
+  ports morts. Declencheur « mid-transfer » = `max(octets fichier,
+  octets circuits DATA READY)` — la resolution magnet publique sur
+  DHT-tunnel reste environnementalement lente (stall documente).
+
 ## MS-13 — banc inter-demon messagerie e2e reel (2026-10-05)
 
 - **`scripts/interop_messaging_e2e.ps1`** : deux demons OnionBit

@@ -356,6 +356,25 @@ pub async fn get_tunnel_swarms(State(state): State<AppState>) -> Response {
     Json(serde_json::json!({ "swarms": tunnel.swarms_info() })).into_response()
 }
 
+/// `DELETE /api/ipv8/tunnel/anon_lanes/{hops}` — detruit la lane
+/// anonyme a `hops` sauts (extension Rust de diagnostic, sans
+/// equivalent pyipv8 : P0-17c-5). La lane est recreee a la prochaine
+/// insertion anonyme. `{"success": true}` si la lane existait, 404
+/// sinon ; `{"success": false, "error": ...}` sans stack IPv8.
+pub async fn delete_anon_lane(State(state): State<AppState>, Path(hops): Path<usize>) -> Response {
+    let Some(stack) = state.session.ipv8() else {
+        return plain_error(StatusCode::NOT_FOUND, "tunnel community not found");
+    };
+    if stack.remove_anon_lane(hops).await {
+        Json(serde_json::json!({ "success": true })).into_response()
+    } else {
+        plain_error(
+            StatusCode::NOT_FOUND,
+            "no anonymous lane for this hop count",
+        )
+    }
+}
+
 /// `GET /api/ipv8/tunnel/guards` — guard nodes actifs/reserve
 /// (ADR-0010, extension Rust sans equivalent pyipv8) :
 /// `{"guards": [], "enabled": bool}` — `enabled` reflete la config,

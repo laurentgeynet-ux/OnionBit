@@ -329,8 +329,8 @@ impl Default for Ipv8Config {
 struct AnonLane {
     /// Port du proxy SOCKS5 (loopback) de cette lane.
     pub socks_addr: SocketAddr,
-    /// Garde le serveur SOCKS5 en vie.
-    #[allow(dead_code)]
+    /// Garde le serveur SOCKS5 en vie ; `shutdown()` ferme son
+    /// listener a la destruction de la lane.
     socks: Arc<Socks5Server>,
     /// Moteur BitTorrent route via le SOCKS5 (uTP only).
     pub engine: BtEngine,
@@ -2150,6 +2150,33 @@ impl Ipv8Stack {
         out
     }
 
+    /// Detruit la lane anonyme `hops` : retrait du registre, arret du
+    /// watchdog de circuits puis du moteur — les sockets uTP/DHT
+    /// tunnelisees et le listener SOCKS5 de la lane sont liberes avec
+    /// elle. La prochaine insertion anonyme a `hops` sauts recree une
+    /// lane neuve (`get_or_create`, nouveaux ports locaux).
+    /// `false` si aucune lane `hops` n'existe.
+    ///
+    /// Surface de diagnostic/test (P0-17c-5 : destruction de lane sous
+    /// capture OS — aucun paquet de l'ancienne lane ne doit survivre).
+    /// Les circuits tunnel partages ne sont PAS detruits : ils
+    /// appartiennent au communaute, pas a la lane.
+    pub async fn remove_anon_lane(&self, hops: usize) -> bool {
+        let lane = self.anon_lanes.lock().unwrap().remove(&hops);
+        let Some(lane) = lane else {
+            return false;
+        };
+        let _ = lane.circuit_watchdog_stop.send(true);
+        // Le listener SOCKS5 de la lane doit mourir avec elle : la
+        // boucle `accept` detient son propre `Arc` + le `TcpListener`
+        // — sans `shutdown()` le port resterait ouvert et servirait
+        // encore les connexions d'une lane "detruite".
+        lane.socks.shutdown();
+        lane.engine.stop().await;
+        tracing::info!(hops, socks = %lane.socks_addr, "lane anonyme detruite");
+        true
+    }
+
     /// Arret des moteurs anonymes et de la maintenance DHT
     /// (`Session.shutdown` Python : les overlay tasks sont annulees).
     pub async fn stop(&self) {
@@ -2176,6 +2203,7 @@ impl Ipv8Stack {
             .collect();
         for lane in lanes {
             let _ = lane.circuit_watchdog_stop.send(true);
+            lane.socks.shutdown();
             lane.engine.stop().await;
         }
     }

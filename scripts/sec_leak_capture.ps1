@@ -37,6 +37,8 @@ param(
     [int]$MaxCircuits = 4,
     [int]$PostExitSec = 30,
     [int]$TriblerWaitSec = 180,
+    [int]$DaemonApiPort = 28700,
+    [int]$DaemonIpv8Port = 28800,
     # P0-17c : injection de panne en plein transfert.
     #   normal         : chemin heureux + fenetre post-arret (P0-17b)
     #   kill           : tue le processus de banc a -FailAtBytes recus
@@ -51,7 +53,13 @@ param(
     #   kill-bootstrap : mort de Tribler.exe local en plein transfert
     #                    (17c-2 : le worker proxy est in-process, la
     #                    mort d'infrastructure en est le pendant OS)
-    [ValidateSet('normal','kill','block','wan','kill-bootstrap')]
+    #   lane-reset     : destruction de la lane anonyme via
+    #                    DELETE /api/ipv8/tunnel/anon_lanes/{hops}
+    #                    pendant un download anonyme du DAEMON
+    #                    (17c-5 : aucun paquet/mapping de l'ancienne
+    #                    lane ne doit survivre ; reprise via une lane
+    #                    recreee sur de nouveaux ports)
+    [ValidateSet('normal','kill','block','wan','kill-bootstrap','lane-reset')]
     [string]$Scenario = 'normal',
     [long]$FailAtBytes = 262144,
     [int]$FailWindowSec = 45,
@@ -97,6 +105,8 @@ if (-not $isAdmin) {
         '-FailAtBytes', "$FailAtBytes",
         '-FailWindowSec', "$FailWindowSec",
         '-TriblerWaitSec', "$TriblerWaitSec",
+        '-DaemonApiPort', "$DaemonApiPort",
+        '-DaemonIpv8Port', "$DaemonIpv8Port",
         '-OutDir', "`"$OutDir`""
     )
     $p = Start-Process -FilePath 'pwsh' -Verb RunAs -Wait -PassThru `
@@ -115,7 +125,7 @@ function Verdict([bool]$ok, [string]$name, [string]$detail = "") {
 $triblerExe = "C:\Program Files (x86)\Tribler\Tribler.exe"
 $stateDir = Join-Path $env:APPDATA ".Tribler"
 $confFile = Join-Path $stateDir "8.0\configuration.json"
-$triblerProc = $null; $startedTribler = $false; $rsProc = $null
+$triblerProc = $null; $startedTribler = $false; $rsProc = $null; $daemonProc = $null
 $captureStarted = $false
 $t0 = Get-Date
 
@@ -178,6 +188,349 @@ try {
     $resolvers = @(Get-DnsClientServerAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
         ForEach-Object { $_.ServerAddresses } | Where-Object { $_ -and $_ -ne '0.0.0.0' })
     Log ("resolveurs DNS : {0}" -f ($resolvers -join ', '))
+
+    # ===================== Scenario lane-reset (17c-5) =====================
+    # Flux distinct : le banc est le DAEMON (la lane anonyme y est un
+    # objet AnonLane de la stack, absente de l'exemple de bench).
+    # Destruction via l'endpoint de diagnostic, observation : ports de
+    # lane liberes, zero paquet sortant des anciens ports, reprise via
+    # une lane recreee. Attribution : les ports UDP du PID du daemon.
+    if ($Scenario -eq 'lane-reset') {
+        Log "build onionbit-daemon"
+        cargo build -p onionbit-daemon 2>&1 | Out-File (Join-Path $OutDir 'build_daemon.log')
+        if ($LASTEXITCODE -ne 0) { throw "build daemon echoue (voir build_daemon.log)" }
+        $daemonExe = Join-Path $root 'target\debug\onionbit-daemon.exe'
+
+        $dstate = Join-Path $OutDir 'daemon-state'
+        New-Item -ItemType Directory -Force -Path $dstate | Out-Null
+        $dcfg = @{
+            tunnel_community = @{
+                enabled          = $true
+                exitnode_enabled = $false
+                min_circuits     = 2
+                max_circuits     = 4
+            }
+            ipv8 = @{
+                bootstrap  = @{ override = @("127.0.0.1:$triblerPort") }
+                interfaces = @( @{ interface = 'UDPIPv4'; ip = '127.0.0.1'; port = $DaemonIpv8Port } )
+            }
+            dht_discovery = @{ enabled = $true }
+            # Ambiant reduit a zero pour l'oracle : sans DHT mainline
+            # ni UPnP/NAT-PMP sur la session en clair, TOUT paquet WAN
+            # emis par un port du daemon est suspect par construction.
+            # La lane anonyme garde sa DHT tunnelsee (`enable_dht`
+            # force cote `anon_engine`, socket virtuelle -> ipv8).
+            libtorrent    = @{ port = 0; dht = $false; upnp = $false
+                               natpmp = $false; lsd = $false }
+        }
+        [System.IO.File]::WriteAllText((Join-Path $dstate 'configuration.json'),
+            ($dcfg | ConvertTo-Json -Depth 8), [System.Text.UTF8Encoding]::new($false))
+        $dLog = Join-Path $OutDir 'daemon.log'
+        $dErr = Join-Path $OutDir 'daemon_err.log'
+        $daemonProc = Start-Process -FilePath $daemonExe -PassThru -NoNewWindow `
+            -ArgumentList "--state-dir `"$dstate`" --listen 127.0.0.1:$DaemonApiPort --no-tray" `
+            -RedirectStandardOutput $dLog -RedirectStandardError $dErr
+        $pidBench = $daemonProc.Id
+        Log "daemon demarre pid=$pidBench api=127.0.0.1:$DaemonApiPort ipv8=$DaemonIpv8Port"
+
+        # Cle API auto-generee dans configuration.json.
+        $apiBase = "http://127.0.0.1:$DaemonApiPort/api"
+        $daemonKey = $null
+        $deadline = (Get-Date).AddSeconds(60)
+        while ((Get-Date) -lt $deadline -and -not $daemonKey) {
+            try {
+                $c = Get-Content (Join-Path $dstate 'configuration.json') -Raw | ConvertFrom-Json
+                if ($c.api -and $c.api.key) { $daemonKey = $c.api.key }
+            } catch {}
+            if (-not $daemonKey) { Start-Sleep -Milliseconds 500 }
+        }
+        if (-not $daemonKey) { throw "cle API du daemon introuvable dans configuration.json" }
+        $H = @{ "X-Api-Key" = $daemonKey }
+        function DApiGet([string]$p) {
+            Invoke-RestMethod -Uri "$apiBase$p" -Headers $H -TimeoutSec 5
+        }
+        Verdict (-not $daemonProc.HasExited) 'daemon vivant' "pid=$pidBench"
+
+        # Attente de pairs overlay reels via le bootstrap Tribler.
+        $deadline = (Get-Date).AddSeconds($TriblerWaitSec)
+        $peersOk = $false
+        while ((Get-Date) -lt $deadline -and -not $peersOk) {
+            try {
+                $net = DApiGet '/ipv8/network'
+                $n = @($net.network.peers).Count
+                if ($n -gt 0) { $peersOk = $true; Log "daemon : $n pair(s) overlay connu(s)" }
+            } catch { Start-Sleep -Seconds 2 }
+            if (-not $peersOk) { Start-Sleep -Seconds 2 }
+        }
+        if (-not $peersOk) { throw "le daemon n'a decouvert aucun pair en ${TriblerWaitSec}s" }
+
+        # Ports UDP du daemon AVANT la lane (baseline : ipv8 + dht +
+        # libtorrent). Les nouveaux ports apres `add` = sockets de lane.
+        $portsBefore = @(Get-NetUDPEndpoint -OwningProcess $pidBench -ErrorAction SilentlyContinue `
+            | Where-Object { $_.LocalAddress -match '^\d+\.\d+\.\d+\.\d+$' } | ForEach-Object { $_.LocalPort } | Sort-Object -Unique)
+        Log ("ports UDP daemon (avant lane) : {0}" -f ($portsBefore -join ', '))
+
+        # ---------- Capture ----------
+        $etl = Join-Path $OutDir 'capture.etl'
+        $pcap = Join-Path $OutDir 'capture.pcapng'
+        & pktmon filter remove 2>&1 | Out-Null
+        & pktmon start --capture --pkt-size 0 --file-name $etl --file-size 512 2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "pktmon start a echoue" }
+        $captureStarted = $true
+        $capStart = Get-Date
+        Log "capture pktmon demarree -> $etl"
+
+        # ---------- Download anonyme puis destruction de lane ----------
+        $dlDir = Join-Path $OutDir 'dl'
+        # Les sockets datagramme d'une lane anonyme sont VIRTUELLES
+        # (TunnelUdpSocket : le trafic est encapsule en cellules IPv8
+        # sur le port ipv8 partage) — la seule socket OS reelle creee
+        # par la lane est le listener TCP SOCKS5 loopback. C'est le
+        # mapping OS a observer : il doit mourir avec la lane et la
+        # lane recreee doit binder un port DIFFERENT.
+        $tcpBefore = @(Get-NetTCPConnection -OwningProcess $pidBench -State Listen `
+            -ErrorAction SilentlyContinue | ForEach-Object { $_.LocalPort } | Sort-Object -Unique)
+        $body = @{ uri = $Magnet; anon_hops = $Hops; safe_seeding = $true; destination = $dlDir } |
+            ConvertTo-Json -Compress
+        $addResp = Invoke-RestMethod -Method Put -Uri "$apiBase/downloads" -Headers $H `
+            -ContentType 'application/json' -Body $body -TimeoutSec 15
+        $infohashHex = [string]$addResp.infohash
+        Log (("download anonyme {0} saut(s) ajoute (ih={1}) - attente de {2} octets " +
+            "(fichier ou trafic tunnel de la lane)") -f $Hops, $infohashHex, $FailAtBytes)
+
+        # Declencheur "mid-transfer" : la lane transporte du trafic
+        # reel des que ses circuits DATA shuttent des cellules
+        # (resolution magnet, DHT tunnelise, metadonnees uTP). Sur un
+        # mesh clairseme les octets FICHIER peuvent tarder des minutes
+        # alors que la lane transfere deja : l'oracle INTERDIT=0 porte
+        # sur la lane detruite, pas sur la progression du torrent.
+        # On prend donc max(octets fichier, octets circuits DATA READY).
+        $tFailure = $null; $lanePorts = @(); $tLaneGone = $null
+        $tResume = $null; $tNewReady = $null
+        $laneSocks = @(); $newSocks = @()
+        $got = 0
+        $deadline = (Get-Date).AddSeconds($DownloadTimeoutSec)
+        while ((Get-Date) -lt $deadline -and -not $tFailure) {
+            try {
+                if (-not $laneSocks) {
+                    $tcpNow = @(Get-NetTCPConnection -OwningProcess $pidBench -State Listen `
+                        -ErrorAction SilentlyContinue | ForEach-Object { $_.LocalPort })
+                    $laneSocks = @($tcpNow | Where-Object { $tcpBefore -notcontains $_ })
+                }
+                $dls = @(DApiGet '/downloads' | ForEach-Object { $_.downloads })
+                $fileBytes = [int64]($dls | ForEach-Object { [int64]$_.session_download } |
+                    Measure-Object -Sum).Sum
+                $cir = DApiGet '/ipv8/tunnel/circuits'
+                $tunnelBytes = [int64](@($cir.circuits) |
+                    Where-Object { $_.type -eq 'DATA' -and $_.state -eq 'READY' `
+                        -and $_.goal_hops -eq $Hops } |
+                    ForEach-Object { [int64]$_.bytes_up + [int64]$_.bytes_down } |
+                    Measure-Object -Sum).Sum
+                $got = [Math]::Max($fileBytes, $tunnelBytes)
+            } catch {}
+            if ($got -ge $FailAtBytes -and $laneSocks.Count -gt 0) {
+                $now = @(Get-NetUDPEndpoint -OwningProcess $pidBench -ErrorAction SilentlyContinue `
+                    | Where-Object { $_.LocalAddress -match '^\d+\.\d+\.\d+\.\d+$' } | ForEach-Object { $_.LocalPort } | Sort-Object -Unique)
+                $lanePorts = @($now | Where-Object { $portsBefore -notcontains $_ })
+                $tFailure = Get-Date
+                Log ("INJECTION lane-reset : DELETE anon_lanes/{0} a {1} octets ; socks=[{2}]" -f `
+                    $Hops, $got, ($laneSocks -join ', '))
+                $r = Invoke-RestMethod -Method Delete `
+                    -Uri "$apiBase/ipv8/tunnel/anon_lanes/$Hops" -Headers $H -TimeoutSec 30
+                Verdict ($r.success -eq $true) 'DELETE lane accepte' "hops=$Hops"
+                try {
+                    Invoke-RestMethod -Method Delete `
+                        -Uri "$apiBase/ipv8/tunnel/anon_lanes/$Hops" -Headers $H -TimeoutSec 10 | Out-Null
+                    Verdict $false 're-DELETE sans lane -> 404' 'reponse 200 inattendue'
+                } catch {
+                    Verdict ($_.Exception.Response.StatusCode.value__ -eq 404) `
+                        're-DELETE sans lane -> 404' $_.Exception.Response.StatusCode
+                }
+            } else { Start-Sleep -Seconds 1 }
+        }
+        Verdict ($got -ge $FailAtBytes) "transfert actif a l'injection (>= $FailAtBytes)" "dernier=$got"
+        Verdict ($null -ne $tFailure) 'panne lane-reset injectee' `
+            $(if ($tFailure) { "t=$($tFailure.ToString('HH:mm:ss.fff'))" } else { 'jamais' })
+        if (-not $tFailure) { throw "transfert jamais atteint $FailAtBytes octets ou listener SOCKS absent" }
+
+        # Liberation effective : le listener TCP de la lane detruite
+        # doit mourir ET l'API doit annoncer la lane absente.
+        $deadline = (Get-Date).AddSeconds(20)
+        $laneGoneApi = $false
+        while ((Get-Date) -lt $deadline -and -not $tLaneGone) {
+            $tcpNow = @(Get-NetTCPConnection -OwningProcess $pidBench -State Listen `
+                -ErrorAction SilentlyContinue | ForEach-Object { $_.LocalPort })
+            $socksGone = -not ($laneSocks | Where-Object { $tcpNow -contains $_ })
+            if (-not $laneGoneApi) {
+                try {
+                    DApiGet "/libtorrent/session?hop=$Hops" | Out-Null
+                } catch {
+                    if ($_.Exception.Response.StatusCode.value__ -eq 404) { $laneGoneApi = $true }
+                }
+            }
+            if ($socksGone -and $laneGoneApi) { $tLaneGone = Get-Date }
+            else { Start-Sleep -Milliseconds 200 }
+        }
+        Verdict ($null -ne $tLaneGone) 'lane detruite (socks libere + session 404)' `
+            $(if ($tLaneGone) { "t=$($tLaneGone.ToString('HH:mm:ss.fff'))" } else {
+                "socks_gone=$socksGone api_gone=$laneGoneApi" })
+
+        # Le daemon doit rester vivant (pas de crash a la destruction).
+        Start-Sleep -Seconds 2
+        Verdict (-not $daemonProc.HasExited) 'daemon vivant apres destruction' "pid=$pidBench"
+
+        # Suppression explicite du download (spec : lane + download) —
+        # libere le marqueur `pending` ; la tache de resolution du
+        # magnet encore en vol avorte silencieusement au lieu de
+        # materialiser une lane fantome plus tard.
+        try {
+            Invoke-RestMethod -Method Delete -Uri "$apiBase/downloads/$infohashHex" `
+                -Headers $H -ContentType 'application/json' `
+                -Body '{"remove_data": false}' -TimeoutSec 15 | Out-Null
+            Log "download $infohashHex supprime (pending libere)"
+        } catch { Log "suppression download : $($_.Exception.Message)" }
+
+        # Recreation : le meme ajout recree une lane neuve sur un
+        # nouveau port SOCKS. Nouvelle lane prouvee = session?hop 200
+        # + listener TCP frais + circuit DATA READY ; reprise = octets
+        # de circuit en croissance apres recreation (le daemon n'a
+        # pas d'autre activite BitTorrent).
+        $cirBase = 0
+        try {
+            $cir = DApiGet '/ipv8/tunnel/circuits'
+            $cirBase = [int64](@($cir.circuits) |
+                Where-Object { $_.type -eq 'DATA' -and $_.goal_hops -eq $Hops } |
+                ForEach-Object { [int64]$_.bytes_up + [int64]$_.bytes_down } |
+                Measure-Object -Sum).Sum
+        } catch {}
+        Invoke-RestMethod -Method Put -Uri "$apiBase/downloads" -Headers $H `
+            -ContentType 'application/json' -Body $body -TimeoutSec 15 | Out-Null
+        $fileBytes0 = 0
+        $deadline = (Get-Date).AddSeconds($DownloadTimeoutSec)
+        while ((Get-Date) -lt $deadline -and -not $tResume) {
+            try {
+                $laneApi = $false
+                try { DApiGet "/libtorrent/session?hop=$Hops" | Out-Null; $laneApi = $true } catch {}
+                if (-not $newSocks) {
+                    $tcpNow = @(Get-NetTCPConnection -OwningProcess $pidBench -State Listen `
+                        -ErrorAction SilentlyContinue | ForEach-Object { $_.LocalPort })
+                    $cand = @($tcpNow | Where-Object { $tcpBefore -notcontains $_ `
+                        -and $laneSocks -notcontains $_ })
+                    if ($laneApi -and $cand) { $newSocks = $cand }
+                }
+                $cir = DApiGet '/ipv8/tunnel/circuits'
+                $ready = @($cir.circuits | Where-Object {
+                    $_.type -eq 'DATA' -and $_.state -eq 'READY' -and $_.goal_hops -eq $Hops })
+                if (-not $tNewReady -and $newSocks.Count -gt 0 -and $ready.Count -gt 0) {
+                    $tNewReady = Get-Date
+                    Log ("nouvelle lane READY (socks {0} + circuit DATA {1} sauts) a {2}" -f `
+                        ($newSocks -join ','), $Hops, $tNewReady.ToString('HH:mm:ss.fff'))
+                }
+                $newBytes = [int64](@($cir.circuits) | Where-Object {
+                    $_.type -eq 'DATA' -and $_.goal_hops -eq $Hops } |
+                    ForEach-Object { [int64]$_.bytes_up + [int64]$_.bytes_down } |
+                    Measure-Object -Sum).Sum
+                $dls = @(DApiGet '/downloads' | ForEach-Object { $_.downloads })
+                $fileBytes = [int64]($dls | ForEach-Object { [int64]$_.session_download } |
+                    Measure-Object -Sum).Sum
+                if ($fileBytes0 -eq 0) { $fileBytes0 = $fileBytes }
+                if ($tNewReady -and ($newBytes -gt $cirBase -or $fileBytes -gt $fileBytes0)) {
+                    $tResume = Get-Date; $got = $fileBytes; break
+                }
+            } catch {}
+            Start-Sleep -Seconds 1
+        }
+        Verdict ($newSocks.Count -gt 0) 'nouvelle lane sur nouveau port SOCKS' `
+            $(if ($newSocks) { "port(s) $($newSocks -join ', ') (ancien: $($laneSocks -join ', '))" } else { 'aucun' })
+        Verdict ($null -ne $tNewReady) 'nouvelle lane READY' `
+            $(if ($tNewReady) { "t=$($tNewReady.ToString('HH:mm:ss.fff'))" } else { 'jamais READY' })
+        Verdict ($null -ne $tResume) 'reprise via lane recreee' `
+            $(if ($tResume) { "t=$($tResume.ToString('HH:mm:ss.fff'))" } else { 'pas de reprise' })
+
+        # Fenetre post-mortem de la lane : trafic fantome de ports morts.
+        if ($PostExitSec -gt 0) {
+            Log "fenetre post-mortem lane ${PostExitSec}s"
+            Start-Sleep -Seconds $PostExitSec
+        }
+        & pktmon stop 2>&1 | Out-Null
+        $captureStarted = $false
+        $capEnd = Get-Date
+        & pktmon etl2pcap $etl -o $pcap 2>&1 | Out-Null
+        if (-not (Test-Path $pcap)) { throw "etl2pcap a echoue" }
+        Log "pcapng : $pcap"
+
+        # ---------- Attribution ----------
+        $portsFinal = @(Get-NetUDPEndpoint -OwningProcess $pidBench -ErrorAction SilentlyContinue `
+            | Where-Object { $_.LocalAddress -match '^\d+\.\d+\.\d+\.\d+$' } | ForEach-Object { $_.LocalPort })
+        $benchPortsFile = Join-Path $OutDir 'bench_ports.txt'
+        @($portsBefore + $lanePorts + $portsFinal) | Sort-Object -Unique |
+            Set-Content $benchPortsFile -Encoding ascii
+        Log "ports du banc : $((Get-Content $benchPortsFile) -join ', ')"
+        # Ports UDP morts : la lane n'a pas de socket UDP reelle
+        # (TunnelUdpSocket virtuelle) — la liste est vide par
+        # construction mais le fichier doit exister pour l'analyseur.
+        $deadPortsFile = Join-Path $OutDir 'dead_ports.txt'
+        [System.IO.File]::WriteAllLines($deadPortsFile, [string[]]$lanePorts)
+        $allowedFile = Join-Path $OutDir 'allowed_endpoints.txt'
+        Set-Content $allowedFile "127.0.0.1:$triblerPort" -Encoding ascii
+
+        $py = 'python'
+        if ($env:TRIBLER_INTEROP_PY -and (Test-Path $env:TRIBLER_INTEROP_PY)) { $py = $env:TRIBLER_INTEROP_PY }
+        $analyzer = Join-Path $root 'scripts\analyze_leak_capture.py'
+        $report = Join-Path $OutDir 'leak_report.json'
+        $w0 = [double]([DateTimeOffset]$tFailure).ToUnixTimeMilliseconds() / 1000
+        $w1 = [double]([DateTimeOffset]$capEnd).ToUnixTimeMilliseconds() / 1000
+        $anArgs = @($analyzer, $pcap, '--allowed', $allowedFile,
+            '--bench-ports', $benchPortsFile, '--report', $report,
+            '--window-start', "$w0", '--window-end', "$w1",
+            '--dead-ports', $deadPortsFile, '--dead-since', "$w0")
+        if ($resolvers.Count) { $anArgs += @('--dns-resolvers', ($resolvers -join ',')) }
+        if ($dhtForbidden.Count) { $anArgs += @('--dht-routers', ($dhtForbidden -join ',')) }
+        $anOut = & $py @anArgs 2>&1
+        $anOut | Out-File (Join-Path $OutDir 'leak_analysis.txt')
+        $anOut | Select-Object -Last 30 | ForEach-Object { Log $_ }
+        Verdict ($LASTEXITCODE -eq 0) 'analyse de fuite (0 paquet interdit)'
+        if (Test-Path $report) {
+            $rep = Get-Content $report -Raw | ConvertFrom-Json
+            Verdict ($rep.window.interdit -eq 0) 'INTERDIT dans la fenetre fail-closed = 0' "n=$($rep.window.interdit)"
+            Verdict ($rep.dead_ports.tx -eq 0) 'paquets sortants de ports morts = 0' "n=$($rep.dead_ports.tx)"
+        }
+
+        @{
+            run_utc   = $t0.ToUniversalTime().ToString('o')
+            script    = 'sec_leak_capture.ps1'
+            commit    = (git -C $root rev-parse --short HEAD)
+            scenario  = $Scenario
+            hops      = $Hops; magnet = $Magnet
+            pid_bench = $pidBench
+            ports     = @{ before = $portsBefore; lane = $lanePorts; final = $portsFinal;
+                           socks_lane = $laneSocks; socks_new_lane = $newSocks }
+            t_failure = $tFailure.ToUniversalTime().ToString('o')
+            t_lane_gone = if ($tLaneGone) { $tLaneGone.ToUniversalTime().ToString('o') } else { $null }
+            t_first_new_ready = if ($tNewReady) { $tNewReady.ToUniversalTime().ToString('o') } else { $null }
+            t_resume_payload = if ($tResume) { $tResume.ToUniversalTime().ToString('o') } else { $null }
+            t_last_overlay = if (Test-Path $report) {
+                (Get-Content $report -Raw | ConvertFrom-Json).milestones.t_last_overlay } else { $null }
+            forbidden_packets_between_failure_and_ready = if (Test-Path $report) {
+                (Get-Content $report -Raw | ConvertFrom-Json).window.interdit } else { $null }
+            dns_queries_in_window = if (Test-Path $report) {
+                (Get-Content $report -Raw | ConvertFrom-Json).window.dns_queries } else { $null }
+            milestones = if (Test-Path $report) { (Get-Content $report -Raw | ConvertFrom-Json).milestones } else { $null }
+            window    = if (Test-Path $report) { (Get-Content $report -Raw | ConvertFrom-Json).window } else { $null }
+            dead_ports= if (Test-Path $report) { (Get-Content $report -Raw | ConvertFrom-Json).dead_ports } else { $null }
+            processes_alive_after_failure = @($daemonProc.HasExited -eq $false)
+            tribler   = @{ exe = $triblerExe; port_ipv8 = $triblerPort; started_by_bench = $startedTribler }
+            capture   = @{ etl = $etl; pcapng = $pcap; start = $capStart.ToString('o'); end = $capEnd.ToString('o'); post_exit_sec = $PostExitSec }
+            resolvers = $resolvers
+            verdict   = if ($script:fails -eq 0) { 'OK' } else { "FAIL($($script:fails))" }
+            artifacts = @{ daemon_log = $dLog; daemon_err = $dErr; analysis = 'leak_analysis.txt'; report = 'leak_report.json' }
+        } | ConvertTo-Json -Depth 6 | Set-Content (Join-Path $OutDir 'manifest.json') -Encoding UTF8
+
+        Log ""
+        if ($script:fails -eq 0) { Log "SEC LEAK CAPTURE OK"; exit 0 }
+        Log "SEC LEAK CAPTURE ECHEC ($($script:fails) verdict(s))"
+        exit 1
+    }
 
     # ---------- Demarrage capture pktmon ----------
     $etl = Join-Path $OutDir 'capture.etl'
@@ -392,6 +745,7 @@ finally {
         & netsh advfirewall firewall delete rule "name=$fwRule" 2>&1 | Out-Null
     }
     if ($captureStarted) { & pktmon stop 2>&1 | Out-Null }
+    if ($daemonProc -and -not $daemonProc.HasExited) { Stop-Process -Id $daemonProc.Id -Force -ErrorAction SilentlyContinue }
     if ($rsProc -and -not $rsProc.HasExited) { Stop-Process -Id $rsProc.Id -Force -ErrorAction SilentlyContinue }
     if ($startedTribler -and $triblerProc) { Stop-Process -Id $triblerProc.Id -Force -ErrorAction SilentlyContinue }
     Get-Process -Name 'interop_public_download' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue

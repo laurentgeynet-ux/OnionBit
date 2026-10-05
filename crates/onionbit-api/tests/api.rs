@@ -2927,6 +2927,61 @@ async fn tunnel_speed_test_validations() {
     srv.session.stop().await;
 }
 
+/// `DELETE /api/ipv8/tunnel/anon_lanes/{hops}` (17c-5) : 404 sans
+/// stack, 404 sans lane, `{"success": true}` puis 404 quand la lane
+/// est detruite — la recreation reste possible (`anon_engine`).
+#[tokio::test]
+async fn delete_anon_lane_semantique() {
+    // Sans stack IPv8 → `{"success": false, "error": ...}` 404.
+    let srv = spawn_server().await;
+    let resp = srv
+        .client
+        .delete(srv.url("/api/ipv8/tunnel/anon_lanes/2"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 404);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["success"], false);
+    srv.session.stop().await;
+
+    let srv = spawn_server_ipv8_anon().await;
+    // Pas de lane a 2 sauts → 404.
+    let resp = srv
+        .client
+        .delete(srv.url("/api/ipv8/tunnel/anon_lanes/2"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 404);
+
+    // Lane creee → DELETE success, lane retiree, re-DELETE → 404 ;
+    // `anon_engine` recree une lane neuve (get-or-create).
+    let stack = srv.session.ipv8().unwrap();
+    stack.anon_engine(2).await.unwrap();
+    assert!(stack.anon_lanes().iter().any(|(h, _)| *h == 2));
+    let resp = srv
+        .client
+        .delete(srv.url("/api/ipv8/tunnel/anon_lanes/2"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["success"], true);
+    assert!(!stack.anon_lanes().iter().any(|(h, _)| *h == 2));
+    let resp = srv
+        .client
+        .delete(srv.url("/api/ipv8/tunnel/anon_lanes/2"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 404);
+    stack.anon_engine(2).await.unwrap();
+    assert!(stack.anon_lanes().iter().any(|(h, _)| *h == 2));
+    srv.session.stop().await;
+}
+
 /// `/api/ipv8/asyncio/drift` : 404 tant que la mesure n'est pas
 /// activee, `enable` via PUT, 400 `incorrect parameters`, 200
 /// `Session not initialized.` sans stack IPv8.
