@@ -386,6 +386,21 @@ try {
         function DApiGet([string]$p) {
             Invoke-RestMethod -Uri "$apiBase$p" -Headers $H -TimeoutSec 5
         }
+        # La cle est ecrite dans configuration.json avant que l'ecoute
+        # HTTP ne soit effective (migrations + moteur en cours) — un
+        # appel trop tot tombe en connexion refusee et tue le run
+        # (crash du run 010106 a /createtorrent, ~3 s post-spawn).
+        $apiDeadline = (Get-Date).AddSeconds(60)
+        $apiUp = $false
+        while ((Get-Date) -lt $apiDeadline -and -not $apiUp) {
+            try {
+                $tc = New-Object System.Net.Sockets.TcpClient
+                $tc.Connect('127.0.0.1', $DaemonApiPort)
+                $apiUp = $tc.Connected
+                $tc.Close()
+            } catch { Start-Sleep -Milliseconds 500 }
+        }
+        Verdict $apiUp 'API daemon en ecoute' "port=$DaemonApiPort"
         Verdict (-not $daemonProc.HasExited) 'daemon vivant' "pid=$pidBench"
 
         # ---------- Seed dedie (17c-5, rejeu optionnel) -------------
@@ -446,6 +461,17 @@ try {
                         if ($hc.api -and $hc.api.key) { $seedKey = $hc.api.key }
                     } catch {}
                     if (-not $seedKey) { Start-Sleep -Milliseconds 500 }
+                }
+                # Meme course que le daemon : la cle est ecrite avant
+                # l'ecoute HTTP — sonder le port avant le PUT seed.
+                $hUp = $false; $hDeadline = (Get-Date).AddSeconds(30)
+                while ((Get-Date) -lt $hDeadline -and -not $hUp) {
+                    try {
+                        $tc = New-Object System.Net.Sockets.TcpClient
+                        $tc.Connect('127.0.0.1', $HelperApiPort)
+                        $hUp = $tc.Connected
+                        $tc.Close()
+                    } catch { Start-Sleep -Milliseconds 500 }
                 }
             }
             try {
@@ -539,19 +565,24 @@ try {
 
         # Precondition vivier de circuits : /ipv8/network ne compte
         # que les pairs discovery - le reservoir de sauts est la
-        # communaute tunnel (/ipv8/tunnel/peers). Un circuit a $Hops
-        # sauts exige au moins $Hops pairs tunnel distincts.
+        # communaute tunnel (/ipv8/tunnel/peers). Un swarm cache a
+        # $Hops sauts exige $Hops+1 pairs distincts : le circuit de
+        # rendez-vous `RP_DOWNLOADER` est construit a swarm.hops+1
+        # (`swarm_circuit_hops`, +1 pyipv8) — a $Hops pairs il reste
+        # EXTENDING a jamais et l'e2e reste half-open (runs 010335/
+        # 005227 : verified=0 avec vivier=2 exactement).
+        $minPeers = $Hops + 1
         $ovDeadline = (Get-Date).AddSeconds($TriblerWaitSec)
         $ovOk = $false; $ovN = 0
         while ((Get-Date) -lt $ovDeadline -and -not $ovOk) {
             try {
                 $ovN = @((DApiGet '/ipv8/tunnel/peers').peers).Count
-                if ($ovN -ge $Hops) { $ovOk = $true }
+                if ($ovN -ge $minPeers) { $ovOk = $true }
             } catch { Start-Sleep -Seconds 3 }
             if (-not $ovOk) { Start-Sleep -Seconds 3 }
         }
-        Precond $ovOk "vivier tunnel daemon >= $Hops pairs" `
-            "dernier=$ovN"
+        Precond $ovOk "vivier tunnel daemon >= $minPeers pairs" `
+            "dernier=$ovN requis=swarm.hops+1"
 
         # Ports UDP du daemon AVANT la lane (baseline : ipv8 + dht +
         # libtorrent). Les nouveaux ports apres `add` = sockets de lane.
