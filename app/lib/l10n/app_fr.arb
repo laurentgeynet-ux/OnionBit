@@ -373,6 +373,8 @@
   "circuitsMaxLabel": "Circuits maximum (défaut : 8)",
   "anonGuards": "Nœuds guards (expérimental)",
   "anonGuardsSub": "Premiers sauts persistants des circuits multi-hop : réduit l'exposition aux attaques Sybil en bornant la loterie des premiers sauts. Mesure expérimentale de réduction d'exposition, pas une garantie d'anonymat. Appliqué à chaud. Défaut : activé.",
+  "anonMessaging": "Messagerie anonyme (e2e)",
+  "anonMessagingSub": "Messagerie de bout en bout entre identités OnionBit sur circuits anonymes : votre nœud annonce des points d'introduction joignables et accepte les demandes de contact (consentement requis avant tout échange). Sans effet si la TunnelCommunity est désactivée. Défaut : activé. Pris en compte au redémarrage.",
   "relaysMaxLabel": "Relais servis maximum (défaut : 100)",
   "relaysMaxNote": "Jambes de relais + sorties servies simultanément pour les autres pairs. Au-delà, les demandes de circuit entrantes sont refusées. Pris en compte au redémarrage.",
   "relayRateAutoNote": "Le débit servi se régule automatiquement : il monte tant que le RTT des pairs reste stable et recule dès que votre file d'attente montante se remplit — sans jamais brider vos propres téléchargements anonymes. Valeur fixe via tunnel_community/max_relayed_rate dans configuration.json (0 = illimité, -1 = auto).",

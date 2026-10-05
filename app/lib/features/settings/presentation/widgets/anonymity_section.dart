@@ -68,9 +68,8 @@ class _AnonymitySectionState extends ConsumerState<AnonymitySection> {
     final relays = int.tryParse(_maxRelays.text.trim()) ?? 100;
     if (min < 0 || max < min || relays < 0) {
       setState(() => _saving = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(context.l10n.anonMinMaxError)),
-      );
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(context.l10n.anonMinMaxError)));
       return;
     }
     await applySettingsPatch(context, ref, {
@@ -112,9 +111,20 @@ class _AnonymitySectionState extends ConsumerState<AnonymitySection> {
               subtitle: l10n.anonExitSub,
             ),
             SettingsSwitch(
+              path: [..._t, 'messaging_enabled'],
+              value: settingsBool(settings, [
+                ..._t,
+                'messaging_enabled',
+              ], def: true),
+              title: l10n.anonMessaging,
+              subtitle: l10n.anonMessagingSub,
+            ),
+            SettingsSwitch(
               path: [..._t, 'guards_enabled'],
-              value: settingsBool(settings, [..._t, 'guards_enabled'],
-                  def: true),
+              value: settingsBool(settings, [
+                ..._t,
+                'guards_enabled',
+              ], def: true),
               title: l10n.anonGuards,
               subtitle: l10n.anonGuardsSub,
             ),

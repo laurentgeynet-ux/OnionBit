@@ -3,6 +3,20 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Messagerie activée par défaut + toggle réglages (2026-10-05)
+
+- `tunnel_community.messaging_enabled` passe à `true` par défaut
+  (le `false` initial était conditionnel à la validation des bancs
+  `MS-*`, achevée : parcours inter-daemon + gate fail-closed).
+- Settings → Tunnels anonymes : interrupteur `messaging_enabled`
+  (persisté via `POST /api/settings`, pris en compte au redémarrage
+  comme les autres réglages structurels) — fin de l'activation par
+  édition manuelle de `configuration.json`.
+- Banc `sec_leak_capture` : budget octets du trigger armé au premier
+  circuit DATA READY (pas à l'ajout du download) — sur maillage
+  clairsemé la construction des circuits consommait la fenêtre
+  (`verified=0` alors que la chaîne convergeait).
+
 ## Fix — prédicat pre-kill de `live_crash_pending_magnet_et_restart` (2026-10-05)
 
 Le « flake » de l'issue #16 était un prédicat structurellement faux :

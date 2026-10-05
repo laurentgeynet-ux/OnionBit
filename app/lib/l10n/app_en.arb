@@ -562,6 +562,8 @@
   "circuitsMaxLabel": "Maximum circuits (default: 8)",
   "anonGuards": "Guard nodes (experimental)",
   "anonGuardsSub": "Persistent first hops for multi-hop circuits: reduces exposure to Sybil attacks by bounding the first-hop lottery. Experimental exposure-reduction measure, not an anonymity guarantee. Applied live. Default: on.",
+  "anonMessaging": "Anonymous messaging (e2e)",
+  "anonMessagingSub": "End-to-end messaging between OnionBit identities over anonymous circuits: your node announces contactable introduction points and accepts contact requests (consent required before any exchange). No effect while TunnelCommunity is disabled. Default: on. Applied on restart.",
   "relaysMaxLabel": "Maximum relays served (default: 100)",
   "relaysMaxNote": "Relay legs + exit sockets served simultaneously for other peers. Beyond this, incoming circuit requests are refused. Applied on restart.",
   "relayRateAutoNote": "Served bandwidth self-regulates: it grows while peer RTT stays flat and backs off as soon as your uplink queue fills — never throttling your own anonymous downloads. Force a fixed value via tunnel_community/max_relayed_rate in configuration.json (0 = unlimited, -1 = auto).",

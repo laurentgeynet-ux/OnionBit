@@ -591,8 +591,8 @@ pub struct TunnelCommunityConfig {
     /// Extension Rust (ADR-0011, messagerie anonyme e2e) : demarre le
     /// service messagerie — le demon annonce sa presence sur
     /// `messaging_hash(pk)` et accepte les liaisons de contacts.
-    /// `false` par defaut tant que les bancs `MS-*` n'ont pas valide
-    /// l'ensemble ; sans effet si `enabled = false`.
+    /// `true` par defaut (bancs `MS-*` et parcours inter-daemon
+    /// valides) ; sans effet si `enabled = false`.
     pub messaging_enabled: bool,
     /// Extension Rust (ADR-0011) : sauts des circuits messagerie
     /// (`hops` de `join_swarm`, meme echelle que `anon_hops`).
@@ -622,7 +622,7 @@ impl Default for TunnelCommunityConfig {
             anon_dht_backoff_cap_secs: crate::ipv8_stack::DEFAULT_ANON_DHT_BACKOFF_CAP_SECS,
             exit_inbound_source_ttl_secs: crate::ipv8_stack::DEFAULT_EXIT_INBOUND_TTL_SECS,
             exit_inbound_max_sources: crate::ipv8_stack::DEFAULT_EXIT_INBOUND_MAX_SOURCES as u64,
-            messaging_enabled: false,
+            messaging_enabled: true,
             messaging_hops: crate::ipv8_stack::DEFAULT_MESSAGING_HOPS as u32,
             extra: serde_json::Map::new(),
         }
