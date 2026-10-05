@@ -3,18 +3,27 @@
 # Copyright (C) 2026 Laurent Geynet <laurent.geynet@gmail.com>
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-# fuzz_asan.sh — campagne sanitizers Linux (WSL/CI) du harnais fuzz.
+# fuzz_asan.sh — campagne sanitizers du harnais fuzz.
 #
-# Windows/MSVC n'a aucun runtime ASan : le shim sancov ne couvre que la
-# couverture guidee (`-s none`). Linux a les runtimes clang complets —
-# cette campagne rejoue les corpus avec AddressSanitizer (inclut Leak)
-# et UndefinedBehaviorSanitizer pour traquer UAF/overflows/UB que le
-# fuzz coverage-only ne detecte pas.
+# Rejoue les corpus avec AddressSanitizer (inclut Leak) et
+# UndefinedBehaviorSanitizer pour traquer UAF/overflows/UB que le fuzz
+# coverage-only ne detecte pas.
 #
-# Prerequis (Linux/WSL) :
+# Linux/WSL (ASan + UBSan, runtime fourni par rustup) :
 #   rustup toolchain install nightly --profile minimal
 #   rustup component add --toolchain nightly rust-src
-#   cargo install cargo-fuzz ; clang (runtime sanitizer)
+#   cargo install cargo-fuzz ; clang
+#
+# Windows/MSVC (ASan seul, runtime externe — la toolchain rustup ne
+# livre pas librustc-nightly_rt.asan.a sur cette cible ; UBSan
+# indisponible). Recette validee 2026-10-05 (MCP compiler-team#702) :
+#   RUSTFLAGS="-Zexternal-clangrt \
+#     -Clink-arg=clang_rt.asan_dynamic-x86_64.lib \
+#     -Clink-arg=clang_rt.asan_dynamic_runtime_thunk-x86_64.lib"
+#   LIB/PATH incluant <LLVM>\lib\clang\<ver>\lib\windows
+#   JAMAIS /WHOLEARCHIVE sur le thunk : doublon __start___sancov_*
+#   avec sancov_shim.lib ; sans lui, lld ne tire que les objets
+#   references. Le DLL clang_rt.asan_dynamic doit etre sur PATH.
 #
 # Usage :
 #   ./scripts/fuzz_asan.sh                     # toutes cibles, 10 min chacune
@@ -22,8 +31,12 @@
 #   SAN=address ./scripts/fuzz_asan.sh         # ASan seul (defaut : les deux)
 #   SEC=600 ./scripts/fuzz_asan.sh -           # 10 min par cible
 #
-# Journal : docs/security/fuzz_journal_san.csv (hors git si prive —
-# verifier .gitignore avant publication).
+# Garde : le script echoue si le sanitizer n'est pas reellement arme
+# (symboles __asan/__ubsan absents du binaire) — un build sans
+# instrumentation ne vaut rien comme validation.
+#
+# Journal : fuzz/artifacts/fuzz_journal_san.csv (fuzz/artifacts est
+# gitignore — remonte en artefact CI).
 set -u
 cd "$(dirname "$0")/.."
 
@@ -31,8 +44,8 @@ SEC="${SEC:-600}"
 SAN_LIST="${SAN:-address undefined}"
 ONLY="${1:-}"
 COMMIT="$(git rev-parse --short HEAD 2>/dev/null || echo '?')"
-JOURNAL="docs/security/fuzz_journal_san.csv"
-mkdir -p "$(dirname "$JOURNAL")" fuzz/artifacts
+JOURNAL="fuzz/artifacts/fuzz_journal_san.csv"
+mkdir -p fuzz/artifacts
 [ -f "$JOURNAL" ] || echo "date,commit,target,san,duree_s,execs,crashes,exit_code" > "$JOURNAL"
 
 TARGETS="raw_datagram tunnel_cell tunnel_payloads ipv8_packet \
@@ -49,6 +62,21 @@ for t in $TARGETS; do
             -- "-max_total_time=$SEC" "-print_final_stats=1" 2>&1 |
             tee "$log" | tail -12
         code=${PIPESTATUS[0]}
+        # Garde « sanitizer arme » : le binaire doit referencer les
+        # symboles du runtime. Sans ca, un build non instrumente
+        # pourrait passer pour une campagne sanitizers reussie.
+        bin="$(ls fuzz/target/*/release/"$t" 2>/dev/null | head -1)"
+        case "$san" in
+            address)   pat='__asan_' ;;
+            undefined) pat='__ubsan_' ;;
+            *)         pat="$san" ;;
+        esac
+        if [ "$code" -eq 0 ] && { [ -z "$bin" ] || \
+            ! command -v nm >/dev/null 2>&1 || \
+            ! nm "$bin" 2>/dev/null | grep -q "$pat"; }; then
+            echo "!! $t/$san : symboles $pat absents — sanitizer non arme"
+            code=42
+        fi
         execs="$(grep -oE '#[0-9]+ +(DONE|pulse|REDUCE|NEW)' "$log" |
                  tail -1 | grep -oE '#[0-9]+' | tr -d '#')"
         crashes="$(find "fuzz/artifacts/$t" -type f 2>/dev/null | wc -l)"

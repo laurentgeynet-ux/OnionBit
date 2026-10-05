@@ -46,6 +46,30 @@ aucun corpus vivant touché, aucun `cargo fuzz` lancé.
   inanalysable) invalide le résultat sécurité — le manifeste est
   écrit quand même et un `INTERDIT=0` ne suffit plus à faire `OK`.
 
+Clôture campagne et gates sanitizers :
+
+- **Campagne `messaging_window` 14 400 s** (`f9521ab`, Windows MSVC,
+  sanitizer none) : 147 471 627 execs, ~10 240 exec/s moyens, pic RSS
+  30 Mo, **0 crash, 0 divergence impl/modèle**. Corpus 376 bruts →
+  **242 minimisés** (merge libFuzzer, 1 463 features préservées),
+  versionné sous `onionbit-messaging/tests/fuzz_corpus_window/` et
+  rejoué en CI stable par `corpus_window_ne_diverge_pas`.
+- **ASan sous MSVC possible** (recette validée 2026-10-05) :
+  `-Zexternal-clangrt` + `-Clink-arg=clang_rt.asan_dynamic-x86_64.lib`
+  + `-Clink-arg=clang_rt.asan_dynamic_runtime_thunk-x86_64.lib`,
+  LLVM `lib\clang\<ver>\lib\windows` dans `LIB` et `PATH`, jamais
+  `/WHOLEARCHIVE` sur le thunk (doublon `__start___sancov_*` avec le
+  shim libfuzzer). Smoke `messaging_window` 60 s : 291 420 execs,
+  ~4 780 exec/s, RSS pic 402 Mo (shadow memory active), 0 crash.
+  Reste : pas de runtime `librustc-nightly_rt.asan.a` ni UBSan —
+  la validation complète reste Linux.
+- **`fuzz_asan.sh` durci** : échoue si le binaire ne référence pas
+  les symboles `__asan_`/`__ubsan_` — un build non instrumenté ne
+  peut plus passer pour une campagne sanitizers.
+- **Job CI `fuzz-san`** (`ci.yml`, nightly/manual, ubuntu-24.04) :
+  toolchain nightly + cargo-fuzz, `SEC=300` × 8 cibles × 2
+  sanitizers, artefacts (journal CSV + `fuzz/artifacts/`) remontés.
+
 ## Fuzz messagerie — campagne `messaging_frame` + cible `messaging_window` (2026-10-05)
 
 - **Campagne `messaging_frame` 14 400 s** (`802c752`, Windows MSVC,

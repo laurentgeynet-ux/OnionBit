@@ -298,3 +298,34 @@ jobs:
             live_endurance.csv
             live_endurance.log
           if-no-files-found: warn
+
+  # Sanitizers (ASan+UBSan) : impossible sous MSVC (pas de runtime
+  # asan livre ; UBSan absent de la cible). Le runner Linux a les
+  # runtimes rustup natifs — scripts/fuzz_asan.sh rejoue les corpus
+  # instrumentes et echoue si les symboles __asan/__ubsan sont absents
+  # du binaire (garde « sanitizer arme »).
+  fuzz-san:
+    name: nightly — fuzz ASan/UBSan (linux)
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    env:
+      # Budget par cible et par sanitizer ; 8 cibles x 2 sanitizers.
+      FUZZ_SAN_SEC: '300'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rust-src
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+      - name: campagne sanitizers
+        shell: bash
+        timeout-minutes: 120
+        run: SEC=$FUZZ_SAN_SEC ./scripts/fuzz_asan.sh
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: fuzz-san-artifacts
+          path: fuzz/artifacts/
+          if-no-files-found: warn
