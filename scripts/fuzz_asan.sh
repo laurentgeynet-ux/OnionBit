@@ -81,8 +81,10 @@ for t in $TARGETS; do
             echo "!! $t/$san : symboles $pat absents — sanitizer non arme"
             code=42
         fi
-        execs="$(grep -oE '#[0-9]+ +(DONE|pulse|REDUCE|NEW)' "$log" |
-                 tail -1 | grep -oE '#[0-9]+' | tr -d '#')"
+        # `Done N runs` est emis une fois a la cloture ; les marqueurs
+        # `#N\tDONE` utilisent une tabulation (pas un espace).
+        execs="$(grep -oE 'Done [0-9]+ runs' "$log" | tail -1 |
+                 grep -oE '[0-9]+')"
         crashes="$(find "fuzz/artifacts/$t" -type f 2>/dev/null | wc -l)"
         echo "$(date '+%F %T'),$COMMIT,$t,$san,$SEC,${execs:-0},$crashes,$code" \
             >> "$JOURNAL"
