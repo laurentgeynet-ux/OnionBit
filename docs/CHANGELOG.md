@@ -3,6 +3,24 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Banc sécurité : campagne ASan complète Windows (2026-10-06)
+
+Jambe sanitizers du harnais fuzz rejouée en longueur (fumée 60 s du
+2026-10-05 seulement avant) : `scripts/fuzz_asan_win.ps1`, 8 cibles ×
+600 s sous AddressSanitizer (runtime clang externe via
+`-Zexternal-clangrt`), commit `b821957`.
+
+- **~253 M execs cumulés, 0 crash**, garde « sanitizer armé » vérifiée
+  sur chaque binaire (`armed=True`, symboles `__asan_` présents) :
+  `raw_datagram` 8,0 M ; `tunnel_cell` 80,4 M ; `tunnel_payloads`
+  34,9 M ; `ipv8_packet` 4,0 M ; `unsigned_dispatch` 7,2 M ;
+  `utp_datagram` 99,5 M ; `messaging_frame` 14,2 M ; `messaging_window`
+  3,0 M.
+- Journal : `fuzz/artifacts/fuzz_journal_san_win.csv` ; logs
+  `asan-last-run-*.log`.
+- Reste : jambe **UBSan** (absente de MSVC) sur Linux/CI via
+  `scripts/fuzz_asan.sh` — WSL non installé sur la machine de banc.
+
 ## Messagerie : pseudonyme local des contacts (2026-10-06)
 
 La liste des contacts n'affichait que la clé publique hex (illisible).
