@@ -338,6 +338,7 @@ class RestDiagnosticRepository implements DiagnosticRepository {
     return [
       for (final a in _list(resp, 'attestations'))
         ExtAttestation(
+          curator: '${a['curator'] ?? ''}',
           curatorMid: '${a['curator_mid'] ?? ''}',
           kind: '${a['kind'] ?? ''}',
           subject: '${a['subject'] ?? ''}',
@@ -356,6 +357,24 @@ class RestDiagnosticRepository implements DiagnosticRepository {
     '/ipv8/ext/attest',
     body: {'kind': kind, 'subject': subject, 'verdict': verdict},
   );
+
+  @override
+  Future<ExtTrust> extTrust({
+    required String kind,
+    required String subject,
+  }) async {
+    final resp = await _api.get('/ipv8/ext/trust/$kind/$subject')
+        as Map<String, dynamic>;
+    final t = resp['trust'] as Map<String, dynamic>? ?? const {};
+    return ExtTrust(
+      score: (t['score'] as num?)?.toInt() ?? 0,
+      endorsements: [
+        for (final e in (t['endorsements'] as List?) ?? const []) '$e',
+      ],
+      flags: [for (final f in (t['flags'] as List?) ?? const []) '$f'],
+      attestationCount: (t['attestation_count'] as num?)?.toInt() ?? 0,
+    );
+  }
 
   @override
   Future<String> logs({int maxLines = 200}) =>

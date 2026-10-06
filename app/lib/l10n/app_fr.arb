@@ -172,6 +172,8 @@
   "ctxDirectHop": "Clair",
   "ctxHops": "{count, plural, other{Anon ×{count}}}",
   "ctxRefreshHealth": "Rafraîchir la santé",
+  "ctxEndorse": "Approuver ce torrent",
+  "ctxFlag": "Signaler ce torrent",
   "ctxCopyMagnet": "Copier le lien magnet",
   "ctxCopyInfohash": "Copier l'info-hash",
   "toastAdded": "« {name} » ajouté",
@@ -269,6 +271,22 @@
   "extAttestFlag": "signaler",
   "extAttestPublished": "Attestation publiée et propagée",
   "extAttestInvalid": "Le sujet doit être hex (40 ou 128 caractères)",
+  "extFollowCurator": "Suivre ce curateur (ext/curators — pris en compte au redémarrage)",
+  "extCuratorFollowing": "Curateur déjà suivi",
+  "extCuratorFollowed": "Curateur ajouté — ses verdicts compteront au redémarrage",
+  "extCuratorAlready": "Ce curateur est déjà suivi",
+  "trustTooltipScored": "Confiance locale : {endorsers} approbation(s), {flaggers} signalement(s) de curateurs suivis · {count} attestation(s) vue(s)",
+  "@trustTooltipScored": {
+    "placeholders": {
+      "endorsers": { "type": "int" },
+      "flaggers": { "type": "int" },
+      "count": { "type": "int" }
+    }
+  },
+  "trustTooltipUnscored": "{count} attestation(s) vue(s), aucune d'un curateur suivi — le score reste 0",
+  "@trustTooltipUnscored": {
+    "placeholders": { "count": { "type": "int" } }
+  },
   "emptyConnections": "Aucune connexion connue",
   "emptyConnectionsMsg": "Pairs IPv8, nœuds DHT, cibles de sortie et pairs BitTorrent apparaissent ici.",
   "listenersSection": "Écoute locale",

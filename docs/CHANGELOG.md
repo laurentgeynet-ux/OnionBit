@@ -3,6 +3,28 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## ADR-0015 : boucle de curation bouclée dans le produit (2026-10-06)
+
+- **Score de confiance sur les résultats de recherche** : pastille
+  discrète accolée au nom (`+n` vert / `-n` rouge / gris si
+  attestations non suivies), tooltip détaillant endorsers/flaggers —
+  `GET /api/ipv8/ext/trust/infohash/{hex}`, provider à requête
+  **unique** par sujet (le score n'évolue que par attestation ; un
+  sondage par ligne serait une amplification N+1). Rien n'est affiché
+  quand le sujet est inconnu — pas de bruit sur les lignes.
+- **Attester depuis la recherche** : entrées « Approuver » /
+  « Signaler » du menu contextuel — `AttestDialog` (extrait en
+  widget partagé, pré-rempli `kind=infohash` + sujet) ; le cache du
+  score est invalidé en succès pour refléter le verdict immédiatement.
+- **« Suivre ce curateur »** : bouton sur chaque attestation stockée
+  — ajoute la clé publique complète du signataire à `ext/curators`
+  (redémarrage requis, icône basculée en « suivi »). Ferme la boucle
+  « je vois une attestation → je fais confiance à son auteur → ses
+  verdicts comptent ».
+- Le score reste **local et explicable** : seuls les curateurs suivis
+  comptent ; aucun blocage/tri automatique n'est appliqué — la
+  pastille informe, l'utilisateur décide.
+
 ## ADR-0017 : proposition « transport furtif » anti-censure (2026-10-06)
 
 - Nouvel ADR en statut **Proposée** (aucun code) : inventaire de la

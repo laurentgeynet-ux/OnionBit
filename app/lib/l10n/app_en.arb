@@ -242,6 +242,8 @@
     "placeholders": { "count": { "type": "int" } }
   },
   "ctxRefreshHealth": "Refresh health",
+  "ctxEndorse": "Endorse this torrent",
+  "ctxFlag": "Flag this torrent",
   "ctxCopyMagnet": "Copy magnet link",
   "ctxCopyInfohash": "Copy info-hash",
   "toastAdded": "\"{name}\" added",
@@ -394,6 +396,22 @@
   "extAttestFlag": "flag",
   "extAttestPublished": "Attestation published and gossiped",
   "extAttestInvalid": "Subject must be hex (40 or 128 characters)",
+  "extFollowCurator": "Follow this curator (ext/curators — applied on restart)",
+  "extCuratorFollowing": "Curator already followed",
+  "extCuratorFollowed": "Curator added — its verdicts will count after restart",
+  "extCuratorAlready": "This curator is already followed",
+  "trustTooltipScored": "Local trust: {endorsers} endorsement(s), {flaggers} flag(s) from followed curators · {count} attestation(s) seen",
+  "@trustTooltipScored": {
+    "placeholders": {
+      "endorsers": { "type": "int" },
+      "flaggers": { "type": "int" },
+      "count": { "type": "int" }
+    }
+  },
+  "trustTooltipUnscored": "{count} attestation(s) seen, none from a followed curator — score stays 0",
+  "@trustTooltipUnscored": {
+    "placeholders": { "count": { "type": "int" } }
+  },
   "emptyConnections": "No known connection",
   "emptyConnectionsMsg": "IPv8 peers, DHT nodes, exit targets and BitTorrent peers appear here.",
   "listenersSection": "Local listeners",

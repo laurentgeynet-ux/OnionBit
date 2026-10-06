@@ -819,6 +819,12 @@ risque IPv8 sous/sur-estimé, etc.), avec la date.
   bootstrap hors-bande (liens d'invitation type bridges Tor),
   trames indiscernables de bruit (obfs4-style), tunnel+messagerie
   conservés au-dessus, BitTorrent public exclu. Aucun code engagé.
+- 2026-10-06 (ADR-0015 — **boucle de curation exploitée**) : le score
+  de confiance local sort du diagnostic — pastille ±n sur les
+  résultats de recherche, « Approuver »/« Signaler » au clic droit
+  (dialogue pré-rempli), « suivre ce curateur » depuis les
+  attestations stockées. Requête unique par sujet (pas de polling
+  N+1) ; score local, aucun blocage automatique.
 - 2026-10-06 (UI mécanismes OnionBit complets) : section « OnionBit »
   des Réglages (ext enabled/ledger/obf/curators — restart ; ledger
   collect/enforce tunnel — hot) + onglet Diagnostic enrichi (registre

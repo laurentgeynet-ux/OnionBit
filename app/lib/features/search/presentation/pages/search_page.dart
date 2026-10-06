@@ -13,6 +13,8 @@ import '../../../../core/layout/breakpoints.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../core/widgets/empty_state.dart';
 import '../../../../core/widgets/error_state.dart';
+import '../../../diagnostic/presentation/providers/diagnostic_providers.dart';
+import '../../../diagnostic/presentation/widgets/attest_dialog.dart';
 import '../../../downloads/domain/download.dart';
 import '../../../downloads/presentation/providers/downloads_providers.dart';
 import '../../../downloads/presentation/widgets/add_download_dialog.dart';
@@ -600,13 +602,20 @@ class _ResultRow extends StatelessWidget {
               ),
               Expanded(
                 flex: 5,
-                child: Text.rich(
-                  _highlighted(
-                    context,
-                    r.name.isEmpty ? r.infohash : r.name,
-                    query,
-                  ),
-                  overflow: TextOverflow.ellipsis,
+                child: Row(
+                  children: [
+                    Flexible(
+                      child: Text.rich(
+                        _highlighted(
+                          context,
+                          r.name.isEmpty ? r.infohash : r.name,
+                          query,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    _TrustBadge(infohash: r.infohash),
+                  ],
                 ),
               ),
               SizedBox(
@@ -828,6 +837,9 @@ class _SearchContextMenuState extends ConsumerState<_SearchContextMenu> {
         }
       }),
       const Divider(height: 1),
+      item(Icons.thumb_up_outlined, l10n.ctxEndorse, () => _attest(r, 'endorse')),
+      item(Icons.flag_outlined, l10n.ctxFlag, () => _attest(r, 'flag')),
+      const Divider(height: 1),
       item(Icons.link, l10n.ctxCopyMagnet, () {
         Clipboard.setData(ClipboardData(text: r.magnet));
         _toast(l10n.toastMagnetCopied);
@@ -837,5 +849,68 @@ class _SearchContextMenuState extends ConsumerState<_SearchContextMenu> {
         _toast(l10n.toastInfohashCopied);
       }),
     ];
+  }
+
+  /// Attestation signée sur l'infohash du résultat
+  /// (`POST /api/ipv8/ext/attest`, ADR-0015 §6) — le dialogue est
+  /// pré-rempli ; en succès on invalide le cache du score pour que
+  /// la pastille de la ligne reflète le nouveau verdict.
+  Future<void> _attest(TorrentResult r, String verdict) async {
+    if (r.infohash.isEmpty) return;
+    final ok = await AttestDialog.show(
+      context,
+      subject: r.infohash,
+      verdict: verdict,
+    );
+    if (!ok || !mounted) return;
+    ref
+      ..invalidate(extTrustProvider((kind: 'infohash', subject: r.infohash)))
+      ..invalidate(extAttestationsProvider);
+    _toast(context.l10n.extAttestPublished);
+  }
+}
+
+/// Pastille de confiance locale (ADR-0015 §6) accolée au nom du
+/// résultat : `+n` vert si les curateurs suivis l'endorsent, `-n`
+/// rouge s'il est flagué, gris si attestations sans verdict suivi.
+/// **N'affiche rien** quand le sujet est inconnu — la majorité des
+/// résultats n'a aucune attestation et la ligne resterait bruitée.
+/// `extTrustProvider` est à requête unique (pas de tick) : le score
+/// n'évolue que par attestation, un sondage par ligne serait une
+/// amplification N+1.
+class _TrustBadge extends ConsumerWidget {
+  const _TrustBadge({required this.infohash});
+
+  final String infohash;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    if (infohash.isEmpty) return const SizedBox.shrink();
+    final trust = ref
+        .watch(extTrustProvider((kind: 'infohash', subject: infohash)))
+        .value;
+    if (trust == null || trust.attestationCount == 0) {
+      return const SizedBox.shrink();
+    }
+    final scheme = Theme.of(context).colorScheme;
+    final (color, icon, label) = switch (trust.score) {
+      > 0 => (scheme.primary, Icons.verified, '+${trust.score}'),
+      < 0 => (scheme.error, Icons.gpp_bad, '${trust.score}'),
+      _ => (scheme.outline, Icons.shield_outlined, '0'),
+    };
+    final detail = trust.score != 0
+        ? context.l10n.trustTooltipScored(
+            trust.endorsements.length,
+            trust.flags.length,
+            trust.attestationCount,
+          )
+        : context.l10n.trustTooltipUnscored(trust.attestationCount);
+    return Padding(
+      padding: const EdgeInsets.only(left: AppSpacing.xs),
+      child: Tooltip(
+        message: detail,
+        child: Icon(icon, size: 14, color: color),
+      ),
+    );
   }
 }

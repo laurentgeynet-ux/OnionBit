@@ -12,8 +12,10 @@ import '../../../../core/widgets/empty_state.dart';
 import '../../../../core/widgets/error_state.dart';
 import '../../../downloads/presentation/providers/downloads_providers.dart';
 import '../../../settings/presentation/providers/settings_providers.dart';
+import '../../../settings/presentation/widgets/settings_section.dart';
 import '../../domain/diagnostic_models.dart';
 import '../providers/diagnostic_providers.dart';
+import '../widgets/attest_dialog.dart';
 import '../widgets/speed_test_dialog.dart';
 
 /// Page « Diagnostic » — tout ce qui est interne au réseau vit ici
@@ -744,11 +746,8 @@ class _ExtAttestationsCard extends ConsumerWidget {
 
   Future<void> _publish(BuildContext context, WidgetRef ref) async {
     final l10n = context.l10n;
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (_) => const _AttestDialog(),
-    );
-    if (ok == true) {
+    final ok = await AttestDialog.show(context);
+    if (ok) {
       ref.invalidate(extAttestationsProvider);
       if (context.mounted) {
         ScaffoldMessenger.of(
@@ -792,10 +791,16 @@ class _ExtAttestationsCard extends ConsumerWidget {
                     : a.subject,
                 style: const TextStyle(fontFamily: 'monospace', fontSize: 11),
               ),
-              trailing: Text(
-                a.verdict == 'endorse'
-                    ? l10n.extAttestEndorse
-                    : l10n.extAttestFlag,
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    a.verdict == 'endorse'
+                        ? l10n.extAttestEndorse
+                        : l10n.extAttestFlag,
+                  ),
+                  _FollowCuratorButton(attestation: a),
+                ],
               ),
             ),
           if (atts.isEmpty)
@@ -823,108 +828,59 @@ class _ExtAttestationsCard extends ConsumerWidget {
   }
 }
 
-/// Dialogue « Publier une attestation » (`POST /api/ipv8/ext/attest`)
-/// — `kind` : infohash|channel, `subject` : hex (40 ou 128 chars),
-/// `verdict` : endorse|flag. Rend `true` en succès.
-class _AttestDialog extends ConsumerStatefulWidget {
-  const _AttestDialog();
+/// Bouton « suivre ce curateur » sur une attestation — ajoute la clé
+/// publique complète du signataire à `ext/curators` (restart requis :
+/// la liste n'est lue qu'à la construction de la communauté). Le score
+/// de confiance ne compte que les curateurs suivis, ce bouton ferme
+/// donc la boucle « je vois une attestation → je fais confiance à son
+/// auteur ».
+class _FollowCuratorButton extends ConsumerWidget {
+  const _FollowCuratorButton({required this.attestation});
 
-  @override
-  ConsumerState<_AttestDialog> createState() => _AttestDialogState();
-}
+  final ExtAttestation attestation;
 
-class _AttestDialogState extends ConsumerState<_AttestDialog> {
-  final _subject = TextEditingController();
-  String _kind = 'infohash';
-  String _verdict = 'endorse';
-  bool _sending = false;
-
-  @override
-  void dispose() {
-    _subject.dispose();
-    super.dispose();
-  }
-
-  Future<void> _send() async {
-    final subject = _subject.text.trim();
-    final hexOk = RegExp(r'^[0-9a-fA-F]{40}$|^[0-9a-fA-F]{128}$')
-        .hasMatch(subject);
-    if (!hexOk) {
+  Future<void> _follow(BuildContext context, WidgetRef ref) async {
+    final l10n = context.l10n;
+    final settings = ref.read(daemonSettingsProvider).value;
+    if (settings == null) return;
+    final current =
+        (settingsLeaf(settings, const ['ext', 'curators']) as List?)
+                ?.map((e) => '$e')
+                .toList() ??
+            <String>[];
+    if (current.contains(attestation.curator)) {
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text(context.l10n.extAttestInvalid)));
+      ).showSnackBar(SnackBar(content: Text(l10n.extCuratorAlready)));
       return;
     }
-    setState(() => _sending = true);
-    try {
-      await ref
-          .read(diagnosticRepositoryProvider)
-          .extAttest(kind: _kind, subject: subject, verdict: _verdict);
-      if (mounted) Navigator.of(context).pop(true);
-    } catch (e) {
-      if (mounted) {
-        setState(() => _sending = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(context.l10n.errorMessage('$e'))),
-        );
-      }
-    }
+    await applySettingsPatch(context, ref, {
+      'ext': {
+        'curators': [...current, attestation.curator],
+      },
+    }, successMessage: l10n.extCuratorFollowed);
   }
 
   @override
-  Widget build(BuildContext context) {
-    final l10n = context.l10n;
-    return AlertDialog(
-      title: Text(l10n.extPublishAttest),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          DropdownButtonFormField<String>(
-            initialValue: _kind,
-            decoration: InputDecoration(labelText: l10n.extAttestKind),
-            items: [
-              DropdownMenuItem(value: 'infohash', child: Text('infohash')),
-              DropdownMenuItem(value: 'channel', child: Text('channel')),
-            ],
-            onChanged: (v) => setState(() => _kind = v ?? 'infohash'),
-          ),
-          TextField(
-            controller: _subject,
-            decoration: InputDecoration(
-              labelText: l10n.extAttestSubject,
-              helperText: l10n.extAttestSubjectHint,
-            ),
-            style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
-          ),
-          const SizedBox(height: AppSpacing.sm),
-          SegmentedButton<String>(
-            segments: [
-              ButtonSegment(
-                value: 'endorse',
-                icon: const Icon(Icons.thumb_up_outlined, size: 16),
-                label: Text(l10n.extAttestEndorse),
-              ),
-              ButtonSegment(
-                value: 'flag',
-                icon: const Icon(Icons.flag_outlined, size: 16),
-                label: Text(l10n.extAttestFlag),
-              ),
-            ],
-            selected: {_verdict},
-            onSelectionChanged: (s) => setState(() => _verdict = s.first),
-          ),
-        ],
+  Widget build(BuildContext context, WidgetRef ref) {
+    if (attestation.curator.isEmpty) return const SizedBox.shrink();
+    final settings = ref.watch(daemonSettingsProvider).value;
+    final followed =
+        ((settingsLeaf(settings ?? const {}, const ['ext', 'curators'])
+                        as List?)
+                    ?.map((e) => '$e') ??
+                const <String>[])
+            .contains(attestation.curator);
+    return IconButton(
+      tooltip: followed
+          ? context.l10n.extCuratorFollowing
+          : context.l10n.extFollowCurator,
+      icon: Icon(
+        followed ? Icons.how_to_reg : Icons.person_add_alt_1,
+        size: 16,
       ),
-      actions: [
-        TextButton(
-          onPressed: _sending ? null : () => Navigator.of(context).pop(false),
-          child: Text(l10n.cancel),
-        ),
-        FilledButton(
-          onPressed: _sending ? null : _send,
-          child: Text(l10n.extPublishAttest),
-        ),
-      ],
+      color: followed ? Theme.of(context).colorScheme.primary : null,
+      onPressed: followed ? null : () => _follow(context, ref),
     );
   }
 }

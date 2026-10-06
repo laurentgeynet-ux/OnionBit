@@ -128,6 +128,28 @@ final extAttestationsProvider =
       }
     });
 
+/// Score de confiance local d'un sujet (`kind`/`subject` — ex.
+/// `('infohash', '<hex>')`). **Sans tick** : le score n'évolue que par
+/// attestation (événement rare), un sondage par ligne de résultat
+/// créerait une amplification N+1 ; `autoDispose` + `family` gardent
+/// le cache par sujet le temps que la ligne reste montée. 404 (ext
+/// off) → score neutre.
+final extTrustProvider = FutureProvider.autoDispose
+    .family<ExtTrust, ({String kind, String subject})>((ref, key) async {
+      try {
+        return await ref
+            .watch(diagnosticRepositoryProvider)
+            .extTrust(kind: key.kind, subject: key.subject);
+      } catch (_) {
+        return const ExtTrust(
+          score: 0,
+          endorsements: [],
+          flags: [],
+          attestationCount: 0,
+        );
+      }
+    });
+
 final daemonLogsProvider = FutureProvider.autoDispose<String>((ref) {
   ref.watch(tickProvider(_kDiagnosticPoll));
   return ref.watch(diagnosticRepositoryProvider).logs();

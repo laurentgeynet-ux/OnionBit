@@ -61,6 +61,11 @@ abstract interface class DiagnosticRepository {
     required String verdict,
   });
 
+  /// Score de confiance local d'un sujet
+  /// (`GET /api/ipv8/ext/trust/{kind}/{subject}`) — 404 quand ext
+  /// est désactivée.
+  Future<ExtTrust> extTrust({required String kind, required String subject});
+
   /// Journal du daemon — réponse texte brut (`/api/logging`).
   Future<String> logs({int maxLines = 200});
 

@@ -445,12 +445,17 @@ class ExtLedger {
 /// ADR-0015 §6) — signée par un curateur, verdict ±1.
 class ExtAttestation {
   const ExtAttestation({
+    required this.curator,
     required this.curatorMid,
     required this.kind,
     required this.subject,
     required this.verdict,
     required this.ts,
   });
+
+  /// Clé publique complète du curateur (hex) — nécessaire pour le
+  /// suivre (`ext/curators` attend la clé entière, pas le `mid`).
+  final String curator;
 
   /// `mid` hex du curateur signataire.
   final String curatorMid;
@@ -466,6 +471,27 @@ class ExtAttestation {
 
   /// Horodatage unix de l'attestation.
   final int ts;
+}
+
+/// Score de confiance local d'un sujet
+/// (`GET /api/ipv8/ext/trust/{kind}/{subject}`, ADR-0015 §6) —
+/// alimenté uniquement par les curateurs suivis.
+class ExtTrust {
+  const ExtTrust({
+    required this.score,
+    required this.endorsements,
+    required this.flags,
+    required this.attestationCount,
+  });
+
+  /// Somme des verdicts des curateurs suivis (+1/-1).
+  final int score;
+  final List<String> endorsements;
+  final List<String> flags;
+
+  /// Attestations stockées sur le sujet (toutes curatrices —
+  /// visibilité, pas comptées dans `score`).
+  final int attestationCount;
 }
 
 /// Échantillon de débit d'un speed test de circuit (MiB/s,
