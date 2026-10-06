@@ -139,9 +139,32 @@ pub mod msg {
 
 /// Capacites transport annoncees dans `hello.caps` — bitmap extensible.
 /// Bit 0 = `obf::CAP_OBF_V1` (enveloppes OBF, Phase 9e) — annonce
-/// uniquement quand `ext/obf_enabled` ; les fonctions `attest_*`/
-/// `ledger_*` restent negociees implicitement par `msg_id`.
+/// uniquement quand `ext/obf_enabled` ; bit 1 = `CAP_MSG_V1`
+/// (messagerie anonyme, ADR-0011) — annonce uniquement quand le
+/// service est demarre ; les fonctions `attest_*`/`ledger_*` restent
+/// negociees implicitement par `msg_id`.
 pub const LOCAL_CAPS: u64 = 0;
+
+/// Bit de capacite `hello.caps` : le pair sert la messagerie anonyme
+/// e2e (ADR-0011 — liaisons chiffrees sur circuits du
+/// `tunnel_community`). La capacite vit dans ext (plan de controle)
+/// mais decrit un service du plan de donnees : elle n'est annoncee
+/// que quand `ExtSettings::messaging_enabled` est vrai — le service
+/// reellement demarre — sinon on promettrait une liaison impossible.
+pub const CAP_MSG_V1: u64 = 1 << 1;
+
+/// Noms des capacites connues de `caps` (decodage pour l'API —
+/// l'UI et les bancs n'ont pas a connaitre le bitmap).
+pub fn cap_names(caps: u64) -> Vec<&'static str> {
+    let mut names = Vec::new();
+    if caps & obf::CAP_OBF_V1 != 0 {
+        names.push("obf_v1");
+    }
+    if caps & CAP_MSG_V1 != 0 {
+        names.push("msg_v1");
+    }
+    names
+}
 
 /// Persistance des attestations verifiees (trait injecte — pattern
 /// `GuardStore`/`PeerStatsStore` : `onionbit-ipv8` definit le contrat
@@ -330,6 +353,12 @@ pub struct ExtSettings {
     /// Opt-in, jamais avec un pair qui ne l'a pas annonce (legacy
     /// compris — de toute facon hors `ext_peers`).
     pub obf_enabled: bool,
+    /// ADR-0011 — service messagerie anonyme e2e demarre : annonce
+    /// `CAP_MSG_V1` dans nos `hello` — les pairs ext peuvent savoir
+    /// qu'une liaison messagerie est tuable sans tentative aveugle.
+    /// Pure annonce : les messages voyagent dans le tunnel, jamais
+    /// dans ext.
+    pub messaging_enabled: bool,
     /// Classe de padding OBF (octets) : le plaintext interne est
     /// arrondi au multiple superieur (`obf::OBF_PAD_BUCKET`).
     pub obf_pad_bucket: usize,
@@ -365,6 +394,7 @@ impl Default for ExtSettings {
             ledger_store_max: 65536,
             ledger_head_fanout: 3,
             obf_enabled: false,
+            messaging_enabled: false,
             obf_pad_bucket: obf::OBF_PAD_BUCKET,
             hello_jitter_pct: 25,
         }
@@ -627,6 +657,11 @@ impl OnionbitExtCommunity {
         // localement — on ne promet pas une capacite desactivee.
         if settings.obf_enabled {
             settings.caps |= obf::CAP_OBF_V1;
+        }
+        // `CAP_MSG_V1` idem : annonce seulement quand le service
+        // messagerie est demarre cote tunnel.
+        if settings.messaging_enabled {
+            settings.caps |= CAP_MSG_V1;
         }
         let ledger_store_max = settings.ledger_store_max;
         let community = Arc::new(Self {
@@ -2224,6 +2259,47 @@ mod tests {
             }
         }
         assert_eq!(hellos_to_a, 1);
+    }
+
+    /// `CAP_MSG_V1` (ADR-0011/0015) : annoncee seulement quand
+    /// `messaging_enabled` — A sert la messagerie, B non ; B
+    /// observe le bit sur A, A n'observe pas le bit sur B.
+    #[tokio::test]
+    async fn cap_msg_v1_annoncee_et_observee() {
+        let (a, _ea, _aa, _ka) = node_full(ExtSettings {
+            messaging_enabled: true,
+            ..ExtSettings::default()
+        })
+        .await;
+        let (b, _eb, addr_b, key_b) = node(0).await;
+        assert_eq!(a.settings.caps & CAP_MSG_V1, CAP_MSG_V1);
+        assert_eq!(b.settings.caps & CAP_MSG_V1, 0);
+        // `CAP_OBF_V1` inchange : pas de bit obf sans `obf_enabled`.
+        assert_eq!(a.settings.caps & obf::CAP_OBF_V1, 0);
+
+        link_ext(&a, &b, &addr_b, &key_b.public_key().to_bin()).await;
+
+        // B voit A comme messagerie-capable.
+        let pk_a = a.key.public_key().to_bin();
+        wait_until(move || {
+            b.ext_peers
+                .lock()
+                .unwrap()
+                .get(&pk_a)
+                .is_some_and(|p| p.caps & CAP_MSG_V1 == CAP_MSG_V1)
+        })
+        .await;
+        // A voit B sans le bit (messaging desactive cote B).
+        wait_until(move || {
+            a.ext_peers
+                .lock()
+                .unwrap()
+                .get(&key_b.public_key().to_bin())
+                .is_some_and(|p| p.caps & CAP_MSG_V1 == 0)
+        })
+        .await;
+        // Decodage API : le nom est expose.
+        assert_eq!(cap_names(CAP_MSG_V1), vec!["msg_v1"]);
     }
 
     /// `hello` avec version inconnue : droppe — le pair n'est ni

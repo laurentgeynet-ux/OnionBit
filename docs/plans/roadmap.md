@@ -811,6 +811,16 @@ Ajouter ici, au fil de l'avancement, tout écart constaté par rapport au
 plan initial (dépendance qui ne convient pas, étape scindée en deux,
 risque IPv8 sous/sur-estimé, etc.), avec la date.
 
+- 2026-10-06 (ADR-0015/ADR-0011 — `CAP_MSG_V1`, bit 1 de
+  `hello.caps`) : pont de découverte entre ext et la messagerie
+  anonyme. Le service reste dans `onionbit-tunnel` (plan de données —
+  circuits + lanes e2e chiffrées) ; ext n'annonce que la capacité
+  dans son `hello` — deux installs OnionBit savent qu'une liaison
+  messagerie est tuable sans tentative aveugle. Annoncé seulement si
+  le service est réellement démarré (`messaging_enabled` + tunnel
+  actif) ; `messaging_enabled` est déjà `true` par défaut dans la
+  config tunnel — les installs par défaut l'annoncent donc. API :
+  `caps_names` décodé dans `GET /api/ipv8/ext` (local + par pair).
 - 2026-10-06 (ADR-0015 — `ext.enabled` **on par défaut**) : écart au
   plan initial qui prévoyait l'activation « après validation ». La
   validation terrain étant verte (T1 + soak + bancs interop), le

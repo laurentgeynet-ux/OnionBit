@@ -72,6 +72,10 @@ Implémentation (`onionbit-ipv8::ext`) : `EXT_COMMUNITY_ID` =
 `922d2ad9ce00b0d84952638cfc227dc1343c1aa4` =
 `sha1("OnionBit extension community")` (constante de domaine, aucune
 clé maîtresse) ; `hello` = `{v: u8, caps: u64}` signé `ez_send`,
+bitmap `caps` extensible — bit 0 `CAP_OBF_V1` (enveloppes OBF,
+si `ext/obf_enabled`), bit 1 `CAP_MSG_V1` (messagerie anonyme
+ADR-0011, si `tunnel_community/messaging_enabled` et tunnel actif —
+pure annonce, les liaisons e2e restent dans le tunnel) —,
 cooldown par pair pour la re-sollicitation comme pour la réponse
 (pas de ping-pong) ; `ext/enabled` défaut **on** depuis la
 validation terrain (2026-10-06 — T1 silence legacy + soak 10/10 +

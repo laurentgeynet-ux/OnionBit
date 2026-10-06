@@ -223,9 +223,10 @@ pub struct Ipv8Config {
     /// Extension Rust (ADR-0011) : demarre le service messagerie e2e
     /// — le demon joint le swarm `messaging_hash(pk)` (seeder avec
     /// la cle d'identite), maintient des points d'introduction et
-    /// accepte les liaisons de contacts. Desactive par defaut tant
-    /// que les bancs `MS-*` (docs/plans/bancs_tests.md SS4.11)
-    /// n'ont pas valide l'ensemble. Necessite `enable_anonymity`.
+    /// accepte les liaisons de contacts. `true` par defaut (bancs
+    /// `MS-*` + interop messaging 19/19 valides) ; annonce
+    /// `CAP_MSG_V1` dans les `hello` ext quand la communaute tourne.
+    /// Necessite `enable_anonymity`.
     pub enable_messaging: bool,
     /// Extension Rust (ADR-0011) : sauts des circuits messagerie
     /// (`hops` de `join_swarm` — meme echelle que `anon_hops` : 1 =
@@ -363,7 +364,10 @@ impl Ipv8Config {
             exit_inbound_max_sources: DEFAULT_EXIT_INBOUND_MAX_SOURCES,
             stats_rate_sample_ms: DEFAULT_STATS_RATE_SAMPLE_MS,
             stats_rate_window_secs: DEFAULT_STATS_RATE_WINDOW_SECS,
-            enable_messaging: false,
+            // Meme defaut que `TunnelCommunityConfig::default()` :
+            // messagerie ADR-0011 active — annoncee via `CAP_MSG_V1`
+            // du hello ext (ADR-0015).
+            enable_messaging: true,
             messaging_hops: DEFAULT_MESSAGING_HOPS,
             ledger_enabled: true,
             ledger_enforce: false,
@@ -1700,6 +1704,11 @@ impl Ipv8Stack {
                     ledger_head_fanout: config.ext_ledger_head_fanout as usize,
                     obf_enabled: config.ext_obf_enabled,
                     obf_pad_bucket: config.ext_obf_pad_bucket.max(16) as usize,
+                    // `CAP_MSG_V1` : annonce seulement quand le
+                    // service messagerie ADR-0011 demarre
+                    // reellement — il faut le tunnel (`enable_anonymity`)
+                    // pour porter les lanes e2e.
+                    messaging_enabled: config.enable_messaging && config.enable_anonymity,
                     hello_jitter_pct: config.ext_hello_jitter_pct.min(100) as u8,
                     ..onionbit_ipv8::ext::ExtSettings::default()
                 },

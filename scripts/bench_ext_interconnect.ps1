@@ -178,6 +178,15 @@ try {
     if ($eB.ext.PSObject.Properties['hello_tx']) { $hB = [int]$eB.ext.hello_tx }
     Oracle 'B-hello-emis' ($hA -ge 1 -and $hB -ge 1) "hello_tx A=$hA B=$hB"
 
+    # CAP_MSG_V1 (bit 1 de hello.caps, ADR-0011/0015) : les deux
+    # noeuds ont tunnel_community.messaging_enabled=true par defaut
+    # -> chacun annonce "msg_v1" localement et l'observe sur le pair.
+    $capLoc = ($eA.ext.caps_names -contains 'msg_v1') -and ($eB.ext.caps_names -contains 'msg_v1')
+    $capPA = @($eA.ext.peers | Where-Object { $_.caps_names -contains 'msg_v1' }).Count
+    $capPB = @($eB.ext.peers | Where-Object { $_.caps_names -contains 'msg_v1' }).Count
+    Oracle 'B-cap-msg-v1' ($capLoc -and $capPA -ge 1 -and $capPB -ge 1) `
+        "msg_v1 local=$capLoc pairs_observees A=$capPA B=$capPB (decouverte messagerie)"
+
     # ---------- Journal ----------
     $commit = 'inconnu'
     try { $commit = (git -C $root rev-parse --short HEAD 2>$null).Trim() } catch {}

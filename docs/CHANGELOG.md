@@ -3,6 +3,24 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## ADR-0015 : `CAP_MSG_V1` — découverte de la messagerie par `hello.caps` (2026-10-06)
+
+- **Pont ext ↔ messagerie** : bit 1 du bitmap `hello.caps` annonce que
+  le pair sert la messagerie anonyme e2e (ADR-0011). La capacité vit
+  dans ext (plan de contrôle) mais décrit un service du plan de
+  données : elle n'est annoncée que quand le `MessagingService` est
+  réellement démarré (`tunnel_community.messaging_enabled` **et**
+  tunnel actif — `enable_messaging && enable_anonymity` côté stack),
+  sinon on promettrait une liaison impossible. Les messages eux-mêmes
+  restent dans `onionbit-tunnel` — jamais dans ext.
+- **Exposition** : `ExtPeerInfo.caps` remontait déjà en brut ;
+  `/api/ipv8/ext` ajoute `caps_names` (local + par pair) via
+  `ext::cap_names` — la UI peut afficher « messagerie supportée »
+  sans connaître le bitmap.
+- **Test** `cap_msg_v1_annoncee_et_observee` : bit présent/absent
+  selon `messaging_enabled`, propagation hello→peer observer, OBF
+  inchangé.
+
 ## ADR-0015 : `ext.enabled` activé par défaut (2026-10-06)
 
 - **Bascule du défaut produit** : `ExtConfig::default().enabled` passe

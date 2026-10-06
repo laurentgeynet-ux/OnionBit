@@ -441,6 +441,7 @@ pub async fn get_ext(State(state): State<AppState>) -> Response {
             serde_json::json!({
                 "mid": p.mid,
                 "caps": p.caps,
+                "caps_names": onionbit_ipv8::ext::cap_names(p.caps),
                 "last_hello_secs": p.last_hello_secs,
             })
         })
@@ -452,6 +453,7 @@ pub async fn get_ext(State(state): State<AppState>) -> Response {
             "hello_fanout": info.hello_fanout,
             "hello_cooldown_secs": info.hello_cooldown_secs,
             "caps": info.caps,
+            "caps_names": onionbit_ipv8::ext::cap_names(info.caps),
             "peer_count": info.peer_count,
             "peers": peers,
             // Compteurs du chemin ATTEST — oracles des bancs
