@@ -395,6 +395,79 @@ class ExtInfo {
   final List<ExtPeerInfo> peers;
 }
 
+/// Lien bilatéral du registre ext (`GET /api/ipv8/ext/ledger` →
+/// `links[]`) — positions `seq_a`/`seq_b` signées des deux côtés.
+class ExtLedgerLink {
+  const ExtLedgerLink({
+    required this.pkAMid,
+    required this.seqA,
+    required this.pkBMid,
+    required this.seqB,
+    required this.sealed,
+    required this.hash,
+  });
+
+  final String pkAMid;
+  final int seqA;
+  final String pkBMid;
+  final int seqB;
+
+  /// `true` = lien complet (deux signatures — reglable), `false` =
+  /// proposition en vol.
+  final bool sealed;
+  final String hash;
+}
+
+/// Registre bilatéral ext (`GET /api/ipv8/ext/ledger`, ADR-0015 §5).
+class ExtLedger {
+  const ExtLedger({
+    required this.enabled,
+    required this.linksCount,
+    required this.pending,
+    required this.forks,
+    required this.myHeadSeq,
+    required this.myHeadHash,
+    required this.links,
+  });
+
+  final bool enabled;
+  final int linksCount;
+  final int pending;
+  final int forks;
+
+  /// Position et hash de notre tête de chaîne.
+  final int myHeadSeq;
+  final String myHeadHash;
+  final List<ExtLedgerLink> links;
+}
+
+/// Attestation de curation stockée (`GET /api/ipv8/ext/attestations`,
+/// ADR-0015 §6) — signée par un curateur, verdict ±1.
+class ExtAttestation {
+  const ExtAttestation({
+    required this.curatorMid,
+    required this.kind,
+    required this.subject,
+    required this.verdict,
+    required this.ts,
+  });
+
+  /// `mid` hex du curateur signataire.
+  final String curatorMid;
+
+  /// `infohash` | `channel`.
+  final String kind;
+
+  /// Sujet hex (info-hash ou clé LibNaCl du canal).
+  final String subject;
+
+  /// `endorse` | `flag`.
+  final String verdict;
+
+  /// Horodatage unix de l'attestation.
+  final int ts;
+}
+
 /// Échantillon de débit d'un speed test de circuit (MiB/s,
 /// `speed: {"up", "down"}` pyipv8).
 class SpeedSample {

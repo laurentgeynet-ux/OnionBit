@@ -811,6 +811,10 @@ Ajouter ici, au fil de l'avancement, tout écart constaté par rapport au
 plan initial (dépendance qui ne convient pas, étape scindée en deux,
 risque IPv8 sous/sur-estimé, etc.), avec la date.
 
+- 2026-10-06 (UI mécanismes OnionBit complets) : section « OnionBit »
+  des Réglages (ext enabled/ledger/obf/curators — restart ; ledger
+  collect/enforce tunnel — hot) + onglet Diagnostic enrichi (registre
+  bilatéral, attestations + publication signée depuis l'UI).
 - 2026-10-06 (UI Diagnostic — onglet « OnionBit ») : `caps_names`
   exposé à l'utilisateur — état local de la communauté ext et pairs
   OnionBit reconnus avec leurs capacités en pastilles.

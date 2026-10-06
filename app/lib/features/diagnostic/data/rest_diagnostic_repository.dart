@@ -299,6 +299,64 @@ class RestDiagnosticRepository implements DiagnosticRepository {
     );
   }
 
+  /// `/api/ipv8/ext/ledger` → `{ledger: {…, links}}` — registre
+  /// bilatéral signé (ADR-0015 §5).
+  @override
+  Future<ExtLedger> extLedger() async {
+    final resp = await _api.get('/ipv8/ext/ledger') as Map<String, dynamic>;
+    final l = resp['ledger'] as Map<String, dynamic>? ?? const {};
+    final head = l['my_head'] as Map<String, dynamic>? ?? const {};
+    return ExtLedger(
+      enabled: l['enabled'] == true,
+      linksCount: (l['links_count'] as num?)?.toInt() ?? 0,
+      pending: (l['pending'] as num?)?.toInt() ?? 0,
+      forks: (l['forks'] as num?)?.toInt() ?? 0,
+      myHeadSeq: (head['seq'] as num?)?.toInt() ?? 0,
+      myHeadHash: '${head['hash'] ?? ''}',
+      links: [
+        for (final x in (l['links'] as List?) ?? const [])
+          if (x is Map<String, dynamic>)
+            ExtLedgerLink(
+              pkAMid: '${x['pk_a_mid'] ?? ''}',
+              seqA: (x['seq_a'] as num?)?.toInt() ?? 0,
+              pkBMid: '${x['pk_b_mid'] ?? ''}',
+              seqB: (x['seq_b'] as num?)?.toInt() ?? 0,
+              sealed: x['sealed'] == true,
+              hash: '${x['hash'] ?? ''}',
+            ),
+      ],
+    );
+  }
+
+  /// `/api/ipv8/ext/attestations` → `{attestations}` — 404 quand la
+  /// communauté est désactivée (remonté en liste vide : l'onglet
+  /// affiche simplement « aucune »).
+  @override
+  Future<List<ExtAttestation>> extAttestations() async {
+    final resp = await _api.get('/ipv8/ext/attestations')
+        as Map<String, dynamic>;
+    return [
+      for (final a in _list(resp, 'attestations'))
+        ExtAttestation(
+          curatorMid: '${a['curator_mid'] ?? ''}',
+          kind: '${a['kind'] ?? ''}',
+          subject: '${a['subject'] ?? ''}',
+          verdict: '${a['verdict'] ?? ''}',
+          ts: (a['ts'] as num?)?.toInt() ?? 0,
+        ),
+    ];
+  }
+
+  @override
+  Future<void> extAttest({
+    required String kind,
+    required String subject,
+    required String verdict,
+  }) => _api.post(
+    '/ipv8/ext/attest',
+    body: {'kind': kind, 'subject': subject, 'verdict': verdict},
+  );
+
   @override
   Future<String> logs({int maxLines = 200}) =>
       _api.getText('/logging', query: {'max_lines': '$maxLines'});

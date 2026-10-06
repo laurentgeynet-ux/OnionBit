@@ -564,8 +564,9 @@ Widget _extCapChip(BuildContext context, String label, IconData icon) {
 }
 
 /// Onglet « OnionBit » — communauté d'extension (ADR-0015) : état
-/// local (activation + capacités annoncées dans nos `hello`) et pairs
-/// OnionBit reconnus avec leurs capacités (`caps_names`).
+/// local (activation + capacités annoncées dans nos `hello`), pairs
+/// OnionBit reconnus avec leurs capacités (`caps_names`), registre
+/// bilatéral et attestations de curation.
 class _ExtTab extends ConsumerWidget {
   const _ExtTab();
 
@@ -661,9 +662,267 @@ class _ExtTab extends ConsumerWidget {
                             ),
                       trailing: Text(l10n.extHelloAge(p.lastHelloSecs)),
                     ),
+                const _ExtLedgerCard(),
+                const _ExtAttestationsCard(),
               ],
             ),
           ),
+        ),
+      ],
+    );
+  }
+}
+
+/// Carte « Registre bilatéral » de l'onglet OnionBit — liens signés
+/// ext (`GET /api/ipv8/ext/ledger`) : compteurs + derniers liens.
+class _ExtLedgerCard extends ConsumerWidget {
+  const _ExtLedgerCard();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final l10n = context.l10n;
+    final value = ref.watch(extLedgerProvider);
+    return Card(
+      child: ExpansionTile(
+        dense: true,
+        leading: const Icon(Icons.receipt_long_outlined, size: 20),
+        title: Text(l10n.extLedgerSection),
+        subtitle: value.when(
+          loading: () => null,
+          error: (_, _) => null,
+          data: (l) => Text(
+            l.enabled
+                ? l10n.extLedgerStats(l.linksCount, l.pending, l.forks)
+                : l10n.extLedgerDisabled,
+          ),
+        ),
+        children: [
+          ...value.when(
+            loading: () => [
+              const Padding(
+                padding: EdgeInsets.all(AppSpacing.sm),
+                child: LinearProgressIndicator(),
+              ),
+            ],
+            error: (_, _) => const [],
+            data: (l) => [
+              for (final link in l.links)
+                ListTile(
+                  dense: true,
+                  leading: Icon(
+                    link.sealed ? Icons.lock_outline : Icons.schedule_outlined,
+                    size: 16,
+                  ),
+                  title: Text(
+                    '${link.pkAMid} #${link.seqA} → ${link.pkBMid} #${link.seqB}',
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+                  ),
+                  subtitle: Text(
+                    link.hash.length > 24
+                        ? '${link.hash.substring(0, 24)}…'
+                        : link.hash,
+                    style: const TextStyle(fontFamily: 'monospace', fontSize: 11),
+                  ),
+                  trailing: Text(
+                    link.sealed ? l10n.extSealed : l10n.extPendingLink,
+                  ),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Carte « Attestations » de l'onglet OnionBit — curation signée
+/// (`GET /api/ipv8/ext/attestations`) + publication
+/// (`POST /api/ipv8/ext/attest`).
+class _ExtAttestationsCard extends ConsumerWidget {
+  const _ExtAttestationsCard();
+
+  Future<void> _publish(BuildContext context, WidgetRef ref) async {
+    final l10n = context.l10n;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => const _AttestDialog(),
+    );
+    if (ok == true) {
+      ref.invalidate(extAttestationsProvider);
+      if (context.mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(l10n.extAttestPublished)));
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final l10n = context.l10n;
+    final atts = ref.watch(extAttestationsProvider).value ?? const [];
+    return Card(
+      child: ExpansionTile(
+        dense: true,
+        leading: const Icon(Icons.verified_outlined, size: 20),
+        title: Text(l10n.extAttestationsSection),
+        subtitle: Text('${atts.length}'),
+        children: [
+          for (final a in atts)
+            ListTile(
+              dense: true,
+              leading: Icon(
+                a.verdict == 'endorse'
+                    ? Icons.thumb_up_outlined
+                    : Icons.flag_outlined,
+                size: 16,
+                color: a.verdict == 'endorse'
+                    ? Theme.of(context).colorScheme.primary
+                    : Theme.of(context).colorScheme.error,
+              ),
+              title: Text(
+                '${a.curatorMid} · ${a.kind}',
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+              ),
+              subtitle: Text(
+                a.subject.length > 24
+                    ? '${a.subject.substring(0, 24)}…'
+                    : a.subject,
+                style: const TextStyle(fontFamily: 'monospace', fontSize: 11),
+              ),
+              trailing: Text(
+                a.verdict == 'endorse'
+                    ? l10n.extAttestEndorse
+                    : l10n.extAttestFlag,
+              ),
+            ),
+          if (atts.isEmpty)
+            Padding(
+              padding: const EdgeInsets.all(AppSpacing.sm),
+              child: Text(l10n.emptyAttestations),
+            ),
+          Align(
+            alignment: Alignment.centerRight,
+            child: Padding(
+              padding: const EdgeInsets.only(
+                right: AppSpacing.md,
+                bottom: AppSpacing.sm,
+              ),
+              child: FilledButton.tonalIcon(
+                onPressed: () => _publish(context, ref),
+                icon: const Icon(Icons.add, size: 18),
+                label: Text(l10n.extPublishAttest),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Dialogue « Publier une attestation » (`POST /api/ipv8/ext/attest`)
+/// — `kind` : infohash|channel, `subject` : hex (40 ou 128 chars),
+/// `verdict` : endorse|flag. Rend `true` en succès.
+class _AttestDialog extends ConsumerStatefulWidget {
+  const _AttestDialog();
+
+  @override
+  ConsumerState<_AttestDialog> createState() => _AttestDialogState();
+}
+
+class _AttestDialogState extends ConsumerState<_AttestDialog> {
+  final _subject = TextEditingController();
+  String _kind = 'infohash';
+  String _verdict = 'endorse';
+  bool _sending = false;
+
+  @override
+  void dispose() {
+    _subject.dispose();
+    super.dispose();
+  }
+
+  Future<void> _send() async {
+    final subject = _subject.text.trim();
+    final hexOk = RegExp(r'^[0-9a-fA-F]{40}$|^[0-9a-fA-F]{128}$')
+        .hasMatch(subject);
+    if (!hexOk) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(context.l10n.extAttestInvalid)));
+      return;
+    }
+    setState(() => _sending = true);
+    try {
+      await ref
+          .read(diagnosticRepositoryProvider)
+          .extAttest(kind: _kind, subject: subject, verdict: _verdict);
+      if (mounted) Navigator.of(context).pop(true);
+    } catch (e) {
+      if (mounted) {
+        setState(() => _sending = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(context.l10n.errorMessage('$e'))),
+        );
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = context.l10n;
+    return AlertDialog(
+      title: Text(l10n.extPublishAttest),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          DropdownButtonFormField<String>(
+            initialValue: _kind,
+            decoration: InputDecoration(labelText: l10n.extAttestKind),
+            items: [
+              DropdownMenuItem(value: 'infohash', child: Text('infohash')),
+              DropdownMenuItem(value: 'channel', child: Text('channel')),
+            ],
+            onChanged: (v) => setState(() => _kind = v ?? 'infohash'),
+          ),
+          TextField(
+            controller: _subject,
+            decoration: InputDecoration(
+              labelText: l10n.extAttestSubject,
+              helperText: l10n.extAttestSubjectHint,
+            ),
+            style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          SegmentedButton<String>(
+            segments: [
+              ButtonSegment(
+                value: 'endorse',
+                icon: const Icon(Icons.thumb_up_outlined, size: 16),
+                label: Text(l10n.extAttestEndorse),
+              ),
+              ButtonSegment(
+                value: 'flag',
+                icon: const Icon(Icons.flag_outlined, size: 16),
+                label: Text(l10n.extAttestFlag),
+              ),
+            ],
+            selected: {_verdict},
+            onSelectionChanged: (s) => setState(() => _verdict = s.first),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: _sending ? null : () => Navigator.of(context).pop(false),
+          child: Text(l10n.cancel),
+        ),
+        FilledButton(
+          onPressed: _sending ? null : _send,
+          child: Text(l10n.extPublishAttest),
         ),
       ],
     );

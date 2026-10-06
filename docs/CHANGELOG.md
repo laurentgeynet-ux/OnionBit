@@ -3,6 +3,22 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## UI : mécanismes OnionBit complets — réglages + Diagnostic enrichi (2026-10-06)
+
+- **Section « OnionBit » des Réglages** (`onionbit_section.dart`) :
+  `ext/enabled`, `ext/ledger_enabled`, `ext/obf_enabled`,
+  `ext/curators` (champ différé, clés hex) — tous appliqués au
+  redémarrage ; `tunnel_community/ledger_enabled` +
+  `tunnel_community/ledger_enforce` (gate sign-then-serve) rechargés
+  à chaud. Défauts `kOnionBitDefaults` + recherche de sections.
+- **Onglet « OnionBit » enrichi** : carte « Registre bilatéral »
+  (`GET /api/ipv8/ext/ledger` — liens scellés/en vol, forks) et
+  carte « Attestations » (`GET …/attestations` + dialogue de
+  publication `POST …/attest` : kind infohash/channel, sujet hex
+  validé 40/128, verdict endorse/flag).
+- Chaîne complète : modèles `ExtLedger`/`ExtLedgerLink`/
+  `ExtAttestation`, méthodes repo, providers sondés à 5 s, i18n en+fr.
+
 ## UI : onglet « OnionBit » dans le Diagnostic (2026-10-06)
 
 - Nouvel onglet (13ᵉ) de la page Diagnostic : consomme

@@ -17,6 +17,7 @@ import '../widgets/connection_section.dart';
 import '../widgets/daemon_section.dart';
 import '../widgets/downloads_section.dart';
 import '../widgets/network_section.dart';
+import '../widgets/onionbit_section.dart';
 import '../widgets/queue_section.dart';
 import '../widgets/seeding_section.dart';
 import '../widgets/versioning_section.dart';
@@ -30,6 +31,7 @@ enum _SectionId {
   queue,
   seeding,
   anonymity,
+  onionbit,
   network,
   automation,
   versioning,
@@ -46,6 +48,7 @@ extension on _SectionId {
     _SectionId.queue => l10n.sectionQueue,
     _SectionId.seeding => l10n.sectionSeeding,
     _SectionId.anonymity => l10n.sectionAnonymity,
+    _SectionId.onionbit => l10n.sectionOnionBit,
     _SectionId.network => l10n.sectionNetwork,
     _SectionId.automation => l10n.sectionAutomation,
     _SectionId.versioning => l10n.sectionVersioning,
@@ -122,6 +125,15 @@ final _kSections = <_SectionEntry>[
         'exitnode sortie test vitesse exit speed anonymous',
     sectionId: 'anonymity',
     child: const AnonymitySection(),
+  ),
+  _SectionEntry(
+    id: _SectionId.onionbit,
+    keywords:
+        'onionbit ext extension ledger registre comptabilité '
+        'accounting obf obfuscation curateurs curators trust '
+        'confiance attest sign-then-serve enforce msg_v1',
+    sectionId: 'onionbit',
+    child: const OnionBitSection(),
   ),
   _SectionEntry(
     id: _SectionId.network,

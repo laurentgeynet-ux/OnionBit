@@ -44,6 +44,23 @@ abstract interface class DiagnosticRepository {
   /// ADR-0015 — extension Rust sans équivalent pyipv8).
   Future<ExtInfo> extInfo();
 
+  /// Registre bilatéral signé de la communauté ext
+  /// (`GET /api/ipv8/ext/ledger`).
+  Future<ExtLedger> extLedger();
+
+  /// Attestations de curation stockées, les plus récentes
+  /// (`GET /api/ipv8/ext/attestations`).
+  Future<List<ExtAttestation>> extAttestations();
+
+  /// Publie une attestation signée par notre clé
+  /// (`POST /api/ipv8/ext/attest` — `kind` : `infohash`|`channel`,
+  /// `verdict` : `endorse`|`flag`).
+  Future<void> extAttest({
+    required String kind,
+    required String subject,
+    required String verdict,
+  });
+
   /// Journal du daemon — réponse texte brut (`/api/logging`).
   Future<String> logs({int maxLines = 200});
 

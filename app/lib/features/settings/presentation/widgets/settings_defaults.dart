@@ -51,6 +51,13 @@ const kAnonymityDefaults = <String, dynamic>{
   },
 };
 
+/// Mécanismes OnionBit — `ExtConfig::default()` (communauté ext,
+/// ADR-0015) + comptabilité tunnel (`TunnelCommunityConfig`).
+const kOnionBitDefaults = <String, dynamic>{
+  'ext': {'enabled': true, 'ledger_enabled': true, 'obf_enabled': false, 'curators': <String>[]},
+  'tunnel_community': {'ledger_enabled': true, 'ledger_enforce': false},
+};
+
 /// Découverte/proxy — `EngineConfig::default()` (tout activé, pas de
 /// proxy).
 const kNetworkDefaults = <String, dynamic>{

@@ -106,6 +106,28 @@ final extInfoProvider = FutureProvider.autoDispose<ExtInfo>((ref) {
   return ref.watch(diagnosticRepositoryProvider).extInfo();
 });
 
+/// Registre bilatéral ext (`/api/ipv8/ext/ledger`) — onglet OnionBit.
+/// Ext désactivée → `ExtLedger.enabled=false` (le endpoint répond
+/// toujours, pas d'exception à masquer).
+final extLedgerProvider = FutureProvider.autoDispose<ExtLedger>((ref) {
+  ref.watch(tickProvider(_kDiagnosticPoll));
+  return ref.watch(diagnosticRepositoryProvider).extLedger();
+});
+
+/// Attestations de curation stockées — 404 quand ext est désactivée
+/// → liste vide (l'onglet affiche « aucune » plutôt qu'une erreur).
+final extAttestationsProvider =
+    FutureProvider.autoDispose<List<ExtAttestation>>((ref) async {
+      ref.watch(tickProvider(_kDiagnosticPoll));
+      try {
+        return await ref
+            .watch(diagnosticRepositoryProvider)
+            .extAttestations();
+      } catch (_) {
+        return const <ExtAttestation>[];
+      }
+    });
+
 final daemonLogsProvider = FutureProvider.autoDispose<String>((ref) {
   ref.watch(tickProvider(_kDiagnosticPoll));
   return ref.watch(diagnosticRepositoryProvider).logs();
