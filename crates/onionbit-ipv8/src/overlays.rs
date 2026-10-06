@@ -153,6 +153,7 @@ pub fn ext_msg_name(msg_id: u8) -> Option<&'static str> {
         5 => Some("on_ledger_head"),
         6 => Some("on_ledger_reject"),
         7 => Some("on_ledger_fork"),
+        8 => Some("on_obf"),
         _ => None,
     }
 }

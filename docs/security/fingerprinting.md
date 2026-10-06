@@ -274,3 +274,40 @@ Proprietes verifiees par le meme banc :
 - **assumee** : la periodicite d'annonce rend un nœud messagerie
   detectable par un observateur DHT — metadonnee documentee dans
   `threat_model.md`, pas dissimulee (v1).
+
+## Banc 47.1 — empreinte de la communaute ext (2026-10-06)
+
+Scenario : `fingerprint_mesh.ps1 -WithExt -WithAnonDownload`, mesh
+ferme 4 OnionBit + 1 Tribler, 15 min, echantillonnage 5 s. `ext` est
+active sur les quatre noeuds OnionBit (curateur = A1, qui publie une
+attestation a t+60 s) — couvre `hello`, le gossip `ATTEST` et le
+ledger bilateral (Phase 9c rebasée sur master `0e70a85`).
+
+| Mesure | OnionBit D (ext on) | Tribler T |
+|---|---|---|
+| Endpoint delta 15 min | ~4,18 Mo up / ~4,06 Mo down (~4,6 Ko/s) | ~1,80 Mo up / ~1,65 Mo down (~2,0 Ko/s) |
+| Circuits DATA READY | 4 | 4 |
+| `hello` ext emis | **4 datagrammes** en 15 min | n/a |
+| `ATTEST` | rx 3 / tx 2 (~250 B chacun, pic unique a t+60 s puis extinction) | n/a |
+| `LEDGER_*` | **0 datagramme** | n/a |
+
+- **Volume ext total : ~1,5 Ko sur 15 min (~0,03 % de l'endpoint)** —
+  sous le plancher de bruit. La divergence D/T (~2,3×) est inchangee
+  par rapport a la baseline sans ext : elle vient du churn discovery,
+  pas de l'extension.
+- **Le ledger ne produit aucun trafic au repos** — ses messages sont
+  declenches par les tranches de trafic tunnel reellement servi
+  (`ledger_tranche_bytes`, 16 Mio par defaut) : un magnet en stall
+  ne les franchit jamais. Phase 9c n'ajoute aucune cadence
+  observable.
+- Surface de detection restante (metadonnees assumees, ADR
+  §Consequences) : le prefixe `community_id` dedie lui-meme, la
+  cadence ~60 s du `hello` quand un pair est sondable, et le pic
+  bref du gossip `ATTEST`. C'est exactement le perimetre de la
+  Phase 9e : opacifier le *contenu* (enveloppe `OBF` : msg_id +
+  padding sous AEAD de paire) et jitter la cadence `hello` — le
+  volume n'a pas besoin de chaff, il est deja negligeable.
+
+Baseline remplie : la mesure prealable exigee par ADR §7 avant
+l'obfuscation est acquise (`ext` ≈ invisible en volume ; la parite
+d'empreinte reste gouvernee par la divergence discovery connue).

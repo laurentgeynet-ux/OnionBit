@@ -11,8 +11,9 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
+use onionbit_crypto::ipv8::keys::LibNaClSecretKey;
 use onionbit_ipv8::ext::{
-    ledger::LedgerLink, Attestation, Hello, EXT_COMMUNITY_ID, WIRE_EXT,
+    ledger::LedgerLink, obf, Attestation, Hello, EXT_COMMUNITY_ID, WIRE_EXT,
 };
 use onionbit_ipv8::packet::Packet;
 use onionbit_ipv8::serializer::Reader;
@@ -30,4 +31,16 @@ fuzz_target!(|data: &[u8]| {
         let mut r = Reader::new(&pkt.payload);
         let _ = LedgerLink::unpack(&mut r, true);
     }
+    // Enveloppe OBF (Phase 9e) : aller-retour avec le payload fuzzé
+    // (seal produit une trame correcte quel que soit le contenu,
+    // open doit la relire sans panic) + ouverture directe d'octets
+    // arbitraires (chemin de reception — AEAD refuse, jamais panic).
+    let a = LibNaClSecretKey::generate();
+    let b = LibNaClSecretKey::generate();
+    let bucket = if data.len() > 1 { (data[0] as usize) | 16 } else { 16 };
+    if let Ok(env) = obf::seal(&b.public_key(), &a, data.first().copied().unwrap_or(0), data, bucket)
+    {
+        let _ = obf::open(&a.public_key(), &b, &env);
+    }
+    let _ = obf::open(&a.public_key(), &b, data);
 });

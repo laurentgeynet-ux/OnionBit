@@ -311,6 +311,12 @@ pub struct Ipv8Config {
     pub ext_ledger_store_max: u32,
     /// Tetes poussees par tick vers des pairs ext (gossip borne).
     pub ext_ledger_head_fanout: u32,
+    /// Phase 9e — enveloppes OBF negociees (opt-in, ADR-0015 §7).
+    pub ext_obf_enabled: bool,
+    /// Classe de padding OBF (octets).
+    pub ext_obf_pad_bucket: u32,
+    /// Jitter du sondage `hello` (% de l'intervalle).
+    pub ext_hello_jitter_pct: u32,
 }
 
 impl Ipv8Config {
@@ -385,6 +391,9 @@ impl Ipv8Config {
             ext_ledger_rate_table_max: DEFAULT_EXT_LEDGER_RATE_TABLE_MAX,
             ext_ledger_store_max: DEFAULT_EXT_LEDGER_STORE_MAX,
             ext_ledger_head_fanout: DEFAULT_EXT_LEDGER_HEAD_FANOUT,
+            ext_obf_enabled: false,
+            ext_obf_pad_bucket: DEFAULT_EXT_OBF_PAD_BUCKET,
+            ext_hello_jitter_pct: DEFAULT_EXT_HELLO_JITTER_PCT,
         }
     }
 }
@@ -456,6 +465,9 @@ impl Default for Ipv8Config {
             ext_ledger_rate_table_max: DEFAULT_EXT_LEDGER_RATE_TABLE_MAX,
             ext_ledger_store_max: DEFAULT_EXT_LEDGER_STORE_MAX,
             ext_ledger_head_fanout: DEFAULT_EXT_LEDGER_HEAD_FANOUT,
+            ext_obf_enabled: false,
+            ext_obf_pad_bucket: DEFAULT_EXT_OBF_PAD_BUCKET,
+            ext_hello_jitter_pct: DEFAULT_EXT_HELLO_JITTER_PCT,
         }
     }
 }
@@ -638,6 +650,10 @@ pub const DEFAULT_EXT_LEDGER_RATE_TABLE_MAX: u32 = 4096;
 pub const DEFAULT_EXT_LEDGER_STORE_MAX: u32 = 65536;
 /// Fanout des tetes de chaine gossip par tick.
 pub const DEFAULT_EXT_LEDGER_HEAD_FANOUT: u32 = 3;
+/// Phase 9e — enveloppes OBF off par defaut (opt-in, ADR-0015 §7).
+pub const DEFAULT_EXT_OBF_PAD_BUCKET: u32 = 256;
+/// Jitter `hello` par defaut : 25 % de l'intervalle.
+pub const DEFAULT_EXT_HELLO_JITTER_PCT: u32 = 25;
 
 /// Tache de maintenance DHT (`PingChurn.take_step` +
 /// `node_maintenance`/`value_maintenance`/`token_maintenance` +
@@ -1675,6 +1691,9 @@ impl Ipv8Stack {
                     ledger_rate_table_max: config.ext_ledger_rate_table_max as usize,
                     ledger_store_max: config.ext_ledger_store_max as usize,
                     ledger_head_fanout: config.ext_ledger_head_fanout as usize,
+                    obf_enabled: config.ext_obf_enabled,
+                    obf_pad_bucket: config.ext_obf_pad_bucket.max(16) as usize,
+                    hello_jitter_pct: config.ext_hello_jitter_pct.min(100) as u8,
                     ..onionbit_ipv8::ext::ExtSettings::default()
                 },
             )

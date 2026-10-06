@@ -145,29 +145,36 @@ const PAIRBOX_HKDF_INFO: &[u8] = b"onionbit/pairbox/v1";
 pub const PAIRBOX_NONCE_LEN: usize = 12;
 
 /// Cle AEAD partagee d'une paire : `crypto_box_beforenm` puis
-/// HKDF-SHA256 expand sur un domaine dedie (pas de reutilisation du
-/// secret brut en cle — separation des usages).
-fn pair_key(
+/// HKDF-SHA256 expand sur `info` — domaine dedie par usage (pas de
+/// reutilisation du secret brut en cle — separation des usages).
+fn pair_key_in(
     peer_pk: &[u8],
     my_sk: &[u8],
+    info: &[u8],
 ) -> Result<chacha20poly1305::ChaCha20Poly1305, CryptoError> {
     use chacha20poly1305::KeyInit;
     let shared = crypto_box_beforenm(peer_pk, my_sk)?;
     let hkdf = hkdf::Hkdf::<sha2::Sha256>::from_prk(&shared)
         .map_err(|e| CryptoError::KeyDerivation(format!("HKDF prk pairbox: {e}")))?;
     let mut key = [0u8; 32];
-    hkdf.expand(PAIRBOX_HKDF_INFO, &mut key)
+    hkdf.expand(info, &mut key)
         .map_err(|e| CryptoError::KeyDerivation(format!("HKDF expand pairbox: {e}")))?;
     Ok(chacha20poly1305::ChaCha20Poly1305::new((&key).into()))
 }
 
-/// Chiffre `plain` pour la paire `(peer_pk X25519, my_sk X25519)` :
-/// sortie `nonce(12) || ciphertext || tag(16)`. Seuls les deux
-/// membres de la paire peuvent lire (anti-*bandwidth crawler* —
-/// ADR-0015 §5).
-pub fn pair_seal(peer_pk: &[u8], my_sk: &[u8], plain: &[u8]) -> Result<Vec<u8>, CryptoError> {
+/// Chiffre `plain` pour la paire sous le domaine `info`
+/// (`pair_seal` = `pair_seal_in` avec `PAIRBOX_HKDF_INFO`). Les
+/// domaines distincts rendent les blobs non interchangeables entre
+/// usages (un `tx` de ledger ne peut pas etre re-soumis comme
+/// enveloppe OBF — ADR-0015 §7).
+pub fn pair_seal_in(
+    peer_pk: &[u8],
+    my_sk: &[u8],
+    info: &[u8],
+    plain: &[u8],
+) -> Result<Vec<u8>, CryptoError> {
     use chacha20poly1305::aead::Aead;
-    let cipher = pair_key(peer_pk, my_sk)?;
+    let cipher = pair_key_in(peer_pk, my_sk, info)?;
     let mut nonce_bytes = [0u8; PAIRBOX_NONCE_LEN];
     rand::Rng::fill_bytes(&mut rand::rng(), &mut nonce_bytes);
     let nonce = chacha20poly1305::Nonce::from(nonce_bytes);
@@ -180,9 +187,14 @@ pub fn pair_seal(peer_pk: &[u8], my_sk: &[u8], plain: &[u8]) -> Result<Vec<u8>, 
     Ok(out)
 }
 
-/// Dechiffre un blob produit par [`pair_seal`] (membre de la paire
-/// uniquement — `Aead` sinon).
-pub fn pair_open(peer_pk: &[u8], my_sk: &[u8], blob: &[u8]) -> Result<Vec<u8>, CryptoError> {
+/// Dechiffre un blob produit par [`pair_seal_in`] sous le meme
+/// domaine `info` (membre de la paire uniquement — `Aead` sinon).
+pub fn pair_open_in(
+    peer_pk: &[u8],
+    my_sk: &[u8],
+    info: &[u8],
+    blob: &[u8],
+) -> Result<Vec<u8>, CryptoError> {
     use chacha20poly1305::aead::Aead;
     if blob.len() < PAIRBOX_NONCE_LEN + 16 {
         return Err(CryptoError::Truncated {
@@ -190,7 +202,7 @@ pub fn pair_open(peer_pk: &[u8], my_sk: &[u8], blob: &[u8]) -> Result<Vec<u8>, C
             actual: blob.len(),
         });
     }
-    let cipher = pair_key(peer_pk, my_sk)?;
+    let cipher = pair_key_in(peer_pk, my_sk, info)?;
     let nonce = chacha20poly1305::Nonce::from(
         <[u8; PAIRBOX_NONCE_LEN]>::try_from(&blob[..PAIRBOX_NONCE_LEN])
             .expect("nonce de 12 octets borne"),
@@ -198,6 +210,20 @@ pub fn pair_open(peer_pk: &[u8], my_sk: &[u8], blob: &[u8]) -> Result<Vec<u8>, C
     cipher
         .decrypt(&nonce, &blob[PAIRBOX_NONCE_LEN..])
         .map_err(|_| CryptoError::Aead)
+}
+
+/// Chiffre `plain` pour la paire `(peer_pk X25519, my_sk X25519)` :
+/// sortie `nonce(12) || ciphertext || tag(16)`. Seuls les deux
+/// membres de la paire peuvent lire (anti-*bandwidth crawler* —
+/// ADR-0015 §5).
+pub fn pair_seal(peer_pk: &[u8], my_sk: &[u8], plain: &[u8]) -> Result<Vec<u8>, CryptoError> {
+    pair_seal_in(peer_pk, my_sk, PAIRBOX_HKDF_INFO, plain)
+}
+
+/// Dechiffre un blob produit par [`pair_seal`] (membre de la paire
+/// uniquement — `Aead` sinon).
+pub fn pair_open(peer_pk: &[u8], my_sk: &[u8], blob: &[u8]) -> Result<Vec<u8>, CryptoError> {
+    pair_open_in(peer_pk, my_sk, PAIRBOX_HKDF_INFO, blob)
 }
 
 #[cfg(test)]

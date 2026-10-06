@@ -590,6 +590,13 @@ pub struct ExtConfig {
     pub ledger_store_max: u32,
     /// Fanout de gossip des tetes de chaine par tick. Defaut 3.
     pub ledger_head_fanout: u32,
+    /// Phase 9e — enveloppes OBF negociees par `hello.caps` (opt-in,
+    /// jamais vers un pair qui ne l'a pas annonce). Defaut false.
+    pub obf_enabled: bool,
+    /// Classe de padding OBF (octets). Defaut 256.
+    pub obf_pad_bucket: u32,
+    /// Jitter du sondage `hello` (% de l'intervalle). Defaut 25.
+    pub hello_jitter_pct: u32,
     /// Clés ext additionnelles — préservées.
     #[serde(flatten)]
     pub extra: serde_json::Map<String, Value>,
@@ -620,6 +627,9 @@ impl Default for ExtConfig {
             ledger_rate_table_max: crate::ipv8_stack::DEFAULT_EXT_LEDGER_RATE_TABLE_MAX,
             ledger_store_max: crate::ipv8_stack::DEFAULT_EXT_LEDGER_STORE_MAX,
             ledger_head_fanout: crate::ipv8_stack::DEFAULT_EXT_LEDGER_HEAD_FANOUT,
+            obf_enabled: false,
+            obf_pad_bucket: crate::ipv8_stack::DEFAULT_EXT_OBF_PAD_BUCKET,
+            hello_jitter_pct: crate::ipv8_stack::DEFAULT_EXT_HELLO_JITTER_PCT,
             extra: serde_json::Map::new(),
         }
     }
@@ -1581,6 +1591,9 @@ impl DaemonConfig {
             ext_ledger_rate_table_max: self.ext.ledger_rate_table_max,
             ext_ledger_store_max: self.ext.ledger_store_max,
             ext_ledger_head_fanout: self.ext.ledger_head_fanout,
+            ext_obf_enabled: self.ext.obf_enabled,
+            ext_obf_pad_bucket: self.ext.obf_pad_bucket,
+            ext_hello_jitter_pct: self.ext.hello_jitter_pct,
         };
 
         crate::CoreConfig {

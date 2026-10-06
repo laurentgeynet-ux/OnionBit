@@ -48,7 +48,7 @@ if ($ApiKey -ne "") { $headers["X-Api-Key"] = $ApiKey }
     Out-File $OutCsv -Encoding utf8
 
 if ($ExtCsv -ne "") {
-    "ts,peer_count,hello_tx,hello_probed,attest_rx,attest_dropped,attest_stored,attest_tx" |
+    "ts,peer_count,hello_tx,hello_probed,attest_rx,attest_dropped,attest_stored,attest_tx,ledger_rx,ledger_dropped,ledger_stored,ledger_tx,ledger_links,ledger_pending,ledger_forks" |
         Out-File $ExtCsv -Encoding utf8
 }
 
@@ -136,7 +136,22 @@ while ((Get-Date) -lt $deadline) {
             $ad = if ($null -ne $e.attest_dropped) { $e.attest_dropped } else { 0 }
             $as = if ($null -ne $e.attest_stored) { $e.attest_stored } else { 0 }
             $at = if ($null -ne $e.attest_tx) { $e.attest_tx } else { 0 }
-            "$ts,$pc,$ht,$hp,$ar,$ad,$as,$at" |
+            # Compteurs ledger (Phase 9c) — endpoint separe
+            # `ext/ledger` ; zero constant = pas de tranche en vol.
+            $lr = 0; $ld = 0; $ls = 0; $lt = 0; $ll = 0; $lp = 0; $lf = 0
+            try {
+                $lg = Invoke-RestMethod -Uri "$ApiBase/api/ipv8/ext/ledger" `
+                    -Headers $headers -TimeoutSec $IntervalSec
+                $l = $lg.ledger
+                if ($null -ne $l.rx)          { $lr = $l.rx }
+                if ($null -ne $l.dropped)     { $ld = $l.dropped }
+                if ($null -ne $l.stored)      { $ls = $l.stored }
+                if ($null -ne $l.tx)          { $lt = $l.tx }
+                if ($null -ne $l.links_count) { $ll = $l.links_count }
+                if ($null -ne $l.pending)     { $lp = $l.pending }
+                if ($null -ne $l.forks)       { $lf = $l.forks }
+            } catch {}
+            "$ts,$pc,$ht,$hp,$ar,$ad,$as,$at,$lr,$ld,$ls,$lt,$ll,$lp,$lf" |
                 Out-File $ExtCsv -Append -Encoding utf8
         } catch {}
     }

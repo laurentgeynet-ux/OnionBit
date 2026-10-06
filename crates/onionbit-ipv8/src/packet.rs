@@ -105,7 +105,7 @@ pub const WIRE_DISCOVERY: WirePolicy = WirePolicy {
 };
 
 /// Paquet IPv8 decode (signature deja verifiee si `signed`).
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Packet {
     /// Community destinataire (extraite du prefixe).
     pub community_id: CommunityId,

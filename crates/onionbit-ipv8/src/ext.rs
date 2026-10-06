@@ -51,6 +51,7 @@ use crate::CommunityId;
 
 pub mod attest;
 pub mod ledger;
+pub mod obf;
 
 pub use attest::{kind as attest_kind, verdict as attest_verdict, Attestation};
 pub use ledger::{
@@ -125,13 +126,18 @@ pub mod msg {
     /// des contenus differents. Conservee et propagee — jamais
     /// tranchee (pas de consensus).
     pub const LEDGER_FORK: u8 = 7;
+    /// `OBF` — enveloppe opaque `{v, blob}` (ADR-0015 §7, Phase 9e) :
+    /// un message ext (`ATTEST`, `LEDGER_*`) chiffre pour la paire et
+    /// padde par classes de taille. Emis uniquement vers les pairs
+    /// ayant annonce `CAP_OBF_V1` ; `hello` reste en clair (il negocie
+    /// la capacite).
+    pub const OBF: u8 = 8;
 }
 
 /// Capacites transport annoncees dans `hello.caps` — bitmap extensible.
-/// v1 : aucun bit assigne (les fonctions futures `attest_*`/`ledger_*`
-/// sont negociees implicitement par `msg_id` — un pair qui ne connait
-/// pas un `msg_id` l'ignore). Les bits de transport (obfuscation
-/// opt-in) seront assignes en Phase 9e.
+/// Bit 0 = `obf::CAP_OBF_V1` (enveloppes OBF, Phase 9e) — annonce
+/// uniquement quand `ext/obf_enabled` ; les fonctions `attest_*`/
+/// `ledger_*` restent negociees implicitement par `msg_id`.
 pub const LOCAL_CAPS: u64 = 0;
 
 /// Persistance des attestations verifiees (trait injecte — pattern
@@ -315,6 +321,19 @@ pub struct ExtSettings {
     /// Tetes poussees par tick de settlement vers des pairs ext
     /// (gossip de tete — borne pour la bande passante).
     pub ledger_head_fanout: usize,
+    /// Phase 9e — enveloppes OBF (ADR-0015 §7) : annonce
+    /// `CAP_OBF_V1` dans nos `hello` et enveloppe les messages
+    /// `ATTEST`/`LEDGER_*` a destination des pairs qui l'ont annonce.
+    /// Opt-in, jamais avec un pair qui ne l'a pas annonce (legacy
+    /// compris — de toute facon hors `ext_peers`).
+    pub obf_enabled: bool,
+    /// Classe de padding OBF (octets) : le plaintext interne est
+    /// arrondi au multiple superieur (`obf::OBF_PAD_BUCKET`).
+    pub obf_pad_bucket: usize,
+    /// Jitter du sondage `hello` (pourcentage de `hello_interval`,
+    /// uniforme `0..=pct`) — la cadence reguliere est le signal
+    /// d'empreinte le plus marquant (§7).
+    pub hello_jitter_pct: u8,
 }
 
 impl Default for ExtSettings {
@@ -342,6 +361,9 @@ impl Default for ExtSettings {
             ledger_rate_table_max: 4096,
             ledger_store_max: 65536,
             ledger_head_fanout: 3,
+            obf_enabled: false,
+            obf_pad_bucket: obf::OBF_PAD_BUCKET,
+            hello_jitter_pct: 25,
         }
     }
 }
@@ -442,6 +464,11 @@ pub struct ExtInfo {
     /// Datagrammes `hello` emis (sondage + reponse) — l'envoi vers
     /// un pair muet est borne par `hello_cooldown`.
     pub hello_tx: u64,
+    /// Trames `OBF` recues/emises/droppees (Phase 9e — oracle du
+    /// chemin enveloppe : `rx` monte seulement chez les pairs OBF).
+    pub obf_rx: u64,
+    pub obf_tx: u64,
+    pub obf_dropped: u64,
     /// Pairs distincts sondes dans la fenetre de cooldown courante
     /// (`probed`) — les pairs legacy verifies y figurent : un pair
     /// Tribler recoit au plus un `hello` par cooldown.
@@ -504,6 +531,13 @@ pub struct OnionbitExtCommunity {
     attest_tx: AtomicU64,
     /// Compteur `hello` emis (`ExtInfo` — oracle « sondage borne »).
     hello_tx: AtomicU64,
+    /// Trames `OBF` recues (enveloppes opaques, Phase 9e).
+    obf_rx: AtomicU64,
+    /// Trames `OBF` emises.
+    obf_tx: AtomicU64,
+    /// `OBF` droppes : budget depasse, version/blob inconnu, AEAD
+    /// invalide, inner malforme ou msg_id interne non routable.
+    obf_dropped: AtomicU64,
     /// Persistances des liens de ledger verifies (injectee —
     /// `InMemoryLedgerStore` borne a la creation).
     ledger_store: Mutex<Arc<dyn LedgerStore>>,
@@ -577,6 +611,12 @@ impl OnionbitExtCommunity {
         endpoint: Arc<UdpEndpoint>,
         settings: ExtSettings,
     ) -> Arc<Self> {
+        let mut settings = settings;
+        // `CAP_OBF_V1` n'est annonce que si l'enveloppe est acceptee
+        // localement — on ne promet pas une capacite desactivee.
+        if settings.obf_enabled {
+            settings.caps |= obf::CAP_OBF_V1;
+        }
         let ledger_store_max = settings.ledger_store_max;
         let community = Arc::new(Self {
             key,
@@ -592,6 +632,9 @@ impl OnionbitExtCommunity {
             attest_stored: AtomicU64::new(0),
             attest_tx: AtomicU64::new(0),
             hello_tx: AtomicU64::new(0),
+            obf_rx: AtomicU64::new(0),
+            obf_tx: AtomicU64::new(0),
+            obf_dropped: AtomicU64::new(0),
             ledger_store: Mutex::new(Arc::new(InMemoryLedgerStore::new(ledger_store_max))),
             stats_source: Mutex::new(None),
             ledger_pending: Mutex::new(HashMap::new()),
@@ -682,8 +725,49 @@ impl OnionbitExtCommunity {
     /// Envoie un `ATTEST` a `addr` — pas de cooldown : le volume est
     /// borne par la dedup (chaque attestation n'est re-emise qu'une
     /// fois par noeud) et par le filtre « curateur suivi ».
+    /// Enveloppe `OBF` quand le pair l'a annoncee (`caps`) et que
+    /// `obf_enabled` est local : retourne `(msg_id, payload)` a
+    /// emettre — enveloppe opaque ou trame claire inchangee. Le pair
+    /// est resolu par son adresse (`network`) ; inconnu ou sans la
+    /// capacite = clair (compatibilite intra-ext preservee).
+    fn obf_wrap(&self, addr: &UdpAddress, msg_id: u8, payload: &[u8]) -> (u8, Vec<u8>) {
+        if !self.settings.obf_enabled {
+            return (msg_id, payload.to_vec());
+        }
+        let Some(peer) = self.network.get_verified_by_address(addr) else {
+            return (msg_id, payload.to_vec());
+        };
+        let caps = self
+            .ext_peers
+            .lock()
+            .unwrap()
+            .get(&peer.public_key_bin)
+            .map(|e| e.caps)
+            .unwrap_or(0);
+        if caps & obf::CAP_OBF_V1 == 0 {
+            return (msg_id, payload.to_vec());
+        }
+        let Ok(peer_pk) = LibNaClPublicKey::from_bin(&peer.public_key_bin) else {
+            return (msg_id, payload.to_vec());
+        };
+        match obf::seal(
+            &peer_pk,
+            &self.key,
+            msg_id,
+            payload,
+            self.settings.obf_pad_bucket,
+        ) {
+            Ok(env) => (msg::OBF, env),
+            Err(_) => (msg_id, payload.to_vec()),
+        }
+    }
+
     async fn send_attest_to(&self, addr: &UdpAddress, payload: &[u8]) {
-        let pkt = Packet::sign_no_dist(&EXT_COMMUNITY_ID, msg::ATTEST, &self.key, payload);
+        let (wire_id, wire) = self.obf_wrap(addr, msg::ATTEST, payload);
+        if wire_id == msg::OBF {
+            self.obf_tx.fetch_add(1, Ordering::Relaxed);
+        }
+        let pkt = Packet::sign_no_dist(&EXT_COMMUNITY_ID, wire_id, &self.key, &wire);
         self.attest_tx.fetch_add(1, Ordering::Relaxed);
         if let Err(e) = self.endpoint.send_to(addr, &pkt).await {
             tracing::debug!(error = %e, target = ?addr, "attest ext perdu");
@@ -966,9 +1050,14 @@ impl OnionbitExtCommunity {
         claimed <= measured.saturating_add(margin)
     }
 
-    /// Envoie un datagramme `LEDGER_*` signe a `addr`.
+    /// Envoie un datagramme `LEDGER_*` signe a `addr` — enveloppe
+    /// `OBF` quand le pair l'a annoncee (`obf_wrap`).
     async fn send_ledger_to(&self, addr: &UdpAddress, msg_id: u8, payload: &[u8]) {
-        let pkt = Packet::sign_no_dist(&EXT_COMMUNITY_ID, msg_id, &self.key, payload);
+        let (wire_id, wire) = self.obf_wrap(addr, msg_id, payload);
+        if wire_id == msg::OBF {
+            self.obf_tx.fetch_add(1, Ordering::Relaxed);
+        }
+        let pkt = Packet::sign_no_dist(&EXT_COMMUNITY_ID, wire_id, &self.key, &wire);
         self.ledger_tx.fetch_add(1, Ordering::Relaxed);
         if let Err(e) = self.endpoint.send_to(addr, &pkt).await {
             tracing::debug!(error = %e, target = ?addr, "ledger ext perdu");
@@ -1731,12 +1820,21 @@ impl OnionbitExtCommunity {
                 }
             });
         }
-        let mut tick = tokio::time::interval(self.settings.hello_interval);
-        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-        // Premier tick immediat absorbe : rien a sonder a froid.
-        tick.tick().await;
+        // Cadence du sondage = intervalle + jitter uniforme
+        // `0..=interval*jitter_pct%` — la periodicite exacte est un
+        // signal d'empreinte (ADR-0015 §7). `MissedTickBehavior` ne
+        // s'applique pas ici : on calcule chaque delai explicitement.
         loop {
-            tick.tick().await;
+            let jitter_max = self
+                .settings
+                .hello_interval
+                .mul_f64(self.settings.hello_jitter_pct as f64 / 100.0);
+            let jitter = if jitter_max.is_zero() {
+                std::time::Duration::ZERO
+            } else {
+                jitter_max.mul_f64(rand::random::<f64>())
+            };
+            tokio::time::sleep(self.settings.hello_interval + jitter).await;
             self.hello_tick().await;
         }
     }
@@ -1790,9 +1888,43 @@ impl OnionbitExtCommunity {
                     _ => self.on_ledger_fork(&pkt)?,
                 }
             }
+            msg::OBF => self.on_obf(&pkt, &src)?,
             _ => {}
         }
         Ok(())
+    }
+
+    /// `on_obf` : enveloppe opaque recue (Phase 9e). Budget partage
+    /// avec `LEDGER_*` (meme cout AEAD par datagramme) *avant* le
+    /// dechiffrement — un flot d'enveloppes ne peut pas saturer le
+    /// chemin de reception. L'inner dechiffre est re-injecte dans le
+    /// dispatch normal (`on_packet` recursif borne : un `OBF` interne
+    /// est droppe — pas d'imbrication). Jamais accepte si
+    /// `obf_enabled` est faux (un pair qui nous enveloppe sans qu'on
+    /// l'ait annonce est simplement ignore).
+    fn on_obf(self: &Arc<Self>, pkt: &Packet, src: &SocketAddr) -> Result<(), Ipv8Error> {
+        self.obf_rx.fetch_add(1, Ordering::Relaxed);
+        if !self.settings.obf_enabled || !self.ledger_rate_ok(&pkt.public_key_bin) {
+            self.obf_dropped.fetch_add(1, Ordering::Relaxed);
+            return Ok(());
+        }
+        let opened = LibNaClPublicKey::from_bin(&pkt.public_key_bin)
+            .ok()
+            .and_then(|pk| obf::open(&pk, &self.key, &pkt.payload).ok());
+        let Some((inner_id, inner_payload)) = opened else {
+            self.obf_dropped.fetch_add(1, Ordering::Relaxed);
+            return Ok(());
+        };
+        // Pas d'imbrication : un OBF dans un OBF n'a pas de sens et
+        // ouvrirait une recursion non bornee.
+        if inner_id == msg::OBF {
+            self.obf_dropped.fetch_add(1, Ordering::Relaxed);
+            return Ok(());
+        }
+        let mut inner_pkt = pkt.clone();
+        inner_pkt.msg_id = inner_id;
+        inner_pkt.payload = inner_payload;
+        self.on_packet(*src, inner_pkt)
     }
 
     /// Nombre de pairs connus comme ext (population OnionBit visible).
@@ -1824,6 +1956,9 @@ impl OnionbitExtCommunity {
             attest_stored: self.attest_stored.load(Ordering::Relaxed),
             attest_tx: self.attest_tx.load(Ordering::Relaxed),
             hello_tx: self.hello_tx.load(Ordering::Relaxed),
+            obf_rx: self.obf_rx.load(Ordering::Relaxed),
+            obf_tx: self.obf_tx.load(Ordering::Relaxed),
+            obf_dropped: self.obf_dropped.load(Ordering::Relaxed),
             hello_probed,
             ledger_enabled: self.settings.ledger_enabled,
             ledger_rx: self.ledger_rx.load(Ordering::Relaxed),

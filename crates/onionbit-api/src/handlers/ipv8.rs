@@ -462,6 +462,11 @@ pub async fn get_ext(State(state): State<AppState>) -> Response {
             "attest_tx": info.attest_tx,
             "hello_tx": info.hello_tx,
             "hello_probed": info.hello_probed,
+            // Compteurs du chemin OBF (Phase 9e — enveloppes
+            // negociees par `caps`, jamais vers un pair legacy).
+            "obf_rx": info.obf_rx,
+            "obf_tx": info.obf_tx,
+            "obf_dropped": info.obf_dropped,
         }
     }))
     .into_response()

@@ -1,11 +1,10 @@
 # ADR-0015 — Extensions OnionBit : stratégie « legacy Tribler + ext OnionBit »
 
 Statut : Acceptée (2026-10-05). Cadre de la Phase 9 de
-`docs/plans/roadmap.md`. Phase 9a (comptabilité locale par pair),
-Phase 9b (`OnionbitExtCommunity` + `hello` lazy) et Phase 9d
-(curation par attestations signées) livrées ; Phase 9c (ledger
-bilatéral) reste conditionnelle et Phase 9e (obfuscation) en attente
-de la mesure d'empreinte.
+`docs/plans/roadmap.md`. Phases 9a (comptabilité locale par pair),
+9b (`OnionbitExtCommunity` + `hello` lazy), 9c (ledger bilatéral
+signé), 9d (curation par attestations signées) et 9e (enveloppes
+`OBF` négociées + jitter `hello`) livrées.
 
 ## Contexte
 
@@ -208,13 +207,49 @@ base (rien n'est purgé — elles restent vérifiables et visibles dans
 curateur réintègre ses verdicts. `ext/curators` est pris en compte à
 la création de la stack (redémarrage).
 
-### 7. Anti-DPI — dernier, négocié, mesuré
+### 7. Anti-DPI — dernier, négocié, mesuré *(Phase 9e livrée)*
 
 La baseline de discrétion est la **parité d'empreinte avec Tribler**
 (`docs/security/fingerprinting.md` déjà instrumentée), pas un profil
 « pseudo-WebRTC » qui créerait une troisième empreinte. Toute
 obfuscation est une capacité annoncée par `hello`, opt-in, jamais
 activée avec un pair legacy.
+
+**Mesure préalable (banc 47.1)** : en mesh contrôlé (`-WithExt
+-WithAnonDownload`, 15 min), le volume ext total est **~1,5 Ko
+(~0,03 % de l'endpoint)** — 4 `hello`, un pic `ATTEST` auto-extinct,
+0 `LEDGER_*` (le ledger n'émet que sur tranches de trafic réel).
+L'empreinte exploitable n'est donc pas le volume mais le *contenu* :
+`msg_id` et tailles lisibles dans l'enveloppe `ez_send`, cadence
+exacte du `hello`.
+
+**Mécanisme livré** — deux briques :
+
+- **`OBF` (`msg_id` 8), enveloppe opaque de paire.** `{v, blob}` où
+  `blob = pair_seal_in(inner)` — ChaCha20-Poly1305 sous la clé X25519
+  de la paire, domaine HKDF dédié `onionbit/ext-obf/v1` (distinct du
+  `pairbox` des `tx` : les blobs ne sont pas interchangeables).
+  `inner = msg_id ‖ len ‖ payload ‖ pad` : le type et la taille
+  réelle ne quittent pas l'AEAD. Padding au multiple supérieur de
+  `ext/obf_pad_bucket` (256 par défaut) — `hello`-sized et
+  `attest`-sized convergent vers la même classe. Émission : `OBF`
+  uniquement si `ext/obf_enabled` **et** le pair a annoncé
+  `CAP_OBF_V1` (bit 0 de `hello.caps`) — sinon clair, la
+  compatibilité intra-ext est préservée. Réception : budget partagé
+  `LEDGER_*` avant déchiffrement (borne AEAD), `obf_dropped` sur
+  version/AEAD/inner malformés, `OBF` imbriqué refusé (pas de
+  récursion), dispatch de l'inner dans le chemin `on_packet` normal
+  — la signature `ez_send` de l'enveloppe authentifie l'émetteur, le
+  contenu interne garde ses propres signatures (attestation auto-
+  portante, lien bilateral).
+- **Jitter `hello`** (`ext/hello_jitter_pct`, 25 % par défaut) :
+  le sondage n'est plus à cadence exacte `hello_interval` — intervalle
+  + tirage uniforme `0..=25 %` — la périodicité était le signal
+  temporel le plus marquant de la mesure.
+
+Non-couvert assumé : le préfixe `community_id` reste visible
+(l'existence du trafic ext est une métadonnée déclarée), et le `hello`
+initial est en clair — c'est le bootstrap de la négociation.
 
 ### 8. `network-policy` sans exception
 

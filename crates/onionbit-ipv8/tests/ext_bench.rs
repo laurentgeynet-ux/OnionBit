@@ -751,3 +751,91 @@ async fn t5c_ledger_fork_gossip() {
         "\"cases\":\"fork detecte au put ; FORK propage ; evidence conservee chez C et B : verts\"",
     );
 }
+
+/// T6 — Phase 9e : enveloppes `OBF` negociees (ADR-0015 §7).
+///
+/// Cas 1 : `a` (obf on, curateur suivi) publie une attestation —
+/// vers `b` (obf on) elle part enveloppee (`obf_tx`/`obf_rx` > 0,
+/// contenu stocke normalement) ; vers `c` (obf off) elle reste en
+/// clair (`obf_rx` == 0, contenu stocke aussi — l'enveloppe est
+/// opt-in par pair, pas communautaire).
+///
+/// Cas 2 : `b` recoit une trame `OBF` malformee — droppe sans
+/// panic (`obf_dropped` monte).
+#[tokio::test(flavor = "current_thread")]
+async fn t6_obf_enveloppe_negociee() {
+    let t0 = Instant::now();
+    let obf_on = ExtSettings {
+        obf_enabled: true,
+        ..ExtSettings::default()
+    };
+    let a = node(obf_on.clone()).await;
+    let pk_a = a.key.public_key().to_bin();
+    let b = node(ExtSettings {
+        curators: HashSet::from([pk_a.clone()]),
+        ..obf_on.clone()
+    })
+    .await;
+    let c = node(ExtSettings {
+        curators: HashSet::from([pk_a.clone()]),
+        ..ExtSettings::default()
+    })
+    .await;
+
+    link(&a, &b).await;
+    link(&a, &c).await;
+    // `b` a bien annonce le bit (caps visible cote `a`).
+    let pk_b = b.key.public_key().to_bin();
+    let ac = a.c.clone();
+    let pb = pk_b.clone();
+    wait_until(move || {
+        ac.peers_info()
+            .iter()
+            .any(|p| p.mid == hex::encode(onionbit_crypto::hash::ipv8_mid(&pb)) && p.caps & 1 != 0)
+    })
+    .await;
+
+    // Cas 1 : publication -> enveloppe vers b, clair vers c.
+    a.c.publish_attestation(attest_kind::INFOHASH, &[0x55; 20], attest_verdict::ENDORSE)
+        .await
+        .unwrap();
+    let bc = b.c.clone();
+    wait_until(move || bc.info().attest_stored >= 1).await;
+    let cc = c.c.clone();
+    wait_until(move || cc.info().attest_stored >= 1).await;
+    let ib = b.c.info();
+    let ic = c.c.info();
+    assert!(ib.obf_rx >= 1, "b doit avoir recu l'attest enveloppee");
+    assert_eq!(ic.obf_rx, 0, "c (obf off) recoit l'attest en clair");
+    assert!(a.c.info().obf_tx >= 1, "a a enveloppe vers b");
+
+    // Cas 2 : trame OBF malformee -> droppee, pas de panic.
+    let mut w = Writer::new();
+    w.u8(1u8);
+    w.raw(&[0xde; 40]);
+    let pkt = Packet::sign_no_dist(&EXT_COMMUNITY_ID, msg::OBF, &a.key, &w.into_bytes());
+    a.ep.send_to(&b.addr, &pkt).await.unwrap();
+    let bc = b.c.clone();
+    wait_until(move || bc.info().obf_dropped >= 1).await;
+
+    journal(
+        "T6-obf-enveloppe-negociee",
+        "obf_enabled sur a,b ; c en clair ; curateur a",
+        "loopback a-b, a-c lies ; publish -> OBF|clair ; OBF malforme",
+        t0,
+        &format!(
+            "{{\"A\":{},\"B\":{},\"C\":{}}}",
+            node_counters(&a),
+            node_counters(&b),
+            node_counters(&c)
+        ),
+        &format!(
+            "{{\"obf\":{{\"A_tx\":{},\"B_rx\":{},\"B_dropped\":{},\"C_rx\":{}}}}}",
+            a.c.info().obf_tx,
+            b.c.info().obf_rx,
+            b.c.info().obf_dropped,
+            c.c.info().obf_rx,
+        ),
+        "\"cases\":\"cap negociee -> enveloppe ; sans cap -> clair ; malforme -> drop : verts\"",
+    );
+}

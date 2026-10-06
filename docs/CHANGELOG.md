@@ -481,6 +481,41 @@ Clôture campagne et gates sanitizers :
 - **Job CI `fuzz-san`** (`ci.yml`, nightly/manual, ubuntu-24.04) :
   toolchain nightly + cargo-fuzz, `SEC=300` × 8 cibles × 2
   sanitizers, artefacts (journal CSV + `fuzz/artifacts/`) remontés.
+## Phase 9e — obfuscation de transport négociée `OBF` (ADR-0015, étape 47, 2026-10-06)
+
+- **Mesure préalable (47.1)** — `fingerprint_mesh.ps1 -WithExt
+  -WithAnonDownload`, 15 min : volume ext total ~1,5 Ko (~0,03 % de
+  l'endpoint) — 4 `hello`, un pic `ATTEST` extinct, 0 `LEDGER_*` (le
+  ledger n'émet que sur tranches servies). Le signal exploitable
+  n'est pas le volume mais le contenu lisible (`msg_id`, tailles) et
+  la cadence `hello` — périmètre exact de l'obfuscation (résultats
+  détaillés dans `docs/security/fingerprinting.md`).
+- **`msg::OBF` (8) — enveloppe opaque de paire** (`ext::obf`) :
+  `{v, blob}` où `blob = pair_seal_in(inner)` sous la clé X25519 de
+  la paire, domaine HKDF `onionbit/ext-obf/v1` (séparé du `pairbox`
+  des `tx` — blobs non interchangeables). `inner = msg_id ‖ len16 ‖
+  payload ‖ pad aléatoire`, arrondi au multiple `ext/obf_pad_bucket`
+  (défaut 256) : type et taille réelle illisibles hors AEAD.
+- **Négociation `caps` bit 0 `CAP_OBF_V1`** : annoncé dans `hello`
+  uniquement quand `ext/obf_enabled` (off par défaut) ; émission
+  enveloppée uniquement vers un pair qui l'a annoncé — sinon clair
+  (compatibilité intra-ext préservée, jamais de `OBF` vers legacy).
+  `hello` reste en clair (bootstrap). Réception : budget partagé
+  `LEDGER_*` avant AEAD, `obf_dropped` sur malformé, `OBF` imbriqué
+  refusé, inner dispatché dans le chemin `on_packet` normal.
+- **Jitter `hello`** (`ext/hello_jitter_pct`, défaut 25 %) :
+  intervalle + tirage uniforme — la périodicité exacte était le
+  signal temporel le plus marquant.
+- **Crypto** : `pair_seal_in`/`pair_open_in` (HKDF paramétré) dans
+  `onionbit-crypto::ipv8::dh` ; `pair_seal`/`pair_open` inchangés.
+- **Observabilité** : `obf_rx/obf_tx/obf_dropped` dans
+  `GET /api/ipv8/ext`, `on_obf` dans `ext_msg_name`, colonnes ledger
+  ajoutées à `fingerprint_stats.ps1 -ExtCsv`.
+- **Tests** : 3 unitaires `obf` (aller-retour+padding, mauvaise
+  clé/tronqué/version, borne de taille) + banc `T6` (attest
+  enveloppée vers pair `cap`, claire vers pair sans `cap`, malformé
+  droppé) + surface `obf::seal/open` dans le fuzz `ext_packet`.
+
 ## Phase 9c — ledger bilatéral signé (ADR-0015 §5, 2026-10-06)
 
 - **`ext/ledger.rs`** : `LedgerLink` `{v, pk_a, seq_a, prev_a, pk_b,
