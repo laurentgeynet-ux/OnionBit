@@ -18,6 +18,24 @@ enum MessagingContactState {
   unknown,
 }
 
+/// État de liaison e2e d'un contact — distinct du consentement
+/// ([`MessagingContactState`]) : un contact consenti peut être sans
+/// circuit. Dérivé côté daemon (`link` de `GET /contacts`).
+enum MessagingLinkState {
+  /// Circuit e2e lié — messages émissibles.
+  bound,
+
+  /// Liaison en cours (connect explicite ou tentative automatique
+  /// du tunnel).
+  connecting,
+
+  /// Dernière tentative échouée — réessayer via « Reconnecter ».
+  failed,
+
+  /// Aucune liaison ni tentative connue.
+  none,
+}
+
 /// Contact de messagerie e2e tel que `GET /api/messaging/contacts`
 /// le rend (extension Rust — pas de parité Python).
 class MessagingContact {
@@ -27,6 +45,7 @@ class MessagingContact {
     this.circuitId,
     this.pendingSinceSecs,
     this.alias = '',
+    this.link = MessagingLinkState.none,
   });
 
   /// Clé publique du contact en hex (`pk_bin` de l'identité daemon).
@@ -43,6 +62,9 @@ class MessagingContact {
 
   /// Pseudonyme local (`''` = aucun — repli sur la clé abrégée).
   final String alias;
+
+  /// État de liaison e2e courant (indicateur du point de statut).
+  final MessagingLinkState link;
 
   /// Raccourci lisible de la clé (8 premiers caractères hex).
   String get shortKey =>

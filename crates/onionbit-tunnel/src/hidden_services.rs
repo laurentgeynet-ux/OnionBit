@@ -1308,6 +1308,27 @@ impl TunnelCommunity {
         }
     }
 
+    /// Liaison e2e en cours vers ce swarm : requete `pending_e2e`
+    /// (handshake `create`/`link`/`building`, retentatives incluses)
+    /// ou circuit `RP_DOWNLOADER` rattache pas encore `e2e`-lie.
+    /// Oracle de l'indicateur « connexion en cours » des services
+    /// applicatifs (messagerie).
+    pub fn e2e_pending(&self, info_hash: &[u8; 20]) -> bool {
+        let inner = self.inner.lock().unwrap();
+        if inner
+            .swarms
+            .get(info_hash)
+            .is_some_and(|s| !s.pending_e2e.is_empty())
+        {
+            return true;
+        }
+        inner.circuits.values().any(|c| {
+            c.ctype == crate::routing::CIRCUIT_TYPE_RP_DOWNLOADER
+                && c.info_hash == Some(*info_hash)
+                && !c.e2e
+        })
+    }
+
     /// `create_e2e` : envoie `create-e2e` au point d'introduction via
     /// `tunnel_data` (paquet non signe dans une cellule `data`).
     ///

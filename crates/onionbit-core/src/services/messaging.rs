@@ -18,7 +18,7 @@
 //! `ipv8_stack` ignore donc nos circuits et l'injection uTP ne peut
 //! pas recevoir de trame messagerie (MS-9).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::{Ipv4Addr, SocketAddrV4};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -121,6 +121,34 @@ pub enum MessagingEvent {
         /// `pk_bin` du contact cree.
         contact: Vec<u8>,
     },
+    /// Transition d'etat de liaison e2e d'un contact (indicateur de
+    /// l'API/UI) — `Bound` signale deja le succes ; cet evenement
+    /// couvre `connecting`/`failed`/`none` (deliaison).
+    Link {
+        /// `pk_bin` du contact.
+        contact: Vec<u8>,
+        /// Etat de liaison courant.
+        link: LinkState,
+    },
+}
+
+/// Etat de liaison e2e d'un contact — oracle de l'indicateur UI
+/// (vert/orange/rouge/gris). Distinct de [`ContactState`] (le
+/// consentement) : un contact consenti peut etre sans circuit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LinkState {
+    /// Circuit e2e lie — trames emissibles.
+    Bound,
+    /// Liaison en cours : `connect` explicite en vol ou tentative
+    /// automatique du tunnel (`pending_e2e`/RP_DOWNLOADER non lie).
+    Connecting,
+    /// Derniere tentative `connect` echouee — aucune liaison en
+    /// cours. Re-tentative via `connect_peer` (ou automatique :
+    /// `do_peer_discovery` re-essaie tant que le swarm est joint).
+    Failed,
+    /// Aucune liaison ni tentative connue (jamais tente ou
+    /// delie faute de retry en cours).
+    None,
 }
 
 /// Etat de consentement d'un contact (ADR-0011, etape 38).
@@ -211,6 +239,9 @@ struct Contact {
     send_seq: u64,
     /// Circuit e2e lie a ce contact (`None` = a etablir).
     circuit: Option<u32>,
+    /// Derniere tentative `connect` echouee (non persistee — un
+    /// restart repart sur `None`, la maintenance tunnel retente).
+    link_failed: bool,
     /// `hello` deja emis sur le circuit lie.
     greeted: bool,
     /// Seau a jetons par contact (`None` = illimite).
@@ -227,6 +258,7 @@ impl Contact {
             recv_window: RecvWindow::new(cfg),
             send_seq: 0,
             circuit: None,
+            link_failed: false,
             greeted: false,
             bucket: TokenBucket::new(cfg.per_contact_rate),
         }
@@ -270,6 +302,9 @@ pub struct MessagingService {
     swarms: Mutex<HashMap<[u8; 20], Vec<u8>>>,
     /// Etat par contact (`pk_bin`).
     contacts: Mutex<HashMap<Vec<u8>, Contact>>,
+    /// `connect_peer` en vol par contact — l'indicateur `connecting`
+    /// couvre le resolve DHT + l'attente de liaison du `POST`.
+    linking: Mutex<HashSet<Vec<u8>>>,
     /// Liaisons par `circuit_id`.
     circuits: Mutex<HashMap<u32, CircuitBinding>>,
     /// Seau a jetons global (toutes trames entrantes confondues —
@@ -319,6 +354,7 @@ impl MessagingService {
             own_mh,
             swarms: Mutex::new(HashMap::new()),
             contacts: Mutex::new(HashMap::new()),
+            linking: Mutex::new(HashSet::new()),
             circuits: Mutex::new(HashMap::new()),
             db,
             stats: MessagingStats::default(),
@@ -343,27 +379,44 @@ impl MessagingService {
                 return;
             }
         };
-        let mut contacts = self.contacts.lock().unwrap();
-        for row in rows {
-            let Ok(pk) = LibNaClPublicKey::from_bin(&row.public_key) else {
-                continue;
-            };
-            let mut c = Contact::active(pk, &self.cfg);
-            c.send_seq = row.send_seq.max(0) as u64;
-            if row.recv_top > 0 {
-                c.recv_window = RecvWindow::resume(&self.cfg, row.recv_top as u64);
-            }
-            match row.state.as_str() {
-                "blocked" => c.state = ContactState::Blocked,
-                "pending" => {
-                    c.state = ContactState::Pending;
-                    // Le TTL repart a la restauration (le pair peut
-                    // renvoyer un `hello` — le pending redevient utile).
-                    c.pending_since = now_secs();
+        let mut rejoin: Vec<(Vec<u8>, LibNaClPublicKey)> = Vec::new();
+        {
+            let mut contacts = self.contacts.lock().unwrap();
+            for row in rows {
+                let Ok(pk) = LibNaClPublicKey::from_bin(&row.public_key) else {
+                    continue;
+                };
+                let mut c = Contact::active(pk.clone(), &self.cfg);
+                c.send_seq = row.send_seq.max(0) as u64;
+                if row.recv_top > 0 {
+                    c.recv_window = RecvWindow::resume(&self.cfg, row.recv_top as u64);
                 }
-                _ => {}
+                match row.state.as_str() {
+                    "blocked" => c.state = ContactState::Blocked,
+                    "pending" => {
+                        c.state = ContactState::Pending;
+                        // Le TTL repart a la restauration (le pair peut
+                        // renvoyer un `hello` — le pending redevient utile).
+                        c.pending_since = now_secs();
+                    }
+                    _ => {
+                        // `Active` : rejoindre le swarm du contact pour
+                        // que `do_peer_discovery` relie le circuit e2e
+                        // sans action utilisateur (sinon le contact
+                        // restaure ne pourrait jamais se reconnecter).
+                        rejoin.push((row.public_key.clone(), pk));
+                    }
+                }
+                contacts.insert(row.public_key, c);
             }
-            contacts.insert(row.public_key, c);
+        }
+        for (pk_bin, pk) in rejoin {
+            let mh = messaging_hash(&pk);
+            let mut swarms = self.swarms.lock().unwrap();
+            if let std::collections::hash_map::Entry::Vacant(e) = swarms.entry(mh) {
+                e.insert(pk_bin);
+                self.tunnel.join_swarm(mh, self.hops, false);
+            }
         }
     }
 
@@ -443,6 +496,87 @@ impl MessagingService {
         }
     }
 
+    /// Orchestration du `POST /contacts/connect` : `resolve` (DHT)
+    /// puis `connect` sur le premier point d'introduction resolu.
+    /// Pilote l'etat de liaison expose par [`Self::link_state`] :
+    /// `Connecting` pendant l'appel, `Failed` si l'ensemble echoue
+    /// (la maintenance tunnel `do_peer_discovery` retente ensuite
+    /// d'elle-meme tant que le swarm est joint).
+    pub async fn connect_peer(&self, contact_pk: &[u8]) -> Result<u32> {
+        if let Some(cid) = self.contact_circuit(contact_pk) {
+            return Ok(cid);
+        }
+        self.link_begin(contact_pk);
+        let res = async {
+            let ips = self.resolve(contact_pk).await?;
+            let Some(ip) = ips.into_iter().next() else {
+                return Err(CoreError::InvalidState(
+                    "messagerie : aucun point d'introduction pour ce contact",
+                ));
+            };
+            self.connect(contact_pk, &ip).await
+        }
+        .await;
+        self.link_end(contact_pk, res.is_ok());
+        res
+    }
+
+    /// Etat de liaison e2e courant du contact — ordre : `Bound`
+    /// (circuit pose) > `Connecting` (`connect` en vol ou tentative
+    /// e2e automatique du tunnel) > `Failed` > `None`.
+    pub fn link_state(&self, contact_pk: &[u8]) -> LinkState {
+        let (pk, failed) = {
+            let contacts = self.contacts.lock().unwrap();
+            match contacts.get(contact_pk) {
+                Some(c) if c.circuit.is_some() => return LinkState::Bound,
+                Some(c) => (Some(c.pk.clone()), c.link_failed),
+                None => (None, false),
+            }
+        };
+        if self.linking.lock().unwrap().contains(contact_pk) {
+            return LinkState::Connecting;
+        }
+        if let Some(pk) = pk {
+            if self.tunnel.e2e_pending(&messaging_hash(&pk)) {
+                return LinkState::Connecting;
+            }
+        }
+        if failed {
+            return LinkState::Failed;
+        }
+        LinkState::None
+    }
+
+    /// Entree en tentative de liaison explicite : marque `linking`
+    /// (et efface un `Failed` anterieur) puis notifie l'API.
+    fn link_begin(&self, contact_pk: &[u8]) {
+        self.linking.lock().unwrap().insert(contact_pk.to_vec());
+        if let Some(c) = self.contacts.lock().unwrap().get_mut(contact_pk) {
+            c.link_failed = false;
+        }
+        self.emit_link(contact_pk);
+    }
+
+    /// Fin de tentative explicite : `Failed` sur echec, puis notifie.
+    fn link_end(&self, contact_pk: &[u8], ok: bool) {
+        self.linking.lock().unwrap().remove(contact_pk);
+        if !ok {
+            if let Some(c) = self.contacts.lock().unwrap().get_mut(contact_pk) {
+                c.link_failed = true;
+            }
+        }
+        self.emit_link(contact_pk);
+    }
+
+    /// Emet l'etat de liaison courant du contact (recompute —
+    /// l'evenement est un indice de fraicheur, jamais une source).
+    fn emit_link(&self, contact_pk: &[u8]) {
+        let _ = self.events_tx.send(MessagingEvent::Link {
+            contact: contact_pk.to_vec(),
+            link: self.link_state(contact_pk),
+        });
+    }
+
     /// Envoie un message applicatif a un contact dont le circuit est
     /// lie (voir [`Self::connect`]). `NotConnected` (InvalidState) si
     /// aucun circuit — la resolution/liaison explicite reste a la
@@ -490,7 +624,7 @@ impl MessagingService {
     /// passe `Active`, notifie l'emetteur (`accept`) et re-emet
     /// `Bound`. Sans effet si le contact n'est pas `pending`.
     pub async fn accept_contact(&self, contact_pk: &[u8]) -> Result<()> {
-        let cid = {
+        let (cid, pk) = {
             let mut contacts = self.contacts.lock().unwrap();
             let Some(c) = contacts.get_mut(contact_pk) else {
                 return Err(CoreError::InvalidState("messagerie : contact inconnu"));
@@ -501,8 +635,14 @@ impl MessagingService {
                 ));
             }
             c.state = ContactState::Active;
-            c.circuit
+            (c.circuit, c.pk.clone())
         };
+        // Consentement = bidirectionnel : rejoindre le swarm du
+        // contact pour pouvoir re-lier un circuit si le courant meurt
+        // (un `pending` inbound ne joint jamais le swarm de son
+        // emetteur — `ensure_contact_swarm` ne cree rien ici, il
+        // joint seulement).
+        self.ensure_contact_swarm(&pk, contact_pk);
         self.persist_contact(contact_pk, ContactState::Active);
         if let Some(cid) = cid {
             // Notification au pair (best effort — le circuit peut
@@ -1050,6 +1190,7 @@ impl MessagingService {
             Some(pk_bin) => {
                 if let Some(c) = self.contacts.lock().unwrap().get_mut(&pk_bin) {
                     c.circuit = Some(cid);
+                    c.link_failed = false;
                 }
                 let _ = self.events_tx.send(MessagingEvent::Bound {
                     contact: pk_bin,
@@ -1096,12 +1237,20 @@ impl MessagingService {
             .unwrap()
             .remove(&cid)
             .and_then(|b| b.contact);
+        let mut detached = None;
         if let Some(pk_bin) = contact {
             if let Some(c) = self.contacts.lock().unwrap().get_mut(&pk_bin) {
                 if c.circuit == Some(cid) {
                     c.circuit = None;
+                    detached = Some(pk_bin);
                 }
             }
+        }
+        // Deliaison reelle : rafraichir l'indicateur (`Connecting` si
+        // la maintenance a deja une retentative e2e en cours,
+        // `None` sinon).
+        if let Some(pk_bin) = detached {
+            self.emit_link(&pk_bin);
         }
     }
 
@@ -1736,9 +1885,16 @@ mod tests {
         assert!(svc.send(&pk_bin, b"x".to_vec()).await.is_err());
 
         // Acceptation : Active + Bound ; les trames passent.
+        // La notification `accept` echoue sur le circuit factice du
+        // banc (inexistant cote tunnel) — la deliaison emet un `Link`
+        // intermediaire avant le `Bound` attendu.
         svc.accept_contact(&pk_bin).await.unwrap();
-        let ev = events.try_recv().expect("Bound attendu");
-        assert!(matches!(ev, MessagingEvent::Bound { .. }));
+        loop {
+            let ev = events.try_recv().expect("Bound attendu");
+            if matches!(ev, MessagingEvent::Bound { .. }) {
+                break;
+            }
+        }
         assert_eq!(svc.contact_state(&pk_bin), Some(ContactState::Active));
         let w2 = wire(&peer, 2, &keys.recv, b"apres accord");
         svc.handle_incoming(20, &keys, &w2);

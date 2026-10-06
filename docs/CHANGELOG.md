@@ -3,6 +3,38 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Messagerie : indicateur de liaison e2e + « Reconnecter » (2026-10-06)
+
+- **Constat** (banc 3 daemons locaux) : le pipeline e2e fonctionne
+  (hello → pending → accept → msg → ack vérifiables via l'API), mais
+  l'UI ne distinguait pas « pas encore tenté » d'« échec » ni
+  d'« en cours », et un contact dont la liaison avait échoué n'avait
+  aucun moyen de retenter sans supprimer/re-ajouter.
+- **État de liaison exposé** : `LinkState` (`bound`/`connecting`/
+  `failed`/`none`) dérivé côté service — circuit lié > `connect`
+  explicite en vol ou tentative e2e automatique du tunnel
+  (`TunnelCommunity::e2e_pending` : `pending_e2e` ou `RP_DOWNLOADER`
+  non lié) > dernier `connect` échoué. Champ `link` dans
+  `GET /messaging/contacts` et `/contacts/pending` ; événement SSE
+  `messaging_link` aux transitions (début/fin de tentative,
+  déliaison réelle).
+- **Orchestration** : `MessagingService::connect_peer` (`resolve` DHT
+  → `connect` premier IP) remplace le duo manuel du handler —
+  l'état de liaison est piloté par le service, pas par l'API.
+- **Auto-reliaison au restart** : `load_state` rejoignait les
+  contacts restaurés sans joindre leurs swarms — un contact restauré
+  ne pouvait jamais se re-lier sans action. Les contacts `active`
+  rejoignent désormais leur swarm (`do_peer_discovery` refait les
+  `create_e2e` tout seul) ; `accept_contact` joint aussi le swarm du
+  demandeur (consentement bidirectionnel — re-liaison possible si le
+  circuit meurt).
+- **UI** : pastille d'état 4 couleurs avec tooltip sur chaque
+  contact + entrée « Reconnecter » au menu des contacts `active`
+  non liés (`connect` idempotent).
+- **Tests** : `cargo test -p onionbit-core messaging` (15 unit +
+  loopback) + test API 404 verts ; `clippy` et `fmt` propres ;
+  `flutter analyze` sans issue.
+
 ## `libtorrent/port` par défaut fixe à 45000 (2026-10-06)
 
 - **Avant** : `0` → sonde de la plage `6881..=6891` à chaque démarrage

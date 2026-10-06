@@ -292,8 +292,9 @@ class _PendingTile extends ConsumerWidget {
   }
 }
 
-/// Tuile contact — état, circuit lié, menu blocage/rétention/
-/// suppression.
+/// Tuile contact — état, indicateur de liaison e2e (vert lié /
+/// orange en cours / rouge échec / gris jamais tenté), menu
+/// reconnexion/blocage/rétention/suppression.
 class _ContactTile extends ConsumerWidget {
   const _ContactTile({
     required this.contact,
@@ -305,25 +306,51 @@ class _ContactTile extends ConsumerWidget {
   final bool selected;
   final VoidCallback onTap;
 
+  /// Pastille de liaison : couleur + libellé de l'état `link`
+  /// remonté par le daemon (jamais déduit du seul `circuit_id`).
+  (IconData, Color, String) _linkVisual(BuildContext context) {
+    final l10n = context.l10n;
+    final theme = Theme.of(context);
+    return switch (contact.link) {
+      MessagingLinkState.bound => (
+        Icons.circle,
+        Colors.green,
+        l10n.msgLinkBound,
+      ),
+      MessagingLinkState.connecting => (
+        Icons.circle,
+        Colors.orange,
+        l10n.msgLinkConnecting,
+      ),
+      MessagingLinkState.failed => (
+        Icons.circle,
+        Colors.red,
+        l10n.msgLinkFailed,
+      ),
+      MessagingLinkState.none => (
+        Icons.circle_outlined,
+        theme.colorScheme.outline,
+        l10n.msgLinkOffline,
+      ),
+    };
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final l10n = context.l10n;
-    final theme = Theme.of(context);
     final repo = ref.watch(messagingRepositoryProvider);
     final stateLabel = switch (contact.state) {
       MessagingContactState.pending => l10n.msgStatePending,
       MessagingContactState.blocked => l10n.msgStateBlocked,
       _ => null,
     };
+    final (linkIcon, linkColor, linkLabel) = _linkVisual(context);
     return ListTile(
       dense: true,
       selected: selected,
-      leading: Icon(
-        contact.circuitId != null ? Icons.circle : Icons.circle_outlined,
-        size: 10,
-        color: contact.circuitId != null
-            ? theme.colorScheme.primary
-            : theme.colorScheme.outline,
+      leading: Tooltip(
+        message: linkLabel,
+        child: Icon(linkIcon, size: 10, color: linkColor),
       ),
       title: Text(
         contact.displayName,
@@ -349,6 +376,12 @@ class _ContactTile extends ConsumerWidget {
         iconSize: 18,
         itemBuilder: (ctx) => [
           PopupMenuItem(value: 'rename', child: Text(l10n.msgRename)),
+          // « Reconnecter » — relance resolve+liaison e2e sur un
+          // contact consenti sans circuit (le connect du daemon est
+          // idempotent ; la maintenance retente aussi toute seule).
+          if (contact.state == MessagingContactState.active &&
+              contact.link != MessagingLinkState.bound)
+            PopupMenuItem(value: 'reconnect', child: Text(l10n.msgReconnect)),
           if (contact.state == MessagingContactState.blocked)
             PopupMenuItem(value: 'unblock', child: Text(l10n.msgUnblock))
           else
@@ -361,6 +394,7 @@ class _ContactTile extends ConsumerWidget {
         ],
         onSelected: (v) => switch (v) {
           'rename' => _renameDialog(context, ref),
+          'reconnect' => _reconnect(context, ref),
           'block' => _act(context, ref, () => repo.block(contact.publicKey)),
           'unblock' => _act(
             context,
@@ -373,6 +407,21 @@ class _ContactTile extends ConsumerWidget {
       ),
       onTap: onTap,
     );
+  }
+
+  /// « Reconnecter » : nouvelle tentative resolve + liaison e2e.
+  /// Le refresh vient du SSE `messaging_link` (connecting → bound /
+  /// failed) — on invalide quand même à la fin pour couvrir un flux
+  /// SSE absent ou laggué.
+  Future<void> _reconnect(BuildContext context, WidgetRef ref) async {
+    try {
+      await ref
+          .read(messagingRepositoryProvider)
+          .connect(contact.publicKey);
+    } catch (e) {
+      if (context.mounted) _showError(context, e);
+    }
+    ref.invalidate(messagingContactsProvider);
   }
 
   /// Dialogue renommage — pseudonyme local (`''` = effacer, retour

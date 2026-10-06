@@ -18,6 +18,12 @@ extension MessagingContactJson on Map<String, dynamic> {
     circuitId: (this['circuit_id'] as num?)?.toInt(),
     pendingSinceSecs: (this['pending_since_secs'] as num?)?.toInt(),
     alias: (this['alias'] as String?) ?? '',
+    link: switch (this['link'] as String? ?? '') {
+      'bound' => MessagingLinkState.bound,
+      'connecting' => MessagingLinkState.connecting,
+      'failed' => MessagingLinkState.failed,
+      _ => MessagingLinkState.none,
+    },
   );
 }
 

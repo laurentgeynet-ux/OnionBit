@@ -24,7 +24,9 @@ use axum::extract::{Path, Query, State};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::Json;
 use futures_util::stream::Stream;
-use onionbit_core::services::messaging::{ContactState, MessagingEvent, MessagingService};
+use onionbit_core::services::messaging::{
+    ContactState, LinkState, MessagingEvent, MessagingService,
+};
 use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
@@ -70,6 +72,15 @@ fn state_str(s: ContactState) -> &'static str {
     }
 }
 
+fn link_str(l: LinkState) -> &'static str {
+    match l {
+        LinkState::Bound => "bound",
+        LinkState::Connecting => "connecting",
+        LinkState::Failed => "failed",
+        LinkState::None => "none",
+    }
+}
+
 /// `GET /api/messaging/stats` — identite locale + compteurs de
 /// drops du demux.
 pub async fn get_stats(State(state): State<AppState>) -> Result<Json<serde_json::Value>, ApiError> {
@@ -100,6 +111,7 @@ pub async fn get_contacts(
                 "public_key": hexs(&pk),
                 "state": svc.contact_state(&pk).map(state_str).unwrap_or("unknown"),
                 "circuit_id": cid,
+                "link": link_str(svc.link_state(&pk)),
                 "alias": svc.contact_alias(&pk).unwrap_or_default(),
             })
         })
@@ -120,6 +132,7 @@ pub async fn get_pending(
             serde_json::json!({
                 "public_key": hexs(&pk),
                 "pending_since_secs": since,
+                "link": link_str(svc.link_state(&pk)),
                 "alias": svc.contact_alias(&pk).unwrap_or_default(),
             })
         })
@@ -136,20 +149,15 @@ pub struct ConnectBody {
 
 /// `POST /api/messaging/contacts/connect` — resout les points
 /// d'introduction du contact puis lie un circuit e2e
-/// (`resolve` DHT puis `connect`).
+/// (`connect_peer` : `resolve` DHT puis `connect`, avec suivi de
+/// l'etat de liaison expose dans `GET /contacts` — champ `link`).
 pub async fn post_connect(
     State(state): State<AppState>,
     Json(body): Json<ConnectBody>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let svc = svc(&state)?;
     let pk = pk_hex(&body.public_key)?;
-    let ips = svc.resolve(&pk).await?;
-    let Some(ip) = ips.into_iter().next() else {
-        return Err(ApiError::not_found(
-            "aucun point d'introduction pour ce contact",
-        ));
-    };
-    let cid = svc.connect(&pk, &ip).await?;
+    let cid = svc.connect_peer(&pk).await?;
     Ok(Json(serde_json::json!({ "circuit_id": cid })))
 }
 
@@ -350,6 +358,10 @@ fn event_to_sse(ev: &MessagingEvent) -> Option<(String, serde_json::Value)> {
         MessagingEvent::ContactAdded { contact } => (
             "messaging_contact",
             serde_json::json!({"contact": hexs(contact)}),
+        ),
+        MessagingEvent::Link { contact, link } => (
+            "messaging_link",
+            serde_json::json!({"contact": hexs(contact), "link": link_str(*link)}),
         ),
     };
     Some((topic.to_string(), kwargs))
