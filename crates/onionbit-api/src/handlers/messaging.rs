@@ -347,6 +347,10 @@ fn event_to_sse(ev: &MessagingEvent) -> Option<(String, serde_json::Value)> {
             "messaging_undeliverable",
             serde_json::json!({"contact": hexs(contact), "id": hexs(id)}),
         ),
+        MessagingEvent::ContactAdded { contact } => (
+            "messaging_contact",
+            serde_json::json!({"contact": hexs(contact)}),
+        ),
     };
     Some((topic.to_string(), kwargs))
 }

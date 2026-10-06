@@ -230,11 +230,14 @@ class _ContactsPane extends ConsumerWidget {
     try {
       await ref.read(messagingRepositoryProvider).connect(pk);
       ref.read(selectedContactProvider.notifier).set(pk);
-      ref.invalidate(messagingContactsProvider);
-      ref.invalidate(messagingHistoryProvider(pk));
     } catch (e) {
       if (context.mounted) _showError(context, e);
     }
+    // Toujours rafraîchir : le contact est créé (et persisté) dès la
+    // résolution côté daemon — même si la liaison e2e échoue (contact
+    // hors ligne), il doit apparaître dans la liste.
+    ref.invalidate(messagingContactsProvider);
+    ref.invalidate(messagingHistoryProvider(pk));
   }
 }
 

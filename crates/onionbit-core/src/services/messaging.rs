@@ -113,6 +113,14 @@ pub enum MessagingEvent {
         /// `id` de la trame perdue.
         id: [u8; 16],
     },
+    /// Contact cree par une intention locale (`resolve`/`connect`) —
+    /// visible dans `GET /contacts` meme sans circuit lie (hors
+    /// ligne) ; sans lui l'UI ne verrait la creation qu'au prochain
+    /// pull.
+    ContactAdded {
+        /// `pk_bin` du contact cree.
+        contact: Vec<u8>,
+    },
 }
 
 /// Etat de consentement d'un contact (ADR-0011, etape 38).
@@ -902,6 +910,9 @@ impl MessagingService {
         };
         if created {
             self.persist_contact(pk_bin, ContactState::Active);
+            let _ = self.events_tx.send(MessagingEvent::ContactAdded {
+                contact: pk_bin.to_vec(),
+            });
         }
         if !blocked {
             let mut swarms = self.swarms.lock().unwrap();

@@ -3,6 +3,24 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Messagerie : contact ajouté invisible jusqu'au redémarrage (2026-10-06)
+
+- **Symptôme** : « Ajouter un contact » ne montrait rien dans la liste
+  quand la liaison e2e échouait (pair hors ligne, aucun point
+  d'introduction) — le contact n'apparaissait qu'au prochain
+  démarrage.
+- **Cause** : `resolve()` crée et persiste le contact dès
+  `ensure_contact_swarm` (`upsert_contact` → `msg_contacts`) mais
+  `post_connect` répond ensuite 404 ; le `catch` de `_addContact`
+  sautait les `ref.invalidate`, et aucun `MessagingEvent` n'était émis
+  à la création → ni pull ni SSE ne rafraîchissaient la liste.
+- **Correctif** : nouvel événement `MessagingEvent::ContactAdded`
+  émis à la création (SSE `messaging_contact` → invalidation via le
+  pont) ; `_addContact` invalide contacts + historique même en cas
+  d'erreur — le contact hors ligne apparaît avec le point creux.
+- **Tests** : 15/15 unitaires messagerie + loopback e2e verts ;
+  `cargo check` api/core, `fmt` et `flutter analyze` propres.
+
 ## Onglet Diagnostic « Connexions » — agrégat ip:port (2026-10-06)
 
 - **Besoin** : dans l'onglet Diagnostic, voir pour chaque adresse
