@@ -3,6 +3,36 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## ADR-0015 : validation terrain du ledger (2026-10-06)
+
+- **Soak réel 10/10** (`scripts/bench_ext_ledger_soak.ps1`, nouveau) :
+  4 daemons ext+OBF en mesh fermé, speedtest 2 sauts réel (6,1 Mio
+  relayés), liens bilatéraux scellés des deux côtés avec hash partagé,
+  `forks=0`, OBF 38/38, endpoint speedtest SSE OK.
+- **Correctif — annuaire partagé volatile** : `Network.services` est
+  mutualisée entre communautés ; le churn discovery/éviction DHT
+  (`remove_peer_key`) y efface la marque `EXT` d'un pair vivant →
+  `peers_for_service(EXT)` vide → silence ledger persistant. La
+  population qui fait foi est désormais `ext_peers` : `ExtPeer`
+  conserve l'adresse du dernier `hello` et `ext_targets()` la sert à
+  tous les envois post-hello (settlement, gossips HEAD/FORK/ATTEST),
+  en re-inscrivant opportunément fiche `by_key` + marque `services`.
+  Régression `T7` (purge symétrique → settlement complet quand même).
+- **Correctif — faux forks en sqlite** : `DbLedgerStore::put`
+  testait la position `(pk_b, seq_b)` pour les propositions non
+  scellées — un REJECT suivi d'une reproposition au même rang
+  s'auto-marquait fork (soak run : `forks=2` fantômes). La position
+  B n'est évaluée que pour les liens scellés (`at_position_sealed`,
+  `sig_b <> zeroblob(64)`), parité avec `InMemoryLedgerStore` ;
+  régression `proposition_rejetee_reproposee_sans_fork`.
+- **T1 silence legacy** : oracle assoupli — `Need a DHT provider`
+  est un bruit interne de `TriblerTunnelCommunity` (connect DHT pour
+  un hop de circuit legacy alors que le banc ferme toute DHT) ; les
+  trames ext sont droppées au préfixe avant d'atteindre ce code.
+- **Diag** : le warn de rejeu « configuration.json corrompu » porte
+  désormais l'erreur de parse (le détail partait en SSE invisible
+  avant l'installation du subscriber).
+
 ## Messagerie : indicateur de liaison e2e + « Reconnecter » (2026-10-06)
 
 - **Constat** (banc 3 daemons locaux) : le pipeline e2e fonctionne

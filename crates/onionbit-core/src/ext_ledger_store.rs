@@ -110,18 +110,26 @@ impl LedgerStore for DbLedgerStore {
                     return Ok(PutOutcome::Duplicate);
                 }
             }
+            // Positions occupees : `(pk_a, seq_a)` toujours — la
+            // chaine du proposeur avance des l'emission. `(pk_b,
+            // seq_b)` seulement une fois `sig_b` posee : une
+            // proposition non scellee n'engage pas la position du
+            // co-signataire — sinon un REJECT suivi d'une
+            // reproposition au meme `seq_b` s'auto-marquerait fork
+            // (meme semantique que `InMemoryLedgerStore`, observe au
+            // banc `bench_ext_ledger_soak` : forks=2 fantomes).
             let pos_a = onionbit_db::ext_ledger::at_position(c, &pa.0, pa.1)?;
-            let pos_b = onionbit_db::ext_ledger::at_position(c, &pb.0, pb.1)?;
-            let fork = pos_a
-                .iter()
-                .chain(pos_b.iter())
-                .any(|r| r.proposal_id != pid);
+            let mut fork = pos_a.iter().any(|r| r.proposal_id != pid);
             let head_a = onionbit_db::ext_ledger::head_seq(c, &pa.0)?;
-            let head_b = onionbit_db::ext_ledger::head_seq(c, &pb.0)?;
-            // Meme semantique que `InMemoryLedgerStore` : derriere
-            // une tete connue = `seq < max` sur l'une des chaines
-            // (l'upgrade sceau a la meme position est `New`).
-            let behind = head_a.is_some_and(|h| pa.1 < h) || head_b.is_some_and(|h| pb.1 < h);
+            let mut behind = head_a.is_some_and(|h| pa.1 < h);
+            if sealed {
+                let pos_b = onionbit_db::ext_ledger::at_position_sealed(c, &pb.0, pb.1)?;
+                fork = fork || pos_b.iter().any(|r| r.proposal_id != pid);
+                let head_b = onionbit_db::ext_ledger::head_seq(c, &pb.0)?;
+                behind = behind || head_b.is_some_and(|h| pb.1 < h);
+            }
+            // Derriere une tete connue = `seq < max` sur l'une des
+            // chaines (l'upgrade sceau a la meme position est `New`).
             onionbit_db::ext_ledger::insert(c, &row)?;
             Ok(if fork {
                 PutOutcome::Fork
@@ -273,5 +281,35 @@ mod tests {
         assert_eq!(store.count(), 1);
         let head = store.head(&sealed.pk_a).unwrap();
         assert_eq!((head.seq, head.hash), (1, sealed.hash()));
+    }
+
+    /// Regression (banc `bench_ext_ledger_soak`) : une proposition
+    /// rejetee puis re-proposee au meme `seq_b` n'est PAS un fork —
+    /// la position `(pk_b, seq_b)` n'est occupee qu'au sceau. Un
+    /// REJECT suivi d'un retry au meme rang produisait `forks=2`
+    /// fantomes sur le proposeur (positions a+b du meme evenement).
+    #[test]
+    fn proposition_rejetee_reproposee_sans_fork() {
+        let db = Arc::new(Database::memory().unwrap());
+        let store = DbLedgerStore::new(db);
+        let a = LibNaClSecretKey::generate();
+        let b = LibNaClSecretKey::generate();
+        // Proposition 1 `(seq_a=1, seq_b=1)` — rejetee par B, reste
+        // non scellee dans le store d'A.
+        let tx1 = LedgerTx::new(8192, 1000);
+        let p1 = LedgerLink::propose(&a, &b.public_key(), 1, GENESIS, 1, GENESIS, &tx1).unwrap();
+        assert_eq!(store.put(&p1), PutOutcome::New);
+        // Resync : re-proposition plafonnee `(seq_a=2, seq_b=1)`.
+        let tx2 = LedgerTx::new(1024, 1001);
+        let p2 = LedgerLink::propose(&a, &b.public_key(), 2, p1.hash(), 1, GENESIS, &tx2).unwrap();
+        assert_eq!(store.put(&p2), PutOutcome::New);
+        // Le sceau de p2 n'est pas un fork non plus : la position
+        // `(pk_b, 1)` ne compte que des liens scelles.
+        let mut sealed2 = p2.clone();
+        sealed2.cosign(&b).unwrap();
+        assert_eq!(store.put(&sealed2), PutOutcome::New);
+        assert_eq!(store.count(), 2);
+        let head = store.head(&sealed2.pk_a).unwrap();
+        assert_eq!((head.seq, head.hash), (2, sealed2.hash()));
     }
 }

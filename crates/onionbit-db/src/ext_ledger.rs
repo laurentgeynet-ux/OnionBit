@@ -126,6 +126,22 @@ pub fn at_position(conn: &Connection, pk: &[u8], seq: i64) -> Result<Vec<LedgerL
     Ok(rows.collect::<std::result::Result<_, _>>()?)
 }
 
+/// Liens occupant la position `(pk, seq)` vus du point de vue d'un
+/// lien scelle entrant : cote `pk_b`, seules les lignes **scellees**
+/// comptent — une proposition non scellee n'engage pas la position
+/// du co-signataire (rejet + re-proposition au meme rang ≠ fork,
+/// semantique `InMemoryLedgerStore`).
+pub fn at_position_sealed(conn: &Connection, pk: &[u8], seq: i64) -> Result<Vec<LedgerLinkRow>> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {COLS} FROM ext_ledger_links
+         WHERE (pk_a = ?1 AND seq_a = ?2)
+            OR (pk_b = ?1 AND seq_b = ?2 AND sig_b <> zeroblob(64))
+         ORDER BY added_on"
+    ))?;
+    let rows = stmt.query_map(params![pk, seq], from_row)?;
+    Ok(rows.collect::<std::result::Result<_, _>>()?)
+}
+
 /// Tete de la chaine de `pk` : le plus grand rang connu ou `pk`
 /// est partie, quel que soit le role.
 pub fn head_seq(conn: &Connection, pk: &[u8]) -> Result<Option<i64>> {

@@ -811,6 +811,21 @@ Ajouter ici, au fil de l'avancement, tout écart constaté par rapport au
 plan initial (dépendance qui ne convient pas, étape scindée en deux,
 risque IPv8 sous/sur-estimé, etc.), avec la date.
 
+- 2026-10-06 (ADR-0015 validation terrain — **vert**) : soak réel
+  `bench_ext_ledger_soak.ps1` (4 daemons ext+OBF, mesh fermé,
+  speedtest tunnel 2 sauts — 6,1 Mio relayés) : 10/10 — convergence
+  ext, liens scellés des deux côtés (hash partagé), `forks=0`, OBF
+  38/38. Deux défauts trouvés et corrigés : (a) `Network.services`
+  partagée perdait la marque `EXT` sous `remove_peer_key`
+  (churn/éviction DHT) → silence ledger persistant — `ext_peers`
+  fait désormais foi (`ExtPeer.addr` = dernier hello,
+  `ext_targets()` re-guérit l'annuaire), régression T7 ; (b)
+  `DbLedgerStore` indexait `(pk_b, seq_b)` dès la proposition non
+  scellée → retry post-REJECT = faux fork — évaluée au sceau
+  seulement, parité `InMemoryLedgerStore`. T1 silence legacy vert
+  (oracle : `Need a DHT provider` = bruit interne Tribler, DHT
+  fermée). Le REJECT-resync observé est nominal : reliquat au-delà
+  de la mesure du pair non réglable, gate conservée.
 - 2026-10-06 (diagnostic des connexions) : nouvel onglet « Connexions »
   de la page Diagnostic (12 onglets) adossé à l'extension Rust
   `GET /api/connections` — agrégat par adresse distante `ip:port` des

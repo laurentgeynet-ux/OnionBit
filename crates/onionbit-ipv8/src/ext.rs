@@ -18,9 +18,12 @@
 //! tourne ici » a tout sniffer. La communaute envoie un `hello` vers
 //! des pairs **deja connus** via les communautes legacy ; un pair qui
 //! ne repond pas (Tribler) n'est plus sollicite pendant
-//! `hello_cooldown`. Le peer set de l'extension
-//! (`peers_for_service(EXT_COMMUNITY_ID)`) *est* la population
-//! OnionBit — la negociation de capacites est implicite par `msg_id`,
+//! `hello_cooldown`. Le peer set de l'extension (`ext_peers` : les
+//! pairs ayant reussi un `hello` valide) *est* la population
+//! OnionBit — `Network.services` etant partagee et purgeable par les
+//! autres communautes, elle ne sert que d'annuaire annexe (repare
+//! opportunement par `ext_targets`). La negociation de capacites est
+//! implicite par `msg_id`,
 //! completee par le bitmap `caps` des `hello` pour les capacites de
 //! transport (obfuscation opt-in, phases suivantes).
 //!
@@ -403,6 +406,14 @@ impl Hello {
 struct ExtPeer {
     caps: u64,
     last_hello: Instant,
+    /// Derniere adresse observee du pair (`src` de son `hello`).
+    /// `Network.services` est un annuaire **partage** : une autre
+    /// communaute peut y retirer la marque `EXT` d'un pair vivant
+    /// (churn discovery, eviction DHT, purge d'adresse) — la
+    /// population ext porte alors sa propre table d'adressage,
+    /// sinon un pair connu devenait injoignable en silence
+    /// (ledgers jamais emis — bug observe au banc `ledger_soak`).
+    addr: Option<UdpAddress>,
 }
 
 /// Instantane d'un pair ext (`peers_info` — structure brute, la
@@ -700,6 +711,7 @@ impl OnionbitExtCommunity {
             ExtPeer {
                 caps: hello.caps,
                 last_hello: Instant::now(),
+                addr: peer.address.clone(),
             },
         );
         if let Some(addr) = peer.address.clone() {
@@ -774,18 +786,46 @@ impl OnionbitExtCommunity {
         }
     }
 
+    /// Instantane `(cle, adresse)` des pairs ext joignables —
+    /// `ext_peers` est la population qui fait foi (ADR-0015 §2) :
+    /// `Network.services` est partage avec les autres communautes
+    /// et une purge externe (churn, eviction DHT) peut y retirer la
+    /// marque `EXT` — voire la fiche `by_key` — d'un pair vivant.
+    /// On re-inscrit opportunement la fiche et la marque a chaque
+    /// lecture pour guerir l'annuaire.
+    fn ext_targets(&self) -> Vec<(Vec<u8>, UdpAddress)> {
+        let snapshot: Vec<(Vec<u8>, Option<UdpAddress>)> = {
+            let peers = self.ext_peers.lock().unwrap();
+            peers
+                .iter()
+                .map(|(pk, e)| (pk.clone(), e.addr.clone()))
+                .collect()
+        };
+        let mut targets = Vec::with_capacity(snapshot.len());
+        for (pk, addr) in snapshot {
+            if self.network.get_by_key(&pk).is_none() {
+                if let Some(p) = Peer::new(pk.clone(), addr.clone()) {
+                    self.network.add_verified(p);
+                }
+            }
+            self.network.discover_service(&pk, EXT_COMMUNITY_ID);
+            if let Some(a) = addr {
+                targets.push((pk, a));
+            }
+        }
+        targets
+    }
+
     /// Pousse `att` a tous les pairs ext connus sauf `except` (cle du
     /// relayeur quand on re-emet — il l'a deja).
     async fn gossip_attest(self: &Arc<Self>, att: &Attestation, except: Option<&[u8]>) {
         let payload = att.pack();
         let my_pk = self.key.public_key().to_bin();
-        for p in self.network.peers_for_service(&EXT_COMMUNITY_ID) {
-            if p.public_key_bin == my_pk || except == Some(p.public_key_bin.as_slice()) {
+        for (pk, addr) in self.ext_targets() {
+            if pk == my_pk || except == Some(pk.as_slice()) {
                 continue;
             }
-            if let Some(addr) = p.address.clone() {
-                self.send_attest_to(&addr, &payload).await;
-            }
+            self.send_attest_to(&addr, &payload).await;
         }
     }
 
@@ -1167,22 +1207,18 @@ impl OnionbitExtCommunity {
                 .keys()
                 .cloned()
                 .collect();
-            let ext_keys: Vec<Vec<u8>> = self.ext_peers.lock().unwrap().keys().cloned().collect();
-            let peers = self.network.peers_for_service(&EXT_COMMUNITY_ID);
-            ext_keys
+            // `ext_targets` porte l'adresse observee au dernier
+            // `hello` — plus robuste que `peers_for_service` dont la
+            // marque `EXT` peut disparaitre sans que le pair soit
+            // mort (annuaire partage entre communautes).
+            self.ext_targets()
                 .into_iter()
-                .filter(|pk| *pk != my_pk)
-                .filter(|pk| !pend_keys.contains(pk))
-                .filter_map(|pk| {
+                .filter(|(pk, _)| *pk != my_pk)
+                .filter(|(pk, _)| !pend_keys.contains(pk))
+                .filter_map(|(pk, addr)| {
                     let served = self.local_stats(&pk)?.0;
                     let delta = served.saturating_sub(self.settled_total(&pk));
-                    (delta >= self.settings.ledger_tranche_bytes).then(|| {
-                        let addr = peers
-                            .iter()
-                            .find(|p| p.public_key_bin == pk)
-                            .and_then(|p| p.address.clone());
-                        addr.map(|a| (pk.clone(), a, served))
-                    })?
+                    (delta >= self.settings.ledger_tranche_bytes).then_some((pk, addr, served))
                 })
                 .collect()
         };
@@ -1208,11 +1244,10 @@ impl OnionbitExtCommunity {
             let payload = w.into_bytes();
             use rand::seq::IteratorRandom;
             let targets: Vec<UdpAddress> = self
-                .network
-                .peers_for_service(&EXT_COMMUNITY_ID)
+                .ext_targets()
                 .into_iter()
-                .filter(|p| p.public_key_bin != my_pk)
-                .filter_map(|p| p.address)
+                .filter(|(pk, _)| *pk != my_pk)
+                .map(|(_, addr)| addr)
                 .sample(&mut rand::rng(), self.settings.ledger_head_fanout);
             for addr in targets {
                 self.send_ledger_to(&addr, msg::LEDGER_HEAD, &payload).await;
@@ -1722,21 +1757,19 @@ impl OnionbitExtCommunity {
         w.u8(EXT_PROTO_VERSION);
         w.raw(&link.pack());
         let payload = w.into_bytes();
-        for p in self.network.peers_for_service(&EXT_COMMUNITY_ID) {
-            if p.public_key_bin == my_pk {
+        for (pk, addr) in self.ext_targets() {
+            if pk == my_pk {
                 continue;
             }
-            if let Some(addr) = p.address {
-                if except == Some(&addr) {
-                    continue;
-                }
-                // Pas de retour vers les parties du lien : elles
-                // l'ont deja par construction.
-                if p.public_key_bin == link.pk_a || p.public_key_bin == link.pk_b {
-                    continue;
-                }
-                self.send_ledger_to(&addr, msg::LEDGER_HEAD, &payload).await;
+            if except == Some(&addr) {
+                continue;
             }
+            // Pas de retour vers les parties du lien : elles
+            // l'ont deja par construction.
+            if pk == link.pk_a || pk == link.pk_b {
+                continue;
+            }
+            self.send_ledger_to(&addr, msg::LEDGER_HEAD, &payload).await;
         }
     }
 
@@ -1749,13 +1782,11 @@ impl OnionbitExtCommunity {
         w.varlen_h(&a.pack());
         w.varlen_h(&b.pack());
         let payload = w.into_bytes();
-        for p in self.network.peers_for_service(&EXT_COMMUNITY_ID) {
-            if p.public_key_bin == my_pk {
+        for (pk, addr) in self.ext_targets() {
+            if pk == my_pk {
                 continue;
             }
-            if let Some(addr) = p.address {
-                self.send_ledger_to(&addr, msg::LEDGER_FORK, &payload).await;
-            }
+            self.send_ledger_to(&addr, msg::LEDGER_FORK, &payload).await;
         }
     }
 
@@ -1995,12 +2026,21 @@ impl OnionbitExtCommunity {
             // `WIRE_EXT` n'a aucun message `dist` : les trames
             // `ez_send` ne portent pas d'horodatage de Lamport.
             global_time: 0,
-            peers: self
-                .network
-                .peers_for_service(&EXT_COMMUNITY_ID)
-                .iter()
-                .map(crate::overlays::overlay_peer)
-                .collect(),
+            peers: {
+                // La population exposee est `ext_peers` (fait foi) ;
+                // la fiche `Network` est preferee quand elle existe
+                // (metadonnees fraiches), sinon on en reconstruit
+                // une minimale depuis l'observation du `hello`.
+                let ext = self.ext_peers.lock().unwrap();
+                ext.iter()
+                    .filter_map(|(pk, e)| {
+                        self.network
+                            .get_by_key(pk)
+                            .or_else(|| Peer::new(pk.clone(), e.addr.clone()))
+                    })
+                    .map(|p| crate::overlays::overlay_peer(&p))
+                    .collect()
+            },
             overlay_name: "OnionbitExtCommunity",
             max_peers: crate::overlays::DEFAULT_MAX_PEERS,
             is_isolated,

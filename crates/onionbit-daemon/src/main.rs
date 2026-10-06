@@ -373,10 +373,11 @@ async fn async_main() -> ExitCode {
     // `report_config_error` une fois la session (et son bus) creee.
     let (mut daemon_config, config_error) = DaemonConfig::load_report(&config_path);
     init_tracing(&args.state_dir, &daemon_config);
-    if config_error.is_some() {
+    if let Some(err) = &config_error {
         // Le warn interne de `load_report` a ete emis avant
         // l'installation du subscriber : on le rejoue ici.
         tracing::warn!(
+            error = %err,
             path = %config_path.display(),
             "configuration.json corrompu, repli sur les valeurs par defaut"
         );

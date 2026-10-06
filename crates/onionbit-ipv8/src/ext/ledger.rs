@@ -440,7 +440,13 @@ impl InMemoryLedgerStore {
         order.sort();
         for (_, h) in order.into_iter().take(links.len() - self.max) {
             if let Some(s) = links.remove(&h) {
-                for (pk, seq) in [(s.link.pk_a, s.link.seq_a), (s.link.pk_b, s.link.seq_b)] {
+                // Meme regle qu'a l'insertion : une proposition non
+                // scellee n'a jamais occupe la position `(pk_b, seq_b)`.
+                let n = 1 + usize::from(s.link.is_sealed());
+                for (pk, seq) in [(s.link.pk_a, s.link.seq_a), (s.link.pk_b, s.link.seq_b)]
+                    .into_iter()
+                    .take(n)
+                {
                     let key = (pk, seq);
                     let empty = if let Some(hashes) = by_pos.get_mut(&key) {
                         hashes.retain(|x| *x != h);
@@ -475,8 +481,19 @@ impl InMemoryLedgerStore {
             }
         }
         let mut by_pos = self.by_pos.lock().unwrap();
+        // Positions occupees : `(pk_a, seq_a)` toujours — la chaine du
+        // proposeur avance des l'emission, un second lien a ce `seq_a`
+        // est une equivocation signee par `a`. `(pk_b, seq_b)` seulement
+        // une fois `sig_b` posee : une proposition non scellee n'engage
+        // pas la position du co-signataire — sinon un REJECT suivi
+        // d'une reproposition au meme `seq_b` s'auto-marquerait fork
+        // (observe au banc `bench_ext_ledger_soak` : forks=2 fantomes).
+        let n = 1 + usize::from(link.is_sealed());
         let mut fork = false;
-        for (pk, seq) in [(&link.pk_a, link.seq_a), (&link.pk_b, link.seq_b)] {
+        for (pk, seq) in [(&link.pk_a, link.seq_a), (&link.pk_b, link.seq_b)]
+            .into_iter()
+            .take(n)
+        {
             let ids = by_pos.entry((pk.clone(), seq)).or_default();
             if ids.iter().any(|id| *id != pid) {
                 fork = true;
@@ -489,6 +506,7 @@ impl InMemoryLedgerStore {
         // chaines n'avance pas les tetes.
         let behind = [(&link.pk_a, link.seq_a), (&link.pk_b, link.seq_b)]
             .iter()
+            .take(n)
             .any(|(pk, seq)| {
                 by_pos
                     .keys()
@@ -708,6 +726,32 @@ mod tests {
         assert_eq!(store.put(&lf), PutOutcome::Fork);
         // Les deux sont conserves (preuve).
         assert_eq!(store.count(), 3);
+    }
+
+    #[test]
+    fn proposition_rejetee_puis_reproposee_nest_pas_un_fork() {
+        // Banc reel (`bench_ext_ledger_soak`) : `a` propose seq_b=1,
+        // `b` refuse (derive), `a` resynchronise et repropose seq_b=1
+        // a `seq_a` suivant. La proposition non scellee n'occupait
+        // jamais reellement la position de `b` — aucun fork.
+        let (a, b, _) = sealed_pair();
+        let store = InMemoryLedgerStore::new(64);
+        let tx1 = LedgerTx::new(1024, now());
+        let p1 = LedgerLink::propose(&a, &b.public_key(), 1, GENESIS, 1, GENESIS, &tx1).unwrap();
+        assert_eq!(store.put(&p1), PutOutcome::New); // non scellee
+        let tx2 = LedgerTx::new(2048, now() + 1);
+        let mut p2 =
+            LedgerLink::propose(&a, &b.public_key(), 2, p1.hash(), 1, GENESIS, &tx2).unwrap();
+        p2.cosign(&b).unwrap();
+        assert_eq!(store.put(&p2), PutOutcome::New); // scellee, meme seq_b
+
+        // Une seconde proposition SCELLEE differente au meme seq_b :
+        // la, vraie equivocation de `b` — fork avere.
+        let tx3 = LedgerTx::new(4096, now() + 2);
+        let mut p3 =
+            LedgerLink::propose(&a, &b.public_key(), 3, p2.hash(), 1, GENESIS, &tx3).unwrap();
+        p3.cosign(&b).unwrap();
+        assert_eq!(store.put(&p3), PutOutcome::Fork);
     }
 
     #[test]

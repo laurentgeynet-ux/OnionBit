@@ -267,8 +267,14 @@ try {
     }
     $terr = ''
     try {
+        # Bruit banc exclu : « Need a DHT provider » — Tribler tente un
+        # connect DHT pour un hop de circuit legacy alors que le mesh
+        # ferme n'a aucune DHT (dht_discovery=false). Interne a
+        # TriblerTunnelCommunity : nos trames ext sont droppees au
+        # prefixe de communaute et n'atteignent jamais ce code.
         $terr = (Select-String -Path (Join-Path $out 'tribler_stdout.log') `
             -Pattern 'error|exception|traceback' -AllMatches |
+            Where-Object { $_.Line -notmatch 'Need a DHT provider' } |
             Select-Object -First 3 | ForEach-Object { $_.Line }) -join ' | '
     } catch {}
     Oracle 'T-log-sans-erreur' ([string]::IsNullOrWhiteSpace($terr)) `

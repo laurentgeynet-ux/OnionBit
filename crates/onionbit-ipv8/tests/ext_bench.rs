@@ -839,3 +839,78 @@ async fn t6_obf_enveloppe_negociee() {
         "\"cases\":\"cap negociee -> enveloppe ; sans cap -> clair ; malforme -> drop : verts\"",
     );
 }
+
+/// T7 — resilience a la purge de l'annuaire partage : le churn
+/// discovery ou l'eviction DHT appellent `Network::remove_peer_key`
+/// qui vide `by_key`/`by_addr` ET `services` pour la cle — le pair
+/// disparait alors de `peers_for_service(EXT)` alors qu'il est
+/// vivant. `ext_peers` fait foi (ADR-0015 §2) : `ext_targets`
+/// conserve l'adresse du dernier `hello` et re-inscrit
+/// opportunement la fiche — le settlement ne depend plus du
+/// marqueur partage.
+#[tokio::test]
+async fn t7_annuaire_purge_settlement_survit() {
+    let t0 = Instant::now();
+    let tranche = 1024u64;
+    let sa = ExtSettings {
+        ledger_tranche_bytes: tranche,
+        ..ExtSettings::default()
+    };
+    let a = node(sa.clone()).await;
+    let b = node(sa).await;
+    link(&a, &b).await;
+    let pk_a = a.key.public_key().to_bin();
+    let pk_b = b.key.public_key().to_bin();
+    let pk_b2 = pk_b.clone();
+    a.c.set_stats_source(Arc::new(move |pk| {
+        (pk == pk_b2.as_slice()).then_some((tranche, 0))
+    }));
+    let pk_a2 = pk_a.clone();
+    b.c.set_stats_source(Arc::new(move |pk| {
+        (pk == pk_a2.as_slice()).then_some((0, tranche))
+    }));
+
+    // Precondition : le marqueur EXT partage est pose des deux cotes.
+    assert!(!a.net.peers_for_service(&EXT_COMMUNITY_ID).is_empty());
+    // Purge symetrique — equivalent de l'eviction observee au soak
+    // (churn discovery / DHT sur la `Network` mutualisee).
+    a.net.remove_peer_key(&pk_b);
+    b.net.remove_peer_key(&pk_a);
+    assert!(a.net.get_by_key(&pk_b).is_none());
+    assert!(a.net.peers_for_service(&EXT_COMMUNITY_ID).is_empty());
+    assert!(b.net.get_by_key(&pk_a).is_none());
+
+    // Le settlement doit quand meme trouver B (adresse du dernier
+    // `hello` conservee dans `ext_peers`) : PROPOSE -> SEAL -> store
+    // des deux cotes, et l'annuaire est gueri au passage.
+    a.c.settle_tick().await;
+    let bc = b.c.clone();
+    wait_until(move || bc.info().ledger_stored >= 1).await;
+    let ac = a.c.clone();
+    wait_until(move || ac.info().ledger_stored >= 1).await;
+    assert_eq!(a.c.info().ledger_pending, 0);
+    assert!(a
+        .net
+        .peers_for_service(&EXT_COMMUNITY_ID)
+        .iter()
+        .any(|p| p.public_key_bin == pk_b));
+
+    let la = a.c.ledger_links(1)[0].clone();
+    let lb = b.c.ledger_links(1)[0].clone();
+    assert_eq!(la.hash(), lb.hash());
+    assert!(la.verify_a() && la.verify_b());
+
+    journal(
+        "T7-annuaire-purge-settlement",
+        "tranche=1024 ; purge remove_peer_key des deux cotes",
+        "loopback 2 noeuds lies ; settle sans marqueur EXT partage",
+        t0,
+        &format!(
+            "{{\"A\":{},\"B\":{}}}",
+            node_counters(&a),
+            node_counters(&b)
+        ),
+        "{\"note\":\"ext_peers + addr hello = population fiable\"}",
+        "\"cases\":\"annuaire purge -> PROPOSE/SEAL quand meme ; fiche guerie : verts\"",
+    );
+}
