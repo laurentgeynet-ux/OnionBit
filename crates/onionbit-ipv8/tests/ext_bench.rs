@@ -22,11 +22,13 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use onionbit_crypto::ipv8::keys::LibNaClPublicKey;
 use onionbit_crypto::ipv8::keys::LibNaClSecretKey;
 use onionbit_ipv8::ext::{
-    attest_kind, attest_verdict, Attestation, ExtSettings, InMemoryAttestationStore,
-    OnionbitExtCommunity, EXT_COMMUNITY_ID,
+    attest_kind, attest_verdict, msg, Attestation, ExtSettings, InMemoryAttestationStore,
+    LedgerLink, LedgerTx, OnionbitExtCommunity, EXT_COMMUNITY_ID, EXT_PROTO_VERSION, GENESIS,
 };
+use onionbit_ipv8::serializer::Writer;
 use onionbit_ipv8::{prefix_of, Network, Packet, Peer, UdpAddress, UdpEndpoint, PREFIX_LEN};
 
 /// Noeud du banc : communaute ext + endpoint + annuaire propres.
@@ -87,6 +89,24 @@ async fn send_att(src: &Node, dst: &Node, att: &Attestation, transport: &LibNaCl
         transport,
         &att.pack(),
     );
+    src.ep.send_to(&dst.addr, &pkt).await.unwrap();
+}
+
+/// Envoie une trame `LEDGER_*` `{v, payload}` signee par
+/// `transport` depuis `src.ep` vers `dst` (relai quelconque : les
+/// liens sont auto-portants, la cle de transport n'entre pas dans
+/// la validation).
+async fn send_ledger(
+    src: &Node,
+    dst: &Node,
+    msg_id: u8,
+    link_bytes: &[u8],
+    transport: &LibNaClSecretKey,
+) {
+    let mut w = Writer::new();
+    w.u8(EXT_PROTO_VERSION);
+    w.raw(link_bytes);
+    let pkt = Packet::sign_no_dist(&EXT_COMMUNITY_ID, msg_id, transport, &w.into_bytes());
     src.ep.send_to(&dst.addr, &pkt).await.unwrap();
 }
 
@@ -528,5 +548,206 @@ async fn t4_cadence_ext_s_eteint() {
         ),
         &volume,
         "\"cases\":\"hello_tx fige post-lien ; attest_tx→0 apres gossip ; rejeu absorbe sans emission : verts\"",
+    );
+}
+
+/// T5a — settlement loopback (Phase 9c) : la comptabilite locale
+/// mesure une tranche servie -> `settle_tick` propose -> le
+/// beneficiaire co-signe -> SEAL stocke des deux cotes ; la gate
+/// `owes_signature` s'eteint apres reglement.
+#[tokio::test]
+async fn t5a_ledger_settlement_loopback() {
+    let t0 = Instant::now();
+    let tranche = 1024u64;
+    let sa = ExtSettings {
+        ledger_tranche_bytes: tranche,
+        ..ExtSettings::default()
+    };
+    let a = node(sa.clone()).await;
+    let b = node(sa).await;
+    link(&a, &b).await;
+    let pk_a = a.key.public_key().to_bin();
+    let pk_b = b.key.public_key().to_bin();
+    // Comptabilite locale injectee (pattern `PeerStatsBook`) : A a
+    // servi exactement une tranche a B ; B mesure le meme recu.
+    let pk_b2 = pk_b.clone();
+    a.c.set_stats_source(Arc::new(move |pk| {
+        (pk == pk_b2.as_slice()).then_some((tranche, 0))
+    }));
+    let pk_a2 = pk_a.clone();
+    b.c.set_stats_source(Arc::new(move |pk| {
+        (pk == pk_a2.as_slice()).then_some((0, tranche))
+    }));
+
+    // Gate avant reglement : la tranche consommee est impayee.
+    assert!(a.c.owes_signature(&pk_b));
+
+    a.c.settle_tick().await;
+    // B recoit PROPOSE -> co-signe -> SEAL ; A stocke le sceau.
+    let bc = b.c.clone();
+    wait_until(move || bc.info().ledger_stored >= 1).await;
+    let ac = a.c.clone();
+    wait_until(move || ac.info().ledger_stored >= 1).await;
+    assert_eq!(a.c.info().ledger_pending, 0);
+
+    // Meme lien des deux cotes, rang 1, signatures valides, `tx`
+    // lisible par la paire seule.
+    let la = a.c.ledger_links(1)[0].clone();
+    let lb = b.c.ledger_links(1)[0].clone();
+    assert_eq!(la.hash(), lb.hash());
+    assert!(la.verify_a() && la.verify_b());
+    assert_eq!(la.seq_a, 1);
+    assert_eq!(la.seq_b, 1);
+    let tx_a = LedgerTx::open(
+        &la.tx_enc,
+        &a.key,
+        &LibNaClPublicKey::from_bin(&pk_b).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(tx_a.served_total, tranche);
+
+    // Le reglement signe eteint la gate (delta servi-signe = 0).
+    assert!(!a.c.owes_signature(&pk_b));
+    assert_eq!(a.c.info().ledger_my_head.0, 1);
+    assert_eq!(b.c.info().ledger_my_head.0, 1);
+
+    journal(
+        "T5a-ledger-settlement",
+        "tranche=1024 ; drift defaut ; stats_source injectee",
+        "loopback 2 noeuds lies ; propose->seal",
+        t0,
+        &format!(
+            "{{\"A\":{},\"B\":{}}}",
+            node_counters(&a),
+            node_counters(&b)
+        ),
+        "{\"note\":\"volume ledger = datagrammes loopback\"}",
+        "\"cases\":\"propose->seal->store ; gate off apres reglement : verts\"",
+    );
+}
+
+/// T5b — derive + refus -> convergence : A gonfle `served` au-dela
+/// de la derive toleree par B -> `LEDGER_REJECT` porte la mesure de
+/// B -> la proposition suivante est plafonnee a `measured + derive`
+/// et scellee. Le reliquat non signe reste du : la gate persiste
+/// (refus != liberation).
+#[tokio::test]
+async fn t5b_ledger_drift_reject_converge() {
+    let t0 = Instant::now();
+    let tranche = 1024u64;
+    let sa = ExtSettings {
+        ledger_tranche_bytes: tranche,
+        ledger_drift_permille: 125,
+        ledger_drift_min: 128,
+        ..ExtSettings::default()
+    };
+    let a = node(sa.clone()).await;
+    let b = node(sa).await;
+    link(&a, &b).await;
+    let pk_a = a.key.public_key().to_bin();
+    let pk_b = b.key.public_key().to_bin();
+    let served_claim = 8192u64; // A declare beaucoup plus que la mesure de B
+    let used_real = 1024u64;
+    let pk_b2 = pk_b.clone();
+    a.c.set_stats_source(Arc::new(move |pk| {
+        (pk == pk_b2.as_slice()).then_some((served_claim, 0))
+    }));
+    let pk_a2 = pk_a.clone();
+    b.c.set_stats_source(Arc::new(move |pk| {
+        (pk == pk_a2.as_slice()).then_some((0, used_real))
+    }));
+
+    a.c.settle_tick().await;
+    // B refuse (8192 > 1024 + 128 + 128) : A recoit REJECT, libere
+    // `pending` et retient la tete + la mesure annoncees.
+    let ac = a.c.clone();
+    wait_until(move || ac.info().ledger_rx >= 1 && ac.info().ledger_pending == 0).await;
+
+    // Tick suivant : proposition plafonnee -> acceptee et scellee.
+    a.c.settle_tick().await;
+    let ac = a.c.clone();
+    wait_until(move || ac.info().ledger_stored >= 1).await;
+    let link = a.c.ledger_links(1)[0].clone();
+    let tx = LedgerTx::open(
+        &link.tx_enc,
+        &a.key,
+        &LibNaClPublicKey::from_bin(&pk_b).unwrap(),
+    )
+    .unwrap();
+    // Le montant converge sur la mesure de B + sa derive toleree.
+    let cap = used_real + used_real / 1000 * 125 + 128;
+    assert_eq!(tx.served_total, cap);
+
+    // Le reliquat non signe (8192 - cap) reste du : gate toujours
+    // active pour ce beneficiaire.
+    assert!(a.c.owes_signature(&pk_b));
+
+    journal(
+        "T5b-ledger-drift-reject",
+        "tranche=1024 ; drift 125/1000 + 128 ; served=8192 mesure=1024",
+        "loopback 2 noeuds ; claim gonfle -> REJECT -> cap -> SEAL",
+        t0,
+        &format!(
+            "{{\"A\":{},\"B\":{}}}",
+            node_counters(&a),
+            node_counters(&b)
+        ),
+        "{\"note\":\"montant corrige visible dans tx dechiffre\"}",
+        "\"cases\":\"reject+resync+cap+seal ; gate persiste sur reliquat : verts\"",
+    );
+}
+
+/// T5c — fork gossip : E equivoque (deux liens scelles a la meme
+/// position `(pk_a, seq_a)`, contenus differents). Poussee en
+/// `LEDGER_HEAD` vers C -> preuve conservee + `LEDGER_FORK` propage
+/// -> B detient l'evidence. Jamais de consensus : la contradiction
+/// est juste conservee et diffusee.
+#[tokio::test]
+async fn t5c_ledger_fork_gossip() {
+    let t0 = Instant::now();
+    let b = node(ExtSettings::default()).await;
+    let c = node(ExtSettings::default()).await;
+    link(&b, &c).await;
+
+    // Deux liens contradictoires scelles : E propose, X co-signe les
+    // deux (equivocation — meme `seq` des deux cotes, `tx` differents).
+    let e_key = LibNaClSecretKey::generate();
+    let x_key = LibNaClSecretKey::generate();
+    let tx1 = LedgerTx::new(1024, epoch());
+    let tx2 = LedgerTx::new(2048, epoch());
+    let mut l1 =
+        LedgerLink::propose(&e_key, &x_key.public_key(), 1, GENESIS, 1, GENESIS, &tx1).unwrap();
+    l1.cosign(&x_key).unwrap();
+    let mut l2 =
+        LedgerLink::propose(&e_key, &x_key.public_key(), 1, GENESIS, 1, GENESIS, &tx2).unwrap();
+    l2.cosign(&x_key).unwrap();
+    assert_ne!(l1.hash(), l2.hash());
+
+    // Premier HEAD : lien nouveau stocke (et re-gossippe vers B).
+    send_ledger(&b, &c, msg::LEDGER_HEAD, &l1.pack(), &e_key).await;
+    let cc = c.c.clone();
+    wait_until(move || cc.info().ledger_stored >= 1).await;
+    // Second HEAD contradictoire : Fork -> conservation + FORK gossip.
+    send_ledger(&b, &c, msg::LEDGER_HEAD, &l2.pack(), &e_key).await;
+    let cc = c.c.clone();
+    wait_until(move || cc.info().ledger_forks >= 1).await;
+    // B recoit la preuve propagee (HEAD l1 relaye puis FORK) :
+    // position marquee + deux liens conserves.
+    let bc = b.c.clone();
+    wait_until(move || bc.info().ledger_forks >= 1).await;
+    assert!(b.c.ledger_links(8).len() >= 2);
+
+    journal(
+        "T5c-ledger-fork-gossip",
+        "defaults ; equivocation fabriquee (meme position, tx differents)",
+        "loopback B-C lies ; E/X cles nues ; HEAD x2 -> FORK",
+        t0,
+        &format!(
+            "{{\"B\":{},\"C\":{}}}",
+            node_counters(&b),
+            node_counters(&c)
+        ),
+        "{\"note\":\"preuve = paire de liens signes contradictoires\"}",
+        "\"cases\":\"fork detecte au put ; FORK propage ; evidence conservee chez C et B : verts\"",
     );
 }

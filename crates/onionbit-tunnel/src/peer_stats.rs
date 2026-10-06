@@ -193,6 +193,11 @@ struct BookState {
 /// persistance paresseuse. Synchronisation interne (`Mutex`) — jamais
 /// de lock sur `inner` de la communaute ici (ordre de verrouillage
 /// garanti : `inner` → `ledger`, jamais l'inverse).
+/// Veto sign-then-serve injecte (Phase 9c) : `f(pk)` -> `true` si
+/// le pair doit une co-signature de ledger — refuse en `admit`
+/// quand `ledger_enforce` est actif, independamment de la pression.
+pub type SignVeto = std::sync::Arc<dyn Fn(&[u8]) -> bool + Send + Sync>;
+
 pub struct PeerStatsBook {
     cfg: LedgerConfig,
     /// `cfg.enabled` duplique en atomique : bascule a chaud via
@@ -206,6 +211,16 @@ pub struct PeerStatsBook {
     capacity_warned: AtomicBool,
     state: Mutex<BookState>,
     store: Mutex<Option<Arc<dyn PeerStatsStore>>>,
+    /// Veto de tranche injecte (Phase 9c — sign-then-serve) :
+    /// `true` = le pair doit une co-signature de reglement → refuse
+    /// quand `enforce` est actif, **sans** condition de pression (le
+    /// refus de signature est la sanction, pas le deficit — ADR-0015
+    /// §5). Injecte par `core` depuis la communaute d'extension ;
+    /// `None` = comportement Phase 9a pur.
+    sign_veto: Mutex<Option<SignVeto>>,
+    /// Veto consulte sans blocage — compteur de decisions veto
+    /// (observabilite de la gate avant promotion).
+    veto_hits: std::sync::atomic::AtomicU64,
 }
 
 impl PeerStatsBook {
@@ -227,7 +242,21 @@ impl PeerStatsBook {
                 dirty: HashSet::new(),
             }),
             store: Mutex::new(store),
+            sign_veto: Mutex::new(None),
+            veto_hits: std::sync::atomic::AtomicU64::new(0),
         }
+    }
+
+    /// Injecte le veto sign-then-serve (Phase 9c) : predicat
+    /// « le pair doit une co-signature » — typiquement
+    /// `OnionbitExtCommunity::owes_signature` cable par `core`.
+    pub fn set_sign_veto(&self, veto: SignVeto) {
+        *self.sign_veto.lock().unwrap() = Some(veto);
+    }
+
+    /// Nombre de refus emis par le veto de signature (observabilite).
+    pub fn veto_hits(&self) -> u64 {
+        self.veto_hits.load(Ordering::Relaxed)
     }
 
     /// Injection post-construction (la communaute est creee avant que
@@ -343,12 +372,24 @@ impl PeerStatsBook {
         }
     }
 
-    /// Gate d'admission d'un `create` (ADR-0015 §4) : sous pression
-    /// (`joined >= soft_cap`), la dette du demandeur doit rester sous
-    /// `max_deficit_bytes`. Desactive ou hors pression = admis
-    /// (comportement pyipv8 exact).
+    /// Gate d'admission d'un `create` (ADR-0015 §4 + §5) : quand
+    /// `enforce` est actif, le veto sign-then-serve s'applique **sans
+    /// condition de pression** — un pair qui doit une co-signature de
+    /// tranche n'est plus servi ; la gate deficit reste, elle, sous
+    /// pression (`joined >= soft_cap`). Desactive ou hors pression =
+    /// admis (comportement pyipv8 exact hors veto).
     pub fn admit(&self, public_key: &[u8], joined: usize) -> bool {
-        if !self.is_enabled() || !self.is_enforce() || joined < self.cfg.soft_cap {
+        if !self.is_enabled() || !self.is_enforce() {
+            return true;
+        }
+        let veto = self.sign_veto.lock().unwrap().clone();
+        if let Some(veto) = veto {
+            if veto(public_key) {
+                self.veto_hits.fetch_add(1, Ordering::Relaxed);
+                return false;
+            }
+        }
+        if joined < self.cfg.soft_cap {
             return true;
         }
         let deficit = self

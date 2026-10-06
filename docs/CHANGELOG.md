@@ -481,6 +481,38 @@ Clôture campagne et gates sanitizers :
 - **Job CI `fuzz-san`** (`ci.yml`, nightly/manual, ubuntu-24.04) :
   toolchain nightly + cargo-fuzz, `SEC=300` × 8 cibles × 2
   sanitizers, artefacts (journal CSV + `fuzz/artifacts/`) remontés.
+## Phase 9c — ledger bilatéral signé (ADR-0015 §5, 2026-10-06)
+
+- **`ext/ledger.rs`** : `LedgerLink` `{v, pk_a, seq_a, prev_a, pk_b,
+  seq_b, prev_b, tx_enc, sig_a, sig_b}` — inséré dans les deux
+  chaînes, `proposal_id` (indépendant de `sig_b`) = clé de dedup et
+  de détection de fork ; `tx` chiffré pour la paire
+  (`pair_seal`/`pair_open` X25519→ChaCha20-Poly1305 dans
+  `onionbit-crypto`) — seuls `pk`/`seq`/`prev` restent en clair.
+- **Filaire** : `LEDGER_PROPOSE`/`SEAL`/`HEAD`/`REJECT`/`FORK` —
+  trames bornées, budget par émetteur, signatures Ed25519 vérifiées,
+  gossip des têtes **scellées** seulement, propagation de la preuve
+  de fork. `REJECT` = resync (tête + mesure du bénéficiaire) → la
+  proposition corrigée plafonne à `measured + dérive`.
+- **Sign-then-serve** : `settle_tick` relance borné + propose la
+  tranche suivante ; `owes_signature` alimente le veto `admit` du
+  tunnel sous `ext/ledger_enforce` (défaut `false` — mesure d'abord).
+- **Persistance** : migration v19 `ext_ledger_links` +
+  `ext_ledger_forks`, `DbLedgerStore` (même sémantique
+  `PutOutcome` que la mémoire), `InMemoryLedgerStore` borné.
+- **API/config** : `GET /api/ipv8/ext/ledger` (liens + forks +
+  têtes), clés `ext/ledger_*` dans `daemon_config`.
+- **Tests** : T5a (propose→seal), T5b (dérive→reject→convergence),
+  T5c (fork gossip) — + `ext_packet` fuzz étendu à `LedgerLink`.
+- **Correctifs de concurrence** : `info()` acquiert ses verrous en
+  `let` séparés (un `MutexGuard` temporaire dans le literal vivait
+  jusqu'à la fin de l'expression → `my_head()` re-verrouillait
+  `ledger_store`, auto-deadlock) ; ordre interne du store unifié
+  `links → by_pos` (ABBA `link_at`/`head` vs `evict`/`store`) ;
+  `settle_tick` ne tient plus `pending` pendant les callbacks
+  (`stats_source`/`store`/`network`) — supprime le cycle
+  `pending → book → pending` possible avec le veto `admit`.
+
 ## Phase 9 — bancs ADR-0015 : T1 legacy silence + T2/T3/T4 (2026-10-05)
 
 - **`ext_bench.rs`** (intégration loopback) : `t2_mesh_curation`

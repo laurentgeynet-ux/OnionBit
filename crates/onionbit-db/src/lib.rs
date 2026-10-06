@@ -22,6 +22,7 @@ pub mod channel;
 pub mod db;
 pub mod downloads;
 pub mod error;
+pub mod ext_ledger;
 pub mod guards;
 pub mod health;
 pub mod messaging;

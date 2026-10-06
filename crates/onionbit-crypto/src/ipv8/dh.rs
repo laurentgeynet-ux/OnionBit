@@ -137,6 +137,69 @@ pub fn crypto_box_beforenm(pk: &[u8], sk: &[u8]) -> Result<[u8; 32], CryptoError
     Ok(hsalsa20(shared.as_bytes(), &nonce))
 }
 
+/// Domaine HKDF de derivation de la cle AEAD par paire — separe ces
+/// chiffrements des cles de session tunnel (autre info HKDF).
+const PAIRBOX_HKDF_INFO: &[u8] = b"onionbit/pairbox/v1";
+/// Taille du nonce ChaCha20-Poly1305 (12 octets, aleatoire, prefixe au
+/// ciphertext).
+pub const PAIRBOX_NONCE_LEN: usize = 12;
+
+/// Cle AEAD partagee d'une paire : `crypto_box_beforenm` puis
+/// HKDF-SHA256 expand sur un domaine dedie (pas de reutilisation du
+/// secret brut en cle — separation des usages).
+fn pair_key(
+    peer_pk: &[u8],
+    my_sk: &[u8],
+) -> Result<chacha20poly1305::ChaCha20Poly1305, CryptoError> {
+    use chacha20poly1305::KeyInit;
+    let shared = crypto_box_beforenm(peer_pk, my_sk)?;
+    let hkdf = hkdf::Hkdf::<sha2::Sha256>::from_prk(&shared)
+        .map_err(|e| CryptoError::KeyDerivation(format!("HKDF prk pairbox: {e}")))?;
+    let mut key = [0u8; 32];
+    hkdf.expand(PAIRBOX_HKDF_INFO, &mut key)
+        .map_err(|e| CryptoError::KeyDerivation(format!("HKDF expand pairbox: {e}")))?;
+    Ok(chacha20poly1305::ChaCha20Poly1305::new((&key).into()))
+}
+
+/// Chiffre `plain` pour la paire `(peer_pk X25519, my_sk X25519)` :
+/// sortie `nonce(12) || ciphertext || tag(16)`. Seuls les deux
+/// membres de la paire peuvent lire (anti-*bandwidth crawler* —
+/// ADR-0015 §5).
+pub fn pair_seal(peer_pk: &[u8], my_sk: &[u8], plain: &[u8]) -> Result<Vec<u8>, CryptoError> {
+    use chacha20poly1305::aead::Aead;
+    let cipher = pair_key(peer_pk, my_sk)?;
+    let mut nonce_bytes = [0u8; PAIRBOX_NONCE_LEN];
+    rand::Rng::fill_bytes(&mut rand::rng(), &mut nonce_bytes);
+    let nonce = chacha20poly1305::Nonce::from(nonce_bytes);
+    let ct = cipher
+        .encrypt(&nonce, plain)
+        .map_err(|_| CryptoError::Aead)?;
+    let mut out = Vec::with_capacity(PAIRBOX_NONCE_LEN + ct.len());
+    out.extend_from_slice(&nonce_bytes);
+    out.extend_from_slice(&ct);
+    Ok(out)
+}
+
+/// Dechiffre un blob produit par [`pair_seal`] (membre de la paire
+/// uniquement — `Aead` sinon).
+pub fn pair_open(peer_pk: &[u8], my_sk: &[u8], blob: &[u8]) -> Result<Vec<u8>, CryptoError> {
+    use chacha20poly1305::aead::Aead;
+    if blob.len() < PAIRBOX_NONCE_LEN + 16 {
+        return Err(CryptoError::Truncated {
+            expected: PAIRBOX_NONCE_LEN + 16,
+            actual: blob.len(),
+        });
+    }
+    let cipher = pair_key(peer_pk, my_sk)?;
+    let nonce = chacha20poly1305::Nonce::from(
+        <[u8; PAIRBOX_NONCE_LEN]>::try_from(&blob[..PAIRBOX_NONCE_LEN])
+            .expect("nonce de 12 octets borne"),
+    );
+    cipher
+        .decrypt(&nonce, &blob[PAIRBOX_NONCE_LEN..])
+        .map_err(|_| CryptoError::Aead)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

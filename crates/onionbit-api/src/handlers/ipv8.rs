@@ -467,6 +467,54 @@ pub async fn get_ext(State(state): State<AppState>) -> Response {
     .into_response()
 }
 
+/// `GET /api/ipv8/ext/ledger` — etat du ledger bilateral signe
+/// (ADR-0015 §5, Phase 9c) : compteurs du chemin `LEDGER_*`, tete de
+/// notre chaine, propositions en vol, forks averes et les derniers
+/// liens stockes. Le `tx` n'est **pas** expose — il est chiffre pour
+/// la paire (anti-bandwidth-crawler, ADR §5) : seuls `mid`, positions
+/// et hash remontent. `enabled: false` hors `ext/enabled`.
+pub async fn get_ext_ledger(State(state): State<AppState>) -> Response {
+    let disabled = serde_json::json!({
+        "ledger": { "enabled": false }
+    });
+    let Some(stack) = state.session.ipv8() else {
+        return Json(disabled).into_response();
+    };
+    let Some(info) = stack.ext_info() else {
+        return Json(disabled).into_response();
+    };
+    let links: Vec<serde_json::Value> = stack
+        .ext_ledger_links(64)
+        .unwrap_or_default()
+        .iter()
+        .map(|l| {
+            serde_json::json!({
+                "pk_a_mid": onionbit_ipv8::ext::LedgerLink::mid_of(&l.pk_a),
+                "seq_a": l.seq_a,
+                "pk_b_mid": onionbit_ipv8::ext::LedgerLink::mid_of(&l.pk_b),
+                "seq_b": l.seq_b,
+                "sealed": l.sig_b != [0; 64],
+                "hash": hex::encode(l.hash()),
+            })
+        })
+        .collect();
+    Json(serde_json::json!({
+        "ledger": {
+            "enabled": info.ledger_enabled,
+            "rx": info.ledger_rx,
+            "dropped": info.ledger_dropped,
+            "stored": info.ledger_stored,
+            "tx": info.ledger_tx,
+            "links_count": info.ledger_links,
+            "pending": info.ledger_pending,
+            "forks": info.ledger_forks,
+            "my_head": { "seq": info.ledger_my_head.0, "hash": info.ledger_my_head.1 },
+            "links": links,
+        }
+    }))
+    .into_response()
+}
+
 /// `kind` textuel d'une attestation → `subject_kind` filaire.
 fn ext_kind(s: &str) -> Option<u8> {
     match s {

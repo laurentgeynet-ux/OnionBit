@@ -120,7 +120,7 @@ table `peer_stats`, migration v16).
   **nos** circuits (`used` croît) — c'est nous qui choisissons nos
   sauts, l'équité émerge sans coordination.
 
-### 5. Ledger bilatéral signé — différé (Phase 9c, conditionnelle)
+### 5. Ledger bilatéral signé (Phase 9c — livrée)
 
 La seule chose que la comptabilité locale ne peut pas faire :
 **prouver sa contribution à un pair qui ne nous a jamais rencontré**
@@ -137,6 +137,22 @@ La seule chose que la comptabilité locale ne peut pas faire :
   seuls `pk`/`seq`/`prev_hash` restent en clair pour la détection de
   forks — le *bandwidth crawler* passif de Tribler 7.x (reconstitution
   du graphe social et des heures d'activité) est un anti-patron.
+
+Implémentation (`onionbit-ipv8::ext::ledger` + `onionbit-db::ext_ledger`
++ `onionbit-core::ext_ledger_store`) : `LEDGER_PROPOSE`/`SEAL`/`HEAD`/
+`REJECT`/`FORK` bornés (`LEDGER_FRAME_MAX`, budget par émetteur).
+Identité de proposition `proposal_id = sha256(champs + sig_a)` —
+indépendante de `sig_b` : le sceau *remplace* la proposition en vol,
+un `proposal_id` différent à la même position `(pk, seq)` est une
+équivoque propagée (`FORK`, preuve conservée). `settle_tick` relance
+les propositions en vol (borné par `ledger_max_retries`), propose la
+tranche suivante aux pairs dont `served − settled ≥ ledger_tranche_bytes`,
+et ne gossip que des têtes **scellées**. Le `REJECT` du bénéficiaire
+porte sa vraie tête + sa mesure — la proposition corrigée plafonne à
+`measured + dérive` (`ledger_drift_*`). Le veto tunnel `admit`
+(`ledger_enforce`, défaut `false` = mesure d'abord) refuse le service
+au-delà d'une tranche non signée. Bancs T5a/T5b/T5c verts
+(`docs/plans/bench_adr0015/`).
 
 ### 6. Curation — indépendante du ledger (Phase 9d — livrée)
 

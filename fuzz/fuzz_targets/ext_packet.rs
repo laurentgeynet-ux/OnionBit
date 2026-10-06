@@ -5,12 +5,15 @@
 //! Communaute d'extension OnionBit-only (ADR-0015) : tout pair peut
 //! envoyer un datagramme arbitraire sur le prefixe dedie.
 //! `Packet::parse` (politique `WIRE_EXT` — tout signe, pas de dist)
-//! puis `Hello::unpack` ne doivent jamais paniquer.
+//! puis `Hello::unpack`/`Attestation::unpack`/`LedgerLink::unpack`
+//! ne doivent jamais paniquer.
 
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use onionbit_ipv8::ext::{Attestation, Hello, EXT_COMMUNITY_ID, WIRE_EXT};
+use onionbit_ipv8::ext::{
+    ledger::LedgerLink, Attestation, Hello, EXT_COMMUNITY_ID, WIRE_EXT,
+};
 use onionbit_ipv8::packet::Packet;
 use onionbit_ipv8::serializer::Reader;
 
@@ -20,5 +23,11 @@ fuzz_target!(|data: &[u8]| {
         let _ = Hello::unpack(&mut r);
         let mut r = Reader::new(&pkt.payload);
         let _ = Attestation::unpack(&mut r);
+        // Liens du ledger bilateral (Phase 9c) : les deux formes
+        // (proposition `sig_b` vide et lien scelle) sont bornees.
+        let mut r = Reader::new(&pkt.payload);
+        let _ = LedgerLink::unpack(&mut r, false);
+        let mut r = Reader::new(&pkt.payload);
+        let _ = LedgerLink::unpack(&mut r, true);
     }
 });

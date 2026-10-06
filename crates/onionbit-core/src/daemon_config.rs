@@ -556,6 +556,40 @@ pub struct ExtConfig {
     /// Borne memoire de la table de budget `ATTEST` — un flot de
     /// cles Sybil fraiches ne fait pas grossir la table. Defaut 4096.
     pub attest_rate_table_max: u32,
+    /// Phase 9c — ledger bilateral signe (ADR-0015 §5) : participe
+    /// au protocole de reglement quand l'extension tourne.
+    /// `true` par defaut ; le *gate* d'admission reste gouverne par
+    /// `tunnel_community/ledger_enforce` (opt-in, mesure d'abord).
+    pub ledger_enabled: bool,
+    /// Tranche sign-then-serve (octets) : delta impaye au-dela
+    /// duquel aucune nouvelle tranche n'est accordee avant
+    /// co-signature. Defaut 16 Mio.
+    pub ledger_tranche_bytes: u64,
+    /// Cadence du tick de settlement (s). Defaut 60.
+    pub ledger_settle_interval_secs: u64,
+    /// Expiration d'une proposition en vol avant relance (s).
+    /// Defaut 120.
+    pub ledger_propose_timeout_secs: u64,
+    /// Relances maximales d'une proposition ignoree. Defaut 3.
+    pub ledger_max_retries: u32,
+    /// Derive de mesure toleree entre les deux comptables (pour
+    /// mille) — les deux parties mesurent le meme flot depuis des
+    /// points differents. Defaut 125 (12,5%).
+    pub ledger_drift_permille: u64,
+    /// Plancher absolu de la derive (octets). Defaut 256 Kio.
+    pub ledger_drift_min_bytes: u64,
+    /// Fenetre du budget `LEDGER_*` par emetteur (s). Defaut 60.
+    pub ledger_rate_window_secs: u64,
+    /// Messages `LEDGER_*` acceptes par emetteur et par fenetre.
+    /// Defaut 128.
+    pub ledger_rate_max: u32,
+    /// Borne memoire de la table de budget `LEDGER_*`. Defaut 4096.
+    pub ledger_rate_table_max: u32,
+    /// Capacite du store de liens en memoire (sans persistance).
+    /// Defaut 65536.
+    pub ledger_store_max: u32,
+    /// Fanout de gossip des tetes de chaine par tick. Defaut 3.
+    pub ledger_head_fanout: u32,
     /// Clés ext additionnelles — préservées.
     #[serde(flatten)]
     pub extra: serde_json::Map<String, Value>,
@@ -574,6 +608,18 @@ impl Default for ExtConfig {
             attest_rate_window_secs: crate::ipv8_stack::DEFAULT_EXT_ATTEST_RATE_WINDOW_SECS,
             attest_rate_max: crate::ipv8_stack::DEFAULT_EXT_ATTEST_RATE_MAX,
             attest_rate_table_max: crate::ipv8_stack::DEFAULT_EXT_ATTEST_RATE_TABLE_MAX,
+            ledger_enabled: true,
+            ledger_tranche_bytes: crate::ipv8_stack::DEFAULT_EXT_LEDGER_TRANCHE_BYTES,
+            ledger_settle_interval_secs: crate::ipv8_stack::DEFAULT_EXT_LEDGER_SETTLE_SECS,
+            ledger_propose_timeout_secs: crate::ipv8_stack::DEFAULT_EXT_LEDGER_TIMEOUT_SECS,
+            ledger_max_retries: crate::ipv8_stack::DEFAULT_EXT_LEDGER_MAX_RETRIES,
+            ledger_drift_permille: crate::ipv8_stack::DEFAULT_EXT_LEDGER_DRIFT_PERMILLE,
+            ledger_drift_min_bytes: crate::ipv8_stack::DEFAULT_EXT_LEDGER_DRIFT_MIN_BYTES,
+            ledger_rate_window_secs: crate::ipv8_stack::DEFAULT_EXT_LEDGER_RATE_WINDOW_SECS,
+            ledger_rate_max: crate::ipv8_stack::DEFAULT_EXT_LEDGER_RATE_MAX,
+            ledger_rate_table_max: crate::ipv8_stack::DEFAULT_EXT_LEDGER_RATE_TABLE_MAX,
+            ledger_store_max: crate::ipv8_stack::DEFAULT_EXT_LEDGER_STORE_MAX,
+            ledger_head_fanout: crate::ipv8_stack::DEFAULT_EXT_LEDGER_HEAD_FANOUT,
             extra: serde_json::Map::new(),
         }
     }
@@ -1523,6 +1569,18 @@ impl DaemonConfig {
             ext_attest_rate_window_secs: self.ext.attest_rate_window_secs,
             ext_attest_rate_max: self.ext.attest_rate_max,
             ext_attest_rate_table_max: self.ext.attest_rate_table_max,
+            ext_ledger_enabled: self.ext.ledger_enabled,
+            ext_ledger_tranche_bytes: self.ext.ledger_tranche_bytes,
+            ext_ledger_settle_interval_secs: self.ext.ledger_settle_interval_secs,
+            ext_ledger_propose_timeout_secs: self.ext.ledger_propose_timeout_secs,
+            ext_ledger_max_retries: self.ext.ledger_max_retries,
+            ext_ledger_drift_permille: self.ext.ledger_drift_permille,
+            ext_ledger_drift_min_bytes: self.ext.ledger_drift_min_bytes,
+            ext_ledger_rate_window_secs: self.ext.ledger_rate_window_secs,
+            ext_ledger_rate_max: self.ext.ledger_rate_max,
+            ext_ledger_rate_table_max: self.ext.ledger_rate_table_max,
+            ext_ledger_store_max: self.ext.ledger_store_max,
+            ext_ledger_head_fanout: self.ext.ledger_head_fanout,
         };
 
         crate::CoreConfig {

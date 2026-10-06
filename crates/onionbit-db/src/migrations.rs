@@ -360,6 +360,33 @@ CREATE TABLE attestations (
 );
 CREATE INDEX idx_attestations_subject ON attestations(kind, subject);
 ",
+    // v19 : ledger bilateral signe (ADR-0015 §5, Phase 9c) —
+    // `ext_ledger_links` stocke chaque lien (auto-portant : cles,
+    // positions dans les deux chaines, `tx` chiffre pour la paire,
+    // deux signatures). La cle primaire est `proposal_id`
+    // (sha256 des champs signes + `sig_a`, independante de `sig_b`) :
+    // le sceau remplace la proposition non scellee en place ; deux
+    // `proposal_id` distincts sur la meme position `(pk, seq)` =
+    // preuve de fork conservee (jamais ecrasee). `hash` (sha256 du
+    // pack complet) reste ce que les `prev_*` referencent.
+    "
+CREATE TABLE ext_ledger_links (
+    proposal_id BLOB PRIMARY KEY,
+    hash        BLOB NOT NULL,
+    pk_a        BLOB NOT NULL,
+    seq_a       INTEGER NOT NULL,
+    prev_a      BLOB NOT NULL,
+    pk_b        BLOB NOT NULL,
+    seq_b       INTEGER NOT NULL,
+    prev_b      BLOB NOT NULL,
+    tx_enc      BLOB NOT NULL,
+    sig_a       BLOB NOT NULL,
+    sig_b       BLOB NOT NULL,
+    added_on    INTEGER NOT NULL
+);
+CREATE INDEX idx_ledger_pos_a ON ext_ledger_links(pk_a, seq_a);
+CREATE INDEX idx_ledger_pos_b ON ext_ledger_links(pk_b, seq_b);
+",
 ];
 
 /// Applique les migrations en attente sur une connexion ouverte.

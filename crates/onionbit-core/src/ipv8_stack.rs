@@ -281,6 +281,36 @@ pub struct Ipv8Config {
     /// Borne memoire de la table de budget `ATTEST` (emetteurs
     /// simultanes suivis).
     pub ext_attest_rate_table_max: u32,
+    /// Phase 9c — ledger bilateral signe dans l'extension (propose
+    /// et co-signe les liens de reglement). `true` par defaut quand
+    /// `ext_enabled` : la mesure tourne ; le *gate* d'admission
+    /// reste gouverne par `tunnel_community/ledger_enforce`.
+    pub ext_ledger_enabled: bool,
+    /// Taille de la tranche sign-then-serve (octets) — au-dela du
+    /// delta impaye, aucune nouvelle tranche sans co-signature.
+    pub ext_ledger_tranche_bytes: u64,
+    /// Cadence du tick de settlement (s).
+    pub ext_ledger_settle_interval_secs: u64,
+    /// Expiration d'une proposition en vol avant relance (s).
+    pub ext_ledger_propose_timeout_secs: u64,
+    /// Relances maximales d'une proposition ignoree.
+    pub ext_ledger_max_retries: u32,
+    /// Derive de mesure toleree entre serveur et beneficiaire
+    /// (pour mille) — les deux comptent le meme flot depuis deux
+    /// points de mesure.
+    pub ext_ledger_drift_permille: u64,
+    /// Plancher absolu de la derive toleree (octets).
+    pub ext_ledger_drift_min_bytes: u64,
+    /// Fenetre du budget `LEDGER_*` par emetteur (s).
+    pub ext_ledger_rate_window_secs: u64,
+    /// Messages `LEDGER_*` acceptes par emetteur et par fenetre.
+    pub ext_ledger_rate_max: u32,
+    /// Borne memoire de la table de budget `LEDGER_*`.
+    pub ext_ledger_rate_table_max: u32,
+    /// Capacite du store de liens (memoire sans persistance).
+    pub ext_ledger_store_max: u32,
+    /// Tetes poussees par tick vers des pairs ext (gossip borne).
+    pub ext_ledger_head_fanout: u32,
 }
 
 impl Ipv8Config {
@@ -343,6 +373,18 @@ impl Ipv8Config {
             ext_attest_rate_window_secs: DEFAULT_EXT_ATTEST_RATE_WINDOW_SECS,
             ext_attest_rate_max: DEFAULT_EXT_ATTEST_RATE_MAX,
             ext_attest_rate_table_max: DEFAULT_EXT_ATTEST_RATE_TABLE_MAX,
+            ext_ledger_enabled: true,
+            ext_ledger_tranche_bytes: DEFAULT_EXT_LEDGER_TRANCHE_BYTES,
+            ext_ledger_settle_interval_secs: DEFAULT_EXT_LEDGER_SETTLE_SECS,
+            ext_ledger_propose_timeout_secs: DEFAULT_EXT_LEDGER_TIMEOUT_SECS,
+            ext_ledger_max_retries: DEFAULT_EXT_LEDGER_MAX_RETRIES,
+            ext_ledger_drift_permille: DEFAULT_EXT_LEDGER_DRIFT_PERMILLE,
+            ext_ledger_drift_min_bytes: DEFAULT_EXT_LEDGER_DRIFT_MIN_BYTES,
+            ext_ledger_rate_window_secs: DEFAULT_EXT_LEDGER_RATE_WINDOW_SECS,
+            ext_ledger_rate_max: DEFAULT_EXT_LEDGER_RATE_MAX,
+            ext_ledger_rate_table_max: DEFAULT_EXT_LEDGER_RATE_TABLE_MAX,
+            ext_ledger_store_max: DEFAULT_EXT_LEDGER_STORE_MAX,
+            ext_ledger_head_fanout: DEFAULT_EXT_LEDGER_HEAD_FANOUT,
         }
     }
 }
@@ -402,6 +444,18 @@ impl Default for Ipv8Config {
             ext_attest_rate_window_secs: DEFAULT_EXT_ATTEST_RATE_WINDOW_SECS,
             ext_attest_rate_max: DEFAULT_EXT_ATTEST_RATE_MAX,
             ext_attest_rate_table_max: DEFAULT_EXT_ATTEST_RATE_TABLE_MAX,
+            ext_ledger_enabled: true,
+            ext_ledger_tranche_bytes: DEFAULT_EXT_LEDGER_TRANCHE_BYTES,
+            ext_ledger_settle_interval_secs: DEFAULT_EXT_LEDGER_SETTLE_SECS,
+            ext_ledger_propose_timeout_secs: DEFAULT_EXT_LEDGER_TIMEOUT_SECS,
+            ext_ledger_max_retries: DEFAULT_EXT_LEDGER_MAX_RETRIES,
+            ext_ledger_drift_permille: DEFAULT_EXT_LEDGER_DRIFT_PERMILLE,
+            ext_ledger_drift_min_bytes: DEFAULT_EXT_LEDGER_DRIFT_MIN_BYTES,
+            ext_ledger_rate_window_secs: DEFAULT_EXT_LEDGER_RATE_WINDOW_SECS,
+            ext_ledger_rate_max: DEFAULT_EXT_LEDGER_RATE_MAX,
+            ext_ledger_rate_table_max: DEFAULT_EXT_LEDGER_RATE_TABLE_MAX,
+            ext_ledger_store_max: DEFAULT_EXT_LEDGER_STORE_MAX,
+            ext_ledger_head_fanout: DEFAULT_EXT_LEDGER_HEAD_FANOUT,
         }
     }
 }
@@ -561,6 +615,29 @@ pub const DEFAULT_EXT_ATTEST_RATE_WINDOW_SECS: u64 = 60;
 pub const DEFAULT_EXT_ATTEST_RATE_MAX: u32 = 256;
 /// Borne memoire par defaut de la table de budget `ATTEST`.
 pub const DEFAULT_EXT_ATTEST_RATE_TABLE_MAX: u32 = 4096;
+/// Tranche sign-then-serve par defaut : 16 Mio — la taille de la
+/// reglette de credit entre deux reglements co-signes.
+pub const DEFAULT_EXT_LEDGER_TRANCHE_BYTES: u64 = 16 * 1024 * 1024;
+/// Cadence du tick de settlement (s).
+pub const DEFAULT_EXT_LEDGER_SETTLE_SECS: u64 = 60;
+/// Expiration d'une proposition en vol (s).
+pub const DEFAULT_EXT_LEDGER_TIMEOUT_SECS: u64 = 120;
+/// Relances maximales d'une proposition.
+pub const DEFAULT_EXT_LEDGER_MAX_RETRIES: u32 = 3;
+/// Derive de mesure toleree, pour mille (12,5%).
+pub const DEFAULT_EXT_LEDGER_DRIFT_PERMILLE: u64 = 125;
+/// Plancher absolu de la derive (256 Kio).
+pub const DEFAULT_EXT_LEDGER_DRIFT_MIN_BYTES: u64 = 256 * 1024;
+/// Fenetre du budget `LEDGER_*` par emetteur (s).
+pub const DEFAULT_EXT_LEDGER_RATE_WINDOW_SECS: u64 = 60;
+/// Messages `LEDGER_*` par emetteur et par fenetre.
+pub const DEFAULT_EXT_LEDGER_RATE_MAX: u32 = 128;
+/// Borne memoire de la table de budget `LEDGER_*`.
+pub const DEFAULT_EXT_LEDGER_RATE_TABLE_MAX: u32 = 4096;
+/// Capacite du store de liens.
+pub const DEFAULT_EXT_LEDGER_STORE_MAX: u32 = 65536;
+/// Fanout des tetes de chaine gossip par tick.
+pub const DEFAULT_EXT_LEDGER_HEAD_FANOUT: u32 = 3;
 
 /// Tache de maintenance DHT (`PingChurn.take_step` +
 /// `node_maintenance`/`value_maintenance`/`token_maintenance` +
@@ -1580,11 +1657,34 @@ impl Ipv8Stack {
                     ),
                     attest_rate_max: config.ext_attest_rate_max,
                     attest_rate_table_max: config.ext_attest_rate_table_max as usize,
+                    ledger_enabled: config.ext_ledger_enabled,
+                    ledger_tranche_bytes: config.ext_ledger_tranche_bytes.max(1),
+                    ledger_settle_interval: std::time::Duration::from_secs(
+                        config.ext_ledger_settle_interval_secs.max(1),
+                    ),
+                    ledger_propose_timeout: std::time::Duration::from_secs(
+                        config.ext_ledger_propose_timeout_secs.max(1),
+                    ),
+                    ledger_max_retries: config.ext_ledger_max_retries,
+                    ledger_drift_permille: config.ext_ledger_drift_permille,
+                    ledger_drift_min: config.ext_ledger_drift_min_bytes,
+                    ledger_rate_window: std::time::Duration::from_secs(
+                        config.ext_ledger_rate_window_secs.max(1),
+                    ),
+                    ledger_rate_max: config.ext_ledger_rate_max,
+                    ledger_rate_table_max: config.ext_ledger_rate_table_max as usize,
+                    ledger_store_max: config.ext_ledger_store_max as usize,
+                    ledger_head_fanout: config.ext_ledger_head_fanout as usize,
                     ..onionbit_ipv8::ext::ExtSettings::default()
                 },
             )
             .await;
             e.set_attestation_store(Arc::new(crate::attestation_store::DbAttestationStore::new(
+                db.clone(),
+            )));
+            // Phase 9c : persistance des liens du ledger bilateral
+            // dans `ext_ledger_links` (v18).
+            e.set_ledger_store(Arc::new(crate::ext_ledger_store::DbLedgerStore::new(
                 db.clone(),
             )));
             tasks.register(Some("OnionbitExtCommunity"), "hello", None);
@@ -1709,6 +1809,23 @@ impl Ipv8Stack {
         } else {
             None
         };
+
+        // ADR-0015 §5 (Phase 9c) : boucle entre le ledger bilateral
+        // ext et la comptabilite locale `peer_stats` (9a) —
+        // `stats_source` alimente les propositions/gates de la
+        // comptabilite mesuree, `sign_veto` fait respecter
+        // sign-then-serve dans `admit` quand `ledger_enforce` est on.
+        if let (Some(e), Some(t)) = (&ext, &tunnel) {
+            let t2 = t.clone();
+            e.set_stats_source(Arc::new(move |pk| {
+                t2.ledger
+                    .stat(pk)
+                    .map(|st| (st.bytes_served, st.bytes_used))
+            }));
+            let e2 = e.clone();
+            t.ledger
+                .set_sign_veto(Arc::new(move |pk| e2.owes_signature(pk)));
+        }
 
         // Stores PEX persistes (`tunnel_pex`) : on redevient point
         // d'introduction des swarms connus des le demarrage — le
@@ -2159,6 +2276,14 @@ impl Ipv8Stack {
     /// ext desactive.
     pub fn ext_trust(&self, kind: u8, subject: &[u8]) -> Option<onionbit_ipv8::ext::TrustInfo> {
         self.ext.as_ref().map(|e| e.trust_info(kind, subject))
+    }
+
+    /// Liens du ledger bilateral les plus recemment stockes (Phase
+    /// 9c) — `None` si `ext_enabled` off. Le `tx` reste chiffre dans
+    /// la forme exposee (anti-crawler : la forme API ne revele que
+    /// pk/seq/hash — les volumes restent lisibles par la paire).
+    pub fn ext_ledger_links(&self, limit: usize) -> Option<Vec<onionbit_ipv8::ext::LedgerLink>> {
+        self.ext.as_ref().map(|e| e.ledger_links(limit))
     }
 
     /// `enable_overlay_statistics` de `OverlaysEndpoint` : active ou

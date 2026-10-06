@@ -148,6 +148,11 @@ pub fn ext_msg_name(msg_id: u8) -> Option<&'static str> {
     match msg_id {
         1 => Some("on_hello"),
         2 => Some("on_attest"),
+        3 => Some("on_ledger_propose"),
+        4 => Some("on_ledger_seal"),
+        5 => Some("on_ledger_head"),
+        6 => Some("on_ledger_reject"),
+        7 => Some("on_ledger_fork"),
         _ => None,
     }
 }

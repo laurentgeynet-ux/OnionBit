@@ -192,6 +192,7 @@ fn api_router(state: AppState) -> Router<AppState> {
         .route("/ipv8/ext", get(ipv8::get_ext))
         .route("/ipv8/ext/attest", post(ipv8::post_ext_attest))
         .route("/ipv8/ext/attestations", get(ipv8::get_ext_attestations))
+        .route("/ipv8/ext/ledger", get(ipv8::get_ext_ledger))
         .route("/ipv8/ext/trust/{kind}/{subject}", get(ipv8::get_ext_trust))
         // Messagerie e2e (ADR-0011 — extension Rust, pas de parite
         // Python ; tout repond 404 quand `enable_messaging` est off).
