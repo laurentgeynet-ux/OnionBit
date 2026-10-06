@@ -362,12 +362,17 @@ class ConnectionsReport {
 class ExtPeerInfo {
   const ExtPeerInfo({
     required this.mid,
+    required this.pk,
     required this.capsNames,
     required this.lastHelloSecs,
   });
 
   /// `mid` hex du pair.
   final String mid;
+
+  /// Clé publique complète (`pk_bin` hex) — adressable en
+  /// messagerie / attestation `identity`.
+  final String pk;
 
   /// Capacités annoncées décodées (`caps_names` : `obf_v1`,
   /// `msg_v1`…). Vide = pair ext sans capacité annoncée.

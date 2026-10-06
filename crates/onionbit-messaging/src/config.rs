@@ -37,6 +37,21 @@ pub struct MessagingConfig {
     /// le pair epingle n'est pas verifie, et sans retry rapide la
     /// presence resterait absente jusqu'a 5 min (MS-13).
     pub ip_check_interval: Duration,
+    /// Gate de consentement par confiance ext (ADR-0015
+    /// `kind=identity`) : un emetteur dont le score local est < 0
+    /// (flague par un curateur suivi) devient `blocked` au lieu de
+    /// `pending` — la demande n'atteint jamais l'utilisateur.
+    /// Necessite le `trust_lookup` injecte cote service.
+    pub consent_gate_flagged: bool,
+    /// Meme gate, cote positif : score > 0 → contact `Active` direct
+    /// (le consentement est delegue aux curateurs suivis — choix
+    /// explicite, defaut `false`).
+    pub consent_gate_endorsed: bool,
+    /// Gate de consentement par dette (ADR-0015 §5) : un pair dont le
+    /// deficit ledger depasse `max_deficit_bytes` ne peut pas ouvrir
+    /// de `pending`. N'opere que si `ledger_enforce` est actif cote
+    /// tunnel (un seul interrupteur d'enforcement).
+    pub consent_gate_ledger: bool,
 }
 
 impl Default for MessagingConfig {
@@ -52,6 +67,9 @@ impl Default for MessagingConfig {
             global_rate: 10,
             announce_interval: Duration::from_secs(300),
             ip_check_interval: Duration::from_secs(10),
+            consent_gate_flagged: false,
+            consent_gate_endorsed: false,
+            consent_gate_ledger: false,
         }
     }
 }

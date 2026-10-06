@@ -24,6 +24,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use onionbit_crypto::ipv8::dh::{pair_open_in, pair_seal_in};
 use onionbit_crypto::ipv8::keys::{LibNaClPublicKey, LibNaClSecretKey};
 use onionbit_db::messaging as dbm;
 use onionbit_db::Database;
@@ -43,6 +44,66 @@ use crate::error::{CoreError, Result};
 const EVENTS_CAP: usize = 256;
 /// Timeout d'attente de liaison e2e dans `connect`.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Magic du blob coffre (`OBV1` + version integree dans `v`) —
+/// octets en clair hors du chiffre pour un sanity check avant AEAD.
+const VAULT_MAGIC: &[u8; 4] = b"OBV1";
+/// Version du document coffre.
+const VAULT_VERSION: u8 = 1;
+/// Domaine HKDF du coffre — separe ce chiffrement des enveloppes
+/// OBF et des `tx` de ledger (meme cle de paire, infos distinctes —
+/// ADR-0015 §7).
+const VAULT_HKDF_INFO: &[u8] = b"onionbit/vault/v1";
+/// Taille maximale du blob coffre accepte a l'import (1 Mio — une
+/// liste de contacts reelle tient dans quelques ko ; borne contre
+/// les collages/hostiles de taille arbitraire).
+const VAULT_BLOB_MAX: usize = 1 << 20;
+
+/// Lookup de confiance `identity` (ADR-0015) injecte par
+/// `Ipv8Stack` : `pk_bin` → score des curateurs suivis.
+type TrustLookup = Arc<dyn Fn(&[u8]) -> i64 + Send + Sync>;
+
+/// Entree de coffre exportee (cle hex + pseudonyme local + etat).
+#[derive(serde::Serialize)]
+struct VaultEntry {
+    pk: String,
+    alias: String,
+    state: String,
+}
+
+/// Document coffre v1 — chiffre en entier dans le blob AEAD.
+#[derive(serde::Serialize)]
+struct VaultDoc {
+    v: u8,
+    exported: u64,
+    contacts: Vec<VaultEntry>,
+}
+
+/// Forme lue a l'import — les champs inconnus sont ignores, les
+/// absents toleres (l'import reste compatible avec des coffres
+/// plus riches produits plus tard).
+#[derive(serde::Deserialize)]
+struct VaultDocIn {
+    v: u8,
+    contacts: Vec<VaultEntryIn>,
+}
+
+/// Entree lue a l'import (`alias`/`state` optionnels).
+#[derive(serde::Deserialize)]
+struct VaultEntryIn {
+    pk: String,
+    alias: Option<String>,
+    state: Option<String>,
+}
+
+/// Libelle stable d'un etat de consentement (DB + coffre).
+fn contact_state_str(state: ContactState) -> &'static str {
+    match state {
+        ContactState::Active => "active",
+        ContactState::Pending => "pending",
+        ContactState::Blocked => "blocked",
+    }
+}
 /// Granularite de scrutation de la liaison dans `connect`.
 const CONNECT_POLL: Duration = Duration::from_millis(50);
 /// Borne du pseudonyme local d'un contact (caracteres) — label UI,
@@ -221,6 +282,15 @@ pub struct MessagingStats {
     pub replay: AtomicU64,
     /// Trames verifiees d'un contact `pending` (non livrees).
     pub pending_drop: AtomicU64,
+    /// Demandes passees en `blocked` par la gate confiance
+    /// (`consent_gate_flagged` — score identity < 0).
+    pub consent_blocked: AtomicU64,
+    /// Demandes admises `Active` directement par la gate confiance
+    /// (`consent_gate_endorsed` — score identity > 0).
+    pub consent_auto_accepted: AtomicU64,
+    /// Demandes refusees par la gate dette (`consent_gate_ledger`
+    /// + `ledger_enforce` — deficit > `max_deficit_bytes`).
+    pub consent_ledger_refused: AtomicU64,
 }
 
 /// Etat d'un contact (cle : `pk_bin`).
@@ -317,6 +387,10 @@ pub struct MessagingService {
     stats: MessagingStats,
     /// Emetteur d'evenements applicatifs.
     events_tx: broadcast::Sender<MessagingEvent>,
+    /// Lookup du score de confiance ext (`kind=identity`) d'une cle
+    /// — injecte par `Ipv8Stack` quand la communaute ext tourne
+    /// (`None` sinon : les gates `consent_gate_*` sont inertes).
+    trust_lookup: Mutex<Option<TrustLookup>>,
     /// Arrets des taches du service.
     stops: Mutex<Vec<watch::Sender<bool>>>,
 }
@@ -359,12 +433,30 @@ impl MessagingService {
             db,
             stats: MessagingStats::default(),
             events_tx,
+            trust_lookup: Mutex::new(None),
             stops: Mutex::new(Vec::new()),
         });
         svc.load_state();
         svc.spawn_e2e_listener();
         svc.spawn_presence_monitor();
         svc
+    }
+
+    /// Injecte le lookup de confiance ext (`kind=identity`) —
+    /// appele par `Ipv8Stack` quand la communaute ext tourne. Sans
+    /// lui, `consent_gate_flagged`/`endorsed` n'ont aucun effet.
+    pub fn set_trust_lookup(&self, f: TrustLookup) {
+        *self.trust_lookup.lock().unwrap() = Some(f);
+    }
+
+    /// Score de confiance identity d'une cle, si le lookup est
+    /// injecte (`None` = ext absente — gates confiance inertes).
+    fn trust_score(&self, pk_bin: &[u8]) -> Option<i64> {
+        self.trust_lookup
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|f| f(pk_bin))
     }
 
     /// Restauration au restart (MS-11) : etat de consentement,
@@ -776,6 +868,112 @@ impl MessagingService {
             .filter(|a| !a.is_empty())
     }
 
+    /// Exporte le coffre de contacts — `{v, contacts: [{pk, alias,
+    /// state}]}` chiffre `pair_seal_in` **pour soi-meme** (AEAD
+    /// `XChaCha20-Poly1305` sous `onionbit/vault/v1`, cle derivee du
+    /// DH `crypt_pk x crypt_sk` de l'identite). Portable entre devices
+    /// partageant la meme identite (ADR-0016) ; contrairement aux
+    /// auto-attestations `identity` (publiques par design), le blob
+    /// est illisible pour quiconque n'a pas la cle privee —
+    /// pseudonymes inclus.
+    pub fn export_vault(&self) -> Vec<u8> {
+        let entries: Vec<VaultEntry> = {
+            let contacts = self.contacts.lock().unwrap();
+            contacts
+                .iter()
+                .map(|(pk_bin, c)| VaultEntry {
+                    pk: hex::encode(pk_bin),
+                    alias: self.contact_alias(pk_bin).unwrap_or_default(),
+                    state: contact_state_str(c.state).to_owned(),
+                })
+                .collect()
+        };
+        let doc = serde_json::to_vec(&VaultDoc {
+            v: VAULT_VERSION,
+            exported: now_secs(),
+            contacts: entries,
+        })
+        .unwrap_or_default();
+        let pk = self.key.public_key();
+        let blob = pair_seal_in(
+            &pk.crypt_pk,
+            &self.key.crypt_x25519().to_bytes(),
+            VAULT_HKDF_INFO,
+            &doc,
+        )
+        .unwrap_or_default();
+        let mut out = Vec::with_capacity(VAULT_MAGIC.len() + blob.len());
+        out.extend_from_slice(VAULT_MAGIC);
+        out.extend_from_slice(&blob);
+        out
+    }
+
+    /// Importe un blob coffre (dechiffrement AEAD par notre propre
+    /// identite) : chaque entree inconnue devient un contact `Active`
+    /// (notre propre liste est une liste de confiance — pas un
+    /// `pending`), l'etat exporte `blocked` est conserve, alias
+    /// restaure. Renvoie le nombre de contacts restaurés.
+    /// `InvalidState` si magic/absent, AEAD ou JSON invalide.
+    pub fn import_vault(&self, blob: &[u8]) -> Result<usize> {
+        if blob.len() > VAULT_BLOB_MAX {
+            return Err(CoreError::InvalidState("coffre : blob trop gros"));
+        }
+        let sealed = blob
+            .strip_prefix(VAULT_MAGIC.as_slice())
+            .ok_or(CoreError::InvalidState("coffre : magic OBV1 absent"))?;
+        let pk = self.key.public_key();
+        let doc_bytes = pair_open_in(
+            &pk.crypt_pk,
+            &self.key.crypt_x25519().to_bytes(),
+            VAULT_HKDF_INFO,
+            sealed,
+        )
+        .map_err(|_| CoreError::InvalidState("coffre : dechiffrement impossible"))?;
+        let doc: VaultDocIn = serde_json::from_slice(&doc_bytes)
+            .map_err(|_| CoreError::InvalidState("coffre : JSON invalide"))?;
+        if doc.v != VAULT_VERSION {
+            return Err(CoreError::InvalidState("coffre : version inconnue"));
+        }
+        let mut restored = 0usize;
+        let mut rejoin: Vec<(Vec<u8>, LibNaClPublicKey)> = Vec::new();
+        for e in &doc.contacts {
+            let Ok(pk_bin) = hex::decode(&e.pk) else {
+                continue;
+            };
+            if self.contacts.lock().unwrap().contains_key(&pk_bin) {
+                continue;
+            }
+            let Ok(pk) = LibNaClPublicKey::from_bin(&pk_bin) else {
+                continue;
+            };
+            let state = match e.state.as_deref() {
+                Some("blocked") => ContactState::Blocked,
+                _ => ContactState::Active,
+            };
+            let mut c = Contact::active(pk.clone(), &self.cfg);
+            c.state = state;
+            self.contacts.lock().unwrap().insert(pk_bin.clone(), c);
+            self.persist_contact(&pk_bin, state);
+            if state == ContactState::Active {
+                rejoin.push((pk_bin.clone(), pk));
+            }
+            if let Some(alias) = &e.alias {
+                if !alias.is_empty() {
+                    let _ = self.set_alias(&pk_bin, alias);
+                }
+            }
+            restored += 1;
+        }
+        // Meme rejoin que `load_state` : les contacts actifs
+        // restaurés rejoignent leur swarm de presence.
+        for (pk_bin, pk) in rejoin {
+            let mh = messaging_hash(&pk);
+            self.tunnel.join_swarm_with_key(mh, self.hops, None);
+            self.swarms.lock().unwrap().insert(mh, pk_bin);
+        }
+        Ok(restored)
+    }
+
     /// Historique borne d'un contact (le plus recent d'abord).
     pub fn history(&self, contact_pk: &[u8], limit: u32) -> Result<Vec<dbm::MsgMessageRow>> {
         let Some(db) = &self.db else {
@@ -802,7 +1000,7 @@ impl MessagingService {
     }
 
     /// Compteurs de drops (instantane).
-    pub fn stats_snapshot(&self) -> [(&'static str, u64); 7] {
+    pub fn stats_snapshot(&self) -> [(&'static str, u64); 10] {
         [
             ("codec", self.stats.codec.load(Ordering::Relaxed)),
             (
@@ -823,6 +1021,18 @@ impl MessagingService {
                 "pending_drop",
                 self.stats.pending_drop.load(Ordering::Relaxed),
             ),
+            (
+                "consent_blocked",
+                self.stats.consent_blocked.load(Ordering::Relaxed),
+            ),
+            (
+                "consent_auto_accepted",
+                self.stats.consent_auto_accepted.load(Ordering::Relaxed),
+            ),
+            (
+                "consent_ledger_refused",
+                self.stats.consent_ledger_refused.load(Ordering::Relaxed),
+            ),
         ]
     }
 
@@ -830,11 +1040,7 @@ impl MessagingService {
     /// compteurs `seq` conserves cote DB par l'`ON CONFLICT`).
     fn persist_contact(&self, pk_bin: &[u8], state: ContactState) {
         let Some(db) = &self.db else { return };
-        let st = match state {
-            ContactState::Active => "active",
-            ContactState::Pending => "pending",
-            ContactState::Blocked => "blocked",
-        };
+        let st = contact_state_str(state);
         let (send_seq, recv_top) = {
             let contacts = self.contacts.lock().unwrap();
             contacts
@@ -1427,6 +1633,45 @@ impl MessagingService {
                 true
             }
             None => {
+                // Gates ADR-0015 avant tout etat : dette ledger
+                // (un pair trop endette n'ouvre pas de lane) puis
+                // confiance identity (flague → `blocked` sans
+                // pending ; approuve → `Active` direct).
+                if self.cfg.consent_gate_ledger
+                    && self.tunnel.ledger.is_enforce()
+                    && self.tunnel.ledger.stat(pk_bin).map_or(0, |s| s.deficit())
+                        > self.tunnel.ledger.max_deficit_bytes()
+                {
+                    self.stats
+                        .consent_ledger_refused
+                        .fetch_add(1, Ordering::Relaxed);
+                    return false;
+                }
+                if let Some(score) = self.trust_score(pk_bin) {
+                    if self.cfg.consent_gate_flagged && score < 0 {
+                        if let Ok(pk) = LibNaClPublicKey::from_bin(pk_bin) {
+                            let mut c = Contact::active(pk, &self.cfg);
+                            c.state = ContactState::Blocked;
+                            self.contacts.lock().unwrap().insert(pk_bin.to_vec(), c);
+                            self.persist_contact(pk_bin, ContactState::Blocked);
+                        }
+                        self.stats.consent_blocked.fetch_add(1, Ordering::Relaxed);
+                        return false;
+                    }
+                    if self.cfg.consent_gate_endorsed && score > 0 {
+                        if let Ok(pk) = LibNaClPublicKey::from_bin(pk_bin) {
+                            let mut c = Contact::active(pk, &self.cfg);
+                            c.circuit = Some(cid);
+                            self.contacts.lock().unwrap().insert(pk_bin.to_vec(), c);
+                            self.persist_contact(pk_bin, ContactState::Active);
+                            self.bind_circuit(cid, pk_bin, keys);
+                            self.stats
+                                .consent_auto_accepted
+                                .fetch_add(1, Ordering::Relaxed);
+                            return true;
+                        }
+                    }
+                }
                 // Inconnu : admission `pending` bornee (capacite +
                 // TTL purges d'abord).
                 self.purge_expired_pending();
@@ -2276,5 +2521,234 @@ mod tests {
             source: onionbit_tunnel::routing::PEER_SOURCE_PEX,
             last_seen_secs: 0,
         }
+    }
+
+    /// Gate confiance `flagged` : un emetteur a score < 0 (flague
+    /// par un curateur suivi, `kind=identity`) devient `Blocked`
+    /// sans `pending` ni evenement `Consent` — la demande
+    /// n'atteint pas l'utilisateur.
+    #[tokio::test]
+    async fn consent_gate_flagged_bloque_sans_pending() {
+        let svc = make_service_cfg(MessagingConfig {
+            consent_gate_flagged: true,
+            ..MessagingConfig::default()
+        })
+        .await;
+        let peer = LibNaClSecretKey::generate();
+        let pk_bin = peer.public_key().to_bin();
+        let flagged = pk_bin.clone();
+        svc.set_trust_lookup(Arc::new(
+            move |pk| {
+                if pk == flagged.as_slice() {
+                    -1
+                } else {
+                    0
+                }
+            },
+        ));
+        let keys = MessagingKeys {
+            send: [1u8; 32],
+            recv: [2u8; 32],
+        };
+        unbound(&svc, 60, &keys);
+        let mut events = svc.subscribe();
+
+        svc.handle_incoming(60, &keys, &hello_wire(&peer, 0, &keys.recv));
+        assert_eq!(svc.contact_state(&pk_bin), Some(ContactState::Blocked));
+        assert!(events.try_recv().is_err(), "aucun Consent pour un flague");
+        assert_eq!(svc.stats.consent_blocked.load(Ordering::Relaxed), 1);
+    }
+
+    /// Gate `endorsed` : score > 0 → `Active` direct (consentement
+    /// delegue aux curateurs suivis) ; les trames passent aussitot.
+    #[tokio::test]
+    async fn consent_gate_endorsed_admet_active() {
+        let svc = make_service_cfg(MessagingConfig {
+            consent_gate_endorsed: true,
+            ..MessagingConfig::default()
+        })
+        .await;
+        let peer = LibNaClSecretKey::generate();
+        let pk_bin = peer.public_key().to_bin();
+        let endorsed = pk_bin.clone();
+        svc.set_trust_lookup(Arc::new(
+            move |pk| {
+                if pk == endorsed.as_slice() {
+                    2
+                } else {
+                    0
+                }
+            },
+        ));
+        let keys = MessagingKeys {
+            send: [1u8; 32],
+            recv: [2u8; 32],
+        };
+        unbound(&svc, 61, &keys);
+
+        svc.handle_incoming(61, &keys, &hello_wire(&peer, 0, &keys.recv));
+        assert_eq!(svc.contact_state(&pk_bin), Some(ContactState::Active));
+        assert_eq!(svc.stats.consent_auto_accepted.load(Ordering::Relaxed), 1);
+        // Le circuit est lie : une trame verifiee du contact est
+        // livree immediatement (pas de `pending_drop`).
+        svc.handle_incoming(61, &keys, &wire(&peer, 1, &keys.recv, b"salut"));
+        assert_eq!(svc.stats.pending_drop.load(Ordering::Relaxed), 0);
+    }
+
+    /// Gate dette : `consent_gate_ledger` + `ledger_enforce` — un
+    /// pair dont le deficit depasse `max_deficit_bytes` ne peut pas
+    /// ouvrir de `pending` (refuse silencieusement, sans etat).
+    #[tokio::test]
+    async fn consent_gate_ledger_refuse_debiteur() {
+        let svc = make_service_cfg(MessagingConfig {
+            consent_gate_ledger: true,
+            ..MessagingConfig::default()
+        })
+        .await;
+        let peer = LibNaClSecretKey::generate();
+        let pk_bin = peer.public_key().to_bin();
+        let keys = MessagingKeys {
+            send: [1u8; 32],
+            recv: [2u8; 32],
+        };
+
+        // Sans enforce : le debiteur passe en pending comme tout
+        // inconnu (mesure seule, jamais d'exclusion).
+        svc.tunnel
+            .ledger
+            .note_served(&pk_bin, svc.tunnel.ledger.max_deficit_bytes() + 1);
+        unbound(&svc, 62, &keys);
+        svc.handle_incoming(62, &keys, &hello_wire(&peer, 0, &keys.recv));
+        assert_eq!(svc.contact_state(&pk_bin), Some(ContactState::Pending));
+        svc.contacts.lock().unwrap().remove(&pk_bin);
+
+        // Enforce : le meme deficit refuse l'admission.
+        svc.tunnel.ledger.set_enforce(true);
+        unbound(&svc, 63, &keys);
+        svc.handle_incoming(63, &keys, &hello_wire(&peer, 1, &keys.recv));
+        assert_eq!(svc.contact_state(&pk_bin), None);
+        assert_eq!(svc.stats.consent_ledger_refused.load(Ordering::Relaxed), 1);
+    }
+
+    /// Coffre portable : export `OBV1` chiffre pour soi, import sur
+    /// un service **neuf partageant la meme identite** (ADR-0016) —
+    /// contacts et pseudonymes restaures, blob illisible pour un
+    /// tiers (autre cle → AEAD refuse).
+    #[tokio::test]
+    async fn vault_export_import_restaure_contacts() {
+        let (tunnel_a, key) = bare_tunnel().await;
+        let db_a = Arc::new(Database::memory().unwrap());
+        let svc_a = MessagingService::start(
+            tunnel_a,
+            key.clone(),
+            MessagingConfig::default(),
+            0,
+            Some(db_a),
+        );
+        let friend = LibNaClSecretKey::generate();
+        let pk_bin = bind(
+            &svc_a,
+            0,
+            &friend,
+            &MessagingKeys {
+                send: [1u8; 32],
+                recv: [2u8; 32],
+            },
+        );
+        svc_a.set_alias(&pk_bin, "alice").unwrap();
+
+        let blob = svc_a.export_vault();
+        assert!(blob.starts_with(b"OBV1"));
+
+        // « Nouveau device » : autre tunnel, autre base — meme cle
+        // d'identite.
+        let ep = UdpEndpoint::bind("127.0.0.1:0").await.unwrap();
+        let ep_run = ep.clone();
+        tokio::spawn(async move {
+            let _ = ep_run.run().await;
+        });
+        let tunnel_b = TunnelCommunity::new_with_id(
+            key.clone(),
+            Arc::new(Network::default()),
+            ep,
+            TunnelSettings {
+                max_intro_points: 0,
+                ..TunnelSettings::default()
+            },
+            TUNNEL_COMMUNITY_ID,
+        )
+        .await;
+        let db_b = Arc::new(Database::memory().unwrap());
+        let svc_b =
+            MessagingService::start(tunnel_b, key, MessagingConfig::default(), 0, Some(db_b));
+        assert_eq!(svc_b.contact_state(&pk_bin), None);
+
+        let restored = svc_b.import_vault(&blob).unwrap();
+        assert_eq!(restored, 1);
+        assert_eq!(svc_b.contact_state(&pk_bin), Some(ContactState::Active));
+        assert_eq!(svc_b.contact_alias(&pk_bin).as_deref(), Some("alice"));
+
+        // Un tiers (autre cle) ne peut pas lire le coffre.
+        let svc_c = make_service(0).await.0;
+        assert!(svc_c.import_vault(&blob).is_err());
+        // Magic absent → erreur propre, pas de panic.
+        assert!(svc_b.import_vault(b"XXXX").is_err());
+    }
+
+    #[tokio::test]
+    async fn vault_import_borne_et_ne_reactive_pas_un_bloque() {
+        // Blob hors borne → refuse avant tout decrypt.
+        let (svc, _tmp) = make_service(0).await;
+        let huge = [b"OBV1".as_slice(), &vec![0u8; VAULT_BLOB_MAX]].concat();
+        assert!(svc.import_vault(&huge).is_err());
+
+        // Un contact deja present (bloque) n'est pas re-active par
+        // l'import : l'existant local prime toujours l'export.
+        let (tunnel_a, key) = bare_tunnel().await;
+        let svc_a =
+            MessagingService::start(tunnel_a, key.clone(), MessagingConfig::default(), 0, None);
+        let friend = LibNaClSecretKey::generate();
+        let pk_bin = bind(
+            &svc_a,
+            0,
+            &friend,
+            &MessagingKeys {
+                send: [3u8; 32],
+                recv: [4u8; 32],
+            },
+        );
+        let blob = svc_a.export_vault();
+
+        let (svc_b, _tmp_b) = make_service(0).await;
+        // `svc_b` a une autre identite : import impossible (AEAD).
+        assert!(svc_b.import_vault(&blob).is_err());
+        // Meme identite sur un autre service : contact deja bloque
+        // localement → le `Active` du coffre ne le reactive pas.
+        let ep = UdpEndpoint::bind("127.0.0.1:0").await.unwrap();
+        let ep_run = ep.clone();
+        tokio::spawn(async move {
+            let _ = ep_run.run().await;
+        });
+        let tunnel_b = TunnelCommunity::new_with_id(
+            key.clone(),
+            Arc::new(Network::default()),
+            ep,
+            TunnelSettings {
+                max_intro_points: 0,
+                ..TunnelSettings::default()
+            },
+            TUNNEL_COMMUNITY_ID,
+        )
+        .await;
+        let svc_c = MessagingService::start(tunnel_b, key, MessagingConfig::default(), 0, None);
+        let mut preexisting = Contact::active(friend.public_key(), &svc_c.cfg);
+        preexisting.state = ContactState::Blocked;
+        svc_c
+            .contacts
+            .lock()
+            .unwrap()
+            .insert(pk_bin.clone(), preexisting);
+        assert_eq!(svc_c.import_vault(&blob).unwrap(), 0);
+        assert_eq!(svc_c.contact_state(&pk_bin), Some(ContactState::Blocked));
     }
 }

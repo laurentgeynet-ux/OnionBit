@@ -300,6 +300,13 @@ impl PeerStatsBook {
         self.state.lock().unwrap().stats.get(public_key).cloned()
     }
 
+    /// Plafond de dette configure (`max_deficit_bytes`) — expose pour
+    /// les gates externes (consentement messagerie) qui reutilisent
+    /// le meme seuil plutot qu'une borne parallele.
+    pub fn max_deficit_bytes(&self) -> u64 {
+        self.cfg.max_deficit_bytes
+    }
+
     /// Entree mutable du pair, creee si besoin (respect de la borne
     /// `max_peers` : une cle fraiche n'entre pas dans une table
     /// pleine — `None` alors).

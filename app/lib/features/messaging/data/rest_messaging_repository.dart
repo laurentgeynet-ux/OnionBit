@@ -130,4 +130,19 @@ class RestMessagingRepository implements MessagingRepository {
     '/messaging/contacts/$publicKey/retention',
     body: {'retention_secs': retentionSecs, 'secure_delete': secureDelete},
   );
+
+  @override
+  Future<String> vaultExport() async {
+    final resp = await _api.get('/messaging/vault/export')
+        as Map<String, dynamic>;
+    return (resp['vault'] as String?) ?? '';
+  }
+
+  @override
+  Future<int> vaultImport(String vaultHex) async {
+    final resp = await _api
+        .post('/messaging/vault/import', body: {'vault': vaultHex})
+        as Map<String, dynamic>;
+    return (resp['restored'] as num?)?.toInt() ?? 0;
+  }
 }

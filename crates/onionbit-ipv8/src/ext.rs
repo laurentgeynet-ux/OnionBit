@@ -452,6 +452,10 @@ struct ExtPeer {
 pub struct ExtPeerInfo {
     /// `mid` hex du pair.
     pub mid: String,
+    /// Cle publique complete du pair (`pk_bin` hex — permet de viser
+    /// le pair en messagerie/attestation `identity`, pas seulement
+    /// de l'identifier).
+    pub pk: String,
     /// `caps` annonce dans son dernier `hello`.
     pub caps: u64,
     /// Secondes depuis le dernier `hello` valide recu.
@@ -2046,6 +2050,7 @@ impl OnionbitExtCommunity {
             .iter()
             .map(|(pk, e)| ExtPeerInfo {
                 mid: hex::encode(onionbit_crypto::hash::ipv8_mid(pk)),
+                pk: hex::encode(pk),
                 caps: e.caps,
                 last_hello_secs: e.last_hello.elapsed().as_secs(),
             })

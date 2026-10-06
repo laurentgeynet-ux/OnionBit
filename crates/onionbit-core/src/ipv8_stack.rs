@@ -242,6 +242,17 @@ pub struct Ipv8Config {
     /// Porte d'admission (voir `ledger_enabled`). `false` (defaut)
     /// = collection seule.
     pub ledger_enforce: bool,
+    /// Gates de consentement messagerie adossees au trust ext
+    /// (`kind=identity`, ADR-0015 §6) : `flagged` → score < 0 bloque
+    /// sans `pending` ; `endorsed` → score > 0 admis `Active` direct.
+    /// `false` par defaut — le consentement manuel reste la regle.
+    pub messaging_consent_flagged: bool,
+    /// Voir `messaging_consent_flagged` — auto-accept des endorses.
+    pub messaging_consent_endorsed: bool,
+    /// Gate dette sur l'admission messagerie (deficit ledger >
+    /// `max_deficit_bytes` → refuse) — n'opere que si
+    /// `ledger_enforce` est actif.
+    pub messaging_consent_ledger: bool,
     /// Octets servis gratuitement avant tout refus (periode de
     /// gratuite pour les nouveaux pairs).
     pub ledger_soft_cap: usize,
@@ -369,6 +380,9 @@ impl Ipv8Config {
             // du hello ext (ADR-0015).
             enable_messaging: true,
             messaging_hops: DEFAULT_MESSAGING_HOPS,
+            messaging_consent_flagged: false,
+            messaging_consent_endorsed: false,
+            messaging_consent_ledger: false,
             ledger_enabled: true,
             ledger_enforce: false,
             ledger_soft_cap: DEFAULT_LEDGER_SOFT_CAP as usize,
@@ -446,6 +460,9 @@ impl Default for Ipv8Config {
             stats_rate_window_secs: DEFAULT_STATS_RATE_WINDOW_SECS,
             enable_messaging: false,
             messaging_hops: DEFAULT_MESSAGING_HOPS,
+            messaging_consent_flagged: false,
+            messaging_consent_endorsed: false,
+            messaging_consent_ledger: false,
             ledger_enabled: true,
             ledger_enforce: false,
             ledger_soft_cap: DEFAULT_LEDGER_SOFT_CAP as usize,
@@ -2198,7 +2215,12 @@ impl Ipv8Stack {
                 Some(t) => Some(crate::services::messaging::MessagingService::start(
                     t.clone(),
                     key.clone(),
-                    onionbit_messaging::MessagingConfig::default(),
+                    onionbit_messaging::MessagingConfig {
+                        consent_gate_flagged: config.messaging_consent_flagged,
+                        consent_gate_endorsed: config.messaging_consent_endorsed,
+                        consent_gate_ledger: config.messaging_consent_ledger,
+                        ..onionbit_messaging::MessagingConfig::default()
+                    },
                     config.messaging_hops,
                     Some(db.clone()),
                 )),
@@ -2212,6 +2234,17 @@ impl Ipv8Stack {
         } else {
             None
         };
+
+        // Pont ext → messagerie : le lookup de confiance
+        // (`kind=identity`) alimente les gates `consent_gate_*` —
+        // sans ext, elles sont inertes.
+        if let (Some(m), Some(e)) = (&messaging, &ext) {
+            let ext = e.clone();
+            m.set_trust_lookup(std::sync::Arc::new(move |pk| {
+                ext.trust_info(onionbit_ipv8::ext::attest_kind::IDENTITY, pk)
+                    .score
+            }));
+        }
 
         let stack = Arc::new(Self {
             endpoint,

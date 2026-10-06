@@ -440,6 +440,7 @@ pub async fn get_ext(State(state): State<AppState>) -> Response {
         .map(|p| {
             serde_json::json!({
                 "mid": p.mid,
+                "pk": p.pk,
                 "caps": p.caps,
                 "caps_names": onionbit_ipv8::ext::cap_names(p.caps),
                 "last_hello_secs": p.last_hello_secs,

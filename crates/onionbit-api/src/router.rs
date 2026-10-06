@@ -233,6 +233,13 @@ fn api_router(state: AppState) -> Router<AppState> {
             delete(messaging::delete_message),
         )
         .route("/messaging/events", get(messaging::get_events))
+        // Coffre de contacts chiffre pour soi (ADR-0015/ADR-0016) —
+        // export/import portable entre devices de meme identite.
+        .route("/messaging/vault/export", get(messaging::get_vault_export))
+        .route(
+            "/messaging/vault/import",
+            post(messaging::post_vault_import),
+        )
         .route("/ipv8/tunnel/guards", get(ipv8::get_tunnel_guards))
         .route("/ipv8/tunnel/peers/dht", get(ipv8::get_dht_peers))
         .route("/ipv8/tunnel/peers/pex", get(ipv8::get_pex_peers))

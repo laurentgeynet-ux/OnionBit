@@ -130,6 +130,37 @@ class _OnionBitSectionState extends ConsumerState<OnionBitSection> {
               subtitle: l10n.onionbitLedgerEnforceSub,
             ),
             const Divider(height: AppSpacing.lg),
+            // Consentement messagerie assisté par la confiance
+            // ADR-0015 (attestations `identity` + solde du registre
+            // tunnel) — politique locale, appliquée au redémarrage.
+            SettingsSwitch(
+              path: [..._t, 'messaging_consent_endorsed'],
+              value: settingsBool(
+                settings,
+                [..._t, 'messaging_consent_endorsed'],
+              ),
+              title: l10n.onionbitConsentEndorsed,
+              subtitle: l10n.onionbitConsentEndorsedSub,
+            ),
+            SettingsSwitch(
+              path: [..._t, 'messaging_consent_flagged'],
+              value: settingsBool(
+                settings,
+                [..._t, 'messaging_consent_flagged'],
+              ),
+              title: l10n.onionbitConsentFlagged,
+              subtitle: l10n.onionbitConsentFlaggedSub,
+            ),
+            SettingsSwitch(
+              path: [..._t, 'messaging_consent_ledger'],
+              value: settingsBool(
+                settings,
+                [..._t, 'messaging_consent_ledger'],
+              ),
+              title: l10n.onionbitConsentLedger,
+              subtitle: l10n.onionbitConsentLedgerSub,
+            ),
+            const Divider(height: AppSpacing.lg),
             TextField(
               controller: _curators,
               onChanged: (_) => _deferred.markDirty(),

@@ -167,6 +167,10 @@ class _ContactsPane extends ConsumerWidget {
                 selfPk: stats?.publicKey ?? '',
                 contacts: contacts,
               ),
+              _ExtPeersSection(
+                contacts: contacts,
+                pending: pending,
+              ),
               if (contacts.isEmpty && pending.isEmpty)
                 Padding(
                   padding: const EdgeInsets.all(AppSpacing.lg),
@@ -188,13 +192,30 @@ class _ContactsPane extends ConsumerWidget {
           ),
         ),
         const Divider(height: 1),
-        // « Ajouter un contact » — résolution + liaison e2e.
+        // « Ajouter un contact » + coffre export/import (chiffre
+        // pour soi — portable entre devices de meme identite).
         Padding(
           padding: const EdgeInsets.all(AppSpacing.sm),
-          child: FilledButton.tonalIcon(
-            icon: const Icon(Icons.person_add_outlined, size: 18),
-            label: Text(l10n.msgAddContact),
-            onPressed: () => _addContact(context, ref),
+          child: Row(
+            children: [
+              Expanded(
+                child: FilledButton.tonalIcon(
+                  icon: const Icon(Icons.person_add_outlined, size: 18),
+                  label: Text(l10n.msgAddContact),
+                  onPressed: () => _addContact(context, ref),
+                ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.lock_open, size: 18),
+                tooltip: l10n.msgVaultExport,
+                onPressed: () => _vaultExport(context, ref),
+              ),
+              IconButton(
+                icon: const Icon(Icons.file_upload_outlined, size: 18),
+                tooltip: l10n.msgVaultImport,
+                onPressed: () => _vaultImport(context, ref),
+              ),
+            ],
           ),
         ),
       ],
@@ -245,6 +266,71 @@ class _ContactsPane extends ConsumerWidget {
     // hors ligne), il doit apparaître dans la liste.
     ref.invalidate(messagingContactsProvider);
     ref.invalidate(messagingHistoryProvider(pk));
+  }
+
+  /// Exporte le coffre chiffre (`GET /messaging/vault/export`) —
+  /// copie le blob hex dans le presse-papiers.
+  Future<void> _vaultExport(BuildContext context, WidgetRef ref) async {
+    try {
+      final blob = await ref.read(messagingRepositoryProvider).vaultExport();
+      await Clipboard.setData(ClipboardData(text: blob));
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(context.l10n.msgVaultExported)),
+        );
+      }
+    } catch (e) {
+      if (context.mounted) _showError(context, e);
+    }
+  }
+
+  /// Importe un blob coffre (`POST /messaging/vault/import`) —
+  /// dialogue de collage, puis restaure les contacts inconnus.
+  Future<void> _vaultImport(BuildContext context, WidgetRef ref) async {
+    final l10n = context.l10n;
+    final controller = TextEditingController();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(l10n.msgVaultImport),
+        content: TextField(
+          controller: controller,
+          decoration: InputDecoration(
+            labelText: l10n.msgVaultPasteHint,
+            border: const OutlineInputBorder(),
+          ),
+          style: const TextStyle(fontFamily: 'monospace', fontSize: 11),
+          maxLines: 4,
+          autofocus: true,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(l10n.cancel),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(l10n.msgVaultImport),
+          ),
+        ],
+      ),
+    );
+    final blob = controller.text.trim();
+    controller.dispose();
+    if (ok != true || !context.mounted || blob.isEmpty) return;
+    try {
+      final n = await ref
+          .read(messagingRepositoryProvider)
+          .vaultImport(blob);
+      ref.invalidate(messagingContactsProvider);
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(l10n.msgVaultRestored(n))),
+        );
+      }
+    } catch (e) {
+      if (context.mounted) _showError(context, e);
+    }
   }
 }
 
@@ -877,6 +963,101 @@ class _FriendsVaultSection extends ConsumerWidget {
             ),
           ),
       ],
+    );
+  }
+}
+
+/// Pairs OnionBit découverts avec `msg_v1` et pas encore contacts —
+/// suggestions d'ajout sans échange de clé hors-bande (ADR-0015 :
+/// le HELLO ext transporte la capacité, le `pk` complet est
+/// adressable tel quel).
+class _ExtPeersSection extends ConsumerWidget {
+  const _ExtPeersSection({required this.contacts, required this.pending});
+
+  final List<MessagingContact> contacts;
+  final List<MessagingContact> pending;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final extAsync = ref.watch(extInfoProvider);
+    final l10n = context.l10n;
+    return extAsync.when(
+      loading: () => const SizedBox.shrink(),
+      error: (e, _) => const SizedBox.shrink(),
+      data: (ext) {
+        final known = contacts
+            .map((c) => c.publicKey.toLowerCase())
+            .followedBy(pending.map((c) => c.publicKey.toLowerCase()))
+            .toSet();
+        // `msg_v1` annoncé + clé complète dispo + pas encore contact.
+        final candidates = [
+          for (final p in ext.peers)
+            if (p.capsNames.contains('msg_v1') &&
+                p.pk.isNotEmpty &&
+                !known.contains(p.pk.toLowerCase()))
+              p,
+        ];
+        if (candidates.isEmpty) return const SizedBox.shrink();
+        return ExpansionTile(
+          dense: true,
+          leading: const Icon(Icons.wifi_tethering_outlined, size: 20),
+          title: Text(l10n.msgSuggestionsTitle),
+          subtitle: Text('${candidates.length}'),
+          children: [
+            for (final p in candidates)
+              ListTile(
+                dense: true,
+                leading: const Icon(Icons.person_outline, size: 16),
+                title: Text(
+                  p.mid,
+                  style: const TextStyle(
+                    fontFamily: 'monospace',
+                    fontSize: 12,
+                  ),
+                ),
+                subtitle: Wrap(
+                  spacing: 4,
+                  children: [
+                    for (final c in p.capsNames)
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 5,
+                          vertical: 1,
+                        ),
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(4),
+                          color: const Color(0xFF2E7D32)
+                              .withValues(alpha: 0.15),
+                        ),
+                        child: Text(
+                          c,
+                          style: const TextStyle(
+                            fontSize: 10,
+                            color: Color(0xFF2E7D32),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+                trailing: IconButton(
+                  icon: const Icon(Icons.person_add_alt_1, size: 18),
+                  tooltip: l10n.msgAddContact,
+                  onPressed: () async {
+                    try {
+                      await ref
+                          .read(messagingRepositoryProvider)
+                          .connect(p.pk);
+                      ref.read(selectedContactProvider.notifier).set(p.pk);
+                      ref.invalidate(messagingContactsProvider);
+                    } catch (e) {
+                      if (context.mounted) _showError(context, e);
+                    }
+                  },
+                ),
+              ),
+          ],
+        );
+      },
     );
   }
 }

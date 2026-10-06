@@ -56,6 +56,16 @@ abstract class MessagingRepository {
     required int retentionSecs,
     bool secureDelete = false,
   });
+
+  /// `GET /messaging/vault/export` — coffre de contacts chiffré pour
+  /// notre propre identité (blob `OBV1…` hex, ADR-0015/ADR-0016).
+  /// Illisible sans la clé privée — pseudonymes inclus.
+  Future<String> vaultExport();
+
+  /// `POST /messaging/vault/import` — restaure les contacts d'un
+  /// coffre exporté par la même identité. Renvoie le nombre de
+  /// contacts restaurés.
+  Future<int> vaultImport(String vaultHex);
 }
 
 /// Identité locale + compteurs exposés par `/messaging/stats`.

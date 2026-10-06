@@ -735,6 +735,18 @@ pub struct TunnelCommunityConfig {
     /// Defaut 1 — augmente l'anonymat de la liaison au prix de
     /// latence (comme les lanes anonymes).
     pub messaging_hops: u32,
+    /// Extension Rust (ADR-0015 §6) : gate de consentement par
+    /// confiance ext `kind=identity` — un emetteur flague (score
+    /// local < 0 par les curateurs suivis) devient `blocked` sans
+    /// atteindre `pending`. `false` par defaut.
+    pub messaging_consent_flagged: bool,
+    /// Meme gate, cote positif : score > 0 → `Active` direct
+    /// (consentement delegue aux curateurs suivis). `false`.
+    pub messaging_consent_endorsed: bool,
+    /// Gate dette : un pair dont le deficit ledger depasse
+    /// `max_deficit_bytes` ne peut ouvrir de `pending` — n'opere
+    /// que si `ledger_enforce` est actif. `false` par defaut.
+    pub messaging_consent_ledger: bool,
     /// Extension Rust (ADR-0015) : comptabilite locale des octets de
     /// tunnel servis/utilises par pair — persistance `peer_stats` et
     /// exposition `/api/ipv8/tunnel/ledger`. `true` par defaut :
@@ -788,6 +800,9 @@ impl Default for TunnelCommunityConfig {
             exit_inbound_max_sources: crate::ipv8_stack::DEFAULT_EXIT_INBOUND_MAX_SOURCES as u64,
             messaging_enabled: true,
             messaging_hops: crate::ipv8_stack::DEFAULT_MESSAGING_HOPS as u32,
+            messaging_consent_flagged: false,
+            messaging_consent_endorsed: false,
+            messaging_consent_ledger: false,
             ledger_enabled: true,
             ledger_enforce: false,
             ledger_soft_cap: crate::ipv8_stack::DEFAULT_LEDGER_SOFT_CAP,
@@ -1547,6 +1562,9 @@ impl DaemonConfig {
             enable_messaging: self.tunnel_community.messaging_enabled
                 && self.tunnel_community.enabled,
             messaging_hops: self.tunnel_community.messaging_hops as usize,
+            messaging_consent_flagged: self.tunnel_community.messaging_consent_flagged,
+            messaging_consent_endorsed: self.tunnel_community.messaging_consent_endorsed,
+            messaging_consent_ledger: self.tunnel_community.messaging_consent_ledger,
             ledger_enabled: self.tunnel_community.ledger_enabled,
             ledger_enforce: self.tunnel_community.ledger_enforce,
             ledger_soft_cap: self.tunnel_community.ledger_soft_cap as usize,

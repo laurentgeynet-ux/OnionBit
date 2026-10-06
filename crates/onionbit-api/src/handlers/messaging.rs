@@ -316,6 +316,39 @@ pub async fn post_retention(
     Ok(Json(serde_json::json!({})))
 }
 
+/// `GET /api/messaging/vault/export` — coffre de contacts chiffre
+/// pour notre propre identite (`OBV1` + AEAD pairbox, cle derivee
+/// du DH `crypt_pk x crypt_sk`) : `{pk, alias, state}` par contact.
+/// Portable entre devices partageant la meme identite (ADR-0016) ;
+/// illisible sans la cle privee — pseudonymes inclus, contrairement
+/// aux auto-attestations `identity` (publiques par design).
+pub async fn get_vault_export(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let blob = svc(&state)?.export_vault();
+    Ok(Json(serde_json::json!({ "vault": hexs(&blob) })))
+}
+
+/// Corps `{vault: "<hex>"}` de `POST /api/messaging/vault/import`.
+#[derive(serde::Deserialize)]
+pub struct VaultImportBody {
+    /// Blob `OBV1…` hex tel que rendu par l'export.
+    pub vault: String,
+}
+
+/// `POST /api/messaging/vault/import` — dechiffre le blob pour notre
+/// identite et restaure les contacts inconnus en `Active` (ou
+/// `blocked` si tel etait leur etat exporte) + alias. Renvoie
+/// `{restored: n}`.
+pub async fn post_vault_import(
+    State(state): State<AppState>,
+    Json(body): Json<VaultImportBody>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let blob = hex::decode(&body.vault).map_err(|_| ApiError::bad_request("vault hex attendu"))?;
+    let restored = svc(&state)?.import_vault(&blob)?;
+    Ok(Json(serde_json::json!({ "restored": restored })))
+}
+
 /// `MessagingEvent` → `(topic, json)` du flux SSE dedie.
 fn event_to_sse(ev: &MessagingEvent) -> Option<(String, serde_json::Value)> {
     let (topic, kwargs) = match ev {

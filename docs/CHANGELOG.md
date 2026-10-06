@@ -3,6 +3,31 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## ADR-0015 §9 : ponts messagerie — consentement assisté + coffre portable (2026-10-06)
+
+- **Gates de consentement** (`tunnel_community/messaging_consent_*`,
+  restart) : `flagged` bloque une demande entrante sans `pending`
+  (score `identity` < 0 chez un curateur suivi), `endorsed` admet
+  directement (score > 0), `ledger` refuse un débiteur au-delà du
+  plafond. Local et configurable — blocage explicite toujours
+  prioritaire ; ext absente → gates inertes. Lookup injecté par
+  `Ipv8Stack::set_trust_lookup` ; compteurs `consent_blocked`/
+  `consent_auto_accepted`/`consent_ledger_refused` dans les stats.
+- **Coffre `OBV1`** : `export_vault`/`import_vault` sur le service
+  — JSON `{v, exported, contacts:[{pk, alias, state}]}` scellé
+  `pair_seal_in` pour soi (HKDF `onionbit/vault/v1`). Endpoints
+  `GET/POST /api/messaging/vault/*` ; borne `VAULT_BLOB_MAX` 1 Mio ;
+  contact existant jamais écrasé (un `blocked` local survit) ;
+  `blocked` exporté préservé ; contacts actifs restaurés
+  rejoignent leur swarm. Ni clé privée ni messages dans le coffre.
+- **`pk` complet par pair ext** (`/api/ipv8/ext`) → l'UI messagerie
+  propose les pairs `msg_v1` non encore contacts (« Pairs
+  OnionBit ») + export/import du coffre par presse-papiers.
+- **Réglages** : trois commutateurs « Consentement messagerie »
+  dans la section OnionBit (sous-titres « Applied on restart »).
+- Tests : 3 gates + vault round-trip (restauration, illisible par
+  un tiers, magic/borne, non-réactivation d'un bloqué).
+
 ## ADR-0015 : `kind=identity` — confiance utilisateur + liste d'amis portable (2026-10-06)
 
 - **`attest_kind::IDENTITY = 3`** (`attest.rs`) : sujet = `pk_bin` du

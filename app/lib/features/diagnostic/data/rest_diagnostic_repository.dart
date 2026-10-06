@@ -290,6 +290,7 @@ class RestDiagnosticRepository implements DiagnosticRepository {
           if (p is Map<String, dynamic>)
             ExtPeerInfo(
               mid: '${p['mid'] ?? ''}',
+              pk: '${p['pk'] ?? ''}',
               capsNames: [
                 for (final c in (p['caps_names'] as List?) ?? const []) '$c',
               ],

@@ -55,7 +55,13 @@ const kAnonymityDefaults = <String, dynamic>{
 /// ADR-0015) + comptabilité tunnel (`TunnelCommunityConfig`).
 const kOnionBitDefaults = <String, dynamic>{
   'ext': {'enabled': true, 'ledger_enabled': true, 'obf_enabled': false, 'curators': <String>[]},
-  'tunnel_community': {'ledger_enabled': true, 'ledger_enforce': false},
+  'tunnel_community': {
+    'ledger_enabled': true,
+    'ledger_enforce': false,
+    'messaging_consent_endorsed': false,
+    'messaging_consent_flagged': false,
+    'messaging_consent_ledger': false,
+  },
 };
 
 /// Découverte/proxy — `EngineConfig::default()` (tout activé, pas de

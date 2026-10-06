@@ -811,6 +811,18 @@ Ajouter ici, au fil de l'avancement, tout écart constaté par rapport au
 plan initial (dépendance qui ne convient pas, étape scindée en deux,
 risque IPv8 sous/sur-estimé, etc.), avec la date.
 
+- 2026-10-06 (ADR-0015 §9 — **ponts messagerie**) : consentement
+  assisté par la confiance (`messaging_consent_flagged` bloque sans
+  `pending`, `messaging_consent_endorsed` admet,
+  `messaging_consent_ledger` refuse les débiteurs — tous off par
+  défaut, restart,
+  blocage local toujours prioritaire) ; coffre `OBV1` portable
+  (`GET/POST /api/messaging/vault/*` — XChaCha20-Poly1305 pour soi,
+  HKDF `onionbit/vault/v1`, borne 1 Mio, contact existant jamais
+  écrasé, `blocked` préservé, alias inclus, ni clé privée ni
+  historique) ; `pk` complet par pair dans `/api/ipv8/ext` +
+  suggestions de contacts `msg_v1` dans l'UI messagerie (export/
+  import coffre par presse-papiers).
 - 2026-10-06 (ADR-0017 — **transport furtif**, statut Proposée) :
   analyse complète de la furtivité anti-censure — décision
   structurante : indétectabilité et interopérabilité legacy Tribler

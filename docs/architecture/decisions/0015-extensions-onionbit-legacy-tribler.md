@@ -280,6 +280,42 @@ Les extensions subissent exactement les mêmes règles (filtrage
 `exit_data`, anti-SSRF, kill switch) — aucun affaiblissement n'est
 introduit pour l'extension.
 
+### 9. Ponts vers la messagerie — consentement assisté + coffre portable (livrée)
+
+Trois usages d'`identity` et du ledger côté messagerie, tous
+locaux, tous désactivés par défaut :
+
+- **Consentement assisté** (`tunnel_community/messaging_consent_*`,
+  lus à la construction du service — redémarrage) : à la réception
+  d'une demande de liaison, avant de créer un `pending`,
+  `consent_flagged` bloque si le score `identity` est < 0 (un
+  curateur suivi la flague), `consent_endorsed` admet directement
+  si le score est > 0, `consent_ledger` refuse si le solde tunnel
+  du pair dépasse le plafond de déficit. Un blocage local explicite
+  prime toujours — la confiance ne peut jamais réactiver un
+  `blocked`. Le lookup est injecté par `Ipv8Stack`
+  (`set_trust_lookup`) ; ext absente → gates confiance inertes,
+  le comportement historique `pending` est conservé.
+- **Coffre de contacts portable** (`OBV1`) : `GET/POST
+  /api/messaging/vault/{export,import}` — `{v, exported, contacts:
+  [{pk, alias, state}]}` sérialisé JSON puis `pair_seal_in`
+  **pour soi-même** (XChaCha20-Poly1305, HKDF
+  `onionbit/vault/v1` séparé des enveloppes OBF et des `tx` de
+  ledger). Illisible sans la clé privée de l'identité — les
+  pseudonymes locaux voyagent chiffrés, contrairement aux
+  auto-attestations `identity` qui sont publiques par design.
+  Import : magic + borne `VAULT_BLOB_MAX` (1 Mio) avant tout
+  decrypt ; chaque entrée inconnue devient `Active` (notre propre
+  liste est une liste de confiance, pas un `pending`), l'état
+  `blocked` exporté est conservé, un contact **déjà présent n'est
+  jamais écrasé** (le blocage local survit à l'import). Les
+  contacts restaurés rejoignent leur swarm de présence comme au
+  restart (`load_state`). Ni clé privée ni historique de messages
+  dans le coffre — données de contact uniquement.
+- **Suggestions de pairs** : `GET /api/ipv8/ext` expose désormais
+  `pk` (clé complète) par pair — l'UI propose les pairs `msg_v1`
+  non encore contacts sans échange de clé hors-bande.
+
 ## Conséquences
 
 - **Positif** : aucune rupture de l'interop Tribler 8.x validée (étape
@@ -332,3 +368,10 @@ introduit pour l'extension.
   rejeté — store/score inchangés, aucune ré-émission), préfiltre
   curateur non suivi observable par compteurs, budget `ATTEST`
   par émetteur (au-delà du cap : drops comptés, stores bornés).
+- messagerie (§9, livrés) : `consent_flagged` bloque une demande
+  sans créer de `pending` ; `consent_endorsed` admet en `Active` ;
+  `consent_ledger` refuse un débiteur au-delà du plafond ; coffre
+  `OBV1` : export chiffré pour soi → import sur un autre device de
+  même identité restaure contacts + alias, un tiers ne peut pas
+  l'ouvrir, magic absent/blob hors borne/contact existant bloqué
+  → refus ou non-écrasement propres.
