@@ -3,6 +3,24 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Banc sécurité : jambe ASan+LSan Linux via CI (2026-10-06)
+
+WSL absent de la machine de banc → `workflow_dispatch` du job
+`fuzz-san` (run `37396859847`, `origin/master` `277e787`) : 8 cibles ×
+300 s sous ASan+LeakSanitizer Ubuntu 24.04, **~310 M execs cumulés,
+0 crash** (`utp_datagram` 177,3 M ; `tunnel_cell` 64,6 M ;
+`utp`/`tunnel_payloads`/`messaging_*` couverts). Artefact
+`fuzz-san-artifacts` téléchargé sous `target/fuzz-san-ci/`.
+
+Au passage, fix de harnais : le compteur `execs` du journal
+`fuzz_journal_san.csv` lisait `#N DONE` avec un espace alors que
+libFuzzer émet une tabulation — il retombait à 0. Parsé sur
+`Done N runs` (`712cc3d`).
+
+UBSan n'est pas exercé : rustc n'expose pas de UBSan général via
+`-Zsanitizer` (`SAN=undefined` retiré du script — la mention
+« ASan/UBSan » du nom de job est historique).
+
 ## Banc sécurité : campagne ASan complète Windows (2026-10-06)
 
 Jambe sanitizers du harnais fuzz rejouée en longueur (fumée 60 s du
