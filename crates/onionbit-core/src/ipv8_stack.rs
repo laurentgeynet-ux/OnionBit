@@ -1116,12 +1116,14 @@ fn simple_dict_mem(
         "num_leechers": leechers,
         "last_tracker_check": last_check,
         "created": row.torrent_date,
+        "updated": row.timestamp,
         "tag_processor_version": row.tag_processor_version,
         "type": row.metadata_type,
         "id": row.id_,
         "origin_id": row.origin_id,
         "public_key": hex::encode(&row.public_key),
         "status": row.status,
+        "xxx": row.xxx,
         "trackers": [],
     })
 }
@@ -2766,7 +2768,7 @@ mod tests {
                     .with_signature([0xAA; 64]),
                 id,
                 origin_id: 0,
-                timestamp: 1_700_000_000,
+                timestamp: 1_700_000_500,
             },
             infohash,
             size: 123,
@@ -2805,6 +2807,10 @@ mod tests {
         assert_eq!(results[0]["num_seeders"], 3922);
         assert_eq!(results[0]["num_leechers"], 40);
         assert_eq!(results[0]["last_tracker_check"], 42);
+        // `to_simple_dict` Python : `updated` = `updated_on` du noeud
+        // (timestamp signe) — la colonne Date de l'UI lit ce champ.
+        assert_eq!(results[0]["updated"], 1_700_000_500);
+        assert_eq!(results[0]["created"], 1_700_000_000);
     }
 
     /// `torrent_health_updated` n'est emis que pour les infohashes

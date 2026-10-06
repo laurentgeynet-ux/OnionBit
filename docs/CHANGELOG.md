@@ -26,6 +26,12 @@ en haut.
 - **Tests** : `sante_gossip_remplit_les_resultats_distants`,
   `health_updated_seulement_pour_les_affiches`, `memoire_gossip_bornee`
   — 3/3 verts ; clippy/fmt propres ; 61/61 tests API.
+- **Correctif complémentaire (colonne Date)** : `simple_dict_mem` émet
+  désormais `"updated"` = `timestamp` signé du nœud (le `updated_on` de
+  `to_simple_dict` Python) + `"xxx"` — le champ que lit l'app pour la
+  colonne Date ; `created` reste = `torrent_date`. Sans lui les dates
+  des résultats distants restaient `—`. Assertions verrouillées dans
+  le test existant.
 
 ## Banc sécurité : jambe ASan+LSan Linux via CI (2026-10-06)
 
