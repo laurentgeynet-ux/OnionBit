@@ -3,6 +3,33 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## ADR-0015 : `kind=identity` — confiance utilisateur + liste d'amis portable (2026-10-06)
+
+- **`attest_kind::IDENTITY = 3`** (`attest.rs`) : sujet = `pk_bin` du
+  pair visé (74 o, mêmes octets que `curator` et que les clés des
+  contacts messagerie). Double usage : verdict social sur un
+  utilisateur **et** liste d'amis auto-signée portable — une
+  auto-attestation `endorse` est re-gossipée par les suiveurs et
+  retrouvée sur un nouveau device partageant l'identité (ADR-0016).
+- **Correction de borne** : `subject_len(CHANNEL)` passait à
+  `LIBNACL_PK_BIN_LEN` (74 o) — la valeur historique 42 excluait tout
+  canal réel ; l'UI exigeait 128 hex, jamais valide. Ext est
+  OnionBit-only : pas d'interop legacy cassée.
+- **API** : `"identity"` accepté par `POST /api/ipv8/ext/attest` et
+  `GET /api/ipv8/ext/trust/{kind}/{subject}`.
+- **Messagerie** : `TrustBadge` (widget partagé, extraction du
+  `_TrustBadge` privé de la recherche) sur les contacts et les
+  demandes `pending` — un inconnu flagué par un curateur suivi est
+  visible **avant** le consentement ; menu contact → « Approuver » /
+  « Signaler cet utilisateur » (dialogue pré-rempli kind=identity).
+- **« Amis approuvés »** dans le panneau contacts : auto-attestations
+  `identity`/`endorse` signées par notre clé, hors contacts existants
+  — ré-ajout en un clic (`connect`). Récupération best-effort (les
+  suiveurs retiennent nos attestations) ; pseudonymes locaux par
+  design (pas de champ libre signé).
+- `AttestDialog` : kind `identity`, `initialKind`, validation hex
+  par kind (40/148).
+
 ## ADR-0015 : boucle de curation bouclée dans le produit (2026-10-06)
 
 - **Score de confiance sur les résultats de recherche** : pastille

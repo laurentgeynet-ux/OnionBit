@@ -17,7 +17,7 @@
 //! verdict d'un curateur ne vaut que pour les noeuds qui le suivent
 //! (`ext/curators`), le score de confiance est **local**.
 
-use onionbit_crypto::ipv8::keys::{LibNaClPublicKey, LibNaClSecretKey};
+use onionbit_crypto::ipv8::keys::{LibNaClPublicKey, LibNaClSecretKey, LIBNACL_PK_BIN_LEN};
 
 use crate::error::Ipv8Error;
 use crate::serializer::{Reader, Writer};
@@ -34,16 +34,27 @@ pub const ATTEST_VERSION: u8 = 1;
 pub mod kind {
     /// Torrent — `subject` = info-hash (20 octets).
     pub const INFOHASH: u8 = 1;
-    /// Canal — `subject` = cle publique du canal (`LibNaClPK` binaire,
-    /// 42 octets). « Une chaine IPTV est une cle publique » (ADR §6).
+    /// Canal — `subject` = cle publique du canal (`LibNaClPK`
+    /// binaire). « Une chaine IPTV est une cle publique » (ADR §6).
     pub const CHANNEL: u8 = 2;
+    /// Identite d'un pair — `subject` = `pk_bin` du pair
+    /// (`LibNaClPK` binaire, `LIBNACL_PK_BIN_LEN` octets — les memes
+    /// octets que le champ `curator` et que les cles des contacts
+    /// messagerie). Porte la confiance « utilisateur » : un endorse
+    /// signe par un curateur suivi vaut `+1` sur la cle, et une
+    /// auto-attestation `endorse` constitue la liste d'amis publique
+    /// du signataire (re-gossipable vers un nouveau device).
+    pub const IDENTITY: u8 = 3;
 
     /// Longueur attendue de `subject` pour `kind`, `None` si kind
     /// inconnu.
     pub fn subject_len(kind: u8) -> Option<usize> {
         match kind {
             INFOHASH => Some(20),
-            CHANNEL => Some(42),
+            // `LibNaClPK` filaire : `LibNaCLPK:` + crypt_pk + vk.
+            // (historiquement 42 — le prefixe + une seule cle : un
+            // canal reel n'a jamais tenu dans cette borne.)
+            CHANNEL | IDENTITY => Some(super::LIBNACL_PK_BIN_LEN),
             _ => None,
         }
     }
@@ -77,9 +88,10 @@ pub struct Attestation {
     /// seule la plus recente attestation `(curator, kind, subject)`
     /// est conservee par les stockeurs).
     pub ts: u64,
-    /// Sujet vise (info-hash 20 B ou `LibNaClPK` de canal 42 B).
+    /// Sujet vise (info-hash 20 B ou `LibNaClPK` binaire — canal ou
+    /// identite).
     pub subject: Vec<u8>,
-    /// Cle publique du curateur (`LibNaClPK` binaire, 42 octets).
+    /// Cle publique du curateur (`LibNaClPK` binaire).
     pub curator: Vec<u8>,
     /// Signature Ed25519 de `SIG_DOMAIN || champs`.
     pub signature: [u8; 64],
@@ -225,11 +237,39 @@ mod tests {
         // Une signature valide sur les champs SANS le domaine ne doit
         // pas verifier — protection anti-replay croise.
         let key = LibNaClSecretKey::generate();
-        let att = Attestation::sign(&key, kind::CHANNEL, &[0x24; 42], verdict::FLAG, 7).unwrap();
+        let att = Attestation::sign(
+            &key,
+            kind::CHANNEL,
+            &[0x24; LIBNACL_PK_BIN_LEN],
+            verdict::FLAG,
+            7,
+        )
+        .unwrap();
         let mut w = Writer::new();
         att.pack_fields(&mut w); // sans SIG_DOMAIN
         let pk = LibNaClPublicKey::from_bin(&att.curator).unwrap();
         assert!(!pk.verify(&w.into_bytes(), &att.signature));
+    }
+
+    #[test]
+    fn kind_identity_accepte_pk_bin() {
+        // `IDENTITY` : sujet = `pk_bin` du pair vise (meme filaire
+        // que `curator`) — porte la confiance utilisateur et la
+        // liste d'amis auto-signee.
+        let key = LibNaClSecretKey::generate();
+        let ami = LibNaClSecretKey::generate();
+        let att = Attestation::sign(
+            &key,
+            kind::IDENTITY,
+            &ami.public_key().to_bin(),
+            verdict::ENDORSE,
+            42,
+        )
+        .expect("sign");
+        assert!(att.verify());
+        assert_eq!(kind::subject_len(kind::IDENTITY), Some(LIBNACL_PK_BIN_LEN));
+        // Mauvaise longueur rejetee comme pour les autres kinds.
+        assert!(Attestation::sign(&key, kind::IDENTITY, &[0; 32], verdict::ENDORSE, 0).is_err());
     }
 
     #[test]

@@ -9,6 +9,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/api/api_client.dart';
 import '../../../../core/l10n/l10n_ext.dart';
 import '../../../../core/theme/app_theme.dart';
+import '../../../diagnostic/presentation/providers/diagnostic_providers.dart';
+import '../../../diagnostic/presentation/widgets/attest_dialog.dart';
+import '../../../diagnostic/presentation/widgets/trust_badge.dart';
 import '../../domain/messaging_contact.dart';
 import '../../domain/messaging_message.dart';
 import '../providers/messaging_providers.dart';
@@ -160,6 +163,10 @@ class _ContactsPane extends ConsumerWidget {
                 for (final c in pending) _PendingTile(contact: c),
                 const Divider(height: AppSpacing.lg),
               ],
+              _FriendsVaultSection(
+                selfPk: stats?.publicKey ?? '',
+                contacts: contacts,
+              ),
               if (contacts.isEmpty && pending.isEmpty)
                 Padding(
                   padding: const EdgeInsets.all(AppSpacing.lg),
@@ -254,13 +261,23 @@ class _PendingTile extends ConsumerWidget {
     return ListTile(
       dense: true,
       leading: const Icon(Icons.person_add_alt_1_outlined, size: 20),
-      title: Text(
-        contact.displayName,
-        style: contact.alias.isNotEmpty
-            ? null
-            : const TextStyle(fontFamily: 'monospace'),
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
+      title: Row(
+        children: [
+          Flexible(
+            child: Text(
+              contact.displayName,
+              style: contact.alias.isNotEmpty
+                  ? null
+                  : const TextStyle(fontFamily: 'monospace'),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          // Confiance ext (kind identity) : un inconnu flagué par un
+          // curateur suivi est visible avant la décision de
+          // consentement.
+          TrustBadge(kind: 'identity', subject: contact.publicKey),
+        ],
       ),
       subtitle: contact.pendingSinceSecs != null
           ? Text('${contact.pendingSinceSecs} s')
@@ -352,13 +369,20 @@ class _ContactTile extends ConsumerWidget {
         message: linkLabel,
         child: Icon(linkIcon, size: 10, color: linkColor),
       ),
-      title: Text(
-        contact.displayName,
-        style: contact.alias.isNotEmpty
-            ? null
-            : const TextStyle(fontFamily: 'monospace'),
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
+      title: Row(
+        children: [
+          Flexible(
+            child: Text(
+              contact.displayName,
+              style: contact.alias.isNotEmpty
+                  ? null
+                  : const TextStyle(fontFamily: 'monospace'),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          TrustBadge(kind: 'identity', subject: contact.publicKey),
+        ],
       ),
       subtitle: stateLabel != null
           ? Text(
@@ -391,9 +415,16 @@ class _ContactTile extends ConsumerWidget {
             child: Text(l10n.msgRetentionTitle),
           ),
           PopupMenuItem(value: 'delete', child: Text(l10n.msgDeleteContact)),
+          // Attestation `identity` (ADR-0015 §6) — « cet utilisateur
+          // est de confiance / nuisible », signée et propagée au mesh.
+          const PopupMenuDivider(),
+          PopupMenuItem(value: 'endorse', child: Text(l10n.ctxEndorseUser)),
+          PopupMenuItem(value: 'flag', child: Text(l10n.ctxFlagUser)),
         ],
         onSelected: (v) => switch (v) {
           'rename' => _renameDialog(context, ref),
+          'endorse' => _attest(context, ref, 'endorse'),
+          'flag' => _attest(context, ref, 'flag'),
           'reconnect' => _reconnect(context, ref),
           'block' => _act(context, ref, () => repo.block(contact.publicKey)),
           'unblock' => _act(
@@ -407,6 +438,31 @@ class _ContactTile extends ConsumerWidget {
       ),
       onTap: onTap,
     );
+  }
+
+  /// Attestation signée sur la clé du contact (`kind=identity`) —
+  /// le dialogue est pré-rempli ; en succès on invalide le cache du
+  /// score pour que la pastille reflète le verdict immédiatement.
+  /// Un `endorse` ajoute aussi la clé à la liste d'amis publique
+  /// (auto-attestations récupérables via le gossip sur un autre
+  /// device — ADR-0015 §6).
+  Future<void> _attest(
+    BuildContext context,
+    WidgetRef ref,
+    String verdict,
+  ) async {
+    final ok = await AttestDialog.show(
+      context,
+      kind: 'identity',
+      subject: contact.publicKey,
+      verdict: verdict,
+    );
+    if (!ok || !context.mounted) return;
+    ref
+      ..invalidate(
+        extTrustProvider((kind: 'identity', subject: contact.publicKey)),
+      )
+      ..invalidate(extAttestationsProvider);
   }
 
   /// « Reconnecter » : nouvelle tentative resolve + liaison e2e.
@@ -753,4 +809,74 @@ Future<void> _act(
 void _showError(BuildContext context, Object e) {
   final msg = e is ApiException ? e.message : context.l10n.errorMessage('$e');
   ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+}
+
+/// « Amis approuvés » — mini coffre-fort de contacts porté par le
+/// mesh ext (ADR-0015 §6) : chaque attestation `identity`/`endorse`
+/// signée par **notre** clé est une entrée de liste d'amis publique.
+/// Sur un nouveau device (même identité ADR-0016), les pairs qui
+/// nous suivent re-gossipent nos attestations → les clés reviennent
+/// et peuvent être re-ajoutées comme contacts en un clic. La
+/// récupération dépend des suiveurs qui ont retenu nos attestations
+/// (best-effort — le gossip n'est pas une archive garantie) ; les
+/// pseudonymes restent locaux par design (le format signé n'a pas
+/// de champ libre).
+class _FriendsVaultSection extends ConsumerWidget {
+  const _FriendsVaultSection({required this.selfPk, required this.contacts});
+
+  /// Clé publique locale hex (`pk_bin` — comparée à `curator`).
+  final String selfPk;
+  final List<MessagingContact> contacts;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    if (selfPk.isEmpty) return const SizedBox.shrink();
+    final atts = ref.watch(extAttestationsProvider).value;
+    if (atts == null) return const SizedBox.shrink();
+    final self = selfPk.toLowerCase();
+    final known = contacts
+        .map((c) => c.publicKey.toLowerCase())
+        .toSet();
+    // Mes auto-attestations `endorse` sur des identités, hors
+    // contacts déjà enregistrés — le reste est bruit pour ce panneau.
+    final friends = [
+      for (final a in atts)
+        if (a.kind == 'identity' &&
+            a.verdict == 'endorse' &&
+            a.curator.toLowerCase() == self &&
+            !known.contains(a.subject.toLowerCase()))
+          a.subject,
+    ];
+    if (friends.isEmpty) return const SizedBox.shrink();
+    final l10n = context.l10n;
+    return ExpansionTile(
+      dense: true,
+      leading: const Icon(Icons.group_outlined, size: 20),
+      title: Text(l10n.msgFriendsTitle),
+      subtitle: Text('${friends.length}'),
+      children: [
+        for (final pk in friends)
+          ListTile(
+            dense: true,
+            leading: const Icon(Icons.key, size: 16),
+            title: Text(
+              pk.length > 16 ? '${pk.substring(0, 16)}…' : pk,
+              style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+            ),
+            trailing: IconButton(
+              icon: const Icon(Icons.person_add_alt_1, size: 18),
+              tooltip: l10n.msgFriendRestore,
+              onPressed: () async {
+                try {
+                  await ref.read(messagingRepositoryProvider).connect(pk);
+                  ref.invalidate(messagingContactsProvider);
+                } catch (e) {
+                  if (context.mounted) _showError(context, e);
+                }
+              },
+            ),
+          ),
+      ],
+    );
+  }
 }

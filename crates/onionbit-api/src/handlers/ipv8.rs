@@ -527,6 +527,7 @@ fn ext_kind(s: &str) -> Option<u8> {
     match s {
         "infohash" => Some(onionbit_ipv8::ext::attest_kind::INFOHASH),
         "channel" => Some(onionbit_ipv8::ext::attest_kind::CHANNEL),
+        "identity" => Some(onionbit_ipv8::ext::attest_kind::IDENTITY),
         _ => None,
     }
 }
@@ -548,6 +549,7 @@ fn attestation_json(a: &onionbit_ipv8::ext::Attestation) -> serde_json::Value {
         "kind": match a.kind {
             onionbit_ipv8::ext::attest_kind::INFOHASH => "infohash",
             onionbit_ipv8::ext::attest_kind::CHANNEL => "channel",
+            onionbit_ipv8::ext::attest_kind::IDENTITY => "identity",
             _ => "unknown",
         },
         "subject": hex::encode(&a.subject),
@@ -563,9 +565,10 @@ fn attestation_json(a: &onionbit_ipv8::ext::Attestation) -> serde_json::Value {
 /// Corps de `POST /api/ipv8/ext/attest`.
 #[derive(serde::Deserialize)]
 pub struct ExtAttestRequest {
-    /// `"infohash"` | `"channel"`.
+    /// `"infohash"` | `"channel"` | `"identity"`.
     pub kind: String,
-    /// Sujet hex (info-hash 40 chars ou `LibNaClPK` hex du canal).
+    /// Sujet hex (info-hash 40 chars ou `LibNaClPK` hex — canal ou
+    /// identite de pair, 84 chars).
     pub subject: String,
     /// `"endorse"` | `"flag"`.
     pub verdict: String,
@@ -579,7 +582,7 @@ pub async fn post_ext_attest(
     Json(req): Json<ExtAttestRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let kind = ext_kind(&req.kind)
-        .ok_or_else(|| ApiError::bad_request("kind attendu : infohash | channel"))?;
+        .ok_or_else(|| ApiError::bad_request("kind attendu : infohash | channel | identity"))?;
     let verdict = ext_verdict(&req.verdict)
         .ok_or_else(|| ApiError::bad_request("verdict attendu : endorse | flag"))?;
     let subject =
@@ -621,7 +624,7 @@ pub async fn get_ext_trust(
     Path((kind_s, subject_s)): Path<(String, String)>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let kind = ext_kind(&kind_s)
-        .ok_or_else(|| ApiError::bad_request("kind attendu : infohash | channel"))?;
+        .ok_or_else(|| ApiError::bad_request("kind attendu : infohash | channel | identity"))?;
     let subject =
         hex::decode(&subject_s).map_err(|_| ApiError::bad_request("subject hex attendu"))?;
     let Some(stack) = state.session.ipv8() else {

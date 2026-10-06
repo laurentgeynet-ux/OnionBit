@@ -10,29 +10,46 @@ import '../../../../core/theme/app_theme.dart';
 import '../providers/diagnostic_providers.dart';
 
 /// Dialogue « Publier une attestation » (`POST /api/ipv8/ext/attest`,
-/// ADR-0015 §6) — `kind` : infohash|channel, `subject` : hex (40 ou
-/// 128 chars), `verdict` : endorse|flag. Rend `true` en succès.
-/// `initialSubject`/`initialVerdict` pré-remplissent le formulaire
-/// (appel depuis le menu contextuel d'un résultat de recherche).
+/// ADR-0015 §6) — `kind` : infohash|channel|identity, `subject` :
+/// hex (longueur selon le kind), `verdict` : endorse|flag. Rend
+/// `true` en succès. `initialKind`/`initialSubject`/`initialVerdict`
+/// pré-remplissent le formulaire (appel depuis le menu contextuel
+/// d'un résultat de recherche ou d'un contact messagerie).
 class AttestDialog extends ConsumerStatefulWidget {
-  const AttestDialog({super.key, this.initialSubject, this.initialVerdict});
+  const AttestDialog({
+    super.key,
+    this.initialKind,
+    this.initialSubject,
+    this.initialVerdict,
+  });
 
-  /// Sujet hex pré-rempli (ex. infohash d'un torrent).
+  /// Kind pré-sélectionné (`infohash`/`channel`/`identity`).
+  final String? initialKind;
+
+  /// Sujet hex pré-rempli (ex. infohash d'un torrent, pk d'un pair).
   final String? initialSubject;
 
   /// Verdict pré-sélectionné (`endorse` ou `flag`).
   final String? initialVerdict;
 
+  /// Longueur hex attendue du sujet par kind (20 o info-hash,
+  /// `LIBNACL_PK_BIN_LEN` = 74 o pour canal et identité).
+  static const _subjectHexLen = {'infohash': 40, 'channel': 148, 'identity': 148};
+
   /// Affiche le dialogue et publie ; rend `true` en succès.
   static Future<bool> show(
     BuildContext context, {
+    String? kind,
     String? subject,
     String? verdict,
   }) async =>
       await showDialog<bool>(
         context: context,
-        builder: (_) =>
-            AttestDialog(initialSubject: subject, initialVerdict: verdict),
+        builder: (_) => AttestDialog(
+          initialKind: kind,
+          initialSubject: subject,
+          initialVerdict: verdict,
+        ),
       ) ==
       true;
 
@@ -50,6 +67,9 @@ class _AttestDialogState extends ConsumerState<AttestDialog> {
   void initState() {
     super.initState();
     _subject = TextEditingController(text: widget.initialSubject ?? '');
+    if (const {'channel', 'identity'}.contains(widget.initialKind)) {
+      _kind = widget.initialKind!;
+    }
     if (widget.initialVerdict == 'flag') _verdict = 'flag';
   }
 
@@ -61,8 +81,8 @@ class _AttestDialogState extends ConsumerState<AttestDialog> {
 
   Future<void> _send() async {
     final subject = _subject.text.trim();
-    final hexOk = RegExp(r'^[0-9a-fA-F]{40}$|^[0-9a-fA-F]{128}$')
-        .hasMatch(subject);
+    final want = AttestDialog._subjectHexLen[_kind] ?? 40;
+    final hexOk = RegExp('^[0-9a-fA-F]{$want}\$').hasMatch(subject);
     if (!hexOk) {
       ScaffoldMessenger.of(
         context,
@@ -99,6 +119,7 @@ class _AttestDialogState extends ConsumerState<AttestDialog> {
             items: [
               DropdownMenuItem(value: 'infohash', child: Text('infohash')),
               DropdownMenuItem(value: 'channel', child: Text('channel')),
+              DropdownMenuItem(value: 'identity', child: Text('identity')),
             ],
             onChanged: (v) => setState(() => _kind = v ?? 'infohash'),
           ),

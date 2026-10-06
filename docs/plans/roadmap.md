@@ -819,6 +819,13 @@ risque IPv8 sous/sur-estimé, etc.), avec la date.
   bootstrap hors-bande (liens d'invitation type bridges Tor),
   trames indiscernables de bruit (obfs4-style), tunnel+messagerie
   conservés au-dessus, BitTorrent public exclu. Aucun code engagé.
+- 2026-10-06 (ADR-0015 — `kind=identity`) : confiance « utilisateur »
+  + liste d'amis portable. Sujet = `pk_bin` (74 o) ; correction de la
+  borne `channel` (42 → 74 — jamais exploitable auparavant). UI :
+  badge de confiance sur contacts/demandes messagerie, attest
+  « utilisateur » au menu contact, section « Amis approuvés »
+  (auto-attestations → restauration en un clic sur nouveau device,
+  best-effort via suiveurs ; pseudonymes locaux par design).
 - 2026-10-06 (ADR-0015 — **boucle de curation exploitée**) : le score
   de confiance local sort du diagnostic — pastille ±n sur les
   résultats de recherche, « Approuver »/« Signaler » au clic droit

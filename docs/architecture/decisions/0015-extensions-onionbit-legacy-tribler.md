@@ -186,6 +186,21 @@ injecté, `DbAttestationStore` (core). Score `+1`/`-1` par curateur
 suivi exposé par `GET /api/ipv8/ext/trust/{kind}/{subject}` ;
 publication `POST /api/ipv8/ext/attest`.
 
+Kinds de sujet (`u8`, longueur de `subject` fixe par kind) :
+`1=infohash` (info-hash 20 o), `2=channel` (`LibNaClPK` 74 o),
+`3=identity` (`pk_bin` du pair — 74 o, mêmes octets que `curator` et
+que les clés des contacts messagerie). `identity` porte la confiance
+« utilisateur » (verdict d'un pair sur la clé d'un autre) **et** la
+liste d'amis auto-signée : une auto-attestation `endorse` sur la clé
+d'un contact est une entrée portable — les suiveurs la retiennent et
+la re-gossipent, un nouveau device partageant la même identité
+(ADR-0016) la retrouve dans son store ext (best-effort : la
+récupération dépend des suiveurs présents ; les pseudonymes restent
+locaux, le format signé n'a pas de champ libre). Correction : la
+longueur `channel` était 42 — une `LibNaClPK` complète fait 74 o
+(`LibNaCLPK:` + crypt_pk + vk) ; aucune attestation canal réelle
+n'était possible avec la borne historique.
+
 **Chemin de réception ordonné du moins coûteux au plus coûteux**
 (durcissement post-revue) : budget `ATTEST` par émetteur
 (`ext/attest_rate_*` — borne CPU face aux rafales, table bornée

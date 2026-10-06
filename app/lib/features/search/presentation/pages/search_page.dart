@@ -15,6 +15,7 @@ import '../../../../core/widgets/empty_state.dart';
 import '../../../../core/widgets/error_state.dart';
 import '../../../diagnostic/presentation/providers/diagnostic_providers.dart';
 import '../../../diagnostic/presentation/widgets/attest_dialog.dart';
+import '../../../diagnostic/presentation/widgets/trust_badge.dart';
 import '../../../downloads/domain/download.dart';
 import '../../../downloads/presentation/providers/downloads_providers.dart';
 import '../../../downloads/presentation/widgets/add_download_dialog.dart';
@@ -614,7 +615,7 @@ class _ResultRow extends StatelessWidget {
                         overflow: TextOverflow.ellipsis,
                       ),
                     ),
-                    _TrustBadge(infohash: r.infohash),
+                    TrustBadge(kind: 'infohash', subject: r.infohash),
                   ],
                 ),
               ),
@@ -867,50 +868,5 @@ class _SearchContextMenuState extends ConsumerState<_SearchContextMenu> {
       ..invalidate(extTrustProvider((kind: 'infohash', subject: r.infohash)))
       ..invalidate(extAttestationsProvider);
     _toast(context.l10n.extAttestPublished);
-  }
-}
-
-/// Pastille de confiance locale (ADR-0015 §6) accolée au nom du
-/// résultat : `+n` vert si les curateurs suivis l'endorsent, `-n`
-/// rouge s'il est flagué, gris si attestations sans verdict suivi.
-/// **N'affiche rien** quand le sujet est inconnu — la majorité des
-/// résultats n'a aucune attestation et la ligne resterait bruitée.
-/// `extTrustProvider` est à requête unique (pas de tick) : le score
-/// n'évolue que par attestation, un sondage par ligne serait une
-/// amplification N+1.
-class _TrustBadge extends ConsumerWidget {
-  const _TrustBadge({required this.infohash});
-
-  final String infohash;
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    if (infohash.isEmpty) return const SizedBox.shrink();
-    final trust = ref
-        .watch(extTrustProvider((kind: 'infohash', subject: infohash)))
-        .value;
-    if (trust == null || trust.attestationCount == 0) {
-      return const SizedBox.shrink();
-    }
-    final scheme = Theme.of(context).colorScheme;
-    final (color, icon, label) = switch (trust.score) {
-      > 0 => (scheme.primary, Icons.verified, '+${trust.score}'),
-      < 0 => (scheme.error, Icons.gpp_bad, '${trust.score}'),
-      _ => (scheme.outline, Icons.shield_outlined, '0'),
-    };
-    final detail = trust.score != 0
-        ? context.l10n.trustTooltipScored(
-            trust.endorsements.length,
-            trust.flags.length,
-            trust.attestationCount,
-          )
-        : context.l10n.trustTooltipUnscored(trust.attestationCount);
-    return Padding(
-      padding: const EdgeInsets.only(left: AppSpacing.xs),
-      child: Tooltip(
-        message: detail,
-        child: Icon(icon, size: 14, color: color),
-      ),
-    );
   }
 }
