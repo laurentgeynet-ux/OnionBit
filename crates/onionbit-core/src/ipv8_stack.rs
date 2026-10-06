@@ -254,9 +254,11 @@ pub struct Ipv8Config {
     pub ledger_max_peers: usize,
     /// Extension Rust (ADR-0015 §1–2) : cree la `OnionbitExtCommunity`
     /// — communaute OnionBit-only (`hello` lazy vers pairs deja
-    /// connus, jamais de walk). `false` par defaut : nouveau protocole
-    /// observable sur le mesh partage, a activer apres validation des
-    /// bancs (meme discipline que `messaging`).
+    /// connus, jamais de walk). `true` en production (`ExtConfig`
+    /// et `production()`) : signe en clair comme le discovery IPv8
+    /// legacy, borne par `hello_fanout`/`hello_cooldown` — sinon deux
+    /// installs OnionBit ne se reconnaissent jamais. `false` dans
+    /// `Ipv8Config::default()` (preset neutre « tout off »).
     pub ext_enabled: bool,
     /// Cadence du sondage `hello` ext (s).
     pub ext_hello_interval_secs: u64,
@@ -369,7 +371,10 @@ impl Ipv8Config {
             ledger_max_deficit_bytes: DEFAULT_LEDGER_MAX_DEFICIT_BYTES,
             ledger_tick_secs: DEFAULT_LEDGER_TICK_SECS,
             ledger_max_peers: DEFAULT_LEDGER_MAX_PEERS as usize,
-            ext_enabled: false,
+            // Meme defaut que `ExtConfig::default()` : la communaute
+            // ext tourne en production (ADR-0015 — interconnexion
+            // OnionBit<->OnionBit sinon impossible).
+            ext_enabled: true,
             ext_hello_interval_secs: DEFAULT_EXT_HELLO_INTERVAL_SECS,
             ext_hello_fanout: DEFAULT_EXT_HELLO_FANOUT,
             ext_hello_cooldown_secs: DEFAULT_EXT_HELLO_COOLDOWN_SECS,
@@ -443,6 +448,8 @@ impl Default for Ipv8Config {
             ledger_max_deficit_bytes: DEFAULT_LEDGER_MAX_DEFICIT_BYTES,
             ledger_tick_secs: DEFAULT_LEDGER_TICK_SECS,
             ledger_max_peers: DEFAULT_LEDGER_MAX_PEERS as usize,
+            // Preset neutre « tout off » (ipv8.enabled=false aussi) :
+            // le defaut produit vit dans `ExtConfig`/`production()`.
             ext_enabled: false,
             ext_hello_interval_secs: DEFAULT_EXT_HELLO_INTERVAL_SECS,
             ext_hello_fanout: DEFAULT_EXT_HELLO_FANOUT,

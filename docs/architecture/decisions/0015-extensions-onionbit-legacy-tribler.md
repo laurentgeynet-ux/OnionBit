@@ -73,9 +73,13 @@ Implémentation (`onionbit-ipv8::ext`) : `EXT_COMMUNITY_ID` =
 `sha1("OnionBit extension community")` (constante de domaine, aucune
 clé maîtresse) ; `hello` = `{v: u8, caps: u64}` signé `ez_send`,
 cooldown par pair pour la re-sollicitation comme pour la réponse
-(pas de ping-pong) ; `ext/enabled` défaut **off** — nouveau
-protocole observable, promotion après validation (discipline
-`messaging`).
+(pas de ping-pong) ; `ext/enabled` défaut **on** depuis la
+validation terrain (2026-10-06 — T1 silence legacy + soak 10/10 +
+bancs interop verts) : `off` par défaut rendait l'interconnexion
+OnionBit↔OnionBit impossible en pratique (`bench_ext_interconnect`).
+Le HELLO signé en clair expose exactement ce que le discovery IPv8
+legacy publie déjà (clé maîtresse + adresses) ; `enabled=false`
+reste honorable pour redevenir muet.
 
 ### 3. Comptabilité locale d'abord (Phase 9a — livrée)
 

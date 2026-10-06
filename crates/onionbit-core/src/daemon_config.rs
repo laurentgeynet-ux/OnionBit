@@ -520,10 +520,13 @@ impl Default for BandwidthConfig {
 #[serde(default)]
 pub struct ExtConfig {
     /// Cree la `OnionbitExtCommunity` — `hello` lazy vers les pairs
-    /// deja decouverts, jamais de marche dediee. `false` par defaut :
-    /// le protocole est observable sur le mesh partage ; a activer
-    /// apres validation (meme discipline que `messaging`). Pris en
-    /// compte au redemarrage.
+    /// deja decouverts, jamais de marche dediee. `true` par defaut :
+    /// le protocole est signe mais en clair sur le mesh partage, a
+    /// l'identique des `introduction-request` IPv8 legacy — le nœud
+    /// s'annonce aux pairs deja connus pour que deux installs
+    /// OnionBit se reconnaissent (sinon elles ne s'interconnectent
+    /// jamais). `false` pour redevenir muet. Pris en compte au
+    /// redemarrage.
     pub enabled: bool,
     /// Cadence du sondage `hello` (s) — a chaque tick, jusqu'a
     /// `hello_fanout` pairs verifies pas encore connus-ext sont
@@ -605,7 +608,7 @@ pub struct ExtConfig {
 impl Default for ExtConfig {
     fn default() -> Self {
         Self {
-            enabled: false,
+            enabled: true,
             hello_interval_secs: crate::ipv8_stack::DEFAULT_EXT_HELLO_INTERVAL_SECS,
             hello_fanout: crate::ipv8_stack::DEFAULT_EXT_HELLO_FANOUT,
             hello_cooldown_secs: crate::ipv8_stack::DEFAULT_EXT_HELLO_COOLDOWN_SECS,
@@ -1707,6 +1710,23 @@ mod tests {
     use super::*;
     use onionbit_network_policy::exit_policy as flags;
     use std::path::Path;
+
+    /// ADR-0015 : `ext.enabled` vaut `true` par defaut — deux
+    /// installs par defaut doivent se reconnaitre comme OnionBit
+    /// (sinon le mesh ext ne se forme jamais). Epingle aussi la
+    /// propagation vers `Ipv8Config::ext_enabled`.
+    #[test]
+    fn ext_active_par_defaut_et_se_propage() {
+        let dcfg = DaemonConfig::default();
+        assert!(dcfg.ext.enabled, "ext.enabled doit etre true par defaut");
+        let cfg = dcfg.to_core_config(Path::new("."));
+        assert!(cfg.ipv8.ext_enabled);
+
+        // Repli explicite : `enabled=false` reste honorable.
+        let mut dcfg = DaemonConfig::default();
+        dcfg.ext.enabled = false;
+        assert!(!dcfg.to_core_config(Path::new(".")).ipv8.ext_enabled);
+    }
 
     /// `peer_flags` de `TriblerTunnelCommunity` (`community.py` Python) :
     /// `{RELAY, SPEED_TEST}` par defaut, plus les sorties

@@ -303,6 +303,10 @@ try {
                     min_circuits     = 1
                     max_circuits     = 2
                 }
+                # Banc de fuite : surface legacy stricte (le defaut
+                # produit ext=true est valide ailleurs ; ici on mesure
+                # le traffic tunnel/discovery seul).
+                ext = @{ enabled = $false }
                 ipv8 = @{
                     # Le helper doit aussi connaitre le daemon de banc :
                     # sinon sa table de routage DHT reste vide (seul
@@ -347,6 +351,8 @@ try {
                 min_circuits     = 2
                 max_circuits     = 4
             }
+            # Meme discipline : mesure de fuite sur la surface legacy.
+            ext = @{ enabled = $false }
             ipv8 = @{
                 bootstrap  = @{ override = $bootAddrs }
                 interfaces = @( @{ interface = 'UDPIPv4'; ip = '127.0.0.1'; port = $DaemonIpv8Port } )

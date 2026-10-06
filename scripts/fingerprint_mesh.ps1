@@ -110,7 +110,10 @@ try {
                 ipv8 = @{ bootstrap = @{ override = @() };
                           interfaces = @( @{ interface = 'UDPIPv4'; ip = '127.0.0.1'; port = $A1.Ipv8 } );
                           estimated_wan = "127.0.0.1:$($A1.Ipv8)" } }
-    if ($WithExt) { $cfgA1['ext'] = @{ enabled = $true } }
+    # Baseline legacy-only sans -WithExt : epingler enabled=false car
+    # le defaut produit est desormais `true` (un HELLO ext polluerait
+    # la mesure de la baseline).
+    $cfgA1['ext'] = if ($WithExt) { @{ enabled = $true } } else { @{ enabled = $false } }
     [System.IO.File]::WriteAllText((Join-Path $A1.Dir 'configuration.json'),
         ($cfgA1 | ConvertTo-Json -Compress -Depth 6))
     $procs['A1'] = Start-OnionBit $A1
@@ -136,7 +139,7 @@ try {
                   ipv8 = @{ bootstrap = @{ override = $boot };
                             interfaces = @( @{ interface = 'UDPIPv4'; ip = '127.0.0.1'; port = $p.Ipv8 } );
                             estimated_wan = "127.0.0.1:$($p.Ipv8)" } }
-        if ($WithExt) { $cfg['ext'] = @{ enabled = $true; curators = @($a1pk) } }
+        $cfg['ext'] = if ($WithExt) { @{ enabled = $true; curators = @($a1pk) } } else { @{ enabled = $false } }
         [System.IO.File]::WriteAllText((Join-Path $p.Dir 'configuration.json'),
             ($cfg | ConvertTo-Json -Compress -Depth 6))
         $procs[$p.Name] = Start-OnionBit $p

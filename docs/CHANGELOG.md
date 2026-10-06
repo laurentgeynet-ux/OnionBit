@@ -3,6 +3,34 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## ADR-0015 : `ext.enabled` activé par défaut (2026-10-06)
+
+- **Bascule du défaut produit** : `ExtConfig::default().enabled` passe
+  à `true` (et `Ipv8Config::production().ext_enabled` avec). Sans
+  cela, deux installs par défaut partagent le mesh IPv8 sans jamais
+  se reconnaître comme OnionBit — la communauté ext (hello, attest,
+  ledger, OBF) restait mort-née en pratique. Le HELLO est signé en
+  clair, même discipline que les `introduction-request` IPv8 legacy :
+  rien de plus exposé que ce qu'un nœud publie déjà au walk.
+  `Ipv8Config::default()` reste le preset neutre « tout off »
+  (tests/dev) ; `ext.enabled=false` explicité reste honoré.
+- **Banc** `scripts/bench_ext_interconnect.ps1` : phase A
+  (`enabled=false`) → IPv8 interconnecté mais `peer_count=0` ;
+  phase B (`enabled=true`, défaut produit) → `peer_count=1` des deux
+  côtés en ~7 s. Test `ext_active_par_defaut_et_se_propage` épingle
+  le défaut et sa propagation vers `Ipv8Config`.
+- **Bancs de mesure figés** : `fingerprint_mesh.ps1` (baseline sans
+  `-WithExt`) et `sec_leak_capture.ps1` épinglent désormais
+  `ext.enabled=false` explicitement — ces oracles mesurent la surface
+  legacy stricte.
+- **Correctif tooling** : `run_interop_suite.ps1` (runner de bancs),
+  `interop_tribler_relay.ps1` (BOM UTF-8 — PS5.1 lisait l'UTF-8 en
+  ANSI, octet `0x94` des em-dash cassant les chaînes),
+  `interop_hidden_py2py.ps1` (`$PSScriptRoot` vide dans un défaut
+  `param()` sous `[CmdletBinding()]`), journal des bancs écrit en un
+  seul `write_all` (les tests parallèles entrelacaient contenu et
+  newline).
+
 ## ADR-0015 : validation terrain du ledger (2026-10-06)
 
 - **Soak réel 10/10** (`scripts/bench_ext_ledger_soak.ps1`, nouveau) :

@@ -811,6 +811,26 @@ Ajouter ici, au fil de l'avancement, tout écart constaté par rapport au
 plan initial (dépendance qui ne convient pas, étape scindée en deux,
 risque IPv8 sous/sur-estimé, etc.), avec la date.
 
+- 2026-10-06 (ADR-0015 — `ext.enabled` **on par défaut**) : écart au
+  plan initial qui prévoyait l'activation « après validation ». La
+  validation terrain étant verte (T1 + soak + bancs interop), le
+  défaut devient `true` : sinon deux installs par défaut ne se
+  reconnaissent jamais comme OnionBit (démontré par
+  `bench_ext_interconnect.ps1` — phase off : IPv8 ok mais
+  `peer_count=0` ; phase on : `peer_count=1` en ~7 s). Le HELLO signé
+  en clair suit la même discipline que les `introduction-request`
+  IPv8 legacy. `Ipv8Config::default()` reste neutre (off) ;
+  `enabled=false` honoré. Bancs de mesure figés sur la surface
+  legacy (`fingerprint_mesh` baseline, `sec_leak_capture`) via
+  `enabled=false` explicite. Campagne post-merge par ailleurs verte :
+  `verify_all` complet, migration v13→v19 sur base réelle (données
+  intactes, purge catalogue v14 intentionnelle), interop 4/4 +
+  Tribler.exe relay/download + hidden download/seed/killseeder +
+  messaging E2E 19/19. `hidden_py2py`/`public_dht` : le swarm public
+  Tribler.exe ne répond pas depuis la machine de banc
+  (`DispersyBootstrapper` ne produit aucun pair — infrastructure
+  dispersy dormante ; le daemon OnionBit bootstrappé sur le même
+  réseau voit lui les pairs publics — environnement, pas protocole).
 - 2026-10-06 (ADR-0015 validation terrain — **vert**) : soak réel
   `bench_ext_ledger_soak.ps1` (4 daemons ext+OBF, mesh fermé,
   speedtest tunnel 2 sauts — 6,1 Mio relayés) : 10/10 — convergence
