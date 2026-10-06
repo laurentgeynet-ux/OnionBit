@@ -35,6 +35,21 @@ en haut.
   loopback) + test API 404 verts ; `clippy` et `fmt` propres ;
   `flutter analyze` sans issue.
 
+## Guards : défaut `true` confirmé (2026-10-06)
+
+- **Décision** : `tunnel_community/guards_enabled` reste `true` par
+  défaut — la mesure ADR-0010 (premiers sauts persistants bornant la
+  loterie Sybil des reconstructions sous `DESTROY`) a rempli son
+  critère de sortie terrain (2026-10-02 : download anonyme 2 sauts,
+  276,4 Mo, premiers hops ⊆ guard set) ; revenir à `false` serait
+  une régression d'anonymat sans signal nouveau. Désactivation à
+  chaud déjà disponible (UI « Nœuds guards », `POST /api/settings`,
+  `GET /api/ipv8/tunnel/guards`).
+- **Ménage** : commentaire `GuardsConfig::enabled` réaligné (le
+  `false` crate-interne est un fallback opt-in, pas le défaut
+  produit) ; note « reste : download public avec guards » de
+  `fingerprinting.md` clôturée (critère rempli).
+
 ## `libtorrent/port` : sonde `port..=port+10` (parité `listen_on` Tribler) (2026-10-06)
 
 - **Constat** : le port fixe introduit juste avant rendait un port

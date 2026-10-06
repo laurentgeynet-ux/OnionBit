@@ -184,8 +184,10 @@ aucun pair/metadonnee disponible)
   couple « cadence de circuits au repos » + « volume d'un download
   anonyme en stall » est aujourd'hui la signature d'implementation
   la plus marquante.
-- Reste : download public avec guards (critere de sortie consigne),
-  puis validation workspace et decision guards par defaut.
+- Le critere « download public avec guards » a ete rempli le
+  2026-10-02 (download anonyme 2 sauts, 276,4 Mo verifies, premiers
+  hops ⊆ guard set, kill switch sans fallback) — `guards_enabled`
+  est `true` par defaut depuis.
 
 ## Attribution finale + mitigation (2026-10-02, post-mesure)
 

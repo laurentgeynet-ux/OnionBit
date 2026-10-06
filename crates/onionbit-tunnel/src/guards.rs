@@ -28,8 +28,10 @@ use onionbit_ipv8::{Peer, UdpAddress};
 #[derive(Debug, Clone)]
 pub struct GuardsConfig {
     /// `true` = premiers sauts persistants ; `false` = tirage pyipv8
-    /// exact (repli diagnostic/interop). Defaut `false` : feature
-    /// experimentale (ADR-0010, statut Proposee).
+    /// exact (repli diagnostic/interop). Defaut crate `false`
+    /// (opt-in du struct) — le daemon l'active par defaut via
+    /// `tunnel_community/guards_enabled = true` depuis la validation
+    /// terrain (ADR-0010, statut Acceptee).
     pub enabled: bool,
     /// Nombre de guards actifs (3, comme `NumEntryGuards` historique
     /// de Tor — repartit sans diluer la persistance).
