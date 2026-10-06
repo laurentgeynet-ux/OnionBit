@@ -291,6 +291,14 @@ impl Default for DownloadDefaultsConfig {
     }
 }
 
+/// `libtorrent/port` par defaut — port d'ecoute BitTorrent fixe.
+/// Ecart assume avec Tribler (`0` = sonde `6881..=6891`) : un port
+/// fixe permet UPnP et une regle de redirection manuelle stables, et
+/// tombe dans la plage UPnP autorisee des box courantes (ex. Freebox
+/// `32768..=49151`). Reste configurable — `0` conserve la sonde
+/// standard Tribler.
+pub const DEFAULT_LIBTORRENT_PORT: u16 = 45000;
+
 /// Section `libtorrent` — réglages de la session BitTorrent.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -300,7 +308,8 @@ pub struct LibtorrentConfig {
     pub socks_listen_ports: Vec<u16>,
     /// Interface d'écoute.
     pub listen_interface: String,
-    /// Port d'écoute (0 = aléatoire).
+    /// Port d'écoute (défaut [`DEFAULT_LIBTORRENT_PORT`] ;
+    /// `0` = sonde de la plage standard `6881..=6891` comme Tribler).
     pub port: u16,
     /// Interface IPv6 ("" = désactivée).
     pub listen_interface_v6: String,
@@ -390,7 +399,7 @@ impl Default for LibtorrentConfig {
         Self {
             socks_listen_ports: vec![0; 5],
             listen_interface: "0.0.0.0".into(),
-            port: 0,
+            port: DEFAULT_LIBTORRENT_PORT,
             listen_interface_v6: String::new(),
             port_v6: 0,
             proxy_type: 0,
@@ -1654,13 +1663,24 @@ mod tests {
     /// Verifie que to_core_config sonde la plage 6881..=6891 quand le port configuré vaut 0.
     #[test]
     fn to_core_config_sonde_plage_bittorrent_standard() {
-        let cfg = DaemonConfig::default();
+        let mut cfg = DaemonConfig::default();
+        cfg.libtorrent.port = 0;
         let core_cfg = cfg.to_core_config(std::path::Path::new("."));
         let port = core_cfg.engine.listen_port.unwrap_or(0);
         // Doit soit appartenir à 6881..=6891, soit 0 si toute la plage locale est saturée
         assert!(
             (6881..=6891).contains(&port) || port == 0,
             "port effectif {port} inattendu"
+        );
+    }
+
+    /// Le defaut est le port fixe [`DEFAULT_LIBTORRENT_PORT`] (UPnP et
+    /// redirection manuelle stables ; `0` garde la sonde Tribler).
+    #[test]
+    fn libtorrent_port_defaut_fixe() {
+        assert_eq!(
+            DaemonConfig::default().libtorrent.port,
+            super::DEFAULT_LIBTORRENT_PORT
         );
     }
 

@@ -3,6 +3,39 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## `libtorrent/port` par défaut fixe à 45000 (2026-10-06)
+
+- **Avant** : `0` → sonde de la plage `6881..=6891` à chaque démarrage
+  (parité `listen_on(port, port+10)` libtorrent) — port variable,
+  mappings UPnP et règles de redirection manuelle instables.
+- **Après** : `DEFAULT_LIBTORRENT_PORT = 45000` — écart assumé vs
+  Tribler, comme `api/http_port = 8085` : port fixe dans la plage UPnP
+  des box courantes (Freebox `32768..=49151` — les mappings hors plage
+  sont refusés en erreur 718). Reste configurable : `libtorrent/port`
+  explicite prioritaire, `0` conserve la sonde standard Tribler.
+
+## Diversité des nœuds de sortie des circuits DATA (2026-10-06)
+
+- **Symptôme observé en prod** : téléchargements hop 3 effondrés
+  (~30 ko/s) — les 3 circuits DATA 3 sauts terminaient tous sur le
+  même pair de sortie (`3d905e3c`, sortie lente), tout le trafic
+  anonyme étant étranglé par un seul nœud volontaire.
+- **Cause** : pyipv8 ne déduplique pas les derniers sauts — le dernier
+  hop d'un `extend` est le premier `candidates` offert par le saut
+  précédent (ou un tirage `EXIT_BT`/`RELAY` en repli). Circuits
+  partageant guard et mids ⇒ mêmes offres ⇒ même sortie.
+- **Correctif (au-delà de la parité pyipv8)** : dans `send_extend`,
+  un dernier saut déjà en service sur un circuit DATA `READY` de même
+  longueur passe en fin de liste des candidats proposés (tri stable)
+  et est dépriorisé dans le repli `get_candidates` — un exit frais
+  est tenté d'abord, les exits usés restent en secours quand c'est le
+  seul choix (la pénurie réelle ne casse jamais la construction).
+- **Portée** : circuits `DATA` uniquement, chemins de choix libre ;
+  `required_exit`/`data_exit_peer`/sauts épinglés inchangés
+  (déterminisme des bancs).
+- **Tests** : 18 unitaires + 42 loopback + 6 fuzz du crate tunnel
+  verts ; `clippy -D warnings` et `fmt` propres.
+
 ## Parité UPnP : mapping UDP (uTP) du port d'écoute BitTorrent (2026-10-06)
 
 - **Écart** : le forwarder UPnP de librqbit (`enable_upnp_port_forwarding`

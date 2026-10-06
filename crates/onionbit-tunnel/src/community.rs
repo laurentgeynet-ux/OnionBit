@@ -14,7 +14,7 @@
 //!
 //! Community id : `81ded07332bdc775aa5a46f96de9f8f390bbc9f3`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU16, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -1796,7 +1796,15 @@ impl TunnelCommunity {
         let zero: UdpAddress = UdpAddress::from("0.0.0.0:0".parse::<SocketAddr>().unwrap());
         let my_pk = self.key.public_key().to_bin();
         let failure_ttl = self.settings.circuit_timeout;
-        let (become_exit, required_exit, first_hop_addr, exclude, pinned, extend_failed) = {
+        let (
+            become_exit,
+            required_exit,
+            first_hop_addr,
+            exclude,
+            pinned,
+            extend_failed,
+            used_exits,
+        ) = {
             let inner = self.inner.lock().unwrap();
             let Some(c) = inner.circuits.get(&circuit_id) else {
                 return Err(Ipv8Error::Malformed("circuit inconnu"));
@@ -1807,6 +1815,27 @@ impl TunnelCommunity {
             if let Some(pk) = &c.required_exit {
                 exclude.push(pk.clone());
             }
+            // Diversite de sortie (au-dela pyipv8) : derniers sauts
+            // deja en service sur un autre circuit DATA `READY` de
+            // meme longueur. pyipv8 ne deduplique pas les exits —
+            // sans ce biais, des circuits partageant premier hop et
+            // mids recoivent les memes `candidates` et concentrent
+            // tout le trafic sur un seul pair de sortie.
+            let used_exits: HashSet<Vec<u8>> = if c.ctype == CIRCUIT_TYPE_DATA {
+                inner
+                    .circuits
+                    .iter()
+                    .filter(|(id, o)| {
+                        **id != circuit_id
+                            && o.ctype == CIRCUIT_TYPE_DATA
+                            && o.goal_hops == c.goal_hops
+                            && o.state() == CIRCUIT_STATE_READY
+                    })
+                    .filter_map(|(_, o)| o.hops.last().map(|h| h.public_key_bin.clone()))
+                    .collect()
+            } else {
+                HashSet::new()
+            };
             (
                 c.goal_hops.saturating_sub(1) == c.hops.len(),
                 c.required_exit.clone(),
@@ -1821,6 +1850,7 @@ impl TunnelCommunity {
                     .filter(|(_, t)| t.elapsed() < failure_ttl)
                     .map(|(k, _)| k.clone())
                     .collect::<Vec<Vec<u8>>>(),
+                used_exits,
             )
         };
 
@@ -1865,7 +1895,7 @@ impl TunnelCommunity {
                 // (pool de relais etroit) — sans ce filtre les
                 // `max_tries` s'epuisent sur des mids morts avant le
                 // repli sur les pairs connus du registre.
-                let valid: Vec<Vec<u8>> = candidates
+                let mut valid: Vec<Vec<u8>> = candidates
                     .iter()
                     .filter(|k| {
                         !exclude.contains(k)
@@ -1874,6 +1904,13 @@ impl TunnelCommunity {
                     })
                     .cloned()
                     .collect();
+                // Diversite de sortie : un dernier saut deja pris par
+                // un autre circuit DATA de meme longueur passe en fin
+                // de liste — un exit frais est tente d'abord, les
+                // exits usses restent en repli (tri stable).
+                if become_exit && !used_exits.is_empty() {
+                    valid.sort_by_key(|k| usize::from(used_exits.contains(k)));
+                }
                 match valid.split_first() {
                     Some((pk, rest)) => {
                         tracing::debug!(
@@ -1918,6 +1955,19 @@ impl TunnelCommunity {
                 .collect();
             if !alive.is_empty() {
                 choices = alive;
+            }
+            // Diversite de sortie : un exit deja en service sur un
+            // circuit DATA de meme longueur est depriorise — repli
+            // sur la liste complete si tous les candidats sont usses.
+            if become_exit && !used_exits.is_empty() {
+                let fresh: Vec<Peer> = choices
+                    .iter()
+                    .filter(|p| !used_exits.contains(&p.public_key_bin))
+                    .cloned()
+                    .collect();
+                if !fresh.is_empty() {
+                    choices = fresh;
+                }
             }
             // `thread_rng` n'est pas `Send` — borne a l'expression.
             let picked = {
