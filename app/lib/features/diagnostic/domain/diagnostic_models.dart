@@ -357,6 +357,44 @@ class ConnectionsReport {
   final List<ListenerInfo> listeners;
 }
 
+/// Pair de la communauté d'extension OnionBit (`GET /api/ipv8/ext` →
+/// `peers[]`) — reconnu par `hello` signé, pas de légacy Tribler.
+class ExtPeerInfo {
+  const ExtPeerInfo({
+    required this.mid,
+    required this.capsNames,
+    required this.lastHelloSecs,
+  });
+
+  /// `mid` hex du pair.
+  final String mid;
+
+  /// Capacités annoncées décodées (`caps_names` : `obf_v1`,
+  /// `msg_v1`…). Vide = pair ext sans capacité annoncée.
+  final List<String> capsNames;
+
+  /// Secondes depuis le dernier `hello` valide reçu.
+  final int lastHelloSecs;
+}
+
+/// Instantané de la communauté ext (`GET /api/ipv8/ext`, ADR-0015).
+class ExtInfo {
+  const ExtInfo({
+    required this.enabled,
+    required this.capsNames,
+    required this.peers,
+  });
+
+  /// `ext/enabled` effectif.
+  final bool enabled;
+
+  /// Capacités annoncées localement (`caps_names`).
+  final List<String> capsNames;
+
+  /// Pairs OnionBit reconnus.
+  final List<ExtPeerInfo> peers;
+}
+
 /// Échantillon de débit d'un speed test de circuit (MiB/s,
 /// `speed: {"up", "down"}` pyipv8).
 class SpeedSample {

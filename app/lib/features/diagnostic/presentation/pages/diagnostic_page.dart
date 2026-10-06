@@ -26,7 +26,7 @@ class DiagnosticPage extends StatelessWidget {
   Widget build(BuildContext context) {
     final l10n = context.l10n;
     return DefaultTabController(
-      length: 12,
+      length: 13,
       child: Column(
         children: [
           TabBar(
@@ -42,6 +42,7 @@ class DiagnosticPage extends StatelessWidget {
               Tab(text: l10n.tabExits),
               Tab(text: l10n.tabSwarms),
               Tab(text: l10n.tabPeers),
+              Tab(text: l10n.tabOnionBit),
               Tab(text: l10n.tabDhtPeers),
               Tab(text: l10n.tabPexPeers),
               Tab(text: l10n.tabLogs),
@@ -59,6 +60,7 @@ class DiagnosticPage extends StatelessWidget {
                 _ExitsTab(),
                 _SwarmsTab(),
                 _PeersTab(),
+                _ExtTab(),
                 _DhtPeersTab(),
                 _PexPeersTab(),
                 _LogsTab(),
@@ -517,6 +519,153 @@ class _PeersTab extends ConsumerWidget {
               : p.flags.map((f) => _peerFlagLabel(context.l10n, f)).join(' · '),
         ),
       ),
+    );
+  }
+}
+
+/// Libellé d'une capacité `caps_names` ext (ADR-0015) — les valeurs
+/// inconnues (bit futur) s'affichent brutes pour rester compatibles.
+String _extCapLabel(AppLocalizations l10n, String cap) => switch (cap) {
+  'msg_v1' => l10n.capMsgV1,
+  'obf_v1' => l10n.capObfV1,
+  _ => cap,
+};
+
+/// Icône associée à une capacité ext connue.
+IconData _extCapIcon(String cap) => switch (cap) {
+  'msg_v1' => Icons.chat_bubble_outline,
+  'obf_v1' => Icons.enhanced_encryption_outlined,
+  _ => Icons.extension_outlined,
+};
+
+/// Pastille de capacité ext (transport/obfuscation/messagerie…).
+Widget _extCapChip(BuildContext context, String label, IconData icon) {
+  final scheme = Theme.of(context).colorScheme;
+  return Container(
+    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+    decoration: BoxDecoration(
+      color: scheme.primaryContainer,
+      borderRadius: BorderRadius.circular(4),
+    ),
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 11, color: scheme.onPrimaryContainer),
+        const SizedBox(width: 3),
+        Text(
+          label,
+          style: Theme.of(
+            context,
+          ).textTheme.labelSmall?.copyWith(color: scheme.onPrimaryContainer),
+        ),
+      ],
+    ),
+  );
+}
+
+/// Onglet « OnionBit » — communauté d'extension (ADR-0015) : état
+/// local (activation + capacités annoncées dans nos `hello`) et pairs
+/// OnionBit reconnus avec leurs capacités (`caps_names`).
+class _ExtTab extends ConsumerWidget {
+  const _ExtTab();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final l10n = context.l10n;
+    final value = ref.watch(extInfoProvider);
+    void retry() => ref.invalidate(extInfoProvider);
+    return Column(
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.end,
+          children: [
+            IconButton(
+              tooltip: l10n.refresh,
+              icon: const Icon(Icons.refresh, size: 18),
+              onPressed: retry,
+            ),
+          ],
+        ),
+        Expanded(
+          child: value.when(
+            loading: () => const Center(child: CircularProgressIndicator()),
+            error: (e, _) => ErrorState(error: e, onRetry: retry),
+            data: (info) => ListView(
+              padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+              children: [
+                // État local : activation + capacités annoncées.
+                Card(
+                  child: ListTile(
+                    dense: true,
+                    leading: Icon(
+                      info.enabled
+                          ? Icons.check_circle_outline
+                          : Icons.cancel_outlined,
+                      size: 20,
+                      color: info.enabled
+                          ? Theme.of(context).colorScheme.primary
+                          : Theme.of(context).colorScheme.outline,
+                    ),
+                    title: Text(
+                      info.enabled ? l10n.extEnabled : l10n.extDisabled,
+                    ),
+                    subtitle: info.capsNames.isEmpty
+                        ? null
+                        : Padding(
+                            padding: const EdgeInsets.only(top: 4),
+                            child: Wrap(
+                              spacing: 4,
+                              children: [
+                                for (final c in info.capsNames)
+                                  _extCapChip(context, _extCapLabel(l10n, c), _extCapIcon(c)),
+                              ],
+                            ),
+                          ),
+                    trailing: Text(l10n.extPeerCount(info.peers.length)),
+                  ),
+                ),
+                if (info.peers.isEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: AppSpacing.xl),
+                    child: EmptyState(
+                      icon: Icons.hub_outlined,
+                      title: l10n.emptyExtPeers,
+                      message: l10n.emptyExtPeersMsg,
+                    ),
+                  )
+                else
+                  for (final p in info.peers)
+                    ListTile(
+                      dense: true,
+                      leading: const Icon(Icons.person_outline, size: 20),
+                      title: Text(
+                        p.mid,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontFamily: 'monospace'),
+                      ),
+                      subtitle: p.capsNames.isEmpty
+                          ? null
+                          : Padding(
+                              padding: const EdgeInsets.only(top: 4),
+                              child: Wrap(
+                                spacing: 4,
+                                children: [
+                                  for (final c in p.capsNames)
+                                    _extCapChip(
+                                      context,
+                                      _extCapLabel(l10n, c),
+                                      _extCapIcon(c),
+                                    ),
+                                ],
+                              ),
+                            ),
+                      trailing: Text(l10n.extHelloAge(p.lastHelloSecs)),
+                    ),
+              ],
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

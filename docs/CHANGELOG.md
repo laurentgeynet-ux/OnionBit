@@ -3,6 +3,17 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## UI : onglet « OnionBit » dans le Diagnostic (2026-10-06)
+
+- Nouvel onglet (13ᵉ) de la page Diagnostic : consomme
+  `GET /api/ipv8/ext` — état local (activé/désactivé + capacités
+  annoncées décodées via `caps_names`) et liste des pairs OnionBit
+  reconnus avec leurs capacités en pastilles (`msg_v1` →
+  « messagerie », `obf_v1` → « obfuscation », inconnu → brut) et
+  l'âge du dernier `hello`.
+- Chaîne : `ExtInfo`/`ExtPeerInfo` (modèles) → `extInfo()` (repo) →
+  `extInfoProvider` (sondage 5 s) → `_ExtTab`. i18n en+fr.
+
 ## ADR-0015 : `CAP_MSG_V1` — découverte de la messagerie par `hello.caps` (2026-10-06)
 
 - **Pont ext ↔ messagerie** : bit 1 du bitmap `hello.caps` annonce que

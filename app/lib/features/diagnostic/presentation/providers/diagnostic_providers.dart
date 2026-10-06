@@ -99,6 +99,13 @@ final connectionsProvider = FutureProvider.autoDispose<ConnectionsReport>((
   return ref.watch(diagnosticRepositoryProvider).connectionsReport();
 });
 
+/// Communauté d'extension OnionBit (`/api/ipv8/ext`, ADR-0015) —
+/// onglet « OnionBit » : capacités locales + pairs reconnus.
+final extInfoProvider = FutureProvider.autoDispose<ExtInfo>((ref) {
+  ref.watch(tickProvider(_kDiagnosticPoll));
+  return ref.watch(diagnosticRepositoryProvider).extInfo();
+});
+
 final daemonLogsProvider = FutureProvider.autoDispose<String>((ref) {
   ref.watch(tickProvider(_kDiagnosticPoll));
   return ref.watch(diagnosticRepositoryProvider).logs();

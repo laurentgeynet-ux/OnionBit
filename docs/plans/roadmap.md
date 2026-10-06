@@ -811,6 +811,9 @@ Ajouter ici, au fil de l'avancement, tout écart constaté par rapport au
 plan initial (dépendance qui ne convient pas, étape scindée en deux,
 risque IPv8 sous/sur-estimé, etc.), avec la date.
 
+- 2026-10-06 (UI Diagnostic — onglet « OnionBit ») : `caps_names`
+  exposé à l'utilisateur — état local de la communauté ext et pairs
+  OnionBit reconnus avec leurs capacités en pastilles.
 - 2026-10-06 (ADR-0015/ADR-0011 — `CAP_MSG_V1`, bit 1 de
   `hello.caps`) : pont de découverte entre ext et la messagerie
   anonyme. Le service reste dans `onionbit-tunnel` (plan de données —

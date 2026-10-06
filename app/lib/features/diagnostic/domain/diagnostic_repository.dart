@@ -39,6 +39,11 @@ abstract interface class DiagnosticRepository {
   /// l'occasion (détruit après le test).
   Stream<SpeedSample> speedTestNewCircuit(int hops, {int testTimeMs = 5000});
 
+  /// Communauté d'extension OnionBit-only : capacités locales et
+  /// pairs reconnus avec leurs `caps_names` (`GET /api/ipv8/ext`,
+  /// ADR-0015 — extension Rust sans équivalent pyipv8).
+  Future<ExtInfo> extInfo();
+
   /// Journal du daemon — réponse texte brut (`/api/logging`).
   Future<String> logs({int maxLines = 200});
 

@@ -342,6 +342,21 @@
   },
   "emptyDhtIntro": "No DHT introduction point",
   "emptyPexIntro": "No PEX introduction point",
+  "tabOnionBit": "OnionBit",
+  "extEnabled": "OnionBit extension enabled",
+  "extDisabled": "OnionBit extension disabled",
+  "extPeerCount": "{count, plural, =1{{count} peer} other{{count} peers}}",
+  "@extPeerCount": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "extHelloAge": "hello {secs} s ago",
+  "@extHelloAge": {
+    "placeholders": { "secs": { "type": "int" } }
+  },
+  "emptyExtPeers": "No OnionBit peer recognized",
+  "emptyExtPeersMsg": "Peers appear here once the signed extension hello is exchanged.",
+  "capMsgV1": "messaging",
+  "capObfV1": "obfuscation",
   "emptyConnections": "No known connection",
   "emptyConnectionsMsg": "IPv8 peers, DHT nodes, exit targets and BitTorrent peers appear here.",
   "listenersSection": "Local listeners",

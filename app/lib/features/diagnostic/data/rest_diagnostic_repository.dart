@@ -273,6 +273,32 @@ class RestDiagnosticRepository implements DiagnosticRepository {
         ),
       );
 
+  /// `/api/ipv8/ext` → `{ext: {enabled, caps_names, peers}}` —
+  /// extension Rust (ADR-0015) sans équivalent pyipv8 ; le bitmap
+  /// `caps` arrive déjà décodé en `caps_names` côté daemon.
+  @override
+  Future<ExtInfo> extInfo() async {
+    final resp = await _api.get('/ipv8/ext') as Map<String, dynamic>;
+    final e = resp['ext'] as Map<String, dynamic>? ?? const {};
+    return ExtInfo(
+      enabled: e['enabled'] == true,
+      capsNames: [
+        for (final c in (e['caps_names'] as List?) ?? const []) '$c',
+      ],
+      peers: [
+        for (final p in (e['peers'] as List?) ?? const [])
+          if (p is Map<String, dynamic>)
+            ExtPeerInfo(
+              mid: '${p['mid'] ?? ''}',
+              capsNames: [
+                for (final c in (p['caps_names'] as List?) ?? const []) '$c',
+              ],
+              lastHelloSecs: (p['last_hello_secs'] as num?)?.toInt() ?? 0,
+            ),
+      ],
+    );
+  }
+
   @override
   Future<String> logs({int maxLines = 200}) =>
       _api.getText('/logging', query: {'max_lines': '$maxLines'});
