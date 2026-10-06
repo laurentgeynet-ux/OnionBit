@@ -3,6 +3,22 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## ADR-0017 : proposition « transport furtif » anti-censure (2026-10-06)
+
+- Nouvel ADR en statut **Proposée** (aucun code) : inventaire de la
+  surface identifiable aujourd'hui (préfixe communautaire, clé
+  maîtresse `ez_send`, hello ext, formats IPv8/BitTorrent), preuve
+  qu'OBF ne masque que le contenu — pas l'existence du protocole.
+- Décision structurante : **furtivité et compatibilité legacy
+  s'excluent** sur un même nœud — le mode furtif est dédié
+  OnionBit↔OnionBit : bootstrap par liens d'invitation hors-bande
+  (le hello de négociation trahirait), trames indiscernables de bruit
+  (authentification par clé partagée, padding aléatoire, cover
+  traffic opt-in), tunnel/messagerie conservés au-dessus, BitTorrent
+  public et DHT publique désactivés dans ce mode.
+- Banc de validation prévu : `bench_stealth_fingerprint.ps1` —
+  indiscernabilité mesurée, pas décrétée.
+
 ## UI : mécanismes OnionBit complets — réglages + Diagnostic enrichi (2026-10-06)
 
 - **Section « OnionBit » des Réglages** (`onionbit_section.dart`) :

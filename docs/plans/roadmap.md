@@ -811,6 +811,14 @@ Ajouter ici, au fil de l'avancement, tout écart constaté par rapport au
 plan initial (dépendance qui ne convient pas, étape scindée en deux,
 risque IPv8 sous/sur-estimé, etc.), avec la date.
 
+- 2026-10-06 (ADR-0017 — **transport furtif**, statut Proposée) :
+  analyse complète de la furtivité anti-censure — décision
+  structurante : indétectabilité et interopérabilité legacy Tribler
+  s'excluent sur un même nœud (le walk legacy trahit toujours) ;
+  le mode furtif serait donc un mode dédié OnionBit↔OnionBit avec
+  bootstrap hors-bande (liens d'invitation type bridges Tor),
+  trames indiscernables de bruit (obfs4-style), tunnel+messagerie
+  conservés au-dessus, BitTorrent public exclu. Aucun code engagé.
 - 2026-10-06 (UI mécanismes OnionBit complets) : section « OnionBit »
   des Réglages (ext enabled/ledger/obf/curators — restart ; ledger
   collect/enforce tunnel — hot) + onglet Diagnostic enrichi (registre
