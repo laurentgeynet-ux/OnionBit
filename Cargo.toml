@@ -97,6 +97,11 @@ librqbit = { version = "9", features = ["storage_examples"] }
 librqbit-core = "9"
 librqbit-bencode = "9"
 librqbit-utp = "0.7"
+# Forwarder UPnP UDP d'`onionbit-bittorrent` : decouverte SSDP et
+# parsing IGD reutilises (le `AddPortMapping` de librqbit-upnp est TCP
+# en dur — le mapping UDP est local a `upnp.rs`).
+librqbit-upnp = "9.0.1"
+network-interface = "2"
 
 # Copie vendored + patchee de librqbit 9.0.1 : les tunnels anonymes
 # Tribler n'ont pas de relais TCP generique — le trafic pair anonyme doit

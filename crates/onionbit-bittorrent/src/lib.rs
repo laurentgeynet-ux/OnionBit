@@ -26,6 +26,7 @@ pub mod download;
 pub mod engine;
 pub mod error;
 pub mod natpmp;
+pub mod upnp;
 
 pub use add_options::AddDownloadOptions;
 pub use config::EngineConfig;

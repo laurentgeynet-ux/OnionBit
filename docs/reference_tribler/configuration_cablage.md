@@ -14,7 +14,8 @@ log (`warn`/`debug`) plutôt que de les ignorer silencieusement.
 
 | Clé | Défaut | Décision |
 | :--- | :--- | :--- |
-| `libtorrent/natpmp` | `true` | librqbit ne supporte pas NAT-PMP — `warn` si activé ; UPnP (`upnp`) couvre le besoin. |
+| `libtorrent/natpmp` | `true` | **implémenté** : client NAT-PMP natif RFC 6886 (`onionbit-bittorrent::natpmp`) — mappings TCP+UDP du port d'écoute, bail renouvelé, libéré à l'arrêt. |
+| `libtorrent/upnp` | `true` | **implémenté** : forwarder TCP de `librqbit-upnp` (`enable_upnp_port_forwarding`) + forwarder UDP local (`onionbit-bittorrent::upnp`) pour uTP — parité libtorrent TCP+UDP. |
 | `libtorrent/announce_to_all_tiers` | `false` | rqbit annonce à tous les trackers sans tiering — le flag ne peut rien changer, `debug`. |
 | `libtorrent/announce_to_all_trackers` | `false` | idem — `debug`. |
 | `libtorrent/max_concurrent_http_announces` | `50` | pas de limite d'annonces HTTP concurrentes exposée par rqbit — `debug`. |

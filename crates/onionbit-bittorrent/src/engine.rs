@@ -43,6 +43,9 @@ pub struct BtEngine {
     watchdog_stop: Option<Arc<tokio::sync::watch::Sender<bool>>>,
     /// Arret du client de port-forwarding NAT-PMP.
     natpmp_stop: Option<Arc<tokio::sync::watch::Sender<bool>>>,
+    /// Arret du forwarder UPnP UDP (uTP) — complement du forwarder
+    /// TCP de librqbit.
+    upnp_udp_stop: Option<Arc<tokio::sync::watch::Sender<bool>>>,
     /// Trackers ajoutes a chaud par info-hash (rqbit ne permet pas de
     /// muter `shared.trackers` apres initialisation). Un `Arc` par
     /// torrent, partage entre tous les clones `Download`.
@@ -123,12 +126,32 @@ impl BtEngine {
         } else {
             None
         };
+        // Mapping UPnP UDP (uTP entrant) : le forwarder de librqbit
+        // ne mappe que TCP (`NewProtocol>TCP` en dur dans
+        // `librqbit-upnp`), alors que libtorrent mappe TCP+UDP du port
+        // d'ecoute. `announce_port()` est le port resolu apres bind —
+        // le meme que le forwarder TCP (absent en loopback : rien a
+        // mapper, comme chez librqbit). Les lanes anonymes ont un
+        // announce_port `None` (bind loopback) : elles sont exclues.
+        let upnp_udp_stop = match session.announce_port() {
+            Some(port) if config.enable_upnp && (config.enable_utp || config.utp_only) => {
+                let (tx, rx) = tokio::sync::watch::channel(false);
+                tokio::spawn(crate::upnp::run_upnp_udp_forwarder(
+                    port,
+                    crate::upnp::UpnpForwardConfig::default(),
+                    rx,
+                ));
+                Some(Arc::new(tx))
+            }
+            _ => None,
+        };
         tracing::info!(
             output_dir = %config.output_dir.display(),
             dht = config.enable_dht,
             listen = ?config.listen_port,
             proxy = ?proxy_addr,
             natpmp = config.enable_natpmp,
+            upnp_udp = upnp_udp_stop.is_some(),
             "session bittorrent demarree"
         );
         Ok(Self {
@@ -137,6 +160,7 @@ impl BtEngine {
             kill_switch,
             watchdog_stop,
             natpmp_stop,
+            upnp_udp_stop,
             extra_trackers: Default::default(),
         })
     }
@@ -192,6 +216,9 @@ impl BtEngine {
             let _ = tx.send(true);
         }
         if let Some(tx) = &self.natpmp_stop {
+            let _ = tx.send(true);
+        }
+        if let Some(tx) = &self.upnp_udp_stop {
             let _ = tx.send(true);
         }
         if self.config.clear_orphaned_parts {

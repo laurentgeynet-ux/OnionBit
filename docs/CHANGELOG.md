@@ -3,6 +3,33 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Parité UPnP : mapping UDP (uTP) du port d'écoute BitTorrent (2026-10-06)
+
+- **Écart** : le forwarder UPnP de librqbit (`enable_upnp_port_forwarding`
+  → `librqbit_upnp::UpnpPortForwarder`) n'envoie que
+  `<NewProtocol>TCP</NewProtocol>` — le mapping UDP du port d'écoute
+  n'existait pas alors que libtorrent mappe TCP **et** UDP (uTP partage
+  le port d'écoute). Sur une box UPnP-only (sans NAT-PMP), les
+  connexions uTP entrantes pouvaient rester bloquées par le NAT.
+- **Correctif** : nouveau `onionbit-bittorrent::upnp` — forwarder UDP
+  symétrique à `natpmp.rs` : découverte SSDP et parsing IGD réutilisés
+  de `librqbit-upnp` (`discover_once`, `discover_services`,
+  `get_local_ip_relative_to`), `AddPortMapping`/`DeletePortMapping`
+  SOAP en UDP via reqwest (`no_proxy` — la passerelle est locale),
+  bail 1 h renouvelé à mi-vie, libération propre à l'arrêt (comme
+  libtorrent), re-découverte si la passerelle cesse de répondre.
+- **Câblage** : spawné dans `BtEngine::start` quand `enable_upnp` et
+  qu'une socket uTP écoute (`enable_utp`/`utp_only`), sur le
+  `announce_port` résolu après bind — exactement le port mappé par le
+  forwarder TCP ; les lanes anonymes (bind loopback, `announce_port`
+  `None`) restent exclues. Arrêt avec la session.
+- **Deps** : `librqbit-upnp` 9.0.1 (déjà transitive de librqbit) +
+  `network-interface` 2 directement dans `onionbit-bittorrent`.
+- **Tests** : `add_mapping_en_udp`, `delete_mapping_en_udp`,
+  `mapping_refuse_sur_500`, `controle_urls_device_imbrique`
+  (extraction des controlURL `WANIPConnection` sur device IGD
+  imbriqué).
+
 ## Messagerie : contact ajouté invisible jusqu'au redémarrage (2026-10-06)
 
 - **Symptôme** : « Ajouter un contact » ne montrait rien dans la liste

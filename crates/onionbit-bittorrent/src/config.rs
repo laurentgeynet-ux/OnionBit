@@ -56,7 +56,8 @@ pub struct EngineConfig {
     /// Sans effet quand `utp_only` (lanes anonymes : toujours uTP).
     pub enable_utp: bool,
     /// Redirection de port UPnP (`libtorrent/upnp` Tribler ->
-    /// `enable_upnp_port_forwarding` librqbit).
+    /// `enable_upnp_port_forwarding` librqbit pour TCP + forwarder
+    /// UDP local [`crate::upnp`] pour uTP — librqbit ne mappe que TCP).
     pub enable_upnp: bool,
     /// Redirection de port NAT-PMP / PCP (`libtorrent/natpmp` Tribler).
     pub enable_natpmp: bool,
