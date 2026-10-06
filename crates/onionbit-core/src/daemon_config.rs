@@ -291,12 +291,13 @@ impl Default for DownloadDefaultsConfig {
     }
 }
 
-/// `libtorrent/port` par defaut — port d'ecoute BitTorrent fixe.
-/// Ecart assume avec Tribler (`0` = sonde `6881..=6891`) : un port
-/// fixe permet UPnP et une regle de redirection manuelle stables, et
-/// tombe dans la plage UPnP autorisee des box courantes (ex. Freebox
-/// `32768..=49151`). Reste configurable — `0` conserve la sonde
-/// standard Tribler.
+/// `libtorrent/port` par defaut — base de la sonde d'ecoute
+/// BitTorrent (`port..port+10`, sémantique `listen_on` de Tribler).
+/// La plage `45000..=45010` est choisie plutôt que `6881..=6891` :
+/// elle tombe dans la plage UPnP autorisee des box courantes (ex.
+/// Freebox `32768..=49151`) tout en gardant UPnP et une regle de
+/// redirection manuelle stables. `0` conserve la sonde historique
+/// Tribler `6881..=6891`.
 pub const DEFAULT_LIBTORRENT_PORT: u16 = 45000;
 
 /// Section `libtorrent` — réglages de la session BitTorrent.
@@ -308,8 +309,9 @@ pub struct LibtorrentConfig {
     pub socks_listen_ports: Vec<u16>,
     /// Interface d'écoute.
     pub listen_interface: String,
-    /// Port d'écoute (défaut [`DEFAULT_LIBTORRENT_PORT`] ;
-    /// `0` = sonde de la plage standard `6881..=6891` comme Tribler).
+    /// Port d'écoute préféré — base de la sonde `port..=port+10`
+    /// (défaut [`DEFAULT_LIBTORRENT_PORT`] ; `0` = sonde de la plage
+    /// standard `6881..=6891` comme Tribler).
     pub port: u16,
     /// Interface IPv6 ("" = désactivée).
     pub listen_interface_v6: String,
@@ -1134,18 +1136,31 @@ impl DaemonConfig {
                 .ok()
                 .map(|ip| std::net::SocketAddr::new(ip, self.libtorrent.port_v6))
         };
-        // Port d'écoute BitTorrent en clair : Tribler sonde la plage 6881..=6891
-        // (`listen_on(port, port + 10)` avec repli 6881 si port == 0).
-        let effective_bt_port = if self.libtorrent.port == 0 {
-            (6881..=6891)
-                .find(|&p| {
-                    std::net::TcpListener::bind((listen_ip, p)).is_ok()
-                        && std::net::UdpSocket::bind((listen_ip, p)).is_ok()
-                })
-                .unwrap_or(0)
+        // Port d'écoute BitTorrent en clair : sémantique Tribler
+        // `listen_on(port, port + 10)` — le port configuré est la base
+        // d'une sonde de 11 ports (repli 6881 si port == 0). Le premier
+        // port libre en TCP ET UDP gagne ; 0 (éphémère) en dernier
+        // recours. La sonde reste centrée sur le port demandé : le
+        // défaut 45000 et son voisinage restent dans la plage UPnP
+        // acceptée des box courantes.
+        let base = if self.libtorrent.port == 0 {
+            6881
         } else {
             self.libtorrent.port
         };
+        let effective_bt_port = (base..=base.saturating_add(10))
+            .find(|&p| {
+                std::net::TcpListener::bind((listen_ip, p)).is_ok()
+                    && std::net::UdpSocket::bind((listen_ip, p)).is_ok()
+            })
+            .unwrap_or(0);
+        if self.libtorrent.port != 0 && effective_bt_port != self.libtorrent.port {
+            tracing::warn!(
+                configured = self.libtorrent.port,
+                effective = effective_bt_port,
+                "port libtorrent occupe — port effectif decale"
+            );
+        }
         let mut engine = onionbit_bittorrent::EngineConfig {
             output_dir: downloads_dir.clone(),
             enable_dht: self.libtorrent.dht,
@@ -1674,8 +1689,9 @@ mod tests {
         );
     }
 
-    /// Le defaut est le port fixe [`DEFAULT_LIBTORRENT_PORT`] (UPnP et
-    /// redirection manuelle stables ; `0` garde la sonde Tribler).
+    /// Le defaut est [`DEFAULT_LIBTORRENT_PORT`] (base de sonde —
+    /// UPnP et redirection manuelle stables ; `0` garde la sonde
+    /// Tribler 6881..=6891).
     #[test]
     fn libtorrent_port_defaut_fixe() {
         assert_eq!(
@@ -1684,12 +1700,34 @@ mod tests {
         );
     }
 
-    /// Verifie qu'un port explicite est respecté tel quel.
+    /// Un port libre est pris tel quel (base de la sonde
+    /// `port..=port+10`).
     #[test]
     fn to_core_config_respecte_port_explicite() {
         let mut cfg = DaemonConfig::default();
         cfg.libtorrent.port = 12345;
         let core_cfg = cfg.to_core_config(std::path::Path::new("."));
         assert_eq!(core_cfg.engine.listen_port, Some(12345));
+    }
+
+    /// Port configuré occupé → la sonde décale dans `port+1..=port+10`
+    /// (sémantique `listen_on` Tribler — un bind pris ne doit pas
+    /// empecher le daemon de demarrer).
+    #[test]
+    fn to_core_config_sonde_decale_si_port_occupe() {
+        let occupee_tcp =
+            std::net::TcpListener::bind((std::net::Ipv4Addr::UNSPECIFIED, 23177)).unwrap();
+        let occupee_udp =
+            std::net::UdpSocket::bind((std::net::Ipv4Addr::UNSPECIFIED, 23177)).unwrap();
+        let mut cfg = DaemonConfig::default();
+        cfg.libtorrent.port = 23177;
+        let core_cfg = cfg.to_core_config(std::path::Path::new("."));
+        let port = core_cfg.engine.listen_port.unwrap_or(0);
+        assert!(
+            (23178..=23187).contains(&port) || port == 0,
+            "port effectif {port} inattendu"
+        );
+        drop(occupee_tcp);
+        drop(occupee_udp);
     }
 }

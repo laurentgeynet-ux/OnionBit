@@ -61,10 +61,13 @@ redémarrage) — parité `set_session_limits` Python + services :
 - `api/https_*` → listener TLS `axum-server` (rustls), même routeur,
   `https_port_running` réécrit.
 - `libtorrent/listen_interface`/`port`/`listen_interface_v6`/`port_v6`
-  → `ListenerOptions` rqbit (dual-stack si IPv6 configurée). Défaut
-  `port` : **45000** (écart assumé vs `0` Tribler — UPnP et règle
-  manuelle stables, plage UPnP des box courantes ; `0` garde la sonde
-  `6881..=6891`).
+  → `ListenerOptions` rqbit (dual-stack si IPv6 configurée). `port` est
+  la **base d'une sonde `port..=port+10`** (sémantique `listen_on`
+  Tribler : premier port libre TCP+UDP gagne — un port occupé ne bloque
+  plus le démarrage). Défaut `port` : **45000** → sonde
+  `45000..=45010` (écart assumé vs la base `6881` Tribler — UPnP et
+  règle manuelle stables, plage UPnP des box courantes ; `0` garde la
+  sonde `6881..=6891`).
 - `libtorrent/utp`/`upnp`/`max_connections_download`/`proxy_*`/
   `max_*_rate` → `EngineConfig` → `SessionOptions`/`ListenerOptions`.
 - `libtorrent/utp_rx_buf_size`/`utp_tx_buf_max` (extensions Rust, `0` =

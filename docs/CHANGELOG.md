@@ -35,6 +35,27 @@ en haut.
   loopback) + test API 404 verts ; `clippy` et `fmt` propres ;
   `flutter analyze` sans issue.
 
+## `libtorrent/port` : sonde `port..=port+10` (parité `listen_on` Tribler) (2026-10-06)
+
+- **Constat** : le port fixe introduit juste avant rendait un port
+  déjà occupé **fatal** au démarrage (bind TCP → `Session::new` Err →
+  daemon refuse de démarrer) — collision systématique en mesh loopback
+  (4 nœuds sur 45000) et sur Windows partage silencieux du port
+  (`SO_REUSEADDR` ≈ SO_REUSEPORT).
+- **Sémantique Tribler restaurée** : `listen_on(port, port + 10)` —
+  le port configuré devient la **base d'une sonde de 11 ports**, pas
+  un bind unique. Premier port libre TCP+UDP gagne, `0` éphémère en
+  dernier recours, `warn!` loggé quand le port effectif diffère du
+  configuré.
+- **Défaut** `45000` → sonde `45000..=45010` : reste dans la plage
+  UPnP des box courantes (Freebox `32768..=49151` — les éphémères
+  49k+ échouent en UPnP) ; `port = 0` conserve la sonde historique
+  `6881..=6891`.
+- `announce_port` (port réellement lié) alimente déjà les forwarders
+  UPnP/NAT-PMP — le mapping suit le port choisi automatiquement.
+- **Test** : `to_core_config_sonde_decale_si_port_occupe` (bind
+  23177 pris → port effectif dans `23178..=23187`).
+
 ## `libtorrent/port` par défaut fixe à 45000 (2026-10-06)
 
 - **Avant** : `0` → sonde de la plage `6881..=6891` à chaque démarrage
