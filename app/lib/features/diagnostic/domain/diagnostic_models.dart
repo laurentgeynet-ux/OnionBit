@@ -254,6 +254,109 @@ class RelayBandwidth {
   final int servedBytes;
 }
 
+/// Une connexion BitTorrent vers un pair (entrée `bittorrent[]` de
+/// `GET /api/connections`, extension Rust).
+class BtPeerConn {
+  const BtPeerConn({
+    required this.infohash,
+    required this.connKind,
+    required this.state,
+    required this.incoming,
+    required this.client,
+    required this.bytesUp,
+    required this.bytesDown,
+  });
+
+  final String infohash;
+
+  /// Transport rqbit (`tcp`, `uTP`, `socks` ; `''` si inconnu).
+  final String connKind;
+
+  /// État interne rqbit (`live`, `connecting`, …).
+  final String state;
+
+  /// Connexion initiée par le pair distant.
+  final bool incoming;
+
+  /// Nom du client distant (peer-id décodé, `''` si inconnu).
+  final String client;
+  final int bytesUp;
+  final int bytesDown;
+}
+
+/// Adresse distante agrégée (`GET /api/connections`) : un `ip:port`
+/// avec tous les rôles/protocoles observés par le daemon.
+class ConnectionInfo {
+  const ConnectionInfo({
+    required this.ip,
+    required this.port,
+    required this.transports,
+    required this.ipv8,
+    required this.mid,
+    required this.overlays,
+    required this.dht,
+    required this.tunnelFlags,
+    required this.exitCircuits,
+    required this.bittorrent,
+  });
+
+  final String ip;
+  final int port;
+
+  /// Transports dérivés (`udp`, `tcp`).
+  final List<String> transports;
+
+  /// Pair vérifié du `Network` IPv8.
+  final bool ipv8;
+
+  /// `mid` hex du pair IPv8 (`''` sinon).
+  final String mid;
+
+  /// Noms d'overlays dont le pair est membre.
+  final List<String> overlays;
+
+  /// Présent dans la table de routage DHT.
+  final bool dht;
+
+  /// `PEER_FLAG_*` annoncés (pair tunnel).
+  final List<int> tunnelFlags;
+
+  /// `circuit_id` des sockets de sortie ayant contacté cette cible WAN.
+  final List<int> exitCircuits;
+
+  /// Connexions BitTorrent vers ce pair.
+  final List<BtPeerConn> bittorrent;
+}
+
+/// Socket d'écoute locale (`listeners[]` de `GET /api/connections`).
+class ListenerInfo {
+  const ListenerInfo({
+    required this.protocol,
+    required this.address,
+    this.circuitId,
+    this.hops,
+  });
+
+  /// `ipv8-udp`, `ipv8-udp-v6`, `tunnel-exit-udp`, `socks5`,
+  /// `bittorrent`.
+  final String protocol;
+  final String address;
+
+  /// Positionné pour `tunnel-exit-udp`.
+  final int? circuitId;
+
+  /// Positionné pour `socks5` (nombre de sauts de la lane).
+  final int? hops;
+}
+
+/// Corps complet de `GET /api/connections`.
+class ConnectionsReport {
+  const ConnectionsReport({required this.connections, required this.listeners});
+
+  final List<ConnectionInfo> connections;
+  final List<ListenerInfo> listeners;
+}
+
 /// Échantillon de débit d'un speed test de circuit (MiB/s,
 /// `speed: {"up", "down"}` pyipv8).
 class SpeedSample {

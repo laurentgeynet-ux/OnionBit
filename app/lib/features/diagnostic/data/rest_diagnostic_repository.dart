@@ -47,8 +47,7 @@ class RestDiagnosticRepository implements DiagnosticRepository {
         exitFlags: (c['exit_flags'] as num?)?.toInt() ?? 0,
         infoHash: c['info_hash'] as String?,
         verifiedHops: [
-          for (final h in (c['verified_hops'] as List?) ?? const [])
-            '$h',
+          for (final h in (c['verified_hops'] as List?) ?? const []) '$h',
         ],
         unverifiedHop: '${c['unverified_hop'] ?? ''}',
         creationTime: (c['creation_time'] as num?)?.toInt() ?? 0,
@@ -137,8 +136,7 @@ class RestDiagnosticRepository implements DiagnosticRepository {
   @override
   Future<OnionbitStats> onionbitStats() async {
     final resp = await _api.get('/statistics/tribler') as Map<String, dynamic>;
-    final s =
-        resp['tribler_statistics'] as Map<String, dynamic>? ?? const {};
+    final s = resp['tribler_statistics'] as Map<String, dynamic>? ?? const {};
     final lt = s['libtorrent'] as Map<String, dynamic>?;
     return OnionbitStats(
       dbSize: (s['db_size'] as num?)?.toInt() ?? 0,
@@ -182,6 +180,59 @@ class RestDiagnosticRepository implements DiagnosticRepository {
     );
   }
 
+  @override
+  Future<ConnectionsReport> connectionsReport() async {
+    final resp = await _api.get('/connections') as Map<String, dynamic>;
+    return ConnectionsReport(
+      connections: [
+        for (final c in _list(resp, 'connections'))
+          ConnectionInfo(
+            ip: '${c['ip'] ?? ''}',
+            port: (c['port'] as num?)?.toInt() ?? 0,
+            transports: [
+              for (final t in (c['transports'] as List?) ?? const []) '$t',
+            ],
+            ipv8: c['ipv8'] == true,
+            mid: '${c['mid'] ?? ''}',
+            overlays: [
+              for (final o in (c['overlays'] as List?) ?? const []) '$o',
+            ],
+            dht: c['dht'] == true,
+            tunnelFlags: [
+              for (final f in (c['tunnel_flags'] as List?) ?? const [])
+                (f as num?)?.toInt() ?? 0,
+            ],
+            exitCircuits: [
+              for (final cid in (c['exit_circuits'] as List?) ?? const [])
+                (cid as num?)?.toInt() ?? 0,
+            ],
+            bittorrent: [
+              for (final b in (c['bittorrent'] as List?) ?? const [])
+                if (b is Map<String, dynamic>)
+                  BtPeerConn(
+                    infohash: '${b['infohash'] ?? ''}',
+                    connKind: '${b['conn_kind'] ?? ''}',
+                    state: '${b['state'] ?? ''}',
+                    incoming: b['incoming'] == true,
+                    client: '${b['client'] ?? ''}',
+                    bytesUp: (b['bytes_up'] as num?)?.toInt() ?? 0,
+                    bytesDown: (b['bytes_down'] as num?)?.toInt() ?? 0,
+                  ),
+            ],
+          ),
+      ],
+      listeners: [
+        for (final l in _list(resp, 'listeners'))
+          ListenerInfo(
+            protocol: '${l['protocol'] ?? ''}',
+            address: '${l['address'] ?? ''}',
+            circuitId: (l['circuit_id'] as num?)?.toInt(),
+            hops: (l['hops'] as num?)?.toInt(),
+          ),
+      ],
+    );
+  }
+
   /// Parse le flux `speed: {"up":…,"down":…}` (MiB/s) du speed test
   /// pyipv8 — une ligne par échantillon ; les lignes illisibles sont
   /// ignorées.
@@ -214,15 +265,13 @@ class RestDiagnosticRepository implements DiagnosticRepository {
   );
 
   @override
-  Stream<SpeedSample> speedTestNewCircuit(
-    int hops, {
-    int testTimeMs = 5000,
-  }) => _speedSamples(
-    _api.getStreamedLines(
-      '/ipv8/tunnel/circuits/test',
-      query: {'goal_hops': '$hops', 'test_time_ms': '$testTimeMs'},
-    ),
-  );
+  Stream<SpeedSample> speedTestNewCircuit(int hops, {int testTimeMs = 5000}) =>
+      _speedSamples(
+        _api.getStreamedLines(
+          '/ipv8/tunnel/circuits/test',
+          query: {'goal_hops': '$hops', 'test_time_ms': '$testTimeMs'},
+        ),
+      );
 
   @override
   Future<String> logs({int maxLines = 200}) =>
@@ -230,8 +279,7 @@ class RestDiagnosticRepository implements DiagnosticRepository {
 
   @override
   Future<bool> debugEnabled() async {
-    final resp =
-        await _api.get('/ipv8/asyncio/debug') as Map<String, dynamic>;
+    final resp = await _api.get('/ipv8/asyncio/debug') as Map<String, dynamic>;
     return resp['enable'] == true;
   }
 

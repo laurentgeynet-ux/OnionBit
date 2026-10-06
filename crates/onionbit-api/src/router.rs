@@ -115,6 +115,9 @@ fn api_router(state: AppState) -> Router<AppState> {
         .route("/shutdown", put(shutdown::shutdown))
         .route("/statistics/tribler", get(statistics::get_onionbit_stats))
         .route("/statistics/ipv8", get(statistics::get_ipv8_stats))
+        // Agregat endpoints distants — extension Rust de diagnostic
+        // (sans equivalent `tribler.core.restapi`).
+        .route("/connections", get(connections::get_connections))
         .route(
             "/statistics/dirspace",
             get(statistics::get_dirspace_stats).put(statistics::put_dirspace_stats),

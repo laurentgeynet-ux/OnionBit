@@ -3,6 +3,33 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Onglet Diagnostic « Connexions » — agrégat ip:port (2026-10-06)
+
+- **Besoin** : dans l'onglet Diagnostic, voir pour chaque adresse
+  distante `ip:port` les protocoles/transports impliqués (UDP IPv8,
+  TCP, uTP, SOCKS, DHT, tunnel, sorties).
+- **API — extension Rust** `GET /api/connections` (sans équivalent
+  `tribler.core.restapi` ; le debug GUI Python agrège côté client) :
+  `{connections, listeners}` où chaque `connections[]` fusionne les
+  observations par `ip:port` — pair IPv8 vérifié (`ipv8`, `mid`),
+  memberships d'overlays, présence en table DHT, `tunnel_flags`,
+  `exit_circuits` (conntrack des sockets de sortie, nouvel accessor
+  `TunnelCommunity::exit_sources`), connexions BitTorrent par torrent
+  (`conn_kind` rqbit `tcp`/`uTP`/`socks`, `state`, `incoming`,
+  `client`, octets) ; `transports` dérivé (`udp` pour tout trafic
+  IPv8/tunnel/uTP, `tcp` sinon). `listeners[]` = sockets d'écoute
+  locales (`ipv8-udp`, `ipv8-udp-v6`, `bittorrent`, `tunnel-exit-udp`
+  avec `circuit_id`, `socks5` des lanes avec `hops`).
+- **UI** : onglet « Connexions » (12ᵉ onglet) — section « Écoute
+  locale » puis tuiles extensibles par endpoint : pastilles de
+  transport/protocole, mid IPv8 tronqué, overlays, flags tunnel,
+  circuits de sortie, détail BitTorrent par infohash. Poll sur la
+  cadence diagnostic, états loading/erreur/vide, clés l10n fr/en.
+- **Tests** : `connections_agregat_offline` (shape du contrat en
+  session sans stack) — 62/62 tests API verts ; clippy/fmt propres ;
+  `flutter analyze` + 19 tests Flutter verts. Documenté dans
+  `docs/reference_tribler/api_rest_mapping.md`.
+
 ## Santé gossip dans les résultats distants, sans persistance (2026-10-06)
 
 - **Symptôme** : tous les résultats de recherche distants affichaient

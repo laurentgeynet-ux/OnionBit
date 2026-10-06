@@ -27,6 +27,10 @@ abstract interface class DiagnosticRepository {
   /// (`GET /api/statistics/ipv8`).
   Future<Ipv8Traffic> ipv8Traffic();
 
+  /// Endpoints distants agrégés par `ip:port` + sockets d'écoute
+  /// locales (`GET /api/connections`, extension Rust de diagnostic).
+  Future<ConnectionsReport> connectionsReport();
+
   /// Test de vitesse sur un circuit existant (`READY` + flag
   /// `PEER_FLAG_SPEED_TEST`) — flux `speed:` pyipv8 en MiB/s.
   Stream<SpeedSample> speedTestCircuit(int circuitId, {int testTimeMs = 5000});

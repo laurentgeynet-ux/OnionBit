@@ -49,6 +49,7 @@ Convention générale :
 | `GET /api/statistics/tribler` | idem | ✅ | `db_size`, `num_torrents`, `num_channels`, `peers`, `libtorrent.sessions` (lanes anonymes) |
 | `GET /api/statistics/ipv8` | idem | ✅ | `total_up`/`total_down` de l'endpoint UDP |
 | `PUT /api/statistics/dirspace` (`{"directory"}`) | `PUT` | ✅ | `{"statistics": {total, used, free}}` du premier ancêtre existant du chemin (404 "No stats for directory!"), fidèle à `get_dirspace_stats` Python ; `GET ?path=` conservé en confort (même réponse) |
+| `GET /api/connections` | — | ✅ | **Extension Rust** de diagnostic (le debug GUI Python agrège côté client) : `{connections: [{ip, port, transports[], ipv8, mid, overlays[], dht, tunnel_flags[], exit_circuits[], bittorrent: [{infohash, conn_kind, state, incoming, client, bytes_up, bytes_down}]}], listeners: [{protocol, address, circuit_id?, hops?}]}` — agrégat par `ip:port` des rôles IPv8/DHT/tunnel/sortie/BitTorrent (`conn_kind` rqbit `tcp`/`uTP`/`socks`) + sockets d'écoute locales (`ipv8-udp`, `ipv8-udp-v6`, `bittorrent`, `tunnel-exit-udp`, `socks5`) ; `{"connections": [], "listeners": []}` en session sans stack |
 | **Metadata** (`database_endpoint.py`) | | | |
 | `GET /api/metadata/torrents/{ih}/health` | idem | ✅ | `refresh=1` déclenche un scrape immédiat via le torrent checker |
 | `GET /api/metadata/torrents/popular` | idem | ✅ | Tri par seeders desc depuis `channel_node`+`torrent_state` |

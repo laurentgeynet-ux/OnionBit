@@ -937,6 +937,20 @@ impl TunnelCommunity {
             .collect()
     }
 
+    /// Sources WAN contactees par chaque socket de sortie (table
+    /// conntrack `contacted_sources`) : `(circuit_id, adresses)` —
+    /// pour l'agregat `GET /api/connections` (extension Rust de
+    /// diagnostic, sans equivalent pyipv8).
+    pub fn exit_sources(&self) -> Vec<(u32, Vec<SocketAddr>)> {
+        self.inner
+            .lock()
+            .unwrap()
+            .exit_sockets
+            .iter()
+            .map(|(cid, e)| (*cid, e.contacted_sources.keys().copied().collect()))
+            .collect()
+    }
+
     /// Surface de test : adresse locale de la socket UDP de sortie
     /// d'un circuit (pour injecter des datagrammes "exterieurs" dans
     /// les bancs — reponses et bruit non sollicite).

@@ -26,71 +26,57 @@ final diagnosticRepositoryProvider = Provider<DiagnosticRepository>(
   (ref) => RestDiagnosticRepository(ref.watch(apiClientProvider)),
 );
 
-final overlaysProvider = FutureProvider.autoDispose<List<OverlayInfo>>(
-  (ref) {
-    ref.watch(tickProvider(_kDiagnosticPoll));
-    return ref.watch(diagnosticRepositoryProvider).overlays();
-  },
-);
+final overlaysProvider = FutureProvider.autoDispose<List<OverlayInfo>>((ref) {
+  ref.watch(tickProvider(_kDiagnosticPoll));
+  return ref.watch(diagnosticRepositoryProvider).overlays();
+});
 
-final tunnelCircuitsProvider = FutureProvider.autoDispose<List<CircuitInfo>>(
-  (ref) {
-    ref.watch(tickProvider(_kDiagnosticPoll));
-    return ref.watch(diagnosticRepositoryProvider).circuits();
-  },
-);
+final tunnelCircuitsProvider = FutureProvider.autoDispose<List<CircuitInfo>>((
+  ref,
+) {
+  ref.watch(tickProvider(_kDiagnosticPoll));
+  return ref.watch(diagnosticRepositoryProvider).circuits();
+});
 
-final tunnelRelaysProvider = FutureProvider.autoDispose<List<RelayInfo>>(
-  (ref) {
-    ref.watch(tickProvider(_kDiagnosticPoll));
-    return ref.watch(diagnosticRepositoryProvider).relays();
-  },
-);
+final tunnelRelaysProvider = FutureProvider.autoDispose<List<RelayInfo>>((ref) {
+  ref.watch(tickProvider(_kDiagnosticPoll));
+  return ref.watch(diagnosticRepositoryProvider).relays();
+});
 
-final tunnelExitsProvider = FutureProvider.autoDispose<List<ExitInfo>>(
-  (ref) {
-    ref.watch(tickProvider(_kDiagnosticPoll));
-    return ref.watch(diagnosticRepositoryProvider).exits();
-  },
-);
+final tunnelExitsProvider = FutureProvider.autoDispose<List<ExitInfo>>((ref) {
+  ref.watch(tickProvider(_kDiagnosticPoll));
+  return ref.watch(diagnosticRepositoryProvider).exits();
+});
 
-final tunnelSwarmsProvider = FutureProvider.autoDispose<List<SwarmInfo>>(
-  (ref) {
-    ref.watch(tickProvider(_kDiagnosticPoll));
-    return ref.watch(diagnosticRepositoryProvider).swarms();
-  },
-);
+final tunnelSwarmsProvider = FutureProvider.autoDispose<List<SwarmInfo>>((ref) {
+  ref.watch(tickProvider(_kDiagnosticPoll));
+  return ref.watch(diagnosticRepositoryProvider).swarms();
+});
 
-final tunnelPeersProvider = FutureProvider.autoDispose<List<TunnelPeerInfo>>(
-  (ref) {
-    ref.watch(tickProvider(_kDiagnosticPoll));
-    return ref.watch(diagnosticRepositoryProvider).tunnelPeers();
-  },
-);
+final tunnelPeersProvider = FutureProvider.autoDispose<List<TunnelPeerInfo>>((
+  ref,
+) {
+  ref.watch(tickProvider(_kDiagnosticPoll));
+  return ref.watch(diagnosticRepositoryProvider).tunnelPeers();
+});
 
 /// Points d'introduction stockés en DHT (swarms cachés).
-final dhtPeersProvider = FutureProvider.autoDispose<List<SwarmPeers>>(
-  (ref) {
-    ref.watch(tickProvider(_kDiagnosticPoll));
-    return ref.watch(diagnosticRepositoryProvider).dhtPeers();
-  },
-);
+final dhtPeersProvider = FutureProvider.autoDispose<List<SwarmPeers>>((ref) {
+  ref.watch(tickProvider(_kDiagnosticPoll));
+  return ref.watch(diagnosticRepositoryProvider).dhtPeers();
+});
 
 /// Points d'introduction du store PEX.
-final pexPeersProvider = FutureProvider.autoDispose<List<SwarmPeers>>(
-  (ref) {
-    ref.watch(tickProvider(_kDiagnosticPoll));
-    return ref.watch(diagnosticRepositoryProvider).pexPeers();
-  },
-);
+final pexPeersProvider = FutureProvider.autoDispose<List<SwarmPeers>>((ref) {
+  ref.watch(tickProvider(_kDiagnosticPoll));
+  return ref.watch(diagnosticRepositoryProvider).pexPeers();
+});
 
 /// Statistiques générales du daemon (`/api/statistics/tribler`).
-final onionbitStatsProvider = FutureProvider.autoDispose<OnionbitStats>(
-  (ref) {
-    ref.watch(tickProvider(const Duration(seconds: 5)));
-    return ref.watch(diagnosticRepositoryProvider).onionbitStats();
-  },
-);
+final onionbitStatsProvider = FutureProvider.autoDispose<OnionbitStats>((ref) {
+  ref.watch(tickProvider(const Duration(seconds: 5)));
+  return ref.watch(diagnosticRepositoryProvider).onionbitStats();
+});
 
 /// Compteurs d'octets de l'endpoint overlay
 /// (`/api/statistics/ipv8` — `total_up`/`total_down`) + débits
@@ -98,19 +84,25 @@ final onionbitStatsProvider = FutureProvider.autoDispose<OnionbitStats>(
 /// côté Rust — plus rien à dériver côté client). Sondé à
 /// `_kTrafficPoll` (2 s) : la carte « Trafic tunnel », l'onglet
 /// Statistiques et la barre d'état partagent la requête.
-final ipv8TrafficProvider = FutureProvider.autoDispose<Ipv8Traffic>(
-  (ref) {
-    ref.watch(tickProvider(_kTrafficPoll));
-    return ref.watch(diagnosticRepositoryProvider).ipv8Traffic();
-  },
-);
+final ipv8TrafficProvider = FutureProvider.autoDispose<Ipv8Traffic>((ref) {
+  ref.watch(tickProvider(_kTrafficPoll));
+  return ref.watch(diagnosticRepositoryProvider).ipv8Traffic();
+});
 
-final daemonLogsProvider = FutureProvider.autoDispose<String>(
-  (ref) {
-    ref.watch(tickProvider(_kDiagnosticPoll));
-    return ref.watch(diagnosticRepositoryProvider).logs();
-  },
-);
+/// Endpoints distants agrégés par `ip:port` + sockets d'écoute
+/// locales (`GET /api/connections`, extension Rust) — onglet
+/// « Connexions ».
+final connectionsProvider = FutureProvider.autoDispose<ConnectionsReport>((
+  ref,
+) {
+  ref.watch(tickProvider(_kDiagnosticPoll));
+  return ref.watch(diagnosticRepositoryProvider).connectionsReport();
+});
+
+final daemonLogsProvider = FutureProvider.autoDispose<String>((ref) {
+  ref.watch(tickProvider(_kDiagnosticPoll));
+  return ref.watch(diagnosticRepositoryProvider).logs();
+});
 
 /// Journal UI (`logs/ui.log` — connexion daemon, bascules SSE,
 /// ajouts de téléchargement, recherches distantes…).

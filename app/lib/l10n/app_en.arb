@@ -270,6 +270,7 @@
   "tabRelays": "Relays",
   "tabExits": "Exits",
   "tabSwarms": "Swarms",
+  "tabConnections": "Connections",
   "tabPeers": "Peers",
   "tabDhtPeers": "DHT peers",
   "tabPexPeers": "PEX peers",
@@ -336,6 +337,25 @@
   },
   "emptyDhtIntro": "No DHT introduction point",
   "emptyPexIntro": "No PEX introduction point",
+  "emptyConnections": "No known connection",
+  "emptyConnectionsMsg": "IPv8 peers, DHT nodes, exit targets and BitTorrent peers appear here.",
+  "listenersSection": "Local listeners",
+  "listenerExitUdp": "Exit UDP · circuit #{id}",
+  "@listenerExitUdp": {
+    "placeholders": { "id": { "type": "int" } }
+  },
+  "listenerSocks5": "SOCKS5 · {hops} hop(s)",
+  "@listenerSocks5": {
+    "placeholders": { "hops": { "type": "int" } }
+  },
+  "connExitTarget": "exit #{id}",
+  "@connExitTarget": {
+    "placeholders": { "id": { "type": "int" } }
+  },
+  "connMid": "mid {mid}",
+  "@connMid": {
+    "placeholders": { "mid": { "type": "String" } }
+  },
 
   "statDaemonVersion": "Daemon version",
   "statDbSize": "Database size",

@@ -26,7 +26,7 @@ class DiagnosticPage extends StatelessWidget {
   Widget build(BuildContext context) {
     final l10n = context.l10n;
     return DefaultTabController(
-      length: 11,
+      length: 12,
       child: Column(
         children: [
           TabBar(
@@ -35,6 +35,7 @@ class DiagnosticPage extends StatelessWidget {
             tabs: [
               Tab(text: l10n.tabOverview),
               Tab(text: l10n.tabStats),
+              Tab(text: l10n.tabConnections),
               Tab(text: l10n.tabOverlays),
               Tab(text: l10n.tabCircuits),
               Tab(text: l10n.tabRelays),
@@ -51,6 +52,7 @@ class DiagnosticPage extends StatelessWidget {
               children: [
                 _OverviewTab(),
                 _StatsTab(),
+                _ConnectionsTab(),
                 _OverlaysTab(),
                 _CircuitsTab(),
                 _RelaysTab(),
@@ -123,6 +125,187 @@ class _TabScaffold<T> extends StatelessWidget {
                   ),
           ),
         ),
+      ],
+    );
+  }
+}
+
+/// Onglet « Connexions » — vue agrégée `GET /api/connections`
+/// (extension Rust) : chaque adresse distante `ip:port` avec les
+/// rôles observés (IPv8/UDP, DHT, tunnel, sorties, BitTorrent
+/// TCP/uTP/SOCKS) + les sockets d'écoute locales.
+class _ConnectionsTab extends ConsumerWidget {
+  const _ConnectionsTab();
+
+  /// Pastille de rôle (transport/protocole) dans le sous-titre.
+  Widget _chip(BuildContext context, String label, {IconData? icon}) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (icon != null) ...[
+            Icon(icon, size: 11, color: scheme.outline),
+            const SizedBox(width: 2),
+          ],
+          Text(label, style: Theme.of(context).textTheme.labelSmall),
+        ],
+      ),
+    );
+  }
+
+  String _listenerLabel(AppLocalizations l10n, ListenerInfo l) =>
+      switch (l.protocol) {
+        'ipv8-udp' => 'IPv8 UDP',
+        'ipv8-udp-v6' => 'IPv8 UDPv6',
+        'bittorrent' => 'BitTorrent TCP/uTP',
+        'tunnel-exit-udp' => l10n.listenerExitUdp(l.circuitId ?? 0),
+        'socks5' => l10n.listenerSocks5(l.hops ?? 0),
+        _ => l.protocol,
+      };
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final report = ref.watch(connectionsProvider);
+    final l10n = context.l10n;
+    return Column(
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.end,
+          children: [
+            IconButton(
+              tooltip: l10n.refresh,
+              icon: const Icon(Icons.refresh, size: 18),
+              onPressed: () => ref.invalidate(connectionsProvider),
+            ),
+          ],
+        ),
+        Expanded(
+          child: report.when(
+            loading: () => const Center(child: CircularProgressIndicator()),
+            error: (e, _) => ErrorState(
+              error: e,
+              onRetry: () => ref.invalidate(connectionsProvider),
+            ),
+            data: (r) => r.connections.isEmpty && r.listeners.isEmpty
+                ? EmptyState(
+                    icon: Icons.lan_outlined,
+                    title: l10n.emptyConnections,
+                    message: l10n.emptyConnectionsMsg,
+                  )
+                : ListView(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: AppSpacing.md,
+                    ),
+                    children: [
+                      if (r.listeners.isNotEmpty) ...[
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: AppSpacing.xs),
+                          child: Text(
+                            l10n.listenersSection,
+                            style: Theme.of(context).textTheme.labelLarge
+                                ?.copyWith(
+                                  color: Theme.of(context).colorScheme.primary,
+                                ),
+                          ),
+                        ),
+                        for (final l in r.listeners)
+                          ListTile(
+                            dense: true,
+                            leading: const Icon(Icons.hearing, size: 18),
+                            title: Text(
+                              l.address,
+                              style: const TextStyle(
+                                fontFamily: 'monospace',
+                                fontSize: 12,
+                              ),
+                            ),
+                            trailing: Text(_listenerLabel(l10n, l)),
+                          ),
+                        const Divider(),
+                      ],
+                      for (final c in r.connections) _connTile(context, c),
+                    ],
+                  ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _connTile(BuildContext context, ConnectionInfo c) {
+    final l10n = context.l10n;
+    final chips = <Widget>[
+      for (final t in c.transports)
+        _chip(context, t.toUpperCase(), icon: Icons.swap_vert),
+      if (c.ipv8) _chip(context, 'IPv8'),
+      if (c.dht) _chip(context, 'DHT'),
+      for (final f in c.tunnelFlags) _chip(context, _peerFlagLabel(l10n, f)),
+      for (final cid in c.exitCircuits)
+        _chip(context, l10n.connExitTarget(cid)),
+    ];
+    return ExpansionTile(
+      dense: true,
+      leading: Icon(
+        c.bittorrent.isNotEmpty
+            ? Icons.download_done
+            : c.ipv8
+            ? Icons.hub_outlined
+            : Icons.public,
+        size: 20,
+      ),
+      title: Text(
+        '${c.ip}:${c.port}',
+        style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
+      ),
+      subtitle: chips.isEmpty
+          ? null
+          : Wrap(spacing: AppSpacing.xs, runSpacing: 2, children: chips),
+      children: [
+        for (final b in c.bittorrent)
+          ListTile(
+            dense: true,
+            leading: Icon(
+              b.incoming ? Icons.south_west : Icons.north_east,
+              size: 16,
+            ),
+            title: Text(
+              'BitTorrent ${b.connKind.toUpperCase()} · ${b.state}'
+              '${b.client.isNotEmpty ? ' · ${b.client}' : ''}',
+            ),
+            subtitle: Text(
+              b.infohash.length > 16
+                  ? '${b.infohash.substring(0, 16)}…'
+                  : b.infohash,
+              style: const TextStyle(fontFamily: 'monospace', fontSize: 11),
+            ),
+            trailing: Text(
+              '↑${context.fmtBytes(b.bytesUp)} '
+              '↓${context.fmtBytes(b.bytesDown)}',
+            ),
+          ),
+        if (c.mid.isNotEmpty)
+          ListTile(
+            dense: true,
+            leading: const Icon(Icons.key_outlined, size: 16),
+            title: Text(
+              l10n.connMid(
+                c.mid.length > 16 ? '${c.mid.substring(0, 16)}…' : c.mid,
+              ),
+              style: const TextStyle(fontFamily: 'monospace', fontSize: 11),
+            ),
+          ),
+        if (c.overlays.isNotEmpty)
+          ListTile(
+            dense: true,
+            leading: const Icon(Icons.hub_outlined, size: 16),
+            title: Text(c.overlays.join(' · ')),
+          ),
       ],
     );
   }
@@ -246,9 +429,7 @@ class _RelaysTab extends ConsumerWidget {
         dense: true,
         title: Text('${r.circuitIn} → ${r.circuitOut}'),
         subtitle: Text(
-          r.rendezvous
-              ? context.l10n.relayRendezvous
-              : context.l10n.relay,
+          r.rendezvous ? context.l10n.relayRendezvous : context.l10n.relay,
         ),
         trailing: Text(
           '↑${context.fmtBytes(r.bytesUp)} '
@@ -273,9 +454,7 @@ class _ExitsTab extends ConsumerWidget {
         leading: Icon(e.enabled ? Icons.exit_to_app : Icons.block, size: 20),
         title: Text(context.l10n.exitCircuit(e.circuitId)),
         trailing: Text(
-          e.enabled
-              ? context.l10n.exitActive
-              : context.l10n.exitInactive,
+          e.enabled ? context.l10n.exitActive : context.l10n.exitInactive,
         ),
       ),
     );
@@ -335,9 +514,7 @@ class _PeersTab extends ConsumerWidget {
         trailing: Text(
           p.flags.isEmpty
               ? context.l10n.noFlags
-              : p.flags
-                    .map((f) => _peerFlagLabel(context.l10n, f))
-                    .join(' · '),
+              : p.flags.map((f) => _peerFlagLabel(context.l10n, f)).join(' · '),
         ),
       ),
     );
@@ -466,9 +643,7 @@ class _StatsTab extends ConsumerWidget {
         (lt?['download_defaults'] as Map<String, dynamic>?)?['saveas']
             as String?;
     final disk = ref.watch(
-      dirSpaceProvider(
-        saveas == null || saveas.isEmpty ? null : saveas,
-      ),
+      dirSpaceProvider(saveas == null || saveas.isEmpty ? null : saveas),
     );
 
     // Circuits DATA prêts, groupés par lane (« ×2 : 3 »).
@@ -478,10 +653,9 @@ class _StatsTab extends ConsumerWidget {
     }
     final dataReadyText = dataReady.isEmpty
         ? l10n.statNone
-        : (dataReady.entries.toList()
-                ..sort((a, b) => a.key.compareTo(b.key)))
-            .map((e) => '×${e.key} : ${e.value}')
-            .join(' · ');
+        : (dataReady.entries.toList()..sort((a, b) => a.key.compareTo(b.key)))
+              .map((e) => '×${e.key} : ${e.value}')
+              .join(' · ');
 
     final activeExits = exits.where((e) => e.enabled).length;
 
@@ -522,11 +696,7 @@ class _StatsTab extends ConsumerWidget {
           ),
         ),
         _section(context, l10n.statSectionNetwork),
-        _stat(
-          context,
-          l10n.statIpv8Peers,
-          s.peers < 0 ? '—' : '${s.peers}',
-        ),
+        _stat(context, l10n.statIpv8Peers, s.peers < 0 ? '—' : '${s.peers}'),
         _stat(
           context,
           l10n.statIpv8Traffic,
@@ -558,9 +728,7 @@ class _StatsTab extends ConsumerWidget {
           l10n.statLanes,
           s.laneHops.isEmpty
               ? l10n.statNone
-              : ([...s.laneHops]..sort())
-                  .map((h) => '×$h')
-                  .join(' · '),
+              : ([...s.laneHops]..sort()).map((h) => '×$h').join(' · '),
         ),
         _stat(context, l10n.statDataCircuits, dataReadyText),
         _stat(context, l10n.statExitsActive, '$activeExits'),
@@ -603,10 +771,7 @@ class _StatsTab extends ConsumerWidget {
   Widget _section(BuildContext context, String title) {
     final theme = Theme.of(context);
     return Padding(
-      padding: const EdgeInsets.only(
-        top: AppSpacing.md,
-        bottom: AppSpacing.xs,
-      ),
+      padding: const EdgeInsets.only(top: AppSpacing.md, bottom: AppSpacing.xs),
       child: Text(
         title,
         style: theme.textTheme.labelLarge?.copyWith(

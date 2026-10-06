@@ -3413,3 +3413,50 @@ async fn web_ui_injection_cle_desactivable() {
 
     session.stop().await;
 }
+
+// ============================================================================
+// Extension Rust — GET /api/connections (agregat diagnostic)
+// ============================================================================
+
+#[tokio::test]
+async fn connections_agregat_offline() {
+    let srv = spawn_server().await;
+    let resp = srv
+        .client
+        .get(srv.url("/api/connections"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    // Session offline : ni stack IPv8 ni ecoute BitTorrent — les deux
+    // collections sont presentes mais vides.
+    assert_eq!(body["connections"], serde_json::json!([]));
+    assert_eq!(body["listeners"], serde_json::json!([]));
+
+    // Chaque entree distante exposerait les cles du contrat.
+    let resp = srv
+        .client
+        .get(srv.url("/api/connections"))
+        .send()
+        .await
+        .unwrap();
+    let body: serde_json::Value = resp.json().await.unwrap();
+    for c in body["connections"].as_array().unwrap() {
+        for k in [
+            "ip",
+            "port",
+            "transports",
+            "ipv8",
+            "mid",
+            "overlays",
+            "dht",
+            "tunnel_flags",
+            "exit_circuits",
+            "bittorrent",
+        ] {
+            assert!(c.get(k).is_some(), "cle {k} manquante");
+        }
+    }
+    srv.session.stop().await;
+}
