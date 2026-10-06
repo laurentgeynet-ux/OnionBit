@@ -3,6 +3,30 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Santé gossip dans les résultats distants, sans persistance (2026-10-06)
+
+- **Symptôme** : tous les résultats de recherche distants affichaient
+  `0` seeders/leechers là où Tribler montre la santé — la colonne
+  « Health » restait grise.
+- **Cause** : depuis la bascule « résultats transitoires » (`922a6f0`),
+  `process_health` ne retenait que l'infohash (`HashSet`) et jetait
+  `seeders`/`leechers`/`last_check` ; `simple_dict_mem` hardcodait
+  `0/0/0` ; `/api/metadata/torrents/{ih}/health` ne lisait que
+  `torrent_state` (downloads uniquement depuis v14).
+- **Fix (zéro écriture DB)** : `GossipMemory` — `HashMap` bornée
+  (200k entrées, éviction >24 h puis plus anciennes) gardant la
+  dernière santé gossip par infohash, alimentant
+  `simple_dict_mem` (parité `to_simple_dict`) et un repli de
+  `get_torrent_health` via `ContentProvider::known_health`.
+- **SSE** : `torrent_health_updated` émis par `process_health` borné
+  aux infohashes déjà poussés à l'UI (`displayed`, cap 50k) — pas de
+  flood d'events pour le torrents invisibles ; l'app route le topic
+  vers `healthOverridesProvider` (pastille verte en direct, local et
+  distant). `seen_nodes` borné à 300k.
+- **Tests** : `sante_gossip_remplit_les_resultats_distants`,
+  `health_updated_seulement_pour_les_affiches`, `memoire_gossip_bornee`
+  — 3/3 verts ; clippy/fmt propres ; 61/61 tests API.
+
 ## Banc sécurité : jambe ASan+LSan Linux via CI (2026-10-06)
 
 WSL absent de la machine de banc → `workflow_dispatch` du job

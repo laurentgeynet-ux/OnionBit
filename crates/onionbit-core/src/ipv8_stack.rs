@@ -619,11 +619,67 @@ struct SessionContentProvider {
     /// remplace la dedup persistee `channel::insert` : les resultats
     /// de recherche distants ne sont plus stockes en base, seuls les
     /// nouveaux objets de la session sont notifies a l'UI.
+    /// Borne [`SEEN_NODES_CAP`].
     seen_nodes: Mutex<std::collections::HashSet<(Vec<u8>, i64)>>,
-    /// Infohashes deja vus dans les santes recues — remplace la
-    /// recherche `channel::get_by_infohash` qui decidait quels
-    /// torrents restaient a resoudre par select.
-    seen_health_infohashes: Mutex<std::collections::HashSet<[u8; 20]>>,
+    /// Memoire gossip : santes connues + infohashes affiches.
+    gossip: Mutex<GossipMemory>,
+}
+
+/// Memoire gossip du provider (tout est volatil, jamais persistee).
+///
+/// `healths` remplace l'ancien `seen_health_infohashes` (HashSet) :
+/// les santes gossip (`seeders`/`leechers`/`last_check`) sont gardees
+/// en memoire pour remplir `remote_query_results` et servir de repli
+/// a `/api/metadata/torrents/{ih}/health` — equivalent du `torrent_state`
+/// Python, mais sans ecriture disque. Bornee [`GOSSIP_HEALTH_CAP`].
+///
+/// `displayed` retient les infohashes des entrees deja poussees a
+/// l'UI (`remote_query_results`) : seuls ces torrents meritent un
+/// `TorrentHealthUpdated` quand une sante gossip arrive ensuite —
+/// sinon chaque tick de gossip emettrait des centaines d'events SSE
+/// pour des torrents que personne n'affiche. Borne [`DISPLAYED_CAP`].
+#[derive(Default)]
+struct GossipMemory {
+    /// `infohash -> (seeders, leechers, last_check)` du dernier gossip.
+    healths: std::collections::HashMap<[u8; 20], (u32, u32, u64)>,
+    /// Infohashes des resultats deja notifies a l'UI.
+    displayed: std::collections::HashSet<[u8; 20]>,
+}
+
+/// Borne des santes gossip conservees (~50 octets/entree, 200k ≈ 10 Mio).
+/// Au-dela : eviction des entrees perimees (>24 h), puis des plus
+/// vieilles si encore plein — la dedup de resolution reste exacte tant
+/// que la map n'a jamais atteint la borne.
+const GOSSIP_HEALTH_CAP: usize = 200_000;
+/// Borne des infohashes suivis pour `TorrentHealthUpdated` (les
+/// resultats reels affiches sont tres en deca).
+const DISPLAYED_CAP: usize = 50_000;
+/// Borne de la dedup `seen_nodes` (croissance non bornee en session
+/// longue sinon ; a cette taille un `clear` re-notifie quelques
+/// doublons — sans consequence).
+const SEEN_NODES_CAP: usize = 300_000;
+
+impl GossipMemory {
+    /// Insertion bornee d'une sante gossip — evince a la borne.
+    fn insert_health(&mut self, h: &HealthInfo) -> bool {
+        if self.healths.len() >= GOSSIP_HEALTH_CAP {
+            let cutoff = h.last_check.saturating_sub(86_400);
+            self.healths.retain(|_, v| v.2 >= cutoff);
+            if self.healths.len() >= GOSSIP_HEALTH_CAP {
+                // Pathologique (>200k santes <24 h) : garde la moitie
+                // la plus recente.
+                let mut aged: Vec<([u8; 20], u64)> =
+                    self.healths.iter().map(|(k, v)| (*k, v.2)).collect();
+                aged.sort_unstable_by_key(|(_, lc)| *lc);
+                for (k, _) in aged.into_iter().take(GOSSIP_HEALTH_CAP / 2) {
+                    self.healths.remove(&k);
+                }
+            }
+        }
+        self.healths
+            .insert(h.infohash, (h.seeders, h.leechers, h.last_check))
+            .is_none()
+    }
 }
 
 /// `deprecated_parameters` Python : ces parametres de select sont
@@ -814,14 +870,35 @@ impl ContentProvider for SessionContentProvider {
             // persistance `torrent_state` : la table grossissait de
             // ~178k lignes d'historique de gossip et chaque rafale
             // monopolisait la connexion sqlite plusieurs secondes.
-            let Ok(mut seen) = self.seen_health_infohashes.lock() else {
-                return Vec::new();
-            };
-            let mut unknown = Vec::new();
-            for h in healths {
-                if seen.insert(h.infohash) {
-                    unknown.push(h.infohash);
+            // Les triplets (seeders/leechers/last_check) sont desormais
+            // retenus en memoire (`GossipMemory`) : ils alimentent les
+            // resultats distants et `TorrentHealthUpdated`.
+            let mut updates = Vec::new();
+            let unknown = {
+                let Ok(mut g) = self.gossip.lock() else {
+                    return Vec::new();
+                };
+                let mut unknown = Vec::new();
+                for h in healths {
+                    if g.insert_health(h) {
+                        unknown.push(h.infohash);
+                    }
+                    if g.displayed.contains(&h.infohash) {
+                        updates.push(h.clone());
+                    }
                 }
+                unknown
+            };
+            // `torrent_health_updated` borne aux torrents affiches a
+            // l'UI — le gossip brut produirait des centaines d'events
+            // par tick pour des infohashes que personne ne voit.
+            for h in updates {
+                self.notifier
+                    .notify(crate::notifier::Notification::TorrentHealthUpdated {
+                        infohash: hex::encode(h.infohash),
+                        seeders: h.seeders as i64,
+                        leechers: h.leechers as i64,
+                    });
             }
             unknown
         })
@@ -900,20 +977,39 @@ impl ContentProvider for SessionContentProvider {
             // figeaient la connexion sqlite partagee). Dedup en
             // memoire sur `(public_key, id_)` — meme semantique
             // `NEW_OBJECT` que `channel::insert`.
-            let (results, new_titles) = {
+            let new_rows: Vec<onionbit_db::models::ChannelNodeRow> = {
                 let Ok(mut seen) = self.seen_nodes.lock() else {
+                    return Vec::new();
+                };
+                if seen.len() >= SEEN_NODES_CAP {
+                    seen.clear();
+                }
+                entries
+                    .iter()
+                    .filter_map(|e| {
+                        let row = entry_to_row(e)?;
+                        seen.insert((row.public_key.clone(), row.id_))
+                            .then_some(row)
+                    })
+                    .collect()
+            };
+            let (results, new_titles) = {
+                let Ok(mut g) = self.gossip.lock() else {
                     return Vec::new();
                 };
                 let mut results = Vec::new();
                 let mut new_titles = Vec::new();
-                for e in &entries {
-                    let Some(row) = entry_to_row(e) else {
-                        continue;
-                    };
-                    if !seen.insert((row.public_key.clone(), row.id_)) {
-                        continue;
+                for row in &new_rows {
+                    let ih: Option<[u8; 20]> = row.infohash.as_slice().try_into().ok();
+                    if let Some(ih) = ih {
+                        if g.displayed.len() < DISPLAYED_CAP {
+                            g.displayed.insert(ih);
+                        }
                     }
-                    results.push(simple_dict_mem(&row));
+                    results.push(simple_dict_mem(
+                        row,
+                        ih.and_then(|k| g.healths.get(&k).copied()),
+                    ));
                     if !row.title.is_empty() {
                         new_titles.push((hex::encode(&row.infohash), row.title.clone()));
                     }
@@ -930,6 +1026,20 @@ impl ContentProvider for SessionContentProvider {
                     });
             }
             results
+        })
+    }
+
+    /// Derniere sante gossip connue pour `infohash` — repli memoire de
+    /// `/api/metadata/torrents/{ih}/health` quand `torrent_state` n'a
+    /// pas de ligne (les resultats distants n'y figurent plus).
+    fn known_health(&self, infohash: &[u8; 20]) -> Option<HealthInfo> {
+        let (seeders, leechers, last_check) = *self.gossip.lock().ok()?.healths.get(infohash)?;
+        Some(HealthInfo {
+            infohash: *infohash,
+            seeders,
+            leechers,
+            last_check,
+            tracker: String::new(),
         })
     }
 
@@ -988,19 +1098,23 @@ fn entry_to_row(
 }
 
 /// `TorrentMetadata.to_simple_dict()` Python pour les resultats de
-/// recherche distants : meme forme JSON que `remote_query_results`,
-/// mais sans `channel_node` ni `torrent_state` — les santes sont
-/// inconnues au moment du parse (0/0/0, actualisees par l'UI via
-/// les evenements de sante ulterieurs le cas echeant).
-fn simple_dict_mem(row: &onionbit_db::models::ChannelNodeRow) -> serde_json::Value {
+/// recherche distants : meme forme JSON que `remote_query_results`.
+/// `health` = derniere sante gossip connue (memoire — l'equivalent du
+/// `torrent_state` Python joint par `to_simple_dict`, sans persistance) ;
+/// `None` -> 0/0/0 comme Python pour une entree sans sante connue.
+fn simple_dict_mem(
+    row: &onionbit_db::models::ChannelNodeRow,
+    health: Option<(u32, u32, u64)>,
+) -> serde_json::Value {
+    let (seeders, leechers, last_check) = health.unwrap_or((0, 0, 0));
     serde_json::json!({
         "name": row.title,
         "category": row.tags,
         "infohash": hex::encode(&row.infohash),
         "size": row.size,
-        "num_seeders": 0,
-        "num_leechers": 0,
-        "last_tracker_check": 0,
+        "num_seeders": seeders,
+        "num_leechers": leechers,
+        "last_tracker_check": last_check,
         "created": row.torrent_date,
         "tag_processor_version": row.tag_processor_version,
         "type": row.metadata_type,
@@ -1296,7 +1410,7 @@ impl Ipv8Stack {
                     config.content_healths_cache_secs,
                 ),
                 seen_nodes: Mutex::new(std::collections::HashSet::new()),
-                seen_health_infohashes: Mutex::new(std::collections::HashSet::new()),
+                gossip: Mutex::new(GossipMemory::default()),
             });
             Some(
                 ContentDiscoveryCommunity::new(
@@ -2623,5 +2737,135 @@ fn load_or_create_key(path: &Path) -> Result<LibNaClSecretKey> {
             std::fs::write(path, key.to_bin())?;
             Ok(key)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use onionbit_format::mdblob::*;
+
+    fn test_provider(notifier: crate::notifier::Notifier) -> SessionContentProvider {
+        SessionContentProvider {
+            db: std::sync::Arc::new(Database::memory().unwrap()),
+            notifier,
+            remote_queries_in_progress: std::sync::atomic::AtomicUsize::new(0),
+            max_response_size: 100,
+            max_payload_size: 1300,
+            healths_cache: Mutex::new(HashMap::new()),
+            healths_cache_ttl: std::time::Duration::from_secs(60),
+            seen_nodes: Mutex::new(std::collections::HashSet::new()),
+            gossip: Mutex::new(GossipMemory::default()),
+        }
+    }
+
+    fn torrent_entry(infohash: [u8; 20], pk: [u8; 64], id: u64) -> MetadataEntry {
+        MetadataEntry::RegularTorrent(TorrentMetadataPayload {
+            node: ChannelNodePayload {
+                header: SignedPayloadHeader::new(types::REGULAR_TORRENT, 0, pk)
+                    .with_signature([0xAA; 64]),
+                id,
+                origin_id: 0,
+                timestamp: 1_700_000_000,
+            },
+            infohash,
+            size: 123,
+            torrent_date: 1_700_000_000,
+            title: "un titre".into(),
+            tags: String::new(),
+            tracker_info: String::new(),
+        })
+    }
+
+    fn health(infohash: [u8; 20], seeders: u32, leechers: u32) -> HealthInfo {
+        HealthInfo {
+            infohash,
+            seeders,
+            leechers,
+            last_check: 42,
+            tracker: String::new(),
+        }
+    }
+
+    /// La sante gossip arrive avant la reponse distante : le resultat
+    /// pousse a l'UI doit porter les vrais compteurs (comportement
+    /// `to_simple_dict` Python — jointure `torrent_state`).
+    #[tokio::test]
+    async fn sante_gossip_remplit_les_resultats_distants() {
+        let provider = test_provider(crate::notifier::Notifier::new());
+        let ih = [7u8; 20];
+
+        let unknown = provider.process_health(&[health(ih, 3922, 40)]).await;
+        assert_eq!(unknown, vec![ih]);
+        assert_eq!(provider.known_health(&ih).unwrap().seeders, 3922);
+
+        let raw = encode_entry_presigned(&torrent_entry(ih, [1u8; 64], 1)).unwrap();
+        let results = provider.process_select_response(&lz4_frame(&raw)).await;
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0]["num_seeders"], 3922);
+        assert_eq!(results[0]["num_leechers"], 40);
+        assert_eq!(results[0]["last_tracker_check"], 42);
+    }
+
+    /// `torrent_health_updated` n'est emis que pour les infohashes
+    /// deja pousses a l'UI — pas pour le reste du gossip.
+    #[tokio::test]
+    async fn health_updated_seulement_pour_les_affiches() {
+        let notifier = crate::notifier::Notifier::new();
+        let mut rx = notifier.subscribe();
+        let provider = test_provider(notifier);
+        let shown = [1u8; 20];
+        let hidden = [2u8; 20];
+
+        let raw = encode_entry_presigned(&torrent_entry(shown, [9u8; 64], 1)).unwrap();
+        assert_eq!(
+            provider
+                .process_select_response(&lz4_frame(&raw))
+                .await
+                .len(),
+            1
+        );
+
+        provider
+            .process_health(&[health(shown, 10, 2), health(hidden, 5, 1)])
+            .await;
+
+        let mut shown_updates = 0;
+        while let Ok(n) = rx.try_recv() {
+            if let crate::notifier::Notification::TorrentHealthUpdated {
+                infohash,
+                seeders,
+                leechers,
+            } = n
+            {
+                assert_eq!(infohash, hex::encode(shown));
+                assert_eq!((seeders, leechers), (10, 2));
+                shown_updates += 1;
+            }
+        }
+        assert_eq!(shown_updates, 1);
+    }
+
+    /// Les ensembles memoire restent bornes : au-dela de la borne,
+    /// la map de santes evince plutot que de croitre sans fin.
+    #[tokio::test]
+    async fn memoire_gossip_bornee() {
+        let mut g = GossipMemory::default();
+        for i in 0..GOSSIP_HEALTH_CAP + 10 {
+            let mut ih = [0u8; 20];
+            ih[..8].copy_from_slice(&(i as u64).to_be_bytes());
+            let fresh = now_unix();
+            g.insert_health(&HealthInfo {
+                infohash: ih,
+                seeders: 1,
+                leechers: 0,
+                // last_check croissant : toutes les entrees restent
+                // « fraiches » (<24 h) — l'eviction tombe sur le
+                // chemin pathologique (moitie la plus ancienne).
+                last_check: fresh,
+                tracker: String::new(),
+            });
+        }
+        assert!(g.healths.len() <= GOSSIP_HEALTH_CAP);
     }
 }

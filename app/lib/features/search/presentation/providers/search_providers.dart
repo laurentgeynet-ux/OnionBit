@@ -154,7 +154,24 @@ final healthOverridesProvider =
 class HealthOverridesNotifier
     extends Notifier<Map<String, ({int seeders, int leechers})>> {
   @override
-  Map<String, ({int seeders, int leechers})> build() => const {};
+  Map<String, ({int seeders, int leechers})> build() {
+    // `torrent_health_updated` (SSE) : santés remontées par le checker
+    // et par le gossip content-discovery pour les torrents affichés —
+    // met à jour la pastille sans re-sondage `/health`.
+    ref.listen(daemonEventsProvider, (_, next) {
+      final event = next.value;
+      if (event == null || event.topic != EventTopics.torrentHealthUpdated) {
+        return;
+      }
+      final ih = '${event.data['infohash'] ?? ''}';
+      if (ih.isEmpty) return;
+      final s = (event.data['seeders'] as num?)?.toInt();
+      final l = (event.data['leechers'] as num?)?.toInt();
+      if (s == null && l == null) return;
+      state = {...state, ih: (seeders: s ?? 0, leechers: l ?? 0)};
+    });
+    return const {};
+  }
 
   /// Sonde un infohash — met à jour l'override si le daemon a une
   /// santé connue (`null` = « checking », pas encore de réponse).

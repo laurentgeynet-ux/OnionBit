@@ -58,7 +58,7 @@ Convention générale :
 | `GET /api/metadata/search/vocabulary` | idem | ✅ | `{"vocabularies": []}` (pas de FTS) |
 | `PUT`/`DELETE`/`PATCH /api/metadata/torrents/{ih}/tags` | idem | ✅ | Tags en colonne `tags` (CSV) de `channel_node` |
 | **Recherche distante** (`search_endpoint.py`) | | | |
-| `PUT /api/search/remote?fts_text=` | idem | ✅ | `RemoteSelect` vers les pairs de la community content-discovery ; réponses intégrées à `channel_node`. 400 si IPv8 inactif |
+| `PUT /api/search/remote?fts_text=` | idem | ✅ | `RemoteSelect` vers les pairs de la community content-discovery ; réponses **non persistées** (dédup mémoire, push SSE `remote_query_results` — santé jointe depuis le gossip en mémoire `GossipMemory`). 400 si IPv8 inactif |
 | **Torrentinfo / createtorrent** | | | |
 | `POST /api/torrentinfo/uri` | idem | ✅ | `file://`, `http(s)://` (fetch anti-SSRF), `magnet:` (résolution DHT ; `skipmagnet` = réponse immédiate). **Extension** : la réponse inclut `trackers` + `private` (absents du Python) |
 | `PUT /api/torrentinfo/file` | idem | ✅ | Corps brut bencode ou `{"torrent": "<hex>"}`. **Extension** : `trackers` + `private` dans la réponse |

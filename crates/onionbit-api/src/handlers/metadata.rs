@@ -93,8 +93,16 @@ pub async fn get_torrent_health(
             onionbit_db::health::get_torrent_state(c, &ih)
         })
         .await?;
-    Ok(Json(match row {
-        Some(r) => serde_json::json!({
+    // Repli memoire : `torrent_state` ne contient que nos
+    // telechargements depuis v14 — les santes gossip connues
+    // comblent le trou pour les resultats distants.
+    let gossip = state.session.ipv8().and_then(|s| {
+        s.content_discovery
+            .as_ref()
+            .and_then(|cd| cd.known_health(&ih))
+    });
+    Ok(Json(match (row, gossip) {
+        (Some(r), _) => serde_json::json!({
             "infohash": infohash,
             "query": { "infohash": infohash },
             "health": {
@@ -104,7 +112,17 @@ pub async fn get_torrent_health(
                 "last_check": r.last_check,
             },
         }),
-        None => serde_json::json!({
+        (None, Some(g)) => serde_json::json!({
+            "infohash": infohash,
+            "query": { "infohash": infohash },
+            "health": {
+                "seeders": g.seeders,
+                "leechers": g.leechers,
+                "infohash": infohash,
+                "last_check": g.last_check,
+            },
+        }),
+        (None, None) => serde_json::json!({
             "infohash": infohash,
             "query": { "infohash": infohash },
             "health": "checking",

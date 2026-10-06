@@ -290,6 +290,11 @@ pub trait ContentProvider: Send + Sync {
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Vec<serde_json::Value>> + Send + 'a>>;
     /// `(version, platform)` locales pour `VersionResponse`.
     fn version_info(&self) -> (String, String);
+    /// Derniere sante gossip connue pour `infohash` (memoire du
+    /// provider — `None` par defaut pour les providers de test).
+    fn known_health(&self, _infohash: &[u8; 20]) -> Option<HealthInfo> {
+        None
+    }
 }
 
 /// Community de decouverte de contenu (gossip sante + select distant).
@@ -802,6 +807,14 @@ impl ContentDiscoveryCommunity {
     /// qui veulent `max_query_peers` etc.).
     pub fn settings(&self) -> &ContentDiscoverySettings {
         &self.settings
+    }
+
+    /// `ContentProvider::known_health` : derniere sante gossip connue
+    /// pour `infohash` — repli memoire de
+    /// `/api/metadata/torrents/{ih}/health` quand la base n'a pas de
+    /// ligne (les resultats distants ne sont plus persistes).
+    pub fn known_health(&self, infohash: &[u8; 20]) -> Option<HealthInfo> {
+        self.provider.known_health(infohash)
     }
 
     /// `send_search_request` Python : echantillonne
