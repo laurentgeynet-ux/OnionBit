@@ -183,7 +183,11 @@ fn journal(
         .open(&path)
         .expect("journal.jsonl");
     use std::io::Write as _;
-    writeln!(f, "{line}").expect("journal write");
+    // Un seul write_all : writeln! emet le '\n' dans un appel separe,
+    // ce qui laisse les tests paralleles entrelacer contenus et fins de
+    // ligne (entrees concatenees sur une ligne + lignes vides).
+    f.write_all(format!("{line}\n").as_bytes())
+        .expect("journal write");
 }
 
 /// `{\"rx\":n,...}` des compteurs d'un noeud.

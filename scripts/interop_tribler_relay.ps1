@@ -1,8 +1,8 @@
-# This file is part of OnionBit - a Rust port of the Tribler daemon.
+﻿# This file is part of OnionBit - a Rust port of the Tribler daemon.
 # Copyright (C) 2026 Laurent Geynet <laurent.geynet@gmail.com>
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-﻿# interop_tribler_relay.ps1 - interop : relais = vrai Tribler.exe
+# interop_tribler_relay.ps1 - interop : relais = vrai Tribler.exe
 # installe (TriblerTunnelCommunity, prefixe a3591a6b…), sortie =
 # TunnelCommunity pyipv8 controle (EXIT_BT).
 #

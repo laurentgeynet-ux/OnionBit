@@ -12,10 +12,13 @@ param(
     [int]$Hops = 1,
     [int]$Bytes = 6291456,
     [int]$TimeoutMin = 40,
-    [string]$Out = (Join-Path $PSScriptRoot '..\target\interop-hidden-py2py')
+    # PS5.1 : $PSScriptRoot est vide dans un defaut de param sous
+    # [CmdletBinding()] — calcule apres le bloc.
+    [string]$Out = ''
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+if (-not $Out) { $Out = Join-Path $PSScriptRoot '..\target\interop-hidden-py2py' }
 $out = (Resolve-Path (New-Item -ItemType Directory -Force $Out)).Path
 $rep = Join-Path $out 'report'
 New-Item -ItemType Directory -Force $rep | Out-Null
