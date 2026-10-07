@@ -80,8 +80,12 @@ pub struct ContentDiscoverySettings {
     /// `NumberCache.timeout_delay` Python (10 s) : TTL d'un
     /// `remote_select` en attente de reponse.
     pub select_ttl: Duration,
-    /// `SelectRequest.packets_limit` (cache.py, 10) : paquets
-    /// `SelectResponse` acceptes par requete (anti-spam).
+    /// `SelectRequest.packets_limit` (cache.py) : paquets
+    /// `SelectResponse` acceptes par requete (anti-spam, cote
+    /// reception uniquement — rien au filaire). Ecart documente :
+    /// 25 au lieu de 10 — ~1300 o d'entrees par paquet font que 10
+    /// paquets tronquaient une reponse complete `max_response_size`
+    /// (100 entrees) a ~40-60 ; 25 laisse passer la totalite.
     pub select_packets_limit: u8,
     /// `RandomWalk` du launcher pyipv8 (`target_peers = 20`).
     pub walk_target_peers: usize,
@@ -101,7 +105,7 @@ impl Default for ContentDiscoverySettings {
             gossip_fanout: 5,
             health_payload_budget: 1200,
             select_ttl: Duration::from_secs(10),
-            select_packets_limit: 10,
+            select_packets_limit: 25,
             walk_target_peers: 20,
             max_query_peers: 60,
         }

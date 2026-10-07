@@ -3,6 +3,18 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Recherche distante : résultats par pair portés au plafond utile (2026-10-07)
+
+- L'UI demande désormais `last=100` (`/search/remote`) — la borne
+  `max_response_size` commune Python/OnionBit : au-delà le pair
+  émetteur tronque la plage `first..last`, demander plus est du
+  gaspillage.
+- `select_packets_limit` 10 → **25** (écart documenté, côté
+  réception uniquement — aucun changement filaire) : à ~1300 o
+  d'entrées par paquet `SelectResponse`, 10 paquets tronquaient une
+  réponse complète de 100 entrées à ~40-60 reçues ; 25 laisse
+  passer la totalité.
+
 ## Durcissement (revue externe 3) : auth ct_eq 404, `dest_circuits` borné, scrape IPv6, corps chunked, RSS zombies (2026-10-07)
 
 - **`api_not_found` en temps constant** : le repli 401/404 comparait

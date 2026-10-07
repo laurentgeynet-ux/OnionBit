@@ -78,7 +78,13 @@ class RestSearchRepository implements SearchRepository {
     try {
       final resp = await _api.put(
         '/search/remote',
-        query: {'fts_text': query},
+        query: {
+          'fts_text': query,
+          // `max_response_size` = 100 côté Python comme côté
+          // OnionBit : au-delà le pair émetteur tronque la plage
+          // `first..last` — 100 est le plafond utile du protocole.
+          'last': '100',
+        },
       ) as Map<String, dynamic>;
       uiLog(
         'recherche distante "$query" -> uuid=${resp['request_uuid']} '
