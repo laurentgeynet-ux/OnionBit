@@ -2670,8 +2670,9 @@ async fn live_messaging_e2e_vault_migration() {
             match events_b.recv().await {
                 Ok(onionbit_core::services::messaging::MessagingEvent::Frame {
                     kind: onionbit_messaging::MsgKind::Msg,
+                    body,
                     ..
-                }) => return true,
+                }) if body == b"post-consentement" => return true,
                 Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => return false,
             }
@@ -2684,6 +2685,17 @@ async fn live_messaging_e2e_vault_migration() {
     assert!(
         hist_b.iter().any(|r| r.body == b"post-consentement"),
         "msg2 absent de l'historique de B"
+    );
+    // `bonjour onionbit` a ete ecarte par le `pending_drop` — la
+    // re-emission a la reception d'`accept` doit l'avoir fait
+    // aboutir en historique quand meme (non-regression MS consent).
+    assert!(
+        wait_until(STATE_WAIT, || m_b
+            .history(&pk_a, 10)
+            .map(|h| h.iter().any(|r| r.body == b"bonjour onionbit"))
+            .unwrap_or(false))
+        .await,
+        "msg1 jamais retransmis apres acceptation"
     );
 
     // ===== Coffre OBV1 : migration sur un state_dir neuf =====

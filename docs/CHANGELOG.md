@@ -3,6 +3,20 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Messagerie : re-émission des `sent` au consentement (2026-10-07)
+
+- **Perte silencieuse du premier message corrigée** — un `Msg` émis
+  pendant que le répondant nous gardait `pending` était écarté par
+  `pending_drop` sans NACK : la ligne outbox restait `sent` à vie.
+  À la réception d'`accept`, les `Msg` sortants encore `sent` sont
+  réémis sous leur `id` d'origine (dedup idempotent, `seq` frais) ;
+  à la réception de `reject`, ils basculent `failed` +
+  `Undeliverable`. Scan borné (`CONSENT_RESEND_SCAN` = 64 récents).
+- Tests : `accept_reemet_les_messages_non_acquittes`,
+  `reject_marque_les_messages_non_acquittes`, et le banc live exige
+  désormais que le message droppé au consentement aboutisse après
+  `accept_contact`.
+
 ## Banc live : messagerie e2e + coffre OBV1 en migration (2026-10-07)
 
 - **`live_messaging_e2e_vault_migration`** (`live_bench.rs`) — deux

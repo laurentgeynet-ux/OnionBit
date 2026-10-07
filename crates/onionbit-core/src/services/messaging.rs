@@ -109,6 +109,11 @@ const CONNECT_POLL: Duration = Duration::from_millis(50);
 /// Borne du pseudonyme local d'un contact (caracteres) — label UI,
 /// pas un identifiant.
 const MAX_CONTACT_ALIAS_CHARS: usize = 64;
+/// Fenetre d'historique scannee pour la re-emission/le constat
+/// d'echec des `Msg` sortants a la reception d'`accept`/`reject`
+/// (les plus recents d'abord — suffisant pour la fenetre de
+/// consentement).
+const CONSENT_RESEND_SCAN: u32 = 64;
 
 /// Secondes Unix courantes.
 fn now_secs() -> u64 {
@@ -1389,6 +1394,110 @@ impl MessagingService {
         Ok(frame.id)
     }
 
+    /// Re-emission d'une trame `Msg` deja persistee (`sent` jamais
+    /// acquitte — typiquement ecartee par le `pending_drop` du
+    /// repondant). L'`id` d'origine est conserve : la dedup la rend
+    /// idempotente si la premiere copie etait passee, et l'`Ack` en
+    /// retour retrouve la ligne d'outbox. Le `seq` est frais — un
+    /// ancien `seq` pourrait tomber hors fenetre `recv_window` si le
+    /// pair a admis des trames plus recentes entre-temps. Aucune
+    /// ligne n'est re-persistee (la ligne `sent` existe deja).
+    async fn resend_frame(
+        &self,
+        contact_pk: &[u8],
+        cid: u32,
+        id: [u8; 16],
+        body: Vec<u8>,
+    ) -> Result<()> {
+        let (send_key, seq) = {
+            let circuits = self.circuits.lock().unwrap_or_else(|e| e.into_inner());
+            let mut contacts = self.contacts.lock().unwrap_or_else(|e| e.into_inner());
+            let (Some(binding), Some(contact)) = (circuits.get(&cid), contacts.get_mut(contact_pk))
+            else {
+                return Err(CoreError::InvalidState("messagerie : liaison disparue"));
+            };
+            let seq = contact.send_seq;
+            contact.send_seq += 1;
+            (binding.keys.send, seq)
+        };
+        let mut frame = Frame::new(MsgKind::Msg, seq, now_secs(), body);
+        frame.id = id;
+        let wire = frame
+            .seal(&self.key, &send_key, &self.cfg)
+            .map_err(|e| CoreError::State(format!("seal trame: {e}")))?;
+        self.persist_seqs(contact_pk);
+        if let Err(e) = self
+            .tunnel
+            .send_data(cid, &unspecified(), &unspecified(), &wire)
+            .await
+        {
+            self.set_msg_status(&frame.id, "failed");
+            let _ = self.events_tx.send(MessagingEvent::Undeliverable {
+                contact: contact_pk.to_vec(),
+                id: frame.id,
+            });
+            self.unbind_circuit(cid);
+            return Err(CoreError::State(format!("send_data messagerie: {e}")));
+        }
+        Ok(())
+    }
+
+    /// Re-emission des `Msg` sortants `sent` (non acquittes) d'un
+    /// contact — appele a la reception de son `accept`. Ordre
+    /// chronologique (le plus ancien d'abord).
+    async fn resend_unacked(&self, contact_pk: &[u8], cid: u32) {
+        let Some(db) = &self.db else {
+            return;
+        };
+        let Ok(rows) = db.with(|c| dbm::list_messages(c, contact_pk, CONSENT_RESEND_SCAN)) else {
+            return;
+        };
+        for row in rows
+            .into_iter()
+            .rev()
+            .filter(|r| r.direction == "out" && r.status == "sent")
+        {
+            let Ok(id) = <[u8; 16]>::try_from(row.id.as_slice()) else {
+                continue;
+            };
+            // La liaison a pu tomber entre-temps : le premier echec
+            // arrete la serie (la trame passe `failed`, le circuit
+            // est delie — les suivantes attendraient en vain).
+            if self
+                .resend_frame(contact_pk, cid, id, row.body)
+                .await
+                .is_err()
+            {
+                return;
+            }
+        }
+    }
+
+    /// Marque `failed` les `Msg` sortants encore `sent` d'un contact
+    /// — appele a la reception de son `reject` : le repondant a
+    /// oublie la liaison, ces trames ne seront jamais admises.
+    fn fail_unacked(&self, contact_pk: &[u8]) {
+        let Some(db) = &self.db else {
+            return;
+        };
+        let Ok(rows) = db.with(|c| dbm::list_messages(c, contact_pk, CONSENT_RESEND_SCAN)) else {
+            return;
+        };
+        for row in rows
+            .into_iter()
+            .filter(|r| r.direction == "out" && r.status == "sent")
+        {
+            let Ok(id) = <[u8; 16]>::try_from(row.id.as_slice()) else {
+                continue;
+            };
+            self.set_msg_status(&id, "failed");
+            let _ = self.events_tx.send(MessagingEvent::Undeliverable {
+                contact: contact_pk.to_vec(),
+                id,
+            });
+        }
+    }
+
     /// Relais `e2e_ready` : demultiplexe les liaisons par swarm —
     /// `own_mh` = repondant (contact a identifier), swarm contact =
     /// initiateur (contact connu). Les swarms BitTorrent sont
@@ -1697,6 +1806,28 @@ impl MessagingService {
                         let _ = svc
                             .send_frame(&pk, cid, MsgKind::Ack, ack_id.to_vec())
                             .await;
+                    });
+                }
+                // Consentement accorde : les `Msg` sortants encore
+                // `sent` ont pu etre ecartes cote repondant pendant
+                // que nous etions `pending` (drop silencieux, jamais
+                // de NACK) — re-emission sous leur `id` d'origine
+                // (dedup idempotent si la copie etait passee).
+                MsgKind::Accept => {
+                    let svc = self.clone();
+                    let pk = pk_bin.clone();
+                    tokio::spawn(async move {
+                        svc.resend_unacked(&pk, cid).await;
+                    });
+                }
+                // Consentement refuse : les trames emises pendant le
+                // `pending` ne seront jamais admises — `failed` +
+                // `Undeliverable`, l'appelant n'attend pas pour rien.
+                MsgKind::Reject => {
+                    let svc = self.clone();
+                    let pk = pk_bin.clone();
+                    tokio::spawn(async move {
+                        svc.fail_unacked(&pk);
                     });
                 }
                 _ => {}
@@ -2963,5 +3094,112 @@ mod tests {
             .insert(pk_bin.clone(), preexisting);
         assert_eq!(svc_c.import_vault(&blob).unwrap(), 0);
         assert_eq!(svc_c.contact_state(&pk_bin), Some(ContactState::Blocked));
+    }
+
+    /// Reception d'un `accept` : les `Msg` sortants encore `sent`
+    /// (emis pendant que le repondant nous gardait `pending` — drop
+    /// silencieux, sans NACK) sont re-emis sous leur `id` d'origine.
+    /// Ici le `cid` n'existe pas dans la table du tunnel : la
+    /// tentative se solde par `failed` + `Undeliverable`, ce qui
+    /// prouve le declenchement ; le chemin heureux bout-en-bout est
+    /// couvert par `live_messaging_e2e_vault_migration`.
+    #[tokio::test]
+    async fn accept_reemet_les_messages_non_acquittes() {
+        let db = Arc::new(Database::memory().unwrap());
+        let svc = make_service_db(db).await;
+        let peer = LibNaClSecretKey::generate();
+        let keys = MessagingKeys {
+            send: [9u8; 32],
+            recv: [8u8; 32],
+        };
+        let pk_bin = bind(&svc, 77, &peer, &keys);
+        let id = [42u8; 16];
+        svc.persist_message(MessagingService::msg_row(
+            &pk_bin, "out", 0, 1, b"perdu", "sent", &id,
+        ));
+        let mut events = svc.subscribe();
+
+        let accept = Frame::new(MsgKind::Accept, 1, 1, Vec::new())
+            .seal(&peer, &keys.recv, &MessagingConfig::default())
+            .unwrap();
+        svc.handle_incoming(77, &keys, &accept);
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            let hist = svc.history(&pk_bin, 10).unwrap();
+            if hist.iter().any(|r| r.id == id && r.status == "failed") {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "le `sent` n'a jamais ete retouche apres `accept`"
+            );
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        // L'echec de la re-emission est signale (circuit mort).
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            match events.try_recv() {
+                Ok(MessagingEvent::Undeliverable { id: ev_id, .. }) if ev_id == id => break,
+                _ => {
+                    assert!(
+                        std::time::Instant::now() < deadline,
+                        "Undeliverable jamais emis pour la re-emission"
+                    );
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            }
+        }
+    }
+
+    /// Reception d'un `reject` : les `Msg` sortants encore `sent`
+    /// ne seront jamais admis (le repondant a oublie la liaison) —
+    /// ils basculent `failed` et `Undeliverable` est emis.
+    #[tokio::test]
+    async fn reject_marque_les_messages_non_acquittes() {
+        let db = Arc::new(Database::memory().unwrap());
+        let svc = make_service_db(db).await;
+        let peer = LibNaClSecretKey::generate();
+        let keys = MessagingKeys {
+            send: [7u8; 32],
+            recv: [6u8; 32],
+        };
+        let pk_bin = bind(&svc, 78, &peer, &keys);
+        let id = [43u8; 16];
+        svc.persist_message(MessagingService::msg_row(
+            &pk_bin, "out", 0, 1, b"jamais", "sent", &id,
+        ));
+        let mut events = svc.subscribe();
+
+        let reject = Frame::new(MsgKind::Reject, 1, 1, Vec::new())
+            .seal(&peer, &keys.recv, &MessagingConfig::default())
+            .unwrap();
+        svc.handle_incoming(78, &keys, &reject);
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            let hist = svc.history(&pk_bin, 10).unwrap();
+            if hist.iter().any(|r| r.id == id && r.status == "failed") {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "le `sent` n'est jamais passe `failed` apres `reject`"
+            );
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            match events.try_recv() {
+                Ok(MessagingEvent::Undeliverable { id: ev_id, .. }) if ev_id == id => break,
+                _ => {
+                    assert!(
+                        std::time::Instant::now() < deadline,
+                        "Undeliverable jamais emis apres `reject`"
+                    );
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            }
+        }
     }
 }
