@@ -3,6 +3,32 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## ADR-0017 étape 55 : banc `bench_stealth_fingerprint.ps1` (worktree adr17, 2026-10-08)
+
+- **`stealth_bench`** (`onionbit-ipv8`, binaire de dev) : `link`
+  (dérive `onionbit-bridge://` depuis `stealth_bridge.key` avec
+  adresse substituable → tout le trafic peut transiter par la
+  capture), `tap` (relais UDP → PCAP LINKTYPE_RAW avec en-têtes
+  IPv4/UDP fabriquées ; injection `--loss/--dup/--reorder`),
+  `probe` (sondes calibrées + rejeu de capture → silence + ratio
+  d'amplification), `synth` (corpus étiquetés dns/quic/wg/noise/
+  ipv8), `analyze` (entropie, marqueurs protocolaires, constance
+  de préfixes, histogramme, doublons intra/inter-capture),
+  `classify` (features taille/direction/cadence par fenêtre, 1-NN
+  leave-one-out — mesure honnête de séparation).
+- **`bench_stealth_fingerprint.ps1`** : deux daemons stealth réels
+  (pont + client) via le tap ; phases = capture de fond, probing
+  actif (0 réponse, amp 0 sur 1,7 Mo de sondes), saturation
+  (session survit, RSS bornée), impairments, restart du pont
+  (re-dial après `dial_cooldown`), rebinding de port client.
+  Verdict PASS/FAIL sur 9 oracles dans `report.json` — premier run
+  : **PASS** (363 datagrammes, entropie 7.99 o/bit, 0 marqueur).
+- **`stealth.tuning`** (`configuration.json`) : timeouts/cooldowns
+  du transport exposés (`dial_cooldown_secs`, `session_idle_timeout_secs`,
+  `pending_timeout_secs`, `hs_retry_secs`, `hs_attempts_max`,
+  `tick_ms`, `cover_interval_*`, plafonds `hs1`, `max_sessions`,
+  `max_bridges`) — indispensables pour piloter les phases du banc.
+
 ## ADR-0017 étape 54 : `INTRO` ext anti-scraping (worktree adr17, 2026-10-07)
 
 - **Ext** (`onionbit-ipv8::ext`) : messages `INTRO_REQ`/`INTRO`

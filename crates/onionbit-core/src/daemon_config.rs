@@ -968,9 +968,67 @@ pub struct StealthFileConfig {
     /// — chaines hex de 64 chars ; vide = tous (v1 : le filtrage
     /// s'applique apres auth, cf. etape 54 pour les tickets).
     pub client_allowlist: Vec<String>,
+    /// Reglages fins du transport — defauts de production bornes de
+    /// `StealthConfig` ; exposés pour les bancs (redemarrage pont,
+    /// expiration de session mesuree sans attendre 5 min).
+    pub tuning: StealthTuningConfig,
     /// Cles inconnues — preservees.
     #[serde(flatten)]
     pub extra: serde_json::Map<String, Value>,
+}
+
+/// `stealth.tuning` — miroir borne des constantes de
+/// `onionbit_ipv8::stealth_transport::StealthConfig` pertinentes a
+/// l'exploitation. Toute valeur absente retombe sur le defaut.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct StealthTuningConfig {
+    /// Periode du tick interne (ms).
+    pub tick_ms: u64,
+    /// Reemission `hs1` tant que la session est `Pending` (s).
+    pub hs_retry_secs: u64,
+    /// Tentatives `hs1` max avant abandon.
+    pub hs_attempts_max: u8,
+    /// Timeout `Pending` sans reponse (s).
+    pub pending_timeout_secs: u64,
+    /// Cooldown avant re-dial d'un pont en echec (s).
+    pub dial_cooldown_secs: u64,
+    /// Idle timeout d'une session etablie (s).
+    pub session_idle_timeout_secs: u64,
+    /// Intervalle cover `[min,max]` (ms) quand `cover_traffic`.
+    pub cover_interval_min_ms: u64,
+    /// Voir `cover_interval_min_ms`.
+    pub cover_interval_max_ms: u64,
+    /// `hs1`/s/IP admis au plafond de budget pre-DH.
+    pub hs1_per_ip_per_sec: u32,
+    /// Rafale `hs1`/IP.
+    pub hs1_per_ip_burst: u32,
+    /// Plafond global `hs1`/s (anti-spoof : la vraie ligne CPU).
+    pub hs1_global_per_sec: u32,
+    /// Sessions max.
+    pub max_sessions: usize,
+    /// Table de ponts max.
+    pub max_bridges: usize,
+}
+
+impl Default for StealthTuningConfig {
+    fn default() -> Self {
+        Self {
+            tick_ms: 500,
+            hs_retry_secs: 2,
+            hs_attempts_max: 8,
+            pending_timeout_secs: 30,
+            dial_cooldown_secs: 120,
+            session_idle_timeout_secs: 300,
+            cover_interval_min_ms: 500,
+            cover_interval_max_ms: 2000,
+            hs1_per_ip_per_sec: 4,
+            hs1_per_ip_burst: 8,
+            hs1_global_per_sec: 256,
+            max_sessions: 10_000,
+            max_bridges: 256,
+        }
+    }
 }
 
 impl Default for StealthFileConfig {
@@ -984,6 +1042,7 @@ impl Default for StealthFileConfig {
             replay_window: 256,
             hs_timestamp_skew_secs: 90,
             client_allowlist: Vec::new(),
+            tuning: StealthTuningConfig::default(),
             extra: serde_json::Map::new(),
         }
     }

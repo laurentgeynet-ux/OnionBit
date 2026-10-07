@@ -3538,6 +3538,21 @@ async fn build_stealth_transport(
             ..onionbit_ipv8::stealth::StealthParams::default()
         },
         cover_traffic: sc.cover_traffic,
+        cover_interval_ms: (
+            sc.tuning.cover_interval_min_ms,
+            sc.tuning.cover_interval_max_ms,
+        ),
+        tick_ms: sc.tuning.tick_ms,
+        hs_retry_secs: sc.tuning.hs_retry_secs,
+        hs_attempts_max: sc.tuning.hs_attempts_max,
+        pending_timeout_secs: sc.tuning.pending_timeout_secs,
+        dial_cooldown_secs: sc.tuning.dial_cooldown_secs,
+        session_idle_timeout_secs: sc.tuning.session_idle_timeout_secs,
+        hs1_per_ip_per_sec: sc.tuning.hs1_per_ip_per_sec,
+        hs1_per_ip_burst: sc.tuning.hs1_per_ip_burst,
+        hs1_global_per_sec: sc.tuning.hs1_global_per_sec,
+        max_sessions: sc.tuning.max_sessions,
+        max_bridges: sc.tuning.max_bridges,
         ..StealthConfig::default()
     };
     let raw = RawUdpTransport::bind_dual_with_retry(
