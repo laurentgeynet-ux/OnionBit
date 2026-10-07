@@ -3691,3 +3691,78 @@ async fn identite_export_import_cycle() {
 
     srv.session.stop().await;
 }
+
+/// ADR-0017 etape 52 : `GET /api/stealth` (etat borne, jamais de
+/// cle/adresse) + `POST /api/stealth/bridges` (validation hostile des
+/// liens d'invitation).
+#[tokio::test]
+async fn stealth_endpoints_et_liens_hostiles() {
+    let srv = spawn_server().await;
+
+    // GET : schema borne, transport inactif par defaut.
+    let body: serde_json::Value = srv
+        .client
+        .get(srv.url("/api/stealth"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(body["enabled"], false);
+    assert_eq!(body["role"], "client");
+    assert_eq!(body["transport_active"], false);
+    assert_eq!(body["sessions"], 0);
+    assert!(body["metrics"].is_null());
+    // La reponse ne contient ni adresse de pont ni materiel de cle.
+    let raw = body.to_string();
+    assert!(!raw.contains("onionbit-bridge://"));
+
+    // POST hostile : champ absent / mauvais type / liens malformes.
+    for json in [
+        serde_json::json!({}),
+        serde_json::json!({"bridge": 42}),
+        serde_json::json!({"bridge": "http://1.2.3.4:80#cle"}),
+        serde_json::json!({"bridge": "onionbit-bridge://192.0.2.1:443#abcd"}), // cle tronquee
+        serde_json::json!({"bridge": "onionbit-bridge://x"}),
+    ] {
+        let resp = srv
+            .client
+            .post(srv.url("/api/stealth/bridges"))
+            .json(&json)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 400, "cas hostile accepte: {json}");
+    }
+
+    // POST valide : lien ajoute, persiste en config, reflete en
+    // compteur dans GET (le lien lui-meme n'apparait jamais).
+    let pk = [0x5Au8; 32];
+    let link = format!("onionbit-bridge://203.0.113.7:9443#{}", hex::encode(pk));
+    let resp = srv
+        .client
+        .post(srv.url("/api/stealth/bridges"))
+        .json(&serde_json::json!({"bridge": link}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["bridges"], 1);
+
+    let body: serde_json::Value = srv
+        .client
+        .get(srv.url("/api/stealth"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(body["bridges_configured"], 1);
+    assert!(!body.to_string().contains("203.0.113.7"));
+    assert!(!body.to_string().contains(&hex::encode(pk)));
+
+    srv.session.stop().await;
+}

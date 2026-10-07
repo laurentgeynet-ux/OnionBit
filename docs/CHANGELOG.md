@@ -3,6 +3,27 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## ADR-0017 étape 52 : liens bridge + config + API (worktree adr17, 2026-10-07)
+
+- **`onionbit-bridge://<ip>:<port>#<pk_hex>`** : `BridgeEntry::
+  parse_link`/`to_link` — validation stricte (scheme exact, v4/v6
+  crochets, 64 hex, port ≠ 0) ; nouvelle variante
+  `StealthError::Malformed` distincte du `Reject` filaire (l'entrée
+  utilisateur n'est pas un oracle de probing).
+- **Config** : section `stealth` persistée (`enabled`, `role`,
+  `bridges`, `cover_traffic`, `pad_max_extra`, `replay_window`,
+  `hs_timestamp_skew_secs`, `client_allowlist`) — `bridge_sk` n'y
+  vit jamais.
+- **API** (`api_key_auth`, surface `/api`) : `GET /api/stealth` =
+  role, `transport_active`, `sessions`, compteurs filaires/métriques
+  — aucune clé, adresse ou lien ; `POST /api/stealth/bridges` =
+  validation → dedup → persistance `configuration.json` →
+  `add_bridge` à chaud (`bridge_pks` du transport passé sous Mutex).
+  `AppState::stealth_transport` injecté par le daemon à l'étape 53.
+- *Tests hostiles* : 12 liens malformés rejetés ; test API complet
+  (400 hostiles, 200 valide, réponse sans fuite de lien/pk/adresse).
+  Tickets révocables reportés à l'étape 54.
+
 ## ADR-0017 étape 51 : `StealthTransport` + banc hostile (worktree adr17, 2026-10-07)
 
 - **`onionbit-ipv8::stealth_transport`** (nouveau) : `DatagramTransport`

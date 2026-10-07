@@ -941,6 +941,54 @@ impl Default for WatchFolderConfig {
     }
 }
 
+/// Section `stealth` — transport furtif ADR-0017. Le secret
+/// `bridge_sk` n'y vit **jamais** (il est genere a l'activation et
+/// stocke ailleurs — etape 53) ; les `bridges` sont des liens
+/// `onionbit-bridge://<ip>:<port>#<pk_hex>` (cle publique d'admission
+/// uniquement, pas de materiel privé).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct StealthFileConfig {
+    /// Mode stealth actif — **exclut** `ipv8` legacy (refus ferme au
+    /// demarrage si les deux, etape 53).
+    pub enabled: bool,
+    /// `client` | `bridge` | `gateway`.
+    pub role: String,
+    /// Liens d'invitation hors-bande.
+    pub bridges: Vec<String>,
+    /// Cover traffic (keepalive paddé, couteux — opt-in).
+    pub cover_traffic: bool,
+    /// Padding additif max (clampe `STEALTH_MTU`).
+    pub pad_max_extra: usize,
+    /// Fenetre de rejeu des trames par session (bits).
+    pub replay_window: usize,
+    /// Fenetre `±` de l'horodatage handshake (s).
+    pub hs_timestamp_skew_secs: u64,
+    /// Allowlist optionnelle des `client_id` acceptes (roles serveur)
+    /// — chaines hex de 64 chars ; vide = tous (v1 : le filtrage
+    /// s'applique apres auth, cf. etape 54 pour les tickets).
+    pub client_allowlist: Vec<String>,
+    /// Cles inconnues — preservees.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, Value>,
+}
+
+impl Default for StealthFileConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            role: "client".into(),
+            bridges: Vec::new(),
+            cover_traffic: false,
+            pad_max_extra: 400,
+            replay_window: 256,
+            hs_timestamp_skew_secs: 90,
+            client_allowlist: Vec::new(),
+            extra: serde_json::Map::new(),
+        }
+    }
+}
+
 /// Section `logging` — rétention des fichiers de log (extension
 /// propre au portage, absente de `TriblerConfig` Python).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -988,6 +1036,8 @@ pub struct DaemonConfig {
     /// Section `ext` — communaute d'extension OnionBit-only
     /// (ADR-0015).
     pub ext: ExtConfig,
+    /// Section `stealth` — transport furtif OnionBit-only (ADR-0017).
+    pub stealth: StealthFileConfig,
     /// Section `database`.
     pub database: EnabledSection,
     /// Section `dht_discovery`.
@@ -1041,6 +1091,7 @@ impl Default for DaemonConfig {
             libtorrent: LibtorrentConfig::default(),
             tunnel_community: TunnelCommunityConfig::default(),
             ext: ExtConfig::default(),
+            stealth: StealthFileConfig::default(),
             database: EnabledSection::enabled(),
             dht_discovery: EnabledSection::enabled(),
             content_discovery_community: EnabledSection::enabled(),

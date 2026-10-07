@@ -190,6 +190,10 @@ fn api_router(state: AppState) -> Router<AppState> {
         // Rust ; `enabled:false` tant que `ext/enabled` est off, les
         // sous-routes operatoires repondent 404).
         .route("/ipv8/ext", get(ipv8::get_ext))
+        // Transport furtif (ADR-0017 — extension Rust ; compteurs et
+        // etat seulement, jamais de cle ni d'adresse de pont).
+        .route("/stealth", get(stealth::get_stealth))
+        .route("/stealth/bridges", post(stealth::add_bridge))
         // Identite portable — export/import de la cle secrete
         // (blob OBID argon2id+AEAD si mot de passe ; restart requis).
         .route("/identity", get(identity::get_identity))

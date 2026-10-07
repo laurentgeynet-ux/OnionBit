@@ -39,8 +39,8 @@ use tokio::sync::broadcast;
 
 use crate::error::Ipv8Error;
 use crate::stealth::{
-    hs1_open, hs1_seal, hs2_open, hs2_seal, Hs1ClientCtx, StealthParams, StealthSession,
-    XPrimeFilter,
+    hs1_open, hs1_seal, hs2_open, hs2_seal, Hs1ClientCtx, StealthError, StealthParams,
+    StealthSession, XPrimeFilter,
 };
 use crate::transport::{BoxFut, DatagramTransport, RawUdpTransport, RxHandler, TapEvent};
 use onionbit_crypto::stealth::HiddenEph;
@@ -69,14 +69,50 @@ impl StealthRole {
     }
 }
 
+/// Scheme des liens d'invitation hors-bande (ADR-0017 §3).
+pub const BRIDGE_LINK_SCHEME: &str = "onionbit-bridge://";
+
 /// Pont amont : adresse + `bridge_pk` X25519 (lien d'invitation
-/// hors-bande — cf. etape 52 pour le format `onionbit-bridge://`).
+/// hors-bande `onionbit-bridge://<ip>:<port>#<bridge_pk_hex>`).
 #[derive(Debug, Clone)]
 pub struct BridgeEntry {
     /// `ip:port` du pont.
     pub addr: SocketAddr,
     /// Cle publique d'admission du pont.
     pub pk: [u8; 32],
+}
+
+impl BridgeEntry {
+    /// Parse un lien `onionbit-bridge://<addr>#<64-hex>`. Validation
+    /// stricte : scheme exact, `SocketAddr` (v4/v6 entre crochets),
+    /// cle 32 octets hex, port non nul — tout ecart est `Err`,
+    /// jamais de devinette.
+    pub fn parse_link(link: &str) -> Result<Self, StealthError> {
+        let body = link
+            .strip_prefix(BRIDGE_LINK_SCHEME)
+            .ok_or(StealthError::Malformed("scheme attendu"))?;
+        let (addr_s, pk_s) = body
+            .split_once('#')
+            .ok_or(StealthError::Malformed("separateur # absent"))?;
+        if pk_s.len() != 64 {
+            return Err(StealthError::Malformed("cle : 64 hex requis"));
+        }
+        let mut pk = [0u8; 32];
+        hex::decode_to_slice(pk_s, &mut pk)
+            .map_err(|_| StealthError::Malformed("cle : hex invalide"))?;
+        let addr: SocketAddr = addr_s
+            .parse()
+            .map_err(|_| StealthError::Malformed("adresse invalide"))?;
+        if addr.port() == 0 {
+            return Err(StealthError::Malformed("port 0 invalide"));
+        }
+        Ok(Self { addr, pk })
+    }
+
+    /// Serialise le lien d'invitation.
+    pub fn to_link(&self) -> String {
+        format!("{BRIDGE_LINK_SCHEME}{}#{}", self.addr, hex::encode(self.pk))
+    }
 }
 
 /// Configuration du transport stealth — aucun seuil en dur.
@@ -263,8 +299,9 @@ pub struct StealthTransport {
     buckets: Mutex<HashMap<IpAddr, RateBucket>>,
     /// Jetons du plafond global de tentatives `hs1` par tick.
     global_tokens: AtomicU64,
-    /// Index `addr → pk` des ponts amonts.
-    bridge_pks: HashMap<SocketAddr, [u8; 32]>,
+    /// Index `addr → pk` des ponts amonts (mutable : ajout a
+    /// chaud via `POST /api/stealth/bridges`).
+    bridge_pks: Mutex<HashMap<SocketAddr, [u8; 32]>>,
     /// Metriques du banc hostile.
     metrics: StealthMetrics,
 }
@@ -290,7 +327,7 @@ impl StealthTransport {
     /// Enrobe un [`RawUdpTransport`] deja lie (construction par le
     /// endpoint a l'etape 53).
     pub fn from_raw(raw: Arc<RawUdpTransport>, cfg: StealthConfig) -> Arc<Self> {
-        let bridge_pks = cfg.bridges.iter().map(|b| (b.addr, b.pk)).collect();
+        let bridge_pks = Mutex::new(cfg.bridges.iter().map(|b| (b.addr, b.pk)).collect());
         let global_tokens = cfg.hs1_global_per_sec as u64;
         Arc::new(Self {
             raw,
@@ -310,6 +347,25 @@ impl StealthTransport {
     /// Compteurs du banc hostile / API.
     pub fn metrics(&self) -> &StealthMetrics {
         &self.metrics
+    }
+
+    /// Ajoute un pont amont a chaud (`POST /api/stealth/bridges`) —
+    /// deduplique sur l'adresse (la pk la plus recente gagne : une
+    /// cle re-emise par invitation remplace l'ancienne).
+    pub fn add_bridge(&self, entry: BridgeEntry) {
+        self.bridge_pks
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(entry.addr, entry.pk);
+    }
+
+    /// Nombre de ponts amonts configures (diagnostic — les adresses
+    /// ne quittent jamais le transport via l'API).
+    pub fn bridge_count(&self) -> usize {
+        self.bridge_pks
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .len()
     }
 
     /// Nombre de sessions actives (`Pending` + `Established`) —
@@ -673,7 +729,12 @@ impl DatagramTransport for StealthTransport {
                         if !self.cfg.role.initiates() || sessions.len() >= self.cfg.max_sessions {
                             self.metrics.queue_dropped.fetch_add(1, Ordering::Relaxed);
                             Out::Drop
-                        } else if let Some(&pk) = self.bridge_pks.get(&dst) {
+                        } else if let Some(&pk) = self
+                            .bridge_pks
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .get(&dst)
+                        {
                             let x = HiddenEph::generate();
                             match hs1_seal(&x, &pk, &self.cfg.client_id, now_ts(), &self.cfg.params)
                             {
@@ -1024,5 +1085,54 @@ mod tests {
             .expect("rebind doit re-handshaker");
         assert_eq!(got.1, b"apres-rebind");
         assert_eq!(got.0.port(), a2.port());
+    }
+
+    #[test]
+    fn liens_bridge_parse_serialize_hostile() {
+        let pk = [0xABu8; 32];
+        let e = BridgeEntry {
+            addr: "192.0.2.1:8443".parse().unwrap(),
+            pk,
+        };
+        let link = e.to_link();
+        assert_eq!(
+            link,
+            format!("onionbit-bridge://192.0.2.1:8443#{}", hex::encode(pk))
+        );
+        let back = BridgeEntry::parse_link(&link).unwrap();
+        assert_eq!(back.addr, e.addr);
+        assert_eq!(back.pk, pk);
+        // IPv6 entre crochets.
+        let v6 =
+            BridgeEntry::parse_link(&format!("onionbit-bridge://[::1]:443#{}", hex::encode(pk)))
+                .unwrap();
+        assert!(v6.addr.is_ipv6());
+
+        // Hostile : tout ecart → Err, jamais de valeur par defaut.
+        let hex_pk = hex::encode(pk);
+        for bad in [
+            "",
+            "onionbit-bridge://",
+            "http://1.2.3.4:80#key",
+            &format!("onionbit-bridge://192.0.2.1:8443#{hex_pk}x"), // 65 hex
+            &format!("onionbit-bridge://192.0.2.1:8443#{}", &hex_pk[..62]), // tronquee
+            &format!("onionbit-bridge://192.0.2.1:8443#{hex_pk}ff"),
+            "onionbit-bridge://192.0.2.1:8443", // pas de #
+            "onionbit-bridge://:8443#",         // vide
+            &format!("onionbit-bridge://192.0.2.1:0#{hex_pk}"), // port 0
+            &format!("onionbit-bridge://pas-une-ip:8443#{hex_pk}"),
+            &format!("onionbit-bridge://192.0.2.1:99999#{hex_pk}"),
+            &format!(
+                "onionbit-bridge://192.0.2.1:8443#{}",
+                hex_pk.to_uppercase().replace("AB", "ZZ") // non-hex
+            ),
+            &format!("ONIONBIT-BRIDGE://192.0.2.1:8443#{hex_pk}"), // casse scheme
+            &format!(" onionbit-bridge://192.0.2.1:8443#{hex_pk}"), // espace
+        ] {
+            assert!(
+                BridgeEntry::parse_link(bad).is_err(),
+                "lien hostile accepte: {bad:?}"
+            );
+        }
     }
 }

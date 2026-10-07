@@ -89,6 +89,10 @@ pub enum StealthError {
     /// jamais emise.
     #[error("inner trop grand pour le budget MTU stealth")]
     TooLarge,
+    /// Lien d'invitation `onionbit-bridge://` mal forme (entree
+    /// utilisateur/API, pas du trafic filaire).
+    #[error("lien bridge mal forme : {0}")]
+    Malformed(&'static str),
 }
 
 /// Alea pour le padding (source : `rand::rng`).
