@@ -3,6 +3,25 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Banc live : messagerie e2e + coffre OBV1 en migration (2026-10-07)
+
+- **`live_messaging_e2e_vault_migration`** (`live_bench.rs`) — deux
+  `CoreSession` réelles sur 3 relais locaux : jointure du swarm de
+  présence, PEX vers le point d'introduction épinglé
+  (`intro_point_peer`, hors-ligne sans DHT), circuit e2e `Bound`,
+  consentement (`Hello` → `pending` → `accept_contact`), trame `Msg`
+  signée livrée (`MessagingEvent::Frame` + historique persisté).
+- **Coffre `OBV1` en scénario migration** : export du vault de A,
+  copie de `ipv8_keypair.bin` dans un `state_dir` neuf, session
+  migrée → même identité, `import_vault` restaure les contacts
+  (`Active`), re-liaison e2e et message post-migration livré.
+- **Contrôle négatif** : une session à identité différente refuse le
+  même blob (`import_vault` en erreur) — le coffre reste lié à la
+  clé d'identité.
+- Écueil de banc documenté : `wait_until` sonde deux fois sa closure
+  — incompatible avec `try_recv` qui consomme l'événement ; les
+  attentes d'événements utilisent `timeout` + `recv()` asynchrone.
+
 ## Correctifs (revue externe 8) : `pieces root` v2, borne split DHT, `relay_early`, mutex DHT/UDP/settings, domaine SOCKS5 (2026-10-07)
 
 - **`TorrentMeta::parse` : panic sur `pieces root` tronqué** — un

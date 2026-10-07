@@ -2537,3 +2537,217 @@ async fn live_endurance_churn() {
     }
     stop_bounded(&session).await;
 }
+
+// ----------------------------------------------------------------
+// Messagerie ADR-0011 + coffre OBV1 : e2e reel entre deux sessions.
+// ----------------------------------------------------------------
+
+/// Resolution PEX reelle + liaison e2e messagerie. Hors-ligne la DHT
+/// est absente : un `peers-request` vers la sortie (`target=None`)
+/// ne rend jamais rien ("sans provider DHT") — le banc epingle donc
+/// le point d'introduction de B via `intro_point_peer` sur un relais
+/// connu, puis vise cet IP explicitement (`tunnel_data` vers l'IP,
+/// le chemin PEX reel de `send_peers_request(Some)`). L'IP repond
+/// avec son `IntroductionPoint` complet (`seeder_pk` inclus) qui
+/// sert alors a `create_e2e`.
+async fn messaging_link(
+    m: &Arc<onionbit_core::services::messaging::MessagingService>,
+    tunnel: &Arc<TunnelCommunity>,
+    contact_pk: &[u8],
+    ip_relay: &Relay,
+    hops: usize,
+) -> bool {
+    use onionbit_core::services::messaging::LinkState;
+    let pk = match onionbit_crypto::ipv8::keys::LibNaClPublicKey::from_bin(contact_pk) {
+        Ok(pk) => pk,
+        Err(_) => return false,
+    };
+    let mh = onionbit_messaging::messaging_hash(&pk);
+    let hint = onionbit_tunnel::routing::IntroductionPoint {
+        address: UdpAddress::from(ip_relay.addr),
+        peer_key: ip_relay.key.public_key().to_bin(),
+        seeder_pk: Vec::new(),
+        source: onionbit_tunnel::routing::PEER_SOURCE_UNKNOWN,
+        last_seen_secs: 0,
+    };
+    let deadline = Instant::now() + TRANSFER_WAIT;
+    while Instant::now() < deadline {
+        // `connect_peer` joint le swarm du contact (circuits swarm)
+        // meme si son `resolve` interne echoue sans DHT.
+        let _ = m.connect_peer(contact_pk).await;
+        if let Ok(ips) = tunnel
+            .send_peers_request_when_ready(mh, Some(&hint), hops)
+            .await
+        {
+            for ip in &ips {
+                let _ = m.connect(contact_pk, ip).await;
+            }
+        }
+        if m.link_state(contact_pk) == LinkState::Bound {
+            return true;
+        }
+        tokio::time::sleep(Duration::from_secs(2)).await;
+    }
+    m.link_state(contact_pk) == LinkState::Bound
+}
+
+/// Liaison e2e messagerie entre deux sessions reelles (A → B), flow
+/// applicatif complet : resolve swarm → circuit e2e → consentement
+/// (`pending` → `accept`) → trame `Msg` signee livree et persistee —
+/// puis coffre `OBV1` en scenario migration : `ipv8_keypair.bin` +
+/// blob copies dans un `state_dir` neuf → meme identite →
+/// `import_vault` rouvre les contacts et la nouvelle session renvoie
+/// un message a B sur sa propre liaison.
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+async fn live_messaging_e2e_vault_migration() {
+    init_tracing();
+    let mut relays = Vec::new();
+    for _ in 0..3 {
+        relays.push(make_relay().await);
+    }
+    let dir_a = tempfile::tempdir().unwrap();
+    let dir_b = tempfile::tempdir().unwrap();
+    // `CoreConfig::offline` desactive la messagerie — le test
+    // l'active expres (le service reste `None` sinon).
+    let mut cfg_a = live_cfg(dir_a.path());
+    cfg_a.ipv8.enable_messaging = true;
+    let hops = cfg_a.ipv8.messaging_hops;
+    let a = CoreSession::start(cfg_a, Notifier::new())
+        .await
+        .expect("session A");
+    let tunnel_a = a.ipv8().unwrap().tunnel.clone().expect("tunnel A");
+    let mut cfg_b = live_cfg(dir_b.path());
+    cfg_b.ipv8.enable_messaging = true;
+    // Hors-ligne (pas de DHT) : le point d'introduction du swarm de
+    // presence de B est epingle sur relays[0] pour que le PEX d'A
+    // sache ou le joindre (`required_ip` pyipv8).
+    cfg_b.ipv8.intro_point_peer = Some(UdpAddress::from(relays[0].addr));
+    let b = CoreSession::start(cfg_b, Notifier::new())
+        .await
+        .expect("session B");
+    let tunnel_b = b.ipv8().unwrap().tunnel.clone().expect("tunnel B");
+    wire_relays(&a.ipv8().unwrap(), &tunnel_a, &relays);
+    wire_relays(&b.ipv8().unwrap(), &tunnel_b, &relays);
+    let m_a = a.ipv8().unwrap().messaging.clone().expect("messaging A");
+    let m_b = b.ipv8().unwrap().messaging.clone().expect("messaging B");
+    let pk_a = m_a.public_key_bin();
+    let pk_b = m_b.public_key_bin();
+    let mut events_b = m_b.subscribe();
+
+    // Liaison e2e : jointure du swarm → PEX vers l'IP epingle de B
+    // → `create_e2e`. La publication de l'IP par le moniteur de
+    // presence n'est pas immediate — retries bornes dans le helper.
+    let bound = messaging_link(&m_a, &tunnel_a, &pk_b, &relays[0], hops).await;
+    assert!(bound, "liaison e2e messagerie jamais etablie (A -> B)");
+
+    // `send` fait preceder la premiere trame d'un `Hello` — c'est lui
+    // qui cree le contact `pending` cote B. La trame `Msg` qui suit
+    // immediatement est ecartee par la barriere de consentement
+    // (`pending_drop`) : msg1 sert de declencheur, pas de livraison.
+    m_a.send(&pk_b, b"bonjour onionbit".to_vec())
+        .await
+        .expect("send msg1");
+
+    // Consentement cote B : le premier contact d'A atterrit `pending`.
+    let ok = wait_until(STATE_WAIT, || {
+        m_b.pending_contacts().iter().any(|(pk, _)| *pk == pk_a)
+    })
+    .await;
+    assert!(ok, "B n'a jamais vu la demande de consentement d'A");
+    m_b.accept_contact(&pk_a).await.expect("accept_contact");
+
+    // Contact desormais `Active` cote B : la trame signee est livree
+    // (event `Frame`), persistee (`history`) et acquittee (`Ack`).
+    m_a.send(&pk_b, b"post-consentement".to_vec())
+        .await
+        .expect("send msg2");
+    // `try_recv` consomme l'evenement — incompatible avec `wait_until`
+    // (son dernier appel a `f()` re-polle un canal vide) : `recv()`
+    // asynchrone borne par `timeout` a la place. `Lagged` est ignore
+    // (les evenements rates seraient des Consent/Bound anterieurs).
+    let got = tokio::time::timeout(STATE_WAIT, async {
+        loop {
+            match events_b.recv().await {
+                Ok(onionbit_core::services::messaging::MessagingEvent::Frame {
+                    kind: onionbit_messaging::MsgKind::Msg,
+                    ..
+                }) => return true,
+                Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => return false,
+            }
+        }
+    })
+    .await
+    .unwrap_or(false);
+    assert!(got, "B n'a pas recu la trame Msg d'A");
+    let hist_b = m_b.history(&pk_a, 10).expect("history B");
+    assert!(
+        hist_b.iter().any(|r| r.body == b"post-consentement"),
+        "msg2 absent de l'historique de B"
+    );
+
+    // ===== Coffre OBV1 : migration sur un state_dir neuf =====
+    // L'export est scelle par l'identite d'A : la migration = meme
+    // `ipv8_keypair.bin` + blob dans un dossier vierge.
+    let blob = m_a.export_vault();
+    stop_bounded(&a).await;
+    let dir_a2 = tempfile::tempdir().unwrap();
+    std::fs::copy(
+        dir_a.path().join("ipv8_keypair.bin"),
+        dir_a2.path().join("ipv8_keypair.bin"),
+    )
+    .expect("copie identite");
+    let mut cfg_a2 = live_cfg(dir_a2.path());
+    cfg_a2.ipv8.enable_messaging = true;
+    let a2 = CoreSession::start(cfg_a2, Notifier::new())
+        .await
+        .expect("session A2");
+    let tunnel_a2 = a2.ipv8().unwrap().tunnel.clone().expect("tunnel A2");
+    wire_relays(&a2.ipv8().unwrap(), &tunnel_a2, &relays);
+    let m_a2 = a2.ipv8().unwrap().messaging.clone().expect("messaging A2");
+    // Meme identite restauree : cle publique identique.
+    assert_eq!(m_a2.public_key_bin(), pk_a, "identite non restauree");
+    let restored = m_a2.import_vault(&blob).expect("import_vault");
+    assert!(restored >= 1, "coffre : aucun contact restaure");
+    // B restaure `Active` — envoi possible des la liaison re-liee.
+    let bound2 = messaging_link(&m_a2, &tunnel_a2, &pk_b, &relays[0], hops).await;
+    assert!(bound2, "liaison e2e jamais retablie apres migration");
+    m_a2.send(&pk_b, b"post-migration".to_vec())
+        .await
+        .expect("send msg3");
+    let got2 = tokio::time::timeout(STATE_WAIT, async {
+        loop {
+            match events_b.recv().await {
+                Ok(onionbit_core::services::messaging::MessagingEvent::Frame {
+                    kind: onionbit_messaging::MsgKind::Msg,
+                    body,
+                    ..
+                }) if body == b"post-migration" => return true,
+                Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => return false,
+            }
+        }
+    })
+    .await
+    .unwrap_or(false);
+    assert!(got2, "B n'a pas recu la trame post-migration");
+
+    // Controle negatif : le coffre est scelle par l'identite — une
+    // session a cle differente ne peut pas l'ouvrir.
+    let dir_x = tempfile::tempdir().unwrap();
+    let mut cfg_x = live_cfg(dir_x.path());
+    cfg_x.ipv8.enable_messaging = true;
+    let x = CoreSession::start(cfg_x, Notifier::new())
+        .await
+        .expect("session X");
+    let m_x = x.ipv8().unwrap().messaging.clone().expect("messaging X");
+    assert_ne!(m_x.public_key_bin(), pk_a, "identite X doit differer");
+    assert!(
+        m_x.import_vault(&blob).is_err(),
+        "coffre OBV1 ouvert sous une autre identite"
+    );
+    stop_bounded(&x).await;
+
+    stop_bounded(&a2).await;
+    stop_bounded(&b).await;
+}
