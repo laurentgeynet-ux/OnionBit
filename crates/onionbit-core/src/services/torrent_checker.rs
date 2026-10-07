@@ -72,8 +72,6 @@ pub struct TorrentChecker {
     db: Arc<Database>,
     notifier: Notifier,
     ip_policy: Arc<IpPolicy>,
-    /// Socket UDP partagee (BEP-15).
-    socket: Arc<tokio::net::UdpSocket>,
 }
 
 impl std::fmt::Debug for TorrentChecker {
@@ -83,15 +81,15 @@ impl std::fmt::Debug for TorrentChecker {
 }
 
 impl TorrentChecker {
-    /// Cree le service avec sa socket UDP dediee (`listen_on_udp`
-    /// Python — une socket partagee entre les sessions).
+    /// Cree le service. Chaque scrape UDP ouvre sa socket ephemere :
+    /// une socket partagee volerait les datagrammes des scrapes
+    /// concurrents (le `recv_from` d'une tache consomme la reponse
+    /// d'une autre, qui part alors en timeout).
     pub async fn new(db: Arc<Database>, notifier: Notifier, ip_policy: IpPolicy) -> Result<Self> {
-        let socket = tokio::net::UdpSocket::bind("0.0.0.0:0").await?;
         Ok(Self {
             db,
             notifier,
             ip_policy: Arc::new(ip_policy),
-            socket: Arc::new(socket),
         })
     }
 
@@ -215,6 +213,10 @@ impl TorrentChecker {
             target.get_or_insert(addr);
         }
         let target = target.ok_or(CoreError::InvalidState("tracker sans adresse"))?;
+        // Socket ephemere propre a ce scrape : connect+scrape partagent
+        // le port source, et aucune autre tache ne peut consommer les
+        // datagrammes de retour.
+        let socket = tokio::net::UdpSocket::bind("0.0.0.0:0").await?;
 
         // connect : !q conn_id, i action, i txn
         let txn: i32 = rand::random::<u32>() as i32;
@@ -222,7 +224,7 @@ impl TorrentChecker {
         req.extend_from_slice(&UDP_TRACKER_INIT_CONNECTION_ID.to_be_bytes());
         req.extend_from_slice(&TRACKER_ACTION_CONNECT.to_be_bytes());
         req.extend_from_slice(&txn.to_be_bytes());
-        let resp = self.udp_roundtrip(target, &req).await?;
+        let resp = self.udp_roundtrip(&socket, target, &req).await?;
         if resp.len() < 16 {
             return Err(CoreError::InvalidState("reponse connect tronquee"));
         }
@@ -248,7 +250,7 @@ impl TorrentChecker {
         for ih in batch {
             req.extend_from_slice(ih);
         }
-        let resp = self.udp_roundtrip(target, &req).await?;
+        let resp = self.udp_roundtrip(&socket, target, &req).await?;
         if resp.len() < 8 || resp.len() - 8 != batch.len() * 12 {
             return Err(CoreError::InvalidState("reponse scrape invalide"));
         }
@@ -280,9 +282,14 @@ impl TorrentChecker {
         Ok(out)
     }
 
-    /// Aller-retour UDP borne par `SCRAPE_TIMEOUT`.
-    async fn udp_roundtrip(&self, target: SocketAddr, req: &[u8]) -> Result<Vec<u8>> {
-        let socket = self.socket.clone();
+    /// Aller-retour UDP borne par `SCRAPE_TIMEOUT` sur la socket
+    /// ephemere du scrape.
+    async fn udp_roundtrip(
+        &self,
+        socket: &tokio::net::UdpSocket,
+        target: SocketAddr,
+        req: &[u8],
+    ) -> Result<Vec<u8>> {
         tokio::time::timeout(SCRAPE_TIMEOUT, async move {
             socket.send_to(req, target).await?;
             let mut buf = vec![0u8; 64 * 1024];

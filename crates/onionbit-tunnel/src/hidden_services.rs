@@ -423,6 +423,14 @@ impl TunnelCommunity {
             "establish-intro envoye"
         );
         self.send_cell(&addr, &p).await?;
+        // Chien de garde : si `intro-established` n'arrive jamais,
+        // l'entree `ip_requests` est expiree — la suppression lache
+        // `tx`, ce qui resout `rx` en erreur et debloque l'appelant.
+        let this = self.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(this.settings.circuit_timeout).await;
+            this.inner.lock().unwrap().ip_requests.remove(&identifier);
+        });
         Ok(rx)
     }
 
@@ -780,10 +788,16 @@ impl TunnelCommunity {
             },
         )
         .await?;
-        let rp_addr = tokio::time::timeout(std::time::Duration::from_millis(timeout_ms), rx)
-            .await
-            .map_err(|_| Ipv8Error::Malformed("timeout rendezvous-established"))?
-            .map_err(|_| Ipv8Error::Malformed("cache rp abandonne"))?;
+        let rp_addr =
+            match tokio::time::timeout(std::time::Duration::from_millis(timeout_ms), rx).await {
+                Ok(Ok(addr)) => addr,
+                Ok(Err(_)) => return Err(Ipv8Error::Malformed("cache rp abandonne")),
+                Err(_) => {
+                    // Timeout : purge l'entree orpheline du cache.
+                    self.inner.lock().unwrap().rp_requests.remove(&identifier);
+                    return Err(Ipv8Error::Malformed("timeout rendezvous-established"));
+                }
+            };
         Ok(RendezvousPoint {
             circuit: cid,
             cookie,
@@ -960,13 +974,25 @@ impl TunnelCommunity {
             };
             self.send_cell(&addr, &p).await?;
         }
-        tokio::time::timeout(
+        match tokio::time::timeout(
             std::time::Duration::from_millis(PEERS_REQUEST_TIMEOUT_MS),
             rx,
         )
         .await
-        .map_err(|_| Ipv8Error::Malformed("timeout peers-response"))?
-        .map_err(|_| Ipv8Error::Malformed("cache peers abandonne"))
+        {
+            Ok(Ok(peers)) => Ok(peers),
+            Ok(Err(_)) => Err(Ipv8Error::Malformed("cache peers abandonne")),
+            Err(_) => {
+                // Sans reponse du pair : l'entree ne serait jamais
+                // consommee — purge explicite du cache de requetes.
+                self.inner
+                    .lock()
+                    .unwrap()
+                    .peers_requests
+                    .remove(&identifier);
+                Err(Ipv8Error::Malformed("timeout peers-response"))
+            }
+        }
     }
 
     /// `estimate_swarm_size` pyipv8 : crawl iteratif — la requete
@@ -1355,12 +1381,43 @@ impl TunnelCommunity {
         // neuf dans le meme appel.
         loop {
             let pending = {
-                let inner = self.inner.lock().unwrap();
-                inner
+                let mut inner = self.inner.lock().unwrap();
+                let entry = inner
                     .swarms
-                    .get(&info_hash)
-                    .and_then(|s| s.pending_e2e.get(intro_point))
-                    .map(|(stage, _)| *stage)
+                    .get_mut(&info_hash)
+                    .and_then(|s| s.pending_e2e.get(intro_point).copied());
+                match entry {
+                    // Point d'introduction silencieux : sans echéance le
+                    // pending re-emettait le meme paquet indefiniment et
+                    // la requete restait en cache. Au-dela de
+                    // `circuit_timeout`, pending + requete sont purges
+                    // et on retombe sur un handshake neuf. `Building`
+                    // est exclu : il a deja son `PendingGuard`, et
+                    // l'expirer ici laisserait l'ancien guard supprimer
+                    // un pending neuf en se terminant.
+                    Some((stage @ (PendingE2e::Create(_) | PendingE2e::Link(_)), t))
+                        if t.elapsed() >= self.settings.circuit_timeout =>
+                    {
+                        let id = match stage {
+                            PendingE2e::Create(id) | PendingE2e::Link(id) => id,
+                            _ => unreachable!(),
+                        };
+                        if let Some(s) = inner.swarms.get_mut(&info_hash) {
+                            s.pending_e2e.remove(intro_point);
+                        }
+                        match stage {
+                            PendingE2e::Create(_) => {
+                                inner.e2e_requests.remove(&id);
+                            }
+                            PendingE2e::Link(_) => {
+                                inner.link_requests.remove(&id);
+                            }
+                            _ => {}
+                        }
+                        None
+                    }
+                    other => other.map(|(stage, _)| stage),
+                }
             };
             match pending {
                 // `created-e2e` recu, circuit `RP_DOWNLOADER` en
@@ -1696,10 +1753,14 @@ impl TunnelCommunity {
         {
             let mut inner = self.inner.lock().unwrap();
             if let Some(s) = inner.swarms.get_mut(&p.info_hash) {
-                if s.seen_e2e.len() < MAX_SEEN_E2E {
-                    s.seen_e2e
-                        .insert((p.identifier, requester.clone()), packet.clone());
+                // Borne `MAX_SEEN_E2E` : au plafond on vide plutot que
+                // de figer le cache (un dedup gele laisserait chaque
+                // retry etre retraite comme une demande neuve).
+                if s.seen_e2e.len() >= MAX_SEEN_E2E {
+                    s.seen_e2e.clear();
                 }
+                s.seen_e2e
+                    .insert((p.identifier, requester.clone()), packet.clone());
             }
         }
         tracing::debug!(

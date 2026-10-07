@@ -312,6 +312,13 @@ impl Socks5Server {
                 }
             }
         }
+        // Le TCP controleur est clos : les entrees `return_map` de
+        // cette association retiendraient la socket UDP ouverte —
+        // purge par identite d'Arc (meme socket = meme association).
+        self.return_map
+            .lock()
+            .unwrap()
+            .retain(|_, (s, _)| !Arc::ptr_eq(s, &socket));
         Ok(())
     }
 

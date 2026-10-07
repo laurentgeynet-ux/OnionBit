@@ -136,10 +136,13 @@ impl WatchFolderService {
                     tracing::warn!(path = %path.display(), "watch_folder: lecture impossible");
                     return;
                 };
-                // Dedup par info-hash : parse borne en amont.
+                // Dedup par info-hash : parse borne en amont. Toutes
+                // les lanes (clair + anonymes) et les ajouts en vol —
+                // `engine()` seul ne couvre que la lane claire.
                 if let Ok(meta) = onionbit_format::torrent::TorrentMeta::parse(&bytes) {
                     let ih = onionbit_crypto::hash::to_hex(&meta.info_hash);
-                    if self.session.engine().get(&ih).is_some() {
+                    if self.session.find_download_hex(&ih).is_some() || self.session.is_pending(&ih)
+                    {
                         return;
                     }
                 }
@@ -154,6 +157,15 @@ impl WatchFolderService {
                 let uri = uri.trim();
                 if uri.is_empty() {
                     return;
+                }
+                // Meme dedup que les `.torrent` : sans lui, un magnet
+                // residuel etait re-soumis a chaque scan.
+                if let Ok(m) = onionbit_format::magnet::MagnetLink::parse(uri) {
+                    let ih = m.info_hash_hex();
+                    if self.session.find_download_hex(&ih).is_some() || self.session.is_pending(&ih)
+                    {
+                        return;
+                    }
                 }
                 if let Err(e) = self.session.add_download(uri, false).await {
                     tracing::warn!(path = %path.display(), error = %e, "watch_folder: ajout magnet echoue");

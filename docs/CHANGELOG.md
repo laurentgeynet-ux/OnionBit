@@ -3,6 +3,38 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Durcissement P0/P1 (revue externe 2) : racine `move_storage`, caches de requêtes tunnels, demux UDP, SOCKS5, watch_folder (2026-10-07)
+
+- **`move_torrent_files` préservait mal la racine** (`session.rs`) —
+  régression du correctif `move_storage` : `Path::parent("f.mkv")`
+  vaut `Some("")` et `src.join("")` == `src`, le nettoyage des
+  sous-dossiers vides pouvait `remove_dir` la racine de
+  téléchargements quand le torrent en était le dernier fichier.
+  Parents vides filtrés + `src` exclu. Test : second déplacement
+  vidant le dossier — la racine survit.
+- **Caches de requêtes tunnels purgés** (`hidden_services.rs`) :
+  `peers_requests` et `rp_requests` retirent leur entrée au timeout
+  (un pair silencieux la laissait indéfiniment) ; `ip_requests`
+  gagne un chien de garde à `circuit_timeout` — l'expiration lâche
+  le `tx`, ce qui débloque les `rx.await` (tâches qui se
+  garentaient pour toujours) ; `pending_e2e` consomme enfin son
+  timestamp — `Create`/`Link` expirés (> `circuit_timeout`) sont
+  purgés avec leur requête, fin du re-send infini vers un point
+  d'introduction mort ; `seen_e2e` se vide au plafond au lieu de
+  figer la déduplication à 64 entrées.
+- **Scrape UDP démultiplexé** (`torrent_checker.rs`) : socket
+  éphémère par session — la socket partagée laissait le `recv_from`
+  d'un scrape concurrent consommer la réponse d'un autre, qui
+  partait en timeout.
+- **`return_map` SOCKS5 purgée** (`socks5.rs`) : à la fermeture du
+  TCP contrôleur, les entrées de l'association sont retirées
+  (`Arc::ptr_eq` sur la socket de relais) — fin de la fuite de
+  descripteurs et de la croissance monotone de la table.
+- **`watch_folder` déduplique toutes lanes** (`watch_folder.rs`) :
+  `find_download_hex` + `is_pending` au lieu de `engine()` (clair
+  seul), et les `.magnet` sont dédupliqués comme les `.torrent` —
+  fin du re-add inutile toutes les 10 s.
+
 ## Durcissement P0 (revue externe) : `move_storage` scopé + `::/96` + timing API + verrou POSIX (2026-10-07)
 
 - **`move_storage` ne déplace plus que les fichiers du torrent**

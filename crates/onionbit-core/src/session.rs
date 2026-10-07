@@ -3066,9 +3066,14 @@ fn move_torrent_files(src: &Path, dst: &Path, rel_paths: &[PathBuf]) -> std::io:
     // Sous-dossiers devenus vides dans `src` (best-effort — le
     // dossier racine `src` est conserve expres : il peut etre le
     // dossier de telechargements partage de l'utilisateur).
+    // `Path::parent` d'un chemin sans dossier vaut `Some("")` et
+    // `src.join("")` == `src` : le parent vide est filtre expres pour
+    // que la racine ne figure jamais dans `dirs`.
     let mut dirs: Vec<PathBuf> = rel_paths
         .iter()
-        .filter_map(|rel| rel.parent().map(|p| src.join(p)))
+        .filter_map(|rel| rel.parent().filter(|p| !p.as_os_str().is_empty()))
+        .map(|p| src.join(p))
+        .filter(|d| d != src)
         .collect();
     dirs.sort_unstable_by_key(|p| std::cmp::Reverse(p.components().count()));
     dirs.dedup();

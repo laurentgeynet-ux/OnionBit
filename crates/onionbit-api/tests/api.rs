@@ -1965,6 +1965,24 @@ async fn patch_download_recheck_stop_resume_move_storage() {
         "le leurre ne doit pas etre deplace"
     );
 
+    // Second deplacement : `new_dir` ne contient plus que le fichier
+    // du torrent — il se vide entierement. `Path::parent("")` valait
+    // `Some("")` et `remove_dir` supprimait alors la racine `src`
+    // elle-meme : elle doit survivre (regression).
+    let final_dir = srv._dir.path().join("final");
+    std::fs::create_dir_all(&final_dir).unwrap();
+    let r = patch(serde_json::json!({
+        "state": "move_storage",
+        "dest_dir": final_dir.display().to_string()
+    }))
+    .await;
+    assert_eq!(r.status(), 200);
+    assert!(final_dir.join("api-test.bin").exists());
+    assert!(
+        new_dir.exists(),
+        "le dossier racine vide doit etre conserve"
+    );
+
     srv.session.stop().await;
 }
 
