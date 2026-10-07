@@ -44,6 +44,9 @@ pub mod packet;
 pub mod payloads;
 pub mod peer;
 pub mod serializer;
+/// Format filaire et sessions du transport furtif (ADR-0017) —
+/// disjoint du transport legacy ; aucun marqueur IPv8 sur le fil.
+pub mod stealth;
 pub mod transport;
 
 pub use address::UdpAddress;

@@ -1135,6 +1135,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "252afb9ae5eaa683babdc6a068b3f5726eb19e05070c731f9b2a23a7c3e8ed34"
 
 [[package]]
+name = "elligator2"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bda9a01fd3e5f7867279ca9b5104507cb2421e7987cb96af6397d84676de4af5"
+dependencies = [
+ "curve25519-dalek 5.0.0",
+ "fiat-crypto 0.3.0",
+ "rand_core 0.10.1",
+ "subtle",
+ "zeroize",
+]
+
+[[package]]
 name = "embed-resource"
 version = "3.0.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3132,6 +3145,7 @@ dependencies = [
  "argon2",
  "chacha20poly1305",
  "ed25519-dalek",
+ "elligator2",
  "hex 0.4.3",
  "hkdf",
  "hmac",

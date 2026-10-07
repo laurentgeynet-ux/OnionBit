@@ -3,6 +3,44 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## ADR-0017 étape 50 : crypto + filaire stealth (worktree adr17, 2026-10-07)
+
+- **`onionbit-crypto::stealth`** (nouveau) : `HiddenEph` — clé X25519
+  éphémère « torsion-dirty » encodée Elligator2 (crate `elligator2`
+  0.1.0, MIT/Apache-2.0 — gate licence passé ; `x25519` feature
+  volontairement off pour ne pas tirer `x25519-dalek` v3 en doublon).
+  Le **représentant** seul va sur le fil (uniforme, bits hauts
+  randomisés) ; le **point** entre dans DH/transcript. HKDF
+  domaine `onionbit/stealth/v1` — trois dérivations : `hs1` (clé
+  d'auth statique sous `X25519(x,B)`), `hs2` (sous `shared_ee +
+  static_dh`), `session` (clés directionnelles c2b/b2c + masques de
+  compteur). ChaCha20-Poly1305 bytes-in/bytes-out.
+- **`onionbit-ipv8::stealth`** (nouveau) : handshake
+  `hs1 = rep(X')‖AEAD〔v‖ts‖len‖id‖pad〕` / `hs2 =
+  rep(Y')‖AEAD〔v‖ts‖pad〕` — horodatage **dans** le plaintext
+  authentifié (anti-rejeu du premier datagramme, skew ±90 s
+  configurable). Trame `field‖AEAD〔len‖inner‖pad〕` où
+  `field = ctr ⊕ mask` : le compteur sert de nonce AEAD sans jamais
+  apparaître en clair. Fenêtre de rejeu = bitmap glissante marquée
+  **après** vérif AEAD (une forge ne fait pas glisser la fenêtre).
+  `XPrimeFilter` : deux fenêtres temporelles + `HashSet` borné,
+  alimenté seulement après auth réussie (le garbage ne sature pas le
+  filtre). Padding additif `uniform(0..=pad_max_extra)` clampé
+  `STEALTH_MTU=1280`. `StealthError::Reject` uniforme — la cause
+  (MAC/ts/rejeu/saturation) reste un diagnostic local, jamais sur le
+  fil.
+- **Tests hostiles** (13) : mauvaise clé de pont, garbage, MAC
+  invalide, horodatage hors fenêtre, rejeu `X'` et trames,
+  troncatures à **toutes** les bornes + bit-flip exhaustif, bords
+  exacts de fenêtre (`window` rejeté, `window-1` accepté), round-trip
+  Elligator + oracle `is_montgomery_u` (le représentant n'est pas une
+  u-coordonnée détectable), **séparation de domaine** `ext-obf/v1` ↔
+  `stealth/v1` dans les deux sens. Cible fuzz `stealth_frame`
+  (hs1/hs2/open_frame, état réel partagé) dans le harnais `fuzz/`.
+- Aucune intégration : `StealthTransport` (étape 51) viendra
+  consommer ces primitives — le mode stealth reste inactivable,
+  conformément au gate.
+
 ## ADR-0017 étape 49 : `DatagramTransport` extrait de `UdpEndpoint` (worktree adr17, 2026-10-07)
 
 - **Nouvelle couche `onionbit-ipv8::transport`** : trait object-safe

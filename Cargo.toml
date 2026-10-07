@@ -55,6 +55,15 @@ sha1 = "0.11"
 sha2 = "0.11"
 ed25519-dalek = "3"
 x25519-dalek = { version = "2", features = ["static_secrets", "getrandom"] }
+# Elligator2 (ADR-0017) : encode les points Curve25519 du handshake
+# stealth en chaines indistinguables d'un tirage uniforme. Crate
+# standalone sur fiat-crypto (arithmetique formellement verifiee,
+# temps constant), testee differentiellement contre le fork Tor
+# `curve25519-elligator2` (dev-dep, jamais embarquee). Licence
+# MIT/Apache-2.0 — compatible GPL-3.0. La feature `x25519` est
+# exclue : elle tirerait x25519-dalek v3 en doublon de notre v2 —
+# le DH reste sur `x25519-dalek` via `secret_bytes()`.
+elligator2 = "0.1"
 chacha20poly1305 = "0.11"
 hkdf = "0.13"
 hmac = "0.13"
