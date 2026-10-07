@@ -233,21 +233,14 @@ class AppSidebar extends ConsumerWidget {
                     const Divider(height: AppSpacing.lg)
                   else
                     _GroupLabel(l10n.sidebarGroupSystem),
-                  _NavItem(
-                    d: kNavCatalog[3],
-                    collapsed: collapsed,
-                    selected: currentPath == '/settings',
-                  ),
-                  _NavItem(
-                    d: kNavCatalog[2],
-                    collapsed: collapsed,
-                    selected: currentPath == '/diagnostic',
-                  ),
-                  _NavItem(
-                    d: kNavCatalog[4],
-                    collapsed: collapsed,
-                    selected: currentPath == '/about',
-                  ),
+                  // Data-driven : `selected` suit `d.path` — un index
+                  // croisé ne peut plus allumer le mauvais onglet.
+                  for (final d in kNavCatalog.skip(2))
+                    _NavItem(
+                      d: d,
+                      collapsed: collapsed,
+                      selected: currentPath == d.path,
+                    ),
                 ],
               ),
             ),
