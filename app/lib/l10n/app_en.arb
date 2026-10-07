@@ -526,7 +526,7 @@
       "rtt": { "type": "String" }
     }
   },
-  "statusRelayCapTip": "Cap on relayed/exit traffic served to other peers — automatic: adapts to your uplink congestion. The ms value is the lowest RTT measured on the probed peers.",
+  "statusRelayCapTip": "Estimated rate for relayed IPv8 data, continuously probed on your connection: rises while the line stays smooth, backs off when delays grow (uplink congestion). ms = lowest RTT measured on probed peers.",
   "statNone": "none",
 
   "logsDebugTooltip": "Logs detailed tunnel events (create/extend/destroy, e2e…)",
