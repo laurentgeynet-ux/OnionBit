@@ -331,6 +331,10 @@ pub struct Ipv8Config {
     pub ext_obf_pad_bucket: u32,
     /// Jitter du sondage `hello` (% de l'intervalle).
     pub ext_hello_jitter_pct: u32,
+    /// TTL d'un pair ext silencieux (s) — eviction + re-sondage.
+    pub ext_peer_ttl_secs: u64,
+    /// Borne memoire de la table `ext_peers`.
+    pub ext_peers_max: u32,
 }
 
 impl Ipv8Config {
@@ -417,6 +421,8 @@ impl Ipv8Config {
             ext_obf_enabled: false,
             ext_obf_pad_bucket: DEFAULT_EXT_OBF_PAD_BUCKET,
             ext_hello_jitter_pct: DEFAULT_EXT_HELLO_JITTER_PCT,
+            ext_peer_ttl_secs: DEFAULT_EXT_PEER_TTL_SECS,
+            ext_peers_max: DEFAULT_EXT_PEERS_MAX,
         }
     }
 }
@@ -496,6 +502,8 @@ impl Default for Ipv8Config {
             ext_obf_enabled: false,
             ext_obf_pad_bucket: DEFAULT_EXT_OBF_PAD_BUCKET,
             ext_hello_jitter_pct: DEFAULT_EXT_HELLO_JITTER_PCT,
+            ext_peer_ttl_secs: DEFAULT_EXT_PEER_TTL_SECS,
+            ext_peers_max: DEFAULT_EXT_PEERS_MAX,
         }
     }
 }
@@ -682,6 +690,12 @@ pub const DEFAULT_EXT_LEDGER_HEAD_FANOUT: u32 = 3;
 pub const DEFAULT_EXT_OBF_PAD_BUCKET: u32 = 256;
 /// Jitter `hello` par defaut : 25 % de l'intervalle.
 pub const DEFAULT_EXT_HELLO_JITTER_PCT: u32 = 25;
+/// TTL d'un pair ext sans trafic recu (s) — 4 h : la purge des
+/// fantomes sous churn sans evincer les vivants silencieux (tout
+/// datagramme signe rafraichit `last_hello`).
+pub const DEFAULT_EXT_PEER_TTL_SECS: u64 = 4 * 3600;
+/// Borne memoire de `ext_peers` — cap anti-Sybil sur les `hello`.
+pub const DEFAULT_EXT_PEERS_MAX: u32 = 4096;
 
 /// Tache de maintenance DHT (`PingChurn.take_step` +
 /// `node_maintenance`/`value_maintenance`/`token_maintenance` +
@@ -1727,6 +1741,10 @@ impl Ipv8Stack {
                     // pour porter les lanes e2e.
                     messaging_enabled: config.enable_messaging && config.enable_anonymity,
                     hello_jitter_pct: config.ext_hello_jitter_pct.min(100) as u8,
+                    peer_ttl: std::time::Duration::from_secs(
+                        config.ext_peer_ttl_secs.max(60),
+                    ),
+                    peers_max: config.ext_peers_max.max(1) as usize,
                     ..onionbit_ipv8::ext::ExtSettings::default()
                 },
             )

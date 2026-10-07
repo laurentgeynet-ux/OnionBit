@@ -811,6 +811,12 @@ Ajouter ici, au fil de l'avancement, tout écart constaté par rapport au
 plan initial (dépendance qui ne convient pas, étape scindée en deux,
 risque IPv8 sous/sur-estimé, etc.), avec la date.
 
+- 2026-10-06 (durcissement P1 — revue externe) : `fetch_checked_with`
+  épingle les IP validées à reqwest (`resolve_to_addrs` — fin du
+  TOCTOU DNS rebinding sur les fetches RSS/trackers/version) ;
+  `ext_peers` purgée au tick sur `ext/peer_ttl_secs` (4 h, trafic
+  signé = preuve de vie) + bornée par `ext/peers_max` (4096) —
+  fini la croissance infinie et les salves UDP vers les fantômes.
 - 2026-10-06 (ADR-0015 §9 — **ponts messagerie**) : consentement
   assisté par la confiance (`messaging_consent_flagged` bloque sans
   `pending`, `messaging_consent_endorsed` admet,

@@ -366,6 +366,17 @@ pub struct ExtSettings {
     /// uniforme `0..=pct`) — la cadence reguliere est le signal
     /// d'empreinte le plus marquant (§7).
     pub hello_jitter_pct: u8,
+    /// TTL d'un pair ext sans trafic recu — `last_hello` est
+    /// rafraichi par tout datagramme signe (pas seulement `hello`),
+    /// donc le seuil mesure le silence reel. Au-dela : eviction au
+    /// tick + retrait de `probed` pour re-sondage immediat — borne
+    /// la memoire et restreint `ext_targets` aux pairs vivants
+    /// (pas de salves UDP vers des fantomes sous churn).
+    pub peer_ttl: Duration,
+    /// Borne memoire de `ext_peers` : pleine, un `hello` de cle
+    /// inconnue est ignore (un flot Sybil de cles fraiches ne fait
+    /// pas grossir la table entre deux purges).
+    pub peers_max: usize,
 }
 
 impl Default for ExtSettings {
@@ -397,6 +408,8 @@ impl Default for ExtSettings {
             messaging_enabled: false,
             obf_pad_bucket: obf::OBF_PAD_BUCKET,
             hello_jitter_pct: 25,
+            peer_ttl: Duration::from_secs(4 * 3600),
+            peers_max: 4096,
         }
     }
 }
@@ -745,14 +758,26 @@ impl OnionbitExtCommunity {
     /// `hello` en retour une fois par cooldown (dedup sortant).
     fn on_hello(self: &Arc<Self>, peer: &Peer, hello: Hello) {
         let pk = peer.public_key_bin.clone();
-        self.ext_peers.lock().unwrap().insert(
-            pk.clone(),
-            ExtPeer {
-                caps: hello.caps,
-                last_hello: Instant::now(),
-                addr: peer.address.clone(),
-            },
-        );
+        {
+            let mut peers = self.ext_peers.lock().unwrap();
+            // Table pleine : un `hello` de cle inconnue est ignore —
+            // borne anti-Sybil entre deux purges TTL.
+            if !peers.contains_key(&pk) && peers.len() >= self.settings.peers_max {
+                tracing::debug!(
+                    peers_max = self.settings.peers_max,
+                    "ext_peers pleine — hello ignore"
+                );
+                return;
+            }
+            peers.insert(
+                pk.clone(),
+                ExtPeer {
+                    caps: hello.caps,
+                    last_hello: Instant::now(),
+                    addr: peer.address.clone(),
+                },
+            );
+        }
         if let Some(addr) = peer.address.clone() {
             let c = self.clone();
             tokio::spawn(async move {
@@ -1842,6 +1867,28 @@ impl OnionbitExtCommunity {
     /// communaute ne connaisse deja par ailleurs (lazy).
     pub async fn hello_tick(&self) {
         let my_pk = self.key.public_key().to_bin();
+        // Purge des pairs ext silencieux depuis `peer_ttl` — borne
+        // memoire + `ext_targets` restreinte aux vivants (pas de
+        // salves vers des fantomes sous churn). L'entree `probed`
+        // est retiree aussi : le pair vivant est re-sonde des ce
+        // tick (sinon le cooldown retarderait son retour d'une
+        // heure).
+        {
+            let ttl = self.settings.peer_ttl;
+            let mut peers = self.ext_peers.lock().unwrap();
+            let dead: Vec<Vec<u8>> = peers
+                .iter()
+                .filter(|(_, e)| e.last_hello.elapsed() >= ttl)
+                .map(|(pk, _)| pk.clone())
+                .collect();
+            if !dead.is_empty() {
+                let mut probed = self.probed.lock().unwrap();
+                for pk in dead {
+                    peers.remove(&pk);
+                    probed.remove(&pk);
+                }
+            }
+        }
         let ext_known: std::collections::HashSet<Vec<u8>> =
             self.ext_peers.lock().unwrap().keys().cloned().collect();
         // Purge des etats perimes (borne memoire + cooldown).
@@ -1915,6 +1962,15 @@ impl OnionbitExtCommunity {
         self.network.touch_by_addr(&src);
         if !pkt.signed {
             return Ok(());
+        }
+        // Tout trafic ext signe est une preuve de vie : rafraichi
+        // `last_hello`/`addr` d'un pair deja connu — la purge TTL
+        // compte dessus (un pair vivant silencieux n'est pas
+        // evince). Ne cree jamais l'entree : seul un `hello`
+        // valide insere.
+        if let Some(e) = self.ext_peers.lock().unwrap().get_mut(&pkt.public_key_bin) {
+            e.last_hello = Instant::now();
+            e.addr = Some(UdpAddress::from(src));
         }
         // Un `msg_id` ext inconnu (version plus recente) tombe dans
         // le `_` : ignore silencieusement — c'est le point
@@ -2771,5 +2827,119 @@ mod tests {
         // Seuls les 2 premiers ont traverse le budget.
         assert_eq!(info.attest_stored, 2);
         assert_eq!(info.attest_dropped, 2);
+    }
+
+    /// Purge `ext_peers` : un pair silencieux depuis `peer_ttl` est
+    /// evince au tick (borne memoire + `ext_targets` aux vivants) et
+    /// son entree `probed` est retiree → re-sonde des ce tick.
+    #[tokio::test]
+    async fn ext_peer_silencieux_purge_et_resonde() {
+        let (a, _ea, _aa, _ka) = node_full(ExtSettings {
+            // TTL nul : toute entree est immediatement perimee.
+            peer_ttl: Duration::ZERO,
+            ..ExtSettings::default()
+        })
+        .await;
+        // Pair vivant cote annuaire IPv8 mais silencieux en ext.
+        let ghost_key = LibNaClSecretKey::generate();
+        let ghost_pk = ghost_key.public_key().to_bin();
+        let ghost_addr = UdpAddress::Ipv4("127.0.0.1:9".parse().unwrap());
+        a.network
+            .add_verified(Peer::new(ghost_pk.clone(), Some(ghost_addr.clone())).unwrap());
+        a.ext_peers.lock().unwrap().insert(
+            ghost_pk.clone(),
+            ExtPeer {
+                caps: 0,
+                last_hello: Instant::now(),
+                addr: Some(ghost_addr),
+            },
+        );
+        a.probed
+            .lock()
+            .unwrap()
+            .insert(ghost_pk.clone(), Instant::now());
+        let hello_tx_before = a.hello_tx.load(Ordering::Relaxed);
+        a.hello_tick().await;
+        // Evince + re-sonde dans le meme tick (probed re-pose par
+        // `send_hello`, pas par le reliquat du cooldown).
+        assert!(!a.ext_peers.lock().unwrap().contains_key(&ghost_pk));
+        assert!(a.probed.lock().unwrap().contains_key(&ghost_pk));
+        assert!(a.hello_tx.load(Ordering::Relaxed) > hello_tx_before);
+    }
+
+    /// Trafic ext signe = preuve de vie : un pair qui emet rafraichit
+    /// son `last_hello` et n'est jamais evince par la purge TTL.
+    #[tokio::test]
+    async fn ext_peer_actif_non_purge_par_le_trafic() {
+        let followed_key = LibNaClSecretKey::generate();
+        let (a, _ea, addr_a, _ka) = node_full(ExtSettings {
+            // TTL court mais non nul : l'entree inseree avec un
+            // `last_hello` d'il y a 1 h serait evincee sans le
+            // rafraichissement par le trafic recu.
+            peer_ttl: Duration::from_secs(60),
+            curators: HashSet::from([followed_key.public_key().to_bin()]),
+            ..ExtSettings::default()
+        })
+        .await;
+        let (b, _eb, _ab, _kb) = node(0).await;
+        let pk = followed_key.public_key().to_bin();
+        a.ext_peers.lock().unwrap().insert(
+            pk.clone(),
+            ExtPeer {
+                caps: 0,
+                last_hello: Instant::now() - Duration::from_secs(3600),
+                addr: Some(UdpAddress::Ipv4("127.0.0.1:9".parse().unwrap())),
+            },
+        );
+        // Un ATTEST signe du pair : met a jour `last_hello` → le
+        // tick ne l'evince pas meme avec un TTL nul.
+        let att = Attestation::sign(
+            &followed_key,
+            attest_kind::INFOHASH,
+            &[7u8; 20],
+            attest_verdict::ENDORSE,
+            1,
+        )
+        .unwrap();
+        let pkt = Packet::sign_no_dist(&EXT_COMMUNITY_ID, msg::ATTEST, &followed_key, &att.pack());
+        b.endpoint.send_to(&addr_a, &pkt).await.unwrap();
+        let a2 = a.clone();
+        wait_until(move || a2.info().attest_rx == 1).await;
+        a.hello_tick().await;
+        assert!(a.ext_peers.lock().unwrap().contains_key(&pk));
+    }
+
+    /// Borne `peers_max` : un `hello` de cle inconnue sur une table
+    /// pleine est ignore — un flot de cles Sybil ne fait pas grossir
+    /// `ext_peers` entre deux purges.
+    #[tokio::test]
+    async fn ext_peers_pleine_hello_ignore() {
+        let (a, _ea, addr_a, _ka) = node_full(ExtSettings {
+            peers_max: 1,
+            ..ExtSettings::default()
+        })
+        .await;
+        let filler = LibNaClSecretKey::generate().public_key().to_bin();
+        a.ext_peers.lock().unwrap().insert(
+            filler,
+            ExtPeer {
+                caps: 0,
+                last_hello: Instant::now(),
+                addr: None,
+            },
+        );
+        // `hello` valide d'une seconde cle : jamais insere.
+        let (b, _eb, _ab, _kb) = node(0).await;
+        let mut w = Writer::new();
+        let _ = Hello {
+            version: EXT_PROTO_VERSION,
+            caps: 0,
+        }
+        .pack(&mut w);
+        let hello_key = LibNaClSecretKey::generate();
+        let pkt = Packet::sign_no_dist(&EXT_COMMUNITY_ID, msg::HELLO, &hello_key, &w.into_bytes());
+        b.endpoint.send_to(&addr_a, &pkt).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert_eq!(a.ext_peer_count(), 1);
     }
 }

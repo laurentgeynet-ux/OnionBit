@@ -58,17 +58,25 @@ pub async fn fetch_checked_with(
     let port = parsed
         .port_or_known_default()
         .ok_or(CoreError::InvalidState("url sans port"))?;
-    let mut count = 0usize;
+    let mut addrs = Vec::new();
     for addr in tokio::net::lookup_host((host, port)).await? {
         ip_policy.check(&addr)?;
-        count += 1;
+        addrs.push(addr);
     }
-    if count == 0 {
+    if addrs.is_empty() {
         return Err(CoreError::InvalidState("hote sans adresse resolue"));
     }
+    // Anti-DNS-rebinding : reqwest est epingle aux seules adresses
+    // deja validees par `ip_policy` — `resolve_to_addrs` court-
+    // circuite le resolveur systeme pour cet hote, donc un domaine
+    // a TTL 0 ne peut pas re-resoudre vers une IP interne entre le
+    // check et la connexion. Le client est reconstruit a chaque
+    // fetch parce que l'epinglage est par hote : il ne peut pas etre
+    // mutualise (chemins peu frequents : RSS, trackers, version).
     let client = reqwest::Client::builder()
         .timeout(timeout)
         .redirect(reqwest::redirect::Policy::none())
+        .resolve_to_addrs(host, &addrs)
         .build()
         .map_err(|_| CoreError::InvalidState("client http indisponible"))?;
     let mut request = client.get(url);

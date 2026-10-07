@@ -600,6 +600,14 @@ pub struct ExtConfig {
     pub obf_pad_bucket: u32,
     /// Jitter du sondage `hello` (% de l'intervalle). Defaut 25.
     pub hello_jitter_pct: u32,
+    /// TTL d'un pair ext sans trafic recu (s) — au-dela, eviction au
+    /// tick + re-sondage (borne memoire + population reelle).
+    /// Defaut 14400 (4 h).
+    pub peer_ttl_secs: u64,
+    /// Borne memoire de la table `ext_peers` — un `hello` de cle
+    /// inconnue est ignore quand elle est pleine (anti-Sybil).
+    /// Defaut 4096.
+    pub peers_max: u32,
     /// Clés ext additionnelles — préservées.
     #[serde(flatten)]
     pub extra: serde_json::Map<String, Value>,
@@ -633,6 +641,8 @@ impl Default for ExtConfig {
             obf_enabled: false,
             obf_pad_bucket: crate::ipv8_stack::DEFAULT_EXT_OBF_PAD_BUCKET,
             hello_jitter_pct: crate::ipv8_stack::DEFAULT_EXT_HELLO_JITTER_PCT,
+            peer_ttl_secs: crate::ipv8_stack::DEFAULT_EXT_PEER_TTL_SECS,
+            peers_max: crate::ipv8_stack::DEFAULT_EXT_PEERS_MAX,
             extra: serde_json::Map::new(),
         }
     }
@@ -1615,6 +1625,8 @@ impl DaemonConfig {
             ext_obf_enabled: self.ext.obf_enabled,
             ext_obf_pad_bucket: self.ext.obf_pad_bucket,
             ext_hello_jitter_pct: self.ext.hello_jitter_pct,
+            ext_peer_ttl_secs: self.ext.peer_ttl_secs,
+            ext_peers_max: self.ext.peers_max,
         };
 
         crate::CoreConfig {

@@ -3,6 +3,26 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Durcissement P1 (revue externe) : DNS rebinding + purge `ext_peers` (2026-10-06)
+
+- **`fetch_checked_with` anti-TOCTOU** (`services/mod.rs`) : les
+  adresses validées par `ip_policy` sont épinglées à reqwest via
+  `resolve_to_addrs` — plus de seconde résolution DNS entre le check
+  et la connexion, un domaine à TTL 0 ne peut plus rebinding vers
+  une IP interne. Le client reste reconstruit par appel (l'épinglage
+  est par hôte, non mutualisable — chemins RSS/trackers peu
+  fréquents).
+- **`ext_peers` bornée** (`ext.rs`) : `last_hello` rafraîchi par tout
+  trafic ext signé (preuve de vie, pas seulement les `hello` —
+  adresse incluse) ; au tick, les pairs silencieux depuis
+  `ext/peer_ttl_secs` (défaut 4 h) sont évincés **et** sortis de
+  `probed` → re-sondés dès ce tick (pas de trou d'une heure) ;
+  `ext/peers_max` (défaut 4096) borne l'insertion — un flot de clés
+  Sybil ne gonfle plus la table ni `ext_targets` (plus de salves
+  UDP vers des fantômes). `probed` était déjà purgé au cooldown.
+- Tests : purge+re-sondage, trafic=preuve de vie, table pleine →
+  `hello` ignoré (3 nouveaux cas verts).
+
 ## ADR-0015 §9 : ponts messagerie — consentement assisté + coffre portable (2026-10-06)
 
 - **Gates de consentement** (`tunnel_community/messaging_consent_*`,
