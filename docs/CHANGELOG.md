@@ -3,6 +3,18 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Diagnostic : carte « Trafic relais » ne mesure que le relais (2026-10-07)
+
+- La carte IPv8 du Diagnostic affichait les débits/totaux de
+  **l'endpoint** (`rate_up`/`rate_down`, `total_*`) — qui cumulent le
+  trafic de nos propres téléchargements anonymes, la découverte et le
+  relais. Elle affiche désormais uniquement le **servi** mesuré au
+  limiteur de la pompe d'émission (`relay_served_bps` en titre,
+  `relay_served_bytes` en caption) — la valeur exacte « combien je
+  relaye », sans soustraction approximative.
+- Libellé renommé « Trafic overlay IPv8 » → « Trafic relais »
+  (`cardTunnelTraffic`, FR/EN).
+
 ## Packaging/lancement : `OnionBit.exe`, `state_dir` bundle-aware, `.lnk` sans console, verrou avant rotation (2026-10-07)
 
 - **Renommage produit** : l'exe Flutter `onionbit_ui.exe` devient

@@ -1384,26 +1384,21 @@ class _OverviewTab extends ConsumerWidget {
               _StatCard(
                 icon: Icons.swap_vert,
                 label: context.l10n.cardTunnelTraffic,
-                value: tunnel == null
-                    ? '—'
-                    : '↓ ${context.fmtRate(tunnel.rateDown)} · '
-                          '↑ ${context.fmtRate(tunnel.rateUp)}',
-                caption: tunnel == null
-                    ? null
-                    : [
-                        // Debit servi aux autres pairs, mesure exacte
-                        // au limiteur (extension Rust) — repond a
-                        // « combien je relaye » sans soustraire le
-                        // trafic propre.
-                        if (tunnel.bandwidth case final bw?)
-                          context.l10n.cardRelayServed(
-                            context.fmtRate(bw.servedBps),
-                          ),
-                        context.l10n.statTrafficValue(
-                          context.fmtBytes(tunnel.up),
-                          context.fmtBytes(tunnel.down),
-                        ),
-                      ].join('\n'),
+                // Relais UNIQUEMENT : debit + total servi aux autres
+                // pairs, mesures exacts au limiteur de la pompe
+                // d'emission (`relay_served_*`) — les compteurs
+                // d'endpoint (rate_up/down, total_*) cumuleraient le
+                // trafic de nos propres telechargements anonymes.
+                value: switch (tunnel?.bandwidth) {
+                  final bw? => '↑ ${context.fmtRate(bw.servedBps)}',
+                  _ => '—',
+                },
+                caption: switch (tunnel?.bandwidth) {
+                  final bw? => context.l10n.cardRelayServedTotal(
+                      context.fmtBytes(bw.servedBytes),
+                    ),
+                  _ => null,
+                },
               ),
               _StatCard(
                 icon: Icons.storage_outlined,

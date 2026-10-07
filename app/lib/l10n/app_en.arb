@@ -553,8 +553,8 @@
   "cardUpload": "Upload",
   "cardFilesDownload": "File download",
   "cardFilesUpload": "File upload",
-  "cardTunnelTraffic": "IPv8 overlay traffic",
-  "cardRelayServed": "relay served: ↑ {rate}",
+  "cardTunnelTraffic": "Relay traffic",
+  "cardRelayServedTotal": "total served: {bytes}",
   "cardDatabase": "Database",
 
   "speedTestCircuitTitle": "Circuit #{id} test",

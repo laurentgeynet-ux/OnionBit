@@ -382,8 +382,8 @@
   "cardUpload": "Envoi",
   "cardFilesDownload": "Réception fichiers",
   "cardFilesUpload": "Envoi fichiers",
-  "cardTunnelTraffic": "Trafic overlay IPv8",
-  "cardRelayServed": "relais servi : ↑ {rate}",
+  "cardTunnelTraffic": "Trafic relais",
+  "cardRelayServedTotal": "total servi : {bytes}",
   "cardDatabase": "Base de données",
 
   "speedTestCircuitTitle": "Test du circuit #{id}",
