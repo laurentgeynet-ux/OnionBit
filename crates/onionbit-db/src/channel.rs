@@ -89,6 +89,15 @@ pub fn insert(conn: &Connection, row: &ChannelNodeRow) -> Result<Option<i64>> {
     if n == 0 {
         return Ok(None);
     }
+    let tr_trimmed = row.tracker_info.trim();
+    if !tr_trimmed.is_empty() && row.infohash.len() == 20 {
+        for url in tr_trimmed.split(|c: char| c.is_whitespace() || c == ',') {
+            let u = url.trim();
+            if u.starts_with("udp://") || u.starts_with("http://") || u.starts_with("https://") {
+                let _ = health::link_tracker(conn, &row.infohash, u);
+            }
+        }
+    }
     Ok(Some(conn.last_insert_rowid()))
 }
 

@@ -3,6 +3,28 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Correctif : résolution des métadonnées des magnets de recherche (trackers & fallback BEP 9) (2026-10-07)
+
+- **Propagation des trackers depuis la recherche locale et distante** :
+  - `onionbit-db` : `channel::insert` associe désormais automatiquement les URLs de
+    `tracker_info` dans `torrent_state_tracker` (parité Tribler) ; ajout de
+    `trackers_for_torrent_rowids` pour charger les trackers par lots sans requête N+1.
+  - `onionbit-api` : `/metadata/search/local` expose les champs `trackers` et
+    `tracker_info` dans chaque résultat de recherche locale (parité avec
+    `TorrentMetadata.to_simple_dict`).
+  - `onionbit-core` : `simple_dict_mem` renvoie les trackers extraits de `tracker_info`
+    dans les notifications SSE de recherche distante (`remote_query_results`).
+- **Génération de magnets enrichis dans l'UI Flutter** :
+  - `onionbit_ui` : `TorrentResult` conserve les `trackers` découverts et le getter `magnet`
+    concatène l'ensemble des trackers encodés (`&tr=...`, parité avec `getMagnetLink` Tribler)
+    au lieu de créer un magnet nu sans aucun tracker.
+- **Trackers publics de repli (fallback)** :
+  - `onionbit-core` : définition de `FALLBACK_PUBLIC_TRACKERS` fiables (opentrackr, stealth.si,
+    torrent.eu.org, explodie, openbittorrent) retournés par `default_trackers()` lorsqu'aucun
+    fichier de trackers n'est configuré. Les magnets sans trackers ne restent plus bloqués
+    indéfiniment en attente de réponse sur la DHT publique.
+
+
 ## Correctifs : `pending` magnet orphelin au drop, retry d'add dans le banc live (2026-10-07)
 
 - **`PendingAddGuard` (session)** — un `add_download_anon` droppé en

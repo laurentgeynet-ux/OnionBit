@@ -166,3 +166,34 @@ pub fn trackers_of(conn: &Connection, infohash: &[u8]) -> Result<Vec<String>> {
     let rows = stmt.query_map(params![infohash], |r| r.get(0))?;
     Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
 }
+
+/// Liste les URLs de trackers pour une liste de `torrent_state_rowid` (evite le N+1).
+pub fn trackers_for_torrent_rowids(
+    conn: &Connection,
+    rowids: &[i64],
+) -> Result<std::collections::HashMap<i64, Vec<String>>> {
+    if rowids.is_empty() {
+        return Ok(std::collections::HashMap::new());
+    }
+    let placeholders = rowids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+    let sql = format!(
+        "SELECT tt.torrent_state_rowid, tr.url
+         FROM torrent_state_tracker tt
+         JOIN tracker_state tr ON tr.rowid = tt.tracker_state_rowid
+         WHERE tt.torrent_state_rowid IN ({placeholders})"
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let params: Vec<&dyn rusqlite::ToSql> =
+        rowids.iter().map(|id| id as &dyn rusqlite::ToSql).collect();
+    let mut rows = stmt.query(rusqlite::params_from_iter(params))?;
+    let mut map = std::collections::HashMap::new();
+    while let Some(r) = rows.next()? {
+        let ts_id: i64 = r.get(0)?;
+        let url: String = r.get(1)?;
+        let list: &mut Vec<String> = map.entry(ts_id).or_default();
+        if !list.contains(&url) {
+            list.push(url);
+        }
+    }
+    Ok(map)
+}

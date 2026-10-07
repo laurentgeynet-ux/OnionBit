@@ -23,6 +23,7 @@ class TorrentResult {
     this.seeders,
     this.leechers,
     this.date,
+    this.trackers = const [],
   });
 
   final String infohash;
@@ -36,9 +37,18 @@ class TorrentResult {
   /// secondes ; `null` = inconnu).
   final DateTime? date;
 
-  /// Magnet minimal pour l'ajout direct.
-  String get magnet =>
-      'magnet:?xt=urn:btih:$infohash&dn=${Uri.encodeComponent(name)}';
+  /// Trackers connus associés à ce torrent.
+  final List<String> trackers;
+
+  /// Magnet complet pour l'ajout direct avec trackers de la source.
+  String get magnet {
+    final base =
+        'magnet:?xt=urn:btih:$infohash&dn=${Uri.encodeComponent(name)}';
+    if (trackers.isEmpty) return base;
+    final trParams =
+        trackers.map((t) => '&tr=${Uri.encodeComponent(t)}').join();
+    return '$base$trParams';
+  }
 
   /// Copie avec la santé rafraîchie (sonde
   /// `/metadata/torrents/{ih}/health`).
@@ -50,5 +60,6 @@ class TorrentResult {
     seeders: seeders,
     leechers: leechers,
     date: date,
+    trackers: trackers,
   );
 }

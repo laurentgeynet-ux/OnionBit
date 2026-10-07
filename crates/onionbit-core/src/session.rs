@@ -1571,18 +1571,21 @@ impl CoreSession {
     /// (`sync_default_trackers_file` : un fetch par heure maximum).
     async fn default_trackers(&self) -> Vec<String> {
         let dd = self.download_defaults();
-        let Some(path) =
+        if let Some(path) =
             crate::trackers::trackers_file_path(&self.inner.config.state_dir, &dd.trackers_file)
-        else {
-            return Vec::new();
-        };
-        if !dd.trackers_file_sync_url.is_empty() {
-            self.sync_trackers_file(&dd.trackers_file_sync_url, &path)
-                .await;
+        {
+            if !dd.trackers_file_sync_url.is_empty() {
+                self.sync_trackers_file(&dd.trackers_file_sync_url, &path)
+                    .await;
+            }
+            let list = std::fs::read_to_string(&path)
+                .map(|s| crate::trackers::parse_trackers_file(&s))
+                .unwrap_or_default();
+            if !list.is_empty() {
+                return list;
+            }
         }
-        std::fs::read_to_string(&path)
-            .map(|s| crate::trackers::parse_trackers_file(&s))
-            .unwrap_or_default()
+        crate::trackers::fallback_public_trackers()
     }
 
     /// `sync_default_trackers_file` Python : reecrit `trackers_file`

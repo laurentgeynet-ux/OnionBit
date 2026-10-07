@@ -31,6 +31,24 @@ use onionbit_db::models::DownloadRow;
 /// 3600 secondes).
 pub const TRACKER_SYNC_TTL_SECS: u64 = 3600;
 
+/// Trackers publics fiables de repli lorsqu'aucun tracker n'est fourni par la source
+/// ou par `trackers_file` (evite le blocage indefini en attente de metadonnees BEP 9).
+pub const FALLBACK_PUBLIC_TRACKERS: &[&str] = &[
+    "udp://tracker.opentrackr.org:1337/announce",
+    "udp://open.stealth.si:80/announce",
+    "udp://tracker.torrent.eu.org:451/announce",
+    "udp://explodie.org:6969/announce",
+    "udp://tracker.openbittorrent.com:6969/announce",
+];
+
+/// Retourne la liste des trackers publics de repli sous forme de `Vec<String>`.
+pub fn fallback_public_trackers() -> Vec<String> {
+    FALLBACK_PUBLIC_TRACKERS
+        .iter()
+        .map(|&s| s.to_string())
+        .collect()
+}
+
 /// Parse le contenu du fichier de trackers par defaut : lignes non
 /// vides trimees (`cached_read` Python — le format uTorrent separe
 /// les URLs par des lignes vides).

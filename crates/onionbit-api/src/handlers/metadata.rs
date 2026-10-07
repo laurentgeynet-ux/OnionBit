@@ -18,12 +18,24 @@ use crate::state::AppState;
 const LIST_LIMIT: u32 = 200;
 
 /// Ligne `channel_node` -> objet `torrent` de la reponse Python
-/// (`TorrentMetadata.to_json`-equivalent).
-fn row_json(row: &onionbit_db::ChannelNodeRow) -> serde_json::Value {
+/// (`TorrentMetadata.to_json`-equivalent), avec la liste de trackers connus.
+fn row_json_with_trackers(
+    row: &onionbit_db::ChannelNodeRow,
+    mut trackers: Vec<String>,
+) -> serde_json::Value {
     let mut infohash = hex::encode(&row.infohash);
     // Les canaux portent la cle publique, pas un infohash.
     if row.infohash.len() != 20 {
         infohash = String::new();
+    }
+    let tr_info = row.tracker_info.trim();
+    if !tr_info.is_empty() {
+        for u in tr_info.split(|c: char| c.is_whitespace() || c == ',') {
+            let u = u.trim();
+            if !u.is_empty() && !trackers.iter().any(|t| t == u) {
+                trackers.push(u.to_string());
+            }
+        }
     }
     serde_json::json!({
         "infohash": infohash,
@@ -50,6 +62,8 @@ fn row_json(row: &onionbit_db::ChannelNodeRow) -> serde_json::Value {
         "votes": row.xxx,
         "type": row.metadata_type,
         "tag_processor_version": row.tag_processor_version,
+        "trackers": trackers,
+        "tracker_info": row.tracker_info,
     })
 }
 
@@ -428,14 +442,17 @@ pub async fn local_search(
     // garde-fou, `build_where` ne pose aucune clause et
     // `select_entries` retournerait toute la table (le filtre texte
     // a ete retire au profit de `rowids`).
-    let rows = if p2.rowids.is_empty() {
-        Vec::new()
+    let (rows, trackers_map) = if p2.rowids.is_empty() {
+        (Vec::new(), std::collections::HashMap::new())
     } else {
         state
             .session
             .db()
             .call("metadata.select_entries", move |c| {
-                onionbit_db::channel::select_entries(c, &p2)
+                let rows = onionbit_db::channel::select_entries(c, &p2)?;
+                let ts_rowids: Vec<i64> = rows.iter().filter_map(|r| r.health_rowid).collect();
+                let trackers = onionbit_db::health::trackers_for_torrent_rowids(c, &ts_rowids)?;
+                Ok((rows, trackers))
             })
             .await?
     };
@@ -460,7 +477,16 @@ pub async fn local_search(
     } else {
         (None, None)
     };
-    let mut results: Vec<_> = rows.iter().map(row_json).collect();
+    let mut results: Vec<_> = rows
+        .iter()
+        .map(|r| {
+            let trs = r
+                .health_rowid
+                .and_then(|id| trackers_map.get(&id).cloned())
+                .unwrap_or_default();
+            row_json_with_trackers(r, trs)
+        })
+        .collect();
 
     // Inclut egalement les telechargements de la session courante correspondant au filtre.
     let fts_lower = fts.to_ascii_lowercase();
@@ -476,6 +502,12 @@ pub async fn local_search(
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_secs())
                 .unwrap_or(0);
+            let trackers = state
+                .session
+                .find_download(&dl.info_hash)
+                .map(|d| d.trackers())
+                .unwrap_or_default();
+            let first_tr = trackers.first().cloned().unwrap_or_default();
             results.push(serde_json::json!({
                 "infohash": dl.info_hash,
                 "name": name,
@@ -486,6 +518,8 @@ pub async fn local_search(
                 "num_seeders": 1,
                 "num_leechers": dl.peers_live,
                 "last_tracker_check": null,
+                "trackers": trackers,
+                "tracker_info": first_tr,
             }));
         }
     }

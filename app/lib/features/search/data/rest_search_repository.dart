@@ -35,6 +35,26 @@ class RestSearchRepository implements SearchRepository {
     return null;
   }
 
+  static List<String> _parseTrackers(
+    dynamic rawTrackers,
+    dynamic rawTrackerInfo,
+  ) {
+    final list = <String>[];
+    if (rawTrackers is List) {
+      for (final t in rawTrackers) {
+        if (t is String && t.trim().isNotEmpty) {
+          final trimmed = t.trim();
+          if (!list.contains(trimmed)) list.add(trimmed);
+        }
+      }
+    }
+    if (rawTrackerInfo is String && rawTrackerInfo.trim().isNotEmpty) {
+      final trimmed = rawTrackerInfo.trim();
+      if (!list.contains(trimmed)) list.add(trimmed);
+    }
+    return list;
+  }
+
   static TorrentResult _parse(Map<String, dynamic> j, TorrentSource source) =>
       TorrentResult(
         infohash: '${j['infohash'] ?? ''}',
@@ -47,6 +67,7 @@ class RestSearchRepository implements SearchRepository {
         // plus parlante que `updated` (mise à jour du noeud chez le
         // pair émetteur, unité ms chez Python).
         date: _parseDate(j['created'] ?? j['updated'] ?? j['torrent_date']),
+        trackers: _parseTrackers(j['trackers'], j['tracker_info']),
       );
 
   /// Parse une entrée `remote_query_results` (même forme `results`).

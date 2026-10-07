@@ -1368,6 +1368,16 @@ fn simple_dict_mem(
     health: Option<(u32, u32, u64)>,
 ) -> serde_json::Value {
     let (seeders, leechers, last_check) = health.unwrap_or((0, 0, 0));
+    let mut trackers = Vec::new();
+    let tr_info = row.tracker_info.trim();
+    if !tr_info.is_empty() {
+        for u in tr_info.split(|c: char| c.is_whitespace() || c == ',') {
+            let u = u.trim();
+            if !u.is_empty() && !trackers.iter().any(|t| t == u) {
+                trackers.push(u.to_string());
+            }
+        }
+    }
     serde_json::json!({
         "name": row.title,
         "category": row.tags,
@@ -1385,7 +1395,8 @@ fn simple_dict_mem(
         "public_key": hex::encode(&row.public_key),
         "status": row.status,
         "xxx": row.xxx,
-        "trackers": [],
+        "trackers": trackers,
+        "tracker_info": row.tracker_info,
     })
 }
 
