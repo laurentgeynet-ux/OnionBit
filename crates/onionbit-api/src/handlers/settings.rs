@@ -21,7 +21,11 @@ use crate::state::AppState;
 /// superpose des valeurs effectivement en cours (reglages appliques a
 /// chaud, ports runtime).
 pub async fn get_settings(State(state): State<AppState>) -> Json<serde_json::Value> {
-    let mut cfg = state.daemon_config.lock().unwrap().clone();
+    let mut cfg = state
+        .daemon_config
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
     cfg.apply_runtime_view(&state.session.effective_config());
     Json(serde_json::json!({
         "settings": serde_json::to_value(&cfg).unwrap_or_default()
@@ -45,7 +49,10 @@ pub async fn update_settings(
         return Err(ApiError::bad_request("settings must be a JSON object"));
     }
 
-    let mut cfg = state.daemon_config.lock().unwrap();
+    let mut cfg = state
+        .daemon_config
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     cfg.merge(patch)
         .map_err(|e| ApiError::bad_request(format!("invalid settings: {e}")))?;
     if let Some(path) = &state.config_path {

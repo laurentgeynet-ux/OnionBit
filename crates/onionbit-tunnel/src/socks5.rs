@@ -533,12 +533,39 @@ fn encode_udp_frame(src: &UdpAddress, data: &[u8]) -> Vec<u8> {
             out.extend_from_slice(&a.port().to_be_bytes());
         }
         UdpAddress::Domain(h, p) => {
+            // Le champ longueur est un u8 — le `from_utf8_lossy` du
+            // parse peut avoir EXPANSE la chaine au-dela de 255
+            // (U+FFFD = 3 o par sequence invalide) : un `as u8` nu
+            // tronquait la longueur annoncee et desynchronisait la
+            // trame. Borne a 255.
+            let bytes = h.as_bytes();
+            let len = bytes.len().min(u8::MAX as usize);
             out.push(ATYP_DOMAIN);
-            out.push(h.len() as u8);
-            out.extend_from_slice(h.as_bytes());
+            out.push(len as u8);
+            out.extend_from_slice(&bytes[..len]);
             out.extend_from_slice(&p.to_be_bytes());
         }
     }
     out.extend_from_slice(data);
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Un domaine au-dela de 255 o (possible : `from_utf8_lossy`
+    /// expand les sequences invalides en U+FFFD) : la longueur
+    /// annoncee est bornee et la trame reste synchronisee.
+    #[test]
+    fn encode_udp_frame_borne_domaine() {
+        let addr = UdpAddress::Domain("a".repeat(300), 9);
+        let frame = encode_udp_frame(&addr, b"x");
+        assert_eq!(frame[3], ATYP_DOMAIN);
+        assert_eq!(frame[4], 255);
+        // RSV(3) ATYP LEN domaine PORT DATA — offsets intacts.
+        assert_eq!(frame.len(), 3 + 1 + 1 + 255 + 2 + 1);
+        assert_eq!(&frame[260..262], &9u16.to_be_bytes());
+        assert_eq!(frame[262], b'x');
+    }
 }

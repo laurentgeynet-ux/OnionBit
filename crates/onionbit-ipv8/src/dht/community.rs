@@ -561,24 +561,30 @@ impl DhtCommunity {
 
     /// `my_estimated_wan`.
     pub fn my_wan(&self) -> UdpAddress {
-        self.my_wan.lock().unwrap().clone()
+        self.my_wan
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     /// `my_estimated_lan`.
     pub fn my_lan(&self) -> UdpAddress {
-        self.my_lan.lock().unwrap().clone()
+        self.my_lan
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     /// Met a jour l'estimation WAN quand la discovery l'apprend
     /// (`my_estimated_wan` Python est mutable a la reception des
     /// introduction-responses).
     pub fn set_my_wan(&self, wan: UdpAddress) {
-        *self.my_wan.lock().unwrap() = wan;
+        *self.my_wan.lock().unwrap_or_else(|e| e.into_inner()) = wan;
     }
 
     /// Met a jour l'estimation LAN.
     pub fn set_my_lan(&self, lan: UdpAddress) {
-        *self.my_lan.lock().unwrap() = lan;
+        *self.my_lan.lock().unwrap_or_else(|e| e.into_inner()) = lan;
     }
 
     /// `global_time` (Lamport approxime par l'horloge, comme l'etape 9).
@@ -605,7 +611,10 @@ impl DhtCommunity {
 
     /// Acces a la table d'une classe donnee (creee si absente).
     fn with_class_table<R>(&self, class: AddrClass, f: impl FnOnce(&mut RoutingTable) -> R) -> R {
-        let mut tables = self.routing_tables.lock().unwrap();
+        let mut tables = self
+            .routing_tables
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let my_id = calc_node_id(&self.my_wan(), &self.my_mid).unwrap_or(self.my_mid);
         let rt = tables
             .entry(class)
@@ -615,7 +624,7 @@ impl DhtCommunity {
 
     /// Storage de la classe d'adresse du noeud.
     fn with_storage<R>(&self, addr: &UdpAddress, f: impl FnOnce(&mut Storage) -> R) -> R {
-        let mut storages = self.storages.lock().unwrap();
+        let mut storages = self.storages.lock().unwrap_or_else(|e| e.into_inner());
         let st = storages.entry(AddrClass::of(addr)).or_default();
         f(st)
     }
@@ -681,7 +690,7 @@ impl DhtCommunity {
         {
             self.pending
                 .lock()
-                .unwrap()
+                .unwrap_or_else(|e| e.into_inner())
                 .remove(&(PendingKind::Ping, id));
             return Err(e.into());
         }
@@ -698,7 +707,7 @@ impl DhtCommunity {
         params: PendingParams,
     ) -> (u32, oneshot::Receiver<PendingResult>) {
         let (tx, rx) = oneshot::channel();
-        let mut pending = self.pending.lock().unwrap();
+        let mut pending = self.pending.lock().unwrap_or_else(|e| e.into_inner());
         let id = loop {
             let id = rand::random::<u32>();
             if !pending.contains_key(&(kind, id)) {
@@ -732,7 +741,7 @@ impl DhtCommunity {
                 let rtt = self
                     .pending
                     .lock()
-                    .unwrap()
+                    .unwrap_or_else(|e| e.into_inner())
                     .remove(&(kind, id))
                     .map(|p| p.start.elapsed().as_secs_f64())
                     .unwrap_or(0.0);
@@ -741,7 +750,10 @@ impl DhtCommunity {
                 Ok(res)
             }
             _ => {
-                self.pending.lock().unwrap().remove(&(kind, id));
+                self.pending
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .remove(&(kind, id));
                 node.note_failure();
                 Err(DhtError::Timeout("requete"))
             }
@@ -751,14 +763,14 @@ impl DhtCommunity {
     /// `token_maintenance` + generation/verification de jetons
     /// (`sha1(str(node) + secret)`, 2 secrets tournants).
     fn generate_token(&self, node: &Node) -> [u8; 20] {
-        let secrets = self.token_secrets.lock().unwrap();
+        let secrets = self.token_secrets.lock().unwrap_or_else(|e| e.into_inner());
         let secret = secrets.back().copied().unwrap_or([0; 16]);
         sha1(&[node_repr(node).as_bytes(), &secret].concat())
     }
 
     /// `check_token`.
     fn check_token(&self, node: &Node, token: &[u8; 20]) -> bool {
-        let secrets = self.token_secrets.lock().unwrap();
+        let secrets = self.token_secrets.lock().unwrap_or_else(|e| e.into_inner());
         secrets
             .iter()
             .any(|secret| sha1(&[node_repr(node).as_bytes(), secret.as_slice()].concat()) == *token)
@@ -768,7 +780,7 @@ impl DhtCommunity {
     /// expires (a appeler periodiquement, `interval=300` Python).
     pub fn token_maintenance(&self) {
         {
-            let mut secrets = self.token_secrets.lock().unwrap();
+            let mut secrets = self.token_secrets.lock().unwrap_or_else(|e| e.into_inner());
             if secrets.len() == 2 {
                 secrets.pop_front();
             }
@@ -777,7 +789,7 @@ impl DhtCommunity {
         let now = now_secs();
         self.tokens
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .retain(|_, (ts, _)| now <= *ts + TOKEN_EXPIRATION_TIME);
     }
 
@@ -876,7 +888,7 @@ impl DhtCommunity {
             let token_entry = self
                 .tokens
                 .lock()
-                .unwrap()
+                .unwrap_or_else(|e| e.into_inner())
                 .get(&node.id().unwrap_or_default())
                 .copied();
             let dist = node.id().map(|id| hex::encode(&distance(&id, key)[..4]));
@@ -981,7 +993,7 @@ impl DhtCommunity {
         {
             self.pending
                 .lock()
-                .unwrap()
+                .unwrap_or_else(|e| e.into_inner())
                 .remove(&(PendingKind::Find, id));
             return Err(e.into());
         }
@@ -1070,7 +1082,7 @@ impl DhtCommunity {
         let classes: Vec<AddrClass> = self
             .routing_tables
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .keys()
             .copied()
             .collect();
@@ -1080,7 +1092,10 @@ impl DhtCommunity {
         for class in classes {
             // Construction du crawl : lecture seule de la table.
             let mut crawl = {
-                let mut tables = self.routing_tables.lock().unwrap();
+                let mut tables = self
+                    .routing_tables
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
                 let rt = match tables.get_mut(&class) {
                     Some(rt) => rt,
                     None => continue,
@@ -1148,7 +1163,10 @@ impl DhtCommunity {
     /// renvoie alors `{"success": false, "error": e}` en 200).
     pub async fn refresh_bucket(self: &Arc<Self>, prefix: &str) -> Result<(), DhtError> {
         let targets: Vec<[u8; 20]> = {
-            let tables = self.routing_tables.lock().unwrap();
+            let tables = self
+                .routing_tables
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
             tables
                 .values()
                 .flat_map(|rt| rt.buckets())
@@ -1177,8 +1195,11 @@ impl DhtCommunity {
     pub fn stats_snapshot(&self) -> DhtStats {
         let my_wan = self.my_wan();
         let endpoints = {
-            let tables = self.routing_tables.lock().unwrap();
-            let storages = self.storages.lock().unwrap();
+            let tables = self
+                .routing_tables
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            let storages = self.storages.lock().unwrap_or_else(|e| e.into_inner());
             tables
                 .iter()
                 .map(|(class, rt)| {
@@ -1200,17 +1221,22 @@ impl DhtCommunity {
         };
         DhtStats {
             peer_id: hex::encode(self.my_mid),
-            num_tokens: self.tokens.lock().unwrap().len(),
+            num_tokens: self.tokens.lock().unwrap_or_else(|e| e.into_inner()).len(),
             endpoints,
-            num_peers_in_store: to_hex_map(&self.store.lock().unwrap()),
-            num_store_for_me: to_hex_map(&self.store_for_me.lock().unwrap()),
+            num_peers_in_store: to_hex_map(&self.store.lock().unwrap_or_else(|e| e.into_inner())),
+            num_store_for_me: to_hex_map(
+                &self.store_for_me.lock().unwrap_or_else(|e| e.into_inner()),
+            ),
         }
     }
 
     /// `dht_endpoint.get_buckets` : instantane des buckets.
     pub fn buckets_snapshot(&self) -> Vec<DhtBucketInfo> {
         let my_wan = self.my_wan();
-        let tables = self.routing_tables.lock().unwrap();
+        let tables = self
+            .routing_tables
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         tables
             .iter()
             .flat_map(|(class, rt)| {
@@ -1248,7 +1274,7 @@ impl DhtCommunity {
     /// `dht_endpoint.get_stored_values` : valeurs post-traitees
     /// stockees localement, par classe d'adresse.
     pub fn stored_values(&self) -> Vec<DhtStoredValue> {
-        let storages = self.storages.lock().unwrap();
+        let storages = self.storages.lock().unwrap_or_else(|e| e.into_inner());
         let mut out = Vec::new();
         for (class, st) in storages.iter() {
             for (key, raw) in st.items_snapshot() {
@@ -1327,7 +1353,7 @@ impl DhtCommunity {
         if self
             .store_for_me
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .get(&key)
             .map(|v| v.len())
             .unwrap_or(0)
@@ -1339,7 +1365,7 @@ impl DhtCommunity {
         let existing: Vec<Vec<u8>> = self
             .store_for_me
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .get(&key)
             .map(|v| v.iter().map(|n| n.key.clone()).collect())
             .unwrap_or_default();
@@ -1366,7 +1392,7 @@ impl DhtCommunity {
             let token = self
                 .tokens
                 .lock()
-                .unwrap()
+                .unwrap_or_else(|e| e.into_inner())
                 .get(&node.id().unwrap_or_default())
                 .map(|(_, t)| *t);
             let Some(token) = token else { continue };
@@ -1417,7 +1443,12 @@ impl DhtCommunity {
         mid: &[u8; 20],
         peer: Option<Peer>,
     ) -> Result<Vec<Arc<Node>>, DhtError> {
-        if let Some(nodes) = self.store.lock().unwrap().get(mid) {
+        if let Some(nodes) = self
+            .store
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(mid)
+        {
             if !nodes.is_empty() {
                 return Ok(nodes.clone());
             }
@@ -1725,14 +1756,14 @@ impl DhtCommunity {
                 if let Some(pend) = self
                     .pending
                     .lock()
-                    .unwrap()
+                    .unwrap_or_else(|e| e.into_inner())
                     .get(&(PendingKind::Find, p.identifier))
                     .map(|pend| pend.node.clone())
                 {
                     if let Some(id) = pend.id() {
                         self.tokens
                             .lock()
-                            .unwrap()
+                            .unwrap_or_else(|e| e.into_inner())
                             .insert(id, (now_secs(), p.token));
                     }
                 }
@@ -1758,7 +1789,7 @@ impl DhtCommunity {
                 if !self.check_token(&node, &p.token) || p.target != peer.mid {
                     return Ok(());
                 }
-                let mut store = self.store.lock().unwrap();
+                let mut store = self.store.lock().unwrap_or_else(|e| e.into_inner());
                 let list = store.entry(p.target).or_default();
                 if !list.iter().any(|n| n.key == node.key) {
                     list.push(node);
@@ -1780,7 +1811,7 @@ impl DhtCommunity {
                 let entry = self
                     .pending
                     .lock()
-                    .unwrap()
+                    .unwrap_or_else(|e| e.into_inner())
                     .get(&(PendingKind::StorePeer, p.identifier))
                     .map(|pend| {
                         (
@@ -1792,7 +1823,7 @@ impl DhtCommunity {
                         )
                     });
                 if let Some((node, key)) = entry {
-                    let mut sfm = self.store_for_me.lock().unwrap();
+                    let mut sfm = self.store_for_me.lock().unwrap_or_else(|e| e.into_inner());
                     let list = sfm.entry(key).or_default();
                     if !list.iter().any(|n| n.key == node.key) {
                         list.push(node);
@@ -1810,7 +1841,7 @@ impl DhtCommunity {
                 let nodes: Vec<Arc<Node>> = self
                     .store
                     .lock()
-                    .unwrap()
+                    .unwrap_or_else(|e| e.into_inner())
                     .get(&p.target)
                     .map(|v| v[..v.len().min(MAX_NODES_IN_FIND)].to_vec())
                     .unwrap_or_default();
@@ -2138,7 +2169,11 @@ impl DhtCommunity {
 
     /// Complete une requete en attente si l'identifiant correspond.
     fn complete(&self, peer: &Peer, kind: PendingKind, id: u32, res: PendingResult) {
-        let pend = self.pending.lock().unwrap().remove(&(kind, id));
+        let pend = self
+            .pending
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&(kind, id));
         match pend {
             Some(p) => {
                 p.node.note_response(p.start.elapsed().as_secs_f64());
@@ -2165,7 +2200,10 @@ impl DhtCommunity {
         // (`PingChurn.take_step`).
         let mut to_ping = Vec::new();
         {
-            let mut tables = self.routing_tables.lock().unwrap();
+            let mut tables = self
+                .routing_tables
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
             for rt in tables.values_mut() {
                 for node in rt.remove_bad_nodes() {
                     self.network.remove_peer_key(&node.key);
@@ -2197,7 +2235,7 @@ impl DhtCommunity {
 
         // `ping_all` (DHTDiscoveryCommunity).
         {
-            let mut sfm = self.store_for_me.lock().unwrap();
+            let mut sfm = self.store_for_me.lock().unwrap_or_else(|e| e.into_inner());
             for nodes in sfm.values_mut() {
                 nodes.retain(|n| n.status() != NODE_STATUS_BAD);
                 for n in nodes.iter() {
@@ -2212,7 +2250,7 @@ impl DhtCommunity {
             }
         }
         {
-            let mut store = self.store.lock().unwrap();
+            let mut store = self.store.lock().unwrap_or_else(|e| e.into_inner());
             for nodes in store.values_mut() {
                 nodes.retain(|n| now <= n.last_query() + 60.0);
             }
@@ -2224,7 +2262,10 @@ impl DhtCommunity {
     pub async fn node_maintenance(self: &Arc<Self>) {
         let now = now_secs();
         let refresh: Vec<[u8; 20]> = {
-            let tables = self.routing_tables.lock().unwrap();
+            let tables = self
+                .routing_tables
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
             tables
                 .values()
                 .flat_map(|rt| rt.buckets())
@@ -2238,7 +2279,10 @@ impl DhtCommunity {
         // Un find_values par prefixe suffit (cf. commentaire Python).
         let mut seen = HashSet::new();
         {
-            let tables = self.routing_tables.lock().unwrap();
+            let tables = self
+                .routing_tables
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
             for rt in tables.values() {
                 for b in rt.buckets() {
                     if now - b.last_changed > BUCKET_REFRESH_AGE {
@@ -2251,7 +2295,10 @@ impl DhtCommunity {
             let _ = self.find_values(&id, 0).await;
         }
         // Met a jour last_changed des buckets touches.
-        let mut tables = self.routing_tables.lock().unwrap();
+        let mut tables = self
+            .routing_tables
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         for rt in tables.values_mut() {
             for b in rt.buckets_mut() {
                 if seen.contains(&b.prefix_id) {
@@ -2263,7 +2310,7 @@ impl DhtCommunity {
 
     /// `value_maintenance` : purge des valeurs expirees.
     pub fn value_maintenance(&self) {
-        let mut storages = self.storages.lock().unwrap();
+        let mut storages = self.storages.lock().unwrap_or_else(|e| e.into_inner());
         for st in storages.values_mut() {
             st.clean();
         }
@@ -2273,7 +2320,7 @@ impl DhtCommunity {
     pub fn node_count(&self) -> usize {
         self.routing_tables
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .values()
             .map(RoutingTable::len)
             .sum()

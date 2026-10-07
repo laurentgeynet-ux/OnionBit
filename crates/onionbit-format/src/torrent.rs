@@ -109,10 +109,11 @@ impl TorrentMeta {
         }
         let pieces_v1: Vec<InfoHashV1> = pieces_raw.as_chunks::<PIECE_HASH_LEN_V1>().0.to_vec();
 
-        let pieces_root_v2 = dict_bytes(info, b"pieces root").map(|b| {
-            let mut h = [0u8; 32];
-            h.copy_from_slice(&b[..32.min(b.len())]);
-            h
+        let pieces_root_v2 = dict_bytes(info, b"pieces root").and_then(|b| {
+            // BEP 52 : racine Merkle SHA-256, exactement 32 octets —
+            // un champ tronque etait un panic `copy_from_slice`
+            // (tailles divergentes). Tolere comme absent.
+            <[u8; 32]>::try_from(b).ok()
         });
 
         let private = dict_int(info, b"private") == Some(1);
@@ -442,6 +443,17 @@ mod tests {
     #[test]
     fn parse_rejette_un_torrent_sans_info() {
         assert!(TorrentMeta::parse(b"d1:ai1ee").is_err());
+    }
+
+    /// `pieces root` tronque (< 32 o) : tolere comme absent, pas de
+    /// panic `copy_from_slice` (champ BEP 52 = exactement 32 octets).
+    #[test]
+    fn parse_tolere_pieces_root_tronque() {
+        let info =
+            "d6:lengthi42e4:name8:test.bin12:piece lengthi16384e11:pieces root20:aaaaaaaaaaaaaaaaaaaa12:meta versioni2ee";
+        let s = format!("d8:announce13:udp://t.local4:info{}e", info);
+        let t = TorrentMeta::parse(s.as_bytes()).unwrap();
+        assert!(t.pieces_root_v2.is_none());
     }
 
     /// `.torrent` prive minimal (announce + private=1 dans info).

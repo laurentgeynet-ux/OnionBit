@@ -343,7 +343,7 @@ impl TunnelUdpSocket {
         self.inner
             .dest_circuits
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .get(&target)
             .copied()
     }
@@ -409,7 +409,7 @@ impl Inner {
         if pps == 0 {
             return true;
         }
-        let mut t = self.rate_tokens.lock().unwrap();
+        let mut t = self.rate_tokens.lock().unwrap_or_else(|e| e.into_inner());
         let now = std::time::Instant::now();
         let elapsed = now.duration_since(t.1).as_secs_f64();
         // Rafale bornee a 1 s de debit : pas d'accumulation de
@@ -434,7 +434,7 @@ impl Inner {
     /// puis d'une entree arbitraire (re-epinglee au prochain envoi).
     fn insert_dest(&self, target: SocketAddr, cid: u32) {
         let max = self.tunnel.settings.dest_map_max_entries;
-        let mut map = self.dest_circuits.lock().unwrap();
+        let mut map = self.dest_circuits.lock().unwrap_or_else(|e| e.into_inner());
         if map.len() >= max && !map.contains_key(&target) {
             map.retain(|_, c| self.tunnel.is_circuit_ready(*c));
             if map.len() >= max {
@@ -449,7 +449,12 @@ impl Inner {
     /// Resout/pin le circuit pour `target` puis envoie la cellule.
     async fn dispatch(&self, target: SocketAddr, data: &[u8]) -> Result<(), Ipv8Error> {
         let dest = UdpAddress::from(target);
-        let pinned = self.dest_circuits.lock().unwrap().get(&target).copied();
+        let pinned = self
+            .dest_circuits
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&target)
+            .copied();
         let cid = { pinned.filter(|cid| self.tunnel.is_circuit_ready(*cid)) };
         let cid = match cid {
             Some(cid) => cid,
@@ -465,7 +470,10 @@ impl Inner {
                         ?self.kind,
                         "socket tunnel: pin stale -> reselection"
                     );
-                    self.dest_circuits.lock().unwrap().remove(&target);
+                    self.dest_circuits
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .remove(&target);
                 }
                 let cid = self.select_circuit()?;
                 self.insert_dest(target, cid);
@@ -504,7 +512,10 @@ impl Inner {
             Err(e) => {
                 // Le circuit a peut-etre ete detruit entre-temps :
                 // on depile le pin pour forcer une reselection.
-                self.dest_circuits.lock().unwrap().remove(&target);
+                self.dest_circuits
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .remove(&target);
                 Err(e)
             }
         }

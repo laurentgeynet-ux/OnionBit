@@ -286,7 +286,10 @@ impl Bucket {
     pub fn generate_id(&self) -> [u8; 20] {
         let mut id = [0u8; 20];
         let mut bitstr = self.prefix_id.clone();
-        for _ in 0..(160 - self.prefix_id.len()) {
+        // saturating_sub : un prefixe de 160+ bits (a priori
+        // inatteignable — les ids de noeud sont dedupes par cle)
+        // rendrait la soustraction en panic.
+        for _ in 0..160usize.saturating_sub(self.prefix_id.len()) {
             bitstr.push(if rand::random::<bool>() { '1' } else { '0' });
         }
         for (i, ch) in bitstr.chars().enumerate() {
@@ -342,7 +345,11 @@ impl Bucket {
 
     /// `Bucket.split` : deux sous-buckets prefixe+'0'/'1' si plein.
     fn split(&self) -> Option<(Bucket, Bucket)> {
-        if self.nodes.len() < self.max_size {
+        // Borne 160 bits : au-dela le prefixe ne peut couvrir aucun id
+        // (et `generate_id` sous-depasserait). Inatteignable en
+        // pratique — la dedup par id borne le bucket a un noeud par
+        // id — mais le split ne doit jamais dependre de ca.
+        if self.nodes.len() < self.max_size || self.prefix_id.len() >= 160 {
             return None;
         }
         let mut b0 = Bucket::new(format!("{}0", self.prefix_id), self.max_size);

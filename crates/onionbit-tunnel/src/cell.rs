@@ -139,8 +139,16 @@ pub fn check_cell_flags(cell: &[u8], max_relay_early: u32) -> Result<(), Ipv8Err
             have: cell.len(),
         });
     }
-    // relay_early non nul uniquement pour extend (msg 4).
-    if (cell[OFF_RELAY_EARLY] == 0 && cell[OFF_INNER_MSG_ID] == 4) || max_relay_early == 0 {
+    // relay_early obligatoire sur extend (msg 4) ; le flag est pose
+    // sur TOUTES les premieres cellules d'un circuit
+    // (`relay_early_count < max_relay_early`), pas seulement extend.
+    // Ecart par rapport a upstream (`max_relay_early <= 0` rejetait
+    // TOUTES les cellules — un quota 0 tuait le tunnel entier, y
+    // compris DATA/CREATED sans flag) : le quota ne borne que les
+    // cellules qui portent le flag.
+    if (cell[OFF_RELAY_EARLY] == 0 && cell[OFF_INNER_MSG_ID] == 4)
+        || (cell[OFF_RELAY_EARLY] != 0 && max_relay_early == 0)
+    {
         return Err(Ipv8Error::Malformed("flag relay_early absent ou inattendu"));
     }
     if cell[OFF_PLAINTEXT] != 0 && !NO_CRYPTO_PACKETS.contains(&cell[OFF_INNER_MSG_ID]) {

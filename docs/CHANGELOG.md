@@ -2,6 +2,33 @@
 
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
+
+## Correctifs (revue externe 8) : `pieces root` v2, borne split DHT, `relay_early`, mutex DHT/UDP/settings, domaine SOCKS5 (2026-10-07)
+
+- **`TorrentMeta::parse` : panic sur `pieces root` tronqué** — un
+  torrent v2 malformé (champ < 32 o) cassait `copy_from_slice`
+  (tailles divergentes). `try_from` strict : le champ est ignoré
+  s'il ne fait pas exactement 32 octets (BEP 52).
+- **DHT `Bucket::generate_id`** — `160 - prefix_id.len()` en
+  `saturating_sub`, et `split` borné à 160 bits. Inatteignable en
+  pratique (la dedup par id borne le bucket à 1 nœud par id) —
+  défense en profondeur contre tout futur appelant.
+- **`check_cell_flags`** — upstream (`ipv8-rust-tunnels`) rejetait
+  TOUTES les cellules quand `max_relay_early == 0`, y compris DATA/
+  CREATED sans flag : un quota de relay-early à 0 tuait le tunnel
+  entier. Le quota ne borne désormais que les cellules flaguées.
+  NB : la partie « interdire relay_early hors extend » de la revue
+  était erronée — upstream pose le flag sur les ~8 premières
+  cellules de TOUT type (`packet[29]==4 || relay_early`) ; une telle
+  interdiction cassait toute construction de circuit.
+- **Mutex poison-tolérant** : `dht/community.rs` (45 sites),
+  `tunnel_udp_socket.rs` (6), `api/handlers/settings.rs` (2) —
+  `.lock().unwrap()` → `into_inner()`, formes multi-lignes incluses.
+- **`socks5::encode_udp_frame`** — `h.len() as u8` tronquait la
+  longueur annoncée pour un domaine > 255 o, atteignable car
+  `from_utf8_lossy` au parse EXPANSE les séquences invalides
+  (U+FFFD = 3 o). Trame désynchronisée ; domaine borné à 255.
+
 ## Release 0.9.4-beta (2026-10-07)
 
 - **Version 0.9.4-beta** : bump de version (`Cargo.toml`, `app/pubspec.yaml`, `README.md`)
