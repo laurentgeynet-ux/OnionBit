@@ -164,7 +164,7 @@ impl Socks5Server {
         let target = {
             self.return_map
                 .lock()
-                .unwrap()
+                .unwrap_or_else(|e| e.into_inner())
                 .get(&msg.circuit_id)
                 .cloned()
         };
@@ -317,7 +317,7 @@ impl Socks5Server {
         // purge par identite d'Arc (meme socket = meme association).
         self.return_map
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .retain(|_, (s, _)| !Arc::ptr_eq(s, &socket));
         Ok(())
     }
@@ -366,6 +366,18 @@ impl Socks5Server {
         let cid = match addr_to_cid.get(&dest).copied() {
             Some(cid) if self.circuit_is_usable(cid) => cid,
             _ => {
+                // Table bornee (meme plafond que `dest_circuits`) :
+                // BitTorrent contacte des dizaines de milliers de
+                // destinations sur la vie d'une association.
+                let max = self.tunnel.settings.dest_map_max_entries;
+                if addr_to_cid.len() >= max && !addr_to_cid.contains_key(&dest) {
+                    addr_to_cid.retain(|_, cid| self.circuit_is_usable(*cid));
+                    if addr_to_cid.len() >= max {
+                        if let Some(k) = addr_to_cid.keys().next().cloned() {
+                            addr_to_cid.remove(&k);
+                        }
+                    }
+                }
                 let cid = self.select_circuit()?;
                 addr_to_cid.insert(dest.clone(), cid);
                 cid
@@ -418,7 +430,7 @@ impl Socks5Server {
     pub fn register_return(&self, circuit_id: u32, socket: Arc<UdpSocket>, client: SocketAddr) {
         self.return_map
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .insert(circuit_id, (socket, client));
     }
 }

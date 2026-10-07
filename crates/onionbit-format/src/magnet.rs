@@ -182,6 +182,25 @@ fn percent_decode(s: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
+/// Encode un parametre de query magnet (`dn`, `tr`…) — pendant de
+/// [`percent_decode`]. Sans ca un titre contenant `&` cassait le
+/// magnet genere : `split('&')` du parseur voyait un parametre sans
+/// `=` et rejetait le lien. Unreserved RFC 3986 conserve, le reste
+/// en %XX UTF-8 ; `+` est encode (il est litteral dans les magnets,
+/// pas un espace).
+pub(crate) fn percent_encode(s: &str) -> String {
+    const UNRESERVED: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~";
+    let mut out = String::with_capacity(s.len());
+    for &b in s.as_bytes() {
+        if UNRESERVED.contains(&b) {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

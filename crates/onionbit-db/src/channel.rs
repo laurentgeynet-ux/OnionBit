@@ -458,7 +458,7 @@ fn popular_entries(conn: &Connection) -> Result<Vec<ChannelNodeRow>> {
               AND (seeders > 0 OR leechers > 0)
             ORDER BY seeders DESC, leechers DESC, last_check DESC
             LIMIT {POPULAR_TORRENTS_COUNT}) results
-         LEFT JOIN channel_node cn ON cn.health_rowid = results.rowid
+         INNER JOIN channel_node cn ON cn.health_rowid = results.rowid
          GROUP BY cn.infohash"
     ))?;
     let rows = stmt.query_map(params![cutoff], from_row)?;

@@ -1069,14 +1069,19 @@ impl ContentProvider for SessionContentProvider {
             let fresh = self
                 .db
                 .call("content.healths_for", move |conn| {
+                    // `length(infohash) = 20` en SQL : un BLOB est
+                    // toujours `!=` d'un TEXT (''), et les noeuds
+                    // canal (cle publique en colonne infohash)
+                    // passaient le filtre puis etaient ecartes cote
+                    // Rust APRES le LIMIT — lots tronques a <20.
                     let sql = if popular {
                         "SELECT n.infohash, t.seeders, t.leechers, t.last_check, n.tracker_info
                          FROM channel_node n JOIN torrent_state t ON t.rowid = n.health_rowid
-                         WHERE n.infohash != '' ORDER BY t.seeders DESC LIMIT 20"
+                         WHERE length(n.infohash) = 20 ORDER BY t.seeders DESC LIMIT 20"
                     } else {
                         "SELECT n.infohash, t.seeders, t.leechers, t.last_check, n.tracker_info
                          FROM channel_node n JOIN torrent_state t ON t.rowid = n.health_rowid
-                         WHERE n.infohash != '' ORDER BY RANDOM() LIMIT 20"
+                         WHERE length(n.infohash) = 20 ORDER BY RANDOM() LIMIT 20"
                     };
                     let mut stmt = conn.prepare(sql)?;
                     let rows = stmt.query_map([], |r| {
@@ -2293,7 +2298,7 @@ impl Ipv8Stack {
             hidden_tasks: Mutex::new(Vec::new()),
             self_weak: Mutex::new(std::sync::Weak::new()),
         });
-        *stack.self_weak.lock().unwrap() = Arc::downgrade(&stack);
+        *stack.self_weak.lock().unwrap_or_else(|e| e.into_inner()) = Arc::downgrade(&stack);
         Ok(stack)
     }
 
@@ -2457,7 +2462,7 @@ impl Ipv8Stack {
         if let Some(engine) = self
             .anon_lanes
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .get(&hops)
             .map(|l| l.engine.clone())
         {
@@ -2473,7 +2478,7 @@ impl Ipv8Stack {
         if let Some(engine) = self
             .anon_lanes
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .get(&hops)
             .map(|l| l.engine.clone())
         {
@@ -2589,7 +2594,10 @@ impl Ipv8Stack {
             dht_socket,
             circuit_watchdog_stop,
         };
-        self.anon_lanes.lock().unwrap().insert(hops, lane);
+        self.anon_lanes
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(hops, lane);
         // `monitor_hidden_swarms` + `on_e2e_finished` Python : le
         // suivi des swarms caches et l'injection des pairs e2e sont
         // globaux a la stack, demarres a la premiere lane.
@@ -2602,11 +2610,15 @@ impl Ipv8Stack {
     /// le poll `monitor_hidden_swarms` et le relais `e2e_ready` ->
     /// pairs uTP (`on_e2e_finished` Python).
     fn ensure_hidden_tasks(&self, tunnel: &Arc<TunnelCommunity>) {
-        let mut tasks = self.hidden_tasks.lock().unwrap();
+        let mut tasks = self.hidden_tasks.lock().unwrap_or_else(|e| e.into_inner());
         if !tasks.is_empty() {
             return;
         }
-        let weak = self.self_weak.lock().unwrap().clone();
+        let weak = self
+            .self_weak
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
         self.tasks.register(
             Some("TriblerTunnelCommunity"),
             "monitor_hidden_swarms",
@@ -2641,7 +2653,7 @@ impl Ipv8Stack {
     fn anon_lane(&self, hops: usize) -> Option<(BtEngine, TunnelUdpSocket)> {
         self.anon_lanes
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .get(&hops)
             .map(|l| (l.engine.clone(), l.utp_transport.clone()))
     }
@@ -2654,7 +2666,7 @@ impl Ipv8Stack {
     pub fn anon_dht_stats(&self, hops: usize) -> Option<(u64, u64, u64, u64, u64, u64)> {
         self.anon_lanes
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .get(&hops)
             .map(|l| l.dht_socket.stats())
     }
@@ -2663,7 +2675,7 @@ impl Ipv8Stack {
     pub fn anon_lanes(&self) -> Vec<(usize, SocketAddr)> {
         self.anon_lanes
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .iter()
             .map(|(h, l)| (*h, l.socks_addr))
             .collect()
@@ -2674,7 +2686,7 @@ impl Ipv8Stack {
     pub fn anon_engines(&self) -> Vec<BtEngine> {
         self.anon_lanes
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .values()
             .map(|l| l.engine.clone())
             .collect()
@@ -2686,7 +2698,7 @@ impl Ipv8Stack {
     pub fn anon_engines_with_hops(&self) -> Vec<(usize, BtEngine)> {
         self.anon_lanes
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .iter()
             .map(|(h, l)| (*h, l.engine.clone()))
             .collect()
@@ -2704,7 +2716,7 @@ impl Ipv8Stack {
         let lookup = lookup_info_hash(&real_ih);
         self.swarm_lookup
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .insert(lookup, (hops, real_ih));
         if let Some(t) = &self.tunnel {
             t.join_swarm(lookup, hops, false);
@@ -2719,7 +2731,10 @@ impl Ipv8Stack {
         real_ih: [u8; 20],
         tx: tokio::sync::mpsc::UnboundedSender<SocketAddr>,
     ) {
-        self.pending_peer_sinks.lock().unwrap().insert(real_ih, tx);
+        self.pending_peer_sinks
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(real_ih, tx);
     }
 
     /// Retire les enregistrements `pending` d'un info-hash reel.
@@ -2727,12 +2742,18 @@ impl Ipv8Stack {
     /// moniteur de swarm reprend le relais (join/leave officiels),
     /// on ne demonte ni le swarm ni le mapping.
     pub fn clear_pending_swarm(&self, real_ih: &[u8; 20], materialized: bool) {
-        self.pending_peer_sinks.lock().unwrap().remove(real_ih);
+        self.pending_peer_sinks
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(real_ih);
         if materialized {
             return;
         }
         let lookup = lookup_info_hash(real_ih);
-        self.swarm_lookup.lock().unwrap().remove(&lookup);
+        self.swarm_lookup
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&lookup);
         if let Some(t) = &self.tunnel {
             t.leave_swarm(&lookup);
         }
@@ -2745,8 +2766,8 @@ impl Ipv8Stack {
     /// stable ; une entree sans etat encore vu (course d'insertion
     /// d'un tick) est omise plutot que d'inventer un etat.
     pub fn swarm_downloads(&self) -> Vec<SwarmDownload> {
-        let lookup = self.swarm_lookup.lock().unwrap();
-        let states = self.swarm_states.lock().unwrap();
+        let lookup = self.swarm_lookup.lock().unwrap_or_else(|e| e.into_inner());
+        let states = self.swarm_states.lock().unwrap_or_else(|e| e.into_inner());
         let mut out: Vec<SwarmDownload> = lookup
             .iter()
             .filter_map(|(lookup_ih, (hops, real_ih))| {
@@ -2777,7 +2798,11 @@ impl Ipv8Stack {
     /// Les circuits tunnel partages ne sont PAS detruits : ils
     /// appartiennent au communaute, pas a la lane.
     pub async fn remove_anon_lane(&self, hops: usize) -> bool {
-        let lane = self.anon_lanes.lock().unwrap().remove(&hops);
+        let lane = self
+            .anon_lanes
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&hops);
         let Some(lane) = lane else {
             return false;
         };
@@ -2798,7 +2823,12 @@ impl Ipv8Stack {
         if let Some(tx) = &self.dht_maintenance_stop {
             let _ = tx.send(true);
         }
-        for tx in self.hidden_tasks.lock().unwrap().drain(..) {
+        for tx in self
+            .hidden_tasks
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .drain(..)
+        {
             let _ = tx.send(true);
         }
         if let Some(m) = &self.messaging {
@@ -2812,7 +2842,7 @@ impl Ipv8Stack {
         let lanes: Vec<AnonLane> = self
             .anon_lanes
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .drain()
             .map(|(_, l)| l)
             .collect();
@@ -2898,7 +2928,7 @@ fn spawn_swarm_monitor(
             let lanes: Vec<(usize, BtEngine)> = stack
                 .anon_lanes
                 .lock()
-                .unwrap()
+                .unwrap_or_else(|e| e.into_inner())
                 .iter()
                 .map(|(h, l)| (*h, l.engine.clone()))
                 .collect();
@@ -2919,12 +2949,12 @@ fn spawn_swarm_monitor(
                     stack
                         .swarm_lookup
                         .lock()
-                        .unwrap()
+                        .unwrap_or_else(|e| e.into_inner())
                         .insert(lookup, (hops, real_ih));
                     let prev = stack
                         .swarm_states
                         .lock()
-                        .unwrap()
+                        .unwrap_or_else(|e| e.into_inner())
                         .insert((hops, lookup), stat.state);
                     use onionbit_bittorrent::DownloadState as S;
                     if prev != Some(stat.state) {
@@ -2965,14 +2995,22 @@ fn spawn_swarm_monitor(
             let gone: Vec<(usize, [u8; 20])> = stack
                 .swarm_states
                 .lock()
-                .unwrap()
+                .unwrap_or_else(|e| e.into_inner())
                 .keys()
                 .filter(|k| !seen.contains(k))
                 .copied()
                 .collect();
             for key in gone {
-                stack.swarm_states.lock().unwrap().remove(&key);
-                stack.swarm_lookup.lock().unwrap().remove(&key.1);
+                stack
+                    .swarm_states
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .remove(&key);
+                stack
+                    .swarm_lookup
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .remove(&key.1);
                 tunnel.leave_swarm(&key.1);
             }
         }
@@ -3075,7 +3113,12 @@ fn spawn_e2e_listener(
                 },
             };
             let Some(stack) = stack.upgrade() else { break };
-            let Some((hops, real_ih)) = stack.swarm_lookup.lock().unwrap().get(&lookup).copied()
+            let Some((hops, real_ih)) = stack
+                .swarm_lookup
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .get(&lookup)
+                .copied()
             else {
                 continue;
             };
@@ -3147,8 +3190,11 @@ fn spawn_e2e_listener(
                     if ctype == onionbit_tunnel::routing::CIRCUIT_TYPE_RP_DOWNLOADER {
                         if let Some(dl) = engine.get_by_hash(&real_ih) {
                             added = dl.add_peer(fake);
-                        } else if let Some(tx) =
-                            stack.pending_peer_sinks.lock().unwrap().get(&real_ih)
+                        } else if let Some(tx) = stack
+                            .pending_peer_sinks
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .get(&real_ih)
                         {
                             // Magnet encore en resolution : le torrent
                             // n'existe pas dans le moteur — l'adresse
@@ -3350,6 +3396,70 @@ mod tests {
             });
         }
         assert!(g.healths.len() <= GOSSIP_HEALTH_CAP);
+    }
+
+    /// `WHERE infohash != ''` comparant un BLOB a un TEXT laissait
+    /// passer les noeuds a infohash de longueur != 20 (cles publiques
+    /// de canaux) : ils occupaient le `LIMIT 20` SQL puis etaient
+    /// ecartes cote Rust — lots de santes tronques.
+    /// `length(infohash) = 20` filtre avant le LIMIT.
+    #[tokio::test]
+    async fn healths_for_exclut_infohash_non_20o_avant_limit() {
+        let provider = test_provider(crate::notifier::Notifier::new());
+        provider
+            .db
+            .with(|c| {
+                // 20 torrents valides, seeders croissants.
+                for i in 1u8..=20 {
+                    let ih = vec![i; 20];
+                    let row = onionbit_db::ChannelNodeRow {
+                        infohash: ih.clone(),
+                        title: format!("t{i}"),
+                        metadata_type: 300,
+                        public_key: vec![i; 64],
+                        id_: i64::from(i),
+                        timestamp: 1_700_000_000_000,
+                        ..Default::default()
+                    };
+                    onionbit_db::channel::insert(c, &row)?;
+                    onionbit_db::health::update_torrent_health(
+                        c,
+                        &ih,
+                        i64::from(i),
+                        0,
+                        1_700_000_000,
+                        false,
+                    )?;
+                }
+                // Noeud canal : 64o en `infohash` avec le plus gros
+                // essaim — il triait en tete sous l'ancien filtre et
+                // consommait un slot du LIMIT.
+                let canal = onionbit_db::ChannelNodeRow {
+                    infohash: vec![9u8; 64],
+                    title: "canal".into(),
+                    metadata_type: 400,
+                    public_key: vec![9u8; 64],
+                    id_: 1,
+                    timestamp: 1_700_000_000_000,
+                    ..Default::default()
+                };
+                onionbit_db::channel::insert(c, &canal)?;
+                onionbit_db::health::update_torrent_health(
+                    c,
+                    &canal.infohash,
+                    1000,
+                    0,
+                    1_700_000_000,
+                    false,
+                )?;
+                Ok(())
+            })
+            .unwrap();
+
+        let santes = provider.healths_for(HEALTH_REQUEST_POPULAR).await;
+        // Avant le fix : 19 (le noeud canal mangeait le 1er slot).
+        assert_eq!(santes.len(), 20);
+        assert!(santes.iter().all(|h| h.seeders <= 20));
     }
 
     /// `restore_identity_key` remplace le fichier d'identite : la

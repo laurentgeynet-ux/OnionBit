@@ -195,14 +195,19 @@ impl MetadataEntry {
 
 impl TorrentMetadataPayload {
     /// Lien magnet equivalent (equivalent de `get_magnet()` Python).
+    /// `dn`/`tr` percent-encodes — un titre avec `&` casserait la
+    /// query et rendrait le magnet irreparable au re-parse.
     pub fn magnet(&self) -> String {
         let mut m = format!(
             "magnet:?xt=urn:btih:{}&dn={}",
             onionbit_crypto::hash::to_hex(&self.infohash),
-            self.title
+            crate::magnet::percent_encode(&self.title)
         );
         if !self.tracker_info.is_empty() {
-            m.push_str(&format!("&tr={}", self.tracker_info));
+            m.push_str(&format!(
+                "&tr={}",
+                crate::magnet::percent_encode(&self.tracker_info)
+            ));
         }
         m
     }
@@ -665,6 +670,26 @@ mod tests {
             MetadataEntry::RegularTorrent(t) => assert!(!t.node.header.verify_signature()),
             _ => panic!("entree attendue RegularTorrent"),
         }
+    }
+
+    /// `dn`/`tr` non echappes cassaient le re-parse : `&` dans le
+    /// titre produisait un parametre sans `=` -> `BadMagnet`.
+    #[test]
+    fn magnet_echappe_dn_et_tr() {
+        let sk = LibNaClSecretKey::generate();
+        let entries = parse_blob(&build_blob(&sk)).unwrap();
+        let Some(MetadataEntry::RegularTorrent(mut t)) = entries.into_iter().next() else {
+            panic!("entree attendue RegularTorrent")
+        };
+        t.title = "Documentaire Science & Nature (2025) été + 100%".to_string();
+        t.tracker_info = "http://tracker.local:6969/announce?x=1&y=2".to_string();
+        let parsed = crate::magnet::MagnetLink::parse(&t.magnet()).unwrap();
+        assert_eq!(parsed.display_name.as_deref(), Some(t.title.as_str()));
+        assert_eq!(parsed.trackers, vec![t.tracker_info.clone()]);
+        assert_eq!(
+            parsed.info_hash_hex(),
+            onionbit_crypto::hash::to_hex(&t.infohash)
+        );
     }
 
     #[test]

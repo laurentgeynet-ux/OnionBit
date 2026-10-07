@@ -3,6 +3,33 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Correctifs (revue externe 5) : `popular_entries` NULL, `addr_to_cid` borné, magnets échappés, filtre `infohash` SQL, mutex (2026-10-07)
+
+- **`popular_entries` : `LEFT JOIN` → `INNER JOIN`** — un
+  `torrent_state` sans `channel_node` (gossip/checker) rendait des
+  colonnes `cn.*` NULL que `from_row` refusait
+  (`FromSqlConversionFailure`) : `/metadata/torrents/popular` et le
+  comptage renvoyaient 500.
+- **`addr_to_cid` (SOCKS5 UDP) borné** : la table destination →
+  circuit d'une association n'était jamais purgée — BitTorrent/DHT la
+  faisait croître sans fin. Réutilise `dest_map_max_entries`
+  (purge des circuits morts puis éviction), comme `dest_circuits`.
+- **Magnets : `dn`/`tr` percent-encodés** — un titre avec `&` (ou un
+  tracker avec query) produisait un paramètre sans `=` au re-parse
+  → `BadMagnet`. `percent_encode` RFC 3986 en pendant du décodeur
+  (`+` reste littéral, pas de form-urlencoded).
+- **`healths_for` : `n.infohash != ''` → `length(n.infohash) = 20`** —
+  un BLOB est toujours `!=` d'un TEXT, et les noeuds canal (clé
+  publique 64 o en `infohash`) consommaient le `LIMIT 20` avant le
+  filtre Rust : lots de santés tronqués.
+- **Mutex poison-tolérant** (`ipv8_stack.rs`, `socks5.rs` — règle
+  AGENTS) : `.lock().unwrap()` → `into_inner()` ; les sites
+  multi-lignes avaient échappé au balayage de la revue 4. Reste
+  ~260 sites dans le workspace — passe dédiée à prévoir.
+- Tests de non-régression : `popular_entries` orphelin (db), magnet
+  `&`/UTF-8 round-trip (format), `healths_for` non-20o avant LIMIT
+  (core).
+
 ## Packaging : résidus de l'ancien nommage nettoyés (2026-10-07)
 
 - `build_dist.ps1` : commentaire `onionbit_ui.exe` → `OnionBit.exe`

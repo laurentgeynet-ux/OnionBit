@@ -122,6 +122,54 @@ mod tests {
         .unwrap();
     }
 
+    /// Un `torrent_state` decouvert via gossip/checker sans
+    /// `channel_node` associe rendait des colonnes `cn.*` NULL sous
+    /// `LEFT JOIN` — `from_row` levait `FromSqlConversionFailure` et
+    /// tout le lot populaire (et `count_entries`) renvoyait 500.
+    #[test]
+    fn popular_entries_ignore_essaim_sans_metadonnee() {
+        let db = Database::memory().unwrap();
+        db.with(|c| {
+            let frais = i64::MAX / 2;
+            // Orphelin : sante seule, aucun channel_node — le plus
+            // populaire de tous pour etre certain qu'il remonte.
+            let orphelin = vec![0xcdu8; 20];
+            health::upsert_torrent_state(c, &orphelin)?;
+            health::update_torrent_health(c, &orphelin, 999, 9, frais, false)?;
+            c.execute(
+                "UPDATE torrent_state SET has_data = 1 WHERE infohash = ?1",
+                rusqlite::params![orphelin],
+            )?;
+            // Torrent documente, moins populaire.
+            let row = ChannelNodeRow {
+                infohash: vec![2u8; 20],
+                title: "documente".into(),
+                metadata_type: 300,
+                public_key: vec![8u8; 64],
+                id_: 1,
+                timestamp: 1_700_000_000_000,
+                ..Default::default()
+            };
+            channel::insert(c, &row)?;
+            health::update_torrent_health(c, &row.infohash, 5, 1, frais, false)?;
+            c.execute(
+                "UPDATE torrent_state SET has_data = 1 WHERE infohash = ?1",
+                rusqlite::params![row.infohash],
+            )?;
+
+            let p = channel::SelectParams {
+                popular: true,
+                ..Default::default()
+            };
+            let entries = channel::select_entries(c, &p)?;
+            assert_eq!(entries.len(), 1);
+            assert_eq!(entries[0].title, "documente");
+            assert_eq!(channel::count_entries(c, &p)?, 1);
+            Ok(())
+        })
+        .unwrap();
+    }
+
     #[test]
     fn downloads_cycle() {
         let db = Database::memory().unwrap();
