@@ -107,11 +107,14 @@ pub struct InMemoryGuardStore {
 
 impl GuardStore for InMemoryGuardStore {
     fn load_guards(&self) -> Vec<GuardRecord> {
-        self.records.lock().unwrap().clone()
+        self.records
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     fn save_guards(&self, guards: &[GuardRecord]) {
-        *self.records.lock().unwrap() = guards.to_vec();
+        *self.records.lock().unwrap_or_else(|e| e.into_inner()) = guards.to_vec();
     }
 }
 
@@ -194,12 +197,12 @@ impl GuardSet {
     pub fn attach_store(&self, store: Arc<dyn GuardStore>) {
         let loaded = store.load_guards();
         {
-            let mut records = self.records.lock().unwrap();
+            let mut records = self.records.lock().unwrap_or_else(|e| e.into_inner());
             if records.is_empty() && !loaded.is_empty() {
                 *records = loaded;
             }
         }
-        *self.store.lock().unwrap() = Some(store);
+        *self.store.lock().unwrap_or_else(|e| e.into_inner()) = Some(store);
     }
 
     /// Instantane des cles des guards (actifs puis reserve) — pour
@@ -243,7 +246,12 @@ impl GuardSet {
 
     /// Persiste l'etat courant si un store est injecte.
     fn persist(&self, records: &[GuardRecord]) {
-        if let Some(s) = self.store.lock().unwrap().as_ref() {
+        if let Some(s) = self
+            .store
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+        {
             s.save_guards(records);
         }
     }
@@ -253,7 +261,7 @@ impl GuardSet {
     /// la rotation ne se fait jamais sous pression (storm).
     pub fn ensure(&self, candidates: &[Peer]) {
         let now = SystemTime::now();
-        let mut records = self.records.lock().unwrap();
+        let mut records = self.records.lock().unwrap_or_else(|e| e.into_inner());
 
         // 1. Expiration naturelle + injoignabilite prolongee.
         let unreachable = self.cfg.unreachable_after;
@@ -312,7 +320,7 @@ impl GuardSet {
         if !self.is_enabled() {
             return candidates;
         }
-        let records = self.records.lock().unwrap();
+        let records = self.records.lock().unwrap_or_else(|e| e.into_inner());
         let mut out: Vec<Peer> = Vec::with_capacity(candidates.len() + records.len());
         for r in records.iter() {
             if let Some(p) = candidates
@@ -335,7 +343,7 @@ impl GuardSet {
     /// Handshake `create` reussi vers `key` : preuve de vie + adresse
     /// rafraichie (le guard peut avoir change d'IP — la cle reste).
     pub fn mark_alive(&self, key: &[u8], address: Option<UdpAddress>) {
-        let mut records = self.records.lock().unwrap();
+        let mut records = self.records.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(r) = records.iter_mut().find(|r| r.public_key_bin == key) {
             r.last_seen = SystemTime::now();
             r.failures = 0;
@@ -353,7 +361,7 @@ impl GuardSet {
     /// un actif de reserve le remplace au prochain `ensure`, jamais
     /// en plein retry de circuit.
     pub fn mark_failure(&self, key: &[u8]) {
-        let mut records = self.records.lock().unwrap();
+        let mut records = self.records.lock().unwrap_or_else(|e| e.into_inner());
         let Some(pos) = records.iter().position(|r| r.public_key_bin == key) else {
             return;
         };

@@ -111,6 +111,7 @@ pub fn upsert(conn: &Connection, row: &DownloadRow) -> Result<i64> {
          ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24,?25,?26)
          ON CONFLICT(infohash) DO UPDATE SET
             name = excluded.name,
+            source_uri = excluded.source_uri,
             torrent_data = excluded.torrent_data,
             output_dir = excluded.output_dir,
             added_on = excluded.added_on,

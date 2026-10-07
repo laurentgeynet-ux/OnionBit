@@ -320,9 +320,23 @@ impl TorrentChecker {
         tracker_url: &str,
         infohashes: &[[u8; 20]],
     ) -> Result<Vec<HealthInfo>> {
-        let scrape_url = tracker_url.replace("announce", "scrape");
-        let parsed = url::Url::parse(&scrape_url)
-            .map_err(|_| CoreError::InvalidState("url de scrape invalide"))?;
+        // BEP 48 : seul `announce` dans le CHEMIN est substitue
+        // (derniere occurrence) — `str::replace` corrompait aussi les
+        // sous-domaines (`announce.tracker.org/announce` ->
+        // `scrape.` : DNS mort, scrape toujours en echec).
+        let mut parsed = url::Url::parse(tracker_url)
+            .map_err(|_| CoreError::InvalidState("url de tracker invalide"))?;
+        {
+            let path = parsed.path();
+            let Some(idx) = path.rfind("announce") else {
+                return Err(CoreError::InvalidState(
+                    "url de tracker sans 'announce' dans le chemin",
+                ));
+            };
+            let new_path = format!("{}scrape{}", &path[..idx], &path[idx + "announce".len()..]);
+            parsed.set_path(&new_path);
+        }
+        let scrape_url = parsed.as_str();
         // `info_hash` transporte des octets bruts : percent-encodage
         // manuel (`add_url_params` Python envoie les 20 octets
         // percent-encodes, pas une perte UTF-8).

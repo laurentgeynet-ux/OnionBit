@@ -30,15 +30,21 @@ fn row_json(row: &onionbit_db::ChannelNodeRow) -> serde_json::Value {
         "name": row.title,
         "length": row.size,
         "size": row.size,
-        "category": serde_json::Value::Null,
+        "category": row.tags,
         // `health.seeders/leechers/last_check` joints (Pony
         // `TorrentMetadata.to_json`).
         "num_seeders": row.health_seeders,
         "num_leechers": row.health_leechers,
         "last_tracker_check": row.health_last_check,
-        "updated": row.torrent_date,
+        // `to_simple_dict` : `created` = `torrent_date` (creation du
+        // torrent, secondes) ; `updated` = `timestamp` du noeud
+        // (l'UI prefer `created` pour sa colonne Date).
+        "created": row.torrent_date,
+        "updated": row.timestamp,
         "status": row.status,
-        "id": row.rowid,
+        // `id` = identifiant de l'entree dans son canal (`id_`),
+        // pas le rowid sqlite local.
+        "id": row.id_,
         "origin_id": row.origin_id,
         "public_key": hex::encode(&row.public_key),
         "votes": row.xxx,
@@ -475,6 +481,7 @@ pub async fn local_search(
                 "name": name,
                 "length": dl.total_bytes,
                 "size": dl.total_bytes,
+                "created": now,
                 "updated": now,
                 "num_seeders": 1,
                 "num_leechers": dl.peers_live,

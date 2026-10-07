@@ -221,7 +221,13 @@ pub async fn run_upnp_udp_forwarder(
 ) {
     // Pas de proxy pour les appels IGD : la passerelle est toujours
     // locale (un proxy HTTP d'entreprise casserait le SOAP).
-    let client = match reqwest::Client::builder().no_proxy().build() {
+    // Timeout borne : un IGD gele (miniupnpd crashe) bloquait la
+    // tache forwarder indefiniment sur le POST SOAP.
+    let client = match reqwest::Client::builder()
+        .no_proxy()
+        .timeout(Duration::from_secs(config.discover_timeout_secs))
+        .build()
+    {
         Ok(c) => c,
         Err(e) => {
             tracing::warn!(error = %e, "UPnP : client HTTP impossible");

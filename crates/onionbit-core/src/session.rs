@@ -486,16 +486,20 @@ impl CoreSession {
     fn spawn_deferred_restore(&self, row: DownloadRow) {
         let ih_hex = onionbit_crypto::hash::to_hex(&row.infohash);
         let notify = self.pending_notify(&ih_hex);
-        self.inner.pending.lock().unwrap().insert(
-            ih_hex.clone(),
-            PendingDownload {
-                infohash: ih_hex.clone(),
-                name: row.name.clone(),
-                anon_hops: row.anon_hops.max(0) as u32,
-                paused: row.paused || row.user_stopped,
-                added_on: row.added_on,
-            },
-        );
+        self.inner
+            .pending
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(
+                ih_hex.clone(),
+                PendingDownload {
+                    infohash: ih_hex.clone(),
+                    name: row.name.clone(),
+                    anon_hops: row.anon_hops.max(0) as u32,
+                    paused: row.paused || row.user_stopped,
+                    added_on: row.added_on,
+                },
+            );
         let session = self.clone();
         tokio::spawn(async move {
             let mut notified = std::pin::pin!(notify.notified());
@@ -558,8 +562,18 @@ impl CoreSession {
                     }
                 }
             };
-            let removed = session.inner.pending.lock().unwrap().remove(&ih_hex);
-            session.inner.pending_notify.lock().unwrap().remove(&ih_hex);
+            let removed = session
+                .inner
+                .pending
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .remove(&ih_hex);
+            session
+                .inner
+                .pending_notify
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .remove(&ih_hex);
             match res {
                 Ok(dl) => {
                     // `update_download_row` renvoie faux quand la
@@ -1317,16 +1331,20 @@ impl CoreSession {
         let mut paused_now = paused;
         let add_res = if let Some(k) = &pending_key {
             let notify = self.pending_notify(k);
-            self.inner.pending.lock().unwrap().insert(
-                k.clone(),
-                PendingDownload {
-                    infohash: k.clone(),
-                    name: magnet.as_ref().and_then(|m| m.display_name.clone()),
-                    anon_hops: hops,
-                    paused,
-                    added_on: now_unix(),
-                },
-            );
+            self.inner
+                .pending
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .insert(
+                    k.clone(),
+                    PendingDownload {
+                        infohash: k.clone(),
+                        name: magnet.as_ref().and_then(|m| m.display_name.clone()),
+                        anon_hops: hops,
+                        paused,
+                        added_on: now_unix(),
+                    },
+                );
             let mut notified = std::pin::pin!(notify.notified());
             loop {
                 notified.as_mut().enable();
@@ -1420,8 +1438,17 @@ impl CoreSession {
             }
         }
         let removed = pending_key.as_ref().and_then(|k| {
-            let r = self.inner.pending.lock().unwrap().remove(k);
-            self.inner.pending_notify.lock().unwrap().remove(k);
+            let r = self
+                .inner
+                .pending
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .remove(k);
+            self.inner
+                .pending_notify
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .remove(k);
             r
         });
         let dl = add_res?;
@@ -1506,14 +1533,12 @@ impl CoreSession {
         if recent {
             return;
         }
-        // Anti-SSRF : la cible est validee par la meme politique IP
-        // que les URI de telechargement ajoutees via l'API.
-        if let Err(e) = self.check_uri_policy(sync_url).await {
-            tracing::warn!(error = %e, "synchronisation trackers_file refusee");
-            return;
-        }
-        match reqwest::get(sync_url).await {
-            Ok(resp) => match resp.bytes().await {
+        // `fetch_checked` fait politique IP + epinglage DNS en une
+        // etape : `check_uri_policy` + `reqwest::get` laissait une
+        // fenetre TOCTOU (re-resolution DNS vers une IP interne) et
+        // `resp.bytes()` n'avait aucun plafond de taille.
+        match crate::services::fetch_checked(sync_url, &self.inner.config.ip_policy).await {
+            Ok(resp) => match crate::services::read_body_limited(resp).await {
                 Ok(body) => {
                     if let Err(e) = std::fs::write(path, &body) {
                         tracing::warn!(error = %e, "ecriture de trackers_file impossible");
@@ -2060,7 +2085,7 @@ impl CoreSession {
             .ok_or(CoreError::InvalidState("telechargement inconnu"))?;
         let key = onionbit_crypto::hash::to_hex(&ih);
         {
-            let mut pending = self.inner.pending.lock().unwrap();
+            let mut pending = self.inner.pending.lock().unwrap_or_else(|e| e.into_inner());
             let Some(p) = pending.get_mut(&key) else {
                 return Err(CoreError::InvalidState("telechargement inconnu"));
             };
@@ -2079,7 +2104,13 @@ impl CoreSession {
             }
             p.anon_hops = new_hops;
         }
-        if let Some(n) = self.inner.pending_notify.lock().unwrap().get(&key) {
+        if let Some(n) = self
+            .inner
+            .pending_notify
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&key)
+        {
             n.notify_one();
         }
         // La ligne existe deja pour les restaurations differees —
@@ -2216,7 +2247,7 @@ impl CoreSession {
             .ok_or(CoreError::InvalidState("telechargement inconnu"))?;
         let key = onionbit_crypto::hash::to_hex(&ih);
         {
-            let mut pending = self.inner.pending.lock().unwrap();
+            let mut pending = self.inner.pending.lock().unwrap_or_else(|e| e.into_inner());
             let Some(p) = pending.get_mut(&key) else {
                 return Err(CoreError::InvalidState("telechargement inconnu"));
             };
@@ -2274,13 +2305,25 @@ impl CoreSession {
             let ih = onionbit_crypto::hash::from_hex(id_or_hash)
                 .ok_or(CoreError::InvalidState("telechargement inconnu"))?;
             let key = onionbit_crypto::hash::to_hex(&ih);
-            let pending = self.inner.pending.lock().unwrap().remove(&key).is_some();
+            let pending = self
+                .inner
+                .pending
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .remove(&key)
+                .is_some();
             if pending {
                 // Reveille la tache de resolution : l'entree retiree
                 // lui fait abandonner `add_uri_opts`/`readd_row` en
                 // vol au lieu de materialiser puis persister un
                 // download supprime.
-                if let Some(n) = self.inner.pending_notify.lock().unwrap().remove(&key) {
+                if let Some(n) = self
+                    .inner
+                    .pending_notify
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .remove(&key)
+                {
                     n.notify_one();
                 }
             }
@@ -2316,8 +2359,18 @@ impl CoreSession {
         // abandonner au lieu de materialiser un download supprime.
         {
             let key = infohash.clone();
-            self.inner.pending.lock().unwrap().remove(&key);
-            if let Some(n) = self.inner.pending_notify.lock().unwrap().remove(&key) {
+            self.inner
+                .pending
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .remove(&key);
+            if let Some(n) = self
+                .inner
+                .pending_notify
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .remove(&key)
+            {
                 n.notify_one();
             }
         }
@@ -2730,17 +2783,31 @@ impl CoreSession {
             );
             services.bandwidth_stop = Some(stop_tx);
         }
-        *self.inner.services.lock().unwrap() = services;
+        *self
+            .inner
+            .services
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = services;
     }
 
     /// Acces au torrent checker (API, tests).
     pub fn torrent_checker(&self) -> Option<Arc<crate::services::torrent_checker::TorrentChecker>> {
-        self.inner.services.lock().unwrap().checker.clone()
+        self.inner
+            .services
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .checker
+            .clone()
     }
 
     /// Acces au gestionnaire RSS.
     pub fn rss(&self) -> Option<Arc<crate::services::rss::RssManager>> {
-        self.inner.services.lock().unwrap().rss.clone()
+        self.inner
+            .services
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .rss
+            .clone()
     }
 
     /// Stack IPv8 de la session (`None` si `config.ipv8.enabled =
@@ -2907,7 +2974,11 @@ impl CoreSession {
         for engine in self.all_engines() {
             engine.set_ratelimits(config.engine.max_upload_bps, config.engine.max_download_bps);
         }
-        let mut services = self.inner.services.lock().unwrap();
+        let mut services = self
+            .inner
+            .services
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         // RSS : mise a jour du manager existant ou creation.
         if let Some(rss) = &services.rss {
             rss.update(&config.rss_urls);
@@ -2999,7 +3070,13 @@ impl CoreSession {
             return;
         }
         self.inner.notifier.notify(Notification::SessionStopping);
-        let services = std::mem::take(&mut *self.inner.services.lock().unwrap());
+        let services = std::mem::take(
+            &mut *self
+                .inner
+                .services
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()),
+        );
         self.shutdown_state("Shutting down torrent checker.");
         if let Some(w) = &services.watch_folder {
             w.stop();

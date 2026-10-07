@@ -3,6 +3,29 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Correctifs (revue externe 4) : `source_uri` upsert, schéma `row_json`, scrape BEP-48, TOCTOU trackers, mutex (2026-10-07)
+
+- **`downloads.upsert` : `source_uri` omis du `DO UPDATE`** — la
+  sémantique « remplacement complet » ignorait silencieusement la
+  nouvelle source (magnet enrichi, trackers d'amorce) au conflit.
+- **`row_json` aligné sur `to_simple_dict`** : `category` renvoie
+  `tags` (plus `null` en dur), `created` = `torrent_date` ajouté,
+  `updated` = `timestamp` du noeud (au lieu de `torrent_date`),
+  `id` = `id_` canal (au lieu du rowid sqlite) ; l'injection
+  `local_search` des téléchargements gagne aussi `created`.
+- **Scrape BEP-48** : `announce → scrape` n'est substitué que dans
+  le *chemin* (`rfind`) — `str::replace` corrompait les
+  sous-domaines `announce.tracker.org` → `scrape.` (DNS mort).
+- **TOCTOU `sync_trackers_file`** : `check_uri_policy` +
+  `reqwest::get` re-resolvait le DNS (rebinding possible) et
+  `resp.bytes()` n'avait pas de borne — remplacés par
+  `fetch_checked` (politique + epinglage) + `read_body_limited`.
+- **UPnP SOAP** : timeout client (`discover_timeout_secs`) — un
+  IGD gele bloquait la tache forwarder indéfiniment.
+- **Mutex poison-tolérant** (`guards.rs`, `session.rs` — règle
+  AGENTS) : `.lock().unwrap()` → `into_inner()` ; ~270 autres
+  sites dans le workspace restent à balayer dans une passe dédiée.
+
 ## Recherche distante : résultats par pair portés au plafond utile (2026-10-07)
 
 - L'UI demande désormais `last=100` (`/search/remote`) — la borne
