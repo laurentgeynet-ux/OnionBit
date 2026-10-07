@@ -57,6 +57,7 @@ pub fn acquire(state_dir: &Path) -> Option<InstanceGuard> {
     let path = state_dir.join(".onionbit.lock");
     let Ok(file) = std::fs::OpenOptions::new()
         .create(true)
+        .truncate(false)
         .write(true)
         .open(&path)
     else {
