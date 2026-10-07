@@ -128,6 +128,60 @@ pub struct PendingDownload {
     pub added_on: i64,
 }
 
+/// Garde RAII d'une entree `pending` magnet : un add abandonne en
+/// vol — le futur est drope au milieu de `resolve_magnet` (timeout ou
+/// annulation cote appelant, requete HTTP coupee) — retire l'entree,
+/// son `pending_notify` et le swarm enregistre. Sans cela l'infohash
+/// restait `is_pending` definitivement : tout re-add ulterieur
+/// echouait en `InvalidState("deja en cours de resolution")` et le
+/// swarm `pending` fuyait jusqu'au prochain demarrage.
+struct PendingAddGuard<'a> {
+    inner: &'a Inner,
+    key: Option<String>,
+    infohash: Option<onionbit_crypto::hash::InfoHashV1>,
+}
+
+impl<'a> PendingAddGuard<'a> {
+    fn new(
+        inner: &'a Inner,
+        key: String,
+        infohash: Option<onionbit_crypto::hash::InfoHashV1>,
+    ) -> Self {
+        Self {
+            inner,
+            key: Some(key),
+            infohash,
+        }
+    }
+
+    /// Sortie normale (succes ou erreur) : le nettoyage explicite a
+    /// deja ete fait — le `Drop` devient un no-op.
+    fn disarm(&mut self) {
+        self.key = None;
+    }
+}
+
+impl Drop for PendingAddGuard<'_> {
+    fn drop(&mut self) {
+        let Some(k) = self.key.take() else {
+            return;
+        };
+        self.inner
+            .pending
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&k);
+        self.inner
+            .pending_notify
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&k);
+        if let (Some(stack), Some(ih)) = (self.inner.ipv8.as_ref(), self.infohash) {
+            stack.clear_pending_swarm(&ih, false);
+        }
+    }
+}
+
 struct Inner {
     config: CoreConfig,
     /// Sous-ensemble de reglages mutables a chaud (`POST /api/settings`) :
@@ -1324,6 +1378,17 @@ impl CoreSession {
         // download est visible dans `GET /api/downloads` pendant
         // l'attente au lieu de n'apparaitre qu'une fois resolu.
         let pending_key = magnet.as_ref().map(|m| m.info_hash_hex());
+        // Garde RAII : un drop du futur en pleine resolution (timeout
+        // ou annulation cote appelant) nettoie `pending` + swarm —
+        // sinon l'infohash restait `is_pending` a vie et tout re-add
+        // echouait en `InvalidState`.
+        let mut pending_guard = pending_key.as_ref().map(|k| {
+            PendingAddGuard::new(
+                &self.inner,
+                k.clone(),
+                magnet.as_ref().and_then(|m| m.info_hash_v1),
+            )
+        });
         // Lane effectivement tentee a la derniere iteration — relue
         // depuis `pending` a chaque relance (`PATCH anon_hops`
         // pendant la resolution).
@@ -1451,6 +1516,9 @@ impl CoreSession {
                 .remove(k);
             r
         });
+        if let Some(g) = pending_guard.as_mut() {
+            g.disarm();
+        }
         let dl = add_res?;
         self.persist(
             &dl,

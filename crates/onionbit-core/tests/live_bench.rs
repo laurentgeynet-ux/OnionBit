@@ -48,6 +48,16 @@ use onionbit_tunnel::TUNNEL_COMMUNITY_ID;
 const CIRCUIT_WAIT: Duration = Duration::from_secs(30);
 /// Delai max d'un transfert complet via le tunnel.
 const TRANSFER_WAIT: Duration = Duration::from_secs(180);
+/// Delai max d'une seule tentative d'add. Une resolution BEP 9 dont la
+/// premiere connexion uTP se perd n'est jamais retentee par le moteur
+/// (hors ligne : pas de DHT/LSD/trackers) — mieux vaut abandonner la
+/// tentative et en relancer une que de consommer tout le budget sur un
+/// futur deja mort. Le drop nettoie l'entree `pending`
+/// (`PendingAddGuard`), la tentative suivante repart propre.
+const ADD_ATTEMPT_WAIT: Duration = Duration::from_secs(60);
+/// Nombre de tentatives d'add : pire cas `3 x 60 s`, budget total
+/// inchange vs `TRANSFER_WAIT`.
+const ADD_ATTEMPTS: u8 = 3;
 /// Delai max des transitions d'etat (pending, migration).
 const STATE_WAIT: Duration = Duration::from_secs(30);
 /// Intervalle de scrutation.
@@ -1038,16 +1048,38 @@ async fn live_flotte_10_restart() {
             // legitiment trainer — on la deporte comme dans le test
             // crash, la convergence reelle est bornee par le
             // `wait_until` de progression par torrent en aval.
+            // Tentatives bornees : une resolution dont la premiere
+            // connexion uTP se perd n'est jamais retentee — le drop
+            // nettoie `pending` et on repart sur un handshake neuf.
             let uri = format!("magnet:?xt=urn:btih:{}&dn={}", t.ih, t.name);
+            let name = t.name.clone();
             let s = session.clone();
             let hops = t.hops;
             let peers = vec![fleet.seed_addr];
             tokio::spawn(async move {
-                if let Err(e) = s
-                    .add_download_anon_with_peers(&uri, false, hops, hops > 0, None, peers)
+                for attempt in 1..=ADD_ATTEMPTS {
+                    match tokio::time::timeout(
+                        ADD_ATTEMPT_WAIT,
+                        s.add_download_anon_with_peers(
+                            &uri,
+                            false,
+                            hops,
+                            hops > 0,
+                            None,
+                            peers.clone(),
+                        ),
+                    )
                     .await
-                {
-                    tracing::warn!(error = %e, "add magnet flotte echoue");
+                    {
+                        Ok(Ok(_)) => return,
+                        Ok(Err(e)) => {
+                            tracing::warn!(error = %e, "add magnet flotte echoue");
+                            return;
+                        }
+                        Err(_) => {
+                            tracing::warn!(torrent = %name, attempt, "add magnet flotte en timeout — relance");
+                        }
+                    }
                 }
             });
         } else {
@@ -1086,9 +1118,11 @@ async fn live_flotte_10_restart() {
     // DHT/LSD/trackers) une tentative de connexion initiale perdue —
     // handshake SOCKS/uTP transitoire sur le circuit — n'est jamais
     // retentee par le moteur : meme correction que la re-annonce
-    // post-restart (`readd_bittorrent_peers`).
+    // post-restart (`readd_bittorrent_peers`). La fenetre couvre une
+    // tentative d'add morte (timeout a `ADD_ATTEMPT_WAIT`) suivie
+    // d'une relance + materialisation.
     for t in &fleet.torrents {
-        let ok = wait_until(Duration::from_secs(60), || {
+        let ok = wait_until(Duration::from_secs(2 * ADD_ATTEMPT_WAIT.as_secs()), || {
             if let Some(d) = session.find_download_hex(&t.ih) {
                 d.add_peer(fleet.seed_addr);
                 let st = d.stats();
@@ -1355,41 +1389,52 @@ async fn live_magnet_pending_non_restaure_au_restart() {
 
 /// Ajoute un `FleetTorrent` a la session (magnet ou `.torrent` selon
 /// `t.magnet`) avec le seeder en pair d'amorce. L'add est borne par
-/// `TRANSFER_WAIT` : une resolution BEP 9 ou un add moteur qui stalle
-/// devient un panic localise au lieu d'un hang CI.
+/// tentative (`ADD_ATTEMPT_WAIT`) et relance : une resolution BEP 9
+/// dont la premiere connexion uTP se perd n'est jamais retentee par le
+/// moteur — le drop nettoie `pending` (`PendingAddGuard`) et la
+/// tentative suivante repart sur un handshake neuf au lieu de stagner
+/// jusqu'au timeout global.
 async fn fleet_add(session: &CoreSession, t: &FleetTorrent, seed_addr: SocketAddr) {
-    let fut = async {
-        if t.magnet {
-            let uri = format!("magnet:?xt=urn:btih:{}&dn={}", t.ih, t.name);
-            session
-                .add_download_anon_with_peers(
-                    &uri,
-                    false,
-                    t.hops,
-                    t.hops > 0,
-                    None,
-                    vec![seed_addr],
-                )
-                .await
-                .map(|_| ())
-        } else {
-            session
-                .add_torrent_bytes_anon_with_peers(
-                    t.bytes.clone(),
-                    false,
-                    t.hops,
-                    t.hops > 0,
-                    None,
-                    vec![seed_addr],
-                )
-                .await
-                .map(|_| ())
+    for attempt in 1..=ADD_ATTEMPTS {
+        let fut = async {
+            if t.magnet {
+                let uri = format!("magnet:?xt=urn:btih:{}&dn={}", t.ih, t.name);
+                session
+                    .add_download_anon_with_peers(
+                        &uri,
+                        false,
+                        t.hops,
+                        t.hops > 0,
+                        None,
+                        vec![seed_addr],
+                    )
+                    .await
+                    .map(|_| ())
+            } else {
+                session
+                    .add_torrent_bytes_anon_with_peers(
+                        t.bytes.clone(),
+                        false,
+                        t.hops,
+                        t.hops > 0,
+                        None,
+                        vec![seed_addr],
+                    )
+                    .await
+                    .map(|_| ())
+            }
+        };
+        match tokio::time::timeout(ADD_ATTEMPT_WAIT, fut).await {
+            Ok(Ok(())) => return,
+            // Erreur deterministe (magnet invalide, disque plein...) :
+            // relancer ne changerait rien.
+            Ok(Err(e)) => panic!("add {} hops={}: {e}", t.name, t.hops),
+            Err(_) if attempt < ADD_ATTEMPTS => {
+                tracing::warn!(torrent = %t.name, attempt, "add en timeout — relance");
+            }
+            Err(_) => panic!("add {} hops={} en timeout", t.name, t.hops),
         }
-    };
-    tokio::time::timeout(TRANSFER_WAIT, fut)
-        .await
-        .unwrap_or_else(|_| panic!("add {} hops={} en timeout", t.name, t.hops))
-        .unwrap_or_else(|e| panic!("add {} hops={}: {e}", t.name, t.hops));
+    }
 }
 
 /// Redemarrage complet : `stop()`, nouvelle session sur le meme

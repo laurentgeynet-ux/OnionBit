@@ -3,6 +3,28 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Correctifs : `pending` magnet orphelin au drop, retry d'add dans le banc live (2026-10-07)
+
+- **`PendingAddGuard` (session)** — un `add_download_anon` droppé en
+  pleine résolution BEP 9 (timeout ou annulation côté appelant,
+  requête HTTP coupée) laissait l'entrée `pending` orpheline :
+  l'infohash restait `is_pending` à vie (tout re-add échouait en
+  `InvalidState("déjà en cours de résolution")`), le `pending_notify`
+  et le swarm enregistré fuyaient. Garde RAII qui retire les trois à
+  la destruction du futur ; désarmée sur la sortie normale.
+- **Banc live : tentatives d'add bornées** — une résolution BEP 9 dont
+  la première connexion uTP se perd n'est jamais retentée par le
+  moteur (hors ligne : pas de DHT/LSD/trackers). `fleet_add` et les
+  adds spawnés de `live_flotte_10_restart` tentent désormais
+  `3 × ADD_ATTEMPT_WAIT (60 s)` au lieu d'une tentative unique de
+  180 s : une tentative morte est abandonnée (drop → garde) puis
+  relancée sur un handshake neuf. Budget total inchangé ; la fenêtre
+  de progression par torrent passe à `2 × ADD_ATTEMPT_WAIT` pour
+  couvrir une relance.
+- Observé en CI tag `v0.9.3-beta` (leg ubuntu) : `fleet3` resté
+  `pending=true`/`owner=None` sur résolution morte, `fleet9` en
+  timeout d'add — le run master du même commit passait.
+
 ## Correctifs (revue externe 7) : re-ACK messagerie, indices speedtest, `PendingGuard::drop`, magnet tolérant, scrape en lots, mutex (2026-10-07)
 
 - **Messagerie : re-ACK sur retransmission** — un `msg` déjà vu était

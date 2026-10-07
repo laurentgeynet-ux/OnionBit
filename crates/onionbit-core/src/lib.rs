@@ -95,6 +95,52 @@ mod tests {
         session.stop().await;
     }
 
+    /// Un add magnet droppé en pleine résolution BEP 9 (timeout ou
+    /// annulation côté appelant) ne doit pas laisser l'entrée
+    /// `pending` orpheline — sinon tout re-add échouait en
+    /// `InvalidState("déjà en cours de résolution")` à vie.
+    #[tokio::test]
+    async fn add_magnet_abandonne_nettoie_pending() {
+        let dir = tempfile::tempdir().unwrap();
+        let session =
+            CoreSession::start_offline(CoreConfig::offline(dir.path().into()), Notifier::new())
+                .await
+                .unwrap();
+        let ih = "a".repeat(40);
+        let uri = format!("magnet:?xt=urn:btih:{ih}&dn=ghost.bin");
+        let s = session.clone();
+        let task = tokio::spawn(async move {
+            s.add_download_anon_with_peers(
+                &uri,
+                false,
+                0,
+                false,
+                None,
+                vec!["127.0.0.1:9".parse().unwrap()],
+            )
+            .await
+        });
+        // `initial_peers` fourni → `resolve_magnet` consomme le pair
+        // (connexion refusée, vite) puis attend d'autres pairs sur le
+        // flux — l'entrée `pending` reste en place : le stall exact
+        // observé en CI sur lane anonyme.
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+        while !session.is_pending(&ih) {
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "entree pending jamais creee"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        task.abort();
+        let _ = task.await;
+        assert!(
+            !session.is_pending(&ih),
+            "entree pending orpheline apres abandon de l'add"
+        );
+        session.stop().await;
+    }
+
     #[test]
     fn notifier_sans_abonne_ne_bloque_pas() {
         let n = Notifier::new();
