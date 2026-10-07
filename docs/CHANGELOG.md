@@ -3,6 +3,32 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## ADR-0016 (intérimaire) : identité portable — export/import `OBID` (2026-10-06)
+
+- **Blob `OBID`** (`onionbit-crypto::keyblob`) : `magic‖v‖sel‖nonce‖
+  ct‖tag` — argon2id RFC 9106 (m = 19 Mio, t = 2, p = 1) →
+  ChaCha20-Poly1305, sel+nonce aléatoires par export, borne 64 Kio à
+  l'ouverture ; mauvais mot de passe / blob altéré / tronqué → rejet.
+- **Fichier `ipv8_keypair.bin` durci** (`ipv8_stack`) : écriture
+  atomique (tmp + rename — plus de fichier tronqué après crash),
+  permissions `0600` sous Unix ; reste en clair volontairement
+  (démarrage headless — voir ADR-0016 pour la graine BIP39 différée).
+- **API** (`/api/identity*`, sous `api_key_auth`) : `GET` → clé
+  publique seule ; `POST /export` → `{key, encrypted}` (brut ou
+  `OBID`) ; `POST /restore` → valide le `LibNaCLSK:` puis remplace le
+  fichier — `{restart_required: true}` (identité liée aux communautés,
+  pas de mutation à chaud).
+- **Flutter** : section « Identité » des réglages — clé publique
+  copiable, export (mot de passe optionnel → presse-papiers), import
+  (hex/`OBID` + mot de passe) avec avertissement de remplacement +
+  redémarrage.
+- Migration nomade : export `OBID` (device A) → restore (B) →
+  redémarrage → import du coffre `OBV1` → contacts + alias retrouvés
+  sous la même identité.
+- Tests : keyblob (round-trip, mauvais mdp, formes rejetées), core
+  (remplacement réel du fichier + blob mal formé refusé), API
+  (cycle complet export→restore→fichier).
+
 ## Durcissement P1 (revue externe) : DNS rebinding + purge `ext_peers` (2026-10-06)
 
 - **`fetch_checked_with` anti-TOCTOU** (`services/mod.rs`) : les

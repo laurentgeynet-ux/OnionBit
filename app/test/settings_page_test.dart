@@ -65,6 +65,13 @@ class _FakeSettings implements SettingsRepository {
   @override
   Future<Map<String, dynamic>> checkVersion() async =>
       {'has_version': false};
+  @override
+  Future<String?> identityPublicKey() async => 'aabbcc';
+  @override
+  Future<Map<String, dynamic>> identityExport({String? password}) async =>
+      {'key': 'deadbeef'};
+  @override
+  Future<void> identityRestore(String keyHex, {String? password}) async {}
 }
 
 void main() {

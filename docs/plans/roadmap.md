@@ -791,17 +791,18 @@ contrepartie hostile.
   l'ayant annoncé — clair sinon, jamais vers legacy. Jitter
   `ext/hello_jitter_pct` (25 %). Banc T6 + fuzz `obf` dans
   `ext_packet`.
-- [x] **Étape 48. Identité portable par graine (ADR-0016)** —
-  graine de 32 octets racine de l'identité IPv8 : HKDF domaine-séparé
-  → keypair `LibNaCLSK:` déterministe ; trois portes — phrase BIP39
-  24 mots, chaîne `onionbit:<hex>`, `argon2id(pseudo‖mdp)` (RFC 9106
-  premier jeu, sel = SHA-256(domaine‖pseudo)). `identity_seed.bin`
-  fait foi (`ipv8_keypair.bin` = cache, clé seule = legacy sans
-  phrase) ; `GET /api/identity`, `GET /api/identity/recovery`
-  (secret, action explicite), `POST /api/identity/restore`
-  (`restart_required`) derrière `api_key_auth` ; section « Identité »
-  des réglages Flutter (adresse, phrase avec avertissement,
-  restauration 3 onglets).
+- [ ] **Étape 48. Identité portable (ADR-0016)** — **intérimaire
+  livré** : export/import de la clé `LibNaCLSK:` — blob `OBID`
+  (argon2id RFC 9106 → ChaCha20-Poly1305, sel+nonce aléatoires) sous
+  mot de passe, ou hex brut sans ; `ipv8_keypair.bin` durci (écriture
+  atomique tmp+rename, `0600` unix) mais en clair (démarrage headless
+  sans mot de passe). `GET /api/identity` (publique seule),
+  `POST /api/identity/export`, `POST /api/identity/restore`
+  (`restart_required` — la clé est liée aux communautés) derrière
+  `api_key_auth` ; section « Identité » des réglages Flutter.
+  **Reste à décider** : graine `identity_seed.bin` + phrase BIP39
+  24 mots (clé = cache régénérable), chiffrement « at rest » optionnel,
+  multi-profils (un `state_dir` par identité).
 
 ---
 
@@ -811,6 +812,10 @@ Ajouter ici, au fil de l'avancement, tout écart constaté par rapport au
 plan initial (dépendance qui ne convient pas, étape scindée en deux,
 risque IPv8 sous/sur-estimé, etc.), avec la date.
 
+- 2026-10-06 (ADR-0016 — identité portable, intérimaire) :
+  export/import `OBID` (argon2id + ChaCha20-Poly1305) + fichier clé
+  atomique `0600` ; étape 48 décochée — la graine BIP39 décrite à
+  l'origine n'est pas implémentée (décision reportée).
 - 2026-10-06 (durcissement P1 — revue externe) : `fetch_checked_with`
   épingle les IP validées à reqwest (`resolve_to_addrs` — fin du
   TOCTOU DNS rebinding sur les fetches RSS/trackers/version) ;

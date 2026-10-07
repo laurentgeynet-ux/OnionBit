@@ -32,4 +32,16 @@ abstract interface class SettingsRepository {
   /// Sonde de mise à jour (`GET /api/versioning/versions/check` →
   /// `{new_version, has_version}`).
   Future<Map<String, dynamic>> checkVersion();
+
+  /// `GET /api/identity` — clé publique IPv8 de l'identité courante.
+  /// `null` si IPv8 désactivé.
+  Future<String?> identityPublicKey();
+
+  /// `POST /api/identity/export` — clé secrète hex (brute ou blob
+  /// `OBID` si [password] non vide). Renvoie `{key, encrypted}`.
+  Future<Map<String, dynamic>> identityExport({String? password});
+
+  /// `POST /api/identity/restore` — écrase `ipv8_keypair.bin` ;
+  /// la nouvelle identité est active au prochain démarrage.
+  Future<void> identityRestore(String keyHex, {String? password});
 }

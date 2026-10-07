@@ -16,6 +16,7 @@ import '../widgets/bandwidth_section.dart';
 import '../widgets/connection_section.dart';
 import '../widgets/daemon_section.dart';
 import '../widgets/downloads_section.dart';
+import '../widgets/identity_section.dart';
 import '../widgets/network_section.dart';
 import '../widgets/onionbit_section.dart';
 import '../widgets/queue_section.dart';
@@ -32,6 +33,7 @@ enum _SectionId {
   seeding,
   anonymity,
   onionbit,
+  identity,
   network,
   automation,
   versioning,
@@ -49,6 +51,7 @@ extension on _SectionId {
     _SectionId.seeding => l10n.sectionSeeding,
     _SectionId.anonymity => l10n.sectionAnonymity,
     _SectionId.onionbit => l10n.sectionOnionBit,
+    _SectionId.identity => l10n.sectionIdentity,
     _SectionId.network => l10n.sectionNetwork,
     _SectionId.automation => l10n.sectionAutomation,
     _SectionId.versioning => l10n.sectionVersioning,
@@ -134,6 +137,14 @@ final _kSections = <_SectionEntry>[
         'confiance attest sign-then-serve enforce msg_v1',
     sectionId: 'onionbit',
     child: const OnionBitSection(),
+  ),
+  _SectionEntry(
+    id: _SectionId.identity,
+    keywords:
+        'identité identity clé key export import backup sauvegarde '
+        'restaurer restore obid ipv8_keypair nomade portable',
+    sectionId: 'identity',
+    child: const IdentitySection(),
   ),
   _SectionEntry(
     id: _SectionId.network,

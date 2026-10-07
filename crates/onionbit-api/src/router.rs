@@ -190,6 +190,11 @@ fn api_router(state: AppState) -> Router<AppState> {
         // Rust ; `enabled:false` tant que `ext/enabled` est off, les
         // sous-routes operatoires repondent 404).
         .route("/ipv8/ext", get(ipv8::get_ext))
+        // Identite portable — export/import de la cle secrete
+        // (blob OBID argon2id+AEAD si mot de passe ; restart requis).
+        .route("/identity", get(identity::get_identity))
+        .route("/identity/export", post(identity::export_identity))
+        .route("/identity/restore", post(identity::restore_identity))
         .route("/ipv8/ext/attest", post(ipv8::post_ext_attest))
         .route("/ipv8/ext/attestations", get(ipv8::get_ext_attestations))
         .route("/ipv8/ext/ledger", get(ipv8::get_ext_ledger))

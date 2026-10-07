@@ -3549,3 +3549,109 @@ async fn connections_agregat_offline() {
     }
     srv.session.stop().await;
 }
+
+/// Cycle complet identite : cle publique exposee, export brut +
+/// protege `OBID`, restauration (remplace `ipv8_keypair.bin`,
+/// `restart_required`), refus des blobs invalides.
+#[tokio::test]
+async fn identite_export_import_cycle() {
+    use onionbit_crypto::ipv8::keys::LibNaClSecretKey;
+    use onionbit_crypto::keyblob::{keyblob_open, keyblob_seal};
+
+    let srv = spawn_server_ipv8().await;
+    let stack = srv.session.ipv8().expect("ipv8 actif");
+
+    // GET : la cle publique correspond a la cle secrete du stack.
+    let resp = srv
+        .client
+        .get(srv.url("/api/identity"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let pk = body["public_key"].as_str().unwrap().to_string();
+    assert_eq!(pk, stack.public_key_hex());
+    // Jamais de materiel prive dans la reponse GET.
+    assert!(body.get("key").is_none());
+    assert!(body.get("secret").is_none());
+
+    // Export brut : la cle hex se decode en la meme cle secrete.
+    let resp = srv
+        .client
+        .post(srv.url("/api/identity/export"))
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["encrypted"], false);
+    let raw = hex::decode(body["key"].as_str().unwrap()).unwrap();
+    LibNaClSecretKey::from_bin(&raw).unwrap();
+    assert_eq!(raw, stack.secret_key_bin());
+
+    // Export protege : blob OBID, re-ouvrable avec le mot de passe.
+    let resp = srv
+        .client
+        .post(srv.url("/api/identity/export"))
+        .json(&serde_json::json!({"password": "phrase forte"}))
+        .send()
+        .await
+        .unwrap();
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["encrypted"], true);
+    let blob = hex::decode(body["key"].as_str().unwrap()).unwrap();
+    let ouvert = keyblob_open(b"phrase forte", &blob).unwrap();
+    assert_eq!(ouvert, stack.secret_key_bin());
+    // Mauvais mot de passe → echec AEAD.
+    assert!(keyblob_open(b"autre", &blob).is_err());
+
+    // Restauration d'une NOUVELLE cle (blob OBID protege) :
+    // restart_required + fichier remplace sur disque.
+    let nouvelle = LibNaClSecretKey::generate();
+    let blob_b = keyblob_seal(b"mdp", &nouvelle.to_bin()).unwrap();
+    let resp = srv
+        .client
+        .post(srv.url("/api/identity/restore"))
+        .json(&serde_json::json!({
+            "key": hex::encode(&blob_b),
+            "password": "mdp",
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["restart_required"], true);
+    let sur_disque =
+        std::fs::read(srv.session.config().state_dir.join("ipv8_keypair.bin")).unwrap();
+    let rechargee = LibNaClSecretKey::from_bin(&sur_disque).unwrap();
+    assert_eq!(
+        rechargee.public_key().to_bin(),
+        nouvelle.public_key().to_bin()
+    );
+
+    // Blob OBID sans mot de passe → 400 ; mauvais mot de passe → 400 ;
+    // hex invalide → 400. Le fichier conserve la cle B dans tous les cas.
+    for json in [
+        serde_json::json!({"key": hex::encode(&blob_b)}),
+        serde_json::json!({"key": hex::encode(&blob_b), "password": "faux"}),
+        serde_json::json!({"key": "zzzz"}),
+        serde_json::json!({"key": hex::encode(b"pas une cle")}),
+    ] {
+        let resp = srv
+            .client
+            .post(srv.url("/api/identity/restore"))
+            .json(&json)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 400, "cas {json}");
+    }
+    let sur_disque =
+        std::fs::read(srv.session.config().state_dir.join("ipv8_keypair.bin")).unwrap();
+    assert_eq!(sur_disque, nouvelle.to_bin());
+
+    srv.session.stop().await;
+}

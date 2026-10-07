@@ -25,5 +25,7 @@
 pub mod error;
 pub mod hash;
 pub mod ipv8;
+/// Blobs proteges par mot de passe (export d'identite portable).
+pub mod keyblob;
 
 pub use error::CryptoError;

@@ -1741,9 +1741,7 @@ impl Ipv8Stack {
                     // pour porter les lanes e2e.
                     messaging_enabled: config.enable_messaging && config.enable_anonymity,
                     hello_jitter_pct: config.ext_hello_jitter_pct.min(100) as u8,
-                    peer_ttl: std::time::Duration::from_secs(
-                        config.ext_peer_ttl_secs.max(60),
-                    ),
+                    peer_ttl: std::time::Duration::from_secs(config.ext_peer_ttl_secs.max(60)),
                     peers_max: config.ext_peers_max.max(1) as usize,
                     ..onionbit_ipv8::ext::ExtSettings::default()
                 },
@@ -2300,6 +2298,13 @@ impl Ipv8Stack {
     }
 
     /// Cle publique IPv8 (hex, affichage API).
+    /// Cle secrete de la session au format filaire (`LibNaCLSK:`)
+    /// — export d'identite portable (`GET /identity/export`,
+    /// `restart_required` a l'import).
+    pub fn secret_key_bin(&self) -> Vec<u8> {
+        self.key.to_bin()
+    }
+
     pub fn public_key_hex(&self) -> String {
         hex::encode(self.key.public_key().to_bin())
     }
@@ -3175,13 +3180,43 @@ fn load_or_create_key(path: &Path) -> Result<LibNaClSecretKey> {
         Ok(data) => LibNaClSecretKey::from_bin(&data).map_err(CoreError::from),
         Err(_) => {
             let key = LibNaClSecretKey::generate();
-            if let Some(parent) = path.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
-            std::fs::write(path, key.to_bin())?;
+            write_identity_key(path, &key.to_bin())?;
             Ok(key)
         }
     }
+}
+
+/// Ecrit le fichier d'identite avec permissions restrictives
+/// (0600 unix ; sous Windows le profil utilisateur ACL le
+/// repertoire `state_dir` — la protection par mot de passe du
+/// fichier lui-meme relève de l'export `OBID`, pas du stockage
+/// local : un daemon headless ne peut pas demander de mot de passe
+/// au boot — voir ADR-0016 a venir pour la graine portable).
+fn write_identity_key(path: &Path, bytes: &[u8]) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    // Ecriture atomique : fichier temporaire dans le meme dossier +
+    // rename — un crash a mi-ecriture laisse `ipv8_keypair.bin`
+    // intact et un `.tmp` orphelin (ecrase au prochain appel).
+    let tmp = path.with_extension("tmp");
+    std::fs::write(&tmp, bytes)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600))?;
+    }
+    std::fs::rename(&tmp, path)?;
+    Ok(())
+}
+
+/// Remplace la cle d'identite (`POST /identity/restore`) : valide
+/// le format `LibNaCLSK:` avant d'ecraser le fichier — effectif au
+/// prochain demarrage (la cle est liee aux communautes en cours).
+pub fn restore_identity_key(state_dir: &Path, key_bytes: &[u8]) -> Result<()> {
+    // Refuse d'ecraser l'identite par un blob mal forme.
+    LibNaClSecretKey::from_bin(key_bytes).map_err(CoreError::from)?;
+    write_identity_key(&state_dir.join(IPV8_KEY_FILE), key_bytes)
 }
 
 #[cfg(test)]
@@ -3315,5 +3350,35 @@ mod tests {
             });
         }
         assert!(g.healths.len() <= GOSSIP_HEALTH_CAP);
+    }
+
+    /// `restore_identity_key` remplace le fichier d'identite : la
+    /// cle rechargee est la nouvelle (et non une fusion), un blob
+    /// mal forme est refuse sans toucher au fichier existant.
+    #[test]
+    fn restauration_identite_remplace_la_cle() {
+        let dir = tempfile::tempdir().unwrap();
+        let key_path = dir.path().join(IPV8_KEY_FILE);
+        let cle_a = LibNaClSecretKey::generate();
+        write_identity_key(&key_path, &cle_a.to_bin()).unwrap();
+
+        // Blob mal forme : refuse, l'ancienne cle reste en place.
+        assert!(restore_identity_key(dir.path(), b"pas une cle").is_err());
+        assert_eq!(
+            LibNaClSecretKey::from_bin(&std::fs::read(&key_path).unwrap())
+                .unwrap()
+                .public_key()
+                .to_bin(),
+            cle_a.public_key().to_bin()
+        );
+
+        // Import valide : la cle B remplace la cle A au chargement.
+        let cle_b = LibNaClSecretKey::generate();
+        restore_identity_key(dir.path(), &cle_b.to_bin()).unwrap();
+        let chargee = load_or_create_key(&key_path).unwrap();
+        assert_eq!(chargee.public_key().to_bin(), cle_b.public_key().to_bin());
+        assert_ne!(chargee.public_key().to_bin(), cle_a.public_key().to_bin());
+        // Pas de residu temporaire apres le rename.
+        assert!(!key_path.with_extension("tmp").exists());
     }
 }

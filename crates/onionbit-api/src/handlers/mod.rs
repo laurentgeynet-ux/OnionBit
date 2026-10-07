@@ -12,6 +12,7 @@ pub mod downloads;
 pub mod downloads_extra;
 pub mod events;
 pub mod files;
+pub mod identity;
 pub mod ipv8;
 pub mod libtorrent;
 pub mod logging;

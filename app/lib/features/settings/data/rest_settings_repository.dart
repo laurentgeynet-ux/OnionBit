@@ -60,4 +60,37 @@ class RestSettingsRepository implements SettingsRepository {
   Future<Map<String, dynamic>> checkVersion() async =>
       await _api.get('/versioning/versions/check') as Map<String, dynamic>? ??
       const {};
+
+  @override
+  Future<String?> identityPublicKey() async {
+    try {
+      final resp = await _api.get('/identity') as Map<String, dynamic>;
+      return resp['public_key'] as String?;
+    } catch (_) {
+      return null; // IPv8 desactive — pas d'identite a afficher.
+    }
+  }
+
+  @override
+  Future<Map<String, dynamic>> identityExport({String? password}) async =>
+      await _api.post(
+            '/identity/export',
+            body: {
+              if (password != null && password.isNotEmpty)
+                'password': password,
+            },
+          )
+          as Map<String, dynamic>? ??
+      const {};
+
+  @override
+  Future<void> identityRestore(String keyHex, {String? password}) =>
+      _api.post(
+        '/identity/restore',
+        body: {
+          'key': keyHex,
+          if (password != null && password.isNotEmpty)
+            'password': password,
+        },
+      );
 }
