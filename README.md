@@ -33,6 +33,12 @@ same design Tribler pioneered:
 - 🌱 **Hidden seeding** — seed content without exposing your IP address
 - 💬 **Decentralized anonymous messaging** — end-to-end encrypted chat riding
   the same onion fabric: no server, no account, your public key is your address
+- 🤝 **OnionBit trust layer** — signed capability handshakes, curator attestations
+  and a bilateral signed ledger between peers ([ADR-0015](#the-onionbit-extension-layer-adr-0015))
+- 🕶️ **Padded encrypted envelopes (OBF)** — optional traffic-shape hardening between
+  OnionBit peers, negotiated per capability bit
+- 🧳 **Portable identity** — export your identity as a password-sealed `OBID` blob
+  and restore it on another device ([ADR-0016](docs/architecture/decisions/0016-identite-portable.md))
 - 🔍 **Decentralized search** — content discovery through the overlay, no central index
 - 🛡️ **Kill switch & leak protection** — no clearnet fallback, no DNS/UDP leaks
 - 🦀 **Pure Rust core** — memory-safe, single binary, embeddable via REST API
@@ -78,8 +84,10 @@ No server, no account, no phone number: **your public key is your address.**
 ```
 
 - 🔑 **Identity = your IPv8 keypair** — an Ed25519 (`libnacl`) key generated
-  once and stored in `state/ipv8_keypair.bin`. Sharing a contact means
-  exchanging public keys, nothing else.
+  once and stored in `state/ipv8_keypair.bin` (atomic writes, `0600` on Unix).
+  Move it between devices via the password-sealed `OBID` export
+  (*Settings → Identity*), then restore your contacts with the `OBV1` vault.
+  Sharing a contact means exchanging public keys, nothing else.
 - 🧅 **Reachable without an IP** — each identity announces introduction
   points on its own hidden swarm (`messaging_hash(pk)`); contacts resolve it
   through DHT/PEX and open a rendezvous e2e circuit. Relays forward cells
@@ -102,6 +110,43 @@ No server, no account, no phone number: **your public key is your address.**
 
 Toggle: *Settings → Anonymity → Anonymous messaging* (on by default; applied
 on restart). REST surface: `GET/POST /api/messaging/*` + SSE events.
+
+## The OnionBit extension layer (ADR-0015)
+
+Wire compatibility with Tribler 8.x is a hard boundary: the legacy protocol is
+**never modified**. Everything new lives in a dedicated extension community
+(`OnionbitExtCommunity`, own community id) spoken **only between OnionBit
+peers** — a Tribler node simply never hears it.
+
+- 🙋 **Signed capability `hello`** — peers advertise feature bits
+  (`CAP_OBF_V1`, `CAP_MSG_V1`, …) in an Ed25519-signed handshake; a forged or
+  replayed hello is rejected at the wire.
+- ⭐ **Signed curator attestations** — any identity can `endorse`/`flag` a
+  torrent or a peer (`kind=identity`); attestations gossip between OnionBit
+  peers and feed a **local** trust score. Search results show trust badges and
+  you can *follow curators* — reputation without a blockchain.
+- 📒 **Bilateral signed ledger** — two peers can record mutual obligations
+  (`PROPOSE` → `SEAL`, heads, rejects, fork proofs). It is *not* Tribler's
+  retired TrustChain: no global state, no consensus, just signed
+  accounting between two endpoints — groundwork against free-riding.
+- 🕶️ **`OBF` padded envelopes** — opt-in encrypted wrapping of extension frames
+  (HKDF `ext-obf/v1`, size-class padding) negotiated via `CAP_OBF_V1`;
+  content *and* shape hidden from a passive observer, never sent to legacy peers.
+- 🤝 **Trust-gated messaging** — optional consent gates: auto-admit endorsed
+  contacts, drop flagged ones, refuse tunnel debtors (`messaging_consent_*`,
+  all off by default). Local blocks always win.
+- 📇 **Encrypted contact vault (`OBV1`)** — export your contact list (public
+  keys + local aliases) sealed to *your own* key; restore on another device.
+  Nothing public, nothing on a server.
+- 🧳 **Portable identity (`OBID`)** — export/import the identity key as an
+  argon2id + ChaCha20-Poly1305 sealed blob; `restart_required` swap, no account
+  needed ([ADR-0016](docs/architecture/decisions/0016-identite-portable.md)).
+
+Discovery: `GET /api/ipv8/ext` lists OnionBit peers with full public keys —
+the messaging UI suggests `msg_v1` peers you haven't added yet. Full spec:
+[ADR-0015](docs/architecture/decisions/0015-extensions-onionbit-legacy-tribler.md).
+A fully camouflaged transport (indistinguishable traffic) is a separate open
+design — [ADR-0017](docs/architecture/decisions/0017-transport-furtif-anti-censure.md).
 
 ## Screenshots
 
@@ -209,6 +254,10 @@ See [SECURITY.md](SECURITY.md) for reporting and the threat model.
 | Web UI served by the daemon (same-origin) | ✅ |
 | In-app update check (GitHub releases probe) | ✅ |
 | Anonymous e2e messaging over hidden services (ADR-0011) | ✅ |
+| OnionBit extension layer: signed hello, attestations, ledger, OBF (ADR-0015) | ✅ |
+| Trust-gated messaging + `OBV1` contact vault (ADR-0015 §9) | ✅ |
+| Portable identity `OBID` export/import — interim (ADR-0016) | ✅ |
+| BIP39 seed identity + stealth transport (ADR-0017) | 📋 |
 | Latest tagged release | ✅ [`v0.9.2-beta`](https://github.com/laurentgeynet-ux/OnionBit/releases/tag/v0.9.2-beta) |
 | Linux packages (.deb + tar.gz) | ✅ |
 | Windows ARM64 package (headless) | ✅ |
