@@ -516,6 +516,14 @@ impl UdpEndpoint {
                 if let Some(t) = self.tap.lock().await.as_ref() {
                     let _ = t.send((TapDir::Tx, sa, data.to_vec()));
                 }
+                // Rendement cooperatif : pyipv8 asyncio traite chaque
+                // envoi sur un tour d'event-loop. Le pacing historique
+                // etait implicite (budget coop des awaits de verrous
+                // ci-dessus) — fragilite mesuree au refactor ADR-0017 :
+                // sans yield, une rafale d'envois sur runtime
+                // mono-thread sature le buffer UDP du receveur avant
+                // qu'il ne soit ordonnance (300 ATTEST -> 240 rx).
+                tokio::task::yield_now().await;
                 Ok(())
             }
             // Comme le Python : on ne peut pas envoyer a un nom de
@@ -569,6 +577,12 @@ impl UdpEndpoint {
             if let Some(t) = self.tap.lock().await.as_ref() {
                 let _ = t.send((TapDir::Rx, src, data.to_vec()));
             }
+            // Rendement cooperatif par datagramme (parite asyncio :
+            // un callback par datagramme, l'event-loop avance entre
+            // chacun). Sans yield explicite, un flot continu draine
+            // le buffer noyau entier sans re-ordonnancer les autres
+            // taches — famine sous flood sur runtime mono-thread.
+            tokio::task::yield_now().await;
             if data.len() < PREFIX_LEN {
                 continue;
             }
