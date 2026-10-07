@@ -102,28 +102,20 @@ mod tests {
     #[tokio::test]
     async fn add_magnet_abandonne_nettoie_pending() {
         let dir = tempfile::tempdir().unwrap();
-        let session =
-            CoreSession::start_offline(CoreConfig::offline(dir.path().into()), Notifier::new())
-                .await
-                .unwrap();
-        let ih = "a".repeat(40);
-        let uri = format!("magnet:?xt=urn:btih:{ih}&dn=ghost.bin");
-        let s = session.clone();
-        let task = tokio::spawn(async move {
-            s.add_download_anon_with_peers(
-                &uri,
-                false,
-                0,
-                false,
-                None,
-                vec!["127.0.0.1:9".parse().unwrap()],
-            )
+        let mut cfg = CoreConfig::offline(dir.path().into());
+        // Un tracker injoignable garde le flux de pairs ouvert
+        // (`TrackerComms` retente a l'infini) : la resolution BEP 9
+        // attend au lieu d'echouer immediatement quand le pair local
+        // est rejete par le kernel (RST immediat sur Linux/macOS).
+        cfg.engine.disable_trackers = false;
+        let session = CoreSession::start_offline(cfg, Notifier::new())
             .await
-        });
-        // `initial_peers` fourni → `resolve_magnet` consomme le pair
-        // (connexion refusée, vite) puis attend d'autres pairs sur le
-        // flux — l'entrée `pending` reste en place : le stall exact
-        // observé en CI sur lane anonyme.
+            .unwrap();
+        let ih = "a".repeat(40);
+        let uri = format!("magnet:?xt=urn:btih:{ih}&dn=ghost.bin&tr=udp%3A%2F%2F127.0.0.1%3A9");
+        let s = session.clone();
+        let task =
+            tokio::spawn(async move { s.add_download_anon(&uri, false, 0, false, None).await });
         let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
         while !session.is_pending(&ih) {
             assert!(

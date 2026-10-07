@@ -21,6 +21,12 @@ en haut.
   relancée sur un handshake neuf. Budget total inchangé ; la fenêtre
   de progression par torrent passe à `2 × ADD_ATTEMPT_WAIT` pour
   couvrir une relance.
+- **Test unitaire `add_magnet_abandonne_nettoie_pending` fiabilisé multiplateforme** —
+  sur Linux/macOS, la connexion vers `127.0.0.1:9` subissait un RST immédiat
+  du kernel ; sans tracker, le flux de pairs de librqbit s'épuisait instantanément
+  et l'add échouait en quelques microsecondes avant que le test n'observe l'état
+  `is_pending`. Configuration d'un tracker UDP loopback avec trackers activés
+  (`disable_trackers = false`), maintenant le flux ouvert sur tous les OS.
 - Observé en CI tag `v0.9.3-beta` (leg ubuntu) : `fleet3` resté
   `pending=true`/`owner=None` sur résolution morte, `fleet9` en
   timeout d'add — le run master du même commit passait.
