@@ -280,7 +280,18 @@ pub fn select_entries(conn: &Connection, p: &SelectParams) -> Result<Vec<Channel
         return Ok(out);
     }
     if p.popular {
-        return popular_entries(conn);
+        let rows = popular_entries(conn, p)?;
+        // `pony_query[first-1:last]` sur le lot filtre (defaut 50
+        // entrees comme `select_filtered`).
+        let first = p.first.max(1);
+        let last = p.last.unwrap_or(first + 49);
+        let lo = usize::try_from(first - 1).unwrap_or(usize::MAX);
+        let hi = usize::try_from(last).unwrap_or(usize::MAX).min(rows.len());
+        return Ok(if lo >= hi {
+            Vec::new()
+        } else {
+            rows[lo..hi].to_vec()
+        });
     }
     select_filtered(conn, p)
 }
@@ -288,7 +299,7 @@ pub fn select_entries(conn: &Connection, p: &SelectParams) -> Result<Vec<Channel
 /// `get_total_count` : meme requete sans pagination ni tri.
 pub fn count_entries(conn: &Connection, p: &SelectParams) -> Result<i64> {
     if p.popular {
-        return Ok(popular_entries(conn)?.len() as i64);
+        return Ok(popular_entries(conn, p)?.len() as i64);
     }
     let (where_sql, args, _fts) = build_where(conn, p);
     let sql = format!(
@@ -439,8 +450,10 @@ fn fts_available(conn: &Connection) -> bool {
 
 /// Branche `popular` de `get_entries_query` Python : les
 /// `POPULAR_TORRENTS_COUNT` torrents sains vus recemment, dedupes par
-/// infohash.
-fn popular_entries(conn: &Connection) -> Result<Vec<ChannelNodeRow>> {
+/// infohash. `hide_xxx`/`category`/`tags` s'appliquent comme dans
+/// [`select_filtered`] — la pagination `first..last` est faite par
+/// l'appelant (le compte de [`count_entries`] reste non pagine).
+fn popular_entries(conn: &Connection, p: &SelectParams) -> Result<Vec<ChannelNodeRow>> {
     let cutoff = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
@@ -451,6 +464,18 @@ fn popular_entries(conn: &Connection) -> Result<Vec<ChannelNodeRow>> {
         .map(|c| format!("cn.{}", c.trim()))
         .collect::<Vec<_>>()
         .join(", ");
+    // ?1 = cutoff ; les filtres annexes reutilisent les memes
+    // predicats que `build_where` (`cn.xxx = 0`, suffixe/tag).
+    let mut args: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(cutoff)];
+    let mut extra = String::new();
+    if p.hide_xxx {
+        extra.push_str(" AND cn.xxx = 0");
+    }
+    for t in p.category.iter().chain(p.tags.iter()) {
+        extra.push_str(" AND (cn.tags LIKE ? OR instr(cn.tags, ?) > 0)");
+        args.push(Box::new(format!("%{t}")));
+        args.push(Box::new(format!("{t},")));
+    }
     let mut stmt = conn.prepare(&format!(
         "SELECT {cols}, results.seeders, results.leechers, results.last_check FROM
            (SELECT * FROM torrent_state
@@ -459,9 +484,11 @@ fn popular_entries(conn: &Connection) -> Result<Vec<ChannelNodeRow>> {
             ORDER BY seeders DESC, leechers DESC, last_check DESC
             LIMIT {POPULAR_TORRENTS_COUNT}) results
          INNER JOIN channel_node cn ON cn.health_rowid = results.rowid
+         WHERE 1=1{extra}
          GROUP BY cn.infohash"
     ))?;
-    let rows = stmt.query_map(params![cutoff], from_row)?;
+    let refs: Vec<&dyn rusqlite::ToSql> = args.iter().map(|b| b.as_ref()).collect();
+    let rows = stmt.query_map(rusqlite::params_from_iter(refs), from_row)?;
     Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
 }
 

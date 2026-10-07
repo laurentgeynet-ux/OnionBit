@@ -39,7 +39,7 @@ impl KillSwitch {
     /// Engage le kill switch pour la portee `scope` (`reason` sert au
     /// diagnostic/log). Idempotent par portee.
     pub fn engage_scoped(&self, scope: &str, reason: impl Into<String>) {
-        let mut scopes = self.scopes.lock().unwrap();
+        let mut scopes = self.scopes.lock().unwrap_or_else(|e| e.into_inner());
         if scopes.insert(scope.to_string(), reason.into()).is_none() && scopes.len() == 1 {
             tracing::warn!(scope, "kill switch engage");
         }
@@ -49,7 +49,7 @@ impl KillSwitch {
     /// autre portee est encore active. Retourne `true` si la portee
     /// etait engagee.
     pub fn release_scoped(&self, scope: &str) -> bool {
-        let mut scopes = self.scopes.lock().unwrap();
+        let mut scopes = self.scopes.lock().unwrap_or_else(|e| e.into_inner());
         let was = scopes.remove(scope).is_some();
         if was && scopes.is_empty() {
             tracing::info!("kill switch desarme");
@@ -65,7 +65,7 @@ impl KillSwitch {
     /// Desarme **toutes** les portees (retour manuel = decision
     /// operateur, elle l'emporte sur les sources restantes).
     pub fn release(&self) {
-        let mut scopes = self.scopes.lock().unwrap();
+        let mut scopes = self.scopes.lock().unwrap_or_else(|e| e.into_inner());
         if !scopes.is_empty() {
             scopes.clear();
             tracing::info!("kill switch desarme (manuel)");
@@ -74,12 +74,16 @@ impl KillSwitch {
 
     /// `true` si engage (au moins une portee active).
     pub fn is_engaged(&self) -> bool {
-        !self.scopes.lock().unwrap().is_empty()
+        !self
+            .scopes
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_empty()
     }
 
     /// Raisons des engagements actifs (diagnostic).
     pub fn reason(&self) -> Option<String> {
-        let scopes = self.scopes.lock().unwrap();
+        let scopes = self.scopes.lock().unwrap_or_else(|e| e.into_inner());
         if scopes.is_empty() {
             return None;
         }
@@ -90,13 +94,17 @@ impl KillSwitch {
 
     /// Garde-fou : `Err(KillSwitchEngaged)` si engage — a appeler
     /// avant tout envoi de trafic dependant de l'anonymat.
+    /// Verrou unique : `is_engaged` + `reason` en deux prises
+    /// laissait une fenetre ou l'engagement disparaissait entre
+    /// les deux (raison perdue -> "raison inconnue").
     pub fn guard(&self) -> Result<()> {
-        if self.is_engaged() {
-            return Err(PolicyError::KillSwitchEngaged(
-                self.reason().unwrap_or_else(|| "raison inconnue".into()),
-            ));
+        let scopes = self.scopes.lock().unwrap_or_else(|e| e.into_inner());
+        if scopes.is_empty() {
+            return Ok(());
         }
-        Ok(())
+        let mut parts: Vec<String> = scopes.iter().map(|(s, r)| format!("{s}: {r}")).collect();
+        parts.sort();
+        Err(PolicyError::KillSwitchEngaged(parts.join(" ; ")))
     }
 
     /// Garde-fou lors de l'ajout d'un téléchargement : bloque si le proxy
@@ -104,7 +112,7 @@ impl KillSwitch {
     /// a été déclenché, mais n'empêche pas l'enregistrement d'un téléchargement
     /// en attente de circuits ("le téléchargement attendra").
     pub fn guard_add(&self) -> Result<()> {
-        let scopes = self.scopes.lock().unwrap();
+        let scopes = self.scopes.lock().unwrap_or_else(|e| e.into_inner());
         for (scope, reason) in scopes.iter() {
             if scope != "circuits" {
                 return Err(PolicyError::KillSwitchEngaged(format!("{scope}: {reason}")));
@@ -115,12 +123,15 @@ impl KillSwitch {
 
     /// `true` si la portée `scope` est engagée.
     pub fn is_scope_engaged(&self, scope: &str) -> bool {
-        self.scopes.lock().unwrap().contains_key(scope)
+        self.scopes
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .contains_key(scope)
     }
 
     /// Garde-fou ciblé sur une portée : `Err(KillSwitchEngaged)` si `scope` est engagée.
     pub fn guard_scope(&self, scope: &str) -> Result<()> {
-        let scopes = self.scopes.lock().unwrap();
+        let scopes = self.scopes.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(reason) = scopes.get(scope) {
             return Err(PolicyError::KillSwitchEngaged(format!("{scope}: {reason}")));
         }

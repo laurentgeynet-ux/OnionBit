@@ -62,7 +62,12 @@ fn tribler_public_key(pem_path: &str) -> Vec<u8> {
         .windows(marker.len())
         .position(|w| w == marker)
         .expect("marqueur LibNaCLSK absent du PEM");
-    LibNaClSecretKey::from_bin(&raw[pos..])
+    // `from_bin` exige la taille exacte : on tronque a la cle (le
+    // pem peut trainer des octets apres le blob).
+    let bin = raw
+        .get(pos..pos + onionbit_crypto::ipv8::keys::LIBNACL_SK_BIN_LEN)
+        .expect("cle Tribler tronquee");
+    LibNaClSecretKey::from_bin(bin)
         .expect("cle Tribler invalide")
         .public_key()
         .to_bin()

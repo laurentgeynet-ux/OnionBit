@@ -48,7 +48,10 @@ pub struct LibNaClPublicKey {
 impl LibNaClPublicKey {
     /// Parse une cle publique depuis sa forme binaire IPv8.
     pub fn from_bin(data: &[u8]) -> Result<Self, CryptoError> {
-        if !data.starts_with(LIBNACL_PK_PREFIX) || data.len() < LIBNACL_PK_BIN_LEN {
+        // Taille exacte exigee : un suffixe bourre passerait sinon le
+        // parse alors que `mid`/`verify` ne portent que sur les 74
+        // octets canoniques — decalage filaire (pyipv8 est strict).
+        if !data.starts_with(LIBNACL_PK_PREFIX) || data.len() != LIBNACL_PK_BIN_LEN {
             return Err(CryptoError::BadKey(format!(
                 "cle publique LibNaCL attendue ({} octets, prefixe LibNaCLPK:), recu {} octets",
                 LIBNACL_PK_BIN_LEN,
@@ -126,7 +129,7 @@ impl LibNaClSecretKey {
 
     /// Parse une cle privee depuis sa forme binaire IPv8.
     pub fn from_bin(data: &[u8]) -> Result<Self, CryptoError> {
-        if !data.starts_with(LIBNACL_SK_PREFIX) || data.len() < LIBNACL_SK_BIN_LEN {
+        if !data.starts_with(LIBNACL_SK_PREFIX) || data.len() != LIBNACL_SK_BIN_LEN {
             return Err(CryptoError::BadKey(format!(
                 "cle privee LibNaCL attendue ({} octets, prefixe LibNaCLSK:), recu {} octets",
                 LIBNACL_SK_BIN_LEN,
@@ -219,6 +222,14 @@ mod tests {
     fn from_bin_rejette_les_mauvaises_cles() {
         assert!(LibNaClPublicKey::from_bin(b"trop-court").is_err());
         assert!(LibNaClSecretKey::from_bin(b"LibNaCLSK:trop-court").is_err());
+        // Taille exacte : les octets en suffixe sont rejetes (le mid
+        // ne porterait que sur les 74 premiers).
+        let mut pad_pk = LibNaClSecretKey::generate().public_key().to_bin();
+        pad_pk.push(0);
+        assert!(LibNaClPublicKey::from_bin(&pad_pk).is_err());
+        let mut pad_sk = LibNaClSecretKey::generate().to_bin();
+        pad_sk.push(0);
+        assert!(LibNaClSecretKey::from_bin(&pad_sk).is_err());
         let mut bad = vec![0u8; LIBNACL_PK_BIN_LEN];
         bad[..10].copy_from_slice(b"BadPrefix:");
         assert!(LibNaClPublicKey::from_bin(&bad).is_err());

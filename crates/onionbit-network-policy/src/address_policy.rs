@@ -163,6 +163,19 @@ impl IpPolicy {
             );
             return self.deny_reason_v4(&v4);
         }
+        // NAT64 Well-Known Prefix RFC 6052 (`64:ff9b::/96`, annonce
+        // par DNS64) : l'IPv4 embarquee dans les 32 derniers bits est
+        // soumise a la politique IPv4 — sans ca `64:ff9b::127.0.0.1`
+        // ne matchait aucun filtre v6 et contournait l'anti-SSRF.
+        if s[0] == 0x0064 && s[1] == 0xff9b && s[2] == 0 && s[3] == 0 && s[4] == 0 && s[5] == 0 {
+            let v4 = Ipv4Addr::new(
+                (s[6] >> 8) as u8,
+                (s[6] & 0xff) as u8,
+                (s[7] >> 8) as u8,
+                (s[7] & 0xff) as u8,
+            );
+            return self.deny_reason_v4(&v4);
+        }
         if !self.allow_private && (s[0] & 0xfe00) == 0xfc00 {
             return Some("ULA fc00::/7 refusee");
         }
@@ -267,6 +280,27 @@ mod tests {
         // `::8.8.8.8` = IPv4-compatible publique → traitee comme v4.
         assert_eq!(
             p.decide(&"::8.8.8.8".parse().unwrap()),
+            PolicyDecision::Allow
+        );
+        // NAT64 WKP RFC 6052 (`64:ff9b::/96`, DNS64) : l'IPv4
+        // embarquee suit la politique v4 — `64:ff9b::127.0.0.1`
+        // ne matchait aucun filtre v6 avant ce cas.
+        for s in [
+            "64:ff9b::127.0.0.1",
+            "64:ff9b::10.0.0.1",
+            "64:ff9b::192.168.1.1",
+            "64:ff9b::169.254.1.1",
+            "64:ff9b::255.255.255.255",
+        ] {
+            let ip: IpAddr = s.parse().unwrap();
+            assert_eq!(
+                p.decide(&ip),
+                PolicyDecision::Deny,
+                "{s} devrait etre refuse"
+            );
+        }
+        assert_eq!(
+            p.decide(&"64:ff9b::8.8.8.8".parse().unwrap()),
             PolicyDecision::Allow
         );
         // En mode permissif `::1` reste autorise (loopback explicite)

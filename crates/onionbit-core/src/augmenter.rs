@@ -104,7 +104,7 @@ impl Augmenter {
     /// `study` des que la fenetre depasse le seuil.
     pub fn consume_title(&self, title: &str) {
         let titles = {
-            let mut inner = self.inner.lock().unwrap();
+            let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             if !inner.initialized {
                 if let Ok(content) = std::fs::read_to_string(&self.cache_file) {
                     inner.title_window = serde_json::from_str(&content).unwrap_or_default();
@@ -137,7 +137,7 @@ impl Augmenter {
     /// (moins 50 pieces par nouveau titre reservees, comme le budget
     /// `8000 - 50*len(titles)` de l'entrainement Python) et persiste.
     fn study(&self, titles: Vec<String>) {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         for title in &titles {
             let normalized: String = title
                 .chars()
@@ -163,30 +163,42 @@ impl Augmenter {
             // couverture totale de l'encodeur.
             inner.vocab = ranked.into_iter().collect();
         }
-        if let Ok(json) = serde_json::to_string(&inner.vocab) {
+        // Serialise sous verrou, mais l'ecriture disque se fait
+        // apres relachement — un `fs::write` bloquant sous `inner`
+        // gelait tous les `encode()` de recherche concurrents.
+        let json = serde_json::to_string(&inner.vocab).ok();
+        drop(inner);
+        if let Some(json) = json {
             let _ = std::fs::write(&self.model_file, json);
         }
-        drop(inner);
         let _ = std::fs::remove_file(&self.cache_file);
     }
 
     /// `needs_kickstart` Python : vocabulaire vide -> amorcer depuis
     /// la base (`seed_augmenter` envoie 10000 titres).
     pub fn needs_kickstart(&self) -> bool {
-        self.inner.lock().unwrap().vocab.is_empty()
+        self.inner
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .vocab
+            .is_empty()
     }
 
     /// `seed_augmenter` Python : empile les titres de la base dans la
     /// fenetre d'apprentissage.
     pub fn seed(&self, titles: Vec<String>) {
-        self.inner.lock().unwrap().title_window.extend(titles);
+        self.inner
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .title_window
+            .extend(titles);
     }
 
     /// `schedule_study` immediat : vide la fenetre et apprend (pour
     /// le kickstart apres `seed`).
     pub fn study_pending(&self) {
         let titles = {
-            let mut inner = self.inner.lock().unwrap();
+            let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             std::mem::take(&mut inner.title_window)
         };
         self.schedule_study(titles);
@@ -194,7 +206,7 @@ impl Augmenter {
 
     /// `on_shutdown` Python : vide le cache des titres en attente.
     pub fn flush_cache(&self) {
-        let inner = self.inner.lock().unwrap();
+        let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         if let Ok(json) = serde_json::to_string(&inner.title_window) {
             let _ = std::fs::write(&self.cache_file, json);
         }
@@ -211,7 +223,7 @@ impl Augmenter {
             .collect();
         let chars: Vec<char> = normalized.chars().collect();
         let n = chars.len();
-        let vocab = &self.inner.lock().unwrap().vocab;
+        let vocab = &self.inner.lock().unwrap_or_else(|e| e.into_inner()).vocab;
         // dp[i] = meilleur score jusqu'au char i + piece terminant a i.
         let mut dp = vec![f64::NEG_INFINITY; n + 1];
         let mut back: Vec<Option<(usize, usize)>> = vec![None; n + 1];
@@ -284,14 +296,18 @@ impl Augmenter {
     /// ses parametres — port exact de la logique de permutations.
     pub fn augment(&self, search: &str, limit: usize, offset: usize) -> (String, Vec<String>) {
         let pieces = self.encode(search);
+        // LIMIT/OFFSET inlines dans les deux branches (entiers
+        // controles, comme Python) : les parametres ne portent que
+        // les motifs `title LIKE ?` — le compte `?` correspond
+        // toujours a `parameters.len()`.
         if pieces.is_empty() {
             return (
-                "SELECT rowid FROM channel_node WHERE title LIKE ? LIMIT ? OFFSET ?".into(),
-                vec!["%".into(), limit.to_string(), offset.to_string()],
+                format!(
+                    "SELECT rowid FROM channel_node WHERE title LIKE ? LIMIT {limit} OFFSET {offset}"
+                ),
+                vec!["%".into()],
             );
         }
-        // FIXME: les parametres LIMIT/OFFSET sont inlines comme en
-        // Python — les bornes sont des entiers controles.
         let phrases = Self::to_phrases(&pieces);
         let mut conjunction: Vec<String> = Vec::new();
         let mut parameters: Vec<String> = Vec::new();
@@ -341,5 +357,29 @@ impl Augmenter {
         );
         tracing::debug!(%query, ?parameters, "requete augmentee");
         (query, parameters)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Le nombre de `?` du SQL rendu correspond toujours a
+    /// `parameters.len()` — la branche « sans pieces » bindait
+    /// aussi LIMIT/OFFSET en parametres chaines, l'autre les
+    /// inlinait : bindings incoherents selon le decoupage.
+    #[test]
+    fn augment_bind_coherent_sur_les_deux_branches() {
+        let dir = tempfile::tempdir().unwrap();
+        let aug = Augmenter::new(dir.path());
+        for search in ["", "abc def"] {
+            let (sql, params) = aug.augment(search, 5, 3);
+            assert_eq!(
+                sql.matches('?').count(),
+                params.len(),
+                "{sql} vs {params:?}"
+            );
+            assert!(sql.contains("LIMIT 5 OFFSET 3"), "{sql}");
+        }
     }
 }

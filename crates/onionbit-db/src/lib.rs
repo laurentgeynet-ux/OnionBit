@@ -170,6 +170,71 @@ mod tests {
         .unwrap();
     }
 
+    /// La branche `popular` court-circuitait `select_filtered` :
+    /// `hide_xxx`/`category`/`tags` et `first..last` etaient ignores
+    /// (100 lignes brutes, xxx compris).
+    #[test]
+    fn popular_entries_respecte_hide_xxx_et_pagination() {
+        let db = Database::memory().unwrap();
+        db.with(|c| {
+            let frais = i64::MAX / 2;
+            // 3 torrents documentes dont 1 marque xxx.
+            for i in 1u8..=3 {
+                let row = ChannelNodeRow {
+                    infohash: vec![i; 20],
+                    title: format!("t{i}"),
+                    metadata_type: 300,
+                    public_key: vec![i; 64],
+                    id_: i64::from(i),
+                    timestamp: 1_700_000_000_000,
+                    xxx: if i == 3 { 1.0 } else { 0.0 },
+                    ..Default::default()
+                };
+                channel::insert(c, &row)?;
+                health::update_torrent_health(c, &row.infohash, i64::from(i), 0, frais, false)?;
+                c.execute(
+                    "UPDATE torrent_state SET has_data = 1 WHERE infohash = ?1",
+                    rusqlite::params![row.infohash],
+                )?;
+            }
+            let sans_xxx = channel::SelectParams {
+                popular: true,
+                hide_xxx: true,
+                ..Default::default()
+            };
+            let entries = channel::select_entries(c, &sans_xxx)?;
+            assert_eq!(entries.len(), 2);
+            assert_eq!(channel::count_entries(c, &sans_xxx)?, 2);
+            // Pagination `pony_query[first-1:last]` : first=2,last=2
+            // -> exactement la 2e ligne ; le compte reste non pagine.
+            let page = channel::SelectParams {
+                popular: true,
+                first: 2,
+                last: Some(2),
+                ..Default::default()
+            };
+            assert_eq!(channel::select_entries(c, &page)?.len(), 1);
+            assert_eq!(channel::count_entries(c, &page)?, 3);
+            // Filtre tag : meme predicat que `select_filtered`
+            // (`instr(tags, 'video,') > 0` — le LIKE %suffixe seul
+            // ne matchait pas 'video,').
+            c.execute(
+                "UPDATE channel_node SET tags = 'video,' WHERE title = 't1'",
+                [],
+            )?;
+            let tagge = channel::SelectParams {
+                popular: true,
+                tags: vec!["video".into()],
+                ..Default::default()
+            };
+            let hits = channel::select_entries(c, &tagge)?;
+            assert_eq!(hits.len(), 1);
+            assert_eq!(hits[0].title, "t1");
+            Ok(())
+        })
+        .unwrap();
+    }
+
     #[test]
     fn downloads_cycle() {
         let db = Database::memory().unwrap();

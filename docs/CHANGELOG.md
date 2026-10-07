@@ -3,6 +3,39 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Durcissement (revue externe 6) : NAT64 SSRF, source SOCKS5, NAT-PMP deadline, KillSwitch, augmenter, clés strictes, popular filtré (2026-10-07)
+
+- **Anti-SSRF : préfixe NAT64 `64:ff9b::/96`** — le WKP RFC 6052
+  (DNS64) ne matchait aucun filtre v6 : `64:ff9b::127.0.0.1`
+  contournait la politique. L'IPv4 embarquée suit désormais
+  `deny_reason_v4`, comme `::/96`.
+- **SOCKS5 UDP : filtre de source RFC 1928 §7** — l'association
+  acceptait les datagrammes de toute source : un processus tiers
+  envoyant au port éphémère écrasait `return_map` et détournait le
+  chemin retour. Seul le client d'origine est accepté.
+- **NAT-PMP : attente à deadline** — un datagramme parasite ou une
+  réponse tardive de sonde (TCP/UDP consécutives, sans nonce RFC
+  6886) abortait le `recv` ; seul `opcode attendu + IP passerelle`
+  obtient un verdict, le reste consomme le délai. `MappingSpec`
+  regroupe les paramètres + `dest_port` testable.
+- **`KillSwitch`** : `.lock().unwrap()` → `into_inner()` (8 sites)
+  et `guard()` en verrou unique (la raison ne peut plus disparaître
+  entre `is_engaged` et `reason`).
+- **`Augmenter`** : LIMIT/OFFSET inlinés dans les deux branches
+  (bindings `?`/params incohérents selon le découpage) ;
+  `fs::write(model)` relâche le verrou (bloquait `encode()`) ;
+  mutex poison-tolérant (7 sites).
+- **Clés LibNaCL strictes** : `from_bin` exige la taille exacte —
+  un suffixe bourré était accepté alors que `mid`/`verify` ne
+  portent que sur les 74 octets canoniques.
+- **`popular_entries`** : honore `hide_xxx`/`category`/`tags` et la
+  pagination `first..last` (la branche court-circuitait tout).
+  Impact nul aujourd'hui : aucun appelant ne pose `popular=true`
+  (endpoint REST `/popular` = requête propre) — durcissement
+  préventif de la fonction.
+- Tests : NAT64 deny/allow, parasite NAT-PMP, popular
+  hide_xxx/pagination/tags, `?`/params augmenter, clés >74 o.
+
 ## Correctifs (revue externe 5) : `popular_entries` NULL, `addr_to_cid` borné, magnets échappés, filtre `infohash` SQL, mutex (2026-10-07)
 
 - **`popular_entries` : `LEFT JOIN` → `INNER JOIN`** — un

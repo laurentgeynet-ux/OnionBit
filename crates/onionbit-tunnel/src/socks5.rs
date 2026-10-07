@@ -300,8 +300,18 @@ impl Socks5Server {
                 }
                 r = socket.recv_from(&mut buf) => {
                     let Ok((n, src)) = r else { break };
-                    if client.is_none() {
-                        client = Some(src);
+                    // RFC 1928 §7 : l'association n'accepte que les
+                    // datagrammes du client d'origine — une source
+                    // inattendue qui passerait injecterait son adresse
+                    // dans `return_map` et detournerait le chemin retour.
+                    match client {
+                        None => client = Some(src),
+                        Some(expected) if expected != src => {
+                            tracing::debug!(%src, %expected,
+                                "frame SOCKS5 UDP rejetee (source non autorisee)");
+                            continue;
+                        }
+                        _ => {}
                     }
                     if let Err(e) = self
                         .handle_udp_frame(&buf[..n], &mut addr_to_cid, &socket, src)
