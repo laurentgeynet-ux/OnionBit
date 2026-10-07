@@ -3,6 +3,29 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## ADR-0017 étape 49 : `DatagramTransport` extrait de `UdpEndpoint` (worktree adr17, 2026-10-07)
+
+- **Nouvelle couche `onionbit-ipv8::transport`** : trait object-safe
+  `DatagramTransport` (futures boxés, pas de dépendance `async-trait`)
+  + `RawUdpTransport` — sockets UDP v4/v6, `bind_dual_with_retry`,
+  routage d'envoi par famille d'adresse, boucles de réception,
+  compteurs d'octets et tap désormais mesurés **à la frontière
+  socket**. `UdpEndpoint` ne conserve plus que le dispatch par
+  préfixe, les listeners, les stats `msg_id` et le rate sampler ;
+  toute son API publique est inchangée (zéro retouche des call
+  sites). C'est le point d'insertion du futur `StealthTransport`.
+- **Rendement coopératif explicité** : la sémantique de verrous
+  async de l'endpoint historique servait de pacing implicite.
+  Remplacé par `yield_now` explicite (un par envoi, un par
+  datagramme reçu — parité avec le modèle asyncio « un callback par
+  datagramme »). Sans cela, les rafales sur runtime `current_thread`
+  débordent le buffer UDP du receveur : repro 300 ATTEST → 240 rx
+  avant correction, 300 après.
+- Oracle de régression : `cargo test -p onionbit-ipv8
+  --all-features` **65 tests verts** (dont `t3_flood_controle`),
+  `cargo check --workspace --all-targets --all-features` et clippy
+  `-D warnings` propres.
+
 ## Guard nodes + banc endurance : churn réseau (2026-10-07)
 
 - **Guard nodes** : l'état visé par l'ADR-0010 est confirmé livré —
