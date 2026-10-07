@@ -60,6 +60,26 @@ try {
 
     # -- 2) Interface Flutter Windows -----------------------------------
     Write-Host "== flutter build windows ($Profile) ==" -ForegroundColor Cyan
+    # Cache CMake perime : `CMAKE_INSTALL_PREFIX` est gele dans
+    # `CMakeCache.txt` au premier configure
+    # (`CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT`) avec le
+    # genexp `$<TARGET_FILE_DIR:<BINARY_NAME>>` evalue sous le nom
+    # de l'epoque. Apres un renommage (ex. `onionbit_ui` ->
+    # `OnionBit`), la cible figee n'existe plus et le generate
+    # echoue ("No target ..."). Purge du build windows si la cible
+    # cachee differe de `OnionBit`.
+    $winBuildDir = Join-Path $app "build\windows"
+    $cmakeCache = Join-Path $winBuildDir "x64\CMakeCache.txt"
+    if (Test-Path $cmakeCache) {
+        $m = Select-String -Path $cmakeCache -Pattern `
+            'CMAKE_INSTALL_PREFIX:PATH=\$<TARGET_FILE_DIR:(\w+)>' |
+            Select-Object -First 1
+        $cachedTarget = if ($m) { $m.Matches.Groups[1].Value } else { "" }
+        if ($cachedTarget -and $cachedTarget -ne "OnionBit") {
+            Write-Host "   purge cache CMake perime (cible '$cachedTarget' != 'OnionBit')" -ForegroundColor Yellow
+            Remove-Item $winBuildDir -Recurse -Force
+        }
+    }
     Push-Location $app
     try {
         flutter pub get | Out-Null
