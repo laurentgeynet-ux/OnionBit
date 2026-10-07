@@ -3,6 +3,31 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## ADR-0017 étape 51 : `StealthTransport` + banc hostile (worktree adr17, 2026-10-07)
+
+- **`onionbit-ipv8::stealth_transport`** (nouveau) : `DatagramTransport`
+  morphe par composition sur `RawUdpTransport` — compteurs d'octets et
+  tap mesurent la forme filaire morphée (oracle PCAP interne). Rôles
+  `Client`/`Bridge`/`Gateway` : initiaton `hs1` conditionnée au role et
+  à la table `bridges`, acceptation `hs1` réservée aux rôles serveur.
+- **Sessions par `SocketAddr`** : `Pending` (file applicative bornée
+  count+octets, retries `hs1` cadencés et bornés, `pending_timeout`)
+  → `Established` (`StealthSession`, purge idle). `send_to` vers une
+  destination sans session et hors ponts = drop local compté —
+  kill switch : jamais d'octet clair, même sur perte/expiration.
+- **Budgets pré-auth** : candidat `hs1` (taille bornée d'abord — zéro
+  alloc crypto sur garbage) → jeton par-IP puis jeton du plafond
+  global par tick ; les ressources DH/AEAD ne sont dépensées qu'après.
+  `XPrimeFilter` alimenté uniquement après auth réussie. Cover
+  traffic opt-in (`inner` vide, intervalle randomisé).
+- **Banc hostile** (6 tests loopback) : flood de 1000 datagrammes →
+  zéro réponse/session, amplification **0** ; `hs1` rejoué → silence
+  (une seule réponse au total) ; file bornée + purge ; NAT rebinding
+  → nouveau handshake sans fuite. `StealthMetrics` expose les causes
+  internes pour les bancs (jamais sérialisées).
+- Suite crate : **79 tests verts**, clippy `-D warnings` et fmt
+  propres.
+
 ## ADR-0017 étape 50 : crypto + filaire stealth (worktree adr17, 2026-10-07)
 
 - **`onionbit-crypto::stealth`** (nouveau) : `HiddenEph` — clé X25519

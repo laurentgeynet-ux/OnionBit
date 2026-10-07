@@ -47,6 +47,10 @@ pub mod serializer;
 /// Format filaire et sessions du transport furtif (ADR-0017) —
 /// disjoint du transport legacy ; aucun marqueur IPv8 sur le fil.
 pub mod stealth;
+/// `StealthTransport` : `DatagramTransport` morphe (ADR-0017) —
+/// sessions par pair, silence absolu sur non-authentifie, jamais de
+/// repli en clair.
+pub mod stealth_transport;
 pub mod transport;
 
 pub use address::UdpAddress;
