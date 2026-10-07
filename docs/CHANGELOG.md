@@ -3,6 +3,23 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Guard nodes + banc endurance : churn réseau (2026-10-07)
+
+- **Guard nodes** : l'état visé par l'ADR-0010 est confirmé livré —
+  persistance `DbGuardStore` injectée dans `ipv8_stack`, table
+  `guards` + migration, `guards_enabled: true` par défaut daemon,
+  bascule à chaud via `POST /api/settings`. Le threat model a été
+  resynchronisé (il décrivait encore l'ancien état « désactivé, non
+  persisté »).
+- **`live_endurance_churn` : churn réseau réel ajouté** — en plus du
+  churn téléchargements/restarts, le banc tue un relais (le
+  `JoinHandle` du endpoint est conservé et aborté — auparavant la
+  tâche `ep.run()` était détachée et survivait au drop), en recrée un
+  et recâble la topologie. Observé sur run 90 s : relais mort →
+  `guard retrograde en reserve (echecs de handshake)` → circuits
+  reconstruits sur premiers sauts alternatifs → drain et intégrité
+  OK, RSS 37→46 Mo, 289 tâches vivantes, sans fuite d'endpoint.
+
 ## Messagerie : re-émission des `sent` au consentement (2026-10-07)
 
 - **Perte silencieuse du premier message corrigée** — un `Msg` émis

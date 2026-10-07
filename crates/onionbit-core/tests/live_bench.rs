@@ -69,6 +69,16 @@ struct Relay {
     network: Arc<Network>,
     tunnel: Arc<TunnelCommunity>,
     addr: SocketAddr,
+    /// Tache `ep.run()` du relais — abortee a la destruction pour que
+    /// la mort d'un relais (churn endurance) soit reelle : le port
+    /// cesse de repondre et la tache ne survit pas au test.
+    task: tokio::task::JoinHandle<()>,
+}
+
+impl Drop for Relay {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
 }
 
 async fn make_relay() -> Relay {
@@ -92,7 +102,7 @@ async fn make_relay() -> Relay {
         TUNNEL_COMMUNITY_ID,
     )
     .await;
-    tokio::spawn(async move {
+    let task = tokio::spawn(async move {
         let _ = ep.run().await;
     });
     Relay {
@@ -100,6 +110,7 @@ async fn make_relay() -> Relay {
         network,
         tunnel,
         addr,
+        task,
     }
 }
 
@@ -2320,7 +2331,7 @@ async fn live_endurance_churn() {
         (0, false),
         (3, false),
     ];
-    let fleet = fleet_setup(&specs, 3).await;
+    let mut fleet = fleet_setup(&specs, 3).await;
     let (mut session, mut tunnel) = start_live_session(&fleet.state_dir).await;
     {
         let stack = session.ipv8().unwrap();
@@ -2347,7 +2358,7 @@ async fn live_endurance_churn() {
 
     // ===== boucle de churn =====
     while Instant::now() < deadline {
-        match rng.below(8) {
+        match rng.below(10) {
             // add un torrent absent.
             0 | 1 => {
                 let absent: Vec<usize> =
@@ -2397,6 +2408,16 @@ async fn live_endurance_churn() {
                         lane[i] = hops;
                     }
                 }
+            }
+            // churn reseau : mort + respawn d'un relais — le vrai mode
+            // de defaillance terrain (les circuits qui le traversaient
+            // meurent, le watchdog reconstruit via les survivants puis
+            // le nouveau pair appris par `wire_relays`).
+            8 => {
+                let i = rng.below(fleet.relays.len() as u64) as usize;
+                fleet.relays[i] = make_relay().await;
+                let stack = session.ipv8().unwrap();
+                wire_relays(&stack, &tunnel, &fleet.relays);
             }
             _ => {}
         }

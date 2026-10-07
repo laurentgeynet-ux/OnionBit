@@ -222,11 +222,14 @@ correlation de trafic globale, les attaques Sybil a grande echelle,
 l'analyse d'intersection a long terme, la compromission de l'endpoint,
 ni les vulnerabilites d'implementation futures. Les guard nodes
 (ADR-0010) visent precisement le premier de ces residus exploitables :
-la multiplication des tirages d'entree. Ils sont implementes derriere
-`TunnelSettings::guards.enabled` (**desactive par defaut** : selection
-pyipv8 exacte) et testes en boucle locale — premier hop borne au set
-sous storm `DESTROY` — mais sans persistance DB ni validation terrain,
-ils ne figurent pas encore dans les proprietes demontrees ci-dessus.
+la multiplication des tirages d'entree. Ils sont **actifs par defaut**
+depuis le 2026-10-02 (`tunnel_community/guards_enabled`, desactivable
+a chaud via `POST /api/settings`), persistes en base (`DbGuardStore`,
+table `guards` — le set survit au redemarrage) et valides sur le
+terrain : matrice interop guards, persistance redemarrage sur reseau
+reel, download public 2 sauts de 276 Mo avec premiers hops ⊆ set. Ils
+restent une mesure de reduction d'exposition Sybil, pas une garantie
+d'anonymat.
 
 ## Gate de bootstrap Tribler (informational)
 
