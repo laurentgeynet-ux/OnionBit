@@ -4,10 +4,10 @@ Inventaire des fichiers/dossiers significatifs. À maintenir à jour à
 chaque étape (cf. `AGENTS.md`, "Workflow par étape").
 
 > `docs/plans/` (roadmap, faisabilité, catalogue de bancs, plans
-> d'enrichissement) est de la documentation interne de pilotage,
-> versionnée dans ce dépôt ; les fichiers marqués *(local)* sont
-> filtrés de la publication publique (`scripts/sync_public.ps1`,
-> hors dépôt).
+> d'enrichissement) est de la documentation interne de pilotage :
+> **non publiée** — les fichiers sont ignorés par git
+> (`docs/plans/*` dans `.gitignore`, seul `README.md` est tracké).
+> Les lignes marquées *(local)* décrivent ces fichiers hors dépôt.
 
 | Chemin | Contenu |
 | :--- | :--- |

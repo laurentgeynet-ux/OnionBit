@@ -20,3 +20,8 @@ scripts/gh_create_release.ps1
 scripts/sync_public.ps1
 scripts/__pycache__/
 
+
+# Documentation interne de pilotage — non publiée (plans, bancs,
+# journaux de campagne). Seul docs/plans/README.md reste tracké.
+docs/plans/*
+!docs/plans/README.md
