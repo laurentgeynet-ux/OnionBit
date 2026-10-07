@@ -2,9 +2,11 @@
 
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
+## Release 0.9.4-beta (2026-10-07)
 
-## Correctif : résolution des métadonnées des magnets de recherche (trackers & fallback BEP 9) (2026-10-07)
-
+- **Version 0.9.4-beta** : bump de version (`Cargo.toml`, `app/pubspec.yaml`, `README.md`)
+  et publication de la release GitHub.
+- **Correctif métadonnées magnets de recherche (trackers & fallback BEP 9)** :
 - **Propagation des trackers depuis la recherche locale et distante** :
   - `onionbit-db` : `channel::insert` associe désormais automatiquement les URLs de
     `tracker_info` dans `torrent_state_tracker` (parité Tribler) ; ajout de
