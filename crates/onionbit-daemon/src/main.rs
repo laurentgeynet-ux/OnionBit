@@ -38,8 +38,51 @@ use onionbit_api::{build, AppState};
 use onionbit_core::{CoreConfig, CoreSession, DaemonConfig, Notifier, CONFIG_FILENAME};
 use shutdown::ShutdownSignal;
 
-/// Repertoire d'etat par defaut (relatif au dossier courant).
+/// Repertoire d'etat par defaut hors bundle (relatif au dossier
+/// courant — usage dev).
 const DEFAULT_STATE_DIR: &str = ".onionbit";
+
+/// Resout le repertoire d'etat effectif.
+///
+/// `--state-dir` explicite fait foi. Sans override, un exe vivant dans
+/// un bundle `dist\` (repertoire web servi ou UI a cote) adopte la
+/// convention des lanceurs — `<exe>/state` : un double-clic direct sur
+/// `onionbit-daemon.exe` retrouve alors la MEME base/config que le
+/// daemon spawnne par l'UI (avant : `.onionbit` relatif au CWD, un
+/// etat orphelin voire `state\state` selon le dossier de travail).
+fn resolve_state_dir(args: &Args) -> PathBuf {
+    if let Some(d) = &args.state_dir {
+        return d.clone();
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            let bundle = dir.join("web").join("index.html").is_file()
+                || ["OnionBit.exe", "onionbit_ui.exe", "OnionBit", "onionbit_ui"]
+                    .iter()
+                    .any(|n| dir.join(n).is_file());
+            if bundle {
+                return dir.join("state");
+            }
+        }
+    }
+    PathBuf::from(DEFAULT_STATE_DIR)
+}
+
+/// Ouvre `http://127.0.0.1:<port>/` dans le navigateur par defaut.
+/// `explorer`/`xdg-open` depuis un binaire GUI : aucune console ne
+/// s'ouvre (contrairement a un .cmd/.bat).
+fn open_web_ui(port: u16) {
+    let url = format!("http://127.0.0.1:{port}/");
+    #[cfg(windows)]
+    let spawned = std::process::Command::new("explorer").arg(&url).spawn();
+    #[cfg(target_os = "macos")]
+    let spawned = std::process::Command::new("open").arg(&url).spawn();
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let spawned = std::process::Command::new("xdg-open").arg(&url).spawn();
+    if let Err(e) = spawned {
+        tracing::warn!(error = %e, url = %url, "ouverture du navigateur impossible");
+    }
+}
 
 #[derive(Parser)]
 #[command(name = "onionbit-daemon", about = "Daemon OnionBit")]
@@ -52,8 +95,9 @@ struct Args {
     listen: Option<String>,
 
     /// Repertoire d'etat (base SQLite, telechargements, configuration.json).
-    #[arg(long, default_value = DEFAULT_STATE_DIR)]
-    state_dir: PathBuf,
+    /// Par defaut : `<exe>/state` dans un bundle dist, sinon `.onionbit`.
+    #[arg(long)]
+    state_dir: Option<PathBuf>,
 
     /// Mode offline (tests) : desactive DHT/trackers/ecoute de pairs et la stack IPv8 —
     /// aucun trafic sortant. La cle API du fichier de configuration reste exigee.
@@ -91,6 +135,14 @@ struct Args {
     /// interactives). Equivalent de `tray/enabled = false`.
     #[arg(long)]
     no_tray: bool,
+
+    /// Ouvre l'interface web dans le navigateur par defaut une fois
+    /// l'API bindée (raccourci « OnionBit Web » : le daemon demarre au
+    /// besoin puis ouvre l'URL — sans passer par un .cmd). Si une
+    /// instance tourne deja, le navigateur s'ouvre quand meme et le
+    /// processus sort sans toucher aux logs.
+    #[arg(long)]
+    open_webui: bool,
 
     /// Repertoire du build Flutter web servi sous `/` (override de
     /// `api/web_ui_dir` ; `api/web_ui_enabled=false` desactive).
@@ -272,6 +324,7 @@ fn resolve_web_ui_dir(
 fn spawn_tray(
     args: &Args,
     daemon_config: &DaemonConfig,
+    state_dir: &std::path::Path,
     tooltip: String,
     signal: &ShutdownSignal,
     api_port: std::sync::Arc<std::sync::atomic::AtomicU16>,
@@ -284,21 +337,22 @@ fn spawn_tray(
     let exe_dir = std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(|d| d.to_path_buf()));
-    let ui_exe = exe_dir
-        .as_ref()
-        .map(|d| d.join("onionbit_ui.exe"))
-        .filter(|p| p.exists());
+    // `OnionBit.exe` est le nom produit actuel ; `onionbit_ui.exe`
+    // reste reconnu (bundles anterieurs au renommage).
+    let ui_exe = exe_dir.and_then(|d| {
+        ["OnionBit.exe", "onionbit_ui.exe"]
+            .iter()
+            .map(|n| d.join(n))
+            .find(|p| p.exists())
+    });
     // `start_minimized` Python ne s'applique pas ici : chez Tribler le
     // core et l'UI sont le MEME processus (`run_tribler`), la cle ne
     // regit que l'etat de la fenetre. Ici le daemon ne lance jamais
-    // l'UI — c'est `onionbit_ui.exe` qui demarre le daemon
+    // l'UI — c'est `OnionBit.exe` qui demarre le daemon
     // (`daemon_launcher`), et le menu « Ouvrir OnionBit » du tray reste
     // le seul chemin daemon → UI (action utilisateur explicite).
     // La cle Run doit survivre au repertoire courant : chemins absolus.
-    let autostart_cmd = match (
-        std::env::current_exe(),
-        std::path::absolute(&args.state_dir),
-    ) {
+    let autostart_cmd = match (std::env::current_exe(), std::path::absolute(state_dir)) {
         (Ok(exe), Ok(state)) => {
             format!("\"{}\" --state-dir \"{}\"", exe.display(), state.display())
         }
@@ -306,7 +360,7 @@ fn spawn_tray(
     };
     tray::spawn(tray::TrayOptions {
         tooltip,
-        logs_dir: args.state_dir.join("logs"),
+        logs_dir: state_dir.join("logs"),
         ui_exe,
         api_port,
         web_ui_served,
@@ -362,17 +416,47 @@ async fn async_main() -> ExitCode {
     if args.console {
         console::attach();
     }
+    let state_dir = resolve_state_dir(&args);
+    let _ = std::fs::create_dir_all(&state_dir);
+
+    // Instance unique par state_dir : un second lancement (double-clic
+    // sur un raccourci, autostart + demarrage manuel) n'ajoute ni
+    // icone ni bind en double — il sort silencieusement. Le verrou est
+    // pose AVANT `init_tracing` : sinon la rotation archivait le log
+    // de l'instance vivante (`onionbit.log` -> `.1`) a chaque
+    // tentative en doublon.
+    let _instance = match instance::acquire(&state_dir) {
+        Some(guard) => guard,
+        None => {
+            // `--open-webui` : le raccourci web sert aussi a rouvrir
+            // l'interface quand le daemon tourne deja — on lit le port
+            // reel dans la config de l'instance vivante et on sort.
+            if args.open_webui {
+                let (cfg, _) = DaemonConfig::load_report(&state_dir.join(CONFIG_FILENAME));
+                if cfg.api.web_ui_enabled {
+                    let port = match cfg.api.http_port_running {
+                        p if p > 0 => p,
+                        _ => cfg.api.http_port,
+                    };
+                    if port > 0 {
+                        open_web_ui(port);
+                    }
+                }
+            }
+            return ExitCode::SUCCESS;
+        }
+    };
 
     // Configuration persistee (`configuration.json`, equivalent de
     // `TriblerConfigManager` : absent ou corrompu -> defauts ; la cle
     // API est generee au premier run et le fichier normalise). Chargee
     // AVANT `init_tracing` pour que `ipv8/logger_level` fasse partie
     // de la directive de base.
-    let config_path = args.state_dir.join(CONFIG_FILENAME);
+    let config_path = state_dir.join(CONFIG_FILENAME);
     // `load_report` remonte l'erreur de parse pour la notifier en
     // `report_config_error` une fois la session (et son bus) creee.
     let (mut daemon_config, config_error) = DaemonConfig::load_report(&config_path);
-    init_tracing(&args.state_dir, &daemon_config);
+    init_tracing(&state_dir, &daemon_config);
     if let Some(err) = &config_error {
         // Le warn interne de `load_report` a ete emis avant
         // l'installation du subscriber : on le rejoue ici.
@@ -382,20 +466,6 @@ async fn async_main() -> ExitCode {
             "configuration.json corrompu, repli sur les valeurs par defaut"
         );
     }
-
-    // Instance unique par state_dir : un second lancement (double-clic
-    // sur demarrer.cmd, autostart + demarrage manuel) n'ajoute ni
-    // icone ni bind en double — il sort silencieusement.
-    let _instance = match instance::acquire(&args.state_dir) {
-        Some(guard) => guard,
-        None => {
-            tracing::warn!(
-                state_dir = %args.state_dir.display(),
-                "une instance du daemon est deja en cours pour ce repertoire d'etat"
-            );
-            return ExitCode::SUCCESS;
-        }
-    };
     if !config_path.exists() {
         if let Err(e) = daemon_config.write(&config_path) {
             tracing::warn!(error = %e, "ecriture initiale de configuration.json impossible");
@@ -428,9 +498,9 @@ async fn async_main() -> ExitCode {
     // CoreConfig : l'arbre persiste + overrides CLI (--offline isole
     // completement, comme avant).
     let config = if args.offline {
-        CoreConfig::offline(args.state_dir.clone())
+        CoreConfig::offline(state_dir.clone())
     } else {
-        let mut cfg = daemon_config.to_core_config(&args.state_dir);
+        let mut cfg = daemon_config.to_core_config(&state_dir);
         if args.no_ipv8 {
             cfg.ipv8.enabled = false;
         }
@@ -453,7 +523,7 @@ async fn async_main() -> ExitCode {
 
     // Repertoire du build web servi par l'API (`api/web_ui_*`) —
     // resolu avant le tray pour activer « Ouvrir dans le navigateur ».
-    let web_ui_dir = resolve_web_ui_dir(&args, &daemon_config, &args.state_dir);
+    let web_ui_dir = resolve_web_ui_dir(&args, &daemon_config, &state_dir);
 
     // Port HTTP reel publie vers le tray (« Ouvrir dans le
     // navigateur ») — 0 tant que l'API n'est pas bindée.
@@ -466,6 +536,7 @@ async fn async_main() -> ExitCode {
     let tray = spawn_tray(
         &args,
         &daemon_config,
+        &state_dir,
         "OnionBit".into(),
         &shutdown_signal,
         api_port.clone(),
@@ -560,7 +631,7 @@ async fn async_main() -> ExitCode {
             &daemon_config.api.https_host,
             daemon_config.api.https_port,
             &daemon_config.api.https_certfile,
-            &args.state_dir,
+            &state_dir,
         )
         .await
         {
@@ -594,6 +665,15 @@ async fn async_main() -> ExitCode {
     if let Some(t) = &tray {
         if let Ok(addr) = listener.local_addr() {
             t.set_tooltip(format!("OnionBit — {addr}"));
+        }
+    }
+
+    // `--open-webui` (raccourci « OnionBit Web ») : le navigateur
+    // s'ouvre une fois le port reel connu — uniquement si l'UI web
+    // est servie (sinon l'URL serait une erreur d'API).
+    if args.open_webui && web_ui_dir.is_some() {
+        if let Ok(addr) = listener.local_addr() {
+            open_web_ui(addr.port());
         }
     }
 

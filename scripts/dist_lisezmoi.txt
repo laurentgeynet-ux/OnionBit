@@ -4,8 +4,8 @@
 ================================================================
 
 CONTENU
-  onionbit_ui.exe       Application graphique (lance le daemon auto)
-  OnionBit Web.cmd      Interface web : demarre le daemon au besoin
+  OnionBit.exe          Application graphique (lance le daemon auto)
+  OnionBit Web.lnk      Interface web : demarre le daemon au besoin
                         puis ouvre le navigateur sur l'UI
   onionbit-daemon.exe   Daemon BitTorrent + API (peut tourner seul)
   onionbit-cli.exe      Pilotage en ligne de commande du daemon
@@ -15,13 +15,13 @@ CONTENU
 
 DEMARRAGE RAPIDE
   1. Extraire le zip complet dans un dossier (ex. C:\OnionBit).
-  2. Lancer onionbit_ui.exe — l'application demarre le daemon
+  2. Lancer OnionBit.exe — l'application demarre le daemon
      automatiquement (le daemon doit rester dans le meme dossier).
-  3. Premier lancement : l'etat est cree dans .onionbit\ a cote des
+  3. Premier lancement : l'etat est cree dans state\ a cote des
      executables (configuration.json, api key, base SQLite, logs).
 
 INTERFACE WEB
-  Double-cliquer « OnionBit Web.cmd » : il lance le daemon s'il ne
+  Double-cliquer « OnionBit Web.lnk » : il lance le daemon s'il ne
   tourne pas deja puis ouvre le navigateur sur
   http://127.0.0.1:8085/ (entree systray « Ouvrir dans le navigateur »
   equivalente). La cle API est injectee automatiquement par le daemon
@@ -32,12 +32,14 @@ INTERFACE WEB
 LIGNES DE COMMANDE (optionnel)
   onionbit-daemon.exe                 lance le daemon (API sur
                                       http://127.0.0.1:8085, loopback)
+  onionbit-daemon.exe --open-webui    idem + ouvre l'UI web dans le
+                                      navigateur (equivalent du .lnk)
   onionbit-daemon.exe --web-ui-dir D  sert une UI web depuis D
   onionbit-cli.exe --help             commandes disponibles
   Variables d'environnement utiles :
     ONIONBIT_DAEMON_EXE=<chemin>      force l'exe du daemon pour l'UI
     ONIONBIT_API_KEY=<cle>            cle d'API (sinon lue depuis
-                                    .onionbit\configuration.json)
+                                    state\configuration.json)
 
 ANONYMAT
   Par defaut les telechargements ajoutes via l'UI utilisent le mode

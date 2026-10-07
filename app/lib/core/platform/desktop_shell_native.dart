@@ -24,7 +24,7 @@ Future<void> initDesktopShell() async {
     return;
   }
   if (Platform.isWindows && kReleaseMode) {
-    // Association `.torrent` → onionbit_ui (HKCU, sans droits
+    // Association `.torrent` → OnionBit.exe (HKCU, sans droits
     // admin) : double-clic / « Ouvrir avec » lance l'app avec le
     // fichier en argv.
     unawaited(_registerTorrentFileAssoc());

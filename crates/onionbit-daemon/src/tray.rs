@@ -25,7 +25,7 @@ pub struct TrayOptions {
     pub tooltip: String,
     /// Dossier ouvert par « Ouvrir le dossier des logs ».
     pub logs_dir: PathBuf,
-    /// `onionbit_ui.exe` à côté du daemon (`None` → item désactivé).
+    /// `OnionBit.exe` (ex `onionbit_ui.exe`) à côté du daemon (`None` → item désactivé).
     pub ui_exe: Option<PathBuf>,
     /// Port HTTP réel de l'API (publié après le bind) — lu par
     /// « Ouvrir dans le navigateur » au moment du clic.
@@ -224,7 +224,7 @@ mod windows_impl {
             } else if id == open_ui.id() {
                 if let Some(exe) = &opts.ui_exe {
                     if let Err(e) = Command::new(exe).spawn() {
-                        tracing::warn!(error = %e, "lancement de onionbit_ui impossible");
+                        tracing::warn!(error = %e, "lancement de l'UI impossible");
                     }
                 }
             } else if id == open_browser.id() {

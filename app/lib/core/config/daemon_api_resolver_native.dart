@@ -22,7 +22,7 @@ import 'dart:io';
 import 'app_config.dart';
 
 /// Répertoires candidats contenant `configuration.json`, par priorité :
-/// `<exe>/state` et `<exe>/../state` (bundle `dist\` : `onionbit_ui.exe`
+/// `<exe>/state` et `<exe>/../state` (bundle `dist\` : `OnionBit.exe`
 /// à la racine, daemon lancé avec `--state-dir <dist>\state`),
 /// `<cwd>/.onionbit`, `<cwd>/../.onionbit` et `<cwd>/state` (boucle de
 /// développement : `flutter run` depuis `app\`, daemon depuis la racine

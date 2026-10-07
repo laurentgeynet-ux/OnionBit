@@ -14,14 +14,14 @@
 # Produit `dist\` a la racine du depot (dossier portable, deja ignore par
 # git) :
 #   onionbit-daemon.exe, onionbit-cli.exe   - backend Rust (plan de controle)
-#   onionbit_ui.exe + *.dll + data\        - interface Flutter Windows
+#   OnionBit.exe + *.dll + data\           - interface Flutter Windows
 #   web\                                  - interface web Flutter, servie
 #                                           par le daemon sur http://127.0.0.1:<port>/
-#   OnionBit Web.cmd + web-launch.ps1     - lanceur navigateur
-#                                           (demarre le daemon au besoin)
+#   OnionBit Web.lnk                      - raccourci navigateur
+#                                           (daemon --open-webui)
 #   build-manifest.json                   - version, commit, rustc, date UTC
 #
-# Pas de script de lancement : `onionbit_ui.exe` demarre le daemon tout
+# Pas de script de lancement : `OnionBit.exe` demarre le daemon tout
 # seul s'il ne tourne pas (daemon_launcher, etape 20) et le daemon vit
 # en icone systray (etape 29). Pour arreter : « Quitter » du menu tray
 # ou PUT /api/shutdown.
@@ -80,8 +80,8 @@ try {
     if (-not (Test-Path "$cargoOut\onionbit-daemon.exe")) {
         throw "onionbit-daemon.exe introuvable dans $cargoOut"
     }
-    if (-not (Test-Path "$flutterOut\onionbit_ui.exe")) {
-        throw "onionbit_ui.exe introuvable dans $flutterOut"
+    if (-not (Test-Path "$flutterOut\OnionBit.exe")) {
+        throw "OnionBit.exe introuvable dans $flutterOut"
     }
 
     New-Item -ItemType Directory -Force -Path $dist | Out-Null
@@ -101,28 +101,30 @@ try {
     if (Test-Path $webDist) { Remove-Item $webDist -Recurse -Force }
     Copy-Item $webOut -Destination $webDist -Recurse -Force
 
-    # Lanceur navigateur « OnionBit Web.cmd » : demarre le daemon s'il
-    # ne tourne pas (meme logique --state-dir que daemon_launcher de
-    # l'UI desktop), sinon ouvre juste l'URL — miroir du double-clic
-    # sur onionbit_ui.exe.
-    Copy-Item (Join-Path $root "scripts\web_launch.ps1") `
-        -Destination (Join-Path $dist "web-launch.ps1") -Force
-    @"
-@echo off
-rem This file is part of OnionBit - a Rust port of the Tribler daemon.
-rem Copyright (C) 2026 Laurent Geynet <laurent.geynet@gmail.com>
-rem SPDX-License-Identifier: GPL-3.0-or-later
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0web-launch.ps1" %*
-"@ | Set-Content -Encoding ascii (Join-Path $dist "OnionBit Web.cmd")
+    # Raccourci navigateur « OnionBit Web.lnk » : cible directe sur
+    # `onionbit-daemon.exe --open-webui` — le daemon demarre au besoin
+    # (state_dir bundle-aware = <exe>\state) puis ouvre l'URL dans le
+    # navigateur par defaut. Un .cmd affichait une fenetre de console ;
+    # un .lnk n'en ouvre aucune (binaire en sous-systeme GUI).
+    $wsh = New-Object -ComObject WScript.Shell
+    $lnk = $wsh.CreateShortcut((Join-Path $dist "OnionBit Web.lnk"))
+    $lnk.TargetPath = Join-Path $dist "onionbit-daemon.exe"
+    $lnk.Arguments = "--open-webui"
+    $lnk.WorkingDirectory = $dist
+    $lnk.IconLocation = "$(Join-Path $dist 'onionbit-daemon.exe'),0"
+    $lnk.Description = "Interface web OnionBit"
+    $lnk.Save()
 
     # -- 4) Nettoyage des lanceurs historiques ---------------------------
     # demarrer/arreter n'ont plus lieu d'etre (lancement par l'UI, arret
     # via le systray ou PUT /api/shutdown) — retirer les restes des
-    # builds precedents, dont les binaires de l'ere tribler-* (avant le
-    # renommage produit en onionbit-*).
+    # builds precedents : binaires de l'ere tribler-*, l'ancien exe UI
+    # `onionbit_ui` (renomme OnionBit) et le lanceur .cmd/.ps1 remplace
+    # par le raccourci .lnk --open-webui.
     foreach ($f in @("demarrer.cmd", "demarrer.ps1", "arreter.cmd", "arreter.ps1",
                      "tribler-daemon.exe", "tribler-cli.exe", "tribler_ui.exe",
-                     "tribler_ui.pdb")) {
+                     "tribler_ui.pdb", "onionbit_ui.exe", "onionbit_ui.pdb",
+                     "OnionBit Web.cmd", "web-launch.ps1")) {
         Remove-Item (Join-Path $dist $f) -Force -ErrorAction SilentlyContinue
     }
 
@@ -130,7 +132,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0web-launch.ps1" %*
     $manifest = @{
         profile   = $Profile
         daemon    = (cargo pkgid -p onionbit-daemon).Split("#")[-1]
-        ui        = "onionbit_ui (Flutter windows $Profile) + web/"
+        ui        = "OnionBit.exe (Flutter windows $Profile) + web/"
         api       = $listen
         commit    = (git rev-parse --short HEAD 2>$null)
         rustc     = (rustc -V)
@@ -175,8 +177,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0web-launch.ps1" %*
 
     Write-Host ""
     Write-Host "Build OK -> dist\" -ForegroundColor Green
-    Write-Host "  Lancement  : dist\onionbit_ui.exe (demarre le daemon au besoin)"
-    Write-Host "  UI web     : dist\`"OnionBit Web.cmd`" ou"
+    Write-Host "  Lancement  : dist\OnionBit.exe (demarre le daemon au besoin)"
+    Write-Host "  UI web     : dist\`"OnionBit Web.lnk`" ou"
     Write-Host "               http://127.0.0.1:8085/ une fois le daemon lance"
     Write-Host "               (cle API injectee automatiquement)"
     Write-Host "  Arret      : systray « Quitter » ou PUT /api/shutdown"

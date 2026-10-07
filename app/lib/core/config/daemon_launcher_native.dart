@@ -4,7 +4,7 @@
 
 /// Lancement du daemon local depuis l'UI (`dart:io`, desktop).
 ///
-/// « Daemon enfant lancé par l'app » (décision V1) : `onionbit_ui.exe`
+/// « Daemon enfant lancé par l'app » (décision V1) : `OnionBit.exe`
 /// démarre `onionbit-daemon.exe` si l'API ne répond pas ; si le daemon
 /// tourne déjà (lancé à la main, resté en systray, ou autostart) l'UI
 /// s'y connecte directement — aucun script de lancement requis.

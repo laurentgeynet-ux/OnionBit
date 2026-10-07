@@ -3,6 +3,29 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Packaging/lancement : `OnionBit.exe`, `state_dir` bundle-aware, `.lnk` sans console, verrou avant rotation (2026-10-07)
+
+- **Renommage produit** : l'exe Flutter `onionbit_ui.exe` devient
+  `OnionBit.exe` (`BINARY_NAME` CMake + `OriginalFilename` du .rc ;
+  `onionbit-daemon.exe`/`onionbit-cli.exe` inchangés — noms déjà
+  représentatifs). Le tray et `resolve_state_dir` reconnaissent les
+  deux noms pour les anciens bundles.
+- **`state_dir` par défaut bundle-aware** (`main.rs`) : sans
+  `--state-dir`, un exe voisin de `web/index.html` ou de l'UI adopte
+  `<exe>/state` — la convention des lanceurs (avant : `.onionbit`
+  relatif au CWD, un double-clic direct créait un état orphelin,
+  voire `state\state`). `.onionbit` reste le défaut hors bundle
+  (dev).
+- **`--open-webui`** : le daemon ouvre `http://127.0.0.1:<port>/`
+  dans le navigateur par défaut une fois l'API bindée, ou
+  immédiatement quand l'instance existe déjà (port relu dans
+  `configuration.json`) — `OnionBit Web.lnk` (raccourci COM généré
+  par `build_dist.ps1`) remplace `OnionBit Web.cmd`/`web-launch.ps1`
+  dont la fenêtre console s'affichait au lancement.
+- **Verrou d'instance avant rotation des logs** : `instance::acquire`
+  précède désormais `init_tracing` — un second lancement ne fait
+  plus basculer `onionbit.log` en `.1` avant de sortir.
+
 ## Durcissement P0/P1 (revue externe 2) : racine `move_storage`, caches de requêtes tunnels, demux UDP, SOCKS5, watch_folder (2026-10-07)
 
 - **`move_torrent_files` préservait mal la racine** (`session.rs`) —

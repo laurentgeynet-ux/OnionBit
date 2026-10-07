@@ -53,7 +53,7 @@ redémarrage) — parité `set_session_limits` Python + services :
 | `libtorrent/check_after_complete` | `force_recheck` libtorrent | `session.recheck` rqbit sur transition vers `Seeding` |
 | `libtorrent/active_*` (file) | gestionnaire interne libtorrent | queue manager `onionbit-core` (`enforce_queue_limits`) : seuls les torrents `auto_managed` comptent, pause/reprise par `queue_position` |
 | `tray_icon_color` | recoloration de l'icône `.ico` | carré plein recoloré `#RRGGBB` (la ressource `.ico` n'est pas recolorable) |
-| `start_minimized` | l'UI ne s'ouvre pas (même processus que le core) | inerte : le daemon ne lance jamais l'UI (c'est `onionbit_ui.exe` qui démarre le daemon) |
+| `start_minimized` | l'UI ne s'ouvre pas (même processus que le core) | inerte : le daemon ne lance jamais l'UI (c'est `OnionBit.exe` qui démarre le daemon) |
 
 ## Mapping direct (récapitulatif)
 

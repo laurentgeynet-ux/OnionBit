@@ -19,7 +19,7 @@ cargo build --release -p onionbit-daemon -p onionbit-cli
 ```sh
 cd app
 flutter build windows --release
-# app/build/windows/x64/runner/Release/onionbit_ui.exe
+# app/build/windows/x64/runner/Release/OnionBit.exe
 ```
 
 The UI looks for `onionbit-daemon.exe` **next to itself** (or via the
@@ -37,9 +37,11 @@ Compress-Archive -Path dist/onionbit-<version>-windows-x64 `
 
 ## Run
 
-- `onionbit_ui.exe` — graphical app (auto-starts the daemon)
-- `onionbit-daemon.exe` — headless daemon; state goes to `.onionbit/` next to
-  the binary (configuration.json, api key, SQLite db, logs)
+- `OnionBit.exe` — graphical app (auto-starts the daemon)
+- `onionbit-daemon.exe` — headless daemon; state goes to `state/` next to
+  the binary in a bundle (`<exe>/web` or UI neighbor), `.onionbit/` elsewhere
+  (configuration.json, api key, SQLite db, logs). `--open-webui` also opens
+  the web UI in the default browser (used by `OnionBit Web.lnk`)
 - `onionbit-cli.exe --help` — CLI control
 
 Environment overrides: `ONIONBIT_API_KEY`, `ONIONBIT_API`, `ONIONBIT_DAEMON_EXE`.
