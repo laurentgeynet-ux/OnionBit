@@ -3,6 +3,28 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Durcissement P0 (revue externe) : `move_storage` scopé + `::/96` + timing API + verrou POSIX (2026-10-07)
+
+- **`move_storage` ne déplace plus que les fichiers du torrent**
+  (`session.rs`) : l'`output_folder` rqbit est le dossier de
+  téléchargements **partagé** pour un mono-fichier — l'ancien
+  `move_dir_contents` vidait *tout* le dossier (autres torrents,
+  fichiers personnels ; copie + suppression inter-volumes).
+  `move_torrent_files` n'opère que sur les `relative_filename`
+  déclarés, nettoie les sous-dossiers vides, conserve le dossier
+  racine. Test : leurre `etranger.txt` épargné, `api-test.bin` déplacé.
+- **Anti-SSRF** (`address_policy.rs`) : les adresses IPv4-compatible
+  `::/96` (ex. `::127.0.0.1`, dépréciées RFC4291 mais acceptées par
+  certaines piles) appliquent désormais la politique IPv4 sur les 32
+  derniers bits — plus de contournement du filtre loopback/privé.
+  `::` et `::1` gardent leurs raisons propres ; permissif inchangé.
+- **Clé API en temps constant** (`auth.rs`) : `subtle::ConstantTimeEq`
+  remplace `==` — fin de la fuite de timing sur la comparaison.
+- **Instance unique POSIX** (`instance.rs`) : verrou `flock` exclusif
+  via `fs2` sur `state_dir/.onionbit.lock` (avant : stub toujours OK —
+  deux daemons pouvaient partager SQLite et les ports). Windows
+  conserve le mutex nommé ; fail-open si le fichier est inouvrable.
+
 ## ADR-0016 (intérimaire) : identité portable — export/import `OBID` (2026-10-06)
 
 - **Blob `OBID`** (`onionbit-crypto::keyblob`) : `magic‖v‖sel‖nonce‖

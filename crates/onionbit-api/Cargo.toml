@@ -22,6 +22,7 @@ thiserror.workspace = true
 tracing.workspace = true
 futures-util.workspace = true
 fs2.workspace = true
+subtle.workspace = true
 librqbit.workspace = true
 rusqlite.workspace = true
 uuid.workspace = true

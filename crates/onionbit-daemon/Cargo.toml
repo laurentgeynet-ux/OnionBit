@@ -24,6 +24,7 @@ tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 tracing-appender.workspace = true
+fs2.workspace = true
 
 # Bureau Windows : icone de notification (tray), cle Run d'autostart,
 # rattachement de la console parente (--console), mutex d'instance

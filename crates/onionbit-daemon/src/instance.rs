@@ -14,10 +14,13 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::path::Path;
 
-/// Handle Win32 du mutex nommé — libéré à la fin du processus.
+/// Handle Win32 du mutex nommé (Windows) ou fichier `.onionbit.lock`
+/// verrouillé (POSIX) — libéré à la fin du processus.
 pub struct InstanceGuard {
     #[cfg(windows)]
     handle: windows_sys::Win32::Foundation::HANDLE,
+    #[cfg(not(windows))]
+    _file: Option<std::fs::File>,
 }
 
 /// `None` = une instance est déjà en cours pour ce `state_dir`.
@@ -43,9 +46,27 @@ pub fn acquire(state_dir: &Path) -> Option<InstanceGuard> {
     }
 }
 
+/// POSIX : verrou exclusif `flock` sur `state_dir/.onionbit.lock`
+/// (fs2 — libéré automatiquement à la fermeture du descripteur, y
+/// compris en cas de crash). `try_lock_exclusive` échoue quand une
+/// autre instance tient déjà le verrou. Fichier inouvrable =
+/// contournement avec avertissement (fail-open comme Windows).
 #[cfg(not(windows))]
-pub fn acquire(_state_dir: &Path) -> Option<InstanceGuard> {
-    Some(InstanceGuard {})
+pub fn acquire(state_dir: &Path) -> Option<InstanceGuard> {
+    use fs2::FileExt;
+    let path = state_dir.join(".onionbit.lock");
+    let Ok(file) = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .open(&path)
+    else {
+        tracing::warn!(?path, "fichier de verrou d'instance inouvrable");
+        return Some(InstanceGuard { _file: None });
+    };
+    match file.try_lock_exclusive() {
+        Ok(()) => Some(InstanceGuard { _file: Some(file) }),
+        Err(_) => None, // verrou tenu par une instance active
+    }
 }
 
 #[cfg(windows)]
@@ -79,9 +100,8 @@ mod tests {
         assert_ne!(state_hash(&dir), state_hash(&other));
     }
 
-    // Le mutex Win32 est la seule implémentation : hors Windows
-    // `acquire` est un stub qui réussit toujours.
-    #[cfg(windows)]
+    // Mutex Win32 sous Windows, verrou `flock` fs2 ailleurs — dans
+    // les deux cas le second `acquire` sur le meme state_dir refuse.
     #[test]
     fn le_second_lock_sur_le_meme_state_dir_echoue() {
         let dir = tempfile::tempdir().unwrap();

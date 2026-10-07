@@ -812,6 +812,11 @@ Ajouter ici, au fil de l'avancement, tout écart constaté par rapport au
 plan initial (dépendance qui ne convient pas, étape scindée en deux,
 risque IPv8 sous/sur-estimé, etc.), avec la date.
 
+- 2026-10-07 (durcissement P0 — revue externe) : `move_storage`
+  vidait le dossier de téléchargements partagé pour un mono-fichier —
+  désormais seuls les `relative_filename` du torrent bougent ;
+  `::/96` IPv4-compatible soumis à la politique v4 (SSRF) ; clé API
+  comparée en temps constant ; verrou d'instance `flock` sous POSIX.
 - 2026-10-06 (ADR-0016 — identité portable, intérimaire) :
   export/import `OBID` (argon2id + ChaCha20-Poly1305) + fichier clé
   atomique `0600` ; étape 48 décochée — la graine BIP39 décrite à

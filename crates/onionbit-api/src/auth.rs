@@ -21,6 +21,7 @@ use axum::extract::State;
 use axum::http::Request;
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
+use subtle::ConstantTimeEq;
 
 use crate::error::ApiError;
 use crate::state::AppState;
@@ -35,7 +36,12 @@ pub async fn api_key_auth(
         return next.run(req).await;
     };
 
-    if provided_key(&req).as_deref() == Some(expected) {
+    // Comparaison en temps constant : `==` sur `&str` s'arrete a la
+    // premiere divergence, fuite de timing exploitable en theorie
+    // meme sur loopback (le daemon peut etre expose via --api-port
+    // sur d'autres interfaces).
+    let valid = provided_key(&req).is_some_and(|p| p.as_bytes().ct_eq(expected.as_bytes()).into());
+    if valid {
         next.run(req).await
     } else {
         ApiError::unauthorized().into_response()

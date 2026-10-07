@@ -1931,7 +1931,13 @@ async fn patch_download_recheck_stop_resume_move_storage() {
     );
 
     // move_storage reel : dossier cree -> fichiers deplaces,
-    // output_dir persiste mis a jour.
+    // output_dir persiste mis a jour. Fichier etranger depose dans
+    // le dossier de telechargements : il ne doit PAS suivre — seul
+    // le contenu declare par le torrent est deplace (mono-fichier :
+    // `output_folder` = dossier partage, ancien bug qui vidait tout).
+    let dl_dir = srv.session.find_download(&ih).unwrap().output_folder();
+    std::fs::write(dl_dir.join("etranger.txt"), b"leurre").unwrap();
+    std::fs::write(dl_dir.join("api-test.bin"), b"donnees").unwrap();
     let new_dir = srv._dir.path().join("deplace");
     std::fs::create_dir_all(&new_dir).unwrap();
     let r = patch(serde_json::json!({
@@ -1946,6 +1952,18 @@ async fn patch_download_recheck_stop_resume_move_storage() {
     );
     let dl = srv.session.find_download(&ih).unwrap();
     assert_eq!(dl.output_folder(), new_dir);
+    assert!(
+        new_dir.join("api-test.bin").exists(),
+        "le fichier du torrent doit suivre"
+    );
+    assert!(
+        dl_dir.join("etranger.txt").exists(),
+        "le fichier etranger doit rester en place"
+    );
+    assert!(
+        !new_dir.join("etranger.txt").exists(),
+        "le leurre ne doit pas etre deplace"
+    );
 
     srv.session.stop().await;
 }

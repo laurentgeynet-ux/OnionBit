@@ -2440,6 +2440,19 @@ impl CoreSession {
         }
         let finished = row.finished;
         let engine = self.engine_for(row.anon_hops.max(0) as u32).await?;
+        // Ne deplacer QUE les fichiers declares par le torrent :
+        // `output_folder` est le dossier de telechargements PARTAGE
+        // pour un mono-fichier (rqbit n'y ajoute pas de sous-dossier)
+        // — parcourir tout le dossier emporterait les autres
+        // telechargements et les fichiers personnels de l'utilisateur.
+        // Lu avant `remove_engine_only`, tant que les metadonnees
+        // sont chargees (magnet non resolu → aucun fichier a bouger).
+        let rel_paths: Vec<PathBuf> = dl
+            .files()
+            .unwrap_or_default()
+            .iter()
+            .map(|f| PathBuf::from(&f.name))
+            .collect();
         // Les handles fichiers doivent etre fermes avant le
         // deplacement (rename impossible sinon sous Windows).
         self.remove_engine_only(id_or_hash, false).await?;
@@ -2449,13 +2462,16 @@ impl CoreSession {
         let t0 = std::time::Instant::now();
         let src = current.clone();
         let dst = dest_dir.to_path_buf();
-        let moved = tokio::task::spawn_blocking(move || move_dir_contents(&src, &dst))
-            .await
-            .unwrap_or_else(|e| {
-                Err(std::io::Error::other(format!(
-                    "deplacement interrompu: {e}"
-                )))
-            });
+        let moved = tokio::task::spawn_blocking({
+            let rel_paths = rel_paths.clone();
+            move || move_torrent_files(&src, &dst, &rel_paths)
+        })
+        .await
+        .unwrap_or_else(|e| {
+            Err(std::io::Error::other(format!(
+                "deplacement interrompu: {e}"
+            )))
+        });
         let elapsed = t0.elapsed();
         if elapsed > std::time::Duration::from_millis(500) {
             tracing::warn!(
@@ -2464,11 +2480,12 @@ impl CoreSession {
             );
         }
         if let Err(e) = moved {
-            // Rollback best-effort : remettre les entrees deja
-            // deplacees puis re-add a l'ancien emplacement.
+            // Rollback best-effort : remettre les fichiers du torrent
+            // deja deplaces puis re-add a l'ancien emplacement.
             let src = dest_dir.to_path_buf();
             let dst = current.clone();
-            let _ = tokio::task::spawn_blocking(move || move_dir_contents(&src, &dst)).await;
+            let _ = tokio::task::spawn_blocking(move || move_torrent_files(&src, &dst, &rel_paths))
+                .await;
             let _ = self.readd_row(&engine, &row).await;
             return Err(CoreError::State(format!(
                 "move_storage: {e} (rollback effectue)"
@@ -3018,18 +3035,24 @@ impl CoreSession {
     }
 }
 
-/// Deplace les entrees de premier niveau de `src` vers `dst`
+/// Deplace les fichiers declares d'un torrent de `src` vers `dst`
 /// (`move_storage` : `rename` intra-volume ; copie + suppression en
-/// secours pour les deplacements inter-volumes).
-fn move_dir_contents(src: &Path, dst: &Path) -> std::io::Result<()> {
-    for entry in std::fs::read_dir(src)? {
-        let entry = entry?;
-        let from = entry.path();
-        let to = dst.join(entry.file_name());
-        if to.exists() {
-            // Collision : la destination prevaut — les pieces non
-            // deplacees seront reverifiees au re-add.
+/// secours pour les deplacements inter-volumes). `rel_paths` =
+/// `relative_filename` de chaque fichier du torrent — SEULS ces
+/// fichiers bougent : l'`output_folder` source peut etre le dossier
+/// de telechargements partage, qui n'est jamais vide lui-meme.
+fn move_torrent_files(src: &Path, dst: &Path, rel_paths: &[PathBuf]) -> std::io::Result<()> {
+    for rel in rel_paths {
+        let from = src.join(rel);
+        let to = dst.join(rel);
+        if !from.exists() || to.exists() {
+            // Fichier absent (telechargement partiel, padding) : rien
+            // a deplacer. Collision : la destination prevaut — les
+            // pieces non deplacees seront reverifiees au re-add.
             continue;
+        }
+        if let Some(parent) = to.parent() {
+            std::fs::create_dir_all(parent)?;
         }
         if std::fs::rename(&from, &to).is_err() {
             copy_recursive(&from, &to)?;
@@ -3039,6 +3062,18 @@ fn move_dir_contents(src: &Path, dst: &Path) -> std::io::Result<()> {
                 std::fs::remove_file(&from)?;
             }
         }
+    }
+    // Sous-dossiers devenus vides dans `src` (best-effort — le
+    // dossier racine `src` est conserve expres : il peut etre le
+    // dossier de telechargements partage de l'utilisateur).
+    let mut dirs: Vec<PathBuf> = rel_paths
+        .iter()
+        .filter_map(|rel| rel.parent().map(|p| src.join(p)))
+        .collect();
+    dirs.sort_unstable_by_key(|p| std::cmp::Reverse(p.components().count()));
+    dirs.dedup();
+    for d in dirs {
+        let _ = std::fs::remove_dir(&d); // echoue si non vide — voulu
     }
     Ok(())
 }
