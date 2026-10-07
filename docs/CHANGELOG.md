@@ -3,6 +3,38 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Correctifs (revue externe 7) : re-ACK messagerie, indices speedtest, `PendingGuard::drop`, magnet tolérant, scrape en lots, mutex (2026-10-07)
+
+- **Messagerie : re-ACK sur retransmission** — un `msg` déjà vu était
+  absorbé par la dedup sans ré-émettre l'ACK : si le premier ACK
+  s'était perdu sur le circuit, l'émetteur marquait `failed` un
+  message pourtant reçu. La duplicata déclenche désormais la
+  ré-émission de l'ACK (sans doublon d'historique ni d'événement).
+- **Speedtest : indices inversés** — `send_times` lisait `s[2]/s[3]`
+  (réception) au lieu de `s[0]/s[1]` (émission) : le `up` du SSE
+  `/api/tunnel/speedtest` était calculé sur les mauvaises colonnes.
+- **`PendingGuard::drop`** : `.lock().unwrap()` pendant un unwinding
+  → double panic → `abort()`. Passage à `into_inner()`.
+- **`run_speedtest`** : `random_data[..request_size]` paniquait si
+  `request_size > 2048` — borné à `SPEED_TEST_RANDOM_BUF` (slice
+  Python tronque silencieusement, comportement fidèle).
+- **`MagnetLink::parse`** : `&` terminal, `&&` et flags sans `=`
+  (`&fl`) rejetaient tout le lien — ignorés désormais (tolérance
+  libtorrent pour les magnets du web/RSS).
+- **`check_tracker` : scrape en lots de 32** — au-delà de
+  `MAX_INFOHASHES_PER_SCRAPE`, les infohashes étaient tronqués
+  silencieusement. Découpage par `chunks(32)` ; un lot en échec
+  après des réponses conserve les santés acquises. Impact dormant :
+  tous les appelants passent 1 hash aujourd'hui.
+- **Mutex poison-tolérant** : balayage des fichiers touchés —
+  `hidden_services` (52 sites), `session` (8), `state`/`downloads`
+  api (8), `speedtest` (8), `messaging` (69), y compris les formes
+  multi-lignes `.lock()\n.unwrap()` échappées aux passes
+  précédentes.
+- Tests : re-ACK sur trame dupliquée (`send_seq` observé, ni
+  doublon ni `Frame` en double), magnet `&`/flags tolérés, scrape
+  UDP 40 infohashes → 2 lots.
+
 ## Durcissement (revue externe 6) : NAT64 SSRF, source SOCKS5, NAT-PMP deadline, KillSwitch, augmenter, clés strictes, popular filtré (2026-10-07)
 
 - **Anti-SSRF : préfixe NAT64 `64:ff9b::/96`** — le WKP RFC 6052

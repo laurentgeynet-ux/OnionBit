@@ -513,7 +513,7 @@ impl CoreSession {
                     .inner
                     .pending
                     .lock()
-                    .unwrap()
+                    .unwrap_or_else(|e| e.into_inner())
                     .get(&ih_hex)
                     .map(|p| (p.anon_hops, p.paused))
                 else {
@@ -1352,7 +1352,7 @@ impl CoreSession {
                     .inner
                     .pending
                     .lock()
-                    .unwrap()
+                    .unwrap_or_else(|e| e.into_inner())
                     .get(k)
                     .map(|p| (p.anon_hops, p.paused))
                 else {
@@ -1982,7 +1982,7 @@ impl CoreSession {
         self.inner
             .pending_notify
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .entry(key.to_string())
             .or_default()
             .clone()
@@ -1996,7 +1996,7 @@ impl CoreSession {
             self.inner
                 .pending
                 .lock()
-                .unwrap()
+                .unwrap_or_else(|e| e.into_inner())
                 .contains_key(&onionbit_crypto::hash::to_hex(&ih))
         })
     }
@@ -2147,7 +2147,7 @@ impl CoreSession {
         self.inner
             .pending
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .values()
             .cloned()
             .collect()
@@ -2855,7 +2855,11 @@ impl CoreSession {
     /// (reglages effectivement en cours pour `GET /api/settings`).
     pub fn effective_config(&self) -> CoreConfig {
         let mut cfg = self.inner.config.clone();
-        let ov = self.inner.overrides.read().unwrap();
+        let ov = self
+            .inner
+            .overrides
+            .read()
+            .unwrap_or_else(|e| e.into_inner());
         // Sections restart-only : la valeur postee l'emporte sur
         // l'etat de demarrage (effet reel au prochain lancement).
         if let Some(ipv8) = &ov.ipv8 {
@@ -2901,7 +2905,7 @@ impl CoreSession {
         self.inner
             .overrides
             .read()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .download_defaults
             .clone()
             .unwrap_or_else(|| self.inner.config.download_defaults.clone())
@@ -2912,7 +2916,11 @@ impl CoreSession {
     pub fn apply_service_settings(&self, config: &CoreConfig) {
         // Memorise le sous-ensemble applique pour que `effective_config()`
         // (et `GET /api/settings`) reflete le reglage courant.
-        *self.inner.overrides.write().unwrap() = ServiceOverrides {
+        *self
+            .inner
+            .overrides
+            .write()
+            .unwrap_or_else(|e| e.into_inner()) = ServiceOverrides {
             rss_urls: Some(config.rss_urls.clone()),
             watch_folder_dir: Some(config.watch_folder_dir.clone()),
             download_dir: Some(config.engine.output_dir.clone()),

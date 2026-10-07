@@ -446,7 +446,7 @@ impl MessagingService {
     /// appele par `Ipv8Stack` quand la communaute ext tourne. Sans
     /// lui, `consent_gate_flagged`/`endorsed` n'ont aucun effet.
     pub fn set_trust_lookup(&self, f: TrustLookup) {
-        *self.trust_lookup.lock().unwrap() = Some(f);
+        *self.trust_lookup.lock().unwrap_or_else(|e| e.into_inner()) = Some(f);
     }
 
     /// Score de confiance identity d'une cle, si le lookup est
@@ -454,7 +454,7 @@ impl MessagingService {
     fn trust_score(&self, pk_bin: &[u8]) -> Option<i64> {
         self.trust_lookup
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .as_ref()
             .map(|f| f(pk_bin))
     }
@@ -473,7 +473,7 @@ impl MessagingService {
         };
         let mut rejoin: Vec<(Vec<u8>, LibNaClPublicKey)> = Vec::new();
         {
-            let mut contacts = self.contacts.lock().unwrap();
+            let mut contacts = self.contacts.lock().unwrap_or_else(|e| e.into_inner());
             for row in rows {
                 let Ok(pk) = LibNaClPublicKey::from_bin(&row.public_key) else {
                     continue;
@@ -504,7 +504,7 @@ impl MessagingService {
         }
         for (pk_bin, pk) in rejoin {
             let mh = messaging_hash(&pk);
-            let mut swarms = self.swarms.lock().unwrap();
+            let mut swarms = self.swarms.lock().unwrap_or_else(|e| e.into_inner());
             if let std::collections::hash_map::Entry::Vacant(e) = swarms.entry(mh) {
                 e.insert(pk_bin);
                 self.tunnel.join_swarm(mh, self.hops, false);
@@ -533,11 +533,22 @@ impl MessagingService {
     /// taches (les circuits e2e meurent avec leurs circuits tunnels).
     pub fn stop(&self) {
         self.tunnel.leave_swarm(&self.own_mh);
-        let mh: Vec<[u8; 20]> = self.swarms.lock().unwrap().keys().copied().collect();
+        let mh: Vec<[u8; 20]> = self
+            .swarms
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .keys()
+            .copied()
+            .collect();
         for m in mh {
             self.tunnel.leave_swarm(&m);
         }
-        for tx in self.stops.lock().unwrap().drain(..) {
+        for tx in self
+            .stops
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .drain(..)
+        {
             let _ = tx.send(true);
         }
     }
@@ -618,14 +629,19 @@ impl MessagingService {
     /// e2e automatique du tunnel) > `Failed` > `None`.
     pub fn link_state(&self, contact_pk: &[u8]) -> LinkState {
         let (pk, failed) = {
-            let contacts = self.contacts.lock().unwrap();
+            let contacts = self.contacts.lock().unwrap_or_else(|e| e.into_inner());
             match contacts.get(contact_pk) {
                 Some(c) if c.circuit.is_some() => return LinkState::Bound,
                 Some(c) => (Some(c.pk.clone()), c.link_failed),
                 None => (None, false),
             }
         };
-        if self.linking.lock().unwrap().contains(contact_pk) {
+        if self
+            .linking
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .contains(contact_pk)
+        {
             return LinkState::Connecting;
         }
         if let Some(pk) = pk {
@@ -642,8 +658,16 @@ impl MessagingService {
     /// Entree en tentative de liaison explicite : marque `linking`
     /// (et efface un `Failed` anterieur) puis notifie l'API.
     fn link_begin(&self, contact_pk: &[u8]) {
-        self.linking.lock().unwrap().insert(contact_pk.to_vec());
-        if let Some(c) = self.contacts.lock().unwrap().get_mut(contact_pk) {
+        self.linking
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(contact_pk.to_vec());
+        if let Some(c) = self
+            .contacts
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get_mut(contact_pk)
+        {
             c.link_failed = false;
         }
         self.emit_link(contact_pk);
@@ -651,9 +675,17 @@ impl MessagingService {
 
     /// Fin de tentative explicite : `Failed` sur echec, puis notifie.
     fn link_end(&self, contact_pk: &[u8], ok: bool) {
-        self.linking.lock().unwrap().remove(contact_pk);
+        self.linking
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(contact_pk);
         if !ok {
-            if let Some(c) = self.contacts.lock().unwrap().get_mut(contact_pk) {
+            if let Some(c) = self
+                .contacts
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .get_mut(contact_pk)
+            {
                 c.link_failed = true;
             }
         }
@@ -717,7 +749,7 @@ impl MessagingService {
     /// `Bound`. Sans effet si le contact n'est pas `pending`.
     pub async fn accept_contact(&self, contact_pk: &[u8]) -> Result<()> {
         let (cid, pk) = {
-            let mut contacts = self.contacts.lock().unwrap();
+            let mut contacts = self.contacts.lock().unwrap_or_else(|e| e.into_inner());
             let Some(c) = contacts.get_mut(contact_pk) else {
                 return Err(CoreError::InvalidState("messagerie : contact inconnu"));
             };
@@ -769,7 +801,7 @@ impl MessagingService {
     /// circuit detruit. Persistant jusqu'a [`Self::unblock_contact`].
     pub async fn block_contact(&self, contact_pk: &[u8]) -> Result<()> {
         let mh = {
-            let mut contacts = self.contacts.lock().unwrap();
+            let mut contacts = self.contacts.lock().unwrap_or_else(|e| e.into_inner());
             let Some(c) = contacts.get_mut(contact_pk) else {
                 return Err(CoreError::InvalidState("messagerie : contact inconnu"));
             };
@@ -780,7 +812,10 @@ impl MessagingService {
         self.persist_contact(contact_pk, ContactState::Blocked);
         // Desarme l'acceptation e2e du swarm du contact.
         self.tunnel.leave_swarm(&mh);
-        self.swarms.lock().unwrap().remove(&mh);
+        self.swarms
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&mh);
         if let Some(cid) = self.contact_circuit(contact_pk) {
             self.unbind_circuit(cid);
             self.tunnel.remove_circuit(cid, "contact bloque").await;
@@ -803,7 +838,7 @@ impl MessagingService {
         let now = now_secs();
         self.contacts
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .iter()
             .filter(|(_, c)| c.state == ContactState::Pending)
             .map(|(pk, c)| (pk.clone(), now.saturating_sub(c.pending_since)))
@@ -814,7 +849,7 @@ impl MessagingService {
     pub fn contact_state(&self, contact_pk: &[u8]) -> Option<ContactState> {
         self.contacts
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .get(contact_pk)
             .map(|c| c.state)
     }
@@ -878,7 +913,7 @@ impl MessagingService {
     /// pseudonymes inclus.
     pub fn export_vault(&self) -> Vec<u8> {
         let entries: Vec<VaultEntry> = {
-            let contacts = self.contacts.lock().unwrap();
+            let contacts = self.contacts.lock().unwrap_or_else(|e| e.into_inner());
             contacts
                 .iter()
                 .map(|(pk_bin, c)| VaultEntry {
@@ -940,7 +975,12 @@ impl MessagingService {
             let Ok(pk_bin) = hex::decode(&e.pk) else {
                 continue;
             };
-            if self.contacts.lock().unwrap().contains_key(&pk_bin) {
+            if self
+                .contacts
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .contains_key(&pk_bin)
+            {
                 continue;
             }
             let Ok(pk) = LibNaClPublicKey::from_bin(&pk_bin) else {
@@ -952,7 +992,10 @@ impl MessagingService {
             };
             let mut c = Contact::active(pk.clone(), &self.cfg);
             c.state = state;
-            self.contacts.lock().unwrap().insert(pk_bin.clone(), c);
+            self.contacts
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .insert(pk_bin.clone(), c);
             self.persist_contact(&pk_bin, state);
             if state == ContactState::Active {
                 rejoin.push((pk_bin.clone(), pk));
@@ -969,7 +1012,10 @@ impl MessagingService {
         for (pk_bin, pk) in rejoin {
             let mh = messaging_hash(&pk);
             self.tunnel.join_swarm_with_key(mh, self.hops, None);
-            self.swarms.lock().unwrap().insert(mh, pk_bin);
+            self.swarms
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .insert(mh, pk_bin);
         }
         Ok(restored)
     }
@@ -1042,7 +1088,7 @@ impl MessagingService {
         let Some(db) = &self.db else { return };
         let st = contact_state_str(state);
         let (send_seq, recv_top) = {
-            let contacts = self.contacts.lock().unwrap();
+            let contacts = self.contacts.lock().unwrap_or_else(|e| e.into_inner());
             contacts
                 .get(pk_bin)
                 .map(|c| (c.send_seq, c.recv_window.top().unwrap_or(0)))
@@ -1070,7 +1116,7 @@ impl MessagingService {
     fn persist_seqs(&self, pk_bin: &[u8]) {
         let Some(db) = &self.db else { return };
         let (send_seq, recv_top) = {
-            let contacts = self.contacts.lock().unwrap();
+            let contacts = self.contacts.lock().unwrap_or_else(|e| e.into_inner());
             match contacts.get(pk_bin) {
                 Some(c) => (c.send_seq, c.recv_window.top().unwrap_or(0)),
                 None => return,
@@ -1152,11 +1198,18 @@ impl MessagingService {
                 tracing::warn!(error = %e, "suppression contact messagerie");
             }
         }
-        let removed = self.contacts.lock().unwrap().remove(contact_pk);
+        let removed = self
+            .contacts
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(contact_pk);
         if let Some(c) = removed {
             let mh = messaging_hash(&c.pk);
             self.tunnel.leave_swarm(&mh);
-            self.swarms.lock().unwrap().remove(&mh);
+            self.swarms
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .remove(&mh);
             if let Some(cid) = c.circuit {
                 self.unbind_circuit(cid);
                 self.tunnel.remove_circuit(cid, "contact supprime").await;
@@ -1170,7 +1223,7 @@ impl MessagingService {
         let now = now_secs();
         let ttl = self.cfg.pending_ttl.as_secs();
         let expired: Vec<(Vec<u8>, Option<u32>)> = {
-            let mut contacts = self.contacts.lock().unwrap();
+            let mut contacts = self.contacts.lock().unwrap_or_else(|e| e.into_inner());
             let expired: Vec<Vec<u8>> = contacts
                 .iter()
                 .filter(|(_, c)| {
@@ -1205,7 +1258,7 @@ impl MessagingService {
     pub fn bound_contacts(&self) -> Vec<(Vec<u8>, Option<u32>)> {
         self.contacts
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .iter()
             .map(|(pk, c)| (pk.clone(), c.circuit))
             .collect()
@@ -1215,7 +1268,7 @@ impl MessagingService {
     fn contact_circuit(&self, contact_pk: &[u8]) -> Option<u32> {
         self.contacts
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .get(contact_pk)
             .and_then(|c| c.circuit)
     }
@@ -1225,7 +1278,7 @@ impl MessagingService {
     fn peek_send_seq(&self, contact_pk: &[u8]) -> u64 {
         self.contacts
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .get(contact_pk)
             .map(|c| c.send_seq)
             .unwrap_or_default()
@@ -1235,7 +1288,7 @@ impl MessagingService {
     fn is_greeted(&self, contact_pk: &[u8]) -> bool {
         self.contacts
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .get(contact_pk)
             .is_some_and(|c| c.greeted)
     }
@@ -1247,7 +1300,7 @@ impl MessagingService {
     fn ensure_contact_swarm(&self, pk: &LibNaClPublicKey, pk_bin: &[u8]) -> [u8; 20] {
         let mh = messaging_hash(pk);
         let (blocked, created) = {
-            let mut contacts = self.contacts.lock().unwrap();
+            let mut contacts = self.contacts.lock().unwrap_or_else(|e| e.into_inner());
             let existed = contacts.contains_key(pk_bin);
             let c = contacts
                 .entry(pk_bin.to_vec())
@@ -1261,7 +1314,7 @@ impl MessagingService {
             });
         }
         if !blocked {
-            let mut swarms = self.swarms.lock().unwrap();
+            let mut swarms = self.swarms.lock().unwrap_or_else(|e| e.into_inner());
             if let std::collections::hash_map::Entry::Vacant(e) = swarms.entry(mh) {
                 e.insert(pk_bin.to_vec());
                 self.tunnel.join_swarm(mh, self.hops, false);
@@ -1279,8 +1332,8 @@ impl MessagingService {
         body: Vec<u8>,
     ) -> Result<[u8; 16]> {
         let (send_key, seq) = {
-            let circuits = self.circuits.lock().unwrap();
-            let mut contacts = self.contacts.lock().unwrap();
+            let circuits = self.circuits.lock().unwrap_or_else(|e| e.into_inner());
+            let mut contacts = self.contacts.lock().unwrap_or_else(|e| e.into_inner());
             let (Some(binding), Some(contact)) = (circuits.get(&cid), contacts.get_mut(contact_pk))
             else {
                 return Err(CoreError::InvalidState("messagerie : liaison disparue"));
@@ -1324,7 +1377,12 @@ impl MessagingService {
             return Err(CoreError::State(format!("send_data messagerie: {e}")));
         }
         if kind == MsgKind::Hello {
-            if let Some(c) = self.contacts.lock().unwrap().get_mut(contact_pk) {
+            if let Some(c) = self
+                .contacts
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .get_mut(contact_pk)
+            {
                 c.greeted = true;
             }
         }
@@ -1337,7 +1395,10 @@ impl MessagingService {
     /// ignores (listener dedie dans `ipv8_stack`).
     fn spawn_e2e_listener(self: &Arc<Self>) {
         let (tx, mut rx_stop) = watch::channel(false);
-        self.stops.lock().unwrap().push(tx);
+        self.stops
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(tx);
         let mut e2e = self.tunnel.e2e_ready();
         let svc = self.clone();
         tokio::spawn(async move {
@@ -1370,7 +1431,12 @@ impl MessagingService {
         let (initiator, contact) = if lookup == self.own_mh {
             // Un pair nous contacte : toujours repondant.
             (false, None)
-        } else if let Some(pk_bin) = self.swarms.lock().unwrap().get(&lookup) {
+        } else if let Some(pk_bin) = self
+            .swarms
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&lookup)
+        {
             (
                 ctype == onionbit_tunnel::routing::CIRCUIT_TYPE_RP_DOWNLOADER,
                 Some(pk_bin.clone()),
@@ -1385,16 +1451,24 @@ impl MessagingService {
         let Ok(keys) = derive_messaging_keys(&shared, initiator) else {
             return;
         };
-        self.circuits.lock().unwrap().insert(
-            cid,
-            CircuitBinding {
-                keys: keys.clone(),
-                contact: contact.clone(),
-            },
-        );
+        self.circuits
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(
+                cid,
+                CircuitBinding {
+                    keys: keys.clone(),
+                    contact: contact.clone(),
+                },
+            );
         match contact {
             Some(pk_bin) => {
-                if let Some(c) = self.contacts.lock().unwrap().get_mut(&pk_bin) {
+                if let Some(c) = self
+                    .contacts
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .get_mut(&pk_bin)
+                {
                     c.circuit = Some(cid);
                     c.link_failed = false;
                 }
@@ -1440,12 +1514,17 @@ impl MessagingService {
         let contact = self
             .circuits
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .remove(&cid)
             .and_then(|b| b.contact);
         let mut detached = None;
         if let Some(pk_bin) = contact {
-            if let Some(c) = self.contacts.lock().unwrap().get_mut(&pk_bin) {
+            if let Some(c) = self
+                .contacts
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .get_mut(&pk_bin)
+            {
                 if c.circuit == Some(cid) {
                     c.circuit = None;
                     detached = Some(pk_bin);
@@ -1474,7 +1553,12 @@ impl MessagingService {
             tracing::debug!(circuit_id = cid, error = %e, "trame messagerie rejetee au prefiltre");
             return;
         }
-        if let Some(b) = self.global_bucket.lock().unwrap().as_mut() {
+        if let Some(b) = self
+            .global_bucket
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_mut()
+        {
             if !b.take() {
                 self.stats.rate_global.fetch_add(1, Ordering::Relaxed);
                 return;
@@ -1491,7 +1575,7 @@ impl MessagingService {
         let bound = self
             .circuits
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .get(&cid)
             .and_then(|b| b.contact.clone());
         let pk_bin = match bound {
@@ -1547,12 +1631,26 @@ impl MessagingService {
         // fenetre `seq` : une trame ecartee au budget n'est PAS
         // admise et sa re-emission ulterieure peut etre livree.
         let admitted = {
-            let mut contacts = self.contacts.lock().unwrap();
+            let mut contacts = self.contacts.lock().unwrap_or_else(|e| e.into_inner());
             match contacts.get_mut(&pk_bin) {
                 None => false,
                 Some(c) => {
                     if c.recv_window.seen_id(&raw.id) {
                         self.stats.replay.fetch_add(1, Ordering::Relaxed);
+                        // Trame deja vue : pour un `msg`, l'emetteur
+                        // retransmet car notre ACK precedent s'est
+                        // perdu — on le re-emet sans re-persister ni
+                        // re-pousser l'evenement.
+                        if raw.kind == MsgKind::Msg {
+                            let svc = self.clone();
+                            let pk = pk_bin.clone();
+                            let ack_id = raw.id;
+                            tokio::spawn(async move {
+                                let _ = svc
+                                    .send_frame(&pk, cid, MsgKind::Ack, ack_id.to_vec())
+                                    .await;
+                            });
+                        }
                         false
                     } else if raw.kind != MsgKind::Ack
                         && c.bucket.as_mut().is_some_and(|b| !b.take())
@@ -1652,7 +1750,10 @@ impl MessagingService {
                         if let Ok(pk) = LibNaClPublicKey::from_bin(pk_bin) {
                             let mut c = Contact::active(pk, &self.cfg);
                             c.state = ContactState::Blocked;
-                            self.contacts.lock().unwrap().insert(pk_bin.to_vec(), c);
+                            self.contacts
+                                .lock()
+                                .unwrap_or_else(|e| e.into_inner())
+                                .insert(pk_bin.to_vec(), c);
                             self.persist_contact(pk_bin, ContactState::Blocked);
                         }
                         self.stats.consent_blocked.fetch_add(1, Ordering::Relaxed);
@@ -1662,7 +1763,10 @@ impl MessagingService {
                         if let Ok(pk) = LibNaClPublicKey::from_bin(pk_bin) {
                             let mut c = Contact::active(pk, &self.cfg);
                             c.circuit = Some(cid);
-                            self.contacts.lock().unwrap().insert(pk_bin.to_vec(), c);
+                            self.contacts
+                                .lock()
+                                .unwrap_or_else(|e| e.into_inner())
+                                .insert(pk_bin.to_vec(), c);
                             self.persist_contact(pk_bin, ContactState::Active);
                             self.bind_circuit(cid, pk_bin, keys);
                             self.stats
@@ -1678,7 +1782,7 @@ impl MessagingService {
                 let full = self
                     .contacts
                     .lock()
-                    .unwrap()
+                    .unwrap_or_else(|e| e.into_inner())
                     .values()
                     .filter(|c| c.state == ContactState::Pending)
                     .count()
@@ -1691,7 +1795,7 @@ impl MessagingService {
                     return false;
                 };
                 {
-                    let mut contacts = self.contacts.lock().unwrap();
+                    let mut contacts = self.contacts.lock().unwrap_or_else(|e| e.into_inner());
                     let mut c = Contact::pending(pk, &self.cfg);
                     c.circuit = Some(cid);
                     contacts.insert(pk_bin.to_vec(), c);
@@ -1711,7 +1815,12 @@ impl MessagingService {
     /// re-pending) — le `hello` sera re-emis : `greeted` rearme.
     fn bind_existing(&self, cid: u32, pk_bin: &[u8], keys: &MessagingKeys) {
         self.bind_circuit(cid, pk_bin, keys);
-        if let Some(c) = self.contacts.lock().unwrap().get_mut(pk_bin) {
+        if let Some(c) = self
+            .contacts
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get_mut(pk_bin)
+        {
             c.circuit = Some(cid);
             c.greeted = false;
         }
@@ -1722,7 +1831,7 @@ impl MessagingService {
     fn bind_circuit(&self, cid: u32, pk_bin: &[u8], keys: &MessagingKeys) {
         self.circuits
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .entry(cid)
             .and_modify(|b| b.contact = Some(pk_bin.to_vec()))
             .or_insert_with(|| CircuitBinding {
@@ -1739,7 +1848,7 @@ impl MessagingService {
     ) -> Option<std::result::Result<Frame, MessagingError>> {
         self.contacts
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .get(pk_bin)
             .map(|c| raw.verify(&c.pk))
     }
@@ -1759,7 +1868,13 @@ impl MessagingService {
             }
             return None;
         }
-        let pks: Vec<Vec<u8>> = self.contacts.lock().unwrap().keys().cloned().collect();
+        let pks: Vec<Vec<u8>> = self
+            .contacts
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .keys()
+            .cloned()
+            .collect();
         pks.into_iter().find(|pk_bin| {
             self.contact_state(pk_bin) != Some(ContactState::Blocked)
                 && matches!(self.verify_against(pk_bin, raw), Some(Ok(_)))
@@ -1774,7 +1889,10 @@ impl MessagingService {
     /// swarms BitTorrent).
     fn spawn_presence_monitor(self: &Arc<Self>) {
         let (tx, mut rx_stop) = watch::channel(false);
-        self.stops.lock().unwrap().push(tx);
+        self.stops
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(tx);
         let svc = self.clone();
         tokio::spawn(async move {
             let mut tick = tokio::time::interval(svc.cfg.ip_check_interval);
@@ -1865,13 +1983,16 @@ mod tests {
     /// Injecte un circuit non lie (`contact: None`) — le repondant
     /// avant identification.
     fn unbound(svc: &MessagingService, cid: u32, keys: &MessagingKeys) {
-        svc.circuits.lock().unwrap().insert(
-            cid,
-            CircuitBinding {
-                keys: keys.clone(),
-                contact: None,
-            },
-        );
+        svc.circuits
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(
+                cid,
+                CircuitBinding {
+                    keys: keys.clone(),
+                    contact: None,
+                },
+            );
     }
 
     /// `hello` filaire d'un pair (corps = sa `pk_bin`).
@@ -1889,17 +2010,23 @@ mod tests {
         keys: &MessagingKeys,
     ) -> Vec<u8> {
         let pk_bin = peer.public_key().to_bin();
-        svc.circuits.lock().unwrap().insert(
-            cid,
-            CircuitBinding {
-                keys: keys.clone(),
-                contact: Some(pk_bin.clone()),
-            },
-        );
+        svc.circuits
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(
+                cid,
+                CircuitBinding {
+                    keys: keys.clone(),
+                    contact: Some(pk_bin.clone()),
+                },
+            );
         let mut c = Contact::active(peer.public_key(), &svc.cfg);
         c.circuit = Some(cid);
         c.greeted = true;
-        svc.contacts.lock().unwrap().insert(pk_bin.clone(), c);
+        svc.contacts
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(pk_bin.clone(), c);
         // La FK `msg_messages.contact_pk` exige la ligne contact.
         svc.persist_contact(&pk_bin, ContactState::Active);
         pk_bin
@@ -1933,20 +2060,26 @@ mod tests {
 
         // Reouverture : un nouveau circuit se lie au meme contact,
         // l'ancien est oublie.
-        svc.circuits.lock().unwrap().insert(
-            12,
-            CircuitBinding {
-                keys: keys.clone(),
-                contact: Some(pk_bin.clone()),
-            },
-        );
+        svc.circuits
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(
+                12,
+                CircuitBinding {
+                    keys: keys.clone(),
+                    contact: Some(pk_bin.clone()),
+                },
+            );
         svc.contacts
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .get_mut(&pk_bin)
             .expect("contact")
             .circuit = Some(12);
-        svc.circuits.lock().unwrap().remove(&11);
+        svc.circuits
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&11);
 
         // La meme trame, relivree sur le circuit de remplacement :
         // absorbee par la dedup (fenetre attachee au contact).
@@ -2036,13 +2169,16 @@ mod tests {
             send: [3u8; 32],
             recv: [4u8; 32],
         };
-        svc.circuits.lock().unwrap().insert(
-            7,
-            CircuitBinding {
-                keys: keys.clone(),
-                contact: None,
-            },
-        );
+        svc.circuits
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(
+                7,
+                CircuitBinding {
+                    keys: keys.clone(),
+                    contact: None,
+                },
+            );
         let hello = Frame::new(MsgKind::Hello, 0, 1, peer.public_key().to_bin())
             .seal(&peer, &keys.recv, &MessagingConfig::default())
             .unwrap();
@@ -2058,13 +2194,16 @@ mod tests {
         // Un `hello` signe par une AUTRE cle que celle declaree est
         // rejete (usurpation du corps).
         let liar = LibNaClSecretKey::generate();
-        svc.circuits.lock().unwrap().insert(
-            9,
-            CircuitBinding {
-                keys: keys.clone(),
-                contact: None,
-            },
-        );
+        svc.circuits
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(
+                9,
+                CircuitBinding {
+                    keys: keys.clone(),
+                    contact: None,
+                },
+            );
         let forged = Frame::new(MsgKind::Hello, 0, 1, peer.public_key().to_bin())
             .seal(&liar, &keys.recv, &MessagingConfig::default())
             .unwrap();
@@ -2180,13 +2319,20 @@ mod tests {
         svc.handle_incoming(32, &keys, &hello_wire(&peer, 2, &keys.recv));
         assert_eq!(svc.stats.blocked.load(Ordering::Relaxed), 1);
         assert!(
-            !svc.circuits.lock().unwrap().contains_key(&32),
+            !svc.circuits
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .contains_key(&32),
             "circuit du bloque delie"
         );
         // `ensure_contact_swarm` ne joint pas le swarm d'un bloque.
         let mh = messaging_hash(&peer.public_key());
         let _ = svc.ensure_contact_swarm(&peer.public_key(), &pk_bin);
-        assert!(!svc.swarms.lock().unwrap().contains_key(&mh));
+        assert!(!svc
+            .swarms
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .contains_key(&mh));
 
         svc.unblock_contact(&pk_bin).await.unwrap();
         assert_eq!(svc.contact_state(&pk_bin), None);
@@ -2227,7 +2373,7 @@ mod tests {
         let p1_bin = p1.public_key().to_bin();
         svc.contacts
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .get_mut(&p1_bin)
             .expect("contact")
             .pending_since = 0;
@@ -2328,11 +2474,14 @@ mod tests {
         );
         svc.contacts
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .get_mut(&pk_bin)
             .expect("contact")
             .circuit = None;
-        svc.circuits.lock().unwrap().remove(&0);
+        svc.circuits
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&0);
         let mut events = svc.subscribe();
 
         assert!(svc.send(&pk_bin, b"perdu".to_vec()).await.is_err());
@@ -2369,7 +2518,7 @@ mod tests {
             svc.handle_incoming(7, &keys, &w);
             // Un `seq` sortant persiste via `persist_seqs`.
             {
-                let mut contacts = svc.contacts.lock().unwrap();
+                let mut contacts = svc.contacts.lock().unwrap_or_else(|e| e.into_inner());
                 contacts.get_mut(&pk_bin).expect("contact").send_seq = 3;
             }
             svc.persist_seqs(&pk_bin);
@@ -2466,6 +2615,67 @@ mod tests {
         let hist = svc.history(&pk_bin, 10).unwrap();
         let out = hist.iter().find(|m| m.direction == "out").unwrap();
         assert_eq!(out.status, "acked");
+    }
+
+    /// Attend que `send_seq` du contact atteigne `n` (chaque trame
+    /// emise en consomme un — observable sans socket).
+    async fn wait_send_seq(svc: &MessagingService, pk: &[u8], n: u64) {
+        for _ in 0..100 {
+            let s = svc
+                .contacts
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .get(pk)
+                .map(|c| c.send_seq)
+                .unwrap_or(0);
+            if s >= n {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        panic!("send_seq n'atteint pas {n}");
+    }
+
+    /// Re-ACK sur retransmission : un `msg` deja vu (ACK precedent
+    /// perdu en transit) doit declencher la re-emission de l'ACK —
+    /// sans doublon d'historique ni d'evenement. Avant, la trame
+    /// etait absorbee par la dedup et l'emetteur marquait `failed`
+    /// un message pourtant bien recu.
+    #[tokio::test]
+    async fn retransmission_reemet_ack_sans_dupliquer() {
+        let db = Arc::new(Database::memory().unwrap());
+        let svc = make_service_db(db).await;
+        let peer = LibNaClSecretKey::generate();
+        let keys = MessagingKeys {
+            send: [1u8; 32],
+            recv: [2u8; 32],
+        };
+        let pk_bin = bind(&svc, 11, &peer, &keys);
+        let mut events = svc.subscribe();
+
+        let w = wire(&peer, 0, &keys.recv, b"recu");
+        svc.handle_incoming(11, &keys, &w);
+        let _ = events.try_recv(); // Frame de la 1re livraison
+        wait_send_seq(&svc, &pk_bin, 1).await;
+
+        // Retransmission filaire identique (meme `id`).
+        svc.handle_incoming(11, &keys, &w);
+        wait_send_seq(&svc, &pk_bin, 2).await;
+
+        assert_eq!(
+            svc.history(&pk_bin, 10).unwrap().len(),
+            1,
+            "pas de doublon en historique"
+        );
+        // `Bound` est attendu : l'ACK du 1er envoi echoue sur le
+        // tunnel nu (circuit absent) -> `unbind_circuit` -> la
+        // retransmission re-lie. Interdit : un `Frame` en doublon.
+        while let Ok(ev) = events.try_recv() {
+            assert!(
+                !matches!(ev, MessagingEvent::Frame { .. }),
+                "evenement Frame en doublon"
+            );
+        }
     }
 
     /// MS-11 — retention : expiration -> `DELETE` reel (le corps
@@ -2620,7 +2830,10 @@ mod tests {
         unbound(&svc, 62, &keys);
         svc.handle_incoming(62, &keys, &hello_wire(&peer, 0, &keys.recv));
         assert_eq!(svc.contact_state(&pk_bin), Some(ContactState::Pending));
-        svc.contacts.lock().unwrap().remove(&pk_bin);
+        svc.contacts
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&pk_bin);
 
         // Enforce : le meme deficit refuse l'admission.
         svc.tunnel.ledger.set_enforce(true);
@@ -2746,7 +2959,7 @@ mod tests {
         svc_c
             .contacts
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .insert(pk_bin.clone(), preexisting);
         assert_eq!(svc_c.import_vault(&blob).unwrap(), 0);
         assert_eq!(svc_c.contact_state(&pk_bin), Some(ContactState::Blocked));

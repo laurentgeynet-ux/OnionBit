@@ -117,12 +117,36 @@ impl TorrentChecker {
         if public.is_empty() {
             return Ok(Vec::new());
         }
-        let result = if tracker_url.starts_with("udp://") {
-            self.udp_scrape(tracker_url, &public).await
-        } else if tracker_url.starts_with("http://") || tracker_url.starts_with("https://") {
-            self.http_scrape(tracker_url, &public).await
-        } else {
+        let udp = tracker_url.starts_with("udp://");
+        let http = tracker_url.starts_with("http://") || tracker_url.starts_with("https://");
+        if !udp && !http {
             return Err(CoreError::InvalidState("schema de tracker inconnu"));
+        }
+        // Un scrape wire transporte au plus 32 infohashes : au-dela,
+        // ils etaient silencieusement tronques — on decoupe en lots
+        // (`check_tracker` n'est appele qu'avec 1 hash aujourd'hui,
+        // mais l'API publique accepte une liste).
+        let mut gathered: Vec<HealthInfo> = Vec::new();
+        let mut chunk_err: Option<CoreError> = None;
+        for chunk in public.chunks(MAX_INFOHASHES_PER_SCRAPE) {
+            let r = if udp {
+                self.udp_scrape(tracker_url, chunk).await
+            } else {
+                self.http_scrape(tracker_url, chunk).await
+            };
+            match r {
+                Ok(mut hs) => gathered.append(&mut hs),
+                Err(e) => {
+                    chunk_err = Some(e);
+                    break;
+                }
+            }
+        }
+        // Lot en echec apres des reponses recues : le tracker est
+        // vivant — les santes deja acquises sont conservees.
+        let result = match (gathered.is_empty(), chunk_err) {
+            (true, Some(e)) => Err(e),
+            _ => Ok(gathered),
         };
         // `tracker_state` Python (`alive`/`failures`/`last_check`) —
         // alimente le statut affiche par tracker dans l'API.

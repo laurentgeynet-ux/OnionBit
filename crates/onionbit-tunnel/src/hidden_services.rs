@@ -127,7 +127,7 @@ impl Drop for PendingGuard<'_> {
                 .community
                 .inner
                 .lock()
-                .unwrap()
+                .unwrap_or_else(|e| e.into_inner())
                 .swarms
                 .get_mut(&self.info_hash)
             {
@@ -202,7 +202,7 @@ impl TunnelCommunity {
         hops: usize,
         seeder_sk: Option<LibNaClSecretKey>,
     ) {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         // Re-joindre un swarm identique reinitialiserait son etat
         // (points d'introduction decouverts, `last_lookup`,
         // connexions e2e) : le moniteur rejoint a la
@@ -221,7 +221,11 @@ impl TunnelCommunity {
 
     /// `leave_swarm`.
     pub fn leave_swarm(&self, info_hash: &[u8; 20]) {
-        self.inner.lock().unwrap().swarms.remove(info_hash);
+        self.inner
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .swarms
+            .remove(info_hash);
     }
 
     /// Abonne un receveur aux notifications de liaison e2e
@@ -233,7 +237,7 @@ impl TunnelCommunity {
     /// `select_circuit_for_infohash` + `create_circuit_for_infohash` :
     /// sauts du swarm, +1 pour `IP_SEEDER`/`RP_DOWNLOADER`.
     fn swarm_circuit_hops(&self, info_hash: &[u8; 20], ctype: &str) -> Option<usize> {
-        let inner = self.inner.lock().unwrap();
+        let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         let swarm = inner.swarms.get(info_hash)?;
         let mut hops = swarm.hops;
         if ctype == CIRCUIT_TYPE_IP_SEEDER || ctype == CIRCUIT_TYPE_RP_DOWNLOADER {
@@ -254,7 +258,7 @@ impl TunnelCommunity {
             let ready = self
                 .inner
                 .lock()
-                .unwrap()
+                .unwrap_or_else(|e| e.into_inner())
                 .circuits
                 .get(&circuit_id)
                 .map(|c| c.state() == crate::routing::CIRCUIT_STATE_READY);
@@ -286,7 +290,7 @@ impl TunnelCommunity {
             Exit(UdpAddress),
         }
         let via = {
-            let inner = self.inner.lock().unwrap();
+            let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(c) = inner.circuits.get(&circuit_id) {
                 Via::Circuit(
                     c.first_hop()
@@ -331,7 +335,7 @@ impl TunnelCommunity {
         required_ip: Option<&Peer>,
     ) -> Result<u32, Ipv8Error> {
         let (hops, _seeder_pk) = {
-            let inner = self.inner.lock().unwrap();
+            let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             let swarm = inner
                 .swarms
                 .get(&info_hash)
@@ -388,7 +392,7 @@ impl TunnelCommunity {
         info_hash: [u8; 20],
     ) -> Result<tokio::sync::oneshot::Receiver<()>, Ipv8Error> {
         let seeder_pk = {
-            let inner = self.inner.lock().unwrap();
+            let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             inner
                 .swarms
                 .get(&info_hash)
@@ -399,7 +403,7 @@ impl TunnelCommunity {
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.inner
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .ip_requests
             .insert(identifier, tx);
         let p = tp::EstablishIntro {
@@ -409,7 +413,7 @@ impl TunnelCommunity {
             public_key: seeder_pk,
         };
         let addr = {
-            let inner = self.inner.lock().unwrap();
+            let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             inner
                 .circuits
                 .get(&circuit_id)
@@ -429,7 +433,11 @@ impl TunnelCommunity {
         let this = self.clone();
         tokio::spawn(async move {
             tokio::time::sleep(this.settings.circuit_timeout).await;
-            this.inner.lock().unwrap().ip_requests.remove(&identifier);
+            this.inner
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .ip_requests
+                .remove(&identifier);
         });
         Ok(rx)
     }
@@ -443,7 +451,7 @@ impl TunnelCommunity {
         cid: u32,
     ) {
         let exit_cid = {
-            let mut inner = self.inner.lock().unwrap();
+            let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             if inner.intro_point_for.contains_key(&p.public_key) {
                 tracing::debug!("intro point deja connu pour cette cle");
                 return;
@@ -490,7 +498,7 @@ impl TunnelCommunity {
     /// `on_intro_established` : complete l'attente `IPRequestCache`.
     pub(crate) fn on_intro_established(self: &Arc<Self>, p: tp::IntroEstablished) {
         let announce = {
-            let mut inner = self.inner.lock().unwrap();
+            let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             match inner.ip_requests.remove(&p.identifier) {
                 Some(tx) => {
                     // "Established introduction tunnel %s" (info).
@@ -558,7 +566,7 @@ impl TunnelCommunity {
     /// chaque circuit `IP_SEEDER` pret republie son `DHTIntroPointPayload`.
     pub async fn reannounce_intro_points(self: &Arc<Self>, info_hash: [u8; 20]) {
         let circuits = {
-            let mut inner = self.inner.lock().unwrap();
+            let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             let last = inner.ip_announced_at.get(&info_hash).copied();
             if last.is_some_and(|t| t.elapsed() < self.settings.intro_reannounce_interval) {
                 return;
@@ -600,7 +608,7 @@ impl TunnelCommunity {
     /// `seeder_pk` d'un swarm (`seeder_sk` ephemere par swarm, comme
     /// pyipv8) — `None` si le swarm est inconnu ou non seede.
     fn seeder_pk_for(&self, info_hash: &[u8; 20]) -> Option<Vec<u8>> {
-        let inner = self.inner.lock().unwrap();
+        let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         inner
             .swarms
             .get(info_hash)
@@ -768,11 +776,11 @@ impl TunnelCommunity {
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.inner
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .rp_requests
             .insert(identifier, tx);
         let addr = {
-            let inner = self.inner.lock().unwrap();
+            let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             inner
                 .circuits
                 .get(&cid)
@@ -794,7 +802,11 @@ impl TunnelCommunity {
                 Ok(Err(_)) => return Err(Ipv8Error::Malformed("cache rp abandonne")),
                 Err(_) => {
                     // Timeout : purge l'entree orpheline du cache.
-                    self.inner.lock().unwrap().rp_requests.remove(&identifier);
+                    self.inner
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .rp_requests
+                        .remove(&identifier);
                     return Err(Ipv8Error::Malformed("timeout rendezvous-established"));
                 }
             };
@@ -814,7 +826,7 @@ impl TunnelCommunity {
         cid: u32,
     ) {
         {
-            let mut inner = self.inner.lock().unwrap();
+            let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             if !inner.exit_sockets.contains_key(&cid) {
                 return;
             }
@@ -860,7 +872,13 @@ impl TunnelCommunity {
 
     /// `on_rendezvous_established` : complete `RPRequestCache`.
     pub(crate) fn on_rendezvous_established(self: &Arc<Self>, p: tp::RendezvousEstablished) {
-        if let Some(tx) = self.inner.lock().unwrap().rp_requests.remove(&p.identifier) {
+        if let Some(tx) = self
+            .inner
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .rp_requests
+            .remove(&p.identifier)
+        {
             let _ = tx.send(p.rendezvous_point);
         }
     }
@@ -928,7 +946,7 @@ impl TunnelCommunity {
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.inner
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .peers_requests
             .insert(identifier, tx);
         let p = tp::PeersRequest {
@@ -943,7 +961,7 @@ impl TunnelCommunity {
         let via_tunnel = match target {
             Some(ip) => {
                 let last_hop_pk = {
-                    let inner = self.inner.lock().unwrap();
+                    let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
                     inner
                         .circuits
                         .get(&cid)
@@ -965,7 +983,7 @@ impl TunnelCommunity {
             .await?;
         } else {
             let addr = {
-                let inner = self.inner.lock().unwrap();
+                let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
                 inner
                     .circuits
                     .get(&cid)
@@ -987,7 +1005,7 @@ impl TunnelCommunity {
                 // consommee — purge explicite du cache de requetes.
                 self.inner
                     .lock()
-                    .unwrap()
+                    .unwrap_or_else(|e| e.into_inner())
                     .peers_requests
                     .remove(&identifier);
                 Err(Ipv8Error::Malformed("timeout peers-response"))
@@ -1058,12 +1076,17 @@ impl TunnelCommunity {
         // `DHTCommunityProvider.lookup`). Chemin requis pour qu'un
         // point de sortie qui n'est pas le point d'introduction puisse
         // quand meme repondre.
-        let need_dht = circuit_id
-            .is_some_and(|cid| self.inner.lock().unwrap().exit_sockets.contains_key(&cid));
+        let need_dht = circuit_id.is_some_and(|cid| {
+            self.inner
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .exit_sockets
+                .contains_key(&cid)
+        });
         let dht = if need_dht { self.dht_provider() } else { None };
 
         let peers: Vec<tp::IntroductionInfo> = {
-            let mut inner = self.inner.lock().unwrap();
+            let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             // `if info_hash in self.pex` Python : le store PEX
             // repond d'abord (nos annonces `intro_points_for`).
             if let Some(store) = inner.pex.get_mut(&p.info_hash) {
@@ -1177,7 +1200,7 @@ impl TunnelCommunity {
         let tx = self
             .inner
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .peers_requests
             .remove(&p.identifier);
         if let Some(tx) = tx {
@@ -1215,7 +1238,7 @@ impl TunnelCommunity {
     pub(crate) async fn do_peer_discovery(self: &Arc<Self>) {
         // Swarms eligibles (sous verrou, sans await).
         let work: Vec<[u8; 20]> = {
-            let inner = self.inner.lock().unwrap();
+            let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             inner
                 .swarms
                 .iter()
@@ -1243,7 +1266,7 @@ impl TunnelCommunity {
     /// `create_e2e` vers les `seeder_pk` non connectes.
     async fn swarm_lookup(self: &Arc<Self>, info_hash: [u8; 20]) {
         let (hops, targets, dht_lookup_due) = {
-            let mut inner = self.inner.lock().unwrap();
+            let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             let Some(swarm) = inner.swarms.get_mut(&info_hash) else {
                 return;
             };
@@ -1310,7 +1333,7 @@ impl TunnelCommunity {
         // `add_intro_point` + `create_e2e` vers les seeder_pk non
         // connectes (`do_peer_discovery` Python).
         let pending: Vec<IntroductionPoint> = {
-            let mut inner = self.inner.lock().unwrap();
+            let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             let Some(swarm) = inner.swarms.get_mut(&info_hash) else {
                 return;
             };
@@ -1340,7 +1363,7 @@ impl TunnelCommunity {
     /// Oracle de l'indicateur « connexion en cours » des services
     /// applicatifs (messagerie).
     pub fn e2e_pending(&self, info_hash: &[u8; 20]) -> bool {
-        let inner = self.inner.lock().unwrap();
+        let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         if inner
             .swarms
             .get(info_hash)
@@ -1381,7 +1404,7 @@ impl TunnelCommunity {
         // neuf dans le meme appel.
         loop {
             let pending = {
-                let mut inner = self.inner.lock().unwrap();
+                let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
                 let entry = inner
                     .swarms
                     .get_mut(&info_hash)
@@ -1433,7 +1456,7 @@ impl TunnelCommunity {
             }
         }
         let hops = {
-            let inner = self.inner.lock().unwrap();
+            let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             inner.swarms.get(&info_hash).map(|s| s.hops)
         }
         .ok_or(Ipv8Error::Malformed("swarm inconnu"))?;
@@ -1459,7 +1482,7 @@ impl TunnelCommunity {
         p.pack(&mut w)?;
         let packet = pack_unsigned(&self.community_id, msg::CREATE_E2E, &w.into_bytes());
         {
-            let mut inner = self.inner.lock().unwrap();
+            let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             inner.e2e_requests.insert(
                 identifier,
                 E2ERequest {
@@ -1498,7 +1521,7 @@ impl TunnelCommunity {
             Stale,
         }
         let stage = {
-            let inner = self.inner.lock().unwrap();
+            let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(req) = inner.e2e_requests.get(&identifier) {
                 Stage::Create(req.packet.clone())
             } else if let Some(req) = inner.link_requests.get(&identifier) {
@@ -1513,7 +1536,7 @@ impl TunnelCommunity {
         match stage {
             Stage::Create(packet) => {
                 let hops = {
-                    let inner = self.inner.lock().unwrap();
+                    let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
                     inner.swarms.get(&info_hash).map(|s| s.hops)
                 }
                 .ok_or(Ipv8Error::Malformed("swarm inconnu"))?;
@@ -1527,7 +1550,7 @@ impl TunnelCommunity {
             }
             Stage::Link { circuit_id, cookie } => {
                 let addr = {
-                    let inner = self.inner.lock().unwrap();
+                    let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
                     inner
                         .circuits
                         .get(&circuit_id)
@@ -1548,7 +1571,13 @@ impl TunnelCommunity {
                 Ok(true)
             }
             Stage::Stale => {
-                if let Some(s) = self.inner.lock().unwrap().swarms.get_mut(&info_hash) {
+                if let Some(s) = self
+                    .inner
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .swarms
+                    .get_mut(&info_hash)
+                {
                     s.pending_e2e.remove(intro_point);
                 }
                 Ok(false)
@@ -1568,7 +1597,7 @@ impl TunnelCommunity {
         match circuit_id {
             None => {
                 let fwd = {
-                    let inner = self.inner.lock().unwrap();
+                    let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
                     inner.intro_point_for.get(&p.node_public_key).copied()
                 };
                 if let Some((relay_cid, _)) = fwd {
@@ -1609,7 +1638,7 @@ impl TunnelCommunity {
                 let requester = UdpAddress::from(src);
                 let key = (p.identifier, requester.clone());
                 let action = {
-                    let mut inner = self.inner.lock().unwrap();
+                    let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
                     let Some(s) = inner.swarms.get_mut(&p.info_hash) else {
                         tracing::debug!("create-e2e recu sans swarm seeder");
                         return;
@@ -1653,7 +1682,13 @@ impl TunnelCommunity {
                             // La reservation expire quoi qu'il arrive :
                             // echec -> un retry ulterieur est retraite ;
                             // succes -> la reponse reste en `seen_e2e`.
-                            if let Some(s) = this.inner.lock().unwrap().swarms.get_mut(&info_hash) {
+                            if let Some(s) = this
+                                .inner
+                                .lock()
+                                .unwrap_or_else(|e| e.into_inner())
+                                .swarms
+                                .get_mut(&info_hash)
+                            {
                                 s.in_flight_e2e.remove(&key);
                             }
                         });
@@ -1682,7 +1717,7 @@ impl TunnelCommunity {
             }
         };
         let (seeder_sk, rp_exit_key) = {
-            let inner = self.inner.lock().unwrap();
+            let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             let sk = inner
                 .swarms
                 .get(&p.info_hash)
@@ -1708,7 +1743,7 @@ impl TunnelCommunity {
         };
         // Les cles e2e sont posees sur le circuit RP_SEEDER.
         {
-            let mut inner = self.inner.lock().unwrap();
+            let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(c) = inner.circuits.get_mut(&rp.circuit) {
                 c.hs_session_keys = Some(session_keys.clone());
                 c.e2e_shared_secret = Some(ds.shared);
@@ -1751,7 +1786,7 @@ impl TunnelCommunity {
         }
         let packet = pack_unsigned(&self.community_id, msg::CREATED_E2E, &w.into_bytes());
         {
-            let mut inner = self.inner.lock().unwrap();
+            let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(s) = inner.swarms.get_mut(&p.info_hash) {
                 // Borne `MAX_SEEN_E2E` : au plafond on vide plutot que
                 // de figer le cache (un dedup gele laisserait chaque
@@ -1791,7 +1826,7 @@ impl TunnelCommunity {
         let req = {
             self.inner
                 .lock()
-                .unwrap()
+                .unwrap_or_else(|e| e.into_inner())
                 .e2e_requests
                 .remove(&p.identifier)
         };
@@ -1805,7 +1840,13 @@ impl TunnelCommunity {
         // d'echec plus bas, le guard purge le pending pour permettre
         // une nouvelle tentative.
         let mut pending_guard = PendingGuard::new(self, &req);
-        if let Some(s) = self.inner.lock().unwrap().swarms.get_mut(&req.info_hash) {
+        if let Some(s) = self
+            .inner
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .swarms
+            .get_mut(&req.info_hash)
+        {
             s.pending_e2e.insert(
                 req.intro_point.clone(),
                 (PendingE2e::Building, Instant::now()),
@@ -1900,7 +1941,7 @@ impl TunnelCommunity {
         // Connection swarm.
         self.inner
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .swarms
             .get_mut(&req.info_hash)
             .map(|s| s.connections.insert(cid, req.intro_point.clone()));
@@ -1913,7 +1954,7 @@ impl TunnelCommunity {
         }
         let identifier = self.next_id();
         {
-            let mut inner = self.inner.lock().unwrap();
+            let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             inner.link_requests.insert(
                 identifier,
                 LinkRequest {
@@ -1936,7 +1977,7 @@ impl TunnelCommunity {
         }
         pending_guard.disarm();
         let addr = {
-            let inner = self.inner.lock().unwrap();
+            let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             match inner
                 .circuits
                 .get(&cid)
@@ -1973,7 +2014,7 @@ impl TunnelCommunity {
     /// sortie en relais `rendezvous_relay` et repond `linked-e2e`.
     pub(crate) fn on_link_e2e(self: &Arc<Self>, src: SocketAddr, p: tp::LinkE2E, circuit_id: u32) {
         let linked = {
-            let mut inner = self.inner.lock().unwrap();
+            let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             let Some(&relay_cid) = inner.rendezvous_point_for.get(&p.cookie) else {
                 tracing::debug!("link-e2e : cookie inconnu");
                 return;
@@ -2066,7 +2107,7 @@ impl TunnelCommunity {
         let req = self
             .inner
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .link_requests
             .remove(&p.identifier);
         let Some(req) = req else {
@@ -2074,7 +2115,7 @@ impl TunnelCommunity {
             return;
         };
         {
-            let mut inner = self.inner.lock().unwrap();
+            let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             // La liaison est faite : la requete n'est plus en cours —
             // un nouvel appel `create_e2e` pourra ouvrir un handshake
             // neuf vers ce point d'introduction.

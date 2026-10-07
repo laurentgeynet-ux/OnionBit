@@ -40,7 +40,12 @@ impl DownloadsRowsCache {
     where
         F: std::future::Future<Output = DownloadsRows>,
     {
-        if let Some((fetched, rows)) = self.inner.lock().unwrap().as_ref() {
+        if let Some((fetched, rows)) = self
+            .inner
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+        {
             if fetched.elapsed() < DOWNLOADS_ROWS_TTL {
                 return (**rows).clone();
             }
@@ -48,19 +53,25 @@ impl DownloadsRowsCache {
         let _guard = self.fetch.lock().await;
         // Re-test sous le verrou : un appelant precedent vient peut-etre
         // de rafraichir.
-        if let Some((fetched, rows)) = self.inner.lock().unwrap().as_ref() {
+        if let Some((fetched, rows)) = self
+            .inner
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+        {
             if fetched.elapsed() < DOWNLOADS_ROWS_TTL {
                 return (**rows).clone();
             }
         }
         let rows = fetch.await;
-        *self.inner.lock().unwrap() = Some((std::time::Instant::now(), Arc::new(rows.clone())));
+        *self.inner.lock().unwrap_or_else(|e| e.into_inner()) =
+            Some((std::time::Instant::now(), Arc::new(rows.clone())));
         rows
     }
 
     /// Invalide le cache (endpoints mutants de `/api/downloads`).
     pub fn invalidate(&self) {
-        *self.inner.lock().unwrap() = None;
+        *self.inner.lock().unwrap_or_else(|e| e.into_inner()) = None;
     }
 }
 
@@ -175,7 +186,7 @@ impl AppState {
     /// Pousse une erreur d'ajout dans le journal CLI (borne 100,
     /// le plus recent en tete — comme `_add_err` Python).
     pub fn push_cli_error(&self, msg: impl Into<String>) {
-        let mut log = self.unhandled_cli.lock().unwrap();
+        let mut log = self.unhandled_cli.lock().unwrap_or_else(|e| e.into_inner());
         log.push_front(msg.into());
         log.truncate(100);
     }

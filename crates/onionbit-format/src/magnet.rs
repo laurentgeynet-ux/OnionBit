@@ -52,9 +52,15 @@ impl MagnetLink {
 
         let mut link = MagnetLink::default();
         for param in query.split('&') {
-            let (key, value) = param
-                .split_once('=')
-                .ok_or_else(|| FormatError::BadMagnet(format!("parametre sans '=': {param}")))?;
+            // Tolerance aux liens du web/RSS : `&` terminal, `&&` et
+            // flags sans valeur (`&fl`) sont ignores plutot que de
+            // rejeter tout le magnet (comportement libtorrent).
+            if param.is_empty() {
+                continue;
+            }
+            let Some((key, value)) = param.split_once('=') else {
+                continue;
+            };
             let value = percent_decode(value);
             match key {
                 "xt" => match value.strip_prefix("urn:btih:") {
@@ -232,6 +238,16 @@ mod tests {
             m.info_hash_hex(),
             "a9993e364706816aba3e25717850c26c9cd0d89d"
         );
+    }
+
+    /// `&` terminal, `&&` et flags sans `=` (`&fl`) sont ignores
+    /// plutot que de rejeter tout le lien (comportement libtorrent).
+    #[test]
+    fn parse_magnet_tolere_params_vides_et_flags() {
+        let uri = format!("magnet:?xt=urn:btih:{}&&dn=x&fl&", "a".repeat(40));
+        let m = MagnetLink::parse(&uri).unwrap();
+        assert_eq!(m.display_name.as_deref(), Some("x"));
+        assert!(m.info_hash_v1.is_some());
     }
 
     #[test]

@@ -853,7 +853,7 @@ async fn run_speed_test(
             let mut send_times: Vec<(u32, u64, u64)> = stats
                 .iter()
                 .filter(|(tid, _)| !tx_ids.contains(*tid))
-                .map(|(tid, s)| (*tid, s[2], s[3]))
+                .map(|(tid, s)| (*tid, s[0], s[1]))
                 .collect();
             send_times.sort_by_key(|e| e.1);
             let mut recv_times: Vec<(u32, u64, u64)> = stats

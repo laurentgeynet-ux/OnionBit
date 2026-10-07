@@ -165,6 +165,61 @@ async fn torrent_checker_udp_scrape() {
     assert!(healths[0].self_checked);
 }
 
+/// Plus de 32 infohashes : `check_tracker` decoupe en lots de 32 —
+/// avant, tout ce qui depassait etait silencieusement tronque.
+#[tokio::test(flavor = "multi_thread")]
+async fn torrent_checker_udp_scrape_decoupe_en_lots() {
+    use std::sync::atomic::Ordering;
+    let tracker = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let tracker_addr = tracker.local_addr().unwrap();
+    let n_scrapes = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    {
+        let n_scrapes = n_scrapes.clone();
+        tokio::spawn(async move {
+            let mut buf = [0u8; 4096];
+            while let Ok((n, src)) = tracker.recv_from(&mut buf).await {
+                let data = &buf[..n];
+                let action = i32::from_be_bytes(data[8..12].try_into().unwrap());
+                let txn = &data[12..16];
+                let mut resp = Vec::new();
+                if action == 0 {
+                    resp.extend_from_slice(&0i32.to_be_bytes());
+                    resp.extend_from_slice(txn);
+                    resp.extend_from_slice(&42i64.to_be_bytes());
+                } else if action == 2 {
+                    n_scrapes.fetch_add(1, Ordering::SeqCst);
+                    resp.extend_from_slice(&2i32.to_be_bytes());
+                    resp.extend_from_slice(txn);
+                    for _ in 0..(n - 16) / 20 {
+                        resp.extend_from_slice(&5i32.to_be_bytes());
+                        resp.extend_from_slice(&0i32.to_be_bytes());
+                        resp.extend_from_slice(&2i32.to_be_bytes());
+                    }
+                }
+                let _ = tracker.send_to(&resp, src).await;
+            }
+        });
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    let db = Arc::new(Database::open(&dir.path().join("t.db")).unwrap());
+    let checker = TorrentChecker::new(
+        db,
+        Notifier::new(),
+        onionbit_network_policy::IpPolicy::permissive(),
+    )
+    .await
+    .unwrap();
+
+    let ihs: Vec<[u8; 20]> = (0..40u8).map(|i| [i; 20]).collect();
+    let healths = checker
+        .check_tracker(&format!("udp://{tracker_addr}"), &ihs)
+        .await
+        .unwrap();
+    assert_eq!(healths.len(), 40, "les 40 infohashes sont scrapes");
+    assert_eq!(n_scrapes.load(Ordering::SeqCst), 2, "2 lots de 32+8");
+}
+
 /// Invariant de non-fuite (docs/security/threat_model.md) : un
 /// infohash en telechargement/seeding anonyme (`downloads.anon_hops >
 /// 0`) ne doit JAMAIS etre scrape en clair — le tracker apprendrait

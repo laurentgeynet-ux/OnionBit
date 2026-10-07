@@ -81,11 +81,13 @@ impl TunnelCommunity {
                 let mut test_rx = this.test_tx.subscribe();
                 tokio::spawn(async move {
                     while let Ok((tid, n)) = test_rx.recv().await {
-                        let mut map = results.lock().unwrap();
+                        let mut map = results.lock().unwrap_or_else(|e| e.into_inner());
                         if let Some(e) = map.get_mut(&tid) {
                             e[2] = now_ms();
                             e[3] = n as u64;
-                            rtts.lock().unwrap().push(e[2].saturating_sub(e[0]));
+                            rtts.lock()
+                                .unwrap_or_else(|e| e.into_inner())
+                                .push(e[2].saturating_sub(e[0]));
                         }
                     }
                 })
@@ -98,7 +100,7 @@ impl TunnelCommunity {
                 tokio::spawn(async move {
                     loop {
                         tokio::time::sleep(Duration::from_millis(SPEED_TEST_CALLBACK_MS)).await;
-                        let snap = results.lock().unwrap().clone();
+                        let snap = results.lock().unwrap_or_else(|e| e.into_inner()).clone();
                         if tx.send((snap, false)).await.is_err() {
                             break;
                         }
@@ -118,7 +120,7 @@ impl TunnelCommunity {
                         // `if sum(rtts[-10:])/10 > target_rtt:
                         // sleep(0)` — yield sans bloquer.
                         let throttled = {
-                            let rtts = rtts.lock().unwrap();
+                            let rtts = rtts.lock().unwrap_or_else(|e| e.into_inner());
                             rtts.len() > RTT_WINDOW
                                 && rtts.iter().rev().take(RTT_WINDOW).sum::<u64>()
                                     / RTT_WINDOW as u64
@@ -135,13 +137,17 @@ impl TunnelCommunity {
                             circuit_id,
                             identifier: tid,
                             response_size,
-                            data: random_data[..request_size as usize].to_vec(),
+                            // `random_data[:request_size]` Python ne
+                            // panique pas au-dela de 2048 — la tranche
+                            // retourne le prefixe disponible.
+                            data: random_data[..(request_size as usize).min(SPEED_TEST_RANDOM_BUF)]
+                                .to_vec(),
                         };
                         match this.send_cell(&addr, &p).await {
                             Ok(n) => {
                                 results
                                     .lock()
-                                    .unwrap()
+                                    .unwrap_or_else(|e| e.into_inner())
                                     .insert(tid, [now_ms(), n as u64, 0, 0]);
                             }
                             Err(_) => break,
@@ -157,7 +163,7 @@ impl TunnelCommunity {
             // `sleep(target_rtt * 2)` : drain des reponses encore en
             // vol avant le snapshot final.
             tokio::time::sleep(Duration::from_millis(SPEED_TEST_TARGET_RTT_MS * 2)).await;
-            let snap = results.lock().unwrap().clone();
+            let snap = results.lock().unwrap_or_else(|e| e.into_inner()).clone();
             let _ = tx.send((snap, true)).await;
         });
         rx
@@ -170,11 +176,18 @@ impl TunnelCommunity {
         // `on_test_request` pyipv8 : sans `PEER_FLAG_SPEED_TEST` dans
         // nos flags de service, on ignore ; la reponse n'est faite
         // que si le circuit_id est connu (sortie ou RP e2e).
-        if self.inner.lock().unwrap().peer_flags & PEER_FLAG_SPEED_TEST == 0 {
+        if self
+            .inner
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .peer_flags
+            & PEER_FLAG_SPEED_TEST
+            == 0
+        {
             return;
         }
         let known = {
-            let inner = self.inner.lock().unwrap();
+            let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             inner.exit_sockets.contains_key(&p.circuit_id)
                 || inner.circuits.get(&p.circuit_id).is_some_and(|c| {
                     c.ctype == CIRCUIT_TYPE_RP_SEEDER || c.ctype == CIRCUIT_TYPE_RP_DOWNLOADER

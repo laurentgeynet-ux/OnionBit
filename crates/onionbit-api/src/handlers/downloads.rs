@@ -259,7 +259,7 @@ pub async fn get_downloads(
             "loaded": downloads.len(),
             "all_loaded": restore_done,
         },
-        "clierrors": state.unhandled_cli.lock().unwrap().len(),
+        "clierrors": state.unhandled_cli.lock().unwrap_or_else(|e| e.into_inner()).len(),
     }))
 }
 
@@ -314,7 +314,10 @@ fn peers_json(state: &AppState, infohash: &str) -> serde_json::Value {
 /// `GET /api/downloads/clierrors` — vide la file des erreurs CLI
 /// (`get_unhandled_cli` Python : `{"errors": [...]}`, drain).
 pub async fn get_cli_errors(State(state): State<AppState>) -> Json<serde_json::Value> {
-    let mut log = state.unhandled_cli.lock().unwrap();
+    let mut log = state
+        .unhandled_cli
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let errors: Vec<String> = log.drain(..).collect();
     Json(serde_json::json!({ "errors": errors }))
 }
@@ -557,7 +560,7 @@ pub async fn add_download(
         let ask = state
             .daemon_config
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .libtorrent
             .ask_download_settings;
         if cli && ask {
