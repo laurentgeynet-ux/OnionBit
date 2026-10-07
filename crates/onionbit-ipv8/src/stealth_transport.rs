@@ -184,6 +184,11 @@ pub struct StealthConfig {
     pub hs_attempts_max: u8,
     /// Timeout d'une session `Pending` sans reponse.
     pub pending_timeout_secs: u64,
+    /// Cooldown avant de re-composer un pont dont le handshake a
+    /// echoue (timeout/`hs_attempts_max`) — sans cela le dial
+    /// proactif retenterait en boucle un pont mort : motif de
+    /// trafic regulier fingerprintable et ressource non bornee.
+    pub dial_cooldown_secs: u64,
     /// Idle timeout d'une session `Established` (purge → silence).
     pub session_idle_timeout_secs: u64,
     /// Periode du tick interne (purge, retry, refill jetons, cover).
@@ -193,6 +198,10 @@ pub struct StealthConfig {
     pub cover_traffic: bool,
     /// Intervalle `[min,max]` ms entre trames de cover.
     pub cover_interval_ms: (u64, u64),
+    /// Borne de la table `bridge_pks` (configures + appris via
+    /// `add_bridge`/`INTRO`) — un flot d'intros ne fait pas grossir
+    /// la table sans limite.
+    pub max_bridges: usize,
 }
 
 impl Default for StealthConfig {
@@ -214,10 +223,12 @@ impl Default for StealthConfig {
             hs_retry_secs: 2,
             hs_attempts_max: 8,
             pending_timeout_secs: 30,
+            dial_cooldown_secs: 120,
             session_idle_timeout_secs: 300,
             tick_ms: 500,
             cover_traffic: false,
             cover_interval_ms: (500, 2000),
+            max_bridges: 256,
         }
     }
 }
@@ -314,6 +325,10 @@ fn now_ts() -> u64 {
         .unwrap_or(0)
 }
 
+/// Hook `session etablie cote serveur` : `(addr, client_id)` —
+/// appele une fois par `hs1` accepte, hors verrous internes.
+pub type SessionHook = Arc<dyn Fn(SocketAddr, &[u8]) + Send + Sync>;
+
 /// Transport furtif : morphing complet du trafic UDP.
 pub struct StealthTransport {
     /// Socket UDP sous-jacent — forme filaire morphee uniquement.
@@ -328,9 +343,19 @@ pub struct StealthTransport {
     buckets: Mutex<HashMap<IpAddr, RateBucket>>,
     /// Jetons du plafond global de tentatives `hs1` par tick.
     global_tokens: AtomicU64,
-    /// Index `addr → pk` des ponts amonts (mutable : ajout a
-    /// chaud via `POST /api/stealth/bridges`).
+    /// Index `addr -> pk` des ponts amonts (mutable : ajout a
+    /// chaud via `POST /api/stealth/bridges` et `INTRO` ext).
     bridge_pks: Mutex<HashMap<SocketAddr, [u8; 32]>>,
+    /// Ponts en cooldown apres handshake echoue (`addr` → instant
+    /// ou un nouveau `hs1` est a nouveau autorise). Bornee par
+    /// `max_bridges`, entrees echues purgees au tick.
+    dial_backoff: Mutex<HashMap<SocketAddr, Instant>>,
+    /// Hook `session etablie cote serveur` — appele avec
+    /// `(addr, client_id)` pour chaque `hs1` accepte (ADR-0017 :
+    /// alimente `Network` pour que les overlays ext/tunnel parlent
+    /// au-dessus du transport morphe ; le client n'a pas d'identite
+    /// du pont au handshake, il l'apprend des paquets signes).
+    session_hook: Mutex<Option<SessionHook>>,
     /// Metriques du banc hostile.
     metrics: StealthMetrics,
 }
@@ -368,6 +393,8 @@ impl StealthTransport {
             buckets: Mutex::new(HashMap::new()),
             global_tokens: AtomicU64::new(global_tokens),
             bridge_pks,
+            dial_backoff: Mutex::new(HashMap::new()),
+            session_hook: Mutex::new(None),
             metrics: StealthMetrics::default(),
             cfg,
         })
@@ -397,11 +424,25 @@ impl StealthTransport {
     /// Ajoute un pont amont a chaud (`POST /api/stealth/bridges`) —
     /// deduplique sur l'adresse (la pk la plus recente gagne : une
     /// cle re-emise par invitation remplace l'ancienne).
+    /// Ajoute un pont amont a chaud (`POST /api/stealth/bridges`,
+    /// `INTRO` ext) — deduplique sur l'adresse (la pk la plus
+    /// recente gagne : une cle re-emise par invitation remplace
+    /// l'ancienne). Table bornee a `max_bridges` : au-dela les
+    /// nouvelles adresses sont ignorees (une pk connue reste
+    /// remplacable).
     pub fn add_bridge(&self, entry: BridgeEntry) {
-        self.bridge_pks
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .insert(entry.addr, entry.pk);
+        let mut pks = self.bridge_pks.lock().unwrap_or_else(|e| e.into_inner());
+        if !pks.contains_key(&entry.addr) && pks.len() >= self.cfg.max_bridges {
+            return;
+        }
+        pks.insert(entry.addr, entry.pk);
+    }
+
+    /// Enregistre le hook `session etablie cote serveur` —
+    /// `(addr, client_id)` pour chaque `hs1` accepte. Appele hors
+    /// verrous internes (le callback peut toucher `Network`).
+    pub fn set_session_hook(&self, hook: SessionHook) {
+        *self.session_hook.lock().unwrap_or_else(|e| e.into_inner()) = Some(hook);
     }
 
     /// Nombre de ponts amonts configures (diagnostic — les adresses
@@ -467,7 +508,9 @@ impl StealthTransport {
         enum Action {
             Deliver(Vec<u8>),
             // (hs2 emis, plaintexts de file a flusher)
-            EstablishedThenFlush(Vec<u8>, Vec<Vec<u8>>),
+            // (hs2 emis, frames de file, `client_id` appris du hs1
+            // cote serveur — `None` cote client apres `hs2_open`).
+            EstablishedThenFlush(Vec<u8>, Vec<Vec<u8>>, Option<Vec<u8>>),
             Silence,
         }
 
@@ -533,7 +576,7 @@ impl StealthTransport {
                             // Le premier flush reemet les
                             // datagrammes en attente — pas de
                             // reponse a renvoyer.
-                            Action::EstablishedThenFlush(Vec::new(), plain)
+                            Action::EstablishedThenFlush(Vec::new(), plain, None)
                         }
                         Err(_) => {
                             self.metrics.hs2_rejected.fetch_add(1, Ordering::Relaxed);
@@ -579,7 +622,11 @@ impl StealthTransport {
                                         }),
                                     );
                                     self.metrics.hs1_accepted.fetch_add(1, Ordering::Relaxed);
-                                    Action::EstablishedThenFlush(d2, Vec::new())
+                                    Action::EstablishedThenFlush(
+                                        d2,
+                                        Vec::new(),
+                                        Some(acc.client_id.clone()),
+                                    )
                                 } else {
                                     // Table pleine : la session n'est
                                     // pas installee, le hs2 n'est pas
@@ -600,7 +647,20 @@ impl StealthTransport {
 
         match action {
             Action::Deliver(pt) => on_rx(src, &pt),
-            Action::EstablishedThenFlush(hs2, frames) => {
+            Action::EstablishedThenFlush(hs2, frames, client_id) => {
+                // Hook post-pose de session : `Network` apprend le
+                // pair (ext/tunnel peuvent alors parler sur la
+                // session morphee). Hors verrous — le callback peut
+                // prendre ses propres locks.
+                if let (Some(hook), Some(id)) = (
+                    self.session_hook
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .clone(),
+                    client_id,
+                ) {
+                    hook(src, &id);
+                }
                 let raw = self.raw.clone();
                 let metrics_out = !hs2.is_empty() || !frames.is_empty();
                 if metrics_out {
@@ -625,6 +685,7 @@ impl StealthTransport {
         let now = Instant::now();
         let mut resend: Vec<(SocketAddr, Vec<u8>)> = Vec::new();
         let mut cover: Vec<(SocketAddr, Vec<u8>)> = Vec::new();
+        let mut failed: Vec<SocketAddr> = Vec::new();
         {
             let mut sessions = self.sessions.lock().unwrap_or_else(|e| e.into_inner());
             let cfg = &self.cfg;
@@ -648,6 +709,7 @@ impl StealthTransport {
                             metrics
                                 .queue_dropped
                                 .fetch_add(p.queue.len() as u64, Ordering::Relaxed);
+                            failed.push(*addr);
                             return false;
                         }
                         if now.duration_since(p.last_sent) >= Duration::from_secs(cfg.hs_retry_secs)
@@ -677,6 +739,62 @@ impl StealthTransport {
                     }
                 }
             });
+
+            // Amorcage proactif : en stealth personne n'emet avant
+            // la session (ext a besoin de `Network`, `Network` a
+            // besoin du hook `hs1` accepte) — le tick initie un
+            // `hs1` vers chaque pont configure/appris sans session.
+            // Couvre aussi les ponts ajoutes a chaud (`add_bridge`).
+            {
+                let mut backoff = self.dial_backoff.lock().unwrap_or_else(|e| e.into_inner());
+                // Purge des entrees echues puis cooldown des ponts
+                // dont la session `Pending` vient d'expirer.
+                backoff.retain(|_, t| now < *t);
+                let cool = Duration::from_secs(cfg.dial_cooldown_secs);
+                for a in failed {
+                    backoff.insert(a, now + cool);
+                }
+            }
+            if cfg.role.initiates() {
+                let backoff = self.dial_backoff.lock().unwrap_or_else(|e| e.into_inner());
+                let to_dial: Vec<(SocketAddr, [u8; 32])> = self
+                    .bridge_pks
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .iter()
+                    .filter(|(a, _)| {
+                        !sessions.contains_key(*a) && backoff.get(*a).is_none_or(|t| now >= *t)
+                    })
+                    .take(cfg.max_sessions.saturating_sub(sessions.len()))
+                    .map(|(a, pk)| (*a, *pk))
+                    .collect();
+                drop(backoff);
+                for (addr, pk) in to_dial {
+                    let x = HiddenEph::generate();
+                    match hs1_seal(&x, &pk, &cfg.client_id, now_ts(), &cfg.params) {
+                        Ok((d1, ctx)) => {
+                            sessions.insert(
+                                addr,
+                                PeerState::Pending(Pending {
+                                    x,
+                                    ctx,
+                                    bridge_pk: pk,
+                                    attempts: 1,
+                                    last_sent: now,
+                                    started: now,
+                                    queue: VecDeque::new(),
+                                    queue_bytes: 0,
+                                }),
+                            );
+                            resend.push((addr, d1));
+                            metrics.hs1_sent.fetch_add(1, Ordering::Relaxed);
+                        }
+                        Err(_) => {
+                            metrics.queue_dropped.fetch_add(1, Ordering::Relaxed);
+                        }
+                    }
+                }
+            }
 
             // Cover traffic : une trame `inner=vide` vers chaque
             // session etablie a cadence randomisee — le peer l'ouvre
@@ -1179,5 +1297,39 @@ mod tests {
                 "lien hostile accepte: {bad:?}"
             );
         }
+    }
+
+    /// ADR-0017 §1 (etape 54) : une intro `INTRO` forgee est
+    /// **inerte** — l'adresse annoncee est celle d'un vrai pont mais
+    /// la `bridge_pk` ne correspond pas a son secret : le `hs1` est
+    /// rejete au MAC, aucune session ne s'etablit et l'applicatif ne
+    /// recoit jamais rien (pas de repli en clair).
+    #[tokio::test]
+    async fn intro_forgee_handshake_inerte() {
+        let (b_cfg, _bk) = cfg(StealthRole::Bridge);
+        let (bridge, _rx, _jb) = spawn(b_cfg).await;
+        let b_addr = bridge.local_addr().unwrap();
+
+        // Le client apprend par INTRO l'adresse du pont reel avec
+        // une `bridge_pk` forgee — le transport fait ce que le sink
+        // de la communaute ext ferait.
+        let (mut c_cfg, _ck) = cfg(StealthRole::Client);
+        c_cfg.bridges = vec![BridgeEntry {
+            addr: b_addr,
+            pk: [0x42; 32],
+        }];
+        let (client, mut rx_c, _jc) = spawn(c_cfg).await;
+
+        client.send_to(b_addr, b"data").await.unwrap();
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        assert!(
+            bridge.metrics().hs1_rejected.load(Ordering::Relaxed) >= 1,
+            "hs1 sous pk forgee doit etre rejete"
+        );
+        assert_eq!(bridge.session_count(), 0);
+        assert!(
+            recv_timeout(&mut rx_c, 300).await.is_none(),
+            "le client ne doit rien recevoir"
+        );
     }
 }

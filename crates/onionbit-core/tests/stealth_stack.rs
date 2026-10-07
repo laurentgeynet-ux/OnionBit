@@ -251,7 +251,97 @@ async fn stealth_aucun_marqueur_legacy_sur_le_fil() {
     bridge.stop().await;
 }
 
+/// e2e ADR-0017 etape 54 : la session vers le pont se forme
+/// proactivement (tick du transport), le hook `hs1` alimente
+/// `Network`, le dialogue ext `hello`+`INTRO` circule morphe et le
+/// client apprend des ponts supplementaires via le sink.
+#[tokio::test]
+async fn stealth_intro_decouverte_ponts() {
+    let dir_b = tempfile::tempdir().unwrap();
+    let dir_c = tempfile::tempdir().unwrap();
+
+    let mut cfg_b = stealth_cfg(dir_b.path().to_path_buf(), "bridge", vec![]);
+    cfg_b.ipv8.ext_enabled = true;
+    let bridge = CoreSession::start_offline(cfg_b, Notifier::new())
+        .await
+        .expect("start bridge");
+    let b_stack = bridge.ipv8().unwrap();
+    let b_transport = b_stack.stealth_transport.clone().unwrap();
+    let b_ext = b_stack.ext.clone().expect("ext actif en stealth");
+    // Le pont connait un autre pont (graine) qu'il pourra annoncer.
+    b_ext.seed_intro("10.77.0.1:8000".parse().unwrap(), [0x33; 32]);
+
+    let mut b_entry = onionbit_ipv8::stealth_transport::BridgeEntry::parse_link(
+        &b_transport.bridge_link().unwrap(),
+    )
+    .unwrap();
+    b_entry
+        .addr
+        .set_ip(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST));
+
+    let mut cfg_c = stealth_cfg(
+        dir_c.path().to_path_buf(),
+        "client",
+        vec![b_entry.to_link()],
+    );
+    cfg_c.ipv8.ext_enabled = true;
+    let client = CoreSession::start_offline(cfg_c, Notifier::new())
+        .await
+        .expect("start client");
+    let c_stack = client.ipv8().unwrap();
+    let c_transport = c_stack.stealth_transport.clone().unwrap();
+    let c_ext = c_stack.ext.clone().expect("ext actif cote client");
+
+    // 1. Session proactive : le tick du client emet `hs1` vers le
+    //    pont configure — aucun trafic applicatif n'est requis.
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    while b_transport.session_count() == 0 {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "session jamais etablie (amorcage proactif casse)"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    // 2. Le hook a enregistre le client dans le `Network` du pont :
+    //    le tick `hello` le sonde (l'intervalle par defaut est trop
+    //    long pour le test — on force le tick).
+    b_ext.hello_tick().await;
+    // Sondes de progression (debug du chemin).
+    eprintln!(
+        "net_b={} extpeers_b={} extpeers_c={}",
+        b_stack.network.verified_peers().len(),
+        b_ext.ext_peer_count(),
+        c_ext.ext_peer_count()
+    );
+    // 3. Le client marque le pont ext, repond `hello` puis enchaine
+    //    `INTRO_REQ` ; le pont sert sa graine -> le client apprend le
+    //    pont supplementaire via le sink (`bridge_count` 1 -> 2).
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    while c_transport.bridge_count() < 2 {
+        eprintln!(
+            "loop: net_b={} extpeers_b={} extpeers_c={} introd_c={}",
+            b_stack.network.verified_peers().len(),
+            b_ext.ext_peer_count(),
+            c_ext.ext_peer_count(),
+            c_ext.intro_table_len()
+        );
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "le client n'a appris aucun pont via INTRO"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        // Le `hello` a pu arriver avant que le client ne soit
+        // visible cote pont — on re-tick tant que le dialogue n'a
+        // pas eu lieu.
+        b_ext.hello_tick().await;
+    }
+    assert!(c_ext.intro_table_len() >= 1);
+    client.stop().await;
+    bridge.stop().await;
+}
+
 /// `anon_hops = 0` refuse en client/pont, autorise en gateway.
+
 #[tokio::test]
 async fn stealth_moteur_direct_refuse_hors_gateway() {
     // Client : le moteur direct est refuse.

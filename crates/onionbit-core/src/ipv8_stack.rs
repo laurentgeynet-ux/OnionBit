@@ -1854,6 +1854,16 @@ impl Ipv8Stack {
                     hello_jitter_pct: config.ext_hello_jitter_pct.min(100) as u8,
                     peer_ttl: std::time::Duration::from_secs(config.ext_peer_ttl_secs.max(60)),
                     peers_max: config.ext_peers_max.max(1) as usize,
+                    // ADR-0017 : decouverte interne de ponts — la
+                    // demande est activee en stealth ; le service ne
+                    // l'est que pour les roles serveur (un client
+                    // n'a rien a annoncer et ne sert jamais de
+                    // source d'enumeration).
+                    intro_enabled: stealth,
+                    intro_serve: stealth
+                        && stealth_transport
+                            .as_ref()
+                            .is_some_and(|t| t.role() != StealthRole::Client),
                     ..onionbit_ipv8::ext::ExtSettings::default()
                 },
             )
@@ -1866,6 +1876,22 @@ impl Ipv8Stack {
             e.set_ledger_store(Arc::new(crate::ext_ledger_store::DbLedgerStore::new(
                 db.clone(),
             )));
+            // ADR-0017 : en stealth, la table `intro` du pair ext
+            // est graine de ses ponts configures ; les entrees
+            // apprises alimentent le transport (`add_bridge`).
+            if let Some(t) = &stealth_transport {
+                if let Some(sc) = &stealth_cfg {
+                    for link in &sc.bridges {
+                        if let Ok(b) = BridgeEntry::parse_link(link) {
+                            e.seed_intro(b.addr, b.pk);
+                        }
+                    }
+                }
+                let t2 = t.clone();
+                e.set_intro_sink(Arc::new(move |addr, pk| {
+                    t2.add_bridge(BridgeEntry { addr, pk });
+                }));
+            }
             tasks.register(Some("OnionbitExtCommunity"), "hello", None);
             let e2 = e.clone();
             tokio::spawn(async move {
@@ -1875,6 +1901,18 @@ impl Ipv8Stack {
         } else {
             None
         };
+        // ADR-0017 : un `hs1` accepte enregistre le pair dans
+        // `Network` (identite = `client_id` du handshake) — sinon
+        // `hello_tick` n'a aucun candidat en stealth et le dialogue
+        // ext (dont `INTRO`) ne demarre jamais cote serveur.
+        if let (Some(t), Some(_)) = (&stealth_transport, &ext) {
+            let net = network.clone();
+            t.set_session_hook(Arc::new(move |addr, client_id| {
+                if let Some(p) = Peer::new(client_id.to_vec(), Some(UdpAddress::from(addr))) {
+                    net.add_verified(p);
+                }
+            }));
+        }
         // ADR-0017 : pas de `DHTDiscoveryCommunity` en stealth —
         // son trafic mainline sur l'endpoint serait non-morphe par
         // nature (et rejete) ; la decouverte passe par `INTRO`.

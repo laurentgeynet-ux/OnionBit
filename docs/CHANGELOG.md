@@ -3,6 +3,33 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## ADR-0017 étape 54 : `INTRO` ext anti-scraping (worktree adr17, 2026-10-07)
+
+- **Ext** (`onionbit-ipv8::ext`) : messages `INTRO_REQ`/`INTRO`
+  bornés (`{ addr, bridge_pk }` ×N≤3 par réponse), table partitionnée
+  (bornes par requête/par pair/globale, TTL, aucune persistance des
+  intros non sollicitées). Séquence graduée : un petit budget de
+  graines est servi sans solde ledger, l'expansion est gatée par la
+  réputation bilatérale, la diffusion large (`push`) réservée aux
+  pairs réciproques. Requêtes de pairs inconnus refusées en silence.
+- **Amorçage proactif** (`StealthTransport`) : le tick compose un
+  `hs1` vers chaque pont configuré/appris sans session — sinon
+  `Network` reste vide et ext ne démarre jamais. `dial_backoff` :
+  un pont dont le handshake échoue est en cooldown
+  (`dial_cooldown_secs`) pour ne pas émettre un motif de retries
+  régulier fingerprintable.
+- **Hook de session** : `hs1` accepté → `session_hook(addr,
+  client_id)` enregistre le pair dans `Network` côté serveur ;
+  `set_intro_sink` route les intros apprises vers
+  `add_bridge` du transport (table `bridge_pks` bornée à
+  `max_bridges`). Une intro forgée reste inerte : le pair annoncé
+  doit prouver `bridge_pk` au handshake.
+- **Tests hostiles** : trame malformée/tronquée, pair inconnu,
+  quotas et fenêtre bornée, énumération en boucle, table apprises
+  bornée, TTL, seed sans réputation, push réciproques seuls,
+  intro forgée inerte (transport), e2e `stealth_stack` : client +
+  pont réels, session proactive, découverte `INTRO` effective.
+
 ## ADR-0017 étape 53 : mode `stealth` du daemon (worktree adr17, 2026-10-07)
 
 - **`Ipv8Stack`** : `Ipv8Config.stealth` propage la section persistée ;
