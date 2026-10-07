@@ -33,8 +33,12 @@
 
 param(
     [switch]$SkipCheck,
+    # `$Profile` est une variable automatique PowerShell (chemin du
+    # profil utilisateur) — nom interne `BuildProfile`, `-Profile`
+    # reste accepte en alias pour la doc existante.
+    [Alias("Profile")]
     [ValidateSet("release", "debug")]
-    [string]$Profile = "release",
+    [string]$BuildProfile = "release",
     [switch]$ZipRelease
 )
 
@@ -51,15 +55,15 @@ try {
         Write-Host "== cargo check pre-build ==" -ForegroundColor Cyan
         cargo check --workspace --all-targets --all-features
     }
-    Write-Host "== cargo build --profile $Profile (daemon + cli) ==" -ForegroundColor Cyan
+    Write-Host "== cargo build --profile $BuildProfile (daemon + cli) ==" -ForegroundColor Cyan
     # cargo n'a pas de profil « debug » : c'est « dev » (sortie
     # target\debug — inchangée pour la suite du script).
-    $cargoProfile = if ($Profile -eq "release") { "release" } else { "dev" }
+    $cargoProfile = if ($BuildProfile -eq "release") { "release" } else { "dev" }
     cargo build --profile $cargoProfile -p onionbit-daemon -p onionbit-cli
     if ($LASTEXITCODE -ne 0) { throw "cargo build a echoue ($LASTEXITCODE)" }
 
     # -- 2) Interface Flutter Windows -----------------------------------
-    Write-Host "== flutter build windows ($Profile) ==" -ForegroundColor Cyan
+    Write-Host "== flutter build windows ($BuildProfile) ==" -ForegroundColor Cyan
     # Cache CMake perime : `CMAKE_INSTALL_PREFIX` est gele dans
     # `CMakeCache.txt` au premier configure
     # (`CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT`) avec le
@@ -83,7 +87,7 @@ try {
     Push-Location $app
     try {
         flutter pub get | Out-Null
-        $flag = if ($Profile -eq "release") { "--release" } else { "--debug" }
+        $flag = if ($BuildProfile -eq "release") { "--release" } else { "--debug" }
         flutter build windows $flag
         if ($LASTEXITCODE -ne 0) { throw "flutter build windows a echoue ($LASTEXITCODE)" }
         # Interface web : servie par le daemon en same-origin (etape 33
@@ -95,8 +99,8 @@ try {
     }
 
     # -- 3) Assemblage dans dist\ ---------------------------------------
-    $cargoOut = Join-Path $root "target\$Profile"
-    $flutterOut = Join-Path $app "build\windows\x64\runner\$(@{$true='Release';$false='Debug'}[$Profile -eq 'release'])"
+    $cargoOut = Join-Path $root "target\$BuildProfile"
+    $flutterOut = Join-Path $app "build\windows\x64\runner\$(@{$true='Release';$false='Debug'}[$BuildProfile -eq 'release'])"
     if (-not (Test-Path "$cargoOut\onionbit-daemon.exe")) {
         throw "onionbit-daemon.exe introuvable dans $cargoOut"
     }
@@ -155,9 +159,9 @@ try {
 
     # -- 5) Manifest de build -------------------------------------------
     $manifest = @{
-        profile   = $Profile
+        profile   = $BuildProfile
         daemon    = (cargo pkgid -p onionbit-daemon).Split("#")[-1]
-        ui        = "OnionBit.exe (Flutter windows $Profile) + web/"
+        ui        = "OnionBit.exe (Flutter windows $BuildProfile) + web/"
         api       = $listen
         commit    = (git rev-parse --short HEAD 2>$null)
         rustc     = (rustc -V)
