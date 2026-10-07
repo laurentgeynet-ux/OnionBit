@@ -3,6 +3,17 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Recherche : dates des résultats distants (années ~58000) corrigées (2026-10-07)
+
+- Les pairs Tribler **Python** émettent `updated` (= `timestamp`
+  signé des métadonnées) en epoch **millisecondes** ; OnionBit
+  l'émet en secondes. Le parseur Dart multipliait par 1000 à
+  l'aveugle → années ~58000 affichées pour les résultats distants.
+- `_parseDate` applique désormais une heuristique de magnitude
+  (`< 1e11` → secondes, sinon déjà ms) et la colonne Date préfère
+  `created` (date de création du torrent, secondes partout) à
+  `updated` (mise à jour du noeud chez le pair émetteur).
+
 ## Diagnostic : carte « Trafic relais » ne mesure que le relais (2026-10-07)
 
 - La carte IPv8 du Diagnostic affichait les débits/totaux de

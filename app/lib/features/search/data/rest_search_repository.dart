@@ -19,11 +19,17 @@ class RestSearchRepository implements SearchRepository {
           .toList() ??
       const [];
 
-  /// `updated`/`torrent_date` : epoch secondes côté Rust, chaîne ISO
-  /// possible côté réponses distantes — les deux sont acceptés.
+  /// `created`/`torrent_date` : epoch **secondes** partout ;
+  /// `updated` : epoch **millisecondes** chez les pairs Tribler
+  /// Python (timestamp signé `>Q` des métadonnées), secondes chez
+  /// OnionBit — heuristique de magnitude pour les deux mondes.
   static DateTime? _parseDate(dynamic v) {
     if (v is num) {
-      return DateTime.fromMillisecondsSinceEpoch(v.toInt() * 1000);
+      var ms = v.toInt();
+      // < 1e11 = secondes (1e11 s ≈ année 5138 ; une valeur ms
+      // réaliste est >= 9.8e11, l'ère BitTorrent débutant en 2001).
+      if (ms.abs() < 100000000000) ms *= 1000;
+      return DateTime.fromMillisecondsSinceEpoch(ms);
     }
     if (v is String) return DateTime.tryParse(v);
     return null;
@@ -37,7 +43,10 @@ class RestSearchRepository implements SearchRepository {
         source: source,
         seeders: (j['num_seeders'] as num?)?.toInt(),
         leechers: (j['num_leechers'] as num?)?.toInt(),
-        date: _parseDate(j['updated'] ?? j['torrent_date']),
+        // `created` (date de création du torrent, secondes) d'abord —
+        // plus parlante que `updated` (mise à jour du noeud chez le
+        // pair émetteur, unité ms chez Python).
+        date: _parseDate(j['created'] ?? j['updated'] ?? j['torrent_date']),
       );
 
   /// Parse une entrée `remote_query_results` (même forme `results`).
