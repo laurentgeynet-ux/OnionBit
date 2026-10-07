@@ -116,6 +116,12 @@ impl RssManager {
                     tokio::select! {
                         _ = stop_rx.changed() => break,
                         _ = tick.tick() => {
+                            // URL retiree par `update` : le watcher
+                            // etait droppe de la table mais la tache
+                            // tournait encore indefiniment.
+                            if !mgr.watchers.lock().unwrap().contains_key(w.url.as_str()) {
+                                break;
+                            }
                             if tokio::time::Instant::now() < *w.next_check.lock().unwrap() {
                                 continue;
                             }

@@ -54,7 +54,7 @@ pub fn build(state: AppState) -> Router {
 /// d'ou cette route fourre-tout.
 async fn api_not_found(State(state): State<AppState>, req: Request<Body>) -> Response {
     if let Some(expected) = state.api_key.as_deref().filter(|k| !k.is_empty()) {
-        if crate::auth::provided_key(&req).as_deref() != Some(expected) {
+        if !crate::auth::key_matches(&req, expected) {
             return ApiError::unauthorized().into_response();
         }
     }

@@ -90,16 +90,28 @@ pub async fn fetch_checked_with(
 }
 
 /// Lit un corps de reponse borne a `HTTP_BODY_LIMIT` octets.
-pub async fn read_body_limited(resp: reqwest::Response) -> Result<bytes::Bytes> {
+/// `content_length` est absent en `Transfer-Encoding: chunked` —
+/// l'accumulation est bornee quoi qu'il arrive (un serveur distant
+/// ne peut pas gonfler la reponse au-dela du plafond).
+pub async fn read_body_limited(mut resp: reqwest::Response) -> Result<bytes::Bytes> {
     if resp
         .content_length()
         .is_some_and(|l| l as usize > HTTP_BODY_LIMIT)
     {
         return Err(CoreError::InvalidState("corps http trop volumineux"));
     }
-    resp.bytes()
+    let mut body = bytes::BytesMut::new();
+    while let Some(chunk) = resp
+        .chunk()
         .await
-        .map_err(|_| CoreError::InvalidState("lecture du corps http impossible"))
+        .map_err(|_| CoreError::InvalidState("lecture du corps http impossible"))?
+    {
+        if body.len() + chunk.len() > HTTP_BODY_LIMIT {
+            return Err(CoreError::InvalidState("corps http trop volumineux"));
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(body.freeze())
 }
 
 /// Extrait les valeurs textuelles d'un flux XML (equivalent de

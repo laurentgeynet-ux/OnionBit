@@ -1092,6 +1092,17 @@ impl TunnelCommunity {
             .collect()
     }
 
+    /// `ready_circuits().contains(&cid)` sans allocation — lookup
+    /// O(1) pour le chemin chaud datagramme (socket tunnel, socks5).
+    pub fn is_circuit_ready(&self, cid: u32) -> bool {
+        self.inner
+            .lock()
+            .unwrap()
+            .circuits
+            .get(&cid)
+            .is_some_and(|c| c.state() == CIRCUIT_STATE_READY)
+    }
+
     /// Ids des circuits `READY`.
     pub fn ready_circuits(&self) -> Vec<u32> {
         self.inner
@@ -1825,7 +1836,7 @@ impl TunnelCommunity {
         candidates: Vec<Vec<u8>>,
         max_tries: i32,
     ) -> Result<(), Ipv8Error> {
-        let zero: UdpAddress = UdpAddress::from("0.0.0.0:0".parse::<SocketAddr>().unwrap());
+        let zero: UdpAddress = UdpAddress::unspecified();
         let my_pk = self.key.public_key().to_bin();
         let failure_ttl = self.settings.circuit_timeout;
         let (
@@ -4205,7 +4216,7 @@ impl TunnelCommunity {
             return;
         };
 
-        let zero_addr = "0.0.0.0:0".parse::<SocketAddr>().unwrap();
+        let zero_addr = SocketAddr::from(([0, 0, 0, 0], 0));
         let node_is_zero = p
             .node_addr
             .to_socket_addr()
@@ -4528,7 +4539,7 @@ impl TunnelCommunity {
         }
         let p = tp::Data {
             circuit_id,
-            dest_address: UdpAddress::from("0.0.0.0:0".parse::<SocketAddr>().unwrap()),
+            dest_address: UdpAddress::unspecified(),
             org_address: UdpAddress::from(src),
             data: data.to_vec(),
         };

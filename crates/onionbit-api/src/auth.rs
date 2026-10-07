@@ -36,16 +36,21 @@ pub async fn api_key_auth(
         return next.run(req).await;
     };
 
-    // Comparaison en temps constant : `==` sur `&str` s'arrete a la
-    // premiere divergence, fuite de timing exploitable en theorie
-    // meme sur loopback (le daemon peut etre expose via --api-port
-    // sur d'autres interfaces).
-    let valid = provided_key(&req).is_some_and(|p| p.as_bytes().ct_eq(expected.as_bytes()).into());
-    if valid {
+    if key_matches(&req, expected) {
         next.run(req).await
     } else {
         ApiError::unauthorized().into_response()
     }
+}
+
+/// La requete porte-t-elle la cle attendue ? Comparaison en temps
+/// constant : `==`/`!=` sur `&str` s'arrete a la premiere divergence,
+/// fuite de timing exploitable en theorie meme sur loopback (le
+/// daemon peut etre expose via --api-port sur d'autres interfaces).
+/// Factorise `api_key_auth` + `router::api_not_found` (les chemins
+/// inconnus sous `/api` doivent garder la meme exigence).
+pub(crate) fn key_matches(req: &Request<axum::body::Body>, expected: &str) -> bool {
+    provided_key(req).is_some_and(|p| p.as_bytes().ct_eq(expected.as_bytes()).into())
 }
 
 /// Cle fournie par la requete (`X-Api-Key`, `?key=`, cookie `api_key`)

@@ -319,7 +319,7 @@ impl TunnelUdpSocket {
     /// sur un circuit `DATA` aleatoire (`set_udp_associate_default_
     /// remote` de `TriblerTunnelCommunity`).
     pub fn pin_circuit(&self, target: SocketAddr, cid: u32) {
-        self.inner.dest_circuits.lock().unwrap().insert(target, cid);
+        self.inner.insert_dest(target, cid);
     }
 
     /// Injecte un datagramme comme s'il arrivait du circuit (forme
@@ -426,11 +426,31 @@ impl Inner {
 }
 
 impl Inner {
+    /// Insere une epingle `dest -> circuit` bornee a
+    /// `dest_map_max_entries` : la DHT interroge des milliers de
+    /// destinations distinctes et une entree n'etait purgee qu'a la
+    /// reinterrogation de la MEME cible — la table croissait sans
+    /// limite. A la borne : eviction des epingles de circuits morts
+    /// puis d'une entree arbitraire (re-epinglee au prochain envoi).
+    fn insert_dest(&self, target: SocketAddr, cid: u32) {
+        let max = self.tunnel.settings.dest_map_max_entries;
+        let mut map = self.dest_circuits.lock().unwrap();
+        if map.len() >= max && !map.contains_key(&target) {
+            map.retain(|_, c| self.tunnel.is_circuit_ready(*c));
+            if map.len() >= max {
+                if let Some(&k) = map.keys().next() {
+                    map.remove(&k);
+                }
+            }
+        }
+        map.insert(target, cid);
+    }
+
     /// Resout/pin le circuit pour `target` puis envoie la cellule.
     async fn dispatch(&self, target: SocketAddr, data: &[u8]) -> Result<(), Ipv8Error> {
         let dest = UdpAddress::from(target);
         let pinned = self.dest_circuits.lock().unwrap().get(&target).copied();
-        let cid = { pinned.filter(|cid| self.tunnel.ready_circuits().contains(cid)) };
+        let cid = { pinned.filter(|cid| self.tunnel.is_circuit_ready(*cid)) };
         let cid = match cid {
             Some(cid) => cid,
             None => {
@@ -448,7 +468,7 @@ impl Inner {
                     self.dest_circuits.lock().unwrap().remove(&target);
                 }
                 let cid = self.select_circuit()?;
-                self.dest_circuits.lock().unwrap().insert(target, cid);
+                self.insert_dest(target, cid);
                 cid
             }
         };

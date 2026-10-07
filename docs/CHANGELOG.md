@@ -3,6 +3,34 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Durcissement (revue externe 3) : auth ct_eq 404, `dest_circuits` borné, scrape IPv6, corps chunked, RSS zombies (2026-10-07)
+
+- **`api_not_found` en temps constant** : le repli 401/404 comparait
+  la clé par `!=` (arrêt à la première divergence) — `key_matches`
+  (`ct_eq`) factorisé entre middleware et repli.
+- **`dest_circuits` borné** (`tunnel_udp_socket`) : la table
+  `dest -> circuit` n'était purgee qu'à la reinterrogation de la
+  même cible — la DHT la faisait croître indéfiniment.
+  `dest_map_max_entries` (4096, `TunnelSettings`) + eviction des
+  épingles de circuits morts puis arbitraire.
+- **`is_circuit_ready(cid)`** O(1) sans allocation remplace
+  `ready_circuits().contains()` sur le chemin datagramme (socket
+  tunnel + socks5) — fini le `Vec` alloué + balayage par paquet.
+- **Scrape UDP IPv6** (`torrent_checker`) : la socket éphémère est
+  liée `[::]:0` quand la cible est V6 (un bind `0.0.0.0` échouait à
+  l'émission vers V6).
+- **`read_body_limited` borné même en chunked** : sans
+  `Content-Length`, `resp.bytes()` lisait le flux entier en mémoire
+  (OOM possible sur RSS/scrape) — accumulation par `chunk()` avec
+  plafond strict.
+- **Watchers RSS zombies** : `update()` retirait l'URL de la table
+  mais la tâche périodique continuait ses GET toutes les 120 s —
+  elle s'arrête au prochain tick si l'URL n'y figure plus.
+- **`unwrap()` résiduels en prod** : les 6 sites
+  `"0.0.0.0:0".parse().unwrap()` remplacés par
+  `UdpAddress::unspecified()` / `SocketAddr::from(([0,0,0,0], 0))`
+  (règle AGENTS « pas d'unwrap hors tests »).
+
 ## Recherche : dates des résultats distants (années ~58000) corrigées (2026-10-07)
 
 - Les pairs Tribler **Python** émettent `updated` (= `timestamp`

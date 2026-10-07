@@ -37,7 +37,7 @@ use crate::routing::{circuit_id_to_ip, CIRCUIT_ID_PORT};
 const RELAY_BUF: usize = 65535;
 /// Adresse factice (`0.0.0.0:0`, convention `tunnel_data` pyipv8).
 fn zero_address() -> UdpAddress {
-    UdpAddress::from("0.0.0.0:0".parse::<SocketAddr>().unwrap())
+    UdpAddress::unspecified()
 }
 
 /// `dial` : expose `circuit_id` (e2e lie) comme une socket UDP

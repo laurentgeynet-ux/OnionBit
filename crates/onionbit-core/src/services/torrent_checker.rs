@@ -215,8 +215,15 @@ impl TorrentChecker {
         let target = target.ok_or(CoreError::InvalidState("tracker sans adresse"))?;
         // Socket ephemere propre a ce scrape : connect+scrape partagent
         // le port source, et aucune autre tache ne peut consommer les
-        // datagrammes de retour.
-        let socket = tokio::net::UdpSocket::bind("0.0.0.0:0").await?;
+        // datagrammes de retour. Famille d'adresse calquee sur la
+        // cible : un socket lie `0.0.0.0` ne peut pas emettre vers
+        // un tracker resolu en IPv6.
+        let socket = tokio::net::UdpSocket::bind(if target.is_ipv6() {
+            "[::]:0"
+        } else {
+            "0.0.0.0:0"
+        })
+        .await?;
 
         // connect : !q conn_id, i action, i txn
         let txn: i32 = rand::random::<u32>() as i32;

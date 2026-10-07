@@ -131,6 +131,13 @@ pub struct TunnelSettings {
     /// socket de sortie — la table ne peut pas croitre sans limite
     /// sous un flot de destinations distinctes.
     pub exit_inbound_max_sources: usize,
+    /// Extension Rust : borne de la table `dest -> circuit` epinglee
+    /// par socket tunnel (`tunnel_udp_socket`) — la DHT interroge des
+    /// milliers de destinations distinctes par heure et une entree
+    /// n'etait purgee qu'a la reinterrogation de la MEME cible : la
+    /// table croissait indefiniment. A la borne, on evince d'abord
+    /// les epingles de circuits morts puis une entree arbitraire.
+    pub dest_map_max_entries: usize,
     /// Intervalle entre deux republications DHT des points
     /// d'introduction d'un swarm seede (`reannounce_intro_points`) —
     /// extension Rust : pyipv8 ne re-annonce jamais, une annonce
@@ -191,6 +198,7 @@ impl Default for TunnelSettings {
             data_exit_peer: None,
             exit_inbound_source_ttl: Duration::from_secs(300),
             exit_inbound_max_sources: 2048,
+            dest_map_max_entries: 4096,
             intro_reannounce_interval: Duration::from_secs(60),
             dht_reannounce_stagger: Duration::from_millis(500),
             served_rate_window: Duration::from_secs(5),

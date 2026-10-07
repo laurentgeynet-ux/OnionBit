@@ -358,12 +358,7 @@ impl Socks5Server {
                 self.register_return(cid, socket.clone(), src);
                 return self
                     .tunnel
-                    .send_data(
-                        cid,
-                        &dest,
-                        &UdpAddress::from("0.0.0.0:0".parse::<SocketAddr>().unwrap()),
-                        &data,
-                    )
+                    .send_data(cid, &dest, &UdpAddress::unspecified(), &data)
                     .await;
             }
         }
@@ -381,12 +376,7 @@ impl Socks5Server {
         self.register_return(cid, socket.clone(), src);
         // `send_data` : origine factice (`0.0.0.0:0` comme la reference).
         self.tunnel
-            .send_data(
-                cid,
-                &dest,
-                &UdpAddress::from("0.0.0.0:0".parse::<SocketAddr>().unwrap()),
-                &data,
-            )
+            .send_data(cid, &dest, &UdpAddress::unspecified(), &data)
             .await
     }
 
@@ -419,7 +409,7 @@ impl Socks5Server {
 
     /// `true` si le circuit est encore pret (pour la table sticky).
     fn circuit_is_usable(&self, cid: u32) -> bool {
-        self.tunnel.ready_circuits().contains(&cid)
+        self.tunnel.is_circuit_ready(cid)
     }
 
     /// Enregistre le mapping circuit -> (socket, client) apres une

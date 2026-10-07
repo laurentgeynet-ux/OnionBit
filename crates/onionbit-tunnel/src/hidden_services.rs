@@ -166,7 +166,7 @@ fn pack_unsigned(cid: &onionbit_ipv8::CommunityId, msg_id: u8, body: &[u8]) -> V
 
 /// Adresse factice `0.0.0.0:0`.
 fn unspecified_addr() -> UdpAddress {
-    UdpAddress::from("0.0.0.0:0".parse::<SocketAddr>().unwrap())
+    UdpAddress::unspecified()
 }
 
 impl TunnelCommunity {
