@@ -106,12 +106,17 @@ try {
     # (state_dir bundle-aware = <exe>\state) puis ouvre l'URL dans le
     # navigateur par defaut. Un .cmd affichait une fenetre de console ;
     # un .lnk n'en ouvre aucune (binaire en sous-systeme GUI).
+    # Icone : le .ico embarque dans l'exe est aussi copie dans dist\
+    # — un raccourci pointe plus fiablement un .ico qu'un index de
+    # ressource d'exe.
+    Copy-Item (Join-Path $root "crates\onionbit-daemon\resources\onionbit.ico") `
+        -Destination (Join-Path $dist "onionbit.ico") -Force
     $wsh = New-Object -ComObject WScript.Shell
     $lnk = $wsh.CreateShortcut((Join-Path $dist "OnionBit Web.lnk"))
     $lnk.TargetPath = Join-Path $dist "onionbit-daemon.exe"
     $lnk.Arguments = "--open-webui"
     $lnk.WorkingDirectory = $dist
-    $lnk.IconLocation = "$(Join-Path $dist 'onionbit-daemon.exe'),0"
+    $lnk.IconLocation = "$(Join-Path $dist 'onionbit.ico'),0"
     $lnk.Description = "Interface web OnionBit"
     $lnk.Save()
 
