@@ -30,8 +30,8 @@ into the Release folder for a standalone bundle.
 
 ```sh
 # Stage: UI bundle + daemon + cli + LICENSE + LISEZMOI.txt
-# -> dist/onionbit-<version>-windows-x64/
-Compress-Archive -Path dist/onionbit-<version>-windows-x64 `
+# -> dist/OnionBit-<version>-windows-x64/
+Compress-Archive -Path dist/OnionBit-<version>-windows-x64 `
                  -DestinationPath dist/OnionBit-<version>-windows-x64.zip
 ```
 

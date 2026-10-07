@@ -198,9 +198,9 @@ design — [ADR-0017](docs/architecture/decisions/0017-transport-furtif-anti-cen
 > [Releases](https://github.com/laurentgeynet-ux/OnionBit/releases) page:
 >
 > - **Windows x64** — `OnionBit-0.9.2-beta-windows-x64.zip`: unzip, run
->   `onionbit_ui.exe` — it starts the daemon automatically. Prefer a browser?
->   The daemon serves the same UI at `http://127.0.0.1:8085/` (API key in
->   `state\configuration.json`).
+>   `OnionBit.exe` — it starts the daemon automatically. Prefer a browser?
+>   `OnionBit Web.lnk` opens the same UI at `http://127.0.0.1:8085/` (API
+>   key in `state\configuration.json`).
 > - **Windows ARM64** — `OnionBit-0.9.2-beta-windows-arm64-headless.zip`: daemon + CLI
 >   (headless — no native Flutter ARM64 build yet; use the web UI in your
 >   browser).

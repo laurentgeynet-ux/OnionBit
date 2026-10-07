@@ -26,7 +26,7 @@
 # en icone systray (etape 29). Pour arreter : « Quitter » du menu tray
 # ou PUT /api/shutdown.
 #
-# `dist\state\` est cree par onionbit_ui.exe/onionbit-daemon.exe
+# `dist\state\` est cree par OnionBit.exe/onionbit-daemon.exe
 # (--state-dir) et n'est JAMAIS efface par ce script - c'est la donnee
 # utilisateur (base SQLite + telechargements). Seuls les artefacts de
 # build connus sont rafraichis.

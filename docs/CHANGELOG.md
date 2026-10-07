@@ -3,6 +3,18 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Packaging : résidus de l'ancien nommage nettoyés (2026-10-07)
+
+- `build_dist.ps1` : commentaire `onionbit_ui.exe` → `OnionBit.exe`
+  (la logique était déjà à jour depuis `da0bb27`).
+- `scripts/web_launch.ps1` **supprimé** : lanceur mort remplacé par
+  `OnionBit Web.lnk --open-webui` — il référençait encore le
+  `.cmd` disparu et rouvrirait une console. `build_dist.ps1` purge
+  toujours les vieilles copies dans `dist\`.
+- `gh_create_release.ps1`, `README.md`, `docs/BUILDING.md` :
+  `onionbit_ui.exe` → `OnionBit.exe`, bundle `dist/onionbit-*` →
+  `dist/OnionBit-*` cohérent avec le zip produit.
+
 ## Correctifs (revue externe 4) : `source_uri` upsert, schéma `row_json`, scrape BEP-48, TOCTOU trackers, mutex (2026-10-07)
 
 - **`downloads.upsert` : `source_uri` omis du `DO UPDATE`** — la
