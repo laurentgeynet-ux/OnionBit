@@ -59,7 +59,13 @@ pub async fn get_onionbit_stats(State(state): State<AppState>) -> Json<serde_jso
     });
 
     if let Some(stack) = state.session.ipv8() {
-        stats["peers"] = serde_json::json!(stack.discovery.peer_count());
+        // ADR-0017 : en stealth pas de `DiscoveryCommunity` — le
+        // compte de pairs connus vient alors de `Network` (ponts +
+        // pairs appris par `INTRO`).
+        stats["peers"] = serde_json::json!(match &stack.discovery {
+            Some(d) => d.peer_count(),
+            None => stack.network.verified_peers().len(),
+        });
         // Sessions libtorrent-equivalentes : moteur principal +
         // lanes anonymes (par nombre de sauts).
         let mut sessions = vec![serde_json::json!({"hops": 0})];

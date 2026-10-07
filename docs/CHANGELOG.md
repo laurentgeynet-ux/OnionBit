@@ -3,6 +3,37 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## ADR-0017 étape 53 : mode `stealth` du daemon (worktree adr17, 2026-10-07)
+
+- **`Ipv8Stack`** : `Ipv8Config.stealth` propage la section persistée ;
+  `start()` instancie `StealthTransport` (`RawUdpTransport` interne
+  bindé avec le même retry de ports) injecté dans `UdpEndpoint::new` —
+  compteurs d'octets et tap restent à la frontière socket et mesurent
+  donc les datagrammes morphés.
+- **Overlays publics exclus** : `discovery`/`content_discovery`/`dht`
+  deviennent `Option` (`None` en stealth ; signatures propagées à
+  `bandwidth`/`statistics`), bootstrap DNS officiel, restauration
+  `ipv8_peers`, re-sollicitation exit-node et OBF ext sautés — jamais
+  d'hybride (`stealth.enabled` × `ipv8.enabled` refusé partout).
+- **Secret de pont** persisté séparément de la config dans
+  `state_dir/stealth_bridge.key` (atomique, 0600) ; `bridge_link()`
+  sert le lien d'invitation pour serveurs (bridge/gateway).
+- **Moteur direct** : `stealth_blocks_direct` interdit `BtEngine::start`
+  + `engine_for(0)` en rôles `client`/`bridge` (RSS/torrent-checker
+  non démarrés) ; `gateway` conserve la sortie publique documentée.
+- **MTU propagé** : `link_mtu` des lanes uTP bridé à 1000 o ;
+  `http_response_chunk` et nouveau `max_cell_data_payload` bornent
+  les chunks HTTP et les cellules `data` à 1024 o — jamais de
+  fragmentation UDP sous le MTU stealth.
+- **Bloc `INFO` figé** au démarrage (`stealth_mode`, `role`,
+  `legacy_ipv8=disabled`, `public_dht=disabled`,
+  `direct_bittorrent=disabled`, `ext_obf=disabled_reason`).
+- **Tests** (`tests/stealth_stack.rs`, 5) : refus stealth×legacy,
+  validation fail-closed, lien d'invitation persistant, refus
+  `engine_for(0)` hors gateway, **oracle socket** — le tap ne voit que
+  des trames morphées pendant qu'un datagramme applicatif est démorphé
+  côté pont.
+
 ## ADR-0017 étape 52 : liens bridge + config + API (worktree adr17, 2026-10-07)
 
 - **`onionbit-bridge://<ip>:<port>#<pk_hex>`** : `BridgeEntry::

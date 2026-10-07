@@ -1538,6 +1538,9 @@ impl TunnelCommunity {
             }
         };
         let this = Arc::clone(self);
+        // Capture avant le spawn : `self` est `&Arc<Self>` et ne peut
+        // pas vivre dans la tache (`'static`).
+        let chunk_size = self.settings.http_response_chunk.max(1);
         tokio::spawn(async move {
             let result = tokio::time::timeout(
                 std::time::Duration::from_millis(crate::http_tunnel::HTTP_TCP_TIMEOUT_MS),
@@ -1548,14 +1551,8 @@ impl TunnelCommunity {
                 tracing::warn!(circuit_id, "requete TCP de sortie en echec");
                 return;
             };
-            let total = response
-                .len()
-                .div_ceil(crate::http_tunnel::HTTP_RESPONSE_CHUNK)
-                .max(1) as u16;
-            for (index, chunk) in response
-                .chunks(crate::http_tunnel::HTTP_RESPONSE_CHUNK)
-                .enumerate()
-            {
+            let total = response.len().div_ceil(chunk_size).max(1) as u16;
+            for (index, chunk) in response.chunks(chunk_size).enumerate() {
                 let part = tp::HttpResponse {
                     circuit_id,
                     identifier: p.identifier,
@@ -4684,6 +4681,14 @@ impl TunnelCommunity {
         let Some(addr) = addr else {
             return Err(Ipv8Error::Malformed("circuit absent ou sans hop"));
         };
+        // ADR-0017 : le filet `max_cell_data_payload` empeche une
+        // cellule `data` de depasser le budget du transport stealth
+        // (jamais de fragmentation UDP morphee). Inerte par defaut.
+        if data.len() > self.settings.max_cell_data_payload {
+            return Err(Ipv8Error::Malformed(
+                "cellule data au-dela du plafond transport",
+            ));
+        }
         tracing::trace!(circuit_id, ?addr, "send_data vers premier hop");
         let p = tp::Data {
             circuit_id,

@@ -1678,6 +1678,12 @@ impl DaemonConfig {
             ext_hello_jitter_pct: self.ext.hello_jitter_pct,
             ext_peer_ttl_secs: self.ext.peer_ttl_secs,
             ext_peers_max: self.ext.peers_max,
+            // ADR-0017 : section `stealth` passee brute — la
+            // validation stricte (role, liens, exclusion `ipv8`) a
+            // lieu dans `Ipv8Stack::start`/`Session::start` ou un
+            // `Err` est possible ; `to_core_config` reste
+            // infaillible comme les autres sections.
+            stealth: self.stealth.enabled.then(|| self.stealth.clone()),
         };
 
         crate::CoreConfig {

@@ -30,6 +30,8 @@ use onionbit_ipv8::dht::DhtCommunity;
 use onionbit_ipv8::discovery::DiscoveryCommunity;
 use onionbit_ipv8::endpoint::UdpEndpoint;
 use onionbit_ipv8::peer::{Network, Peer};
+use onionbit_ipv8::stealth_transport::{BridgeEntry, StealthConfig, StealthRole, StealthTransport};
+use onionbit_ipv8::transport::RawUdpTransport;
 use onionbit_ipv8::UdpAddress;
 use onionbit_tunnel::community::TunnelCommunity;
 use onionbit_tunnel::hidden_services::lookup_info_hash;
@@ -43,6 +45,26 @@ use crate::error::{CoreError, Result};
 /// Fichier de cle IPv8 persiste dans `state_dir` (`ec.pem`-equivalent,
 /// format binaire `LibNaCLSK:`).
 const IPV8_KEY_FILE: &str = "ipv8_keypair.bin";
+
+/// Fichier du secret statique de pont stealth (ADR-0017) — 32 octets
+/// X25519 bruts, meme discipline de permissions atomiques 0600 que
+/// `ipv8_keypair.bin`. Distinct de la cle maitresse : le lien
+/// `onionbit-bridge://` n'expose pas l'identite publique du noeud.
+const STEALTH_BRIDGE_KEY_FILE: &str = "stealth_bridge.key";
+
+/// `link_mtu` impose aux sockets uTP des lanes anonymes en mode
+/// stealth (ADR-0017 §4) : le datagramme uTP (~`link_mtu` - 48 o
+/// d'en-tetes simules) doit laisser la place aux enveloppes —
+/// payload `data` (~30 o) + couches onion (≈40 o/saut, 3 sauts) +
+/// en-tete paquet IPv8 (~30 o) + trame stealth (~26 o) — sous
+/// `STEALTH_MTU` (1280 o), marge de padding incluse. Au-dela, le
+/// transport refuse l'envoi (`TooLarge`) et uTP tomberait en
+/// retransmission perpetuelle.
+const STEALTH_UTP_LINK_MTU: usize = 1000;
+
+/// Idem pour le chunking `http-response` et le filet
+/// `max_cell_data_payload` de `TunnelSettings` en mode stealth.
+const STEALTH_CELL_DATA_CAP: usize = 1024;
 
 /// Nombre de sauts anonymes maximum (`anon_hops` Python : 1..=3).
 pub const MAX_ANON_HOPS: usize = 3;
@@ -335,6 +357,18 @@ pub struct Ipv8Config {
     pub ext_peer_ttl_secs: u64,
     /// Borne memoire de la table `ext_peers`.
     pub ext_peers_max: u32,
+    /// ADR-0017 : `Some` = mode stealth OnionBit-only — le transport
+    /// UDP est morphe (`StealthTransport`), les overlays publics
+    /// (discovery, content-discovery, DHT) ne sont **pas** crees et
+    /// le trafic BitTorrent direct est interdit hors role
+    /// `gateway`. **Mutuellement exclusif avec `enabled`** (refus
+    /// ferme : `Session::start` et `Ipv8Stack::start` echouent sur
+    /// une combinaison hybride — jamais de repli clair). La section
+    /// est validee strictement au demarrage de la stack : role
+    /// inconnu, lien `onionbit-bridge://` mal forme ou allowlist
+    /// non-hex → `Err` (un noeud stealth ne demarre jamais a moitie
+    /// configure).
+    pub stealth: Option<crate::daemon_config::StealthFileConfig>,
 }
 
 impl Ipv8Config {
@@ -423,6 +457,7 @@ impl Ipv8Config {
             ext_hello_jitter_pct: DEFAULT_EXT_HELLO_JITTER_PCT,
             ext_peer_ttl_secs: DEFAULT_EXT_PEER_TTL_SECS,
             ext_peers_max: DEFAULT_EXT_PEERS_MAX,
+            stealth: None,
         }
     }
 }
@@ -504,6 +539,7 @@ impl Default for Ipv8Config {
             ext_hello_jitter_pct: DEFAULT_EXT_HELLO_JITTER_PCT,
             ext_peer_ttl_secs: DEFAULT_EXT_PEER_TTL_SECS,
             ext_peers_max: DEFAULT_EXT_PEERS_MAX,
+            stealth: None,
         }
     }
 }
@@ -1511,8 +1547,12 @@ pub struct Ipv8Stack {
     pub endpoint: Arc<UdpEndpoint>,
     /// Registre de pairs IPv8.
     pub network: Arc<Network>,
-    /// Community de decouverte de pairs.
-    pub discovery: Arc<DiscoveryCommunity>,
+    /// Community de decouverte de pairs — `None` en mode stealth
+    /// (ADR-0017 : aucun walk/`introduction-request` legacy n'existe
+    /// sur le noeud ; le transport morphe rejetterait de toute facon
+    /// ces datagrammes, mais ne pas creer l'overlay supprime aussi
+    /// les timers et la memoire associes).
+    pub discovery: Option<Arc<DiscoveryCommunity>>,
     /// Community de decouverte de contenu (`None` si
     /// `content_discovery_community/enabled = false`).
     pub content_discovery: Option<Arc<ContentDiscoveryCommunity>>,
@@ -1586,6 +1626,18 @@ pub struct Ipv8Stack {
     /// `Weak` auto-reference (les taches hidden-services demarrees
     /// depuis `anon_engine(&self)` n'ont pas acces a `Arc<Self>`).
     self_weak: Mutex<std::sync::Weak<Ipv8Stack>>,
+    /// Transport furtif actif (ADR-0017) — `Some` si la stack tourne
+    /// en mode stealth ; enrobe le `RawUdpTransport` sous
+    /// `endpoint` (compteurs/tap restent a la frontiere socket,
+    /// cote octets morphes). Expose pour `/api/stealth` et les
+    /// tests d'invariants de socket.
+    pub stealth_transport: Option<Arc<onionbit_ipv8::stealth_transport::StealthTransport>>,
+    /// `link_mtu` impose aux sockets uTP tunnelsees des lanes en mode
+    /// stealth : le datagramme applicatif doit laisser la place aux
+    /// enveloppes (cellule `data` + couches onion + paquet IPv8 +
+    /// trame stealth) sous `STEALTH_MTU` — sinon `send_to` refuse et
+    /// le debit s'effondre en retransmissions. `None` hors stealth.
+    stealth_link_mtu: Option<std::num::NonZeroUsize>,
 }
 
 /// Fichier de persistance des noeuds de sortie (`exitnode_cache`
@@ -1630,18 +1682,40 @@ impl Ipv8Stack {
         tasks: crate::asyncio::TaskRegistry,
     ) -> Result<Arc<Self>> {
         let key = load_or_create_key(&state_dir.join(IPV8_KEY_FILE))?;
+        // ADR-0017 : `stealth.enabled` × `ipv8.enabled` est refuse
+        // fermement sur CHAQUE chemin de demarrage (ici +
+        // `start_ipv8` + `Session::start`) — une combinaison
+        // hybride laisserait coexister trafic legacy et morphe sur le
+        // meme noeud, ce que le mode stealth exclut par definition.
+        let stealth_cfg = config.stealth.clone();
+        if stealth_cfg.is_some() && config.enabled {
+            return Err(CoreError::InvalidState(
+                "stealth.enabled exclut ipv8.enabled — combinaison hybride refusee",
+            ));
+        }
         // `ipv8/interfaces` pyipv8 : `UDPIPv4` obligatoire, `UDPIPv6`
         // optionnel (socket secondaire du meme endpoint, partage des
         // listeners — `DispatcherEndpoint`).
         let bind_v6 = config.listen_addr_v6.as_deref();
-        let endpoint = UdpEndpoint::bind_dual_with_retry(
-            &config.listen_addr,
-            bind_v6,
-            onionbit_ipv8::endpoint::UdpEndpoint::MAX_PORT_RETRY_ATTEMPTS,
-        )
-        .await
-        .map_err(|e| CoreError::State(format!("bind ipv8: {e}")))?;
+        let (endpoint, stealth_transport, stealth_link_mtu) = if let Some(sc) = &stealth_cfg {
+            let (t, link_mtu) =
+                build_stealth_transport(sc, &key, &config.listen_addr, bind_v6, state_dir).await?;
+            (UdpEndpoint::new(t.clone()), Some(t), Some(link_mtu))
+        } else {
+            (
+                UdpEndpoint::bind_dual_with_retry(
+                    &config.listen_addr,
+                    bind_v6,
+                    onionbit_ipv8::endpoint::UdpEndpoint::MAX_PORT_RETRY_ATTEMPTS,
+                )
+                .await
+                .map_err(|e| CoreError::State(format!("bind ipv8: {e}")))?,
+                None,
+                None,
+            )
+        };
         let endpoint: Arc<UdpEndpoint> = endpoint;
+        let stealth = stealth_transport.is_some();
         let network = Arc::new(Network::default());
         // `my_estimated_lan` : l'adresse d'ecoute reelle quand elle
         // est specifiee (127.0.0.1 du banc, NIC LAN en prod) — pyipv8
@@ -1659,49 +1733,65 @@ impl Ipv8Stack {
             };
             UdpAddress::Ipv4(std::net::SocketAddrV4::new(lan_ip, local.port()))
         };
-        let discovery =
-            DiscoveryCommunity::new(key.clone(), network.clone(), endpoint.clone(), lan.clone())
-                .await;
-        // Extension Rust (bancs loopback) : `ipv8.estimated_wan` —
-        // sur un mesh 100 % loopback `my_estimated_wan` ne s'apprend
-        // jamais (`address_in_lan_subnets`), ce qui figerait le DHT
-        // (`on_node_discovered` refuse tout noeud — comme pyipv8).
-        if let Some(wan) = &config.estimated_wan {
-            discovery.set_estimated_wan(wan.clone());
-        }
+        // ADR-0017 : en mode stealth l'overlay discovery n'existe pas
+        // — aucune marche, aucun `introduction-request`, aucun ping ;
+        // `Option` garde le contrat visible dans tout le code amont
+        // (`None` = "pas de legacy sur ce noeud").
+        let discovery = if stealth {
+            None
+        } else {
+            let d = DiscoveryCommunity::new(
+                key.clone(),
+                network.clone(),
+                endpoint.clone(),
+                lan.clone(),
+            )
+            .await;
+            // Extension Rust (bancs loopback) : `ipv8.estimated_wan` —
+            // sur un mesh 100 % loopback `my_estimated_wan` ne s'apprend
+            // jamais (`address_in_lan_subnets`), ce qui figerait le DHT
+            // (`on_node_discovered` refuse tout noeud — comme pyipv8).
+            if let Some(wan) = &config.estimated_wan {
+                d.set_estimated_wan(wan.clone());
+            }
+            Some(d)
+        };
         // `ContentDiscoveryComponent` Python : cree seulement si
         // `content_discovery_community/enabled` (la recherche distante
         // et `/api/search` retournent alors 503-vide cote REST).
-        let content_discovery = if config.enable_content_discovery {
-            // `ContentDiscoverySettings` Python : defauts filaires
-            // (gossip 5 s, max 20 pairs, TTL 10 s, 10 paquets max).
-            let cd_settings = onionbit_ipv8::content_discovery::ContentDiscoverySettings::default();
-            let provider = Arc::new(SessionContentProvider {
-                db: db.clone(),
-                notifier: notifier.clone(),
-                remote_queries_in_progress: std::sync::atomic::AtomicUsize::new(0),
-                max_response_size: 100,
-                max_payload_size: 1300,
-                healths_cache: Mutex::new(HashMap::new()),
-                healths_cache_ttl: std::time::Duration::from_secs(
-                    config.content_healths_cache_secs,
-                ),
-                seen_nodes: Mutex::new(std::collections::HashSet::new()),
-                gossip: Mutex::new(GossipMemory::default()),
-            });
-            Some(
-                ContentDiscoveryCommunity::new(
-                    key.clone(),
-                    network.clone(),
-                    endpoint.clone(),
-                    provider,
-                    cd_settings,
-                    discovery.clone(),
+        // ADR-0017 : jamais en stealth (overlay legacy public).
+        let content_discovery = match (config.enable_content_discovery && !stealth, &discovery) {
+            (true, Some(discovery)) => {
+                // `ContentDiscoverySettings` Python : defauts filaires
+                // (gossip 5 s, max 20 pairs, TTL 10 s, 10 paquets max).
+                let cd_settings =
+                    onionbit_ipv8::content_discovery::ContentDiscoverySettings::default();
+                let provider = Arc::new(SessionContentProvider {
+                    db: db.clone(),
+                    notifier: notifier.clone(),
+                    remote_queries_in_progress: std::sync::atomic::AtomicUsize::new(0),
+                    max_response_size: 100,
+                    max_payload_size: 1300,
+                    healths_cache: Mutex::new(HashMap::new()),
+                    healths_cache_ttl: std::time::Duration::from_secs(
+                        config.content_healths_cache_secs,
+                    ),
+                    seen_nodes: Mutex::new(std::collections::HashSet::new()),
+                    gossip: Mutex::new(GossipMemory::default()),
+                });
+                Some(
+                    ContentDiscoveryCommunity::new(
+                        key.clone(),
+                        network.clone(),
+                        endpoint.clone(),
+                        provider,
+                        cd_settings,
+                        discovery.clone(),
+                    )
+                    .await,
                 )
-                .await,
-            )
-        } else {
-            None
+            }
+            _ => None,
         };
         // ADR-0015 §1–2 : `OnionbitExtCommunity` — extension
         // OnionBit-only sur `community_id` dedie. `hello` lazy vers
@@ -1749,7 +1839,12 @@ impl Ipv8Stack {
                     ledger_rate_table_max: config.ext_ledger_rate_table_max as usize,
                     ledger_store_max: config.ext_ledger_store_max as usize,
                     ledger_head_fanout: config.ext_ledger_head_fanout as usize,
-                    obf_enabled: config.ext_obf_enabled,
+                    // ADR-0017 : l'enveloppe OBF est redondante sous
+                    // le transport morphe — toujours desactivee en
+                    // stealth, quelle que soit la config
+                    // (`ext_obf=disabled_reason=redundant` du bloc
+                    // de demarrage).
+                    obf_enabled: config.ext_obf_enabled && !stealth,
                     obf_pad_bucket: config.ext_obf_pad_bucket.max(16) as usize,
                     // `CAP_MSG_V1` : annonce seulement quand le
                     // service messagerie ADR-0011 demarre
@@ -1780,7 +1875,10 @@ impl Ipv8Stack {
         } else {
             None
         };
-        let dht = if config.enable_dht {
+        // ADR-0017 : pas de `DHTDiscoveryCommunity` en stealth —
+        // son trafic mainline sur l'endpoint serait non-morphe par
+        // nature (et rejete) ; la decouverte passe par `INTRO`.
+        let dht = if config.enable_dht && !stealth {
             // `DHTDiscoveryCommunity` Python : `my_estimated_wan`
             // commence non-specifie et est appris par introduction ;
             // `my_estimated_lan` = adresse d'ecoute (ci-dessus).
@@ -1841,6 +1939,22 @@ impl Ipv8Stack {
                         tick: std::time::Duration::from_secs(config.ledger_tick_secs.max(1)),
                         max_peers: config.ledger_max_peers,
                     },
+                    // ADR-0017 : sous transport morphe, les cellules
+                    // `data` et les chunks `http-response` doivent
+                    // tenir sous `STEALTH_MTU` — les defauts
+                    // filaires (1400 o) fragmenteraient ou seraient
+                    // refuses. Inerte hors stealth (`usize::MAX` /
+                    // 1400 o Python).
+                    http_response_chunk: if stealth {
+                        STEALTH_CELL_DATA_CAP
+                    } else {
+                        onionbit_tunnel::http_tunnel::HTTP_RESPONSE_CHUNK
+                    },
+                    max_cell_data_payload: if stealth {
+                        STEALTH_CELL_DATA_CAP
+                    } else {
+                        usize::MAX
+                    },
                     ..onionbit_tunnel::settings::TunnelSettings::default()
                 },
                 community_id,
@@ -1863,7 +1977,12 @@ impl Ipv8Stack {
             // `my_peer` Python est partage entre overlays : la
             // tunnel-community emprunte les estimations WAN/LAN de la
             // discovery pour ses introductions et punctures.
-            t.set_discovery(discovery.clone());
+            // ADR-0017 : pas de discovery en stealth — les punctures
+            // et introductions legacy sont impossibles de toute
+            // facon (le transport ne parle qu'aux ponts connus).
+            if let Some(d) = &discovery {
+                t.set_discovery(d.clone());
+            }
             // `dht_provider` (`out["dht_provider"] =
             // DHTCommunityProvider(...)` du composant Tribler) :
             // annonces/lookups des points d'introduction des swarms
@@ -1882,12 +2001,16 @@ impl Ipv8Stack {
             // `load_exit_nodes` Python : reintroduit les noeuds de
             // sortie connus de la session precedente dans `Network`
             // puis les re-sollicite (`send_introduction_request`).
-            for (pk, addr, flags) in load_exitnode_cache(&state_dir.join(EXITNODE_CACHE_FILE)) {
-                t.register_exit_peer(&pk, addr, flags);
-                let t = t.clone();
-                tokio::spawn(async move {
-                    let _ = t.send_introduction_request(&UdpAddress::from(addr)).await;
-                });
+            // ADR-0017 : saute en stealth — ces adresses ne sont pas
+            // des ponts connus, le transport dropperait chaque envoi.
+            if !stealth {
+                for (pk, addr, flags) in load_exitnode_cache(&state_dir.join(EXITNODE_CACHE_FILE)) {
+                    t.register_exit_peer(&pk, addr, flags);
+                    let t = t.clone();
+                    tokio::spawn(async move {
+                        let _ = t.send_introduction_request(&UdpAddress::from(addr)).await;
+                    });
+                }
             }
             Some(t)
         } else {
@@ -1985,9 +2108,12 @@ impl Ipv8Stack {
         // de `session.py` : Tribler active le suivi des stats pour
         // toutes les communities des le demarrage.
         let stats_prefixes = {
-            let mut v = vec![onionbit_ipv8::prefix_of(
-                &onionbit_ipv8::discovery::DISCOVERY_COMMUNITY_ID,
-            )];
+            let mut v = Vec::new();
+            if discovery.is_some() {
+                v.push(onionbit_ipv8::prefix_of(
+                    &onionbit_ipv8::discovery::DISCOVERY_COMMUNITY_ID,
+                ));
+            }
             if content_discovery.is_some() {
                 v.push(onionbit_ipv8::prefix_of(
                     &onionbit_ipv8::CONTENT_DISCOVERY_COMMUNITY_ID,
@@ -2029,23 +2155,32 @@ impl Ipv8Stack {
             ep.run_rate_sampler(rate_interval, rate_span).await;
         });
 
-        // Maintenance DHT en tache de fond (arret via `stop`).
+        // Maintenance DHT en tache de fond (arret via `stop`) — le
+        // `zip` exprime l'invariant : sans overlay legacy, ni DHT ni
+        // discovery n'existent en stealth.
         let dht_maintenance_stop = dht
             .clone()
-            .map(|d| spawn_dht_maintenance(d, discovery.clone(), tasks.clone()));
+            .zip(discovery.clone())
+            .map(|(d, disc)| spawn_dht_maintenance(d, disc, tasks.clone()));
 
         // Cache de pairs verifies (`ipv8_peers`) : recharge les plus
         // frais dans `Network` AVANT le bootstrap — les walks peuvent
         // viser des pairs connus immediatement, sans attendre la
         // resolution DNS ni un premier cycle d'introduction.
+        // ADR-0017 : saute en stealth — les pairs caches sont des
+        // adresses legacy (jamais des ponts) ; les recharger
+        // exposerait leur contenu aux marches… qui n'existent pas.
         let peer_cutoff = now_unix().saturating_sub(config.peer_cache_max_age_secs) as i64;
         let peer_cache_max = config.peer_cache_max;
-        let restored = db
-            .call("ipv8.peers_restore", move |c| {
+        let restored = if stealth {
+            Vec::new()
+        } else {
+            db.call("ipv8.peers_restore", move |c| {
                 onionbit_db::peers::list_peers(c, peer_cutoff, peer_cache_max)
             })
             .await
-            .unwrap_or_default();
+            .unwrap_or_default()
+        };
         let mut warm_addrs: Vec<UdpAddress> = Vec::new();
         for row in &restored {
             if let Ok(sa) = row.address.parse::<SocketAddr>() {
@@ -2069,12 +2204,15 @@ impl Ipv8Stack {
         // Snapshot periodique `Network` -> `ipv8_peers` : une ecriture
         // en lot par intervalle plutot qu'un upsert par pair decouvert
         // (le WAL + `call` gardent la boucle d'evenements fluide).
-        tasks.register(
-            None,
-            "ipv8_peer_cache",
-            Some(config.peer_persist_interval_secs as f64),
-        );
-        {
+        // ADR-0017 : inactif en stealth — persister les adresses des
+        // ponts dans `ipv8_peers` les melangerait au cache legacy
+        // (et leur traitement PEX `own` n'a pas de sens sans DHT).
+        if !stealth {
+            tasks.register(
+                None,
+                "ipv8_peer_cache",
+                Some(config.peer_persist_interval_secs as f64),
+            );
             let network = network.clone();
             let db = db.clone();
             let tunnel_cache = tunnel.clone();
@@ -2163,10 +2301,15 @@ impl Ipv8Stack {
         // `register_anonymous_task("bootstrap", ...)` Python. Les
         // adresses du cache sont marchees en plus des noeuds
         // d'amorcage (le cache seul suffit a amorcer).
+        // ADR-0017 : jamais en stealth — `discovery` est `None` et
+        // aucune marche/lookup DNS vers des noeuds publics n'a lieu
+        // (l'entree se fait par les ponts hors-bande uniquement).
         let bootstrap_peers_config = config.bootstrap_peers.clone();
-        if !bootstrap_peers_config.is_empty() || !warm_addrs.is_empty() {
+        if !stealth && (!bootstrap_peers_config.is_empty() || !warm_addrs.is_empty()) {
+            let Some(d) = discovery.clone() else {
+                unreachable!("discovery existe toujours hors stealth")
+            };
             tasks.register(None, "bootstrap", None);
-            let d = discovery.clone();
             let dht = dht.clone();
             let cd = content_discovery.clone();
             let tunnel_for_walk = tunnel.clone();
@@ -2278,6 +2421,22 @@ impl Ipv8Stack {
             }));
         }
 
+        // Bloc INFO de demarrage fige (ADR-0017 §9) — la forme exacte
+        // des champs est un oracle des bancs socket/PCAP : ne pas le
+        // reformater sans mettre a jour les tests d'invariants.
+        if let Some(t) = &stealth_transport {
+            tracing::info!(
+                "stealth_mode=on role={} legacy_ipv8=disabled public_dht=disabled \
+                 direct_bittorrent={} ext_obf=disabled_reason=redundant",
+                t.role().as_str(),
+                if t.role().allows_direct_bt() {
+                    "enabled"
+                } else {
+                    "disabled"
+                },
+            );
+        }
+
         let stack = Arc::new(Self {
             endpoint,
             network,
@@ -2286,6 +2445,8 @@ impl Ipv8Stack {
             tunnel,
             dht,
             ext,
+            stealth_transport,
+            stealth_link_mtu,
             key,
             messaging,
             dht_maintenance_stop,
@@ -2330,7 +2491,10 @@ impl Ipv8Stack {
     /// (`DiscoveryCommunity` config, puis launchers : content, DHT,
     /// tunnel).
     pub fn overlays_info(&self) -> Vec<onionbit_ipv8::OverlayInfo> {
-        let mut out = vec![self.discovery.overlay_info(false)];
+        let mut out = Vec::new();
+        if let Some(d) = &self.discovery {
+            out.push(d.overlay_info(false));
+        }
         if let Some(c) = &self.content_discovery {
             out.push(c.overlay_info(false));
         }
@@ -2427,7 +2591,11 @@ impl Ipv8Stack {
         // `session.network.blacklist.append` — discovery/content/
         // tunnel partagent `self.network` ; le DHT a le sien.
         self.network.add_blacklist(addr.clone());
-        let _ = self.discovery.walk_to(addr).await;
+        if let Some(d) = &self.discovery {
+            let _ = d.walk_to(addr).await;
+            // `bootstrapper.ip_addresses.append` (overlay Community).
+            d.add_bootstrapper(addr.clone());
+        }
         if let Some(c) = &self.content_discovery {
             let _ = c.walk_to(addr).await;
         }
@@ -2438,8 +2606,6 @@ impl Ipv8Stack {
         if let Some(t) = &self.tunnel {
             let _ = t.walk_to(addr).await;
         }
-        // `bootstrapper.ip_addresses.append` (overlay Community).
-        self.discovery.add_bootstrapper(addr.clone());
     }
 
     /// `NoBlockDHTEndpoint` : lance `DHTDiscoveryCommunity.connect_peer`
@@ -2526,12 +2692,20 @@ impl Ipv8Stack {
         // =False) — les pairs passent en uTP a travers le tunnel, la
         // DHT et les trackers UDP aussi ; seuls les trackers HTTP(S)
         // utilisent le SOCKS5 (`http-request` one-shot).
+        let mut utp_opts = self.engine_config.utp_socket_opts();
+        // ADR-0017 : en stealth le datagramme uTP doit laisser la
+        // place aux enveloppes sous `STEALTH_MTU` — le filet
+        // `max_cell_data_payload` refuse sinon l'envoi (pertes en
+        // boucle). La valeur vient du transport, jamais en dur ici.
+        if let Some(mtu) = self.stealth_link_mtu {
+            utp_opts.link_mtu = Some(mtu);
+        }
         let udp_sockets = onionbit_tunnel::tunnel_udp_socket::TunnelUdpSockets::with_dht_policy(
             tunnel.clone(),
             hops,
             socks_addr,
             self.anon_dht_client_only,
-            self.engine_config.utp_socket_opts(),
+            utp_opts,
         )
         .map_err(|e| CoreError::State(format!("socket uTP tunnel: {e}")))?;
         // Discipline DHT de la lane (extension Rust — Tribler n'a pas
@@ -3241,6 +3415,103 @@ fn load_or_create_key(path: &Path) -> Result<LibNaClSecretKey> {
             Ok(key)
         }
     }
+}
+
+/// Charge ou cree le secret statique X25519 du role pont
+/// (ADR-0017) — 32 octets bruts dans `stealth_bridge.key`. Toute
+/// autre taille est refusee (fichier corrompu → `Err`, jamais de
+/// regeneration silencieuse qui changerait l'identite du pont sous
+/// les liens d'invitation deja distribues).
+fn load_or_create_bridge_sk(path: &Path) -> Result<[u8; 32]> {
+    match std::fs::read(path) {
+        Ok(data) => <[u8; 32]>::try_from(data.as_slice())
+            .map_err(|_| CoreError::InvalidState("stealth_bridge.key corrompu (taille != 32)")),
+        Err(_) => {
+            let (sk, _pk) = onionbit_crypto::stealth::generate_bridge_keypair();
+            write_identity_key(path, &sk)?;
+            Ok(sk)
+        }
+    }
+}
+
+/// ADR-0017 : construit le [`StealthTransport`] depuis la section
+/// fichier — validation **stricte** (fail-closed) : role inconnu,
+/// lien `onionbit-bridge://` mal forme, allowlist non-hex ou role
+/// amont sans pont → `Err`. Un client sans pont ne pourrait jamais
+/// ouvrir de session ; demarrer quand meme servirait un noeud muet
+/// dont l'utilisateur croirait qu'il fonctionne.
+async fn build_stealth_transport(
+    sc: &crate::daemon_config::StealthFileConfig,
+    key: &LibNaClSecretKey,
+    listen_addr: &str,
+    listen_addr_v6: Option<&str>,
+    state_dir: &Path,
+) -> Result<(Arc<StealthTransport>, std::num::NonZeroUsize)> {
+    let role = StealthRole::parse_role(&sc.role).ok_or(CoreError::InvalidState(
+        "stealth.role : valeur inconnue (attendu client|bridge|gateway)",
+    ))?;
+    let mut bridges = Vec::with_capacity(sc.bridges.len());
+    for link in &sc.bridges {
+        bridges.push(BridgeEntry::parse_link(link).map_err(|_| {
+            CoreError::InvalidState("stealth.bridges : lien onionbit-bridge:// mal forme")
+        })?);
+    }
+    // Seul le client exige un amont : un pont feuille (sans uplink)
+    // est une topologie legitime (relai terminal du chemin), une
+    // passerelle n'a rien a initier.
+    if role == StealthRole::Client && bridges.is_empty() {
+        return Err(CoreError::InvalidState(
+            "stealth : role client sans aucun pont configure",
+        ));
+    }
+    // `client_allowlist` n'est pas encore consommee par le transport
+    // (tickets — etape 54) ; le format est quand meme valide ici
+    // pour qu'une entree corrompue soit refusee au demarrage plutot
+    // qu'ignoree en silence le jour ou le filtrage s'activera.
+    for h in &sc.client_allowlist {
+        if hex::decode(h).map(|b| b.len()) != Ok(32) {
+            return Err(CoreError::InvalidState(
+                "stealth.client_allowlist : 64 caracteres hex attendus",
+            ));
+        }
+    }
+    // `bridge_sk` vit hors fichier de config (`state_dir`,
+    // permissions 0600) — la pk publique voyage dans les liens
+    // d'invitation, le secret ne sort jamais du noeud.
+    let (bridge_sk, bridge_pk) = if matches!(role, StealthRole::Bridge | StealthRole::Gateway) {
+        let sk = load_or_create_bridge_sk(&state_dir.join(STEALTH_BRIDGE_KEY_FILE))?;
+        (Some(sk), Some(onionbit_crypto::stealth::bridge_public(&sk)))
+    } else {
+        (None, None)
+    };
+    let cfg = StealthConfig {
+        role,
+        bridge_sk,
+        bridge_pk,
+        bridges,
+        // Identite vehiculee chiffree dans `hs1` : cle maitresse du
+        // noeud (compromis v1 documente dans l'ADR — une cle dediee
+        // reduirait la correlation entre l'invitation et l'identite).
+        client_id: key.public_key().to_bin(),
+        params: onionbit_ipv8::stealth::StealthParams {
+            pad_max_extra: sc.pad_max_extra,
+            hs_timestamp_skew_secs: sc.hs_timestamp_skew_secs,
+            replay_window: sc.replay_window,
+            ..onionbit_ipv8::stealth::StealthParams::default()
+        },
+        cover_traffic: sc.cover_traffic,
+        ..StealthConfig::default()
+    };
+    let raw = RawUdpTransport::bind_dual_with_retry(
+        listen_addr,
+        listen_addr_v6,
+        UdpEndpoint::MAX_PORT_RETRY_ATTEMPTS,
+    )
+    .await
+    .map_err(|e| CoreError::State(format!("bind ipv8 (stealth): {e}")))?;
+    let link_mtu = std::num::NonZeroUsize::new(STEALTH_UTP_LINK_MTU)
+        .ok_or(CoreError::InvalidState("stealth link_mtu nul"))?;
+    Ok((StealthTransport::from_raw(raw, cfg), link_mtu))
 }
 
 /// Ecrit le fichier d'identite avec permissions restrictives

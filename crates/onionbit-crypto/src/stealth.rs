@@ -115,6 +115,22 @@ pub fn is_montgomery_u(bytes: &[u8; 32]) -> bool {
     elligator2::is_montgomery_u(bytes)
 }
 
+/// Paire statique X25519 `(secret, public)` d'un role serveur
+/// (pont/passerelle) — persistee par l'appelant
+/// (`state_dir/stealth_bridge.key`), jamais dans la configuration ni
+/// les journaux. Distincte de la cle maitresse IPv8 : l'invitation
+/// `onionbit-bridge://` ne revele pas l'identite publique du noeud.
+pub fn generate_bridge_keypair() -> ([u8; 32], [u8; 32]) {
+    let sk = StaticSecret::random();
+    (sk.to_bytes(), X25519PublicKey::from(&sk).to_bytes())
+}
+
+/// Cle publique d'un secret statique persiste (rechargement de
+/// `stealth_bridge.key` au demarrage).
+pub fn bridge_public(sk: &[u8; 32]) -> [u8; 32] {
+    X25519PublicKey::from(&StaticSecret::from(*sk)).to_bytes()
+}
+
 /// X25519 nu : `clamp(sk) * pk`. Le clampage du scalaire a lieu dans
 /// `x25519-dalek` — `sk` peut etre un scalaire brut non clampe
 /// (`HiddenEph::secret_bytes` l'est, a l'image de `crypto_scalarmult`

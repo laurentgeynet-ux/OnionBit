@@ -67,6 +67,35 @@ impl StealthRole {
     fn initiates(self) -> bool {
         matches!(self, StealthRole::Client | StealthRole::Bridge)
     }
+
+    /// `client` | `bridge` | `gateway` — forme canonique du fichier
+    /// de configuration et du bloc de demarrage.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            StealthRole::Client => "client",
+            StealthRole::Bridge => "bridge",
+            StealthRole::Gateway => "gateway",
+        }
+    }
+
+    /// Parse `as_str` — toute autre valeur est refusee (`None`) :
+    /// une coquille de role ne doit jamais devenir `client` en
+    /// silence.
+    pub fn parse_role(s: &str) -> Option<Self> {
+        match s {
+            "client" => Some(StealthRole::Client),
+            "bridge" => Some(StealthRole::Bridge),
+            "gateway" => Some(StealthRole::Gateway),
+            _ => None,
+        }
+    }
+
+    /// `true` pour les roles qui servent le reseau public BitTorrent
+    /// (sortie `EXIT_BT`) — le client et le pont purs n'ont aucune
+    /// activite directe autorisee.
+    pub fn allows_direct_bt(self) -> bool {
+        matches!(self, StealthRole::Gateway)
+    }
 }
 
 /// Scheme des liens d'invitation hors-bande (ADR-0017 §3).
@@ -347,6 +376,22 @@ impl StealthTransport {
     /// Compteurs du banc hostile / API.
     pub fn metrics(&self) -> &StealthMetrics {
         &self.metrics
+    }
+
+    /// Role configure (diagnostic `/api/stealth`, bloc de demarrage).
+    pub fn role(&self) -> StealthRole {
+        self.cfg.role
+    }
+
+    /// Lien d'invitation `onionbit-bridge://` de ce noeud — `None`
+    /// pour le role `client` (pas de secret statique). L'adresse est
+    /// l'ecoute locale : sur `0.0.0.0` le lien n'est partageable que
+    /// tel quel en loopback/bancs ; l'UI publique devra substituer
+    /// l'adresse WAN annoncee (comme `my_estimated_wan`).
+    pub fn bridge_link(&self) -> Option<String> {
+        let pk = self.cfg.bridge_pk?;
+        let addr = self.raw.local_addr().ok()?;
+        Some(BridgeEntry { addr, pk }.to_link())
     }
 
     /// Ajoute un pont amont a chaud (`POST /api/stealth/bridges`) —
