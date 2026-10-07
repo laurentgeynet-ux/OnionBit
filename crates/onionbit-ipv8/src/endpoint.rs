@@ -344,7 +344,7 @@ impl UdpEndpoint {
     /// tente `port, port + 1, ...` jusqu'a `max_attempts`).
     /// Si le port initial vaut 0 ou si l'adresse n'est pas un `SocketAddr`, bind direct.
     /// Si le bind IPv6 echoue pour toute raison, il est ignore avec repli IPv4 seul.
-    /// Si toutes les tentatives echouent, repli ultime sur `"0.0.0.0"` (port ephemere).
+    /// Si toutes les tentatives echouent, repli ultime sur `"0.0.0.0:0"` (port ephemere).
     pub async fn bind_dual_with_retry(
         bind: &str,
         bind_v6: Option<&str>,
