@@ -3,6 +3,21 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## ADR-0017 : passage au statut « Acceptée » (2026-10-08)
+
+- **Revue externe remplie** (`docs/security/revue_stealth.md`,
+  6 sections cochées) + banc `bench_stealth_fingerprint.ps1`
+  PASS (9/9 oracles : silence probing, amplification 0, zero
+  marqueur/constante/legacy sur le fil, entropie 7,99 bits/o,
+  session survivant flood/impairments/restart/rebinding).
+- Toutes les conditions de sortie de l'étape 56 sont réunies →
+  statut ADR **Acceptée**. Réserve documentée : le banc a tourné
+  en loopback via tap-proxy — une campagne inter-machines reste
+  souhaitable pour valider le profil de timing WAN.
+- Corrections de noms de symboles dans la checklist
+  (`intro_seed_max`/`intro_expand_max`/`intro_per_peer_max`,
+  `tick`).
+
 ## ADR-0017 étape 56 : docs sécurité + UI « Mode furtif » (worktree adr17, 2026-10-08)
 
 - **`docs/security/fingerprinting.md`** : section « Mode furtif » —

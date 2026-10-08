@@ -1,9 +1,14 @@
 # ADR-0017 — Transport furtif (anti-censure), mode OnionBit↔OnionBit
 
-Statut : **Proposée** (2026-10-06) — exploration future, aucune
-implémentation engagée. Suite directe du constat ADR-0015 §7
-(fingerprinting) : `OBF` masque le contenu des trames ext mais pas
-l'existence du protocole.
+Statut : **Acceptée** (2026-10-08) — implantée sur le worktree
+`adr17` (étapes 49-56, commits `2836f2c`..`ca05ca3`), banc
+`bench_stealth_fingerprint.ps1` PASS (9/9 oracles, capture
+socket réelle loopback), revue externe remplie
+(`docs/security/revue_stealth.md`). Réserve honnête : le banc a
+tourné en loopback via tap-proxy ; une campagne inter-machines
+reste souhaitable pour le timing WAN. Suite du constat ADR-0015
+§7 (fingerprinting) : `OBF` masque le contenu des trames ext mais
+pas l'existence du protocole.
 
 ## Contexte
 
