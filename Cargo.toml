@@ -98,7 +98,7 @@ rcgen = "0.13"
 # Bureau Windows (onionbit-daemon) : icone systray, cle Run d'autostart,
 # console/icone executable. Version epinglee exacte pour tray-icon
 # (0.25.1, 2026-09-16) : eviter de resoudre vers une version fraiche.
-tray-icon = "=0.25.1"
+tray-icon = "=0.26.0"
 winreg = "0.55"
 windows-sys = "0.61"
 embed-resource = "3"
