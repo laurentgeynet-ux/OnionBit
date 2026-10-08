@@ -190,6 +190,29 @@ client en loopback via relais consignant PCAP, `stealth_bench`) :
   les `bridge_pk` annoncees doivent etre prouvees au handshake —
   une intro forgee est inerte.
 
+## Identite portable (ADR-0016, etapes 48a-48e)
+
+- **Vol du `state_dir`** : en mode par defaut la graine
+  `identity_seed.bin` est en clair (comme tout wallet « hot ») —
+  `0600` Unix mais lisible par un attaquant ayant la session.
+  Mitigation opt-in : `identity.at_rest` → graine scellee `OBSK`
+  (argon2id 19 Mio → ChaCha20-Poly1305), boot en `locked`,
+  `unlock` rate-limite par IP + globalement, erreur uniforme sans
+  oracle. Le unlock ne reecrit jamais de clef en clair sur disque.
+- **Phrase BIP39 = compromission totale** : les 24 mots derivent
+  l'identite IPv8 **et** la cle de pont stealth — quiconque la
+  detient EST l'identite. L'endpoint `recovery_phrase` reste
+  derriere `api_key_auth`, trace `warn` sans jamais la logguer.
+- **Premier boot sous gate** (`--first-run-gate`, lanceur UI) :
+  `identity_pending` — aucun composant identitaire ne demarre,
+  aucun datagramme signe n'existe avant le choix utilisateur ;
+  les endpoints identitaires recoivent `409` uniforme.
+- **Session invitee** : identite purement memoire, base `:memory:`,
+  zero artefact dans `state_dir` — rien a voler, mais aucune
+  continuite (reputation ADR-0015, contacts, coffre).
+- **`at_rest` refuse aux ponts/passerelles** : un serveur doit
+  redemarrer sans surveillance (fail-closed).
+
 ## Ce qui n'est PAS demontre
 
 Les points suivants sont hors perimetre de preuve des bancs actuels.

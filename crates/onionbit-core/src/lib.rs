@@ -90,10 +90,7 @@ mod tests {
         // en sautant `SessionStarted`, emis par `try_start_identity`).
         tokio::time::timeout(std::time::Duration::from_secs(5), async {
             loop {
-                if matches!(
-                    rx.recv().await.unwrap(),
-                    Notification::DownloadProgress(_)
-                ) {
+                if matches!(rx.recv().await.unwrap(), Notification::DownloadProgress(_)) {
                     return;
                 }
             }

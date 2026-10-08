@@ -1,9 +1,9 @@
 # ADR-0016 — Identité portable : export/import chiffré (solution intérimaire)
 
-Statut : **partiellement implémentée** (2026-10-06 ; architecture
-cible décidée 2026-10-08) — l'export/import `OBID` et le durcissement
-du fichier local sont livrés ; la graine BIP39 + chiffrement « at
-rest » opt-in sont décidés, en attente d'implantation.
+Statut : **implémentée** (2026-10-08) — intérimaire `OBID` livré le
+2026-10-06 ; graine racine HKDF + phrase BIP39 EN/FR + session
+différée (`pending`/`locked`/invité) + `OBSK` at-rest + UI du gate
+livres en etapes 48a-48e. Multi-profils toujours differes.
 
 ## Contexte
 

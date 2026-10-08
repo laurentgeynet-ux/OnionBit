@@ -8,6 +8,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../l10n/app_localizations.dart';
 import 'core/config/ui_prefs.dart';
 import 'core/di/providers.dart';
+import 'core/identity/identity_gate.dart';
 import 'core/l10n/locale_settings.dart';
 import 'core/router/app_router.dart';
 import 'core/theme/app_theme.dart';
@@ -34,6 +35,12 @@ class OnionbitApp extends ConsumerWidget {
     final locale = resolveFlutterLocale(
       ref.watch(localeSettingsProvider).value,
     );
+    // Gate identitaire ADR-0016 : `pending`/`locked` remplacent tout
+    // le contenu routé (l'API répondrait 409) ; une session invitée
+    // affiche le bandeau « rien n'est conservé » en permanence.
+    final status = ref.watch(identityGateProvider).value ?? const {};
+    final identityState = status['state'] as String?;
+    final guest = status['mode'] == 'guest';
 
     return MaterialApp.router(
       title: 'OnionBit',
@@ -45,6 +52,19 @@ class OnionbitApp extends ConsumerWidget {
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
       routerConfig: router,
+      builder: (context, child) {
+        if (identityState == 'pending' || identityState == 'locked') {
+          return IdentityGatePage(locked: identityState == 'locked');
+        }
+        final content = child ?? const SizedBox.shrink();
+        if (!guest) return content;
+        return Column(
+          children: [
+            const GuestBanner(),
+            Expanded(child: content),
+          ],
+        );
+      },
     );
   }
 }

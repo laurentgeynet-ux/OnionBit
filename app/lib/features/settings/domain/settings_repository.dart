@@ -37,11 +37,45 @@ abstract interface class SettingsRepository {
   /// `null` si IPv8 désactivé.
   Future<String?> identityPublicKey();
 
+  /// `GET /api/identity` complet — `{state, seeded, mode, persistent,
+  /// public_key?}` (ADR-0016 : `state` = ready/locked/pending).
+  Future<Map<String, dynamic>> identityStatus();
+
+  /// `GET /api/identity/recovery_phrase?lang=` — phrase BIP39 de 24
+  /// mots de l'identité seedée. `null` sur identité legacy.
+  Future<String?> identityRecoveryPhrase({String? lang});
+
   /// `POST /api/identity/export` — clé secrète hex (brute ou blob
   /// `OBID` si [password] non vide). Renvoie `{key, encrypted}`.
   Future<Map<String, dynamic>> identityExport({String? password});
 
-  /// `POST /api/identity/restore` — écrase `ipv8_keypair.bin` ;
-  /// la nouvelle identité est active au prochain démarrage.
-  Future<void> identityRestore(String keyHex, {String? password});
+  /// `POST /api/identity/restore` — clé `LibNaCLSK:` hex ou blob
+  /// `OBID` ; `forceLegacy` requis sur install seedée (conversion
+  /// explicite — la graine gagnerait sinon au prochain boot).
+  Future<void> identityRestore(
+    String keyHex, {
+    String? password,
+    bool forceLegacy = false,
+  });
+
+  /// `POST /api/identity/restore` par phrase BIP39 (24 mots, EN/FR) —
+  /// installe `identity_seed.bin` et régénère les clés dérivées.
+  Future<void> identityRestorePhrase(String phrase);
+
+  /// `POST /api/identity/at_rest` — scelle/déscelle la graine `OBSK`
+  /// sur disque (mot de passe exigé dans les deux sens).
+  Future<void> identitySetAtRest({required bool enabled, required String password});
+
+  /// `POST /api/identity/create` — résolution « nouvelle identité »
+  /// du gate `pending` ; [password] non vide scelle la graine
+  /// (`OBSK`) d'emblée.
+  Future<void> identityCreate({String? password});
+
+  /// `POST /api/identity/guest` — session invitée éphémère (aucun
+  /// artefact disque, base mémoire).
+  Future<void> identityGuest();
+
+  /// `POST /api/identity/unlock` — déverrouille une graine `OBSK`
+  /// (état `locked`). 400 = mot de passe incorrect, 429 = rate-limit.
+  Future<void> identityUnlock(String password);
 }

@@ -4268,3 +4268,41 @@ async fn identite_locked_unlock_et_rate_limit() {
 
     srv.session.stop().await;
 }
+
+/// ADR-0016 etape 48e : `identity.at_rest` refuse via l'arbre
+/// generique `/api/settings` (le scellement OBSK exige un mot de
+/// passe — endpoint dedie) ; les autres cles `identity` passent.
+#[tokio::test]
+async fn identite_at_rest_refuse_via_settings() {
+    let srv = spawn_server().await;
+    // `at_rest` ne se bascule pas par l'arbre generique.
+    let resp = srv
+        .client
+        .post(srv.url("/api/settings"))
+        .json(&serde_json::json!({"identity": {"at_rest": true}}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 400);
+    // `seed_acknowledged` reste une feuille ordinaire (merge + 200).
+    let resp = srv
+        .client
+        .post(srv.url("/api/settings"))
+        .json(&serde_json::json!({"identity": {"seed_acknowledged": true}}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = srv
+        .client
+        .get(srv.url("/api/settings"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(body["settings"]["identity"]["seed_acknowledged"], true);
+    assert_eq!(body["settings"]["identity"]["at_rest"], false);
+    srv.session.stop().await;
+}

@@ -60,11 +60,15 @@ Future<AppConfig?> ensureDaemonRunning() async {
 
   try {
     // Détaché : le daemon survit à la fermeture de l'UI (il vit dans
-    // sa propre icône systray depuis l'étape 29).
-    uiLog('spawn ${exe.path} --state-dir ${stateDir.path}');
+    // sa propre icône systray depuis l'étape 29). `--first-run-gate`
+    // (ADR-0016) : un state_dir vierge reste en `identity_pending`
+    // — aucune clé jetable n'est créée avant le choix utilisateur.
+    uiLog(
+      'spawn ${exe.path} --state-dir ${stateDir.path} --first-run-gate',
+    );
     await Process.start(
       exe.path,
-      ['--state-dir', stateDir.path],
+      ['--state-dir', stateDir.path, '--first-run-gate'],
       mode: ProcessStartMode.detached,
       workingDirectory: exeDir.path,
     );

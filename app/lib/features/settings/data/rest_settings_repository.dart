@@ -64,10 +64,30 @@ class RestSettingsRepository implements SettingsRepository {
   @override
   Future<String?> identityPublicKey() async {
     try {
-      final resp = await _api.get('/identity') as Map<String, dynamic>;
+      final resp = await identityStatus();
       return resp['public_key'] as String?;
     } catch (_) {
       return null; // IPv8 desactive — pas d'identite a afficher.
+    }
+  }
+
+  @override
+  Future<Map<String, dynamic>> identityStatus() async =>
+      await _api.get('/identity') as Map<String, dynamic>? ?? const {};
+
+  @override
+  Future<String?> identityRecoveryPhrase({String? lang}) async {
+    try {
+      final resp =
+          await _api.get(
+                '/identity/recovery_phrase',
+                query: {'lang': ?lang},
+              )
+              as Map<String, dynamic>?;
+      return resp?['phrase'] as String?;
+    } catch (_) {
+      // Identite legacy (404) ou indisponible : pas de phrase.
+      return null;
     }
   }
 
@@ -84,13 +104,47 @@ class RestSettingsRepository implements SettingsRepository {
       const {};
 
   @override
-  Future<void> identityRestore(String keyHex, {String? password}) =>
+  Future<void> identityRestore(
+    String keyHex, {
+    String? password,
+    bool forceLegacy = false,
+  }) =>
       _api.post(
         '/identity/restore',
         body: {
           'key': keyHex,
           if (password != null && password.isNotEmpty)
             'password': password,
+          if (forceLegacy) 'force_legacy': true,
         },
       );
+
+  @override
+  Future<void> identityRestorePhrase(String phrase) =>
+      _api.post('/identity/restore', body: {'phrase': phrase});
+
+  @override
+  Future<void> identitySetAtRest({
+    required bool enabled,
+    required String password,
+  }) =>
+      _api.post(
+        '/identity/at_rest',
+        body: {'enabled': enabled, 'password': password},
+      );
+
+  @override
+  Future<void> identityCreate({String? password}) => _api.post(
+    '/identity/create',
+    body: {
+      if (password != null && password.isNotEmpty) 'password': password,
+    },
+  );
+
+  @override
+  Future<void> identityGuest() => _api.post('/identity/guest');
+
+  @override
+  Future<void> identityUnlock(String password) =>
+      _api.post('/identity/unlock', body: {'password': password});
 }

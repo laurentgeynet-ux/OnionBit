@@ -59,10 +59,18 @@ pub async fn update_settings(
     candidate
         .merge(patch)
         .map_err(|e| ApiError::bad_request(format!("invalid settings: {e}")))?;
-    // ADR-0016 : `identity.at_rest` exige un redemarrage surveille —
-    // incompatible avec `stealth.role != "client"` dans les deux
-    // sens (activer at-rest sur un pont, ou passer un client at-rest
-    // en pont). Refus ferme `400`.
+    // ADR-0016 : `identity.at_rest` ne se bascule PAS via l'arbre
+    // generique — le scellement/descellement `OBSK` exige un mot de
+    // passe (`POST /api/identity/at_rest`). Sans ce refus, la config
+    // pourrait dire `true` avec une graine en clair sur disque.
+    if candidate.identity.at_rest != cfg.identity.at_rest {
+        return Err(ApiError::bad_request(
+            "identity.at_rest se bascule via POST /api/identity/at_rest (mot de passe requis)",
+        ));
+    }
+    // `at_rest` exige un redemarrage surveille — incompatible avec
+    // `stealth.role != "client"` dans les deux sens (activer at-rest
+    // sur un pont, ou passer un client at-rest en pont).
     if candidate.identity.at_rest && candidate.stealth.enabled && candidate.stealth.role != "client"
     {
         return Err(ApiError::bad_request(
