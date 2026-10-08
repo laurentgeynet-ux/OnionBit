@@ -93,6 +93,23 @@ opt-in réservé au rôle client.** Multi-profils : toujours différé.
   (perte de la confiance ADR-0015). Documenté, jamais forcé.
 - Nouvelles installs : graine générée au premier démarrage.
 
+### Premier boot : gate « identité » (aucune clé jetable sur le fil)
+
+- Premier démarrage **spawné par l'UI** (`--first-run-gate` passé par
+  `daemon_launcher`) : le daemon monte l'API puis s'arrête en état
+  `identity_pending` — aucune session, aucune signature. L'UI impose
+  le choix « nouvelle identité » / « restaurer » (phrase BIP39 ou
+  `OBID`) ; la session ne démarre qu'ensuite.
+- **Daemon headless** (pont stealth, service) : sans le flag, la
+  graine est générée silencieusement au premier boot comme
+  aujourd'hui — jamais de blocage sans surveillance.
+- Justification anonymat : une clé jetable signée pendant quelques
+  secondes laisserait un churn de pubkey observable (et un
+  `client_id` transitoire vers les ponts stealth) ; le seul matériel
+  cryptographique visible doit être l'identité définitive.
+- Même mécanisme que le mode locked ci-dessous : « API up,
+  `Session::start` différé » — un seul gate, deux déclencheurs.
+
 ### Chiffrement « at rest » (opt-in, client uniquement)
 
 - `identity.at_rest = true` → graine stockée chiffrée (`OBSK` :
@@ -132,4 +149,5 @@ opt-in réservé au rôle client.** Multi-profils : toujours différé.
   peut déjà exporter l'identité via `OBID`).
 - Le mode locked ajoute un état de session inédit (API up, identité
   absente) — surface DoS locale bornée par le rate-limit d'`unlock`
-  et argon2id.
+  et argon2id. Le même état sert le gate de premier boot
+  (`identity_pending`) : aucune clé jetable ne touche jamais le fil.

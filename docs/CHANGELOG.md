@@ -20,6 +20,10 @@ en haut.
   client**, refusé pour `bridge`/`gateway` (pont = reboot sans
   surveillance). Mot de passe perdu → restore par phrase.
 - Multi-profils toujours différé. Sous-étapes 48a-e dans la roadmap.
+- **Gate de premier boot** (option 2 retenue) : premier démarrage
+  spawné par l'UI → `identity_pending` (API up, aucune signature) —
+  aucune clé jetable sur le fil ; headless auto-génère sans flag.
+  Même machinerie que le locked mode.
 
 ## ADR-0017 : passage au statut « Acceptée » (2026-10-08)
 
