@@ -83,6 +83,82 @@ impl Default for DownloadDefaults {
     }
 }
 
+/// Zone de stockage d'un telechargement (`storage_area`, ADR-0018).
+///
+/// `public` : contenu en clair sous `data/public/…`. `private` :
+/// contenu chiffre `OBD` lie a l'identite sous `data/private/…`
+/// (etapes 60-62 — la zone refuse tout ajout tant que
+/// `EncryptedStorageFactory` n'est pas cablee).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum StorageArea {
+    /// Zone publique en clair (`data/public/`).
+    #[default]
+    Public,
+    /// Zone privee chiffree liee a l'identite (`data/private/`).
+    Private,
+}
+
+impl StorageArea {
+    /// Valeur persistee (`storage/default_area`, colonne
+    /// `downloads.storage_area`).
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Public => "public",
+            Self::Private => "private",
+        }
+    }
+
+    /// Parsing permissif : `private` (insensible a la casse) →
+    /// `Private`, toute autre valeur → `Public` avec trace (un libelle
+    /// inconnu ne doit jamais activer la zone chiffree par accident).
+    pub fn parse(s: &str) -> Self {
+        if s.eq_ignore_ascii_case("private") {
+            Self::Private
+        } else {
+            if !s.eq_ignore_ascii_case("public") {
+                tracing::warn!(value = s, "storage/default_area inconnu — repli sur public");
+            }
+            Self::Public
+        }
+    }
+}
+
+/// Bornes de `storage/private_chunk_kib` (ADR-0018 : 16 Kio = bloc
+/// BitTorrent, borne l'amplification des RMW chiffrees ; 4 Kio..=1 Mio).
+pub const MIN_PRIVATE_CHUNK_KIB: i64 = 4;
+/// Borne haute de `storage/private_chunk_kib`.
+pub const MAX_PRIVATE_CHUNK_KIB: i64 = 1024;
+
+/// Reglages `storage/*` (ADR-0018) : zones de telechargement et
+/// deplacement a completion.
+#[derive(Debug, Clone)]
+pub struct StorageSettings {
+    /// Zone privee chiffree disponible (`private_enabled`) — etapes
+    /// 60-62 : fichiers `OBD`, factory opaque, manifest `OBM`.
+    pub private_enabled: bool,
+    /// Zone des nouveaux ajouts sans choix explicite (`default_area`).
+    pub default_area: StorageArea,
+    /// Taille de chunk `OBD` en octets (`private_chunk_kib` borne,
+    /// defaut 16 Kio).
+    pub private_chunk_bytes: usize,
+    /// `temp` → `downloads` a la transition `finished`
+    /// (`move_on_completion`, defaut actif sous le layout portable).
+    /// `false` = comportement historique : l'ajout ecrit directement
+    /// dans le dossier final.
+    pub move_on_completion: bool,
+}
+
+impl Default for StorageSettings {
+    fn default() -> Self {
+        Self {
+            private_enabled: true,
+            default_area: StorageArea::Public,
+            private_chunk_bytes: (MIN_PRIVATE_CHUNK_KIB.max(16) as usize) * 1024,
+            move_on_completion: true,
+        }
+    }
+}
+
 /// Limites de file libtorrent (`libtorrent/active_downloads`,
 /// `active_seeds`, `active_limit` Tribler ; `< 0` = illimite).
 ///
@@ -168,6 +244,9 @@ pub struct CoreConfig {
     /// `identity.seed_acknowledged` : l'utilisateur a confirme avoir
     /// note sa phrase — informatif (UI), ne bloque rien.
     pub identity_seed_acknowledged: bool,
+    /// Section `storage` (ADR-0018) : zones public/privee et
+    /// deplacement `temp` → `downloads` a la completion (etape 59).
+    pub storage: StorageSettings,
 }
 
 impl Default for CoreConfig {
@@ -191,6 +270,7 @@ impl Default for CoreConfig {
             check_after_complete: false,
             identity_at_rest: false,
             identity_seed_acknowledged: false,
+            storage: StorageSettings::default(),
         }
     }
 }
@@ -230,6 +310,15 @@ impl CoreConfig {
             check_after_complete: false,
             identity_at_rest: false,
             identity_seed_acknowledged: false,
+            // `move_on_completion = false` en offline : les tests
+            // pre-ecrivent le contenu dans `engine.output_dir` et
+            // attendent `output_folder` direct — le split
+            // `temp → downloads` est couvert par des tests dedies
+            // qui activent le drapeau explicitement.
+            storage: StorageSettings {
+                move_on_completion: false,
+                ..StorageSettings::default()
+            },
         }
     }
 }

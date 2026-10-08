@@ -3,6 +3,43 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## ADR-0018 étape 59 : move-on-completion public `temp` → `downloads` (2026-10-09)
+
+- **Section `storage`** dans `configuration.json` (extension OnionBit,
+  absente de `TriblerConfig` Python) : `private_enabled`,
+  `default_area` (`public`|`private`), `private_chunk_kib` borné
+  4..=1024 (défaut 16 = bloc BitTorrent), `move_on_completion`
+  (défaut **on**) → `CoreConfig::storage` (`StorageSettings` +
+  `StorageArea`) ; override à chaud via `POST /api/settings`
+  (`ServiceOverrides.storage`), `apply_runtime_view` réécrit les
+  valeurs effectives.
+- **Ajout** : sans `destination` explicite et `move_on_completion`
+  actif, un téléchargement dont la destination finale reste sous
+  `@public/` écrit dans `data/public/temp` ; un `saveas` externe ou
+  une destination explicite gardent l'accès direct (pas de paire
+  temp/downloads hors zone).
+- **Transition `finished`** : `CoreSession::move_on_completion`
+  délègue au pipeline `move_storage` existant — fichiers déclarés du
+  torrent seuls (durcissement 2026-10-07), `remove_engine_only` +
+  déplacement `spawn_blocking` + re-add avec re-hash de
+  reconnaissance, `output_dir` persisté en `@public/downloads`.
+  `completed_dir` per-download reste une consigne honorée même sans
+  le drapeau global (parité `move_to_completed_dir` Python). Le move
+  et le `check_after_complete` sont sérialisés dans un seul spawn
+  (les deux font remove+re-add — pas de course).
+- **Reprise au boot** : une ligne `finished` encore en `@public/temp`
+  (kill entre complétion et rangement) est refoulée à la
+  restauration — le set `finished` pré-amorcé du progress loop ne
+  rejouerait jamais le déplacement.
+- **Échec** : destination invalide/disque plein → rollback interne de
+  `move_storage`, contenu conservé en `temp`, `output_dir` inchangée,
+  `warn` + notification `tribler_exception` (jamais de perte).
+- Tests `lifecycle` : complétion → fichier en `downloads/` +
+  `output_dir=@public/downloads` + restore re-hashé, fichier étranger
+  conservé en `temp`, drapeau `false` = comportement historique,
+  échec sans perte + exception notifiée, reprise post-kill —
+  107 tests lib + 12 `lifecycle` verts ; clippy/fmt propres.
+
 ## ADR-0018 étape 58 : arborescence cible + marqueur portable + packaging multi-OS (2026-10-09)
 
 - **Layout physique créé au boot** (`PathRoots::ensure_tree` +

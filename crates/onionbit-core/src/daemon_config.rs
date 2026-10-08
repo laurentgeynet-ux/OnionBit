@@ -1087,6 +1087,40 @@ impl Default for IdentityFileConfig {
     }
 }
 
+/// Section `storage` (ADR-0018) — zones de telechargement et
+/// deplacement a completion. Extension OnionBit : `TriblerConfig`
+/// Python n'a pas d'equivalent (le rangement se faisait via
+/// `completed_dir` par telechargement).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct StorageConfig {
+    /// Zone privee chiffree disponible (`private_enabled`) —
+    /// etapes 60-62 : fichiers `OBD`, factory opaque, manifest `OBM`.
+    pub private_enabled: bool,
+    /// Zone des nouveaux ajouts : `public` | `private`.
+    pub default_area: String,
+    /// Taille de chunk `OBD` en Kio — bornee
+    /// (`MIN_PRIVATE_CHUNK_KIB`..=`MAX_PRIVATE_CHUNK_KIB`) a la
+    /// lecture (defaut 16, le bloc BitTorrent : borne
+    /// l'amplification des lecture-modification-ecriture chiffrees).
+    pub private_chunk_kib: i64,
+    /// `temp` → `downloads` a la transition `finished` (les deux
+    /// zones — rename O(1) intra-volume sur le layout portable).
+    /// `false` = comportement historique.
+    pub move_on_completion: bool,
+}
+
+impl Default for StorageConfig {
+    fn default() -> Self {
+        Self {
+            private_enabled: true,
+            default_area: "public".into(),
+            private_chunk_kib: 16,
+            move_on_completion: true,
+        }
+    }
+}
+
 /// Section `logging` — rétention des fichiers de log (extension
 /// propre au portage, absente de `TriblerConfig` Python).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1139,6 +1173,9 @@ pub struct DaemonConfig {
     /// Section `identity` — identite portable ADR-0016 (at-rest,
     /// acquittement de la phrase).
     pub identity: IdentityFileConfig,
+    /// Section `storage` — zones de telechargement ADR-0018
+    /// (etapes 59-62).
+    pub storage: StorageConfig,
     /// Section `database`.
     pub database: EnabledSection,
     /// Section `dht_discovery`.
@@ -1194,6 +1231,7 @@ impl Default for DaemonConfig {
             ext: ExtConfig::default(),
             stealth: StealthFileConfig::default(),
             identity: IdentityFileConfig::default(),
+            storage: StorageConfig::default(),
             database: EnabledSection::enabled(),
             dht_discovery: EnabledSection::enabled(),
             content_discovery_community: EnabledSection::enabled(),
@@ -1824,6 +1862,18 @@ impl DaemonConfig {
                 active_limit: self.libtorrent.active_limit,
             },
             check_after_complete: self.libtorrent.check_after_complete,
+            // `storage` (ADR-0018) : la taille de chunk est bornee —
+            // une valeur hors plage est un warning, jamais un refus.
+            storage: crate::config::StorageSettings {
+                private_enabled: self.storage.private_enabled,
+                default_area: crate::config::StorageArea::parse(&self.storage.default_area),
+                private_chunk_bytes: (self.storage.private_chunk_kib.clamp(
+                    crate::config::MIN_PRIVATE_CHUNK_KIB,
+                    crate::config::MAX_PRIVATE_CHUNK_KIB,
+                ) as usize)
+                    * 1024,
+                move_on_completion: self.storage.move_on_completion,
+            },
             identity_at_rest: self.identity.at_rest,
             identity_seed_acknowledged: self.identity.seed_acknowledged,
             download_defaults: crate::config::DownloadDefaults {
@@ -1950,6 +2000,10 @@ impl DaemonConfig {
         self.libtorrent.socks_listen_ports = core.ipv8.socks_listen_ports.clone();
         self.dht_discovery.enabled = core.ipv8.enable_dht;
         self.content_discovery_community.enabled = core.ipv8.enable_content_discovery;
+        self.storage.private_enabled = core.storage.private_enabled;
+        self.storage.default_area = core.storage.default_area.as_str().to_string();
+        self.storage.private_chunk_kib = (core.storage.private_chunk_bytes / 1024) as i64;
+        self.storage.move_on_completion = core.storage.move_on_completion;
     }
 }
 
@@ -1974,6 +2028,39 @@ mod tests {
         let mut dcfg = DaemonConfig::default();
         dcfg.ext.enabled = false;
         assert!(!dcfg.to_core_config(Path::new(".")).ipv8.ext_enabled);
+    }
+
+    /// Section `storage` (ADR-0018, etape 59) : defauts actifs sous le
+    /// layout portable, mapping vers `CoreConfig::storage`, bornage de
+    /// `private_chunk_kib` et aller-retour `apply_runtime_view`.
+    #[test]
+    fn storage_section_mappee_et_bornee() {
+        let cfg = DaemonConfig::default().to_core_config(Path::new("."));
+        assert!(cfg.storage.move_on_completion, "defaut ADR-0018 : on");
+        assert!(cfg.storage.private_enabled);
+        assert_eq!(cfg.storage.default_area, crate::config::StorageArea::Public);
+        assert_eq!(cfg.storage.private_chunk_bytes, 16 * 1024);
+
+        let mut dcfg = DaemonConfig::default();
+        dcfg.storage.move_on_completion = false;
+        dcfg.storage.default_area = "private".into();
+        dcfg.storage.private_chunk_kib = 0; // hors borne → clamp
+        let cfg = dcfg.to_core_config(Path::new("."));
+        assert!(!cfg.storage.move_on_completion);
+        assert_eq!(
+            cfg.storage.default_area,
+            crate::config::StorageArea::Private
+        );
+        assert_eq!(
+            cfg.storage.private_chunk_bytes,
+            (crate::config::MIN_PRIVATE_CHUNK_KIB as usize) * 1024
+        );
+
+        // `GET /api/settings` reflete la valeur effective.
+        let mut back = DaemonConfig::default();
+        back.apply_runtime_view(&cfg);
+        assert!(!back.storage.move_on_completion);
+        assert_eq!(back.storage.default_area, "private");
     }
 
     /// `peer_flags` de `TriblerTunnelCommunity` (`community.py` Python) :

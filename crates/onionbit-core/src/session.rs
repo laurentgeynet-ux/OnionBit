@@ -102,6 +102,10 @@ struct ServiceOverrides {
     engine: Option<onionbit_bittorrent::EngineConfig>,
     /// Idem pour `torrent_checker/enabled`.
     enable_torrent_checker: Option<bool>,
+    /// Section `storage` effective (`Some` = remplace
+    /// `config.storage` — `move_on_completion` s'applique a chaud :
+    /// les nouveaux ajouts repartent en `temp` des le prochain PUT).
+    storage: Option<crate::config::StorageSettings>,
 }
 
 /// Parametres initiaux communs de `persist`/`persist_torrent`.
@@ -712,6 +716,33 @@ impl CoreSession {
                     if let Some(name) = dl.name() {
                         self.index_channel_node(&dl.info_hash(), &name, dl.stats().total_bytes);
                     }
+                    if row.finished {
+                        // Arret entre la transition `finished` et le
+                        // rangement (etape 59) : la ligne dit
+                        // « termine » mais le contenu vit encore dans
+                        // `public/temp` — le set `finished` du
+                        // progress loop est pre-amorce et ne rejouerait
+                        // jamais le deplacement. Idempotent : no-op si
+                        // le torrent est deja hors de `temp` ou si le
+                        // drapeau est desactive.
+                        let session = self.clone();
+                        let ih = dl.info_hash_hex();
+                        tokio::spawn(async move {
+                            if let Err(e) = session.move_on_completion(&ih).await {
+                                tracing::warn!(
+                                    infohash = %ih,
+                                    error = %e,
+                                    "move_on_completion differe en echec — le torrent reste en temp"
+                                );
+                                session
+                                    .inner
+                                    .notifier
+                                    .notify(Notification::TriblerException {
+                                        error: format!("move_on_completion {ih}: {e}"),
+                                    });
+                            }
+                        });
+                    }
                 }
                 Err(e) => {
                     failed += 1;
@@ -1152,20 +1183,39 @@ impl CoreSession {
                                     );
                                 }
                             }
-                            // `libtorrent/check_after_complete` Python :
-                            // reverification des pieces a la fin
-                            // (`session.recheck` = remove + re-add, le
-                            // hash-check rqbit sert de recheck).
-                            if session.inner.config.check_after_complete {
+                            // ADR-0018 etape 59 + `check_after_complete`
+                            // Python : rangement `temp` → `downloads` puis
+                            // recheck. Les deux font remove + re-add du
+                            // torrent — serialises dans UN seul spawn pour
+                            // eviter toute course concurrente.
+                            {
                                 let session = session.clone();
                                 let ih = stats.info_hash.clone();
+                                let recheck = session.inner.config.check_after_complete;
                                 tokio::spawn(async move {
-                                    if let Err(e) = session.recheck(&ih).await {
+                                    if let Err(e) = session.move_on_completion(&ih).await {
+                                        // Jamais de perte : le contenu
+                                        // reste en `temp` (rollback
+                                        // interne de `move_storage`).
                                         tracing::warn!(
                                             error = %e,
                                             infohash = %ih,
-                                            "check_after_complete en erreur"
+                                            "move_on_completion en echec — le torrent reste en temp"
                                         );
+                                        session.inner.notifier.notify(
+                                            Notification::TriblerException {
+                                                error: format!("move_on_completion {ih}: {e}"),
+                                            },
+                                        );
+                                    }
+                                    if recheck {
+                                        if let Err(e) = session.recheck(&ih).await {
+                                            tracing::warn!(
+                                                error = %e,
+                                                infohash = %ih,
+                                                "check_after_complete en erreur"
+                                            );
+                                        }
                                     }
                                 });
                             }
@@ -2251,13 +2301,56 @@ impl CoreSession {
             .transpose()
             .map(|d| {
                 d.or_else(|| {
-                    self.inner
-                        .overrides
-                        .read()
-                        .ok()
-                        .and_then(|ov| ov.download_dir.clone())
+                    let final_dir = self.default_final_dir();
+                    // ADR-0018 etape 59 : `storage/move_on_completion`
+                    // ajoute dans `data/public/temp` quand la
+                    // destination finale reste dans la zone publique
+                    // — le contenu est refoule vers `downloads/` a la
+                    // transition `finished`. Un `saveas` externe n'a
+                    // pas de paire temp/downloads : acces direct.
+                    if self.storage_settings().move_on_completion && self.in_public_zone(&final_dir)
+                    {
+                        Some(self.inner.paths.public_temp())
+                    } else {
+                        Some(final_dir)
+                    }
                 })
             })
+    }
+
+    /// Dossier final d'un ajout sans `destination` : `saveas`
+    /// (override `POST /api/settings`) ou `engine.output_dir` (les
+    /// lanes anonymes partagent le meme `output_dir` — un `Some`
+    /// explicite est equivalent au `None` historique).
+    fn default_final_dir(&self) -> std::path::PathBuf {
+        self.inner
+            .overrides
+            .read()
+            .ok()
+            .and_then(|ov| ov.download_dir.clone())
+            .unwrap_or_else(|| self.inner.config.engine.output_dir.clone())
+    }
+
+    /// `dir` vit sous la racine publique du layout (`@public/…`) —
+    /// comparaison normalisee par `to_portable`, insensible a la
+    /// casse et aux remontages (lettre de lecteur).
+    fn in_public_zone(&self, dir: &std::path::Path) -> bool {
+        self.inner
+            .paths
+            .to_portable(dir)
+            .is_some_and(|s| s == "@public" || s.starts_with("@public/"))
+    }
+
+    /// Reglages `storage/*` effectifs — l'override
+    /// `POST /api/settings` a chaud prime sur la config de boot.
+    fn storage_settings(&self) -> crate::config::StorageSettings {
+        self.inner
+            .overrides
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .storage
+            .clone()
+            .unwrap_or_else(|| self.inner.config.storage.clone())
     }
 
     /// Valeur persistee pour un chemin runtime : spec `@root/…`
@@ -2977,6 +3070,53 @@ impl CoreSession {
         Ok(true)
     }
 
+    /// ADR-0018 etape 59 : a la transition `finished`, un
+    /// telechargement vivant dans `data/public/temp` est refoule vers
+    /// sa destination finale — `completed_dir` per-download s'il est
+    /// pose, sinon `saveas`/dossier public effectif. Un telechargement
+    /// ajoute avec `destination` explicite hors zone `temp` n'est pas
+    /// touche ; `completed_dir` reste une consigne de rangement
+    /// honoree independamment du drapeau global (parite Python).
+    ///
+    /// Le deplacement reutilise `move_storage` : fichiers declares du
+    /// torrent seuls, remove + re-add avec re-hash de reconnaissance.
+    /// En echec (disque plein…) le rollback interne a deja replace le
+    /// contenu — l'appelant trace et notifie, jamais de perte.
+    async fn move_on_completion(&self, id_or_hash: &str) -> Result<()> {
+        // Le download peut avoir ete supprime entre le tick du
+        // progress loop et le spawn — ce n'est pas une erreur.
+        let Ok((dl, row)) = self.download_and_row(id_or_hash) else {
+            return Ok(());
+        };
+        let current = dl.output_folder();
+        let target = match row.completed_dir.as_deref().filter(|s| !s.is_empty()) {
+            Some(cd) => self.inner.paths.resolve_persisted(cd),
+            None => {
+                if !self.storage_settings().move_on_completion {
+                    return Ok(());
+                }
+                // Rangement automatique reserve aux torrents du
+                // tampon public : une destination explicite (ou un
+                // `saveas` externe) reste en place.
+                let in_temp = self
+                    .inner
+                    .paths
+                    .to_portable(&current)
+                    .is_some_and(|s| s == "@public/temp" || s.starts_with("@public/temp/"));
+                if !in_temp {
+                    return Ok(());
+                }
+                self.default_final_dir()
+            }
+        };
+        if target == current {
+            return Ok(());
+        }
+        self.move_storage(id_or_hash, &target, None)
+            .await
+            .map(|_| ())
+    }
+
     /// `set_selected_files` Python : valide les indices puis applique
     /// `only_files` rqbit et persiste la selection.
     pub async fn set_selected_files(&self, id_or_hash: &str, files: &[i64]) -> Result<()> {
@@ -3315,6 +3455,9 @@ impl CoreSession {
         if let Some(dd) = &ov.download_defaults {
             cfg.download_defaults = dd.clone();
         }
+        if let Some(s) = &ov.storage {
+            cfg.storage = s.clone();
+        }
         // Bornes de circuits a chaud : relues dans la stack IPv8.
         if let Some(stack) = self.ipv8() {
             let (min, max) = stack.circuit_bounds();
@@ -3352,6 +3495,7 @@ impl CoreSession {
             queue: Some(config.queue.clone()),
             rate_limits: Some((config.engine.max_upload_bps, config.engine.max_download_bps)),
             download_defaults: Some(config.download_defaults.clone()),
+            storage: Some(config.storage.clone()),
             ipv8: Some(config.ipv8.clone()),
             engine: Some(config.engine.clone()),
             enable_torrent_checker: Some(config.enable_torrent_checker),

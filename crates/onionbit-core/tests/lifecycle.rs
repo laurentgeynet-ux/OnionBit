@@ -560,3 +560,287 @@ async fn operations_sur_magnet_en_resolution() {
     assert!(row.is_none(), "ligne persistee non supprimee");
     session.stop().await;
 }
+
+/// ADR-0018 etape 59 : `storage/move_on_completion` — un ajout sans
+/// `destination` ecrit dans `data/public/temp` ; a la transition
+/// `finished` le contenu declare (et lui seul) est refoule vers
+/// `data/public/downloads`, `output_dir` persistee devient
+/// `@public/downloads`, et le redemarrage re-hash le torrent fini
+/// a son nouvel emplacement (re-check rqbit de reconnaissance).
+#[tokio::test]
+async fn move_on_completion_deplace_temp_vers_downloads() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut cfg = CoreConfig::offline(dir.path().to_path_buf());
+    cfg.progress_interval_ms = 50;
+    cfg.storage.move_on_completion = true;
+    let roots = onionbit_core::paths::PathRoots::for_state_dir(dir.path());
+    let temp = roots.public_temp();
+    let downloads = roots.public_downloads();
+
+    let content = b"payload move_on_completion".to_vec();
+    let bytes = torrent_complet("moved.bin", &content);
+    let meta = onionbit_format::torrent::TorrentMeta::parse(&bytes).unwrap();
+    let ih = meta.info_hash_hex();
+    let ih_bin = || onionbit_crypto::hash::from_hex(&ih).unwrap();
+
+    let session = CoreSession::start(cfg.clone(), Notifier::new())
+        .await
+        .expect("start #1");
+    // Contenu complet deja en place + un fichier etranger qui ne doit
+    // PAS suivre (durcissement : fichiers declares seulement).
+    std::fs::write(temp.join("moved.bin"), &content).unwrap();
+    std::fs::write(temp.join("etranger.txt"), b"pas a deplacer").unwrap();
+    let dl = session
+        .add_torrent_bytes(bytes, false)
+        .await
+        .expect("add torrent");
+    assert_eq!(
+        dl.output_folder()
+            .components()
+            .collect::<std::path::PathBuf>(),
+        temp.components().collect::<std::path::PathBuf>(),
+        "ajout sans destination doit ecrire dans public/temp"
+    );
+
+    // Completion detectee par le progress loop → deplacement.
+    let moved = onionbit_test_support::wait_for(std::time::Duration::from_secs(15), || {
+        downloads.join("moved.bin").is_file()
+    })
+    .await;
+    assert!(moved, "contenu termine non refoule vers public/downloads");
+    assert!(
+        !temp.join("moved.bin").exists(),
+        "source encore presente en temp"
+    );
+    assert!(
+        temp.join("etranger.txt").is_file(),
+        "fichier etranger au torrent deplace par erreur"
+    );
+
+    // `output_dir` persistee en spec portable vers la zone finale.
+    let persisted = onionbit_test_support::wait_for(std::time::Duration::from_secs(5), || {
+        session
+            .db()
+            .with(|c| onionbit_db::downloads::get(c, &ih_bin()))
+            .ok()
+            .flatten()
+            .map(|r| r.output_dir == "@public/downloads")
+            .unwrap_or(false)
+    })
+    .await;
+    assert!(
+        persisted,
+        "output_dir persistee non mise a jour vers @public/downloads"
+    );
+    session.stop().await;
+
+    // Redemarrage : la restauration relit `@public/downloads` et le
+    // re-hash rqbit reconnait le contenu deja complet.
+    let session = CoreSession::start(cfg, Notifier::new())
+        .await
+        .expect("start #2");
+    session.wait_restored().await;
+    let done = onionbit_test_support::wait_for(std::time::Duration::from_secs(10), || {
+        session
+            .find_download(&ih)
+            .map(|d| d.stats().finished)
+            .unwrap_or(false)
+    })
+    .await;
+    assert!(done, "torrent deplace jamais revenu finished au restart");
+    let restored = session.find_download(&ih).unwrap();
+    assert_eq!(
+        restored
+            .output_folder()
+            .components()
+            .collect::<std::path::PathBuf>(),
+        downloads.components().collect::<std::path::PathBuf>(),
+    );
+    session.stop().await;
+}
+
+/// `storage/move_on_completion = false` : comportement historique —
+/// l'ajout ecrit directement dans le dossier final, rien ne bouge a
+/// la completion.
+#[tokio::test]
+async fn move_on_completion_desactive_garde_la_destination() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut cfg = CoreConfig::offline(dir.path().to_path_buf());
+    cfg.progress_interval_ms = 50;
+    cfg.storage.move_on_completion = false;
+    let roots = onionbit_core::paths::PathRoots::for_state_dir(dir.path());
+    let downloads = roots.public_downloads();
+
+    let content = b"payload sans move".to_vec();
+    let bytes = torrent_complet("stay.bin", &content);
+
+    let session = CoreSession::start(cfg, Notifier::new())
+        .await
+        .expect("start");
+    std::fs::create_dir_all(&downloads).unwrap();
+    std::fs::write(downloads.join("stay.bin"), &content).unwrap();
+    let dl = session
+        .add_torrent_bytes(bytes, false)
+        .await
+        .expect("add torrent");
+    assert_eq!(
+        dl.output_folder()
+            .components()
+            .collect::<std::path::PathBuf>(),
+        downloads.components().collect::<std::path::PathBuf>(),
+        "move_on_completion=false doit garder le dossier final"
+    );
+    let done = onionbit_test_support::wait_for(std::time::Duration::from_secs(10), || {
+        session.downloads().iter().any(|s| s.finished)
+    })
+    .await;
+    assert!(done);
+    // Quelques ticks : un deplacement intempestif aurait eu lieu.
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    assert!(
+        downloads.join("stay.bin").is_file(),
+        "contenu deplace malgre move_on_completion=false"
+    );
+    session.stop().await;
+}
+
+/// Echec du deplacement (destination `public/downloads` inutilisable) :
+/// le contenu reste en `temp`, `output_dir` persistee inchangee, et
+/// l'echec est signale via `tribler_exception` — jamais de perte.
+#[tokio::test]
+async fn move_on_completion_echec_conserve_le_contenu_en_temp() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut cfg = CoreConfig::offline(dir.path().to_path_buf());
+    cfg.progress_interval_ms = 50;
+    cfg.storage.move_on_completion = true;
+    let roots = onionbit_core::paths::PathRoots::for_state_dir(dir.path());
+    let temp = roots.public_temp();
+    let downloads = roots.public_downloads();
+
+    let content = b"payload bloque".to_vec();
+    let bytes = torrent_complet("blocked.bin", &content);
+    let meta = onionbit_format::torrent::TorrentMeta::parse(&bytes).unwrap();
+    let ih = meta.info_hash_hex();
+    let ih_bin = || onionbit_crypto::hash::from_hex(&ih).unwrap();
+
+    let notifier = Notifier::new();
+    let mut rx = notifier.subscribe();
+    let session = CoreSession::start(cfg, notifier).await.expect("start");
+    // `public/downloads` est bloquee APRES le boot (le moteur exige un
+    // `output_dir` valide au demarrage) : le dossier est remplace par
+    // un fichier ordinaire — `move_storage` refusera la cible.
+    std::fs::remove_dir(&downloads).expect("remove downloads dir");
+    std::fs::write(&downloads, b"blocked").unwrap();
+    std::fs::create_dir_all(&temp).unwrap();
+    std::fs::write(temp.join("blocked.bin"), &content).unwrap();
+    session
+        .add_torrent_bytes(bytes, false)
+        .await
+        .expect("add torrent");
+
+    // La completion arrive (le hash-check reussit dans temp), le move
+    // echoue — attendre la notification d'echec.
+    let flagged = onionbit_test_support::wait_for(std::time::Duration::from_secs(15), || {
+        session
+            .db()
+            .with(|c| onionbit_db::downloads::get(c, &ih_bin()))
+            .ok()
+            .flatten()
+            .map(|r| r.finished)
+            .unwrap_or(false)
+    })
+    .await;
+    assert!(flagged, "completion jamais detectee");
+    // `wait_for` rappelle `f` une derniere fois apres sa boucle : un
+    // predicat non idempotent (ici le drainage du canal) doit memoriser
+    // sa reussite dans un flag, jamais la retourner directement.
+    let mut reported = false;
+    let seen = onionbit_test_support::wait_for(std::time::Duration::from_secs(10), || {
+        while let Ok(n) = rx.try_recv() {
+            if let onionbit_core::Notification::TriblerException { error } = n {
+                if error.contains("move_on_completion") {
+                    reported = true;
+                }
+            }
+        }
+        reported
+    })
+    .await;
+    assert!(seen, "echec du deplacement jamais signale");
+
+    assert!(
+        temp.join("blocked.bin").is_file(),
+        "contenu perdu en cas d'echec du deplacement"
+    );
+    let out = session
+        .db()
+        .with(|c| onionbit_db::downloads::get(c, &ih_bin()))
+        .expect("get")
+        .map(|r| r.output_dir)
+        .unwrap_or_default();
+    assert_eq!(
+        out, "@public/temp",
+        "output_dir persistee modifiee malgre l'echec"
+    );
+    session.stop().await;
+}
+
+/// Reprise : une ligne `finished` encore en `@public/temp` (kill entre
+/// la completion et le rangement) est refoulee au redemarrage — le
+/// set `finished` du progress loop est pre-amorce et ne rejouerait
+/// jamais le deplacement.
+#[tokio::test]
+async fn move_on_completion_rejoue_au_redemarrage_si_fini_en_temp() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut cfg = CoreConfig::offline(dir.path().to_path_buf());
+    cfg.progress_interval_ms = 50;
+    cfg.storage.move_on_completion = true;
+    let roots = onionbit_core::paths::PathRoots::for_state_dir(dir.path());
+    let temp = roots.public_temp();
+    let downloads = roots.public_downloads();
+
+    let content = b"payload reprise".to_vec();
+    let bytes = torrent_complet("orphan.bin", &content);
+    let meta = onionbit_format::torrent::TorrentMeta::parse(&bytes).unwrap();
+    let ih = meta.info_hash_hex();
+
+    // Etat laisse par un kill post-completion : ligne `finished` avec
+    // `output_dir = @public/temp`, contenu encore sur place.
+    std::fs::create_dir_all(&temp).unwrap();
+    std::fs::write(temp.join("orphan.bin"), &content).unwrap();
+    let session = CoreSession::start(cfg.clone(), Notifier::new())
+        .await
+        .expect("start #1");
+    session
+        .db()
+        .with(|c| {
+            onionbit_db::downloads::upsert(
+                c,
+                &onionbit_db::DownloadRow {
+                    infohash: onionbit_crypto::hash::from_hex(&ih).unwrap(),
+                    name: Some("orphan.bin".into()),
+                    source_uri: format!("magnet:?xt=urn:btih:{ih}"),
+                    torrent_data: Some(bytes),
+                    output_dir: "@public/temp".into(),
+                    finished: true,
+                    ..Default::default()
+                },
+            )
+        })
+        .expect("upsert downloads");
+    session.stop().await;
+
+    let session = CoreSession::start(cfg, Notifier::new())
+        .await
+        .expect("start #2");
+    session.wait_restored().await;
+    let moved = onionbit_test_support::wait_for(std::time::Duration::from_secs(15), || {
+        downloads.join("orphan.bin").is_file()
+    })
+    .await;
+    assert!(
+        moved,
+        "torrent fini reste en temp n'a pas ete range au redemarrage"
+    );
+    session.stop().await;
+}
