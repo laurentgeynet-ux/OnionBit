@@ -58,7 +58,7 @@ x25519-dalek = { version = "2", features = ["static_secrets", "getrandom"] }
 chacha20poly1305 = "0.11"
 hkdf = "0.13"
 hmac = "0.13"
-argon2 = "0.5"
+argon2 = "0.6"
 subtle = "2"
 hex = "0.4"
 uuid = { version = "1", features = ["v4", "serde"] }
