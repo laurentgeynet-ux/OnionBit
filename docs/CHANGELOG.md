@@ -3,6 +3,40 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## ADR-0021 étape 70 : fondations du design system (2026-10-09, worktree adr21)
+
+- **`core/design/`** : tokens couleur (`AppBrandColors`,
+  `AppSemanticColors` + `ThemeExtension`), typographie
+  (`AppTypography`, échelle M3 Space Grotesk/Inter), espacement
+  (`AppSpace`), rayons (`AppRadius`), élévation (`AppElevation`),
+  motion (`AppMotionDuration`/`Curve`) ; `AppDesignTheme` (successeur
+  de l'ancien `AppTheme`, pas encore câblé dans `app.dart` —
+  cohabitation le temps de la migration, ADR-0021 §2).
+- **`FrostedSurface`** : premier primitif (flou + dégradé), réservé
+  aux moments de marque (futur Privacy HUD, ADR-0021 §8) — les autres
+  primitifs (boutons, champs, chips, navigation, dialogues) arrivent
+  au fil des écrans migrés plutôt que devinés à l'avance.
+- **Polices auto-hébergées** (`assets/fonts/`, licence OFL, provenance
+  `SOURCES.md`) : Space Grotesk (titres), Inter (corps), JetBrains
+  Mono (hex/clés/phrases de seed ADR-0016) — zéro dépendance
+  `google_fonts`, zéro requête réseau (posture `onionbit-network-policy`).
+- **Guide de style vivant** (`/_style-guide`,
+  `core/design/style_guide/`), route enregistrée uniquement en
+  `kDebugMode`. Note technique : `CupertinoPageTransitionsBuilder` vit
+  désormais dans `package:flutter/cupertino.dart` (découplage récent
+  de Flutter stable 3.47, pas de `material_ui`/`cupertino_ui` séparés
+  nécessaires) — import ajouté dans `app_design_theme.dart`.
+- **Harnais de tests golden** (`test/design/`) :
+  `flutter_test_config.dart` charge les polices réelles via
+  `FontLoader`, scopé à `test/design/` (et non `test/` global) pour ne
+  pas casser les tests Dart purs existants qui n'initialisent pas le
+  binding Flutter ; 2 golden clair/sombre du guide de style.
+- Aucun écran existant modifié visuellement — l'ancien `AppTheme`
+  reste intact et utilisé par `app.dart` (stratégie de l'étrangleur,
+  ADR-0021 §2).
+- **Validation** : `flutter analyze` (0 issue), `flutter test` (31
+  verts, dont les 2 golden), `flutter build web` OK.
+
 ## ADR-0019 étape 69 : validation + retours MG-13 (2026-10-09)
 
 - **`CAP_MSG_V2` annoncé** : `messaging_groups_enabled` plombé
