@@ -43,7 +43,7 @@
     <tspan fill="#B07BD6">Onion</tspan><tspan fill="#4FD8E0">Bit</tspan>
   </text>
   <text x="544" y="368" font-family="Segoe UI, Roboto, Helvetica, Arial, sans-serif"
-        font-size="34" fill="#B8B3C4" letter-spacing="2">Anonymous BitTorrent client, native in Rust</text>
+        font-size="26" fill="#B8B3C4" letter-spacing="1">Anonymous, censorship-resistant P2P ecosystem</text>
   <text x="544" y="428" font-family="Segoe UI, Roboto, Helvetica, Arial, sans-serif"
-        font-size="24" fill="#6E6879" letter-spacing="1">A Tribler port · Onion-routed circuits · GPL-3.0</text>
+        font-size="24" fill="#6E6879" letter-spacing="1">File sharing · Messaging · Portable identity · GPL-3.0</text>
 </svg>

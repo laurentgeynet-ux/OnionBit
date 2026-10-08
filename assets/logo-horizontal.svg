@@ -35,5 +35,5 @@
     <tspan fill="#7D4698">Onion</tspan><tspan fill="#1FA8B8">Bit</tspan>
   </text>
   <text x="180" y="136" font-family="Segoe UI, Roboto, Helvetica, Arial, sans-serif"
-        font-size="20" fill="#8A8A93" letter-spacing="3.2">ANONYMOUS BITTORRENT IN RUST</text>
+        font-size="20" fill="#8A8A93" letter-spacing="3.2">ANONYMOUS P2P ECOSYSTEM</text>
 </svg>
