@@ -3,6 +3,24 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## ADR-0016 : architecture cible décidée — graine BIP39 + at-rest opt-in (2026-10-08)
+
+- **Modèle de clés** : `identity_seed.bin` (32 o, atomique, `0600`)
+  racine unique ; HKDF-SHA256 à domaines `onionbit/identity/
+  {ipv8-crypt,ipv8-sign,bridge}/v1` — `ipv8_keypair.bin` et
+  `stealth_bridge.key` deviennent des caches régénérables.
+- **Phrase BIP39 24 mots** : wordlist officielle vendored (pas de
+  crate externe) ; `GET /api/identity/recovery_phrase` + `restore`
+  par phrase ; pas de passphrase 25e mot en v1.
+- **Migration** : installs sans graine = « legacy », rien ne change,
+  pas de re-key forcé.
+- **At-rest opt-in** : `OBSK` (argon2id+AEAD via `keyblob.rs`), boot
+  locked (API up, `Session::start` différé, `409 identity_locked`,
+  `POST /api/identity/unlock` rate-limité) — **réservé au rôle
+  client**, refusé pour `bridge`/`gateway` (pont = reboot sans
+  surveillance). Mot de passe perdu → restore par phrase.
+- Multi-profils toujours différé. Sous-étapes 48a-e dans la roadmap.
+
 ## ADR-0017 : passage au statut « Acceptée » (2026-10-08)
 
 - **Revue externe remplie** (`docs/security/revue_stealth.md`,

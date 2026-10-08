@@ -1,8 +1,9 @@
 # ADR-0016 — Identité portable : export/import chiffré (solution intérimaire)
 
-Statut : **partiellement implémentée** (2026-10-06) — l'export/import
-`OBID` et le durcissement du fichier local sont livrés ; la graine
-BIP39/phrase de récupération reste une décision ouverte.
+Statut : **partiellement implémentée** (2026-10-06 ; architecture
+cible décidée 2026-10-08) — l'export/import `OBID` et le durcissement
+du fichier local sont livrés ; la graine BIP39 + chiffrement « at
+rest » opt-in sont décidés, en attente d'implantation.
 
 ## Contexte
 
@@ -53,14 +54,64 @@ pour l'instant.
    (device B) → redémarrage → import du coffre `OBV1` → contacts +
    alias restaurés sous la même identité.
 
-## Différé (décision ouverte)
+## Décision cible (2026-10-08)
 
-L'architecture cible reste à choisir — probablement une graine
-`identity_seed.bin` (32 o) racine de dérivation HKDF, encodée en phrase
-BIP39 24 mots, le fichier de clé devenant un cache régénérable. Aussi
-ouvert : chiffrement « at rest » optionnel du fichier local (DPAPI /
-trousseau OS / mot de passe) et multi-profils (un `state_dir` par
-identité, sélecteur au démarrage).
+**Graine racine HKDF + phrase BIP39 24 mots + chiffrement « at rest »
+opt-in réservé au rôle client.** Multi-profils : toujours différé.
+
+### Modèle de clés
+
+- `identity_seed.bin` : 32 octets aléatoires, racine unique de
+  l'identité ; écriture atomique tmp+rename, `0600` (même discipline
+  que `stealth_bridge.key`).
+- Dérivation HKDF-SHA256 (`hkdf` déjà en dep) à domaines séparés :
+  - `onionbit/identity/ipv8-crypt/v1` → `crypt_sk` X25519 ;
+  - `onionbit/identity/ipv8-sign/v1` → seed ed25519 ;
+  - `onionbit/identity/bridge/v1` → `stealth_bridge.key` — la phrase
+    couvre aussi la clé de pont ADR-0017, jusqu'ici non exportable.
+- `ipv8_keypair.bin` / `stealth_bridge.key` deviennent des **caches
+  dérivés** : régénérés au boot depuis la graine, plus source de
+  vérité (compat : en présence des deux, la graine dérivée gagne).
+
+### Phrase de récupération BIP39
+
+- 32 o d'entropie → 264 bits → 24 mots. Wordlist anglaise officielle
+  BIP39 vendored (2048 mots, domaine public) — encode/decode maison
+  ~100 lignes, pas de crate externe.
+- `GET /api/identity/recovery_phrase` derrière `api_key_auth` (le
+  détenteur de `api.key` est déjà racine de confiance loopback) ;
+  `POST /api/identity/restore` accepte la phrase en alternative au
+  blob `OBID`.
+- Pas de passphrase « 25e mot » en v1 (complexité UX pour un gain
+  redondant avec le chiffrement at-rest).
+
+### Migration
+
+- Install existante sans graine = identité **legacy** : tout continue
+  de fonctionner, `GET /api/identity` ajoute `seeded: false`.
+- Pas de conversion sans re-key — changer de clé = nouvelle identité
+  (perte de la confiance ADR-0015). Documenté, jamais forcé.
+- Nouvelles installs : graine générée au premier démarrage.
+
+### Chiffrement « at rest » (opt-in, client uniquement)
+
+- `identity.at_rest = true` → graine stockée chiffrée (`OBSK` :
+  magic + argon2id RFC 9106 m=19 Mio/t=2/p=1 → ChaCha20-Poly1305,
+  réutilise `keyblob.rs`).
+- **Boot locked** : le daemon monte l'API (`api.key` reste en clair —
+  sinon deadlock de déverrouillage), diffère `Session::start`, répond
+  `409 identity_locked` sur les endpoints dépendants de l'identité ;
+  `POST /api/identity/unlock {password}` (rate-limité) démarre la
+  session à retardement. Le statut locked reste derrière `api_key_auth`.
+- **Restriction** : `at_rest` refusé si `stealth.role ∈ {bridge,
+  gateway}` — un pont doit rebooter sans surveillance (fail-closed,
+  même discipline qu'ADR-0017). Usage réaliste : poste client en zone
+  à risque de saisie.
+- Aucune clé dérivée en clair sur disque en mode at-rest :
+  `ipv8_keypair.bin` n'existe pas (dérivation en mémoire à l'unlock).
+- Lockout : mot de passe perdu → restore par phrase BIP39 → nouveau
+  mot de passe. La phrase reste la recovery ultime — c'est elle qui
+  rend le chiffrement acceptable.
 
 ## Conséquences
 
@@ -74,3 +125,11 @@ identité, sélecteur au démarrage).
   permissions `0600`, pas de réplication ailleurs.
 - `restore` valide le format avant d'écrire : un blob mal formé ou un
   mauvais mot de passe ne touche jamais le fichier existant.
+- La phrase BIP39 = l'identité complète en clair sur papier (modèle
+  wallet) : plus simple à sauvegarder, plus simple à photographier —
+  le risque change de forme, pas d'ordre de grandeur.
+- Le détenteur d'`api.key` peut extraire la phrase (cohérent : il
+  peut déjà exporter l'identité via `OBID`).
+- Le mode locked ajoute un état de session inédit (API up, identité
+  absente) — surface DoS locale bornée par le rate-limit d'`unlock`
+  et argon2id.
