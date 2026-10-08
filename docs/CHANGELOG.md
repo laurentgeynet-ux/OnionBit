@@ -5439,7 +5439,7 @@ les flags daemon/UI et les attributs de canal par téléchargement.
 - **`start_minimized`** : lue mais **inerte** côté daemon — chez
   Tribler core et UI sont le même processus (`run_tribler`), la clé ne
   régit que l'état de la fenêtre. Ici le daemon ne lance jamais l'UI :
-  c'est `onionbit_ui.exe` qui démarre le daemon (`daemon_launcher`),
+  c'est `OnionBit.exe` qui démarre le daemon (`daemon_launcher`),
   sinon UI lancée → daemon → UI, boucle.
 - **`database.enabled=false`** : `db_filename` bascule sur
   `":memory:"` (mode dégradé sans persistance, même repli que
@@ -5637,7 +5637,7 @@ toujours.
 
 ## Suppression des lanceurs `demarrer`/`arreter` (2026-09-28)
 
-Devenus inutiles : `onionbit_ui.exe` lance le daemon elle-même
+Devenus inutiles : `OnionBit.exe` lance le daemon elle-même
 (`daemon_launcher`) et l'arrêt se fait via « Quitter » du systray ou
 `PUT /api/shutdown` (qui termine réellement le processus depuis
 l'étape 29). `build_dist.ps1` ne les génère plus et nettoie les restes
@@ -5646,7 +5646,7 @@ des builds précédents dans `dist\`.
 ## UI : lancement automatique du daemon (2026-09-28)
 
 Décision V1 de `flutter_architecture.md` implémentée : plus besoin de
-`demarrer.cmd`, lancer `onionbit_ui.exe` suffit.
+`demarrer.cmd`, lancer `OnionBit.exe` suffit.
 
 - `core/config/daemon_launcher{,_native,_stub}` : au build de
   `connectionSettingsProvider`, si l'API découverte ne répond pas,
