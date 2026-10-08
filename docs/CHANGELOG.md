@@ -3,6 +3,41 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## ADR-0018 : proposition « arborescence portable + zones public / privé » (2026-10-08)
+
+- **Constats** : `state_dir` plat mélangeant identité, base, caches et
+  `downloads/` en clair ; chemins **absolus** persistés
+  (`downloads.output_dir`/`completed_dir`, `saveas`, `torrent_folder`,
+  `watch_folder/directory`, `output_folder` du `session.json` rqbit) —
+  un déplacement de bundle ou un changement de lettre USB casse la
+  restauration ; aucune distinction de sensibilité des contenus
+  téléchargés.
+- **Décision** : marqueur `OnionBit.portable` (remontée depuis `<exe>`),
+  arborescence `state/{identity,logs,cache,rqbit}` + `data/{public,
+  private}/{temp,downloads}`, sous-dossiers par plateforme partageant
+  le même `state/` — bundle utilisable depuis une clé USB ou un
+  disque externe, sur Windows/Linux/macOS.
+- **Chemins portables** : racines nommées `@state`/`@public`/`@private`
+  persistées et résolues à l'exécution ; migration des absolus sous
+  l'ancien `state_dir` ; les absolus externes restent un choix
+  explicite tracé.
+- **Zone privée** : `EncryptedStorageFactory` implémentant le trait
+  `TorrentStorage` de librqbit vendored (override **par torrent** via
+  `AddTorrentOptions.storage_factory`) — fichiers `OBD` à chunks
+  AEAD ChaCha20-Poly1305, clés `HKDF(identity, onionbit/private-store/v1)`,
+  noms opaques HMAC (l'infohash et les noms réels ne fuient pas),
+  accès fermé en `locked`, `private/temp/.guest/` purgé en invité,
+  streaming `/stream` déchiffré à la volée sans temporaire en clair.
+- **Patch vendored prévu** : `session_persistence/json.rs` n'accepte
+  que les factories filesystem (`is_type_id` → bail) — whitelist du
+  `TypeId` privé requise pour conserver le fastresume `.bitv`.
+- Limites assumées : pas de déni plausible (magic `OBD` visible),
+  tailles observables, `onionbit.db` reste en clair (zone `state/`
+  sensible), `at_rest` recommandé sur média sans ACL (FAT32/exFAT).
+- Plan : Phase 11, étapes 57-63 — `docs/plans/roadmap_adr0018.md`.
+  Aucun code engagé ; l'ADR passera « Acceptée » après le banc
+  `bench_portable.ps1`.
+
 ## ADR-0016 étape 48d : session différée — pending / locked / invité (2026-10-08)
 
 - **`CoreSession` scindée** : `start_gated` construit un *shell*
