@@ -60,6 +60,19 @@ en haut.
   `session.json`) ; restauration privée explicitement routée par le
   manifest `OBM` (`row.infohash` = HMAC), `locked_area` = état
   runtime dérivé, pas de colonne persistée.
+- **Revue externe 2 — concurrence, SPOF manifest, réalités FS** :
+  RMW `pwrite_all` **sérialisée par verrous de chunk** (écritures
+  concurrentes sur un même chunk sinon = perte silencieuse de bloc) ;
+  `chunk_size` défaut 16 Kio (taille de bloc BitTorrent → borne
+  l'amplification RMW et les petites écritures USB) ; `manifest.obm`
+  SPOF amorti par `.bak` + champ de secours `infohash‖relpath` scellé
+  dans l'en-tête de chaque `.obd` (reconstruction par balayage) +
+  scan d'orphelins au montage ; sparse corrigé — FAT32/exFAT n'ont
+  pas de fichiers creux (remplissage physique, sémantique « slot nul
+  → zéros » inchangée) ; `noexec` des montages amovibles documenté ;
+  `move_on_completion` privé = rename physique (même volume, O(1)) ;
+  `.bitv` invité court-circuité en `NonPersistent` (la purge
+  `.guest/` ne couvrirait pas `state/rqbit/`).
 - Plan : Phase 11, étapes 57-63 — `docs/plans/roadmap_adr0018.md`.
   Aucun code engagé ; l'ADR passera « Acceptée » après le banc
   `bench_portable.ps1`.

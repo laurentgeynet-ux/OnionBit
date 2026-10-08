@@ -142,6 +142,9 @@ Par téléchargement, nouvel attribut `storage_area ∈ {public, private}`
   (fichiers déclarés du torrent seuls, déplacement hors executor,
   re-add avec re-hash de reconnaissance). `temp`/`downloads` restent
   deux sous-dossiers de la même zone : même FS, rename possible.
+  Côté privé, tranché en revue externe : **rename physique des
+  `.obd`** (même volume, O(1)) — `temp/` ne s'encombre pas de fichiers
+  finis et les deux zones gardent la même sémantique.
 - **`private`** — `EncryptedStorageFactory`
   (`onionbit-bittorrent::storage_private`), implémentation native de
   `TorrentStorage` injectée via `AddTorrentOptions.storage_factory` :
@@ -182,15 +185,25 @@ constante filaire »). Le magic n'est pas écrit en clair : il vit dans
 l'en-tête *chiffré*.
 
 ```text
-fichier  :  hdr_nonce(12) ‖ hdr_ct ‖ chunk_0 ‖ chunk_1 ‖ …
+fichier  :  HDR_SLOT(4 Kio) ‖ chunk_0 ‖ chunk_1 ‖ …
+HDR_SLOT :  hdr_nonce(12) ‖ hdr_ct ‖ pad(0)    — slot fixe : offsets
+                                               de chunks constants
 hdr_ct   :  AEAD(K_file, hdr_nonce, "obd/hdr")〔"OBD" ‖ v(1)
-            ‖ chunk_log2(1) ‖ file_id(16) ‖ plain_len(8)
+            ‖ chunk_log2(1) ‖ file_id(16) ‖ infohash(20)
+            ‖ relpath_len(2) ‖ relpath(var) ‖ plain_len(8)
             ‖ reserved〕                     — en-tête scellé
 chunk_i  :  nonce_i(12) ‖ AEAD(K_file, nonce_i, aad_i)〔plain_i〕
 aad_i    :  file_id ‖ i:u64be                (lie le chunk au fichier
                                               et à sa position)
 nonce_i  :  **aléatoire à chaque écriture**, stocké en tête du chunk
 ```
+
+`infohash‖relpath` dans l'en-tête scellé est le **filet de secours du
+manifest** (revue externe 2) : si `manifest.obm` est perdu, un
+balayage des `.obd` avec la graine reconstruit les groupes et les
+noms (le torrent se rattache ensuite par magnet au swarm). Chiffré →
+ne fuit rien ; `relpath_len = 0` = secours absent (chemin > ~4 Kio,
+documenté — le format reste opérationnel via l'`OBM`).
 
 **Nonce aléatoire par écriture, jamais dérivé de l'index** — point
 d'audit bloquant de la revue externe : `pwrite_all` *réécrit* des
@@ -217,22 +230,36 @@ corrompu, non-OBD), aucun oracle différencié. Sans la clé, un `.obd`
 est **indiscernable d'octets aléatoires** sous un nom HMAC : pas de
 signature statique exploitable (reste l'entropie — §4).
 
-- `chunk_size` = 64 Kio par défaut (`storage.private_chunk_kib`,
-  borné 16–1024) : `pread`/`pwrite` découpent sur les bornes de chunk,
-  lecture-modification-réécriture des chunks partiels (les écritures
-  torrent ne sont pas garanties alignées).
+- `chunk_size` = **16 Kio** par défaut (`storage.private_chunk_kib`,
+  borné 16–1024) : calibré sur la taille de bloc BitTorrent — les
+  offsets fichier ne sont pas alignés sur les pièces, donc la RMW
+  reste nécessaire, mais un chunk de 16 Kio borne l'amplification à
+  ~2×16 Kio par bloc au lieu de ~64+ Kio, et soulage les petites
+  écritures aléatoires des clés USB.
+- **RMW sérialisée par chunk — exigence de correction de
+  concurrence** (revue externe 2) : `pwrite_all` est appelé
+  concurrentiellement (blocs de pairs parallèles) ; deux RMW du même
+  chunk entrelacées perdraient silencieusement un bloc → échec de
+  hash, re-téléchargement en boucle. La factory verrouille par
+  (fichier, index de chunk) — verrous rayés en mémoire, pas de lock
+  global.
 - Présence d'un chunk : slot d'écriture fixe
-  `hdr_len + i × (chunk_size+28)` ; un slot **entièrement nul** =
-  chunk jamais écrit → zéros en lecture (sparse préservé — le fichier
-  physique ne croît que des chunks réellement écrits, important sur
-  clé USB ; un slot nul ne peut pas être un chunk valide, le tag ne
-  vérifierait jamais). Slot non nul mais AEAD invalide (corruption,
-  troncature) → `warn!` + zéros : l'autorité d'intégrité reste le
-  hash de pièce BitTorrent, rqbit re-télécharge — la couche OBD
-  détecte et signale, elle ne doit pas figer le téléchargement.
-  `ensure_file_length` fixe la longueur *logique* dans l'en-tête.
-  La cohérence après crash repose sur le fastresume rqbit (`.bitv`)
-  exactement comme sur la zone publique.
+  `HDR_SLOT + i × (chunk_size+28)` ; un slot **entièrement nul** =
+  chunk jamais écrit → zéros en lecture (un slot nul ne peut pas être
+  un chunk valide, le tag ne vérifierait jamais). Slot non nul mais
+  AEAD invalide (corruption, troncature) → `warn!` + zéros :
+  l'autorité d'intégrité reste le hash de pièce BitTorrent, rqbit
+  re-télécharge — la couche OBD détecte et signale, elle ne doit pas
+  figer le téléchargement. `ensure_file_length` fixe la longueur
+  *logique* dans l'en-tête. La cohérence après crash repose sur le
+  fastresume rqbit (`.bitv`) exactement comme sur la zone publique.
+- **Sparse : honnêteté FS** (revue externe 2) — le fichier ne croît
+  que des chunks écrits, mais « creux non alloué » n'existe que sur
+  NTFS/ext4/APFS ; **FAT32/exFAT remplissent physiquement** : écrire
+  à l'offset 500 Mo alloue et zéroifie tout l'amont — taille pleine
+  immédiate et latence d'extension. La sémantique « slot nul →
+  zéros » reste exacte partout ; l'économie d'espace est un bonus
+  réservé aux FS sparse-capables, jamais une promesse.
 - Pas de versionnement anti-rollback par chunk en v1 (un attaquant qui
   réécrit le disque peut déjà supprimer les fichiers — la menace visée
   est la lecture, pas la réécriture fine ; le tag AEAD détecte toute
@@ -302,7 +329,18 @@ privé. Pour les lignes `storage_area = 'private'` :
   externalisés dans un **manifest chiffré** `data/private/manifest.obm`
   — blob de la famille `OB*` : `nonce ‖ AEAD(HKDF(K_store,
   "manifest"))〔"OBM" ‖ v ‖ catalogue JSON borné〕`, réécrit atomique
-  (tmp+rename) à chaque mutation, borne de taille à l'ouverture ;
+  (tmp+rename+fsync dir) à chaque mutation, borne de taille à
+  l'ouverture ;
+- **résilience du manifest** (revue externe 2) : SPOF assumé et
+  amorti — la réécriture conserve la copie précédente en
+  `manifest.obm.bak` (rotation tmp → `.bak` → courant) ; en double
+  perte, l'en-tête scellé de chaque `.obd` porte `infohash‖relpath`,
+  permettant de reconstruire le catalogue par balayage avec la
+  graine (les métadonnées `.torrent` se rattachent via magnet) ;
+- **orphelins** : au montage de la zone privée (post-unlock), scan
+  de cohérence — fichiers `.obd`/`<hmac>.bitv` absents du manifest →
+  rapport + purge proposée (un crash pendant création/suppression
+  laisserait sinon du bruit anonyme irrécupérable) ;
 - indisponible tant que la zone privée est fermée (`locked`) —
   cohérent : le catalogue *est* la donnée privée.
 
@@ -384,6 +422,11 @@ struct de config (AGENTS.md).
   réel serait un faux sentiment de sécurité). Non bloquant par
   défaut : l'utilisateur garde le choix — le bandeau est le
   garde-fou, pas le verrou.
+- **`noexec` sur média amovible** (revue externe 2) : Linux/macOS
+  montent souvent les volumes amovibles en `noexec` — les binaires du
+  bundle ne démarrent pas depuis la clé. Documenté dans le guide
+  nomade (remontage `exec`, `bash <chemin>`, ou copie locale des
+  binaires : `state/`+`data/` restent sur la clé).
 
 ## Alternatives rejetées
 
@@ -436,6 +479,13 @@ struct de config (AGENTS.md).
   nonces distincts dans le slot (oracle anti-réutilisation), lecture
   = dernier clair ; idem pour la réécriture d'en-tête (extension de
   `plain_len`) ;
+- **concurrence** : `pwrite_all` parallèles visant le même chunk →
+  aucune perte de bloc (le verrou par chunk sérialise la RMW),
+  contenu = union des écritures ;
+- **manifest** : corruption de `manifest.obm` → reprise sur `.bak` ;
+  double perte → reconstruction du catalogue par balayage des
+  en-têtes scellés `infohash‖relpath` ; orphelins `.obd`/`.bitv`
+  rapportés au montage ;
 - `.bitv` : aucun `<infohash>.bitv` sur disque pour un privé (oracle
   listing + strings), `<hmac>.bitv` présent et fonctionnel, supprimé
   par `remove_data`, bascule public→privé sans résidu en clair ;
