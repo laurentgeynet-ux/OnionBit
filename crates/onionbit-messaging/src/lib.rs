@@ -28,16 +28,24 @@
 //! points d'introduction malveillants, ni a la compromission
 //! d'endpoint.
 
+pub mod attach;
 pub mod config;
+pub mod conv;
 pub mod error;
 pub mod frame;
+pub mod gctl;
 pub mod hash;
+pub mod hello;
 pub mod keys;
 pub mod replay;
 
+pub use attach::{AttachDesc, IH_LEN, MID_LEN};
 pub use config::MessagingConfig;
+pub use conv::{direct_conv, random_conv, ConvId, CONV_ID_LEN};
 pub use error::MessagingError;
-pub use frame::{preflight, Frame, MsgKind, RawFrame};
+pub use frame::{preflight, Frame, MsgKind, RawFrame, PROTO_VERSION_V2};
+pub use gctl::{Gctl, RosterEntry, PK_LEN};
 pub use hash::messaging_hash;
+pub use hello::{decode_hello, encode_hello_v1, encode_hello_v2, HELLO_CAP_GROUPS};
 pub use keys::{derive_messaging_keys, MessagingKeys, HKDF_INFO_MESSAGING};
 pub use replay::RecvWindow;

@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! Codec de trame messagerie — unique point d'entree du parseur
-//! (ADR-0011, « format canonique versionne »).
+//! (ADR-0011, « format canonique versionne » ; v2 : ADR-0019).
 //!
 //! Trame filaire v1 — dictionnaire bencode **canonique** (cles
 //! triees, entiers minimaux, aucune cle hors l'ensemble prevu) :
@@ -15,13 +15,28 @@
 //!   "v":   1 }
 //! ```
 //!
+//! Trame v2 = v1 + cle `conv` (16 octets) **au niveau dict**, sous
+//! la signature (routable avant dechiffrement) + types
+//! `gctl`/`attach` :
+//!
+//! ```text
+//! { "body": <corps chiffre>,  "conv": <16 octets conv_id>,
+//!   "id":   <16 octets>,      "seq":  <u64>,
+//!   "sig":  <Ed25519 64 o>,   "ts":   <u64>,
+//!   "type": <…|gctl|attach>,  "v":    2 }
+//! ```
+//!
 //! - `body` = ChaCha20-Poly1305 du corps applicatif, cle
 //!   [`crate::keys::MessagingKeys`], nonce = `"omsg" || seq(BE)` —
 //!   `seq` monotone par direction garantit l'unicite du nonce.
 //! - `sig` = signature Ed25519 de la forme canonique du dictionnaire
 //!   **sans** `sig` (encrypt-then-sign : la signature authentifie le
-//!   corps chiffre) ; verification contre la `pk` du contact, qui
-//!   est aussi celle dont derive le swarm.
+//!   corps chiffre et `conv`) ; verification contre la `pk` du
+//!   contact, qui est aussi celle dont derive le swarm.
+//! - `v:2` **exige** `conv` ; `gctl`/`attach` exigent `v:2`. Le
+//!   texte 1:1 reste emis en v1 tant que `CAP_MSG_V2` n'est pas
+//!   confirme cote pair (compat Phase 8 : un pair v1 prefiltre les
+//!   trames v2 en `UnknownVersion`).
 
 use std::collections::BTreeMap;
 
@@ -34,10 +49,13 @@ use onionbit_crypto::ipv8::keys::{LibNaClPublicKey, LibNaClSecretKey, SIGNATURE_
 use onionbit_format::bencode::{decode, BValue};
 
 use crate::config::MessagingConfig;
+use crate::conv::{ConvId, CONV_ID_LEN};
 use crate::error::MessagingError;
 
-/// Version du format de trame.
+/// Version du format de trame v1 (emission par defaut — compat).
 pub const PROTO_VERSION: i64 = 1;
+/// Version du format de trame v2 (`conv` + `gctl`/`attach`, ADR-0019).
+pub const PROTO_VERSION_V2: i64 = 2;
 /// Taille du `id` de trame (dedup).
 pub const MSG_ID_LEN: usize = 16;
 /// Taille du tag Poly1305.
@@ -58,9 +76,19 @@ pub enum MsgKind {
     Msg,
     /// Accuse de livraison (`body` = `id` de la trame acquittee).
     Ack,
+    /// Controle de groupe (v2 — corps [`crate::gctl::Gctl`]).
+    Gctl,
+    /// Descripteur de piece jointe (v2 — corps
+    /// [`crate::attach::AttachDesc`]).
+    Attach,
 }
 
 impl MsgKind {
+    /// `true` si le type exige une trame v2 (avec `conv`).
+    pub fn is_v2_only(self) -> bool {
+        matches!(self, MsgKind::Gctl | MsgKind::Attach)
+    }
+
     fn as_bytes(self) -> &'static [u8] {
         match self {
             MsgKind::Hello => b"hello",
@@ -68,6 +96,8 @@ impl MsgKind {
             MsgKind::Reject => b"reject",
             MsgKind::Msg => b"msg",
             MsgKind::Ack => b"ack",
+            MsgKind::Gctl => b"gctl",
+            MsgKind::Attach => b"attach",
         }
     }
 
@@ -78,6 +108,8 @@ impl MsgKind {
             b"reject" => Ok(MsgKind::Reject),
             b"msg" => Ok(MsgKind::Msg),
             b"ack" => Ok(MsgKind::Ack),
+            b"gctl" => Ok(MsgKind::Gctl),
+            b"attach" => Ok(MsgKind::Attach),
             _ => Err(MessagingError::UnknownKind(
                 String::from_utf8_lossy(b).into_owned(),
             )),
@@ -97,6 +129,9 @@ impl MsgKind {
 pub struct RawFrame {
     /// Type de trame.
     pub kind: MsgKind,
+    /// Conversation (`v2` — routable avant verification de l'emet-
+    /// teur : le prefiltre peut jauger `conv` avant `verify`).
+    pub conv: Option<ConvId>,
     /// Identifiant (dedup).
     pub id: [u8; MSG_ID_LEN],
     /// `seq` — anti-replay applique APRES verification.
@@ -112,6 +147,15 @@ pub struct RawFrame {
 }
 
 impl RawFrame {
+    /// Version filaire de la trame lue (1 ou 2).
+    pub fn version(&self) -> i64 {
+        if self.conv.is_some() {
+            PROTO_VERSION_V2
+        } else {
+            PROTO_VERSION
+        }
+    }
+
     /// Codec + dechiffrement sans verification d'emetteur : borne,
     /// bencode, ensemble de cles, champs, puis AEAD sous `recv_key`.
     /// Une signature invalide ou un corps non dechiffrable sont
@@ -123,7 +167,7 @@ impl RawFrame {
         cfg: &MessagingConfig,
     ) -> Result<Self, MessagingError> {
         let f = parse_fields(data, cfg)?;
-        let unsigned = unsigned_form(f.kind, &f.id, f.seq, f.ts, &f.body_ct);
+        let unsigned = unsigned_form(f.kind, f.conv.as_ref(), &f.id, f.seq, f.ts, &f.body_ct);
         let (cipher, nonce) = chacha(recv_key, f.seq);
         let body = cipher
             .decrypt(&nonce, f.body_ct.as_slice())
@@ -132,6 +176,7 @@ impl RawFrame {
         sig.copy_from_slice(&f.sig);
         Ok(Self {
             kind: f.kind,
+            conv: f.conv,
             id: f.id,
             seq: f.seq,
             ts: f.ts,
@@ -149,6 +194,7 @@ impl RawFrame {
         }
         Ok(Frame {
             kind: self.kind,
+            conv: self.conv,
             id: self.id,
             seq: self.seq,
             ts: self.ts,
@@ -162,8 +208,11 @@ impl RawFrame {
 /// par datagramme hostile ecarte ici est constant.
 ///
 /// La forme canonique trie les cles, donc `v` est la derniere et la
-/// trame se termine par `1:vi<ver>ee`. Une entree qui ne revele pas
-/// ce suffixe n'est pas une trame v1 canonique : rejet `Malformed`.
+/// trame se termine par `1:vi<ver>ee` (`conv` trie avant `id` : la
+/// position de `v` ne change pas en v2). Une entree qui ne revele
+/// pas ce suffixe n'est pas une trame canonique : rejet `Malformed`.
+/// Les versions admises sont `{1, 2}` — un pair v1 rejetterait ici
+/// toute trame v2 en `UnknownVersion` (degradation propre).
 pub fn preflight(data: &[u8], cfg: &MessagingConfig) -> Result<(), MessagingError> {
     if data.len() > cfg.max_frame_len {
         return Err(MessagingError::FrameTooLarge(data.len(), cfg.max_frame_len));
@@ -191,7 +240,7 @@ pub fn preflight(data: &[u8], cfg: &MessagingConfig) -> Result<(), MessagingErro
     if rest.len() != end + 2 || rest[end + 1] != b'e' {
         return Err(MessagingError::Malformed("version non terminale"));
     }
-    if v != PROTO_VERSION {
+    if v != PROTO_VERSION && v != PROTO_VERSION_V2 {
         return Err(MessagingError::UnknownVersion(v));
     }
     Ok(())
@@ -200,6 +249,7 @@ pub fn preflight(data: &[u8], cfg: &MessagingConfig) -> Result<(), MessagingErro
 /// Champs bruts d'une trame filaire (corps encore chiffre).
 struct WireFields {
     kind: MsgKind,
+    conv: Option<ConvId>,
     id: [u8; MSG_ID_LEN],
     seq: u64,
     ts: u64,
@@ -207,9 +257,10 @@ struct WireFields {
     sig: Vec<u8>,
 }
 
-/// Codec strict de la trame filaire : borne -> bencode -> ensemble
-/// de cles exact -> types/tailles de champs. Ne verifie ni `sig`
-/// ni AEAD — c'est le role des phases suivantes.
+/// Codec strict de la trame filaire : borne -> bencode -> version
+/// -> ensemble de cles exact **par version** -> types/tailles de
+/// champs. Ne verifie ni `sig` ni AEAD — c'est le role des phases
+/// suivantes.
 fn parse_fields(data: &[u8], cfg: &MessagingConfig) -> Result<WireFields, MessagingError> {
     // Borne avant tout parse : le seul cout par trame hostile
     // est lineaire et borne (anti-DoS, ADR-0011).
@@ -220,26 +271,49 @@ fn parse_fields(data: &[u8], cfg: &MessagingConfig) -> Result<WireFields, Messag
     let dict = value.as_dict().ok_or(MessagingError::Malformed(
         "la trame n'est pas un dictionnaire",
     ))?;
+    // La version tranche l'ensemble de cles attendu — `v` est lue
+    // d'abord (elle est aussi verifiee par le prefiltre).
+    let v = dict
+        .get(b"v".as_ref())
+        .and_then(BValue::as_int)
+        .ok_or(MessagingError::Malformed("v absent ou non entier"))?;
+    let (keys, v2) = match v {
+        PROTO_VERSION => (FRAME_KEYS, false),
+        PROTO_VERSION_V2 => (FRAME_KEYS_V2, true),
+        _ => return Err(MessagingError::UnknownVersion(v)),
+    };
     // Ensemble de cles strict : ni champ critique absent, ni
     // champ inconnu ignore.
-    if dict.len() != FRAME_KEYS.len() || !FRAME_KEYS.iter().all(|k| dict.contains_key(*k)) {
+    if dict.len() != keys.len() || !keys.iter().all(|k| dict.contains_key(*k)) {
         return Err(MessagingError::Malformed(
-            "ensemble de cles different de la trame v1",
+            "ensemble de cles different de la trame attendue",
         ));
     }
     let get = |k: &'static str| dict.get(k.as_bytes()).unwrap();
 
-    let v = get("v")
-        .as_int()
-        .ok_or(MessagingError::Malformed("v non entier"))?;
-    if v != PROTO_VERSION {
-        return Err(MessagingError::UnknownVersion(v));
-    }
+    let conv = if v2 {
+        let raw = get("conv")
+            .as_bytes()
+            .ok_or(MessagingError::Malformed("conv non chaine"))?;
+        if raw.len() != CONV_ID_LEN {
+            return Err(MessagingError::Malformed("conv != 16 octets"));
+        }
+        let mut conv = [0u8; CONV_ID_LEN];
+        conv.copy_from_slice(raw);
+        Some(conv)
+    } else {
+        None
+    };
     let kind = MsgKind::from_bytes(
         get("type")
             .as_bytes()
             .ok_or(MessagingError::Malformed("type non chaine"))?,
     )?;
+    // `gctl`/`attach` exigent v2 (une trame v1 ne peut pas porter
+    // `conv` — le service n'aurait rien pour router la trame).
+    if !v2 && kind.is_v2_only() {
+        return Err(MessagingError::Malformed("type v2 sur trame v1"));
+    }
     let id_raw = get("id")
         .as_bytes()
         .ok_or(MessagingError::Malformed("id non chaine"))?;
@@ -277,6 +351,7 @@ fn parse_fields(data: &[u8], cfg: &MessagingConfig) -> Result<WireFields, Messag
     }
     Ok(WireFields {
         kind,
+        conv,
         id,
         seq: seq as u64,
         ts: ts as u64,
@@ -290,6 +365,9 @@ fn parse_fields(data: &[u8], cfg: &MessagingConfig) -> Result<WireFields, Messag
 pub struct Frame {
     /// Type de trame.
     pub kind: MsgKind,
+    /// Conversation — `Some` ⇒ trame v2 (conv directe derivee ou
+    /// identifiant de groupe) ; `None` ⇒ v1 (compat Phase 8).
+    pub conv: Option<ConvId>,
     /// Identifiant aleatoire (dedup, cible des `ack`).
     pub id: [u8; MSG_ID_LEN],
     /// Compteur monotone par (contact, direction) — nonce AEAD.
@@ -304,6 +382,11 @@ pub struct Frame {
 /// liste est un rejet (pas d'ignore silencieux).
 const FRAME_KEYS: &[&[u8]] = &[b"body", b"id", b"seq", b"sig", b"ts", b"type", b"v"];
 
+/// Ensemble exact des cles de la trame v2 = v1 + `conv`.
+const FRAME_KEYS_V2: &[&[u8]] = &[
+    b"body", b"conv", b"id", b"seq", b"sig", b"ts", b"type", b"v",
+];
+
 fn chacha(key: &[u8; 32], seq: u64) -> (ChaCha20Poly1305, Nonce) {
     let mut nonce = [0u8; 12];
     nonce[..4].copy_from_slice(NONCE_DOMAIN);
@@ -314,9 +397,11 @@ fn chacha(key: &[u8; 32], seq: u64) -> (ChaCha20Poly1305, Nonce) {
 
 /// Forme canonique signee : dictionnaire de tous les champs sauf
 /// `sig` — re-serialise a l'identique des deux cotes (`BTreeMap`
-/// trie les cles).
+/// trie les cles). `conv` fait partie de la forme signee en v2 :
+/// la signature authentifie la conversation routee.
 fn unsigned_form(
     kind: MsgKind,
+    conv: Option<&ConvId>,
     id: &[u8; MSG_ID_LEN],
     seq: u64,
     ts: u64,
@@ -324,23 +409,57 @@ fn unsigned_form(
 ) -> Vec<u8> {
     let mut d = BTreeMap::new();
     d.insert(b"body".to_vec(), BValue::Bytes(body_ct.to_vec()));
+    if let Some(conv) = conv {
+        d.insert(b"conv".to_vec(), BValue::Bytes(conv.to_vec()));
+    }
     d.insert(b"id".to_vec(), BValue::Bytes(id.to_vec()));
     d.insert(b"seq".to_vec(), BValue::Int(seq as i64));
     d.insert(b"ts".to_vec(), BValue::Int(ts as i64));
     d.insert(b"type".to_vec(), BValue::Bytes(kind.as_bytes().to_vec()));
-    d.insert(b"v".to_vec(), BValue::Int(PROTO_VERSION));
+    d.insert(
+        b"v".to_vec(),
+        BValue::Int(if conv.is_some() {
+            PROTO_VERSION_V2
+        } else {
+            PROTO_VERSION
+        }),
+    );
     BValue::Dict(d).encode()
 }
 
 impl Frame {
-    /// Cree une trame avec un `id` aleatoire neuf.
+    /// Cree une trame v1 avec un `id` aleatoire neuf.
     pub fn new(kind: MsgKind, seq: u64, ts: u64, body: Vec<u8>) -> Self {
         Self {
             kind,
+            conv: None,
             id: rand::random(),
             seq,
             ts,
             body,
+        }
+    }
+
+    /// Cree une trame v2 dans une conversation (`conv` non nul —
+    /// directe derivee ou groupe).
+    pub fn new_in_conv(kind: MsgKind, conv: ConvId, seq: u64, ts: u64, body: Vec<u8>) -> Self {
+        Self {
+            kind,
+            conv: Some(conv),
+            id: rand::random(),
+            seq,
+            ts,
+            body,
+        }
+    }
+
+    /// Version filaire emise par [`Frame::seal`] (2 si `conv`
+    /// present, 1 sinon).
+    pub fn version(&self) -> i64 {
+        if self.conv.is_some() {
+            PROTO_VERSION_V2
+        } else {
+            PROTO_VERSION
         }
     }
 
@@ -361,15 +480,32 @@ impl Frame {
                 cfg.max_body_len,
             ));
         }
+        // `gctl`/`attach` exigent `conv` : sans conversation la
+        // trame est inroutable cote recepteur.
+        if self.kind.is_v2_only() && self.conv.is_none() {
+            return Err(MessagingError::Malformed(
+                "gctl/attach exigent une trame v2 (conv)",
+            ));
+        }
         let (cipher, nonce) = chacha(send_key, self.seq);
         let body_ct = cipher
             .encrypt(&nonce, self.body.as_ref())
             .map_err(|_| CryptoError::Aead)?;
-        let unsigned = unsigned_form(self.kind, &self.id, self.seq, self.ts, &body_ct);
+        let unsigned = unsigned_form(
+            self.kind,
+            self.conv.as_ref(),
+            &self.id,
+            self.seq,
+            self.ts,
+            &body_ct,
+        );
         let sig = sk.sign(&unsigned);
 
         let mut d = BTreeMap::new();
         d.insert(b"body".to_vec(), BValue::Bytes(body_ct));
+        if let Some(conv) = &self.conv {
+            d.insert(b"conv".to_vec(), BValue::Bytes(conv.to_vec()));
+        }
         d.insert(b"id".to_vec(), BValue::Bytes(self.id.to_vec()));
         d.insert(b"seq".to_vec(), BValue::Int(self.seq as i64));
         d.insert(b"sig".to_vec(), BValue::Bytes(sig.to_vec()));
@@ -378,7 +514,7 @@ impl Frame {
             b"type".to_vec(),
             BValue::Bytes(self.kind.as_bytes().to_vec()),
         );
-        d.insert(b"v".to_vec(), BValue::Int(PROTO_VERSION));
+        d.insert(b"v".to_vec(), BValue::Int(self.version()));
         let wire = BValue::Dict(d).encode();
         if wire.len() > cfg.max_frame_len {
             return Err(MessagingError::FrameTooLarge(wire.len(), cfg.max_frame_len));
@@ -459,6 +595,7 @@ mod tests {
         let key = [1u8; 32];
         let f = Frame {
             kind: MsgKind::Msg,
+            conv: None,
             id: [7u8; MSG_ID_LEN],
             seq: 1,
             ts: 100,
@@ -490,7 +627,7 @@ mod tests {
             Err(MessagingError::FrameTooLarge(..))
         ));
 
-        // `v` = 2 : reconstruit une trame pirate signee — la
+        // `v` = 3 : reconstruit une trame pirate signee — la
         // signature reste valide mais la version est rejetee AVANT
         // verification (v lu avant sig).
         let mut d = BTreeMap::new();
@@ -500,11 +637,11 @@ mod tests {
         d.insert(b"sig".to_vec(), BValue::Bytes([0u8; 64].to_vec()));
         d.insert(b"ts".to_vec(), BValue::Int(0));
         d.insert(b"type".to_vec(), BValue::Bytes(b"msg".to_vec()));
-        d.insert(b"v".to_vec(), BValue::Int(2));
+        d.insert(b"v".to_vec(), BValue::Int(3));
         let bad = BValue::Dict(d).encode();
         assert!(matches!(
             Frame::open(&bad, &pk, &key, &cfg),
-            Err(MessagingError::UnknownVersion(2))
+            Err(MessagingError::UnknownVersion(3))
         ));
 
         // Cle inconnue ajoutee.
@@ -577,5 +714,118 @@ mod tests {
             ok.seal(&sk, &key, &cfg),
             Err(MessagingError::FrameTooLarge(..))
         ));
+    }
+
+    /// Roundtrip v2 : `conv` en cle dict top-level, sous la
+    /// signature — la trame rouvre avec la meme `conv`.
+    #[test]
+    fn roundtrip_v2_conv() {
+        let (sk, pk, _) = keys();
+        let conv = crate::conv::direct_conv(&[1u8; 32], &[2u8; 32]);
+        for kind in [MsgKind::Msg, MsgKind::Ack, MsgKind::Gctl, MsgKind::Attach] {
+            let f = Frame::new_in_conv(kind, conv, 9, 1_700_000_000, b"corps".to_vec());
+            roundtrip(&f, &sk, &pk);
+            assert_eq!(f.version(), PROTO_VERSION_V2);
+        }
+    }
+
+    /// `conv` est signee : une trame v2 dont `conv` est permutee
+    /// post-signature est rejetee en `BadSignature`.
+    #[test]
+    fn v2_conv_signee() {
+        let (sk, pk, cfg) = keys();
+        let key = [8u8; 32];
+        let conv = crate::conv::direct_conv(&[1u8; 32], &[2u8; 32]);
+        let f = Frame::new_in_conv(MsgKind::Msg, conv, 1, 1, b"x".to_vec());
+        let wire = f.seal(&sk, &key, &cfg).unwrap();
+        // `4:conv16:` suivi des 16 octets — permutation des deux
+        // premiers octets de la conv sur le fil.
+        let pat = b"4:conv16:";
+        let pos = wire
+            .windows(pat.len())
+            .position(|w| w == pat)
+            .expect("cle conv absente du fil");
+        let mut forged = wire.clone();
+        forged.swap(pos + pat.len(), pos + pat.len() + 1);
+        assert!(matches!(
+            Frame::open(&forged, &pk, &key, &cfg),
+            Err(MessagingError::BadSignature)
+        ));
+    }
+
+    /// `gctl`/`attach` exigent `conv` a l'emission ; une trame v1
+    /// portant `type=gctl` est rejetee au codec.
+    #[test]
+    fn v2_kinds_exigent_conv() {
+        let (sk, pk, cfg) = keys();
+        let key = [8u8; 32];
+        let bare = Frame::new(MsgKind::Gctl, 1, 1, b"{}".to_vec());
+        assert!(bare.seal(&sk, &key, &cfg).is_err());
+        let bare = Frame::new(MsgKind::Attach, 1, 1, b"{}".to_vec());
+        assert!(bare.seal(&sk, &key, &cfg).is_err());
+        // v1 filaire avec `type=gctl` → Malformed (pas de conv pour
+        // router la trame).
+        let mut d = BTreeMap::new();
+        d.insert(b"body".to_vec(), BValue::Bytes(b"ab".to_vec()));
+        d.insert(b"id".to_vec(), BValue::Bytes([0u8; 16].to_vec()));
+        d.insert(b"seq".to_vec(), BValue::Int(0));
+        d.insert(b"sig".to_vec(), BValue::Bytes([0u8; 64].to_vec()));
+        d.insert(b"ts".to_vec(), BValue::Int(0));
+        d.insert(b"type".to_vec(), BValue::Bytes(b"gctl".to_vec()));
+        d.insert(b"v".to_vec(), BValue::Int(1));
+        assert!(Frame::open(&BValue::Dict(d).encode(), &pk, &key, &cfg).is_err());
+        // v2 sans `conv` → ensemble de cles faux.
+        let mut d2 = BTreeMap::new();
+        d2.insert(b"body".to_vec(), BValue::Bytes(b"ab".to_vec()));
+        d2.insert(b"id".to_vec(), BValue::Bytes([0u8; 16].to_vec()));
+        d2.insert(b"seq".to_vec(), BValue::Int(0));
+        d2.insert(b"sig".to_vec(), BValue::Bytes([0u8; 64].to_vec()));
+        d2.insert(b"ts".to_vec(), BValue::Int(0));
+        d2.insert(b"type".to_vec(), BValue::Bytes(b"msg".to_vec()));
+        d2.insert(b"v".to_vec(), BValue::Int(2));
+        assert!(Frame::open(&BValue::Dict(d2).encode(), &pk, &key, &cfg).is_err());
+    }
+
+    /// Compat : v1 et v2 cohabitent sur le meme lien (meme `seq`
+    /// space, meme cle de corps) ; le prefiltre accepte les deux.
+    #[test]
+    fn mixte_v1_v2_meme_lien() {
+        let (sk, pk, cfg) = keys();
+        let key = [8u8; 32];
+        let conv = crate::conv::direct_conv(&[1u8; 32], &[2u8; 32]);
+        let v1 = Frame::new(MsgKind::Msg, 1, 1, b"v1".to_vec())
+            .seal(&sk, &key, &cfg)
+            .unwrap();
+        let v2 = Frame::new_in_conv(MsgKind::Msg, conv, 2, 1, b"v2".to_vec())
+            .seal(&sk, &key, &cfg)
+            .unwrap();
+        for wire in [&v1, &v2] {
+            preflight(wire, &cfg).unwrap();
+        }
+        assert_eq!(Frame::open(&v1, &pk, &key, &cfg).unwrap().conv, None);
+        assert_eq!(Frame::open(&v2, &pk, &key, &cfg).unwrap().conv, Some(conv));
+        // `v` reste la derniere cle : suffixe `1:vi2ee` visible.
+        assert!(v2.ends_with(b"1:vi2ee"));
+        assert!(v1.ends_with(b"1:vi1ee"));
+    }
+
+    /// Une trame v2 avec `conv` de taille fausse ou cle inconnue
+    /// est rejetee comme toute trame malformee.
+    #[test]
+    fn v2_conv_malformee() {
+        let (_sk, pk, cfg) = keys();
+        let key = [8u8; 32];
+        for conv_len in [15usize, 17] {
+            let mut d = BTreeMap::new();
+            d.insert(b"body".to_vec(), BValue::Bytes(b"ab".to_vec()));
+            d.insert(b"conv".to_vec(), BValue::Bytes(vec![0u8; conv_len]));
+            d.insert(b"id".to_vec(), BValue::Bytes([0u8; 16].to_vec()));
+            d.insert(b"seq".to_vec(), BValue::Int(0));
+            d.insert(b"sig".to_vec(), BValue::Bytes([0u8; 64].to_vec()));
+            d.insert(b"ts".to_vec(), BValue::Int(0));
+            d.insert(b"type".to_vec(), BValue::Bytes(b"msg".to_vec()));
+            d.insert(b"v".to_vec(), BValue::Int(2));
+            assert!(Frame::open(&BValue::Dict(d).encode(), &pk, &key, &cfg).is_err());
+        }
     }
 }

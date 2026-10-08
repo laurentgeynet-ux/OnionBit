@@ -3,6 +3,33 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## ADR-0019 étape 64 : trame v2 + conversations dans `onionbit-messaging` (2026-10-09)
+
+- **`frame.rs`** : `v:2` = clé `conv` (16 o) au niveau dict, sous la
+  signature canonique (routable avant déchiffrement) ; `v:2` exige
+  `conv`, `gctl`/`attach` exigent `v:2` (rejet `Malformed` sinon) ;
+  ensembles de clés stricts par version ; `preflight` admet `{1,2}` —
+  `v` reste la dernière clé, suffixe `1:vi2ee`, un pair v1 préfiltre
+  les trames v2 en `UnknownVersion` (dégradation propre).
+- **`conv.rs`** : `direct_conv` = `SHA1("onionbit/conv/direct/v1"‖
+  min‖max)[:16]` symétrique + `random_conv` pour les groupes.
+- **`gctl.rs`** : corps invite/join/leave/roster, bencode strict à
+  clés exactes, borné (`group_max_members`, `group_name_max_len`).
+- **`attach.rs`** : `AttachDesc{ih(20o),mid(16o),name,size}` strict.
+- **`hello.rs`** : corps `pk` (v1) / `pk‖caps` (v2,
+  `HELLO_CAP_GROUPS`).
+- **`config.rs`** : champs ADR-0019 §7 — `groups_enabled`,
+  `group_max_members/convs/pending_cap/pending_ttl/name_max_len`,
+  `attach_max_bytes/max_per_msg/stage_max_bytes/seed_ttl/
+  purge_on_expire/area`, `upload_ttl`.
+- **`CAP_MSG_V2 = 1<<2`** dans `onionbit-ipv8::ext` + `cap_names`.
+- **Fuzz** `messaging_frame` étendu : `Frame::open` + corps
+  `gctl`/`attach` sur l'entrée brute (atteignables par un pair
+  authentifié — modèle hostile conservé).
+- **Tests** : 39 verts — roundtrip v2 tous types, `conv` signée
+  (permutation filaire → `BadSignature`), v1↔v2 sur le même lien,
+  `conv` malformée, corps `gctl`/`attach` hostiles.
+
 ## ADR-0019 revues externes : intégration (2026-10-09)
 
 - **Salage `x-onionbit` sans patch** : `create_torrent` standard puis

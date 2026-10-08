@@ -8,12 +8,18 @@
 // taille avant tout travail (`max_frame_len`), puis le bencode
 // borne, la forme de cles et la signature — invariant : jamais de
 // panic, jamais d'allocation infinie.
+//
+// v2 (ADR-0019) : les corps `gctl`/`attach` sont des decodeurs
+// stricts a cles exactes et bornes — on les exerce directement
+// sur l'entree brute (ils s'executent **apres** verification de
+// l'emetteur, donc un pair authentifie peut les atteindre : le
+// modele de menace reste hostile).
 
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
 use onionbit_crypto::ipv8::keys::{LibNaClPublicKey, LibNaClSecretKey};
-use onionbit_messaging::{Frame, MessagingConfig};
+use onionbit_messaging::{AttachDesc, Frame, Gctl, MessagingConfig};
 use std::sync::OnceLock;
 
 /// Cle de contact fixe — la signature rejettera la plupart des
@@ -28,4 +34,8 @@ fuzz_target!(|data: &[u8]| {
     let cfg = MessagingConfig::default();
     let key = [0u8; 32];
     let _ = Frame::open(data, peer_pk(), &key, &cfg);
+    // Corps applicatifs v2 : decodeurs stricts bornes, atteignables
+    // par un pair authentifie (membre de groupe, contact).
+    let _ = Gctl::decode_body(data, &cfg);
+    let _ = AttachDesc::decode_body(data, &cfg);
 });

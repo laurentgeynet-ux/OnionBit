@@ -154,8 +154,10 @@ pub const INTRO_FRAME_MAX: usize = 512;
 /// Bit 0 = `obf::CAP_OBF_V1` (enveloppes OBF, Phase 9e) — annonce
 /// uniquement quand `ext/obf_enabled` ; bit 1 = `CAP_MSG_V1`
 /// (messagerie anonyme, ADR-0011) — annonce uniquement quand le
-/// service est demarre ; les fonctions `attest_*`/`ledger_*` restent
-/// negociees implicitement par `msg_id`.
+/// service est demarre ; bit 2 = `CAP_MSG_V2` (conversations/groupes/
+/// pieces jointes, ADR-0019) — annonce seulement si la messagerie
+/// tourne **et** `messaging.groups_enabled` ; les fonctions
+/// `attest_*`/`ledger_*` restent negociees implicitement par `msg_id`.
 pub const LOCAL_CAPS: u64 = 0;
 
 /// Bit de capacite `hello.caps` : le pair sert la messagerie anonyme
@@ -166,6 +168,14 @@ pub const LOCAL_CAPS: u64 = 0;
 /// reellement demarre — sinon on promettrait une liaison impossible.
 pub const CAP_MSG_V1: u64 = 1 << 1;
 
+/// Bit de capacite `hello.caps` : le pair parle la messagerie v2 —
+/// conversations (`conv` en cle dict), groupes (`gctl`) et pieces
+/// jointes (`attach`), ADR-0019. Annoncee seulement quand le service
+/// messagerie tourne **et** `groups_enabled` est vrai : un pair qui
+/// ne la voit pas recoit du texte 1:1 emis en trames v1 (degradation
+/// propre — ses trames v2 seraient prefiltrees `UnknownVersion`).
+pub const CAP_MSG_V2: u64 = 1 << 2;
+
 /// Noms des capacites connues de `caps` (decodage pour l'API —
 /// l'UI et les bancs n'ont pas a connaitre le bitmap).
 pub fn cap_names(caps: u64) -> Vec<&'static str> {
@@ -175,6 +185,9 @@ pub fn cap_names(caps: u64) -> Vec<&'static str> {
     }
     if caps & CAP_MSG_V1 != 0 {
         names.push("msg_v1");
+    }
+    if caps & CAP_MSG_V2 != 0 {
+        names.push("msg_v2");
     }
     names
 }
