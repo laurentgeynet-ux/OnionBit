@@ -21,7 +21,8 @@ OnionBit est né comme « portage Rust natif du daemon Tribler »
 (`AGENTS.md`) avec pour promesse publique « Anonymous BitTorrent
 client » (README). Ce cadre initial a été progressivement dépassé
 par les capacités livrées (ou, pour ADR-0019, en cours de livraison
-— Phase 12, étapes 64–67 livrées à la date de rédaction) :
+— Phase 12, étapes 64–68 livrées à la date de rédaction, reste la
+validation 69) :
 
 | ADR | Capacité ajoutée | Pourquoi elle déborde « client BitTorrent » |
 | :--- | :--- | :--- |
