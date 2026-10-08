@@ -20,7 +20,7 @@
 //! configuration explicite.
 
 use std::net::SocketAddr;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -1446,11 +1446,15 @@ impl DaemonConfig {
     pub fn to_core_config(&self, state_dir: &Path) -> crate::CoreConfig {
         use onionbit_network_policy::exit_policy as flags;
 
+        let roots = crate::paths::PathRoots::for_state_dir(state_dir);
         let dd = &self.libtorrent.download_defaults;
+        // ADR-0018 : `saveas` persistee peut etre un spec `@root/…`
+        // (resolu ici) ou un absolu externe conserve tel quel ;
+        // vide = defaut `<state_dir>/downloads` historique.
         let downloads_dir = if dd.saveas.is_empty() {
             state_dir.join("downloads")
         } else {
-            PathBuf::from(&dd.saveas)
+            roots.resolve_persisted(&dd.saveas)
         };
 
         // `listen_interface` Python est une IP (`"0.0.0.0"`) ;
@@ -1802,7 +1806,7 @@ impl DaemonConfig {
             ip_policy: onionbit_network_policy::IpPolicy::strict(),
             watch_folder_dir: (self.watch_folder.enabled
                 && !self.watch_folder.directory.is_empty())
-            .then(|| PathBuf::from(&self.watch_folder.directory)),
+            .then(|| roots.resolve_persisted(&self.watch_folder.directory)),
             watch_folder_interval_ms: (self.watch_folder.check_interval.max(0.1) * 1000.0) as u64,
             rss_urls: if self.rss.enabled {
                 self.rss.urls.clone()
@@ -1839,12 +1843,59 @@ impl DaemonConfig {
         }
     }
 
+    /// Migration ADR-0018 (etape 57) : reecrit en specs `@root/…`
+    /// les chemins persistes sous les racines (`state/downloads` →
+    /// `@public/downloads`, identite → `@state/identity/…`). Les
+    /// absolus hors racines sont conserves (choix externe explicite).
+    /// Idempotent. Retourne `true` si `configuration.json` doit etre
+    /// reecrit.
+    pub fn migrate_persisted_paths(&mut self, roots: &crate::paths::PathRoots) -> bool {
+        use crate::paths::PathMigration;
+        let mut changed = false;
+        let mut migrate = |v: &mut String, what: &str| match roots.migrate_persisted(v) {
+            PathMigration::Rewrite(s) => {
+                tracing::info!(field = what, from = %v, to = %s, "chemin persiste migre en spec portable");
+                *v = s;
+                changed = true;
+            }
+            PathMigration::External => {
+                tracing::info!(field = what, path = %v, "chemin externe conserve (hors racines portables)")
+            }
+            PathMigration::Invalid => {
+                tracing::warn!(field = what, value = %v, "spec portable invalide conserve tel quel")
+            }
+            PathMigration::Keep => {}
+        };
+        let dd = &mut self.libtorrent.download_defaults;
+        migrate(&mut dd.saveas, "libtorrent/download_defaults/saveas");
+        migrate(
+            &mut dd.completed_dir,
+            "libtorrent/download_defaults/completed_dir",
+        );
+        migrate(
+            &mut dd.torrent_folder,
+            "libtorrent/download_defaults/torrent_folder",
+        );
+        migrate(
+            &mut dd.trackers_file,
+            "libtorrent/download_defaults/trackers_file",
+        );
+        migrate(&mut self.watch_folder.directory, "watch_folder/directory");
+        migrate(&mut self.api.web_ui_dir, "api/web_ui_dir");
+        migrate(&mut self.api.https_certfile, "api/https_certfile");
+        changed
+    }
+
     /// Superpose les valeurs effectivement en cours (`CoreConfig`
     /// effective de la session, overrides à chaud compris) pour que
     /// `GET /api/settings` reflète l'état réel et pas seulement le
-    /// fichier.
+    /// fichier. Les chemins sous une racine portable sont reemes en
+    /// spec `@root/…` (ADR-0018) — pas de chemin machine fige.
     pub fn apply_runtime_view(&mut self, core: &crate::CoreConfig) {
-        self.libtorrent.download_defaults.saveas = core.engine.output_dir.display().to_string();
+        let roots = crate::paths::PathRoots::for_state_dir(&core.state_dir);
+        self.libtorrent.download_defaults.saveas = roots
+            .to_portable(&core.engine.output_dir)
+            .unwrap_or_else(|| core.engine.output_dir.display().to_string());
         self.libtorrent.dht = core.engine.enable_dht;
         self.libtorrent.lsd = !core.engine.disable_lsd;
         if self.libtorrent.port != 0 {
@@ -1880,8 +1931,12 @@ impl DaemonConfig {
         self.watch_folder.enabled = core.watch_folder_dir.is_some();
         self.watch_folder.directory = core
             .watch_folder_dir
-            .as_ref()
-            .map(|d| d.display().to_string())
+            .as_deref()
+            .map(|p| {
+                roots
+                    .to_portable(p)
+                    .unwrap_or_else(|| p.display().to_string())
+            })
             .unwrap_or_default();
         self.torrent_checker.enabled = core.enable_torrent_checker;
         self.ipv8.enabled = core.ipv8.enabled;

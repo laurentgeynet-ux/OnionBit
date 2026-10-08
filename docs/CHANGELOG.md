@@ -3,6 +3,32 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## ADR-0018 étape 57 : résolveur de chemins portables + migration des persistés (2026-10-09)
+
+- **`onionbit-core::paths`** (nouveau module) : `PathRoots { state,
+  public, private }` (`for_state_dir` — `data/` voisine de `state/` en
+  bundle, sous `state/` en dev), specs `@state/`/`@public/`/`@private/`
+  persistées et résolues à l'exécution. Validation stricte des
+  sous-chemins : `..`, séparateurs `\`, composants avec `:` (lettre de
+  lecteur), chemins racinés → refus typé ; `to_portable` n'émet un spec
+  que pour un chemin **sous** la racine correspondante.
+- **Migration au chargement** : `DaemonConfig::migrate_persisted_paths`
+  réécrit `saveas`/`watch_folder`/`web_ui_dir`/`https_certfile`/
+  `trackers_file` en spec `@root/…` quand l'absolu pointe sous une
+  racine connue ; absolus externes conservés + `warn` tracé.
+  `CoreSession::migrate_download_paths` fait de même sur
+  `downloads.{output_dir,completed_dir}` avant la restauration
+  (`has_root()` — `/x` est raciné même sous Windows, `C:x` non).
+- **Entrées** : `effective_output_dir`, `move_storage`,
+  `trackers_file_path`, `web_ui_dir`, certificats HTTPS et
+  `destination` de `PUT /api/downloads` acceptent les specs ;
+  `apply_runtime_view` réécrit `saveas`/`watch_folder.directory` en
+  portable au lieu de figer l'absolu résolu ; l'API affiche les specs
+  résolus (`display_stored_path`).
+- Tests : aller-retour `to_portable`/`resolve`, specs hostiles,
+  migration de valeurs persistées, détection du marqueur portable —
+  101 tests `onionbit-core` verts, clippy/fmt workspace propres.
+
 ## ADR-0019 : proposition « conversations multiples, groupes et pièces jointes » (2026-10-08)
 
 - **Demande** : onglets de conversation par correspondant, chat

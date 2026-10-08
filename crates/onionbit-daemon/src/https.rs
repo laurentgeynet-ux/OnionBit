@@ -100,10 +100,11 @@ pub async fn spawn(
     Ok((bound, handle))
 }
 
-/// Chemin du PEM : absolu tel quel, relatif resolu contre `state_dir`
-/// (resolution `TriblerConfigManager` Python).
+/// Chemin du PEM : spec `@root/…` resolu contre les racines
+/// portables (ADR-0018), absolu tel quel, relatif resolu contre
+/// `state_dir` (resolution `TriblerConfigManager` Python).
 fn resolve(certfile: &str, state_dir: &Path) -> PathBuf {
-    let p = PathBuf::from(certfile);
+    let p = onionbit_core::paths::PathRoots::for_state_dir(state_dir).resolve_persisted(certfile);
     if p.is_absolute() {
         p
     } else {

@@ -107,7 +107,14 @@ pub async fn get_downloads(
                 info.seeding_ratio = r.seeding_ratio.unwrap_or(defaults.seeding_ratio);
                 info.queue_position = r.queue_position;
                 info.auto_managed = r.auto_managed;
-                info.completed_dir = r.completed_dir.clone().unwrap_or_default();
+                // ADR-0018 : `output_dir`/`completed_dir` peuvent etre
+                // des specs `@root/…` — resolus en chemin du run
+                // courant pour l'affichage.
+                info.completed_dir = r
+                    .completed_dir
+                    .as_deref()
+                    .map(|s| state.session.display_stored_path(s).display().to_string())
+                    .unwrap_or_default();
                 info.time_added = r.added_on;
                 info.time_finished = r.time_finished;
                 // `all_time_*` : cumuls persistants toutes sessions
@@ -120,7 +127,11 @@ pub async fn get_downloads(
                     info.all_time_upload as f64 / info.all_time_download as f64
                 };
                 if info.destination.is_empty() {
-                    info.destination = r.output_dir.clone();
+                    info.destination = state
+                        .session
+                        .display_stored_path(&r.output_dir)
+                        .display()
+                        .to_string();
                 }
             }
             // Ligne persistee prioritaire (intention configuree —
@@ -236,7 +247,7 @@ pub async fn get_downloads(
                 "status": if stopped { "STOPPED" } else { "WAITING_FOR_HASHCHECK" },
                 "status_code": if stopped { 5 } else { 1 },
                 "size": 0,
-                "destination": r.output_dir.clone(),
+                "destination": state.session.display_stored_path(&r.output_dir).display().to_string(),
                 "hops": r.anon_hops.max(0),
                 "anon_download": r.anon_hops > 0,
                 "safe_seeding": r.safe_seeding,
@@ -245,7 +256,7 @@ pub async fn get_downloads(
                 "seeding_ratio": r.seeding_ratio.unwrap_or(defaults.seeding_ratio),
                 "queue_position": r.queue_position,
                 "auto_managed": r.auto_managed,
-                "completed_dir": r.completed_dir.clone().unwrap_or_default(),
+                "completed_dir": r.completed_dir.as_deref().map(|s| state.session.display_stored_path(s).display().to_string()).unwrap_or_default(),
                 "time_added": r.added_on,
                 "time_finished": r.time_finished,
                 "user_stopped": r.user_stopped,

@@ -55,6 +55,14 @@ fn resolve_state_dir(args: &Args) -> PathBuf {
         return d.clone();
     }
     if let Ok(exe) = std::env::current_exe() {
+        // ADR-0018 : un marqueur `OnionBit.portable` a un ancetre de
+        // l'exe (layout `<root>/<os>/onionbit-daemon`) fait remonter
+        // `state/` a la racine du bundle — `data/` y est voisine
+        // (`PathRoots::for_state_dir`). Avant la detection bundle
+        // historique : le marqueur est le signal le plus explicite.
+        if let Some(root) = onionbit_core::paths::find_portable_root(&exe) {
+            return root.join("state");
+        }
         if let Some(dir) = exe.parent() {
             let bundle = dir.join("web").join("index.html").is_file()
                 || ["OnionBit.exe", "onionbit_ui.exe", "OnionBit", "onionbit_ui"]
@@ -302,8 +310,11 @@ fn resolve_web_ui_dir(
         return None;
     }
     if let Some(dir) = args.web_ui_dir.clone().or_else(|| {
-        (!daemon_config.api.web_ui_dir.is_empty())
-            .then(|| PathBuf::from(&daemon_config.api.web_ui_dir))
+        // `api/web_ui_dir` peut etre un spec `@root/…` (ADR-0018).
+        (!daemon_config.api.web_ui_dir.is_empty()).then(|| {
+            onionbit_core::paths::PathRoots::for_state_dir(state_dir)
+                .resolve_persisted(&daemon_config.api.web_ui_dir)
+        })
     }) {
         return if dir.join("index.html").is_file() {
             Some(dir)
@@ -478,6 +489,17 @@ async fn async_main() -> ExitCode {
     if !config_path.exists() {
         if let Err(e) = daemon_config.write(&config_path) {
             tracing::warn!(error = %e, "ecriture initiale de configuration.json impossible");
+        }
+    }
+
+    // ADR-0018 etape 57 : migration idempotente des chemins persistes
+    // vers les specs `@root/…` (les absolus sous les racines sont
+    // reecrits ; les externes conserves). Le fichier n'est reecrit que
+    // si une valeur a change.
+    let path_roots = onionbit_core::paths::PathRoots::for_state_dir(&state_dir);
+    if daemon_config.migrate_persisted_paths(&path_roots) {
+        if let Err(e) = daemon_config.write(&config_path) {
+            tracing::warn!(error = %e, "reecriture de configuration.json (chemins portables) impossible");
         }
     }
 

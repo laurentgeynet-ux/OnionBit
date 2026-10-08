@@ -25,6 +25,7 @@ pub mod guard_store;
 pub mod identity;
 pub mod ipv8_stack;
 pub mod notifier;
+pub mod paths;
 pub mod peer_stats_store;
 pub mod queries;
 pub mod services;

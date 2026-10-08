@@ -203,6 +203,10 @@ pub enum IdentityPhase {
 
 struct Inner {
     config: CoreConfig,
+    /// Racines de resolution des chemins persistes (`@state`,
+    /// `@public`, `@private` — ADR-0018 etape 57) derivees de
+    /// `config.state_dir`.
+    paths: crate::paths::PathRoots,
     /// Sous-ensemble de reglages mutables a chaud (`POST /api/settings`) :
     /// superposes a `config` par `effective_config()`.
     overrides: std::sync::RwLock<ServiceOverrides>,
@@ -413,6 +417,13 @@ impl CoreSession {
             *self.inner.db.write().unwrap_or_else(|e| e.into_inner()) = Arc::new(db);
         }
         let db = self.inner.db_arc();
+        // ADR-0018 etape 57 : reecrit les `output_dir`/`completed_dir`
+        // persistes en specs `@root/…` quand ils pointaient sous les
+        // racines (idempotent — rejoue a chaque demarrage ; en invite
+        // la base memoire est un no-op gratuit).
+        if !guest {
+            Self::migrate_download_paths(&db, &self.inner.paths);
+        }
         let engine = BtEngine::start(engine_config_effective(config)).await?;
         let ipv8 = start_ipv8_with_identity(
             config,
@@ -475,6 +486,20 @@ impl CoreSession {
         self.inner.guest.load(std::sync::atomic::Ordering::Relaxed)
     }
 
+    /// Racines portables (`@state`/`@public`/`@private`) du run
+    /// courant — resolution et migration des chemins persistes
+    /// (ADR-0018).
+    pub fn paths(&self) -> &crate::paths::PathRoots {
+        &self.inner.paths
+    }
+
+    /// Valeur `downloads.*_dir` persistee → chemin du run courant
+    /// (spec `@root/…` resolu ; absolu legacy conserve). Pour
+    /// l'affichage API — un spec invalide retombe sur le litteral.
+    pub fn display_stored_path(&self, stored: &str) -> PathBuf {
+        self.inner.paths.resolve_persisted(stored)
+    }
+
     /// Construit le shell commun aux deux chemins de demarrage :
     /// `Inner` cree avec une base memoire placeholder et aucun
     /// composant identitaire.
@@ -482,9 +507,11 @@ impl CoreSession {
         let db = Database::memory()?;
         let asyncio = crate::asyncio::AsyncioMonitor::new(config.ipv8.walker_interval);
         let augmenter = Arc::new(crate::augmenter::Augmenter::new(&config.state_dir));
+        let paths = crate::paths::PathRoots::for_state_dir(&config.state_dir);
         Ok(Self {
             inner: Arc::new(Inner {
                 config,
+                paths,
                 overrides: std::sync::RwLock::new(ServiceOverrides::default()),
                 engine: std::sync::RwLock::new(None),
                 db: std::sync::RwLock::new(Arc::new(db)),
@@ -701,6 +728,62 @@ impl CoreSession {
         );
     }
 
+    /// Migration ADR-0018 (etape 57) : les `output_dir`/`completed_dir`
+    /// absolus pointant sous les racines connues sont reecrits en specs
+    /// `@root/…` ; les absolus externes sont conserves (choix explicite
+    /// journalise). Idempotent — relance a chaque boot, ne touche que
+    /// les lignes encore en ancien format.
+    fn migrate_download_paths(db: &Database, paths: &crate::paths::PathRoots) {
+        use crate::paths::PathMigration;
+        let res = db.with(|c| {
+            let mut rewritten = 0usize;
+            let mut external = 0usize;
+            let mut invalid = 0usize;
+            for mut row in onionbit_db::downloads::list(c)? {
+                let mut dirty = false;
+                match paths.migrate_persisted(&row.output_dir) {
+                    PathMigration::Rewrite(s) => {
+                        row.output_dir = s;
+                        dirty = true;
+                    }
+                    PathMigration::External => external += 1,
+                    PathMigration::Invalid => invalid += 1,
+                    PathMigration::Keep => {}
+                }
+                if let Some(cd) = &mut row.completed_dir {
+                    match paths.migrate_persisted(cd) {
+                        PathMigration::Rewrite(s) => {
+                            *cd = s;
+                            dirty = true;
+                        }
+                        PathMigration::External => external += 1,
+                        PathMigration::Invalid => invalid += 1,
+                        PathMigration::Keep => {}
+                    }
+                }
+                if dirty {
+                    onionbit_db::downloads::upsert(c, &row)?;
+                    rewritten += 1;
+                }
+            }
+            Ok((rewritten, external, invalid))
+        });
+        match res {
+            Ok((0, 0, 0)) => {}
+            Ok((rewritten, external, invalid)) => {
+                tracing::info!(
+                    rewritten,
+                    external,
+                    invalid,
+                    "chemins persistes migres en specs portables"
+                );
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "migration des chemins persistes impossible")
+            }
+        }
+    }
+
     /// Re-add deporte d'une ligne sans metainfo persistee : la ligne
     /// apparait en `pending` (statut METADATA) pendant la resolution
     /// de la source, puis le metainfo resolu est backfille dans
@@ -892,10 +975,14 @@ impl CoreSession {
     /// ajoutes a chaud, limites, dossier de sortie, pause) sont
     /// reappliques a chaque (re)creation, comme le `DownloadConfig`
     /// checkpointe Python.
-    fn row_add_options(row: &DownloadRow) -> AddDownloadOptions {
+    fn row_add_options(&self, row: &DownloadRow) -> AddDownloadOptions {
         AddDownloadOptions {
             paused: row.paused,
-            output_folder: (!row.output_dir.is_empty()).then(|| PathBuf::from(&row.output_dir)),
+            // `output_dir` persiste en spec portable `@root/…`
+            // (ADR-0018) ou en absolu legacy — resolution vers le
+            // chemin du run courant a la re-addition.
+            output_folder: (!row.output_dir.is_empty())
+                .then(|| self.inner.paths.resolve_persisted(&row.output_dir)),
             // `output_dir` persiste = `Download::output_folder()` :
             // dossier final, nom du torrent deja inclus.
             output_includes_name: true,
@@ -920,7 +1007,7 @@ impl CoreSession {
     /// librqbit refusionne les trackers de la source avec
     /// `opts.trackers` : seule une source purgee les honore.
     async fn readd_row(&self, engine: &BtEngine, row: &DownloadRow) -> Result<Download> {
-        let opts = Self::row_add_options(row);
+        let opts = self.row_add_options(row);
         let (torrent_data, source_uri) = crate::trackers::effective_source(row);
         Ok(if let Some(bytes) = torrent_data {
             engine.add_torrent_bytes_opts(bytes, &opts).await?
@@ -1123,7 +1210,19 @@ impl CoreSession {
     /// Retourne `false` quand le metainfo n'est pas encore la (magnet
     /// non resolu — a reessayer au prochain tick) ou `true` sinon.
     fn backup_torrent_file(&self, ih_hex: &str) -> bool {
-        let folder = self.download_defaults().torrent_folder;
+        // `torrent_folder` peut etre un spec `@root/…` (ADR-0018) ;
+        // un relatif reste resolu contre `state_dir` comme avant.
+        let folder = {
+            let p = self
+                .inner
+                .paths
+                .resolve_persisted(&self.download_defaults().torrent_folder);
+            if p.is_absolute() {
+                p
+            } else {
+                self.inner.config.state_dir.join(p)
+            }
+        };
         let Some(dl) = self.find_download_hex(ih_hex) else {
             return true; // disparu entre-temps — ne pas reessayer
         };
@@ -1134,7 +1233,7 @@ impl CoreSession {
             .name()
             .unwrap_or_else(|| ih_hex.to_string())
             .replace(['/', '\\'], "_");
-        let path = Path::new(&folder).join(format!("{name} [{ih_hex}].torrent"));
+        let path = folder.join(format!("{name} [{ih_hex}].torrent"));
         if let Err(e) = std::fs::create_dir_all(&folder).and_then(|_| std::fs::write(&path, &bytes))
         {
             tracing::warn!(error = %e, path = %path.display(), "sauvegarde .torrent impossible");
@@ -1644,7 +1743,7 @@ impl CoreSession {
                 }
                 let opts = AddDownloadOptions {
                     paused: paused_now,
-                    output_folder: self.effective_output_dir(destination.clone()),
+                    output_folder: self.effective_output_dir(destination.clone())?,
                     trackers: trackers.clone(),
                     initial_peers: initial_peers.clone(),
                     extra_peers_rx,
@@ -1673,7 +1772,7 @@ impl CoreSession {
                     uri,
                     &AddDownloadOptions {
                         paused,
-                        output_folder: self.effective_output_dir(destination),
+                        output_folder: self.effective_output_dir(destination)?,
                         trackers: trackers.clone(),
                         initial_peers: initial_peers.clone(),
                         ..Default::default()
@@ -1760,8 +1859,16 @@ impl CoreSession {
     /// (`sync_default_trackers_file` : un fetch par heure maximum).
     async fn default_trackers(&self) -> Vec<String> {
         let dd = self.download_defaults();
+        // `trackers_file` persistee peut etre un spec `@root/…` —
+        // resolu ici ; un relatif legacy reste joint a `state_dir`.
+        let trackers_file = self
+            .inner
+            .paths
+            .resolve_persisted(&dd.trackers_file)
+            .display()
+            .to_string();
         if let Some(path) =
-            crate::trackers::trackers_file_path(&self.inner.config.state_dir, &dd.trackers_file)
+            crate::trackers::trackers_file_path(&self.inner.config.state_dir, &trackers_file)
         {
             if !dd.trackers_file_sync_url.is_empty() {
                 self.sync_trackers_file(&dd.trackers_file_sync_url, &path)
@@ -2017,7 +2124,7 @@ impl CoreSession {
                 bytes.clone(),
                 &AddDownloadOptions {
                     paused,
-                    output_folder: self.effective_output_dir(destination),
+                    output_folder: self.effective_output_dir(destination)?,
                     trackers: trackers.clone(),
                     initial_peers,
                     ..Default::default()
@@ -2112,21 +2219,43 @@ impl CoreSession {
     }
 
     /// Dossier de sortie d'un nouveau telechargement : `destination`
-    /// explicite (`PUT /api/downloads`), sinon le `saveas` effectif
-    /// (override `POST /api/settings`), sinon `None` = dossier de
+    /// explicite (un spec `@root/…` est resolu contre les racines
+    /// portables — erreur si mal forme), sinon l'override
+    /// `saveas`/`POST /api/settings`, sinon le dossier de session de
     /// l'engine (par lane). Python : `DownloadConfig.destination`
     /// defaut = `libtorrent/download_defaults/saveas`.
     fn effective_output_dir(
         &self,
         destination: Option<std::path::PathBuf>,
-    ) -> Option<std::path::PathBuf> {
-        destination.or_else(|| {
-            self.inner
-                .overrides
-                .read()
-                .ok()
-                .and_then(|ov| ov.download_dir.clone())
-        })
+    ) -> Result<Option<std::path::PathBuf>> {
+        destination
+            .map(|d| {
+                self.inner
+                    .paths
+                    .resolve_input(&d)
+                    .map_err(|e| CoreError::State(e.to_string()))
+            })
+            .transpose()
+            .map(|d| {
+                d.or_else(|| {
+                    self.inner
+                        .overrides
+                        .read()
+                        .ok()
+                        .and_then(|ov| ov.download_dir.clone())
+                })
+            })
+    }
+
+    /// Valeur persistee pour un chemin runtime : spec `@root/…`
+    /// quand le chemin est sous une racine connue (aucun chemin
+    /// machine fige — ADR-0018), chemin absolu sinon (choix externe
+    /// explicite conserve).
+    fn persisted_path(&self, p: &Path) -> String {
+        self.inner
+            .paths
+            .to_portable(p)
+            .unwrap_or_else(|| p.display().to_string())
     }
 
     /// Reglages initiaux d'une ligne `downloads` : defauts de
@@ -2162,7 +2291,7 @@ impl CoreSession {
                     // le magnet a chaque demarrage (meme source que
                     // le checkpoint Python : le `.torrent` sauvegarde).
                     torrent_data: dl.torrent_bytes().map(|b| b.to_vec()),
-                    output_dir: dl.output_folder().display().to_string(),
+                    output_dir: self.persisted_path(&dl.output_folder()),
                     added_on: now_unix(),
                     paused: p.paused,
                     anon_hops: i64::from(p.anon_hops),
@@ -2195,7 +2324,7 @@ impl CoreSession {
                         onionbit_crypto::hash::to_hex(&meta.info_hash)
                     ),
                     torrent_data: Some(bytes),
-                    output_dir: dl.output_folder().display().to_string(),
+                    output_dir: self.persisted_path(&dl.output_folder()),
                     added_on: now_unix(),
                     paused: p.paused,
                     anon_hops: i64::from(p.anon_hops),
@@ -2731,17 +2860,34 @@ impl CoreSession {
         dest_dir: &Path,
         completed_dir: Option<&Path>,
     ) -> Result<bool> {
+        // ADR-0018 : `dest_dir`/`completed_dir` acceptent les specs
+        // `@root/…` (resolus ici — erreur sur spec mal forme).
+        let dest_dir = self
+            .inner
+            .paths
+            .resolve_input(dest_dir)
+            .map_err(|e| CoreError::State(e.to_string()))?;
+        let completed = completed_dir
+            .map(|c| {
+                self.inner
+                    .paths
+                    .resolve_input(c)
+                    .map_err(|e| CoreError::State(e.to_string()))
+            })
+            .transpose()?
+            .unwrap_or_else(|| dest_dir.clone());
         let (dl, mut row) = self.download_and_row(id_or_hash)?;
         let current = dl.output_folder();
-        let completed = completed_dir.unwrap_or(dest_dir);
+        // `completed_dir` persiste peut etre un spec `@root/…` —
+        // resolu avant comparaison avec la cible.
         let cur_completed = row
             .completed_dir
             .as_deref()
-            .map(PathBuf::from)
+            .map(|s| self.inner.paths.resolve_persisted(s))
             .unwrap_or_default();
         if dest_dir == current
             && completed_dir
-                .map(|c| c == cur_completed.as_path())
+                .map(|_| completed == cur_completed)
                 .unwrap_or(true)
         {
             return Ok(false);
@@ -2808,12 +2954,9 @@ impl CoreSession {
                 "move_storage: {e} (rollback effectue)"
             )));
         }
-        row.output_dir = dest_dir.display().to_string();
-        row.completed_dir = Some(
-            if finished { dest_dir } else { completed }
-                .display()
-                .to_string(),
-        );
+        row.output_dir = self.persisted_path(&dest_dir);
+        row.completed_dir =
+            Some(self.persisted_path(if finished { &dest_dir } else { &completed }));
         self.readd_row(&engine, &row).await?;
         self.inner
             .db_arc()
