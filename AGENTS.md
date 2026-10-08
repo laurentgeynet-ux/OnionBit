@@ -26,7 +26,7 @@ cargo test -p <crate> --all-features   # ou --workspace
 
 # Si app/ touché :
 cd app; flutter analyze; flutter test
-powershell -ExecutionPolicy Bypass -File scripts/check_i18n.ps1
+pwsh -File scripts/check_i18n.ps1
 ```
 
 ## Règles
@@ -57,6 +57,9 @@ powershell -ExecutionPolicy Bypass -File scripts/check_i18n.ps1
 - **Édition de fichiers** : ne PAS réécrire de fichiers via PowerShell
   (`-replace`, `Set-Content`) — corruption UTF-8 constatée (mojibake
   dans les accents) ; utiliser les outils d'édition dédiés.
+- **Scripts `.ps1`** : UTF-8 **avec BOM** + prologue d'encodage
+  (PS 5.1 reste utilisable) ; invoquer de préférence `pwsh` (7+,
+  UTF-8 natif), jamais `powershell` dans les appels imbriqués.
 - Une fonctionnalité = un propriétaire (pas de doublons entre crates).
 - Workflow d'étape : implémenter → tester → cocher la roadmap +
   CHANGELOG (+ ADR si architecture) → commit dédié.

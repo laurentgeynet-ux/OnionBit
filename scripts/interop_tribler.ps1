@@ -1,4 +1,4 @@
-# This file is part of OnionBit - a Rust port of the Tribler daemon.
+﻿# This file is part of OnionBit - a Rust port of the Tribler daemon.
 # Copyright (C) 2026 Laurent Geynet <laurent.geynet@gmail.com>
 # SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -21,7 +21,18 @@
 # Tribler tourne avec un APPDATA isole (aucun trafic vers
 # l'exterieur : bootstrappeurs vides, upnp/natpmp/lsd/dht off).
 #
-# Usage : powershell -NoProfile -ExecutionPolicy RemoteSigned -File scripts\interop_tribler.ps1
+# Usage : pwsh -NoProfile -ExecutionPolicy RemoteSigned -File scripts\interop_tribler.ps1
+
+
+# Encodage : sous Windows PowerShell 5.1, forcer UTF-8 (console +
+# lectures Get-Content ; les ecritures gardent leur -Encoding explicite
+# ou le defaut de l'hote). pwsh 7 est deja UTF-8 : bloc sans effet.
+if ($PSVersionTable.PSVersion.Major -lt 7) {
+    [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+    $OutputEncoding = [System.Text.Encoding]::UTF8
+    if ($null -eq $PSDefaultParameterValues) { $PSDefaultParameterValues = @{} }
+    $PSDefaultParameterValues['Get-Content:Encoding'] = 'UTF8'
+}
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot

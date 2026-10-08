@@ -1,4 +1,4 @@
-# This file is part of OnionBit - a Rust port of the Tribler daemon.
+﻿# This file is part of OnionBit - a Rust port of the Tribler daemon.
 # Copyright (C) 2026 Laurent Geynet <laurent.geynet@gmail.com>
 # SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -19,7 +19,7 @@
 #     entree `api.key`).
 #
 # Usage :
-#   powershell -NoProfile -ExecutionPolicy RemoteSigned -File scripts\api_parity.ps1 `
+#   pwsh -NoProfile -ExecutionPolicy RemoteSigned -File scripts\api_parity.ps1 `
 #       -TriblerUrl http://127.0.0.1:20100 -TriblerKey <hex> `
 #       -RustUrl http://127.0.0.1:8085 -RustKey <hex> [-FailOnDiff]
 
@@ -35,6 +35,17 @@ param(
     [switch] $ShowDiff,
     [int] $TimeoutSec = 15
 )
+
+# Encodage : sous Windows PowerShell 5.1, forcer UTF-8 (console +
+# lectures Get-Content ; les ecritures gardent leur -Encoding explicite
+# ou le defaut de l'hote). pwsh 7 est deja UTF-8 : bloc sans effet.
+if ($PSVersionTable.PSVersion.Major -lt 7) {
+    [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+    $OutputEncoding = [System.Text.Encoding]::UTF8
+    if ($null -eq $PSDefaultParameterValues) { $PSDefaultParameterValues = @{} }
+    $PSDefaultParameterValues['Get-Content:Encoding'] = 'UTF8'
+}
+
 
 $ErrorActionPreference = "Stop"
 

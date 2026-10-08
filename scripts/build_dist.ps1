@@ -1,14 +1,14 @@
-# This file is part of OnionBit - a Rust port of the Tribler daemon.
+﻿# This file is part of OnionBit - a Rust port of the Tribler daemon.
 # Copyright (C) 2026 Laurent Geynet <laurent.geynet@gmail.com>
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 # build_dist.ps1 - Assemble `dist\OnionBit\` : bundle portable ADR-0018.
 #
 # Usage :
-#   powershell -NoProfile -ExecutionPolicy RemoteSigned -File scripts\build_dist.ps1
-#   powershell ... -SkipCheck                        (sans le cargo check prealable)
-#   powershell ... -Profile debug                    (binaires debug)
-#   powershell ... -ZipRelease                       (+ bundle+zip GitHub :
+#   pwsh -NoProfile -ExecutionPolicy RemoteSigned -File scripts\build_dist.ps1
+#   pwsh ... -SkipCheck                        (sans le cargo check prealable)
+#   pwsh ... -Profile debug                    (binaires debug)
+#   pwsh ... -ZipRelease                       (+ bundle+zip GitHub :
 #                                                     dist\OnionBit-<ver>-windows-x64.zip)
 #
 # Layout produit (etape 58 — une cle USB embarque tous les OS sur le
@@ -46,6 +46,17 @@ param(
     [string]$BuildProfile = "release",
     [switch]$ZipRelease
 )
+
+# Encodage : sous Windows PowerShell 5.1, forcer UTF-8 (console +
+# lectures Get-Content ; les ecritures gardent leur -Encoding explicite
+# ou le defaut de l'hote). pwsh 7 est deja UTF-8 : bloc sans effet.
+if ($PSVersionTable.PSVersion.Major -lt 7) {
+    [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+    $OutputEncoding = [System.Text.Encoding]::UTF8
+    if ($null -eq $PSDefaultParameterValues) { $PSDefaultParameterValues = @{} }
+    $PSDefaultParameterValues['Get-Content:Encoding'] = 'UTF8'
+}
+
 
 $ErrorActionPreference = "Stop"
 $root   = Split-Path -Parent $PSScriptRoot

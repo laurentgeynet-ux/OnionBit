@@ -1,4 +1,4 @@
-# This file is part of OnionBit
+﻿# This file is part of OnionBit
 #
 # Copyright (C) 2026 Laurent Geynet
 # SPDX-License-Identifier: GPL-3.0-or-later
@@ -19,8 +19,8 @@
 #   cleanup DELETE (contact + historique).
 #
 # Usage :
-#   powershell -File scripts/interop_messaging_e2e.ps1
-#   powershell -File scripts/interop_messaging_e2e.ps1 -MessagingHops 2
+#   pwsh -File scripts/interop_messaging_e2e.ps1
+#   pwsh -File scripts/interop_messaging_e2e.ps1 -MessagingHops 2
 #
 # Preconditions : `cargo build -p onionbit-daemon` a jour.
 # Artefacts : $OutDir/{manifest.json, console.log, <node>/...}.
@@ -32,6 +32,17 @@ param(
     [string]$BaseAddr = '127.0.0.1',
     [int]$MessagingHops = 1
 )
+
+# Encodage : sous Windows PowerShell 5.1, forcer UTF-8 (console +
+# lectures Get-Content ; les ecritures gardent leur -Encoding explicite
+# ou le defaut de l'hote). pwsh 7 est deja UTF-8 : bloc sans effet.
+if ($PSVersionTable.PSVersion.Major -lt 7) {
+    [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+    $OutputEncoding = [System.Text.Encoding]::UTF8
+    if ($null -eq $PSDefaultParameterValues) { $PSDefaultParameterValues = @{} }
+    $PSDefaultParameterValues['Get-Content:Encoding'] = 'UTF8'
+}
+
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest

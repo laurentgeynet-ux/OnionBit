@@ -1,4 +1,4 @@
-# This file is part of OnionBit - a Rust port of the Tribler daemon.
+﻿# This file is part of OnionBit - a Rust port of the Tribler daemon.
 # Copyright (C) 2026 Laurent Geynet <laurent.geynet@gmail.com>
 # SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -13,7 +13,7 @@
 # et achemine les reponses en retour — le contenu telecharge est
 # verifie octet a octet.
 #
-# Usage : powershell -NoProfile -ExecutionPolicy RemoteSigned -File scripts\interop_exit_download.ps1 [-Hops 1|2|3] [-Dht]
+# Usage : pwsh -NoProfile -ExecutionPolicy RemoteSigned -File scripts\interop_exit_download.ps1 [-Hops 1|2|3] [-Dht]
 # Prerequis : venv interop (voir scripts/interop_ipv8.ps1).
 # -Dht : le pair du seeder est decouvert par la DHT routee dans le
 # tunnel (get_peers a travers la sortie pyipv8) au lieu de
@@ -28,6 +28,17 @@ param(
     # Taille du fichier telecharge en octets (defaut 200000).
     [int] $Payload = 200000
 )
+
+# Encodage : sous Windows PowerShell 5.1, forcer UTF-8 (console +
+# lectures Get-Content ; les ecritures gardent leur -Encoding explicite
+# ou le defaut de l'hote). pwsh 7 est deja UTF-8 : bloc sans effet.
+if ($PSVersionTable.PSVersion.Major -lt 7) {
+    [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+    $OutputEncoding = [System.Text.Encoding]::UTF8
+    if ($null -eq $PSDefaultParameterValues) { $PSDefaultParameterValues = @{} }
+    $PSDefaultParameterValues['Get-Content:Encoding'] = 'UTF8'
+}
+
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot

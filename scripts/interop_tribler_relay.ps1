@@ -28,7 +28,7 @@
 # -Dht : la decouverte DHT est celle du banc local controle (noeud
 # bootstrap local), PAS la DHT publique.
 #
-# Usage : powershell -NoProfile -ExecutionPolicy RemoteSigned `
+# Usage : pwsh -NoProfile -ExecutionPolicy RemoteSigned `
 #   -File scripts\interop_tribler_relay.ps1 [-Hops 2|3] [-Dht] [-Payload N]
 
 param(
@@ -44,6 +44,17 @@ param(
     # qui couvre 32 Mio dans le banc controle).
     [int] $DownloadTimeoutSec = 240
 )
+
+# Encodage : sous Windows PowerShell 5.1, forcer UTF-8 (console +
+# lectures Get-Content ; les ecritures gardent leur -Encoding explicite
+# ou le defaut de l'hote). pwsh 7 est deja UTF-8 : bloc sans effet.
+if ($PSVersionTable.PSVersion.Major -lt 7) {
+    [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+    $OutputEncoding = [System.Text.Encoding]::UTF8
+    if ($null -eq $PSDefaultParameterValues) { $PSDefaultParameterValues = @{} }
+    $PSDefaultParameterValues['Get-Content:Encoding'] = 'UTF8'
+}
+
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot

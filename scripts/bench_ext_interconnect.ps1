@@ -1,4 +1,4 @@
-# This file is part of OnionBit - a Rust port of the Tribler daemon.
+﻿# This file is part of OnionBit - a Rust port of the Tribler daemon.
 # Copyright (C) 2026 Laurent Geynet <laurent.geynet@gmail.com>
 # SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -17,7 +17,7 @@
 #
 # Journal : docs/plans/bench_adr0015/journal.jsonl.
 #
-# Usage : powershell -NoProfile -ExecutionPolicy RemoteSigned `
+# Usage : pwsh -NoProfile -ExecutionPolicy RemoteSigned `
 #           -File scripts\bench_ext_interconnect.ps1
 #
 # NOTE encodage : fichier volontairement ASCII.
@@ -27,6 +27,17 @@ param(
     [int]   $PhaseSec  = 40,
     [string]$OutDir    = ("target\bench-ext-interconnect-" + (Get-Date -Format 'yyyyMMdd-HHmmss'))
 )
+
+# Encodage : sous Windows PowerShell 5.1, forcer UTF-8 (console +
+# lectures Get-Content ; les ecritures gardent leur -Encoding explicite
+# ou le defaut de l'hote). pwsh 7 est deja UTF-8 : bloc sans effet.
+if ($PSVersionTable.PSVersion.Major -lt 7) {
+    [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+    $OutputEncoding = [System.Text.Encoding]::UTF8
+    if ($null -eq $PSDefaultParameterValues) { $PSDefaultParameterValues = @{} }
+    $PSDefaultParameterValues['Get-Content:Encoding'] = 'UTF8'
+}
+
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest

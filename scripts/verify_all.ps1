@@ -1,15 +1,26 @@
-# This file is part of OnionBit - a Rust port of the Tribler daemon.
+﻿# This file is part of OnionBit - a Rust port of the Tribler daemon.
 # Copyright (C) 2026 Laurent Geynet <laurent.geynet@gmail.com>
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 # verify_all.ps1 — validation complete du workspace avant de considerer
 # une etape terminee. Cf. AGENTS.md, section "Commandes de validation".
 #
-# Usage : powershell -NoProfile -ExecutionPolicy RemoteSigned -File scripts\verify_all.ps1
+# Usage : pwsh -NoProfile -ExecutionPolicy RemoteSigned -File scripts\verify_all.ps1
 #
 # NOTE : $ErrorActionPreference n'intercepte PAS les codes de sortie
 # des commandes natives (cargo) — chaque etape est verifiee via
 # $LASTEXITCODE et le script echoue des la premiere non nulle.
+
+
+# Encodage : sous Windows PowerShell 5.1, forcer UTF-8 (console +
+# lectures Get-Content ; les ecritures gardent leur -Encoding explicite
+# ou le defaut de l'hote). pwsh 7 est deja UTF-8 : bloc sans effet.
+if ($PSVersionTable.PSVersion.Major -lt 7) {
+    [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+    $OutputEncoding = [System.Text.Encoding]::UTF8
+    if ($null -eq $PSDefaultParameterValues) { $PSDefaultParameterValues = @{} }
+    $PSDefaultParameterValues['Get-Content:Encoding'] = 'UTF8'
+}
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
@@ -44,7 +55,7 @@ Invoke-Step "cargo test (workspace)" {
 }
 
 Invoke-Step "check_i18n (aucun litteral FR dans app/lib)" {
-    powershell -NoProfile -ExecutionPolicy Bypass -File "$PSScriptRoot\check_i18n.ps1"
+    pwsh -NoProfile -ExecutionPolicy Bypass -File "$PSScriptRoot\check_i18n.ps1"
 }
 
 # Cibles de l'UI Flutter : l'analyseur et les tests garantissent le
