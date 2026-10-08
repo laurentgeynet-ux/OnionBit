@@ -30,7 +30,6 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use onionbit_bittorrent::Download;
 use onionbit_db::conversations as dbc;
 use onionbit_messaging::attach::AttachDesc;
 
@@ -87,6 +86,17 @@ pub struct UploadInfo {
     pub size: u64,
     /// Chemin du fichier stage (source d'`attach_offer`).
     pub path: PathBuf,
+}
+
+/// Resultat d'une acceptation — la resolution du magnet est
+/// deportee, aucun `Download` n'est materialise a la reponse.
+#[derive(Debug)]
+pub struct AttachAccept {
+    /// Infohash sale (hex) — le download apparaitra dans
+    /// `GET /api/downloads` a la materialisation.
+    pub infohash: String,
+    /// Nom affiche de l'offre acceptee.
+    pub name: String,
 }
 
 impl CoreSession {
@@ -406,12 +416,18 @@ impl CoreSession {
     /// ADR-0018). `area=None` → `attach_area` du service ;
     /// `destination=None` → `@public/messaging/` (public) ou
     /// `@private/downloads` (prive, noms opaques OBD).
+    ///
+    /// La resolution BEP 9 du magnet est **deportee en tache** (idem
+    /// `PUT /downloads` — elle peut durer longtemps en lane anonyme) :
+    /// l'offre passe `accepted` tout de suite, `downloading` a la
+    /// materialisation, `done` au reaper quand le download termine.
+    /// Un echec de resolution rend l'offre `offered` (reessai).
     pub async fn attach_accept(
         &self,
         attach_id: &[u8],
         destination: Option<PathBuf>,
         area: Option<StorageArea>,
-    ) -> Result<Download> {
+    ) -> Result<AttachAccept> {
         let svc = self.require_messaging()?;
         let db = self.inner.db_arc();
         let row = db
@@ -436,20 +452,45 @@ impl CoreSession {
                 "attach : une piece jointe exige l'anonymat (messaging_hops = 0)",
             ));
         }
-        let magnet = format!(
-            "magnet:?xt=urn:btih:{}",
-            onionbit_crypto::hash::to_hex(&row.ih)
-        );
-        let dl = self
-            .add_download_anon_area(&magnet, false, hops, true, dest, area)
-            .await?;
-        self.inner
-            .db_arc()
-            .with(|c| onionbit_db::downloads::set_origin(c, &row.ih, "messaging"))?;
+        let ih_hex = onionbit_crypto::hash::to_hex(&row.ih);
+        let magnet = format!("magnet:?xt=urn:btih:{ih_hex}");
         self.inner
             .db_arc()
             .with(|c| dbc::set_attachment_state(c, attach_id, "accepted"))?;
-        Ok(dl)
+        let session = self.clone();
+        let aid = attach_id.to_vec();
+        let ih = row.ih.clone();
+        tokio::spawn(async move {
+            match session
+                .add_download_anon_area(&magnet, false, hops, true, dest, area)
+                .await
+            {
+                Ok(_) => {
+                    let _ = session
+                        .inner
+                        .db_arc()
+                        .with(|c| onionbit_db::downloads::set_origin(c, &ih, "messaging"));
+                    let _ = session
+                        .inner
+                        .db_arc()
+                        .with(|c| dbc::set_attachment_state(c, &aid, "downloading"));
+                }
+                Err(e) => {
+                    // Annulation (suppression du pending) ou echec :
+                    // l'offre redevient `offered` — l'acceptation est
+                    // rejouable explicitement.
+                    tracing::warn!(error = %e, "attach : resolution magnet echouee");
+                    let _ = session
+                        .inner
+                        .db_arc()
+                        .with(|c| dbc::set_attachment_state(c, &aid, "offered"));
+                }
+            }
+        });
+        Ok(AttachAccept {
+            infohash: ih_hex,
+            name: row.name,
+        })
     }
 
     /// Refuse une offre recue (`offered` → `declined` — aucun
@@ -526,6 +567,10 @@ impl CoreSession {
                 live.insert(row.attach_id);
             }
         }
+        // La transition `accepted|downloading → done` n'est PAS
+        // ici : elle suit `stats.finished` dans la boucle de
+        // progression (`spawn_progress_loop` — cadence UI). Le
+        // reaper horaire ne traiterait la complétion qu'a retard.
         // Staging residuel : dossier sans offre `seeding` vivante et
         // plus vieux que `upload_ttl` (upload interrompu, offre
         // expiree sans purge, reste d'un crash). Meme discipline pour

@@ -25,9 +25,20 @@ pub struct MessagingConfig {
     /// Budget de trames entrantes par contact (seau a jetons/s,
     /// `0` = illimite — usage banc uniquement).
     pub per_contact_rate: u32,
+    /// Capacite de rafale du seau par contact (`0` = capacite =
+    /// debit, aucune rafale — usage banc). Doit couvrir la rafale
+    /// de negociation de groupe (`hello`+`join`+`roster`) : sinon
+    /// le premier `msg` derriere un `accept` est ecarte au seau
+    /// sans retransmission (MG-13).
+    pub per_contact_burst: u32,
     /// Budget de trames entrantes global (seau a jetons/s,
     /// `0` = illimite — usage banc uniquement).
     pub global_rate: u32,
+    /// Capacite de rafale du seau global (`0` = capacite = debit).
+    /// Agrege les rafales de tous les liens — une arrivee massive
+    /// de `join`/`roster`/`ack` de groupe ne doit pas affamer les
+    /// `msg` applicatifs.
+    pub global_burst: u32,
     /// Cadence de reannonce DHT du swarm de presence.
     pub announce_interval: Duration,
     /// Cadence de verification des points d'introduction
@@ -100,7 +111,9 @@ impl Default for MessagingConfig {
             pending_cap: 64,
             pending_ttl: Duration::from_secs(600),
             per_contact_rate: 2,
+            per_contact_burst: 16,
             global_rate: 10,
+            global_burst: 64,
             announce_interval: Duration::from_secs(300),
             ip_check_interval: Duration::from_secs(10),
             consent_gate_flagged: false,

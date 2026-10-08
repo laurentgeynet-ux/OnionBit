@@ -806,7 +806,10 @@ pub struct AttachAcceptBody {
 }
 
 /// `POST /api/messaging/attachments/{id}/accept` — accepte l'offre :
-/// download anonyme de l'infohash sale. `409 identity_locked` si la
+/// download anonyme de l'infohash sale **deporte en tache** (la
+/// resolution BEP 9 peut durer en lane anonyme — meme deport que
+/// `PUT /downloads`, l'offre passe `accepted` immediatement puis
+/// `downloading` a la materialisation). `409 identity_locked` si la
 /// zone privee visee est verrouillee.
 pub async fn post_attach_accept(
     State(state): State<AppState>,
@@ -836,13 +839,13 @@ pub async fn post_attach_accept(
                 .map_err(|e| ApiError::bad_request(e.to_string()))?,
         ),
     };
-    let dl = state
+    let acc = state
         .session
         .attach_accept(&id_hex(&id)?, destination, area)
         .await?;
     Ok(Json(serde_json::json!({
-        "infohash": dl.info_hash_hex(),
-        "name": dl.name().unwrap_or_default(),
+        "infohash": acc.infohash,
+        "name": acc.name,
     })))
 }
 

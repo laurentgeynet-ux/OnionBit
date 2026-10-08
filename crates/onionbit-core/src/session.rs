@@ -1418,6 +1418,15 @@ impl CoreSession {
                         }
                     }
                     if stats.finished {
+                        // ADR-0019 : pieces jointes recues — le
+                        // download du ih sale termine `accepted|
+                        // downloading → done` (tick de progression,
+                        // pas le reaper horaire).
+                        if let Some(ih) = onionbit_crypto::hash::from_hex(&stats.info_hash) {
+                            let _ = session.inner.db_arc().with(|c| {
+                                onionbit_db::conversations::set_attach_done_by_ih(c, &ih)
+                            });
+                        }
                         // `insert` = passage a termine observe dans
                         // cette session : notification + drapeau
                         // persistant + recheck optionnel.

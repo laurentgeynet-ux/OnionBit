@@ -266,6 +266,11 @@ pub struct Ipv8Config {
     /// `max_deficit_bytes` → refuse) — n'opere que si
     /// `ledger_enforce` est actif.
     pub messaging_consent_ledger: bool,
+    /// ADR-0019 : conversations de groupe + pieces jointes — propage
+    /// a `MessagingConfig.groups_enabled` (refus service) et a
+    /// l'annonce `CAP_MSG_V2` des `hello` ext (pas de promesse
+    /// mensongere). `true` par defaut.
+    pub messaging_groups_enabled: bool,
     /// Octets servis gratuitement avant tout refus (periode de
     /// gratuite pour les nouveaux pairs).
     pub ledger_soft_cap: usize,
@@ -412,6 +417,7 @@ impl Ipv8Config {
             messaging_consent_flagged: false,
             messaging_consent_endorsed: false,
             messaging_consent_ledger: false,
+            messaging_groups_enabled: true,
             ledger_enabled: true,
             ledger_enforce: false,
             ledger_soft_cap: DEFAULT_LEDGER_SOFT_CAP as usize,
@@ -495,6 +501,7 @@ impl Default for Ipv8Config {
             messaging_consent_flagged: false,
             messaging_consent_endorsed: false,
             messaging_consent_ledger: false,
+            messaging_groups_enabled: true,
             ledger_enabled: true,
             ledger_enforce: false,
             ledger_soft_cap: DEFAULT_LEDGER_SOFT_CAP as usize,
@@ -1852,6 +1859,13 @@ impl Ipv8Stack {
                     // reellement — il faut le tunnel (`enable_anonymity`)
                     // pour porter les lanes e2e.
                     messaging_enabled: config.enable_messaging && config.enable_anonymity,
+                    // `CAP_MSG_V2` (ADR-0019) : groupes/attach — meme
+                    // garde que `CAP_MSG_V1` + `groups_enabled` : on
+                    // n'annonce jamais une capacite refusee cote
+                    // service.
+                    messaging_v2_enabled: config.enable_messaging
+                        && config.enable_anonymity
+                        && config.messaging_groups_enabled,
                     hello_jitter_pct: config.ext_hello_jitter_pct.min(100) as u8,
                     peer_ttl: std::time::Duration::from_secs(config.ext_peer_ttl_secs.max(60)),
                     peers_max: config.ext_peers_max.max(1) as usize,
@@ -2439,6 +2453,7 @@ impl Ipv8Stack {
                         consent_gate_flagged: config.messaging_consent_flagged,
                         consent_gate_endorsed: config.messaging_consent_endorsed,
                         consent_gate_ledger: config.messaging_consent_ledger,
+                        groups_enabled: config.messaging_groups_enabled,
                         ..onionbit_messaging::MessagingConfig::default()
                     },
                     config.messaging_hops,

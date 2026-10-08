@@ -2321,6 +2321,22 @@ async fn build_circuits_ne_compte_pas_les_ip_seeder() {
         "circuit IP_SEEDER a 1 saut attendu, aucun DATA"
     );
 
+    // `wait_ready_circuit_of_hops` (chemin `create_e2e` /
+    // `peers-request`) ne doit pas davantage retourner l'IP_SEEDER :
+    // un paquet envoye sur un circuit e2e-lie serait livre au pair
+    // e2e comme charge applicative (perte silencieuse). Il doit
+    // declencher puis attendre un circuit DATA.
+    let cid = a
+        .tunnel
+        .wait_ready_circuit_of_hops(1, "test")
+        .await
+        .expect("circuit DATA apres attente bornee");
+    assert_ne!(
+        cid, ip_cid,
+        "wait_ready ne doit pas retourner le circuit IP_SEEDER"
+    );
+    assert!(a.tunnel.ready_data_circuits_of_hops(1).contains(&cid));
+
     // Le besoin de circuits DATA a 1 saut ne doit pas etre couvert
     // par l'IP_SEEDER : une construction DATA doit suivre.
     a.tunnel.build_circuits_if_needed(1, 1).await.unwrap();

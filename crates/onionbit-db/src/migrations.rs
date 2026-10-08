@@ -459,6 +459,17 @@ CREATE INDEX idx_msg_attachments_ih ON msg_attachments(ih);
 ALTER TABLE downloads ADD COLUMN origin TEXT NOT NULL
     DEFAULT 'user' CHECK (origin IN ('user','messaging'));
 ",
+    // v22 : correlation des livraisons par membre (ADR-0019,
+    // retour MG-13). `msg_delivery.msg_id` ancrait la trame emise
+    // au lieu de la ligne `msg_messages` porteuse — violation de
+    // FK silencieuse a chaque `sent`/`acked`. `msg_id` devient
+    // l'ancre (`mid` d'un `msg` de groupe, `attach_id` d'une
+    // offre) et `frame_id` identifie la trame v2 emise vers CE
+    // membre — le corps de son `ack` la reference.
+    "
+ALTER TABLE msg_delivery ADD COLUMN frame_id BLOB;
+CREATE INDEX idx_msg_delivery_frame ON msg_delivery(frame_id);
+",
 ];
 
 /// Applique les migrations en attente sur une connexion ouverte.

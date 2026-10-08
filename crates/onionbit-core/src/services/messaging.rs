@@ -304,11 +304,12 @@ struct TokenBucket {
 }
 
 impl TokenBucket {
-    /// Seau plein de capacite = `rate` (rafale d'une seconde).
-    fn new(rate: u32) -> Option<Self> {
+    /// Seau plein de capacite = `max(rate, burst)` — `burst` permet
+    /// une rafale au-dela du debit soutenu (negociation de groupe).
+    fn new(rate: u32, burst: u32) -> Option<Self> {
         (rate > 0).then(|| Self {
-            tokens: f64::from(rate),
-            cap: f64::from(rate),
+            tokens: f64::from(rate.max(burst)),
+            cap: f64::from(rate.max(burst)),
             rate: f64::from(rate),
             last: Instant::now(),
         })
@@ -403,7 +404,7 @@ impl Contact {
             circuit: None,
             link_failed: false,
             greeted: false,
-            bucket: TokenBucket::new(cfg.per_contact_rate),
+            bucket: TokenBucket::new(cfg.per_contact_rate, cfg.per_contact_burst),
         }
     }
 
@@ -504,7 +505,7 @@ impl MessagingService {
         let svc = Arc::new(Self {
             tunnel,
             key,
-            global_bucket: Mutex::new(TokenBucket::new(cfg.global_rate)),
+            global_bucket: Mutex::new(TokenBucket::new(cfg.global_rate, cfg.global_burst)),
             cfg,
             hops,
             own_mh,
@@ -2059,10 +2060,16 @@ impl MessagingService {
             }
             match raw.kind {
                 // ACK applicatif : `body` = `id` de la trame
-                // acquittee -> statut `acked` de notre `out`.
+                // acquittee -> statut `acked` de notre `out` (et de
+                // la livraison `frame_id` des offres `attach` v2).
                 MsgKind::Ack => {
                     if let Ok(id) = <[u8; 16]>::try_from(raw.body.as_slice()) {
                         self.set_msg_status(&id, "acked");
+                        if let Some(db) = &self.db {
+                            let _ = db.with(|c| {
+                                dbc::ack_delivery_frame(c, &id, &pk_bin, now_secs() as i64)
+                            });
+                        }
                     }
                 }
                 // Message : historique `received` + ACK applicatif
@@ -2110,7 +2117,7 @@ impl MessagingService {
                 // persistee `offered` — l'acceptation est explicite.
                 MsgKind::Attach => {
                     let conv = raw.conv.unwrap_or_else(|| self.direct_conv_id(&pk_bin));
-                    self.inbound_attach(conv, &pk_bin, &raw);
+                    self.inbound_attach(conv, &pk_bin, cid, &raw);
                 }
                 _ => {}
             }
@@ -2401,22 +2408,15 @@ impl MessagingService {
             }
             // Offre de piece jointe de groupe (v2) : meme pipeline
             // que la directe — `conv` = groupe, auteur = emetteur.
-            MsgKind::Attach => self.inbound_attach(conv, sender, raw),
-            // `ack` de groupe : acquitte la livraison par membre
-            // (`msg_id` = `id` de la trame emise vers ce membre).
+            MsgKind::Attach => self.inbound_attach(conv, sender, cid, raw),
+            // `ack` de groupe : acquitte la livraison par membre —
+            // son corps reference la `frame_id` de la trame emise
+            // vers ce membre.
             MsgKind::Ack => {
-                if let Ok(msg_id) = <[u8; 16]>::try_from(body) {
+                if let Ok(frame_id) = <[u8; 16]>::try_from(body) {
                     if let Some(db) = &self.db {
                         let _ = db.with(|c| {
-                            dbc::upsert_delivery(
-                                c,
-                                &dbc::MsgDeliveryRow {
-                                    msg_id: msg_id.to_vec(),
-                                    member_pk: sender.to_vec(),
-                                    status: "acked".into(),
-                                    ts: now_secs() as i64,
-                                },
-                            )
+                            dbc::ack_delivery_frame(c, &frame_id, sender, now_secs() as i64)
                         });
                     }
                 }
@@ -2431,7 +2431,7 @@ impl MessagingService {
     /// `msg_attachments` en `offered` (FK `msg_id`) et notifie —
     /// l'acceptation (download anonyme) est une decision explicite
     /// cote session/API, jamais automatique.
-    fn inbound_attach(&self, conv: [u8; 16], sender: &[u8], raw: &RawFrame) {
+    fn inbound_attach(self: &Arc<Self>, conv: [u8; 16], sender: &[u8], cid: u32, raw: &RawFrame) {
         let desc = match AttachDesc::decode_body(&raw.body, &self.cfg) {
             Ok(d) => d,
             Err(e) => {
@@ -2479,6 +2479,17 @@ impl MessagingService {
             ih: desc.ih,
             name: desc.name,
             size: desc.size,
+        });
+        // Acquittement v2 : la livraison par membre suit le meme
+        // contrat que les `msg` (`frame_id` de la trame `attach`
+        // acquittee) — direct et groupe.
+        let svc = self.clone();
+        let pk = sender.to_vec();
+        let ack_id = raw.id;
+        tokio::spawn(async move {
+            let _ = svc
+                .send_frame_v2(&pk, cid, conv, MsgKind::Ack, ack_id.to_vec())
+                .await;
         });
     }
 
@@ -2587,8 +2598,8 @@ impl MessagingService {
         }
         let mut sent = 0usize;
         for pk in targets {
-            // Livraison par membre (`msg_delivery` = `id` de la
-            // trame emise — acquittee par l'`ack` en retour).
+            // Livraison par membre ancree a `attach_id` — `frame_id`
+            // de la trame emise vers ce membre, acquittee par `ack`.
             match self
                 .send_to_member(conv, &pk, MsgKind::Attach, body.clone())
                 .await
@@ -2600,9 +2611,10 @@ impl MessagingService {
                             dbc::upsert_delivery(
                                 c,
                                 &dbc::MsgDeliveryRow {
-                                    msg_id: frame_id.to_vec(),
+                                    msg_id: attach_id.to_vec(),
                                     member_pk: pk.clone(),
                                     status: "sent".into(),
+                                    frame_id: Some(frame_id.to_vec()),
                                     ts: now_secs() as i64,
                                 },
                             )
@@ -2618,6 +2630,7 @@ impl MessagingService {
                                     msg_id: attach_id.to_vec(),
                                     member_pk: pk.clone(),
                                     status: "failed".into(),
+                                    frame_id: None,
                                     ts: now_secs() as i64,
                                 },
                             )
@@ -3224,16 +3237,18 @@ impl MessagingService {
                 .await
             {
                 Ok(frame_id) => {
-                    // La livraison suit l'`id` de la trame emise
-                    // vers CE membre (cible de son `ack`).
+                    // Livraison ancree au `mid` (FK `msg_messages`)
+                    // — `frame_id` identifie la trame emise vers CE
+                    // membre (corps de son `ack`).
                     if let Some(db) = &self.db {
                         let _ = db.with(|c| {
                             dbc::upsert_delivery(
                                 c,
                                 &dbc::MsgDeliveryRow {
-                                    msg_id: frame_id.to_vec(),
+                                    msg_id: mid.to_vec(),
                                     member_pk: pk_bin.clone(),
                                     status: "sent".into(),
+                                    frame_id: Some(frame_id.to_vec()),
                                     ts: now_secs() as i64,
                                 },
                             )
@@ -3251,6 +3266,7 @@ impl MessagingService {
                             msg_id: mid.to_vec(),
                             member_pk: pk_bin.clone(),
                             status: status.into(),
+                            frame_id: None,
                             ts: now_secs() as i64,
                         },
                     )
@@ -3857,9 +3873,11 @@ mod tests {
             send: [1u8; 32],
             recv: [2u8; 32],
         };
-        // Seau contact = 2/s : la troisieme trame est ecartee.
+        // Seau contact = 2/s sans rafale : la troisieme trame est
+        // ecartee.
         let svc = make_service_cfg(MessagingConfig {
             per_contact_rate: 2,
+            per_contact_burst: 0,
             global_rate: 0,
             ..Default::default()
         })
@@ -3878,9 +3896,11 @@ mod tests {
         assert_eq!(n, 2, "2 trames livrees, la 3e au budget");
         assert_eq!(svc.stats.rate_contact.load(Ordering::Relaxed), 1);
 
-        // Seau global = 1/s : tout au-dela est ecarte avant le codec.
+        // Seau global = 1/s sans rafale : tout au-dela est ecarte
+        // avant le codec.
         let svc = make_service_cfg(MessagingConfig {
             global_rate: 1,
+            global_burst: 0,
             per_contact_rate: 0,
             ..Default::default()
         })

@@ -898,12 +898,16 @@ impl TunnelCommunity {
         hops: usize,
         context: &'static str,
     ) -> Result<u32, Ipv8Error> {
-        if self.ready_circuits_of_hops(hops).is_empty() {
+        // DATA uniquement : un circuit `RP_*`/`IP_*` est lie a un pair
+        // e2e — un paquet `create-e2e`/`peers-request` envoye dessus
+        // serait livre au pair e2e comme charge applicative au lieu
+        // de sortir vers le point d'introduction (silencieusement perdu).
+        if self.ready_data_circuits_of_hops(hops).is_empty() {
             let _ = self.build_circuits_if_needed(hops, 1).await;
         }
         let deadline = std::time::Instant::now() + self.settings.circuit_timeout;
         loop {
-            if let Some(cid) = self.ready_circuits_of_hops(hops).first().copied() {
+            if let Some(cid) = self.ready_data_circuits_of_hops(hops).first().copied() {
                 return Ok(cid);
             }
             if std::time::Instant::now() >= deadline {
@@ -938,7 +942,7 @@ impl TunnelCommunity {
         hops: usize,
     ) -> Result<Vec<IntroductionPoint>, Ipv8Error> {
         let cid = self
-            .ready_circuits_of_hops(hops)
+            .ready_data_circuits_of_hops(hops)
             .first()
             .copied()
             .ok_or(Ipv8Error::NotReady("aucun circuit pour peers-request"))?;
@@ -1541,7 +1545,7 @@ impl TunnelCommunity {
                 }
                 .ok_or(Ipv8Error::Malformed("swarm inconnu"))?;
                 let cid = self
-                    .ready_circuits_of_hops(hops)
+                    .ready_data_circuits_of_hops(hops)
                     .first()
                     .copied()
                     .ok_or(Ipv8Error::Malformed("aucun circuit pour e2e"))?;
@@ -1604,6 +1608,7 @@ impl TunnelCommunity {
                     // "On create-e2e: forwarding message because
                     // received over socket" (info).
                     tracing::debug!(
+                        info_hash = hex::encode(p.info_hash),
                         circuit_id = relay_cid,
                         identifier = p.identifier,
                         src = ?src,
@@ -1621,7 +1626,12 @@ impl TunnelCommunity {
                         let _ = this.tunnel_data(relay_cid, &dest, &packet).await;
                     });
                 } else {
-                    tracing::debug!("create-e2e pour seeder_pk inconnu");
+                    tracing::debug!(
+                        info_hash = hex::encode(p.info_hash),
+                        identifier = p.identifier,
+                        src = ?src,
+                        "create-e2e pour seeder_pk inconnu"
+                    );
                 }
             }
             Some(cid) => {
@@ -1640,11 +1650,21 @@ impl TunnelCommunity {
                 let action = {
                     let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
                     let Some(s) = inner.swarms.get_mut(&p.info_hash) else {
-                        tracing::debug!("create-e2e recu sans swarm seeder");
+                        tracing::debug!(
+                            info_hash = hex::encode(p.info_hash),
+                            identifier = p.identifier,
+                            requester = ?requester,
+                            "create-e2e recu sans swarm seeder"
+                        );
                         return;
                     };
                     if s.seeder_sk.is_none() {
-                        tracing::debug!("create-e2e recu sans swarm seeder");
+                        tracing::debug!(
+                            info_hash = hex::encode(p.info_hash),
+                            identifier = p.identifier,
+                            requester = ?requester,
+                            "create-e2e recu sans swarm seeder"
+                        );
                         return;
                     }
                     if let Some(reply) = s.seen_e2e.get(&key).cloned() {

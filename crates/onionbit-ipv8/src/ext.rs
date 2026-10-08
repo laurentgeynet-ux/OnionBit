@@ -385,6 +385,12 @@ pub struct ExtSettings {
     /// Pure annonce : les messages voyagent dans le tunnel, jamais
     /// dans ext.
     pub messaging_enabled: bool,
+    /// ADR-0019 — messagerie v2 (conversations/groupes/pieces
+    /// jointes) : annonce `CAP_MSG_V2` en plus de `CAP_MSG_V1`.
+    /// Fixe seulement quand le service tourne **et**
+    /// `groups_enabled` — un pair qui ne la voit pas recoit du texte
+    /// 1:1 v1 (degradation propre).
+    pub messaging_v2_enabled: bool,
     /// Classe de padding OBF (octets) : le plaintext interne est
     /// arrondi au multiple superieur (`obf::OBF_PAD_BUCKET`).
     pub obf_pad_bucket: usize,
@@ -480,6 +486,7 @@ impl Default for ExtSettings {
             ledger_head_fanout: 3,
             obf_enabled: false,
             messaging_enabled: false,
+            messaging_v2_enabled: false,
             obf_pad_bucket: obf::OBF_PAD_BUCKET,
             hello_jitter_pct: 25,
             peer_ttl: Duration::from_secs(4 * 3600),
@@ -922,6 +929,12 @@ impl OnionbitExtCommunity {
         // messagerie est demarre cote tunnel.
         if settings.messaging_enabled {
             settings.caps |= CAP_MSG_V1;
+        }
+        // `CAP_MSG_V2` (ADR-0019) : annoncee seulement quand le
+        // service tourne ET `groups_enabled` — la degradation v1
+        // couvre les pairs qui ne la voient pas.
+        if settings.messaging_v2_enabled {
+            settings.caps |= CAP_MSG_V2;
         }
         let ledger_store_max = settings.ledger_store_max;
         let community = Arc::new(Self {
@@ -2978,6 +2991,40 @@ mod tests {
         .await;
         // Decodage API : le nom est expose.
         assert_eq!(cap_names(CAP_MSG_V1), vec!["msg_v1"]);
+    }
+
+    /// `CAP_MSG_V2` (ADR-0019) : annoncee seulement quand
+    /// `messaging_v2_enabled` — A parle groupes/attach, B reste v1 ;
+    /// B observe `msg_v2` sur A, jamais l'inverse. Un pair sans le
+    /// bit recoit du texte v1 (degradation au prefiltrage
+    /// `UnknownVersion` sur ses propres trames v2).
+    #[tokio::test]
+    async fn cap_msg_v2_annoncee_seulement_si_groupes_actifs() {
+        let (a, _ea, _aa, _ka) = node_full(ExtSettings {
+            messaging_enabled: true,
+            messaging_v2_enabled: true,
+            ..ExtSettings::default()
+        })
+        .await;
+        let (b, _eb, addr_b, key_b) = node(0).await;
+        assert_eq!(a.settings.caps & CAP_MSG_V2, CAP_MSG_V2);
+        // `messaging_v2_enabled` sans messagerie ne suffit pas a
+        // annoncer `CAP_MSG_V1` — la coherence v2 ⇒ v1 reste du
+        // ressort de la config de la stack.
+        assert_eq!(b.settings.caps & CAP_MSG_V2, 0);
+
+        link_ext(&a, &b, &addr_b, &key_b.public_key().to_bin()).await;
+
+        let pk_a = a.key.public_key().to_bin();
+        wait_until(move || {
+            b.ext_peers
+                .lock()
+                .unwrap()
+                .get(&pk_a)
+                .is_some_and(|p| p.caps & CAP_MSG_V2 == CAP_MSG_V2)
+        })
+        .await;
+        assert_eq!(cap_names(CAP_MSG_V1 | CAP_MSG_V2), vec!["msg_v1", "msg_v2"]);
     }
 
     /// `hello` avec version inconnue : droppe — le pair n'est ni

@@ -2787,3 +2787,131 @@ async fn live_messaging_e2e_vault_migration() {
     stop_bounded(&a2).await;
     stop_bounded(&b).await;
 }
+
+/// Banc MG-7 (ADR-0019) — non-fuite zone privee des pieces jointes :
+/// un upload `{path}` sous `@private` est refuse (jamais de copie
+/// claire sauvage d'un contenu chiffre OBD) et l'acceptation d'une
+/// offre `recv` vers la zone privee verrouillee rend
+/// `identity_locked` avant tout telechargement.
+#[tokio::test(flavor = "multi_thread")]
+async fn messaging_attach_zone_privee_bornee() {
+    let state_dir = tempfile::tempdir().unwrap();
+    let mut cfg = live_cfg(state_dir.path());
+    cfg.ipv8.enable_messaging = true;
+    // Zone privee non montee → `private_area_state() == "locked"`.
+    cfg.storage.private_enabled = false;
+    let session = CoreSession::start(cfg, Notifier::new())
+        .await
+        .expect("session live");
+    assert!(
+        session.ipv8().unwrap().messaging.is_some(),
+        "service messagerie attendu"
+    );
+    assert_eq!(session.private_area_state(), "locked");
+
+    // 1) `{path}` pointant sous `@private` : refus explicite.
+    let priv_dir = session.paths().private_downloads();
+    std::fs::create_dir_all(&priv_dir).unwrap();
+    let secret = priv_dir.join("secret.bin");
+    std::fs::write(&secret, b"contenu prive").unwrap();
+    let err = session
+        .stage_upload_path(&secret, None)
+        .expect_err("upload @private doit etre refuse");
+    assert!(
+        err.to_string().contains("@private"),
+        "refus @private attendu : {err}"
+    );
+
+    // 2) Offre `recv`/`offered` persiste → `attach_accept` vers la
+    //    zone privee verrouillee → `identity_locked` avant toute
+    //    resolution BEP 9.
+    let conv = [7u8; 16].to_vec();
+    let pk = vec![9u8; 74];
+    let mid = [3u8; 16].to_vec();
+    let attach_id = [5u8; 16].to_vec();
+    let ih = [11u8; 20].to_vec();
+    session
+        .db()
+        .with(|c| {
+            onionbit_db::messaging::upsert_contact(
+                c,
+                &onionbit_db::messaging::MsgContactRow {
+                    public_key: pk.clone(),
+                    state: "active".into(),
+                    send_seq: 0,
+                    recv_top: 0,
+                    retention_secs: 0,
+                    secure_delete: false,
+                    alias: String::new(),
+                    scope: "contact".into(),
+                    created_at: 1,
+                    updated_at: 1,
+                },
+            )?;
+            onionbit_db::conversations::upsert_conversation(
+                c,
+                &onionbit_db::conversations::MsgConversationRow {
+                    conv_id: conv.clone(),
+                    kind: "direct".into(),
+                    name: String::new(),
+                    state: "active".into(),
+                    created_at: 1,
+                    updated_at: 1,
+                    last_read_ts: 0,
+                },
+            )?;
+            onionbit_db::messaging::insert_message(
+                c,
+                &onionbit_db::messaging::MsgMessageRow {
+                    id: mid.clone(),
+                    contact_pk: pk.clone(),
+                    direction: "in".into(),
+                    seq: 1,
+                    ts: 1,
+                    body: Vec::new(),
+                    status: "received".into(),
+                    created_at: 1,
+                    conv_id: conv.clone(),
+                    author_pk: None,
+                    mid: None,
+                },
+            )?;
+            onionbit_db::conversations::insert_attachment(
+                c,
+                &onionbit_db::conversations::MsgAttachmentRow {
+                    attach_id: attach_id.clone(),
+                    conv_id: conv.clone(),
+                    msg_id: mid.clone(),
+                    ih: ih.clone(),
+                    name: "fichier.bin".into(),
+                    size: 12,
+                    role: "recv".into(),
+                    state: "offered".into(),
+                    created_at: 1,
+                },
+            )
+        })
+        .expect("fixture attach");
+    let err = session
+        .attach_accept(
+            &attach_id,
+            None,
+            Some(onionbit_core::config::StorageArea::Private),
+        )
+        .await
+        .expect_err("accept prive zone verrouillee");
+    assert!(
+        err.to_string().contains("identity_locked"),
+        "identity_locked attendu : {err}"
+    );
+    // L'offre reste `offered` — l'echec est anterieur a toute
+    // mutation d'etat ni telechargement.
+    let row = session
+        .db()
+        .with(|c| onionbit_db::conversations::get_attachment(c, &attach_id))
+        .unwrap()
+        .expect("ligne attach");
+    assert_eq!(row.state, "offered");
+
+    stop_bounded(&session).await;
+}

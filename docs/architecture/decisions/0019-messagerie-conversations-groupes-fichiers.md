@@ -1,7 +1,11 @@
 # ADR-0019 — Messagerie : conversations multiples, groupes et pièces jointes
 
-Statut : **Proposée** (2026-10-08, revue 2026-10-09 — alignement sur
-ADR-0018 implémentée) — extension de la messagerie e2e
+Statut : **Acceptée** (proposée 2026-10-08, revue + acceptation
+2026-10-09 — étapes 64–69 livrées et validées : codec v2 + fuzz,
+persistance v21, groupes `gctl` confinés, pièces jointes salées,
+API + UI, bancs `MG-1..MG-10` en tests unitaires/intégration et
+`MG-13` scripté `interop_messaging_v2_e2e.ps1`) — extension de la
+messagerie e2e
 d'ADR-0011 (livrée, Phase 8, bancs `MS-*` verts). Réutilise sans les
 modifier : les circuits e2e et le hidden seeding
 (`onionbit-tunnel`), le codec et l'anti-replay

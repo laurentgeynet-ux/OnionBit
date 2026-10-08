@@ -757,6 +757,11 @@ pub struct TunnelCommunityConfig {
     /// `max_deficit_bytes` ne peut ouvrir de `pending` — n'opere
     /// que si `ledger_enforce` est actif. `false` par defaut.
     pub messaging_consent_ledger: bool,
+    /// Extension Rust (ADR-0019) : conversations de groupe et pieces
+    /// jointes — `false` confine le service au 1:1 v1/v2 (groupes et
+    /// `attach` refuses cote service, `CAP_MSG_V2` non annoncee).
+    /// `true` par defaut.
+    pub messaging_groups_enabled: bool,
     /// Extension Rust (ADR-0015) : comptabilite locale des octets de
     /// tunnel servis/utilises par pair — persistance `peer_stats` et
     /// exposition `/api/ipv8/tunnel/ledger`. `true` par defaut :
@@ -813,6 +818,7 @@ impl Default for TunnelCommunityConfig {
             messaging_consent_flagged: false,
             messaging_consent_endorsed: false,
             messaging_consent_ledger: false,
+            messaging_groups_enabled: true,
             ledger_enabled: true,
             ledger_enforce: false,
             ledger_soft_cap: crate::ipv8_stack::DEFAULT_LEDGER_SOFT_CAP,
@@ -1772,6 +1778,7 @@ impl DaemonConfig {
             messaging_consent_flagged: self.tunnel_community.messaging_consent_flagged,
             messaging_consent_endorsed: self.tunnel_community.messaging_consent_endorsed,
             messaging_consent_ledger: self.tunnel_community.messaging_consent_ledger,
+            messaging_groups_enabled: self.tunnel_community.messaging_groups_enabled,
             ledger_enabled: self.tunnel_community.ledger_enabled,
             ledger_enforce: self.tunnel_community.ledger_enforce,
             ledger_soft_cap: self.tunnel_community.ledger_soft_cap as usize,

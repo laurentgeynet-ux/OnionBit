@@ -67,12 +67,16 @@ pub struct MsgMemberRow {
 /// Ligne de `msg_delivery` (statut par membre d'un message sortant).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MsgDeliveryRow {
-    /// `id` de la trame emise.
+    /// `id` de la ligne `msg_messages` porteuse — `mid` d'un `msg`
+    /// de groupe, `attach_id` d'une offre (ancre FK).
     pub msg_id: Vec<u8>,
     /// `pk_bin` du membre destinataire.
     pub member_pk: Vec<u8>,
     /// `"sent" | "acked" | "failed"`.
     pub status: String,
+    /// `id` de la trame v2 emise vers ce membre — corps de son
+    /// `ack` (`None` si l'emission a echoue avant la trame).
+    pub frame_id: Option<Vec<u8>>,
     /// Horodatage de la derniere transition.
     pub ts: i64,
 }
@@ -359,20 +363,52 @@ pub fn count_active_members(conn: &Connection, conv_id: &[u8]) -> Result<u64> {
 /// progression — `acked` et `failed` sont terminaux).
 pub fn upsert_delivery(conn: &Connection, row: &MsgDeliveryRow) -> Result<()> {
     conn.execute(
-        "INSERT INTO msg_delivery (msg_id, member_pk, status, ts)
-         VALUES (?1,?2,?3,?4)
+        "INSERT INTO msg_delivery (msg_id, member_pk, status, frame_id, ts)
+         VALUES (?1,?2,?3,?4,?5)
          ON CONFLICT(msg_id, member_pk) DO UPDATE SET
-             status=excluded.status, ts=excluded.ts
+             status=excluded.status, ts=excluded.ts,
+             frame_id=COALESCE(msg_delivery.frame_id, excluded.frame_id)
          WHERE msg_delivery.status='sent'",
-        params![row.msg_id, row.member_pk, row.status, row.ts],
+        params![row.msg_id, row.member_pk, row.status, row.frame_id, row.ts],
     )?;
     Ok(())
+}
+
+/// Transition `accepted|downloading → done` des pieces jointes
+/// recues dont le download de l'infohash a termine — appele par la
+/// boucle de progression qui observe `stats.finished` (l'etat suit
+/// la livraison reelle, pas seulement l'acceptation).
+pub fn set_attach_done_by_ih(conn: &Connection, ih: &[u8]) -> Result<usize> {
+    let n = conn.execute(
+        "UPDATE msg_attachments SET state='done'
+         WHERE ih=?1 AND role='recv' AND state IN ('accepted','downloading')",
+        params![ih],
+    )?;
+    Ok(n)
+}
+
+/// Acquitte la livraison identifiee par sa `frame_id` — le corps
+/// d'un `ack` de groupe reference la trame emise vers ce membre.
+/// `sent -> acked` seulement (terminal). Retourne le nombre de
+/// lignes transitionnees.
+pub fn ack_delivery_frame(
+    conn: &Connection,
+    frame_id: &[u8],
+    member_pk: &[u8],
+    ts: i64,
+) -> Result<usize> {
+    let n = conn.execute(
+        "UPDATE msg_delivery SET status='acked', ts=?1
+         WHERE frame_id=?2 AND member_pk=?3 AND status='sent'",
+        params![ts, frame_id, member_pk],
+    )?;
+    Ok(n)
 }
 
 /// Statuts par membre d'un message sortant.
 pub fn list_delivery(conn: &Connection, msg_id: &[u8]) -> Result<Vec<MsgDeliveryRow>> {
     let mut stmt = conn.prepare(
-        "SELECT msg_id, member_pk, status, ts
+        "SELECT msg_id, member_pk, status, frame_id, ts
          FROM msg_delivery WHERE msg_id=?1",
     )?;
     let rows = stmt.query_map(params![msg_id], |r| {
@@ -380,7 +416,8 @@ pub fn list_delivery(conn: &Connection, msg_id: &[u8]) -> Result<Vec<MsgDelivery
             msg_id: r.get(0)?,
             member_pk: r.get(1)?,
             status: r.get(2)?,
-            ts: r.get(3)?,
+            frame_id: r.get(3)?,
+            ts: r.get(4)?,
         })
     })?;
     Ok(rows.collect::<std::result::Result<_, _>>()?)
@@ -586,6 +623,7 @@ mod tests {
                     msg_id: mid_row.clone(),
                     member_pk: vec![1u8; 74],
                     status: "sent".into(),
+                    frame_id: Some(vec![9u8; 16]),
                     ts: 100,
                 },
             )?;
@@ -595,6 +633,7 @@ mod tests {
                     msg_id: mid_row.clone(),
                     member_pk: vec![1u8; 74],
                     status: "acked".into(),
+                    frame_id: None,
                     ts: 110,
                 },
             )?;
@@ -604,10 +643,34 @@ mod tests {
                     msg_id: mid_row.clone(),
                     member_pk: vec![1u8; 74],
                     status: "failed".into(),
+                    frame_id: None,
                     ts: 120,
                 },
             )?;
             assert_eq!(list_delivery(c, &mid_row)?[0].status, "acked");
+
+            // Correlation d'ack par `frame_id` (v22) : la trame
+            // emise vers le membre identifie sa livraison.
+            upsert_delivery(
+                c,
+                &MsgDeliveryRow {
+                    msg_id: mid_row.clone(),
+                    member_pk: vec![2u8; 74],
+                    status: "sent".into(),
+                    frame_id: Some(vec![7u8; 16]),
+                    ts: 100,
+                },
+            )?;
+            assert_eq!(ack_delivery_frame(c, &[7u8; 16], &[2u8; 74], 110)?, 1);
+            // Deja acked : terminal.
+            assert_eq!(ack_delivery_frame(c, &[7u8; 16], &[2u8; 74], 120)?, 0);
+            let rows = list_delivery(c, &mid_row)?;
+            assert_eq!(
+                rows.iter()
+                    .find(|r| r.member_pk == vec![2u8; 74])
+                    .map(|r| r.status.as_str()),
+                Some("acked")
+            );
 
             // Attaches + cascade de suppression.
             insert_attachment(

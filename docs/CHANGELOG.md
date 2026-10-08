@@ -3,6 +3,69 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## ADR-0019 étape 69 : validation + retours MG-13 (2026-10-09)
+
+- **`CAP_MSG_V2` annoncé** : `messaging_groups_enabled` plombé
+  jusqu'à `Ipv8Config.msg_caps` — le bit `1<<2` n'est émis que si
+  messagerie + groupes actifs (`CAP_MSG_V1` reste indépendant,
+  test `ext` dédié).
+- **Banc MG-13** `scripts/interop_messaging_v2_e2e.ps1` — cycle
+  réel **3 démons** : liaisons A-B/A-C/B-C → groupe {B,C} → invites
+  → fan-out A et B → pièce jointe réelle (384 Kio aléatoire) →
+  accept → download anonyme du ih salé → **SHA-256 identique** →
+  oracle du sel (même fichier, deux ih) → `leave` → roster `left`.
+  Corrélation inter-pairs par l'`infohash` salé (l'`attach_id`
+  local = `id` de la trame reçue, un par membre).
+- **Retours de validation (MG-13)** — trois défauts réels corrigés :
+  - **Seaux sans rafale** : `cap = rate` (2 trames/s par contact,
+    10 global) ne tolérait aucune rafale — la négociation de groupe
+    (`hello`+`join`+`roster` en <1 s par lien) vidait le seau et le
+    `msg` suivant était écarté sans retransmission. Nouveaux
+    réglages `per_contact_burst`/`global_burst` (16/64) —
+    capacité `max(rate, burst)`, débit soutenu inchangé.
+  - **`msg_delivery` mort** : la ligne `sent`/`acked` était insérée
+    avec `msg_id = frame_id` — jamais un `msg_messages.id` →
+    violation de FK avalée, aucune livraison par membre
+    enregistrée. Migration **v22** : colonne `frame_id` (corps de
+    l'`ack`), `msg_id` ancré au `mid`/`attach_id` ; nouvel
+    `ack_delivery_frame` + acquittement v2 des trames `attach`
+    (direct et groupe) dans `inbound_attach`.
+  - **`accept` bloquant** : `attach_accept` attendait la résolution
+    BEP 9 du magnet dans l'appel (HTTP > 60 s en lane anonyme).
+    Déport en tâche — même convention que `PUT /downloads` :
+    `accepted` immédiat, `downloading` à la matérialisation, retour
+    `offered` si échec (réessai possible). Transition `accepted|
+    downloading → done` déplacée dans la boucle de progression
+    (`set_attach_done_by_ih` au tick `finished`) — le reaper
+    horaire était trop lent pour l'état vu par l'UI.
+  - **`create-e2e`/`peers-request` sur circuit e2e-lié** :
+    `ready_circuits_of_hops` ne filtrait que `READY`+`goal_hops` —
+    un circuit `RP_*`/`IP_*` lié à un pair e2e pouvait être choisi,
+    et le paquet y était livré au pair comme charge applicative
+    (rejeté au préfiltre messagerie, perte silencieuse). Un membre
+    de groupe restait ainsi `accepted` sans jamais amorcer le
+    download quand `HashMap::first` tirait son circuit RP_SEEDER —
+    variance selon l'ordre de hachage, d'où la flakiness. Les trois
+    sites qui émettent vers un socket externe
+    (`wait_ready_circuit_of_hops`, `send_peers_request`, re-émission
+    `resend_e2e`) n'utilisent plus que `ready_data_circuits_of_hops`
+    (régression couverte : un `IP_SEEDER` seul prêt ne satisfait
+    plus l'attente) ; logs de rejet `create-e2e` enrichis
+    (ih/identifier/requester).
+- **MG-7 couvert** : `live_bench::messaging_attach_zone_privee_bornee`
+  vérifie le refus `{path}` sous `@private` et `identity_locked` à
+  l'accept privé zone verrouillée (offre intacte `offered`).
+- **MG-13 vert** : manifeste `ok:true` complet — groupe 3 démons,
+  fan-out bidirectionnel, pièce jointe 384 Kio reçue `done` chez
+  B **et** C, SHA-256 identique aller-retour, oracle du sel (deux
+  ih distincts), `leave` propagé. Effet collatéral du fix circuit :
+  `Link-Pair` passe en <1 s (auparavant jusqu'à >240 s — même
+  cause racine).
+- **Catalogue** `docs/plans/bancs_tests.md` §4.3 : bancs MG-1..MG-10
+  (unitaires/intégration) + MG-13 scripté.
+- **ADR-0019 → Acceptée** : implémentation étapes 64–68 + retours
+  ci-dessus validés.
+
 ## ADR-0019 étape 68 : API + UI (2026-10-09)
 
 - **REST `/api/messaging`** (ADR-0019 §6) — toutes sous
