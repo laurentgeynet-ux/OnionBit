@@ -130,7 +130,7 @@ No server, no account, no phone number: **your public key is your address.**
 Toggle: *Settings → Anonymity → Anonymous messaging* (on by default; applied
 on restart). REST surface: `GET/POST /api/messaging/*` + SSE events.
 
-### 🪪 Portable identity — yours, on any device (ADR-0016)
+### 🪪 Portable identity — yours, on any device ([ADR-0016](docs/architecture/decisions/0016-identite-portable.md))
 
 No account, no server — and your identity is no longer tied to one device
 nor exposed as a bare file:
@@ -161,7 +161,7 @@ nor exposed as a bare file:
 Full spec and migration path:
 [ADR-0016](docs/architecture/decisions/0016-identite-portable.md).
 
-### 🤝 Trust & extensions — reputation without a blockchain (ADR-0015)
+### 🤝 Trust & extensions — reputation without a blockchain ([ADR-0015](docs/architecture/decisions/0015-extensions-onionbit-legacy-tribler.md))
 
 Wire compatibility with Tribler 8.x is a hard boundary: the legacy protocol is
 **never modified**. Everything new lives in a dedicated extension community
@@ -200,7 +200,7 @@ the messaging UI suggests `msg_v1` peers you haven't added yet. Full spec:
 For anti-censorship — traffic with *no static protocol marker at all* — see
 the dedicated [stealth mode](#stealth--censorship-resistance-by-design-adr-0017).
 
-### 🥷 Stealth — censorship resistance by design (ADR-0017)
+### 🥷 Stealth — censorship resistance by design ([ADR-0017](docs/architecture/decisions/0017-transport-furtif-anti-censure.md))
 
 `OBF` hides the *content* of extension frames — but a classifying censor can
 still recognize "OnionBit" from the very first datagram. **Stealth mode
@@ -243,7 +243,7 @@ on three roles:
   budget for newcomers, expansion gated on bilateral ledger reputation —
   one leaked link cannot enumerate the bridge network.
 - 📡 **Everything still works inside** — onion circuits, hidden seeding,
-  e2e messaging and the whole ADR-0015 extension layer run unchanged over
+  e2e messaging and the whole [ADR-0015](docs/architecture/decisions/0015-extensions-onionbit-legacy-tribler.md) extension layer run unchanged over
   the morphed transport. Only clearnet discovery, the public DHT and
   direct BitTorrent are off (public exit exists only on `gateway`).
 
@@ -333,7 +333,7 @@ Tribler 8.x network.*
   third-party tool all go through the same door.
 - **UI** — Flutter, one codebase for Windows, Linux, macOS, Android, iOS and Web.
   The web build is served **same-origin by the daemon itself**
-  (`http://127.0.0.1:<port>/`, ADR-0012) — same UI in your browser, no CORS,
+  (`http://127.0.0.1:<port>/`, [ADR-0012](docs/architecture/decisions/0012-interface-web-same-origin.md)) — same UI in your browser, no CORS,
   `/api/*` still behind the API key.
 
 ## Getting started
@@ -399,15 +399,15 @@ See [SECURITY.md](SECURITY.md) for reporting and the threat model.
 
 **Messaging & identity**
 
-- ✅ Anonymous e2e messaging over hidden services (ADR-0011)
-- ✅ Multi-conversation messaging: tabs, groups, file attachments (ADR-0019)
-- ✅ OnionBit extension layer: signed hello, attestations, ledger, OBF (ADR-0015)
-- ✅ Trust-gated messaging + `OBV1` contact vault (ADR-0015 §9)
-- ✅ Seed identity: HKDF root seed + 24-word BIP39 phrase (EN/FR), guest & locked modes, `OBID` (ADR-0016)
+- ✅ Anonymous e2e messaging over hidden services ([ADR-0011](docs/architecture/decisions/0011-messagerie-anonyme-e2e.md))
+- ✅ Multi-conversation messaging: tabs, groups, file attachments ([ADR-0019](docs/architecture/decisions/0019-messagerie-conversations-groupes-fichiers.md))
+- ✅ OnionBit extension layer: signed hello, attestations, ledger, OBF ([ADR-0015](docs/architecture/decisions/0015-extensions-onionbit-legacy-tribler.md))
+- ✅ Trust-gated messaging + `OBV1` contact vault ([ADR-0015 §9](docs/architecture/decisions/0015-extensions-onionbit-legacy-tribler.md))
+- ✅ Seed identity: HKDF root seed + 24-word BIP39 phrase (EN/FR), guest & locked modes, `OBID` ([ADR-0016](docs/architecture/decisions/0016-identite-portable.md))
 
 **Stealth & anti-censorship**
 
-- ✅ Stealth transport: morphed wire format, bridge links, anti-probing & anti-scraping (ADR-0017)
+- ✅ Stealth transport: morphed wire format, bridge links, anti-probing & anti-scraping ([ADR-0017](docs/architecture/decisions/0017-transport-furtif-anti-censure.md))
 
 **Platform**
 
