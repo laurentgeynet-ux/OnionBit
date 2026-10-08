@@ -155,8 +155,8 @@ Par téléchargement, nouvel attribut `storage_area ∈ {public, private}`
     que le contenu) ne quittent jamais la zone en clair ;
   - dérivation : `K_store = HKDF(racine_identité,
     "onionbit/private-store/v1")`, `K_names = HKDF(K_store, "names")`,
-    `K_file = HKDF(K_store, "file/"‖relpath)` — domaines séparés
-    comme ADR-0016 ;
+    `K_file = HKDF(K_store, "file/"‖infohash‖"/"‖relpath)` — domaines
+    séparés comme ADR-0016, clé liée au torrent *et* au chemin ;
   - `racine_identité` = la graine (install seedée) **ou** `crypt_sk`
     (identité legacy — la zone privée fonctionne aussi en legacy, la
     phrase BIP39 reste la voie de sauvegarde la plus propre) ;
@@ -182,13 +182,33 @@ constante filaire »). Le magic n'est pas écrit en clair : il vit dans
 l'en-tête *chiffré*.
 
 ```text
-fichier  :  nonce(12) ‖ hdr_ct ‖ chunk_0 ‖ chunk_1 ‖ …
-hdr_ct   :  AEAD(K_file, nonce)〔"OBD" ‖ v(1) ‖ chunk_log2(1)
-            ‖ plain_len(8) ‖ reserved〕      — en-tête scellé
-chunk i  :  AEAD(K_file, nonce_i, plain_i)   — ≤ chunk_size + tag(16)
-nonce_i  :  nonce[0..8] ‖ i:u32be            (12 o — jamais réutilisé)
-AAD_i    :  hdr_ct ‖ i                        (lie le chunk au fichier)
+fichier  :  hdr_nonce(12) ‖ hdr_ct ‖ chunk_0 ‖ chunk_1 ‖ …
+hdr_ct   :  AEAD(K_file, hdr_nonce, "obd/hdr")〔"OBD" ‖ v(1)
+            ‖ chunk_log2(1) ‖ file_id(16) ‖ plain_len(8)
+            ‖ reserved〕                     — en-tête scellé
+chunk_i  :  nonce_i(12) ‖ AEAD(K_file, nonce_i, aad_i)〔plain_i〕
+aad_i    :  file_id ‖ i:u64be                (lie le chunk au fichier
+                                              et à sa position)
+nonce_i  :  **aléatoire à chaque écriture**, stocké en tête du chunk
 ```
+
+**Nonce aléatoire par écriture, jamais dérivé de l'index** — point
+d'audit bloquant de la revue externe : `pwrite_all` *réécrit* des
+chunks existants (RMW des écritures non alignées, re-téléchargement
+d'une pièce après échec de hash, écritures `only_files` en bordure).
+Un nonce déterministe `f(fichier, index)` chiffrerait alors deux
+clairs sous le même `(K_file, nonce)` → réutilisation de nonce
+ChaCha20-Poly1305 (keystream récupérable + forge). Même cause pour
+l'en-tête : `plain_len` croît à mesure que le fichier s'étend →
+l'en-tête est réécrit avec un `hdr_nonce` aléatoire neuf à chaque
+réécriture. Surcoût : 28 o/chunk (nonce + tag) sur 64 Kio — négligeable.
+Le nonce de fichier unique disparaît : chaque segment porte le sien.
+
+`K_file` est dérivé **par (torrent, fichier)** :
+`K_file = HKDF(K_store, "file/"‖infohash‖"/"‖relpath)` — l'infohash
+dans le domaine interdit qu'un même `relpath` partagé entre deux
+torrents privés aboutisse à la même clé (interdiction du swap de
+chunks inter-fichiers, renforcé par `file_id` dans l'AAD).
 
 À l'ouverture : dérivation de `K_file` → ouverture AEAD de l'en-tête
 (un seul decrypt, coût nul) → refus typé si magic/version absents —
@@ -201,11 +221,18 @@ signature statique exploitable (reste l'entropie — §4).
   borné 16–1024) : `pread`/`pwrite` découpent sur les bornes de chunk,
   lecture-modification-réécriture des chunks partiels (les écritures
   torrent ne sont pas garanties alignées).
-- Chunk jamais écrit → zéros en lecture : `ensure_file_length` fixe la
-  longueur *logique* dans l'en-tête, le fichier physique ne croît que
-  des chunks réellement écrits (sparse préservé — important sur clé
-  USB). La cohérence après crash repose sur le fastresume rqbit
-  (`.bitv`) exactement comme sur la zone publique.
+- Présence d'un chunk : slot d'écriture fixe
+  `hdr_len + i × (chunk_size+28)` ; un slot **entièrement nul** =
+  chunk jamais écrit → zéros en lecture (sparse préservé — le fichier
+  physique ne croît que des chunks réellement écrits, important sur
+  clé USB ; un slot nul ne peut pas être un chunk valide, le tag ne
+  vérifierait jamais). Slot non nul mais AEAD invalide (corruption,
+  troncature) → `warn!` + zéros : l'autorité d'intégrité reste le
+  hash de pièce BitTorrent, rqbit re-télécharge — la couche OBD
+  détecte et signale, elle ne doit pas figer le téléchargement.
+  `ensure_file_length` fixe la longueur *logique* dans l'en-tête.
+  La cohérence après crash repose sur le fastresume rqbit (`.bitv`)
+  exactement comme sur la zone publique.
 - Pas de versionnement anti-rollback par chunk en v1 (un attaquant qui
   réécrit le disque peut déjà supprimer les fichiers — la menace visée
   est la lecture, pas la réécriture fine ; le tag AEAD détecte toute
@@ -236,6 +263,33 @@ Patch minimal (~15 lignes, lignée ADR-0007) : `update_db` **saute**
 - `delete()` rendu idempotent (`warn` → `debug` sur id absent) : les
   privés n'y figurent jamais.
 
+#### Fuite `.bitv` — infohash en clair sur disque
+
+Point d'audit de la revue externe : `bitv_filename` =
+`{info_hash:?}.bitv` (`json.rs`) — le fastresume d'un privé
+porterait l'infohash réel, en contradiction directe avec le HMAC des
+noms/DB. De plus `delete()`/`clear(Id)` ne peuvent pas résoudre un
+privé (absent de `session.json` → `to_hash(Id)` échoue) : rqbit ne
+supprimerait jamais le `.bitv` privé.
+
+**Solution : `OpaqueBitVFactory`** — wrapper du trait `BitVFactory`
+(3 méthodes, `bitv_factory.rs`) autour du store interne, sans patch
+vendored : `load`/`store_initial_check`/`clear` reçoivent
+`TorrentIdOrHash::Hash(h)` → si `h ∈ private_hashes` (set en mémoire
+alimenté par le moteur depuis l'`OBM` et les ajouts), délègue avec
+`Hash(HMAC20(K_names, h))` → le fichier écrit est `<hmac>.bitv`.
+Contrainte vérifiée : le mapping est **par hash, pas uniforme** — en
+`locked`, `K_names` n'existe pas et la zone publique doit fonctionner
+(les privés ne sont pas dans la session tant que la zone est fermée :
+pas de storage factory sans clé). Le moteur maintient le set : ajout
+avant `add_torrent`, retrait + **suppression explicite du
+`<hmac>.bitv`** sur `remove_data` (rqbit ne peut pas le faire — il
+connaît le hash via l'`OBM`). Bascule public→privé : le moteur
+supprime l'ancien `<ih>.bitv` en clair ; un opaque est recréé.
+`to_hash(Id)` sur un privé reste inoffensif : seul call site =
+`clear` du chemin fastresume-corrompu, en `warn!` (consigné).
+`fastresume_sampled_check` est off — pas de relecture de pièces.
+
 #### Catalogue privé — manifest `OBM`
 
 La table `downloads` ne doit pas révéler les métadonnées d'un contenu
@@ -253,6 +307,20 @@ privé. Pour les lignes `storage_area = 'private'` :
   cohérent : le catalogue *est* la donnée privée.
 
 `public` reste en clair dans `onionbit.db` comme aujourd'hui.
+Conséquence directe sur la restauration : `restore_downloads` ne peut
+pas router une ligne privée par `row.infohash` (c'est le HMAC — rqbit
+ajouterait un torrent fantôme à l'infohash-HMAC). Le routage privé
+lit l'`OBM` (vrai infohash, destination, état paused) ; zone fermée →
+la ligne est sautée, marquée `locked_area` en mémoire, reprise à
+l'unlock. `locked_area` n'est **pas** une colonne persistée : état
+runtime dérivé de `storage_area × état du gate` — rien à écrire,
+rien à migrer.
+
+`shared.options.output_folder` d'un privé est ignoré par la factory
+(noms HMAC) ; `stream_file` et `move_storage` doivent passer par le
+trait `TorrentStorage`, jamais par un chemin FS reconstitué depuis
+`output_folder` — sinon lecture d'un fichier inexistant ou, pire,
+écriture en clair (test dédié).
 
 #### API
 
@@ -364,6 +432,13 @@ struct de config (AGENTS.md).
   partielles, chunk absent → zéros, borne de taille — **et oracle
   « zéro constante »** : deux fichiers de même contenu sous deux
   identités n'ont aucun octet commun, aucun magic reconnaissable ;
+- **réécriture** : écrire deux fois le même chunk avec deux clairs →
+  nonces distincts dans le slot (oracle anti-réutilisation), lecture
+  = dernier clair ; idem pour la réécriture d'en-tête (extension de
+  `plain_len`) ;
+- `.bitv` : aucun `<infohash>.bitv` sur disque pour un privé (oracle
+  listing + strings), `<hmac>.bitv` présent et fonctionnel, supprimé
+  par `remove_data`, bascule public→privé sans résidu en clair ;
 - manifest `OBM` : ligne DB privée sans infohash/nom en clair (oracle
   strings), catalogue intact après restart, indisponible en `locked` ;
 - factory : `pread`/`pwrite` positionnés vs référence filesystem sur

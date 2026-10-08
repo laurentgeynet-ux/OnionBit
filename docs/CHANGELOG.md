@@ -47,6 +47,19 @@ en haut.
   racine de dérivation résolue) ; le bandeau `at_rest` passe par le
   dialogue dédié `POST /api/identity/at_rest` (mot de passe, les deux
   sens) car le flag n'est plus basculable via `/api/settings`.
+- **Revue externe 1 — corrections crypto `OBD` et fuite `.bitv`** :
+  nonce **aléatoire par écriture** stocké dans le chunk (un nonce
+  dérivé de l'index aurait été réutilisé à chaque réécriture —
+  réutilisation de nonce ChaCha20-Poly1305), `hdr_nonce` neuf à
+  chaque réécriture d'en-tête, `file_id` scellé lié dans l'AAD des
+  chunks, `K_file` dérivé par `(infohash, relpath)` ; fuite
+  `<infohash>.bitv` corrigée par `OpaqueBitVFactory` (wrapper du
+  trait `BitVFactory`, mapping par-hash — `K_names` absent en
+  `locked` interdit l'uniforme), suppression `<hmac>.bitv` à la
+  charge du moteur (rqbit ne résout pas `Id`→hash sans entrée
+  `session.json`) ; restauration privée explicitement routée par le
+  manifest `OBM` (`row.infohash` = HMAC), `locked_area` = état
+  runtime dérivé, pas de colonne persistée.
 - Plan : Phase 11, étapes 57-63 — `docs/plans/roadmap_adr0018.md`.
   Aucun code engagé ; l'ADR passera « Acceptée » après le banc
   `bench_portable.ps1`.
