@@ -269,7 +269,12 @@ signature statique exploitable (reste l'entropie — §4).
   l'autorité d'intégrité reste le hash de pièce BitTorrent, rqbit
   re-télécharge — la couche OBD détecte et signale, elle ne doit pas
   figer le téléchargement. `ensure_file_length` fixe la longueur
-  *logique* dans l'en-tête. La cohérence après crash repose sur le
+  *logique* dans l'en-tête. La longueur chiffrée du **dernier**
+  chunk n'est pas stockée : elle se déduit de `plain_len`
+  (`ct_len = (plain_len mod chunk_size) + 28` ; plein si reste nul) —
+  dépendance assumée à l'en-tête. Un slot physiquement tronqué en
+  fin de fichier est traité comme invalide (`warn!` + zéros), jamais
+  comme longueur implicite. La cohérence après crash repose sur le
   fastresume rqbit (`.bitv`) exactement comme sur la zone publique.
 - **Sparse : honnêteté FS** (revue externe 2) — le fichier ne croît
   que des chunks écrits, mais « creux non alloué » n'existe que sur

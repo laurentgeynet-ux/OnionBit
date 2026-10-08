@@ -82,7 +82,10 @@ en haut.
   verrous rayés promus en `RwLock` couvrant `pread_exact` (lecture
   déchirée pendant une RMW) ; `noexec` nuancé (udisks2/macOS montent
   en `exec`, fstab durcis concernés) et sparse NTFS précisé
-  (`FSCTL_SET_SPARSE`).
+  (`FSCTL_SET_SPARSE`) ; longueur du dernier chunk explicitement
+  déduite de `plain_len` (slot physiquement tronqué = invalide,
+  jamais de longueur implicite). Trois itérations de revue intégrées —
+  design bouclée.
 - Plan : Phase 11, étapes 57-63 — `docs/plans/roadmap_adr0018.md`.
   Aucun code engagé ; l'ADR passera « Acceptée » après le banc
   `bench_portable.ps1`.
