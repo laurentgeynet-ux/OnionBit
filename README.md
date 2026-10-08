@@ -391,31 +391,36 @@ See [SECURITY.md](SECURITY.md) for reporting and the threat model.
 
 ## Roadmap
 
-|| Milestone | Status |
-|| :--- | :--- |
-|| **File sharing** | |
-|| BitTorrent engine (librqbit integration) | ✅ |
-|| Onion circuits + hidden seeding | ✅ |
-|| Live interop with Tribler 8.x nodes | ✅ |
-|| **Messaging & identity** | |
-|| Anonymous e2e messaging over hidden services (ADR-0011) | ✅ |
-|| Multi-conversation messaging: tabs, groups, file attachments (ADR-0019) | ✅ |
-|| OnionBit extension layer: signed hello, attestations, ledger, OBF (ADR-0015) | ✅ |
-|| Trust-gated messaging + `OBV1` contact vault (ADR-0015 §9) | ✅ |
-|| Seed identity: HKDF root seed + 24-word BIP39 phrase (EN/FR), guest & locked modes, `OBID` (ADR-0016) | ✅ |
-|| **Stealth & anti-censorship** | |
-|| Stealth transport: morphed wire format, bridge links, anti-probing & anti-scraping (ADR-0017) | ✅ |
-|| **Platform** | |
-|| IPv8 overlay (discovery, communities, DHT) | ✅ |
-|| REST + SSE control plane, CLI | ✅ |
-|| Flutter UI (desktop first) | ✅ |
-|| Web UI served by the daemon (same-origin) | ✅ |
-|| In-app update check (GitHub releases probe) | ✅ |
-|| Latest tagged release | ✅ [`v0.9.4-beta`](https://github.com/laurentgeynet-ux/OnionBit/releases/tag/v0.9.4-beta) |
-|| Linux packages (.deb + tar.gz) | ✅ |
-|| Windows ARM64 package (headless) | ✅ |
-|| Mobile execution model (Android/iOS) | 📋 |
-|| macOS package, native Linux UI | 📋 |
+**File sharing**
+
+- ✅ BitTorrent engine (librqbit integration)
+- ✅ Onion circuits + hidden seeding
+- ✅ Live interop with Tribler 8.x nodes
+
+**Messaging & identity**
+
+- ✅ Anonymous e2e messaging over hidden services (ADR-0011)
+- ✅ Multi-conversation messaging: tabs, groups, file attachments (ADR-0019)
+- ✅ OnionBit extension layer: signed hello, attestations, ledger, OBF (ADR-0015)
+- ✅ Trust-gated messaging + `OBV1` contact vault (ADR-0015 §9)
+- ✅ Seed identity: HKDF root seed + 24-word BIP39 phrase (EN/FR), guest & locked modes, `OBID` (ADR-0016)
+
+**Stealth & anti-censorship**
+
+- ✅ Stealth transport: morphed wire format, bridge links, anti-probing & anti-scraping (ADR-0017)
+
+**Platform**
+
+- ✅ IPv8 overlay (discovery, communities, DHT)
+- ✅ REST + SSE control plane, CLI
+- ✅ Flutter UI (desktop first)
+- ✅ Web UI served by the daemon (same-origin)
+- ✅ In-app update check (GitHub releases probe)
+- ✅ Latest tagged release: [`v0.9.4-beta`](https://github.com/laurentgeynet-ux/OnionBit/releases/tag/v0.9.4-beta)
+- ✅ Linux packages (.deb + tar.gz)
+- ✅ Windows ARM64 package (headless)
+- 📋 Mobile execution model (Android/iOS)
+- 📋 macOS package, native Linux UI
 
 ## Contributing
 
