@@ -3,6 +3,26 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## ADR-0016 étape 48a : graine racine + dérivation HKDF + cycle de vie fichier (2026-10-08)
+
+- **`onionbit_crypto::identity`** (nouveau) : `IdentitySeed` 32 o,
+  `Zeroize` au drop ; HKDF-SHA256 à domaines séparés
+  `onionbit/identity/{ipv8-crypt,ipv8-sign,bridge}/v1` ;
+  `derive_keypair` reconstruit un `LibNaClSecretKey` cohérent via le
+  nouveau `LibNaClSecretKey::from_parts`.
+- **`onionbit_core::identity`** (nouveau) : `IdentityState`
+  (`Seeded`/`Legacy`/`Absent`) — `identity_seed.bin` devient la
+  racine de vérité ; `ipv8_keypair.bin` et `stealth_bridge.key`
+  rétrogradés en caches régénérés quand ils divergent (`warn`).
+  Legacy : aucun fichier jamais réécrit ; graine corrompue ou
+  keypair malformé → erreur, jamais de régénération silencieuse.
+- `ipv8_stack` consomme `IdentityMaterial` ; `load_or_create_key` /
+  `load_or_create_bridge_sk` déplacés sous `identity` (propriétaire
+  unique du cycle de vie).
+- Tests : dérivation déterministe, domaines distincts, keypair
+  divergent réécrit, legacy préservé, bridge key legacy conservée /
+  seedée dérivée, graine corrompue refusée.
+
 ## ADR-0016 : architecture cible décidée — graine BIP39 + at-rest opt-in (2026-10-08)
 
 - **Modèle de clés** : `identity_seed.bin` (32 o, atomique, `0600`)

@@ -127,6 +127,16 @@ impl LibNaClSecretKey {
         }
     }
 
+    /// Reconstruit une paire depuis le materiel brut derive
+    /// (ADR-0016 : graine racine `identity_seed.bin` → HKDF par
+    /// domaine — la paire devient un cache regenerable).
+    pub fn from_parts(crypt_sk: [u8; 32], sign_seed: [u8; 32]) -> Self {
+        Self {
+            crypt_sk: StaticSecret::from(crypt_sk),
+            sign: SigningKey::from_bytes(&sign_seed),
+        }
+    }
+
     /// Parse une cle privee depuis sa forme binaire IPv8.
     pub fn from_bin(data: &[u8]) -> Result<Self, CryptoError> {
         if !data.starts_with(LIBNACL_SK_PREFIX) || data.len() != LIBNACL_SK_BIN_LEN {

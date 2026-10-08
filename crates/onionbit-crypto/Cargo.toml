@@ -17,6 +17,7 @@ hkdf.workspace = true
 hmac.workspace = true
 argon2.workspace = true
 subtle.workspace = true
+zeroize.workspace = true
 rand.workspace = true
 hex.workspace = true
 elligator2.workspace = true

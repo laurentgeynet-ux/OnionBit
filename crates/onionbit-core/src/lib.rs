@@ -22,6 +22,7 @@ pub mod daemon_config;
 pub mod error;
 pub mod ext_ledger_store;
 pub mod guard_store;
+pub mod identity;
 pub mod ipv8_stack;
 pub mod notifier;
 pub mod peer_stats_store;

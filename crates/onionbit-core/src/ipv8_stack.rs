@@ -41,16 +41,7 @@ use onionbit_tunnel::tunnel_udp_socket::TunnelUdpSocket;
 use onionbit_tunnel::TRIBLER_TUNNEL_COMMUNITY_ID;
 
 use crate::error::{CoreError, Result};
-
-/// Fichier de cle IPv8 persiste dans `state_dir` (`ec.pem`-equivalent,
-/// format binaire `LibNaCLSK:`).
-const IPV8_KEY_FILE: &str = "ipv8_keypair.bin";
-
-/// Fichier du secret statique de pont stealth (ADR-0017) — 32 octets
-/// X25519 bruts, meme discipline de permissions atomiques 0600 que
-/// `ipv8_keypair.bin`. Distinct de la cle maitresse : le lien
-/// `onionbit-bridge://` n'expose pas l'identite publique du noeud.
-const STEALTH_BRIDGE_KEY_FILE: &str = "stealth_bridge.key";
+use crate::identity::{self, IdentityKind, IPV8_KEY_FILE};
 
 /// `link_mtu` impose aux sockets uTP des lanes anonymes en mode
 /// stealth (ADR-0017 §4) : le datagramme uTP (~`link_mtu` - 48 o
@@ -1681,7 +1672,11 @@ impl Ipv8Stack {
         notifier: crate::notifier::Notifier,
         tasks: crate::asyncio::TaskRegistry,
     ) -> Result<Arc<Self>> {
-        let key = load_or_create_key(&state_dir.join(IPV8_KEY_FILE))?;
+        // ADR-0016 : l'identite est racinee sur `identity_seed.bin`
+        // quand elle existe ; `ipv8_keypair.bin` n'est qu'un cache
+        // derive. Legacy (fichier seul) charge tel quel.
+        let identity = identity::load_or_generate(state_dir)?;
+        let key = identity.keypair;
         // ADR-0017 : `stealth.enabled` × `ipv8.enabled` est refuse
         // fermement sur CHAQUE chemin de demarrage (ici +
         // `start_ipv8` + `Session::start`) — une combinaison
@@ -1698,8 +1693,15 @@ impl Ipv8Stack {
         // listeners — `DispatcherEndpoint`).
         let bind_v6 = config.listen_addr_v6.as_deref();
         let (endpoint, stealth_transport, stealth_link_mtu) = if let Some(sc) = &stealth_cfg {
-            let (t, link_mtu) =
-                build_stealth_transport(sc, &key, &config.listen_addr, bind_v6, state_dir).await?;
+            let (t, link_mtu) = build_stealth_transport(
+                sc,
+                &key,
+                identity.kind,
+                &config.listen_addr,
+                bind_v6,
+                state_dir,
+            )
+            .await?;
             (UdpEndpoint::new(t.clone()), Some(t), Some(link_mtu))
         } else {
             (
@@ -3442,8 +3444,9 @@ fn spawn_e2e_listener(
     tx
 }
 
-/// Charge la cle IPv8 depuis `path` ou en cree une nouvelle (format
-/// binaire `LibNaCLSK:`).
+/// Charge la cle IPv8 legacy depuis `path` (tests — le boot passe
+/// par [`identity::load_or_generate`], ADR-0016).
+#[cfg(test)]
 fn load_or_create_key(path: &Path) -> Result<LibNaClSecretKey> {
     match std::fs::read(path) {
         Ok(data) => LibNaClSecretKey::from_bin(&data).map_err(CoreError::from),
@@ -3451,23 +3454,6 @@ fn load_or_create_key(path: &Path) -> Result<LibNaClSecretKey> {
             let key = LibNaClSecretKey::generate();
             write_identity_key(path, &key.to_bin())?;
             Ok(key)
-        }
-    }
-}
-
-/// Charge ou cree le secret statique X25519 du role pont
-/// (ADR-0017) — 32 octets bruts dans `stealth_bridge.key`. Toute
-/// autre taille est refusee (fichier corrompu → `Err`, jamais de
-/// regeneration silencieuse qui changerait l'identite du pont sous
-/// les liens d'invitation deja distribues).
-fn load_or_create_bridge_sk(path: &Path) -> Result<[u8; 32]> {
-    match std::fs::read(path) {
-        Ok(data) => <[u8; 32]>::try_from(data.as_slice())
-            .map_err(|_| CoreError::InvalidState("stealth_bridge.key corrompu (taille != 32)")),
-        Err(_) => {
-            let (sk, _pk) = onionbit_crypto::stealth::generate_bridge_keypair();
-            write_identity_key(path, &sk)?;
-            Ok(sk)
         }
     }
 }
@@ -3481,6 +3467,7 @@ fn load_or_create_bridge_sk(path: &Path) -> Result<[u8; 32]> {
 async fn build_stealth_transport(
     sc: &crate::daemon_config::StealthFileConfig,
     key: &LibNaClSecretKey,
+    identity_kind: IdentityKind,
     listen_addr: &str,
     listen_addr_v6: Option<&str>,
     state_dir: &Path,
@@ -3517,7 +3504,9 @@ async fn build_stealth_transport(
     // permissions 0600) — la pk publique voyage dans les liens
     // d'invitation, le secret ne sort jamais du noeud.
     let (bridge_sk, bridge_pk) = if matches!(role, StealthRole::Bridge | StealthRole::Gateway) {
-        let sk = load_or_create_bridge_sk(&state_dir.join(STEALTH_BRIDGE_KEY_FILE))?;
+        // Legacy : le fichier pont reste maitre (liens distribues) ;
+        // Seeded : derivation autoritaire (la phrase le reproduit).
+        let sk = identity::load_or_create_bridge_sk(state_dir, identity_kind)?;
         (Some(sk), Some(onionbit_crypto::stealth::bridge_public(&sk)))
     } else {
         (None, None)
@@ -3573,7 +3562,7 @@ async fn build_stealth_transport(
 /// fichier lui-meme relève de l'export `OBID`, pas du stockage
 /// local : un daemon headless ne peut pas demander de mot de passe
 /// au boot — voir ADR-0016 a venir pour la graine portable).
-fn write_identity_key(path: &Path, bytes: &[u8]) -> Result<()> {
+pub(crate) fn write_identity_key(path: &Path, bytes: &[u8]) -> Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
