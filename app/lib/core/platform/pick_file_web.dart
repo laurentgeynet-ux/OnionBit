@@ -59,3 +59,25 @@ Future<PickedFile?> pickTorrentFile() {
   input.click();
   return completer.future;
 }
+
+Future<PickedFile?> pickAnyFile() {
+  final completer = Completer<PickedFile?>();
+  final input =
+      web.document.createElement('input') as web.HTMLInputElement
+        ..type = 'file';
+  input.onchange = ((web.Event _) {
+    final file = input.files?.item(0);
+    if (file == null) {
+      completer.complete(null);
+      return;
+    }
+    _readFile(file)
+        .then(
+          (bytes) => completer.complete(PickedFile(name: file.name, bytes: bytes)),
+        )
+        .catchError((_) => completer.complete(null));
+  }).toJS;
+  input.oncancel = ((web.Event _) => completer.complete(null)).toJS;
+  input.click();
+  return completer.future;
+}

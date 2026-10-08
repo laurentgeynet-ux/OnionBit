@@ -75,6 +75,20 @@ pub struct AttachOffer {
     pub sent: usize,
 }
 
+/// Upload stage (import utilisateur en attente d'offre — TTL
+/// `upload_ttl`, borne `attach_max_bytes`/`attach_stage_max_bytes`).
+#[derive(Debug)]
+pub struct UploadInfo {
+    /// `upload_id` (hex dans l'API — dossier `uploads/<id>/`).
+    pub upload_id: [u8; 16],
+    /// Nom affiche (basename).
+    pub name: String,
+    /// Taille du fichier stage.
+    pub size: u64,
+    /// Chemin du fichier stage (source d'`attach_offer`).
+    pub path: PathBuf,
+}
+
 impl CoreSession {
     /// Service messagerie courant (`None` si desactive ou stack non
     /// prete — aucune piece jointe possible alors).
@@ -97,6 +111,13 @@ impl CoreSession {
         self.paths().state().join("messaging").join("attachments")
     }
 
+    /// Racine des uploads stages : `@state/messaging/uploads/` —
+    /// imports utilisateur en attente d'offre (TTL `upload_ttl`),
+    /// distinct du staging d'envoi `attachments/`.
+    pub fn upload_stage_dir(&self) -> PathBuf {
+        self.paths().state().join("messaging").join("uploads")
+    }
+
     /// Taille totale d'un dossier (borne `attach_stage_max_bytes`).
     fn dir_size(dir: &Path) -> u64 {
         let mut total = 0u64;
@@ -111,6 +132,146 @@ impl CoreSession {
             }
         }
         total
+    }
+
+    /// Nom de piece jointe valide : non vide, borne
+    /// `group_name_max_len`, basename seul (jamais de separateur).
+    fn check_attach_name(cfg: &onionbit_messaging::MessagingConfig, name: &str) -> Result<()> {
+        if name.is_empty()
+            || name.len() > cfg.group_name_max_len
+            || name.contains('/')
+            || name.contains('\\')
+        {
+            return Err(CoreError::InvalidState(
+                "attach : nom de piece jointe hors borne",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Garde commune staging : borne par fichier + borne globale sur
+    /// la racine `messaging/` (uploads + attachments confondus).
+    fn check_stage_bounds(
+        cfg: &onionbit_messaging::MessagingConfig,
+        stage_parent: &Path,
+        file_len: u64,
+        dir: &Path,
+    ) -> Result<()> {
+        if file_len == 0 || file_len > cfg.attach_max_bytes {
+            let _ = std::fs::remove_dir_all(dir);
+            return Err(CoreError::InvalidState(
+                "attach : taille hors borne attach_max_bytes",
+            ));
+        }
+        if Self::dir_size(stage_parent) > cfg.attach_stage_max_bytes {
+            let _ = std::fs::remove_dir_all(dir);
+            return Err(CoreError::InvalidState(
+                "attach : staging sature (attach_stage_max_bytes)",
+            ));
+        }
+        Ok(())
+    }
+
+    /// `POST /uploads {path}` — stage un fichier local sous
+    /// `@state/messaging/uploads/<id>/<name>`. `@private` refuse
+    /// (pas de copie claire sauvage d'un contenu chiffre OBD).
+    pub fn stage_upload_path(
+        &self,
+        source: &Path,
+        display_name: Option<String>,
+    ) -> Result<UploadInfo> {
+        let svc = self.require_messaging()?;
+        let cfg = svc.config();
+        let meta = std::fs::metadata(source)
+            .map_err(|e| CoreError::State(format!("upload : source illisible: {e}")))?;
+        if !meta.is_file() {
+            return Err(CoreError::InvalidState("upload : pas un fichier"));
+        }
+        if self
+            .inner
+            .paths
+            .to_portable(source)
+            .is_some_and(|s| s == "@private" || s.starts_with("@private/"))
+        {
+            return Err(CoreError::InvalidState(
+                "upload : source refusee depuis @private",
+            ));
+        }
+        let name = display_name
+            .or_else(|| source.file_name().map(|n| n.to_string_lossy().into_owned()))
+            .unwrap_or_else(|| "fichier".into());
+        Self::check_attach_name(cfg, &name)?;
+        let upload_id: [u8; 16] = rand::random();
+        let parent = self.paths().state().join("messaging");
+        let dir = self
+            .upload_stage_dir()
+            .join(onionbit_crypto::hash::to_hex(&upload_id));
+        std::fs::create_dir_all(&dir)
+            .map_err(|e| CoreError::State(format!("upload : staging: {e}")))?;
+        let staged = dir.join(&name);
+        if let Err(e) = std::fs::copy(source, &staged) {
+            let _ = std::fs::remove_dir_all(&dir);
+            return Err(CoreError::State(format!("upload : copie: {e}")));
+        }
+        Self::check_stage_bounds(cfg, &parent, meta.len(), &dir)?;
+        Ok(UploadInfo {
+            upload_id,
+            name,
+            size: meta.len(),
+            path: staged,
+        })
+    }
+
+    /// `POST /uploads` octets — variante pour les envois API/UI
+    /// (drag & drop, web) : ecrit les octets sous
+    /// `uploads/<id>/<name>`. `bytes.len()` borne avant ecriture.
+    pub fn stage_upload_bytes(&self, name: &str, bytes: &[u8]) -> Result<UploadInfo> {
+        let svc = self.require_messaging()?;
+        let cfg = svc.config();
+        Self::check_attach_name(cfg, name)?;
+        if bytes.is_empty() || bytes.len() as u64 > cfg.attach_max_bytes {
+            return Err(CoreError::InvalidState(
+                "upload : taille hors borne attach_max_bytes",
+            ));
+        }
+        let upload_id: [u8; 16] = rand::random();
+        let parent = self.paths().state().join("messaging");
+        let dir = self
+            .upload_stage_dir()
+            .join(onionbit_crypto::hash::to_hex(&upload_id));
+        std::fs::create_dir_all(&dir)
+            .map_err(|e| CoreError::State(format!("upload : staging: {e}")))?;
+        let staged = dir.join(name);
+        if let Err(e) = std::fs::write(&staged, bytes) {
+            let _ = std::fs::remove_dir_all(&dir);
+            return Err(CoreError::State(format!("upload : ecriture: {e}")));
+        }
+        Self::check_stage_bounds(cfg, &parent, bytes.len() as u64, &dir)?;
+        Ok(UploadInfo {
+            upload_id,
+            name: name.to_string(),
+            size: bytes.len() as u64,
+            path: staged,
+        })
+    }
+
+    /// Resout `upload_id` → chemin du fichier stage (offre a partir
+    /// d'un upload `POST /uploads`).
+    pub fn upload_path(&self, upload_id: &[u8]) -> Result<PathBuf> {
+        if upload_id.len() != 16 {
+            return Err(CoreError::InvalidState("upload : id attendu 16 octets"));
+        }
+        let dir = self
+            .upload_stage_dir()
+            .join(onionbit_crypto::hash::to_hex(upload_id));
+        let rd = std::fs::read_dir(&dir)
+            .map_err(|_| CoreError::InvalidState("upload : inconnu ou expire"))?;
+        for e in rd.flatten() {
+            if e.path().is_file() {
+                return Ok(e.path());
+            }
+        }
+        Err(CoreError::InvalidState("upload : dossier vide"))
     }
 
     /// Offre un fichier en piece jointe (pipeline d'envoi complet).
@@ -155,15 +316,7 @@ impl CoreSession {
             .unwrap_or_else(|| "fichier".into());
         // Le nom circule en clair dans la trame — basename seul,
         // jamais de separateur de chemin.
-        if name.is_empty()
-            || name.len() > cfg.group_name_max_len
-            || name.contains('/')
-            || name.contains('\\')
-        {
-            return Err(CoreError::InvalidState(
-                "attach : nom de piece jointe hors borne",
-            ));
-        }
+        Self::check_attach_name(cfg, &name)?;
         // Staging `<@state>/messaging/attachments/<attach_id>/<name>`.
         let attach_id: [u8; 16] = rand::random();
         let stage_root = self.attach_stage_dir();
@@ -375,31 +528,47 @@ impl CoreSession {
         }
         // Staging residuel : dossier sans offre `seeding` vivante et
         // plus vieux que `upload_ttl` (upload interrompu, offre
-        // expiree sans purge, reste d'un crash).
-        let stage_root = self.attach_stage_dir();
-        if let Ok(rd) = std::fs::read_dir(&stage_root) {
-            for e in rd.flatten() {
-                let p = e.path();
-                if !p.is_dir() {
-                    continue;
-                }
-                let aged_out = e
-                    .metadata()
-                    .and_then(|m| m.modified())
-                    .ok()
-                    .and_then(|t| t.elapsed().ok())
-                    .is_some_and(|age| age >= cfg.upload_ttl);
-                if !aged_out {
-                    continue;
-                }
+        // expiree sans purge, reste d'un crash). Meme discipline pour
+        // les uploads `uploads/` — jamais d'offre associee.
+        self.reap_stage_root(&self.attach_stage_dir(), cfg.upload_ttl, Some(&live));
+        self.reap_stage_root(&self.upload_stage_dir(), cfg.upload_ttl, None);
+    }
+
+    /// Purge les sous-dossiers d'une racine de staging plus vieux
+    /// que `ttl` — `live` retient les dossiers encore references par
+    /// une offre `seeding` (`None` = tout est candidat).
+    fn reap_stage_root(
+        &self,
+        root: &Path,
+        ttl: Duration,
+        live: Option<&std::collections::HashSet<Vec<u8>>>,
+    ) {
+        let Ok(rd) = std::fs::read_dir(root) else {
+            return;
+        };
+        for e in rd.flatten() {
+            let p = e.path();
+            if !p.is_dir() {
+                continue;
+            }
+            let aged_out = e
+                .metadata()
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|t| t.elapsed().ok())
+                .is_some_and(|age| age >= ttl);
+            if !aged_out {
+                continue;
+            }
+            if let Some(live) = live {
                 let attach_id = p
                     .file_name()
                     .and_then(|n| onionbit_crypto::hash::from_hex(&n.to_string_lossy()));
                 if attach_id.is_some_and(|id| live.contains(&id)) {
                     continue;
                 }
-                let _ = std::fs::remove_dir_all(&p);
             }
+            let _ = std::fs::remove_dir_all(&p);
         }
     }
 

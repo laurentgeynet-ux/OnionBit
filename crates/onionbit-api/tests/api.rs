@@ -1126,6 +1126,109 @@ async fn messaging_desactivee_repond_404_sur_tous_les_endpoints() {
             format!("/api/messaging/messages/{}", hex::encode([0u8; 16])),
             "".to_string(),
         ),
+        // ADR-0019 : conversations, groupes, uploads, pieces
+        // jointes — meme garde 404 messagerie desactivee.
+        (
+            "GET",
+            "/api/messaging/conversations".to_string(),
+            "".to_string(),
+        ),
+        (
+            "GET",
+            format!(
+                "/api/messaging/conversations/{}/messages",
+                hex::encode([0u8; 16])
+            ),
+            "".to_string(),
+        ),
+        (
+            "POST",
+            format!(
+                "/api/messaging/conversations/{}/messages",
+                hex::encode([0u8; 16])
+            ),
+            "{\"body\":\"test\"}".to_string(),
+        ),
+        (
+            "POST",
+            format!(
+                "/api/messaging/conversations/{}/read",
+                hex::encode([0u8; 16])
+            ),
+            "{}".to_string(),
+        ),
+        (
+            "DELETE",
+            format!("/api/messaging/conversations/{}", hex::encode([0u8; 16])),
+            "".to_string(),
+        ),
+        (
+            "GET",
+            format!(
+                "/api/messaging/conversations/{}/attachments",
+                hex::encode([0u8; 16])
+            ),
+            "".to_string(),
+        ),
+        (
+            "POST",
+            format!(
+                "/api/messaging/conversations/{}/attachments",
+                hex::encode([0u8; 16])
+            ),
+            "{\"path\":\"x\"}".to_string(),
+        ),
+        (
+            "POST",
+            "/api/messaging/groups".to_string(),
+            "{\"name\":\"g\",\"members\":[]}".to_string(),
+        ),
+        (
+            "GET",
+            format!("/api/messaging/groups/{}/members", hex::encode([0u8; 16])),
+            "".to_string(),
+        ),
+        (
+            "POST",
+            format!("/api/messaging/groups/{}/invite", hex::encode([0u8; 16])),
+            format!("{{\"public_key\":\"{pk}\"}}"),
+        ),
+        (
+            "POST",
+            format!("/api/messaging/groups/{}/accept", hex::encode([0u8; 16])),
+            "{}".to_string(),
+        ),
+        (
+            "POST",
+            format!("/api/messaging/groups/{}/decline", hex::encode([0u8; 16])),
+            "{}".to_string(),
+        ),
+        (
+            "POST",
+            format!("/api/messaging/groups/{}/leave", hex::encode([0u8; 16])),
+            "{}".to_string(),
+        ),
+        (
+            "POST",
+            "/api/messaging/uploads".to_string(),
+            "{\"path\":\"x\"}".to_string(),
+        ),
+        (
+            "POST",
+            format!(
+                "/api/messaging/attachments/{}/accept",
+                hex::encode([0u8; 16])
+            ),
+            "{}".to_string(),
+        ),
+        (
+            "POST",
+            format!(
+                "/api/messaging/attachments/{}/decline",
+                hex::encode([0u8; 16])
+            ),
+            "{}".to_string(),
+        ),
     ] {
         let resp = match method {
             "GET" => srv.client.get(srv.url(&path)),

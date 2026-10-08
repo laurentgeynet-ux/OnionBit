@@ -16,6 +16,8 @@ class MessagingMessage {
     required this.body,
     required this.status,
     required this.createdAt,
+    this.authorPk,
+    this.mid,
   });
 
   /// `id` de trame en hex (16 octets — cible des ACKs et de la
@@ -39,6 +41,14 @@ class MessagingMessage {
 
   /// Date d'insertion locale (secondes epoch).
   final int createdAt;
+
+  /// `pk_bin` hex de l'auteur — groupe uniquement (v2, ADR-0019) ;
+  /// `null` en direct v1 (l'auteur est le contact).
+  final String? authorPk;
+
+  /// `mid` hex de regroupement (v2 : messages/attaches d'un même
+  /// geste) — `null` en v1.
+  final String? mid;
 
   bool get isOutgoing => direction == 'out';
   bool get isFailed => status == 'failed';

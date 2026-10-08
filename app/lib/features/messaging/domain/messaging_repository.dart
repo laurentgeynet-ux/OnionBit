@@ -2,7 +2,9 @@
 // Copyright (C) 2026 Laurent Geynet <laurent.geynet@gmail.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+import 'messaging_attachment.dart';
 import 'messaging_contact.dart';
+import 'messaging_conversation.dart';
 import 'messaging_message.dart';
 
 /// Dépôt messagerie — surface API de l'UI (l'app ne touche jamais
@@ -66,6 +68,78 @@ abstract class MessagingRepository {
   /// coffre exporté par la même identité. Renvoie le nombre de
   /// contacts restaurés.
   Future<int> vaultImport(String vaultHex);
+
+  // ── ADR-0019 : conversations, groupes, pièces jointes ──────
+
+  /// `GET /messaging/conversations` — conversations directes et
+  /// groupes (non-lus + dernier horodatage).
+  Future<List<MessagingConversation>> conversations();
+
+  /// `GET /messaging/conversations/direct/{pk}` — `conv_id`
+  /// déterministe de la conv directe avec `pk` (peut ne pas encore
+  /// exister en base).
+  Future<String> directConversation(String publicKey);
+
+  /// `GET /conversations/{conv}/messages` — historique borné de la
+  /// conversation (le plus récent d'abord).
+  Future<List<MessagingMessage>> convHistory(
+    String convId, {
+    int limit = 100,
+  });
+
+  /// `POST /conversations/{conv}/messages` — envoi dans la conv :
+  /// `send` au contact en direct, `group_send` en groupe.
+  Future<String> convSend(String convId, String body);
+
+  /// `POST /conversations/{conv}/read` — marque la conv lue.
+  Future<void> convMarkRead(String convId);
+
+  /// `DELETE /conversations/{conv}` — suppression réelle (cascade).
+  Future<void> convDelete(String convId);
+
+  /// `POST /messaging/groups` — crée un groupe : `members` = clés
+  /// hex de contacts actifs invités. Renvoie le `conv_id`.
+  Future<String> groupCreate(String name, List<String> members);
+
+  /// `GET /groups/{conv}/members` — roster du groupe.
+  Future<List<MessagingMember>> groupMembers(String convId);
+
+  /// `POST /groups/{conv}/invite` — invite un contact actif.
+  Future<void> groupInvite(String convId, String publicKey);
+
+  /// `POST /groups/{conv}/accept|decline|leave`.
+  Future<void> groupAccept(String convId);
+  Future<void> groupDecline(String convId);
+  Future<void> groupLeave(String convId);
+
+  /// `POST /messaging/uploads` JSON `{path}` — stage un fichier
+  /// local du daemon (desktop ; `@private` refusé).
+  Future<MessagingUpload> uploadPath(String path, {String? name});
+
+  /// `POST /messaging/uploads` octets + `?name=` — staging direct
+  /// (web, ou octets déjà en mémoire).
+  Future<MessagingUpload> uploadBytes(String name, List<int> bytes);
+
+  /// `POST /conversations/{conv}/attachments` — offre la pièce
+  /// jointe (`uploadId` ou `path` local) : torrent salé + seed
+  /// anonyme + trames `attach` en fan-out.
+  Future<AttachOfferResult> convAttach(
+    String convId, {
+    String? uploadId,
+    String? path,
+    String? name,
+  });
+
+  /// `GET /conversations/{conv}/attachments` — offres et réceptions.
+  Future<List<MessagingAttachment>> convAttachments(String convId);
+
+  /// `POST /attachments/{id}/accept` — accepte l'offre : download
+  /// anonyme de l'infohash salé. `area` : `public|private`, `dir` :
+  /// spec `@…` ou chemin. `ApiException(409)` = `identity_locked`.
+  Future<String> attachAccept(String attachId, {String? area, String? dir});
+
+  /// `POST /attachments/{id}/decline` — refuse l'offre.
+  Future<void> attachDecline(String attachId);
 }
 
 /// Identité locale + compteurs exposés par `/messaging/stats`.

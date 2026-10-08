@@ -2499,6 +2499,18 @@ impl MessagingService {
         self.direct_conv_id(pk_bin)
     }
 
+    /// `pk_bin` du contact d'une conversation **directe** (`None`
+    /// pour une conv de groupe ou inconnue) — resolution inverse de
+    /// [`Self::direct_conv`] pour les routes `conversations/*`.
+    pub fn conv_peer(&self, conv: &[u8; 16]) -> Option<Vec<u8>> {
+        self.contacts
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .keys()
+            .find(|pk| self.direct_conv_id(pk) == *conv)
+            .cloned()
+    }
+
     /// Emet une offre `attach` dans une conversation (ADR-0019 §4) :
     /// fan-out vers tous les membres `active` d'un groupe, ou vers le
     /// contact d'une conv directe. Persiste la ligne

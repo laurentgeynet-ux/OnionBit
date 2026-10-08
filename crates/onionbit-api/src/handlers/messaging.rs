@@ -33,6 +33,8 @@ use tokio_stream::StreamExt;
 
 use crate::error::ApiError;
 use crate::state::AppState;
+use onionbit_core::config::StorageArea;
+use onionbit_core::session::attach::AttachTarget;
 
 /// Borne par defaut de l'historique (`?limit=`).
 const DEFAULT_HISTORY_LIMIT: u32 = 100;
@@ -396,8 +398,463 @@ fn event_to_sse(ev: &MessagingEvent) -> Option<(String, serde_json::Value)> {
             "messaging_link",
             serde_json::json!({"contact": hexs(contact), "link": link_str(*link)}),
         ),
+        MessagingEvent::Conv {
+            conv,
+            contact,
+            kind,
+            id,
+            body,
+        } => (
+            "messaging_conv",
+            serde_json::json!({
+                "conv_id": hexs(conv),
+                "contact": hexs(contact),
+                "kind": format!("{kind:?}").to_lowercase(),
+                "id": hexs(id),
+                "body": String::from_utf8_lossy(body),
+            }),
+        ),
+        MessagingEvent::GroupInvite { conv, name, by } => (
+            "messaging_group_invite",
+            serde_json::json!({
+                "conv_id": hexs(conv),
+                "name": name,
+                "by": hexs(by),
+            }),
+        ),
+        MessagingEvent::Attach {
+            conv,
+            contact,
+            attach_id,
+            ih,
+            name,
+            size,
+        } => (
+            "messaging_attach",
+            serde_json::json!({
+                "conv_id": hexs(conv),
+                "contact": hexs(contact),
+                "attach_id": hexs(attach_id),
+                "infohash": hexs(ih),
+                "name": name,
+                "size": size,
+            }),
+        ),
     };
     Some((topic.to_string(), kwargs))
+}
+
+// ── ADR-0019 : conversations, groupes, pieces jointes ───────────
+
+/// `conv_id` depuis son chemin hex (16 octets).
+fn conv_hex(param: &str) -> Result<[u8; 16], ApiError> {
+    id_hex(param)
+}
+
+/// `GET /api/messaging/conversations` — toutes les conversations
+/// (directes + groupes) avec non-lus et dernier horodatage.
+pub async fn get_conversations(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let svc = svc(&state)?;
+    let conversations: Vec<serde_json::Value> = svc
+        .conversation_list()?
+        .into_iter()
+        .map(|c| {
+            let peer = svc.conv_peer(&c.row.conv_id.clone().try_into().unwrap_or_default());
+            serde_json::json!({
+                "conv_id": hexs(&c.row.conv_id),
+                "kind": c.row.kind,
+                "name": c.row.name,
+                "state": c.row.state,
+                "created_at": c.row.created_at,
+                "unread": c.unread,
+                "last_ts": c.last_ts,
+                "peer": peer.as_ref().map(|p| hexs(p)),
+                "alias": peer.and_then(|p| svc.contact_alias(&p)).unwrap_or_default(),
+            })
+        })
+        .collect();
+    Ok(Json(serde_json::json!({ "conversations": conversations })))
+}
+
+/// `GET /api/messaging/conversations/direct/{pk}` — `conv_id`
+/// deterministe de la conversation directe avec `pk` (la conv peut
+/// ne pas encore exister en base — derivee pure).
+pub async fn get_direct_conversation(
+    State(state): State<AppState>,
+    Path(pk): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let svc = svc(&state)?;
+    let conv = svc.direct_conv(&pk_hex(&pk)?);
+    Ok(Json(serde_json::json!({ "conv_id": hexs(&conv) })))
+}
+
+fn conv_json_conv(conv: &[u8; 16], m: &onionbit_db::messaging::MsgMessageRow) -> serde_json::Value {
+    let _ = conv;
+    serde_json::json!({
+        "id": hexs(&m.id),
+        "direction": m.direction,
+        "seq": m.seq,
+        "ts": m.ts,
+        "body": String::from_utf8_lossy(&m.body),
+        "status": m.status,
+        "created_at": m.created_at,
+        "author_pk": m.author_pk.as_ref().map(|p| hexs(p)),
+        "mid": m.mid.as_ref().map(|p| hexs(p)),
+    })
+}
+
+/// `GET /api/messaging/conversations/{conv}/messages?limit=` —
+/// historique borne de la conversation (le plus recent d'abord).
+pub async fn get_conv_messages(
+    State(state): State<AppState>,
+    Path(conv): Path<String>,
+    Query(q): Query<HistoryQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let svc = svc(&state)?;
+    let conv = conv_hex(&conv)?;
+    let limit = q
+        .limit
+        .unwrap_or(DEFAULT_HISTORY_LIMIT)
+        .min(MAX_HISTORY_LIMIT);
+    let messages: Vec<serde_json::Value> = svc
+        .conversation_messages(&conv, limit)?
+        .into_iter()
+        .map(|m| conv_json_conv(&conv, &m))
+        .collect();
+    Ok(Json(serde_json::json!({ "messages": messages })))
+}
+
+/// `POST /api/messaging/conversations/{conv}/messages` — envoie dans
+/// la conversation : `group_send` en groupe, `send` au contact de la
+/// conv directe.
+pub async fn post_conv_message(
+    State(state): State<AppState>,
+    Path(conv): Path<String>,
+    Json(body): Json<SendBody>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let svc = svc(&state)?;
+    let conv = conv_hex(&conv)?;
+    let id = if let Some(pk) = svc.conv_peer(&conv) {
+        svc.send(&pk, body.body.into_bytes()).await?
+    } else {
+        svc.group_send(&conv, body.body.into_bytes()).await?
+    };
+    Ok(Json(serde_json::json!({ "id": hexs(&id) })))
+}
+
+/// `POST /api/messaging/conversations/{conv}/read` — marque lu.
+pub async fn post_conv_read(
+    State(state): State<AppState>,
+    Path(conv): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    svc(&state)?.conversation_mark_read(&conv_hex(&conv)?)?;
+    Ok(Json(serde_json::json!({})))
+}
+
+/// `DELETE /api/messaging/conversations/{conv}` — suppression reelle
+/// (cascade : messages, roster, livraisons, pieces jointes).
+pub async fn delete_conversation(
+    State(state): State<AppState>,
+    Path(conv): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    svc(&state)?.conversation_delete(&conv_hex(&conv)?)?;
+    Ok(Json(serde_json::json!({})))
+}
+
+/// Corps `{name, members:[<pk hex>]}` de `POST /messaging/groups`.
+#[derive(serde::Deserialize)]
+pub struct GroupCreateBody {
+    /// Nom affiche du groupe.
+    pub name: String,
+    /// `pk_bin` hex des membres invites (contacts actifs requis).
+    pub members: Vec<String>,
+}
+
+/// `POST /api/messaging/groups` — cree un groupe : conv aleatoire +
+/// `gctl invite` vers chaque contact actif.
+pub async fn post_group(
+    State(state): State<AppState>,
+    Json(body): Json<GroupCreateBody>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let svc = svc(&state)?;
+    let members: Result<Vec<Vec<u8>>, ApiError> = body.members.iter().map(|m| pk_hex(m)).collect();
+    let conv = svc.group_create(&body.name, &members?).await?;
+    Ok(Json(serde_json::json!({ "conv_id": hexs(&conv) })))
+}
+
+/// `GET /api/messaging/groups/{conv}/members` — roster du groupe.
+pub async fn get_group_members(
+    State(state): State<AppState>,
+    Path(conv): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let svc = svc(&state)?;
+    let members: Vec<serde_json::Value> = svc
+        .conversation_members(&conv_hex(&conv)?)?
+        .into_iter()
+        .map(|m| {
+            serde_json::json!({
+                "member_pk": hexs(&m.member_pk),
+                "added_by": hexs(&m.added_by),
+                "state": m.state,
+                "joined_at": m.joined_at,
+                "alias": svc.contact_alias(&m.member_pk).unwrap_or_default(),
+            })
+        })
+        .collect();
+    Ok(Json(serde_json::json!({ "members": members })))
+}
+
+/// `POST /api/messaging/groups/{conv}/invite` — invite un contact
+/// actif (emission `gctl invite` + roster additif).
+pub async fn post_group_invite(
+    State(state): State<AppState>,
+    Path(conv): Path<String>,
+    Json(body): Json<ConnectBody>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    svc(&state)?
+        .group_invite(&conv_hex(&conv)?, &pk_hex(&body.public_key)?)
+        .await?;
+    Ok(Json(serde_json::json!({})))
+}
+
+/// `POST /api/messaging/groups/{conv}/accept` — rejoint (`join` +
+/// `active`).
+pub async fn post_group_accept(
+    State(state): State<AppState>,
+    Path(conv): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    svc(&state)?.group_accept(&conv_hex(&conv)?).await?;
+    Ok(Json(serde_json::json!({})))
+}
+
+/// `POST /api/messaging/groups/{conv}/decline` — decline
+/// l'invitation (conv `left`, `gctl leave` a l'invitant).
+pub async fn post_group_decline(
+    State(state): State<AppState>,
+    Path(conv): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    svc(&state)?.group_decline(&conv_hex(&conv)?).await?;
+    Ok(Json(serde_json::json!({})))
+}
+
+/// `POST /api/messaging/groups/{conv}/leave` — quitte le groupe
+/// (conv `left`, `gctl leave` aux membres).
+pub async fn post_group_leave(
+    State(state): State<AppState>,
+    Path(conv): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    svc(&state)?.group_leave(&conv_hex(&conv)?).await?;
+    Ok(Json(serde_json::json!({})))
+}
+
+/// Corps `{path, name?}` de `POST /messaging/uploads` (variante
+/// JSON — le fichier reste sur la machine du daemon).
+#[derive(serde::Deserialize)]
+pub struct UploadPathBody {
+    /// Chemin local du fichier (hors `@private`).
+    pub path: String,
+    /// Nom affiche (defaut : basename du fichier).
+    pub name: Option<String>,
+}
+
+/// `POST /api/messaging/uploads` — stage un fichier sous
+/// `@state/messaging/uploads/<id>/` (TTL `upload_ttl`, bornes
+/// `attach_max_bytes`/`attach_stage_max_bytes`, jamais sous
+/// `data/public`).
+///
+/// Deux formes :
+/// - JSON `{path, name?}` : fichier local du daemon (hors
+///   `@private` — refuse).
+/// - Octets bruts + `?name=` : envoi direct (drag & drop UI, web) —
+///   lecture bornee par `attach_max_bytes`.
+pub async fn post_upload(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+    Query(q): Query<UploadQuery>,
+    body: axum::body::Body,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let svc = svc(&state)?;
+    let content_type = headers
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let info = if content_type.contains("json") {
+        let bytes = axum::body::to_bytes(body, 1 << 20)
+            .await
+            .map_err(|_| ApiError::bad_request("corps JSON trop grand"))?;
+        let req: UploadPathBody = serde_json::from_slice(&bytes)
+            .map_err(|_| ApiError::bad_request("corps JSON invalide"))?;
+        state
+            .session
+            .stage_upload_path(std::path::Path::new(&req.path), req.name)?
+    } else {
+        let name = q
+            .name
+            .ok_or_else(|| ApiError::bad_request("parametre name manquant"))?;
+        // `to_bytes` borne la lecture — `DefaultBodyLimit` global
+        // desactive sur cette route (cap = `attach_max_bytes`).
+        let cap = svc.config().attach_max_bytes as usize;
+        let bytes = axum::body::to_bytes(body, cap)
+            .await
+            .map_err(|_| ApiError::bad_request("corps hors borne attach_max_bytes"))?;
+        state.session.stage_upload_bytes(&name, &bytes)?
+    };
+    Ok(Json(serde_json::json!({
+        "upload_id": hexs(&info.upload_id),
+        "name": info.name,
+        "size": info.size,
+    })))
+}
+
+/// `?name=` de `POST /messaging/uploads` (forme octets).
+#[derive(serde::Deserialize)]
+pub struct UploadQuery {
+    /// Nom affiche du fichier envoye en octets.
+    pub name: Option<String>,
+}
+
+/// Corps `{upload_id?|path?, name?}` de
+/// `POST /conversations/{conv}/attachments`.
+#[derive(serde::Deserialize)]
+pub struct AttachSendBody {
+    /// `upload_id` d'un fichier stage par `POST /uploads`.
+    pub upload_id: Option<String>,
+    /// Chemin local direct (hors `@private`) — alternative a
+    /// `upload_id`.
+    pub path: Option<String>,
+    /// Nom affiche (defaut : basename du fichier).
+    pub name: Option<String>,
+}
+
+/// `POST /api/messaging/conversations/{conv}/attachments` — offre la
+/// piece jointe stagee (ou le `{path}` direct) a la conversation :
+/// torrent ephemere sale + seed anonyme + trames `attach`.
+pub async fn post_conv_attach(
+    State(state): State<AppState>,
+    Path(conv): Path<String>,
+    Json(body): Json<AttachSendBody>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let svc = svc(&state)?;
+    let conv = conv_hex(&conv)?;
+    let source = match (&body.upload_id, &body.path) {
+        (Some(id), None) => state.session.upload_path(
+            &hex::decode(id).map_err(|_| ApiError::bad_request("upload_id attendu en hex"))?,
+        )?,
+        (None, Some(p)) => std::path::PathBuf::from(p),
+        _ => return Err(ApiError::bad_request("upload_id ou path attendu (un seul)")),
+    };
+    let target = if let Some(pk) = svc.conv_peer(&conv) {
+        AttachTarget::Contact(pk)
+    } else {
+        AttachTarget::Group(conv)
+    };
+    let offer = state
+        .session
+        .attach_offer(target, &source, body.name)
+        .await?;
+    Ok(Json(serde_json::json!({
+        "attach_id": hexs(&offer.attach_id),
+        "conv_id": hexs(&offer.conv),
+        "infohash": hexs(&offer.ih),
+        "name": offer.name,
+        "size": offer.size,
+        "sent": offer.sent,
+    })))
+}
+
+/// `GET /api/messaging/conversations/{conv}/attachments` — offres et
+/// receptions de la conversation.
+pub async fn get_conv_attachments(
+    State(state): State<AppState>,
+    Path(conv): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let _svc = svc(&state)?;
+    let attachments: Vec<serde_json::Value> = state
+        .session
+        .attach_list(Some(conv_hex(&conv)?))?
+        .into_iter()
+        .map(|a| {
+            serde_json::json!({
+                "attach_id": hexs(&a.attach_id),
+                "conv_id": hexs(&a.conv_id),
+                "infohash": hexs(&a.ih),
+                "name": a.name,
+                "size": a.size,
+                "role": a.role,
+                "state": a.state,
+                "created_at": a.created_at,
+            })
+        })
+        .collect();
+    Ok(Json(serde_json::json!({ "attachments": attachments })))
+}
+
+/// Corps `{area?, dir?}` de `POST /attachments/{id}/accept` —
+/// grammaire `destination {area, dir?}` d'ADR-0018 : `dir` est un
+/// spec portable (`@private/downloads`, `@public/...`) ou chemin
+/// externe, resolu par `resolve_input`.
+#[derive(serde::Deserialize)]
+pub struct AttachAcceptBody {
+    /// `"public"` ou `"private"` (defaut `attach_area` du service).
+    pub area: Option<String>,
+    /// `dir` destination (spec `@…` ou chemin — prive : seuls
+    /// `temp`/`downloads` sont admis).
+    pub dir: Option<String>,
+}
+
+/// `POST /api/messaging/attachments/{id}/accept` — accepte l'offre :
+/// download anonyme de l'infohash sale. `409 identity_locked` si la
+/// zone privee visee est verrouillee.
+pub async fn post_attach_accept(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<AttachAcceptBody>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let _svc = svc(&state)?;
+    let area = match body.area.as_deref() {
+        None | Some("") => None,
+        Some("public") => Some(StorageArea::Public),
+        Some("private") => Some(StorageArea::Private),
+        Some(_) => return Err(ApiError::bad_request("area attendue : public|private")),
+    };
+    // Garde explicite `identity_locked` (409) avant tout travail —
+    // la session renverrait la meme erreur en `InvalidState`, mais
+    // le statut 409 est le contrat ADR-0018.
+    if area == Some(StorageArea::Private) && state.session.private_area_state() == "locked" {
+        return Err(ApiError::conflict("identity_locked"));
+    }
+    let destination = match &body.dir {
+        None => None,
+        Some(d) => Some(
+            state
+                .session
+                .paths()
+                .resolve_input(std::path::Path::new(d))
+                .map_err(|e| ApiError::bad_request(e.to_string()))?,
+        ),
+    };
+    let dl = state
+        .session
+        .attach_accept(&id_hex(&id)?, destination, area)
+        .await?;
+    Ok(Json(serde_json::json!({
+        "infohash": dl.info_hash_hex(),
+        "name": dl.name().unwrap_or_default(),
+    })))
+}
+
+/// `POST /api/messaging/attachments/{id}/decline` — refuse l'offre
+/// (`offered` → `declined`, aucun telechargement lance).
+pub async fn post_attach_decline(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let _svc = svc(&state)?;
+    state.session.attach_decline(&id_hex(&id)?)?;
+    Ok(Json(serde_json::json!({})))
 }
 
 /// `GET /api/messaging/events` — flux SSE dedie de la messagerie

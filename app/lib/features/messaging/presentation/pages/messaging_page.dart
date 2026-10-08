@@ -13,8 +13,9 @@ import '../../../diagnostic/presentation/providers/diagnostic_providers.dart';
 import '../../../diagnostic/presentation/widgets/attest_dialog.dart';
 import '../../../diagnostic/presentation/widgets/trust_badge.dart';
 import '../../domain/messaging_contact.dart';
-import '../../domain/messaging_message.dart';
+import '../../domain/messaging_conversation.dart';
 import '../providers/messaging_providers.dart';
+import '../widgets/conversation_view.dart';
 
 /// Page messagerie e2e (ADR-0011) — liste des contacts (états de
 /// consentement, demandes `pending` actionnables) + conversation
@@ -44,7 +45,7 @@ class MessagingPage extends ConsumerWidget {
           children: [
             SizedBox(width: 300, child: _ContactsPane()),
             VerticalDivider(width: 1),
-            Expanded(child: _ConversationPane()),
+            Expanded(child: ConversationTabs()),
           ],
         );
       },
@@ -113,7 +114,8 @@ class _ContactsPane extends ConsumerWidget {
     final stats = ref.watch(messagingStatsProvider).value;
     final pending = ref.watch(messagingPendingProvider).value ?? const [];
     final contacts = ref.watch(messagingContactsProvider).value ?? const [];
-    final selected = ref.watch(selectedContactProvider);
+    final convs = ref.watch(messagingConversationsProvider).value ?? const [];
+    final selectedConv = ref.watch(selectedConversationProvider);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -145,6 +147,45 @@ class _ContactsPane extends ConsumerWidget {
         Expanded(
           child: ListView(
             children: [
+              // ADR-0019 : conversations (directes + groupes) en
+              // tete — clic = onglet dans le panneau de droite.
+              Padding(
+                padding: const EdgeInsets.fromLTRB(
+                  AppSpacing.md,
+                  AppSpacing.md,
+                  AppSpacing.xs,
+                  AppSpacing.xs,
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        l10n.msgConversations,
+                        style: Theme.of(context).textTheme.labelLarge,
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.group_add_outlined, size: 18),
+                      tooltip: l10n.msgNewGroup,
+                      onPressed: () => _newGroup(context, ref, contacts),
+                    ),
+                  ],
+                ),
+              ),
+              if (convs.isEmpty)
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: AppSpacing.lg,
+                    vertical: AppSpacing.xs,
+                  ),
+                  child: Text(
+                    l10n.msgNoConversations,
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ),
+              for (final c in convs)
+                _ConvTile(conv: c, selected: c.convId == selectedConv),
+              const Divider(height: AppSpacing.lg),
               // Demandes de consentement en attente — actions
               // accepter / refuser / bloquer.
               if (pending.isNotEmpty) ...[
@@ -183,10 +224,8 @@ class _ContactsPane extends ConsumerWidget {
               for (final c in contacts)
                 _ContactTile(
                   contact: c,
-                  selected: c.publicKey == selected,
-                  onTap: () => ref
-                      .read(selectedContactProvider.notifier)
-                      .set(c.publicKey),
+                  selected: false,
+                  onTap: () => _openDirect(ref, c.publicKey),
                 ),
             ],
           ),
@@ -257,7 +296,7 @@ class _ContactsPane extends ConsumerWidget {
     if (ok != true || !context.mounted || pk.isEmpty) return;
     try {
       await ref.read(messagingRepositoryProvider).connect(pk);
-      ref.read(selectedContactProvider.notifier).set(pk);
+      await _openDirect(ref, pk);
     } catch (e) {
       if (context.mounted) _showError(context, e);
     }
@@ -266,6 +305,114 @@ class _ContactsPane extends ConsumerWidget {
     // hors ligne), il doit apparaître dans la liste.
     ref.invalidate(messagingContactsProvider);
     ref.invalidate(messagingHistoryProvider(pk));
+    ref.invalidate(messagingConversationsProvider);
+  }
+
+  /// Ouvre l'onglet de la conversation directe avec `pk` —
+  /// `conv_id` deterministe cote daemon (la conv peut ne pas encore
+  /// exister en base : `peer` sert alors le libelle de l'onglet).
+  static Future<void> _openDirect(WidgetRef ref, String pk) async {
+    try {
+      final convId = await ref
+          .read(messagingRepositoryProvider)
+          .directConversation(pk);
+      if (convId.isNotEmpty) {
+        ref.read(openConversationsProvider.notifier).open(convId, peer: pk);
+      }
+    } catch (_) {
+      // Messagerie desactivee ou erreur reseau : le SSE re-essaiera.
+    }
+  }
+
+  /// Dialogue « nouveau groupe » : nom + selection de contacts
+  /// actifs → `group_create` (le daemon envoie un `gctl invite` a
+  /// chacun — confinement `scope='group'` pour les inconnus).
+  Future<void> _newGroup(
+    BuildContext context,
+    WidgetRef ref,
+    List<MessagingContact> contacts,
+  ) async {
+    final l10n = context.l10n;
+    final actives = [
+      for (final c in contacts)
+        if (c.state == MessagingContactState.active) c,
+    ];
+    final nameCtl = TextEditingController();
+    final chosen = <String>{};
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setState) => AlertDialog(
+          title: Text(l10n.msgNewGroup),
+          content: SizedBox(
+            width: 360,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: nameCtl,
+                  decoration: InputDecoration(
+                    labelText: l10n.msgGroupNameLabel,
+                    border: const OutlineInputBorder(),
+                  ),
+                  autofocus: true,
+                ),
+                const SizedBox(height: AppSpacing.sm),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    l10n.msgGroupPickMembers,
+                    style: Theme.of(ctx).textTheme.labelMedium,
+                  ),
+                ),
+                Flexible(
+                  child: ListView(
+                    shrinkWrap: true,
+                    children: [
+                      for (final c in actives)
+                        CheckboxListTile(
+                          dense: true,
+                          title: Text(c.displayName),
+                          value: chosen.contains(c.publicKey),
+                          onChanged: (v) => setState(
+                            () => v == true
+                                ? chosen.add(c.publicKey)
+                                : chosen.remove(c.publicKey),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: Text(l10n.cancel),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: Text(l10n.msgNewGroup),
+            ),
+          ],
+        ),
+      ),
+    );
+    final name = nameCtl.text.trim();
+    nameCtl.dispose();
+    if (ok != true || !context.mounted || name.isEmpty) return;
+    try {
+      final convId = await ref
+          .read(messagingRepositoryProvider)
+          .groupCreate(name, chosen.toList());
+      ref.invalidate(messagingConversationsProvider);
+      if (convId.isNotEmpty) {
+        ref.read(openConversationsProvider.notifier).open(convId);
+      }
+    } catch (e) {
+      if (context.mounted) _showError(context, e);
+    }
   }
 
   /// Exporte le coffre chiffre (`GET /messaging/vault/export`) —
@@ -328,6 +475,101 @@ class _ContactsPane extends ConsumerWidget {
           SnackBar(content: Text(l10n.msgVaultRestored(n))),
         );
       }
+    } catch (e) {
+      if (context.mounted) _showError(context, e);
+    }
+  }
+}
+
+/// Tuile de conversation (ADR-0019) : icone direct/groupe, libelle,
+/// badge de non-lus, indicateur d'invitation, menu suppression.
+class _ConvTile extends ConsumerWidget {
+  const _ConvTile({required this.conv, required this.selected});
+
+  final MessagingConversation conv;
+  final bool selected;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final theme = Theme.of(context);
+    final l10n = context.l10n;
+    return ListTile(
+      dense: true,
+      selected: selected,
+      leading: Icon(
+        conv.isGroup ? Icons.groups_outlined : Icons.person_outline,
+        size: 20,
+        color: conv.isInvited ? theme.colorScheme.tertiary : null,
+      ),
+      title: Text(
+        conv.displayName,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: conv.alias.isEmpty && !conv.isGroup && conv.name.isEmpty
+            ? const TextStyle(fontFamily: 'monospace', fontSize: 12)
+            : null,
+      ),
+      subtitle: conv.isInvited ? Text(l10n.msgStatePending) : null,
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (conv.unread > 0)
+            Container(
+              padding: const EdgeInsets.symmetric(
+                horizontal: 6,
+                vertical: 1,
+              ),
+              decoration: BoxDecoration(
+                color: theme.colorScheme.primary,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Text(
+                '${conv.unread}',
+                style: theme.textTheme.labelSmall
+                    ?.copyWith(color: theme.colorScheme.onPrimary),
+              ),
+            ),
+          PopupMenuButton<String>(
+            iconSize: 18,
+            itemBuilder: (ctx) => [
+              PopupMenuItem(
+                value: 'delete',
+                child: Text(l10n.msgDeleteConversation),
+              ),
+            ],
+            onSelected: (_) => _delete(context, ref),
+          ),
+        ],
+      ),
+      onTap: () => ref
+          .read(openConversationsProvider.notifier)
+          .open(conv.convId, peer: conv.peer),
+    );
+  }
+
+  Future<void> _delete(BuildContext context, WidgetRef ref) async {
+    final l10n = context.l10n;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(l10n.msgDeleteConversation),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(l10n.cancel),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(l10n.msgDeleteConversation),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !context.mounted) return;
+    try {
+      await ref.read(messagingRepositoryProvider).convDelete(conv.convId);
+      ref.read(openConversationsProvider.notifier).close(conv.convId);
+      ref.invalidate(messagingConversationsProvider);
     } catch (e) {
       if (context.mounted) _showError(context, e);
     }
@@ -667,214 +909,6 @@ class _ContactTile extends ConsumerWidget {
   }
 }
 
-/// Panneau droit : historique + compositeur.
-class _ConversationPane extends ConsumerStatefulWidget {
-  const _ConversationPane();
-
-  @override
-  ConsumerState<_ConversationPane> createState() => _ConversationPaneState();
-}
-
-class _ConversationPaneState extends ConsumerState<_ConversationPane> {
-  final _controller = TextEditingController();
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final l10n = context.l10n;
-    final pk = ref.watch(selectedContactProvider);
-    if (pk == null) {
-      return _MessagePane(
-        icon: Icons.chat_bubble_outline,
-        title: l10n.msgSelectContact,
-      );
-    }
-    final history = ref.watch(messagingHistoryProvider(pk));
-    return Column(
-      children: [
-        Expanded(
-          child: history.when(
-            loading: () => const Center(child: CircularProgressIndicator()),
-            error: (e, _) => _MessagePane(
-              icon: Icons.error_outline,
-              title: l10n.errorMessage('$e'),
-            ),
-            data: (messages) {
-              // `history` rend le plus récent d'abord — la liste
-              // `reverse` affiche le plus récent en bas.
-              return ListView.builder(
-                reverse: true,
-                padding: const EdgeInsets.all(AppSpacing.md),
-                itemCount: messages.length,
-                itemBuilder: (ctx, i) => _Bubble(message: messages[i]),
-              );
-            },
-          ),
-        ),
-        const Divider(height: 1),
-        // Compositeur — `send` propage le 404 « hors ligne » en
-        // snackbar (le daemon enregistre déjà `failed`).
-        Padding(
-          padding: const EdgeInsets.all(AppSpacing.sm),
-          child: Row(
-            children: [
-              Expanded(
-                child: TextField(
-                  controller: _controller,
-                  decoration: InputDecoration(
-                    hintText: l10n.msgTypeMessage,
-                    border: const OutlineInputBorder(),
-                    isDense: true,
-                  ),
-                  onSubmitted: (_) => _send(pk),
-                ),
-              ),
-              const SizedBox(width: AppSpacing.sm),
-              IconButton.filled(
-                icon: const Icon(Icons.send, size: 18),
-                tooltip: l10n.msgSend,
-                onPressed: () => _send(pk),
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
-  Future<void> _send(String pk) async {
-    final body = _controller.text.trim();
-    if (body.isEmpty) return;
-    _controller.clear();
-    try {
-      await ref.read(messagingRepositoryProvider).send(pk, body);
-    } catch (e) {
-      if (mounted) {
-        final msg = e is ApiException && e.statusCode == 404
-            ? context.l10n.msgSendFailed
-            : context.l10n.errorMessage('$e');
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(msg)));
-      }
-    }
-    // Toujours rafraîchir : un échec est enregistré `failed` côté
-    // daemon (la bulle doit apparaître en erreur).
-    ref.invalidate(messagingHistoryProvider(pk));
-  }
-}
-
-/// Bulle de message — alignement + pastille de statut (outgoing)
-/// et suppression au clic long.
-class _Bubble extends ConsumerWidget {
-  const _Bubble({required this.message});
-
-  final MessagingMessage message;
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final theme = Theme.of(context);
-    final l10n = context.l10n;
-    final statusLabel = switch (message.status) {
-      'sent' => l10n.msgStatusSent,
-      'acked' => l10n.msgStatusAcked,
-      'failed' => l10n.msgStatusFailed,
-      _ => l10n.msgStatusReceived,
-    };
-    final statusIcon = switch (message.status) {
-      'sent' => Icons.check,
-      'acked' => Icons.done_all,
-      'failed' => Icons.error_outline,
-      _ => null,
-    };
-    return Align(
-      alignment: message.isOutgoing
-          ? Alignment.centerRight
-          : Alignment.centerLeft,
-      child: GestureDetector(
-        onLongPress: () => _delete(context, ref),
-        child: Container(
-          constraints: const BoxConstraints(maxWidth: 480),
-          margin: const EdgeInsets.symmetric(vertical: AppSpacing.xs / 2),
-          padding: const EdgeInsets.symmetric(
-            horizontal: AppSpacing.md,
-            vertical: AppSpacing.sm,
-          ),
-          decoration: BoxDecoration(
-            color: message.isOutgoing
-                ? theme.colorScheme.primaryContainer
-                : theme.colorScheme.surfaceContainerHighest,
-            borderRadius: BorderRadius.circular(AppRadii.medium),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Text(message.body, style: theme.textTheme.bodyMedium),
-              if (statusIcon != null)
-                Padding(
-                  padding: const EdgeInsets.only(top: AppSpacing.xs / 2),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        statusIcon,
-                        size: 12,
-                        color: message.isFailed
-                            ? theme.colorScheme.error
-                            : theme.colorScheme.onSurfaceVariant,
-                      ),
-                      const SizedBox(width: AppSpacing.xs),
-                      Text(
-                        statusLabel,
-                        style: theme.textTheme.labelSmall?.copyWith(
-                          color: message.isFailed
-                              ? theme.colorScheme.error
-                              : theme.colorScheme.onSurfaceVariant,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Future<void> _delete(BuildContext context, WidgetRef ref) async {
-    final l10n = context.l10n;
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(l10n.msgDeleteMessage),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: Text(l10n.cancel),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: Text(l10n.msgDeleteMessage),
-          ),
-        ],
-      ),
-    );
-    if (ok != true || !context.mounted) return;
-    try {
-      await ref.read(messagingRepositoryProvider).deleteMessage(message.id);
-      final pk = ref.read(selectedContactProvider);
-      if (pk != null) ref.invalidate(messagingHistoryProvider(pk));
-    } catch (e) {
-      if (context.mounted) _showError(context, e);
-    }
-  }
-}
-
 /// Action dépôt + invalidation commune, erreurs en snackbar.
 Future<void> _act(
   BuildContext context,
@@ -885,8 +919,7 @@ Future<void> _act(
     await call();
     ref.invalidate(messagingContactsProvider);
     ref.invalidate(messagingPendingProvider);
-    final pk = ref.read(selectedContactProvider);
-    if (pk != null) ref.invalidate(messagingHistoryProvider(pk));
+    ref.invalidate(messagingConversationsProvider);
   } catch (e) {
     if (context.mounted) _showError(context, e);
   }
@@ -1047,7 +1080,7 @@ class _ExtPeersSection extends ConsumerWidget {
                       await ref
                           .read(messagingRepositoryProvider)
                           .connect(p.pk);
-                      ref.read(selectedContactProvider.notifier).set(p.pk);
+                      await _ContactsPane._openDirect(ref, p.pk);
                       ref.invalidate(messagingContactsProvider);
                     } catch (e) {
                       if (context.mounted) _showError(context, e);

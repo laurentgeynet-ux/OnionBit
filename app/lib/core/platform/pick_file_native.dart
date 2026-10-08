@@ -32,3 +32,15 @@ Future<PickedFile?> pickTorrentFile() async {
     bytes: await file.readAsBytes(),
   );
 }
+
+Future<PickedFile?> pickAnyFile() async {
+  // Pas de `XTypeGroup` : tout type admis (pièce jointe
+  // messagerie — le daemon borne par `attach_max_bytes`).
+  final file = await openFile();
+  if (file == null) return null;
+  return PickedFile(
+    name: file.name,
+    path: file.path,
+    bytes: await file.readAsBytes(),
+  );
+}

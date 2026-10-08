@@ -39,3 +39,7 @@ class PickedFile {
 /// Ouvre le sélecteur `.torrent` de la plateforme.
 /// `null` = annulé par l'utilisateur.
 Future<PickedFile?> pickTorrentFile() => impl.pickTorrentFile();
+
+/// Ouvre le sélecteur « tout fichier » (pièce jointe messagerie,
+/// ADR-0019) — aucun filtre d'extension.
+Future<PickedFile?> pickAnyFile() => impl.pickAnyFile();

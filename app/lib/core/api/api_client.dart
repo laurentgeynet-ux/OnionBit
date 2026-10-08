@@ -95,6 +95,22 @@ class ApiClient {
     query,
   );
 
+  /// `POST` d'octets bruts (`Content-Type: application/octet-stream`,
+  /// nom en query — `POST /messaging/uploads?name=`).
+  Future<dynamic> postBytes(
+    String path,
+    List<int> bytes, {
+    Map<String, String>? query,
+  }) => _send(
+    (uri) => _http.post(
+      uri,
+      headers: {..._headers, 'Content-Type': 'application/octet-stream'},
+      body: bytes,
+    ),
+    path,
+    query,
+  );
+
   Future<dynamic> post(String path, {Object? body}) => _send(
     (uri) => _http.post(uri, headers: _headers, body: jsonEncode(body)),
     path,

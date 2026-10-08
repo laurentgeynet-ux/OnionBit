@@ -4,7 +4,9 @@
 
 import '../../../core/api/api_client.dart';
 import '../../../core/config/ui_log.dart';
+import '../domain/messaging_attachment.dart';
 import '../domain/messaging_contact.dart';
+import '../domain/messaging_conversation.dart';
 import '../domain/messaging_message.dart';
 import '../domain/messaging_repository.dart';
 import 'messaging_dto.dart';
@@ -145,4 +147,160 @@ class RestMessagingRepository implements MessagingRepository {
         as Map<String, dynamic>;
     return (resp['restored'] as num?)?.toInt() ?? 0;
   }
+
+  // ── ADR-0019 : conversations, groupes, pieces jointes ──────
+
+  @override
+  Future<List<MessagingConversation>> conversations() async {
+    final resp = await _api.get('/messaging/conversations')
+        as Map<String, dynamic>;
+    final items = resp['conversations'] as List<dynamic>? ?? const [];
+    return items
+        .whereType<Map<String, dynamic>>()
+        .map((c) => c.toMessagingConversation())
+        .toList();
+  }
+
+  @override
+  Future<String> directConversation(String publicKey) async {
+    final resp = await _api.get('/messaging/conversations/direct/$publicKey')
+        as Map<String, dynamic>;
+    return (resp['conv_id'] as String?) ?? '';
+  }
+
+  @override
+  Future<List<MessagingMessage>> convHistory(
+    String convId, {
+    int limit = 100,
+  }) async {
+    final resp = await _api.get(
+      '/messaging/conversations/$convId/messages',
+      query: {'limit': '$limit'},
+    ) as Map<String, dynamic>;
+    final items = resp['messages'] as List<dynamic>? ?? const [];
+    return items
+        .whereType<Map<String, dynamic>>()
+        .map((m) => m.toMessagingMessage())
+        .toList();
+  }
+
+  @override
+  Future<String> convSend(String convId, String body) async {
+    final resp = await _api.post(
+      '/messaging/conversations/$convId/messages',
+      body: {'body': body},
+    ) as Map<String, dynamic>;
+    return (resp['id'] as String?) ?? '';
+  }
+
+  @override
+  Future<void> convMarkRead(String convId) =>
+      _api.post('/messaging/conversations/$convId/read', body: {});
+
+  @override
+  Future<void> convDelete(String convId) =>
+      _api.delete('/messaging/conversations/$convId');
+
+  @override
+  Future<String> groupCreate(String name, List<String> members) async {
+    final resp = await _api.post(
+      '/messaging/groups',
+      body: {'name': name, 'members': members},
+    ) as Map<String, dynamic>;
+    return (resp['conv_id'] as String?) ?? '';
+  }
+
+  @override
+  Future<List<MessagingMember>> groupMembers(String convId) async {
+    final resp = await _api.get('/messaging/groups/$convId/members')
+        as Map<String, dynamic>;
+    final items = resp['members'] as List<dynamic>? ?? const [];
+    return items
+        .whereType<Map<String, dynamic>>()
+        .map((m) => m.toMessagingMember())
+        .toList();
+  }
+
+  @override
+  Future<void> groupInvite(String convId, String publicKey) => _api.post(
+    '/messaging/groups/$convId/invite',
+    body: {'public_key': publicKey},
+  );
+
+  @override
+  Future<void> groupAccept(String convId) =>
+      _api.post('/messaging/groups/$convId/accept', body: {});
+
+  @override
+  Future<void> groupDecline(String convId) =>
+      _api.post('/messaging/groups/$convId/decline', body: {});
+
+  @override
+  Future<void> groupLeave(String convId) =>
+      _api.post('/messaging/groups/$convId/leave', body: {});
+
+  @override
+  Future<MessagingUpload> uploadPath(String path, {String? name}) async {
+    final resp = await _api.post(
+      '/messaging/uploads',
+      body: {'path': path, 'name': ?name},
+    ) as Map<String, dynamic>;
+    return resp.toMessagingUpload();
+  }
+
+  @override
+  Future<MessagingUpload> uploadBytes(String name, List<int> bytes) async {
+    final resp = await _api.postBytes(
+      '/messaging/uploads',
+      bytes,
+      query: {'name': name},
+    ) as Map<String, dynamic>;
+    return resp.toMessagingUpload();
+  }
+
+  @override
+  Future<AttachOfferResult> convAttach(
+    String convId, {
+    String? uploadId,
+    String? path,
+    String? name,
+  }) async {
+    final resp = await _api.post(
+      '/messaging/conversations/$convId/attachments',
+      body: {
+        'upload_id': ?uploadId,
+        'path': ?path,
+        'name': ?name,
+      },
+    ) as Map<String, dynamic>;
+    return resp.toAttachOfferResult();
+  }
+
+  @override
+  Future<List<MessagingAttachment>> convAttachments(String convId) async {
+    final resp = await _api.get('/messaging/conversations/$convId/attachments')
+        as Map<String, dynamic>;
+    final items = resp['attachments'] as List<dynamic>? ?? const [];
+    return items
+        .whereType<Map<String, dynamic>>()
+        .map((a) => a.toMessagingAttachment())
+        .toList();
+  }
+
+  @override
+  Future<String> attachAccept(
+    String attachId, {
+    String? area,
+    String? dir,
+  }) async {
+    final resp = await _api.post(
+      '/messaging/attachments/$attachId/accept',
+      body: {'area': ?area, 'dir': ?dir},
+    ) as Map<String, dynamic>;
+    return (resp['infohash'] as String?) ?? '';
+  }
+
+  @override
+  Future<void> attachDecline(String attachId) =>
+      _api.post('/messaging/attachments/$attachId/decline', body: {});
 }

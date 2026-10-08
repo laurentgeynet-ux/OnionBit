@@ -3,6 +3,66 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## ADR-0019 étape 68 : API + UI (2026-10-09)
+
+- **REST `/api/messaging`** (ADR-0019 §6) — toutes sous
+  `api_key_auth` + garde 404 messagerie off (test dédié étendu aux
+  18 routes) :
+  - `GET /conversations` (kind/name/state/non-lus/`last_ts`/`peer`/
+    `alias`), `GET /conversations/direct/{pk}` (`conv_id` dérivé —
+    la conv peut ne pas encore exister), `GET|POST
+    /conversations/{conv}/messages` (`send` direct ou `group_send`),
+    `POST …/read`, `DELETE /conversations/{conv}` (cascade),
+    `GET /conversations/{conv}/attachments`.
+  - `POST /groups` (nom + contacts actifs), `GET
+    /groups/{conv}/members`, `POST /groups/{conv}/invite|accept|
+    decline|leave`.
+  - `POST /uploads` — JSON `{path, name?}` (hors `@private`) ou
+    octets bruts `?name=` ; lecture bornée `to_bytes(
+    attach_max_bytes)` avec `DefaultBodyLimit` désactivé sur cette
+    seule route ; staging `@state/messaging/uploads/` (TTL
+    `upload_ttl`, reaper).
+  - `POST /conversations/{conv}/attachments` (`upload_id` ou
+    `path`), `POST /attachments/{id}/accept` `{area?, dir?}`
+    (`409 identity_locked` si privé verrouillé), `POST
+    /attachments/{id}/decline`.
+  - **SSE** : `messaging_conv` (message entrant conv v1/v2),
+    `messaging_group_invite`, `messaging_attach` — ajoutés au
+    convertisseur `event_to_sse`.
+  - `MessagingService::conv_peer` : résolution inverse conv
+    directe → contact pour `POST …/messages`.
+  - `session/attach.rs` : staging d'uploads (`stage_upload_path`/
+    `stage_upload_bytes`/`upload_path`, nom assaini, bornes fichier
+    et globale) + purge reaper des uploads expirés et des dossiers
+    de seeding orphelins.
+- **UI Flutter** (`app/lib/features/messaging`) :
+  - domaine `MessagingConversation`/`MessagingMember`,
+    `MessagingAttachment`/`MessagingUpload`/`AttachOfferResult`,
+    `MessagingMessage` étendu (`authorPk`/`mid`), repository +
+    `RestMessagingRepository` (toutes les routes), `ApiClient.
+    postBytes`, `pickAnyFile` (picker tout type), `drop_detector.
+    dart` (réexport du détecteur plateforme — la `DropZone` globale
+    `.torrent` inchangée).
+  - providers : `messagingConversations`, `openConversations`
+    (onglets UI-only), `selectedConversation`, `convHistory`
+    (marque-lu à l'affichage), `groupMembers`, `convAttachments`,
+    pont SSE `messaging_conv`/`attach`/`group_invite`.
+  - page : liste de conversations (badges non lus, `invited`,
+    suppression) au-dessus des contacts ; clic contact → onglet de
+    la conv directe dérivée ; rangée d'onglets fermables ; vue
+    conversation = bannière d'invitation (accepter/décliner),
+    historique fusionné messages+attaches, auteur affiché en
+    groupe, compositeur « joindre » + drop zone scopée (chemin
+    desktop direct / octets stagés web), carte pièce jointe
+    (nom/taille/état + dialogue destination public/privé à
+    l'accept), en-tête groupe (roster + inviter + quitter),
+    dialogue de création multi-sélection contacts actifs.
+  - i18n FR/EN (`check_i18n` vert) ; écart assumé : pas de grisage
+    cap-v2 (repli v1 transparent du daemon).
+- **Validation** : `flutter analyze`/`test` (29) verts ; clippy
+  `onionbit-api`/`core` propre ; fmt appliqué ; 75 tests API dont le
+  test 404 étendu.
+
 ## ADR-0019 étape 67 : pièces jointes (2026-10-09)
 
 - **`salt_torrent`** (`onionbit-format::torrent`) : injection

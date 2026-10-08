@@ -304,6 +304,69 @@ fn api_router(state: AppState) -> Router<AppState> {
             delete(messaging::delete_message),
         )
         .route("/messaging/events", get(messaging::get_events))
+        // ADR-0019 : conversations / groupes / pieces jointes
+        // (aliases v1 conserves : `contacts/{pk}/messages` = conv
+        // directe).
+        .route(
+            "/messaging/conversations",
+            get(messaging::get_conversations),
+        )
+        .route(
+            "/messaging/conversations/direct/{pk}",
+            get(messaging::get_direct_conversation),
+        )
+        .route(
+            "/messaging/conversations/{conv}/messages",
+            get(messaging::get_conv_messages).post(messaging::post_conv_message),
+        )
+        .route(
+            "/messaging/conversations/{conv}/read",
+            post(messaging::post_conv_read),
+        )
+        .route(
+            "/messaging/conversations/{conv}",
+            delete(messaging::delete_conversation),
+        )
+        .route(
+            "/messaging/conversations/{conv}/attachments",
+            get(messaging::get_conv_attachments).post(messaging::post_conv_attach),
+        )
+        .route("/messaging/groups", post(messaging::post_group))
+        .route(
+            "/messaging/groups/{conv}/members",
+            get(messaging::get_group_members),
+        )
+        .route(
+            "/messaging/groups/{conv}/invite",
+            post(messaging::post_group_invite),
+        )
+        .route(
+            "/messaging/groups/{conv}/accept",
+            post(messaging::post_group_accept),
+        )
+        .route(
+            "/messaging/groups/{conv}/decline",
+            post(messaging::post_group_decline),
+        )
+        .route(
+            "/messaging/groups/{conv}/leave",
+            post(messaging::post_group_leave),
+        )
+        // Uploads : `DefaultBodyLimit` global desactive — la borne
+        // effective est `attach_max_bytes` relue a l'execution dans
+        // le handler (lecture `to_bytes` bornee).
+        .route(
+            "/messaging/uploads",
+            post(messaging::post_upload).route_layer(DefaultBodyLimit::disable()),
+        )
+        .route(
+            "/messaging/attachments/{id}/accept",
+            post(messaging::post_attach_accept),
+        )
+        .route(
+            "/messaging/attachments/{id}/decline",
+            post(messaging::post_attach_decline),
+        )
         // Coffre de contacts chiffre pour soi (ADR-0015/ADR-0016) —
         // export/import portable entre devices de meme identite.
         .route("/messaging/vault/export", get(messaging::get_vault_export))
