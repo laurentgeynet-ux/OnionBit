@@ -186,24 +186,38 @@ l'en-tête *chiffré*.
 
 ```text
 fichier  :  HDR_SLOT(4 Kio) ‖ chunk_0 ‖ chunk_1 ‖ …
-HDR_SLOT :  hdr_nonce(12) ‖ hdr_ct ‖ pad(0)    — slot fixe : offsets
-                                               de chunks constants
+HDR_SLOT :  hdr_nonce(12) ‖ hdr_ct ‖ scan_nonce(12) ‖ scan_ct ‖ pad(0)
+            — offsets fixes : positions des chunks constantes
 hdr_ct   :  AEAD(K_file, hdr_nonce, "obd/hdr")〔"OBD" ‖ v(1)
-            ‖ chunk_log2(1) ‖ file_id(16) ‖ infohash(20)
-            ‖ relpath_len(2) ‖ relpath(var) ‖ plain_len(8)
-            ‖ reserved〕                     — en-tête scellé
+            ‖ chunk_log2(1) ‖ file_id(16) ‖ plain_len(8)
+            ‖ reserved ‖ pad(0)〕            — clair bourré à taille
+                                             fixe → hdr_ct à longueur
+                                             constante, zéro fuite de
+                                             longueur, parsing univoque
+scan_ct  :  AEAD(K_scan, scan_nonce, "obd/scan")〔infohash(20)
+            ‖ relpath_len(2) ‖ relpath(var) ‖ pad(0)〕
+            — clair bourré à taille fixe lui aussi
+K_scan   :  HKDF(K_store, "scan")            — clé de balayage unique,
+                                             indépendante de K_file
 chunk_i  :  nonce_i(12) ‖ AEAD(K_file, nonce_i, aad_i)〔plain_i〕
 aad_i    :  file_id ‖ i:u64be                (lie le chunk au fichier
                                               et à sa position)
 nonce_i  :  **aléatoire à chaque écriture**, stocké en tête du chunk
 ```
 
-`infohash‖relpath` dans l'en-tête scellé est le **filet de secours du
-manifest** (revue externe 2) : si `manifest.obm` est perdu, un
-balayage des `.obd` avec la graine reconstruit les groupes et les
-noms (le torrent se rattache ensuite par magnet au swarm). Chiffré →
-ne fuit rien ; `relpath_len = 0` = secours absent (chemin > ~4 Kio,
-documenté — le format reste opérationnel via l'`OBM`).
+**Pourquoi un second sceau `scan_ct`** (revue externe 2, circularité
+débusquée) : `K_file = HKDF(K_store, "file/"‖infohash‖"/"‖relpath)`
+exige déjà le couple `(infohash, relpath)` — un en-tête scellé sous
+`K_file` qui contiendrait ce couple serait **illisible lors du
+balayage de secours** : circularité. `scan_ct` la brise : scellé sous
+`K_scan` (dérivée de la seule graine), il s'ouvre aveuglément sur
+chaque `.obd` → extraction de `(infohash, relpath)` → dérivation de
+`K_file` → ouverture de `hdr_ct`. Si `manifest.obm` *et* `.bak`
+sont perdus, ce scan O(N) reconstruit les groupes et les noms ; le
+torrent se rattache ensuite par magnet au swarm. Sans la graine,
+`scan_ct` est indiscernable de bruit — zéro marqueur. `relpath_len
+= 0` = secours absent (chemin > capacité du slot, documenté — le
+format reste opérationnel via l'`OBM`).
 
 **Nonce aléatoire par écriture, jamais dérivé de l'index** — point
 d'audit bloquant de la revue externe : `pwrite_all` *réécrit* des
@@ -237,12 +251,16 @@ signature statique exploitable (reste l'entropie — §4).
   ~2×16 Kio par bloc au lieu de ~64+ Kio, et soulage les petites
   écritures aléatoires des clés USB.
 - **RMW sérialisée par chunk — exigence de correction de
-  concurrence** (revue externe 2) : `pwrite_all` est appelé
-  concurrentiellement (blocs de pairs parallèles) ; deux RMW du même
-  chunk entrelacées perdraient silencieusement un bloc → échec de
-  hash, re-téléchargement en boucle. La factory verrouille par
-  (fichier, index de chunk) — verrous rayés en mémoire, pas de lock
-  global.
+  concurrence** (revue externe 2) : le verrou de librqbit est *par
+  pièce* (`live/mod.rs`), or un chunk `OBD` chevauche deux pièces
+  (fichiers non alignés) → deux `pwrite_all` concurrents atteignent
+  le même chunk ; deux RMW entrelacées perdraient silencieusement un
+  bloc → échec de hash, re-téléchargement en boucle. Idem en lecture :
+  `check_piece`/envoi pair lisant un chunk pendant sa RMW saisit un
+  ciphertext déchiré → tag invalide parasite. La factory pose des
+  **verrous rayés `RwLock` par (fichier, index)** : `pread_exact` en
+  lecture partagée (zéro contention entre lectures), `pwrite_all` en
+  écriture exclusive pendant sa RMW — pas de lock global.
 - Présence d'un chunk : slot d'écriture fixe
   `HDR_SLOT + i × (chunk_size+28)` ; un slot **entièrement nul** =
   chunk jamais écrit → zéros en lecture (un slot nul ne peut pas être
@@ -255,11 +273,13 @@ signature statique exploitable (reste l'entropie — §4).
   fastresume rqbit (`.bitv`) exactement comme sur la zone publique.
 - **Sparse : honnêteté FS** (revue externe 2) — le fichier ne croît
   que des chunks écrits, mais « creux non alloué » n'existe que sur
-  NTFS/ext4/APFS ; **FAT32/exFAT remplissent physiquement** : écrire
-  à l'offset 500 Mo alloue et zéroifie tout l'amont — taille pleine
-  immédiate et latence d'extension. La sémantique « slot nul →
-  zéros » reste exacte partout ; l'économie d'espace est un bonus
-  réservé aux FS sparse-capables, jamais une promesse.
+  ext4/APFS et NTFS **marqué** (`FSCTL_SET_SPARSE` — sans marquage,
+  un `pwrite` lointain remplit physiquement sous Windows aussi) ;
+  **FAT32/exFAT remplissent physiquement** : écrire à l'offset
+  500 Mo alloue et zéroifie tout l'amont — taille pleine immédiate
+  et latence d'extension. La sémantique « slot nul → zéros » reste
+  exacte partout ; l'économie d'espace est un bonus réservé aux FS
+  sparse-capables, jamais une promesse.
 - Pas de versionnement anti-rollback par chunk en v1 (un attaquant qui
   réécrit le disque peut déjà supprimer les fichiers — la menace visée
   est la lecture, pas la réécriture fine ; le tag AEAD détecte toute
@@ -334,9 +354,10 @@ privé. Pour les lignes `storage_area = 'private'` :
 - **résilience du manifest** (revue externe 2) : SPOF assumé et
   amorti — la réécriture conserve la copie précédente en
   `manifest.obm.bak` (rotation tmp → `.bak` → courant) ; en double
-  perte, l'en-tête scellé de chaque `.obd` porte `infohash‖relpath`,
-  permettant de reconstruire le catalogue par balayage avec la
-  graine (les métadonnées `.torrent` se rattachent via magnet) ;
+  perte, le sceau `scan_ct` de chaque `.obd` livre `infohash‖relpath`
+  sous `K_scan`, permettant de reconstruire le catalogue par balayage
+  avec la seule graine (les métadonnées `.torrent` se rattachent via
+  magnet) ;
 - **orphelins** : au montage de la zone privée (post-unlock), scan
   de cohérence — fichiers `.obd`/`<hmac>.bitv` absents du manifest →
   rapport + purge proposée (un crash pendant création/suppression
@@ -422,11 +443,12 @@ struct de config (AGENTS.md).
   réel serait un faux sentiment de sécurité). Non bloquant par
   défaut : l'utilisateur garde le choix — le bandeau est le
   garde-fou, pas le verrou.
-- **`noexec` sur média amovible** (revue externe 2) : Linux/macOS
-  montent souvent les volumes amovibles en `noexec` — les binaires du
-  bundle ne démarrent pas depuis la clé. Documenté dans le guide
-  nomade (remontage `exec`, `bash <chemin>`, ou copie locale des
-  binaires : `state/`+`data/` restent sur la clé).
+- **`noexec` sur média amovible** (revue externe 2, nuancé) :
+  udisks2 et macOS montent en `exec` par défaut, mais des fstab
+  durcis et certaines distributions posent `noexec` sur les volumes
+  amovibles — les binaires du bundle ne démarrent alors pas depuis
+  la clé. Documenté dans le guide nomade (remontage `exec`, ou copie
+  locale des binaires : `state/`+`data/` restent sur la clé).
 
 ## Alternatives rejetées
 

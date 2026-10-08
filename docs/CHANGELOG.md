@@ -73,6 +73,16 @@ en haut.
   `move_on_completion` privé = rename physique (même volume, O(1)) ;
   `.bitv` invité court-circuité en `NonPersistent` (la purge
   `.guest/` ne couvrirait pas `state/rqbit/`).
+- **Revue externe 2 — contre-relecture** : circularité du secours
+  corrigée — le couple `infohash‖relpath` migre de `hdr_ct` vers un
+  sceau de découverte `scan_ct` sous `K_scan = HKDF(K_store,"scan")`
+  (ouvrable avec la graine seule, sinon le balayage était aveugle) ;
+  clairs bourrés à taille fixe avant scellement → ciphertexts à
+  longueur constante (parsing univoque, zéro fuite de longueur) ;
+  verrous rayés promus en `RwLock` couvrant `pread_exact` (lecture
+  déchirée pendant une RMW) ; `noexec` nuancé (udisks2/macOS montent
+  en `exec`, fstab durcis concernés) et sparse NTFS précisé
+  (`FSCTL_SET_SPARSE`).
 - Plan : Phase 11, étapes 57-63 — `docs/plans/roadmap_adr0018.md`.
   Aucun code engagé ; l'ADR passera « Acceptée » après le banc
   `bench_portable.ps1`.
