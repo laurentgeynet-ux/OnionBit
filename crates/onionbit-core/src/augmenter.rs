@@ -62,9 +62,18 @@ pub struct Augmenter {
 
 impl Augmenter {
     /// Cree l'augmenter pour `state_dir` et recharge le vocabulaire.
+    /// ADR-0018 etape 58 : les fichiers vivent sous `state/cache/` —
+    /// `state_cache_file` garde la lecture du plat historique tant
+    /// que la migration de layout n'a pas tourne.
     pub fn new(state_dir: &Path) -> Self {
-        let model_file = state_dir.join(MODEL_FILE);
-        let cache_file = state_dir.join(CACHE_FILE);
+        let roots = crate::paths::PathRoots::for_state_dir(state_dir);
+        let model_file = roots.state_cache_file(MODEL_FILE);
+        let cache_file = roots.state_cache_file(CACHE_FILE);
+        // Les ecritures (`study`, `flush_cache`) sont best-effort —
+        // le dossier doit exister pour qu'elles reussissent.
+        if let Some(dir) = model_file.parent().or(cache_file.parent()) {
+            let _ = std::fs::create_dir_all(dir);
+        }
         let vocab = std::fs::read_to_string(&model_file)
             .ok()
             .and_then(|s| serde_json::from_str::<HashMap<String, u64>>(&s).ok())

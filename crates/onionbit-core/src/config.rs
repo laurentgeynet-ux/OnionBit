@@ -204,9 +204,13 @@ impl CoreConfig {
     /// Configuration isolee pour les tests : aucun trafic sortant,
     /// repertoire temporaire, base en memoire geree par l'appelant.
     pub fn offline(state_dir: PathBuf) -> Self {
+        // ADR-0018 : la zone publique `data/public/downloads` est le
+        // defaut — sous un `state_dir` de test `data/` vit dedans
+        // (`PathRoots::for_state_dir`).
+        let downloads = crate::paths::PathRoots::for_state_dir(&state_dir).public_downloads();
         Self {
-            engine: onionbit_bittorrent::EngineConfig::offline(state_dir.join("downloads")),
-            downloads_dir: state_dir.join("downloads"),
+            engine: onionbit_bittorrent::EngineConfig::offline(downloads.clone()),
+            downloads_dir: downloads,
             state_dir,
             db_filename: "onionbit.db".into(),
             progress_interval_ms: DEFAULT_PROGRESS_INTERVAL_MS,

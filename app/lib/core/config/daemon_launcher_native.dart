@@ -56,19 +56,29 @@ Future<AppConfig?> ensureDaemonRunning() async {
     return null;
   }
   final exeDir = exe.parent;
-  final stateDir = Directory('${exeDir.path}${Platform.pathSeparator}state');
+  // ADR-0018 : dans un bundle portable (`OnionBit.portable` à un
+  // ancêtre de l'exe, layout `<root>/<os>/…`), le daemon résout
+  // lui-même `<root>/state` — un `--state-dir <exe>/state` viserait
+  // `<root>/<os>/state` à tort. Hors bundle : la convention
+  // `<exe>/state` historique est conservée.
+  final portable = _portableRoot(exeDir);
+  final args = portable != null
+      ? const ['--first-run-gate']
+      : [
+          '--state-dir',
+          '${exeDir.path}${Platform.pathSeparator}state',
+          '--first-run-gate',
+        ];
 
   try {
     // Détaché : le daemon survit à la fermeture de l'UI (il vit dans
     // sa propre icône systray depuis l'étape 29). `--first-run-gate`
     // (ADR-0016) : un state_dir vierge reste en `identity_pending`
     // — aucune clé jetable n'est créée avant le choix utilisateur.
-    uiLog(
-      'spawn ${exe.path} --state-dir ${stateDir.path} --first-run-gate',
-    );
+    uiLog('spawn ${exe.path} ${args.join(' ')}');
     await Process.start(
       exe.path,
-      ['--state-dir', stateDir.path, '--first-run-gate'],
+      args,
       mode: ProcessStartMode.detached,
       workingDirectory: exeDir.path,
     );
@@ -91,6 +101,22 @@ Future<AppConfig?> ensureDaemonRunning() async {
   }
   uiLog('timeout ${_kStartupTimeout.inSeconds}s sans reponse du daemon');
   return null;
+}
+
+/// Racine du bundle portable si `OnionBit.portable` marque un ancêtre
+/// de `dir` (miroir de `paths::find_portable_root` du daemon —
+/// ADR-0018). `null` hors bundle portable.
+Directory? _portableRoot(Directory dir) {
+  var d = dir;
+  while (true) {
+    if (File('${d.path}${Platform.pathSeparator}OnionBit.portable')
+        .existsSync()) {
+      return d;
+    }
+    final parent = d.parent;
+    if (parent.path == d.path) return null;
+    d = parent;
+  }
 }
 
 /// `onionbit-daemon[.exe]` voisin de l'exécutable de l'UI

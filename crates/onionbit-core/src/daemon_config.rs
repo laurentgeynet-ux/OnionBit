@@ -1450,9 +1450,11 @@ impl DaemonConfig {
         let dd = &self.libtorrent.download_defaults;
         // ADR-0018 : `saveas` persistee peut etre un spec `@root/…`
         // (resolu ici) ou un absolu externe conserve tel quel ;
-        // vide = defaut `<state_dir>/downloads` historique.
+        // vide = defaut `data/public/downloads` du layout (le
+        // `<state_dir>/downloads` historique est migre physiquement
+        // par `migrate_legacy_tree` au boot).
         let downloads_dir = if dd.saveas.is_empty() {
-            state_dir.join("downloads")
+            roots.public_downloads()
         } else {
             roots.resolve_persisted(&dd.saveas)
         };

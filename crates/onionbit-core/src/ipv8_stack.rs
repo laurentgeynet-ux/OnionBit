@@ -2043,7 +2043,13 @@ impl Ipv8Stack {
             // ADR-0017 : saute en stealth — ces adresses ne sont pas
             // des ponts connus, le transport dropperait chaque envoi.
             if !stealth {
-                for (pk, addr, flags) in load_exitnode_cache(&state_dir.join(EXITNODE_CACHE_FILE)) {
+                // ADR-0018 etape 58 : le cache vit sous `state/cache/`
+                // (fallback lecture sur le plat historique tant que
+                // la migration de layout n'a pas tourne).
+                for (pk, addr, flags) in load_exitnode_cache(
+                    &crate::paths::PathRoots::for_state_dir(state_dir)
+                        .state_cache_file(EXITNODE_CACHE_FILE),
+                ) {
                     t.register_exit_peer(&pk, addr, flags);
                     let t = t.clone();
                     tokio::spawn(async move {
@@ -3068,7 +3074,12 @@ impl Ipv8Stack {
         // `exitnode_cache` Python : persiste les noeuds de sortie
         // connus (re-pinges au prochain demarrage).
         if let Some(t) = &self.tunnel {
-            save_exitnode_cache(t, &self.state_dir.join(EXITNODE_CACHE_FILE));
+            save_exitnode_cache(
+                t,
+                &crate::paths::PathRoots::for_state_dir(&self.state_dir)
+                    .state_cache()
+                    .join(EXITNODE_CACHE_FILE),
+            );
         }
         let lanes: Vec<AnonLane> = self
             .anon_lanes
@@ -3616,11 +3627,18 @@ pub fn restore_identity_key(
         // Ordre fail-safe : la cle d'abord, la graine ensuite — un
         // crash entre les deux laisse une install seedee coherente
         // (le keypair sera re-derive identique au prochain boot).
-        write_identity_key(&state_dir.join(IPV8_KEY_FILE), key_bytes)?;
+        // ADR-0018 : les fichiers d'identite vivent sous
+        // `state/identity/` depuis l'etape 58 (compat lecture par
+        // `identity_dir` tant que la migration n'a pas tourne).
+        let dir = identity::identity_dir(state_dir);
+        write_identity_key(&dir.join(IPV8_KEY_FILE), key_bytes)?;
         std::fs::remove_file(&seed_file)?;
         return Ok(());
     }
-    write_identity_key(&state_dir.join(IPV8_KEY_FILE), key_bytes)
+    write_identity_key(
+        &identity::identity_dir(state_dir).join(IPV8_KEY_FILE),
+        key_bytes,
+    )
 }
 
 #[cfg(test)]

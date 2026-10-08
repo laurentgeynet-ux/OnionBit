@@ -330,6 +330,15 @@ impl CoreSession {
         first_run_gate: bool,
     ) -> Result<Self> {
         std::fs::create_dir_all(&config.state_dir)?;
+        // ADR-0018 etape 58 : arborescence cible + migration physique
+        // legacy (identite → `state/identity/`, donnees → `data/public/…`)
+        // AVANT la detection identitaire — `identity_dir` depend de
+        // l'emplacement effectivement migre.
+        let roots = crate::paths::PathRoots::for_state_dir(&config.state_dir);
+        if let Err(e) = roots.ensure_tree() {
+            tracing::warn!(error = %e, "creation de l'arborescence data/ incomplete");
+        }
+        roots.migrate_legacy_tree();
         // ADR-0017 : le refus `stealth × ipv8` est verifie AVANT la
         // creation du moteur — une config hybride ne doit pas meme
         // ouvrir une socket d'ecoute BitTorrent.
@@ -543,6 +552,10 @@ impl CoreSession {
             ));
         }
         let stack_enabled = config.ipv8.enabled || config.ipv8.stealth.is_some();
+        // Meme bootstrap d'arborescence qu'en `start_gated` (ADR-0018).
+        let roots = crate::paths::PathRoots::for_state_dir(&config.state_dir);
+        let _ = roots.ensure_tree();
+        roots.migrate_legacy_tree();
         let material = if stack_enabled {
             Some(crate::identity::load_or_generate(&config.state_dir)?)
         } else {

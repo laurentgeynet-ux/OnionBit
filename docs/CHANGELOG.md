@@ -3,6 +3,42 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## ADR-0018 étape 58 : arborescence cible + marqueur portable + packaging multi-OS (2026-10-09)
+
+- **Layout physique créé au boot** (`PathRoots::ensure_tree` +
+  `migrate_legacy_tree`, appelés en tête de `start_gated`/
+  `start_offline` avant toute détection identitaire) :
+  `state/{identity,logs,cache,rqbit}` +
+  `data/{public,private}/{temp,downloads,torrents}` +
+  `private/{manifest,rqbit}`.
+- **Migration physique par rename** (intra-volume, jamais de copie) :
+  fichiers d'identité plats → `state/identity/` (`identity_dir`
+  conserve la lecture des deux emplacements), `<state>/downloads` →
+  `data/public/downloads`, `<state>/torrents` → `data/public/torrents`
+  (fusion par enfant, la destination prévaut en conflit), caches
+  `exitnodes.txt`/`_m_torrent_titles.*` → `state/cache/`, journaux
+  plats `onionbit.log*` → `state/logs/` — compteurs agrégés en `info`,
+  chaque conflit en `warn`.
+- **Nouveaux défauts** : `saveas` vide → `data/public/downloads` ;
+  `ipv8_stack`/`augmenter` lisent/écrivent sous `state/cache/`
+  (fallback lecture plat tant que la migration n'a pas tourné).
+- **Marqueur `OnionBit.portable`** : `resolve_state_dir` remonte les
+  ancêtres de `<exe>` (livré à l'étape 57) ; le launcher Flutter
+  **omet `--state-dir`** quand le marqueur est trouvé (sinon
+  `<exe>/state` viserait `<root>/<os>/state`) ; le résolveur d'API
+  couvre déjà `<root>/state` via le candidat `<exe>/../state`.
+- **Packaging** : `build_dist.ps1` assemble `dist/OnionBit/` racine
+  portable — `windows/` (daemon+CLI+UI Flutter+web), marqueur,
+  `state/`/`data/` jamais effacés, migration douce du `dist/state`
+  plat historique ; le zip de release reproduit la racine portable
+  (`<os>/` + marqueur + `state`/`data` vides). `build_release.ps1`
+  dépose chaque cible dans `dist/OnionBit/<os>/` (windows/linux/
+  macos/android) — une clé embarque tous les OS sur le même état.
+- Tests : `ensure_tree`, déplacement identité+données+caches+logs,
+  conflit destination préservée, compat lecture `identity_dir`/
+  `state_cache_file`, marqueur depuis `<root>/windows/` — 106 tests
+  `onionbit-core` verts, clippy/fmt/flutter analyze propres.
+
 ## ADR-0018 étape 57 : résolveur de chemins portables + migration des persistés (2026-10-09)
 
 - **`onionbit-core::paths`** (nouveau module) : `PathRoots { state,

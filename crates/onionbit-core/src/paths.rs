@@ -186,6 +186,95 @@ impl PathRoots {
         self.private.join("downloads")
     }
 
+    /// `data/private/torrents` — metainfo privee sauvegardee.
+    pub fn private_torrents(&self) -> PathBuf {
+        self.private.join("torrents")
+    }
+
+    /// `data/private/manifest` — `manifest.obm` (catalogue prive
+    /// scelle, ADR-0018 etape 62).
+    pub fn private_manifest(&self) -> PathBuf {
+        self.private.join("manifest")
+    }
+
+    /// `data/private/rqbit` — persistance fastresume de la zone
+    /// privee (`<hmac>.bitv` opaques, etape 61).
+    pub fn private_rqbit(&self) -> PathBuf {
+        self.private.join("rqbit")
+    }
+
+    /// `data/private/temp/.guest` — zone ephemere des sessions
+    /// invitees, purgee a chaque demarrage (etape 62).
+    pub fn private_guest_temp(&self) -> PathBuf {
+        self.private_temp().join(".guest")
+    }
+
+    /// `state/identity` — graine, keypair IPv8, cle de pont
+    /// (etape 58 : les fichiers identitaires plats sont migres ici).
+    pub fn state_identity(&self) -> PathBuf {
+        self.state.join("identity")
+    }
+
+    /// `state/cache` — caches regenerables (`exitnodes.txt`,
+    /// `_m_torrent_titles.*`, caches de services).
+    pub fn state_cache(&self) -> PathBuf {
+        self.state.join("cache")
+    }
+
+    /// Lecture compat d'un fichier deplace vers `state/cache/` par le
+    /// layout etape 58 : `state/cache/<name>` si present, sinon le
+    /// plat historique `state/<name>` (migration pas encore jouee).
+    /// Pour l'ecriture, utiliser `state_cache().join(name)` — jamais
+    /// le plat.
+    pub fn state_cache_file(&self, name: &str) -> PathBuf {
+        let flat = self.state.join(name);
+        let cached = self.state_cache().join(name);
+        // Le plat historique ne gagne que s'il existe vraiment
+        // (migration pas encore jouee) — sinon tout nouveau fichier
+        // nait sous `state/cache/`.
+        if cached.exists() || !flat.exists() {
+            cached
+        } else {
+            flat
+        }
+    }
+
+    /// `state/rqbit` — persistance fastresume publique.
+    pub fn state_rqbit(&self) -> PathBuf {
+        self.state.join("rqbit")
+    }
+
+    /// `state/logs` — journaux du daemon.
+    pub fn state_logs(&self) -> PathBuf {
+        self.state.join("logs")
+    }
+
+    /// Cree l'arborescence cible ADR-0018 — idempotent, appele a
+    /// chaque boot avant toute resolution identitaire.
+    ///
+    /// Les repertoires prives sont crees vides : leur existence n'est
+    /// pas un secret (le contenu est chiffre, pas la presence — voir
+    /// l'ADR pour les limites du deni plausible).
+    pub fn ensure_tree(&self) -> std::io::Result<()> {
+        for d in [
+            self.state_identity(),
+            self.state_cache(),
+            self.state_rqbit(),
+            self.state_logs(),
+            self.public_temp(),
+            self.public_downloads(),
+            self.public_torrents(),
+            self.private_temp(),
+            self.private_downloads(),
+            self.private_torrents(),
+            self.private_manifest(),
+            self.private_rqbit(),
+        ] {
+            std::fs::create_dir_all(&d)?;
+        }
+        Ok(())
+    }
+
     /// Repertoire de la racine.
     fn dir_of(&self, root: PortableRoot) -> &Path {
         match root {
@@ -270,6 +359,68 @@ impl PathRoots {
         None
     }
 
+    /// Deplace les artefacts de l'arborescence historique
+    /// (`state_dir` plat, pre-ADR-0018) vers le layout cible.
+    /// Idempotent et best-effort : chaque echec est un `warn`, jamais
+    /// un refus de boot ; un residu non deplace reste lisible par les
+    /// fallbacks de compat (`identity_dir`, lectures legacy).
+    ///
+    /// - fichiers d'identite plats → `state/identity/` ;
+    /// - `<state>/downloads` → `data/public/downloads` ;
+    /// - `<state>/torrents` → `data/public/torrents` ;
+    /// - caches (`exitnodes.txt`, `_m_torrent_titles.*`) →
+    ///   `state/cache/` ;
+    /// - journaux plats `onionbit.log*` → `state/logs/`.
+    ///
+    /// Tout se fait par `rename` intra-volume (`data/` est voisine
+    /// ou fille de `state/` — jamais de copie de masse). Une entree
+    /// en conflit avec la destination est conservee a sa place et
+    /// tracee : la destination prevaut toujours.
+    pub fn migrate_legacy_tree(&self) -> LayoutMigration {
+        let mut rep = LayoutMigration::default();
+        // 1. Fichiers d'identite plats → state/identity/.
+        let id_dir = self.state_identity();
+        for name in IDENTITY_FILES {
+            move_file(&self.state.join(name), &id_dir.join(name), &mut rep);
+        }
+        // 2. Donnees historiques : <state>/downloads et
+        //    <state>/torrents quittent `state/` pour la zone publique
+        //    (les chemins persistes pointant dessus sont deja
+        //    reecrits `@public/…` par `migrate_persisted`).
+        move_dir_tree(
+            &self.state.join("downloads"),
+            &self.public_downloads(),
+            &mut rep,
+        );
+        move_dir_tree(
+            &self.state.join("torrents"),
+            &self.public_torrents(),
+            &mut rep,
+        );
+        // 3. Caches regenerables → state/cache/.
+        let cache = self.state_cache();
+        for name in [
+            "exitnodes.txt",
+            "_m_torrent_titles.model",
+            "_m_torrent_titles.cache.txt",
+        ] {
+            move_file(&self.state.join(name), &cache.join(name), &mut rep);
+        }
+        // 4. Journaux plats historiques → state/logs/.
+        let logs = self.state_logs();
+        if let Ok(rd) = std::fs::read_dir(&self.state) {
+            for entry in rd.flatten() {
+                let name = entry.file_name();
+                let Some(s) = name.to_str() else { continue };
+                if entry.file_type().is_ok_and(|t| t.is_file()) && s.starts_with("onionbit.log") {
+                    move_file(&entry.path(), &logs.join(&name), &mut rep);
+                }
+            }
+        }
+        rep.log();
+        rep
+    }
+
     /// Migration d'une valeur persistee vers la grammaire portable
     /// (etape 57) — idempotente, reappliquee a chaque chargement.
     ///
@@ -351,6 +502,120 @@ fn rooted(root: PortableRoot, rel: &[String]) -> String {
     } else {
         format!("{}/{}", root.token(), rel.join("/"))
     }
+}
+
+/// Compte rendu de [`PathRoots::migrate_legacy_tree`] — compteurs
+/// agreges (un seul `info` quand quelque chose a bouge ; chaque
+/// echec individuel est un `warn` immediat).
+#[derive(Debug, Default)]
+pub struct LayoutMigration {
+    /// Entrees effectivement deplacees.
+    moved: usize,
+    /// Entrees conservees faute de pouvoir ecraser la destination
+    /// ou de renommer (a resoudre a la main — rien n'est perdu).
+    skipped: usize,
+}
+
+impl LayoutMigration {
+    /// `true` si la migration a ete un no-op complet.
+    pub fn is_clean(&self) -> bool {
+        self.moved == 0 && self.skipped == 0
+    }
+
+    fn log(&self) {
+        if !self.is_clean() {
+            tracing::info!(
+                moved = self.moved,
+                skipped = self.skipped,
+                "arborescence legacy migree vers le layout ADR-0018"
+            );
+        }
+    }
+}
+
+/// `rename` d'un fichier legacy vers sa cible — no-op si la source
+/// est absente ; la destination existante prevaut (`skipped`).
+fn move_file(from: &Path, to: &Path, rep: &mut LayoutMigration) {
+    if !from.is_file() {
+        return;
+    }
+    if to.exists() {
+        rep.skipped += 1;
+        tracing::warn!(
+            from = %from.display(),
+            to = %to.display(),
+            "migration layout : destination deja presente — source conservee"
+        );
+        return;
+    }
+    if let Some(parent) = to.parent() {
+        if let Err(e) = std::fs::create_dir_all(parent) {
+            rep.skipped += 1;
+            tracing::warn!(error = %e, dir = %parent.display(), "migration layout : mkdir impossible");
+            return;
+        }
+    }
+    match std::fs::rename(from, to) {
+        Ok(()) => rep.moved += 1,
+        Err(e) => {
+            rep.skipped += 1;
+            tracing::warn!(
+                error = %e,
+                from = %from.display(),
+                to = %to.display(),
+                "migration layout : rename impossible — source conservee"
+            );
+        }
+    }
+}
+
+/// Deplace un dossier legacy vers sa cible : `rename` du dossier
+/// entier quand la destination n'existe pas ; sinon fusion par
+/// enfant (chaque entree non conflictuelle bougee, le reste
+/// conserve + `warn`). Le dossier source vide est retire.
+fn move_dir_tree(from: &Path, to: &Path, rep: &mut LayoutMigration) {
+    if !from.is_dir() {
+        return;
+    }
+    if !to.exists() {
+        if let Some(parent) = to.parent() {
+            if let Err(e) = std::fs::create_dir_all(parent) {
+                rep.skipped += 1;
+                tracing::warn!(error = %e, dir = %parent.display(), "migration layout : mkdir impossible");
+                return;
+            }
+        }
+        match std::fs::rename(from, to) {
+            Ok(()) => {
+                rep.moved += 1;
+                return;
+            }
+            Err(e) => {
+                rep.skipped += 1;
+                tracing::warn!(
+                    error = %e,
+                    from = %from.display(),
+                    to = %to.display(),
+                    "migration layout : rename du dossier impossible — source conservee"
+                );
+                return;
+            }
+        }
+    }
+    // Fusion : les enfants sans conflit rejoignent la destination.
+    if let Ok(rd) = std::fs::read_dir(from) {
+        for entry in rd.flatten() {
+            let dest = to.join(entry.file_name());
+            if entry.file_type().is_ok_and(|t| t.is_dir()) {
+                move_dir_tree(&entry.path(), &dest, rep);
+            } else {
+                move_file(&entry.path(), &dest, rep);
+            }
+        }
+    }
+    // Vide si tout a ete fusionne — `remove_dir` echoue sinon
+    // (restes conflictuels conserves, voulu).
+    let _ = std::fs::remove_dir(from);
 }
 
 /// Cherche `OnionBit.portable` en remontant depuis le dossier de
@@ -638,6 +903,103 @@ mod tests {
         assert_eq!(
             r.resolve_input(Path::new("rel/x")).unwrap(),
             PathBuf::from("rel/x")
+        );
+    }
+
+    #[test]
+    fn ensure_tree_cree_le_layout() {
+        let tmp = tempfile::tempdir().unwrap();
+        let r = PathRoots::for_state_dir(&tmp.path().join("state"));
+        r.ensure_tree().unwrap();
+        for d in [
+            r.state_identity(),
+            r.state_cache(),
+            r.state_rqbit(),
+            r.state_logs(),
+            r.public_temp(),
+            r.public_downloads(),
+            r.public_torrents(),
+            r.private_temp(),
+            r.private_downloads(),
+            r.private_manifest(),
+            r.private_rqbit(),
+        ] {
+            assert!(d.is_dir(), "dossier attendu : {}", d.display());
+        }
+    }
+
+    #[test]
+    fn migrate_legacy_tree_deplace_identite_et_donnees() {
+        let tmp = tempfile::tempdir().unwrap();
+        // Layout dev : `data/` sous `state_dir` (le nom n'est pas
+        // « state ») — la migration doit tenir dans les deux layouts.
+        let state = tmp.path().join(".onionbit");
+        let r = PathRoots::for_state_dir(&state);
+        std::fs::create_dir_all(&state).unwrap();
+        std::fs::write(state.join("identity_seed.bin"), [7u8; 32]).unwrap();
+        std::fs::write(state.join("ipv8_keypair.bin"), b"key").unwrap();
+        std::fs::write(state.join("exitnodes.txt"), b"nodes").unwrap();
+        std::fs::write(state.join("onionbit.log.2"), b"vieux log").unwrap();
+        std::fs::create_dir_all(state.join("downloads").join("film")).unwrap();
+        std::fs::write(state.join("downloads").join("film").join("a.mkv"), b"x").unwrap();
+
+        let rep = r.migrate_legacy_tree();
+        assert!(rep.moved >= 5);
+        assert_eq!(rep.skipped, 0);
+        // Identite sous state/identity/, caches sous state/cache/,
+        // donnees sous data/public/.
+        assert!(state.join("identity/identity_seed.bin").is_file());
+        assert!(state.join("identity/ipv8_keypair.bin").is_file());
+        assert!(state.join("cache/exitnodes.txt").is_file());
+        assert!(state.join("logs/onionbit.log.2").is_file());
+        assert!(r.public_downloads().join("film/a.mkv").is_file());
+        assert!(!state.join("downloads").exists());
+        // Idempotent : second passage propre.
+        assert!(r.migrate_legacy_tree().is_clean());
+    }
+
+    #[test]
+    fn migrate_legacy_tree_conflit_destination_preserve() {
+        let tmp = tempfile::tempdir().unwrap();
+        let state = tmp.path().join(".onionbit");
+        let r = PathRoots::for_state_dir(&state);
+        r.ensure_tree().unwrap();
+        // Conflit : meme nom dans les deux dossiers — la destination
+        // prevaut, la source est conservee et comptee `skipped`.
+        std::fs::create_dir_all(state.join("downloads")).unwrap();
+        std::fs::write(state.join("downloads").join("a.txt"), b"legacy").unwrap();
+        std::fs::write(r.public_downloads().join("a.txt"), b"nouveau").unwrap();
+        let rep = r.migrate_legacy_tree();
+        assert_eq!(rep.skipped, 1);
+        assert_eq!(
+            std::fs::read(r.public_downloads().join("a.txt")).unwrap(),
+            b"nouveau"
+        );
+        assert!(state.join("downloads/a.txt").is_file());
+    }
+
+    #[test]
+    fn state_cache_file_compat_lecture() {
+        let tmp = tempfile::tempdir().unwrap();
+        let state = tmp.path().join(".onionbit");
+        std::fs::create_dir_all(&state).unwrap();
+        let r = PathRoots::for_state_dir(&state);
+        // Fichier plat non migre : lecture legacy.
+        std::fs::write(state.join("exitnodes.txt"), b"n").unwrap();
+        assert_eq!(
+            r.state_cache_file("exitnodes.txt"),
+            state.join("exitnodes.txt")
+        );
+        // Fichier migre (ou absent des deux cotes) : `state/cache/`.
+        std::fs::create_dir_all(r.state_cache()).unwrap();
+        std::fs::write(r.state_cache().join("exitnodes.txt"), b"n2").unwrap();
+        assert_eq!(
+            r.state_cache_file("exitnodes.txt"),
+            r.state_cache().join("exitnodes.txt")
+        );
+        assert_eq!(
+            r.state_cache_file("jamais_vu.bin"),
+            r.state_cache().join("jamais_vu.bin")
         );
     }
 

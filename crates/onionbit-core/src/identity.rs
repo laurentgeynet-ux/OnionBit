@@ -32,6 +32,29 @@ pub const IPV8_KEY_FILE: &str = "ipv8_keypair.bin";
 /// Nom du fichier du secret statique du pont stealth (ADR-0017).
 pub const STEALTH_BRIDGE_KEY_FILE: &str = "stealth_bridge.key";
 
+/// Repertoire des fichiers d'identite (ADR-0018, etape 58) :
+/// `state/identity/` dans le layout cible, `state_dir` plat tant que
+/// la migration legacy n'a pas deplace les fichiers.
+///
+/// Regle de compat lecture — la destination gagne des qu'elle
+/// contient la graine ou le keypair ; sinon le plat historique gagne
+/// s'il en contient un ; a defaut (install vierge) le sous-dossier
+/// est choisi quand le layout l'a deja cree au boot.
+pub fn identity_dir(state_dir: &Path) -> PathBuf {
+    let dir = state_dir.join("identity");
+    if dir.join(IDENTITY_SEED_FILE).exists() || dir.join(IPV8_KEY_FILE).exists() {
+        return dir;
+    }
+    if state_dir.join(IDENTITY_SEED_FILE).exists() || state_dir.join(IPV8_KEY_FILE).exists() {
+        return state_dir.to_path_buf();
+    }
+    if dir.is_dir() {
+        dir
+    } else {
+        state_dir.to_path_buf()
+    }
+}
+
 /// Etat de l'identite sur disque au boot.
 pub enum IdentityState {
     /// Graine racine presente en clair — derivation autoritaire.
@@ -100,8 +123,9 @@ pub enum IdentityKind {
 /// - keypair seul → `Legacy` (corrompu → `Err` via `from_bin`) ;
 /// - rien → `Absent`.
 pub fn detect(state_dir: &Path) -> Result<IdentityState> {
-    let seed_path = state_dir.join(IDENTITY_SEED_FILE);
-    let key_path = state_dir.join(IPV8_KEY_FILE);
+    let dir = identity_dir(state_dir);
+    let seed_path = dir.join(IDENTITY_SEED_FILE);
+    let key_path = dir.join(IPV8_KEY_FILE);
     if seed_path.exists() {
         let data = std::fs::read(&seed_path)?;
         if seedblob_is_sealed(&data) {
@@ -132,7 +156,7 @@ pub fn load_or_generate(state_dir: &Path) -> Result<IdentityMaterial> {
     match detect(state_dir)? {
         IdentityState::Seeded { seed } => {
             let keypair = seed.derive_keypair();
-            let key_path = state_dir.join(IPV8_KEY_FILE);
+            let key_path = identity_dir(state_dir).join(IPV8_KEY_FILE);
             let expected = keypair.to_bin();
             let divergent = std::fs::read(&key_path)
                 .map(|d| d != expected)
@@ -161,11 +185,12 @@ pub fn load_or_generate(state_dir: &Path) -> Result<IdentityMaterial> {
         }),
         IdentityState::Absent => {
             let seed = IdentitySeed::generate();
-            write_identity_key(&state_dir.join(IDENTITY_SEED_FILE), seed.as_bytes())?;
+            let dir = identity_dir(state_dir);
+            write_identity_key(&dir.join(IDENTITY_SEED_FILE), seed.as_bytes())?;
             let keypair = seed.derive_keypair();
-            write_identity_key(&state_dir.join(IPV8_KEY_FILE), &keypair.to_bin())?;
+            write_identity_key(&dir.join(IPV8_KEY_FILE), &keypair.to_bin())?;
             let bridge_sk = seed.derive_bridge_key();
-            write_identity_key(&state_dir.join(STEALTH_BRIDGE_KEY_FILE), &bridge_sk)?;
+            write_identity_key(&dir.join(STEALTH_BRIDGE_KEY_FILE), &bridge_sk)?;
             Ok(IdentityMaterial {
                 keypair,
                 bridge_sk,
@@ -189,12 +214,12 @@ pub fn load_or_generate(state_dir: &Path) -> Result<IdentityMaterial> {
 /// - `Legacy` : le fichier est maitre — jamais regenere
 ///   silencieusement ; absent → aleatoire (comportement actuel).
 pub fn load_or_create_bridge_sk(state_dir: &Path, kind: IdentityKind) -> Result<[u8; 32]> {
-    let path = state_dir.join(STEALTH_BRIDGE_KEY_FILE);
+    let dir = identity_dir(state_dir);
+    let path = dir.join(STEALTH_BRIDGE_KEY_FILE);
     match kind {
         IdentityKind::Seeded => {
-            let seed =
-                IdentitySeed::from_bytes(&std::fs::read(state_dir.join(IDENTITY_SEED_FILE))?)
-                    .map_err(|_| CoreError::InvalidState("identity_seed.bin corrompu"))?;
+            let seed = IdentitySeed::from_bytes(&std::fs::read(dir.join(IDENTITY_SEED_FILE))?)
+                .map_err(|_| CoreError::InvalidState("identity_seed.bin corrompu"))?;
             let derived = seed.derive_bridge_key();
             let divergent = std::fs::read(&path)
                 .map(|d| d.as_slice() != derived.as_slice())
@@ -232,7 +257,7 @@ pub fn material_from_seed(seed: &IdentitySeed) -> IdentityMaterial {
 
 /// Chemin du fichier graine (pour l'API `recovery_phrase`, etape 48b).
 pub fn seed_path(state_dir: &Path) -> PathBuf {
-    state_dir.join(IDENTITY_SEED_FILE)
+    identity_dir(state_dir).join(IDENTITY_SEED_FILE)
 }
 
 /// Installe une graine de restauration (`POST /api/identity/restore`
@@ -245,10 +270,11 @@ pub fn seed_path(state_dir: &Path) -> PathBuf {
 /// la phrase de l'identite precedente, pas par le filesystem.
 pub fn restore_seed(state_dir: &Path, seed: &IdentitySeed) -> Result<()> {
     write_identity_key(&seed_path(state_dir), seed.as_bytes())?;
+    let dir = identity_dir(state_dir);
     let keypair = seed.derive_keypair();
-    write_identity_key(&state_dir.join(IPV8_KEY_FILE), &keypair.to_bin())?;
+    write_identity_key(&dir.join(IPV8_KEY_FILE), &keypair.to_bin())?;
     write_identity_key(
-        &state_dir.join(STEALTH_BRIDGE_KEY_FILE),
+        &dir.join(STEALTH_BRIDGE_KEY_FILE),
         &seed.derive_bridge_key(),
     )?;
     Ok(())
@@ -320,8 +346,9 @@ pub fn seal_seed(state_dir: &Path, password: &[u8]) -> Result<()> {
     // entre les deux laisse un etat encore coherent (caches regeneres
     // au prochain unlock).
     write_identity_key(&seed_path(state_dir), &blob)?;
-    let _ = std::fs::remove_file(state_dir.join(IPV8_KEY_FILE));
-    let _ = std::fs::remove_file(state_dir.join(STEALTH_BRIDGE_KEY_FILE));
+    let dir = identity_dir(state_dir);
+    let _ = std::fs::remove_file(dir.join(IPV8_KEY_FILE));
+    let _ = std::fs::remove_file(dir.join(STEALTH_BRIDGE_KEY_FILE));
     Ok(())
 }
 
@@ -332,17 +359,36 @@ pub fn unseal_seed(state_dir: &Path, password: &[u8]) -> Result<()> {
     let seed = open_sealed(state_dir, password)?;
     let material = IdentityMaterial::from_seed(&seed, false);
     write_identity_key(&seed_path(state_dir), seed.as_bytes())?;
-    write_identity_key(&state_dir.join(IPV8_KEY_FILE), &material.keypair.to_bin())?;
-    write_identity_key(
-        &state_dir.join(STEALTH_BRIDGE_KEY_FILE),
-        &material.bridge_sk,
-    )?;
+    let dir = identity_dir(state_dir);
+    write_identity_key(&dir.join(IPV8_KEY_FILE), &material.keypair.to_bin())?;
+    write_identity_key(&dir.join(STEALTH_BRIDGE_KEY_FILE), &material.bridge_sk)?;
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn identity_dir_compat_plate_et_migree() {
+        // ADR-0018 etape 58 : tant que `state/identity/` n'a pas de
+        // contenu, le plat historique fait foi ; sinon le sous-dossier.
+        let dir = tempfile::tempdir().unwrap();
+        let state = dir.path();
+        // Rien nulle part, layout non cree : plat (comportement
+        // historique des tests directs).
+        assert_eq!(identity_dir(state), state.to_path_buf());
+        // Layout cree (boot `ensure_tree`), toujours vierge :
+        // sous-dossier choisi pour les ecritures a venir.
+        std::fs::create_dir_all(state.join("identity")).unwrap();
+        assert_eq!(identity_dir(state), state.join("identity"));
+        // Fichier plat legacy non migre : le plat reprend la main.
+        std::fs::write(state.join(IPV8_KEY_FILE), b"k").unwrap();
+        assert_eq!(identity_dir(state), state.to_path_buf());
+        // Fichier migre dans le sous-dossier : il gagne.
+        std::fs::write(state.join("identity").join(IPV8_KEY_FILE), b"k2").unwrap();
+        assert_eq!(identity_dir(state), state.join("identity"));
+    }
 
     #[test]
     fn absent_puis_seeded_deterministe() {

@@ -9,7 +9,10 @@
 #   powershell ... -Target x86_64-unknown-linux-gnu        (cross, si toolchain installee)
 #   powershell ... -Target aarch64-pc-windows-msvc -SkipCheck
 #
-# Produit `dist/<target>/` contenant les binaires + manifest de build
+# Produit `dist/OnionBit/<os>/` (bundle portable ADR-0018 : le marqueur
+# `OnionBit.portable` a la racine de `OnionBit/` fait remonter state/ et
+# data/ hors des sous-dossiers d'OS — une cle USB peut embarquer
+# windows+linux+macos sur le meme etat) + manifest de build par cible
 # (version, commit, rustc, date UTC) — reproductibilite traceable.
 #
 # Cibles prevues (roadmap etape 17) :
@@ -53,8 +56,24 @@ try {
     $cargoProfile = if ($Profile -eq "release") { "release" } else { "dev" }
     cargo build --profile $cargoProfile -p onionbit-daemon -p onionbit-cli --target $Target
 
-    $out = Join-Path $root "dist\$Target"
+    # Sous-dossier d'OS du bundle portable (`<os>` du layout ADR-0018).
+    $osDir = switch -Wildcard ($Target) {
+        "*windows*" { "windows" }
+        "*linux*"   { "linux" }
+        "*darwin*"  { "macos" }
+        "*android*" { "android" }
+        default     { $Target }
+    }
+    $bundleRoot = Join-Path $root "dist\OnionBit"
+    $out = Join-Path $bundleRoot $osDir
     New-Item -ItemType Directory -Force -Path $out | Out-Null
+    # Marqueur portable : state/ + data/ a la racine du bundle.
+    $marker = Join-Path $bundleRoot "OnionBit.portable"
+    if (-not (Test-Path $marker)) {
+        "Bundle portable OnionBit (ADR-0018) : state/ et data/ vivent a cote de ce marqueur.`n" +
+        "Ne pas supprimer — deplacable tel quel sur cle USB ou disque externe." |
+            Set-Content $marker -Encoding UTF8
+    }
     $suffix = if ($Target -like "*windows*") { ".exe" } else { "" }
     $srcDir = if ($Profile -eq "release") { "release" } else { "debug" }
     $src = Join-Path $root "target\$Target\$srcDir"
@@ -64,6 +83,7 @@ try {
 
     $manifest = @{
         target   = $Target
+        os_dir   = $osDir
         profile  = $Profile
         version  = (cargo pkgid -p onionbit-daemon).Split("#")[-1]
         commit   = (git rev-parse --short HEAD 2>$null)
@@ -71,7 +91,7 @@ try {
         built_utc = (Get-Date).ToUniversalTime().ToString("o")
     }
     $manifest | ConvertTo-Json | Set-Content (Join-Path $out "build-manifest.json")
-    Write-Host "Build OK -> dist\$Target" -ForegroundColor Green
+    Write-Host "Build OK -> dist\OnionBit\$osDir" -ForegroundColor Green
     Get-ChildItem $out | Format-Table Name, Length
 } finally {
     Pop-Location
