@@ -28,6 +28,11 @@ en haut.
   mémoire uniquement, `database.enabled` forcé off, identité détruite
   à la fermeture. Inlinkabilité inter-sessions au prix d'être un
   inconnu permanent (budget `intro_seed`, jamais de réputation).
+- **Questions tranchées** : wordlists BIP39 anglaise + française
+  (décodeur essaie les deux, checksum lève l'ambiguïté) ;
+  `seed_acknowledged` insistant non bloquant ; pas de re-lock à
+  chaud ; `restore` en `ready` garde `restart_required` ; at-rest
+  proposé à la confirmation de la phrase.
 
 ## ADR-0017 : passage au statut « Acceptée » (2026-10-08)
 

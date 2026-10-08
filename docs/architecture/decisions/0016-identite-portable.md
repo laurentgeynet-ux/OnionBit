@@ -75,9 +75,11 @@ opt-in réservé au rôle client.** Multi-profils : toujours différé.
 
 ### Phrase de récupération BIP39
 
-- 32 o d'entropie → 264 bits → 24 mots. Wordlist anglaise officielle
-  BIP39 vendored (2048 mots, domaine public) — encode/decode maison
-  ~100 lignes, pas de crate externe.
+- 32 o d'entropie → 264 bits → 24 mots. Wordlists officielles BIP39
+  anglaise **et** française vendored (2×2048 mots, domaine public) —
+  encode/decode maison ~100 lignes, pas de crate externe ; listes
+  disjointes, le décodeur essaie les deux et le checksum lève
+  l'ambiguïté ; l'encodeur suit la locale de l'UI.
 - `GET /api/identity/recovery_phrase` derrière `api_key_auth` (le
   détenteur de `api.key` est déjà racine de confiance loopback) ;
   `POST /api/identity/restore` accepte la phrase en alternative au
