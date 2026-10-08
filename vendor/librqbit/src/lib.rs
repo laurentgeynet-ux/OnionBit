@@ -103,6 +103,13 @@ pub use torrent_state::{
 };
 pub use type_aliases::FileInfos;
 
+// OnionBit (ADR-0018) : surface publique pour `OpaqueBitVFactory` —
+// l'enrobage des `.bitv` prives en noms HMAC exige le trait et ses
+// types associes, inaccessibles tant que les modules restent prives.
+pub use bitv::BitV;
+pub use bitv_factory::{BitVFactory, NonPersistentBitVFactory};
+pub use type_aliases::BF;
+
 pub use buffers::*;
 pub use clone_to_owned::CloneToOwned;
 pub use librqbit_core::magnet::*;

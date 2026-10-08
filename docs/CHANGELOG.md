@@ -3,6 +3,65 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## ADR-0018 étape 61 : `PrivateStorageFactory` + `OpaqueBitV` + patch persistence vendored (2026-10-09)
+
+- **`onionbit-bittorrent::storage_private`** : `StorageFactory` +
+  `TorrentStorage` librqbit au-dessus du codec `OBD` —
+  `<root>/<groupe>/<nom>.obd` avec `<groupe>`/`<nom>` HMAC opaques
+  (`PrivateStoreKeys::{group_name,file_name}`), padding BitTorrent
+  jamais matérialisé, ouverture paresseuse (parité
+  `FilesystemStorage`), `init`/`pread_exact`/`pwrite_all`/
+  `pwrite_all_vectored`/`ensure_file_length`/`remove_file`/
+  `remove_directory_if_empty`/`take`/`on_piece_completed` complets et
+  synchrones comme le trait l'exige. **Verrous rayés `RwLock` par
+  (fichier, index%128)** : `pread` partagé, `pwrite` exclusif, ids
+  triés (pas de deadlock) — le verrou librqbit est par *pièce* et un
+  chunk `OBD` chevauche deux pièces (RMW entrelacées perdraient un
+  bloc). `ensure_file_length` met à jour l'en-tête `OBD` en exclusion
+  avec la matérialisation ; `remove_file` ferme le handle avant
+  `remove_file` (Windows) et est idempotent.
+- **`onionbit-bittorrent::bitv_opaque`** : `OpaqueBitV` (config
+  partagée — clés, set d'infohashes privés, drapeau invité, dossier
+  rqbit) + `OpaqueBitVFactory` (`BitVFactory` enrobé). `Hash(h)` privé
+  → `Hash(HMAC20(K_names,"bitv/"‖h))` : le `.bitv` s'écrit
+  `<hmac>.bitv` ; invité → `NonPersistentBitVFactory` ; verrouillé →
+  `load`/`clear` retombent sur le nom clair (purge du résidu
+  public→privé) mais `store_initial_check` **refuse** (écrire un
+  `.bitv` clair d'un privé serait la fuite à éviter). `Id` toujours
+  délégué (les privés ne sont pas dans `session.json`).
+- **Injection** : `AddDownloadOptions.storage_factory` →
+  `AddTorrentOptions.storage_factory` rqbit ;
+  `EngineConfig.opaque_bitv` → `SessionOptions.bitv_factory_wrapper`
+  (champ ajouté au vendored). `PrivateStorageFactory::
+  with_private_hashes(set)` inscrit l'infohash à `create` — avant le
+  `bitv.load` de `initializing` — donc le `.bitv` est opaque **dès le
+  départ**, y compris après un restart où le set mémoire est vide.
+  `BtEngine::remove` appelle `OpaqueBitV::clear_files` : supprime
+  `<hmac>.bitv` + le `<ih>.bitv` clair résiduel et retire le hash du
+  set (rqbit ne voit pas ces fichiers — privés absents de
+  `session.json`).
+- **Patch vendored** (`session_persistence/json.rs`, lignée ADR-0007) :
+  `update_db` **saute** les factories non-filesystem (`Ok(())` +
+  `debug!` au lieu de `bail!` qui faisait échouer `add_torrent`) —
+  `session.json` n'est pas l'autorité (`restore:false`,
+  `onionbit.db`+`OBM` font foi) et y inscrire le privé fuiterait
+  `<ih>.torrent`/`output_folder` en clair ; `delete()` idempotent.
+  `type_aliases::BF` et `bitv`/`bitv_factory` ré-exportés publiquement
+  pour le wrapper.
+- **`ObdFile` partageable** : `plain_len` en `AtomicU64`, méthodes en
+  `&self` → le handle `.obd` est partagé sous les verrous rayés.
+- **Tests** : unitaires — `pwrite` concurrents sur le même chunk sans
+  perte (8 bandes disjointes), chevauchement sans déchirure (AA/BB
+  uniforme), lecture pendant écriture cohérente. Intégration
+  `private_download.rs` — **vrai téléchargement loopback uTP** dont
+  les pièces traversent le storage `OBD` : contenu déchiffré identique
+  au payload, `<hmac>.bitv` présent et `<ih>.bitv`/`<ih>.torrent`
+  absents, `session.json` sans l'infohash, aucun fichier ne contient
+  `LibNaCL`/le nom réel ; **restart sans réseau** (seeder éteint) →
+  re-hash des `.obd` via `.bitv` opaque et complétion sans
+  re-téléchargement ; `remove(delete_files)` efface le groupe `.obd` +
+  `<hmac>.bitv`.
+
 ## ADR-0018 étape 60 : format `OBD` — fichiers privés chiffrés par chunks (2026-10-09)
 
 - **`onionbit-crypto::obdfile`** : codec `OBD` — `HDR_SLOT` fixe de

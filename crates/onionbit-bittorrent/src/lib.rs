@@ -21,18 +21,22 @@
 //! pour les garde-fous — loopback uniquement).
 
 pub mod add_options;
+pub mod bitv_opaque;
 pub mod config;
 pub mod download;
 pub mod engine;
 pub mod error;
 pub mod natpmp;
+pub mod storage_private;
 pub mod upnp;
 
 pub use add_options::AddDownloadOptions;
+pub use bitv_opaque::{OpaqueBitV, OpaqueBitVFactory};
 pub use config::EngineConfig;
 pub use download::{Download, DownloadState, DownloadStats};
 pub use engine::{BtEngine, DownloadPeer};
 pub use error::{BtError, Result};
+pub use storage_private::PrivateStorageFactory;
 
 #[cfg(test)]
 mod tests {

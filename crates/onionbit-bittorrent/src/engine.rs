@@ -485,13 +485,31 @@ impl BtEngine {
     ///
     /// `delete_files` efface aussi les donnees sur disque — ne doit etre
     /// vrai que sur demande explicite de l'utilisateur (couche API).
+    /// Configuration d'opacite `.bitv` de la session (zone privee
+    /// ADR-0018) — `None` quand le fastresume opaque est inactif.
+    pub fn opaque_bitv(&self) -> Option<&crate::bitv_opaque::OpaqueBitV> {
+        self.config.opaque_bitv.as_ref()
+    }
+
     pub async fn remove(&self, id_or_hash: &str, delete_files: bool) -> Result<()> {
         let key = parse_id_or_hash(id_or_hash)
             .ok_or_else(|| BtError::NotFound(id_or_hash.to_string()))?;
+        // Infohash resolu avant la suppression — le `<hmac>.bitv`
+        // d'un prive est invisible pour `SessionPersistenceStore`
+        // (skip `update_db`) : `clear_files` le supprime a la main,
+        // ainsi que le residu `<ih>.bitv` d'une bascule public→privee.
+        let ih = match key {
+            TorrentIdOrHash::Hash(h) => Some(h),
+            TorrentIdOrHash::Id(_) => self.get(id_or_hash).map(|d| d.inner.info_hash()),
+        };
         self.session
             .delete(key, delete_files)
             .await
-            .map_err(|e| BtError::Engine(e.to_string()))
+            .map_err(|e| BtError::Engine(e.to_string()))?;
+        if let (Some(opaque), Some(h)) = (self.config.opaque_bitv.as_ref(), ih) {
+            opaque.clear_files(&h);
+        }
+        Ok(())
     }
 
     /// Restreint les fichiers telecharges (`selected_files` de
@@ -644,6 +662,12 @@ fn rqbit_opts(o: &crate::add_options::AddDownloadOptions) -> AddTorrentOptions {
             upload_bps: to_nz(o.upload_limit_bps),
             download_bps: to_nz(o.download_limit_bps),
         },
+        // Zone privee (ADR-0018) : le telechargement ecrit ses pieces
+        // via le storage OBD chiffre au lieu du filesystem.
+        storage_factory: o
+            .storage_factory
+            .as_ref()
+            .map(|f| librqbit::storage::StorageFactoryExt::boxed(f.clone())),
         ..Default::default()
     }
 }

@@ -56,4 +56,8 @@ pub struct AddDownloadOptions {
     /// avant la materialisation du torrent (`initial_peers` est fige
     /// a l'ajout, ce flux reste ouvert tant que le sender vit).
     pub extra_peers_rx: Option<SharedPeerRx>,
+    /// Zone privee (ADR-0018) : stockage `OBD` chiffre pour ce
+    /// telechargement — les pieces traversent `PrivateStorage`
+    /// au lieu du filesystem en clair.
+    pub storage_factory: Option<crate::storage_private::PrivateStorageFactory>,
 }

@@ -10,7 +10,7 @@ use crate::{
     torrent_state::ManagedTorrentHandle,
     type_aliases::BF,
 };
-use anyhow::{Context, bail};
+use anyhow::Context;
 use async_trait::async_trait;
 use futures::{StreamExt, stream::BoxStream};
 use itertools::Itertools;
@@ -174,7 +174,19 @@ impl JsonSessionPersistenceStore {
                 crate::storage::examples::mmap::MmapFilesystemStorageFactory,
             >())
         {
-            bail!("storages other than filesystem-based factories are not supported");
+            // OnionBit (ADR-0018) : les storages non-filesystem (zone
+            // privee `OBD`) sont SIMPLEMENT SAUTES — session.json n'est
+            // pas l'autorite de restauration (`restore: false`,
+            // `onionbit.db` fait foi via le manifest `OBM`), le `.bitv`
+            // est ecrit par `BitVFactory` adresse par infohash, et ne
+            // pas y inscrire le prive evite la fuite `<ih>.torrent` +
+            // `output_folder` en clair. Un `bail!` ici remontait a
+            // `add_torrent` et refusait l'ajout.
+            debug!(
+                info_hash = ?torrent.info_hash(),
+                "storage non-filesystem — torrent saute dans session.json"
+            );
+            return Ok(());
         }
 
         let st = SerializedTorrent {
@@ -326,7 +338,10 @@ impl SessionPersistenceStore for JsonSessionPersistenceStore {
                 }
             }
         } else {
-            bail!("error deleting: didn't find torrent id={id}")
+            // OnionBit (ADR-0018) : idempotent — les torrents prives ne
+            // sont jamais inscrits ici (skip dans `update_db`), leur
+            // suppression ne doit pas echouer.
+            debug!(?id, "delete: absent de session.json (prive ou deja supprime)");
         }
 
         Ok(())

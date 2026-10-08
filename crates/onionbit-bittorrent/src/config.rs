@@ -195,7 +195,21 @@ pub struct EngineConfig {
     /// coeurs — les workers Tokio doivent etre plus nombreux (cf.
     /// `worker_threads` dans `onionbit-daemon`).
     pub runtime_worker_threads: Option<usize>,
+    /// Zone privee (ADR-0018) : configuration d'opacite `.bitv` —
+    /// enrobage `OpaqueBitVFactory` injecte dans
+    /// `SessionOptions::bitv_factory_wrapper` (les `.bitv` prives sont
+    /// ecrits sous des noms HMAC au lieu de `<infohash>.bitv` clair) +
+    /// set partage + nettoyage a la suppression.
+    pub opaque_bitv: Option<crate::bitv_opaque::OpaqueBitV>,
 }
+
+/// Signature de la closure d'enrobage `BitVFactory` injectee dans
+/// `SessionOptions::bitv_factory_wrapper` (patch vendored, ADR-0018).
+pub type BitVWrapperFn = std::sync::Arc<
+    dyn Fn(std::sync::Arc<dyn librqbit::BitVFactory>) -> std::sync::Arc<dyn librqbit::BitVFactory>
+        + Send
+        + Sync,
+>;
 
 impl Default for EngineConfig {
     fn default() -> Self {
@@ -234,6 +248,7 @@ impl Default for EngineConfig {
             utp_rx_buf_size: None,
             utp_tx_buf_max: None,
             runtime_worker_threads: default_runtime_worker_threads(),
+            opaque_bitv: None,
         }
     }
 }
@@ -277,6 +292,7 @@ impl EngineConfig {
             utp_rx_buf_size: None,
             utp_tx_buf_max: None,
             runtime_worker_threads: default_runtime_worker_threads(),
+            opaque_bitv: None,
         }
     }
 
@@ -420,6 +436,7 @@ impl EngineConfig {
             connect,
             udp_tracker_socket: self.udp_tracker_socket.clone(),
             runtime_worker_threads: self.runtime_worker_threads,
+            bitv_factory_wrapper: self.opaque_bitv.as_ref().map(|o| o.wrapper()),
             ..Default::default()
         }
     }

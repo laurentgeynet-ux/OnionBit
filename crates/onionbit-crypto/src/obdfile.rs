@@ -90,6 +90,7 @@ const AAD_SCAN: &[u8] = b"obd/scan";
 /// Domaines HMAC des noms opaques (`K_names`).
 const HMAC_GROUP_PREFIX: &[u8] = b"grp/";
 const HMAC_NAME_PREFIX: &[u8] = b"nam/";
+const HMAC_BITV_PREFIX: &[u8] = b"bitv/";
 
 /// Longueur hex des noms opaques (16 octets de HMAC → 32 chars).
 const NAME_HMAC_LEN: usize = 16;
@@ -287,6 +288,17 @@ impl PrivateStoreKeys {
             hex::encode(&mac.finalize().into_bytes()[..NAME_HMAC_LEN])
         )
     }
+
+    /// Nom fastresume opaque : `HMAC(K_names, "bitv/"‖infohash)[..20]`
+    /// — le `.bitv` prive est `<hmac>.bitv` au lieu de
+    /// `<infohash>.bitv` en clair (`OpaqueBitVFactory`, etape 61).
+    pub fn bitv_name(&self, infohash: &[u8; 20]) -> [u8; 20] {
+        let mut mac = <Hmac<Sha256> as KeyInit>::new_from_slice(&self.expand(INFO_NAMES))
+            .expect("HMAC accepte toute taille de cle");
+        mac.update(HMAC_BITV_PREFIX);
+        mac.update(infohash);
+        mac.finalize().into_bytes()[..20].try_into().unwrap()
+    }
 }
 
 /// Fichier `OBD` ouvert — codec de chunks AEAD au-dessus de
@@ -296,7 +308,10 @@ pub struct ObdFile {
     cipher: ChaCha20Poly1305,
     file_id: [u8; 16],
     chunk_log2: u8,
-    plain_len: u64,
+    /// Longueur logique — `AtomicU64` : `set_len` (`ensure_file_length`
+    /// rqbit) peut concourir avec des lectures sous les verrous rayes
+    /// de la factory.
+    plain_len: std::sync::atomic::AtomicU64,
 }
 
 impl ObdFile {
@@ -370,7 +385,7 @@ impl ObdFile {
             cipher,
             file_id,
             chunk_log2,
-            plain_len,
+            plain_len: std::sync::atomic::AtomicU64::new(plain_len),
         })
     }
 
@@ -406,7 +421,7 @@ impl ObdFile {
             cipher: cipher.clone(),
             file_id,
             chunk_log2: plain[4],
-            plain_len,
+            plain_len: std::sync::atomic::AtomicU64::new(plain_len),
         })
     }
 
@@ -437,7 +452,7 @@ impl ObdFile {
 
     /// Taille logique en clair (`ensure_file_length` ecrit ici).
     pub fn plain_len(&self) -> u64 {
-        self.plain_len
+        self.plain_len.load(std::sync::atomic::Ordering::Acquire)
     }
 
     /// Identifiant aleatoire du fichier (lie chaque chunk a *ce*
@@ -454,7 +469,7 @@ impl ObdFile {
     /// Nombre de chunks logiques (`ceil(plain_len / chunk_size)`).
     pub fn chunk_count(&self) -> u64 {
         let cs = self.chunk_size() as u64;
-        self.plain_len.div_ceil(cs)
+        self.plain_len().div_ceil(cs)
     }
 
     /// AAD d'un chunk : `file_id ‖ index:u64be` — lie le chunk au
@@ -471,7 +486,7 @@ impl ObdFile {
     fn chunk_slot(&self, index: u64) -> (u64, usize) {
         let cs = self.chunk_size() as u64;
         let start = index * cs;
-        let plain = (self.plain_len - start).min(cs);
+        let plain = (self.plain_len() - start).min(cs);
         (
             HDR_SLOT as u64 + index * (cs + CHUNK_OVERHEAD as u64),
             plain as usize + CHUNK_OVERHEAD,
@@ -547,7 +562,7 @@ impl ObdFile {
         let cs = self.chunk_size() as u64;
         let mut done = 0usize;
         while done < buf.len() {
-            if off >= self.plain_len {
+            if off >= self.plain_len() {
                 buf[done..].fill(0);
                 break;
             }
@@ -580,8 +595,8 @@ impl ObdFile {
     /// **Non thread-safe** : la serialisation des RMW concurrentes sur
     /// un meme chunk est garantie par la factory (verrous rayes
     /// `(fichier, index)`, etape 61).
-    pub fn write_range(&mut self, mut off: u64, data: &[u8]) -> Result<(), ObdError> {
-        if off > self.plain_len || data.len() as u64 > self.plain_len - off {
+    pub fn write_range(&self, mut off: u64, data: &[u8]) -> Result<(), ObdError> {
+        if off > self.plain_len() || data.len() as u64 > self.plain_len() - off {
             return Err(ObdError::Bounds);
         }
         let cs = self.chunk_size() as u64;
@@ -609,7 +624,7 @@ impl ObdFile {
     /// Fixe la longueur logique (`ensure_file_length` rqbit) :
     /// reecrit l'en-tete scelle avec un nonce neuf (le `scan_ct` reste
     /// octet pour octet — il ne depend pas de `plain_len`).
-    pub fn set_len(&mut self, plain_len: u64) -> Result<(), ObdError> {
+    pub fn set_len(&self, plain_len: u64) -> Result<(), ObdError> {
         let mut hdr_plain = [0u8; HDR_PLAIN_LEN];
         hdr_plain[..3].copy_from_slice(MAGIC);
         hdr_plain[3] = VERSION;
@@ -624,7 +639,8 @@ impl ObdFile {
         while w < slot.len() {
             w += pwrite(&self.file, &slot[w..], w as u64)?;
         }
-        self.plain_len = plain_len;
+        self.plain_len
+            .store(plain_len, std::sync::atomic::Ordering::Release);
         Ok(())
     }
 
@@ -661,7 +677,7 @@ mod tests {
     fn roundtrip_multi_chunks_et_lectures_partielles() {
         let (_dir, path) = temp_obd();
         let plain: Vec<u8> = (0..100_000u64).map(|i| (i % 251) as u8).collect();
-        let mut obd = ObdFile::create(&path, &keys(), IH, b"sub/dir/f.bin", 14, plain.len() as u64)
+        let obd = ObdFile::create(&path, &keys(), IH, b"sub/dir/f.bin", 14, plain.len() as u64)
             .expect("create");
         assert_eq!(obd.plain_len(), plain.len() as u64);
         assert_eq!(obd.chunk_size(), 16384);
@@ -726,7 +742,7 @@ mod tests {
     #[test]
     fn bit_flip_chunk_donne_zeros_pas_erreur() {
         let (_dir, path) = temp_obd();
-        let mut obd = ObdFile::create(&path, &keys(), IH, b"a.bin", 14, 4096).unwrap();
+        let obd = ObdFile::create(&path, &keys(), IH, b"a.bin", 14, 4096).unwrap();
         obd.write_range(0, &vec![0x5A; 4096]).unwrap();
         drop(obd);
         // Corruption dans le chunk 0 (zone du ciphertext).
@@ -758,7 +774,7 @@ mod tests {
     #[test]
     fn nonce_neuf_a_chaque_reecriture() {
         let (_dir, path) = temp_obd();
-        let mut obd = ObdFile::create(&path, &keys(), IH, b"a.bin", 14, 4096).unwrap();
+        let obd = ObdFile::create(&path, &keys(), IH, b"a.bin", 14, 4096).unwrap();
         obd.write_range(0, &[1u8; 4096]).unwrap();
         let s1 = std::fs::read(&path).unwrap()[HDR_SLOT..HDR_SLOT + 40].to_vec();
         obd.write_range(0, &[2u8; 4096]).unwrap();
@@ -779,8 +795,8 @@ mod tests {
         let (_d1, p1) = temp_obd();
         let (_d2, p2) = temp_obd();
         let data = vec![0x11; 8192];
-        let mut a = ObdFile::create(&p1, &keys(), IH, b"x", 14, 8192).unwrap();
-        let mut b = ObdFile::create(&p2, &k2, IH, b"x", 14, 8192).unwrap();
+        let a = ObdFile::create(&p1, &keys(), IH, b"x", 14, 8192).unwrap();
+        let b = ObdFile::create(&p2, &k2, IH, b"x", 14, 8192).unwrap();
         a.write_range(0, &data).unwrap();
         b.write_range(0, &data).unwrap();
         drop((a, b));
@@ -832,7 +848,7 @@ mod tests {
     fn chunk_absent_lit_zeros_et_slot_tronque_invalide() {
         let (_dir, path) = temp_obd();
         let cs = 16384usize;
-        let mut obd = ObdFile::create(&path, &keys(), IH, b"a.bin", 14, 3 * cs as u64).unwrap();
+        let obd = ObdFile::create(&path, &keys(), IH, b"a.bin", 14, 3 * cs as u64).unwrap();
         // Ecrit le chunk 2 seulement : 0 et 1 restent des trous.
         obd.write_range(2 * cs as u64, &vec![7u8; cs]).unwrap();
         drop(obd);
@@ -857,7 +873,7 @@ mod tests {
     #[test]
     fn set_len_reecrit_en_tete_et_scan_inchange() {
         let (_dir, path) = temp_obd();
-        let mut obd = ObdFile::create(&path, &keys(), IH, b"a.bin", 14, 4096).unwrap();
+        let obd = ObdFile::create(&path, &keys(), IH, b"a.bin", 14, 4096).unwrap();
         obd.write_range(0, &[9u8; 4096]).unwrap();
         let hdr1 = std::fs::read(&path).unwrap()[..SCAN_NONCE_OFF].to_vec();
         obd.set_len(8192).unwrap();
@@ -866,7 +882,7 @@ mod tests {
         let scan1 =
             std::fs::read(&path).unwrap()[SCAN_NONCE_OFF..SCAN_CT_OFF + SCAN_CT_LEN].to_vec();
         drop(obd);
-        let mut obd = ObdFile::open(&path, &keys().file_cipher(IH, b"a.bin")).unwrap();
+        let obd = ObdFile::open(&path, &keys().file_cipher(IH, b"a.bin")).unwrap();
         assert_eq!(obd.plain_len(), 8192);
         let scan2 =
             std::fs::read(&path).unwrap()[SCAN_NONCE_OFF..SCAN_CT_OFF + SCAN_CT_LEN].to_vec();
@@ -910,7 +926,7 @@ mod tests {
     #[test]
     fn plain_len_zero_fichier_vide() {
         let (_dir, path) = temp_obd();
-        let mut obd = ObdFile::create(&path, &keys(), IH, b"empty", 14, 0).unwrap();
+        let obd = ObdFile::create(&path, &keys(), IH, b"empty", 14, 0).unwrap();
         assert_eq!(obd.chunk_count(), 0);
         let mut buf = [1u8; 8];
         obd.read_range(0, &mut buf).unwrap();

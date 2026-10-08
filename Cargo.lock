@@ -3065,6 +3065,8 @@ dependencies = [
 name = "onionbit-bittorrent"
 version = "0.9.4-beta"
 dependencies = [
+ "anyhow",
+ "async-trait",
  "base64 0.23.1",
  "bytes",
  "futures-util",

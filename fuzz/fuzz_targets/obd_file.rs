@@ -29,7 +29,7 @@ fuzz_target!(|data: &[u8]| {
     }
     let keys = PrivateStoreKeys::from_root(&[42u8; 32]);
     let _ = ObdFile::scan_path(&path, &keys);
-    if let Ok(mut f) = ObdFile::open(&path, &keys.file_cipher(&[0u8; 20], b"x")) {
+    if let Ok(f) = ObdFile::open(&path, &keys.file_cipher(&[0u8; 20], b"x")) {
         let mut buf = vec![0u8; 8192];
         let _ = f.read_range(0, &mut buf);
         let _ = f.read_range(u64::MAX - 16, &mut buf[..64]);

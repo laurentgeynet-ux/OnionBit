@@ -553,6 +553,13 @@ pub struct SessionOptions {
     /// this transport instead of a real UDP socket — used by anonymous
     /// lanes to avoid leaking UDP traffic outside the tunnel.
     pub udp_tracker_socket: Option<Arc<dyn DatagramSocket>>,
+
+    /// OnionBit (ADR-0018) : enveloppe optionnelle appliquee au
+    /// `BitVFactory` produit par la persistence — la zone privee y
+    /// injecte `OpaqueBitVFactory` pour ecrire les `.bitv` prives sous
+    /// des noms HMAC au lieu de `<infohash>.bitv` en clair.
+    pub bitv_factory_wrapper:
+        Option<Arc<dyn Fn(Arc<dyn BitVFactory>) -> Arc<dyn BitVFactory> + Send + Sync>>,
 }
 
 impl Default for SessionOptions {
@@ -583,6 +590,7 @@ impl Default for SessionOptions {
             ipv4_only: false,
             client_name_and_version: None,
             udp_tracker_socket: None,
+            bitv_factory_wrapper: None,
         }
     }
 }
@@ -773,6 +781,10 @@ impl Session {
             let (persistence, bitv_factory) = persistence_factory(&opts, spawner.clone())
                 .await
                 .context("error initializing session persistence store")?;
+            let bitv_factory = match &opts.bitv_factory_wrapper {
+                Some(wrap) => wrap(bitv_factory),
+                None => bitv_factory,
+            };
 
             let proxy_url = opts.connect.as_ref().and_then(|s| s.proxy_url.as_ref());
             let proxy_config = match proxy_url {

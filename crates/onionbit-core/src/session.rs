@@ -1042,6 +1042,9 @@ impl CoreSession {
             // Ephemere aussi : le flux de pairs pending est recree
             // par la boucle de resolution magnet si besoin.
             extra_peers_rx: None,
+            // Zone privee (ADR-0018, etape 62) : le factory OBD sera
+            // injecte ici quand `row.storage_area == private`.
+            storage_factory: None,
         }
     }
 

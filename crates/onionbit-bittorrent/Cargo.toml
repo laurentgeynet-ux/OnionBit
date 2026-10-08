@@ -31,6 +31,10 @@ reqwest.workspace = true
 # `stream::unfold`/`BoxStream` — conversion du receveur de pairs e2e
 # (`extra_peers_rx`) en flux consommable par la resolution magnet.
 futures-util.workspace = true
+# Signatures `anyhow::Result` des traits vendored `StorageFactory`/
+# `TorrentStorage`/`BitVFactory` implementes par la zone privee.
+anyhow = "1"
+async-trait = "0.1"
 
 [dev-dependencies]
 tempfile.workspace = true
