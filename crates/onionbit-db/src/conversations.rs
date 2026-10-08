@@ -256,6 +256,17 @@ pub fn touch_conversation(conn: &Connection, conv_id: &[u8], now: i64) -> Result
     Ok(())
 }
 
+/// Conversations d'un type donne (`direct`|`group`), tous etats —
+/// recharge au restart (miroir memoire du service).
+pub fn list_by_kind(conn: &Connection, kind: &str) -> Result<Vec<MsgConversationRow>> {
+    let mut stmt = conn.prepare(
+        "SELECT conv_id, kind, name, state, created_at, updated_at, last_read_ts
+         FROM msg_conversations WHERE kind=?1 ORDER BY created_at",
+    )?;
+    let rows = stmt.query_map(params![kind], row_to_conversation)?;
+    Ok(rows.collect::<std::result::Result<_, _>>()?)
+}
+
 // ── Membres ─────────────────────────────────────────────────
 
 /// Insere ou met a jour un membre (synchro **additive** : etat et

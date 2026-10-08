@@ -164,6 +164,19 @@ pub fn list_contacts(conn: &Connection) -> Result<Vec<MsgContactRow>> {
     Ok(rows.collect::<std::result::Result<_, _>>()?)
 }
 
+/// Pairs d'une portee donnee (`'group'` = confines roster — le
+/// service recharge leurs compteurs de lien au restart sans les
+/// exposer en contacts).
+pub fn list_by_scope(conn: &Connection, scope: &str) -> Result<Vec<MsgContactRow>> {
+    let mut stmt = conn.prepare(
+        "SELECT public_key, state, send_seq, recv_top, retention_secs,
+                secure_delete, alias, scope, created_at, updated_at
+         FROM msg_contacts WHERE scope=?1 ORDER BY created_at",
+    )?;
+    let rows = stmt.query_map(params![scope], row_to_contact)?;
+    Ok(rows.collect::<std::result::Result<_, _>>()?)
+}
+
 /// Compteurs `seq` d'un contact (persistes a chaque trame admise).
 pub fn set_seqs(
     conn: &Connection,

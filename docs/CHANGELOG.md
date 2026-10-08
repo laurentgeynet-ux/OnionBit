@@ -3,6 +3,46 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## ADR-0019 étape 66 : groupes dans `MessagingService` (2026-10-09)
+
+- **`gmsg.rs`** (`onionbit-messaging`) : corps de `msg` de groupe
+  `{b: payload, m: mid}` — `mid` applicatif dans le corps chiffré,
+  dedup `(conv, author, mid)` qui survit aux re-émissions.
+- **Routage `conv`** dans `handle_incoming` (avant dedup, coût
+  constant) : directe dérivée réservée aux `scope='contact'` ;
+  conv connue → état + appartenance au roster requis (`invited`
+  n'admet que `gctl`) ; conv inconnue → seule `gctl invite` ;
+  sinon `group_rejected` (compteur stats).
+- **Confinement `scope='group'`** : `Contact.scope`, pairs roster
+  rechargés au restart (compteurs de lien, identification),
+  admission `Active` confinée sans gates de consentement ;
+  `send()` 1:1 et conv directe refusés ; jamais `pending`,
+  jamais dans `list_contacts`.
+- **`gctl`** : `invite` admise seulement d'un contact actif
+  (`by` == émetteur, roster porte émetteur + nous, borne
+  `group_pending_cap`) ; `join` confirme + synchro `roster` en
+  retour ; `leave` honoré sur le lien signé du membre seulement ;
+  `roster` **additif** (`joined_at` max, jamais soustractif —
+  un `left` forgé est structurellement impossible).
+- **API service** : `group_create` (bornes membres/convs,
+  contacts actifs requis, `gctl invite` fan-out), `group_invite`
+  (membre invitant **son** contact), `group_accept`/`group_decline`,
+  `group_leave` (fan-out `leave`), `group_send` (`mid` + fan-out,
+  `msg_delivery` `sent/acked/failed` par membre), lectures
+  `conversation_*` (liste non lus, messages, membres, livraisons,
+  mark_read, delete).
+- **`send_frame_v2` + `greet_v2`** : `hello` v2 `pk‖caps`
+  (`HELLO_CAP_GROUPS`) sur la conv directe du lien avant la
+  première trame de groupe ; `identify` décode `hello` v1/v2.
+- **Événements** : `Conv{conv,contact,kind,id,body}`,
+  `GroupInvite{conv,name,by}`.
+- **Tests** : 6 nouveaux verts — invite contact actif →
+  `invited`+roster+event→`accept`→`active` ; invite d'un pair
+  confiné rejetée ; dedup `mid` (re-émission même `mid` absorbée,
+  `mid` différent livré) ; anti-forge `leave`/`roster` ;
+  confinement v1+directe ; `group_send` fan-out + livraison +
+  refus d'invite d'un non-contact et de `send` 1:1 confiné.
+
 ## ADR-0019 étape 65 : persistance conversations/groupes dans `onionbit-db` (2026-10-09)
 
 - **Migration v21** : `msg_contacts.scope` ∈ `{contact,group}` (pair

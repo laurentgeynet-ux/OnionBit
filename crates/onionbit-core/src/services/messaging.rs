@@ -31,8 +31,10 @@ use onionbit_db::messaging as dbm;
 use onionbit_db::Database;
 use onionbit_ipv8::UdpAddress;
 use onionbit_messaging::{
-    derive_messaging_keys, messaging_hash, preflight, Frame, MessagingConfig, MessagingError,
-    MessagingKeys, MsgKind, RawFrame, RecvWindow,
+    conv, derive_messaging_keys,
+    gctl::{Gctl, RosterEntry},
+    gmsg, hello, messaging_hash, preflight, Frame, MessagingConfig, MessagingError, MessagingKeys,
+    MsgKind, RawFrame, RecvWindow,
 };
 use onionbit_tunnel::community::TunnelCommunity;
 use onionbit_tunnel::routing::IntroductionPoint;
@@ -197,6 +199,31 @@ pub enum MessagingEvent {
         /// Etat de liaison courant.
         link: LinkState,
     },
+    /// Trame admise dans une conversation de groupe (ADR-0019) —
+    /// `gctl` compris : le consommateur re-interroge le roster ou
+    /// l'historique selon `kind`.
+    Conv {
+        /// `conv_id` de la conversation.
+        conv: [u8; 16],
+        /// `pk_bin` de l'emetteur verifie.
+        contact: Vec<u8>,
+        /// Type de trame.
+        kind: MsgKind,
+        /// `id` de trame.
+        id: [u8; 16],
+        /// Corps applicatif en clair.
+        body: Vec<u8>,
+    },
+    /// Invitation a un groupe recue d'un contact actif — decision
+    /// utilisateur requise (`group_accept`/`group_decline`).
+    GroupInvite {
+        /// `conv_id` du groupe propose.
+        conv: [u8; 16],
+        /// Nom affiche du groupe.
+        name: String,
+        /// `pk_bin` de l'invitant.
+        by: Vec<u8>,
+    },
 }
 
 /// Etat de liaison e2e d'un contact — oracle de l'indicateur UI
@@ -230,6 +257,18 @@ pub enum ContactState {
     /// Bloque : trames ignorees, swarm de contact non joint,
     /// circuits detruits a l'identification.
     Blocked,
+}
+
+/// Portee d'un pair (ADR-0019 §3) : un pair `Group` est connu
+/// seulement via un roster — son lien sert les compteurs
+/// anti-replay mais le confinement l'empeche de parler en 1:1,
+/// de devenir `pending` ou d'inviter hors de son groupe.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContactScope {
+    /// Contact au sens propre (consentement complet).
+    Contact,
+    /// Pair confine a un roster de groupe.
+    Group,
 }
 
 /// Seau a jetons de limitation (trames/s). `rate == 0` = illimite
@@ -297,14 +336,22 @@ pub struct MessagingStats {
     /// Demandes refusees par la gate dette (`consent_gate_ledger`
     /// + `ledger_enforce` — deficit > `max_deficit_bytes`).
     pub consent_ledger_refused: AtomicU64,
+    /// Trames v2 ecartees au routage `conv` (ADR-0019) : conv
+    /// inconnue, directe depuis un pair `scope='group'`, membre
+    /// absent du roster, conv `left`.
+    pub group_rejected: AtomicU64,
 }
 
-/// Etat d'un contact (cle : `pk_bin`).
+/// Etat d'un pair messagerie (cle : `pk_bin`) — contact ou membre
+/// de groupe confine (le meme objet porte les compteurs du lien
+/// dans les deux cas).
 struct Contact {
-    /// Cle publique du contact (verification des signatures).
+    /// Cle publique du pair (verification des signatures).
     pk: LibNaClPublicKey,
     /// Etat de consentement.
     state: ContactState,
+    /// Portee (`Group` = confine roster — ADR-0019).
+    scope: ContactScope,
     /// Entree en `pending` (secondes Unix — TTL `pending_ttl`).
     pending_since: u64,
     /// Fenetre anti-replay entrante (persiste d'un circuit a l'autre
@@ -330,6 +377,7 @@ impl Contact {
         Self {
             pk,
             state: ContactState::Active,
+            scope: ContactScope::Contact,
             pending_since: 0,
             recv_window: RecvWindow::new(cfg),
             send_seq: 0,
@@ -338,6 +386,15 @@ impl Contact {
             greeted: false,
             bucket: TokenBucket::new(cfg.per_contact_rate),
         }
+    }
+
+    /// Pair `scope='group'` neuf : `Active` (le roster l'a deja
+    /// admis — pas de `pending`) mais confine aux trames `conv`
+    /// de ses groupes (confinement dans `handle_incoming`).
+    fn group_scoped(pk: LibNaClPublicKey, cfg: &MessagingConfig) -> Self {
+        let mut c = Self::active(pk, cfg);
+        c.scope = ContactScope::Group;
+        c
     }
 
     /// Contact `Pending` neuf (`hello` entrant verifie d'un inconnu).
@@ -516,7 +573,42 @@ impl MessagingService {
                 self.tunnel.join_swarm(mh, self.hops, false);
             }
         }
+        self.load_group_peers();
         self.backfill_conversations();
+    }
+
+    /// Pairs `scope='group'` persistes (ADR-0019) : recharges en
+    /// `Contact` confines — leurs compteurs `send_seq`/`recv_top`
+    /// servent l'anti-replay du lien et leur cle l'identification
+    /// (`identify` balaie la table). Jamais exposes en contacts.
+    fn load_group_peers(&self) {
+        let Some(db) = &self.db else { return };
+        let rows = match db.with(|c| dbm::list_by_scope(c, "group")) {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::warn!(error = %e, "restauration pairs de groupe impossible");
+                return;
+            }
+        };
+        let own = self.key.public_key().to_bin();
+        let mut contacts = self.contacts.lock().unwrap_or_else(|e| e.into_inner());
+        for row in rows {
+            if row.public_key == own {
+                continue;
+            }
+            let Ok(pk) = LibNaClPublicKey::from_bin(&row.public_key) else {
+                continue;
+            };
+            let mut c = Contact::group_scoped(pk, &self.cfg);
+            c.send_seq = row.send_seq.max(0) as u64;
+            if row.recv_top > 0 {
+                c.recv_window = RecvWindow::resume(&self.cfg, row.recv_top as u64);
+            }
+            if row.state == "blocked" {
+                c.state = ContactState::Blocked;
+            }
+            contacts.insert(row.public_key, c);
+        }
     }
 
     /// Rejeu de la migration v21 (ADR-0019) : materialise la
@@ -561,7 +653,19 @@ impl MessagingService {
     /// `conv_id` de la conversation directe avec `contact_pk`
     /// (derivation deterministe ADR-0019 — aucune negociation).
     fn direct_conv_id(&self, contact_pk: &[u8]) -> [u8; 16] {
-        onionbit_messaging::conv::direct_conv(&self.key.public_key().to_bin(), contact_pk)
+        conv::direct_conv(&self.key.public_key().to_bin(), contact_pk)
+    }
+
+    /// Portee d'un pair (`Contact` si absent de la table — un
+    /// inconnu ne passe de toute facon pas la barriere de
+    /// consentement).
+    fn peer_scope(&self, pk_bin: &[u8]) -> ContactScope {
+        self.contacts
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(pk_bin)
+            .map(|c| c.scope)
+            .unwrap_or(ContactScope::Contact)
     }
 
     /// Materialise la conversation directe d'un contact (idempotent
@@ -791,6 +895,11 @@ impl MessagingService {
     /// sont `refuse_contact`/`block_contact`).
     pub async fn send(&self, contact_pk: &[u8], body: Vec<u8>) -> Result<[u8; 16]> {
         self.require_state(contact_pk, ContactState::Active)?;
+        if self.peer_scope(contact_pk) == ContactScope::Group {
+            return Err(CoreError::InvalidState(
+                "messagerie : pair confine a un groupe",
+            ));
+        }
         let Some(cid) = self.contact_circuit(contact_pk) else {
             // Online-only : pas de file — le message est enregistre
             // `failed` (visible en historique) et signale
@@ -1817,6 +1926,64 @@ impl MessagingService {
         if raw.kind == MsgKind::Hello {
             return;
         }
+        // Routage `conv` (ADR-0019) — avant la dedup : une trame
+        // mal routee ne consomme ni jeton ni fenetre. `Direct` =
+        // conv directe derivee ou pas de `conv` (v1) ; `Group` =
+        // conv connue et emetteur au roster ; `GroupNew` = conv
+        // inconnue — seule une `gctl invite` peut la creer.
+        enum ConvTarget {
+            Direct,
+            Group([u8; 16]),
+            GroupNew([u8; 16]),
+        }
+        let conv_target = match raw.conv {
+            None => {
+                // v1 : confinement — un pair `scope='group'` ne
+                // parle qu'en trames v2 de groupe.
+                if self.peer_scope(&pk_bin) == ContactScope::Group {
+                    self.stats.group_rejected.fetch_add(1, Ordering::Relaxed);
+                    return;
+                }
+                ConvTarget::Direct
+            }
+            Some(c) if c == self.direct_conv_id(&pk_bin) => {
+                // Directe v2 : reservee aux contacts (confinement).
+                if self.peer_scope(&pk_bin) == ContactScope::Group {
+                    self.stats.group_rejected.fetch_add(1, Ordering::Relaxed);
+                    return;
+                }
+                ConvTarget::Direct
+            }
+            Some(c) => {
+                // Conv de groupe : etat de la conv + appartenance
+                // de l'emetteur au roster — la `gctl invite` d'une
+                // conv inconnue est admise (sa validation reste
+                // applicative : invite seulement d'un contact).
+                let conv_id = c;
+                let known = self.db_state(|c2| dbc::conversation_state(c2, &conv_id));
+                match known.as_deref() {
+                    Some("active") | Some("invited") => {
+                        let member = self.db_state(|c2| dbc::member_state(c2, &conv_id, &pk_bin));
+                        if member.as_deref() != Some("member") {
+                            self.stats.group_rejected.fetch_add(1, Ordering::Relaxed);
+                            return;
+                        }
+                        // `invited` n'admet que le `gctl` de
+                        // negociation — jamais un `msg`.
+                        if known.as_deref() == Some("invited") && raw.kind != MsgKind::Gctl {
+                            self.stats.group_rejected.fetch_add(1, Ordering::Relaxed);
+                            return;
+                        }
+                        ConvTarget::Group(conv_id)
+                    }
+                    None if raw.kind == MsgKind::Gctl => ConvTarget::GroupNew(conv_id),
+                    _ => {
+                        self.stats.group_rejected.fetch_add(1, Ordering::Relaxed);
+                        return;
+                    }
+                }
+            }
+        };
         // Dedup `id` d'abord (gratuite — une re-emission honnete ne
         // consomme pas de jeton), puis seau du contact, puis la
         // fenetre `seq` : une trame ecartee au budget n'est PAS
@@ -1867,6 +2034,10 @@ impl MessagingService {
         };
         if admitted {
             self.persist_seqs(&pk_bin);
+            if let ConvTarget::Group(conv) | ConvTarget::GroupNew(conv) = conv_target {
+                self.handle_group_frame(conv, &pk_bin, cid, &raw);
+                return;
+            }
             match raw.kind {
                 // ACK applicatif : `body` = `id` de la trame
                 // acquittee -> statut `acked` de notre `out`.
@@ -1878,9 +2049,13 @@ impl MessagingService {
                 // Message : historique `received` + ACK applicatif
                 // en retour (`body` = `id` de cette trame).
                 MsgKind::Msg => {
-                    self.persist_message(Self::msg_row(
+                    let mut row = Self::msg_row(
                         &pk_bin, "in", raw.seq, raw.ts, &raw.body, "received", &raw.id,
-                    ));
+                    );
+                    if let Some(c) = raw.conv {
+                        row.conv_id = c.to_vec();
+                    }
+                    self.persist_message(row);
                     let svc = self.clone();
                     let pk = pk_bin.clone();
                     let ack_id = raw.id;
@@ -1944,6 +2119,36 @@ impl MessagingService {
                 true
             }
             None => {
+                // Pair confine roster (`scope='group'`, ADR-0019) :
+                // la ligne DB existe deja — admission `Active`
+                // confinee sans les gates de consentement (le
+                // roster l'a admis ; le confinement `conv` fait
+                // le reste). Ses compteurs de lien sont restaures.
+                if self.db_scope(pk_bin).as_deref() == Some("group") {
+                    let Some(row) = self
+                        .db
+                        .as_ref()
+                        .and_then(|db| db.with(|c| dbm::get_contact(c, pk_bin)).ok())
+                        .flatten()
+                    else {
+                        return false;
+                    };
+                    let Ok(pk) = LibNaClPublicKey::from_bin(pk_bin) else {
+                        return false;
+                    };
+                    let mut c = Contact::group_scoped(pk, &self.cfg);
+                    c.send_seq = row.send_seq.max(0) as u64;
+                    if row.recv_top > 0 {
+                        c.recv_window = RecvWindow::resume(&self.cfg, row.recv_top as u64);
+                    }
+                    c.circuit = Some(cid);
+                    self.contacts
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .insert(pk_bin.to_vec(), c);
+                    self.bind_circuit(cid, pk_bin, keys);
+                    return true;
+                }
                 // Gates ADR-0015 avant tout etat : dette ledger
                 // (un pair trop endette n'ouvre pas de lane) puis
                 // confiance identity (flague → `blocked` sans
@@ -2024,6 +2229,24 @@ impl MessagingService {
         }
     }
 
+    /// Portee DB d'un pair (`"contact"`/`"group"` ; `None` =
+    /// inconnu ou pas de persistance).
+    fn db_scope(&self, pk_bin: &[u8]) -> Option<String> {
+        self.db
+            .as_ref()
+            .and_then(|db| db.with(|c| dbm::contact_scope(c, pk_bin)).ok())
+            .flatten()
+    }
+
+    /// Lecture DB opportuniste (`None` si pas de persistance ou
+    /// erreur — le routage `conv` reste fonctionnel en memoire).
+    fn db_state<T>(
+        &self,
+        f: impl FnOnce(&rusqlite::Connection) -> onionbit_db::Result<Option<T>>,
+    ) -> Option<T> {
+        self.db.as_ref().and_then(|db| db.with(f).ok()).flatten()
+    }
+
     /// Lie le circuit a un contact existant (reouverture ou
     /// re-pending) — le `hello` sera re-emis : `greeted` rearme.
     fn bind_existing(&self, cid: u32, pk_bin: &[u8], keys: &MessagingKeys) {
@@ -2074,9 +2297,12 @@ impl MessagingService {
     /// le circuit (l'acceptation e2e est desarmee).
     fn identify(&self, raw: &RawFrame) -> Option<Vec<u8>> {
         if raw.kind == MsgKind::Hello {
-            if let Ok(pk) = LibNaClPublicKey::from_bin(&raw.body) {
-                if raw.verify(&pk).is_ok() {
-                    return Some(pk.to_bin());
+            // v1 : corps = `pk_bin` seule ; v2 : `pk_bin ‖ caps`.
+            if let Ok((pk_bin, _caps)) = hello::decode_hello(&raw.body) {
+                if let Ok(pk) = LibNaClPublicKey::from_bin(&pk_bin) {
+                    if raw.verify(&pk).is_ok() {
+                        return Some(pk.to_bin());
+                    }
                 }
             }
             return None;
@@ -2092,6 +2318,790 @@ impl MessagingService {
             self.contact_state(pk_bin) != Some(ContactState::Blocked)
                 && matches!(self.verify_against(pk_bin, raw), Some(Ok(_)))
         })
+    }
+
+    // ── ADR-0019 : conversations de groupe ─────────────────
+
+    /// Dispatch d'une trame admise dans une conv de groupe
+    /// (`conv` deja routee : etat + appartenance verifies).
+    fn handle_group_frame(
+        self: &Arc<Self>,
+        conv: [u8; 16],
+        sender: &[u8],
+        cid: u32,
+        raw: &RawFrame,
+    ) {
+        let (kind, id, body) = (raw.kind, raw.id, raw.body.as_slice());
+        match kind {
+            MsgKind::Gctl => self.handle_gctl(&conv, sender, body),
+            MsgKind::Msg => {
+                let Ok((mid, payload)) = gmsg::decode_gmsg(body) else {
+                    self.stats.codec.fetch_add(1, Ordering::Relaxed);
+                    return;
+                };
+                let ack = |svc: Arc<Self>, pk: Vec<u8>| {
+                    tokio::spawn(async move {
+                        let _ = svc
+                            .send_frame_v2(&pk, cid, conv, MsgKind::Ack, id.to_vec())
+                            .await;
+                    });
+                };
+                // Dedup applicative `(conv, author, mid)` : une
+                // re-emission honnete apres reouverture porte un
+                // nouvel `id` de trame — la dedup `id` ne la
+                // voit pas, `mid` si.
+                if self
+                    .db
+                    .as_ref()
+                    .and_then(|db| db.with(|c| dbm::has_group_mid(c, &conv, sender, &mid)).ok())
+                    .unwrap_or(false)
+                {
+                    ack(self.clone(), sender.to_vec());
+                    return;
+                }
+                let mut row =
+                    Self::msg_row(sender, "in", raw.seq, raw.ts, &payload, "received", &id);
+                row.conv_id = conv.to_vec();
+                row.author_pk = Some(sender.to_vec());
+                row.mid = Some(mid.to_vec());
+                self.persist_message(row);
+                ack(self.clone(), sender.to_vec());
+                let _ = self.events_tx.send(MessagingEvent::Conv {
+                    conv,
+                    contact: sender.to_vec(),
+                    kind,
+                    id,
+                    body: payload,
+                });
+            }
+            // `ack` de groupe : acquitte la livraison par membre
+            // (`msg_id` = `id` de la trame emise vers ce membre).
+            MsgKind::Ack => {
+                if let Ok(msg_id) = <[u8; 16]>::try_from(body) {
+                    if let Some(db) = &self.db {
+                        let _ = db.with(|c| {
+                            dbc::upsert_delivery(
+                                c,
+                                &dbc::MsgDeliveryRow {
+                                    msg_id: msg_id.to_vec(),
+                                    member_pk: sender.to_vec(),
+                                    status: "acked".into(),
+                                    ts: now_secs() as i64,
+                                },
+                            )
+                        });
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Corps `gctl` admis (trame deja verifiee + membre verifie
+    /// pour les conv connues ; `GroupNew` n'admet que `invite`).
+    fn handle_gctl(self: &Arc<Self>, conv: &[u8; 16], sender: &[u8], body: &[u8]) {
+        let op = match Gctl::decode_body(body, &self.cfg) {
+            Ok(o) => o,
+            Err(e) => {
+                self.stats.codec.fetch_add(1, Ordering::Relaxed);
+                tracing::debug!(error = %e, "corps gctl rejete");
+                return;
+            }
+        };
+        match op {
+            Gctl::Invite { name, roster, by } => {
+                self.on_group_invite(conv, sender, &name, &roster, &by)
+            }
+            Gctl::Join => self.on_group_join(conv, sender),
+            Gctl::Leave => self.on_group_leave(conv, sender),
+            Gctl::Roster { members } => self.on_group_roster(conv, sender, &members),
+        }
+    }
+
+    /// `invite` : cree la conv en `invited` (cap borne) + roster —
+    /// admise **seulement d'un contact actif** : un pair confine
+    /// `scope='group'` ne peut pas inviter (confinement). L'invite
+    /// doit s'y declarer (`by == emetteur`) et le roster porter
+    /// l'emetteur et nous-meme.
+    fn on_group_invite(
+        &self,
+        conv: &[u8; 16],
+        sender: &[u8],
+        name: &str,
+        roster: &[[u8; 74]],
+        by: &[u8; 74],
+    ) {
+        if self.peer_scope(sender) == ContactScope::Group
+            || by.as_slice() != sender
+            || !roster.iter().any(|pk| pk.as_slice() == sender)
+            || !roster
+                .iter()
+                .any(|pk| pk.as_slice() == self.key.public_key().to_bin().as_slice())
+        {
+            self.stats.group_rejected.fetch_add(1, Ordering::Relaxed);
+            return;
+        }
+        let Some(db) = &self.db else { return };
+        if self
+            .db_state(|c| dbc::conversation_state(c, conv))
+            .is_none()
+        {
+            // Conv inconnue : borne `group_pending_cap` sur les
+            // invitations en attente de decision.
+            let pending = db
+                .with(|c| dbc::count_conversations(c, "group", &["invited"]))
+                .unwrap_or(0);
+            if pending >= self.cfg.group_pending_cap as u64 {
+                self.stats.group_rejected.fetch_add(1, Ordering::Relaxed);
+                return;
+            }
+            let now = now_secs() as i64;
+            if let Err(e) = db.with(|c| {
+                dbc::upsert_conversation(
+                    c,
+                    &dbc::MsgConversationRow {
+                        conv_id: conv.to_vec(),
+                        kind: "group".into(),
+                        name: name.to_string(),
+                        state: "invited".into(),
+                        created_at: now,
+                        updated_at: now,
+                        last_read_ts: 0,
+                    },
+                )
+            }) {
+                tracing::warn!(error = %e, "persistance conv invitee");
+                return;
+            }
+            let _ = self.events_tx.send(MessagingEvent::GroupInvite {
+                conv: *conv,
+                name: name.to_string(),
+                by: sender.to_vec(),
+            });
+        }
+        // Roster additif dans les deux cas (creation ou re-invite).
+        let now = now_secs() as i64;
+        for pk in roster {
+            let pk_bin = pk.to_vec();
+            self.persist_member(conv, &pk_bin, by.as_slice(), "member", now);
+            self.ensure_group_peer_row(&pk_bin);
+        }
+    }
+
+    /// `join` : confirme le membre (le `left` n'est jamais pose
+    /// par un autre — la resurrection additive ne s'applique qu'au
+    /// `join` emis **sur son propre lien**).
+    fn on_group_join(self: &Arc<Self>, conv: &[u8; 16], sender: &[u8]) {
+        let now = now_secs() as i64;
+        self.persist_member(conv, sender, sender, "member", now);
+        // Synchro additive en retour : le nouveau membre recoit le
+        // roster complet (ses membres manquants seront ajoutes).
+        self.broadcast_roster(conv, Some(sender));
+        let _ = self.events_tx.send(MessagingEvent::Conv {
+            conv: *conv,
+            contact: sender.to_vec(),
+            kind: MsgKind::Gctl,
+            id: [0; 16],
+            body: b"join".to_vec(),
+        });
+    }
+
+    /// `leave` : le depart n'est honore que sur le lien signe du
+    /// membre lui-meme (anti-forge — deja garanti : la trame est
+    /// verifiee contre la cle de `sender`).
+    fn on_group_leave(&self, conv: &[u8; 16], sender: &[u8]) {
+        if let Some(db) = &self.db {
+            let _ = db.with(|c| dbc::set_member_state(c, conv, sender, "left"));
+        }
+        let _ = self.events_tx.send(MessagingEvent::Conv {
+            conv: *conv,
+            contact: sender.to_vec(),
+            kind: MsgKind::Gctl,
+            id: [0; 16],
+            body: b"leave".to_vec(),
+        });
+    }
+
+    /// `roster` : synchro **additive** — ajoute/met a jour des
+    /// membres (`joined_at` max), jamais de suppression : un
+    /// `left` forge via `roster` est structurellement impossible.
+    fn on_group_roster(&self, conv: &[u8; 16], sender: &[u8], members: &[RosterEntry]) {
+        if self
+            .db_state(|c| dbc::conversation_state(c, conv))
+            .as_deref()
+            == Some("left")
+        {
+            return;
+        }
+        for e in members {
+            let pk_bin = e.pk.to_vec();
+            self.persist_member(conv, &pk_bin, &e.added_by, "member", e.joined_at as i64);
+            self.ensure_group_peer_row(&pk_bin);
+            // Swarm du nouveau membre : necessaire au fan-out sortant
+            // (un membre qu'on ne resout jamais est inatteignable).
+            if pk_bin != sender {
+                self.ensure_group_swarm(&pk_bin);
+            }
+        }
+        let _ = self.events_tx.send(MessagingEvent::Conv {
+            conv: *conv,
+            contact: sender.to_vec(),
+            kind: MsgKind::Gctl,
+            id: [0; 16],
+            body: b"roster".to_vec(),
+        });
+    }
+
+    /// Persiste un membre de roster (upsert additif DB).
+    fn persist_member(
+        &self,
+        conv: &[u8; 16],
+        pk_bin: &[u8],
+        added_by: &[u8],
+        state: &str,
+        ts: i64,
+    ) {
+        if let Some(db) = &self.db {
+            if let Err(e) = db.with(|c| {
+                dbc::upsert_member(
+                    c,
+                    &dbc::MsgMemberRow {
+                        conv_id: conv.to_vec(),
+                        member_pk: pk_bin.to_vec(),
+                        added_by: added_by.to_vec(),
+                        state: state.into(),
+                        joined_at: ts,
+                    },
+                )
+            }) {
+                tracing::warn!(error = %e, "persistance membre groupe");
+            }
+        }
+    }
+
+    /// Ligne `msg_contacts` `scope='group'` pour un pair encore
+    /// inconnu (ancre FK des messages + compteurs de lien) —
+    /// n'ecrase jamais une ligne existante (un contact garde sa
+    /// portee, un `blocked` reste `blocked`).
+    fn ensure_group_peer_row(&self, pk_bin: &[u8]) {
+        let Some(db) = &self.db else { return };
+        let now = now_secs() as i64;
+        let _ = db.with(|c| {
+            if dbm::get_contact(c, pk_bin)?.is_none() {
+                dbm::upsert_contact(
+                    c,
+                    &dbm::MsgContactRow {
+                        public_key: pk_bin.to_vec(),
+                        state: "active".into(),
+                        send_seq: 0,
+                        recv_top: 0,
+                        retention_secs: 0,
+                        secure_delete: false,
+                        alias: String::new(),
+                        scope: "group".into(),
+                        created_at: now,
+                        updated_at: now,
+                    },
+                )
+            } else {
+                Ok(())
+            }
+        });
+    }
+
+    /// Joint le swarm de presence d'un membre de groupe (comme un
+    /// contact — transport seul ; le confinement reste applicatif).
+    fn ensure_group_swarm(&self, pk_bin: &[u8]) {
+        let Ok(pk) = LibNaClPublicKey::from_bin(pk_bin) else {
+            return;
+        };
+        self.ensure_contact_swarm(&pk, pk_bin);
+    }
+
+    /// Synchro `roster` additive vers les membres lies (`only`
+    /// restreint a un destinataire — reponse a un `join`). Envoi
+    /// en taches detachees (appelee depuis le chemin de
+    /// reception synchrone).
+    fn broadcast_roster(self: &Arc<Self>, conv: &[u8; 16], only: Option<&[u8]>) {
+        let Some(db) = &self.db else { return };
+        let Ok(rows) = db.with(|c| dbc::list_members(c, conv)) else {
+            return;
+        };
+        let own = self.key.public_key().to_bin();
+        let mut targets: Vec<Vec<u8>> = Vec::new();
+        let mut members: Vec<RosterEntry> = Vec::new();
+        for m in &rows {
+            if m.state != "member" {
+                continue;
+            }
+            let (Ok(pk), Ok(by)) = (
+                <[u8; 74]>::try_from(m.member_pk.as_slice()),
+                <[u8; 74]>::try_from(m.added_by.as_slice()),
+            ) else {
+                continue;
+            };
+            members.push(RosterEntry {
+                pk,
+                added_by: by,
+                joined_at: m.joined_at.max(0) as u64,
+            });
+            if m.member_pk != own && only.is_none_or(|o| o == m.member_pk) {
+                targets.push(m.member_pk.clone());
+            }
+        }
+        if members.is_empty() {
+            return;
+        }
+        let body = Gctl::Roster { members }.encode();
+        for pk_bin in targets {
+            let Some(cid) = self.contact_circuit(&pk_bin) else {
+                continue;
+            };
+            let svc = self.clone();
+            let b = body.clone();
+            let cv = *conv;
+            tokio::spawn(async move {
+                let _ = svc.send_frame_v2(&pk_bin, cid, cv, MsgKind::Gctl, b).await;
+            });
+        }
+    }
+
+    /// Scelle et emet une trame **v2** (`conv` signee) sur le
+    /// circuit du pair — pas de persistance `msg` (la ligne de
+    /// conversation et la livraison par membre sont aux appelants).
+    async fn send_frame_v2(
+        &self,
+        pk_bin: &[u8],
+        cid: u32,
+        conv: [u8; 16],
+        kind: MsgKind,
+        body: Vec<u8>,
+    ) -> Result<[u8; 16]> {
+        let (send_key, seq) = {
+            let circuits = self.circuits.lock().unwrap_or_else(|e| e.into_inner());
+            let mut contacts = self.contacts.lock().unwrap_or_else(|e| e.into_inner());
+            let (Some(binding), Some(contact)) = (circuits.get(&cid), contacts.get_mut(pk_bin))
+            else {
+                return Err(CoreError::InvalidState("messagerie : liaison disparue"));
+            };
+            let seq = contact.send_seq;
+            contact.send_seq += 1;
+            (binding.keys.send, seq)
+        };
+        let frame = Frame::new_in_conv(kind, conv, seq, now_secs(), body);
+        let wire = frame
+            .seal(&self.key, &send_key, &self.cfg)
+            .map_err(|e| CoreError::State(format!("seal trame v2: {e}")))?;
+        self.persist_seqs(pk_bin);
+        if let Err(e) = self
+            .tunnel
+            .send_data(cid, &unspecified(), &unspecified(), &wire)
+            .await
+        {
+            self.unbind_circuit(cid);
+            return Err(CoreError::State(format!("send_data messagerie: {e}")));
+        }
+        if kind == MsgKind::Hello {
+            if let Some(c) = self
+                .contacts
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .get_mut(pk_bin)
+            {
+                c.greeted = true;
+            }
+        }
+        Ok(frame.id)
+    }
+
+    /// `hello` v2 (`pk‖caps`, `conv` directe du lien) — precede le
+    /// premier `gctl`/`msg` vers un pair `scope='group'`.
+    async fn greet_v2(&self, pk_bin: &[u8], cid: u32) -> Result<()> {
+        let conv = self.direct_conv_id(pk_bin);
+        let body = hello::encode_hello_v2(&self.key.public_key().to_bin(), hello::HELLO_CAP_GROUPS);
+        self.send_frame_v2(pk_bin, cid, conv, MsgKind::Hello, body)
+            .await
+            .map(|_| ())
+    }
+
+    /// Emission v2 vers un membre : `hello` v2 d'abord si la
+    /// liaison vient d'etre liee, puis la trame `conv` demandee.
+    async fn send_to_member(
+        &self,
+        conv: [u8; 16],
+        member: &[u8],
+        kind: MsgKind,
+        body: Vec<u8>,
+    ) -> Result<[u8; 16]> {
+        let Some(cid) = self.contact_circuit(member) else {
+            return Err(CoreError::InvalidState("messagerie : membre hors ligne"));
+        };
+        if !self.is_greeted(member) {
+            self.greet_v2(member, cid).await?;
+        }
+        self.send_frame_v2(member, cid, conv, kind, body).await
+    }
+
+    /// Cree un groupe : conv aleatoire, roster initial (nous +
+    /// les invites — tous des contacts `Active` requis) et `gctl
+    /// invite` vers chaque membre lie. Online-only : un invite
+    /// hors ligne recevra le roster a sa prochaine liaison.
+    pub async fn group_create(
+        self: &Arc<Self>,
+        name: &str,
+        member_pks: &[Vec<u8>],
+    ) -> Result<[u8; 16]> {
+        if !self.cfg.groups_enabled {
+            return Err(CoreError::InvalidState("messagerie : groupes desactives"));
+        }
+        if name.is_empty() || name.len() > self.cfg.group_name_max_len {
+            return Err(CoreError::InvalidState(
+                "messagerie : nom de groupe hors borne",
+            ));
+        }
+        if member_pks.is_empty() || member_pks.len() + 1 > self.cfg.group_max_members {
+            return Err(CoreError::InvalidState(
+                "messagerie : membres de groupe hors borne",
+            ));
+        }
+        for pk_bin in member_pks {
+            self.require_state(pk_bin, ContactState::Active)?;
+            if self.peer_scope(pk_bin) == ContactScope::Group {
+                return Err(CoreError::InvalidState(
+                    "messagerie : seuls des contacts sont invitables",
+                ));
+            }
+        }
+        if let Some(db) = &self.db {
+            let n = db
+                .with(|c| dbc::count_conversations(c, "group", &["invited", "active"]))
+                .unwrap_or(0);
+            if n >= self.cfg.group_max_convs as u64 {
+                return Err(CoreError::InvalidState(
+                    "messagerie : nombre de groupes sature",
+                ));
+            }
+        }
+        let conv = conv::random_conv();
+        let own = self.key.public_key().to_bin();
+        let now = now_secs() as i64;
+        self.ensure_group_peer_row(&own);
+        if let Some(db) = &self.db {
+            db.with(|c| {
+                dbc::upsert_conversation(
+                    c,
+                    &dbc::MsgConversationRow {
+                        conv_id: conv.to_vec(),
+                        kind: "group".into(),
+                        name: name.to_string(),
+                        state: "active".into(),
+                        created_at: now,
+                        updated_at: now,
+                        last_read_ts: 0,
+                    },
+                )
+            })?;
+        }
+        self.persist_member(&conv, &own, &own, "member", now);
+        let mut roster: Vec<[u8; 74]> = Vec::with_capacity(member_pks.len() + 1);
+        let own_arr: [u8; 74] = own
+            .as_slice()
+            .try_into()
+            .map_err(|_| CoreError::State("pk_bin inattendue".into()))?;
+        roster.push(own_arr);
+        for pk_bin in member_pks {
+            self.persist_member(&conv, pk_bin, &own, "member", now);
+            if let Ok(arr) = <[u8; 74]>::try_from(pk_bin.as_slice()) {
+                roster.push(arr);
+            }
+        }
+        let body = Gctl::Invite {
+            name: name.to_string(),
+            roster,
+            by: own_arr,
+        }
+        .encode();
+        for pk_bin in member_pks {
+            let _ = self
+                .send_to_member(conv, pk_bin, MsgKind::Gctl, body.clone())
+                .await;
+        }
+        let _ = self.events_tx.send(MessagingEvent::Conv {
+            conv,
+            contact: own,
+            kind: MsgKind::Gctl,
+            id: [0; 16],
+            body: b"create".to_vec(),
+        });
+        Ok(conv)
+    }
+
+    /// Invite un contact actif dans un groupe existant (membres
+    /// peuvent inviter **leurs propres contacts** — la regle est
+    /// symetrique des deux cotes).
+    pub async fn group_invite(self: &Arc<Self>, conv: &[u8; 16], pk_bin: &[u8]) -> Result<()> {
+        self.require_group_active(conv)?;
+        self.require_state(pk_bin, ContactState::Active)?;
+        if self.peer_scope(pk_bin) == ContactScope::Group {
+            return Err(CoreError::InvalidState(
+                "messagerie : seuls des contacts sont invitables",
+            ));
+        }
+        if let Some(db) = &self.db {
+            if db.with(|c| dbc::member_state(c, conv, pk_bin))?.as_deref() == Some("member") {
+                return Err(CoreError::InvalidState("messagerie : deja membre"));
+            }
+            if db.with(|c| dbc::count_active_members(c, conv))? >= self.cfg.group_max_members as u64
+            {
+                return Err(CoreError::InvalidState("messagerie : groupe plein"));
+            }
+        }
+        let own = self.key.public_key().to_bin();
+        self.persist_member(conv, pk_bin, &own, "member", now_secs() as i64);
+        self.send_roster_invite(conv, pk_bin).await
+    }
+
+    /// `gctl invite` vers un membre precis (roster actuel + nom).
+    async fn send_roster_invite(&self, conv: &[u8; 16], target: &[u8]) -> Result<()> {
+        let Some(db) = &self.db else { return Ok(()) };
+        let row = db.with(|c| dbc::get_conversation(c, conv))?;
+        let Some(conv_row) = row else { return Ok(()) };
+        let members = db.with(|c| dbc::list_members(c, conv))?;
+        let own = self.key.public_key().to_bin();
+        let own_arr: [u8; 74] = own
+            .as_slice()
+            .try_into()
+            .map_err(|_| CoreError::State("pk_bin inattendue".into()))?;
+        let roster: Vec<[u8; 74]> = members
+            .iter()
+            .filter(|m| m.state == "member")
+            .filter_map(|m| m.member_pk.as_slice().try_into().ok())
+            .collect();
+        let body = Gctl::Invite {
+            name: conv_row.name,
+            roster,
+            by: own_arr,
+        }
+        .encode();
+        self.send_to_member(*conv, target, MsgKind::Gctl, body)
+            .await
+            .map(|_| ())
+    }
+
+    /// Accepte une invitation : conv `invited` → `active` + `gctl
+    /// join` vers l'invitant (son lien est lie — c'est un contact).
+    pub async fn group_accept(self: &Arc<Self>, conv: &[u8; 16]) -> Result<()> {
+        let Some(db) = &self.db else {
+            return Err(CoreError::InvalidState("messagerie : sans persistance"));
+        };
+        if db.with(|c| dbc::conversation_state(c, conv))?.as_deref() != Some("invited") {
+            return Err(CoreError::InvalidState(
+                "messagerie : conversation non invitee",
+            ));
+        }
+        // L'invitant = `added_by` de notre propre ligne membre.
+        let own = self.key.public_key().to_bin();
+        let inviter_pk = db
+            .with(|c| dbc::list_members(c, conv))?
+            .into_iter()
+            .find(|m| m.member_pk == own)
+            .map(|m| m.added_by)
+            .unwrap_or_default();
+        db.with(|c| dbc::set_conversation_state(c, conv, "active", now_secs() as i64))?;
+        self.persist_member(conv, &own, &inviter_pk, "member", now_secs() as i64);
+        if !inviter_pk.is_empty() {
+            let _ = self
+                .send_to_member(*conv, &inviter_pk, MsgKind::Gctl, Gctl::Join.encode())
+                .await;
+        }
+        self.broadcast_roster(conv, None);
+        Ok(())
+    }
+
+    /// Refuse une invitation : `invited` → `left` + `gctl leave`
+    /// vers l'invitant (historique conserve — jamais de remove).
+    pub async fn group_decline(self: &Arc<Self>, conv: &[u8; 16]) -> Result<()> {
+        let Some(db) = &self.db else {
+            return Err(CoreError::InvalidState("messagerie : sans persistance"));
+        };
+        if db.with(|c| dbc::conversation_state(c, conv))?.as_deref() != Some("invited") {
+            return Err(CoreError::InvalidState(
+                "messagerie : conversation non invitee",
+            ));
+        }
+        db.with(|c| dbc::set_conversation_state(c, conv, "left", now_secs() as i64))?;
+        let own = self.key.public_key().to_bin();
+        let inviter = db
+            .with(|c| dbc::list_members(c, conv))?
+            .into_iter()
+            .find(|m| m.member_pk == own)
+            .map(|m| m.added_by)
+            .unwrap_or_default();
+        if !inviter.is_empty() {
+            let _ = self
+                .send_to_member(*conv, &inviter, MsgKind::Gctl, Gctl::Leave.encode())
+                .await;
+        }
+        Ok(())
+    }
+
+    /// Quitte un groupe : `left` + `gctl leave` en fan-out vers
+    /// les membres lies (historique conserve — suppression reelle
+    /// seulement via `conversation_delete`).
+    pub async fn group_leave(self: &Arc<Self>, conv: &[u8; 16]) -> Result<()> {
+        let Some(db) = &self.db else {
+            return Err(CoreError::InvalidState("messagerie : sans persistance"));
+        };
+        db.with(|c| dbc::set_conversation_state(c, conv, "left", now_secs() as i64))?;
+        let own = self.key.public_key().to_bin();
+        db.with(|c| dbc::set_member_state(c, conv, &own, "left"))?;
+        for pk_bin in self.member_pks(conv) {
+            if pk_bin == own {
+                continue;
+            }
+            let _ = self
+                .send_to_member(*conv, &pk_bin, MsgKind::Gctl, Gctl::Leave.encode())
+                .await;
+        }
+        Ok(())
+    }
+
+    /// Message de groupe : `mid` applicatif + fan-out par membre
+    /// lie ; livraison par membre dans `msg_delivery`.
+    pub async fn group_send(self: &Arc<Self>, conv: &[u8; 16], body: Vec<u8>) -> Result<[u8; 16]> {
+        self.require_group_active(conv)?;
+        let mid: [u8; 16] = rand::random();
+        let wire_body = gmsg::encode_gmsg(&mid, &body);
+        if wire_body.len() > self.cfg.max_body_len {
+            return Err(CoreError::InvalidState("messagerie : corps hors borne"));
+        }
+        let own = self.key.public_key().to_bin();
+        // Ligne de conversation (une par message — la livraison
+        // par membre vit dans `msg_delivery`).
+        let mut row = Self::msg_row(&own, "out", 0, now_secs(), &body, "sent", &mid);
+        row.conv_id = conv.to_vec();
+        row.author_pk = Some(own.clone());
+        row.mid = Some(mid.to_vec());
+        self.persist_message(row);
+        for pk_bin in self.member_pks(conv) {
+            if pk_bin == own {
+                continue;
+            }
+            let status = match self
+                .send_to_member(*conv, &pk_bin, MsgKind::Msg, wire_body.clone())
+                .await
+            {
+                Ok(frame_id) => {
+                    // La livraison suit l'`id` de la trame emise
+                    // vers CE membre (cible de son `ack`).
+                    if let Some(db) = &self.db {
+                        let _ = db.with(|c| {
+                            dbc::upsert_delivery(
+                                c,
+                                &dbc::MsgDeliveryRow {
+                                    msg_id: frame_id.to_vec(),
+                                    member_pk: pk_bin.clone(),
+                                    status: "sent".into(),
+                                    ts: now_secs() as i64,
+                                },
+                            )
+                        });
+                    }
+                    continue;
+                }
+                Err(_) => "failed",
+            };
+            if let Some(db) = &self.db {
+                let _ = db.with(|c| {
+                    dbc::upsert_delivery(
+                        c,
+                        &dbc::MsgDeliveryRow {
+                            msg_id: mid.to_vec(),
+                            member_pk: pk_bin.clone(),
+                            status: status.into(),
+                            ts: now_secs() as i64,
+                        },
+                    )
+                });
+            }
+        }
+        Ok(mid)
+    }
+
+    /// Conv `active` requise (et notre appartenance).
+    fn require_group_active(&self, conv: &[u8; 16]) -> Result<()> {
+        let Some(db) = &self.db else {
+            return Err(CoreError::InvalidState("messagerie : sans persistance"));
+        };
+        if db.with(|c| dbc::conversation_state(c, conv))?.as_deref() != Some("active") {
+            return Err(CoreError::InvalidState(
+                "messagerie : conversation inactive",
+            ));
+        }
+        Ok(())
+    }
+
+    /// `pk_bin` des membres actifs d'un groupe.
+    fn member_pks(&self, conv: &[u8; 16]) -> Vec<Vec<u8>> {
+        self.db
+            .as_ref()
+            .and_then(|db| db.with(|c| dbc::list_active_members(c, conv)).ok())
+            .unwrap_or_default()
+    }
+
+    // ── API conversations (lecture pour REST/UI) ─────────────
+
+    /// Liste des conversations avec non lus / dernier horodatage.
+    pub fn conversation_list(&self) -> Result<Vec<dbc::MsgConversationListRow>> {
+        let Some(db) = &self.db else {
+            return Ok(Vec::new());
+        };
+        Ok(db.with(dbc::list_conversations)?)
+    }
+
+    /// Messages d'une conversation (ordre total local).
+    pub fn conversation_messages(
+        &self,
+        conv: &[u8; 16],
+        limit: u32,
+    ) -> Result<Vec<dbm::MsgMessageRow>> {
+        let Some(db) = &self.db else {
+            return Ok(Vec::new());
+        };
+        Ok(db.with(|c| dbm::list_messages_by_conv(c, conv, limit))?)
+    }
+
+    /// Roster d'un groupe.
+    pub fn conversation_members(&self, conv: &[u8; 16]) -> Result<Vec<dbc::MsgMemberRow>> {
+        let Some(db) = &self.db else {
+            return Ok(Vec::new());
+        };
+        Ok(db.with(|c| dbc::list_members(c, conv))?)
+    }
+
+    /// Livraisons par membre d'un message de groupe.
+    pub fn conversation_delivery(&self, msg_id: &[u8; 16]) -> Result<Vec<dbc::MsgDeliveryRow>> {
+        let Some(db) = &self.db else {
+            return Ok(Vec::new());
+        };
+        Ok(db.with(|c| dbc::list_delivery(c, msg_id))?)
+    }
+
+    /// Etat d'une conversation (`invited|active|left`).
+    pub fn conversation_state(&self, conv: &[u8; 16]) -> Option<String> {
+        self.db_state(|c| dbc::conversation_state(c, conv))
+    }
+
+    /// Marqueur de lecture (badge non lu).
+    pub fn conversation_mark_read(&self, conv: &[u8; 16]) -> Result<()> {
+        let Some(db) = &self.db else { return Ok(()) };
+        Ok(db.with(|c| dbc::mark_read(c, conv, now_secs() as i64))?)
+    }
+
+    /// Suppression reelle d'une conversation (cascades).
+    pub fn conversation_delete(&self, conv: &[u8; 16]) -> Result<()> {
+        let Some(db) = &self.db else { return Ok(()) };
+        Ok(db.with(|c| dbc::delete_conversation(c, conv))?)
     }
 
     /// Presence : maintient des points d'introduction sur notre
@@ -2191,6 +3201,12 @@ mod tests {
     async fn make_service_db(db: Arc<Database>) -> Arc<MessagingService> {
         let (tunnel, key) = bare_tunnel().await;
         MessagingService::start(tunnel, key, MessagingConfig::default(), 0, Some(db))
+    }
+
+    /// `make_service_db` avec config explicite.
+    async fn make_service_db_cfg(db: Arc<Database>, cfg: MessagingConfig) -> Arc<MessagingService> {
+        let (tunnel, key) = bare_tunnel().await;
+        MessagingService::start(tunnel, key, cfg, 0, Some(db))
     }
 
     /// Injecte un circuit non lie (`contact: None`) — le repondant
@@ -3284,5 +4300,327 @@ mod tests {
                 }
             }
         }
+    }
+
+    // ── ADR-0019 : conversations de groupe ──────────────────
+
+    /// Trame v2 filaire (`conv` signee) d'un pair.
+    fn wire_v2(
+        peer: &LibNaClSecretKey,
+        seq: u64,
+        key: &[u8; 32],
+        conv: [u8; 16],
+        kind: MsgKind,
+        body: Vec<u8>,
+    ) -> Vec<u8> {
+        Frame::new_in_conv(kind, conv, seq, 1, body)
+            .seal(peer, key, &MessagingConfig::default())
+            .unwrap()
+    }
+
+    /// Conv de groupe persistante (`state` donne) + notre ligne
+    /// membre (ancre FK des messages `out`).
+    fn seed_conv(svc: &MessagingService, conv: [u8; 16], state: &str) {
+        let own = svc.key.public_key().to_bin();
+        svc.ensure_group_peer_row(&own);
+        let db = svc.db.as_ref().expect("db");
+        db.with(|c| {
+            dbc::upsert_conversation(
+                c,
+                &dbc::MsgConversationRow {
+                    conv_id: conv.to_vec(),
+                    kind: "group".into(),
+                    name: "g".into(),
+                    state: state.into(),
+                    created_at: 1,
+                    updated_at: 1,
+                    last_read_ts: 0,
+                },
+            )?;
+            dbc::upsert_member(
+                c,
+                &dbc::MsgMemberRow {
+                    conv_id: conv.to_vec(),
+                    member_pk: own.clone(),
+                    added_by: own,
+                    state: "member".into(),
+                    joined_at: 1,
+                },
+            )
+        })
+        .unwrap();
+    }
+
+    /// Lie un pair `scope='group'` : Contact confine + circuit +
+    /// lignes DB (contact `scope='group'` + membre du roster).
+    fn bind_group_member(
+        svc: &MessagingService,
+        cid: u32,
+        conv: &[u8; 16],
+        peer: &LibNaClSecretKey,
+        keys: &MessagingKeys,
+    ) -> Vec<u8> {
+        let pk_bin = peer.public_key().to_bin();
+        svc.circuits
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(
+                cid,
+                CircuitBinding {
+                    keys: keys.clone(),
+                    contact: Some(pk_bin.clone()),
+                },
+            );
+        let mut c = Contact::group_scoped(peer.public_key(), &svc.cfg);
+        c.circuit = Some(cid);
+        c.greeted = true;
+        svc.contacts
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(pk_bin.clone(), c);
+        svc.ensure_group_peer_row(&pk_bin);
+        svc.persist_member(conv, &pk_bin, &pk_bin, "member", 1);
+        pk_bin
+    }
+
+    /// `gctl invite` d'un **contact actif** : conv `invited`,
+    /// roster pose, evenement `GroupInvite` emis.
+    #[tokio::test]
+    async fn group_invite_d_un_contact_actif() {
+        let db = Arc::new(Database::memory().unwrap());
+        let svc = make_service_db(db).await;
+        let peer = LibNaClSecretKey::generate();
+        let keys = MessagingKeys {
+            send: [1u8; 32],
+            recv: [2u8; 32],
+        };
+        let pk_bin = bind(&svc, 90, &peer, &keys);
+        let mut events = svc.subscribe();
+        let conv = conv::random_conv();
+        let own = svc.key.public_key().to_bin();
+        let invite = Gctl::Invite {
+            name: "canal".into(),
+            roster: vec![
+                pk_bin.as_slice().try_into().unwrap(),
+                own.as_slice().try_into().unwrap(),
+            ],
+            by: pk_bin.as_slice().try_into().unwrap(),
+        }
+        .encode();
+        let w = wire_v2(&peer, 0, &keys.recv, conv, MsgKind::Gctl, invite);
+        svc.handle_incoming(90, &keys, &w);
+        assert_eq!(svc.conversation_state(&conv).as_deref(), Some("invited"));
+        let members = svc.conversation_members(&conv).unwrap();
+        assert_eq!(members.len(), 2);
+        assert!(members.iter().all(|m| m.state == "member"));
+        match events.try_recv() {
+            Ok(MessagingEvent::GroupInvite { conv: c, name, by }) => {
+                assert_eq!((c, name.as_str(), by), (conv, "canal", pk_bin));
+            }
+            other => panic!("GroupInvite attendu, recu {other:?}"),
+        }
+        // `accept` -> `active` (le `join` part en best effort).
+        svc.group_accept(&conv).await.unwrap();
+        assert_eq!(svc.conversation_state(&conv).as_deref(), Some("active"));
+    }
+
+    /// `gctl invite` d'un pair `scope='group'` : rejetee —
+    /// l'invitation n'est admise que d'un contact actif (le membre
+    /// confine ne peut pas inviter vers d'autres convs).
+    #[tokio::test]
+    async fn group_invite_d_un_pair_confine_rejetee() {
+        let db = Arc::new(Database::memory().unwrap());
+        let svc = make_service_db(db).await;
+        let peer = LibNaClSecretKey::generate();
+        let keys = MessagingKeys {
+            send: [1u8; 32],
+            recv: [2u8; 32],
+        };
+        // Le pair est deja membre d'un groupe A.
+        let conv_a = conv::random_conv();
+        seed_conv(&svc, conv_a, "active");
+        let pk_bin = bind_group_member(&svc, 91, &conv_a, &peer, &keys);
+        // Il tente d'inviter vers une conv B inconnue.
+        let conv_b = conv::random_conv();
+        let own = svc.key.public_key().to_bin();
+        let invite = Gctl::Invite {
+            name: "autre".into(),
+            roster: vec![
+                pk_bin.as_slice().try_into().unwrap(),
+                own.as_slice().try_into().unwrap(),
+            ],
+            by: pk_bin.as_slice().try_into().unwrap(),
+        }
+        .encode();
+        let w = wire_v2(&peer, 0, &keys.recv, conv_b, MsgKind::Gctl, invite);
+        svc.handle_incoming(91, &keys, &w);
+        assert_eq!(svc.conversation_state(&conv_b), None);
+        assert_eq!(svc.stats.group_rejected.load(Ordering::Relaxed), 1);
+    }
+
+    /// Dedup applicative `(conv, author, mid)` : le meme message
+    /// re-emis avec un `id` de trame different (reouverture) n'est
+    /// pas duplique ; un `mid` different est livre.
+    #[tokio::test]
+    async fn group_msg_dedup_par_mid() {
+        let db = Arc::new(Database::memory().unwrap());
+        // Debit illimite : la dedup `mid` doit etre l'oracle, pas
+        // le seau (trois trames dans la meme rafale).
+        let svc = make_service_db_cfg(
+            db,
+            MessagingConfig {
+                per_contact_rate: 0,
+                global_rate: 0,
+                ..Default::default()
+            },
+        )
+        .await;
+        let peer = LibNaClSecretKey::generate();
+        let keys = MessagingKeys {
+            send: [1u8; 32],
+            recv: [2u8; 32],
+        };
+        let conv = conv::random_conv();
+        seed_conv(&svc, conv, "active");
+        let pk_bin = bind_group_member(&svc, 92, &conv, &peer, &keys);
+        let mid = [9u8; 16];
+        let body = gmsg::encode_gmsg(&mid, b"salut");
+        svc.handle_incoming(
+            92,
+            &keys,
+            &wire_v2(&peer, 0, &keys.recv, conv, MsgKind::Msg, body.clone()),
+        );
+        // Re-emission : meme `mid`, nouvel `id` (le codec l'alloue).
+        svc.handle_incoming(
+            92,
+            &keys,
+            &wire_v2(&peer, 1, &keys.recv, conv, MsgKind::Msg, body),
+        );
+        // `mid` different -> livre.
+        let body2 = gmsg::encode_gmsg(&[10u8; 16], b"re");
+        svc.handle_incoming(
+            92,
+            &keys,
+            &wire_v2(&peer, 2, &keys.recv, conv, MsgKind::Msg, body2),
+        );
+        let hist = svc.conversation_messages(&conv, 10).unwrap();
+        assert_eq!(hist.len(), 2);
+        assert!(hist.iter().all(|m| m.mid.is_some()));
+        assert!(hist
+            .iter()
+            .all(|m| m.author_pk.as_deref() == Some(pk_bin.as_slice())));
+    }
+
+    /// Anti-forge : `roster` est additif (un `left` de B ne peut
+    /// pas etre forge par A) ; le `leave` de A ne marque que A.
+    #[tokio::test]
+    async fn group_leave_anti_forge_et_roster_additif() {
+        let db = Arc::new(Database::memory().unwrap());
+        let svc = make_service_db(db).await;
+        let keys = MessagingKeys {
+            send: [1u8; 32],
+            recv: [2u8; 32],
+        };
+        let conv = conv::random_conv();
+        seed_conv(&svc, conv, "active");
+        let a = LibNaClSecretKey::generate();
+        let b = LibNaClSecretKey::generate();
+        let a_bin = bind_group_member(&svc, 93, &conv, &a, &keys);
+        let b_bin = bind_group_member(&svc, 94, &conv, &b, &keys);
+        // A envoie un roster marquant B — additif : rien ne change.
+        let roster = Gctl::Roster {
+            members: vec![RosterEntry {
+                pk: b_bin.as_slice().try_into().unwrap(),
+                added_by: a_bin.as_slice().try_into().unwrap(),
+                joined_at: 5,
+            }],
+        }
+        .encode();
+        svc.handle_incoming(
+            93,
+            &keys,
+            &wire_v2(&a, 0, &keys.recv, conv, MsgKind::Gctl, roster),
+        );
+        let state = |pk: &[u8]| {
+            svc.db
+                .as_ref()
+                .unwrap()
+                .with(|c| dbc::member_state(c, &conv, pk))
+                .unwrap()
+        };
+        assert_eq!(state(&b_bin).as_deref(), Some("member"));
+        // `leave` de A : honore (son propre lien signe) — B intact.
+        svc.handle_incoming(
+            93,
+            &keys,
+            &wire_v2(&a, 1, &keys.recv, conv, MsgKind::Gctl, Gctl::Leave.encode()),
+        );
+        assert_eq!(state(&a_bin).as_deref(), Some("left"));
+        assert_eq!(state(&b_bin).as_deref(), Some("member"));
+    }
+
+    /// Confinement : un pair `scope='group'` ne peut parler ni en
+    /// v1 ni sur la conv directe — seules ses convs de groupe.
+    #[tokio::test]
+    async fn confinement_pair_groupe() {
+        let db = Arc::new(Database::memory().unwrap());
+        let svc = make_service_db(db).await;
+        let peer = LibNaClSecretKey::generate();
+        let keys = MessagingKeys {
+            send: [1u8; 32],
+            recv: [2u8; 32],
+        };
+        let conv = conv::random_conv();
+        seed_conv(&svc, conv, "active");
+        let pk_bin = bind_group_member(&svc, 95, &conv, &peer, &keys);
+        // v1 (sans conv) -> rejet.
+        svc.handle_incoming(95, &keys, &wire(&peer, 0, &keys.recv, b"1:1"));
+        // v2 conv directe -> rejet.
+        let direct = svc.direct_conv_id(&pk_bin);
+        svc.handle_incoming(
+            95,
+            &keys,
+            &wire_v2(&peer, 1, &keys.recv, direct, MsgKind::Msg, b"1:1".to_vec()),
+        );
+        assert_eq!(svc.stats.group_rejected.load(Ordering::Relaxed), 2);
+        let hist = svc.conversation_messages(&conv, 10).unwrap();
+        assert!(hist.is_empty());
+    }
+
+    /// `group_create` + `group_send` : conv creee, roster pose,
+    /// ligne de conversation avec `mid`, livraison par membre
+    /// (offline en test -> `failed` — oracle online-only).
+    #[tokio::test]
+    async fn group_send_fanout_et_historique() {
+        let db = Arc::new(Database::memory().unwrap());
+        let svc = make_service_db(db).await;
+        let peer = LibNaClSecretKey::generate();
+        let keys = MessagingKeys {
+            send: [1u8; 32],
+            recv: [2u8; 32],
+        };
+        let pk_bin = bind(&svc, 96, &peer, &keys);
+        let conv = svc
+            .group_create("canal", std::slice::from_ref(&pk_bin))
+            .await
+            .unwrap();
+        assert_eq!(svc.conversation_state(&conv).as_deref(), Some("active"));
+        assert_eq!(svc.conversation_members(&conv).unwrap().len(), 2);
+        let mid = svc.group_send(&conv, b"bonjour".to_vec()).await.unwrap();
+        let hist = svc.conversation_messages(&conv, 10).unwrap();
+        assert_eq!(hist.len(), 1);
+        assert_eq!(hist[0].direction, "out");
+        assert_eq!(hist[0].mid.as_deref(), Some(mid.as_slice()));
+        // Livraison : tentative d'envoi tracee par membre (le
+        // send_data echoue sans vrai circuit -> `failed`).
+        let deliv = svc.conversation_delivery(&mid).unwrap();
+        assert_eq!(deliv.len(), 1);
+        assert_eq!(deliv[0].member_pk, pk_bin);
+        // Un membre non-contact ne peut pas etre invite.
+        let p2 = LibNaClSecretKey::generate();
+        let b2 = bind_group_member(&svc, 97, &conv, &p2, &keys);
+        assert!(svc.group_invite(&conv, &b2).await.is_err());
+        // Un pair confine refuse le `send` 1:1.
+        assert!(svc.send(&b2, b"x".to_vec()).await.is_err());
     }
 }

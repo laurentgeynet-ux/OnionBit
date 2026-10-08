@@ -34,6 +34,7 @@ pub mod conv;
 pub mod error;
 pub mod frame;
 pub mod gctl;
+pub mod gmsg;
 pub mod hash;
 pub mod hello;
 pub mod keys;
