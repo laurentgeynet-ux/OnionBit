@@ -3,6 +3,32 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## ADR-0019 revue : alignement sur ADR-0018 implémentée (2026-10-09)
+
+- **Réception d'attach** : la route `accept` réutilise la grammaire
+  `destination` `"<chemin>" | {area, dir?}` et `resolve_area`
+  d'ADR-0018 — même `409 identity_locked` si la zone privée est
+  fermée ; `attach_area` = défaut `public`, surchargeable par requête.
+- **Zone privée** : `@public/messaging/` reste le sous-dossier dédié en
+  public ; en privé, pas de sous-dossier dédié — `PrivateSubdir` ne
+  connaît que `temp`/`downloads` et les noms sont opaques par
+  construction (`move_on_completion` `temp→downloads` s'applique).
+- **Upload `{path}`** : limité à `@public` / hors racines — `@private`
+  exclu (cohérent avec le 403 de `files/browse`) ; attacher un privé
+  passe par lecture `TorrentStorage` → staging en clair sous `@state/`
+  (flux assumé).
+- **Limite de périmètre documentée** : un attach reçu en privé protège
+  le contenu (`.obd` + `manifest.obm`, ligne `downloads` opaque) mais
+  pas les métadonnées du fil (`msg_attachments`, corps du message
+  `{ih,name,size}` en clair — persistance v1 assumée d'ADR-0011).
+- **Invité** : pièce jointe privée = éphémère (`temp/.guest/`), purgée
+  à la fermeture.
+- **DB** : la migration Phase 12 se pose après v20 (`storage_area`
+  existe) — ajout de `downloads.origin` (`'user'`/`'messaging'`).
+- **UI** : « recevoir en privé » seulement si `GET /api/private` →
+  `mounted`/`guest` ; chemins affichés via `display_stored_path` —
+  jamais de chemin absolu calculé côté app.
+
 ## ADR-0018 étape 62 : câblage core/API — `storage_area`, manifeste `OBM`, locked, invité (2026-10-09)
 
 - **DB** : migration `downloads.storage_area TEXT NOT NULL DEFAULT

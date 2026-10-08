@@ -1,14 +1,18 @@
 # ADR-0019 — Messagerie : conversations multiples, groupes et pièces jointes
 
-Statut : **Proposée** (2026-10-08) — extension de la messagerie e2e
+Statut : **Proposée** (2026-10-08, revue 2026-10-09 — alignement sur
+ADR-0018 implémentée) — extension de la messagerie e2e
 d'ADR-0011 (livrée, Phase 8, bancs `MS-*` verts). Réutilise sans les
 modifier : les circuits e2e et le hidden seeding
 (`onionbit-tunnel`), le codec et l'anti-replay
 (`onionbit-messaging`), les capacités `hello.caps` d'ADR-0015
-(`CAP_MSG_V1` = bit 1), et les racines portables
-`@state`/`@public`/`@private` d'ADR-0018 (étape 57 livrée :
-`onionbit-core::paths`). Cadre de la Phase 12 de
-`docs/plans/roadmap.md`.
+(`CAP_MSG_V1` = bit 1), et **ADR-0018 implémentée** : racines
+portables `@state`/`@public`/`@private` (`onionbit-core::paths`),
+`StorageArea`/`storage.default_area`, grammaire `destination`
+`"<chemin>" | {area, dir?}`, zone privée `OBD`/`OBM`
+(`PrivateZone`, `store_root`, état `locked|mounted|guest`),
+`downloads.storage_area` (v20) et `GET /api/private`. Cadre de la
+Phase 12 de `docs/plans/roadmap.md`.
 
 ## Contexte
 
@@ -197,8 +201,11 @@ upload ──► staging @state ──► createtorrent   attach {ih,name,size}
   jamais attaché est purgé au tick. Nécessaire pour l'UI web et
   le pilotage mobile ; l'app desktop emprunte le même chemin (un
   seul flux, uniforme). Variante locale : `uploads` accepte aussi
-  `{path: "@…/…"}` d'un fichier déjà sous une racine connue
-  (zéro copie pour les fichiers déjà dans `data/`).
+  `{path: "@…/…"}` d'un fichier déjà sous `@public` ou hors
+  racines (zéro copie pour les fichiers déjà dans `data/public`) —
+  **`@private` est exclu** de cette variante (`files/browse` le
+  refuse déjà en 403) ; attacher un fichier privé passe par
+  lecture via `TorrentStorage` (voir « posture zone privée »).
 - **Émission** : `POST …/conversations/{conv}/attachments
   {upload_ids:[…], note?}` — chaque upload est déplacé sous
   `@state/messaging/attachments/<attach_id>/`, puis
@@ -223,12 +230,18 @@ upload ──► staging @state ──► createtorrent   attach {ih,name,size}
   de téléchargement automatique** (posture de consentement
   d'ADR-0011 étendue au contenu). Le clic « Recevoir » appelle
   `POST /api/messaging/attachments/{aid}/accept` → ajout
-  `magnet:?xt=urn:btih:<ih>` avec `anon_hops`, destination
-  `@<attach_area>/messaging/` (`attach_area` = `public` par
-  défaut, `private` possible dès ADR-0018 livrée — pièce jointe
-  sensible au repos sous la clé d'identité). Les métadonnées
-  arrivent par `ut_metadata` sur le swarm caché (le seed initial
-  est l'émetteur seul). `decline` oublie l'offre ; l'expiration du
+  `magnet:?xt=urn:btih:<ih>` avec `anon_hops` et la **grammaire
+  `destination` d'ADR-0018 réutilisée telle quelle** : zone =
+  `attach_area` (défaut `public`, surchargeable par requête
+  `{area:"private"}` — même `resolve_area`, même
+  `409 identity_locked` tant que la zone est fermée). Sous
+  `public`, sous-dossier dédié `@public/messaging/` ; sous
+  `private`, `destination:{area:"private"}` sans `dir` — la zone
+  ne connaît que `temp`/`downloads` et les noms y sont opaques
+  par construction. Les métadonnées arrivent par `ut_metadata`
+  sur le swarm caché (le seed initial est l'émetteur seul) ; un
+  privé reçu prend `move_on_completion` `temp→downloads` comme
+  tout privé. `decline` oublie l'offre ; l'expiration du
   seed émetteur bascule l'offre en `expired` au timeout des
   métadonnées — échec borné et visible, comme l'offline.
 - **Groupe** : le même `ih` sert tous les membres — un seul
@@ -245,13 +258,28 @@ upload ──► staging @state ──► createtorrent   attach {ih,name,size}
   `@private` passe par lecture via `TorrentStorage` → copie **en
   clair** dans le staging `@state/` — flux assumé et documenté
   (le staging vit dans `state/`, zone sensible par construction,
-  jamais sous `data/public`).
+  jamais sous `data/public`). En session **invitée**, une pièce
+  jointe reçue en `private` vit sous `temp/.guest/` et est purgée
+  à la fermeture — cohérent avec « rien n'est conservé ».
+- **Métadonnées en clair — limite de périmètre assumée** : pour
+  un attach **reçu en zone privée**, le contenu est protégé
+  (`.obd` + catalogue `manifest.obm`) mais la ligne
+  `msg_attachments` et le corps du message (`{ih, name, size}`)
+  restent en clair dans `onionbit.db` — persistance en clair v1
+  assumée d'ADR-0011. La zone privée couvre le **contenu**, pas
+  les métadonnées du fil de discussion ; la ligne `downloads`
+  reste opaque (`HMAC(infohash)`), cohérent avec ADR-0018.
 - **Intégrité** : l'infohash porte l'authenticité du contenu —
   aucun relais ni membre ne peut altérer le fichier servi (hash
   de pièce vérifié par le moteur). La confidentialité du contenu
   = celle des circuits e2e + l'indévinabilité du swarm.
 
-### 5. Persistance — nouvelle migration
+### 5. Persistance — nouvelle migration (après v20)
+
+v20 (ADR-0018) a déjà posé `downloads.storage_area` ; cette
+migration ajoute les tables de messagerie et la colonne
+`downloads.origin` (`'user'` défaut, `'messaging'` pour les
+offres seedées — filtrable dans l'UI Téléchargements).
 
 ```sql
 ALTER TABLE msg_contacts ADD COLUMN scope TEXT NOT NULL
@@ -301,6 +329,10 @@ CREATE TABLE msg_attachments (
                                        -- declined
     created_at INTEGER NOT NULL
 );
+ALTER TABLE downloads ADD COLUMN origin TEXT NOT NULL
+    DEFAULT 'user' CHECK (origin IN ('user','messaging'));
+    -- 'messaging' = swarm caché offert par la messagerie (seed ou
+    -- réception) ; filtrable côté UI Téléchargements.
 ```
 
 Migration des données : chaque ligne `msg_messages` reçoit la
@@ -325,7 +357,7 @@ dans `api_rest_mapping.md`, mêmes gardes : 404 messagerie off,
 | `POST /conversations/{conv}/leave` | quitter le groupe |
 | `POST /uploads` `?name=` / `DELETE /uploads/{id}` | staging de fichiers |
 | `POST /conversations/{conv}/attachments` `{upload_ids, note?}` | émission attach |
-| `GET /attachments/{aid}` + `POST …/accept` / `…/decline` | état + décision |
+| `GET /attachments/{aid}` + `POST …/accept {destination?}` / `…/decline` | état + décision (`destination` = grammaire ADR-0018 `{area,dir?}`, défaut `attach_area`) |
 
 SSE : `messaging_frame` gagne `conv` ; nouveaux topics
 `messaging_conv` (created/invited/updated/left) et
@@ -342,7 +374,12 @@ membres ; **zone de glisser-déposer scopée à la conversation**
 `.torrent`/`.magnet` reste sur le reste de la fenêtre) ; bulle
 pièce jointe (nom, taille, progression mappée du download,
 états `offered/done/expired`) ; boutons groupe/fichier grisés
-avec infobulle quand le pair n'annonce pas v2.
+avec infobulle quand le pair n'annonce pas v2. Côté zones :
+l'option « recevoir en privé » n'est offerte que si
+`GET /api/private` annonce `mounted` (ou `guest`, marqué
+éphémère) ; les chemins affichés passent par
+`display_stored_path` — l'UI ne calcule jamais de chemin absolu
+(portable ADR-0018).
 
 ### 7. Configuration (aucune valeur en dur)
 
@@ -358,7 +395,10 @@ avec infobulle quand le pair n'annonce pas v2.
     "attach_max_per_msg": 8,
     "attach_stage_max_mib": 4096,    // quota global du staging
     "attach_seed_ttl_secs": 604800,  // 0 = politique seeding normale
-    "attach_area": "public",         // zone de réception (ADR-0018)
+    "attach_area": "public",         // zone de réception ADR-0018 ;
+                                     // "private" → 409 tant que la
+                                     // zone est fermée ; "guest" =
+                                     // éphémère, purgé à la fermeture
     "upload_ttl_secs": 86400
   }
 }
@@ -374,6 +414,7 @@ avec infobulle quand le pair n'annonce pas v2.
 | Ordre des messages de groupe | dédup `(conv,author,mid)` + ordre total local `(ts,author,mid)` | ordre **non causal** assumé — deux réponses simultanées peuvent s'afficher inversées entre membres |
 | Malware | réception = clic explicite, jamais automatique | le contenu reçu est exécuté sous la responsabilité utilisateur (même posture qu'un magnet reçu) |
 | Fichier privé attaché | lecture via `TorrentStorage` | copie **en clair** dans `@state/` (zone sensible assumée, purgeable) |
+| Attach reçu en zone privée | contenu `.obd` + catalogue `manifest.obm`, ligne `downloads` opaque | les métadonnées du fil (`msg_attachments`, corps du message `{ih,name,size}`) restent **en clair** dans `onionbit.db` — la zone couvre le contenu, pas les métadonnées (persistance en clair v1 d'ADR-0011) |
 
 ## Alternatives rejetées
 
@@ -440,7 +481,11 @@ avec infobulle quand le pair n'annonce pas v2.
   `expired` sans boucle ; suppression = fichier stagé retiré ;
 - **Non-fuite** : aucun octet de fichier hors tunnel ; le fichier
   stagé ne sort jamais sous `data/public` (oracle listing) ; un
-  `.obd` privé attaché passe bien par `TorrentStorage` ;
+  `.obd` privé attaché passe bien par `TorrentStorage` ; un
+  attach accepté `area=private` est catalogué `manifest.obm` et
+  sa ligne `downloads` opaque (`HMAC(infohash)`) ; accept privé
+  zone fermée → `409 identity_locked` ; invité → privé purgé à
+  la fermeture ; la variante `uploads {path}` refuse `@private` ;
 - **Caps** : `CAP_MSG_V2` annoncé seulement si messagerie +
   `groups_enabled` ; pair v1 → dégradation propre (v2 droppé au
   préfiltre, v1 continue) ;
