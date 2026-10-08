@@ -1131,5 +1131,41 @@
   "stealthCoverSub": "Padded keepalive frames at randomized intervals — smooths timing and volume, costs bandwidth. Default: off. Applied on restart.",
   "stealthSaved": "Stealth settings saved",
   "stealthStatus": "Role: {role} — sessions: {sessions} — configured bridges: {bridges}",
-  "stealthClockWarning": "Handshakes to bridges keep failing without any established session. On a censored network, check your clock: NTP may be filtered or spoofed and the handshake timestamp window is ±90 s."
+  "stealthClockWarning": "Handshakes to bridges keep failing without any established session. On a censored network, check your clock: NTP may be filtered or spoofed and the handshake timestamp window is ±90 s.",
+
+  "storageAreaLabel": "Storage area",
+  "storageAreaPublic": "Public",
+  "storageAreaPrivate": "Private",
+  "storageAreaPublicHint": "Cleartext files under data/public/ — readable by anyone who can open the media.",
+  "storageAreaPrivateHint": "Files encrypted and bound to your identity — readable only by you, after unlock.",
+  "zonePrivateTip": "Private area — files encrypted (OBD) and bound to your identity",
+  "zonePrivateLockedTip": "Private area locked — unlock your identity to access this download",
+  "sectionStorage": "Storage",
+  "storageDefaultArea": "Default area for new downloads",
+  "storageMoveOnCompletion": "Move completed downloads",
+  "storageMoveOnCompletionSub": "temp → downloads as soon as a download finishes (both areas).",
+  "storagePrivateEnabled": "Encrypted private area",
+  "storagePrivateEnabledSub": "Identity-bound area under data/private/ — taken into account on next start.",
+  "storagePrivateState": "Private area: {state}",
+  "@storagePrivateState": {
+    "placeholders": { "state": { "type": "String" } }
+  },
+  "storagePrivateStateMounted": "mounted",
+  "storagePrivateStateLocked": "locked",
+  "storagePrivateStateGuest": "guest (ephemeral)",
+  "storageNonPortableTitle": "Non-portable path",
+  "storageNonPortableBody": "The download folder \"{path}\" is a machine-specific absolute path. On a portable bundle (USB key), use an @public/… spec so the path survives a drive-letter or mount-point change.",
+  "@storageNonPortableBody": {
+    "placeholders": { "path": { "type": "String" } }
+  },
+  "storageOrphansTitle": "Private orphans",
+  "storageOrphansBody": "{count} encrypted file group(s) not referenced by the manifest — likely leftovers from a crash or a removed download.",
+  "@storageOrphansBody": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "storageOrphansPurge": "Purge",
+  "storageOrphansPurgeConfirm": "Delete orphan .obd/.bitv files? They are not referenced by the private manifest. This cannot be undone.",
+  "removableBannerBody": "OnionBit runs from a removable or unprotected volume — your identity seed is stored in cleartext. Encrypt it with a password to protect it if the media is lost.",
+  "removableBannerAction": "Encrypt identity",
+  "removableBannerDismiss": "Later"
 }

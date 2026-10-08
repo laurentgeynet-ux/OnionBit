@@ -3,6 +3,43 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## ADR-0018 étape 63 : UI zones + banc portable + docs — ADR Acceptée (2026-10-08)
+
+- **Détection média amovible** (`onionbit-core::volume`) : Windows
+  `GetDriveType` (REMOVABLE/CDROM) + `FILE_PERSISTENT_ACLS` absent →
+  FAT/exFAT ; Linux/Android via `/proc/self/mounts` (fstype sans ACL
+  vfat/exfat/ntfs/fuseblk/sdcardfs/fuse.* ou point de montage
+  `/media`, `/run/media`, `/mnt/*`, `/storage/*`) ; macOS via
+  `statfs` (fstypename msdos/exfat/ntfs ou `/Volumes/*`). Best-effort,
+  jamais bloquant.
+- **`GET /api/identity` expose `storage_removable`** dans les trois
+  états (`pending`/`locked`/`ready`).
+- **Bandeau UI** `RemovableStorageBanner` : média amovible + graine non
+  scellée → proposition `POST /api/identity/at_rest` (mot de passe),
+  masquable pour la session, jamais en invité.
+- **Ajout de téléchargement** : sélecteur de zone `public`/`private`
+  (défaut `storage/default_area`, option privée grisée quand la zone
+  est `locked` — le backend répondrait `409`) ; le champ destination
+  est masqué en privé (arborescence opaque gérée par le daemon).
+  `DownloadsRepository.add`/`addTorrentBytes` acceptent `area`.
+- **Badge zone** dans les lignes de téléchargements : cadenas
+  `enhanced_encryption` (privé monté) ou `lock_clock` rouge
+  (`locked_area` = zone privée non montée).
+- **Section Réglages « Stockage »** : zone par défaut,
+  `move_on_completion`, `private_enabled`, état `GET /api/private`
+  (montée/verrouillée/invitée), purge explicite des orphelins
+  `.obd`/`.bitv`, espace disque par zone (`dirspace?area=`), carte
+  « chemin non portable » quand `saveas` est un absolu hors specs `@…`.
+- **`scripts/bench_portable.ps1`** (vert en `--offline`) : A ajout
+  public+privé avec groupe opaque 32-hex et zéro nom privé en clair ;
+  B copie du bundle → restitution identique + oracle zéro chemin
+  absolu persisté ; C `data/private` sous identité étrangère →
+  manifeste indéchiffrable, listing vide.
+- **Docs** : `THREAT-MODEL.md` (zone privée, limites FAT32/exFAT —
+  pas d'ACL, pas de déni plausible —, `noexec`), `BUILDING.md` (layout
+  du bundle portable + guide nomade).
+- **ADR-0018 → Acceptée** : critères de sortie Phase 11 tous vérifiés.
+
 ## ADR-0019 revue : alignement sur ADR-0018 implémentée (2026-10-09)
 
 - **Réception d'attach** : la route `accept` réutilise la grammaire

@@ -9,6 +9,7 @@ import '../l10n/app_localizations.dart';
 import 'core/config/ui_prefs.dart';
 import 'core/di/providers.dart';
 import 'core/identity/identity_gate.dart';
+import 'features/settings/presentation/providers/settings_providers.dart';
 import 'core/l10n/locale_settings.dart';
 import 'core/router/app_router.dart';
 import 'core/theme/app_theme.dart';
@@ -57,13 +58,23 @@ class OnionbitApp extends ConsumerWidget {
           return IdentityGatePage(locked: identityState == 'locked');
         }
         final content = child ?? const SizedBox.shrink();
-        if (!guest) return content;
-        return Column(
-          children: [
-            const GuestBanner(),
-            Expanded(child: content),
-          ],
-        );
+        // Bandeau « média amovible » (ADR-0018) : racine du bundle sur
+        // volume amovible/sans ACL + graine non scellée → proposition
+        // `identity.at_rest` (non bloquante, masquable pour la
+        // session). Ignorée en session invitée : rien ne persiste.
+        final identityCfg =
+            ref.watch(daemonSettingsProvider).value?['identity'];
+        final atRest = identityCfg is Map && identityCfg['at_rest'] == true;
+        final showRemovable = !guest &&
+            identityState == 'ready' &&
+            status['storage_removable'] == true &&
+            !atRest;
+        final banners = <Widget>[
+          if (guest) const GuestBanner(),
+          if (showRemovable) const RemovableStorageBanner(),
+        ];
+        if (banners.isEmpty) return content;
+        return Column(children: [...banners, Expanded(child: content)]);
       },
     );
   }

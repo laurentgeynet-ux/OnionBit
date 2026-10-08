@@ -27,7 +27,7 @@ class _FakeRepo implements SettingsRepository {
   @override
   Future<void> shutdown() async {}
   @override
-  Future<Map<String, int>> dirSpace({String? directory}) async =>
+  Future<Map<String, int>> dirSpace({String? directory, String? area}) async =>
       {'total': 0, 'used': 0, 'free': 0};
   @override
   Future<List<Map<String, dynamic>>> rssItems() async => [];
@@ -69,6 +69,11 @@ class _FakeRepo implements SettingsRepository {
     final e = unlockError;
     if (e != null) throw e;
   }
+  @override
+  Future<Map<String, dynamic>> privateZone() async =>
+      {'state': 'locked', 'downloads': const [], 'orphans': const {}};
+  @override
+  Future<void> purgePrivateOrphans() async {}
 }
 
 Widget _gateApp(_FakeRepo repo, Widget home) => ProviderScope(

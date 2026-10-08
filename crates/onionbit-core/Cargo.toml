@@ -35,6 +35,21 @@ serde.workspace = true
 serde_json.workspace = true
 hex.workspace = true
 
+# Detection « media amovible / sans ACL » (`volume.rs`, ADR-0018
+# etape 63) : GetVolumeInformation/GetDriveType sous Windows,
+# statfs(2) sous macOS. Linux/Android se contentent de
+# /proc/self/mounts — pas de dep.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_Storage_FileSystem",
+    "Win32_System_SystemServices",
+    "Win32_System_WindowsProgramming",
+] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+libc.workspace = true
+
 [dev-dependencies]
 tempfile.workspace = true
 onionbit-test-support = { path = "../onionbit-test-support" }

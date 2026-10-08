@@ -3114,6 +3114,7 @@ dependencies = [
  "bytes",
  "fs2",
  "hex 0.4.3",
+ "libc",
  "librqbit",
  "librqbit-core",
  "librqbit-upnp",
@@ -3139,6 +3140,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "url",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

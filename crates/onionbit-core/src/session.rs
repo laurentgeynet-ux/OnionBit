@@ -633,6 +633,15 @@ impl CoreSession {
         }
     }
 
+    /// `true` si la racine du bundle (`state/` voisin de `data/`)
+    /// vit sur un volume amovible ou sans ACL persistantes —
+    /// expose `storage_removable` via `/api/identity` pour le
+    /// bandeau `identity.at_rest` (ADR-0018 etape 63, detection
+    /// best-effort non bloquante).
+    pub fn storage_removable(&self) -> bool {
+        crate::volume::media_removable(self.paths().state())
+    }
+
     /// Cle de ligne `downloads` pour un infohash : l'infohash reel en
     /// public, `HMAC(K_names,"row/"‖ih)` opaque en prive — la base ne
     /// revele jamais les infohashes prives (ADR-0018 §catalogue).

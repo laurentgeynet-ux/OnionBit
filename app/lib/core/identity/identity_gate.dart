@@ -104,6 +104,124 @@ class GuestBanner extends StatelessWidget {
   }
 }
 
+/// Bandeau « média amovible » (ADR-0018 étape 63) : quand la racine
+/// du bundle vit sur un volume amovible ou sans ACL (`storage_
+/// removable` de `GET /api/identity`), on propose de sceller la
+/// graine `identity.at_rest` — proposition non bloquante, masquable
+/// pour la session. Jamais affiché en session invitée ni si la
+/// graine est déjà scellée.
+class RemovableStorageBanner extends ConsumerStatefulWidget {
+  const RemovableStorageBanner({super.key});
+
+  @override
+  ConsumerState<RemovableStorageBanner> createState() =>
+      _RemovableStorageBannerState();
+}
+
+class _RemovableStorageBannerState
+    extends ConsumerState<RemovableStorageBanner> {
+  bool _dismissed = false;
+  bool _busy = false;
+
+  /// `identity.at_rest` exige un mot de passe (scellement `OBSK`).
+  Future<void> _enableAtRest() async {
+    final l10n = context.l10n;
+    final pw = TextEditingController();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(l10n.identityAtRest),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(l10n.removableBannerBody),
+            const SizedBox(height: AppSpacing.sm),
+            TextField(
+              controller: pw,
+              obscureText: true,
+              autofocus: true,
+              decoration: InputDecoration(
+                labelText: l10n.identityAtRestPasswordNew,
+                border: const OutlineInputBorder(),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(l10n.cancel),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(l10n.apply),
+          ),
+        ],
+      ),
+    );
+    final password = pw.text;
+    pw.dispose();
+    if (ok != true || !mounted || password.isEmpty) return;
+    setState(() => _busy = true);
+    try {
+      await ref
+          .read(settingsRepositoryProvider)
+          .identitySetAtRest(enabled: true, password: password);
+      ref.invalidate(daemonSettingsProvider);
+      ref.invalidate(identityGateProvider);
+      if (mounted) setState(() => _dismissed = true);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('$e')));
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_dismissed) return const SizedBox.shrink();
+    final scheme = Theme.of(context).colorScheme;
+    final l10n = context.l10n;
+    return Material(
+      color: scheme.errorContainer,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.md,
+          vertical: AppSpacing.xs,
+        ),
+        child: Row(
+          children: [
+            Icon(
+              Icons.usb_outlined,
+              size: 18,
+              color: scheme.onErrorContainer,
+            ),
+            const SizedBox(width: AppSpacing.sm),
+            Expanded(
+              child: Text(
+                l10n.removableBannerBody,
+                style: TextStyle(color: scheme.onErrorContainer),
+              ),
+            ),
+            TextButton(
+              onPressed: () => setState(() => _dismissed = true),
+              child: Text(l10n.removableBannerDismiss),
+            ),
+            FilledButton.tonal(
+              onPressed: _busy ? null : _enableAtRest,
+              child: Text(l10n.removableBannerAction),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 /// Premier boot : trois résolutions du gate `identity_pending`.
 class _PendingGate extends ConsumerStatefulWidget {
   const _PendingGate();

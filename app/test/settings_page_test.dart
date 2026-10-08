@@ -54,7 +54,7 @@ class _FakeSettings implements SettingsRepository {
   @override
   Future<void> shutdown() async {}
   @override
-  Future<Map<String, int>> dirSpace({String? directory}) async =>
+  Future<Map<String, int>> dirSpace({String? directory, String? area}) async =>
       {'total': 100, 'used': 50, 'free': 50};
   @override
   Future<List<Map<String, dynamic>>> rssItems() async => [];
@@ -99,6 +99,14 @@ class _FakeSettings implements SettingsRepository {
   Future<void> identityGuest() async {}
   @override
   Future<void> identityUnlock(String password) async {}
+  @override
+  Future<Map<String, dynamic>> privateZone() async => {
+    'state': 'mounted',
+    'downloads': const [],
+    'orphans': const {'obd_groups': 0, 'bitv': 0},
+  };
+  @override
+  Future<void> purgePrivateOrphans() async {}
 }
 
 void main() {

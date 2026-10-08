@@ -35,6 +35,10 @@ pub mod queries;
 pub mod services;
 pub mod session;
 pub mod trackers;
+/// Detection « media amovible / sans ACL » de la racine du bundle
+/// (ADR-0018, etape 63) — bandeau `identity.at_rest`, proposition
+/// non bloquante.
+pub mod volume;
 
 pub use config::CoreConfig;
 pub use daemon_config::{DaemonConfig, CONFIG_FILENAME};

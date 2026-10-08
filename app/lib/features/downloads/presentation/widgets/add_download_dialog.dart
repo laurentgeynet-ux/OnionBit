@@ -62,6 +62,10 @@ class _AddDownloadDialogState extends ConsumerState<AddDownloadDialog> {
   /// pré-remplit le dialogue avec les défauts configurés).
   int _hops = 0;
   bool _hopsInitialized = false;
+
+  /// Zone de stockage choisie (`public`|`private`, ADR-0018) —
+  /// initialisée depuis `storage/default_area` avec les réglages.
+  String _area = 'public';
   bool _paused = false;
   bool _busy = false;
   String? _error;
@@ -148,9 +152,15 @@ class _AddDownloadDialogState extends ConsumerState<AddDownloadDialog> {
       if (_fileBytes != null) {
         await repo.addTorrentBytes(
           _fileBytes!,
-          destination: _destController.text.trim().isEmpty
+          // Zone privée : la destination est gérée par le daemon
+          // (layout opaque `data/private/…`) — le champ dossier est
+          // masqué dans ce mode.
+          destination: _area == 'private'
+              ? null
+              : _destController.text.trim().isEmpty
               ? null
               : _destController.text.trim(),
+          area: _area,
           anonHops: _hops,
           safeSeeding: _hops > 0,
           paused: _paused,
@@ -167,9 +177,12 @@ class _AddDownloadDialogState extends ConsumerState<AddDownloadDialog> {
         }
         await repo.add(
           uri: uri,
-          destination: _destController.text.trim().isEmpty
+          destination: _area == 'private'
+              ? null
+              : _destController.text.trim().isEmpty
               ? null
               : _destController.text.trim(),
+          area: _area,
           anonHops: _hops,
           safeSeeding: _hops > 0,
           paused: _paused,
@@ -197,11 +210,19 @@ class _AddDownloadDialogState extends ConsumerState<AddDownloadDialog> {
     final dd = settings['libtorrent'] is Map
         ? (settings['libtorrent'] as Map)['download_defaults']
         : null;
-    if (dd is! Map) return;
-    final anonymous = dd['anonymity_enabled'] == true;
-    final hops = (dd['number_hops'] as num?)?.toInt() ?? 0;
-    // Appelé pendant build : affectation directe, pas de setState.
-    _hops = anonymous ? hops.clamp(1, 3) : 0;
+    if (dd is Map) {
+      final anonymous = dd['anonymity_enabled'] == true;
+      final hops = (dd['number_hops'] as num?)?.toInt() ?? 0;
+      // Appelé pendant build : affectation directe, pas de setState.
+      _hops = anonymous ? hops.clamp(1, 3) : 0;
+    }
+    // Zone par defaut `storage/default_area` (ADR-0018) — « private »
+    // n'est proposee que si la zone est montable (cf. `_privateOk` au
+    // build : l'option reste visible mais grisee si verrouillee).
+    final storage = settings['storage'];
+    if (storage is Map && storage['default_area'] == 'private') {
+      _area = 'private';
+    }
   }
 
   @override
@@ -209,6 +230,12 @@ class _AddDownloadDialogState extends ConsumerState<AddDownloadDialog> {
     final theme = Theme.of(context);
     final l10n = context.l10n;
     _initHops(ref.watch(daemonSettingsProvider).value);
+    // Zone privée utilisable seulement si montée (ou invitée —
+    // éphémère) : `locked` grise l'option, le backend répondrait 409.
+    final privateState =
+        ref.watch(privateZoneProvider).value?['state'] as String?;
+    final privateOk = privateState == 'mounted' || privateState == 'guest';
+    if (!privateOk && _area == 'private') _area = 'public';
     // Torrent privé : l'anonymat est structurellement impossible —
     // les sauts restent verrouillés sur « Clair » quelle que soit
     // l'init tardive des réglages ou un choix antérieur.
@@ -294,6 +321,35 @@ class _AddDownloadDialogState extends ConsumerState<AddDownloadDialog> {
               ),
             ],
             const SizedBox(height: AppSpacing.md),
+            Text(l10n.storageAreaLabel, style: theme.textTheme.labelMedium),
+            const SizedBox(height: AppSpacing.xs),
+            SegmentedButton<String>(
+              segments: [
+                ButtonSegment(
+                  value: 'public',
+                  label: Text(l10n.storageAreaPublic),
+                  icon: const Icon(Icons.folder_open, size: 16),
+                ),
+                ButtonSegment(
+                  value: 'private',
+                  enabled: privateOk,
+                  label: Text(l10n.storageAreaPrivate),
+                  icon: const Icon(Icons.lock_outline, size: 16),
+                ),
+              ],
+              selected: {_area},
+              onSelectionChanged: (s) => setState(() => _area = s.first),
+            ),
+            const SizedBox(height: AppSpacing.xs),
+            Text(
+              _area == 'private'
+                  ? l10n.storageAreaPrivateHint
+                  : l10n.storageAreaPublicHint,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.outline,
+              ),
+            ),
+            const SizedBox(height: AppSpacing.md),
             Text(l10n.rowAnon, style: theme.textTheme.labelMedium),
             const SizedBox(height: AppSpacing.xs),
             SegmentedButton<int>(
@@ -327,26 +383,30 @@ class _AddDownloadDialogState extends ConsumerState<AddDownloadDialog> {
               ),
             ),
             const SizedBox(height: AppSpacing.md),
-            TextField(
-              controller: _destController,
-              decoration: InputDecoration(
-                labelText: l10n.destFolderOpt,
-                prefixIcon: const Icon(Icons.folder_outlined),
-                suffixIcon: IconButton(
-                  tooltip: l10n.browse,
-                  icon: const Icon(Icons.folder_open),
-                  onPressed: () async {
-                    final dir = await pickDaemonDirectory(
-                      context,
-                      initialPath: _destController.text.trim(),
-                    );
-                    if (dir != null) {
-                      setState(() => _destController.text = dir);
-                    }
-                  },
+            // Destination libre : zone publique uniquement — la zone
+            // privée impose son arborescence opaque gérée par le
+            // daemon (`data/private/temp|downloads/<hmac>/…`).
+            if (_area == 'public')
+              TextField(
+                controller: _destController,
+                decoration: InputDecoration(
+                  labelText: l10n.destFolderOpt,
+                  prefixIcon: const Icon(Icons.folder_outlined),
+                  suffixIcon: IconButton(
+                    tooltip: l10n.browse,
+                    icon: const Icon(Icons.folder_open),
+                    onPressed: () async {
+                      final dir = await pickDaemonDirectory(
+                        context,
+                        initialPath: _destController.text.trim(),
+                      );
+                      if (dir != null) {
+                        setState(() => _destController.text = dir);
+                      }
+                    },
+                  ),
                 ),
               ),
-            ),
             CheckboxListTile(
               value: _paused,
               onChanged: (v) => setState(() => _paused = v ?? false),

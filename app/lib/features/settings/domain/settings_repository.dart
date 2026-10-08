@@ -15,8 +15,9 @@ abstract interface class SettingsRepository {
 
   /// Espace disque du répertoire (`PUT /api/statistics/dirspace` ;
   /// `null` = dossier de téléchargement par défaut) → `{total, used,
-  /// free}` en octets.
-  Future<Map<String, int>> dirSpace({String? directory});
+  /// free}` en octets. [area] (`public`|`private`, ADR-0018) mesure
+  /// la racine de la zone et prime sur [directory].
+  Future<Map<String, int>> dirSpace({String? directory, String? area});
 
   /// Items découverts par les watchers RSS (`GET /api/rss`).
   Future<List<Map<String, dynamic>>> rssItems();
@@ -78,4 +79,14 @@ abstract interface class SettingsRepository {
   /// `POST /api/identity/unlock` — déverrouille une graine `OBSK`
   /// (état `locked`). 400 = mot de passe incorrect, 429 = rate-limit.
   Future<void> identityUnlock(String password);
+
+  /// `GET /api/private` — zone privée ADR-0018 : `{state: locked|
+  /// mounted|guest, downloads: [...], orphans: {obd_groups, bitv}}`.
+  /// Les entrées ne sont visibles que montées (manifeste `OBM`
+  /// déchiffré).
+  Future<Map<String, dynamic>> privateZone();
+
+  /// `DELETE /api/private/orphans` — purge explicite des orphelins
+  /// `.obd`/`.bitv` rapportés au montage (jamais automatique).
+  Future<void> purgePrivateOrphans();
 }

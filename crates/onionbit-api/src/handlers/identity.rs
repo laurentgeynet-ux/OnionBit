@@ -144,11 +144,13 @@ pub async fn get_identity(
         IdentityPhase::Pending => Ok(Json(serde_json::json!({
             "state": "pending",
             "seeded": false,
+            "storage_removable": state.session.storage_removable(),
         }))),
         IdentityPhase::Locked => Ok(Json(serde_json::json!({
             "state": "locked",
             "seeded": true,
             "at_rest": true,
+            "storage_removable": state.session.storage_removable(),
         }))),
         IdentityPhase::Ready => {
             let Some(stack) = state.session.ipv8() else {
@@ -162,6 +164,10 @@ pub async fn get_identity(
                 "seeded": stack.identity_kind() == IdentityKind::Seeded,
                 "mode": if state.session.is_guest() { "guest" } else { "persistent" },
                 "persistent": !state.session.is_guest(),
+                // Racine sur volume amovible ou sans ACL (cle USB,
+                // exFAT…) : l'UI propose alors `identity.at_rest`
+                // (bandeau non bloquant, ADR-0018 etape 63).
+                "storage_removable": state.session.storage_removable(),
                 // La cle privee n'est jamais exposee en lecture simple —
                 // seul l'export explicite la fournit.
             })))

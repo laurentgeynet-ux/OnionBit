@@ -25,10 +25,10 @@ class RestSettingsRepository implements SettingsRepository {
   Future<void> shutdown() => _api.put('/shutdown');
 
   @override
-  Future<Map<String, int>> dirSpace({String? directory}) async {
+  Future<Map<String, int>> dirSpace({String? directory, String? area}) async {
     final resp = await _api.put(
       '/statistics/dirspace',
-      body: {'directory': ?directory},
+      body: {'directory': ?directory, 'area': ?area},
     ) as Map<String, dynamic>;
     final s = resp['statistics'] as Map<String, dynamic>? ?? const {};
     return {
@@ -147,4 +147,11 @@ class RestSettingsRepository implements SettingsRepository {
   @override
   Future<void> identityUnlock(String password) =>
       _api.post('/identity/unlock', body: {'password': password});
+
+  @override
+  Future<Map<String, dynamic>> privateZone() async =>
+      await _api.get('/private') as Map<String, dynamic>? ?? const {};
+
+  @override
+  Future<void> purgePrivateOrphans() => _api.delete('/private/orphans');
 }

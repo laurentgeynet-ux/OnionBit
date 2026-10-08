@@ -36,6 +36,7 @@ class RestDownloadsRepository implements DownloadsRepository {
     String? uri,
     String? torrentPath,
     String? destination,
+    String? area,
     int anonHops = 0,
     bool safeSeeding = false,
     bool paused = false,
@@ -52,6 +53,7 @@ class RestDownloadsRepository implements DownloadsRepository {
           'uri': ?uri,
           'torrent': ?torrentPath,
           'destination': ?destination,
+          'area': ?area,
           if (anonHops > 0) 'anon_hops': anonHops,
           'safe_seeding': safeSeeding,
           'paused': paused,
@@ -70,6 +72,7 @@ class RestDownloadsRepository implements DownloadsRepository {
   Future<String> addTorrentBytes(
     List<int> bytes, {
     String? destination,
+    String? area,
     int anonHops = 0,
     bool safeSeeding = false,
     bool paused = false,
@@ -81,6 +84,7 @@ class RestDownloadsRepository implements DownloadsRepository {
         query: {
           if (destination != null && destination.isNotEmpty)
             'destination': destination,
+          'area': ?area,
           if (anonHops > 0) 'anon_hops': '$anonHops',
           'safe_seeding': '$safeSeeding',
           'paused': '$paused',

@@ -1,6 +1,9 @@
 # ADR-0018 — Arborescence portable et zones de téléchargement public / privé
 
-Statut : **Proposée** (2026-10-08) — suite logique des ADR-0015/0016/0017
+Statut : **Acceptée** (2026-10-08) — implémentée (étapes 57–63) ;
+`scripts/bench_portable.ps1` valide la portabilité bout-en-bout
+(bundle copié → reprise identique, zone privée inerte sous identité
+étrangère, zéro chemin absolu persisté). Suite logique des ADR-0015/0016/0017
 (extensions, identité portable, transport furtif). ADR-0016 est
 **implémentée** : graine HKDF, phrase BIP39, gate `pending`/`locked`/
 invité et `OBSK` sont livrés — les fondations de la zone privée

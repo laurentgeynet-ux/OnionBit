@@ -27,6 +27,10 @@ extension DownloadJson on Map<String, dynamic> {
     hops: (this['hops'] as num?)?.toInt() ?? 0,
     anonDownload: this['anon_download'] == true,
     isPrivate: this['private'] == true,
+    // ADR-0018 : zone de stockage `public`/`private` ; `locked_area`
+    // = zone privée mais identité verrouillée (contenu inaccessible).
+    storageArea: (this['storage_area'] as String?) ?? 'public',
+    lockedArea: this['locked_area'] == true,
     safeSeeding: this['safe_seeding'] == true,
     uploaded: (this['all_time_upload'] as num?)?.toInt() ?? 0,
     downloaded: (this['all_time_download'] as num?)?.toInt() ?? 0,

@@ -27,11 +27,13 @@ abstract interface class DownloadsRepository {
   /// Ajoute un téléchargement (`uri` magnet/http(s) ou `torrent`
   /// chemin local). `anonHops > 0` exige `safeSeeding` (règle Python —
   /// l'UI la passe automatiquement quand l'utilisateur choisit un mode
-  /// anonyme).
+  /// anonyme). [area] (`public`|`private`) choisit la zone de
+  /// stockage ADR-0018 — `null` = `storage/default_area` du daemon.
   Future<String> add({
     String? uri,
     String? torrentPath,
     String? destination,
+    String? area,
     int anonHops = 0,
     bool safeSeeding = false,
     bool paused = false,
@@ -43,6 +45,7 @@ abstract interface class DownloadsRepository {
   Future<String> addTorrentBytes(
     List<int> bytes, {
     String? destination,
+    String? area,
     int anonHops = 0,
     bool safeSeeding = false,
     bool paused = false,

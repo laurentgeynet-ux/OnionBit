@@ -36,6 +36,22 @@ final dirSpaceProvider = FutureProvider.autoDispose
           ref.watch(settingsRepositoryProvider).dirSpace(directory: dir),
     );
 
+/// Espace disque d'une zone de stockage (`public`|`private`,
+/// ADR-0018) — `{total, used, free}` de la racine de la zone.
+final zoneSpaceProvider = FutureProvider.autoDispose
+    .family<Map<String, int>, String>(
+      (ref, area) =>
+          ref.watch(settingsRepositoryProvider).dirSpace(area: area),
+    );
+
+/// État de la zone privée (`GET /api/private`) : `state`
+/// (`locked`/`mounted`/`guest`), `downloads` du manifeste, compteurs
+/// `orphans`. Rafraîchi à la main via `ref.invalidate`.
+final privateZoneProvider =
+    FutureProvider.autoDispose<Map<String, dynamic>>(
+      (ref) => ref.watch(settingsRepositoryProvider).privateZone(),
+    );
+
 /// Items découverts par les flux RSS (`GET /api/rss`).
 final rssItemsProvider = FutureProvider.autoDispose<List<Map<String, dynamic>>>(
   (ref) => ref.watch(settingsRepositoryProvider).rssItems(),

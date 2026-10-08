@@ -43,6 +43,8 @@ class Download {
     required this.trackers,
     required this.peers,
     this.isPrivate = false,
+    this.storageArea = 'public',
+    this.lockedArea = false,
   });
 
   final String infohash;
@@ -111,6 +113,18 @@ class Download {
   /// anonyme » (jumeau public).
   final bool isPrivate;
 
+  /// Zone de stockage ADR-0018 : `'public'` (clair, `data/public/`)
+  /// ou `'private'` (chiffré `OBD`, lié à l'identité — `data/private/`).
+  final String storageArea;
+
+  /// La ligne appartient à la zone privée mais l'identité est
+  /// verrouillée/non montée : le contenu est inaccessible tant que
+  /// `identity/unlock` n'a pas ouvert la graine.
+  final bool lockedArea;
+
+  /// Le téléchargement vit dans la zone privée chiffrée.
+  bool get isPrivateStorage => storageArea == 'private';
+
   /// Fusionne l'instantané `download_state_changed` (payload SSE =
   /// `DownloadInfo::from_stats` brut) dans cette entrée. Seuls les
   /// champs volatils de progression sont repris de l'événement ; les
@@ -156,6 +170,8 @@ class Download {
     trackers: trackers,
     peers: peers,
     isPrivate: isPrivate,
+    storageArea: storageArea,
+    lockedArea: lockedArea,
   );
 
   bool get isActive => status == 'DOWNLOADING' || status == 'SEEDING';

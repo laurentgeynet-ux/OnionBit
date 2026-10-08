@@ -700,6 +700,26 @@ class _RowBadges extends StatelessWidget {
             message: context.l10n.privateTorrent,
             child: Icon(Icons.lock_outline, size: 16, color: scheme.outline),
           ),
+        // Zone de stockage ADR-0018 : la zone privée chiffre les
+        // fichiers sous `data/private/` (OBD lié à l'identité) ; la
+        // clé barrée signale une zone verrouillée (identité non
+        // montée — contenu inaccessible).
+        if (d.isPrivateStorage)
+          Tooltip(
+            message: d.lockedArea
+                ? context.l10n.zonePrivateLockedTip
+                : context.l10n.zonePrivateTip,
+            child: Padding(
+              padding: const EdgeInsets.only(right: 2),
+              child: Icon(
+                d.lockedArea
+                    ? Icons.lock_clock_outlined
+                    : Icons.enhanced_encryption_outlined,
+                size: 16,
+                color: d.lockedArea ? scheme.error : scheme.primary,
+              ),
+            ),
+          ),
         if (d.queuePosition >= 0)
           Tooltip(
             message: context.l10n.queuePosTip(d.queuePosition),

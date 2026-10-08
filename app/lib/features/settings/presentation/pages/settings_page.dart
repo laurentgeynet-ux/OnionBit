@@ -22,6 +22,7 @@ import '../widgets/onionbit_section.dart';
 import '../widgets/queue_section.dart';
 import '../widgets/seeding_section.dart';
 import '../widgets/stealth_section.dart';
+import '../widgets/storage_section.dart';
 import '../widgets/versioning_section.dart';
 
 /// Identifiants des sections de réglages — les titres affichés sont
@@ -29,6 +30,7 @@ import '../widgets/versioning_section.dart';
 enum _SectionId {
   appearance,
   downloads,
+  storage,
   bandwidth,
   queue,
   seeding,
@@ -48,6 +50,7 @@ extension on _SectionId {
   String title(AppLocalizations l10n) => switch (this) {
     _SectionId.appearance => l10n.settingsAppearanceTitle,
     _SectionId.downloads => l10n.sectionDownloadsDefaults,
+    _SectionId.storage => l10n.sectionStorage,
     _SectionId.bandwidth => l10n.sectionBandwidth,
     _SectionId.queue => l10n.sectionQueue,
     _SectionId.seeding => l10n.sectionSeeding,
@@ -101,6 +104,14 @@ final _kSections = <_SectionEntry>[
         'folder disk space default',
     sectionId: 'downloads',
     child: const DownloadsSection(),
+  ),
+  _SectionEntry(
+    id: _SectionId.storage,
+    keywords:
+        'stockage storage zones public private privé chiffré '
+        'move_on_completion default_area private_enabled espace '
+        'portable orphelins orphans obd',
+    child: const StorageSection(),
   ),
   _SectionEntry(
     id: _SectionId.bandwidth,

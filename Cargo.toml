@@ -102,6 +102,9 @@ tray-icon = "=0.25.1"
 winreg = "0.55"
 windows-sys = "0.61"
 embed-resource = "3"
+# Detection de volume (`onionbit-core::volume`, ADR-0018) : statfs(2)
+# sous macOS. libc est deja dans l'arbre via tokio/rusqlite.
+libc = "0.2"
 
 # Moteur BitTorrent reutilise (voir ADR-0001) : evite de reecrire bencode,
 # protocole peer-wire, DHT BEP5 et tracker HTTP/UDP qui existent deja en
