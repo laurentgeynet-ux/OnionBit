@@ -233,6 +233,21 @@ en haut.
   `cargo check --workspace --all-targets --all-features` et clippy
   `-D warnings` propres.
 
+## Endpoint IPv8 : pacing coopératif explicité (2026-10-07)
+
+- **`yield_now` explicite dans `UdpEndpoint::send_to` et `recv_loop`** —
+  le pacing des rafales UDP reposait implicitement sur le budget
+  coopératif des `lock().await` des mutex tokio. Fragilité mesurée
+  pendant le refactor ADR-0017 (worktree `adr17`) : une variante
+  synchrone perdait les rendements et saturait le buffer UDP du
+  receveur sur runtime `current_thread` (repro 300 ATTEST → 240 rx,
+  soit 20 % de drops silencieux ; `t3_flood_controle` échouait après
+  15 s). Le yield explicite — un par envoi, un par datagramme reçu —
+  rend l'invariant visible et résistant aux refactors futurs (parité
+  avec le modèle asyncio pyipv8 : un callback par datagramme).
+- Oracle : `cargo test -p onionbit-ipv8 --all-features` 64/64 verts,
+  `t3_flood_controle` en 4.3 s (identique à l'avant).
+
 ## Guard nodes + banc endurance : churn réseau (2026-10-07)
 
 - **Guard nodes** : l'état visé par l'ADR-0010 est confirmé livré —
