@@ -37,8 +37,14 @@ same design Tribler pioneered:
   and a bilateral signed ledger between peers ([ADR-0015](#the-onionbit-extension-layer-adr-0015))
 - 🕶️ **Padded encrypted envelopes (OBF)** — optional traffic-shape hardening between
   OnionBit peers, negotiated per capability bit
-- 🧳 **Portable identity** — export your identity as a password-sealed `OBID` blob
-  and restore it on another device ([ADR-0016](docs/architecture/decisions/0016-identite-portable.md))
+- 🌱 **Self-sovereign identity** — one 24-word recovery phrase (English *or*
+  French) backs up your entire identity; ephemeral guest sessions and
+  optional password-sealed at-rest storage included
+  ([ADR-0016](docs/architecture/decisions/0016-identite-portable.md))
+- 🥷 **Stealth anti-censorship mode** — a dedicated transport with no static
+  protocol marker on the wire: Elligator2-encoded handshake, uniform silence
+  under active probing, Tor-style `onionbit-bridge://` invitation links
+  ([ADR-0017](docs/architecture/decisions/0017-transport-furtif-anti-censure.md))
 - 🔍 **Decentralized search** — content discovery through the overlay, no central index
 - 🛡️ **Kill switch & leak protection** — no clearnet fallback, no DNS/UDP leaks
 - 🦀 **Pure Rust core** — memory-safe, single binary, embeddable via REST API
@@ -83,10 +89,11 @@ No server, no account, no phone number: **your public key is your address.**
          │  ◄════════ signed, e2e-encrypted frames ════════►
 ```
 
-- 🔑 **Identity = your IPv8 keypair** — an Ed25519 (`libnacl`) key generated
-  once and stored in `state/ipv8_keypair.bin` (atomic writes, `0600` on Unix).
-  Move it between devices via the password-sealed `OBID` export
-  (*Settings → Identity*), then restore your contacts with the `OBV1` vault.
+- 🔑 **Identity = your IPv8 keypair** — an Ed25519 (`libnacl`) key derived
+  from a root seed (`identity_seed.bin`, atomic writes, `0600` on Unix).
+  Back it up once as a 24-word recovery phrase or move it between devices
+  via the password-sealed `OBID` export (*Settings → Identity*), then
+  restore your contacts with the `OBV1` vault.
   Sharing a contact means exchanging public keys, nothing else.
 - 🧅 **Reachable without an IP** — each identity announces introduction
   points on its own hidden swarm (`messaging_hash(pk)`); contacts resolve it
@@ -139,14 +146,104 @@ peers** — a Tribler node simply never hears it.
   keys + local aliases) sealed to *your own* key; restore on another device.
   Nothing public, nothing on a server.
 - 🧳 **Portable identity (`OBID`)** — export/import the identity key as an
-  argon2id + ChaCha20-Poly1305 sealed blob; `restart_required` swap, no account
-  needed ([ADR-0016](docs/architecture/decisions/0016-identite-portable.md)).
+  argon2id + ChaCha20-Poly1305 sealed blob — or back up the root seed as a
+  24-word BIP39 phrase that regenerates keypair *and* stealth bridge key;
+  `restart_required` swap, no account needed
+  ([ADR-0016](docs/architecture/decisions/0016-identite-portable.md)).
 
 Discovery: `GET /api/ipv8/ext` lists OnionBit peers with full public keys —
 the messaging UI suggests `msg_v1` peers you haven't added yet. Full spec:
 [ADR-0015](docs/architecture/decisions/0015-extensions-onionbit-legacy-tribler.md).
-A fully camouflaged transport (indistinguishable traffic) is a separate open
-design — [ADR-0017](docs/architecture/decisions/0017-transport-furtif-anti-censure.md).
+For anti-censorship — traffic with *no static protocol marker at all* — see
+the dedicated [stealth mode](#stealth-mode--anti-censorship-adr-0017).
+
+## A self-sovereign identity (ADR-0016)
+
+No account, no server — and your identity is no longer tied to one device
+nor exposed as a bare file:
+
+- 🌱 **One seed, one phrase** — a 32-byte root seed (`identity_seed.bin`)
+  derives *everything* through domain-separated HKDF: your IPv8 keypair
+  **and** your stealth bridge key. Back it up once as a **24-word BIP39
+  recovery phrase** — official wordlists vendored in English *and* French,
+  the decoder accepts both — and that phrase restores the complete identity
+  on any device.
+- 🚪 **No throwaway key on the wire** — on first launch, a UI-spawned daemon
+  stops at an `identity_pending` gate: *create*, *restore* (phrase or
+  `OBID`) or *go guest* **before any packet is signed**. Headless daemons
+  still auto-generate — a bridge must never block unattended.
+- 👻 **Guest sessions** — a fully ephemeral identity held in memory only:
+  nothing is written to disk, history stays `:memory:`, and the identity
+  ceases to exist on shutdown. Two guest sessions are unlinkable — at the
+  cost of being a permanent stranger (no accumulated trust).
+- 🔒 **Optional at-rest sealing** — encrypt the seed into an `OBSK` blob
+  (argon2id RFC 9106 → ChaCha20-Poly1305) and the daemon boots `locked`:
+  the API is up but nothing identity-bound runs until a rate-limited
+  `unlock`. Refused on `bridge`/`gateway` roles — a bridge must reboot
+  without supervision. Lost password → restore from the phrase.
+- 🧓 **Existing installs unaffected** — legacy nodes keep their raw keypair
+  (`seeded: false`); changing keys means a new identity, so re-keying is
+  never forced.
+
+Full spec and migration path:
+[ADR-0016](docs/architecture/decisions/0016-identite-portable.md).
+
+## Stealth mode — anti-censorship (ADR-0017)
+
+`OBF` hides the *content* of extension frames — but a classifying censor can
+still recognize "OnionBit" from the very first datagram. **Stealth mode
+removes every static protocol marker**: no community prefixes, no cleartext
+keys or signatures, no recognizable handshake — a transport measured against
+fingerprinting oracles, not merely declared stealthy.
+
+Stealth is a **dedicated, opt-in mode**: stealth and legacy Tribler interop
+cannot coexist on one node (legacy walk traffic would betray the protocol),
+and hybrid configs are refused at startup on every path. The network runs
+on three roles:
+
+| Role | What it does |
+| :--- | :--- |
+| `client` | the censored node — all cleartext interfaces off, only the morphed transport toward bridges |
+| `bridge` | entry gate — accepts stealth handshakes; its `onionbit-bridge://` invitation link is distributed out-of-band |
+| `gateway` | stealth transport **plus** public BitTorrent exit — the role that makes the global swarm reachable from inside the censored zone |
+
+- 🎫 **Bridge invitation links** — `onionbit-bridge://<ip>:<port>#<bridge_pk>`,
+  shared out-of-band like Tor bridges. The bridge key serves admission and
+  anti-probing; your OnionBit identity is only revealed *inside* the
+  authenticated tunnel.
+- 🌀 **No static wire marker** — an `ntor`-style authenticated handshake in
+  the very first datagram; ephemeral X25519 keys travel as **Elligator2
+  representatives** (indistinguishable from uniform randomness); frame
+  counters masked inside the AEAD; additive padding clamped under a
+  1280-byte MTU so nothing fragments.
+- 🧱 **Uniform silence under probing** — malformed, forged or replayed
+  datagrams get *zero* response, whatever the cause (no probing oracle),
+  with amplification strictly ≤ 1 and pre-DH CPU budgets both per-IP and
+  global.
+- 🔁 **Handshake anti-replay** — authenticated timestamps (±90 s window)
+  plus a bounded sliding filter of seen ephemeral keys: a captured first
+  datagram can never force a response.
+- 🛡️ **Fail-closed kill switch** — never a cleartext datagram, even on
+  packet loss, timeouts, NAT rebinding or session expiry. Optional random
+  cover traffic smooths idle periods.
+- 🐌 **Anti-scraping peer discovery** — bridges introduce stealth peers via
+  `INTRO` messages *inside* the tunnel, in a graduated sequence: a seed
+  budget for newcomers, expansion gated on bilateral ledger reputation —
+  one leaked link cannot enumerate the bridge network.
+- 📡 **Everything still works inside** — onion circuits, hidden seeding,
+  e2e messaging and the whole ADR-0015 extension layer run unchanged over
+  the morphed transport. Only clearnet discovery, the public DHT and
+  direct BitTorrent are off (public exit exists only on `gateway`).
+
+Validated by measurement, not decree: `bench_stealth_fingerprint.ps1` runs
+two real stealth daemons through a UDP tap proxy — **9/9 oracles PASS**
+(probing silence, amplification 0, zero legacy marker or constant prefix,
+≈8 bits/byte entropy, sessions surviving floods, impairments, bridge
+restarts and port rebinding). Honest limits: traffic *volume* stays a
+signal, blanket UDP throttling breaks the transport, and distributing the
+first bridge link remains a social problem — see
+[ADR-0017](docs/architecture/decisions/0017-transport-furtif-anti-censure.md)
+and [docs/security/fingerprinting.md](docs/security/fingerprinting.md).
 
 ## Screenshots
 
@@ -235,6 +332,10 @@ Anonymity tooling fails quietly. OnionBit treats leak prevention as a hard invar
 
 - **No clearnet fallback** — anonymous downloads never silently degrade to direct connections
 - **Kill switch** — traffic halts when circuits collapse
+- **Stealth kill switch** — in stealth mode, *no cleartext datagram ever leaves
+  the socket*, even on loss, timeout, NAT rebinding or session expiry
+- **Probing resistance** — stealth nodes answer unauthenticated traffic with
+  uniform silence; response amplification is capped at ≤ 1
 - **Anti-SSRF & loopback isolation** — the API cannot be coerced into reaching internal services
 - **Exit policy enforcement** — exit nodes honor a strict policy
 - **Sandboxed trackers/DHT** — in anonymous mode, tracker and DHT traffic rides inside the tunnel
@@ -256,8 +357,8 @@ See [SECURITY.md](SECURITY.md) for reporting and the threat model.
 | Anonymous e2e messaging over hidden services (ADR-0011) | ✅ |
 | OnionBit extension layer: signed hello, attestations, ledger, OBF (ADR-0015) | ✅ |
 | Trust-gated messaging + `OBV1` contact vault (ADR-0015 §9) | ✅ |
-| Portable identity `OBID` export/import — interim (ADR-0016) | ✅ |
-| BIP39 seed identity + stealth transport (ADR-0017) | 📋 |
+| Seed identity: HKDF root seed + 24-word BIP39 phrase (EN/FR), guest & locked modes, `OBID` (ADR-0016) | ✅ |
+| Stealth transport: morphed wire format, bridge links, anti-probing & anti-scraping (ADR-0017) | ✅ |
 | Latest tagged release | ✅ [`v0.9.4-beta`](https://github.com/laurentgeynet-ux/OnionBit/releases/tag/v0.9.4-beta) |
 | Linux packages (.deb + tar.gz) | ✅ |
 | Windows ARM64 package (headless) | ✅ |
