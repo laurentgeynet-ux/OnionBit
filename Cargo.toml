@@ -71,6 +71,9 @@ argon2 = "0.5"
 subtle = "2"
 zeroize = { version = "1", features = ["derive"] }
 hex = "0.4"
+# Normalisation Unicode NFKD (BIP39, ADR-0016) : la spec exige NFKD
+# sur la phrase saisie — macOS emet du NFD au clavier.
+unicode-normalization = "0.1"
 uuid = { version = "1", features = ["v4", "serde"] }
 url = "2"
 bytes = "1"

@@ -3,6 +3,29 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## ADR-0016 étape 48b : phrase BIP39 bilingue + API récupération (2026-10-08)
+
+- **`onionbit_format::bip39`** (nouveau) : wordlists officielles EN +
+  FR vendored (`assets/bip39_{en,fr}.txt`, 2048 mots, NFKD) ;
+  encode 32 o → 24 mots (checksum SHA-256 8 bits) ; decode NFKD en
+  entrée, essai des deux listes, le checksum arbitre les ~100 mots
+  partagés. Erreurs typées : `BadWordCount`, `UnknownWord`,
+  `ChecksumMismatch`. 5 vecteurs officiels Trezor en tests.
+- **API** : `GET /api/identity` ajoute `seeded` ;
+  `GET /api/identity/recovery_phrase?lang=en|fr` (404 en legacy,
+  tracé `warn`, jamais loggée) ; `POST /api/identity/restore`
+  accepte `{phrase}` (checksum validé avant écriture) ou
+  `{key, password?, force_legacy?}` — sur install seedée la clé
+  brute exige `force_legacy` explicite (la graine gagnerait sinon
+  au prochain boot ; conversion legacy = retrait de la graine,
+  la phrase reste utilisable).
+- **`identity::restore_seed`** : pose la graine et régénère
+  immédiatement `ipv8_keypair.bin` + `stealth_bridge.key` —
+  cohérence sans attendre le redémarrage.
+- Tests : vecteurs officiels, hostiles (23/25 mots, casse mixte,
+  doubles espaces, checksum), NFD→NFKD macOS, cycle HTTP complet
+  (phrase EN/FR, legacy 404, 401 sans api.key, `force_legacy`).
+
 ## ADR-0016 étape 48a : graine racine + dérivation HKDF + cycle de vie fichier (2026-10-08)
 
 - **`onionbit_crypto::identity`** (nouveau) : `IdentitySeed` 32 o,

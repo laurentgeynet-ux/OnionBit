@@ -197,6 +197,7 @@ fn api_router(state: AppState) -> Router<AppState> {
         // Identite portable — export/import de la cle secrete
         // (blob OBID argon2id+AEAD si mot de passe ; restart requis).
         .route("/identity", get(identity::get_identity))
+        .route("/identity/recovery_phrase", get(identity::recovery_phrase))
         .route("/identity/export", post(identity::export_identity))
         .route("/identity/restore", post(identity::restore_identity))
         .route("/ipv8/ext/attest", post(ipv8::post_ext_attest))

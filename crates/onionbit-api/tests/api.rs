@@ -2225,7 +2225,12 @@ async fn put_download_ask_add_download() {
 /// ephemere, aucun bootstrap — zero trafic sortant) : permet de
 /// couvrir les routes `/api/ipv8/dht/*` en presence de la community.
 async fn spawn_server_ipv8() -> TestServer {
-    let dir = tempfile::tempdir().unwrap();
+    spawn_server_ipv8_at(tempfile::tempdir().unwrap()).await
+}
+
+/// IPv8 sur un `state_dir` prepare a l'avance (ex. `ipv8_keypair.bin`
+/// pose pour simuler une install legacy ADR-0016).
+async fn spawn_server_ipv8_at(dir: tempfile::TempDir) -> TestServer {
     let mut cfg = CoreConfig::offline(dir.path().into());
     cfg.ipv8.enabled = true;
     cfg.ipv8.listen_addr = "0.0.0.0:0".into();
@@ -3608,6 +3613,8 @@ async fn identite_export_import_cycle() {
     let body: serde_json::Value = resp.json().await.unwrap();
     let pk = body["public_key"].as_str().unwrap().to_string();
     assert_eq!(pk, stack.public_key_hex());
+    // ADR-0016 : install neuve → identite seedee auto-generee.
+    assert_eq!(body["seeded"], true);
     // Jamais de materiel prive dans la reponse GET.
     assert!(body.get("key").is_none());
     assert!(body.get("secret").is_none());
@@ -3643,8 +3650,9 @@ async fn identite_export_import_cycle() {
     // Mauvais mot de passe → echec AEAD.
     assert!(keyblob_open(b"autre", &blob).is_err());
 
-    // Restauration d'une NOUVELLE cle (blob OBID protege) :
-    // restart_required + fichier remplace sur disque.
+    // Restauration d'une NOUVELLE cle (blob OBID protege) sur une
+    // install seedee : refusee sans confirmation explicite — la
+    // graine gagnerait au prochain boot et la cle serait perdue.
     let nouvelle = LibNaClSecretKey::generate();
     let blob_b = keyblob_seal(b"mdp", &nouvelle.to_bin()).unwrap();
     let resp = srv
@@ -3657,7 +3665,27 @@ async fn identite_export_import_cycle() {
         .send()
         .await
         .unwrap();
+    assert_eq!(resp.status(), 400, "restore OBID refuse sans force_legacy");
+    // Avec `force_legacy` : conversion assumee — la graine est
+    // retiree, restart_required + fichier remplace sur disque.
+    let resp = srv
+        .client
+        .post(srv.url("/api/identity/restore"))
+        .json(&serde_json::json!({
+            "key": hex::encode(&blob_b),
+            "password": "mdp",
+            "force_legacy": true,
+        }))
+        .send()
+        .await
+        .unwrap();
     assert_eq!(resp.status(), 200);
+    assert!(!srv
+        .session
+        .config()
+        .state_dir
+        .join("identity_seed.bin")
+        .exists());
     let body: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(body["restart_required"], true);
     let sur_disque =
@@ -3690,6 +3718,201 @@ async fn identite_export_import_cycle() {
     assert_eq!(sur_disque, nouvelle.to_bin());
 
     srv.session.stop().await;
+}
+
+/// ADR-0016 etape 48b : `GET /api/identity/recovery_phrase` (phrase
+/// BIP39 24 mots EN/FR, `seeded` dans `GET /api/identity`) et
+/// `POST /api/identity/restore` par phrase — decode cote client =
+/// memes fichiers sur disque.
+#[tokio::test]
+async fn identite_phrase_recuperation_cycle() {
+    use onionbit_crypto::identity::IdentitySeed;
+    use onionbit_format::bip39;
+
+    let srv = spawn_server_ipv8().await;
+    let state_dir = srv.session.config().state_dir.clone();
+    let stack = srv.session.ipv8().unwrap();
+    let seed_attendu = std::fs::read(state_dir.join("identity_seed.bin")).unwrap();
+
+    // Phrase EN : 24 mots, decode = la graine sur disque.
+    let resp = srv
+        .client
+        .get(srv.url("/api/identity/recovery_phrase"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let phrase_en = body["phrase"].as_str().unwrap().to_string();
+    assert_eq!(phrase_en.split(' ').count(), 24);
+    assert_eq!(
+        bip39::decode(&phrase_en).unwrap().as_slice(),
+        seed_attendu.as_slice()
+    );
+
+    // Phrase FR : memes indices, wordlist differente, meme entropie.
+    let resp = srv
+        .client
+        .get(srv.url("/api/identity/recovery_phrase?lang=fr"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let phrase_fr = body["phrase"].as_str().unwrap().to_string();
+    assert_eq!(
+        bip39::decode(&phrase_fr).unwrap().as_slice(),
+        seed_attendu.as_slice()
+    );
+    assert_ne!(phrase_fr, phrase_en);
+
+    // Langue inconnue → 400.
+    let resp = srv
+        .client
+        .get(srv.url("/api/identity/recovery_phrase?lang=xx"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 400);
+
+    // Restore par une AUTRE phrase : fichiers derives coherents.
+    let seed2 = IdentitySeed::generate();
+    let phrase2 = bip39::encode(seed2.as_bytes(), bip39::Language::English);
+    let resp = srv
+        .client
+        .post(srv.url("/api/identity/restore"))
+        .json(&serde_json::json!({"phrase": phrase2}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["restart_required"], true);
+    assert_eq!(
+        std::fs::read(state_dir.join("identity_seed.bin"))
+            .unwrap()
+            .as_slice(),
+        seed2.as_bytes()
+    );
+    assert_eq!(
+        std::fs::read(state_dir.join("ipv8_keypair.bin")).unwrap(),
+        seed2.derive_keypair().to_bin()
+    );
+    assert_eq!(
+        std::fs::read(state_dir.join("stealth_bridge.key"))
+            .unwrap()
+            .as_slice(),
+        seed2.derive_bridge_key()
+    );
+    let _ = stack;
+
+    // Hostiles : checksum faux, corps vide, phrase+key → 400 sans
+    // toucher au disque.
+    let mut mots: Vec<&str> = phrase2.split(' ').collect();
+    *mots.last_mut().unwrap() = "zoo"; // checksum casse
+    for json in [
+        serde_json::json!({"phrase": mots.join(" ")}),
+        serde_json::json!({}),
+        serde_json::json!({"phrase": phrase2, "key": "aa"}),
+    ] {
+        let resp = srv
+            .client
+            .post(srv.url("/api/identity/restore"))
+            .json(&json)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 400, "cas {json}");
+    }
+    assert_eq!(
+        std::fs::read(state_dir.join("identity_seed.bin"))
+            .unwrap()
+            .as_slice(),
+        seed2.as_bytes()
+    );
+    srv.session.stop().await;
+}
+
+/// ADR-0016 : install legacy (keypair seul, pas de graine) →
+/// `seeded: false`, `recovery_phrase` → 404 ; un restore par phrase
+/// convertit en seedee.
+#[tokio::test]
+async fn identite_legacy_pas_de_phrase() {
+    use onionbit_crypto::ipv8::keys::LibNaClSecretKey;
+    use onionbit_format::bip39;
+
+    let dir = tempfile::tempdir().unwrap();
+    let legacy = LibNaClSecretKey::generate();
+    std::fs::write(dir.path().join("ipv8_keypair.bin"), legacy.to_bin()).unwrap();
+    let srv = spawn_server_ipv8_at(dir).await;
+    let state_dir = srv.session.config().state_dir.clone();
+
+    let resp = srv
+        .client
+        .get(srv.url("/api/identity"))
+        .send()
+        .await
+        .unwrap();
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["seeded"], false);
+
+    let resp = srv
+        .client
+        .get(srv.url("/api/identity/recovery_phrase"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 404);
+
+    // Restore par phrase : la graine s'installe, l'identite devient
+    // seedee au prochain boot — la cle legacy est remplacee.
+    let phrase = bip39::encode(&[42u8; 32], bip39::Language::French);
+    let resp = srv
+        .client
+        .post(srv.url("/api/identity/restore"))
+        .json(&serde_json::json!({"phrase": phrase}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    assert!(state_dir.join("identity_seed.bin").exists());
+    srv.session.stop().await;
+}
+
+/// `recovery_phrase` est derriere `api_key_auth` — sans cle → 401.
+#[tokio::test]
+async fn identite_phrase_exige_cle_api() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut cfg = CoreConfig::offline(dir.path().into());
+    cfg.ipv8.enabled = true;
+    cfg.ipv8.listen_addr = "0.0.0.0:0".into();
+    cfg.ipv8.bootstrap_peers = Vec::new();
+    let session = CoreSession::start_offline(cfg, Notifier::new())
+        .await
+        .unwrap();
+    let state = AppState::new(session.clone()).with_api_key("cle-de-test");
+    let app = build(state);
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .get(format!("http://{addr}/api/identity/recovery_phrase"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 401);
+    let resp = client
+        .get(format!("http://{addr}/api/identity/recovery_phrase"))
+        .header("X-Api-Key", "cle-de-test")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    session.stop().await;
 }
 
 /// ADR-0017 etape 52 : `GET /api/stealth` (etat borne, jamais de

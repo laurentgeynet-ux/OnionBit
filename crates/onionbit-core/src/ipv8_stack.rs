@@ -1558,6 +1558,10 @@ pub struct Ipv8Stack {
     pub ext: Option<Arc<onionbit_ipv8::ext::OnionbitExtCommunity>>,
     /// Cle IPv8 de la session (persistee dans `state_dir`).
     key: LibNaClSecretKey,
+    /// Classe d'identite resolue au boot (ADR-0016) : `Seeded` =
+    /// racinee sur `identity_seed.bin` (phrase de recuperation
+    /// disponible), `Legacy` = fichier seul d'avant ADR-0016.
+    identity_kind: IdentityKind,
     /// Arret de la tache de maintenance DHT.
     dht_maintenance_stop: Option<tokio::sync::watch::Sender<bool>>,
     /// Moteurs anonymes par nombre de sauts (1..=3).
@@ -1676,6 +1680,7 @@ impl Ipv8Stack {
         // quand elle existe ; `ipv8_keypair.bin` n'est qu'un cache
         // derive. Legacy (fichier seul) charge tel quel.
         let identity = identity::load_or_generate(state_dir)?;
+        let identity_kind = identity.kind;
         let key = identity.keypair;
         // ADR-0017 : `stealth.enabled` × `ipv8.enabled` est refuse
         // fermement sur CHAQUE chemin de demarrage (ici +
@@ -1696,7 +1701,7 @@ impl Ipv8Stack {
             let (t, link_mtu) = build_stealth_transport(
                 sc,
                 &key,
-                identity.kind,
+                identity_kind,
                 &config.listen_addr,
                 bind_v6,
                 state_dir,
@@ -2488,6 +2493,7 @@ impl Ipv8Stack {
             stealth_transport,
             stealth_link_mtu,
             key,
+            identity_kind,
             messaging,
             dht_maintenance_stop,
             anon_lanes: Mutex::new(HashMap::new()),
@@ -2524,6 +2530,12 @@ impl Ipv8Stack {
 
     pub fn public_key_hex(&self) -> String {
         hex::encode(self.key.public_key().to_bin())
+    }
+
+    /// Classe d'identite de la session (ADR-0016) — `Seeded` permet
+    /// `GET /api/identity/recovery_phrase`.
+    pub fn identity_kind(&self) -> IdentityKind {
+        self.identity_kind
     }
 
     /// `session.overlays` : instantanes `OverlaySchema` de toutes les
@@ -3583,9 +3595,36 @@ pub(crate) fn write_identity_key(path: &Path, bytes: &[u8]) -> Result<()> {
 /// Remplace la cle d'identite (`POST /identity/restore`) : valide
 /// le format `LibNaCLSK:` avant d'ecraser le fichier — effectif au
 /// prochain demarrage (la cle est liee aux communautes en cours).
-pub fn restore_identity_key(state_dir: &Path, key_bytes: &[u8]) -> Result<()> {
-    // Refuse d'ecraser l'identite par un blob mal forme.
+///
+/// ADR-0016 : une install seedee impose `downgrade_seeded` — sinon
+/// la graine gagnerait au prochain boot et la cle restauree serait
+/// silencieusement perdue. Avec `downgrade_seeded`, la conversion
+/// est explicite : la nouvelle cle est posee PUIS la graine retiree
+/// (la phrase garde de l'identite seedee reste utilisable — elle
+/// re-derive toujours l'ancienne identite via `restore_seed`).
+pub fn restore_identity_key(
+    state_dir: &Path,
+    key_bytes: &[u8],
+    downgrade_seeded: bool,
+) -> Result<()> {
+    // Refuse d'ecraser l'identite par un blob mal forme — avant tout
+    // changement d'etat sur disque.
     LibNaClSecretKey::from_bin(key_bytes).map_err(CoreError::from)?;
+    let seed_file = identity::seed_path(state_dir);
+    if seed_file.exists() {
+        if !downgrade_seeded {
+            return Err(CoreError::InvalidState(
+                "identite seedee — utiliser la phrase de recuperation, \
+                 ou confirmer la conversion legacy",
+            ));
+        }
+        // Ordre fail-safe : la cle d'abord, la graine ensuite — un
+        // crash entre les deux laisse une install seedee coherente
+        // (le keypair sera re-derive identique au prochain boot).
+        write_identity_key(&state_dir.join(IPV8_KEY_FILE), key_bytes)?;
+        std::fs::remove_file(&seed_file)?;
+        return Ok(());
+    }
     write_identity_key(&state_dir.join(IPV8_KEY_FILE), key_bytes)
 }
 
@@ -3797,7 +3836,7 @@ mod tests {
         write_identity_key(&key_path, &cle_a.to_bin()).unwrap();
 
         // Blob mal forme : refuse, l'ancienne cle reste en place.
-        assert!(restore_identity_key(dir.path(), b"pas une cle").is_err());
+        assert!(restore_identity_key(dir.path(), b"pas une cle", false).is_err());
         assert_eq!(
             LibNaClSecretKey::from_bin(&std::fs::read(&key_path).unwrap())
                 .unwrap()
@@ -3808,7 +3847,7 @@ mod tests {
 
         // Import valide : la cle B remplace la cle A au chargement.
         let cle_b = LibNaClSecretKey::generate();
-        restore_identity_key(dir.path(), &cle_b.to_bin()).unwrap();
+        restore_identity_key(dir.path(), &cle_b.to_bin(), false).unwrap();
         let chargee = load_or_create_key(&key_path).unwrap();
         assert_eq!(chargee.public_key().to_bin(), cle_b.public_key().to_bin());
         assert_ne!(chargee.public_key().to_bin(), cle_a.public_key().to_bin());

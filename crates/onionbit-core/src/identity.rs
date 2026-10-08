@@ -180,6 +180,25 @@ pub fn seed_path(state_dir: &Path) -> PathBuf {
     state_dir.join(IDENTITY_SEED_FILE)
 }
 
+/// Installe une graine de restauration (`POST /api/identity/restore`
+/// par phrase BIP39) : ecrit `identity_seed.bin` puis regenere
+/// immediatement les caches derives pour coherence — la graine est
+/// autoritaire des sa pose, sans attendre le redemarrage.
+///
+/// Ecrase une identite precedente (seedee ou legacy) : c'est le
+/// contrat explicite d'un restore — le retour en arriere passe par
+/// la phrase de l'identite precedente, pas par le filesystem.
+pub fn restore_seed(state_dir: &Path, seed: &IdentitySeed) -> Result<()> {
+    write_identity_key(&seed_path(state_dir), seed.as_bytes())?;
+    let keypair = seed.derive_keypair();
+    write_identity_key(&state_dir.join(IPV8_KEY_FILE), &keypair.to_bin())?;
+    write_identity_key(
+        &state_dir.join(STEALTH_BRIDGE_KEY_FILE),
+        &seed.derive_bridge_key(),
+    )?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -255,5 +274,54 @@ mod tests {
             IdentitySeed::from_bytes(&std::fs::read(dir2.path().join(IDENTITY_SEED_FILE)).unwrap())
                 .unwrap();
         assert_eq!(got2, seed.derive_bridge_key());
+    }
+
+    #[test]
+    fn restore_seed_regenere_les_caches() {
+        let dir = tempfile::tempdir().unwrap();
+        let m1 = load_or_generate(dir.path()).unwrap();
+        // Restore d'une autre graine (phrase BIP39 decodee en amont) :
+        // les trois fichiers refletent immediatement la nouvelle
+        // racine — la coherence ne depend pas du redemarrage.
+        let seed2 = IdentitySeed::generate();
+        restore_seed(dir.path(), &seed2).unwrap();
+        assert_eq!(
+            std::fs::read(dir.path().join(IDENTITY_SEED_FILE)).unwrap(),
+            seed2.as_bytes()
+        );
+        let m2 = load_or_generate(dir.path()).unwrap();
+        assert_eq!(
+            m2.keypair.public_key().to_bin(),
+            seed2.derive_keypair().public_key().to_bin()
+        );
+        assert_ne!(
+            m2.keypair.public_key().to_bin(),
+            m1.keypair.public_key().to_bin()
+        );
+        assert_eq!(
+            std::fs::read(dir.path().join(STEALTH_BRIDGE_KEY_FILE)).unwrap(),
+            seed2.derive_bridge_key()
+        );
+    }
+
+    #[test]
+    fn restore_cle_brute_refusee_sur_seedee_sauf_force_legacy() {
+        let dir = tempfile::tempdir().unwrap();
+        let m1 = load_or_generate(dir.path()).unwrap();
+        let cle = LibNaClSecretKey::generate();
+        // Sans confirmation explicite : refus, graine intacte.
+        assert!(crate::ipv8_stack::restore_identity_key(dir.path(), &cle.to_bin(), false).is_err());
+        assert!(seed_path(dir.path()).exists());
+        // Avec force_legacy : la graine est retiree, l'install
+        // devient legacy avec la cle restauree.
+        crate::ipv8_stack::restore_identity_key(dir.path(), &cle.to_bin(), true).unwrap();
+        assert!(!seed_path(dir.path()).exists());
+        let m = load_or_generate(dir.path()).unwrap();
+        assert_eq!(m.kind, IdentityKind::Legacy);
+        assert_eq!(m.keypair.public_key().to_bin(), cle.public_key().to_bin());
+        assert_ne!(
+            m.keypair.public_key().to_bin(),
+            m1.keypair.public_key().to_bin()
+        );
     }
 }

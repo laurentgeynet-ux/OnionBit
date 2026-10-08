@@ -14,6 +14,7 @@
 //! (cf. `docs/architecture/architecture.md`).
 
 pub mod bencode;
+pub mod bip39;
 pub mod error;
 pub mod limits;
 pub mod magnet;
