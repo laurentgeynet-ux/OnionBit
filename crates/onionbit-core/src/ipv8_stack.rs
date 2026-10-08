@@ -1667,6 +1667,7 @@ impl Ipv8Stack {
     /// Cree et demarre la stack : endpoint, communities, discovery
     /// bootstrap (tache de fond). `notifier` recoit le relais
     /// `circuit_removed` -> `tunnel_removed`.
+    #[allow(clippy::too_many_arguments)]
     pub async fn start(
         config: &Ipv8Config,
         state_dir: &Path,
@@ -1675,13 +1676,12 @@ impl Ipv8Stack {
         db: Arc<Database>,
         notifier: crate::notifier::Notifier,
         tasks: crate::asyncio::TaskRegistry,
+        identity: identity::IdentityMaterial,
     ) -> Result<Arc<Self>> {
-        // ADR-0016 : l'identite est racinee sur `identity_seed.bin`
-        // quand elle existe ; `ipv8_keypair.bin` n'est qu'un cache
-        // derive. Legacy (fichier seul) charge tel quel.
-        let identity = identity::load_or_generate(state_dir)?;
+        // ADR-0016 : le materiel identitaire est resolu en amont par
+        // la session (`identity::load_or_generate`, `unlock_seed`,
+        // invite ephemere) — le stack ne touche plus aux fichiers.
         let identity_kind = identity.kind;
-        let key = identity.keypair;
         // ADR-0017 : `stealth.enabled` × `ipv8.enabled` est refuse
         // fermement sur CHAQUE chemin de demarrage (ici +
         // `start_ipv8` + `Session::start`) — une combinaison
@@ -1698,15 +1698,8 @@ impl Ipv8Stack {
         // listeners — `DispatcherEndpoint`).
         let bind_v6 = config.listen_addr_v6.as_deref();
         let (endpoint, stealth_transport, stealth_link_mtu) = if let Some(sc) = &stealth_cfg {
-            let (t, link_mtu) = build_stealth_transport(
-                sc,
-                &key,
-                identity_kind,
-                &config.listen_addr,
-                bind_v6,
-                state_dir,
-            )
-            .await?;
+            let (t, link_mtu) =
+                build_stealth_transport(sc, &identity, &config.listen_addr, bind_v6).await?;
             (UdpEndpoint::new(t.clone()), Some(t), Some(link_mtu))
         } else {
             (
@@ -1722,6 +1715,7 @@ impl Ipv8Stack {
             )
         };
         let endpoint: Arc<UdpEndpoint> = endpoint;
+        let key = identity.keypair;
         let stealth = stealth_transport.is_some();
         let network = Arc::new(Network::default());
         // `my_estimated_lan` : l'adresse d'ecoute reelle quand elle
@@ -3478,11 +3472,9 @@ fn load_or_create_key(path: &Path) -> Result<LibNaClSecretKey> {
 /// dont l'utilisateur croirait qu'il fonctionne.
 async fn build_stealth_transport(
     sc: &crate::daemon_config::StealthFileConfig,
-    key: &LibNaClSecretKey,
-    identity_kind: IdentityKind,
+    identity: &identity::IdentityMaterial,
     listen_addr: &str,
     listen_addr_v6: Option<&str>,
-    state_dir: &Path,
 ) -> Result<(Arc<StealthTransport>, std::num::NonZeroUsize)> {
     let role = StealthRole::parse_role(&sc.role).ok_or(CoreError::InvalidState(
         "stealth.role : valeur inconnue (attendu client|bridge|gateway)",
@@ -3516,10 +3508,13 @@ async fn build_stealth_transport(
     // permissions 0600) — la pk publique voyage dans les liens
     // d'invitation, le secret ne sort jamais du noeud.
     let (bridge_sk, bridge_pk) = if matches!(role, StealthRole::Bridge | StealthRole::Gateway) {
-        // Legacy : le fichier pont reste maitre (liens distribues) ;
-        // Seeded : derivation autoritaire (la phrase le reproduit).
-        let sk = identity::load_or_create_bridge_sk(state_dir, identity_kind)?;
-        (Some(sk), Some(onionbit_crypto::stealth::bridge_public(&sk)))
+        // Le secret pont vient du materiel resolu par la session :
+        // Legacy = fichier maitre (liens distribues), Seeded =
+        // derivation autoritaire (la phrase le reproduit).
+        (
+            Some(identity.bridge_sk),
+            Some(onionbit_crypto::stealth::bridge_public(&identity.bridge_sk)),
+        )
     } else {
         (None, None)
     };
@@ -3531,7 +3526,7 @@ async fn build_stealth_transport(
         // Identite vehiculee chiffree dans `hs1` : cle maitresse du
         // noeud (compromis v1 documente dans l'ADR — une cle dediee
         // reduirait la correlation entre l'invitation et l'identite).
-        client_id: key.public_key().to_bin(),
+        client_id: identity.keypair.public_key().to_bin(),
         params: onionbit_ipv8::stealth::StealthParams {
             pad_max_extra: sc.pad_max_extra,
             hs_timestamp_skew_secs: sc.hs_timestamp_skew_secs,

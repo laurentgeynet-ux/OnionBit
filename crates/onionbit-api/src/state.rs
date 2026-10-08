@@ -5,6 +5,7 @@
 //! Etat partage des handlers (equivalent de ce que les endpoints
 //! Python recuperent depuis `request.app`).
 
+use std::net::IpAddr;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -84,6 +85,58 @@ impl Default for DownloadsRowsCache {
     }
 }
 
+/// Rate-limiter des tentatives de deverrouillage (`POST
+/// /api/identity/unlock`, ADR-0016) : fenetre glissante par IP +
+/// globale. Les plafonds viennent de `identity.unlock_*` (config) —
+/// aucune valeur en dur ici, seule la mecanique.
+pub struct UnlockRateLimiter {
+    per_ip:
+        Mutex<std::collections::HashMap<IpAddr, std::collections::VecDeque<std::time::Instant>>>,
+    global: Mutex<std::collections::VecDeque<std::time::Instant>>,
+}
+
+impl UnlockRateLimiter {
+    /// `true` si la tentative est admise (et enregistree) ; `false`
+    /// si un des deux plafonds est atteint dans la fenetre.
+    pub fn admit(
+        &self,
+        ip: IpAddr,
+        per_ip_max: u32,
+        global_max: u32,
+        window: std::time::Duration,
+    ) -> bool {
+        let now = std::time::Instant::now();
+        let cutoff = now.checked_sub(window).unwrap_or(now);
+        let mut global = self.global.lock().unwrap_or_else(|e| e.into_inner());
+        while global.front().is_some_and(|t| *t < cutoff) {
+            global.pop_front();
+        }
+        if global.len() >= global_max as usize {
+            return false;
+        }
+        let mut per_ip = self.per_ip.lock().unwrap_or_else(|e| e.into_inner());
+        let q = per_ip.entry(ip).or_default();
+        while q.front().is_some_and(|t| *t < cutoff) {
+            q.pop_front();
+        }
+        if q.len() >= per_ip_max as usize {
+            return false;
+        }
+        q.push_back(now);
+        global.push_back(now);
+        true
+    }
+}
+
+impl Default for UnlockRateLimiter {
+    fn default() -> Self {
+        Self {
+            per_ip: Mutex::new(std::collections::HashMap::new()),
+            global: Mutex::new(std::collections::VecDeque::new()),
+        }
+    }
+}
+
 /// Etat injecte dans tous les handlers.
 #[derive(Clone)]
 pub struct AppState {
@@ -123,10 +176,9 @@ pub struct AppState {
     /// `onionbit-api-key`) pour l'auto-connexion same-origin
     /// (`api/web_ui_inject_key`, defaut `true`).
     pub web_ui_inject_key: bool,
-    /// Transport furtif actif (ADR-0017, injecte par le daemon quand
-    /// `stealth.enabled` — `None` sinon). Les handlers n'en lisent
-    /// que des compteurs ; jamais de cle ni d'adresse.
-    pub stealth_transport: Option<Arc<onionbit_ipv8::stealth_transport::StealthTransport>>,
+    /// Rate-limiter de `POST /api/identity/unlock` (ADR-0016) —
+    /// borne anti brute-force du mot de passe `OBSK`.
+    pub unlock_limiter: Arc<UnlockRateLimiter>,
 }
 
 impl AppState {
@@ -144,7 +196,7 @@ impl AppState {
             downloads_rows: Arc::new(DownloadsRowsCache::default()),
             web_ui_dir: None,
             web_ui_inject_key: true,
-            stealth_transport: None,
+            unlock_limiter: Arc::new(UnlockRateLimiter::default()),
         }
     }
 
@@ -188,13 +240,17 @@ impl AppState {
         self
     }
 
-    /// Injecte le transport furtif actif (daemon en mode stealth).
-    pub fn with_stealth_transport(
-        mut self,
-        t: Option<Arc<onionbit_ipv8::stealth_transport::StealthTransport>>,
-    ) -> Self {
-        self.stealth_transport = t;
-        self
+    /// Transport furtif actif (ADR-0017) — resolu **dynamiquement**
+    /// depuis la session : en demarrage differe (ADR-0016 —
+    /// `identity_pending`/`locked`) la stack n'existe qu'apres
+    /// resolution ; un snapshot pris au bind resterait `None` a
+    /// jamais. `None` hors stealth ou avant resolution.
+    pub fn stealth_transport(
+        &self,
+    ) -> Option<Arc<onionbit_ipv8::stealth_transport::StealthTransport>> {
+        self.session
+            .ipv8()
+            .and_then(|stack| stack.stealth_transport.clone())
     }
 
     /// Pousse une erreur d'ajout dans le journal CLI (borne 100,

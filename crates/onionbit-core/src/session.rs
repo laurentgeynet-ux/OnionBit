@@ -178,10 +178,27 @@ impl Drop for PendingAddGuard<'_> {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .remove(&k);
-        if let (Some(stack), Some(ih)) = (self.inner.ipv8.as_ref(), self.infohash) {
+        let ipv8 = self.inner.ipv8.read().unwrap_or_else(|e| e.into_inner());
+        if let (Some(stack), Some(ih)) = (ipv8.as_ref(), self.infohash) {
             stack.clear_pending_swarm(&ih, false);
         }
     }
+}
+
+/// Phase identitaire de la session (ADR-0016, etape 48d) —
+/// `identity_pending`/`locked` = shell API sans composants reseau ;
+/// `Ready` = `try_start_identity` a complete (moteur + stack).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IdentityPhase {
+    /// Premier boot sous gate UI : rien sur disque, aucun socket
+    /// identitaire ouvert — en attente du choix nouvelle / restaurer
+    /// / invite.
+    Pending,
+    /// Graine `OBSK` chiffree sur disque (`identity.at_rest`) —
+    /// l'identite attend `POST /api/identity/unlock`.
+    Locked,
+    /// Identite resolue — tous les composants tournent.
+    Ready,
 }
 
 struct Inner {
@@ -189,13 +206,28 @@ struct Inner {
     /// Sous-ensemble de reglages mutables a chaud (`POST /api/settings`) :
     /// superposes a `config` par `effective_config()`.
     overrides: std::sync::RwLock<ServiceOverrides>,
-    engine: BtEngine,
-    db: Arc<Database>,
+    /// `None` tant que la phase n'est pas `Ready` : le moteur
+    /// BitTorrent (DHT, annonces trackers, peer-wire) fait partie
+    /// des composants identitaires differes — aucun datagramme ne
+    /// doit partir pendant `pending`/`locked`.
+    engine: std::sync::RwLock<Option<BtEngine>>,
+    /// Placeholder `:memory:` en shell ; swappe vers la base
+    /// fichier a la resolution d'identite — sauf en invite, ou la
+    /// memoire reste definitive (aucune trace persistante).
+    db: std::sync::RwLock<Arc<Database>>,
     notifier: Notifier,
     services: std::sync::Mutex<Services>,
     /// Stack IPv8 (discovery, content discovery, tunnel, lanes
-    /// anonymes) — `Some` si `config.ipv8.enabled`.
-    ipv8: Option<Arc<crate::ipv8_stack::Ipv8Stack>>,
+    /// anonymes) — `Some` si `config.ipv8.enabled` ET phase `Ready`.
+    ipv8: std::sync::RwLock<Option<Arc<crate::ipv8_stack::Ipv8Stack>>>,
+    /// Phase identitaire courante (`GET /api/identity` -> `state`).
+    identity_phase: std::sync::RwLock<IdentityPhase>,
+    /// Serialise `try_start_identity` : unlock/create/restore/guest
+    /// concurrents resolvent une seule fois.
+    identity_gate: tokio::sync::Mutex<()>,
+    /// Session invitee active (materiel ephemere — `GET
+    /// /api/identity` expose `mode:"guest"`).
+    guest: std::sync::atomic::AtomicBool,
     /// Dernier fetch de `trackers_file_sync_url`
     /// (`Download.LAST_TRACKER_FILE_SYNC` Python — TTL
     /// [`crate::trackers::TRACKER_SYNC_TTL_SECS`]).
@@ -235,6 +267,28 @@ struct Inner {
     started_at: std::time::Instant,
 }
 
+impl Inner {
+    /// Clone de l'Arc base courant (placeholder memoire en shell,
+    /// base fichier une fois l'identite resolue — sauf invite).
+    fn db_arc(&self) -> Arc<Database> {
+        self.db.read().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    /// Stack IPv8 en cours (`None` en `pending`/`locked` ou stack
+    /// desactivee).
+    fn ipv8_stack(&self) -> Option<Arc<crate::ipv8_stack::Ipv8Stack>> {
+        self.ipv8.read().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    /// Moteur courant (`None` tant que la phase n'est pas `Ready`).
+    fn engine_opt(&self) -> Option<BtEngine> {
+        self.engine
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+}
+
 impl std::fmt::Debug for CoreSession {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("CoreSession")
@@ -244,23 +298,34 @@ impl std::fmt::Debug for CoreSession {
 }
 
 impl CoreSession {
-    /// Demarre la session : ouvre la base, cree le moteur BitTorrent,
-    /// lance la boucle de publication de progression. La restauration
-    /// des telechargements persistes (`load_checkpoint` Python) part
-    /// en tache de fond — la verification initiale des pieces peut
-    /// prendre plusieurs secondes par torrent et ne doit pas retarder
-    /// le bind de l'API de controle. Les downloads restaurés
-    /// apparaissent progressivement cote clients ; [`Self::wait_restored`]
-    /// attend la fin si besoin.
+    /// Demarre la session complete (chemin historique — headless et
+    /// tests) : shell puis resolution d'identite immediate, sauf si
+    /// l'identite sur disque est scellee (`OBSK`) ou absente sous
+    /// `first_run_gate`. La restauration des telechargements persistes
+    /// (`load_checkpoint` Python) part en tache de fond — la
+    /// verification initiale des pieces peut prendre plusieurs
+    /// secondes par torrent et ne doit pas retarder le bind de l'API
+    /// de controle. [`Self::wait_restored`] attend la fin si besoin.
     pub async fn start(config: CoreConfig, notifier: Notifier) -> Result<Self> {
+        Self::start_gated(config, notifier, false).await
+    }
+
+    /// Phase 1 du demarrage (ADR-0016, etape 48d) : construit le
+    /// « shell » — base, moteur et stack ne sont ouverts que si
+    /// l'identite est resolvable immediatement ; sinon la session
+    /// reste en `Pending`/`Locked` et l'API repond `409` aux routes
+    /// identitaires jusqu'a [`Self::try_start_identity`].
+    ///
+    /// `first_run_gate` : demande par l'UI (`--first-run-gate`) —
+    /// un `state_dir` vierge attend le choix utilisateur au lieu
+    /// d'auto-generer une identite jetable. Sans le flag (daemon
+    /// headless, ponts), `Absent` auto-genere comme historiquement.
+    pub async fn start_gated(
+        config: CoreConfig,
+        notifier: Notifier,
+        first_run_gate: bool,
+    ) -> Result<Self> {
         std::fs::create_dir_all(&config.state_dir)?;
-        // `memory_db` (`db_filename = ":memory:"`) → base volatile,
-        // comme `Database::memory()` des tests.
-        let db = if config.db_filename == ":memory:" {
-            Database::memory()?
-        } else {
-            Database::open(&config.db_path())?
-        };
         // ADR-0017 : le refus `stealth × ipv8` est verifie AVANT la
         // creation du moteur — une config hybride ne doit pas meme
         // ouvrir une socket d'ecoute BitTorrent.
@@ -269,38 +334,103 @@ impl CoreSession {
                 "stealth.enabled exclut ipv8.enabled — combinaison hybride refusee",
             ));
         }
-        let engine = BtEngine::start(engine_config_effective(&config)).await?;
-        let db = Arc::new(db);
-        let asyncio = crate::asyncio::AsyncioMonitor::new(config.ipv8.walker_interval);
-        let ipv8 = start_ipv8(&config, db.clone(), notifier.clone(), asyncio.tasks.clone()).await?;
-        let services_config = config.clone();
-        let augmenter = Arc::new(crate::augmenter::Augmenter::new(&config.state_dir));
-        let notifier_aug = notifier.clone();
-        let session = Self {
-            inner: Arc::new(Inner {
-                config,
-                overrides: std::sync::RwLock::new(ServiceOverrides::default()),
-                engine,
-                db: db.clone(),
-                notifier,
-                services: std::sync::Mutex::new(Services::default()),
-                ipv8,
-                last_tracker_sync: std::sync::Mutex::new(None),
-                asyncio,
-                pending: std::sync::Mutex::new(std::collections::HashMap::new()),
-                pending_notify: std::sync::Mutex::new(std::collections::HashMap::new()),
-                stopped: std::sync::atomic::AtomicBool::new(false),
-                restore_done: tokio::sync::watch::channel(false).0,
-                augmenter: augmenter.clone(),
-                bandwidth: Arc::new(crate::services::bandwidth::CongestionController::new()),
-                started_at: std::time::Instant::now(),
-            }),
+        // ADR-0016 : `at_rest` + pont/passerelle refuse — un pont doit
+        // redemarrer sans surveillance (double-check config paranoia ;
+        // la validation principale vit dans `DaemonConfig`).
+        if config.identity_at_rest
+            && config
+                .ipv8
+                .stealth
+                .as_ref()
+                .is_some_and(|sc| sc.role != "client")
+        {
+            return Err(CoreError::InvalidState(
+                "identity.at_rest incompatible avec stealth.role != client (un pont doit redemarrer sans surveillance)",
+            ));
+        }
+        let stack_enabled = config.ipv8.enabled || config.ipv8.stealth.is_some();
+        let disk_state = crate::identity::detect(&config.state_dir)?;
+        // Le shell nait `Pending` (ou `Locked`) : `Ready` n'est pose
+        // qu'en fin de `try_start_identity` — c'est ce marqueur qui
+        // rend le second appel idempotent.
+        let (phase, resolvable) = match disk_state {
+            // Graine `OBSK` : toujours verrouillee, gate ou pas —
+            // un headless ne peut pas deviner le mot de passe.
+            crate::identity::IdentityState::Sealed { .. } => (IdentityPhase::Locked, false),
+            // Rien sur disque : le gate UI attend le choix ; sans
+            // gate (headless) auto-generation historique.
+            crate::identity::IdentityState::Absent => (IdentityPhase::Pending, !first_run_gate),
+            // `Seeded`/`Legacy` : resolution immediate. Stack
+            // desactivee : rien a resoudre, moteur seul.
+            _ => (IdentityPhase::Pending, true),
         };
+        let session = Self::new_shell(config, notifier, phase)?;
+        if resolvable {
+            let material = if stack_enabled {
+                Some(crate::identity::load_or_generate(
+                    &session.inner.config.state_dir,
+                )?)
+            } else {
+                None
+            };
+            session.try_start_identity(material).await?;
+        }
+        Ok(session)
+    }
+
+    /// Phase 2 : resout le materiel identitaire et demarre les
+    /// composants qui en dependent (base fichier, moteur BitTorrent,
+    /// stack IPv8, services, restauration). Idempotent : un second
+    /// appel apres resolution retourne `Ok` sans rien refaire —
+    /// concurrents `unlock`/`create`/`restore`/invite serialises par
+    /// `identity_gate`.
+    ///
+    /// `material` : `Some` quand la stack IPv8/stealth est active ;
+    /// `None` (stack desactivee) demarre moteur + base sans identite.
+    /// `material.guest == true` : la base memoire du shell est
+    /// conservee — aucun artefact persistant pour une session invitee.
+    pub async fn try_start_identity(
+        &self,
+        material: Option<crate::identity::IdentityMaterial>,
+    ) -> Result<()> {
+        let _gate = self.inner.identity_gate.lock().await;
+        if *self
+            .inner
+            .identity_phase
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            == IdentityPhase::Ready
+        {
+            return Ok(());
+        }
+        let config = &self.inner.config;
+        // `memory_db` (`db_filename = ":memory:"`) → base volatile,
+        // comme `Database::memory()` des tests. En invite, la memoire
+        // du shell est definitive.
+        let guest = material.as_ref().is_some_and(|m| m.guest);
+        if !guest && config.db_filename != ":memory:" {
+            let db = Database::open(&config.db_path())?;
+            *self.inner.db.write().unwrap_or_else(|e| e.into_inner()) = Arc::new(db);
+        }
+        let db = self.inner.db_arc();
+        let engine = BtEngine::start(engine_config_effective(config)).await?;
+        let ipv8 = start_ipv8_with_identity(
+            config,
+            db.clone(),
+            self.inner.notifier.clone(),
+            self.inner.asyncio.tasks.clone(),
+            material,
+        )
+        .await?;
+        *self.inner.engine.write().unwrap_or_else(|e| e.into_inner()) = Some(engine);
+        *self.inner.ipv8.write().unwrap_or_else(|e| e.into_inner()) = ipv8;
         // `AugmentedSearch` Python : abonne aux metadonnees ajoutees
         // et amorce le vocabulaire depuis la base s'il est vide
         // (`seed_augmenter` + `schedule_study`).
-        augmenter.spawn_consumer(notifier_aug);
-        if augmenter.needs_kickstart() {
+        self.inner
+            .augmenter
+            .spawn_consumer(self.inner.notifier.clone());
+        if self.inner.augmenter.needs_kickstart() {
             let titles = db
                 .with(|c| {
                     let mut stmt = c.prepare(
@@ -311,60 +441,88 @@ impl CoreSession {
                     Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
                 })
                 .unwrap_or_default();
-            augmenter.seed(titles);
-            let aug = augmenter.clone();
+            self.inner.augmenter.seed(titles);
+            let aug = self.inner.augmenter.clone();
             tokio::task::spawn_blocking(move || aug.study_pending());
         }
-        session.start_services(&services_config).await;
-        session.spawn_restore();
-        session.spawn_progress_loop();
-        session.inner.notifier.notify(Notification::SessionStarted);
-        Ok(session)
+        let services_config = config.clone();
+        self.start_services(&services_config).await;
+        self.spawn_restore();
+        self.spawn_progress_loop();
+        self.inner
+            .guest
+            .store(guest, std::sync::atomic::Ordering::Relaxed);
+        self.inner.notifier.notify(Notification::SessionStarted);
+        *self
+            .inner
+            .identity_phase
+            .write()
+            .unwrap_or_else(|e| e.into_inner()) = IdentityPhase::Ready;
+        Ok(())
     }
 
-    /// Session de test entierement en memoire (base volatile, moteur
-    /// offline).
-    pub async fn start_offline(config: CoreConfig, notifier: Notifier) -> Result<Self> {
+    /// Phase identitaire courante (`GET /api/identity`).
+    pub fn identity_phase(&self) -> IdentityPhase {
+        *self
+            .inner
+            .identity_phase
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// `true` si la session tourne avec une identite ephemere invitee.
+    pub fn is_guest(&self) -> bool {
+        self.inner.guest.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Construit le shell commun aux deux chemins de demarrage :
+    /// `Inner` cree avec une base memoire placeholder et aucun
+    /// composant identitaire.
+    fn new_shell(config: CoreConfig, notifier: Notifier, phase: IdentityPhase) -> Result<Self> {
         let db = Database::memory()?;
-        if config.ipv8.enabled && config.ipv8.stealth.is_some() {
-            return Err(CoreError::InvalidState(
-                "stealth.enabled exclut ipv8.enabled — combinaison hybride refusee",
-            ));
-        }
-        let engine = BtEngine::start(engine_config_effective(&config)).await?;
-        let db = Arc::new(db);
         let asyncio = crate::asyncio::AsyncioMonitor::new(config.ipv8.walker_interval);
-        let ipv8 = start_ipv8(&config, db.clone(), notifier.clone(), asyncio.tasks.clone()).await?;
-        let services_config = config.clone();
         let augmenter = Arc::new(crate::augmenter::Augmenter::new(&config.state_dir));
-        let session = Self {
+        Ok(Self {
             inner: Arc::new(Inner {
                 config,
                 overrides: std::sync::RwLock::new(ServiceOverrides::default()),
-                engine,
-                db,
+                engine: std::sync::RwLock::new(None),
+                db: std::sync::RwLock::new(Arc::new(db)),
                 notifier,
                 services: std::sync::Mutex::new(Services::default()),
-                ipv8,
+                ipv8: std::sync::RwLock::new(None),
+                identity_phase: std::sync::RwLock::new(phase),
+                identity_gate: tokio::sync::Mutex::new(()),
+                guest: std::sync::atomic::AtomicBool::new(false),
                 last_tracker_sync: std::sync::Mutex::new(None),
                 asyncio,
                 pending: std::sync::Mutex::new(std::collections::HashMap::new()),
                 pending_notify: std::sync::Mutex::new(std::collections::HashMap::new()),
                 stopped: std::sync::atomic::AtomicBool::new(false),
-                // Base memoire : rien a restaurer — restauration
-                // marquee terminee d'emblee.
-                restore_done: tokio::sync::watch::channel(true).0,
+                restore_done: tokio::sync::watch::channel(false).0,
                 augmenter,
                 bandwidth: Arc::new(crate::services::bandwidth::CongestionController::new()),
                 started_at: std::time::Instant::now(),
             }),
+        })
+    }
+
+    /// Session de test entierement en memoire (base volatile, moteur
+    /// offline).
+    pub async fn start_offline(config: CoreConfig, notifier: Notifier) -> Result<Self> {
+        if config.ipv8.enabled && config.ipv8.stealth.is_some() {
+            return Err(CoreError::InvalidState(
+                "stealth.enabled exclut ipv8.enabled — combinaison hybride refusee",
+            ));
+        }
+        let stack_enabled = config.ipv8.enabled || config.ipv8.stealth.is_some();
+        let material = if stack_enabled {
+            Some(crate::identity::load_or_generate(&config.state_dir)?)
+        } else {
+            None
         };
-        session
-            .inner
-            .augmenter
-            .spawn_consumer(session.inner.notifier.clone());
-        session.start_services(&services_config).await;
-        session.spawn_progress_loop();
+        let session = Self::new_shell(config, notifier, IdentityPhase::Pending)?;
+        session.try_start_identity(material).await?;
         Ok(session)
     }
 
@@ -424,7 +582,7 @@ impl CoreSession {
         let mut restored = 0usize;
         let mut failed = 0usize;
         let mut deferred = 0usize;
-        let rows = match self.inner.db.with(onionbit_db::downloads::list) {
+        let rows = match self.inner.db_arc().with(onionbit_db::downloads::list) {
             Ok(r) => r,
             Err(e) => {
                 tracing::warn!(error = %e, "lecture des downloads persistes impossible");
@@ -470,7 +628,8 @@ impl CoreSession {
             // re-add se fait quand meme (le Python restaure aussi
             // sans garantie de circuit).
             if row.anon_hops > 0 && awaited_lanes.insert(row.anon_hops as u32) {
-                if let Some(tunnel) = self.inner.ipv8.as_ref().and_then(|s| s.tunnel.as_ref()) {
+                let ipv8 = self.inner.ipv8_stack();
+                if let Some(tunnel) = ipv8.as_ref().and_then(|s| s.tunnel.as_ref()) {
                     let ok = tunnel
                         .await_data_circuit_of_hops(
                             row.anon_hops as usize,
@@ -606,9 +765,8 @@ impl CoreSession {
                 // premier circuit pret evite les envois droppes sur
                 // `select_circuit`. Best-effort, borne `next_hop_timeout`.
                 if hops > 0 {
-                    if let Some(tunnel) =
-                        session.inner.ipv8.as_ref().and_then(|s| s.tunnel.as_ref())
-                    {
+                    let ipv8 = session.inner.ipv8_stack();
+                    if let Some(tunnel) = ipv8.as_ref().and_then(|s| s.tunnel.as_ref()) {
                         tunnel
                             .await_data_circuit_of_hops(
                                 hops as usize,
@@ -773,7 +931,10 @@ impl CoreSession {
 
     /// Ligne de persistance d'un telechargement (`None` si inconnue).
     fn row_of(&self, ih: &[u8]) -> Result<Option<DownloadRow>> {
-        Ok(self.inner.db.with(|c| onionbit_db::downloads::get(c, ih))?)
+        Ok(self
+            .inner
+            .db_arc()
+            .with(|c| onionbit_db::downloads::get(c, ih))?)
     }
 
     /// Lecture-modification-ecriture des reglages persistes d'un
@@ -781,7 +942,7 @@ impl CoreSession {
     /// runtime de la ligne relue sont conservees — `f` ne touche que
     /// les reglages.
     pub fn update_download_row(&self, ih: &[u8], f: impl FnOnce(&mut DownloadRow)) -> Result<bool> {
-        Ok(self.inner.db.with(|c| {
+        Ok(self.inner.db_arc().with(|c| {
             let Some(mut row) = onionbit_db::downloads::get(c, ih)? else {
                 return Ok(false);
             };
@@ -810,7 +971,7 @@ impl CoreSession {
             // les telechargements termines (et relancait leur recheck).
             let mut finished: std::collections::HashSet<String> = session
                 .inner
-                .db
+                .db_arc()
                 .with(|c| {
                     Ok(onionbit_db::downloads::list(c)?
                         .into_iter()
@@ -851,7 +1012,7 @@ impl CoreSession {
                         if let Some(ih) = onionbit_crypto::hash::from_hex(&stats.info_hash) {
                             let _ = session
                                 .inner
-                                .db
+                                .db_arc()
                                 .with(|c| onionbit_db::downloads::add_transferred(c, &ih, du, dd));
                         }
                     }
@@ -871,14 +1032,14 @@ impl CoreSession {
                             if let Some(ih) = ih {
                                 let _ = session
                                     .inner
-                                    .db
+                                    .db_arc()
                                     .with(|c| onionbit_db::downloads::set_finished(c, &ih, true));
                                 // `add_download_to_channel` Python : les
                                 // canaux ne sont pas portes — l'attribut
                                 // persiste en base et le manque est trace.
                                 let channel = session
                                     .inner
-                                    .db
+                                    .db_arc()
                                     .with(|c| onionbit_db::downloads::get(c, &ih))
                                     .ok()
                                     .flatten()
@@ -927,7 +1088,7 @@ impl CoreSession {
                         if let Some(ih) = onionbit_crypto::hash::from_hex(&stats.info_hash) {
                             let _ = session
                                 .inner
-                                .db
+                                .db_arc()
                                 .with(|c| onionbit_db::downloads::set_finished(c, &ih, false));
                         }
                     }
@@ -987,9 +1148,10 @@ impl CoreSession {
     }
 
     /// Acces direct au moteur (services internes : watch folder,
-    /// torrent checker…).
-    pub fn engine(&self) -> &BtEngine {
-        &self.inner.engine
+    /// torrent checker…). `None` tant que la phase identitaire n'est
+    /// pas `Ready` (etape 48d).
+    pub fn engine(&self) -> Option<BtEngine> {
+        self.inner.engine_opt()
     }
 
     /// Secondes depuis `start()` — `uptime_sec` de
@@ -1018,9 +1180,11 @@ impl CoreSession {
                     "mode stealth : telechargement direct interdit (anon_hops requis)",
                 ));
             }
-            return Ok(self.inner.engine.clone());
+            return self.inner.engine_opt().ok_or(CoreError::InvalidState(
+                "identite non resolue — moteur non demarre",
+            ));
         }
-        let stack = self.inner.ipv8.clone().ok_or(CoreError::InvalidState(
+        let stack = self.inner.ipv8_stack().ok_or(CoreError::InvalidState(
             "anon_hops > 0 mais la stack ipv8 est inactive",
         ))?;
         stack.anon_engine(anon_hops as usize).await
@@ -1028,8 +1192,8 @@ impl CoreSession {
 
     /// Tous les moteurs (principal + lanes anonymes actives).
     fn all_engines(&self) -> Vec<BtEngine> {
-        let mut engines = vec![self.inner.engine.clone()];
-        if let Some(stack) = &self.inner.ipv8 {
+        let mut engines: Vec<BtEngine> = self.inner.engine_opt().into_iter().collect();
+        if let Some(stack) = self.inner.ipv8_stack() {
             engines.extend(stack.anon_engines());
         }
         engines
@@ -1067,7 +1231,7 @@ impl CoreSession {
         };
         let row = self
             .inner
-            .db
+            .db_arc()
             .with(|c| onionbit_db::downloads::get(c, &ih))
             .unwrap_or(None);
         let Some(row) = row else { return };
@@ -1129,7 +1293,7 @@ impl CoreSession {
         }
         let rows = self
             .inner
-            .db
+            .db_arc()
             .with(onionbit_db::downloads::list)
             .unwrap_or_default();
         let row_of = |hash: &str| {
@@ -1464,7 +1628,7 @@ impl CoreSession {
                 // demarree + `get_by_hash` retournait None).
                 let mut extra_peers_rx = None;
                 if let (Some(stack), Some(ih)) = (
-                    self.inner.ipv8.as_ref(),
+                    self.inner.ipv8_stack().as_ref().map(Arc::as_ref),
                     magnet.as_ref().and_then(|m| m.info_hash_v1),
                 ) {
                     if hops > 0 {
@@ -1522,7 +1686,7 @@ impl CoreSession {
         // conserve si le torrent est materialise (le moniteur de
         // swarm reprend le relais), retire sinon — echec ou
         // annulation sans laisser de swarm orphelin.
-        if let (Some(stack), Some(m)) = (self.inner.ipv8.as_ref(), magnet.as_ref()) {
+        if let (Some(stack), Some(m)) = (self.inner.ipv8_stack(), magnet.as_ref()) {
             if let Some(ih) = m.info_hash_v1 {
                 stack.clear_pending_swarm(&ih, add_res.is_ok());
             }
@@ -1986,7 +2150,7 @@ impl CoreSession {
     }
 
     fn persist(&self, dl: &Download, uri: &str, p: PersistParams) -> Result<()> {
-        self.inner.db.with(|c| {
+        self.inner.db_arc().with(|c| {
             onionbit_db::downloads::upsert(
                 c,
                 &DownloadRow {
@@ -2020,7 +2184,7 @@ impl CoreSession {
         meta: &onionbit_format::torrent::TorrentMeta,
         p: PersistParams,
     ) -> Result<()> {
-        self.inner.db.with(|c| {
+        self.inner.db_arc().with(|c| {
             onionbit_db::downloads::upsert(
                 c,
                 &DownloadRow {
@@ -2047,7 +2211,7 @@ impl CoreSession {
     /// Indexe les metadonnees du torrent dans `channel_node` pour alimenter
     /// les recherches locales (`/api/metadata/search/local`) et populaires.
     fn index_channel_node(&self, infohash: &[u8], name: &str, size: u64) {
-        let _ = self.inner.db.with(|c| {
+        let _ = self.inner.db_arc().with(|c| {
             if let Ok(Some(_)) = onionbit_db::channel::get_by_infohash(c, infohash) {
                 return Ok(());
             }
@@ -2149,7 +2313,7 @@ impl CoreSession {
         match self.readd_row(&new_engine, &row).await {
             Ok(_) => {
                 self.inner
-                    .db
+                    .db_arc()
                     .with(|c| onionbit_db::downloads::upsert(c, &row))?;
                 Ok(())
             }
@@ -2190,7 +2354,7 @@ impl CoreSession {
             if new_hops > crate::ipv8_stack::MAX_ANON_HOPS as u32 {
                 return Err(CoreError::State("anon_hops doit etre entre 1 et 3".into()));
             }
-            if new_hops > 0 && self.inner.ipv8.is_none() {
+            if new_hops > 0 && self.inner.ipv8_stack().is_none() {
                 return Err(CoreError::InvalidState(
                     "anon_hops > 0 mais la stack ipv8 est inactive",
                 ));
@@ -2257,10 +2421,14 @@ impl CoreSession {
     /// reellement en tunnel serait un mensonge sur l'anonymat.
     pub fn owner_engine_hops(&self, infohash_hex: &str) -> Option<u32> {
         let ih = onionbit_crypto::hash::from_hex(infohash_hex)?;
-        if self.inner.engine.get_by_hash(&ih).is_some() {
+        if self
+            .inner
+            .engine_opt()
+            .is_some_and(|e| e.get_by_hash(&ih).is_some())
+        {
             return Some(0);
         }
-        self.inner.ipv8.as_ref().and_then(|s| {
+        self.inner.ipv8_stack().and_then(|s| {
             s.anon_engines_with_hops()
                 .into_iter()
                 .find(|(_, e)| e.get_by_hash(&ih).is_some())
@@ -2272,7 +2440,7 @@ impl CoreSession {
     /// (utilise par `GET /api/downloads` pour `hops`/`anon_download`).
     pub fn anon_hops_map(&self) -> std::collections::HashMap<String, u32> {
         self.inner
-            .db
+            .db_arc()
             .with(onionbit_db::downloads::list)
             .map(|rows| {
                 rows.into_iter()
@@ -2428,7 +2596,7 @@ impl CoreSession {
                 return Err(CoreError::InvalidState("telechargement inconnu"));
             }
             self.inner
-                .db
+                .db_arc()
                 .with(|c| onionbit_db::downloads::delete(c, &ih))?;
             return Ok(());
         };
@@ -2492,7 +2660,7 @@ impl CoreSession {
             if let Some(ih) = onionbit_crypto::hash::from_hex(&h) {
                 let _ = self
                     .inner
-                    .db
+                    .db_arc()
                     .with(|c| onionbit_db::downloads::delete(c, &ih));
             }
         }
@@ -2539,7 +2707,7 @@ impl CoreSession {
         self.remove_engine_only(id_or_hash, false).await?;
         self.readd_row(&engine, &row).await?;
         self.inner
-            .db
+            .db_arc()
             .with(|c| onionbit_db::downloads::upsert(c, &row))?;
         self.notify_state(&onionbit_crypto::hash::to_hex(&ih));
         Ok(())
@@ -2648,7 +2816,7 @@ impl CoreSession {
         );
         self.readd_row(&engine, &row).await?;
         self.inner
-            .db
+            .db_arc()
             .with(|c| onionbit_db::downloads::upsert(c, &row))?;
         Ok(true)
     }
@@ -2749,7 +2917,7 @@ impl CoreSession {
     pub fn move_in_queue(&self, id_or_hash: &str, op: QueueOp) -> Result<()> {
         let (dl, _) = self.download_and_row(id_or_hash)?;
         let ih = dl.info_hash();
-        Ok(self.inner.db.with(|c| {
+        Ok(self.inner.db_arc().with(|c| {
             let mut rows = onionbit_db::downloads::list(c)?;
             rows.sort_by_key(|r| r.queue_position);
             let Some(pos) = rows.iter().position(|r| r.infohash == ih.to_vec()) else {
@@ -2824,7 +2992,7 @@ impl CoreSession {
             let mgr = crate::services::rss::RssManager::new(
                 self.inner.notifier.clone(),
                 config.ip_policy.clone(),
-                self.inner.db.clone(),
+                self.inner.db_arc(),
                 self.inner.asyncio.tasks.clone(),
             );
             mgr.update(&config.rss_urls);
@@ -2832,7 +3000,7 @@ impl CoreSession {
         }
         if config.enable_torrent_checker && !stealth_no_direct {
             match crate::services::torrent_checker::TorrentChecker::new(
-                self.inner.db.clone(),
+                self.inner.db_arc(),
                 self.inner.notifier.clone(),
                 config.ip_policy.clone(),
             )
@@ -2914,7 +3082,7 @@ impl CoreSession {
     /// Stack IPv8 de la session (`None` si `config.ipv8.enabled =
     /// false` — equivalent de `session.ipv8` conditionnel Python).
     pub fn ipv8(&self) -> Option<Arc<crate::ipv8_stack::Ipv8Stack>> {
-        self.inner.ipv8.clone()
+        self.inner.ipv8_stack()
     }
 
     /// Contrôleur de congestion du débit servi
@@ -2933,7 +3101,7 @@ impl CoreSession {
     /// desactive — `session.get_overlay(DHTCommunity)` Python rend
     /// alors `None` et le `dht_endpoint` repond 404).
     pub fn dht(&self) -> Option<Arc<onionbit_ipv8::dht::DhtCommunity>> {
-        self.inner.ipv8.as_ref().and_then(|s| s.dht.clone())
+        self.inner.ipv8_stack().and_then(|s| s.dht.clone())
     }
 
     /// Acces a la base de metadonnees (endpoints `/api/metadata`).
@@ -2943,8 +3111,8 @@ impl CoreSession {
         &self.inner.augmenter
     }
 
-    pub fn db(&self) -> &Arc<Database> {
-        &self.inner.db
+    pub fn db(&self) -> Arc<Database> {
+        self.inner.db_arc()
     }
 
     /// Configuration effective de la session.
@@ -3046,7 +3214,7 @@ impl CoreSession {
             if let Some(tunnel) = stack.tunnel.as_ref() {
                 if config.ipv8.guards_enabled && !tunnel.guards.is_enabled() {
                     tunnel.set_guard_store(Arc::new(crate::guard_store::DbGuardStore::new(
-                        self.inner.db.clone(),
+                        self.inner.db_arc(),
                     )));
                 }
                 tunnel.guards.set_enabled(config.ipv8.guards_enabled);
@@ -3058,7 +3226,7 @@ impl CoreSession {
                 // guards.
                 if config.ipv8.ledger_enabled && !tunnel.ledger.is_enabled() {
                     tunnel.set_peer_stats_store(Arc::new(
-                        crate::peer_stats_store::DbPeerStatsStore::new(self.inner.db.clone()),
+                        crate::peer_stats_store::DbPeerStatsStore::new(self.inner.db_arc()),
                     ));
                 }
                 tunnel.ledger.set_enabled(config.ipv8.ledger_enabled);
@@ -3095,7 +3263,7 @@ impl CoreSession {
             let mgr = crate::services::rss::RssManager::new(
                 self.inner.notifier.clone(),
                 config.ip_policy.clone(),
-                self.inner.db.clone(),
+                self.inner.db_arc(),
                 self.inner.asyncio.tasks.clone(),
             );
             mgr.update(&config.rss_urls);
@@ -3153,8 +3321,7 @@ impl CoreSession {
     /// `/api/events/info` ; vide si IPv8 est desactive.
     pub fn public_key_hex(&self) -> String {
         self.inner
-            .ipv8
-            .as_ref()
+            .ipv8_stack()
             .map(|s| s.public_key_hex())
             .unwrap_or_default()
     }
@@ -3202,11 +3369,13 @@ impl CoreSession {
         // Arret des lanes anonymes puis de la stack IPv8 (overlays +
         // interface SOCKS5 locale des lanes).
         self.shutdown_state("Shutting down IPv8 peer-to-peer overlays.");
-        if let Some(stack) = &self.inner.ipv8 {
+        if let Some(stack) = self.inner.ipv8_stack() {
             stack.stop().await;
         }
         self.shutdown_state("Shutting down download manager.");
-        self.inner.engine.stop().await;
+        if let Some(engine) = self.inner.engine_opt() {
+            engine.stop().await;
+        }
         self.shutdown_state("Shutting down local SOCKS5 interface.");
         self.shutdown_state("Shutting down metadata database.");
         // `on_shutdown` de `AugmentedSearch` : persiste la fenetre de
@@ -3215,7 +3384,7 @@ impl CoreSession {
         // Checkpoint WAL final : le journal est rejoue dans le fichier
         // principal puis tronque — le prochain demarrage part d'une
         // base compacte au lieu de rejouer plusieurs Mio de WAL.
-        let db = self.inner.db.clone();
+        let db = self.inner.db_arc();
         let _ = tokio::task::spawn_blocking(move || db.checkpoint()).await;
         self.shutdown_state("Shutting down GUI connection. Going dark.");
     }
@@ -3327,11 +3496,12 @@ fn stealth_blocks_direct(config: &CoreConfig) -> bool {
 /// mode stealth ADR-0017 quand `stealth.enabled` (transport morphe,
 /// overlays legacy off). `stealth.enabled × ipv8.enabled` est un
 /// refus ferme : jamais de coexistence legacy/morphe sur un noeud.
-async fn start_ipv8(
+async fn start_ipv8_with_identity(
     config: &CoreConfig,
     db: Arc<Database>,
     notifier: Notifier,
     tasks: crate::asyncio::TaskRegistry,
+    material: Option<crate::identity::IdentityMaterial>,
 ) -> Result<Option<Arc<crate::ipv8_stack::Ipv8Stack>>> {
     if config.ipv8.enabled && config.ipv8.stealth.is_some() {
         return Err(CoreError::InvalidState(
@@ -3341,6 +3511,11 @@ async fn start_ipv8(
     if !config.ipv8.enabled && config.ipv8.stealth.is_none() {
         return Ok(None);
     }
+    let Some(identity) = material else {
+        return Err(CoreError::InvalidState(
+            "stack ipv8/stealth active sans materiel identitaire resolu",
+        ));
+    };
     let stack = crate::ipv8_stack::Ipv8Stack::start(
         &config.ipv8,
         &config.state_dir,
@@ -3349,6 +3524,7 @@ async fn start_ipv8(
         db,
         notifier,
         tasks,
+        identity,
     )
     .await?;
     Ok(Some(stack))

@@ -3,6 +3,46 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## ADR-0016 étape 48d : session différée — pending / locked / invité (2026-10-08)
+
+- **`CoreSession` scindée** : `start_gated` construit un *shell*
+  (base `:memory:` placeholder, **aucun** moteur ni stack IPv8) puis
+  `try_start_identity` résout l'identité et démarre base fichier,
+  moteur, stack, services, restauration — idempotent sous
+  `identity_gate` (mutex async). `Inner.{engine,ipv8}` deviennent
+  `RwLock<Option<…>>`, `db` swappable.
+- **Phases** `Pending`/`Locked`/`Ready` : `Locked` sur graine `OBSK`
+  détectée ; `Pending` sur `Absent` **sous `--first-run-gate`**
+  (lanceur UI) — sinon auto-génération historique (headless/ponts).
+- **`OBSK`** (`keyblob.rs`) : magic dédié + version + sel/nonce
+  aléatoires + argon2id → ChaCha20-Poly1305 + borne de taille ;
+  erreurs typées (magie/version/tronqué/mot de passe) sans oracle.
+- **Invité** : `POST /api/identity/guest` — identité en mémoire,
+  base `:memory:` conservée, **zéro artefact** disque ;
+  `GET /api/identity` expose `mode:"guest"`, `persistent:false`.
+- **API** : gate middleware — hors `Ready` seuls `/api/identity`,
+  `/api/settings`, `/api/shutdown`, `/api/events`,
+  `/api/statistics/tribler`, `/api/logging` répondent ; tout le reste
+  reçoit `409` uniforme (`identity_pending`/`identity_locked`).
+  `unlock` rate-limité par IP + globalement (`identity.unlock_*`),
+  erreur 400 uniforme, double appel idempotent ; `create` résout le
+  gate (mot de passe optionnel = `OBSK` d'emblée) ; `at_rest`
+  active/désactive le scellement à chaud (persisté dans
+  `configuration.json`).
+- **`Ipv8Stack::start` reçoit `IdentityMaterial`** — plus aucune
+  lecture de fichier identité dans la stack ; transport stealth
+  construit sur le matériel injecté ; `AppState::stealth_transport`
+  résolu **dynamiquement** (le snapshot figé au bind resterait `None`
+  après unlock).
+- **Validation croisée** : `POST /api/settings` refuse
+  `identity.at_rest` × `stealth.role ≠ "client"` dans les deux sens
+  (merge sur clone → validation → commit) ; le daemon refuse aussi
+  la combinaison au boot.
+- Tests : 6 d'intégration gate (`identity_gate.rs` — pending sans
+  composants, headless auto, create idempotent, invité sans
+  persistance, locked→unlock, refus at-rest×pont), 4 OBSK hostiles,
+  3 API HTTP nouvelles (gate 409, create, locked→unlock→idempotent).
+
 ## ADR-0016 étape 48b : phrase BIP39 bilingue + API récupération (2026-10-08)
 
 - **`onionbit_format::bip39`** (nouveau) : wordlists officielles EN +

@@ -254,7 +254,10 @@ pub async fn get_trackers(
     Path(infohash): Path<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let dl = find(&state, &infohash)?;
-    let dht = state.session.engine().config().enable_dht;
+    let dht = state
+        .session
+        .engine()
+        .is_some_and(|e| e.config().enable_dht);
     let urls = dl.trackers();
     let ih = onionbit_crypto::hash::from_hex(&infohash).unwrap_or_default();
     // `tracker_state` (scrape du torrent checker) + sante de

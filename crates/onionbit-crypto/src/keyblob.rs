@@ -20,6 +20,10 @@ use crate::CryptoError;
 
 /// Magic des blobs proteges par mot de passe.
 pub const KEYBLOB_MAGIC: &[u8; 4] = b"OBID";
+/// Magic du blob de graine verrouillee au repos (ADR-0016) : meme
+/// enveloppe argon2id+AEAD, magic distinct pour qu'un `OBID` colle a
+/// la place de `identity_seed.bin` soit refuse a l'ouverture.
+pub const SEEDBLOB_MAGIC: &[u8; 4] = b"OBSK";
 /// Version du format.
 const KEYBLOB_VERSION: u8 = 1;
 /// Sel argon2id (aleatoire, par blob).
@@ -36,6 +40,11 @@ pub const KEYBLOB_MAX: usize = 64 * 1024;
 /// l'appelant de distinguer une cle brute d'un blob protege).
 pub fn keyblob_is_sealed(blob: &[u8]) -> bool {
     blob.starts_with(KEYBLOB_MAGIC)
+}
+
+/// `true` si `blob` commence par le magic `OBSK`.
+pub fn seedblob_is_sealed(blob: &[u8]) -> bool {
+    blob.starts_with(SEEDBLOB_MAGIC)
 }
 
 /// Cle AEAD derivee du mot de passe : argon2id RFC 9106
@@ -61,6 +70,16 @@ fn kdf(
 /// `password` vide = refuse (un export non protege est le choix de
 /// l'appelant, pas un accident de ce helper).
 pub fn keyblob_seal(password: &[u8], plain: &[u8]) -> Result<Vec<u8>, CryptoError> {
+    seal_with(KEYBLOB_MAGIC, password, plain)
+}
+
+/// Chiffre la graine d'identite sous `password` → blob `OBSK…`
+/// (verrouillage au repos ADR-0016).
+pub fn seedblob_seal(password: &[u8], plain: &[u8]) -> Result<Vec<u8>, CryptoError> {
+    seal_with(SEEDBLOB_MAGIC, password, plain)
+}
+
+fn seal_with(magic: &[u8; 4], password: &[u8], plain: &[u8]) -> Result<Vec<u8>, CryptoError> {
     use chacha20poly1305::aead::Aead;
     if password.is_empty() {
         return Err(CryptoError::BadKey("mot de passe vide".into()));
@@ -75,7 +94,7 @@ pub fn keyblob_seal(password: &[u8], plain: &[u8]) -> Result<Vec<u8>, CryptoErro
         .encrypt(&nonce, plain)
         .map_err(|_| CryptoError::Aead)?;
     let mut out = Vec::with_capacity(HEADER_LEN + ct.len());
-    out.extend_from_slice(KEYBLOB_MAGIC);
+    out.extend_from_slice(magic);
     out.push(KEYBLOB_VERSION);
     out.extend_from_slice(&salt);
     out.extend_from_slice(&nonce_bytes);
@@ -87,6 +106,21 @@ pub fn keyblob_seal(password: &[u8], plain: &[u8]) -> Result<Vec<u8>, CryptoErro
 /// court, `BadKey` si magic/version inconnus ou blob hors borne,
 /// `Aead` si mot de passe faux ou contenu altere.
 pub fn keyblob_open(password: &[u8], blob: &[u8]) -> Result<Vec<u8>, CryptoError> {
+    open_with(KEYBLOB_MAGIC, "OBID", password, blob)
+}
+
+/// Dechiffre un blob `OBSK…` sous `password` — memes erreurs que
+/// [`keyblob_open`].
+pub fn seedblob_open(password: &[u8], blob: &[u8]) -> Result<Vec<u8>, CryptoError> {
+    open_with(SEEDBLOB_MAGIC, "OBSK", password, blob)
+}
+
+fn open_with(
+    magic: &[u8; 4],
+    name: &str,
+    password: &[u8],
+    blob: &[u8],
+) -> Result<Vec<u8>, CryptoError> {
     use chacha20poly1305::aead::Aead;
     if blob.len() > KEYBLOB_MAX {
         return Err(CryptoError::BadKey("blob hors borne".into()));
@@ -97,11 +131,11 @@ pub fn keyblob_open(password: &[u8], blob: &[u8]) -> Result<Vec<u8>, CryptoError
             actual: blob.len(),
         });
     }
-    if !keyblob_is_sealed(blob) {
-        return Err(CryptoError::BadKey("magic OBID absent".into()));
+    if !blob.starts_with(magic) {
+        return Err(CryptoError::BadKey(format!("magic {name} absent")));
     }
     if blob[4] != KEYBLOB_VERSION {
-        return Err(CryptoError::BadKey("version OBID inconnue".into()));
+        return Err(CryptoError::BadKey(format!("version {name} inconnue")));
     }
     let salt: &[u8; SALT_LEN] = blob[5..5 + SALT_LEN]
         .try_into()
@@ -153,5 +187,43 @@ mod tests {
         let last = corrupt.len() - 1;
         corrupt[last] ^= 1;
         assert!(keyblob_open(b"p", &corrupt).is_err());
+    }
+
+    #[test]
+    fn obsk_aller_retour() {
+        let seed = [0xABu8; 32];
+        let blob = seedblob_seal(b"mot de passe", &seed).unwrap();
+        assert!(seedblob_is_sealed(&blob));
+        assert!(!keyblob_is_sealed(&blob));
+        assert_eq!(seedblob_open(b"mot de passe", &blob).unwrap(), seed);
+        // Mauvais mot de passe : echec AEAD uniforme, jamais de clair.
+        assert!(seedblob_open(b"autre", &blob).is_err());
+        // Deux scellements = sel + nonce distincts.
+        let blob2 = seedblob_seal(b"mot de passe", &seed).unwrap();
+        assert_ne!(blob, blob2);
+    }
+
+    #[test]
+    fn obsk_rejets_hostiles() {
+        let blob = seedblob_seal(b"p", &[0x42; 32]).unwrap();
+        // Un OBID pose a la place d'un OBSK : magic refuse.
+        let obid = keyblob_seal(b"p", &[0x42; 32]).unwrap();
+        assert!(seedblob_open(b"p", &obid).is_err());
+        assert!(keyblob_open(b"p", &blob).is_err());
+        // Tronque, version inconnue, hors borne, corruption, mdp vide.
+        assert!(seedblob_open(b"p", &blob[..10]).is_err());
+        let mut v9 = blob.clone();
+        v9[4] = 9;
+        assert!(seedblob_open(b"p", &v9).is_err());
+        let huge = vec![b'O', b'S', b'K']
+            .into_iter()
+            .chain(std::iter::repeat_n(0u8, KEYBLOB_MAX))
+            .collect::<Vec<_>>();
+        assert!(seedblob_open(b"p", &huge).is_err());
+        let mut corrupt = blob.clone();
+        let last = corrupt.len() - 1;
+        corrupt[last] ^= 1;
+        assert!(seedblob_open(b"p", &corrupt).is_err());
+        assert!(seedblob_seal(b"", &[0x42; 32]).is_err());
     }
 }

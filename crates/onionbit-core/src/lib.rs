@@ -86,12 +86,20 @@ mod tests {
         assert_eq!(session.downloads().len(), 1);
 
         // Le notifier a vu l'ajout via les evenements de progression
-        // (la boucle tourne en tache de fond ; on attend un evenement).
-        let n = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
-            .await
-            .expect("aucune notification recue")
-            .unwrap();
-        assert!(matches!(n, Notification::DownloadProgress(_)));
+        // (la boucle tourne en tache de fond ; on attend l'evenement
+        // en sautant `SessionStarted`, emis par `try_start_identity`).
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                if matches!(
+                    rx.recv().await.unwrap(),
+                    Notification::DownloadProgress(_)
+                ) {
+                    return;
+                }
+            }
+        })
+        .await
+        .expect("aucune notification de progression recue");
 
         session.stop().await;
     }

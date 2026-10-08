@@ -157,6 +157,29 @@ identité écrit ; l'identité cesse d'exister à la fermeture du daemon.
   mot de passe. La phrase reste la recovery ultime — c'est elle qui
   rend le chiffrement acceptable.
 
+### Implantation (étape 48d livrée)
+
+- `CoreSession::start_gated(cfg, notifier, first_run_gate)` : phase 1
+  construit le *shell* (DB `:memory:` placeholder, ni moteur ni
+  stack) ; phase 2 `try_start_identity(material)` — idempotent sous
+  `identity_gate` — résout puis démarre tout. Phases :
+  `Pending`/`Locked`/`Ready` (`GET /api/identity` → `state`).
+- Résolutions du gate : `POST /api/identity/create` (mot de passe
+  optionnel = `OBSK` d'emblée), `POST /api/identity/restore`
+  (phrase/OBID — démarrage immédiat en `pending`/`locked`,
+  `restart_required` en `ready`), `POST /api/identity/guest`,
+  `POST /api/identity/unlock` (locked uniquement, rate-limité par IP
+  + globalement via `identity.unlock_*`, erreur 400 uniforme) ;
+  `POST /api/identity/at_rest` bascule le scellement à chaud.
+- Gate middleware : hors `Ready`, seuls `/api/identity`,
+  `/api/settings`, `/api/shutdown`, `/api/events`,
+  `/api/statistics/tribler`, `/api/logging` répondent — le reste
+  reçoit `409` uniforme (`identity_pending`/`identity_locked`).
+- `Ipv8Stack::start` reçoit `IdentityMaterial` — la stack ne lit
+  plus aucun fichier identité ; `AppState::stealth_transport` résout
+  dynamiquement via `session.ipv8()` (un snapshot au bind resterait
+  `None` après unlock).
+
 ## Conséquences
 
 - Portabilité immédiate sans compte, sans serveur, sans friction au

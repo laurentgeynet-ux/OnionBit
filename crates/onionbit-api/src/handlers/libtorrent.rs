@@ -94,7 +94,10 @@ pub async fn get_libtorrent_session_info(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let hops = q.hops();
     let engine = if hops == 0 {
-        state.session.engine().clone()
+        state
+            .session
+            .engine()
+            .ok_or_else(|| ApiError::conflict("identity_pending"))?
     } else {
         let stack = state
             .session

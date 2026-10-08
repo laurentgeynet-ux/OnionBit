@@ -161,6 +161,13 @@ pub struct CoreConfig {
     /// (`libtorrent/check_after_complete` Python — `session.recheck`
     /// cote moteur, rqbit n'ayant pas de recheck in-place).
     pub check_after_complete: bool,
+    /// `identity.at_rest` (ADR-0016) : la graine est scellee `OBSK`
+    /// sur disque ; le boot entre en phase `Locked` (etape 48d).
+    /// Refuse avec `stealth.role != client`.
+    pub identity_at_rest: bool,
+    /// `identity.seed_acknowledged` : l'utilisateur a confirme avoir
+    /// note sa phrase — informatif (UI), ne bloque rien.
+    pub identity_seed_acknowledged: bool,
 }
 
 impl Default for CoreConfig {
@@ -182,6 +189,8 @@ impl Default for CoreConfig {
             download_defaults: DownloadDefaults::default(),
             queue: QueueLimits::default(),
             check_after_complete: false,
+            identity_at_rest: false,
+            identity_seed_acknowledged: false,
         }
     }
 }
@@ -215,6 +224,8 @@ impl CoreConfig {
             download_defaults: DownloadDefaults::default(),
             queue: QueueLimits::default(),
             check_after_complete: false,
+            identity_at_rest: false,
+            identity_seed_acknowledged: false,
         }
     }
 }

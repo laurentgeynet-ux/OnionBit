@@ -208,7 +208,10 @@ async fn apply_service_settings_applique_les_bornes_a_chaud() {
     // GET /api/settings reflete la borne appliquee.
     assert_eq!(session.effective_config().queue.active_downloads, 1);
     // Limites rqbit appliquees a chaud sur le moteur.
-    assert_eq!(session.engine().ratelimits(), (Some(2048), Some(1024)));
+    assert_eq!(
+        session.engine().unwrap().ratelimits(),
+        (Some(2048), Some(1024))
+    );
 
     // `saveas` modifie a chaud : le prochain ajout ecrit dans le
     // nouveau dossier (Python relit `saveas` a chaque ajout).

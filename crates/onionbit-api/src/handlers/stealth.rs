@@ -35,7 +35,10 @@ pub async fn get_stealth(State(state): State<AppState>) -> Json<serde_json::Valu
     let cover = cfg.stealth.cover_traffic;
     drop(cfg);
 
-    let t = state.stealth_transport.as_ref();
+    // Resolution dynamique (ADR-0016) : le transport n'existe qu'une
+    // fois l'identite demarree — jamais fige au bind de l'API.
+    let t = state.stealth_transport();
+    let t = t.as_ref();
     let metrics = t.map(|t| {
         let m = t.metrics();
         serde_json::json!({
@@ -101,7 +104,7 @@ pub async fn add_bridge(
     }
     drop(cfg);
 
-    if let Some(t) = &state.stealth_transport {
+    if let Some(t) = state.stealth_transport() {
         t.add_bridge(entry);
     }
     state

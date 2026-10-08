@@ -18,11 +18,13 @@ use std::path::{Path, PathBuf};
 
 use onionbit_crypto::identity::IdentitySeed;
 use onionbit_crypto::ipv8::keys::LibNaClSecretKey;
+use onionbit_crypto::keyblob::{seedblob_is_sealed, seedblob_open, seedblob_seal};
 
 use crate::error::{CoreError, Result};
 use crate::ipv8_stack::write_identity_key;
 
-/// Nom du fichier graine racine (32 octets, `0600`).
+/// Nom du fichier graine racine — 32 octets en clair (`0600`) ou
+/// blob `OBSK` quand `identity.at_rest` est actif.
 pub const IDENTITY_SEED_FILE: &str = "identity_seed.bin";
 /// Nom du fichier de la cle maitresse IPv8 derivee (cache en mode
 /// seede, secret maitre en mode legacy).
@@ -32,8 +34,12 @@ pub const STEALTH_BRIDGE_KEY_FILE: &str = "stealth_bridge.key";
 
 /// Etat de l'identite sur disque au boot.
 pub enum IdentityState {
-    /// Graine racine presente — derivation autoritaire.
+    /// Graine racine presente en clair — derivation autoritaire.
     Seeded { seed: IdentitySeed },
+    /// Graine racine chiffree `OBSK` (`identity.at_rest`) — le boot
+    /// entre en mode `locked` ; la cle n'est derivee qu'apres
+    /// `POST /api/identity/unlock`.
+    Sealed { blob: Vec<u8> },
     /// Cle maitresse seule (install anterieure a ADR-0016) — le
     /// fichier est la source de verite, jamais regenere.
     Legacy { keypair: Box<LibNaClSecretKey> },
@@ -42,12 +48,38 @@ pub enum IdentityState {
     Absent,
 }
 
-/// Materiel identitaire resolu pour le demarrage.
+/// Materiel identitaire resolu pour le demarrage — entierement en
+/// memoire, rien n'est relu depuis le disque par la suite.
 pub struct IdentityMaterial {
     /// Cle maitresse IPv8 effective (derivee ou legacy).
     pub keypair: LibNaClSecretKey,
+    /// Secret statique du pont stealth (ADR-0017) — derive de la
+    /// graine en mode seede, lu du fichier legacy sinon.
+    pub bridge_sk: [u8; 32],
     /// Etat sur disque (apres resolution).
     pub kind: IdentityKind,
+    /// Session invitee : aucun fichier identite ne doit etre ecrit ;
+    /// l'identite meurt avec le processus.
+    pub guest: bool,
+}
+
+impl IdentityMaterial {
+    /// Materiel ephemere pour une session invitee — aucune
+    /// persistance (`guest`), identite impossible a rejouer.
+    pub fn guest() -> Self {
+        Self::from_seed(&IdentitySeed::generate(), true)
+    }
+
+    /// Derivation en memoire pure d'une graine — utilisee par
+    /// `unlock` (le fichier reste `OBSK`) et par le mode invite.
+    fn from_seed(seed: &IdentitySeed, guest: bool) -> Self {
+        Self {
+            keypair: seed.derive_keypair(),
+            bridge_sk: seed.derive_bridge_key(),
+            kind: IdentityKind::Seeded,
+            guest,
+        }
+    }
 }
 
 /// Classe d'identite (exposee a l'API : `seeded` dans `GET
@@ -72,6 +104,9 @@ pub fn detect(state_dir: &Path) -> Result<IdentityState> {
     let key_path = state_dir.join(IPV8_KEY_FILE);
     if seed_path.exists() {
         let data = std::fs::read(&seed_path)?;
+        if seedblob_is_sealed(&data) {
+            return Ok(IdentityState::Sealed { blob: data });
+        }
         let seed = IdentitySeed::from_bytes(&data)
             .map_err(|_| CoreError::InvalidState("identity_seed.bin corrompu (taille != 32)"))?;
         return Ok(IdentityState::Seeded { seed });
@@ -110,25 +145,37 @@ pub fn load_or_generate(state_dir: &Path) -> Result<IdentityMaterial> {
                 }
                 write_identity_key(&key_path, &expected)?;
             }
+            let bridge_sk = load_or_create_bridge_sk(state_dir, IdentityKind::Seeded)?;
             Ok(IdentityMaterial {
                 keypair,
+                bridge_sk,
                 kind: IdentityKind::Seeded,
+                guest: false,
             })
         }
         IdentityState::Legacy { keypair } => Ok(IdentityMaterial {
+            bridge_sk: load_or_create_bridge_sk(state_dir, IdentityKind::Legacy)?,
             keypair: *keypair,
             kind: IdentityKind::Legacy,
+            guest: false,
         }),
         IdentityState::Absent => {
             let seed = IdentitySeed::generate();
             write_identity_key(&state_dir.join(IDENTITY_SEED_FILE), seed.as_bytes())?;
             let keypair = seed.derive_keypair();
             write_identity_key(&state_dir.join(IPV8_KEY_FILE), &keypair.to_bin())?;
+            let bridge_sk = seed.derive_bridge_key();
+            write_identity_key(&state_dir.join(STEALTH_BRIDGE_KEY_FILE), &bridge_sk)?;
             Ok(IdentityMaterial {
                 keypair,
+                bridge_sk,
                 kind: IdentityKind::Seeded,
+                guest: false,
             })
         }
+        IdentityState::Sealed { .. } => Err(CoreError::InvalidState(
+            "identite verrouillee (at-rest) — unlock requis",
+        )),
     }
 }
 
@@ -175,6 +222,14 @@ pub fn load_or_create_bridge_sk(state_dir: &Path, kind: IdentityKind) -> Result<
     }
 }
 
+/// Materiel en memoire pour une graine deja connue — resolution
+/// d'identite immediate en `identity_pending`/`locked` apres un
+/// `restore` par phrase (le fichier est pose par `restore_seed`,
+/// le materiel demarre la session sans le relire).
+pub fn material_from_seed(seed: &IdentitySeed) -> IdentityMaterial {
+    IdentityMaterial::from_seed(seed, false)
+}
+
 /// Chemin du fichier graine (pour l'API `recovery_phrase`, etape 48b).
 pub fn seed_path(state_dir: &Path) -> PathBuf {
     state_dir.join(IDENTITY_SEED_FILE)
@@ -195,6 +250,92 @@ pub fn restore_seed(state_dir: &Path, seed: &IdentitySeed) -> Result<()> {
     write_identity_key(
         &state_dir.join(STEALTH_BRIDGE_KEY_FILE),
         &seed.derive_bridge_key(),
+    )?;
+    Ok(())
+}
+
+/// Cree une identite neuve depuis le gate `identity_pending`
+/// (`POST /api/identity/create`) : graine neuve persistante, ou
+/// verrouillee d'emblee si `password` est fourni (at-rest des la
+/// creation — aucun cache derive en clair sur disque dans ce cas).
+pub fn create_seed(state_dir: &Path, password: Option<&str>) -> Result<IdentityMaterial> {
+    if !matches!(detect(state_dir)?, IdentityState::Absent) {
+        return Err(CoreError::InvalidState(
+            "une identite existe deja — create n'est valable qu'en premier boot",
+        ));
+    }
+    let seed = IdentitySeed::generate();
+    match password {
+        Some(pw) if !pw.is_empty() => {
+            let blob = seedblob_seal(pw.as_bytes(), seed.as_bytes())
+                .map_err(|e| CoreError::State(format!("scellement graine: {e}")))?;
+            write_identity_key(&seed_path(state_dir), &blob)?;
+            Ok(IdentityMaterial::from_seed(&seed, false))
+        }
+        _ => {
+            restore_seed(state_dir, &seed)?;
+            let keypair = seed.derive_keypair();
+            Ok(IdentityMaterial {
+                keypair,
+                bridge_sk: seed.derive_bridge_key(),
+                kind: IdentityKind::Seeded,
+                guest: false,
+            })
+        }
+    }
+}
+
+/// Ouvre le blob `OBSK` du disque → graine en memoire.
+fn open_sealed(state_dir: &Path, password: &[u8]) -> Result<IdentitySeed> {
+    let IdentityState::Sealed { blob } = detect(state_dir)? else {
+        return Err(CoreError::InvalidState("pas d'identite verrouillee"));
+    };
+    let raw = seedblob_open(password, &blob)
+        .map_err(|_| CoreError::InvalidState("mot de passe incorrect"))?;
+    IdentitySeed::from_bytes(&raw)
+        .map_err(|_| CoreError::InvalidState("blob OBSK de taille inattendue"))
+}
+
+/// Deverrouille une graine `OBSK` (`POST /api/identity/unlock`) :
+/// derivation en memoire uniquement — aucun cache clair n'est ecrit
+/// (ecrire `ipv8_keypair.bin` annulerait la protection at-rest).
+pub fn unlock_seed(state_dir: &Path, password: &[u8]) -> Result<IdentityMaterial> {
+    let seed = open_sealed(state_dir, password)?;
+    Ok(IdentityMaterial::from_seed(&seed, false))
+}
+
+/// Active l'at-rest (`POST /api/identity/at_rest {enabled:true}`) :
+/// remplace `identity_seed.bin` par un blob `OBSK` et retire les
+/// caches derives — une copie brute du disque ne revele plus rien.
+/// Refuse en mode `Legacy` (pas de graine a proteger).
+pub fn seal_seed(state_dir: &Path, password: &[u8]) -> Result<()> {
+    let IdentityState::Seeded { seed } = detect(state_dir)? else {
+        return Err(CoreError::InvalidState(
+            "at-rest requiert une identite seedee en clair (legacy : migrer d'abord)",
+        ));
+    };
+    let blob = seedblob_seal(password, seed.as_bytes())
+        .map_err(|e| CoreError::State(format!("scellement graine: {e}")))?;
+    // Le fichier scelle d'abord, puis les caches retires — un crash
+    // entre les deux laisse un etat encore coherent (caches regeneres
+    // au prochain unlock).
+    write_identity_key(&seed_path(state_dir), &blob)?;
+    let _ = std::fs::remove_file(state_dir.join(IPV8_KEY_FILE));
+    let _ = std::fs::remove_file(state_dir.join(STEALTH_BRIDGE_KEY_FILE));
+    Ok(())
+}
+
+/// Desactive l'at-rest (`enabled:false`) : mot de passe exige pour
+/// re-ecrire la graine en clair + regenerer les caches — sans lui,
+/// n'importe quel appelant demantelerait la protection.
+pub fn unseal_seed(state_dir: &Path, password: &[u8]) -> Result<()> {
+    let seed = open_sealed(state_dir, password)?;
+    let material = IdentityMaterial::from_seed(&seed, false);
+    write_identity_key(&seed_path(state_dir), seed.as_bytes())?;
+    write_identity_key(&state_dir.join(IPV8_KEY_FILE), &material.keypair.to_bin())?;
+    write_identity_key(
+        &state_dir.join(STEALTH_BRIDGE_KEY_FILE),
+        &material.bridge_sk,
     )?;
     Ok(())
 }
@@ -323,5 +464,110 @@ mod tests {
             m.keypair.public_key().to_bin(),
             m1.keypair.public_key().to_bin()
         );
+    }
+
+    #[test]
+    fn scellement_detect_sealed_unlock_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let m1 = load_or_generate(dir.path()).unwrap();
+        let pk = m1.keypair.public_key().to_bin();
+        seal_seed(dir.path(), b"mot de passe").unwrap();
+        // Le disque ne contient plus ni graine claire ni caches.
+        assert!(matches!(
+            detect(dir.path()).unwrap(),
+            IdentityState::Sealed { .. }
+        ));
+        assert!(!dir.path().join(IPV8_KEY_FILE).exists());
+        assert!(!dir.path().join(STEALTH_BRIDGE_KEY_FILE).exists());
+        // `load_or_generate` refuse : l'identite attend l'unlock.
+        assert!(load_or_generate(dir.path()).is_err());
+        // Mauvais mot de passe : echec uniforme.
+        assert!(unlock_seed(dir.path(), b"faux").is_err());
+        // Bon mot de passe : meme identite, derivee en memoire.
+        let m2 = unlock_seed(dir.path(), b"mot de passe").unwrap();
+        assert_eq!(m2.keypair.public_key().to_bin(), pk);
+        assert!(!m2.guest);
+        // Le fichier reste OBSK, aucun cache clair n'est reecrit.
+        assert!(matches!(
+            detect(dir.path()).unwrap(),
+            IdentityState::Sealed { .. }
+        ));
+        assert!(!dir.path().join(IPV8_KEY_FILE).exists());
+    }
+
+    #[test]
+    fn unseal_reecrit_graine_et_caches() {
+        let dir = tempfile::tempdir().unwrap();
+        let m1 = load_or_generate(dir.path()).unwrap();
+        seal_seed(dir.path(), b"pw").unwrap();
+        unseal_seed(dir.path(), b"pw").unwrap();
+        assert!(matches!(
+            detect(dir.path()).unwrap(),
+            IdentityState::Seeded { .. }
+        ));
+        assert!(dir.path().join(IPV8_KEY_FILE).exists());
+        let m2 = load_or_generate(dir.path()).unwrap();
+        assert_eq!(m2.keypair.to_bin(), m1.keypair.to_bin());
+        // Mauvais mot de passe sur unseal : rien n'est modifie.
+        seal_seed(dir.path(), b"pw").unwrap();
+        assert!(unseal_seed(dir.path(), b"faux").is_err());
+        assert!(matches!(
+            detect(dir.path()).unwrap(),
+            IdentityState::Sealed { .. }
+        ));
+    }
+
+    #[test]
+    fn create_seed_gate_premier_boot() {
+        let dir = tempfile::tempdir().unwrap();
+        // Sans mot de passe : graine claire + caches.
+        let m = create_seed(dir.path(), None).unwrap();
+        assert_eq!(m.kind, IdentityKind::Seeded);
+        assert!(matches!(
+            detect(dir.path()).unwrap(),
+            IdentityState::Seeded { .. }
+        ));
+        assert!(dir.path().join(IPV8_KEY_FILE).exists());
+        // Second create sur une install seedee : refus.
+        assert!(create_seed(dir.path(), None).is_err());
+    }
+
+    #[test]
+    fn create_seed_avec_mot_de_passe_scelle() {
+        let dir = tempfile::tempdir().unwrap();
+        let m = create_seed(dir.path(), Some("pw")).unwrap();
+        // Graine scellee d'emblee : aucun cache clair sur disque.
+        assert!(matches!(
+            detect(dir.path()).unwrap(),
+            IdentityState::Sealed { .. }
+        ));
+        assert!(!dir.path().join(IPV8_KEY_FILE).exists());
+        // Le materiel retourne est celui de la graine scellee.
+        let m2 = unlock_seed(dir.path(), b"pw").unwrap();
+        assert_eq!(
+            m2.keypair.public_key().to_bin(),
+            m.keypair.public_key().to_bin()
+        );
+    }
+
+    #[test]
+    fn invite_ephemere_et_distinct() {
+        let g1 = IdentityMaterial::guest();
+        let g2 = IdentityMaterial::guest();
+        assert!(g1.guest && g2.guest);
+        assert_eq!(g1.kind, IdentityKind::Seeded);
+        // Deux sessions invitees = deux cles publiques distinctes.
+        assert_ne!(
+            g1.keypair.public_key().to_bin(),
+            g2.keypair.public_key().to_bin()
+        );
+    }
+
+    #[test]
+    fn seal_refuse_en_legacy() {
+        let dir = tempfile::tempdir().unwrap();
+        let kp = LibNaClSecretKey::generate();
+        write_identity_key(&dir.path().join(IPV8_KEY_FILE), &kp.to_bin()).unwrap();
+        assert!(seal_seed(dir.path(), b"pw").is_err());
     }
 }

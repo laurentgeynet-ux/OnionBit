@@ -62,6 +62,30 @@ impl ApiError {
         }
     }
 
+    /// 409 — conflit d'etat (`identity_pending`, `identity_locked`
+    /// — ADR-0016 etape 48d).
+    pub fn conflict(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::CONFLICT,
+            body: ApiErrorBody {
+                handled: true,
+                message: message.into(),
+            },
+        }
+    }
+
+    /// 429 — plafond de tentatives atteint (`identity/unlock`,
+    /// ADR-0016).
+    pub fn too_many_requests(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::TOO_MANY_REQUESTS,
+            body: ApiErrorBody {
+                handled: true,
+                message: message.into(),
+            },
+        }
+    }
+
     /// 500 — erreur interne.
     pub fn internal(message: impl Into<String>) -> Self {
         Self {

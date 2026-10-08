@@ -139,7 +139,10 @@ pub async fn get_downloads(
                 info.private = dl.is_private();
                 info.trackers = crate::handlers::downloads_extra::trackers_json(
                     dl.trackers(),
-                    state.session.engine().config().enable_dht,
+                    state
+                        .session
+                        .engine()
+                        .is_some_and(|e| e.config().enable_dht),
                     &tracker_states,
                     ih_bytes.as_ref().and_then(|ih| health_map.get(ih).copied()),
                 );

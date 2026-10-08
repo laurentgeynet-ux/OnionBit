@@ -61,6 +61,53 @@ async fn api_not_found(State(state): State<AppState>, req: Request<Body>) -> Res
     ApiError::not_found("Not found").into_response()
 }
 
+/// Gate identitaire (ADR-0016, etape 48d) : tant que la session est
+/// `identity_pending` (premier boot sous gate) ou `locked` (graine
+/// `OBSK`), seules les routes du cycle de vie repondent — toute
+/// route identitaire recoit un `409` uniforme. Ainsi aucun acces
+/// session ne precede l'existence d'une identite, et l'interface
+/// peut conduire l'onboarding sur une API vivante.
+async fn identity_gate(
+    State(state): State<AppState>,
+    req: Request<Body>,
+    next: axum::middleware::Next,
+) -> Response {
+    use onionbit_core::session::IdentityPhase;
+    let phase = state.session.identity_phase();
+    if phase == IdentityPhase::Ready {
+        return next.run(req).await;
+    }
+    // Routes utilisables avant resolution : celles qui servent a
+    // resoudre (identite), regler (settings), observer l'etat
+    // (events, statistiques tribler, logs) ou arreter (shutdown).
+    const ALLOWED: &[&str] = &[
+        "/api/identity",
+        "/api/settings",
+        "/api/shutdown",
+        "/api/events",
+        "/api/statistics/tribler",
+        "/api/logging",
+    ];
+    // `nest("/api", …)` retire le prefixe de `req.uri()` dans le
+    // routeur neste — `OriginalUri` conserve le chemin complet.
+    let path = req
+        .extensions()
+        .get::<axum::extract::OriginalUri>()
+        .map_or_else(|| req.uri().path().to_string(), |u| u.path().to_string());
+    if ALLOWED
+        .iter()
+        .any(|p| path == *p || path.strip_prefix(p).is_some_and(|r| r.starts_with('/')))
+    {
+        return next.run(req).await;
+    }
+    let message = match phase {
+        IdentityPhase::Pending => "identity_pending",
+        IdentityPhase::Locked => "identity_locked",
+        IdentityPhase::Ready => unreachable!(),
+    };
+    ApiError::conflict(message).into_response()
+}
+
 /// Routeur des endpoints REST/SSE — la couche `api_key_auth` s'applique
 /// a toutes les requetes sous `/api`, y compris les chemins inconnus
 /// (`ApiKeyMiddleware` Python : une requete non authentifiee vers un
@@ -200,6 +247,12 @@ fn api_router(state: AppState) -> Router<AppState> {
         .route("/identity/recovery_phrase", get(identity::recovery_phrase))
         .route("/identity/export", post(identity::export_identity))
         .route("/identity/restore", post(identity::restore_identity))
+        // Cycle de vie ADR-0016 (etape 48d) : resolution du gate de
+        // premier boot, deverrouillage at-rest, session invitee.
+        .route("/identity/unlock", post(identity::unlock_identity))
+        .route("/identity/create", post(identity::create_identity))
+        .route("/identity/guest", post(identity::guest_identity))
+        .route("/identity/at_rest", post(identity::set_at_rest))
         .route("/ipv8/ext/attest", post(ipv8::post_ext_attest))
         .route("/ipv8/ext/attestations", get(ipv8::get_ext_attestations))
         .route("/ipv8/ext/ledger", get(ipv8::get_ext_ledger))
@@ -320,6 +373,14 @@ fn api_router(state: AppState) -> Router<AppState> {
         // inconnu — le fallback interne echapperait a la couche
         // d'auth (parite `ApiKeyMiddleware` : 401 avant routage).
         .route("/{*rest}", any(api_not_found))
+        // Gate identitaire ADR-0016 : applique APRES l'auth (la
+        // couche ci-dessous est la plus externe) — une sonde non
+        // authentifiee recoit 401 et n'apprend meme pas l'etat
+        // `locked`/`pending`.
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            identity_gate,
+        ))
         // `ApiKeyMiddleware` Python : s'applique a toutes les routes
         // (y compris les 404 — une requete non authentifiee vers un
         // chemin inconnu recoit 401, pas 404).

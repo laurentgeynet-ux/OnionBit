@@ -2,22 +2,32 @@
 // Copyright (C) 2026 Laurent Geynet <laurent.geynet@gmail.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! `GET/POST /api/identity/*` — identite IPv8 portable (export /
-//! import de la cle secrete).
+//! `GET/POST /api/identity/*` — identite IPv8 portable (ADR-0016).
 //!
 //! Export : `LibNaCLSK:` brut en hex, ou blob `OBID` (argon2id +
 //! ChaCha20-Poly1305) quand un mot de passe est fourni — c'est le
 //! blob qui voyage entre devices, donc c'est lui qui merite la
 //! protection. Import : valide le format, ecrase
-//! `ipv8_keypair.bin`, `restart_required` (la cle est liee aux
-//! communautes en cours d'execution).
+//! `ipv8_keypair.bin`, `restart_required` en phase `ready` —
+//! activation immediate en `pending`/`locked` (etape 48d).
+//!
+//! Cycle de vie de la session (etape 48d) : `GET /api/identity`
+//! expose `state = ready | locked | pending` ; `unlock` ouvre une
+//! graine `OBSK` (rate-limite par IP + globalement), `create`
+//! resout le gate de premier boot, `guest` demarre une session
+//! ephemere sans rien persister, `at_rest` active/desactive le
+//! scellement de la graine.
 //!
 //! Endpoints sensibles : derriere `api_key_auth` comme le reste de
-//! `/api` ; jamais loggues, jamais dans les events SSE.
+//! `/api` ; jamais loggues, jamais dans les events SSE — mots de
+//! passe, phrase et graines ne franchissent que la requete.
 
-use axum::extract::{Query, State};
+use std::net::{IpAddr, SocketAddr};
+
+use axum::extract::{ConnectInfo, Query, State};
 use axum::Json;
-use onionbit_core::identity::IdentityKind;
+use onionbit_core::identity::{self, IdentityKind};
+use onionbit_core::session::IdentityPhase;
 use onionbit_crypto::identity::IdentitySeed;
 use onionbit_crypto::ipv8::keys::LibNaClSecretKey;
 use onionbit_crypto::keyblob::{keyblob_is_sealed, keyblob_open, keyblob_seal};
@@ -55,6 +65,7 @@ pub struct IdentityRestoreBody {
     #[serde(default)]
     pub force_legacy: bool,
 }
+
 #[derive(serde::Deserialize)]
 pub struct RecoveryPhraseQuery {
     /// `en` (defaut) ou `fr` — wordlist d'encodage.
@@ -62,21 +73,273 @@ pub struct RecoveryPhraseQuery {
     pub lang: Option<String>,
 }
 
-/// `GET /api/identity` — cle publique de l'identite courante (hex)
-/// et `seeded` : `true` si l'identite est racinee sur
-/// `identity_seed.bin` (phrase de recuperation disponible,
-/// ADR-0016). 404 si IPv8 est desactive (pas d'identite chargee).
+/// Corps `{password}` de `POST /api/identity/unlock`.
+#[derive(serde::Deserialize)]
+pub struct UnlockBody {
+    /// Mot de passe `OBSK` de la graine scellee.
+    pub password: String,
+}
+
+/// IP cliente optionnelle (`ConnectInfo`) — tolérante a l'absence
+/// de l'extension (tests qui servent le routeur sans
+/// `into_make_service_with_connect_info`).
+pub struct MaybeClientIp(pub Option<IpAddr>);
+
+impl<S: Send + Sync> axum::extract::FromRequestParts<S> for MaybeClientIp {
+    type Rejection = std::convert::Infallible;
+
+    async fn from_request_parts(
+        parts: &mut axum::http::request::Parts,
+        _state: &S,
+    ) -> Result<Self, Self::Rejection> {
+        Ok(Self(
+            parts
+                .extensions
+                .get::<ConnectInfo<SocketAddr>>()
+                .map(|c| c.0.ip()),
+        ))
+    }
+}
+
+/// Corps `{password?}` de `POST /api/identity/create` — un mot de
+/// passe non vide scelle la graine d'emblee (at-rest des la
+/// creation).
+#[derive(serde::Deserialize)]
+pub struct CreateBody {
+    /// Mot de passe at-rest optionnel.
+    #[serde(default)]
+    pub password: Option<String>,
+}
+
+/// Corps `{enabled, password?}` de `POST /api/identity/at_rest`.
+#[derive(serde::Deserialize)]
+pub struct AtRestBody {
+    /// Active (`true`, mot de passe requis) ou desactive (`false`,
+    /// mot de passe exige pour re-ecrire la graine en clair).
+    pub enabled: bool,
+    /// Mot de passe `OBSK` (nouveau pour l'activation, courant pour
+    /// la desactivation).
+    #[serde(default)]
+    pub password: Option<String>,
+}
+
+/// Nom d'etat expose par `GET /api/identity` (et reutilise pour les
+/// 409 du gate : `identity_pending` / `identity_locked`).
+fn phase_name(phase: IdentityPhase) -> &'static str {
+    match phase {
+        IdentityPhase::Pending => "pending",
+        IdentityPhase::Locked => "locked",
+        IdentityPhase::Ready => "ready",
+    }
+}
+
+/// `GET /api/identity` — etat du cycle de vie ADR-0016 :
+/// `state`, `seeded`, `mode` (`"guest"`/`"persistent"`) et la cle
+/// publique en `ready`. Jamais de materiel prive.
 pub async fn get_identity(
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let Some(stack) = state.session.ipv8() else {
-        return Err(ApiError::not_found("ipv8 desactive"));
-    };
+    let phase = state.session.identity_phase();
+    match phase {
+        IdentityPhase::Pending => Ok(Json(serde_json::json!({
+            "state": "pending",
+            "seeded": false,
+        }))),
+        IdentityPhase::Locked => Ok(Json(serde_json::json!({
+            "state": "locked",
+            "seeded": true,
+            "at_rest": true,
+        }))),
+        IdentityPhase::Ready => {
+            let Some(stack) = state.session.ipv8() else {
+                // Stack desactivee : pas d'identite chargee (parite
+                // historique du 404).
+                return Err(ApiError::not_found("ipv8 desactive"));
+            };
+            Ok(Json(serde_json::json!({
+                "state": "ready",
+                "public_key": stack.public_key_hex(),
+                "seeded": stack.identity_kind() == IdentityKind::Seeded,
+                "mode": if state.session.is_guest() { "guest" } else { "persistent" },
+                "persistent": !state.session.is_guest(),
+                // La cle privee n'est jamais exposee en lecture simple —
+                // seul l'export explicite la fournit.
+            })))
+        }
+    }
+}
+
+/// Verrou commun aux trois resolutions du gate : refuse hors
+/// `Pending`/`Locked`, demarre la session avec le materiel resolu.
+async fn resolve_identity(
+    state: &AppState,
+    material: identity::IdentityMaterial,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let phase = state.session.identity_phase();
+    if phase == IdentityPhase::Ready {
+        return Ok(Json(serde_json::json!({ "state": "ready" })));
+    }
+    state
+        .session
+        .try_start_identity(Some(material))
+        .await
+        .map_err(|e| ApiError::internal(format!("demarrage identite: {e}")))?;
     Ok(Json(serde_json::json!({
-        "public_key": stack.public_key_hex(),
-        "seeded": stack.identity_kind() == IdentityKind::Seeded,
-        // La cle privee n'est jamais exposee en lecture simple —
-        // seul l'export explicite la fournit.
+        "state": "ready",
+        "restart_required": false,
+    })))
+}
+
+/// `POST /api/identity/unlock` — ouvre la graine `OBSK` et demarre
+/// les composants identitaires. Rate-limite par IP et globalement
+/// (`identity.unlock_*` de la config) ; double appel = `ready`
+/// idempotent ; mauvais mot de passe = erreur uniforme 400 (rien
+/// n'est revele sur l'etat du blob).
+pub async fn unlock_identity(
+    State(state): State<AppState>,
+    MaybeClientIp(client_ip): MaybeClientIp,
+    Json(body): Json<UnlockBody>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let phase = state.session.identity_phase();
+    match phase {
+        // Idempotent : un second unlock sur une session deja
+        // resolue repond `ready` sans rien retenter.
+        IdentityPhase::Ready => return Ok(Json(serde_json::json!({ "state": "ready" }))),
+        IdentityPhase::Pending => {
+            return Err(ApiError::conflict("identity_pending"));
+        }
+        IdentityPhase::Locked => {}
+    }
+    let (per_ip_max, global_max, window_secs) = {
+        let cfg = state
+            .daemon_config
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        (
+            cfg.identity.unlock_per_ip_per_min,
+            cfg.identity.unlock_global_per_min,
+            cfg.identity.unlock_window_secs,
+        )
+    };
+    let ip = client_ip.unwrap_or(IpAddr::V4(std::net::Ipv4Addr::LOCALHOST));
+    if !state.unlock_limiter.admit(
+        ip,
+        per_ip_max,
+        global_max,
+        std::time::Duration::from_secs(window_secs),
+    ) {
+        return Err(ApiError::too_many_requests(
+            "trop de tentatives de deverrouillage",
+        ));
+    }
+    let state_dir = state.session.config().state_dir.clone();
+    let material = tokio::task::spawn_blocking(move || {
+        identity::unlock_seed(&state_dir, body.password.as_bytes())
+    })
+    .await
+    .map_err(|e| ApiError::internal(format!("unlock task: {e}")))?
+    // Erreur uniforme : mauvais mot de passe et blob corrompu ne se
+    // distinguent pas pour l'appelant.
+    .map_err(|_| ApiError::bad_request("mot de passe incorrect"))?;
+    resolve_identity(&state, material).await
+}
+
+/// `POST /api/identity/create` — resolution « nouvelle identite »
+/// du gate `identity_pending` : graine neuve persistante, ou
+/// `OBSK` d'emblee si `password` est fourni.
+pub async fn create_identity(
+    State(state): State<AppState>,
+    Json(body): Json<CreateBody>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    match state.session.identity_phase() {
+        IdentityPhase::Pending => {}
+        IdentityPhase::Locked => return Err(ApiError::conflict("identity_locked")),
+        IdentityPhase::Ready => {
+            return Err(ApiError::conflict("une identite existe deja"));
+        }
+    }
+    let state_dir = state.session.config().state_dir.clone();
+    let material = tokio::task::spawn_blocking(move || {
+        identity::create_seed(&state_dir, body.password.as_deref())
+    })
+    .await
+    .map_err(|e| ApiError::internal(format!("create task: {e}")))?
+    .map_err(|e| ApiError::bad_request(format!("creation impossible: {e}")))?;
+    resolve_identity(&state, material).await
+}
+
+/// `POST /api/identity/guest` — session invitee : identite
+/// ephemere en memoire, aucun fichier, base `:memory:` ; tout meurt
+/// a la fermeture du daemon. Resout `pending` comme `locked` (le
+/// detenteur du mot de passe peut preferer une session brulee).
+pub async fn guest_identity(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    match state.session.identity_phase() {
+        IdentityPhase::Ready => return Err(ApiError::conflict("identite deja resolue")),
+        IdentityPhase::Pending | IdentityPhase::Locked => {}
+    }
+    resolve_identity(&state, identity::IdentityMaterial::guest()).await
+}
+
+/// `POST /api/identity/at_rest` — active/desactive le scellement
+/// `OBSK` de la graine (ADR-0016). L'activation exige une identite
+/// seedee en clair et `stealth.role == "client"` ; la desactivation
+/// exige le mot de passe courant. L'etat persiste dans
+/// `identity.at_rest` de `configuration.json`.
+pub async fn set_at_rest(
+    State(state): State<AppState>,
+    Json(body): Json<AtRestBody>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    if state.session.identity_phase() != IdentityPhase::Ready {
+        return Err(ApiError::conflict(format!(
+            "identity_{}",
+            phase_name(state.session.identity_phase())
+        )));
+    }
+    let stealth_role_client = {
+        let cfg = state
+            .daemon_config
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        !cfg.stealth.enabled || cfg.stealth.role == "client"
+    };
+    let state_dir = state.session.config().state_dir.clone();
+    let password = body.password.unwrap_or_default();
+    if password.is_empty() {
+        return Err(ApiError::bad_request("mot de passe requis"));
+    }
+    if body.enabled {
+        if !stealth_role_client {
+            return Err(ApiError::bad_request(
+                "identity.at_rest incompatible avec stealth.role != \"client\"",
+            ));
+        }
+        let pw = password.clone();
+        let dir = state_dir.clone();
+        tokio::task::spawn_blocking(move || identity::seal_seed(&dir, pw.as_bytes()))
+            .await
+            .map_err(|e| ApiError::internal(format!("seal task: {e}")))?
+            .map_err(|e| ApiError::bad_request(format!("scellement impossible: {e}")))?;
+    } else {
+        let dir = state_dir.clone();
+        tokio::task::spawn_blocking(move || identity::unseal_seed(&dir, password.as_bytes()))
+            .await
+            .map_err(|e| ApiError::internal(format!("unseal task: {e}")))?
+            .map_err(|_| ApiError::bad_request("mot de passe incorrect"))?;
+    }
+    let mut cfg = state
+        .daemon_config
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    cfg.identity.at_rest = body.enabled;
+    if let Some(path) = &state.config_path {
+        cfg.write(path)
+            .map_err(|e| ApiError::internal(format!("ecriture configuration.json: {e}")))?;
+    }
+    Ok(Json(serde_json::json!({
+        "modified": true,
+        "at_rest": body.enabled,
     })))
 }
 
@@ -148,24 +411,31 @@ pub async fn export_identity(
 ///   (chemin legacy — refuse sur install seedee, la graine
 ///   gagnerait au prochain boot).
 ///
-/// Repond `{restart_required: true}` : la nouvelle identite est
-/// activee au prochain demarrage du daemon.
+/// En phase `pending`/`locked` la nouvelle identite **demarre la
+/// session immediatement** (`restart_required: false`) — rien ne
+/// tournait encore. En `ready`, `restart_required: true` : on ne
+/// change jamais d'identite sous des communautes actives.
 pub async fn restore_identity(
     State(state): State<AppState>,
     Json(body): Json<IdentityRestoreBody>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let state_dir = state.session.config().state_dir.clone();
+    let phase = state.session.identity_phase();
     if let Some(phrase) = body.phrase {
         if body.key.is_some() {
             return Err(ApiError::bad_request("phrase OU key, pas les deux"));
         }
-        // Validation checksum AVANT toute ecriture.
+        // Validation checksum AVANT toute ecriture — une phrase
+        // invalide en `pending` laisse le state_dir vierge.
         let entropy = bip39::decode(&phrase)
             .map_err(|e| ApiError::bad_request(format!("phrase invalide : {e}")))?;
         let seed = IdentitySeed::from_bytes(&entropy)
             .map_err(|_| ApiError::bad_request("entropie de phrase invalide"))?;
         onionbit_core::identity::restore_seed(&state_dir, &seed)
             .map_err(|e| ApiError::bad_request(format!("ecriture impossible: {e}")))?;
+        if phase != IdentityPhase::Ready {
+            return resolve_identity(&state, identity::material_from_seed(&seed)).await;
+        }
         return Ok(Json(serde_json::json!({ "restart_required": true })));
     }
     let Some(key) = body.key else {
@@ -189,5 +459,12 @@ pub async fn restore_identity(
         .map_err(|_| ApiError::bad_request("cle LibNaCLSK mal formee"))?;
     onionbit_core::ipv8_stack::restore_identity_key(&state_dir, &raw, body.force_legacy)
         .map_err(|e| ApiError::bad_request(format!("ecriture impossible: {e}")))?;
+    if phase != IdentityPhase::Ready {
+        // Identite legacy fraichement posee : le chargement relit les
+        // fichiers (meme chemin qu'un boot normal).
+        let material = identity::load_or_generate(&state_dir)
+            .map_err(|e| ApiError::internal(format!("chargement identite: {e}")))?;
+        return resolve_identity(&state, material).await;
+    }
     Ok(Json(serde_json::json!({ "restart_required": true })))
 }

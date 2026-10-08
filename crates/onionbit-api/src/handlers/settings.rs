@@ -53,8 +53,23 @@ pub async fn update_settings(
         .daemon_config
         .lock()
         .unwrap_or_else(|e| e.into_inner());
-    cfg.merge(patch)
+    // Merge sur une copie : une validation refusee ne doit pas
+    // laisser l'arbre persiste a moitie mute.
+    let mut candidate = cfg.clone();
+    candidate
+        .merge(patch)
         .map_err(|e| ApiError::bad_request(format!("invalid settings: {e}")))?;
+    // ADR-0016 : `identity.at_rest` exige un redemarrage surveille —
+    // incompatible avec `stealth.role != "client"` dans les deux
+    // sens (activer at-rest sur un pont, ou passer un client at-rest
+    // en pont). Refus ferme `400`.
+    if candidate.identity.at_rest && candidate.stealth.enabled && candidate.stealth.role != "client"
+    {
+        return Err(ApiError::bad_request(
+            "identity.at_rest est incompatible avec stealth.role != \"client\" (un pont doit redemarrer sans surveillance)",
+        ));
+    }
+    *cfg = candidate;
     if let Some(path) = &state.config_path {
         cfg.write(path)
             .map_err(|e| ApiError::internal(format!("ecriture configuration.json: {e}")))?;

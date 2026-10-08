@@ -172,7 +172,7 @@ pub async fn get_connections(State(state): State<AppState>) -> Response {
 
     // Socket d'ecoute BitTorrent du moteur principal (TCP + uTP
     // partagent le port chez librqbit).
-    if let Some(addr) = state.session.engine().listen_addr() {
+    if let Some(addr) = state.session.engine().and_then(|e| e.listen_addr()) {
         listeners.push(serde_json::json!({
             "protocol": "bittorrent", "address": addr.to_string(),
         }));

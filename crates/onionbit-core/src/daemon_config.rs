@@ -1048,6 +1048,45 @@ impl Default for StealthFileConfig {
     }
 }
 
+/// Section `identity` — identite portable ADR-0016 (etape 48d).
+/// Aucun secret n'y vit : uniquement les commutateurs du cycle de
+/// vie (`identity_seed.bin`/`OBSK`, phrase de recuperation).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct IdentityFileConfig {
+    /// Chiffrement at-rest de la graine (`identity_seed.bin` devient
+    /// un blob `OBSK` Argon2id+AEAD ; boot -> etat `locked`).
+    /// **Incompatible** avec `stealth.role` `bridge`/`gateway` — un
+    /// pont doit redemarrer sans surveillance.
+    pub at_rest: bool,
+    /// L'utilisateur a confirme avoir note sa phrase de recuperation
+    /// (`seed_acknowledged`) — carte de rappel dismissible en UI.
+    pub seed_acknowledged: bool,
+    /// Plafond de `POST /api/identity/unlock` par IP et par fenetre
+    /// (anti brute-force `OBSK`).
+    pub unlock_per_ip_per_min: u32,
+    /// Plafond global d'`unlock` par fenetre.
+    pub unlock_global_per_min: u32,
+    /// Fenetre glissante des plafonds `unlock_*` (s).
+    pub unlock_window_secs: u64,
+    /// Cles inconnues — preservees.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, Value>,
+}
+
+impl Default for IdentityFileConfig {
+    fn default() -> Self {
+        Self {
+            at_rest: false,
+            seed_acknowledged: false,
+            unlock_per_ip_per_min: 5,
+            unlock_global_per_min: 30,
+            unlock_window_secs: 60,
+            extra: serde_json::Map::new(),
+        }
+    }
+}
+
 /// Section `logging` — rétention des fichiers de log (extension
 /// propre au portage, absente de `TriblerConfig` Python).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1097,6 +1136,9 @@ pub struct DaemonConfig {
     pub ext: ExtConfig,
     /// Section `stealth` — transport furtif OnionBit-only (ADR-0017).
     pub stealth: StealthFileConfig,
+    /// Section `identity` — identite portable ADR-0016 (at-rest,
+    /// acquittement de la phrase).
+    pub identity: IdentityFileConfig,
     /// Section `database`.
     pub database: EnabledSection,
     /// Section `dht_discovery`.
@@ -1151,6 +1193,7 @@ impl Default for DaemonConfig {
             tunnel_community: TunnelCommunityConfig::default(),
             ext: ExtConfig::default(),
             stealth: StealthFileConfig::default(),
+            identity: IdentityFileConfig::default(),
             database: EnabledSection::enabled(),
             dht_discovery: EnabledSection::enabled(),
             content_discovery_community: EnabledSection::enabled(),
@@ -1775,6 +1818,8 @@ impl DaemonConfig {
                 active_limit: self.libtorrent.active_limit,
             },
             check_after_complete: self.libtorrent.check_after_complete,
+            identity_at_rest: self.identity.at_rest,
+            identity_seed_acknowledged: self.identity.seed_acknowledged,
             download_defaults: crate::config::DownloadDefaults {
                 anonymity_enabled: dd.anonymity_enabled,
                 number_hops: dd.number_hops,

@@ -148,6 +148,15 @@ struct Args {
     /// `api/web_ui_dir` ; `api/web_ui_enabled=false` desactive).
     #[arg(long)]
     web_ui_dir: Option<PathBuf>,
+
+    /// Gate de premier boot (ADR-0016) : passe par le lanceur de
+    /// l'UI. Sans identite sur disque, la session expose l'API en
+    /// `identity_pending` — aucune cle jetable n'est creee et aucun
+    /// datagramme signe n'est emis avant le choix utilisateur
+    /// (nouvelle / restaurer / invite). Sans ce flag (headless,
+    /// ponts), une identite absente est auto-generee comme avant.
+    #[arg(long)]
+    first_run_gate: bool,
 }
 
 use tracing_subscriber::layer::SubscriberExt;
@@ -543,7 +552,24 @@ async fn async_main() -> ExitCode {
         web_ui_dir.is_some(),
     );
 
-    let session = match CoreSession::start(config, Notifier::new()).await {
+    // ADR-0016 : refus ferme `at_rest` × role serveur stealth avant
+    // tout boot — un pont doit pouvoir redemarrer sans surveillance.
+    if daemon_config.identity.at_rest
+        && daemon_config.stealth.enabled
+        && daemon_config.stealth.role != "client"
+    {
+        tracing::error!(
+            role = %daemon_config.stealth.role,
+            "identity.at_rest incompatible avec stealth.role != \"client\""
+        );
+        return ExitCode::FAILURE;
+    }
+
+    // ADR-0016 etape 48d : `--first-run-gate` (lanceur UI) maintient
+    // la session en `identity_pending` sur un state_dir vierge ;
+    // `locked` quand `identity.at_rest` a scelle la graine.
+    let session = match CoreSession::start_gated(config, Notifier::new(), args.first_run_gate).await
+    {
         Ok(s) => s,
         Err(e) => {
             tracing::error!(error = %e, "demarrage de la session impossible");
@@ -617,14 +643,10 @@ async fn async_main() -> ExitCode {
     let app = build(
         AppState::new(session.clone())
             .with_daemon_config(daemon_config.clone(), Some(config_path.clone()))
-            // ADR-0017 : expose le transport furtif a `/api/stealth`
-            // (metriques + ajout de pont a chaud) quand le mode est
-            // actif — `None` sinon.
-            .with_stealth_transport(
-                session
-                    .ipv8()
-                    .and_then(|stack| stack.stealth_transport.clone()),
-            )
+            // ADR-0016 : le transport furtif est resolu
+            // dynamiquement depuis la session (`AppState::
+            // stealth_transport()`) — il n'existe qu'apres le
+            // demarrage differe de l'identite en mode gate.
             .with_shutdown_notify(shutdown_signal.notifier())
             .with_web_ui_dir(web_ui_dir.clone())
             .with_web_ui_inject_key(daemon_config.api.web_ui_inject_key),
@@ -701,9 +723,15 @@ async fn async_main() -> ExitCode {
         }
     };
 
-    let serve_result = axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown)
-        .await;
+    // `ConnectInfo<SocketAddr>` : l'IP cliente est extraite par les
+    // endpoints sensibles au brute-force (`POST /api/identity/unlock`,
+    // ADR-0016 — rate-limit par IP + global).
+    let serve_result = axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown)
+    .await;
     if let Some(t) = tray {
         t.stop();
     }

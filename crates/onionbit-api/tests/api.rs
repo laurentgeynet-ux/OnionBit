@@ -3989,3 +3989,282 @@ async fn stealth_endpoints_et_liens_hostiles() {
 
     srv.session.stop().await;
 }
+
+// ---------------------------------------------------------------------------
+// ADR-0016 etape 48d — gate d'identite : pending / locked / guest
+// ---------------------------------------------------------------------------
+
+/// Serveur monte en `identity_pending` (premier boot sous gate :
+/// `state_dir` vierge + `--first-run-gate`). Aucun composant
+/// identitaire ne tourne — la pile ne doit rien emettre.
+async fn spawn_server_pending() -> TestServer {
+    let dir = tempfile::tempdir().unwrap();
+    let mut cfg = CoreConfig::offline(dir.path().into());
+    cfg.ipv8.enabled = true;
+    cfg.ipv8.listen_addr = "0.0.0.0:0".into();
+    cfg.ipv8.bootstrap_peers = Vec::new();
+    let session = CoreSession::start_gated(cfg, Notifier::new(), true)
+        .await
+        .unwrap();
+    let state = AppState::new(session.clone());
+    let app = build(state.clone());
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    TestServer {
+        addr,
+        session,
+        state,
+        client: reqwest::Client::new(),
+        _dir: dir,
+    }
+}
+
+/// Serveur monte en `locked` : graine scellee `OBSK` posee sur
+/// disque avant le boot (simule `identity.at_rest`).
+async fn spawn_server_locked() -> TestServer {
+    let dir = tempfile::tempdir().unwrap();
+    let state_dir = dir.path().to_path_buf();
+    // Installe une graine seedee puis la scelle.
+    onionbit_core::identity::restore_seed(
+        &state_dir,
+        &onionbit_crypto::identity::IdentitySeed::generate(),
+    )
+    .unwrap();
+    onionbit_core::identity::seal_seed(&state_dir, b"pw-correct").unwrap();
+    let mut cfg = CoreConfig::offline(state_dir);
+    cfg.ipv8.enabled = true;
+    cfg.ipv8.listen_addr = "0.0.0.0:0".into();
+    cfg.ipv8.bootstrap_peers = Vec::new();
+    cfg.identity_at_rest = true;
+    let session = CoreSession::start_gated(cfg, Notifier::new(), false)
+        .await
+        .unwrap();
+    let state = AppState::new(session.clone());
+    let app = build(state.clone());
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    TestServer {
+        addr,
+        session,
+        state,
+        client: reqwest::Client::new(),
+        _dir: dir,
+    }
+}
+
+#[tokio::test]
+async fn identite_pending_gate_409_puis_guest() {
+    let srv = spawn_server_pending().await;
+    let state_dir = srv.session.config().state_dir.clone();
+
+    // L'etat expose pending sans cle publique.
+    let body: serde_json::Value = srv
+        .client
+        .get(srv.url("/api/identity"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(body["state"], "pending");
+
+    // Routes identitaires → 409 uniforme ; routes du cycle de vie
+    // et d'observation passent.
+    for path in [
+        "/api/downloads",
+        "/api/ipv8/overlays",
+        "/api/statistics/ipv8",
+        "/api/metadata/search/local?query=x",
+    ] {
+        let resp = srv.client.get(srv.url(path)).send().await.unwrap();
+        assert_eq!(resp.status(), 409, "{path}");
+        let body: serde_json::Value = resp.json().await.unwrap();
+        assert_eq!(body["error"]["message"], "identity_pending", "{path}");
+    }
+    let resp = srv
+        .client
+        .get(srv.url("/api/statistics/tribler"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        200,
+        "statistiques tribler autorisees en pending"
+    );
+    let resp = srv
+        .client
+        .get(srv.url("/api/settings"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200, "settings lisibles en pending");
+
+    // Phrase invalide en pending : 400 et aucun fichier identite.
+    let resp = srv
+        .client
+        .post(srv.url("/api/identity/restore"))
+        .json(&serde_json::json!({"phrase": "mot invalide pas bip39 du tout"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 400);
+    assert!(!state_dir.join("identity_seed.bin").exists());
+    assert!(!state_dir.join("ipv8_keypair.bin").exists());
+
+    // Resolution invite : session prete, aucun artefact identite.
+    let resp = srv
+        .client
+        .post(srv.url("/api/identity/guest"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["state"], "ready");
+    let body: serde_json::Value = srv
+        .client
+        .get(srv.url("/api/identity"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(body["state"], "ready");
+    assert_eq!(body["mode"], "guest");
+    assert_eq!(body["persistent"], false);
+    assert!(body["public_key"].is_string());
+    // Les routes precedemment gatees repondent.
+    let resp = srv
+        .client
+        .get(srv.url("/api/downloads"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    assert!(!state_dir.join("identity_seed.bin").exists());
+    assert!(!state_dir.join("ipv8_keypair.bin").exists());
+
+    srv.session.stop().await;
+}
+
+#[tokio::test]
+async fn identite_pending_create() {
+    let srv = spawn_server_pending().await;
+    let state_dir = srv.session.config().state_dir.clone();
+    let resp = srv
+        .client
+        .post(srv.url("/api/identity/create"))
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = srv
+        .client
+        .get(srv.url("/api/identity"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(body["state"], "ready");
+    assert_eq!(body["seeded"], true);
+    assert!(state_dir.join("identity_seed.bin").exists());
+    // Un second create est refuse (409).
+    let resp = srv
+        .client
+        .post(srv.url("/api/identity/create"))
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 409);
+    srv.session.stop().await;
+}
+
+#[tokio::test]
+async fn identite_locked_unlock_et_rate_limit() {
+    let srv = spawn_server_locked().await;
+    let state_dir = srv.session.config().state_dir.clone();
+
+    let body: serde_json::Value = srv
+        .client
+        .get(srv.url("/api/identity"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(body["state"], "locked");
+    assert_eq!(body["at_rest"], true);
+
+    // Routes identitaires → 409 identity_locked.
+    let resp = srv
+        .client
+        .get(srv.url("/api/downloads"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 409);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["error"]["message"], "identity_locked");
+
+    // Mauvais mot de passe : 400 uniforme.
+    let resp = srv
+        .client
+        .post(srv.url("/api/identity/unlock"))
+        .json(&serde_json::json!({"password": "faux"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 400);
+    assert!(matches!(
+        onionbit_core::identity::detect(&state_dir).unwrap(),
+        onionbit_core::identity::IdentityState::Sealed { .. }
+    ));
+
+    // Bon mot de passe : session resolue, meme cle publique que la
+    // graine scellee.
+    let resp = srv
+        .client
+        .post(srv.url("/api/identity/unlock"))
+        .json(&serde_json::json!({"password": "pw-correct"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["state"], "ready");
+    let body: serde_json::Value = srv
+        .client
+        .get(srv.url("/api/identity"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(body["state"], "ready");
+    // Un second unlock est idempotent (200, rien de retente).
+    let resp = srv
+        .client
+        .post(srv.url("/api/identity/unlock"))
+        .json(&serde_json::json!({"password": "n'importe"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    srv.session.stop().await;
+}
