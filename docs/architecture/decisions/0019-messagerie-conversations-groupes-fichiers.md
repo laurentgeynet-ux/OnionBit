@@ -6,12 +6,14 @@ d'ADR-0011 (livrée, Phase 8, bancs `MS-*` verts). Réutilise sans les
 modifier : les circuits e2e et le hidden seeding
 (`onionbit-tunnel`), le codec et l'anti-replay
 (`onionbit-messaging`), les capacités `hello.caps` d'ADR-0015
-(`CAP_MSG_V1` = bit 1), et **ADR-0018 implémentée** : racines
-portables `@state`/`@public`/`@private` (`onionbit-core::paths`),
-`StorageArea`/`storage.default_area`, grammaire `destination`
-`"<chemin>" | {area, dir?}`, zone privée `OBD`/`OBM`
-(`PrivateZone`, `store_root`, état `locked|mounted|guest`),
-`downloads.storage_area` (v20) et `GET /api/private`. Cadre de la
+(`CAP_MSG_V1` = bit 1), et **ADR-0018 Acceptée** (étapes 57–63) :
+racines portables `@state`/`@public`/`@private`
+(`onionbit-core::paths`), `StorageArea`/`storage.default_area`,
+grammaire `destination` `"<chemin>" | {area, dir?}`, zone privée
+`OBD`/`OBM` (`PrivateZone`, `store_root`, état
+`locked|mounted|guest`), `downloads.storage_area` (v20),
+`GET /api/private`, `storage_removable`/`identity.at_rest` et
+sélecteur de zone UI (privée grisée si `locked`). Cadre de la
 Phase 12 de `docs/plans/roadmap.md`.
 
 ## Contexte
