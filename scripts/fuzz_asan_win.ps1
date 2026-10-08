@@ -61,7 +61,7 @@ $env:RUSTFLAGS = "-Zexternal-clangrt " +
 
 $targets = @("raw_datagram", "tunnel_cell", "tunnel_payloads",
     "ipv8_packet", "unsigned_dispatch", "utp_datagram",
-    "messaging_frame", "messaging_window")
+    "messaging_frame", "messaging_window", "obd_file")
 if ($Target -ne "-") { $targets = @($Target) }
 
 $journal = Join-Path $Repo "fuzz\artifacts\fuzz_journal_san_win.csv"

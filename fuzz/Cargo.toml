@@ -103,3 +103,9 @@ name = "stealth_frame"
 path = "fuzz_targets/stealth_frame.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "obd_file"
+path = "fuzz_targets/obd_file.rs"
+test = false
+doc = false

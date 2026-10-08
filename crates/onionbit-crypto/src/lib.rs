@@ -28,6 +28,10 @@ pub mod identity;
 pub mod ipv8;
 /// Blobs proteges par mot de passe (export d'identite portable).
 pub mod keyblob;
+/// Format `OBD` — fichiers chiffres par chunks de la zone privee
+/// (ADR-0018 etape 60) : en-tete scelle a slot fixe, sceau de
+/// decouverte `K_scan`, nonce aleatoire par ecriture.
+pub mod obdfile;
 /// Primitives du transport furtif (ADR-0017) : cles ephemeres
 /// Elligator2, DH/HKDF domaine `onionbit/stealth/v1`, AEAD.
 pub mod stealth;

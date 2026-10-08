@@ -53,7 +53,8 @@ mkdir -p fuzz/artifacts
 [ -f "$JOURNAL" ] || echo "date,commit,target,san,duree_s,execs,crashes,exit_code" > "$JOURNAL"
 
 TARGETS="raw_datagram tunnel_cell tunnel_payloads ipv8_packet \
-unsigned_dispatch utp_datagram messaging_frame messaging_window"
+unsigned_dispatch utp_datagram messaging_frame messaging_window \
+obd_file"
 [ -n "$ONLY" ] && [ "$ONLY" != "-" ] && TARGETS="$ONLY"
 
 fails=0

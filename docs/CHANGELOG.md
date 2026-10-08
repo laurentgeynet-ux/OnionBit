@@ -3,6 +3,46 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## ADR-0018 étape 60 : format `OBD` — fichiers privés chiffrés par chunks (2026-10-09)
+
+- **`onionbit-crypto::obdfile`** : codec `OBD` — `HDR_SLOT` fixe de
+  4 Kio (`hdr_nonce‖hdr_ct‖scan_nonce‖scan_ct‖pad(0)`), clairs bourrés
+  à taille fixe avant scellement → ciphertexts à longueur constante,
+  zéro marqueur statique en clair (magic `"OBD"`+version vivent dans
+  `hdr_ct`). `K_store = HKDF(racine, "onionbit/private-store/v1")`,
+  `K_scan = HKDF(K_store,"scan")` (sceau de découverte qui brise la
+  circularité `K_file`/`relpath` : balayage aveugle →
+  `(infohash,relpath)` → `K_file`), `K_file = HKDF(K_store,
+  "file/"‖infohash‖"/"‖relpath)`, `K_names` pour les noms opaques
+  `grp/`/`nam/` (HMAC-SHA256 tronqué 16 o, hex + `.obd`).
+- **Chunks** : `nonce(12)‖AEAD(K_file, nonce, file_id‖i:u64be)〔plain〕`
+  — nonce **aléatoire à chaque écriture** (jamais dérivé de l'index :
+  `pwrite_all` réécrit), AAD liant fichier+position (anti-swap et
+  anti-permutation), slot à offset fixe `HDR_SLOT + i×(cs+28)`.
+  Lecture clippée à `plain_len`, trou/slot nul/tronqué/tag invalide →
+  `warn!` + zéros (intégrité déléguée au hash de pièce) ; longueur du
+  dernier chunk déduite de `plain_len` (agrandir le fichier invalide
+  l'ancien dernier chunk court — documenté) ; écriture hors bornes →
+  `ObdError::Bounds` ; ouverture toujours `ObdError::Open` uniforme
+  (pas d'oracle magic/version/clé). Verrous non inclus : la
+  sérialisation RMW est à la factory (étape 61).
+- **API** : `PrivateStoreKeys::{from_root, scan_cipher, file_cipher,
+  group_name, file_name}` (racine `ZeroizeOnDrop`) ;
+  `ObdFile::{create, open, open_scan, scan_path, read_range,
+  write_range, set_len}` sur `&Path` en lecture+écriture positionnée
+  (`pread`/`pwrite` cfg unix/windows).
+- **Tests** : 13 hostiles — round-trip multi-chunk RMW, mauvaise
+  clé/relpath → refus uniforme, troncatures à 6 bornes, bit-flip
+  en-tête → `Open` / bit-flip chunk → zéros, nonce neuf par
+  réécriture (slot octet-par-octet), oracle « zéro constante » hors
+  pad `0` de spec, sceau de scan sans `K_file` (+ rejet mauvaise
+  graine, `relpath` > `SCAN_RELPATH_CAP` → secours absent), trou et
+  slot tronqué → zéros, `set_len` (nonce hdr neuf, `scan_ct` intact,
+  dernier chunk court invalidé), noms déterministes/opaques,
+  `plain_len=0`. Cible fuzz **`obd_file`** ajoutée au harnais
+  (`fuzz/Cargo.toml` + campagnes `fuzz_asan{,_win}`). 41 tests crypto
+  verts, clippy/fmt propres.
+
 ## ADR-0018 étape 59 : move-on-completion public `temp` → `downloads` (2026-10-09)
 
 - **Section `storage`** dans `configuration.json` (extension OnionBit,
