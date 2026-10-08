@@ -1,6 +1,6 @@
 [package]
 name = "onionbit-api"
-description = "Plan de controle REST + SSE (axum) du daemon Tribler Rust. Parite fonctionnelle avec tribler.core.restapi ; seule porte d'entree reseau locale."
+description = "Plan de controle REST + SSE (axum) du daemon OnionBit. Parite fonctionnelle avec tribler.core.restapi ; seule porte d'entree reseau locale."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

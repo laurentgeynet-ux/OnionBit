@@ -1,5 +1,14 @@
 # Architecture — OnionBit
 
+> OnionBit est un écosystème pair-à-pair anonyme et résistant à la censure
+> — une toile onion sans serveur qui porte ses propres services : partage
+> de fichiers, messagerie et identité portable. Né comme portage Rust de
+> Tribler, il est devenu écosystème autonome — compatible avec Tribler,
+> défini par ses extensions. Définition canonique et vocabulaire normé :
+> [ADR-0020](decisions/0020-definition-ecosysteme-p2p-anonyme.md). La
+> colonne « Analogue Python » ci-dessous décrit la filiation et la
+> compatibilité protocole, pas la définition du produit.
+
 ## 1. Principes (clean architecture)
 
 Le workspace suit une architecture en couches avec inversion de

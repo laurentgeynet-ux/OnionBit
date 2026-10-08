@@ -1,18 +1,17 @@
 # ADR-0020 — Définition du logiciel : écosystème P2P anonyme et anti-censure
 
-Statut : **Proposée** (2026-10-08, deux tours de revue externe
-intégrés : §7 en-têtes GPL réécriture complète + oracle ancré
-`/*` compris, « portable » remplace « souveraine », propagation
-complétée — README refondu, SVG, i18n, Cargo.toml) — en attente
-d'approbation **et de la fin d'implantation d'ADR-0019** (§7).
+Statut : **Acceptée** (proposée 2026-10-08, deux tours de revue
+externe intégrés, acceptation 2026-10-09 après l'implantation
+complète d'ADR-0019 — étapes 64–69 livrées) — exécutée sur le
+worktree `adr20` (§7).
 Document publié comme les autres ADR — il est la référence de
-vocabulaire que les fichiers publics citeront (§Conséquences) :
-le garder local créerait des liens morts sur GitHub.
-ADR documentaire : aucun code impacté avant acceptation. La
+vocabulaire que les fichiers publics citent (§Conséquences) :
+le garder local aurait créé des liens morts sur GitHub.
+ADR documentaire : aucun code impacté. La
 propagation du vocabulaire au README, `AGENTS.md`,
 `docs/architecture/architecture.md`, `docs/THREAT-MODEL.md`,
 `app/pubspec.yaml`, `app/lib/l10n/*.arb`, en-têtes GPL et
-descriptions `Cargo.toml` intervient **à l'acceptation**
+descriptions `Cargo.toml` accompagne cette acceptation
 (§Conséquences).
 
 ## Contexte

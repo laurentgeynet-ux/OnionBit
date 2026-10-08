@@ -1,8 +1,12 @@
 # AGENTS.md — OnionBit
 
-Portage Rust natif du daemon [Tribler](https://github.com/Tribler/tribler)
-(BitTorrent anonyme : overlay IPv8 + circuits onion) avec app Flutter
-multiplateforme (`app/`). Licence : **GPL-3.0-or-later**.
+Écosystème pair-à-pair anonyme et résistant à la censure — une toile
+onion sans serveur (overlay IPv8 + circuits multi-sauts) qui porte ses
+propres services : partage de fichiers (BitTorrent anonyme), messagerie
+e2e et identité portable, avec app Flutter multiplateforme (`app/`).
+Né comme portage Rust du daemon [Tribler](https://github.com/Tribler/tribler)
+— compatible avec Tribler, défini par ses extensions (ADR-0020).
+Licence : **GPL-3.0-or-later**.
 
 ## Structure
 
@@ -35,10 +39,10 @@ pwsh -File scripts/check_i18n.ps1
   tests ; `tracing` ; Tokio ; zéro warning.
 - Mutex d'état : préférer `.lock().unwrap_or_else(|e| e.into_inner())`
   (poison-tolérant — une panique sous verrou ne doit pas cascader).
-- **En-tête GPL sur chaque fichier source** (RS/Dart/PS1/Py/CMake) :
-  `This file is part of OnionBit...` + `Copyright (C) 2026 Laurent Geynet`
-  + `SPDX-License-Identifier: GPL-3.0-or-later`. `vendor/` exclu
-  (librqbit reste Apache-2.0).
+- **En-tête GPL sur chaque fichier source** (RS/Dart/PS1/Py/CMake/C) :
+  `This file is part of OnionBit.` + `Copyright (C) 2026 Laurent Geynet`
+  + `SPDX-License-Identifier: GPL-3.0-or-later` — aucun descripteur
+  (ADR-0020 §7). `vendor/` exclu (librqbit reste Apache-2.0).
 - **Aucune valeur en dur** : seuils/timeouts → structs de config.
 - **Fidélité protocole** : tout comportement filaire IPv8/BitTorrent/REST
   est vérifié contre les sources Tribler (checkout local via

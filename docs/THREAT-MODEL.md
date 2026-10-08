@@ -1,25 +1,45 @@
 # Threat model
 
+OnionBit is an anonymous, censorship-resistant peer-to-peer ecosystem —
+the onion fabric below carries file sharing, messaging and portable
+identity (see
+[ADR-0020](architecture/decisions/0020-definition-ecosysteme-p2p-anonyme.md)
+for the canonical definition). This document bounds the anonymity and
+anti-censorship claims: what the fabric protects against, and what it
+explicitly does not.
+
 ## What OnionBit protects against
 
 - **Swarm peers learning your IP** — in anonymous mode, peers only ever see the
   exit node's address.
-- **Your ISP/local observer seeing BitTorrent traffic** — tunnel traffic is
-  layered encryption over ordinary UDP; it does not look like peer-wire.
+- **Your ISP/local observer seeing BitTorrent or OnionBit traffic** — tunnel
+  traffic is layered encryption over ordinary UDP; it does not look like
+  peer-wire.
 - **Hidden seeder exposure** — a seeder can serve content behind rendezvous
   circuits without publishing a reachable address.
+- **Server-side surveillance of conversations** — messaging has no server to
+  compel or breach: frames travel e2e-encrypted over hidden services and
+  relays only forward cells.
+- **Censorship by protocol fingerprint** — stealth mode (ADR-0017) removes
+  every static protocol marker: morphed wire format, Elligator2 ephemeral
+  keys, uniform silence under probing, bridge links distributed out-of-band.
 
 ## What it does NOT protect against
 
 - **Global passive adversary** (nation-state monitoring both ends of the
   network): OnionBit circuits lack the padding/constant-rate defenses needed
-  for that threat class. Tribler's design — and this port — targets
+  for that threat class. Tribler's design — and OnionBit's — targets
   peer-level and local-observer anonymity, not Tor-grade protection.
 - **Malicious exit collusion**: with short circuits, a colluding first hop and
   exit could correlate flows. Longer hop counts reduce but do not eliminate
   this.
 - **Application-level leaks**: files you download can still identify you
   (watermarked content, telemetry embedded in media, etc.).
+- **Traffic volume and timing analysis** — stealth mode removes static
+  markers, not the *amount* or *timing* of traffic; a censor can still see
+  that something flows, and blanket UDP throttling breaks the transport.
+- **Bridge link distribution** — a first `onionbit-bridge://` link must reach
+  the censored user out-of-band; a leaked link can get that bridge blocked.
 
 ## Private download area (ADR-0018)
 
@@ -57,7 +77,9 @@ encrypted and identity-bound):
   exec bits; on Linux/macOS removable mounts are often `noexec` — copy the
   binaries locally or remount `exec` (see `docs/BUILDING.md`).
 
-## Alpha disclaimer
+## Beta disclaimer
 
-The tunnel implementation is being validated against live Tribler 8.x nodes.
-Until the interop milestones are complete, treat anonymity as best-effort.
+The tunnel implementation has completed bidirectional interoperability with
+live Tribler 8.x nodes (see `docs/interop/README.md`) — yet OnionBit remains
+beta software. Treat anonymity as a design goal with the limits above, not a
+guarantee; it is not yet recommended for high-stakes anonymity.
