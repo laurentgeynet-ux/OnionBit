@@ -3,6 +3,37 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## ADR-0019 : proposition « conversations multiples, groupes et pièces jointes » (2026-10-08)
+
+- **Demande** : onglets de conversation par correspondant, chat
+  groupé à plusieurs membres, pièces jointes par import ou
+  glisser-déposer dans la messagerie.
+- **Décision** : abstraction « conversation » (`conv_id` 16 o —
+  déterministe `SHA1(pk_min‖pk_max)` pour le direct, aléatoire pour
+  les groupes) ; trame messagerie **v2** (+ champ `conv` signé,
+  types `gctl`/`attach`, `hello` v2 avec `caps`, `CAP_MSG_V2` ext,
+  texte 1:1 conservé en v1 pour compatibilité) ; **groupes =
+  maillage pair-à-pair** de circuits e2e existants (aucun swarm de
+  groupe, fan-out signé par membre, roster par `gctl`, portée de
+  consentement `scope='group'` confinée — un membre non contact ne
+  devient ni contact ni `pending`) ; **pièce jointe = torrent
+  éphémère salé** (`x-onionbit` dans le dict `info` → infohash
+  indévinable) seedé anonymement + descripteur magnet dans la trame
+  — réception jamais automatique, téléchargement anonyme classique
+  au clic.
+- **Chantiers identifiés** : migration DB (`msg_conversations`,
+  `msg_members`, `msg_delivery`, `msg_attachments`, `scope` sur
+  `msg_contacts`), upload staging borné `@state/messaging/uploads`,
+  micro-patch vendored `CreateTorrentOptions` (salage `info`),
+  `origin='messaging'` sur les downloads, zone `attach_area`
+  (ADR-0018), UI onglets + drop zone scopée + bulle pièce jointe.
+- Limites assumées : membership ouvert sans admin/kick v1, ordre de
+  groupe non causal `(ts,author,mid)`, N-1 circuits e2e par nœud
+  bornés par `group_max_members`, staging clair sous `@state/`,
+  online-only hérité d'ADR-0011.
+- Phase 12 de `docs/plans/roadmap.md`, bancs `MG-*` à cataloguer.
+  Aucun code engagé.
+
 ## ADR-0018 : proposition « arborescence portable + zones public / privé » (2026-10-08)
 
 - **Constats** : `state_dir` plat mélangeant identité, base, caches et
