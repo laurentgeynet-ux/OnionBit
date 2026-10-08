@@ -1074,5 +1074,19 @@
   "accentSlate": "Slate",
   "settingsLanguage": "Language",
   "@settingsLanguage": { "description": "Language selector label" },
-  "languageSystem": "System"
+  "languageSystem": "System",
+  "sectionStealth": "Stealth mode",
+  "stealthEnabled": "Stealth transport (ADR-0017)",
+  "stealthEnabledSub": "OnionBit-to-OnionBit only: morphed datagrams, no IPv8/BitTorrent signature on the wire. Mutually exclusive with the legacy IPv8 network — applied on restart. A client needs at least one bridge link to enter.",
+  "stealthRoleLabel": "Role",
+  "stealthRoleClient": "Client (enters via bridge links)",
+  "stealthRoleBridge": "Bridge (entry point)",
+  "stealthRoleGateway": "Gateway (bridge + public BitTorrent exit)",
+  "stealthBridgesLabel": "Bridge invitation links",
+  "stealthBridgesNote": "One onionbit-bridge:// link per line, obtained out-of-band (invitation). Applied on restart.",
+  "stealthCover": "Cover traffic",
+  "stealthCoverSub": "Padded keepalive frames at randomized intervals — smooths timing and volume, costs bandwidth. Default: off. Applied on restart.",
+  "stealthSaved": "Stealth settings saved",
+  "stealthStatus": "Role: {role} — sessions: {sessions} — configured bridges: {bridges}",
+  "stealthClockWarning": "Handshakes to bridges keep failing without any established session. On a censored network, check your clock: NTP may be filtered or spoofed and the handshake timestamp window is ±90 s."
 }

@@ -54,7 +54,12 @@ const kAnonymityDefaults = <String, dynamic>{
 /// Mécanismes OnionBit — `ExtConfig::default()` (communauté ext,
 /// ADR-0015) + comptabilité tunnel (`TunnelCommunityConfig`).
 const kOnionBitDefaults = <String, dynamic>{
-  'ext': {'enabled': true, 'ledger_enabled': true, 'obf_enabled': false, 'curators': <String>[]},
+  'ext': {
+    'enabled': true,
+    'ledger_enabled': true,
+    'obf_enabled': false,
+    'curators': <String>[],
+  },
   'tunnel_community': {
     'ledger_enabled': true,
     'ledger_enforce': false,
@@ -74,6 +79,17 @@ const kNetworkDefaults = <String, dynamic>{
     'lsd': true,
     'utp': true,
     'proxy_type': 0,
+  },
+};
+
+/// Mode furtif — `StealthFileConfig::default()` (transport morphe
+/// ADR-0017 : client sans pont amont, pas de cover par defaut).
+const kStealthDefaults = <String, dynamic>{
+  'stealth': {
+    'enabled': false,
+    'role': 'client',
+    'bridges': <String>[],
+    'cover_traffic': false,
   },
 };
 

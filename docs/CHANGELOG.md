@@ -3,6 +3,30 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## ADR-0017 étape 56 : docs sécurité + UI « Mode furtif » (worktree adr17, 2026-10-08)
+
+- **`docs/security/fingerprinting.md`** : section « Mode furtif » —
+  adversaire censeur-classifiant modélisé, résultats du banc
+  (oracles + mesures réelles du premier run), limites assumées
+  (volume, timing long-terme, bootstrap social, blocage IP,
+  throttling UDP), règle de non-régression.
+- **`docs/security/threat_model.md`** : section « Transport furtif »
+  — ce que le banc prouve (silence probing, amplification ≤1, zero
+  marqueur legacy, résilience, anti-scraping INTRO) + ajout du
+  censeur classifiant aux non-démontrés.
+- **`docs/security/revue_stealth.md`** : checklist de revue externe
+  en 6 sections (fil morphé, silence uniforme, fail-closed,
+  anti-scraping, résilience sans oracle, surface résiduelle) —
+  gate de passage « Acceptée ».
+- **UI** : section Réglages « Mode furtif » (`stealth.enabled`,
+  rôle client/bridge/gateway, liens `onionbit-bridge://`,
+  cover traffic — tout appliqué au redémarrage) + statut live via
+  `GET /api/stealth` + **alerte horloge** quand les `hs1` échouent
+  sans session (NTP filtré/spoofé en zone censurée). `flutter
+  analyze`, `flutter test` (22), `check_i18n` verts.
+- **ADR-0017 reste « Proposée »** — acceptation conditionnée à la
+  revue externe (`revue_stealth.md`) + banc sur réseau réel.
+
 ## ADR-0017 étape 55 : banc `bench_stealth_fingerprint.ps1` (worktree adr17, 2026-10-08)
 
 - **`stealth_bench`** (`onionbit-ipv8`, binaire de dev) : `link`
