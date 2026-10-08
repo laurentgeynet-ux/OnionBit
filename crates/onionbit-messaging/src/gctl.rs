@@ -10,11 +10,11 @@
 //! l'identite du groupe — le corps ne la repete pas.
 //!
 //! ```text
-//! invite : { "by": <32o pk>, "name": <str>, "op": "invite",
-//!            "roster": [<32o pk>...] }
+//! invite : { "by": <pk_bin 74o>, "name": <str>, "op": "invite",
+//!            "roster": [<pk_bin 74o>...] }
 //! join   : { "op": "join" }
 //! leave  : { "op": "leave" }
-//! roster : { "members": [ { "by": <32o>, "pk": <32o>,
+//! roster : { "members": [ { "by": <74o>, "pk": <74o>,
 //!                            "ts": <u64> } ... ], "op": "roster" }
 //! ```
 
@@ -25,8 +25,9 @@ use onionbit_format::bencode::{decode, BValue};
 use crate::config::MessagingConfig;
 use crate::error::MessagingError;
 
-/// Cle publique brute d'un membre (LibNaCl, 32 octets).
-pub const PK_LEN: usize = 32;
+/// Cle publique brute d'un membre (`pk_bin` LibNaCl, format
+/// `to_bin` — 74 octets).
+pub const PK_LEN: usize = onionbit_crypto::ipv8::keys::LIBNACL_PK_BIN_LEN;
 
 /// Entree de roster propagee par `gctl roster`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -122,7 +123,7 @@ impl Gctl {
                 .as_bytes()
                 .ok_or(MessagingError::Malformed("gctl : pk non binaire"))?;
             <[u8; PK_LEN]>::try_from(b)
-                .map_err(|_| MessagingError::Malformed("gctl : pk != 32 octets"))
+                .map_err(|_| MessagingError::Malformed("gctl : pk taille inattendue"))
         };
         match op {
             b"invite" => {
@@ -221,21 +222,21 @@ mod tests {
         let ops = [
             Gctl::Invite {
                 name: "groupe test".into(),
-                roster: vec![[1u8; 32], [2u8; 32]],
-                by: [9u8; 32],
+                roster: vec![[1u8; PK_LEN], [2u8; PK_LEN]],
+                by: [9u8; PK_LEN],
             },
             Gctl::Join,
             Gctl::Leave,
             Gctl::Roster {
                 members: vec![
                     RosterEntry {
-                        pk: [1u8; 32],
-                        added_by: [1u8; 32],
+                        pk: [1u8; PK_LEN],
+                        added_by: [1u8; PK_LEN],
                         joined_at: 100,
                     },
                     RosterEntry {
-                        pk: [2u8; 32],
-                        added_by: [9u8; 32],
+                        pk: [2u8; PK_LEN],
+                        added_by: [9u8; PK_LEN],
                         joined_at: 150,
                     },
                 ],
@@ -258,11 +259,11 @@ mod tests {
         // invite : cle supplementaire
         let mut d = BTreeMap::new();
         d.insert(b"op".to_vec(), BValue::Bytes(b"invite".to_vec()));
-        d.insert(b"by".to_vec(), BValue::Bytes([1u8; 32].to_vec()));
+        d.insert(b"by".to_vec(), BValue::Bytes([1u8; PK_LEN].to_vec()));
         d.insert(b"name".to_vec(), BValue::Bytes(b"n".to_vec()));
         d.insert(
             b"roster".to_vec(),
-            BValue::List(vec![BValue::Bytes([1u8; 32].to_vec())]),
+            BValue::List(vec![BValue::Bytes([1u8; PK_LEN].to_vec())]),
         );
         d.insert(b"extra".to_vec(), BValue::Int(1));
         assert!(Gctl::decode_body(&BValue::Dict(d).encode(), &c).is_err());
@@ -270,26 +271,26 @@ mod tests {
         let inv = Gctl::Invite {
             name: "n".into(),
             roster: vec![],
-            by: [1u8; 32],
+            by: [1u8; PK_LEN],
         };
         assert!(Gctl::decode_body(&inv.encode(), &c).is_err());
         let inv = Gctl::Invite {
             name: "n".into(),
-            roster: vec![[0u8; 32]; c.group_max_members + 1],
-            by: [1u8; 32],
+            roster: vec![[0u8; PK_LEN]; c.group_max_members + 1],
+            by: [1u8; PK_LEN],
         };
         assert!(Gctl::decode_body(&inv.encode(), &c).is_err());
         // invite : nom hors borne
         let inv = Gctl::Invite {
             name: "x".repeat(c.group_name_max_len + 1),
-            roster: vec![[1u8; 32]],
-            by: [1u8; 32],
+            roster: vec![[1u8; PK_LEN]],
+            by: [1u8; PK_LEN],
         };
         assert!(Gctl::decode_body(&inv.encode(), &c).is_err());
         // roster : entree a cle inconnue
         let mut e = BTreeMap::new();
-        e.insert(b"by".to_vec(), BValue::Bytes([1u8; 32].to_vec()));
-        e.insert(b"pk".to_vec(), BValue::Bytes([2u8; 32].to_vec()));
+        e.insert(b"by".to_vec(), BValue::Bytes([1u8; PK_LEN].to_vec()));
+        e.insert(b"pk".to_vec(), BValue::Bytes([2u8; PK_LEN].to_vec()));
         e.insert(b"ts".to_vec(), BValue::Int(1));
         e.insert(b"x".to_vec(), BValue::Int(1));
         let mut d = BTreeMap::new();
@@ -298,8 +299,8 @@ mod tests {
         assert!(Gctl::decode_body(&BValue::Dict(d).encode(), &c).is_err());
         // roster : ts negatif
         let mut e = BTreeMap::new();
-        e.insert(b"by".to_vec(), BValue::Bytes([1u8; 32].to_vec()));
-        e.insert(b"pk".to_vec(), BValue::Bytes([2u8; 32].to_vec()));
+        e.insert(b"by".to_vec(), BValue::Bytes([1u8; PK_LEN].to_vec()));
+        e.insert(b"pk".to_vec(), BValue::Bytes([2u8; PK_LEN].to_vec()));
         e.insert(b"ts".to_vec(), BValue::Int(-1));
         let mut d = BTreeMap::new();
         d.insert(b"op".to_vec(), BValue::Bytes(b"roster".to_vec()));
