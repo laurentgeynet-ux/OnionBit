@@ -110,6 +110,31 @@ opt-in réservé au rôle client.** Multi-profils : toujours différé.
 - Même mécanisme que le mode locked ci-dessous : « API up,
   `Session::start` différé » — un seul gate, deux déclencheurs.
 
+### Mode invité (session éphémère)
+
+Troisième résolution du gate `identity_pending` : **« Session
+invitée »** — graine générée **en mémoire uniquement**, aucun fichier
+identité écrit ; l'identité cesse d'exister à la fermeture du daemon.
+
+- `GET /api/identity` → `mode: "guest"`, `persistent: false` ;
+  l'UI affiche un bandeau permanent « rien n'est conservé ».
+- Cohérence de persistance : invité force `database.enabled=false`
+  (état `:memory:` existant) — sinon l'historique téléchargements
+  contredirait la promesse. Coffre `OBV1`, ledger et contacts en
+  mémoire seulement.
+- Réseau : l'invité est un nouveau `pk` à chaque session — toujours au
+  budget `intro_seed`, jamais de réputation ADR-0015. Un pont stealth
+  avec `client_allowlist` le rejettera (attendu, documenté).
+- Pas de surface d'abus nouvelle : un invité n'a pas plus de
+  capacité qu'une réinstallation (pk frais = inconnu, pas de
+  confiance acquise).
+- Headless : sans effet sans UI ; flag `--guest` possible plus tard —
+  v1 : résolution du gate UI uniquement.
+- Distinction clé : l'identité éphémère **choisie** (invité) n'a rien
+  à voir avec la clé jetable **involontaire** que le gate élimine —
+  la première est une promesse utilisateur, la seconde était une
+  fuite de churn.
+
 ### Chiffrement « at rest » (opt-in, client uniquement)
 
 - `identity.at_rest = true` → graine stockée chiffrée (`OBSK` :
@@ -147,6 +172,10 @@ opt-in réservé au rôle client.** Multi-profils : toujours différé.
   le risque change de forme, pas d'ordre de grandeur.
 - Le détenteur d'`api.key` peut extraire la phrase (cohérent : il
   peut déjà exporter l'identité via `OBID`).
+- Le mode invité échange la continuité (confiance, contacts,
+  historique) contre l'inlinkabilité inter-sessions : un observateur
+  ne peut pas savoir que deux sessions invité viennent du même
+  appareil — au prix d'être un inconnu permanent.
 - Le mode locked ajoute un état de session inédit (API up, identité
   absente) — surface DoS locale bornée par le rate-limit d'`unlock`
   et argon2id. Le même état sert le gate de premier boot

@@ -24,6 +24,10 @@ en haut.
   spawné par l'UI → `identity_pending` (API up, aucune signature) —
   aucune clé jetable sur le fil ; headless auto-génère sans flag.
   Même machinerie que le locked mode.
+- **Mode invité** (ajout) : troisième résolution du gate — graine en
+  mémoire uniquement, `database.enabled` forcé off, identité détruite
+  à la fermeture. Inlinkabilité inter-sessions au prix d'être un
+  inconnu permanent (budget `intro_seed`, jamais de réputation).
 
 ## ADR-0017 : passage au statut « Acceptée » (2026-10-08)
 
