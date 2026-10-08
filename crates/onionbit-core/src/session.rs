@@ -21,6 +21,11 @@ use crate::config::CoreConfig;
 use crate::error::{CoreError, Result};
 use crate::notifier::{Notification, Notifier};
 
+/// Pieces jointes de messagerie (ADR-0019 etape 67) — `impl
+/// CoreSession` separee ; module enfant pour l'acces aux champs
+/// prives de `Inner`.
+pub mod attach;
+
 /// Seuil d'espace libre declenchant `low_space` (1 Gio) — le topic
 /// n'est plus emis par Tribler 8.x ; cette sonde d'ajout le re-active
 /// cote daemon (format `disk_usage_data` identique).
@@ -296,13 +301,13 @@ struct Inner {
 impl Inner {
     /// Clone de l'Arc base courant (placeholder memoire en shell,
     /// base fichier une fois l'identite resolue — sauf invite).
-    fn db_arc(&self) -> Arc<Database> {
+    pub(crate) fn db_arc(&self) -> Arc<Database> {
         self.db.read().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
     /// Stack IPv8 en cours (`None` en `pending`/`locked` ou stack
     /// desactivee).
-    fn ipv8_stack(&self) -> Option<Arc<crate::ipv8_stack::Ipv8Stack>> {
+    pub(crate) fn ipv8_stack(&self) -> Option<Arc<crate::ipv8_stack::Ipv8Stack>> {
         self.ipv8.read().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
@@ -553,6 +558,7 @@ impl CoreSession {
         self.start_services(&services_config).await;
         self.spawn_restore();
         self.spawn_progress_loop();
+        self.spawn_attach_reaper();
         self.inner
             .guest
             .store(guest, std::sync::atomic::Ordering::Relaxed);

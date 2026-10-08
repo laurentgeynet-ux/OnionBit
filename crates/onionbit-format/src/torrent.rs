@@ -316,6 +316,76 @@ pub fn to_public(data: &[u8]) -> Result<Vec<u8>> {
     }
 }
 
+/// Taille du sel `x-onionbit` injecte dans `info` (ADR-0019 §4).
+pub const ONIONBIT_SALT_LEN: usize = 16;
+
+/// Cle d'extension inseree dans le dict `info` des pieces jointes.
+pub const ONIONBIT_SALT_KEY: &[u8] = b"x-onionbit";
+
+/// Sale un `.torrent` pour une piece jointe de messagerie (ADR-0019) :
+/// injecte `x-onionbit: <16 octets aleatoires>` dans le dictionnaire
+/// `info` **serialise** et recalcule l'info-hash. Le sel rend
+/// l'infohash indevinable pour un contenu connu — l'essaim ephemere ne
+/// peut pas etre retrouve par observation de la DHT.
+///
+/// Post-traitement octet-niveau (meme chirurgie que [`to_public`]) :
+/// `x-onionbit` trie apres toutes les cles `info` standard
+/// (`'x' > 's'`) → insertion canonique juste avant le `e` de cloture
+/// du dict. La boucle de reception est deja coherente sans patch :
+/// `ut_metadata` sert `info_bytes` brut (sel inclus) et le destinataire
+/// re-hash les memes octets — l'infohash sale matche.
+///
+/// Retourne `(octets du .torrent sale, infohash sale)`.
+/// Erreur si le dict `info` contient deja `x-onionbit` ou une cle
+/// triant apres (ordre canonique rompu — nos torrents generes n'ont
+/// que des cles standard).
+pub fn salt_torrent(data: &[u8], salt: &[u8; ONIONBIT_SALT_LEN]) -> Result<(Vec<u8>, InfoHashV1)> {
+    let (info_start, info_end) = raw_info_span(data)?;
+    // Derniere cle du dict `info` : elle doit trier strictement avant
+    // `x-onionbit` pour que l'insertion avant le `e` final reste une
+    // serialisation canonique.
+    let mut pos = info_start + 1;
+    while pos < info_end && data[pos] != b'e' {
+        let key = parser::decode_at(data, pos, 1)?;
+        let kb = key
+            .value
+            .as_bytes()
+            .ok_or(FormatError::BadBencode {
+                offset: pos,
+                reason: "cle info non-binaire".into(),
+            })?
+            .to_vec();
+        if kb == ONIONBIT_SALT_KEY {
+            return Err(FormatError::BadBencode {
+                offset: pos,
+                reason: "info.x-onionbit deja present".into(),
+            });
+        }
+        if kb.as_slice() >= ONIONBIT_SALT_KEY {
+            return Err(FormatError::BadBencode {
+                offset: pos,
+                reason: "cle info triant apres x-onionbit — insertion non canonique".into(),
+            });
+        }
+        let val = parser::decode_at(data, key.end, 1)?;
+        pos = val.end;
+    }
+    if pos >= info_end || data[pos] != b'e' {
+        return Err(FormatError::Truncated { offset: pos });
+    }
+    // `10:x-onionbit16:<sel>` insere a `pos` (avant le `e` du dict info).
+    let mut entry = Vec::with_capacity(28 + ONIONBIT_SALT_LEN);
+    entry.extend_from_slice(b"10:x-onionbit16:");
+    entry.extend_from_slice(salt);
+    let mut out = Vec::with_capacity(data.len() + entry.len());
+    out.extend_from_slice(&data[..pos]);
+    out.extend_from_slice(&entry);
+    out.extend_from_slice(&data[pos..]);
+    let (s, e) = raw_info_span(&out)?;
+    let info_hash = hash::sha1(&out[s..e]);
+    Ok((out, info_hash))
+}
+
 /// Extrait le sous-arbre "file tree" d'un torrent v2 en liste de fichiers.
 fn collect_v2_files(
     tree: &BTreeMap<Vec<u8>, BValue>,
@@ -499,5 +569,46 @@ mod tests {
         let meta = TorrentMeta::parse(&public).unwrap();
         assert!(!meta.private);
         assert!(meta.announce.is_none());
+    }
+
+    /// Salage `x-onionbit` (ADR-0019) : insertion canonique dans le
+    /// dict `info` serialise, infohash recalcule et coherent avec le
+    /// re-hash du recepteur, contenu inchange.
+    #[test]
+    fn salt_torrent_insere_le_sel_et_rehash() {
+        let data = build_torrent();
+        let orig = TorrentMeta::parse(&data).unwrap();
+        let salt = [0xabu8; ONIONBIT_SALT_LEN];
+        let (salted, ih) = salt_torrent(&data, &salt).unwrap();
+        // Infohash nouveau, egal au SHA-1 de l'info serialise sale
+        // (exactement ce que le recepteur re-hash depuis ut_metadata).
+        assert_ne!(ih, orig.info_hash);
+        let meta = TorrentMeta::parse(&salted).unwrap();
+        assert_eq!(meta.info_hash, ih);
+        assert_eq!(meta.info_hash, hash::sha1(&meta.raw_info));
+        // Le sel est bien present dans `info` et en derniere cle
+        // (ordre canonique : 'x-onionbit' trie apres toutes les cles
+        // standard).
+        let span = meta.raw_info;
+        let needle = b"10:x-onionbit16:";
+        let pos = span
+            .windows(needle.len())
+            .position(|w| w == needle)
+            .expect("x-onionbit dans info");
+        assert_eq!(&span[pos + needle.len()..pos + needle.len() + 16], &salt);
+        // Pieces/fichiers inchanges — le seed retrouve les donnees.
+        assert_eq!(meta.pieces_v1, orig.pieces_v1);
+        assert_eq!(meta.files, orig.files);
+    }
+
+    /// Un dict `info` deja sale ou portant une cle triant apres
+    /// `x-onionbit` est refuse (insertion non canonique).
+    #[test]
+    fn salt_torrent_rejette_les_cas_non_canoniques() {
+        let data = build_torrent();
+        let salt = [1u8; ONIONBIT_SALT_LEN];
+        let (salted, _) = salt_torrent(&data, &salt).unwrap();
+        // Re-salage -> `x-onionbit` deja present.
+        assert!(salt_torrent(&salted, &salt).is_err());
     }
 }

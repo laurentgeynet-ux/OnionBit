@@ -31,6 +31,7 @@ use onionbit_db::messaging as dbm;
 use onionbit_db::Database;
 use onionbit_ipv8::UdpAddress;
 use onionbit_messaging::{
+    attach::AttachDesc,
     conv, derive_messaging_keys,
     gctl::{Gctl, RosterEntry},
     gmsg, hello, messaging_hash, preflight, Frame, MessagingConfig, MessagingError, MessagingKeys,
@@ -223,6 +224,24 @@ pub enum MessagingEvent {
         name: String,
         /// `pk_bin` de l'invitant.
         by: Vec<u8>,
+    },
+    /// Offre de piece jointe recue (ADR-0019 §4 — decodee et
+    /// persistee `msg_attachments`/`offered` ; l'acceptation est
+    /// explicite cote session → download anonyme).
+    Attach {
+        /// `conv_id` porteur (direct ou groupe).
+        conv: [u8; 16],
+        /// `pk_bin` de l'emetteur verifie.
+        contact: Vec<u8>,
+        /// `attach_id` local (= `id` de la trame recue — cible de
+        /// `attach_accept`/`attach_decline`).
+        attach_id: [u8; 16],
+        /// Infohash **sale** du torrent ephemere.
+        ih: [u8; 20],
+        /// Nom affiche du fichier.
+        name: String,
+        /// Taille annoncee en octets.
+        size: u64,
     },
 }
 
@@ -2087,6 +2106,12 @@ impl MessagingService {
                         svc.fail_unacked(&pk);
                     });
                 }
+                // Offre de piece jointe 1:1 (v2) : decodee, bornee,
+                // persistee `offered` — l'acceptation est explicite.
+                MsgKind::Attach => {
+                    let conv = raw.conv.unwrap_or_else(|| self.direct_conv_id(&pk_bin));
+                    self.inbound_attach(conv, &pk_bin, &raw);
+                }
                 _ => {}
             }
             let _ = self.events_tx.send(MessagingEvent::Frame {
@@ -2374,6 +2399,9 @@ impl MessagingService {
                     body: payload,
                 });
             }
+            // Offre de piece jointe de groupe (v2) : meme pipeline
+            // que la directe — `conv` = groupe, auteur = emetteur.
+            MsgKind::Attach => self.inbound_attach(conv, sender, raw),
             // `ack` de groupe : acquitte la livraison par membre
             // (`msg_id` = `id` de la trame emise vers ce membre).
             MsgKind::Ack => {
@@ -2395,6 +2423,198 @@ impl MessagingService {
             }
             _ => {}
         }
+    }
+
+    /// Corps `attach` admis (direct ou groupe — trame deja verifiee,
+    /// routage `conv` deja tranche). Decode, borne
+    /// (`attach_max_bytes`), persiste l'historique `msg` puis
+    /// `msg_attachments` en `offered` (FK `msg_id`) et notifie —
+    /// l'acceptation (download anonyme) est une decision explicite
+    /// cote session/API, jamais automatique.
+    fn inbound_attach(&self, conv: [u8; 16], sender: &[u8], raw: &RawFrame) {
+        let desc = match AttachDesc::decode_body(&raw.body, &self.cfg) {
+            Ok(d) => d,
+            Err(e) => {
+                self.stats.codec.fetch_add(1, Ordering::Relaxed);
+                tracing::debug!(error = %e, "corps attach rejete");
+                return;
+            }
+        };
+        if desc.size > self.cfg.attach_max_bytes {
+            self.stats.codec.fetch_add(1, Ordering::Relaxed);
+            return;
+        }
+        // Ligne `msg` de l'offre (historique + ancre FK
+        // `msg_attachments.msg_id`) — `mid` groupe les attaches
+        // d'un meme geste.
+        let mut mrow = Self::msg_row(
+            sender, "in", raw.seq, raw.ts, &raw.body, "received", &raw.id,
+        );
+        mrow.conv_id = conv.to_vec();
+        mrow.author_pk = Some(sender.to_vec());
+        mrow.mid = Some(desc.mid.to_vec());
+        self.persist_message(mrow);
+        if let Some(db) = &self.db {
+            let _ = db.with(|c| {
+                dbc::insert_attachment(
+                    c,
+                    &dbc::MsgAttachmentRow {
+                        attach_id: raw.id.to_vec(),
+                        conv_id: conv.to_vec(),
+                        msg_id: raw.id.to_vec(),
+                        ih: desc.ih.to_vec(),
+                        name: desc.name.clone(),
+                        size: desc.size as i64,
+                        role: "recv".into(),
+                        state: "offered".into(),
+                        created_at: now_secs() as i64,
+                    },
+                )
+            });
+        }
+        let _ = self.events_tx.send(MessagingEvent::Attach {
+            conv,
+            contact: sender.to_vec(),
+            attach_id: raw.id,
+            ih: desc.ih,
+            name: desc.name,
+            size: desc.size,
+        });
+    }
+
+    /// Reglages effectifs du service (bornes `attach_*`/`group_*`
+    /// relues par la session pour l'orchestration des pieces
+    /// jointes).
+    pub fn config(&self) -> &MessagingConfig {
+        &self.cfg
+    }
+
+    /// `pk_bin` de notre propre identite messagerie.
+    pub fn own_pk_bin(&self) -> Vec<u8> {
+        self.key.public_key().to_bin()
+    }
+
+    /// `conv_id` deterministe de la conversation directe avec `pk_bin`.
+    pub fn direct_conv(&self, pk_bin: &[u8]) -> [u8; 16] {
+        self.direct_conv_id(pk_bin)
+    }
+
+    /// Emet une offre `attach` dans une conversation (ADR-0019 §4) :
+    /// fan-out vers tous les membres `active` d'un groupe, ou vers le
+    /// contact d'une conv directe. Persiste la ligne
+    /// `msg_attachments` en `seeding` (une par offre — `attach_id`
+    /// genere par l'appelant, partage par tous les destinataires).
+    /// Retourne le nombre de trames effectivement emises (un membre
+    /// hors ligne n'est pas compte — online-only comme les `msg`).
+    pub async fn attach_send(
+        self: &Arc<Self>,
+        conv: [u8; 16],
+        attach_id: [u8; 16],
+        desc: &AttachDesc,
+    ) -> Result<usize> {
+        if desc.size > self.cfg.attach_max_bytes {
+            return Err(CoreError::InvalidState(
+                "messagerie : piece jointe hors borne attach_max_bytes",
+            ));
+        }
+        let body = desc.encode();
+        // Ligne `msg` de l'offre (historique + ancre FK
+        // `msg_attachments.msg_id`) — `mid` groupe les attaches
+        // d'un meme geste ; `id` = `attach_id` (cle primaire du
+        // descripteur local, partagee par tous les destinataires).
+        let own = self.own_pk_bin();
+        let mut mrow = Self::msg_row(&own, "out", 0, now_secs(), &body, "sent", &attach_id);
+        mrow.conv_id = conv.to_vec();
+        mrow.author_pk = Some(own.clone());
+        mrow.mid = Some(desc.mid.to_vec());
+        self.persist_message(mrow);
+        if let Some(db) = &self.db {
+            db.with(|c| {
+                dbc::insert_attachment(
+                    c,
+                    &dbc::MsgAttachmentRow {
+                        attach_id: attach_id.to_vec(),
+                        conv_id: conv.to_vec(),
+                        msg_id: attach_id.to_vec(),
+                        ih: desc.ih.to_vec(),
+                        name: desc.name.clone(),
+                        size: desc.size as i64,
+                        role: "offer".into(),
+                        state: "seeding".into(),
+                        created_at: now_secs() as i64,
+                    },
+                )
+            })?;
+        }
+        let kind = self
+            .db_state(|c| dbc::get_conversation(c, &conv))
+            .map(|r| r.kind)
+            .unwrap_or_default();
+        let targets: Vec<Vec<u8>> = if kind == "group" {
+            self.db
+                .as_ref()
+                .and_then(|db| db.with(|c| dbc::list_active_members(c, &conv)).ok())
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|pk| *pk != own)
+                .collect()
+        } else {
+            // Conv directe : retrouve le contact par sa `conv` derivee.
+            self.contacts
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .keys()
+                .filter(|pk| self.direct_conv_id(pk) == conv)
+                .cloned()
+                .collect()
+        };
+        if targets.is_empty() {
+            return Err(CoreError::InvalidState(
+                "messagerie : conversation sans destinataire",
+            ));
+        }
+        let mut sent = 0usize;
+        for pk in targets {
+            // Livraison par membre (`msg_delivery` = `id` de la
+            // trame emise — acquittee par l'`ack` en retour).
+            match self
+                .send_to_member(conv, &pk, MsgKind::Attach, body.clone())
+                .await
+            {
+                Ok(frame_id) => {
+                    sent += 1;
+                    if let Some(db) = &self.db {
+                        let _ = db.with(|c| {
+                            dbc::upsert_delivery(
+                                c,
+                                &dbc::MsgDeliveryRow {
+                                    msg_id: frame_id.to_vec(),
+                                    member_pk: pk.clone(),
+                                    status: "sent".into(),
+                                    ts: now_secs() as i64,
+                                },
+                            )
+                        });
+                    }
+                }
+                Err(_) => {
+                    if let Some(db) = &self.db {
+                        let _ = db.with(|c| {
+                            dbc::upsert_delivery(
+                                c,
+                                &dbc::MsgDeliveryRow {
+                                    msg_id: attach_id.to_vec(),
+                                    member_pk: pk.clone(),
+                                    status: "failed".into(),
+                                    ts: now_secs() as i64,
+                                },
+                            )
+                        });
+                    }
+                }
+            }
+        }
+        Ok(sent)
     }
 
     /// Corps `gctl` admis (trame deja verifiee + membre verifie
@@ -4622,5 +4842,160 @@ mod tests {
         assert!(svc.group_invite(&conv, &b2).await.is_err());
         // Un pair confine refuse le `send` 1:1.
         assert!(svc.send(&b2, b"x".to_vec()).await.is_err());
+    }
+
+    /// `attach` v2 directe : descripteur decode → ligne
+    /// `msg_attachments` `recv`/`offered` + evenement `Attach`
+    /// decode (l'acceptation reste un clic applicatif).
+    #[tokio::test]
+    async fn attach_recu_direct_persiste_et_notifie() {
+        let db = Arc::new(Database::memory().unwrap());
+        let svc = make_service_db(db.clone()).await;
+        let peer = LibNaClSecretKey::generate();
+        let keys = MessagingKeys {
+            send: [1u8; 32],
+            recv: [2u8; 32],
+        };
+        let pk_bin = bind(&svc, 98, &peer, &keys);
+        let conv = svc.direct_conv_id(&pk_bin);
+        // Conv directe persistee (FK de msg_attachments).
+        db.with(|c| {
+            dbc::upsert_conversation(
+                c,
+                &dbc::MsgConversationRow {
+                    conv_id: conv.to_vec(),
+                    kind: "direct".into(),
+                    name: "".into(),
+                    state: "active".into(),
+                    created_at: 1,
+                    updated_at: 1,
+                    last_read_ts: 0,
+                },
+            )
+        })
+        .unwrap();
+        let mut events = svc.subscribe();
+        let desc = AttachDesc {
+            ih: [5u8; 20],
+            mid: [9u8; 16],
+            name: "photo.png".into(),
+            size: 4096,
+        };
+        let w = wire_v2(&peer, 0, &keys.recv, conv, MsgKind::Attach, desc.encode());
+        svc.handle_incoming(98, &keys, &w);
+        let attach_id = loop {
+            match events.try_recv() {
+                Ok(MessagingEvent::Attach {
+                    conv: c,
+                    contact,
+                    attach_id,
+                    ih,
+                    name,
+                    size,
+                }) => {
+                    assert_eq!(c, conv);
+                    assert_eq!(contact, pk_bin);
+                    assert_eq!((ih, name.as_str(), size), ([5u8; 20], "photo.png", 4096));
+                    break attach_id;
+                }
+                Ok(_) => continue,
+                Err(_) => panic!("evenement Attach attendu"),
+            }
+        };
+        let row = db
+            .with(|c| dbc::get_attachment(c, &attach_id))
+            .unwrap()
+            .expect("ligne attach");
+        assert_eq!((row.role.as_str(), row.state.as_str()), ("recv", "offered"));
+        assert_eq!(row.conv_id, conv.to_vec());
+    }
+
+    /// `attach` v2 de groupe : meme pipeline, `conv` = groupe et
+    /// auteur = membre emetteur.
+    #[tokio::test]
+    async fn attach_recu_groupe_persiste_et_notifie() {
+        let db = Arc::new(Database::memory().unwrap());
+        let svc = make_service_db(db.clone()).await;
+        let peer = LibNaClSecretKey::generate();
+        let keys = MessagingKeys {
+            send: [1u8; 32],
+            recv: [2u8; 32],
+        };
+        let conv = conv::random_conv();
+        seed_conv(&svc, conv, "active");
+        let pk_bin = bind_group_member(&svc, 99, &conv, &peer, &keys);
+        let mut events = svc.subscribe();
+        let desc = AttachDesc {
+            ih: [7u8; 20],
+            mid: [3u8; 16],
+            name: "archive.zip".into(),
+            size: 1_000_000,
+        };
+        let w = wire_v2(&peer, 0, &keys.recv, conv, MsgKind::Attach, desc.encode());
+        svc.handle_incoming(99, &keys, &w);
+        let mut got = false;
+        while let Ok(ev) = events.try_recv() {
+            if let MessagingEvent::Attach {
+                conv: c, contact, ..
+            } = ev
+            {
+                assert_eq!((c, contact.as_slice()), (conv, pk_bin.as_slice()));
+                got = true;
+            }
+        }
+        assert!(got, "evenement Attach de groupe attendu");
+        // Le descripteur hors borne `attach_max_bytes` est ecarte.
+        let big = AttachDesc {
+            ih: [8u8; 20],
+            mid: [4u8; 16],
+            name: "trop.bin".into(),
+            size: svc.cfg.attach_max_bytes + 1,
+        };
+        let w2 = wire_v2(&peer, 1, &keys.recv, conv, MsgKind::Attach, big.encode());
+        svc.handle_incoming(99, &keys, &w2);
+        assert!(events.try_recv().is_err(), "attach hors borne -> rien");
+    }
+
+    /// `attach_send` : ligne `offer`/`seeding` persistee pour un
+    /// envoi de groupe (les envois eux-memes echouent faute de vrai
+    /// circuit — online-only, `sent` peut etre 0).
+    #[tokio::test]
+    async fn attach_send_persiste_offre_seeding() {
+        let db = Arc::new(Database::memory().unwrap());
+        let svc = make_service_db(db.clone()).await;
+        let conv = conv::random_conv();
+        seed_conv(&svc, conv, "active");
+        let peer = LibNaClSecretKey::generate();
+        let keys = MessagingKeys {
+            send: [1u8; 32],
+            recv: [2u8; 32],
+        };
+        let _member = bind_group_member(&svc, 97, &conv, &peer, &keys);
+        let attach_id = [42u8; 16];
+        let desc = AttachDesc {
+            ih: [6u8; 20],
+            mid: [2u8; 16],
+            name: "f.bin".into(),
+            size: 128,
+        };
+        let _sent = svc.attach_send(conv, attach_id, &desc).await.unwrap();
+        let row = db
+            .with(|c| dbc::get_attachment(c, &attach_id))
+            .unwrap()
+            .expect("offre persistee");
+        assert_eq!(
+            (row.role.as_str(), row.state.as_str()),
+            ("offer", "seeding")
+        );
+        // Hors borne -> refusee avant persistance.
+        let big = AttachDesc {
+            size: svc.cfg.attach_max_bytes + 1,
+            ..desc
+        };
+        assert!(svc.attach_send(conv, [7u8; 16], &big).await.is_err());
+        assert!(db
+            .with(|c| dbc::get_attachment(c, &[7u8; 16]))
+            .unwrap()
+            .is_none());
     }
 }

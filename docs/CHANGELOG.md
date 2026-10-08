@@ -3,6 +3,47 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## ADR-0019 étape 67 : pièces jointes (2026-10-09)
+
+- **`salt_torrent`** (`onionbit-format::torrent`) : injection
+  `x-onionbit: <16 o>` dans le dict `info` **sérialisé** (insertion
+  canonique — `'x'` trie après les clés standard) + `SHA1(info)`
+  recalculé. Salage post-encode, **zéro patch vendored** ; le
+  récepteur re-hash les octets bruts servis par `ut_metadata` →
+  infohash salé cohérent de bout en bout. Refus d'un `info` déjà
+  salé ou non canonique.
+- **`session/attach.rs`** (module enfant de `session`) : pipeline
+  complet `attach_offer` — source hors `@private` (upload `{path}`
+  direct refusé), staging `<@state>/messaging/attachments/<id>/`
+  borné (`attach_max_bytes` fichier, `attach_stage_max_bytes`
+  global), `librqbit::create_torrent` + salage, seed anonyme via
+  `add_torrent_bytes_anon_area` (`output_folder` staging,
+  `safe_seeding`, `messaging_hops`, `downloads.origin='messaging'`),
+  puis trames `attach` v2 ; `attach_accept` → magnet de l'infohash
+  salé en download anonyme (`destination {area,dir?}` : défaut
+  `attach_area`, `@public/messaging/` en public, `@private/downloads`
+  en privé, `identity_locked` zone fermée) ; `attach_decline` ;
+  `attach_list`.
+- **`attach_reaper`** (tâche `CoreSession`, intervalle dérivé des
+  TTL) : offres `seeding` au-delà de `attach_seed_ttl` → `expired`
+  (+ `remove` moteur et dossier de staging si
+  `attach_purge_on_expire`) ; dossiers de staging orphelins plus
+  vieux que `upload_ttl` purgés.
+- **`MessagingService`** : `inbound_attach` partagé direct/groupe —
+  `AttachDesc` décodé, borné `attach_max_bytes`, ligne `msg` +
+  `msg_attachments` `recv`/`offered` persistées (FK `msg_id`),
+  événement `MessagingEvent::Attach` (conv, contact, `attach_id`,
+  `ih`, nom, taille) ; `attach_send` fan-out v2 avec `msg` out +
+  `msg_delivery` par membre ; getters `config`/`own_pk_bin`/
+  `direct_conv`.
+- **`downloads::set_origin`** (`onionbit-db`) : marque `origin=
+  'messaging'` sur la ligne du download (seed émissif et réception
+  acceptée).
+- **Tests** : salage (insertion canonique + re-hash + refus),
+  `attach` directe et groupe (ligne `offered` + événement), borne
+  `attach_max_bytes`, persistance `offer`/`seeding` — 32 tests
+  messagerie verts. Route HTTP `POST /uploads` et SSE à l'étape 68.
+
 ## ADR-0019 étape 66 : groupes dans `MessagingService` (2026-10-09)
 
 - **`gmsg.rs`** (`onionbit-messaging`) : corps de `msg` de groupe

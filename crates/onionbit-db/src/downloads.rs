@@ -204,6 +204,17 @@ pub fn list(conn: &Connection) -> Result<Vec<DownloadRow>> {
     Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
 }
 
+/// Marque l'origine d'un telechargement (`'user'` | `'messaging'` —
+/// ADR-0019 : les pieces jointes sont distinguees des ajouts
+/// utilisateur pour la purge TTL et l'UI).
+pub fn set_origin(conn: &Connection, infohash: &[u8], origin: &str) -> Result<()> {
+    conn.execute(
+        "UPDATE downloads SET origin = ?2 WHERE infohash = ?1",
+        params![infohash, origin],
+    )?;
+    Ok(())
+}
+
 /// Supprime un telechargement connu.
 pub fn delete(conn: &Connection, infohash: &[u8]) -> Result<()> {
     conn.execute(
