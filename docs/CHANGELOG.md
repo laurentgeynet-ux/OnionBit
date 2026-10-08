@@ -24,19 +24,54 @@ en haut.
 - **Zone privée** : `EncryptedStorageFactory` implémentant le trait
   `TorrentStorage` de librqbit vendored (override **par torrent** via
   `AddTorrentOptions.storage_factory`) — fichiers `OBD` à chunks
-  AEAD ChaCha20-Poly1305, clés `HKDF(identity, onionbit/private-store/v1)`,
-  noms opaques HMAC (l'infohash et les noms réels ne fuient pas),
-  accès fermé en `locked`, `private/temp/.guest/` purgé en invité,
-  streaming `/stream` déchiffré à la volée sans temporaire en clair.
-- **Patch vendored prévu** : `session_persistence/json.rs` n'accepte
-  que les factories filesystem (`is_type_id` → bail) — whitelist du
-  `TypeId` privé requise pour conserver le fastresume `.bitv`.
-- Limites assumées : pas de déni plausible (magic `OBD` visible),
-  tailles observables, `onionbit.db` reste en clair (zone `state/`
-  sensible), `at_rest` recommandé sur média sans ACL (FAT32/exFAT).
+  AEAD ChaCha20-Poly1305 **à en-tête scellé** (zéro marqueur statique,
+  même discipline qu'ADR-0017), clés `HKDF(identity,
+  onionbit/private-store/v1)`, noms opaques HMAC (infohash et noms
+  réels invisibles), catalogue privé dans un manifest `OBM` scellé
+  (ligne `downloads` réduite à `HMAC(infohash)`), accès fermé en
+  `locked`, `private/temp/.guest/` purgé en invité, streaming
+  `/stream` déchiffré à la volée sans temporaire en clair.
+- **Patch vendored prévu** : `session_persistence/json.rs`
+  `update_db` → **skip** des factories non-filesystem au lieu de
+  `bail!` (qui fait échouer `add_torrent` entier) ; sûr car
+  `restore:false` fait de `onionbit.db` l'autorité de restauration et
+  le `.bitv` est écrit par `BitVFactory` adressé par infohash —
+  l'exclusion supprime aussi la fuite `<ih>.torrent`/`output_folder`.
+- Limites assumées : entropie/tailles de la zone privée observables
+  (pas de déni plausible — volumes cachés hors scope), catalogue
+  public en clair, `at_rest` proposé par bandeau UI sur média
+  amovible/sans-ACL (non bloquant).
 - Plan : Phase 11, étapes 57-63 — `docs/plans/roadmap_adr0018.md`.
   Aucun code engagé ; l'ADR passera « Acceptée » après le banc
   `bench_portable.ps1`.
+
+## ADR-0016 étapes 48c+48e : UI phrase + écrans du gate identitaire (2026-10-08)
+
+- **`daemon_launcher` passe `--first-run-gate`** : un `state_dir`
+  vierge spawné par l'UI reste en `identity_pending` — aucune clé
+  jetable n'est créée avant le choix utilisateur.
+- **Gate** (`lib/core/identity/identity_gate.dart`) : le `builder` de
+  `MaterialApp` remplace tout le contenu routé tant que
+  `state ∈ {pending, locked}` — écran « choisir l'identité »
+  (nouvelle / restaurer phrase-ou-clé / invité) et écran de
+  déverrouillage `OBSK` (400 → « mot de passe incorrect », 429 →
+  rate-limit, porte de sortie invitée). `identityGateProvider` est
+  réactif (SSE `events_start` + transitions de connexion) — pas de
+  polling.
+- **Bandeau invité** permanent quand `mode == "guest"`.
+- **Section Identité** : affichage de la phrase BIP39 (24 mots
+  numérotés, langue = locale UI, copie), carte rappel
+  `seed_acknowledged` insistante non bloquante (persistée côté daemon,
+  dismissible par session), proposition at-rest à la confirmation,
+  switch at-rest (désactivé + explication si rôle stealth pont),
+  import auto-détecté phrase/clé avec confirmation `force_legacy`
+  sur install seedée.
+- **`identity.at_rest` refusé via `/api/settings`** : bascule
+  uniquement par `POST /api/identity/at_rest` (mot de passe exigé) —
+  sinon le flag pourrait dire `true` avec une graine en clair.
+- Tests : 7 widgets gate (3 choix, create/guest, unlock, 400/429,
+  porte invitée, bandeau) + API `at_rest` via settings refusé.
+  `flutter analyze`/`test`/i18n lint propres.
 
 ## ADR-0016 étape 48d : session différée — pending / locked / invité (2026-10-08)
 

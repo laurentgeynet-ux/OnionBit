@@ -125,8 +125,8 @@ peut toutefois embarquer l'APK client.
   `@racine/` en plus des absolus ; `GET /api/files/browse` peut
   naviguer `@state`/`@public` mais **`@private` n'est jamais listé par
   walk du FS** — les noms physiques y sont opaques (§3) ; le listing
-  privé vient de la DB/métadonnées, exposé via un endpoint dédié sous
-  `api_key_auth`.
+  privé vient du manifest `OBM` (§3), exposé via un endpoint dédié
+  sous `api_key_auth`.
 
 ### 3. Deux zones : `public` (clair) et `private` (chiffré, lié à l'identité)
 
@@ -169,15 +169,29 @@ Par téléchargement, nouvel attribut `storage_area ∈ {public, private}`
     « rien n'est conservé » (les `.obd` résiduels seraient du bruit
     inexploitable, mais la promesse est zéro artefact).
 
-#### Format `OBD` — fichier chiffré par chunks (convention blobs portables)
+#### Format `OBD` — fichier chiffré par chunks, en-tête scellé
+
+Convention des blobs portables (AGENTS.md : version + nonce + AEAD +
+borne), avec une spécificité arrêtée en revue : **aucun marqueur
+statique** — même discipline que le transport ADR-0017 (« pas de
+constante filaire »). Le magic n'est pas écrit en clair : il vit dans
+l'en-tête *chiffré*.
 
 ```text
-en-tête :  "OBD" ‖ version(1) ‖ nonce_base(12) ‖ chunk_log2(1)
-           ‖ plain_len(8) ‖ reserved(6)
-chunk i :  AEAD(K_file, nonce_i, plain_i)   — ≤ chunk_size + tag(16)
-nonce_i :  nonce_base[0..8] ‖ i:u32be       (12 o — jamais réutilisé)
-AAD_i   :  en-tête complet ‖ i              (lie le chunk au fichier)
+fichier  :  nonce(12) ‖ hdr_ct ‖ chunk_0 ‖ chunk_1 ‖ …
+hdr_ct   :  AEAD(K_file, nonce)〔"OBD" ‖ v(1) ‖ chunk_log2(1)
+            ‖ plain_len(8) ‖ reserved〕      — en-tête scellé
+chunk i  :  AEAD(K_file, nonce_i, plain_i)   — ≤ chunk_size + tag(16)
+nonce_i  :  nonce[0..8] ‖ i:u32be            (12 o — jamais réutilisé)
+AAD_i    :  hdr_ct ‖ i                        (lie le chunk au fichier)
 ```
+
+À l'ouverture : dérivation de `K_file` → ouverture AEAD de l'en-tête
+(un seul decrypt, coût nul) → refus typé si magic/version absents —
+l'erreur est identique quelle que soit la cause (mauvaise clé, fichier
+corrompu, non-OBD), aucun oracle différencié. Sans la clé, un `.obd`
+est **indiscernable d'octets aléatoires** sous un nom HMAC : pas de
+signature statique exploitable (reste l'entropie — §4).
 
 - `chunk_size` = 64 Kio par défaut (`storage.private_chunk_kib`,
   borné 16–1024) : `pread`/`pwrite` découpent sur les bornes de chunk,
@@ -193,15 +207,48 @@ AAD_i   :  en-tête complet ‖ i              (lie le chunk au fichier)
   est la lecture, pas la réécriture fine ; le tag AEAD détecte toute
   modification à l'ouverture du chunk).
 
-#### Point d'intégration vendored
+#### Point d'intégration vendored — skip, pas whitelist
 
-`session_persistence/json.rs` refuse aujourd'hui de persister un
-torrent dont la factory n'est pas `FilesystemStorageFactory`/
-`MmapFilesystemStorageFactory` (`is_type_id` → `bail!`). Patch vendored
-(minimal, dans la lignée ADR-0007) : reconnaître le `TypeId` de
-`EncryptedStorageFactory` et persister `output_folder` en forme
-portable — sans cela le fastresume `.bitv` des torrents privés serait
-silencieusement perdu.
+`session_persistence/json.rs` `update_db` refuse aujourd'hui toute
+factory non-filesystem (`is_type_id` → `bail!`). Mécanique exacte
+vérifiée : l'erreur remonte à `Session::add_torrent` (`session.rs`
+~1612) et **fait échouer l'ajout entier** — sans patch, un torrent
+privé ne peut même pas être créé.
+
+Patch minimal (~15 lignes, lignée ADR-0007) : `update_db` **saute**
+(`Ok(())` + `debug!`) les factories non-filesystem au lieu de
+`bail!`. C'est le bon geste, pas un contournement :
+
+- `session.json` n'est pas notre autorité de restauration —
+  `SessionPersistenceConfig::Json { restore: false }` est déjà posé,
+  `restore_downloads` depuis `onionbit.db` fait foi ;
+- le fastresume `.bitv` est indépendant : `store_initial_check`/`load`
+  sont adressés par `TorrentIdOrHash::Hash` (`initializing.rs`),
+  `to_hash(Hash)` ne consulte jamais l'entrée de session ;
+- sauter l'entrée évite d'écrire `<ih>.torrent` et `output_folder`
+  en clair — une fuite de métadonnées privées sinon ;
+- et écarte le risque qu'un `restore:true` futur ré-ajoute un privé
+  avec la factory filesystem — écriture en clair, fuite majeure ;
+- `delete()` rendu idempotent (`warn` → `debug` sur id absent) : les
+  privés n'y figurent jamais.
+
+#### Catalogue privé — manifest `OBM`
+
+La table `downloads` ne doit pas révéler les métadonnées d'un contenu
+privé. Pour les lignes `storage_area = 'private'` :
+
+- la clé de ligne est `HMAC(K_names, infohash)` — l'infohash brut
+  n'apparaît pas en base (un infohash en clair identifie le contenu
+  via DHT/swarm) ;
+- `name`, `source_uri`, `torrent_data` et les chemins internes sont
+  externalisés dans un **manifest chiffré** `data/private/manifest.obm`
+  — blob de la famille `OB*` : `nonce ‖ AEAD(HKDF(K_store,
+  "manifest"))〔"OBM" ‖ v ‖ catalogue JSON borné〕`, réécrit atomique
+  (tmp+rename) à chaque mutation, borne de taille à l'ouverture ;
+- indisponible tant que la zone privée est fermée (`locked`) —
+  cohérent : le catalogue *est* la donnée privée.
+
+`public` reste en clair dans `onionbit.db` comme aujourd'hui.
 
 #### API
 
@@ -214,9 +261,10 @@ silencieusement perdu.
   en clair.
 - `DELETE …?remove_data` sur un privé supprime les `.obd` (effacement
   logique — sur flash pas de garantie anti-forensique, documenté).
-- `GET /api/private` (sous `api_key_auth`) : listing de la zone privé
-  depuis la DB (noms réels issus des métadonnées), état
-  `locked|mounted|guest-ephemeral`, compteurs.
+- `GET /api/private` (sous `api_key_auth`) : listing de la zone privée
+  depuis le manifest `OBM` (noms réels, fichiers, progression), état
+  `locked|mounted|guest-ephemeral`, compteurs — indisponible en
+  `locked` (409).
 
 #### Config
 
@@ -238,10 +286,10 @@ struct de config (AGENTS.md).
 
 | Menace | Mitigation | Limite honnête |
 | :--- | :--- | :--- |
-| Vol/saisie du média | zone privée = blobs AEAD liés à l'identité | magic `OBD` reconnaissable — **pas de déni plausible** |
-| FAT32/exFAT sans ACL | `identity.at_rest` **recommandé** quand la racine est amovible | sans at-rest, `state/identity/` reste lisible par tout montage |
-| Infohash/noms dans les fichiers | noms opaques HMAC | les tailles de fichiers fuient (padding non prévu v1) |
-| `onionbit.db` | vit dans `state/` (zone sensible) | `downloads.name`/`source_uri` d'un privé restent en clair en base v1 — documenté |
+| Vol/saisie du média | zone privée = blobs AEAD liés à l'identité, en-tête scellé | aucune signature statique ; la **présence** d'une zone d'entropie reste observable — pas de déni plausible |
+| FAT32/exFAT sans ACL | `identity.at_rest` proposé par bandeau UI quand la racine est détectée amovible/sans-ACL | non bloquant ; sans at-rest, `state/identity/` reste lisible par tout montage |
+| Infohash/noms dans les fichiers | noms opaques HMAC + catalogue `OBM` chiffré | tailles et *nombre* de fichiers observables (padding non prévu v1) |
+| `onionbit.db` | lignes privées réduites à `HMAC(infohash)` — métadonnées dans `OBM` | le catalogue public reste en clair (zone `state/` sensible par construction) |
 | Écrits résiduels OS | pagefile, indexation, miniatures | hors périmètre logiciel ; la zone publique est indexée normalement |
 | Invité | purge `private/temp/.guest/` | écrasement flash non garanti (effacement logique) |
 
@@ -251,6 +299,13 @@ struct de config (AGENTS.md).
 - **Corrélation volume/horaires** : la taille et les dates des `.obd`
   restent observables — même statut assumé que le volume réseau en
   ADR-0017.
+- **Média amovible** : le daemon détecte une racine sur volume
+  amovible ou FS sans ACL POSIX (`GetVolumeInformation`/
+  `f_flags`/`statvfs` selon l'OS — borne : « lecture des flags du
+  volume, jamais de règle d'écriture affaiblie ») → flag exposé à
+  l'API (`/api/identity` : `storage_removable: true`) → bandeau UI
+  proposant `identity.at_rest`. Non bloquant par défaut : l'utilisateur
+  garde le choix — le bandeau est le garde-fou, pas le verrou.
 
 ## Alternatives rejetées
 
@@ -265,13 +320,13 @@ struct de config (AGENTS.md).
   second secret à sauvegarder/verrouiller ; la racine ADR-0016
   couvre déjà le besoin — complexité sans gain.
 - **SQLite chiffré (SQLCipher)** : sortirait de `rusqlite` standard,
-  mélange les responsabilités ; les données sensibles hors fichiers
-  (messages, contacts, noms de téléchargements privés) restent un
-  sujet distinct — la DB vit déjà dans `state/`, zone sensible par
-  construction.
+  mélange les responsabilités — le besoin réel (métadonnées des
+  privés) est couvert par le manifest `OBM`, plus ciblé ; la DB vit
+  déjà dans `state/`, zone sensible par construction.
 - **Padding des tailles** : alourdirait chaque fichier d'un quantum
   fixe pour un gain de métadonnée marginal ; tailles = métadonnée
-  assumée (comme ADR-0017 pour le volume réseau).
+  assumée (comme ADR-0017 pour le volume réseau). Option
+  `private_size_pad_kib` envisageable si le modèle de menace évolue.
 
 ## Conséquences
 
@@ -296,13 +351,20 @@ struct de config (AGENTS.md).
   intact), bundle déplacé/renommé → redémarrage identique ;
 - `OBD` : round-trip, mauvaise clé/tag, troncatures à toutes les
   bornes, bit-flip par chunk, écritures non alignées + lectures
-  partielles, chunk absent → zéros, borne de taille ;
+  partielles, chunk absent → zéros, borne de taille — **et oracle
+  « zéro constante »** : deux fichiers de même contenu sous deux
+  identités n'ont aucun octet commun, aucun magic reconnaissable ;
+- manifest `OBM` : ligne DB privée sans infohash/nom en clair (oracle
+  strings), catalogue intact après restart, indisponible en `locked` ;
 - factory : `pread`/`pwrite` positionnés vs référence filesystem sur
   un torrent réel loopback — hash SHA-256 du contenu identique après
-  decrypt ; fastresume privé (restart → reprise sans re-télécharger) ;
+  decrypt ; fastresume privé (restart → reprise sans re-télécharger)
+  malgré l'absence d'entrée `session.json` (vérifier aussi que
+  `<ih>.torrent` n'est jamais écrit pour un privé) ;
 - `locked` : ajout privé → `409 identity_locked`, listing privé
   fermé, zone publique fonctionnelle ; `guest` → purge `temp/.guest/`
   constatée au shutdown ;
+- amovible : volume sans ACL → `storage_removable` vrai + bandeau ;
 - banc `bench_portable.ps1` : `state/`+`data/` copiés vers un second
   chemin (lettre/dossier différent) → API identique, aucun chemin
   absolu résiduel dans les artefacts persistés (oracle grep).
