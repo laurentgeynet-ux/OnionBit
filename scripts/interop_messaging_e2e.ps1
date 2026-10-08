@@ -1,4 +1,4 @@
-﻿# This file is part of OnionBit
+﻿# This file is part of OnionBit.
 #
 # Copyright (C) 2026 Laurent Geynet
 # SPDX-License-Identifier: GPL-3.0-or-later

@@ -1,4 +1,4 @@
-﻿# This file is part of OnionBit - a Rust port of the Tribler daemon.
+﻿# This file is part of OnionBit.
 # Copyright (C) 2026 Laurent Geynet <laurent.geynet@gmail.com>
 # SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -36,6 +36,11 @@ function Invoke-Step {
         Write-Host "ECHEC ($Title) - code $LASTEXITCODE" -ForegroundColor Red
         exit $LASTEXITCODE
     }
+}
+
+# Oracle ADR-0020 : notices GPL au nouveau format, balayage depot entier.
+Invoke-Step "check_gpl_headers (oracle ADR-0020)" {
+    pwsh -NoProfile -ExecutionPolicy Bypass -File "$PSScriptRoot\check_gpl_headers.ps1"
 }
 
 Invoke-Step "cargo check (workspace, tous les targets/features)" {
