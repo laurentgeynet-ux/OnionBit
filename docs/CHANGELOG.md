@@ -33,6 +33,12 @@ en haut.
   `seed_acknowledged` insistant non bloquant ; pas de re-lock à
   chaud ; `restore` en `ready` garde `restart_required` ; at-rest
   proposé à la confirmation de la phrase.
+- **Revue externe intégrée** (roadmap) : `stealth_bridge.key` legacy
+  jamais touché / dérivation autoritaire en `Seeded` ;
+  `AppState.stealth_transport` à résolution dynamique (session
+  différée) ; validation croisée `at_rest`×`role` à chaud dans
+  `/api/settings` ; dep `zeroize` à ajouter ; NFKD obligatoire au
+  décodage BIP39 (clavier macOS).
 
 ## ADR-0017 : passage au statut « Acceptée » (2026-10-08)
 
