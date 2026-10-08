@@ -41,6 +41,12 @@ en haut.
   (pas de déni plausible — volumes cachés hors scope), catalogue
   public en clair, `at_rest` proposé par bandeau UI sur média
   amovible/sans-ACL (non bloquant).
+- **Revue post-livraison ADR-0016** : les fondations (gate
+  `pending`/`locked`/invité, `OBSK`, HKDF) sont désormais livrées —
+  la zone privée est fermée en `pending` comme en `locked` (aucune
+  racine de dérivation résolue) ; le bandeau `at_rest` passe par le
+  dialogue dédié `POST /api/identity/at_rest` (mot de passe, les deux
+  sens) car le flag n'est plus basculable via `/api/settings`.
 - Plan : Phase 11, étapes 57-63 — `docs/plans/roadmap_adr0018.md`.
   Aucun code engagé ; l'ADR passera « Acceptée » après le banc
   `bench_portable.ps1`.

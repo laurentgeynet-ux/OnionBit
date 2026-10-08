@@ -1,8 +1,10 @@
 # ADR-0018 — Arborescence portable et zones de téléchargement public / privé
 
 Statut : **Proposée** (2026-10-08) — suite logique des ADR-0015/0016/0017
-(extensions, identité portable, transport furtif). Cadre de la Phase 11
-de `docs/plans/roadmap.md`.
+(extensions, identité portable, transport furtif). ADR-0016 est
+**implémentée** : graine HKDF, phrase BIP39, gate `pending`/`locked`/
+invité et `OBSK` sont livrés — les fondations de la zone privée
+existent déjà. Cadre de la Phase 11 de `docs/plans/roadmap.md`.
 
 ## Contexte
 
@@ -158,7 +160,9 @@ Par téléchargement, nouvel attribut `storage_area ∈ {public, private}`
   - `racine_identité` = la graine (install seedée) **ou** `crypt_sk`
     (identité legacy — la zone privée fonctionne aussi en legacy, la
     phrase BIP39 reste la voie de sauvegarde la plus propre) ;
-  - `locked` (at-rest OBSK) → la zone privée est **fermée** : ajouts
+  - `pending`/`locked` (gate ADR-0016 livré : `pending` = aucune
+    identité résolue sous `--first-run-gate`, `locked` = at-rest
+    OBSK) → la zone privée est **fermée** dans les deux cas : ajouts
     privés et listing privé → `409 identity_locked`, téléchargements
     privés persistés restaurés en pause avec drapeau `locked_area`
     (cohérent : pas de clé, pas de données) ;
@@ -264,7 +268,8 @@ privé. Pour les lignes `storage_area = 'private'` :
 - `GET /api/private` (sous `api_key_auth`) : listing de la zone privée
   depuis le manifest `OBM` (noms réels, fichiers, progression), état
   `locked|mounted|guest-ephemeral`, compteurs — indisponible en
-  `locked` (409).
+  `locked` (409) ; `locked` couvre aussi `pending` (aucune racine
+  de dérivation tant que le gate n'a pas résolu l'identité).
 
 #### Config
 
@@ -304,8 +309,13 @@ struct de config (AGENTS.md).
   `f_flags`/`statvfs` selon l'OS — borne : « lecture des flags du
   volume, jamais de règle d'écriture affaiblie ») → flag exposé à
   l'API (`/api/identity` : `storage_removable: true`) → bandeau UI
-  proposant `identity.at_rest`. Non bloquant par défaut : l'utilisateur
-  garde le choix — le bandeau est le garde-fou, pas le verrou.
+  proposant le scellement at-rest. Le bandeau ouvre un dialogue mot
+  de passe appelant `POST /api/identity/at_rest` — la bascule exige
+  le mot de passe dans les deux sens et est refusée via
+  `/api/settings` (ADR-0016 livré : un flag `true` sans `OBSK`
+  réel serait un faux sentiment de sécurité). Non bloquant par
+  défaut : l'utilisateur garde le choix — le bandeau est le
+  garde-fou, pas le verrou.
 
 ## Alternatives rejetées
 
@@ -361,10 +371,11 @@ struct de config (AGENTS.md).
   decrypt ; fastresume privé (restart → reprise sans re-télécharger)
   malgré l'absence d'entrée `session.json` (vérifier aussi que
   `<ih>.torrent` n'est jamais écrit pour un privé) ;
-- `locked` : ajout privé → `409 identity_locked`, listing privé
-  fermé, zone publique fonctionnelle ; `guest` → purge `temp/.guest/`
-  constatée au shutdown ;
-- amovible : volume sans ACL → `storage_removable` vrai + bandeau ;
+- `locked`/`pending` : ajout privé → `409 identity_locked`, listing
+  privé fermé, zone publique fonctionnelle ; `guest` → purge
+  `temp/.guest/` constatée au shutdown ;
+- amovible : volume sans ACL → `storage_removable` vrai + bandeau
+  (activation via `POST /api/identity/at_rest`, mot de passe) ;
 - banc `bench_portable.ps1` : `state/`+`data/` copiés vers un second
   chemin (lettre/dossier différent) → API identique, aucun chemin
   absolu résiduel dans les artefacts persistés (oracle grep).
