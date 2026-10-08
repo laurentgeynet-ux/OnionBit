@@ -137,7 +137,12 @@ multi-membres greffée sur les liaisons e2e 1:1 existantes**.
   joined_at)`. Le roster se propage par `gctl` : `invite` {conv,
   name, roster, by}, `join` (acceptation du membre), `leave`,
   `roster` (synchronisation complète à la jointure et à chaque
-  changement — dernier écrivain gagne sur `(joined_at, pk)`).
+  changement). **Règle anti-forge** — un `gctl` ne porte que la
+  signature du **lien** : un `left` de M n'est honoré que reçu
+  sur le lien signé de M ; la synchro `roster` peut **ajouter**
+  des membres (dernier écrivain gagne sur `(joined_at, pk)`,
+  validés quand ils se lient eux-mêmes) mais **jamais en
+  supprimer** — sinon tout membre forgerait un kick local.
 - **Portée de consentement — point de sécurité central** : un
   membre du roster qui n'est *pas* un de mes contacts obtient une
   portée **strictement confinée au groupe** : ses trames ne sont
@@ -148,13 +153,18 @@ multi-membres greffée sur les liaisons e2e 1:1 existantes**.
   Promotion en contact = action utilisateur explicite. À
   l'inverse, un membre qui est déjà contact garde sa portée
   complète — même table, même seq.
-- **Consentement de groupe** : l'invitation ne peut arriver que
-  sur un lien déjà consenti (un inconnu ne peut pas lier de
-  circuit — ADR-0011) ; elle ouvre une entrée `invited` bornée →
-  l'utilisateur accepte (`join` émis aux membres joignables) ou
-  décline (`leave` à l'invitant, conv oubliée). Membership ouvert
-  — tout membre peut inviter ; pas d'admin ni d'exclusion en v1
-  (limite assumée, §8).
+- **Consentement de groupe** : l'invitation n'est admise que si
+  l'émetteur est un **contact actif** — le consentement est
+  applicatif, pas à la liaison (un inconnu *peut* lier un
+  circuit : c'est le chemin `hello`→`pending` d'ADR-0011 ; son
+  `gctl invite` est écarté comme tout frame hors portée).
+  « Membership ouvert » se lit alors : tout membre peut inviter
+  **ses propres contacts** — un pair `scope='group'` (membre non
+  contact) ne peut pas m'inviter ailleurs. Elle ouvre une entrée
+  `invited` bornée → l'utilisateur accepte (`join` émis aux
+  membres joignables) ou décline (`leave` à l'invitant, conv
+  oubliée). Pas d'admin ni d'exclusion en v1 (limite assumée,
+  §8).
 - **Émission = fan-out** : un message de groupe est scellé une
   fois logiquement (`mid` applicatif 16 octets + `author` =
   signataire, dans le `body`) puis envoyé en une trame v2
@@ -211,14 +221,24 @@ upload ──► staging @state ──► createtorrent   attach {ih,name,size}
 - **Émission** : `POST …/conversations/{conv}/attachments
   {upload_ids:[…], note?}` — chaque upload est déplacé sous
   `@state/messaging/attachments/<attach_id>/`, puis
-  `librqbit::create_torrent` avec **salage entropique** du dict
-  `info` (champ `x-onionbit` = 16 octets aléatoires — rend
-  l'infohash indévinable : un hash de contenu connu pointerait le
-  swarm ; le nom réel reste propre, le sel ne sort pas du torrent).
-  `CreateTorrentOptions` n'expose aujourd'hui que
-  `name/trackers/piece_length` → **micro-patch vendored** (lignée
-  ADR-0007, ~option `info_extra`) — alternative sans patch
-  rejetée : saler le `name` polluerait le nom du fichier reçu.
+  `librqbit::create_torrent` standard, suivi d'un
+  **post-traitement `onionbit-format`** — même discipline
+  chirurgicale que `strip_trackers`/`to_public` : insertion de
+  `x-onionbit` = 16 octets aléatoires dans le dict `info`
+  **sérialisé** (la clé trie après toutes les clés standard →
+  insertion canonique avant le `e` final) puis re-calcul
+  `SHA1(info)` — l'infohash devient indévinable : un hash de
+  contenu connu pointerait le swarm ; le nom réel reste propre,
+  le sel ne sort pas du torrent. **Zéro patch** :
+  `TorrentMetaV1Info` vit dans `librqbit-core` (dépendance
+  registry, non vendored) mais la chirurgie n'exige que les
+  octets du `.torrent` produit ; ajout via `add_torrent_bytes`
+  (octets bruts salés). La boucle de réception est intacte sans
+  rien toucher : `send_metadata_piece` sert `info_bytes` brut,
+  le récepteur re-hash les octets reçus (`WithRawBytes`) →
+  l'infohash salé vérifie, serde ignore le champ inconnu.
+  Alternative rejetée : saler le `name` polluerait le nom du
+  fichier reçu.
   Le torrent est ajouté à la session en **seed** avec
   `anon_hops` = sauts messagerie, `output_folder` = le dossier de
   staging (aucune copie de données), `origin = "messaging"` en
@@ -397,10 +417,14 @@ l'option « recevoir en privé » n'est offerte que si
     "attach_max_per_msg": 8,
     "attach_stage_max_mib": 4096,    // quota global du staging
     "attach_seed_ttl_secs": 604800,  // 0 = politique seeding normale
-    "attach_area": "public",         // zone de réception ADR-0018 ;
-                                     // "private" → 409 tant que la
-                                     // zone est fermée ; "guest" =
-                                     // éphémère, purgé à la fermeture
+    "attach_area": "public",         // zone de réception ADR-0018 —
+                                     // valeurs : "public"|"private"
+                                     // (StorageArea) ; "private" →
+                                     // 409 tant que la zone est
+                                     // fermée ; en session invitée
+                                     // la zone privée s'écrit sous
+                                     // temp/.guest/ — purgée à la
+                                     // fermeture
     "upload_ttl_secs": 86400
   }
 }
@@ -414,6 +438,7 @@ l'option « recevoir en privé » n'est offerte que si
 | Empreinte réseau du groupe | aucun swarm de groupe — pas d'annonce DHT supplémentaire ; seules des liaisons e2e de plus | le nombre de circuits e2e par nœud croît (N-1) : volume observable par les relais, borné par `group_max_members` |
 | Pièce jointe : swarm observable | infohash **salé** (`x-onionbit` dans `info`) → non dévinable, non corrélable au contenu | taille du fichier visible dans le swarm ; l'offre expire avec le seed de l'émetteur (online-only hérité — pas de store-and-forward) |
 | Ordre des messages de groupe | dédup `(conv,author,mid)` + ordre total local `(ts,author,mid)` | ordre **non causal** assumé — deux réponses simultanées peuvent s'afficher inversées entre membres |
+| Kick forgé via `roster` | `left` de M admis seulement sur le lien signé de M ; la synchro `roster` est additive, jamais soustractive | un membre malveillant peut toujours flooder `gctl` — même rate-limit par lien que le texte |
 | Malware | réception = clic explicite, jamais automatique | le contenu reçu est exécuté sous la responsabilité utilisateur (même posture qu'un magnet reçu) |
 | Fichier privé attaché | lecture via `TorrentStorage` | copie **en clair** dans `@state/` (zone sensible assumée, purgeable) |
 | Attach reçu en zone privée | contenu `.obd` + catalogue `manifest.obm`, ligne `downloads` opaque | les métadonnées du fil (`msg_attachments`, corps du message `{ih,name,size}`) restent **en clair** dans `onionbit.db` — la zone couvre le contenu, pas les métadonnées (persistance en clair v1 d'ADR-0011) |
@@ -453,8 +478,7 @@ l'option « recevoir en privé » n'est offerte que si
   chez les pairs Phase 8) ; aucune annonce DHT de groupe.
 - **Négatif** : surface de protocole nouvelle (v2 + `gctl` +
   `attach` → fuzz et tests hostiles obligatoires) ; pression de
-  circuits par nœud dans les grands groupes (bornée) ; un second
-  patch vendored (`info_extra` du create_torrent) ; staging
+  circuits par nœud dans les grands groupes (bornée) ; staging
   disque à administrer (bornes + TTL).
 - **Interop** : strictement OnionBit↔OnionBit, comme la
   messagerie v1 — Tribler n'y voit rien (écart assumé et
@@ -472,6 +496,8 @@ l'option « recevoir en privé » n'est offerte que si
 - **Groupe loopback 3 nœuds** : création → invite → join → msg
   fan-out → roster sync → membre invité par un non-créateur →
   leave ; non-membre parlant `conv=G` → drop + compteur ;
+  `left`/`roster` forgé (départ d'un autre membre, suppression
+  via synchro) → ignoré ;
   pair `scope='group'` : aucun `pending`, aucun 1:1 ;
 - **Dédup/ordre groupe** : `mid` réémis après réouverture de
   circuit → un seul affichage ; statuts par membre (`failed`

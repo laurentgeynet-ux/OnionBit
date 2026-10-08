@@ -3,6 +3,28 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## ADR-0019 revues externes : intégration (2026-10-09)
+
+- **Salage `x-onionbit` sans patch** : `create_torrent` standard puis
+  post-traitement `onionbit-format` — même chirurgie octet-niveau que
+  `strip_trackers`/`to_public` (insertion dans `info` sérialisé, clé
+  triée dernière → canonique, `SHA1(info)` recalculé, ajout via
+  `add_torrent_bytes`). `TorrentMetaV1Info` étant dans `librqbit-core`
+  (registry), toute option de patch est abandonnée — vendored inchangé.
+- **Règle anti-forge `roster`** (tranchée, §3 + tableau des menaces +
+  tests) : un `left` de M n'est honoré que sur le lien signé de M ; la
+  synchro `roster` est additive (dernier écrivain sur `(joined_at, pk)`)
+  et jamais soustractive — sinon kick local par forge.
+- **Précisions intégrées** : `conv` en clé dict top-level signée (pas
+  dans `body`) ; invite admise seulement d'un contact actif ; préfixe
+  de dérivation `onionbit/conv/direct/v1` ; `attach_area` ∈
+  `{public, private}` (« guest » est un état de session, pas une
+  valeur).
+- **Roadmap dédiée** `docs/plans/roadmap_adr0019.md` (convention
+  ADR-0016/17/18) : cartographie v1, étapes 64–69 détaillées, critères
+  de sortie, questions tranchées ; `roadmap.md` Phase 12 réduite au
+  résumé + renvoi.
+
 ## ADR-0018 étape 63 : UI zones + banc portable + docs — ADR Acceptée (2026-10-08)
 
 - **Détection média amovible** (`onionbit-core::volume`) : Windows
