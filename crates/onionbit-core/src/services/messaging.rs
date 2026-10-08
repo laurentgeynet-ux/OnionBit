@@ -26,6 +26,7 @@ use std::time::{Duration, Instant};
 
 use onionbit_crypto::ipv8::dh::{pair_open_in, pair_seal_in};
 use onionbit_crypto::ipv8::keys::{LibNaClPublicKey, LibNaClSecretKey};
+use onionbit_db::conversations as dbc;
 use onionbit_db::messaging as dbm;
 use onionbit_db::Database;
 use onionbit_ipv8::UdpAddress;
@@ -514,6 +515,76 @@ impl MessagingService {
                 e.insert(pk_bin);
                 self.tunnel.join_swarm(mh, self.hops, false);
             }
+        }
+        self.backfill_conversations();
+    }
+
+    /// Rejeu de la migration v21 (ADR-0019) : materialise la
+    /// conversation directe de chaque contact et attribute
+    /// `conv_id` aux messages historiques qui n'en ont pas. La
+    /// derivation est deterministe (les deux extremites calculent
+    /// la meme valeur) — le rejeu est idempotent et relancable.
+    fn backfill_conversations(&self) {
+        let Some(db) = &self.db else { return };
+        let own = self.key.public_key().to_bin();
+        let contacts = self
+            .contacts
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>();
+        let now = now_secs() as i64;
+        if let Err(e) = db.with(|c| {
+            for pk_bin in &contacts {
+                let conv = onionbit_messaging::conv::direct_conv(&own, pk_bin);
+                dbc::upsert_conversation(
+                    c,
+                    &dbc::MsgConversationRow {
+                        conv_id: conv.to_vec(),
+                        kind: "direct".into(),
+                        name: String::new(),
+                        state: "active".into(),
+                        created_at: now,
+                        updated_at: now,
+                        last_read_ts: 0,
+                    },
+                )?;
+                dbm::backfill_conv(c, &conv, pk_bin)?;
+            }
+            Ok(())
+        }) {
+            tracing::warn!(error = %e, "rejeu des conversations directes impossible");
+        }
+    }
+
+    /// `conv_id` de la conversation directe avec `contact_pk`
+    /// (derivation deterministe ADR-0019 — aucune negociation).
+    fn direct_conv_id(&self, contact_pk: &[u8]) -> [u8; 16] {
+        onionbit_messaging::conv::direct_conv(&self.key.public_key().to_bin(), contact_pk)
+    }
+
+    /// Materialise la conversation directe d'un contact (idempotent
+    /// — creation paresseuse, ADR-0019 §2).
+    fn ensure_direct_conv(&self, contact_pk: &[u8]) {
+        let Some(db) = &self.db else { return };
+        let conv = self.direct_conv_id(contact_pk);
+        let now = now_secs() as i64;
+        if let Err(e) = db.with(|c| {
+            dbc::upsert_conversation(
+                c,
+                &dbc::MsgConversationRow {
+                    conv_id: conv.to_vec(),
+                    kind: "direct".into(),
+                    name: String::new(),
+                    state: "active".into(),
+                    created_at: now,
+                    updated_at: now,
+                    last_read_ts: 0,
+                },
+            )
+        }) {
+            tracing::warn!(error = %e, "persistance conversation directe");
         }
     }
 
@@ -1108,12 +1179,14 @@ impl MessagingService {
             retention_secs: 0,
             secure_delete: false,
             alias: String::new(),
+            scope: "contact".into(),
             created_at: now,
             updated_at: now,
         };
         if let Err(e) = db.with(|c| dbm::upsert_contact(c, &row)) {
             tracing::warn!(error = %e, "persistance contact messagerie");
         }
+        self.ensure_direct_conv(pk_bin);
     }
 
     /// Persiste les compteurs `seq` du contact (apres chaque trame
@@ -1135,9 +1208,15 @@ impl MessagingService {
     }
 
     /// Persiste un message (`direction` `in`/`out`, `status` de
-    /// livraison — voir [`dbm::MsgMessageRow`]).
-    fn persist_message(&self, row: dbm::MsgMessageRow) {
+    /// livraison — voir [`dbm::MsgMessageRow`]). `conv_id` vide =
+    /// conversation directe derivee (compat des constructeurs 1:1
+    /// historiques ; le groupe renseigne explicitement `conv_id`,
+    /// `author_pk` et `mid`).
+    fn persist_message(&self, mut row: dbm::MsgMessageRow) {
         let Some(db) = &self.db else { return };
+        if row.conv_id.is_empty() {
+            row.conv_id = self.direct_conv_id(&row.contact_pk).to_vec();
+        }
         if let Err(e) = db.with(|c| dbm::insert_message(c, &row)) {
             tracing::warn!(error = %e, "persistance message");
         }
@@ -1162,6 +1241,9 @@ impl MessagingService {
             body: body.to_vec(),
             status: status.into(),
             created_at: now_secs() as i64,
+            conv_id: Vec::new(),
+            author_pk: None,
+            mid: None,
         }
     }
 
@@ -2573,11 +2655,12 @@ mod tests {
         assert!(preflight(b"", &cfg).is_err());
         assert!(preflight(b"pas du bencode", &cfg).is_err());
         assert!(preflight(&vec![0u8; cfg.max_frame_len + 1], &cfg).is_err());
-        // `v=2` : suffixe present mais version refusee tot.
-        let bad = b"d4:body0:2:id16:0123456789abcdef3:seqi0e3:sig64:00000000000000000000000000000000000000000000000000000000000000002:tsi1e4:type3:msg1:vi2ee";
+        // `v=3` : suffixe present mais version refusee tot (v1/v2
+        // sont connues — la v2 est validee plus loin, sur `conv`).
+        let bad = b"d4:body0:2:id16:0123456789abcdef3:seqi0e3:sig64:00000000000000000000000000000000000000000000000000000000000000002:tsi1e4:type3:msg1:vi3ee";
         assert!(matches!(
             preflight(bad, &cfg),
-            Err(MessagingError::UnknownVersion(2))
+            Err(MessagingError::UnknownVersion(3))
         ));
         // Trame valide : le prefiltre laisse passer.
         let peer = LibNaClSecretKey::generate();

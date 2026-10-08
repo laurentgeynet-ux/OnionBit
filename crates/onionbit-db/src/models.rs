@@ -143,6 +143,12 @@ pub struct DownloadRow {
     /// `torrent_data` restent vides — le catalogue reel vit dans le
     /// manifest `manifest.obm`.
     pub storage_area: String,
+    /// Origine de l'ajout (ADR-0019) : `"user"` (defaut — ajout
+    /// explicite UI/CLI) ou `"messaging"` (swarm cache offert ou
+    /// recu par la messagerie — filtrable dans l'UI
+    /// Telechargements, et candidat a une purge au depart de
+    /// l'offre). Vide traite comme `"user"` a l'upsert.
+    pub origin: String,
     /// Fichiers selectionnes (indices ; `None` = tous, CSV en base
     /// comme `download_defaults/files` Python).
     pub selected_files: Option<Vec<i64>>,

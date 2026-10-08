@@ -3,6 +3,43 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## ADR-0019 étape 65 : persistance conversations/groupes dans `onionbit-db` (2026-10-09)
+
+- **Migration v21** : `msg_contacts.scope` ∈ `{contact,group}` (pair
+  confiné roster — la ligne sert les compteurs anti-replay du lien
+  sans le promouvoir contact) ; `msg_messages` + `conv_id` (16 o,
+  nullable) / `author_pk` / `mid` ; `msg_conversations`
+  (`kind` ∈ `{direct,group}`, `state` ∈ `{invited,active,left}`,
+  `last_read_ts`) ; `msg_members` (roster, PK `(conv,pk)`) ;
+  `msg_delivery` (PK `(msg_id,member_pk)`, `sent/acked/failed`) ;
+  `msg_attachments` (descripteurs magnet — `role` ∈ `{offer,recv}`) ;
+  `downloads.origin` ∈ `{user,messaging}` (swarms cachés filtrables
+  dans l'UI) ; indexes `msg_messages(conv_id,ts)` et
+  `msg_attachments(conv_id, ih)`.
+- **`conversations.rs`** : CRUD conversations + vue liste avec
+  compteur non lus en SQL, membres (synchro **additive** —
+  `joined_at` max, jamais de `left` par `upsert`), livraisons
+  (transition terminale non régressable), pièces jointes
+  (`insert` idempotent, `by_ih`, états).
+- **`messaging.rs`** : `MsgContactRow.scope` (posé à l'insertion,
+  préservé comme `alias`), `list_contacts` filtrée `scope='contact'`,
+  `MsgMessageRow` étendue, `list_messages_by_conv`, `has_group_mid`
+  (dédup `(conv,author,mid)`), `backfill_conv`.
+- **Rejeu v1** : `MessagingService::backfill_conversations` au
+  `load_state` — matérialise la conv directe dérivée de chaque
+  contact et attribue `conv_id` aux historiques (idempotent,
+  relançable ; la couche DB reste sans dépendance crypto).
+- **`persist_message`** remplit `conv_id` direct dérivé quand vide —
+  tous les messages 1:1 écrits portent désormais leur conversation.
+- **Tests** : `cycle_conversation` (roster additif, non lus, dédup
+  `mid`, livraison `sent→acked` non régressable, cascade réelle) ;
+  chaîne de migrations v1→v21 verte ; `preflight` service réajusté
+  (`v=3` refuse, v2 connue).
+- **Note** : la rétention reste par lien (`msg_contacts.retention_secs`)
+  — chaque lien de groupe ayant sa propre ligne, la politique s'applique
+  déjà ; une rétention par conversation peut être ajoutée plus tard
+  sans migration.
+
 ## ADR-0019 étape 64 : trame v2 + conversations dans `onionbit-messaging` (2026-10-09)
 
 - **`frame.rs`** : `v:2` = clé `conv` (16 o) au niveau dict, sous la

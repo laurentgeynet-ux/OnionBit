@@ -396,6 +396,69 @@ CREATE INDEX idx_ledger_pos_b ON ext_ledger_links(pk_b, seq_b);
     "
 ALTER TABLE downloads ADD COLUMN storage_area TEXT NOT NULL DEFAULT 'public';
 ",
+    // v21 : conversations de messagerie (ADR-0019, Phase 12) —
+    // abstraction « conversation » (`conv_id` 16 o) : directe
+    // deterministe `SHA1(domaine‖min‖max)`, groupe aleatoire.
+    // `scope='group'` sur `msg_contacts` : pair connu seulement via
+    // un roster — la ligne sert les compteurs anti-replay du lien
+    // sans jamais le promouvoir contact ni `pending`. `msg_members`
+    // = roster par groupe, `msg_delivery` = statut par membre,
+    // `msg_attachments` = offres/recus de pieces jointes (metadon-
+    // nees en clair v1 — assume ADR-0011). `downloads.origin`
+    // distingue les swarms caches de la messagerie ('messaging')
+    // des ajouts utilisateur ('user') — filtrable cote UI.
+    "
+ALTER TABLE msg_contacts ADD COLUMN scope TEXT NOT NULL
+    DEFAULT 'contact' CHECK (scope IN ('contact','group'));
+ALTER TABLE msg_messages ADD COLUMN conv_id BLOB;
+ALTER TABLE msg_messages ADD COLUMN author_pk BLOB;
+ALTER TABLE msg_messages ADD COLUMN mid BLOB;
+CREATE TABLE msg_conversations (
+    conv_id      BLOB PRIMARY KEY,
+    kind         TEXT NOT NULL CHECK (kind IN ('direct','group')),
+    name         TEXT NOT NULL DEFAULT '',
+    state        TEXT NOT NULL DEFAULT 'active'
+                 CHECK (state IN ('invited','active','left')),
+    created_at   INTEGER NOT NULL,
+    updated_at   INTEGER NOT NULL,
+    last_read_ts INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE msg_members (
+    conv_id    BLOB NOT NULL REFERENCES msg_conversations(conv_id)
+               ON DELETE CASCADE,
+    member_pk  BLOB NOT NULL,
+    added_by   BLOB NOT NULL,
+    state      TEXT NOT NULL CHECK (state IN ('member','left')),
+    joined_at  INTEGER NOT NULL,
+    PRIMARY KEY (conv_id, member_pk)
+);
+CREATE TABLE msg_delivery (
+    msg_id    BLOB NOT NULL REFERENCES msg_messages(id)
+              ON DELETE CASCADE,
+    member_pk BLOB NOT NULL,
+    status    TEXT NOT NULL CHECK (status IN ('sent','acked','failed')),
+    ts        INTEGER NOT NULL,
+    PRIMARY KEY (msg_id, member_pk)
+);
+CREATE TABLE msg_attachments (
+    attach_id  BLOB PRIMARY KEY,
+    conv_id    BLOB NOT NULL REFERENCES msg_conversations(conv_id)
+               ON DELETE CASCADE,
+    msg_id     BLOB NOT NULL REFERENCES msg_messages(id)
+               ON DELETE CASCADE,
+    ih         BLOB NOT NULL,
+    name       TEXT NOT NULL,
+    size       INTEGER NOT NULL,
+    role       TEXT NOT NULL CHECK (role IN ('offer','recv')),
+    state      TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+);
+CREATE INDEX idx_msg_messages_conv ON msg_messages(conv_id, ts);
+CREATE INDEX idx_msg_attachments_conv ON msg_attachments(conv_id, created_at);
+CREATE INDEX idx_msg_attachments_ih ON msg_attachments(ih);
+ALTER TABLE downloads ADD COLUMN origin TEXT NOT NULL
+    DEFAULT 'user' CHECK (origin IN ('user','messaging'));
+",
 ];
 
 /// Applique les migrations en attente sur une connexion ouverte.

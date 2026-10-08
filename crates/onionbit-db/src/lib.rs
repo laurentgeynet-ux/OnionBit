@@ -19,6 +19,7 @@
 
 pub mod attestations;
 pub mod channel;
+pub mod conversations;
 pub mod db;
 pub mod downloads;
 pub mod error;
