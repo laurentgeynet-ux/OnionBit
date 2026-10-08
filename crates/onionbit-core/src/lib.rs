@@ -27,6 +27,10 @@ pub mod ipv8_stack;
 pub mod notifier;
 pub mod paths;
 pub mod peer_stats_store;
+/// Zone de telechargement privee liee a l'identite (ADR-0018,
+/// etape 62) : manifeste `manifest.obm` AEAD, fabriques rqbit
+/// (`PrivateStorageFactory`/`OpaqueBitV`), GC d'orphelins.
+pub mod private_zone;
 pub mod queries;
 pub mod services;
 pub mod session;

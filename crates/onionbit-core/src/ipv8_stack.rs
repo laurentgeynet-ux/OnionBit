@@ -2808,6 +2808,15 @@ impl Ipv8Stack {
         // dossier dedie empeche la restauration croisee des torrents
         // anonymes sur le moteur en clair.
         cfg.persistence_dir = Some(self.state_dir.join("rqbit").join(format!("anon{hops}")));
+        // ADR-0018 : l'`OpaqueBitV` herite du moteur principal
+        // pointe sur `state/rqbit` — les `.bitv` opaques de la lane
+        // vivent dans son propre dossier (`clear_files` adresse le
+        // bon `<hmac>.bitv`).
+        if let Some(dir) = &cfg.persistence_dir {
+            if let Some(o) = &cfg.opaque_bitv {
+                cfg.opaque_bitv = Some(o.for_dir(dir.clone()));
+            }
+        }
         let engine = BtEngine::start(cfg).await?;
         self.tasks.register(
             Some("Ipv8Stack"),

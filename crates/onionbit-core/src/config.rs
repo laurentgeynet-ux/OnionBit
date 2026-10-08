@@ -87,8 +87,9 @@ impl Default for DownloadDefaults {
 ///
 /// `public` : contenu en clair sous `data/public/…`. `private` :
 /// contenu chiffre `OBD` lie a l'identite sous `data/private/…`
-/// (etapes 60-62 — la zone refuse tout ajout tant que
-/// `EncryptedStorageFactory` n'est pas cablee).
+/// (fichiers opaques, fastresume `<hmac>.bitv`, catalogue dans le
+/// manifest `manifest.obm` — zone absente tant que l'identite est
+/// verrouillee).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum StorageArea {
     /// Zone publique en clair (`data/public/`).

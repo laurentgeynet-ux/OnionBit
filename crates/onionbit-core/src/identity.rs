@@ -84,6 +84,12 @@ pub struct IdentityMaterial {
     /// Session invitee : aucun fichier identite ne doit etre ecrit ;
     /// l'identite meurt avec le processus.
     pub guest: bool,
+    /// Racine `K_store` de la zone privee (ADR-0018) : la graine elle-
+    /// meme en mode `Seeded`/`guest` (deterministe entre runs,
+    /// protegee par `OBSK` quand l'at-rest est actif) et
+    /// `SHA-256(keypair)` en `Legacy` — liee a l'identite, jamais
+    /// persistee ni derivee d'un fichier mutable comme `bridge_sk`.
+    pub store_root: [u8; 32],
 }
 
 impl IdentityMaterial {
@@ -101,6 +107,7 @@ impl IdentityMaterial {
             bridge_sk: seed.derive_bridge_key(),
             kind: IdentityKind::Seeded,
             guest,
+            store_root: *seed.as_bytes(),
         }
     }
 }
@@ -175,10 +182,15 @@ pub fn load_or_generate(state_dir: &Path) -> Result<IdentityMaterial> {
                 bridge_sk,
                 kind: IdentityKind::Seeded,
                 guest: false,
+                store_root: *seed.as_bytes(),
             })
         }
         IdentityState::Legacy { keypair } => Ok(IdentityMaterial {
             bridge_sk: load_or_create_bridge_sk(state_dir, IdentityKind::Legacy)?,
+            // Zone privee ancree sur la cle maitresse legacy (aucune
+            // graine n'existe) — deterministe tant que le fichier
+            // `ipv8_keypair.bin` survit, lie a l'identite.
+            store_root: onionbit_crypto::hash::sha256(&keypair.to_bin()),
             keypair: *keypair,
             kind: IdentityKind::Legacy,
             guest: false,
@@ -196,6 +208,7 @@ pub fn load_or_generate(state_dir: &Path) -> Result<IdentityMaterial> {
                 bridge_sk,
                 kind: IdentityKind::Seeded,
                 guest: false,
+                store_root: *seed.as_bytes(),
             })
         }
         IdentityState::Sealed { .. } => Err(CoreError::InvalidState(
@@ -306,6 +319,7 @@ pub fn create_seed(state_dir: &Path, password: Option<&str>) -> Result<IdentityM
                 bridge_sk: seed.derive_bridge_key(),
                 kind: IdentityKind::Seeded,
                 guest: false,
+                store_root: *seed.as_bytes(),
             })
         }
     }

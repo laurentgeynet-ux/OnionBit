@@ -3,6 +3,63 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## ADR-0018 étape 62 : câblage core/API — `storage_area`, manifeste `OBM`, locked, invité (2026-10-09)
+
+- **DB** : migration `downloads.storage_area TEXT NOT NULL DEFAULT
+  'public'` ; `DownloadRow.storage_area` lu/écrit (`upsert` normalise
+  `""`→`public`). Ligne privée = clé `HMAC(K_names,"row/"‖ih)` dans
+  `infohash`, `name`/`source_uri`/`torrent_data` absents — oracle
+  d'intégration vérifiant `SELECT` vide sous le vrai infohash.
+- **`onionbit-crypto::obm`** : manifeste `data/private/manifest.obm` —
+  magic+version, nonce aléatoire, AEAD sous
+  `HKDF(K_store,"manifest")`, borne à l'ouverture ; persistance
+  atomique `.tmp`→fsync→rotation `.bak`→rename+fsync dir ; reprise
+  `.bak` sur corruption, `None` sur double perte.
+- **`onionbit-core::private_zone`** : `PrivateZone` montée à
+  `try_start_identity` depuis `IdentityMaterial::store_root` (graine
+  `Seeded`/invité, `SHA-256(keypair)` en legacy) — **le matériel est
+  désormais chargé même sans stack IPv8** (la zone est liée à
+  l'identité, pas au réseau). `locked`/`pending`/`private_enabled=off`
+  → zone absente → ajout privé refusé `InvalidState` → `409
+  identity_locked` côté API. Invité : racine `temp/.guest/` éphémère,
+  aucun manifeste, purge au `stop`. `scan_orphans` au montage :
+  reconstruction des entrées via `scan_ct` (aimant `btih` minimal)
+  sinon rapport `.obd`/`.bitv` orphelins (`GET/DELETE
+  /api/private/orphans`).
+- **Cycle de vie** : `add_*_anon_area` (URI/magnet/octets) → factory
+  privée + `subdir` `@private/temp|downloads` ; `restore_downloads`
+  route les lignes privées via l'`OBM` (vrai infohash + octets
+  torrent), jamais par la clé opaque ; `readd_row` lit le manifeste ;
+  `remove` efface ligne opaque + entrée manifeste + groupe `.obd` +
+  `<hmac>.bitv` ; `move_on_completion` privé = rename du groupe
+  `temp`→`downloads` + fallback copie ; `move_storage` étendu au
+  franchissement de zone (ré-encapsulation `OBD` / décapsulation, pas
+  de `fs` brut) ; `pending` privés clés par HMAC ; boucle de
+  progression et `persist` par `stored_row_key` — zéro infohash réel
+  dans les logs/la base/le catalogue public (backup `.torrent` clair
+  désactivé en privé : les octets vivent dans le manifeste).
+- **API** : `PUT /api/downloads` accepte `area` (query+JSON) et
+  `destination:"<chemin>"|{area,dir?}` — inférence privée si la cible
+  est sous `data/private` ; `GET /api/downloads` joint par clé opaque
+  et expose `storage_area`/`locked_area` (destination privée affichée
+  en spec `@private/…`, jamais le dossier de groupe) ; `GET
+  /api/private` (sous `api_key_auth` + gate identitaire) : état
+  `locked|mounted|guest`, catalogue manifeste, orphelins ;
+  `files/browse|list|create` refusent `@private/…` et tout chemin
+  canonique sous `data/private` (403) ; `dirspace` accepte
+  `area=public|private` ; sonde `low_space` couvre les deux racines.
+- **Fixes** : `ensure_tree` ne crée plus `manifest.obm` en *dossier*
+  (écriture `Accès refusé` sous Windows) ; `obm::store_manifest`
+  ouvre le `.tmp` en écriture pour `sync_all` (Windows exige
+  `GENERIC_WRITE`) ; `PrivateStorage::init` matérialise le premier
+  `.obd` d'office — sans sceau `scan_ct`, un groupe jamais écrit
+  serait irreversiblement anonyme après double perte du manifeste.
+- **Tests** `private_zone.rs` (8) : opacité DB/disque + manifeste,
+  restauration `OBM` au redémarrage, refus `locked` (gate) puis
+  `OBSK`→unlock→reprise, invité éphémère, orphelins rapportés+purgés,
+  double perte → reconstruction `scan_ct`, suppression complète. Les
+  oracles `api.rs` identité migrés vers `state/identity/` (étape 58).
+
 ## ADR-0018 étape 61 : `PrivateStorageFactory` + `OpaqueBitV` + patch persistence vendored (2026-10-09)
 
 - **`onionbit-bittorrent::storage_private`** : `StorageFactory` +

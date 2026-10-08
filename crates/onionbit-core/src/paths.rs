@@ -191,10 +191,10 @@ impl PathRoots {
         self.private.join("torrents")
     }
 
-    /// `data/private/manifest` — `manifest.obm` (catalogue prive
-    /// scelle, ADR-0018 etape 62).
+    /// `data/private/manifest.obm` — catalogue prive scelle
+    /// (ADR-0018 etape 62).
     pub fn private_manifest(&self) -> PathBuf {
-        self.private.join("manifest")
+        self.private.join("manifest.obm")
     }
 
     /// `data/private/rqbit` — persistance fastresume de la zone
@@ -267,7 +267,9 @@ impl PathRoots {
             self.private_temp(),
             self.private_downloads(),
             self.private_torrents(),
-            self.private_manifest(),
+            // `manifest.obm` est un FICHIER — c'est son parent
+            // `data/private/` qui doit exister.
+            self.private.clone(),
             self.private_rqbit(),
         ] {
             std::fs::create_dir_all(&d)?;
@@ -921,11 +923,15 @@ mod tests {
             r.public_torrents(),
             r.private_temp(),
             r.private_downloads(),
-            r.private_manifest(),
             r.private_rqbit(),
         ] {
             assert!(d.is_dir(), "dossier attendu : {}", d.display());
         }
+        // `manifest.obm` est un fichier — `ensure_tree` cree son
+        // parent `data/private/`, jamais un dossier du meme nom.
+        let manifest = r.private_manifest();
+        assert!(!manifest.is_dir());
+        assert!(manifest.parent().unwrap().is_dir());
     }
 
     #[test]

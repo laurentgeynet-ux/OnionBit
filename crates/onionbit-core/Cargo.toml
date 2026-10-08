@@ -44,5 +44,6 @@ onionbit-tunnel = { path = "../onionbit-tunnel" }
 onionbit-messaging = { path = "../onionbit-messaging" }
 # Banc live (`tests/live_bench.rs`) : `create_torrent` et options rqbit.
 librqbit.workspace = true
+librqbit-core.workspace = true
 sysinfo = "0.32"
 

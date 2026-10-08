@@ -3115,6 +3115,7 @@ dependencies = [
  "fs2",
  "hex 0.4.3",
  "librqbit",
+ "librqbit-core",
  "librqbit-upnp",
  "lz4_flex",
  "onionbit-bittorrent",

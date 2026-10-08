@@ -387,6 +387,15 @@ CREATE TABLE ext_ledger_links (
 CREATE INDEX idx_ledger_pos_a ON ext_ledger_links(pk_a, seq_a);
 CREATE INDEX idx_ledger_pos_b ON ext_ledger_links(pk_b, seq_b);
 ",
+    // v20 : zone de stockage du telechargement (ADR-0018) —
+    // `public` (clair, `data/public/`) ou `private` (chiffre `OBD`
+    // lie a l'identite, `data/private/`). Pour les lignes `private`,
+    // `infohash` porte `HMAC(K_names, infohash)` — jamais l'infohash
+    // en clair — et `name`/`source_uri`/`torrent_data` restent vides :
+    // le catalogue reel vit dans le manifest `manifest.obm` chiffre.
+    "
+ALTER TABLE downloads ADD COLUMN storage_area TEXT NOT NULL DEFAULT 'public';
+",
 ];
 
 /// Applique les migrations en attente sur une connexion ouverte.

@@ -136,6 +136,13 @@ pub struct DownloadRow {
     pub queue_position: i64,
     /// Dossier des fichiers termines (`completed_dir` Python).
     pub completed_dir: Option<String>,
+    /// Zone de stockage ADR-0018 : `"public"` (clair, `data/public/`)
+    /// ou `"private"` (chiffre `OBD` lie a l'identite,
+    /// `data/private/`). Sur une ligne privee, `infohash` porte la
+    /// cle opaque `HMAC(K_names, infohash)` et `name`/`source_uri`/
+    /// `torrent_data` restent vides — le catalogue reel vit dans le
+    /// manifest `manifest.obm`.
+    pub storage_area: String,
     /// Fichiers selectionnes (indices ; `None` = tous, CSV en base
     /// comme `download_defaults/files` Python).
     pub selected_files: Option<Vec<i64>>,

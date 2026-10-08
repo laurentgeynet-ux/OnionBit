@@ -74,6 +74,18 @@ impl ApiError {
         }
     }
 
+    /// 403 — action interdite par politique (zone privee non
+    /// navigable en clair — ADR-0018).
+    pub fn forbidden(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::FORBIDDEN,
+            body: ApiErrorBody {
+                handled: true,
+                message: message.into(),
+            },
+        }
+    }
+
     /// 429 — plafond de tentatives atteint (`identity/unlock`,
     /// ADR-0016).
     pub fn too_many_requests(message: impl Into<String>) -> Self {

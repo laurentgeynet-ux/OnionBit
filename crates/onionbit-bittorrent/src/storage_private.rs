@@ -313,6 +313,16 @@ impl TorrentStorage for PrivateStorage {
                 }
             })
             .collect();
+        // ADR-0018 etape 62 : materialise le premier `.obd` reel des
+        // l'init — son sceau `scan_ct` est la seule cle de
+        // reconstruction d'un groupe apres double perte du manifeste
+        // (`manifest.obm` + `.bak`). Sans lui, un ajout prive reste
+        // en pause avant toute E/S serait anonyme sur disque a tout
+        // jamais (le nom de groupe et la ligne DB sont des HMAC
+        // non inversibles). Les autres fichiers restent paresseux.
+        if let Some(f) = self.files.iter().find(|f| !f.padding) {
+            f.materialize(self)?;
+        }
         Ok(())
     }
 

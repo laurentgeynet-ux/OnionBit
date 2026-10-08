@@ -93,7 +93,16 @@ pub async fn get_downloads(
             let mut info = DownloadInfo::from_stats(s);
             let dl = state.session.find_download(&s.info_hash);
             let ih_bytes = onionbit_crypto::hash::from_hex(&s.info_hash);
-            let row = ih_bytes.as_ref().and_then(|ih| row_map.get(ih));
+            // ADR-0018 : les lignes `private` sont clees par HMAC —
+            // la jointure passe par `stored_row_key` (identite pour
+            // une ligne publique).
+            let row = ih_bytes
+                .as_ref()
+                .map(|ih| state.session.stored_row_key(ih))
+                .and_then(|k| row_map.get(&k));
+            if let Some(ih) = &ih_bytes {
+                info.storage_area = state.session.storage_area_of(ih).as_str().to_string();
+            }
             // Reglages persistes (`DownloadConfig` checkpointe
             // Python) : safe_seeding, limites, ratio, queue…
             if let Some(r) = row {
@@ -146,7 +155,25 @@ pub async fn get_downloads(
             info.hops = hops.max(info.hops);
             info.anon_download = info.hops > 0;
             if let Some(dl) = &dl {
-                info.destination = dl.output_folder().display().to_string();
+                // ADR-0018 : pour un prive, `output_folder` est le
+                // dossier de groupe opaque (`…/temp/<hmac>`) — on
+                // expose le spec `@private/…` de la sous-racine, pas
+                // la topologie chiffree.
+                if info.storage_area == "private" {
+                    info.destination = ih_bytes
+                        .as_ref()
+                        .and_then(|b| <[u8; 20]>::try_from(b.as_slice()).ok())
+                        .and_then(|a| {
+                            state.session.private_zone().map(|z| {
+                                z.subdir_of(&onionbit_bittorrent::Id20::new(a))
+                                    .spec()
+                                    .to_string()
+                            })
+                        })
+                        .unwrap_or_else(|| "@private".to_string());
+                } else {
+                    info.destination = dl.output_folder().display().to_string();
+                }
                 info.private = dl.is_private();
                 info.trackers = crate::handlers::downloads_extra::trackers_json(
                     dl.trackers(),
@@ -207,6 +234,9 @@ pub async fn get_downloads(
         downloads.push(serde_json::json!({
             "infohash": p.infohash,
             "name": p.name.unwrap_or_default(),
+            // ADR-0018 : un magnet prive pendent est deja cle par la
+            // cle opaque (pas de nom/infohash reel a exposer).
+            "storage_area": if p.private { "private" } else { "public" },
             "progress": 0.0,
             "status": "METADATA",
             "status_code": 7,
@@ -229,20 +259,34 @@ pub async fn get_downloads(
     // indéfiniment pretait a confusion (le `tribler_exception` emis
     // au skip porte la raison).
     let restore_done = state.session.restore_finished();
-    if !restore_done {
+    // `private_locked` : zone non montee (identite verrouillee ou
+    // `private_enabled=false`) — ces lignes sont differees SANS
+    // echeance, elles restent visibles meme apres `restore_done`.
+    let private_locked = state.session.private_area_state() == "locked";
+    if !restore_done || private_locked {
         let visible: std::collections::HashSet<String> = downloads
             .iter()
             .filter_map(|d| d.get("infohash").and_then(|v| v.as_str()).map(String::from))
             .collect();
+        // ADR-0018 : une ligne `private` differee faute de zone
+        // montee (identite verrouillee) est marquee `locked_area` —
+        // son infohash expose est deja la cle opaque, son nom est
+        // vide en base (catalogue dans `manifest.obm`).
         for r in row_map.values() {
+            let private = r.storage_area == "private";
+            if restore_done && !(private && private_locked) {
+                continue;
+            }
             let infohash = onionbit_crypto::hash::to_hex(&r.infohash);
             if visible.contains(&infohash) {
                 continue;
             }
-            let stopped = r.paused || r.user_stopped;
+            let stopped = r.paused || r.user_stopped || (private && private_locked);
             downloads.push(serde_json::json!({
                 "infohash": infohash,
                 "name": r.name.clone().unwrap_or_default(),
+                "storage_area": r.storage_area,
+                "locked_area": private && private_locked,
                 "progress": 0.0,
                 "status": if stopped { "STOPPED" } else { "WAITING_FOR_HASHCHECK" },
                 "status_code": if stopped { 5 } else { 1 },
@@ -371,6 +415,9 @@ pub struct AddDownloadQuery {
     /// Requete emise depuis un CLI.
     #[serde(default, deserialize_with = "deserialize_optional_bool")]
     pub cli: Option<bool>,
+    /// ADR-0018 : zone de stockage (`public`|`private`) — le corps
+    /// JSON accepte aussi `destination` en objet `{area, dir?}`.
+    pub area: Option<String>,
 }
 
 /// Deserialise un booleen optionnel souple (accepte true/false, "true"/"false", "1"/"0").
@@ -431,7 +478,12 @@ pub struct AddDownloadRequest {
     /// Chemin local d'un fichier `.torrent` sur le disque du daemon.
     pub torrent: Option<String>,
     /// Repertoire de destination (defaut : config du daemon).
-    pub destination: Option<String>,
+    /// ADR-0018 : chaine de chemin (compat) ou objet
+    /// `{ "area": "public"|"private", "dir": "<chemin>" }` — `dir`
+    /// omis = sous-racine par defaut de la zone.
+    pub destination: Option<serde_json::Value>,
+    /// Zone de stockage explicite — prime sur `destination.area`.
+    pub area: Option<String>,
     /// Nombre de sauts anonymes (0 = telechargement direct).
     /// Exige `safe_seeding` et la stack IPv8 avec anonymat actif.
     pub anon_hops: Option<u32>,
@@ -445,6 +497,98 @@ pub struct AddDownloadRequest {
     /// dans la file `clierrors` (parametre `cli` Python).
     #[serde(default, deserialize_with = "deserialize_optional_bool")]
     pub cli: Option<bool>,
+}
+
+/// `destination` ADR-0018 : `"<chemin>"` (compat) ou objet
+/// `{"area": "public"|"private", "dir": "<chemin>"}`. Un chemin sous
+/// `data/private` (ou le spec `@private/…`) implique la zone privee.
+/// Retourne `(area, dir)` — `area: None` = a trancher par le reste
+/// de la requete ou `storage/default_area`.
+fn parse_destination(
+    state: &AppState,
+    v: &serde_json::Value,
+) -> Result<
+    (
+        Option<onionbit_core::config::StorageArea>,
+        Option<std::path::PathBuf>,
+    ),
+    ApiError,
+> {
+    use onionbit_core::config::StorageArea;
+    let (area_str, dir) = match v {
+        serde_json::Value::String(s) => (None, s.clone()),
+        serde_json::Value::Object(o) => (
+            o.get("area").and_then(|a| a.as_str()).map(str::to_string),
+            o.get("dir")
+                .and_then(|d| d.as_str())
+                .unwrap_or_default()
+                .to_string(),
+        ),
+        _ => return Err(ApiError::bad_request("invalid destination")),
+    };
+    let dir = (!dir.is_empty()).then(|| std::path::PathBuf::from(&dir));
+    if let Some(a) = &area_str {
+        let area = match a.to_ascii_lowercase().as_str() {
+            "public" => StorageArea::Public,
+            "private" => StorageArea::Private,
+            _ => return Err(ApiError::bad_request("invalid destination.area")),
+        };
+        return Ok((Some(area), dir));
+    }
+    // Inference : un chemin sous `data/private` (ou le spec
+    // `@private/…` lui-meme) = demande de zone privee.
+    if let Some(d) = &dir {
+        let resolved = state
+            .session
+            .paths()
+            .resolve_input(d)
+            .unwrap_or_else(|_| d.clone());
+        let private = state
+            .session
+            .paths()
+            .to_portable(&resolved)
+            .is_some_and(|s| s == "@private" || s.starts_with("@private/"));
+        if private {
+            return Ok((Some(StorageArea::Private), dir));
+        }
+    }
+    Ok((None, dir))
+}
+
+/// Tranche la zone effective d'un ajout : `area` explicite,
+/// `destination.area`, dossier sous `data/private`, sinon
+/// `storage/default_area`. Zone privee non montee (identite
+/// verrouillee/en attente) → `409 identity_locked`.
+fn resolve_area(
+    state: &AppState,
+    explicit: Option<&str>,
+    dest: &Option<serde_json::Value>,
+) -> Result<
+    (
+        onionbit_core::config::StorageArea,
+        Option<std::path::PathBuf>,
+    ),
+    ApiError,
+> {
+    use onionbit_core::config::StorageArea;
+    let (dest_area, dir) = match dest {
+        Some(v) => parse_destination(state, v)?,
+        None => (None, None),
+    };
+    let area = match explicit {
+        Some(a) => match a.to_ascii_lowercase().as_str() {
+            "public" => StorageArea::Public,
+            "private" => StorageArea::Private,
+            _ => return Err(ApiError::bad_request("invalid area")),
+        },
+        None => {
+            dest_area.unwrap_or_else(|| StorageArea::parse(&state.session.storage_default_area()))
+        }
+    };
+    if area == StorageArea::Private && state.session.private_area_state() == "locked" {
+        return Err(ApiError::conflict("identity_locked"));
+    }
+    Ok((area, dir))
 }
 
 /// Enregistre l'erreur dans la file CLI si `cli` est vrai, comme
@@ -516,15 +660,13 @@ pub async fn add_download(
             ));
         }
 
+        // ADR-0018 : `area`/`destination` de la query — les octets
+        // bruts arrivent sans corps JSON.
+        let dest_v = query.destination.map(serde_json::Value::String);
+        let (area, dest_dir) = resolve_area(&state, query.area.as_deref(), &dest_v)?;
         let dl = state
             .session
-            .add_torrent_bytes_anon(
-                body.to_vec(),
-                paused,
-                hops,
-                safe_seeding,
-                query.destination.as_deref().map(std::path::PathBuf::from),
-            )
+            .add_torrent_bytes_anon_area(body.to_vec(), paused, hops, safe_seeding, dest_dir, area)
             .await
             .map_err(|e| match &e {
                 onionbit_core::CoreError::Format(_) => {
@@ -555,10 +697,16 @@ pub async fn add_download(
     let paused = req.paused.or(query.paused).unwrap_or(false);
     let uri = req.uri.or(query.uri);
     let torrent = req.torrent.or(query.torrent);
-    let destination = req
+    // ADR-0018 : `destination` peut etre `"<chemin>"` (query/corps
+    // historique) ou `{"area": ..., "dir": ...}` ; `area` a plat prime.
+    let dest_v = req
         .destination
-        .or(query.destination)
-        .map(std::path::PathBuf::from);
+        .or_else(|| query.destination.map(serde_json::Value::String));
+    let (area, destination) = resolve_area(
+        &state,
+        req.area.as_deref().or(query.area.as_deref()),
+        &dest_v,
+    )?;
 
     if hops > 0 && !safe_seeding {
         return Err(add_err(
@@ -607,7 +755,7 @@ pub async fn add_download(
             tokio::spawn(async move {
                 if let Err(e) = st
                     .session
-                    .add_download_anon(&uri, paused, hops, safe_seeding, dest)
+                    .add_download_anon_area(&uri, paused, hops, safe_seeding, dest, area)
                     .await
                 {
                     if matches!(e, onionbit_core::CoreError::Cancelled(_)) {
@@ -632,7 +780,7 @@ pub async fn add_download(
         }
         state
             .session
-            .add_download_anon(uri, paused, hops, safe_seeding, destination.clone())
+            .add_download_anon_area(uri, paused, hops, safe_seeding, destination.clone(), area)
             .await
             .map_err(|e| add_err(&state, e.to_string(), cli))?
     } else if let Some(path) = &torrent {
@@ -640,7 +788,7 @@ pub async fn add_download(
             .map_err(|e| add_err(&state, format!("lecture du .torrent: {e}"), cli))?;
         state
             .session
-            .add_torrent_bytes_anon(bytes, paused, hops, safe_seeding, destination)
+            .add_torrent_bytes_anon_area(bytes, paused, hops, safe_seeding, destination, area)
             .await
             .map_err(|e| add_err(&state, e.to_string(), cli))?
     } else {
@@ -945,6 +1093,55 @@ pub async fn update_download(
         "modified": modified,
         "infohash": ih_hex,
     })))
+}
+
+/// `GET /api/private` — etat et catalogue de la zone privee
+/// (ADR-0018 etape 62, endpoint d'extension sous `api_key_auth`).
+///
+/// Reponse : `{state: "locked"|"mounted"|"guest", downloads: [...],
+/// orphans: {...}}`. `locked` = identite non resolue ou zone
+/// desactivee — `downloads` est alors vide (le manifeste `OBM` ne
+/// peut pas etre ouvert sans les cles). Les noms/infohashes listes
+/// sont les valeurs reelles du manifeste dechiffre — endpoint
+/// protege, reserve au titulaire.
+pub async fn get_private(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let zone_state = state.session.private_area_state();
+    let entries: Vec<serde_json::Value> = state
+        .session
+        .private_manifest_entries()
+        .into_iter()
+        .map(|e| {
+            serde_json::json!({
+                "infohash": e.infohash,
+                "name": e.name.unwrap_or_default(),
+                "destination": e.output_dir,
+                "paused": e.paused,
+                "time_added": e.added_on,
+            })
+        })
+        .collect();
+    let orphans = state.session.private_orphan_report();
+    Json(serde_json::json!({
+        "state": zone_state,
+        "downloads": entries,
+        "orphans": {
+            "obd_groups": orphans.obd_groups.len(),
+            "bitv": orphans.bitv.len(),
+        },
+    }))
+}
+
+/// `DELETE /api/private/orphans` — purge les orphelins `.obd`/`.bitv`
+/// rapportes au montage (action explicite de l'utilisateur ; le scan
+/// de montage ne supprime jamais rien silencieusement).
+pub async fn purge_private_orphans(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    if state.session.private_area_state() == "locked" {
+        return Err(ApiError::conflict("identity_locked"));
+    }
+    state.session.purge_private_orphans();
+    Ok(Json(serde_json::json!({ "purged": true })))
 }
 
 /// Les erreurs metier `InvalidState` des chemins anonymes (stack ipv8

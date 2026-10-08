@@ -153,6 +153,14 @@ fn api_router(state: AppState) -> Router<AppState> {
             get(downloads_extra::stream_file),
         )
         .route("/downloads/clierrors", get(downloads::get_cli_errors))
+        // -- Zone privee ADR-0018 (etape 62) : etat `locked|mounted|
+        // guest` + catalogue `manifest.obm` dechiffre (reserve au
+        // titulaire — la route est derriere `api_key_auth`).
+        .route("/private", get(downloads::get_private))
+        .route(
+            "/private/orphans",
+            axum::routing::delete(downloads::purge_private_orphans),
+        )
         // -- Evenements SSE (events_endpoint.py) ------------------------
         .route("/events", get(events::get_events))
         .route("/events/info", get(events::get_events_info))

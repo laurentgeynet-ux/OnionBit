@@ -114,6 +114,11 @@ struct PersistParams {
     anon_hops: u32,
     safe_seeding: bool,
     extra_trackers: Vec<String>,
+    /// Zone de stockage choisie a l'ajout (ADR-0018 etape 62) —
+    /// `Private` → ligne DB opaque + entree `manifest.obm`.
+    area: crate::config::StorageArea,
+    /// Sous-racine privee de destination (`None` en public).
+    private_sub: Option<crate::private_zone::PrivateSubdir>,
 }
 
 /// Ajout magnet en cours de resolution des metadonnees (BEP 9) —
@@ -132,6 +137,10 @@ pub struct PendingDownload {
     pub paused: bool,
     /// Timestamp d'ajout (secondes Unix).
     pub added_on: i64,
+    /// ADR-0018 : entree privee — sa cle est le HMAC opaque, le
+    /// vrai infohash ne doit pas fuiter dans `GET /api/downloads`
+    /// (filtre cote API ; visible via `/api/private`).
+    pub private: bool,
 }
 
 /// Garde RAII d'une entree `pending` magnet : un add abandonne en
@@ -266,6 +275,15 @@ struct Inner {
     /// titres de torrents, utilise par `local_search` (`augmenter`
     /// du `DatabaseEndpoint`).
     augmenter: Arc<crate::augmenter::Augmenter>,
+    /// Zone de telechargement privee liee a l'identite (ADR-0018
+    /// etape 62) — montee dans `try_start_identity` quand
+    /// `storage/private_enabled` et le materiel identitaire est
+    /// resolu ; `None` en `pending`/`locked`/desactivee. En session
+    /// invitee la zone existe mais est ephemere (`temp/.guest/`).
+    private_zone: std::sync::RwLock<Option<Arc<crate::private_zone::PrivateZone>>>,
+    /// Orphelins prives detectes au montage (`GET /api/private`
+    /// les rapporte ; purge sur demande explicite seulement).
+    orphan_report: std::sync::Mutex<crate::private_zone::OrphanReport>,
     /// Estimateur de capacite upload (`tunnel_community/bandwidth`) —
     /// regle `max_relayed_rate` en mode auto (AIMD sur le retard de
     /// file) ; consultable via `/api/statistics/ipv8` (`bandwidth`).
@@ -365,7 +383,6 @@ impl CoreSession {
                 "identity.at_rest incompatible avec stealth.role != client (un pont doit redemarrer sans surveillance)",
             ));
         }
-        let stack_enabled = config.ipv8.enabled || config.ipv8.stealth.is_some();
         let disk_state = crate::identity::detect(&config.state_dir)?;
         // Le shell nait `Pending` (ou `Locked`) : `Ready` n'est pose
         // qu'en fin de `try_start_identity` — c'est ce marqueur qui
@@ -383,13 +400,13 @@ impl CoreSession {
         };
         let session = Self::new_shell(config, notifier, phase)?;
         if resolvable {
-            let material = if stack_enabled {
-                Some(crate::identity::load_or_generate(
-                    &session.inner.config.state_dir,
-                )?)
-            } else {
-                None
-            };
+            // ADR-0018 : le materiel est charge meme sans stack IPv8 —
+            // la zone privee (`manifest.obm`, `.obd`) est liee a
+            // l'identite, pas au reseau. `start_ipv8_with_identity`
+            // ignore le materiel quand la stack est desactivee.
+            let material = Some(crate::identity::load_or_generate(
+                &session.inner.config.state_dir,
+            )?);
             session.try_start_identity(material).await?;
         }
         Ok(session)
@@ -437,12 +454,75 @@ impl CoreSession {
         if !guest {
             Self::migrate_download_paths(&db, &self.inner.paths);
         }
-        let engine = BtEngine::start(engine_config_effective(config)).await?;
+        // ADR-0018 etape 62 : montage de la zone privee une fois
+        // l'identite resolue — `store_root` ne vient que du materiel
+        // en memoire (graine ou SHA-256 du keypair legacy), jamais
+        // d'un fichier relu a part. `private_enabled=false` ou
+        // `material=None` (stack off) → zone absente : les ajouts
+        // prives echoueront en `InvalidState` → 409 cote API.
+        let zone = material.as_ref().and_then(|m| {
+            if !self.storage_settings().private_enabled {
+                return None;
+            }
+            let keys = onionbit_crypto::obdfile::PrivateStoreKeys::from_root(&m.store_root);
+            // Infohashes publics connus : distinguent un `.bitv`
+            // legitime d'un orphelin opaque au balayage de montage.
+            let public_hashes: Vec<onionbit_bittorrent::Id20> = db
+                .with(|c| {
+                    let mut stmt =
+                        c.prepare("SELECT infohash FROM downloads WHERE storage_area = 'public'")?;
+                    let rows = stmt.query_map([], |r| r.get::<_, Vec<u8>>(0))?;
+                    Ok(rows
+                        .filter_map(|r| {
+                            r.ok().and_then(|b| <[u8; 20]>::try_from(b.as_slice()).ok())
+                        })
+                        .map(onionbit_bittorrent::Id20::new)
+                        .collect())
+                })
+                .unwrap_or_default();
+            let chunk_log2 =
+                (self.storage_settings().private_chunk_bytes.max(16384)).trailing_zeros() as u8;
+            let (zone, report) = crate::private_zone::PrivateZone::mount(
+                self.inner.paths.clone(),
+                keys,
+                m.guest,
+                chunk_log2,
+                &public_hashes,
+            );
+            // Orphelins rapportes en warn (deja trace dans le scan) —
+            // purge uniquement a la demande via `private_purge_orphans`.
+            *self
+                .inner
+                .orphan_report
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()) = report;
+            Some(Arc::new(zone))
+        });
+        if let Some(z) = &zone {
+            *self
+                .inner
+                .private_zone
+                .write()
+                .unwrap_or_else(|e| e.into_inner()) = Some(z.clone());
+        }
+        let mut engine_cfg = engine_config_effective(config);
+        // `.bitv` opaques : le wrapper voit le set `private_hashes`
+        // que `PrivateStorageFactory::create` alimente — fastresume
+        // `<hmac>.bitv` des le premier add prive, skip `session.json`.
+        engine_cfg.opaque_bitv = zone.as_ref().map(|z| z.opaque_bitv());
+        let engine = BtEngine::start(engine_cfg).await?;
+        // Les lanes anonymes clonent `config.engine` : la config
+        // qu'elles heritent porte le meme `opaque_bitv` (leur
+        // `persistence_dir` est recale dans `Ipv8Stack::anon_engine`
+        // via `OpaqueBitV::for_dir`).
+        let mut lane_engine_cfg = config.engine.clone();
+        lane_engine_cfg.opaque_bitv = zone.as_ref().map(|z| z.opaque_bitv());
         let ipv8 = start_ipv8_with_identity(
             config,
             db.clone(),
             self.inner.notifier.clone(),
             self.inner.asyncio.tasks.clone(),
+            lane_engine_cfg,
             material,
         )
         .await?;
@@ -513,6 +593,98 @@ impl CoreSession {
         self.inner.paths.resolve_persisted(stored)
     }
 
+    /// Zone privee montee — `None` tant que l'identite n'est pas
+    /// resolue (`pending`/`locked`), en session sans stack, ou quand
+    /// `storage/private_enabled` est desactive (ADR-0018 etape 62).
+    pub fn private_zone(&self) -> Option<Arc<crate::private_zone::PrivateZone>> {
+        self.inner
+            .private_zone
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
+    /// Zone de stockage d'un download — `Private` si le set opaque
+    /// partage connait l'infohash (alimente a `create` et par le
+    /// manifeste au montage), `Public` sinon.
+    pub fn storage_area_of(&self, ih: &[u8]) -> crate::config::StorageArea {
+        if let (Some(z), Ok(arr)) = (self.private_zone(), <&[u8; 20]>::try_from(ih)) {
+            if z.is_private(&onionbit_bittorrent::Id20::new(*arr)) {
+                return crate::config::StorageArea::Private;
+            }
+        }
+        crate::config::StorageArea::Public
+    }
+
+    /// Zone par defaut des nouveaux ajouts (`storage/default_area`
+    /// effectif — override `POST /api/settings` compris).
+    pub fn storage_default_area(&self) -> String {
+        self.storage_settings().default_area.as_str().to_string()
+    }
+
+    /// Etat de la zone privee pour `/api/private` : `"locked"` quand
+    /// l'identite n'est pas resolue ou `private_enabled` est off,
+    /// `"guest"` en session invitee ephemere, `"mounted"` sinon.
+    pub fn private_area_state(&self) -> &'static str {
+        match self.private_zone() {
+            None => "locked",
+            Some(z) if z.is_guest() => "guest",
+            Some(_) => "mounted",
+        }
+    }
+
+    /// Cle de ligne `downloads` pour un infohash : l'infohash reel en
+    /// public, `HMAC(K_names,"row/"‖ih)` opaque en prive — la base ne
+    /// revele jamais les infohashes prives (ADR-0018 §catalogue).
+    fn db_key(&self, ih: &[u8]) -> Vec<u8> {
+        if let (Some(z), Ok(arr)) = (self.private_zone(), <&[u8; 20]>::try_from(ih)) {
+            let id = onionbit_bittorrent::Id20::new(*arr);
+            if z.is_private(&id) {
+                return z.row_key(&id).to_vec();
+            }
+        }
+        ih.to_vec()
+    }
+
+    /// [`Session::db_key`] expose a la couche API : la jointure
+    /// stats-moteur ↔ ligne `downloads` doit utiliser la cle stockee
+    /// (opaque pour un prive).
+    pub fn stored_row_key(&self, ih: &[u8]) -> Vec<u8> {
+        self.db_key(ih)
+    }
+
+    /// Catalogue prive pour `GET /api/private` — entrees du
+    /// `manifest.obm` dechiffre (infohash reel, nom, sous-zone).
+    /// Vide si la zone est verrouillee/desactivee.
+    pub fn private_manifest_entries(&self) -> Vec<crate::private_zone::ManifestEntry> {
+        self.private_zone().map(|z| z.entries()).unwrap_or_default()
+    }
+
+    /// Orphelins prives detectes au montage (expose a `GET
+    /// /api/private` ; `purge_private_orphans` supprime a la demande).
+    pub fn private_orphan_report(&self) -> crate::private_zone::OrphanReport {
+        self.inner
+            .orphan_report
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
+    /// Purge les orphelins prives rapportes au montage (`.obd` sans
+    /// entree manifeste, `.bitv` hors catalogue) — action explicite,
+    /// jamais automatique.
+    pub fn purge_private_orphans(&self) {
+        let report = self.private_orphan_report();
+        if let Some(z) = self.private_zone() {
+            z.purge_orphans(&report);
+        }
+        *self
+            .inner
+            .orphan_report
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = Default::default();
+    }
+
     /// Construit le shell commun aux deux chemins de demarrage :
     /// `Inner` cree avec une base memoire placeholder et aucun
     /// composant identitaire.
@@ -534,6 +706,8 @@ impl CoreSession {
                 identity_phase: std::sync::RwLock::new(phase),
                 identity_gate: tokio::sync::Mutex::new(()),
                 guest: std::sync::atomic::AtomicBool::new(false),
+                private_zone: std::sync::RwLock::new(None),
+                orphan_report: std::sync::Mutex::new(Default::default()),
                 last_tracker_sync: std::sync::Mutex::new(None),
                 asyncio,
                 pending: std::sync::Mutex::new(std::collections::HashMap::new()),
@@ -555,16 +729,13 @@ impl CoreSession {
                 "stealth.enabled exclut ipv8.enabled — combinaison hybride refusee",
             ));
         }
-        let stack_enabled = config.ipv8.enabled || config.ipv8.stealth.is_some();
         // Meme bootstrap d'arborescence qu'en `start_gated` (ADR-0018).
         let roots = crate::paths::PathRoots::for_state_dir(&config.state_dir);
         let _ = roots.ensure_tree();
         roots.migrate_legacy_tree();
-        let material = if stack_enabled {
-            Some(crate::identity::load_or_generate(&config.state_dir)?)
-        } else {
-            None
-        };
+        // Materiel identitaire charge meme stack off : la zone privee
+        // en depend (ADR-0018 etape 62).
+        let material = Some(crate::identity::load_or_generate(&config.state_dir)?);
         let session = Self::new_shell(config, notifier, IdentityPhase::Pending)?;
         session.try_start_identity(material).await?;
         Ok(session)
@@ -637,12 +808,34 @@ impl CoreSession {
         // circuit `DATA` pret se fait une fois par `anon_hops`, les
         // downloads suivants de la meme lane passent directement.
         let mut awaited_lanes: std::collections::HashSet<u32> = std::collections::HashSet::new();
+        let zone = self.private_zone();
         for row in rows {
             // `stop()` pendant la restauration : on abandonne — les
             // downloads non reinjectes seront relus au prochain run.
             if self.inner.stopped.load(std::sync::atomic::Ordering::SeqCst) {
                 tracing::info!("restauration interrompue par l'arret de la session");
                 return;
+            }
+            // Ligne `private` : la colonne `infohash` porte la cle
+            // HMAC opaque — le re-add passe par le manifeste OBM
+            // (`readd_row` synthetise la vraie entree). Zone absente
+            // (verrouillee/desactivee) → reporte jusqu'au prochain
+            // unlock, expose en `locked_area` cote API.
+            if row.storage_area == "private" {
+                match &zone {
+                    None => {
+                        deferred += 1;
+                        continue;
+                    }
+                    Some(z) => {
+                        if z.entry_by_row_key(&hex::encode(&row.infohash)).is_none() {
+                            tracing::warn!(
+                                "ligne privee sans entree manifeste — ignoree (orpheline)"
+                            );
+                            continue;
+                        }
+                    }
+                }
             }
             let engine = match self.engine_for(row.anon_hops as u32).await {
                 Ok(e) => e,
@@ -709,12 +902,20 @@ impl CoreSession {
             match self.readd_row(&engine, &row).await {
                 Ok(dl) => {
                     restored += 1;
-                    tracing::info!(
-                        infohash = %dl.info_hash_hex(),
-                        "telechargement restaure"
-                    );
-                    if let Some(name) = dl.name() {
-                        self.index_channel_node(&dl.info_hash(), &name, dl.stats().total_bytes);
+                    // Zone privee : infohash reel et nom exclus des
+                    // logs et du catalogue public (`index_channel_node`
+                    // alimente la recherche de canaux — un prive n'y
+                    // apparait jamais).
+                    if row.storage_area == "private" {
+                        tracing::info!("telechargement prive restaure");
+                    } else {
+                        tracing::info!(
+                            infohash = %dl.info_hash_hex(),
+                            "telechargement restaure"
+                        );
+                        if let Some(name) = dl.name() {
+                            self.index_channel_node(&dl.info_hash(), &name, dl.stats().total_bytes);
+                        }
                     }
                     if row.finished {
                         // Arret entre la transition `finished` et le
@@ -853,6 +1054,10 @@ impl CoreSession {
                     anon_hops: row.anon_hops.max(0) as u32,
                     paused: row.paused || row.user_stopped,
                     added_on: row.added_on,
+                    // Ligne privee : `ih_hex` est la cle HMAC —
+                    // marquee `private` pour ne jamais figurer dans
+                    // `GET /api/downloads`.
+                    private: row.storage_area == "private",
                 },
             );
         let session = self.clone();
@@ -1054,8 +1259,36 @@ impl CoreSession {
     /// librqbit refusionne les trackers de la source avec
     /// `opts.trackers` : seule une source purgee les honore.
     async fn readd_row(&self, engine: &BtEngine, row: &DownloadRow) -> Result<Download> {
-        let opts = self.row_add_options(row);
-        let (torrent_data, source_uri) = crate::trackers::effective_source(row);
+        let mut opts = self.row_add_options(row);
+        // Ligne `private` : `row.infohash` est la cle HMAC opaque —
+        // les vraies metadonnees viennent du manifeste OBM (infohash
+        // reel, source, `.torrent`) et le stockage est la factory
+        // `OBD` de la sous-racine courante (ADR-0018 etape 62).
+        let (torrent_data, source_uri) = if row.storage_area == "private" {
+            let zone = self.private_zone().ok_or(CoreError::InvalidState(
+                "zone privee verrouillee — restauration differee",
+            ))?;
+            let entry = zone.entry_by_row_key(&hex::encode(&row.infohash)).ok_or(
+                CoreError::InvalidState("entree privee absente du manifeste"),
+            )?;
+            let ih_arr: [u8; 20] = hex::decode(&entry.infohash)
+                .ok()
+                .and_then(|b| b.try_into().ok())
+                .ok_or(CoreError::InvalidState("infohash manifeste invalide"))?;
+            let _ = ih_arr; // la factory derive tout de `shared.info_hash`
+            let sub = crate::private_zone::PrivateZone::subdir_of_spec_pub(&entry.output_dir);
+            opts.storage_factory = Some(zone.factory(sub));
+            opts.output_folder = Some(zone.subdir_root(sub));
+            (
+                entry
+                    .torrent_data
+                    .as_deref()
+                    .and_then(|h| hex::decode(h).ok()),
+                entry.source_uri,
+            )
+        } else {
+            crate::trackers::effective_source(row)
+        };
         Ok(if let Some(bytes) = torrent_data {
             engine.add_torrent_bytes_opts(bytes, &opts).await?
         } else {
@@ -1064,11 +1297,14 @@ impl CoreSession {
     }
 
     /// Ligne de persistance d'un telechargement (`None` si inconnue).
+    /// `ih` est l'infohash reel : pour un prive la cle stockee est
+    /// `HMAC(K_names,"row/"‖ih)` (`db_key` traduit).
     fn row_of(&self, ih: &[u8]) -> Result<Option<DownloadRow>> {
+        let key = self.db_key(ih);
         Ok(self
             .inner
             .db_arc()
-            .with(|c| onionbit_db::downloads::get(c, ih))?)
+            .with(|c| onionbit_db::downloads::get(c, &key))?)
     }
 
     /// Lecture-modification-ecriture des reglages persistes d'un
@@ -1076,8 +1312,9 @@ impl CoreSession {
     /// runtime de la ligne relue sont conservees — `f` ne touche que
     /// les reglages.
     pub fn update_download_row(&self, ih: &[u8], f: impl FnOnce(&mut DownloadRow)) -> Result<bool> {
+        let key = self.db_key(ih);
         Ok(self.inner.db_arc().with(|c| {
-            let Some(mut row) = onionbit_db::downloads::get(c, ih)? else {
+            let Some(mut row) = onionbit_db::downloads::get(c, &key)? else {
                 return Ok(false);
             };
             f(&mut row);
@@ -1110,7 +1347,21 @@ impl CoreSession {
                     Ok(onionbit_db::downloads::list(c)?
                         .into_iter()
                         .filter(|r| r.finished)
-                        .map(|r| onionbit_crypto::hash::to_hex(&r.infohash))
+                        .map(|r| {
+                            // Ligne privee : `infohash` est la cle HMAC —
+                            // le set est indexe par l'infohash REEL du
+                            // moteur (`stats.info_hash`) : traduction via
+                            // le manifeste.
+                            if r.storage_area == "private" {
+                                session
+                                    .private_zone()
+                                    .and_then(|z| z.entry_by_row_key(&hex::encode(&r.infohash)))
+                                    .map(|e| e.infohash)
+                                    .unwrap_or_else(|| onionbit_crypto::hash::to_hex(&r.infohash))
+                            } else {
+                                onionbit_crypto::hash::to_hex(&r.infohash)
+                            }
+                        })
                         .collect())
                 })
                 .unwrap_or_default();
@@ -1144,10 +1395,11 @@ impl CoreSession {
                     let dd = stats.progress_bytes.saturating_sub(prev_down);
                     if du > 0 || dd > 0 {
                         if let Some(ih) = onionbit_crypto::hash::from_hex(&stats.info_hash) {
+                            let key = session.db_key(&ih);
                             let _ = session
                                 .inner
                                 .db_arc()
-                                .with(|c| onionbit_db::downloads::add_transferred(c, &ih, du, dd));
+                                .with(|c| onionbit_db::downloads::add_transferred(c, &key, du, dd));
                         }
                     }
                     if stats.finished {
@@ -1164,17 +1416,18 @@ impl CoreSession {
                                 });
                             let ih = onionbit_crypto::hash::from_hex(&stats.info_hash);
                             if let Some(ih) = ih {
+                                let key = session.db_key(&ih);
                                 let _ = session
                                     .inner
                                     .db_arc()
-                                    .with(|c| onionbit_db::downloads::set_finished(c, &ih, true));
+                                    .with(|c| onionbit_db::downloads::set_finished(c, &key, true));
                                 // `add_download_to_channel` Python : les
                                 // canaux ne sont pas portes — l'attribut
                                 // persiste en base et le manque est trace.
                                 let channel = session
                                     .inner
                                     .db_arc()
-                                    .with(|c| onionbit_db::downloads::get(c, &ih))
+                                    .with(|c| onionbit_db::downloads::get(c, &key))
                                     .ok()
                                     .flatten()
                                     .map(|r| r.add_download_to_channel)
@@ -1195,6 +1448,20 @@ impl CoreSession {
                                 let session = session.clone();
                                 let ih = stats.info_hash.clone();
                                 let recheck = session.inner.config.check_after_complete;
+                                // Zone privee : l'infohash reel ne va
+                                // jamais dans les logs ni les events —
+                                // etiquette opacifiee (`<prive>`).
+                                let label = onionbit_crypto::hash::from_hex(&ih)
+                                    .map(|b| {
+                                        if session.storage_area_of(&b)
+                                            == crate::config::StorageArea::Private
+                                        {
+                                            "<prive>".to_string()
+                                        } else {
+                                            ih.clone()
+                                        }
+                                    })
+                                    .unwrap_or_else(|| ih.clone());
                                 tokio::spawn(async move {
                                     if let Err(e) = session.move_on_completion(&ih).await {
                                         // Jamais de perte : le contenu
@@ -1202,12 +1469,12 @@ impl CoreSession {
                                         // interne de `move_storage`).
                                         tracing::warn!(
                                             error = %e,
-                                            infohash = %ih,
+                                            infohash = %label,
                                             "move_on_completion en echec — le torrent reste en temp"
                                         );
                                         session.inner.notifier.notify(
                                             Notification::TriblerException {
-                                                error: format!("move_on_completion {ih}: {e}"),
+                                                error: format!("move_on_completion {label}: {e}"),
                                             },
                                         );
                                     }
@@ -1239,22 +1506,31 @@ impl CoreSession {
                         // retirer le drapeau ici redeclenchait
                         // `torrent_finished` a chaque boot.
                         if let Some(ih) = onionbit_crypto::hash::from_hex(&stats.info_hash) {
+                            let key = session.db_key(&ih);
                             let _ = session
                                 .inner
                                 .db_arc()
-                                .with(|c| onionbit_db::downloads::set_finished(c, &ih, false));
+                                .with(|c| onionbit_db::downloads::set_finished(c, &key, false));
                         }
                     }
                     session.enforce_seeding_policy(&stats);
                     // `download_defaults/torrent_folder` Python
                     // (`PostHandleOp.WRITE_BACKUP_TORRENT`) : sauvegarde
                     // du .torrent des que le metainfo est connu.
-                    if !session
-                        .inner
-                        .config
-                        .download_defaults
-                        .torrent_folder
-                        .is_empty()
+                    // Zone privee : JAMAIS — `<nom> [<infohash>].torrent`
+                    // en clair exposerait nom+metainfo ; les octets
+                    // vivent deja dans `manifest.obm` (chiffres).
+                    let is_private =
+                        onionbit_crypto::hash::from_hex(&stats.info_hash).is_some_and(|b| {
+                            session.storage_area_of(&b) == crate::config::StorageArea::Private
+                        });
+                    if !is_private
+                        && !session
+                            .inner
+                            .config
+                            .download_defaults
+                            .torrent_folder
+                            .is_empty()
                         && !backed_up.contains(&stats.info_hash)
                         && session.backup_torrent_file(&stats.info_hash)
                     {
@@ -1633,6 +1909,31 @@ impl CoreSession {
             safe_seeding,
             destination,
             Vec::new(),
+            crate::config::StorageArea::Public,
+        )
+        .await
+    }
+
+    /// `add_download_anon` + zone de stockage explicite
+    /// (`destination.area` de `PUT /api/downloads` — ADR-0018) :
+    /// `Private` exige la zone montee (identite resolue).
+    pub async fn add_download_anon_area(
+        &self,
+        uri: &str,
+        paused: bool,
+        anon_hops: u32,
+        safe_seeding: bool,
+        destination: Option<std::path::PathBuf>,
+        area: crate::config::StorageArea,
+    ) -> Result<Download> {
+        self.add_download_anon_inner(
+            uri,
+            paused,
+            anon_hops,
+            safe_seeding,
+            destination,
+            Vec::new(),
+            area,
         )
         .await
     }
@@ -1649,6 +1950,30 @@ impl CoreSession {
         destination: Option<std::path::PathBuf>,
         initial_peers: Vec<std::net::SocketAddr>,
     ) -> Result<Download> {
+        self.add_download_anon_area_with_peers(
+            uri,
+            paused,
+            anon_hops,
+            safe_seeding,
+            destination,
+            initial_peers,
+            crate::config::StorageArea::Public,
+        )
+        .await
+    }
+
+    /// `add_download_anon_with_peers` + zone (bancs prives).
+    #[allow(clippy::too_many_arguments)]
+    pub async fn add_download_anon_area_with_peers(
+        &self,
+        uri: &str,
+        paused: bool,
+        anon_hops: u32,
+        safe_seeding: bool,
+        destination: Option<std::path::PathBuf>,
+        initial_peers: Vec<std::net::SocketAddr>,
+        area: crate::config::StorageArea,
+    ) -> Result<Download> {
         self.add_download_anon_inner(
             uri,
             paused,
@@ -1656,10 +1981,12 @@ impl CoreSession {
             safe_seeding,
             destination,
             initial_peers,
+            area,
         )
         .await
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn add_download_anon_inner(
         &self,
         uri: &str,
@@ -1668,11 +1995,27 @@ impl CoreSession {
         safe_seeding: bool,
         destination: Option<std::path::PathBuf>,
         initial_peers: Vec<std::net::SocketAddr>,
+        area: crate::config::StorageArea,
     ) -> Result<Download> {
         if anon_hops == 0 {
             self.check_uri_policy(uri).await?;
         }
         self.check_low_space();
+        // ADR-0018 etape 62 : zone privee → factory OBD opaque +
+        // dossier de sous-racine (noms HMAC). Resolu une fois avant
+        // la boucle de resolution magnet — `destination` ne peut
+        // viser que `@private/temp`/`@private/downloads`.
+        let (private_factory, private_output, private_sub) = match area {
+            crate::config::StorageArea::Private => {
+                let (zone, sub) = self.private_subdir(destination.as_deref())?;
+                (
+                    Some(zone.factory(sub)),
+                    Some(zone.subdir_root(sub)),
+                    Some(sub),
+                )
+            }
+            crate::config::StorageArea::Public => (None, None, None),
+        };
         // URI `http(s)` pointant un `.torrent` : le metainfo est
         // public — fetch en clair sous `ip_policy` (anti-SSRF,
         // timeout, taille bornee), puis ajout des octets par le
@@ -1695,6 +2038,7 @@ impl CoreSession {
                     safe_seeding,
                     destination,
                     initial_peers,
+                    area,
                 )
                 .await;
         }
@@ -1762,6 +2106,7 @@ impl CoreSession {
                         anon_hops: hops,
                         paused,
                         added_on: now_unix(),
+                        private: area == crate::config::StorageArea::Private,
                     },
                 );
             let mut notified = std::pin::pin!(notify.notified());
@@ -1809,10 +2154,14 @@ impl CoreSession {
                 }
                 let opts = AddDownloadOptions {
                     paused: paused_now,
-                    output_folder: self.effective_output_dir(destination.clone())?,
+                    output_folder: match private_output.clone() {
+                        Some(d) => Some(d),
+                        None => self.effective_output_dir(destination.clone())?,
+                    },
                     trackers: trackers.clone(),
                     initial_peers: initial_peers.clone(),
                     extra_peers_rx,
+                    storage_factory: private_factory.clone(),
                     ..Default::default()
                 };
                 let fut = engine.add_uri_opts(uri, &opts);
@@ -1838,9 +2187,13 @@ impl CoreSession {
                     uri,
                     &AddDownloadOptions {
                         paused,
-                        output_folder: self.effective_output_dir(destination)?,
+                        output_folder: match private_output.clone() {
+                            Some(d) => Some(d),
+                            None => self.effective_output_dir(destination)?,
+                        },
                         trackers: trackers.clone(),
                         initial_peers: initial_peers.clone(),
+                        storage_factory: private_factory.clone(),
                         ..Default::default()
                     },
                 )
@@ -1882,6 +2235,8 @@ impl CoreSession {
                 anon_hops: hops,
                 safe_seeding,
                 extra_trackers: trackers,
+                area,
+                private_sub,
             },
         )?;
         self.notify_if_private(&dl, hops);
@@ -2117,6 +2472,30 @@ impl CoreSession {
         safe_seeding: bool,
         destination: Option<std::path::PathBuf>,
     ) -> Result<Download> {
+        self.add_torrent_bytes_anon_area(
+            bytes,
+            paused,
+            anon_hops,
+            safe_seeding,
+            destination,
+            crate::config::StorageArea::Public,
+        )
+        .await
+    }
+
+    /// `add_torrent_bytes_anon` + zone de stockage (ADR-0018) :
+    /// `Private` ajoute sous `data/private/` (fichiers `OBD`, ligne
+    /// DB opaque, entree `manifest.obm`) — zone verrouillee →
+    /// `InvalidState` (409 cote API).
+    pub async fn add_torrent_bytes_anon_area(
+        &self,
+        bytes: Vec<u8>,
+        paused: bool,
+        anon_hops: u32,
+        safe_seeding: bool,
+        destination: Option<std::path::PathBuf>,
+        area: crate::config::StorageArea,
+    ) -> Result<Download> {
         self.add_torrent_bytes_anon_inner(
             bytes,
             paused,
@@ -2124,6 +2503,7 @@ impl CoreSession {
             safe_seeding,
             destination,
             Vec::new(),
+            area,
         )
         .await
     }
@@ -2139,6 +2519,30 @@ impl CoreSession {
         destination: Option<std::path::PathBuf>,
         initial_peers: Vec<std::net::SocketAddr>,
     ) -> Result<Download> {
+        self.add_torrent_bytes_anon_area_with_peers(
+            bytes,
+            paused,
+            anon_hops,
+            safe_seeding,
+            destination,
+            initial_peers,
+            crate::config::StorageArea::Public,
+        )
+        .await
+    }
+
+    /// `add_torrent_bytes_anon_with_peers` + zone (bancs prives).
+    #[allow(clippy::too_many_arguments)]
+    pub async fn add_torrent_bytes_anon_area_with_peers(
+        &self,
+        bytes: Vec<u8>,
+        paused: bool,
+        anon_hops: u32,
+        safe_seeding: bool,
+        destination: Option<std::path::PathBuf>,
+        initial_peers: Vec<std::net::SocketAddr>,
+        area: crate::config::StorageArea,
+    ) -> Result<Download> {
         self.add_torrent_bytes_anon_inner(
             bytes,
             paused,
@@ -2146,10 +2550,12 @@ impl CoreSession {
             safe_seeding,
             destination,
             initial_peers,
+            area,
         )
         .await
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn add_torrent_bytes_anon_inner(
         &self,
         bytes: Vec<u8>,
@@ -2158,6 +2564,7 @@ impl CoreSession {
         safe_seeding: bool,
         destination: Option<std::path::PathBuf>,
         initial_peers: Vec<std::net::SocketAddr>,
+        area: crate::config::StorageArea,
     ) -> Result<Download> {
         // Parsing borne en amont pour extraire l'info-hash a persister.
         let meta = onionbit_format::torrent::TorrentMeta::parse(&bytes)?;
@@ -2178,6 +2585,18 @@ impl CoreSession {
             ));
         }
         let engine = self.engine_for(anon_hops).await?;
+        // ADR-0018 : zone privee → factory OBD + sous-racine opaque.
+        let (private_factory, private_output, private_sub) = match area {
+            crate::config::StorageArea::Private => {
+                let (zone, sub) = self.private_subdir(destination.as_deref())?;
+                (
+                    Some(zone.factory(sub)),
+                    Some(zone.subdir_root(sub)),
+                    Some(sub),
+                )
+            }
+            crate::config::StorageArea::Public => (None, None, None),
+        };
         // Pas de trackers par defaut sur un torrent prive (condition
         // `not torrent_info.priv()` du `_post_handle_events` Python).
         let trackers = if meta.private {
@@ -2190,9 +2609,13 @@ impl CoreSession {
                 bytes.clone(),
                 &AddDownloadOptions {
                     paused,
-                    output_folder: self.effective_output_dir(destination)?,
+                    output_folder: match private_output {
+                        Some(d) => Some(d),
+                        None => self.effective_output_dir(destination)?,
+                    },
                     trackers: trackers.clone(),
                     initial_peers,
+                    storage_factory: private_factory,
                     ..Default::default()
                 },
             )
@@ -2206,6 +2629,8 @@ impl CoreSession {
                 anon_hops,
                 safe_seeding,
                 extra_trackers: trackers,
+                area,
+                private_sub,
             },
         )?;
         if meta.private {
@@ -2344,6 +2769,50 @@ impl CoreSession {
             .is_some_and(|s| s == "@public" || s.starts_with("@public/"))
     }
 
+    /// Sous-racine privee pour un ajout : `destination` ne peut viser
+    /// que `@private/temp` ou `@private/downloads` (le nom de groupe
+    /// opaque est calcule — les chemins libres n'existent pas dans la
+    /// zone chiffree). Erreur si la zone est verrouillee/absente.
+    fn private_subdir(
+        &self,
+        destination: Option<&Path>,
+    ) -> Result<(
+        Arc<crate::private_zone::PrivateZone>,
+        crate::private_zone::PrivateSubdir,
+    )> {
+        use crate::private_zone::PrivateSubdir;
+        let zone = self.private_zone().ok_or(CoreError::InvalidState(
+            "zone privee verrouillee ou desactivee",
+        ))?;
+        let sub = match destination {
+            None => PrivateSubdir::Temp,
+            Some(d) => {
+                let resolved = self
+                    .inner
+                    .paths
+                    .resolve_input(d)
+                    .map_err(|e| CoreError::State(e.to_string()))?;
+                match self.inner.paths.to_portable(&resolved).as_deref() {
+                    Some("@private/downloads") => PrivateSubdir::Downloads,
+                    Some(s)
+                        if s == "@private"
+                            || s == "@private/temp"
+                            || s.starts_with("@private/temp/") =>
+                    {
+                        PrivateSubdir::Temp
+                    }
+                    Some(s) if s.starts_with("@private/downloads/") => PrivateSubdir::Downloads,
+                    _ => {
+                        return Err(CoreError::State(
+                            "destination privee hors de data/private — @private/temp ou @private/downloads attendu".into(),
+                        ));
+                    }
+                }
+            }
+        };
+        Ok((zone, sub))
+    }
+
     /// Reglages `storage/*` effectifs — l'override
     /// `POST /api/settings` a chaud prime sur la config de boot.
     fn storage_settings(&self) -> crate::config::StorageSettings {
@@ -2387,7 +2856,67 @@ impl CoreSession {
         })
     }
 
+    /// Ligne publique opaque d'un telechargement prive : `infohash`
+    /// = cle `HMAC`, `name`/`source_uri`/`torrent_data` vides — les
+    /// vraies metadonnees vont dans `manifest.obm` (ADR-0018).
+    fn persist_private(
+        &self,
+        infohash: &[u8; 20],
+        name: Option<String>,
+        uri: &str,
+        torrent_data: Option<Vec<u8>>,
+        p: PersistParams,
+    ) -> Result<()> {
+        let zone = self
+            .private_zone()
+            .ok_or(CoreError::InvalidState("zone privee verrouillee"))?;
+        let id = onionbit_bittorrent::Id20::new(*infohash);
+        let sub = p.private_sub.unwrap_or_else(|| zone.subdir_of(&id));
+        zone.upsert(
+            &id,
+            crate::private_zone::ManifestEntry {
+                infohash: hex::encode(infohash),
+                name,
+                source_uri: uri.to_string(),
+                torrent_data: torrent_data.as_deref().map(hex::encode),
+                output_dir: sub.spec().to_string(),
+                paused: p.paused,
+                added_on: now_unix(),
+            },
+        )?;
+        let row_key = zone.row_key(&id);
+        self.inner.db_arc().with(|c| {
+            onionbit_db::downloads::upsert(
+                c,
+                &DownloadRow {
+                    infohash: row_key.to_vec(),
+                    // `output_dir` porte le spec `@private/…` — les
+                    // autres champs restent vides (catalogue dans OBM).
+                    output_dir: sub.spec().to_string(),
+                    storage_area: "private".to_string(),
+                    added_on: now_unix(),
+                    paused: p.paused,
+                    anon_hops: i64::from(p.anon_hops),
+                    extra_trackers: p.extra_trackers,
+                    ..self.settings_defaults(c, p.safe_seeding)?
+                },
+            )
+        })?;
+        // Jamais `index_channel_node` : le catalogue public ne doit
+        // rien savoir du contenu prive.
+        Ok(())
+    }
+
     fn persist(&self, dl: &Download, uri: &str, p: PersistParams) -> Result<()> {
+        if p.area == crate::config::StorageArea::Private {
+            return self.persist_private(
+                &dl.info_hash(),
+                dl.name(),
+                uri,
+                dl.torrent_bytes().map(|b| b.to_vec()),
+                p,
+            );
+        }
         self.inner.db_arc().with(|c| {
             onionbit_db::downloads::upsert(
                 c,
@@ -2422,6 +2951,19 @@ impl CoreSession {
         meta: &onionbit_format::torrent::TorrentMeta,
         p: PersistParams,
     ) -> Result<()> {
+        if p.area == crate::config::StorageArea::Private {
+            let uri = format!(
+                "magnet:?xt=urn:btih:{}",
+                onionbit_crypto::hash::to_hex(&meta.info_hash)
+            );
+            return self.persist_private(
+                &meta.info_hash,
+                Some(meta.name.clone()),
+                &uri,
+                Some(bytes),
+                p,
+            );
+        }
         self.inner.db_arc().with(|c| {
             onionbit_db::downloads::upsert(
                 c,
@@ -2490,13 +3032,19 @@ impl CoreSession {
     /// resolution (`pending`, statut METADATA) — pas encore d'objet
     /// moteur.
     pub fn is_pending(&self, infohash_hex: &str) -> bool {
-        onionbit_crypto::hash::from_hex(infohash_hex).is_some_and(|ih| {
-            self.inner
-                .pending
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .contains_key(&onionbit_crypto::hash::to_hex(&ih))
-        })
+        let Some(ih) = onionbit_crypto::hash::from_hex(infohash_hex) else {
+            return false;
+        };
+        let key = onionbit_crypto::hash::to_hex(&ih);
+        let direct = self
+            .inner
+            .pending
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .contains_key(&key);
+        // Un magnet prive frais est mappe sous l'infohash reel alors
+        // que l'API connait la cle opaque — resolution inverse.
+        direct || self.pending_opaque_match(&key).is_some()
     }
 
     /// `update_hops` Python (`DownloadManager.update_hops`) : retire le
@@ -2581,7 +3129,11 @@ impl CoreSession {
     fn update_pending_hops(&self, id_or_hash: &str, new_hops: u32) -> Result<()> {
         let ih = onionbit_crypto::hash::from_hex(id_or_hash)
             .ok_or(CoreError::InvalidState("telechargement inconnu"))?;
-        let key = onionbit_crypto::hash::to_hex(&ih);
+        // Cle opaque ou infohash reel — `pending` est mappe sous
+        // l'un ou l'autre selon le chemin d'ajout prive.
+        let key = self
+            .pending_opaque_match(&onionbit_crypto::hash::to_hex(&ih))
+            .unwrap_or_else(|| onionbit_crypto::hash::to_hex(&ih));
         {
             let mut pending = self.inner.pending.lock().unwrap_or_else(|e| e.into_inner());
             let Some(p) = pending.get_mut(&key) else {
@@ -2641,14 +3193,61 @@ impl CoreSession {
 
     /// Magnets en cours de resolution BEP 9 (`METADATA` Python) —
     /// fusionnes dans `GET /api/downloads` par la couche API.
+    ///
+    /// ADR-0018 : une entree `private` est masquee — `infohash` devient
+    /// la cle `HMAC` opaque (meme identifiant que la ligne persistee)
+    /// et le nom (`dn` du magnet, metadonnee sensible) n'est pas
+    /// expose ici ; le catalogue reel vit dans `manifest.obm`.
     pub fn pending_downloads(&self) -> Vec<PendingDownload> {
+        let zone = self.private_zone();
         self.inner
             .pending
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .values()
-            .cloned()
+            .map(|p| {
+                let mut p = p.clone();
+                if p.private {
+                    if let Some(z) = zone.as_ref() {
+                        // Deja opaque (restauration differee cle par
+                        // HMAC) : la cle est conservee telle quelle.
+                        let already_opaque = z.entry_by_row_key(&p.infohash).is_some();
+                        if !already_opaque {
+                            if let Some(arr) = onionbit_crypto::hash::from_hex(&p.infohash)
+                                .and_then(|b| <[u8; 20]>::try_from(b.as_slice()).ok())
+                            {
+                                p.infohash = z.row_key_hex(&onionbit_bittorrent::Id20::new(arr));
+                            }
+                        }
+                    }
+                    p.name = None;
+                }
+                p
+            })
             .collect()
+    }
+
+    /// Cle opaque (`HMAC` 40 hex) d'un `pending` prive a partir de la
+    /// cle donnee par l'utilisateur — accepte indifferenment
+    /// l'infohash reel et sa cle opaque (DELETE/PATCH ciblent l'un ou
+    /// l'autre selon ce que le listing a expose).
+    fn pending_opaque_match(&self, key: &str) -> Option<String> {
+        let zone = self.private_zone()?;
+        self.inner
+            .pending
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .values()
+            .find(|p| {
+                p.private
+                    && (p.infohash == key
+                        || onionbit_crypto::hash::from_hex(&p.infohash)
+                            .and_then(|b| <[u8; 20]>::try_from(b.as_slice()).ok())
+                            .is_some_and(|arr| {
+                                zone.row_key_hex(&onionbit_bittorrent::Id20::new(arr)) == key
+                            }))
+            })
+            .map(|p| p.infohash.clone())
     }
 
     /// Lane detenant reellement le telechargement (verite moteur,
@@ -2747,7 +3346,9 @@ impl CoreSession {
     fn set_pending_paused(&self, id_or_hash: &str, paused: bool) -> Result<()> {
         let ih = onionbit_crypto::hash::from_hex(id_or_hash)
             .ok_or(CoreError::InvalidState("telechargement inconnu"))?;
-        let key = onionbit_crypto::hash::to_hex(&ih);
+        let key = self
+            .pending_opaque_match(&onionbit_crypto::hash::to_hex(&ih))
+            .unwrap_or_else(|| onionbit_crypto::hash::to_hex(&ih));
         {
             let mut pending = self.inner.pending.lock().unwrap_or_else(|e| e.into_inner());
             let Some(p) = pending.get_mut(&key) else {
@@ -2806,7 +3407,13 @@ impl CoreSession {
         let Some(dl) = self.find_download(id_or_hash) else {
             let ih = onionbit_crypto::hash::from_hex(id_or_hash)
                 .ok_or(CoreError::InvalidState("telechargement inconnu"))?;
-            let key = onionbit_crypto::hash::to_hex(&ih);
+            // Cle passee par le client : infohash reel (public),
+            // cle HMAC opaque (prive) — un magnet prive en resolution
+            // est mappe sous les deux cles selon le chemin (ajout frais
+            // = reel, restauration differee = opaque).
+            let key = self
+                .pending_opaque_match(&onionbit_crypto::hash::to_hex(&ih))
+                .unwrap_or_else(|| onionbit_crypto::hash::to_hex(&ih));
             let pending = self
                 .inner
                 .pending
@@ -2833,12 +3440,26 @@ impl CoreSession {
             if !pending && !known {
                 return Err(CoreError::InvalidState("telechargement inconnu"));
             }
+            // Ligne privee : cle HMAC ; entree manifeste retiree
+            // aussi (orphan sinon).
+            let key = self.db_key(&ih);
             self.inner
                 .db_arc()
-                .with(|c| onionbit_db::downloads::delete(c, &ih))?;
+                .with(|c| onionbit_db::downloads::delete(c, &key))?;
+            if let (Some(z), Ok(arr)) = (self.private_zone(), <[u8; 20]>::try_from(ih.as_slice())) {
+                let _ = z.remove(&onionbit_bittorrent::Id20::new(arr));
+            }
             return Ok(());
         };
         let infohash = dl.info_hash_hex();
+        // ADR-0018 : la cle de ligne DB d'un prive est son HMAC —
+        // capturee AVANT le retrait moteur (`OpaqueBitV::clear_files`
+        // retire le hash du set, `db_key` retomberait sur le clair).
+        let db_key = self.db_key(&dl.info_hash());
+        let private_id = self
+            .private_zone()
+            .filter(|z| z.is_private(&onionbit_bittorrent::Id20::new(dl.info_hash())))
+            .map(|_| onionbit_bittorrent::Id20::new(dl.info_hash()));
         // Un meme infohash a pu etre materialise sur plusieurs
         // moteurs (lanes anonymes = sessions librqbit distinctes)
         // par une course de resolution : ne retirer que le premier
@@ -2859,8 +3480,9 @@ impl CoreSession {
         // Une entree `pending` residuelle coexistant avec l'objet
         // moteur : la retirer aussi, sa tache de resolution doit
         // abandonner au lieu de materialiser un download supprime.
-        {
-            let key = infohash.clone();
+        // Une restauration differee privee est cle par HMAC — les
+        // deux cles sont retirees.
+        for key in [infohash.clone(), hex::encode(&db_key)] {
             self.inner
                 .pending
                 .lock()
@@ -2895,11 +3517,19 @@ impl CoreSession {
                 })
                 .await;
             }
-            if let Some(ih) = onionbit_crypto::hash::from_hex(&h) {
-                let _ = self
-                    .inner
-                    .db_arc()
-                    .with(|c| onionbit_db::downloads::delete(c, &ih));
+            // Cle opaque capturee avant le retrait moteur : une
+            // ligne `private` est supprimee sous son HMAC, jamais
+            // sous l'infohash reel (absent de la base).
+            let _ = self
+                .inner
+                .db_arc()
+                .with(|c| onionbit_db::downloads::delete(c, &db_key));
+            // Entree `manifest.obm` retiree aussi — sans elle le
+            // catalogue conserverait un prive fantome.
+            if let (Some(z), Some(id)) = (self.private_zone(), private_id) {
+                if let Err(e) = z.remove(&id) {
+                    tracing::warn!(error = %e, "entree manifeste privee non retiree");
+                }
             }
         }
         Ok(())
@@ -2986,6 +3616,19 @@ impl CoreSession {
             .transpose()?
             .unwrap_or_else(|| dest_dir.clone());
         let (dl, mut row) = self.download_and_row(id_or_hash)?;
+        // ADR-0018 etape 62 : franchissement de zone — destination
+        // sous `@private/…` (ou ligne deja privee) → chemin dedie de
+        // re-encapsulation `OBD` / decryptage, pas un `fs` brut.
+        let to_private = self
+            .inner
+            .paths
+            .to_portable(&dest_dir)
+            .is_some_and(|s| s == "@private" || s.starts_with("@private/"));
+        if row.storage_area == "private" || to_private {
+            return self
+                .move_across_zones(id_or_hash, &dl, row, &dest_dir, &completed, to_private)
+                .await;
+        }
         let current = dl.output_folder();
         // `completed_dir` persiste peut etre un spec `@root/…` —
         // resolu avant comparaison avec la cible.
@@ -3091,6 +3734,9 @@ impl CoreSession {
         let Ok((dl, row)) = self.download_and_row(id_or_hash) else {
             return Ok(());
         };
+        if row.storage_area == "private" {
+            return self.move_private_on_completion(id_or_hash, &dl, &row).await;
+        }
         let current = dl.output_folder();
         let target = match row.completed_dir.as_deref().filter(|s| !s.is_empty()) {
             Some(cd) => self.inner.paths.resolve_persisted(cd),
@@ -3118,6 +3764,218 @@ impl CoreSession {
         self.move_storage(id_or_hash, &target, None)
             .await
             .map(|_| ())
+    }
+
+    /// ADR-0018 etape 62 : rangement prive a completion — le groupe
+    /// opaque `<hmac>` migre de `private/temp` vers
+    /// `private/downloads` (rename intra-zone, contenu inchange car
+    /// les noms et le chiffrement sont stables), le manifeste `OBM`
+    /// suit. No-op si le drapeau est desactive ou si le torrent est
+    /// deja dans `downloads`.
+    async fn move_private_on_completion(
+        &self,
+        id_or_hash: &str,
+        dl: &Download,
+        row: &DownloadRow,
+    ) -> Result<()> {
+        use crate::private_zone::PrivateSubdir;
+        let Some(zone) = self.private_zone() else {
+            return Ok(());
+        };
+        if !self.storage_settings().move_on_completion {
+            return Ok(());
+        }
+        let id = onionbit_bittorrent::Id20::new(dl.info_hash());
+        if zone.subdir_of(&id) == PrivateSubdir::Downloads {
+            return Ok(());
+        }
+        let src = zone.group_dir(&id, PrivateSubdir::Temp);
+        let dst = zone.group_dir(&id, PrivateSubdir::Downloads);
+        // Handles `.obd` fermes avant le rename (Windows).
+        self.remove_engine_only(id_or_hash, false).await?;
+        if src.exists() && std::fs::rename(&src, &dst).is_err() {
+            copy_recursive(&src, &dst)
+                .map_err(|e| CoreError::State(format!("move prive temp→downloads: {e}")))?;
+            std::fs::remove_dir_all(&src)?;
+        }
+        // Manifeste AVANT le re-add — `readd_row` choisit la factory
+        // de la sous-racine courante via `subdir_of`.
+        if let Some(mut entry) = zone.entry(&id) {
+            entry.output_dir = PrivateSubdir::Downloads.spec().to_string();
+            zone.upsert(&id, entry)?;
+        }
+        let mut row = row.clone();
+        row.output_dir = PrivateSubdir::Downloads.spec().to_string();
+        let engine = self.engine_for(row.anon_hops.max(0) as u32).await?;
+        self.readd_row(&engine, &row).await?;
+        self.inner
+            .db_arc()
+            .with(|c| onionbit_db::downloads::upsert(c, &row))?;
+        self.notify_state(id_or_hash);
+        Ok(())
+    }
+
+    /// ADR-0018 etape 62 — `move_storage` franchissant une zone :
+    ///
+    /// - **prive → prive** (`@private/temp` ↔ `@private/downloads`) :
+    ///   rename du groupe opaque, manifeste + ligne mis a jour ;
+    /// - **public → prive** : le contenu clair est re-encapsule en
+    ///   `.obd` (noms HMAC, `K_file` par fichier), les originaux sont
+    ///   effaces, la ligne publique devient opaque ;
+    /// - **prive → public** : decryptage des `.obd` vers `dest_dir`,
+    ///   groupe opaque supprime, la ligne redevient claire et
+    ///   l'entree `manifest.obm` disparait.
+    ///
+    /// Meme cycle remove/re-add que `move_storage` : le hash-check du
+    /// re-add reconnait le contenu (identique en clair).
+    async fn move_across_zones(
+        &self,
+        id_or_hash: &str,
+        dl: &Download,
+        mut row: DownloadRow,
+        dest_dir: &Path,
+        completed: &Path,
+        to_private: bool,
+    ) -> Result<bool> {
+        use crate::private_zone::PrivateSubdir;
+        let zone = self.private_zone().ok_or(CoreError::InvalidState(
+            "zone privee verrouillee ou desactivee",
+        ))?;
+        let id = onionbit_bittorrent::Id20::new(dl.info_hash());
+        let from_private = row.storage_area == "private";
+        let dest_spec = self.inner.paths.to_portable(dest_dir);
+        let target_sub = match dest_spec.as_deref() {
+            Some(s) if s == "@private/downloads" || s.starts_with("@private/downloads/") => {
+                PrivateSubdir::Downloads
+            }
+            _ => PrivateSubdir::Temp,
+        };
+
+        if from_private && to_private {
+            // Rename intra-zone : contenu deja `OBD`, noms stables.
+            let from = zone.subdir_of(&id);
+            if from == target_sub {
+                return Ok(false);
+            }
+            let src = zone.group_dir(&id, from);
+            let dst = zone.group_dir(&id, target_sub);
+            self.remove_engine_only(id_or_hash, false).await?;
+            if src.exists() && std::fs::rename(&src, &dst).is_err() {
+                copy_recursive(&src, &dst)
+                    .map_err(|e| CoreError::State(format!("move prive: {e}")))?;
+                std::fs::remove_dir_all(&src)?;
+            }
+            if let Some(mut entry) = zone.entry(&id) {
+                entry.output_dir = target_sub.spec().to_string();
+                zone.upsert(&id, entry)?;
+            }
+            row.output_dir = target_sub.spec().to_string();
+            let engine = self.engine_for(row.anon_hops.max(0) as u32).await?;
+            self.readd_row(&engine, &row).await?;
+            self.inner
+                .db_arc()
+                .with(|c| onionbit_db::downloads::upsert(c, &row))?;
+            self.notify_state(id_or_hash);
+            return Ok(true);
+        }
+
+        if to_private {
+            // public → prive : encapsulation des fichiers declares.
+            let files: Vec<(String, u64)> = dl
+                .files()
+                .unwrap_or_default()
+                .iter()
+                .map(|f| (f.name.clone(), f.length))
+                .collect();
+            let current = dl.output_folder();
+            if row.torrent_data.is_none() {
+                row.torrent_data = dl.torrent_bytes().map(|b| b.to_vec());
+            }
+            let name = dl.name();
+            self.remove_engine_only(id_or_hash, false).await?;
+            let (z, f) = (zone.clone(), files);
+            let (src_dir, dst_sub) = (current.clone(), target_sub);
+            tokio::task::spawn_blocking(move || {
+                encapsulate_public_files(&src_dir, &z, &id, dst_sub, &f)
+            })
+            .await
+            .map_err(|e| CoreError::State(format!("encapsulation interrompue: {e}")))?
+            .map_err(|e| CoreError::State(format!("encapsulation OBD: {e}")))?;
+            // Manifeste avant la ligne opaque (coherence a froid).
+            zone.upsert(
+                &id,
+                crate::private_zone::ManifestEntry {
+                    infohash: hex::encode(dl.info_hash()),
+                    name,
+                    source_uri: row.source_uri.clone(),
+                    torrent_data: row.torrent_data.as_deref().map(hex::encode),
+                    output_dir: target_sub.spec().to_string(),
+                    paused: row.paused,
+                    added_on: row.added_on,
+                },
+            )?;
+            let mut prow = row.clone();
+            let old_key = row.infohash.clone();
+            prow.infohash = zone.row_key(&id).to_vec();
+            prow.name = None;
+            prow.source_uri = String::new();
+            prow.torrent_data = None;
+            prow.output_dir = target_sub.spec().to_string();
+            prow.storage_area = "private".to_string();
+            // La ligne publique disparait, remplacee par la ligne
+            // opaque — ordre delete+upsert dans une transaction.
+            self.inner.db_arc().with(|c| {
+                onionbit_db::downloads::delete(c, &old_key)?;
+                onionbit_db::downloads::upsert(c, &prow)?;
+                Ok(())
+            })?;
+            let engine = self.engine_for(row.anon_hops.max(0) as u32).await?;
+            self.readd_row(&engine, &prow).await?;
+            self.notify_state(id_or_hash);
+            return Ok(true);
+        }
+
+        // prive → public : decryptage des `.obd` vers `dest_dir`.
+        if !dest_dir.is_dir() || !completed.is_dir() {
+            return Err(CoreError::State(format!(
+                "Target directory ({}) does not exist",
+                dest_dir.display()
+            )));
+        }
+        let entry = zone.entry(&id).ok_or(CoreError::InvalidState(
+            "entree privee absente du manifeste",
+        ))?;
+        let finished = row.finished;
+        // Le retrait moteur supprime `<hmac>.bitv` (`clear_files`) et
+        // retire le hash du set prive — le re-add sera public.
+        self.remove_engine_only(id_or_hash, false).await?;
+        let (z, dst) = (zone.clone(), dest_dir.to_path_buf());
+        tokio::task::spawn_blocking(move || decapsulate_private_files(&z, &id, &dst))
+            .await
+            .map_err(|e| CoreError::State(format!("decapsulation interrompue: {e}")))?
+            .map_err(|e| CoreError::State(format!("decapsulation OBD: {e}")))?;
+        zone.remove(&id)?;
+        let mut publ = row;
+        let old_key = publ.infohash.clone();
+        publ.infohash = dl.info_hash().to_vec();
+        publ.name = entry.name;
+        publ.source_uri = entry.source_uri;
+        publ.torrent_data = entry
+            .torrent_data
+            .as_deref()
+            .and_then(|h| hex::decode(h).ok());
+        publ.output_dir = self.persisted_path(dest_dir);
+        publ.completed_dir = Some(self.persisted_path(if finished { dest_dir } else { completed }));
+        publ.storage_area = "public".to_string();
+        self.inner.db_arc().with(|c| {
+            onionbit_db::downloads::delete(c, &old_key)?;
+            onionbit_db::downloads::upsert(c, &publ)?;
+            Ok(())
+        })?;
+        let engine = self.engine_for(publ.anon_hops.max(0) as u32).await?;
+        self.readd_row(&engine, &publ).await?;
+        self.notify_state(id_or_hash);
+        Ok(true)
     }
 
     /// `set_selected_files` Python : valide les indices puis applique
@@ -3602,21 +4460,33 @@ impl CoreSession {
     /// (`total`/`used`/`free` — Tribler 8.x ne re-emet plus ce topic,
     /// la sonde est une extension du daemon documentee).
     pub fn check_low_space(&self) {
-        let dir = &self.inner.config.downloads_dir;
-        let Ok(total) = fs2::total_space(dir) else {
-            return;
-        };
-        let Ok(free) = fs2::available_space(dir) else {
-            return;
-        };
-        if free < LOW_SPACE_THRESHOLD_BYTES {
-            self.inner.notifier.notify(Notification::LowSpace {
-                disk_usage_data: serde_json::json!({
-                    "total": total,
-                    "used": total.saturating_sub(free),
-                    "free": free,
-                }),
-            });
+        // ADR-0018 : la sonde couvre les deux zones — `data/public`
+        // (dossier telechargements configure) et `data/private` quand
+        // la zone est montee (meme volume en portable, volumes
+        // distincts possibles via junctions/liens).
+        let mut dirs = vec![self.inner.config.downloads_dir.clone()];
+        if self.private_zone().is_some() {
+            let p = self.inner.paths.private().to_path_buf();
+            if !dirs.iter().any(|d| d == &p) {
+                dirs.push(p);
+            }
+        }
+        for dir in dirs {
+            let Ok(total) = fs2::total_space(&dir) else {
+                continue;
+            };
+            let Ok(free) = fs2::available_space(&dir) else {
+                continue;
+            };
+            if free < LOW_SPACE_THRESHOLD_BYTES {
+                self.inner.notifier.notify(Notification::LowSpace {
+                    disk_usage_data: serde_json::json!({
+                        "total": total,
+                        "used": total.saturating_sub(free),
+                        "free": free,
+                    }),
+                });
+            }
         }
     }
 
@@ -3679,6 +4549,12 @@ impl CoreSession {
         if let Some(engine) = self.inner.engine_opt() {
             engine.stop().await;
         }
+        // ADR-0018 etape 62 : zone invitee ephemere —
+        // `data/private/temp/.guest/` ne survit pas au `stop` (aucun
+        // artefact prive persistant hors identite).
+        if let Some(z) = self.private_zone() {
+            z.purge_guest();
+        }
         self.shutdown_state("Shutting down local SOCKS5 interface.");
         self.shutdown_state("Shutting down metadata database.");
         // `on_shutdown` de `AugmentedSearch` : persiste la fenetre de
@@ -3690,6 +4566,146 @@ impl CoreSession {
         let db = self.inner.db_arc();
         let _ = tokio::task::spawn_blocking(move || db.checkpoint()).await;
         self.shutdown_state("Shutting down GUI connection. Going dark.");
+    }
+}
+
+/// `relpath` BitTorrent normalise `/` (meme regle que
+/// `storage_private::relpath_bytes` — le domaine de `K_file` est
+/// stable d'un OS a l'autre, le bundle est portable).
+fn relpath_bytes(name: &str) -> Vec<u8> {
+    Path::new(name)
+        .components()
+        .map(|c| c.as_os_str().to_string_lossy().into_owned())
+        .collect::<Vec<_>>()
+        .join("/")
+        .into_bytes()
+}
+
+/// `relpath` `a/b` → chemin de destination sur disque, composants
+/// `..`/absolus rejettes (un `scan_ct` corrompu ne doit pas ecrire
+/// hors de `dst`).
+fn safe_relpath_path(dst: &Path, relpath: &[u8]) -> Option<PathBuf> {
+    let text = std::str::from_utf8(relpath).ok()?;
+    if text.is_empty() {
+        return None;
+    }
+    let mut out = dst.to_path_buf();
+    for comp in text.split('/') {
+        if comp.is_empty()
+            || comp == "."
+            || comp == ".."
+            || comp.contains('\\')
+            || comp.contains(':')
+        {
+            return None;
+        }
+        out.push(comp);
+    }
+    Some(out)
+}
+
+/// ADR-0018 : encapsulation public → prive. Chaque fichier declare
+/// du torrent devient un `.obd` sous `<sub>/<grp opaque>` ; les
+/// originaux clairs sont effaces apres une copie reussie. Les trous
+/// d'un telechargement partiel deviennent des zeros — le hash-check
+/// du re-add les remarque comme manquants.
+fn encapsulate_public_files(
+    src_dir: &Path,
+    zone: &crate::private_zone::PrivateZone,
+    ih: &onionbit_bittorrent::Id20,
+    sub: crate::private_zone::PrivateSubdir,
+    files: &[(String, u64)],
+) -> std::io::Result<()> {
+    use onionbit_crypto::obdfile::ObdFile;
+    let grp = zone.group_dir(ih, sub);
+    std::fs::create_dir_all(&grp)?;
+    let mut buf = vec![0u8; 4 << 20];
+    for (rel, len) in files {
+        let src = src_dir.join(rel);
+        if !src.is_file() {
+            continue;
+        }
+        let relb = relpath_bytes(rel);
+        let dst = grp.join(zone.keys().file_name(&ih.0, &relb));
+        let obd = ObdFile::create(&dst, zone.keys(), &ih.0, &relb, zone.chunk_log2(), *len)
+            .map_err(std::io::Error::other)?;
+        let mut f = std::fs::File::open(&src)?;
+        let mut off = 0u64;
+        loop {
+            let n = std::io::Read::read(&mut f, &mut buf)?;
+            if n == 0 {
+                break;
+            }
+            obd.write_range(off, &buf[..n])
+                .map_err(std::io::Error::other)?;
+            off += n as u64;
+        }
+        std::fs::remove_file(&src)?;
+    }
+    // Dossiers vides laisses par la source (ex. `<nom>/fichiers`).
+    prune_empty_dirs(src_dir);
+    Ok(())
+}
+
+/// ADR-0018 : decryptage prive → public. Chaque `.obd` du groupe est
+/// localise par son sceau `scan_ct` (couple `infohash‖relpath`),
+/// dechiffre sous `K_file` puis ecrit en clair sous `dst_dir` ; le
+/// groupe opaque est supprime ensuite.
+fn decapsulate_private_files(
+    zone: &crate::private_zone::PrivateZone,
+    ih: &onionbit_bittorrent::Id20,
+    dst_dir: &Path,
+) -> std::io::Result<()> {
+    use onionbit_crypto::obdfile::ObdFile;
+    let grp = zone.group_dir(ih, zone.subdir_of(ih));
+    let mut buf = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&grp) {
+        for e in entries.flatten() {
+            let p = e.path();
+            if p.extension().is_none_or(|x| x != "obd") {
+                continue;
+            }
+            let Ok(Some((obd_ih, relb))) = ObdFile::scan_path(&p, zone.keys()) else {
+                continue;
+            };
+            if obd_ih != ih.0 {
+                continue;
+            }
+            let cipher = zone.keys().file_cipher(&ih.0, &relb);
+            let Ok(obd) = ObdFile::open(&p, &cipher) else {
+                continue;
+            };
+            let Some(dst) = safe_relpath_path(dst_dir, &relb) else {
+                continue;
+            };
+            if let Some(parent) = dst.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            let len = obd.plain_len();
+            buf.resize(len as usize, 0);
+            obd.read_range(0, &mut buf).map_err(std::io::Error::other)?;
+            std::fs::write(&dst, &buf)?;
+        }
+    }
+    if grp.exists() {
+        std::fs::remove_dir_all(&grp)?;
+    }
+    Ok(())
+}
+
+/// Supprime les dossiers vides sous `root` (post-decapsulation) —
+/// `root` lui-meme est conserve (c'est le dossier de telechargements
+/// partage, pas un contenu du torrent).
+fn prune_empty_dirs(root: &Path) {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return;
+    };
+    for e in entries.flatten() {
+        let p = e.path();
+        if p.is_dir() {
+            prune_empty_dirs(&p);
+            let _ = std::fs::remove_dir(&p); // echoue si non vide — attendu
+        }
     }
 }
 
@@ -3799,11 +4815,17 @@ fn stealth_blocks_direct(config: &CoreConfig) -> bool {
 /// mode stealth ADR-0017 quand `stealth.enabled` (transport morphe,
 /// overlays legacy off). `stealth.enabled × ipv8.enabled` est un
 /// refus ferme : jamais de coexistence legacy/morphe sur un noeud.
+///
+/// `lane_engine_config` = config moteur des **lanes anonymes**
+/// (`config.engine` non neutralise stealth + `opaque_bitv` eventuel
+/// — ADR-0018) ; leur `persistence_dir` est recalee par lane dans
+/// `Ipv8Stack::anon_engine`.
 async fn start_ipv8_with_identity(
     config: &CoreConfig,
     db: Arc<Database>,
     notifier: Notifier,
     tasks: crate::asyncio::TaskRegistry,
+    lane_engine_config: onionbit_bittorrent::EngineConfig,
     material: Option<crate::identity::IdentityMaterial>,
 ) -> Result<Option<Arc<crate::ipv8_stack::Ipv8Stack>>> {
     if config.ipv8.enabled && config.ipv8.stealth.is_some() {
@@ -3823,7 +4845,7 @@ async fn start_ipv8_with_identity(
         &config.ipv8,
         &config.state_dir,
         &config.downloads_dir,
-        &config.engine,
+        &lane_engine_config,
         db,
         notifier,
         tasks,

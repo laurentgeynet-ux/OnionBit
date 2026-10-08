@@ -36,6 +36,10 @@ pub use config::EngineConfig;
 pub use download::{Download, DownloadState, DownloadStats};
 pub use engine::{BtEngine, DownloadPeer};
 pub use error::{BtError, Result};
+// `Id20` reexporte : la zone privee du core (`OpaqueBitV`,
+// `PrivateStorageFactory`) manipule des infohashes `Id20` sans
+// dependre directement de `librqbit-core`.
+pub use librqbit_core::Id20;
 pub use storage_private::PrivateStorageFactory;
 
 #[cfg(test)]

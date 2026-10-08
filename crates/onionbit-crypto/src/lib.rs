@@ -32,6 +32,10 @@ pub mod keyblob;
 /// (ADR-0018 etape 60) : en-tete scelle a slot fixe, sceau de
 /// decouverte `K_scan`, nonce aleatoire par ecriture.
 pub mod obdfile;
+/// Manifest prive `manifest.obm` — catalogue AEAD `K_manifest` des
+/// telechargements prives (ADR-0018 etape 62) : ecriture atomique,
+/// rotation `.bak`, borne a l'ouverture.
+pub mod obm;
 /// Primitives du transport furtif (ADR-0017) : cles ephemeres
 /// Elligator2, DH/HKDF domaine `onionbit/stealth/v1`, AEAD.
 pub mod stealth;

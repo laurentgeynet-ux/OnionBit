@@ -895,7 +895,8 @@ struct Fleet {
     _state_dir: tempfile::TempDir,
     _seed_dir: tempfile::TempDir,
     state_dir: std::path::PathBuf,
-    /// Repertoire de sortie des downloads (`state_dir/downloads`).
+    /// Repertoire de sortie des downloads (ADR-0018 :
+    /// `data/public/downloads` sous `state_dir`).
     dl_dir: std::path::PathBuf,
     torrents: Vec<FleetTorrent>,
 }
@@ -984,7 +985,7 @@ async fn fleet_setup(specs: &[(u32, bool)], n_relays: usize) -> Fleet {
         relays,
         _seeder: seeder,
         seed_addr,
-        dl_dir: state_dir.path().join("downloads"),
+        dl_dir: onionbit_core::paths::PathRoots::for_state_dir(state_dir.path()).public_downloads(),
         state_dir: state_dir.path().to_path_buf(),
         _state_dir: state_dir,
         _seed_dir: seed_dir,
@@ -2725,8 +2726,10 @@ async fn live_messaging_e2e_vault_migration() {
     let blob = m_a.export_vault();
     stop_bounded(&a).await;
     let dir_a2 = tempfile::tempdir().unwrap();
+    // ADR-0018 etape 58 : la cle vit sous `state/identity/` ; la copie
+    // a plat dans le nouveau state exerce la migration legacy au boot.
     std::fs::copy(
-        dir_a.path().join("ipv8_keypair.bin"),
+        dir_a.path().join("identity").join("ipv8_keypair.bin"),
         dir_a2.path().join("ipv8_keypair.bin"),
     )
     .expect("copie identite");

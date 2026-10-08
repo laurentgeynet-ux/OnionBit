@@ -87,6 +87,18 @@ impl OpaqueBitV {
         }
     }
 
+    /// Re-instance pour un autre dossier de persistance — les lanes
+    /// anonymes ont leur propre `state/rqbit/anon{n}` ; memes cles,
+    /// set et drapeau invite partages.
+    pub fn for_dir(&self, persistence_dir: PathBuf) -> Self {
+        Self {
+            keys: self.keys.clone(),
+            private: self.private.clone(),
+            guest: self.guest.clone(),
+            persistence_dir,
+        }
+    }
+
     /// Set partage des infohashes prives — a brancher sur
     /// `PrivateStorageFactory::with_private_hashes`.
     pub fn private_hashes(&self) -> &Arc<Mutex<HashSet<Id20>>> {

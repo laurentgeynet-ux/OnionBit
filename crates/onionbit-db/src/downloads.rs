@@ -16,10 +16,10 @@ const COLS: &str = "rowid, infohash, name, source_uri, torrent_data,
                     output_dir, added_on, paused, finished, anon_hops,
                     safe_seeding, user_stopped, upload_limit, download_limit,
                     seeding_ratio, auto_managed, queue_position, completed_dir,
-                    selected_files, file_priorities, extra_trackers,
-                    removed_trackers, time_finished, channel_download,
-                    add_download_to_channel, total_uploaded,
-                    total_downloaded";
+                    storage_area, selected_files, file_priorities,
+                    extra_trackers, removed_trackers, time_finished,
+                    channel_download, add_download_to_channel,
+                    total_uploaded, total_downloaded";
 
 /// Encode une liste d'entiers en CSV (`"0,2,3,"` — format du champ
 /// `download_defaults/files` des checkpoints Python).
@@ -76,6 +76,7 @@ fn from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<DownloadRow> {
         auto_managed: r.get::<_, i64>("auto_managed")? != 0,
         queue_position: r.get("queue_position")?,
         completed_dir: r.get("completed_dir")?,
+        storage_area: r.get("storage_area")?,
         selected_files: selected_files.map(|s| decode_csv(&s)),
         file_priorities: file_priorities.map(|s| decode_csv(&s)),
         extra_trackers: extra_trackers.map(|s| decode_urls(&s)).unwrap_or_default(),
@@ -105,10 +106,10 @@ pub fn upsert(conn: &Connection, row: &DownloadRow) -> Result<i64> {
             added_on, paused, finished, anon_hops,
             safe_seeding, user_stopped, upload_limit, download_limit,
             seeding_ratio, auto_managed, queue_position, completed_dir,
-            selected_files, file_priorities, extra_trackers,
+            storage_area, selected_files, file_priorities, extra_trackers,
             removed_trackers, time_finished, channel_download,
             add_download_to_channel, total_uploaded, total_downloaded
-         ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24,?25,?26)
+         ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24,?25,?26,?27)
          ON CONFLICT(infohash) DO UPDATE SET
             name = excluded.name,
             source_uri = excluded.source_uri,
@@ -126,6 +127,7 @@ pub fn upsert(conn: &Connection, row: &DownloadRow) -> Result<i64> {
             auto_managed = excluded.auto_managed,
             queue_position = excluded.queue_position,
             completed_dir = excluded.completed_dir,
+            storage_area = excluded.storage_area,
             selected_files = excluded.selected_files,
             file_priorities = excluded.file_priorities,
             extra_trackers = excluded.extra_trackers,
@@ -153,6 +155,14 @@ pub fn upsert(conn: &Connection, row: &DownloadRow) -> Result<i64> {
             row.auto_managed as i64,
             row.queue_position,
             row.completed_dir,
+            // `""` (defaut derive) = `public` — la colonne est
+            // NOT NULL DEFAULT 'public' depuis la migration v20,
+            // mais l'upsert explicite doit ecrire la valeur reelle.
+            if row.storage_area.is_empty() {
+                "public"
+            } else {
+                row.storage_area.as_str()
+            },
             row.selected_files.as_deref().map(encode_csv),
             row.file_priorities.as_deref().map(encode_csv),
             (!row.extra_trackers.is_empty()).then(|| encode_urls(&row.extra_trackers)),

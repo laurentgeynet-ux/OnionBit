@@ -6,14 +6,39 @@
 //! `tribler.core.restapi.file_endpoint` (navigateur de fichiers pour
 //! les selecteurs de l'UI ; l'API n'ecoute que sur loopback).
 
-use axum::extract::Query;
+use axum::extract::{Query, State};
 use axum::Json;
 use serde::Deserialize;
 
 use crate::error::ApiError;
+use crate::state::AppState;
 
 /// Separateur de la plateforme (`os.path.sep` Python).
 const SEPARATOR: &str = if cfg!(windows) { "\\" } else { "/" };
+
+/// ADR-0018 : la zone privee n'est pas navigable — les noms de
+/// groupes `OBD`/`manifest.obm` n'apportent rien au selecteur et un
+/// listing brut exposerait la topologie chiffree. `path` sous
+/// `data/private` (ou le spec `@private/…`) → `403`.
+fn refuse_private(state: &AppState, path: &std::path::Path) -> Result<(), ApiError> {
+    let resolved = state
+        .session
+        .paths()
+        .resolve_input(path)
+        .unwrap_or_else(|_| path.to_path_buf());
+    let resolved = resolved.canonicalize().unwrap_or(resolved);
+    if state
+        .session
+        .paths()
+        .to_portable(&resolved)
+        .is_some_and(|s| s == "@private" || s.starts_with("@private/"))
+    {
+        return Err(ApiError::forbidden(
+            "the private storage area is not browsable",
+        ));
+    }
+    Ok(())
+}
 
 /// Entree d'un listing de repertoire.
 fn entry(path: &std::path::Path) -> serde_json::Value {
@@ -35,7 +60,10 @@ pub struct BrowseQuery {
     pub files: Option<String>,
 }
 
-pub async fn browse(Query(q): Query<BrowseQuery>) -> Result<Json<serde_json::Value>, ApiError> {
+pub async fn browse(
+    State(state): State<AppState>,
+    Query(q): Query<BrowseQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
     let path = q.path.unwrap_or_default();
     let show_files = q.files.as_deref() == Some("1");
 
@@ -57,12 +85,16 @@ pub async fn browse(Query(q): Query<BrowseQuery>) -> Result<Json<serde_json::Val
 
     // Remonter jusqu'a un repertoire existant (comportement Python).
     let mut dir = std::path::PathBuf::from(if path.is_empty() { "." } else { &path });
+    refuse_private(&state, &dir)?;
     dir = dir.canonicalize().unwrap_or(dir);
     while !dir.is_dir() {
         if !dir.pop() {
             break;
         }
     }
+    // `canonicalize` a pu rentrer dans `data/private` par un chemin
+    // public prefixe (junction) — re-verification post-resolution.
+    refuse_private(&state, &dir)?;
     if !dir.is_dir() {
         return Err(ApiError::not_found(format!(
             "No directory named {path} exists"
@@ -108,10 +140,14 @@ pub struct ListQuery {
     pub recursively: Option<String>,
 }
 
-pub async fn list(Query(q): Query<ListQuery>) -> Result<Json<serde_json::Value>, ApiError> {
+pub async fn list(
+    State(state): State<AppState>,
+    Query(q): Query<ListQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
     let path = q.path.unwrap_or_default();
     let recursive = q.recursively.as_deref() != Some("0");
     let dir = std::path::PathBuf::from(&path);
+    refuse_private(&state, &dir)?;
     if !dir.exists() {
         return Err(ApiError::not_found(format!(
             "Directory {path} does not exist"
@@ -152,12 +188,16 @@ pub struct CreateQuery {
     pub path: Option<String>,
 }
 
-pub async fn create(Query(q): Query<CreateQuery>) -> Result<Json<serde_json::Value>, ApiError> {
+pub async fn create(
+    State(state): State<AppState>,
+    Query(q): Query<CreateQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
     let path = q
         .path
         .filter(|p| !p.is_empty())
         .ok_or_else(|| ApiError::bad_request("path parameter missing"))?;
     let dir = std::path::PathBuf::from(&path);
+    refuse_private(&state, &dir)?;
     std::fs::create_dir_all(&dir)
         .map_err(|e| ApiError::bad_request(format!("Cannot create {path}: {e}")))?;
     Ok(Json(serde_json::json!({

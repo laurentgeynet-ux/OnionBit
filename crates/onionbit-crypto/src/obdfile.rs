@@ -81,6 +81,7 @@ const INFO_STORE: &[u8] = b"onionbit/private-store/v1";
 const INFO_SCAN: &[u8] = b"scan";
 const INFO_NAMES: &[u8] = b"names";
 const INFO_FILE_PREFIX: &[u8] = b"file/";
+const INFO_MANIFEST: &[u8] = b"manifest";
 
 /// AAD des sceaux d'en-tete (lien fonctionnel : un `scan_ct` colle a
 /// la place d'un `hdr_ct` echoue au decrypt).
@@ -247,6 +248,23 @@ impl PrivateStoreKeys {
     /// `.obd` avec la seule graine (secours `OBM` perdu).
     pub fn scan_cipher(&self) -> ChaCha20Poly1305 {
         cipher(self.expand(INFO_SCAN))
+    }
+
+    /// `K_manifest` — cle du catalogue prive `manifest.obm`
+    /// (`HKDF(K_store, "manifest")`, codec `obm.rs`, etape 62).
+    pub fn manifest_cipher(&self) -> ChaCha20Poly1305 {
+        cipher(self.expand(INFO_MANIFEST))
+    }
+
+    /// Cle de ligne publique : `HMAC(K_names, "row/"‖infohash)` —
+    /// la colonne `infohash` des lignes `private` porte cette cle
+    /// opaque, jamais l'infohash reel (ADR-0018 §catalogue).
+    pub fn row_key(&self, infohash: &[u8; 20]) -> [u8; 20] {
+        let mut mac = <Hmac<Sha256> as KeyInit>::new_from_slice(&self.expand(INFO_NAMES))
+            .expect("HMAC accepte toute taille de cle");
+        mac.update(b"row/");
+        mac.update(infohash);
+        mac.finalize().into_bytes()[..20].try_into().unwrap()
     }
 
     /// `K_file(infohash, relpath)` — cle par (torrent, fichier) :

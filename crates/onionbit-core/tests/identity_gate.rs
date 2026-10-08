@@ -22,6 +22,8 @@ fn gated_cfg(state_dir: std::path::PathBuf) -> CoreConfig {
 }
 
 fn no_identity_files(dir: &std::path::Path) -> bool {
+    // ADR-0018 etape 58 : fichiers identitaires sous `state/identity/`.
+    let dir = dir.join("identity");
     !dir.join(identity::IDENTITY_SEED_FILE).exists()
         && !dir.join(identity::IPV8_KEY_FILE).exists()
         && !dir.join(identity::STEALTH_BRIDGE_KEY_FILE).exists()
@@ -51,7 +53,11 @@ async fn headless_sans_gate_auto_genere() {
         .expect("boot headless");
     assert_eq!(session.identity_phase(), IdentityPhase::Ready);
     assert!(session.ipv8().is_some());
-    assert!(dir.path().join(identity::IDENTITY_SEED_FILE).exists());
+    assert!(dir
+        .path()
+        .join("identity")
+        .join(identity::IDENTITY_SEED_FILE)
+        .exists());
     session.stop().await;
 }
 

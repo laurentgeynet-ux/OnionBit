@@ -3684,12 +3684,19 @@ async fn identite_export_import_cycle() {
         .session
         .config()
         .state_dir
+        .join("identity")
         .join("identity_seed.bin")
         .exists());
     let body: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(body["restart_required"], true);
-    let sur_disque =
-        std::fs::read(srv.session.config().state_dir.join("ipv8_keypair.bin")).unwrap();
+    let sur_disque = std::fs::read(
+        srv.session
+            .config()
+            .state_dir
+            .join("identity")
+            .join("ipv8_keypair.bin"),
+    )
+    .unwrap();
     let rechargee = LibNaClSecretKey::from_bin(&sur_disque).unwrap();
     assert_eq!(
         rechargee.public_key().to_bin(),
@@ -3713,8 +3720,14 @@ async fn identite_export_import_cycle() {
             .unwrap();
         assert_eq!(resp.status(), 400, "cas {json}");
     }
-    let sur_disque =
-        std::fs::read(srv.session.config().state_dir.join("ipv8_keypair.bin")).unwrap();
+    let sur_disque = std::fs::read(
+        srv.session
+            .config()
+            .state_dir
+            .join("identity")
+            .join("ipv8_keypair.bin"),
+    )
+    .unwrap();
     assert_eq!(sur_disque, nouvelle.to_bin());
 
     srv.session.stop().await;
@@ -3732,7 +3745,7 @@ async fn identite_phrase_recuperation_cycle() {
     let srv = spawn_server_ipv8().await;
     let state_dir = srv.session.config().state_dir.clone();
     let stack = srv.session.ipv8().unwrap();
-    let seed_attendu = std::fs::read(state_dir.join("identity_seed.bin")).unwrap();
+    let seed_attendu = std::fs::read(state_dir.join("identity").join("identity_seed.bin")).unwrap();
 
     // Phrase EN : 24 mots, decode = la graine sur disque.
     let resp = srv
@@ -3789,17 +3802,17 @@ async fn identite_phrase_recuperation_cycle() {
     let body: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(body["restart_required"], true);
     assert_eq!(
-        std::fs::read(state_dir.join("identity_seed.bin"))
+        std::fs::read(state_dir.join("identity").join("identity_seed.bin"))
             .unwrap()
             .as_slice(),
         seed2.as_bytes()
     );
     assert_eq!(
-        std::fs::read(state_dir.join("ipv8_keypair.bin")).unwrap(),
+        std::fs::read(state_dir.join("identity").join("ipv8_keypair.bin")).unwrap(),
         seed2.derive_keypair().to_bin()
     );
     assert_eq!(
-        std::fs::read(state_dir.join("stealth_bridge.key"))
+        std::fs::read(state_dir.join("identity").join("stealth_bridge.key"))
             .unwrap()
             .as_slice(),
         seed2.derive_bridge_key()
@@ -3825,7 +3838,7 @@ async fn identite_phrase_recuperation_cycle() {
         assert_eq!(resp.status(), 400, "cas {json}");
     }
     assert_eq!(
-        std::fs::read(state_dir.join("identity_seed.bin"))
+        std::fs::read(state_dir.join("identity").join("identity_seed.bin"))
             .unwrap()
             .as_slice(),
         seed2.as_bytes()
@@ -3875,7 +3888,10 @@ async fn identite_legacy_pas_de_phrase() {
         .await
         .unwrap();
     assert_eq!(resp.status(), 200);
-    assert!(state_dir.join("identity_seed.bin").exists());
+    assert!(state_dir
+        .join("identity")
+        .join("identity_seed.bin")
+        .exists());
     srv.session.stop().await;
 }
 
@@ -4116,8 +4132,11 @@ async fn identite_pending_gate_409_puis_guest() {
         .await
         .unwrap();
     assert_eq!(resp.status(), 400);
-    assert!(!state_dir.join("identity_seed.bin").exists());
-    assert!(!state_dir.join("ipv8_keypair.bin").exists());
+    assert!(!state_dir
+        .join("identity")
+        .join("identity_seed.bin")
+        .exists());
+    assert!(!state_dir.join("identity").join("ipv8_keypair.bin").exists());
 
     // Resolution invite : session prete, aucun artefact identite.
     let resp = srv
@@ -4150,8 +4169,11 @@ async fn identite_pending_gate_409_puis_guest() {
         .await
         .unwrap();
     assert_eq!(resp.status(), 200);
-    assert!(!state_dir.join("identity_seed.bin").exists());
-    assert!(!state_dir.join("ipv8_keypair.bin").exists());
+    assert!(!state_dir
+        .join("identity")
+        .join("identity_seed.bin")
+        .exists());
+    assert!(!state_dir.join("identity").join("ipv8_keypair.bin").exists());
 
     srv.session.stop().await;
 }
@@ -4179,7 +4201,10 @@ async fn identite_pending_create() {
         .unwrap();
     assert_eq!(body["state"], "ready");
     assert_eq!(body["seeded"], true);
-    assert!(state_dir.join("identity_seed.bin").exists());
+    assert!(state_dir
+        .join("identity")
+        .join("identity_seed.bin")
+        .exists());
     // Un second create est refuse (409).
     let resp = srv
         .client

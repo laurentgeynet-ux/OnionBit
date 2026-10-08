@@ -147,21 +147,27 @@ pub async fn get_ipv8_stats(State(state): State<AppState>) -> Json<serde_json::V
     Json(serde_json::json!({ "ipv8_statistics": stats }))
 }
 
-/// `GET /api/statistics/dirspace?path=...` — variante de confort de
-/// la route Python (voir `put_dirspace_stats`).
+/// `GET /api/statistics/dirspace?path=...&area=public|private` —
+/// variante de confort de la route Python (voir `put_dirspace_stats`).
 #[derive(Debug, Deserialize)]
 pub struct DirspaceQuery {
     /// Repertoire a mesurer.
     pub path: Option<String>,
+    /// ADR-0018 : zone de stockage — `private` mesure la racine
+    /// `data/private` (prime sur `path`).
+    pub area: Option<String>,
 }
 
 pub async fn get_dirspace_stats(
+    State(state): State<AppState>,
     Query(q): Query<DirspaceQuery>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     dirspace_response(
+        &state,
         q.path
             .filter(|p| !p.is_empty())
             .map(std::path::PathBuf::from),
+        q.area.as_deref(),
     )
 }
 
@@ -172,6 +178,8 @@ pub async fn get_dirspace_stats(
 pub struct DirspaceBody {
     /// Repertoire a mesurer.
     pub directory: Option<String>,
+    /// ADR-0018 : zone de stockage (`private` = racine `data/private`).
+    pub area: Option<String>,
 }
 
 /// `PUT /api/statistics/dirspace` — route Python exacte
@@ -179,19 +187,33 @@ pub struct DirspaceBody {
 /// `{"statistics": {"total","used","free"}}` du premier ancetre
 /// existant du repertoire demande.
 pub async fn put_dirspace_stats(
+    State(state): State<AppState>,
     axum::Json(body): axum::Json<DirspaceBody>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     dirspace_response(
+        &state,
         body.directory
             .filter(|d| !d.is_empty())
             .map(std::path::PathBuf::from),
+        body.area.as_deref(),
     )
 }
 
 /// Fidele a `get_dirspace_stats` Python : `shutil.disk_usage` sur le
 /// premier ancetre existant du chemin (404 "No stats for directory!"
-/// si aucun n'existe).
-fn dirspace_response(dir: Option<std::path::PathBuf>) -> Result<Json<serde_json::Value>, ApiError> {
+/// si aucun n'existe). ADR-0018 : `area=private|public` mesure la
+/// racine de la zone (`@private/…` est aussi resolu dans `dir`).
+fn dirspace_response(
+    state: &AppState,
+    dir: Option<std::path::PathBuf>,
+    area: Option<&str>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let dir = match area.map(|a| a.to_ascii_lowercase()) {
+        Some(a) if a == "private" => Some(state.session.paths().private().to_path_buf()),
+        Some(a) if a == "public" => Some(state.session.paths().public().to_path_buf()),
+        Some(_) => return Err(ApiError::bad_request("invalid area")),
+        None => dir.map(|d| state.session.paths().resolve_input(&d).unwrap_or(d)),
+    };
     let dir = dir.unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
     let mut path = Some(dir.as_path());
     while let Some(p) = path {

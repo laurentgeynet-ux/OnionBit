@@ -122,6 +122,15 @@ pub struct DownloadInfo {
     /// Extension (pas Python) : flag `private` du metainfo —
     /// permet au client de proposer « republier en anonyme ».
     pub private: bool,
+    /// Extension ADR-0018 : zone de stockage du telechargement —
+    /// `"public"` (clair sous `data/public/`) ou `"private"`
+    /// (chiffre `OBD` lie a l'identite sous `data/private/`).
+    pub storage_area: String,
+    /// Extension ADR-0018 : la ligne est une entree de la zone
+    /// privee alors que l'identite est verrouillee — le download est
+    /// connu (cle opaque) mais son contenu reste indisponible tant
+    /// que l'identite n'est pas debloquee.
+    pub locked_area: bool,
 }
 
 impl DownloadInfo {
@@ -186,6 +195,8 @@ impl DownloadInfo {
             user_stopped: matches!(s.state, DownloadState::Paused),
             streamable,
             private: false,
+            storage_area: "public".to_string(),
+            locked_area: false,
         }
     }
 }
