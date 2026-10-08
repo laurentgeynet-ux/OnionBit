@@ -44,6 +44,14 @@ pub mod packet;
 pub mod payloads;
 pub mod peer;
 pub mod serializer;
+/// Format filaire et sessions du transport furtif (ADR-0017) —
+/// disjoint du transport legacy ; aucun marqueur IPv8 sur le fil.
+pub mod stealth;
+/// `StealthTransport` : `DatagramTransport` morphe (ADR-0017) —
+/// sessions par pair, silence absolu sur non-authentifie, jamais de
+/// repli en clair.
+pub mod stealth_transport;
+pub mod transport;
 
 pub use address::UdpAddress;
 pub use content_discovery::CONTENT_DISCOVERY_COMMUNITY_ID;
@@ -54,6 +62,7 @@ pub use error::Ipv8Error;
 pub use overlays::{OverlayInfo, OverlayPeer, OverlayStrategy};
 pub use packet::{prefix_of, Packet, PREFIX_LEN, PROTOCOL_VERSION};
 pub use peer::{Network, Peer};
+pub use transport::{DatagramTransport, RawUdpTransport};
 
 /// Identifiant de community IPv8 (equivalent du `community_id`
 /// pyipv8, 20 octets de hash de cle publique).

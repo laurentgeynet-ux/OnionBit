@@ -135,7 +135,20 @@ pub mod msg {
     /// ayant annonce `CAP_OBF_V1` ; `hello` reste en clair (il negocie
     /// la capacite).
     pub const OBF: u8 = 8;
+    /// `INTRO_REQ` — demande d'introductions de ponts stealth
+    /// `{v, want}` (ADR-0017 §1) : le demandeur est un pair ext deja
+    /// connu (paquet signe) ; la reponse est graduee par reputation.
+    pub const INTRO_REQ: u8 = 9;
+    /// `INTRO` — `{v, count, [(addr, bridge_pk)]}` : reponse a un
+    /// `INTRO_REQ` ou diffusion poussee aux pairs reciproques quand
+    /// la table locale gagne une entree nouvelle.
+    pub const INTRO: u8 = 10;
 }
+
+/// Borne du payload `INTRO` — `count` est borne par
+/// `intro_resp_max` et une entree fait ≤ 51 octets (addr v6 +
+/// `bridge_pk`) ; le filet refuse les trames gonflees avant parse.
+pub const INTRO_FRAME_MAX: usize = 512;
 
 /// Capacites transport annoncees dans `hello.caps` — bitmap extensible.
 /// Bit 0 = `obf::CAP_OBF_V1` (enveloppes OBF, Phase 9e) — annonce
@@ -377,6 +390,54 @@ pub struct ExtSettings {
     /// inconnue est ignore (un flot Sybil de cles fraiches ne fait
     /// pas grossir la table entre deux purges).
     pub peers_max: usize,
+
+    // -- ADR-0017 : decouverte interne de ponts (`INTRO`) -----------
+    /// Participe a la decouverte de ponts : demande des intros aux
+    /// pairs ext nouvellement connus et accepte les reponses.
+    /// Actif uniquement en mode stealth (le stack le positionne —
+    /// hors stealth le transport ne saurait meme pas joindre un pont).
+    pub intro_enabled: bool,
+    /// Sert les `INTRO_REQ` depuis `intro_table` (roles `bridge` /
+    /// `gateway` — un `client` n'a rien a annoncer : il n'est pas un
+    /// point d'entree). Le service reste borne meme pour lui.
+    pub intro_serve: bool,
+    /// Reponses `INTRO` max a un pair sans reputation ledger
+    /// (sequence graduee n°2 : le bootstrap ne doit jamais dependre
+    /// du solde — un nouveau client n'en a aucun).
+    pub intro_seed_max: usize,
+    /// Reponses `INTRO` max a un pair dont le solde ledger est
+    /// positif (sequence graduee n°3 : expansion conditionnee a la
+    /// reputation).
+    pub intro_expand_max: usize,
+    /// Entrees max par trame `INTRO` emise — partition de la table :
+    /// un pair ne voit jamais plus d'un tirage restreint, meme en un
+    /// seul message.
+    pub intro_resp_max: usize,
+    /// Total cumule d'entrees servies par pair (borne d'enumeration :
+    /// un pair compromis bouclant des `INTRO_REQ` ne pompe jamais
+    /// plus que ce total, toutes fenetres confondues).
+    pub intro_per_peer_max: u32,
+    /// Fenetre du budget `INTRO_REQ` par emetteur.
+    pub intro_rate_window: Duration,
+    /// `INTRO_REQ` acceptes par emetteur et par fenetre.
+    pub intro_rate_max: u32,
+    /// Borne memoire de la table de budget `INTRO_REQ`.
+    pub intro_rate_table_max: usize,
+    /// Borne memoire de `intro_table` (ponts connus : configures +
+    /// appris). Pleine, les entrees apprises sont ignorees — les
+    /// entrees configurees (graine) ne sont jamais evincees par les
+    /// apprises.
+    pub intro_table_max: usize,
+    /// TTL d'une entree **apprise** (pas de persistance : tout pont
+    /// appris par `INTRO` expire — le reseau re-decouvre au lieu
+    /// d'accumuler des adresses mortes).
+    pub intro_ttl: Duration,
+    /// Peers auxquels on pousse les entrees nouvelles : seulement les
+    /// pairs **reciproques** (qui nous ont appris au moins une entree
+    /// valide) — sequence graduee n°4. Borne par poussee.
+    pub intro_push_fanout: usize,
+    /// Cooldown entre deux `INTRO_REQ` emis vers le meme pair.
+    pub intro_req_cooldown: Duration,
 }
 
 impl Default for ExtSettings {
@@ -410,6 +471,19 @@ impl Default for ExtSettings {
             hello_jitter_pct: 25,
             peer_ttl: Duration::from_secs(4 * 3600),
             peers_max: 4096,
+            intro_enabled: false,
+            intro_serve: false,
+            intro_seed_max: 2,
+            intro_expand_max: 3,
+            intro_resp_max: 3,
+            intro_per_peer_max: 8,
+            intro_rate_window: Duration::from_secs(60),
+            intro_rate_max: 8,
+            intro_rate_table_max: 4096,
+            intro_table_max: 256,
+            intro_ttl: Duration::from_secs(3600),
+            intro_push_fanout: 3,
+            intro_req_cooldown: Duration::from_secs(300),
         }
     }
 }
@@ -441,6 +515,131 @@ impl Hello {
         let caps = r.u64()?;
         Ok(Self { version, caps })
     }
+}
+
+/// Trame `intro_req` (`{v, want}`) : demande d'introductions de
+/// ponts stealth. `want` borne la reponse — le serveur applique de
+/// toute facon sa propre graduation (graine/expansion/plafond).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IntroReq {
+    /// Version du protocole d'extension.
+    pub version: u8,
+    /// Nombre d'entrees souhaitees (bornee cote serveur).
+    pub want: u8,
+}
+
+impl IntroReq {
+    /// `onionbit_ext.intro_req` — `msg_id` filaire.
+    pub const MSG_ID: u8 = msg::INTRO_REQ;
+
+    /// Serialise (`{v: u8, want: u8}` — 2 octets).
+    pub fn pack(&self, w: &mut Writer) -> Result<(), Ipv8Error> {
+        w.u8(self.version);
+        w.u8(self.want);
+        Ok(())
+    }
+
+    /// Deserialise ; `TrailingBytes` tolere.
+    pub fn unpack(r: &mut Reader) -> Result<Self, Ipv8Error> {
+        let version = r.u8()?;
+        let want = r.u8()?;
+        Ok(Self { version, want })
+    }
+}
+
+/// Une entree de pont annoncee dans `INTRO` (`{addr, bridge_pk}`) :
+/// l'adresse est serialisee `{tag, ip, port}` (tag 4 = v4, 6 = v6).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IntroEntry {
+    /// `ip:port` du pont.
+    pub addr: SocketAddr,
+    /// `bridge_pk` X25519 (32 octets) — le pair annonce doit la
+    /// prouver au handshake stealth : une intro mensongere est inerte.
+    pub pk: [u8; 32],
+}
+
+impl IntroEntry {
+    /// `ip_address` pyipv8 (tag + ip + port) puis `pk` 32 octets —
+    /// un domaine n'est pas serialisable ici (les ponts sont
+    /// toujours des adresses IP directes).
+    fn pack(&self, w: &mut Writer) -> Result<(), Ipv8Error> {
+        w.ip_address(&UdpAddress::from(self.addr))?;
+        w.bytes(&self.pk);
+        Ok(())
+    }
+
+    fn unpack(r: &mut Reader) -> Result<Self, Ipv8Error> {
+        let addr = match r.ip_address()? {
+            UdpAddress::Ipv4(a) => SocketAddr::V4(a),
+            UdpAddress::Ipv6(a) => SocketAddr::V6(a),
+            // Un pont ne s'annonce jamais par domaine (le lien
+            // `onionbit-bridge://` exige `ip:port` — meme regle).
+            UdpAddress::Domain(..) => {
+                return Err(Ipv8Error::Malformed("intro : domaine interdit"));
+            }
+        };
+        if addr.port() == 0 {
+            return Err(Ipv8Error::Malformed("intro : port nul"));
+        }
+        let pk: [u8; 32] = r
+            .take(32)?
+            .try_into()
+            .map_err(|_| Ipv8Error::Malformed("intro : pk tronquee"))?;
+        Ok(Self { addr, pk })
+    }
+}
+
+/// Trame `intro` (`{v, count, entries}`) : tirage borne de la table
+/// de ponts — jamais plus de `intro_resp_max` entrees.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Intro {
+    /// Version du protocole d'extension.
+    pub version: u8,
+    /// Entrees annoncees (borne `intro_resp_max` a l'emission ;
+    /// borne `INTRO_FRAME_MAX`/`count` a la reception).
+    pub entries: Vec<IntroEntry>,
+}
+
+impl Intro {
+    /// `onionbit_ext.intro` — `msg_id` filaire.
+    pub const MSG_ID: u8 = msg::INTRO;
+
+    /// Serialise.
+    pub fn pack(&self, w: &mut Writer) -> Result<(), Ipv8Error> {
+        w.u8(self.version);
+        w.u8(self.entries.len() as u8);
+        for e in &self.entries {
+            e.pack(w)?;
+        }
+        Ok(())
+    }
+
+    /// Deserialise ; `count` borne le parse (jamais plus d'entrees
+    /// que n'en contient une trame legitime).
+    pub fn unpack(r: &mut Reader) -> Result<Self, Ipv8Error> {
+        let version = r.u8()?;
+        let count = r.u8()? as usize;
+        if count > INTRO_FRAME_MAX / 39 {
+            // 39 o = entree v4 minimale (1+4+2+32).
+            return Err(Ipv8Error::Malformed("intro : count excessif"));
+        }
+        let mut entries = Vec::with_capacity(count);
+        for _ in 0..count {
+            entries.push(IntroEntry::unpack(r)?);
+        }
+        Ok(Self { version, entries })
+    }
+}
+
+/// Entree de la table de ponts connue localement : `learned`
+/// mesure le TTL des entrees **apprises** ; `seeded` marque les
+/// ponts configures (jamais evinces par les apprises ni par le TTL —
+/// ils viennent de la conf locale, pas du reseau).
+#[derive(Debug, Clone)]
+struct IntroTableEntry {
+    pk: [u8; 32],
+    learned: Instant,
+    seeded: bool,
 }
 
 /// Etat observe d'un pair ext (`caps` + instant du dernier `hello`
@@ -639,12 +838,43 @@ pub struct OnionbitExtCommunity {
     /// Forks averes observes (`put` → `Fork` + preuves `LEDGER_FORK`
     /// valides recues).
     ledger_fork_count: AtomicU64,
+    /// Table des ponts stealth connus (ADR-0017) : indexee par
+    /// `SocketAddr`. `seeded` = configuree (immortelle) ; apprise =
+    /// TTL `intro_ttl`. Jamais persiste — les intros non sollicitees
+    /// d'un pair non reciproque sont refusees a l'entree.
+    intro_table: Mutex<HashMap<SocketAddr, IntroTableEntry>>,
+    /// Budget `INTRO_REQ` par emetteur (meme schema que
+    /// `attest_rate`) — borne le cout du chemin de reception.
+    intro_rate: Mutex<HashMap<Vec<u8>, (Instant, u32)>>,
+    /// Total cumule d'entrees servies par pair — borne
+    /// d'enumeration (`intro_per_peer_max`, jamais remis a zero :
+    /// la fenetre de rate-limit regule le debit, ce compteur borne
+    /// la fuite totale).
+    intro_served: Mutex<HashMap<Vec<u8>, u32>>,
+    /// Pairs ayant deja pousse au moins une entree valide et
+    /// nouvelle — la diffusion large ne vise qu'eux.
+    intro_reciprocal: Mutex<HashSet<Vec<u8>>>,
+    /// Pairs auxquels nous avons demande des intros (`Instant` du
+    /// dernier envoi) — cooldown sortant + leviers d'admission des
+    /// reponses non sollicitees.
+    intro_asked: Mutex<HashMap<Vec<u8>, Instant>>,
+    /// Puits des ponts appris — injecte par le stack
+    /// (`StealthTransport::add_bridge`). `None` hors stealth.
+    intro_sink: Mutex<Option<IntroSink>>,
+    /// `INTRO` recus/emis/droppes (oracles de banc).
+    intro_rx: AtomicU64,
+    intro_tx: AtomicU64,
+    intro_dropped: AtomicU64,
 }
 
 /// Source de comptabilite locale injectee (adapte
 /// `PeerStatsBook` cote core) : `f(pk)` -> `Some((bytes_served,
 /// bytes_used))` — `None` si pair inconnu.
 pub type StatsSource = Arc<dyn Fn(&[u8]) -> Option<(u64, u64)> + Send + Sync>;
+
+/// Puits des ponts stealth appris par `INTRO` (ADR-0017) :
+/// `f(addr, bridge_pk)` — typiquement `StealthTransport::add_bridge`.
+pub type IntroSink = Arc<dyn Fn(SocketAddr, [u8; 32]) + Send + Sync>;
 
 /// Proposition en vol (une par beneficiaire — les relances
 /// reutilisent les memes octets pour rester idempotentes).
@@ -712,6 +942,15 @@ impl OnionbitExtCommunity {
             ledger_stored: AtomicU64::new(0),
             ledger_tx: AtomicU64::new(0),
             ledger_fork_count: AtomicU64::new(0),
+            intro_table: Mutex::new(HashMap::new()),
+            intro_rate: Mutex::new(HashMap::new()),
+            intro_served: Mutex::new(HashMap::new()),
+            intro_reciprocal: Mutex::new(HashSet::new()),
+            intro_asked: Mutex::new(HashMap::new()),
+            intro_sink: Mutex::new(None),
+            intro_rx: AtomicU64::new(0),
+            intro_tx: AtomicU64::new(0),
+            intro_dropped: AtomicU64::new(0),
         });
         let prefix = prefix_of(&EXT_COMMUNITY_ID);
         let c = community.clone();
@@ -778,10 +1017,19 @@ impl OnionbitExtCommunity {
                 },
             );
         }
+        // ADR-0017 : un pair ext nouveau est un candidat a la
+        // decouverte de ponts (stealth) — la demande est chainee
+        // APRES le `hello` de reponse dans la meme tache : le
+        // serveur n'accepte les `INTRO_REQ` que de pairs deja
+        // connus ext, l'ordre filaire fait foi.
+        let ask_intro = self.maybe_ask_intro(peer);
         if let Some(addr) = peer.address.clone() {
             let c = self.clone();
             tokio::spawn(async move {
                 c.send_hello(&addr, &pk).await;
+                if ask_intro {
+                    c.send_intro_req(&addr).await;
+                }
             });
         }
     }
@@ -1889,6 +2137,9 @@ impl OnionbitExtCommunity {
                 }
             }
         }
+        // Ponts appris perimes (ADR-0017 : pas de persistance des
+        // intros — la table se vide seule).
+        self.intro_purge();
         let ext_known: std::collections::HashSet<Vec<u8>> =
             self.ext_peers.lock().unwrap().keys().cloned().collect();
         // Purge des etats perimes (borne memoire + cooldown).
@@ -2015,6 +2266,8 @@ impl OnionbitExtCommunity {
                 }
             }
             msg::OBF => self.on_obf(&pkt, &src)?,
+            msg::INTRO_REQ => self.on_intro_req(&pkt, &src)?,
+            msg::INTRO => self.on_intro(&pkt, &src)?,
             _ => {}
         }
         Ok(())
@@ -2056,6 +2309,357 @@ impl OnionbitExtCommunity {
     /// Nombre de pairs connus comme ext (population OnionBit visible).
     pub fn ext_peer_count(&self) -> usize {
         self.ext_peers.lock().unwrap().len()
+    }
+
+    // --------------------- ADR-0017 : ponts `INTRO` ------------------
+
+    /// Puits des ponts appris (`StealthTransport::add_bridge` cote
+    /// core) — appele pour chaque entree nouvelle acceptee. Une
+    /// intro mensongere est inerte : la `bridge_pk` annoncee sera
+    /// prouvee au handshake stealth, ou la tentative mourra en
+    /// silence (`hs1_rejected`).
+    pub fn set_intro_sink(&self, sink: IntroSink) {
+        *self.intro_sink.lock().unwrap() = Some(sink);
+    }
+
+    /// Graine la table avec les ponts **configures** (liens
+    /// hors-bande) — `seeded` = jamais evincee par le TTL ni par la
+    /// borne `intro_table_max` tant que des entrees apprises
+    /// restent evincables.
+    pub fn seed_intro(&self, addr: SocketAddr, pk: [u8; 32]) {
+        self.intro_table.lock().unwrap().insert(
+            addr,
+            IntroTableEntry {
+                pk,
+                learned: Instant::now(),
+                seeded: true,
+            },
+        );
+    }
+
+    /// Nombre de ponts connus (diagnostic borne — adresses jamais
+    /// exposees par l'API).
+    pub fn intro_table_len(&self) -> usize {
+        self.intro_table.lock().unwrap().len()
+    }
+
+    /// Decide si l'on demande des intros a ce pair — cooldown
+    /// `intro_req_cooldown` par pair (dedup sortant). `true` =
+    /// l'appelant doit emettre le `INTRO_REQ` **apres** son `hello`
+    /// de reponse (meme tache — l'ordre filaire compte : le serveur
+    /// n'accepte que les demandes de pairs ext connus).
+    /// Inerte hors `intro_enabled`.
+    fn maybe_ask_intro(&self, peer: &Peer) -> bool {
+        if !self.settings.intro_enabled || peer.address.is_none() {
+            return false;
+        }
+        let mut asked = self.intro_asked.lock().unwrap();
+        if let Some(t) = asked.get(&peer.public_key_bin) {
+            if t.elapsed() < self.settings.intro_req_cooldown {
+                return false;
+            }
+        }
+        asked.insert(peer.public_key_bin.clone(), Instant::now());
+        true
+    }
+
+    /// Emission effective du `INTRO_REQ` (apres `maybe_ask_intro`).
+    async fn send_intro_req(&self, addr: &UdpAddress) {
+        let mut w = Writer::new();
+        let _ = IntroReq {
+            version: EXT_PROTO_VERSION,
+            want: self.settings.intro_resp_max as u8,
+        }
+        .pack(&mut w);
+        let pkt = Packet::sign_no_dist(
+            &EXT_COMMUNITY_ID,
+            msg::INTRO_REQ,
+            &self.key,
+            &w.into_bytes(),
+        );
+        if let Err(e) = self.endpoint.send_to(addr, &pkt).await {
+            tracing::debug!(error = %e, target = ?addr, "intro_req ext perdu");
+        }
+    }
+
+    /// Budget `INTRO_REQ` par emetteur (meme schema que
+    /// `ledger_rate_ok`) — borne le cout du chemin de reception.
+    fn intro_rate_ok(&self, sender_pk: &[u8]) -> bool {
+        let mut rates = self.intro_rate.lock().unwrap();
+        match rates.get_mut(sender_pk) {
+            Some((start, n)) => {
+                if start.elapsed() >= self.settings.intro_rate_window {
+                    *start = Instant::now();
+                    *n = 0;
+                }
+                *n += 1;
+                *n <= self.settings.intro_rate_max
+            }
+            None => {
+                if rates.len() >= self.settings.intro_rate_table_max
+                    && self.settings.intro_rate_table_max > 0
+                {
+                    false
+                } else {
+                    rates.insert(sender_pk.to_vec(), (Instant::now(), 1));
+                    true
+                }
+            }
+        }
+    }
+
+    /// Graduation de la reponse : combien d'entrees ce pair peut-il
+    /// encore recevoir ? (1) tout pair ext connu a droit a la
+    /// graine `intro_seed_max` — jamais conditionnee au ledger ;
+    /// (2) solde positif (lien scelle le concernant, ou mesure
+    /// `used` locale) → `intro_expand_max` ; (3) `intro_served`
+    /// plafonne le total cumule quelle que soit la reputation.
+    fn intro_allowance(&self, pk: &[u8]) -> usize {
+        let served = *self.intro_served.lock().unwrap().get(pk).unwrap_or(&0);
+        if served >= self.settings.intro_per_peer_max {
+            return 0;
+        }
+        let reputed = self.settled_total(pk) > 0
+            || self
+                .local_stats(pk)
+                .is_some_and(|(served_them, _they_served_us)| served_them > 0);
+        let per_ask = if reputed {
+            self.settings.intro_expand_max
+        } else {
+            self.settings.intro_seed_max
+        };
+        per_ask.min((self.settings.intro_per_peer_max - served) as usize)
+    }
+
+    /// Tirage aleatoire borne de la table (partition anti-scraping :
+    /// un pair ne recoit qu'un sous-ensemble, jamais la table
+    /// entiere — le taux de fuite sous enumeration reste borne par
+    /// `intro_per_peer_max`).
+    fn intro_draw(&self, n: usize) -> Vec<IntroEntry> {
+        let ttl = self.settings.intro_ttl;
+        let table = self.intro_table.lock().unwrap();
+        let mut fresh: Vec<IntroEntry> = table
+            .iter()
+            .filter(|(_, e)| e.seeded || e.learned.elapsed() < ttl)
+            .map(|(addr, e)| IntroEntry {
+                addr: *addr,
+                pk: e.pk,
+            })
+            .collect();
+        // Melange Fisher-Yates partiel sur `n` — le sous-ensemble est
+        // uniforme par tirage, non correlable a l'ordre d'insertion.
+        let n = n.min(fresh.len());
+        for i in 0..n {
+            let j = i + (rand::random::<u64>() as usize) % (fresh.len() - i);
+            fresh.swap(i, j);
+        }
+        fresh.truncate(n);
+        fresh
+    }
+
+    /// `on_intro_req` : demande d'intros recue. Silencieux si le
+    /// demandeur n'est pas un pair ext connu, si `intro_serve` est
+    /// off (role client), si le budget est epuise ou si la table est
+    /// vide — toute emission est borne et comptabilisee.
+    fn on_intro_req(self: &Arc<Self>, pkt: &Packet, src: &SocketAddr) -> Result<(), Ipv8Error> {
+        if !self.settings.intro_serve || !self.intro_rate_ok(&pkt.public_key_bin) {
+            self.intro_dropped.fetch_add(1, Ordering::Relaxed);
+            return Ok(());
+        }
+        let mut r = Reader::new(&pkt.payload);
+        let req = IntroReq::unpack(&mut r)?;
+        if req.version != EXT_PROTO_VERSION {
+            self.intro_dropped.fetch_add(1, Ordering::Relaxed);
+            return Ok(());
+        }
+        // Un pair inconnu qui demande des intros sans avoir dit
+        // `hello` n'a pas sa place ici — la graine n'est due qu'aux
+        // pairs etablis.
+        if !self
+            .ext_peers
+            .lock()
+            .unwrap()
+            .contains_key(&pkt.public_key_bin)
+        {
+            self.intro_dropped.fetch_add(1, Ordering::Relaxed);
+            return Ok(());
+        }
+        let n = self
+            .intro_allowance(&pkt.public_key_bin)
+            .min(req.want as usize)
+            .min(self.settings.intro_resp_max);
+        let entries = self.intro_draw(n);
+        if entries.is_empty() {
+            self.intro_dropped.fetch_add(1, Ordering::Relaxed);
+            return Ok(());
+        }
+        *self
+            .intro_served
+            .lock()
+            .unwrap()
+            .entry(pkt.public_key_bin.clone())
+            .or_insert(0) += entries.len() as u32;
+        let addr = UdpAddress::from(*src);
+        let c = self.clone();
+        tokio::spawn(async move {
+            let mut w = Writer::new();
+            let _ = Intro {
+                version: EXT_PROTO_VERSION,
+                entries,
+            }
+            .pack(&mut w);
+            let pkt = Packet::sign_no_dist(&EXT_COMMUNITY_ID, msg::INTRO, &c.key, &w.into_bytes());
+            c.intro_tx.fetch_add(1, Ordering::Relaxed);
+            if let Err(e) = c.endpoint.send_to(&addr, &pkt).await {
+                tracing::debug!(error = %e, target = ?addr, "intro ext perdu");
+            }
+        });
+        Ok(())
+    }
+
+    /// `on_intro` : annonces recues. Admis seulement si le pair nous
+    /// avait ete demande (`intro_asked` frais) ou s'il est
+    /// reciproque — les intros non sollicitees ne sont jamais
+    /// stockees (anti-poisoning). Chaque entree nouvelle est poussee
+    /// au `intro_sink` (le transport decidera au handshake si la pk
+    /// annoncee est vraie) puis diffusee aux seuls pairs
+    /// reciproques (sequence graduee n°4).
+    fn on_intro(self: &Arc<Self>, pkt: &Packet, _src: &SocketAddr) -> Result<(), Ipv8Error> {
+        self.intro_rx.fetch_add(1, Ordering::Relaxed);
+        if pkt.payload.len() > INTRO_FRAME_MAX {
+            self.intro_dropped.fetch_add(1, Ordering::Relaxed);
+            return Ok(());
+        }
+        let mut r = Reader::new(&pkt.payload);
+        let intro = Intro::unpack(&mut r)?;
+        if intro.version != EXT_PROTO_VERSION {
+            self.intro_dropped.fetch_add(1, Ordering::Relaxed);
+            return Ok(());
+        }
+        let solicited = self
+            .intro_asked
+            .lock()
+            .unwrap()
+            .get(&pkt.public_key_bin)
+            .is_some_and(|t| t.elapsed() < self.settings.intro_req_cooldown);
+        let reciprocal = self
+            .intro_reciprocal
+            .lock()
+            .unwrap()
+            .contains(&pkt.public_key_bin);
+        if !solicited && !reciprocal {
+            self.intro_dropped.fetch_add(1, Ordering::Relaxed);
+            return Ok(());
+        }
+        // Stockage borne : les entrees apprises partagent
+        // `intro_table_max` avec les graines, les graines ne sont
+        // jamais remplacees par des apprises.
+        let now = Instant::now();
+        let mut new_entries: Vec<IntroEntry> = Vec::new();
+        {
+            let mut table = self.intro_table.lock().unwrap();
+            for e in intro.entries {
+                match table.get(&e.addr) {
+                    // Adresse inconnue : insertion si la borne
+                    // d'apprises n'est pas atteinte.
+                    None => {
+                        let learned_count = table.values().filter(|t| !t.seeded).count();
+                        if learned_count >= self.settings.intro_table_max {
+                            self.intro_dropped.fetch_add(1, Ordering::Relaxed);
+                            continue;
+                        }
+                        table.insert(
+                            e.addr,
+                            IntroTableEntry {
+                                pk: e.pk,
+                                learned: now,
+                                seeded: false,
+                            },
+                        );
+                        new_entries.push(e);
+                    }
+                    // Re-annonce avec une autre pk : la plus recente
+                    // gagne (rotation de cle du pont) — jamais sur
+                    // une graine. Meme pk : simple rafraichissement
+                    // du TTL.
+                    Some(cur) if !cur.seeded => {
+                        let fresh = IntroTableEntry {
+                            pk: e.pk,
+                            learned: now,
+                            seeded: false,
+                        };
+                        if cur.pk != e.pk {
+                            table.insert(e.addr, fresh);
+                            new_entries.push(e);
+                        } else {
+                            table.insert(e.addr, fresh);
+                        }
+                    }
+                    // Graine : immuable (la conf locale fait foi).
+                    Some(_) => {}
+                }
+            }
+        }
+        if new_entries.is_empty() {
+            return Ok(());
+        }
+        // L'emetteur a partage de la valeur → reciproque (diffusion
+        // large reservee a ces pairs).
+        self.intro_reciprocal
+            .lock()
+            .unwrap()
+            .insert(pkt.public_key_bin.clone());
+        // Puits : le transport (ou le test) decide de l'usage.
+        if let Some(sink) = self.intro_sink.lock().unwrap().clone() {
+            for e in &new_entries {
+                sink(e.addr, e.pk);
+            }
+        }
+        // Diffusion large → pairs reciproques uniquement, borne
+        // `intro_push_fanout`, source exclue.
+        let targets: Vec<(Vec<u8>, UdpAddress)> = {
+            let peers = self.ext_peers.lock().unwrap();
+            let recip = self.intro_reciprocal.lock().unwrap();
+            peers
+                .iter()
+                .filter(|(pk, e)| {
+                    *pk != &pkt.public_key_bin && recip.contains(*pk) && e.addr.is_some()
+                })
+                .take(self.settings.intro_push_fanout)
+                .map(|(pk, e)| (pk.clone(), e.addr.clone().unwrap()))
+                .collect()
+        };
+        if !targets.is_empty() {
+            let c = self.clone();
+            tokio::spawn(async move {
+                let mut w = Writer::new();
+                let _ = Intro {
+                    version: EXT_PROTO_VERSION,
+                    entries: new_entries,
+                }
+                .pack(&mut w);
+                let pkt =
+                    Packet::sign_no_dist(&EXT_COMMUNITY_ID, msg::INTRO, &c.key, &w.into_bytes());
+                for (_pk, addr) in targets {
+                    c.intro_tx.fetch_add(1, Ordering::Relaxed);
+                    if let Err(e) = c.endpoint.send_to(&addr, &pkt).await {
+                        tracing::debug!(error = %e, target = ?addr, "intro push perdu");
+                    }
+                    tokio::task::yield_now().await;
+                }
+            });
+        }
+        Ok(())
+    }
+
+    /// Purge des entrees apprises perimees (TTL `intro_ttl`) —
+    /// appele depuis `hello_tick`. Les graines ne periment jamais.
+    fn intro_purge(&self) {
+        let ttl = self.settings.intro_ttl;
+        self.intro_table
+            .lock()
+            .unwrap()
+            .retain(|_, e| e.seeded || e.learned.elapsed() < ttl);
     }
 
     /// Instantane complet (reglages + pairs + compteurs ATTEST)
@@ -2941,5 +3545,357 @@ mod tests {
         b.endpoint.send_to(&addr_a, &pkt).await.unwrap();
         tokio::time::sleep(Duration::from_millis(100)).await;
         assert_eq!(a.ext_peer_count(), 1);
+    }
+
+    // ----------------- ADR-0017 : INTRO anti-scraping -----------------
+
+    /// Envoie un `INTRO_REQ` signe (chemin filaire complet).
+    async fn send_intro_req(
+        ep: &Arc<UdpEndpoint>,
+        key: &LibNaClSecretKey,
+        to: &UdpAddress,
+        want: u8,
+    ) {
+        let mut w = Writer::new();
+        IntroReq {
+            version: EXT_PROTO_VERSION,
+            want,
+        }
+        .pack(&mut w)
+        .unwrap();
+        let pkt = Packet::sign_no_dist(&EXT_COMMUNITY_ID, msg::INTRO_REQ, key, &w.into_bytes());
+        ep.send_to(to, &pkt).await.unwrap();
+    }
+
+    /// Envoie un `INTRO` signe portant `entries`.
+    async fn send_intro(
+        ep: &Arc<UdpEndpoint>,
+        key: &LibNaClSecretKey,
+        to: &UdpAddress,
+        entries: Vec<IntroEntry>,
+    ) {
+        let mut w = Writer::new();
+        Intro {
+            version: EXT_PROTO_VERSION,
+            entries,
+        }
+        .pack(&mut w)
+        .unwrap();
+        let pkt = Packet::sign_no_dist(&EXT_COMMUNITY_ID, msg::INTRO, key, &w.into_bytes());
+        ep.send_to(to, &pkt).await.unwrap();
+    }
+
+    /// Une entree d'intro de test.
+    fn entry(port: u16, fill: u8) -> IntroEntry {
+        IntroEntry {
+            addr: format!("10.0.0.1:{port}").parse().unwrap(),
+            pk: [fill; 32],
+        }
+    }
+
+    /// Reglages `intro` serres pour le banc.
+    fn intro_settings(enabled: bool, serve: bool) -> ExtSettings {
+        ExtSettings {
+            intro_enabled: enabled,
+            intro_serve: serve,
+            intro_seed_max: 2,
+            intro_expand_max: 3,
+            intro_resp_max: 3,
+            intro_per_peer_max: 4,
+            intro_rate_max: 64,
+            intro_req_cooldown: Duration::from_secs(300),
+            ..ExtSettings::default()
+        }
+    }
+
+    /// Roundtrip + hostile : troncature a chaque borne, `count`
+    /// excessif, port nul.
+    #[test]
+    fn intro_trame_roundtrip_et_hostile() {
+        let intro = Intro {
+            version: EXT_PROTO_VERSION,
+            entries: vec![entry(8443, 7), {
+                let mut e = entry(9999, 8);
+                e.addr = "[2001:db8::1]:8443".parse().unwrap();
+                e
+            }],
+        };
+        let mut w = Writer::new();
+        intro.pack(&mut w).unwrap();
+        let bytes = w.into_bytes();
+        assert_eq!(Intro::unpack(&mut Reader::new(&bytes)).unwrap(), intro);
+        // Troncature a chaque borne : Err, jamais de panic.
+        for n in 0..bytes.len() {
+            assert!(
+                Intro::unpack(&mut Reader::new(&bytes[..n])).is_err(),
+                "n={n}"
+            );
+        }
+        // `count` gonfle : refuse avant le parse.
+        let mut w = Writer::new();
+        w.u8(EXT_PROTO_VERSION);
+        w.u8(200);
+        assert!(Intro::unpack(&mut Reader::new(&w.into_bytes())).is_err());
+        // Entree a port nul : refusee a l'unpack.
+        let mut w = Writer::new();
+        let _ = Intro {
+            version: EXT_PROTO_VERSION,
+            entries: vec![IntroEntry {
+                addr: "10.0.0.1:0".parse().unwrap(),
+                pk: [1; 32],
+            }],
+        }
+        .pack(&mut w);
+        assert!(Intro::unpack(&mut Reader::new(&w.into_bytes())).is_err());
+    }
+
+    /// Graine sans reputation : un pair ext connu mais sans historique
+    /// ledger recoit au plus `intro_seed_max` — jamais la table
+    /// entiere.
+    #[tokio::test]
+    async fn intro_seed_sans_reputation() {
+        let (a, _ea, _addr_a, _ka) = node_full(intro_settings(true, false)).await;
+        let (b, _eb, addr_b, kb) = node_full(intro_settings(false, true)).await;
+        for i in 0..5u16 {
+            b.seed_intro(
+                format!("10.1.0.1:{}", 8000 + i).parse().unwrap(),
+                [i as u8; 32],
+            );
+        }
+        link_ext(&a, &b, &addr_b, &kb.public_key().to_bin()).await;
+
+        // `intro_enabled` : A demande automatiquement au `hello` de
+        // B (chemin `maybe_ask_intro`) — la demande explicite
+        // ci-dessous arrive en plus, chacune bornee a `seed_max`.
+        send_intro_req(&a.endpoint, &a.key, &addr_b, 3).await;
+        let a2 = a.clone();
+        wait_until(move || a2.intro_table_len() > 0).await;
+        let learned = a.intro_table.lock().unwrap().len();
+        assert!(learned <= 4, "graine depassee : {learned}");
+        assert!(b.intro_tx.load(Ordering::Relaxed) <= 2);
+    }
+
+    /// `INTRO_REQ` d'un pair inconnu (jamais de `hello`) : silence.
+    #[tokio::test]
+    async fn intro_req_pair_inconnu_refuse() {
+        let (_a, _ea, _aa, _ka) = node(0).await;
+        let (b, _eb, addr_b, _kb) = node_full(intro_settings(false, true)).await;
+        b.seed_intro("10.1.0.1:8000".parse().unwrap(), [1; 32]);
+        let rogue = LibNaClSecretKey::generate();
+        let rogue_ep = UdpEndpoint::bind("127.0.0.1:0").await.unwrap();
+        send_intro_req(&rogue_ep, &rogue, &addr_b, 3).await;
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert_eq!(b.intro_tx.load(Ordering::Relaxed), 0);
+        assert!(b.intro_dropped.load(Ordering::Relaxed) >= 1);
+    }
+
+    /// Role `client` (`intro_serve=false`) : jamais de reponse, meme
+    /// a un pair connu — un client ne sert pas de source
+    /// d'enumeration.
+    #[tokio::test]
+    async fn intro_serve_off_client_muet() {
+        let (a, _ea, _addr_a, _ka) = node(0).await;
+        let (b, _eb, addr_b, kb) = node_full(intro_settings(true, false)).await;
+        b.seed_intro("10.1.0.1:8000".parse().unwrap(), [1; 32]);
+        link_ext(&a, &b, &addr_b, &kb.public_key().to_bin()).await;
+        send_intro_req(&a.endpoint, &a.key, &addr_b, 3).await;
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert_eq!(b.intro_tx.load(Ordering::Relaxed), 0);
+    }
+
+    /// Enumeration en boucle : le cumul servi est borne par
+    /// `intro_per_peer_max` — un pair compromis ne pompe jamais la
+    /// table entiere (fenetre rate neutre, quota cumul actif).
+    #[tokio::test]
+    async fn intro_enumeration_bornee() {
+        let mut st = intro_settings(false, true);
+        st.intro_rate_max = 64;
+        st.intro_rate_window = Duration::from_secs(3600);
+        let (b, _eb, addr_b, _kb) = node_full(st).await;
+        for i in 0..8u16 {
+            b.seed_intro(
+                format!("10.1.0.{}:8000", i + 1).parse().unwrap(),
+                [i as u8; 32],
+            );
+        }
+        let (a, _ea, _aa, ka) = node(0).await;
+        let pk_a = ka.public_key().to_bin();
+        // A est pair ext de B (hello recu) — sinon la graine n'est
+        // pas due.
+        b.ext_peers.lock().unwrap().insert(
+            pk_a.clone(),
+            ExtPeer {
+                caps: 0,
+                last_hello: Instant::now(),
+                addr: Some(UdpAddress::from(a.endpoint.local_addr().unwrap())),
+            },
+        );
+        // 10 demandes d'affilee : chacune au max 3 entrees mais le
+        // cumul borne a `intro_per_peer_max` = 4.
+        for _ in 0..10 {
+            send_intro_req(&a.endpoint, &ka, &addr_b, 3).await;
+        }
+        tokio::time::sleep(Duration::from_millis(400)).await;
+        let served = *b.intro_served.lock().unwrap().get(&pk_a).unwrap_or(&0);
+        assert!(served <= 4, "fuite cumulee {served} > intro_per_peer_max");
+        assert!(b.intro_tx.load(Ordering::Relaxed) <= 4);
+    }
+
+    /// Budget de fenetre : au-dela de `intro_rate_max` par fenetre,
+    /// les demandes sont droppes sans reponse.
+    #[tokio::test]
+    async fn intro_req_fenetre_bornee() {
+        let mut st = intro_settings(false, true);
+        st.intro_rate_max = 2;
+        let (b, _eb, addr_b, _kb) = node_full(st).await;
+        b.seed_intro("10.1.0.1:8000".parse().unwrap(), [1; 32]);
+        let (a, _ea, _aa, ka) = node(0).await;
+        let pk_a = ka.public_key().to_bin();
+        b.ext_peers.lock().unwrap().insert(
+            pk_a,
+            ExtPeer {
+                caps: 0,
+                last_hello: Instant::now(),
+                addr: Some(UdpAddress::from(a.endpoint.local_addr().unwrap())),
+            },
+        );
+        for _ in 0..6 {
+            send_intro_req(&a.endpoint, &ka, &addr_b, 3).await;
+        }
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert!(b.intro_tx.load(Ordering::Relaxed) <= 2);
+    }
+
+    /// `INTRO` non sollicitee : jamais stockee (anti-poisoning) —
+    /// seuls les pairs demandes recemment ou reciproques sont admis.
+    #[tokio::test]
+    async fn intro_non_sollicitee_droppee() {
+        let (a, _ea, addr_a, _ka) = node_full(intro_settings(true, false)).await;
+        let (b, _eb, _ab, kb) = node_full(intro_settings(false, true)).await;
+        send_intro(&b.endpoint, &kb, &addr_a, vec![entry(8000, 9)]).await;
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert_eq!(a.intro_table_len(), 0);
+        assert!(a.intro_dropped.load(Ordering::Relaxed) >= 1);
+    }
+
+    /// Reponse sollicitee : stockee + poussee au sink + l'emetteur
+    /// devient reciproque (pret pour la diffusion large).
+    #[tokio::test]
+    async fn intro_sollicitee_stockee_sink_reciproque() {
+        let (a, _ea, _aa, _ka) = node_full(intro_settings(true, false)).await;
+        let (b, _eb, addr_b, kb) = node_full(intro_settings(false, true)).await;
+        let pk_b = kb.public_key().to_bin();
+        // A demande a B (chemin normal : `maybe_ask_intro`).
+        let peer_b = Peer::new(pk_b.clone(), Some(addr_b.clone())).unwrap();
+        a.maybe_ask_intro(&peer_b);
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let sink_hits = Arc::new(AtomicU64::new(0));
+        {
+            let sink_hits = sink_hits.clone();
+            a.set_intro_sink(Arc::new(move |_addr, _pk| {
+                sink_hits.fetch_add(1, Ordering::Relaxed);
+            }));
+        }
+        send_intro(
+            &b.endpoint,
+            &kb,
+            &UdpAddress::from(a.endpoint.local_addr().unwrap()),
+            vec![entry(8000, 9)],
+        )
+        .await;
+        let a2 = a.clone();
+        wait_until(move || a2.intro_table_len() == 1).await;
+        assert_eq!(sink_hits.load(Ordering::Relaxed), 1);
+        assert!(a.intro_reciprocal.lock().unwrap().contains(&pk_b));
+    }
+
+    /// Diffusion large : les entrees nouvelles ne sont poussees qu'aux
+    /// pairs reciproques — le voisin non-reciproque ne voit rien.
+    #[tokio::test]
+    async fn intro_push_reciproques_seulement() {
+        let (a, _ea, addr_a, _ka) = node_full(intro_settings(true, false)).await;
+        let (x, _ex, _ax, kx) = node(0).await; // reciproque
+        let (y, _ey, _ay, ky) = node(0).await; // source
+        let (z, _ez, _az, kz) = node(0).await; // temoin non-reciproque
+        let pk_x = kx.public_key().to_bin();
+        let pk_y = ky.public_key().to_bin();
+        let pk_z = kz.public_key().to_bin();
+        // X et Z sont pairs ext de A ; X est reciproque.
+        for (pk, ep) in [(&pk_x, &x.endpoint), (&pk_z, &z.endpoint)] {
+            a.ext_peers.lock().unwrap().insert(
+                pk.clone(),
+                ExtPeer {
+                    caps: 0,
+                    last_hello: Instant::now(),
+                    addr: Some(UdpAddress::from(ep.local_addr().unwrap())),
+                },
+            );
+        }
+        a.intro_reciprocal.lock().unwrap().insert(pk_x);
+        // A a demande a Y (solicited) puis Y pousse une entree.
+        a.intro_asked.lock().unwrap().insert(pk_y, Instant::now());
+        let e = entry(4242, 0xee);
+        send_intro(&y.endpoint, &ky, &addr_a, vec![e.clone()]).await;
+        // A stocke puis pousse vers X seul.
+        let a2 = a.clone();
+        wait_until(move || a2.intro_table_len() == 1).await;
+        // Le push part en tache : laisser la runtime tourner.
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        let tx_seen = a.intro_tx.load(Ordering::Relaxed);
+        assert_eq!(tx_seen, 1, "un seul push, vers le reciproque");
+        // Z ne recoit rien (aucun datagramme applicatif vers lui).
+        assert_eq!(z.endpoint.bytes_counters().1, 0);
+    }
+
+    /// Borne de la table d'apprises : au-dela de `intro_table_max`
+    /// les entrees supplementaires sont refusees (la graine est
+    /// hors quota).
+    #[tokio::test]
+    async fn intro_table_apprises_bornee() {
+        let mut st = intro_settings(true, false);
+        st.intro_table_max = 1;
+        let (a, _ea, addr_a, _ka) = node_full(st).await;
+        let (b, _eb, _ab, kb) = node_full(intro_settings(false, true)).await;
+        let pk_b = kb.public_key().to_bin();
+        a.intro_asked.lock().unwrap().insert(pk_b, Instant::now());
+        send_intro(
+            &b.endpoint,
+            &kb,
+            &addr_a,
+            vec![entry(8000, 1), entry(8001, 2), entry(8002, 3)],
+        )
+        .await;
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let learned = a
+            .intro_table
+            .lock()
+            .unwrap()
+            .values()
+            .filter(|e| !e.seeded)
+            .count();
+        assert_eq!(learned, 1);
+        assert!(a.intro_dropped.load(Ordering::Relaxed) >= 2);
+    }
+
+    /// TTL : les entrees apprises periment, les graines jamais —
+    /// pas de persistance des intros (ADR-0017 §1).
+    #[tokio::test]
+    async fn intro_ttl_purge_apprises_seules() {
+        let mut st = intro_settings(true, false);
+        st.intro_ttl = Duration::ZERO;
+        let (a, _ea, _aa, _ka) = node_full(st).await;
+        a.seed_intro("10.9.9.9:8000".parse().unwrap(), [0xAA; 32]);
+        a.intro_table.lock().unwrap().insert(
+            "10.9.9.8:8000".parse().unwrap(),
+            IntroTableEntry {
+                pk: [0xBB; 32],
+                learned: Instant::now() - Duration::from_secs(1),
+                seeded: false,
+            },
+        );
+        a.intro_purge();
+        let table = a.intro_table.lock().unwrap();
+        assert_eq!(table.len(), 1);
+        assert!(table.values().all(|e| e.seeded));
     }
 }

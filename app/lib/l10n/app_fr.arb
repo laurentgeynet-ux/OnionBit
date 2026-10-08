@@ -739,5 +739,19 @@
   "accentPink": "Rose",
   "accentSlate": "Ardoise",
   "settingsLanguage": "Langue",
-  "languageSystem": "Système"
+  "languageSystem": "Système",
+  "sectionStealth": "Mode furtif",
+  "stealthEnabled": "Transport furtif (ADR-0017)",
+  "stealthEnabledSub": "OnionBit à OnionBit uniquement : datagrammes morphés, aucune signature IPv8/BitTorrent sur le fil. Mutuellement exclusif avec le réseau IPv8 legacy — appliqué au redémarrage. Un client a besoin d'au moins un lien de pont pour entrer.",
+  "stealthRoleLabel": "Rôle",
+  "stealthRoleClient": "Client (entre par des liens de pont)",
+  "stealthRoleBridge": "Pont (point d'entrée)",
+  "stealthRoleGateway": "Passerelle (pont + sortie BitTorrent publique)",
+  "stealthBridgesLabel": "Liens d'invitation de ponts",
+  "stealthBridgesNote": "Un lien onionbit-bridge:// par ligne, obtenu hors-bande (invitation). Appliqué au redémarrage.",
+  "stealthCover": "Trafic de couverture",
+  "stealthCoverSub": "Trames de keepalive paddées à cadence aléatoire — lisse le timing et le volume, coûteux en bande passante. Défaut : désactivé. Appliqué au redémarrage.",
+  "stealthSaved": "Réglages furtifs enregistrés",
+  "stealthStatus": "Rôle : {role} — sessions : {sessions} — ponts configurés : {bridges}",
+  "stealthClockWarning": "Les handshakes vers les ponts échouent sans établir de session. Sur un réseau censuré, vérifiez votre horloge : le NTP peut être filtré ou usurpé et la fenêtre d'horodatage du handshake est de ±90 s."
 }

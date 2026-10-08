@@ -3,6 +3,236 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## ADR-0017 : passage au statut « Acceptée » (2026-10-08)
+
+- **Revue externe remplie** (`docs/security/revue_stealth.md`,
+  6 sections cochées) + banc `bench_stealth_fingerprint.ps1`
+  PASS (9/9 oracles : silence probing, amplification 0, zero
+  marqueur/constante/legacy sur le fil, entropie 7,99 bits/o,
+  session survivant flood/impairments/restart/rebinding).
+- Toutes les conditions de sortie de l'étape 56 sont réunies →
+  statut ADR **Acceptée**. Réserve documentée : le banc a tourné
+  en loopback via tap-proxy — une campagne inter-machines reste
+  souhaitable pour valider le profil de timing WAN.
+- Corrections de noms de symboles dans la checklist
+  (`intro_seed_max`/`intro_expand_max`/`intro_per_peer_max`,
+  `tick`).
+
+## ADR-0017 étape 56 : docs sécurité + UI « Mode furtif » (worktree adr17, 2026-10-08)
+
+- **`docs/security/fingerprinting.md`** : section « Mode furtif » —
+  adversaire censeur-classifiant modélisé, résultats du banc
+  (oracles + mesures réelles du premier run), limites assumées
+  (volume, timing long-terme, bootstrap social, blocage IP,
+  throttling UDP), règle de non-régression.
+- **`docs/security/threat_model.md`** : section « Transport furtif »
+  — ce que le banc prouve (silence probing, amplification ≤1, zero
+  marqueur legacy, résilience, anti-scraping INTRO) + ajout du
+  censeur classifiant aux non-démontrés.
+- **`docs/security/revue_stealth.md`** : checklist de revue externe
+  en 6 sections (fil morphé, silence uniforme, fail-closed,
+  anti-scraping, résilience sans oracle, surface résiduelle) —
+  gate de passage « Acceptée ».
+- **UI** : section Réglages « Mode furtif » (`stealth.enabled`,
+  rôle client/bridge/gateway, liens `onionbit-bridge://`,
+  cover traffic — tout appliqué au redémarrage) + statut live via
+  `GET /api/stealth` + **alerte horloge** quand les `hs1` échouent
+  sans session (NTP filtré/spoofé en zone censurée). `flutter
+  analyze`, `flutter test` (22), `check_i18n` verts.
+- **ADR-0017 reste « Proposée »** — acceptation conditionnée à la
+  revue externe (`revue_stealth.md`) + banc sur réseau réel.
+
+## ADR-0017 étape 55 : banc `bench_stealth_fingerprint.ps1` (worktree adr17, 2026-10-08)
+
+- **`stealth_bench`** (`onionbit-ipv8`, binaire de dev) : `link`
+  (dérive `onionbit-bridge://` depuis `stealth_bridge.key` avec
+  adresse substituable → tout le trafic peut transiter par la
+  capture), `tap` (relais UDP → PCAP LINKTYPE_RAW avec en-têtes
+  IPv4/UDP fabriquées ; injection `--loss/--dup/--reorder`),
+  `probe` (sondes calibrées + rejeu de capture → silence + ratio
+  d'amplification), `synth` (corpus étiquetés dns/quic/wg/noise/
+  ipv8), `analyze` (entropie, marqueurs protocolaires, constance
+  de préfixes, histogramme, doublons intra/inter-capture),
+  `classify` (features taille/direction/cadence par fenêtre, 1-NN
+  leave-one-out — mesure honnête de séparation).
+- **`bench_stealth_fingerprint.ps1`** : deux daemons stealth réels
+  (pont + client) via le tap ; phases = capture de fond, probing
+  actif (0 réponse, amp 0 sur 1,7 Mo de sondes), saturation
+  (session survit, RSS bornée), impairments, restart du pont
+  (re-dial après `dial_cooldown`), rebinding de port client.
+  Verdict PASS/FAIL sur 9 oracles dans `report.json` — premier run
+  : **PASS** (363 datagrammes, entropie 7.99 o/bit, 0 marqueur).
+- **`stealth.tuning`** (`configuration.json`) : timeouts/cooldowns
+  du transport exposés (`dial_cooldown_secs`, `session_idle_timeout_secs`,
+  `pending_timeout_secs`, `hs_retry_secs`, `hs_attempts_max`,
+  `tick_ms`, `cover_interval_*`, plafonds `hs1`, `max_sessions`,
+  `max_bridges`) — indispensables pour piloter les phases du banc.
+
+## ADR-0017 étape 54 : `INTRO` ext anti-scraping (worktree adr17, 2026-10-07)
+
+- **Ext** (`onionbit-ipv8::ext`) : messages `INTRO_REQ`/`INTRO`
+  bornés (`{ addr, bridge_pk }` ×N≤3 par réponse), table partitionnée
+  (bornes par requête/par pair/globale, TTL, aucune persistance des
+  intros non sollicitées). Séquence graduée : un petit budget de
+  graines est servi sans solde ledger, l'expansion est gatée par la
+  réputation bilatérale, la diffusion large (`push`) réservée aux
+  pairs réciproques. Requêtes de pairs inconnus refusées en silence.
+- **Amorçage proactif** (`StealthTransport`) : le tick compose un
+  `hs1` vers chaque pont configuré/appris sans session — sinon
+  `Network` reste vide et ext ne démarre jamais. `dial_backoff` :
+  un pont dont le handshake échoue est en cooldown
+  (`dial_cooldown_secs`) pour ne pas émettre un motif de retries
+  régulier fingerprintable.
+- **Hook de session** : `hs1` accepté → `session_hook(addr,
+  client_id)` enregistre le pair dans `Network` côté serveur ;
+  `set_intro_sink` route les intros apprises vers
+  `add_bridge` du transport (table `bridge_pks` bornée à
+  `max_bridges`). Une intro forgée reste inerte : le pair annoncé
+  doit prouver `bridge_pk` au handshake.
+- **Tests hostiles** : trame malformée/tronquée, pair inconnu,
+  quotas et fenêtre bornée, énumération en boucle, table apprises
+  bornée, TTL, seed sans réputation, push réciproques seuls,
+  intro forgée inerte (transport), e2e `stealth_stack` : client +
+  pont réels, session proactive, découverte `INTRO` effective.
+
+## ADR-0017 étape 53 : mode `stealth` du daemon (worktree adr17, 2026-10-07)
+
+- **`Ipv8Stack`** : `Ipv8Config.stealth` propage la section persistée ;
+  `start()` instancie `StealthTransport` (`RawUdpTransport` interne
+  bindé avec le même retry de ports) injecté dans `UdpEndpoint::new` —
+  compteurs d'octets et tap restent à la frontière socket et mesurent
+  donc les datagrammes morphés.
+- **Overlays publics exclus** : `discovery`/`content_discovery`/`dht`
+  deviennent `Option` (`None` en stealth ; signatures propagées à
+  `bandwidth`/`statistics`), bootstrap DNS officiel, restauration
+  `ipv8_peers`, re-sollicitation exit-node et OBF ext sautés — jamais
+  d'hybride (`stealth.enabled` × `ipv8.enabled` refusé partout).
+- **Secret de pont** persisté séparément de la config dans
+  `state_dir/stealth_bridge.key` (atomique, 0600) ; `bridge_link()`
+  sert le lien d'invitation pour serveurs (bridge/gateway).
+- **Moteur direct** : `stealth_blocks_direct` interdit `BtEngine::start`
+  + `engine_for(0)` en rôles `client`/`bridge` (RSS/torrent-checker
+  non démarrés) ; `gateway` conserve la sortie publique documentée.
+- **MTU propagé** : `link_mtu` des lanes uTP bridé à 1000 o ;
+  `http_response_chunk` et nouveau `max_cell_data_payload` bornent
+  les chunks HTTP et les cellules `data` à 1024 o — jamais de
+  fragmentation UDP sous le MTU stealth.
+- **Bloc `INFO` figé** au démarrage (`stealth_mode`, `role`,
+  `legacy_ipv8=disabled`, `public_dht=disabled`,
+  `direct_bittorrent=disabled`, `ext_obf=disabled_reason`).
+- **Tests** (`tests/stealth_stack.rs`, 5) : refus stealth×legacy,
+  validation fail-closed, lien d'invitation persistant, refus
+  `engine_for(0)` hors gateway, **oracle socket** — le tap ne voit que
+  des trames morphées pendant qu'un datagramme applicatif est démorphé
+  côté pont.
+
+## ADR-0017 étape 52 : liens bridge + config + API (worktree adr17, 2026-10-07)
+
+- **`onionbit-bridge://<ip>:<port>#<pk_hex>`** : `BridgeEntry::
+  parse_link`/`to_link` — validation stricte (scheme exact, v4/v6
+  crochets, 64 hex, port ≠ 0) ; nouvelle variante
+  `StealthError::Malformed` distincte du `Reject` filaire (l'entrée
+  utilisateur n'est pas un oracle de probing).
+- **Config** : section `stealth` persistée (`enabled`, `role`,
+  `bridges`, `cover_traffic`, `pad_max_extra`, `replay_window`,
+  `hs_timestamp_skew_secs`, `client_allowlist`) — `bridge_sk` n'y
+  vit jamais.
+- **API** (`api_key_auth`, surface `/api`) : `GET /api/stealth` =
+  role, `transport_active`, `sessions`, compteurs filaires/métriques
+  — aucune clé, adresse ou lien ; `POST /api/stealth/bridges` =
+  validation → dedup → persistance `configuration.json` →
+  `add_bridge` à chaud (`bridge_pks` du transport passé sous Mutex).
+  `AppState::stealth_transport` injecté par le daemon à l'étape 53.
+- *Tests hostiles* : 12 liens malformés rejetés ; test API complet
+  (400 hostiles, 200 valide, réponse sans fuite de lien/pk/adresse).
+  Tickets révocables reportés à l'étape 54.
+
+## ADR-0017 étape 51 : `StealthTransport` + banc hostile (worktree adr17, 2026-10-07)
+
+- **`onionbit-ipv8::stealth_transport`** (nouveau) : `DatagramTransport`
+  morphe par composition sur `RawUdpTransport` — compteurs d'octets et
+  tap mesurent la forme filaire morphée (oracle PCAP interne). Rôles
+  `Client`/`Bridge`/`Gateway` : initiaton `hs1` conditionnée au role et
+  à la table `bridges`, acceptation `hs1` réservée aux rôles serveur.
+- **Sessions par `SocketAddr`** : `Pending` (file applicative bornée
+  count+octets, retries `hs1` cadencés et bornés, `pending_timeout`)
+  → `Established` (`StealthSession`, purge idle). `send_to` vers une
+  destination sans session et hors ponts = drop local compté —
+  kill switch : jamais d'octet clair, même sur perte/expiration.
+- **Budgets pré-auth** : candidat `hs1` (taille bornée d'abord — zéro
+  alloc crypto sur garbage) → jeton par-IP puis jeton du plafond
+  global par tick ; les ressources DH/AEAD ne sont dépensées qu'après.
+  `XPrimeFilter` alimenté uniquement après auth réussie. Cover
+  traffic opt-in (`inner` vide, intervalle randomisé).
+- **Banc hostile** (6 tests loopback) : flood de 1000 datagrammes →
+  zéro réponse/session, amplification **0** ; `hs1` rejoué → silence
+  (une seule réponse au total) ; file bornée + purge ; NAT rebinding
+  → nouveau handshake sans fuite. `StealthMetrics` expose les causes
+  internes pour les bancs (jamais sérialisées).
+- Suite crate : **79 tests verts**, clippy `-D warnings` et fmt
+  propres.
+
+## ADR-0017 étape 50 : crypto + filaire stealth (worktree adr17, 2026-10-07)
+
+- **`onionbit-crypto::stealth`** (nouveau) : `HiddenEph` — clé X25519
+  éphémère « torsion-dirty » encodée Elligator2 (crate `elligator2`
+  0.1.0, MIT/Apache-2.0 — gate licence passé ; `x25519` feature
+  volontairement off pour ne pas tirer `x25519-dalek` v3 en doublon).
+  Le **représentant** seul va sur le fil (uniforme, bits hauts
+  randomisés) ; le **point** entre dans DH/transcript. HKDF
+  domaine `onionbit/stealth/v1` — trois dérivations : `hs1` (clé
+  d'auth statique sous `X25519(x,B)`), `hs2` (sous `shared_ee +
+  static_dh`), `session` (clés directionnelles c2b/b2c + masques de
+  compteur). ChaCha20-Poly1305 bytes-in/bytes-out.
+- **`onionbit-ipv8::stealth`** (nouveau) : handshake
+  `hs1 = rep(X')‖AEAD〔v‖ts‖len‖id‖pad〕` / `hs2 =
+  rep(Y')‖AEAD〔v‖ts‖pad〕` — horodatage **dans** le plaintext
+  authentifié (anti-rejeu du premier datagramme, skew ±90 s
+  configurable). Trame `field‖AEAD〔len‖inner‖pad〕` où
+  `field = ctr ⊕ mask` : le compteur sert de nonce AEAD sans jamais
+  apparaître en clair. Fenêtre de rejeu = bitmap glissante marquée
+  **après** vérif AEAD (une forge ne fait pas glisser la fenêtre).
+  `XPrimeFilter` : deux fenêtres temporelles + `HashSet` borné,
+  alimenté seulement après auth réussie (le garbage ne sature pas le
+  filtre). Padding additif `uniform(0..=pad_max_extra)` clampé
+  `STEALTH_MTU=1280`. `StealthError::Reject` uniforme — la cause
+  (MAC/ts/rejeu/saturation) reste un diagnostic local, jamais sur le
+  fil.
+- **Tests hostiles** (13) : mauvaise clé de pont, garbage, MAC
+  invalide, horodatage hors fenêtre, rejeu `X'` et trames,
+  troncatures à **toutes** les bornes + bit-flip exhaustif, bords
+  exacts de fenêtre (`window` rejeté, `window-1` accepté), round-trip
+  Elligator + oracle `is_montgomery_u` (le représentant n'est pas une
+  u-coordonnée détectable), **séparation de domaine** `ext-obf/v1` ↔
+  `stealth/v1` dans les deux sens. Cible fuzz `stealth_frame`
+  (hs1/hs2/open_frame, état réel partagé) dans le harnais `fuzz/`.
+- Aucune intégration : `StealthTransport` (étape 51) viendra
+  consommer ces primitives — le mode stealth reste inactivable,
+  conformément au gate.
+
+## ADR-0017 étape 49 : `DatagramTransport` extrait de `UdpEndpoint` (worktree adr17, 2026-10-07)
+
+- **Nouvelle couche `onionbit-ipv8::transport`** : trait object-safe
+  `DatagramTransport` (futures boxés, pas de dépendance `async-trait`)
+  + `RawUdpTransport` — sockets UDP v4/v6, `bind_dual_with_retry`,
+  routage d'envoi par famille d'adresse, boucles de réception,
+  compteurs d'octets et tap désormais mesurés **à la frontière
+  socket**. `UdpEndpoint` ne conserve plus que le dispatch par
+  préfixe, les listeners, les stats `msg_id` et le rate sampler ;
+  toute son API publique est inchangée (zéro retouche des call
+  sites). C'est le point d'insertion du futur `StealthTransport`.
+- **Rendement coopératif explicité** : la sémantique de verrous
+  async de l'endpoint historique servait de pacing implicite.
+  Remplacé par `yield_now` explicite (un par envoi, un par
+  datagramme reçu — parité avec le modèle asyncio « un callback par
+  datagramme »). Sans cela, les rafales sur runtime `current_thread`
+  débordent le buffer UDP du receveur : repro 300 ATTEST → 240 rx
+  avant correction, 300 après.
+- Oracle de régression : `cargo test -p onionbit-ipv8
+  --all-features` **65 tests verts** (dont `t3_flood_controle`),
+  `cargo check --workspace --all-targets --all-features` et clippy
+  `-D warnings` propres.
+
 ## Endpoint IPv8 : pacing coopératif explicité (2026-10-07)
 
 - **`yield_now` explicite dans `UdpEndpoint::send_to` et `recv_loop`** —

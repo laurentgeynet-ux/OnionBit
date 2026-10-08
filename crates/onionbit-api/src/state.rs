@@ -123,6 +123,10 @@ pub struct AppState {
     /// `onionbit-api-key`) pour l'auto-connexion same-origin
     /// (`api/web_ui_inject_key`, defaut `true`).
     pub web_ui_inject_key: bool,
+    /// Transport furtif actif (ADR-0017, injecte par le daemon quand
+    /// `stealth.enabled` — `None` sinon). Les handlers n'en lisent
+    /// que des compteurs ; jamais de cle ni d'adresse.
+    pub stealth_transport: Option<Arc<onionbit_ipv8::stealth_transport::StealthTransport>>,
 }
 
 impl AppState {
@@ -140,6 +144,7 @@ impl AppState {
             downloads_rows: Arc::new(DownloadsRowsCache::default()),
             web_ui_dir: None,
             web_ui_inject_key: true,
+            stealth_transport: None,
         }
     }
 
@@ -180,6 +185,15 @@ impl AppState {
     /// (`api/web_ui_inject_key = false`).
     pub fn with_web_ui_inject_key(mut self, inject: bool) -> Self {
         self.web_ui_inject_key = inject;
+        self
+    }
+
+    /// Injecte le transport furtif actif (daemon en mode stealth).
+    pub fn with_stealth_transport(
+        mut self,
+        t: Option<Arc<onionbit_ipv8::stealth_transport::StealthTransport>>,
+    ) -> Self {
+        self.stealth_transport = t;
         self
     }
 

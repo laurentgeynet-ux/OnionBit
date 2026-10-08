@@ -12,7 +12,9 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use onionbit_bittorrent::{AddDownloadOptions, BtEngine, Download, DownloadState, DownloadStats};
+use onionbit_bittorrent::{
+    AddDownloadOptions, BtEngine, Download, DownloadState, DownloadStats, EngineConfig,
+};
 use onionbit_db::{Database, DownloadRow};
 
 use crate::config::CoreConfig;
@@ -259,7 +261,15 @@ impl CoreSession {
         } else {
             Database::open(&config.db_path())?
         };
-        let engine = BtEngine::start(config.engine.clone()).await?;
+        // ADR-0017 : le refus `stealth × ipv8` est verifie AVANT la
+        // creation du moteur — une config hybride ne doit pas meme
+        // ouvrir une socket d'ecoute BitTorrent.
+        if config.ipv8.enabled && config.ipv8.stealth.is_some() {
+            return Err(CoreError::InvalidState(
+                "stealth.enabled exclut ipv8.enabled — combinaison hybride refusee",
+            ));
+        }
+        let engine = BtEngine::start(engine_config_effective(&config)).await?;
         let db = Arc::new(db);
         let asyncio = crate::asyncio::AsyncioMonitor::new(config.ipv8.walker_interval);
         let ipv8 = start_ipv8(&config, db.clone(), notifier.clone(), asyncio.tasks.clone()).await?;
@@ -316,7 +326,12 @@ impl CoreSession {
     /// offline).
     pub async fn start_offline(config: CoreConfig, notifier: Notifier) -> Result<Self> {
         let db = Database::memory()?;
-        let engine = BtEngine::start(config.engine.clone()).await?;
+        if config.ipv8.enabled && config.ipv8.stealth.is_some() {
+            return Err(CoreError::InvalidState(
+                "stealth.enabled exclut ipv8.enabled — combinaison hybride refusee",
+            ));
+        }
+        let engine = BtEngine::start(engine_config_effective(&config)).await?;
         let db = Arc::new(db);
         let asyncio = crate::asyncio::AsyncioMonitor::new(config.ipv8.walker_interval);
         let ipv8 = start_ipv8(&config, db.clone(), notifier.clone(), asyncio.tasks.clone()).await?;
@@ -993,6 +1008,16 @@ impl CoreSession {
     /// cote Python.
     pub async fn engine_for(&self, anon_hops: u32) -> Result<BtEngine> {
         if anon_hops == 0 {
+            // ADR-0017 : le moteur direct est interdit en stealth
+            // client/bridge — l'ajout est refuse ici (en plus de la
+            // neutralisation de `engine_config_effective`) pour que
+            // l'erreur remonte a l'utilisateur plutot qu'un download
+            // silencieusement inerte.
+            if stealth_blocks_direct(&self.inner.config) {
+                return Err(CoreError::InvalidState(
+                    "mode stealth : telechargement direct interdit (anon_hops requis)",
+                ));
+            }
             return Ok(self.inner.engine.clone());
         }
         let stack = self.inner.ipv8.clone().ok_or(CoreError::InvalidState(
@@ -2790,7 +2815,12 @@ impl CoreSession {
             );
             services.watch_folder = Some(svc);
         }
-        if !config.rss_urls.is_empty() {
+        // ADR-0017 : en stealth client/bridge aucune activite reseau
+        // directe n'est permise — ni sondes RSS (HTTP clair) ni le
+        // torrent checker (requetes tracker UDP) ; le tunnel sert de
+        // seule porte de sortie.
+        let stealth_no_direct = stealth_blocks_direct(config);
+        if !config.rss_urls.is_empty() && !stealth_no_direct {
             let mgr = crate::services::rss::RssManager::new(
                 self.inner.notifier.clone(),
                 config.ip_policy.clone(),
@@ -2800,7 +2830,7 @@ impl CoreSession {
             mgr.update(&config.rss_urls);
             services.rss = Some(mgr);
         }
-        if config.enable_torrent_checker {
+        if config.enable_torrent_checker && !stealth_no_direct {
             match crate::services::torrent_checker::TorrentChecker::new(
                 self.inner.db.clone(),
                 self.inner.notifier.clone(),
@@ -3254,15 +3284,61 @@ fn copy_recursive(from: &Path, to: &Path) -> std::io::Result<()> {
     }
 }
 
+/// ADR-0017 : config effective du moteur BitTorrent **direct**
+/// (hors lanes anonymes). En stealth `client`/`bridge` il est
+/// neutralise au bind : aucun socket d'ecoute, pas de DHT publique,
+/// pas de trackers, pas de LSD, pas d'UPnP/NAT-PMP — meme un
+/// download `anon_hops = 0` ajoute par erreur n'aurait aucune
+/// source de pairs et n'emettrait rien (double filet avec
+/// `engine_for`, qui refuse l'ajout). La passerelle (`gateway`)
+/// conserve son activite publique : c'est sa fonction (`EXIT_BT`).
+fn engine_config_effective(config: &CoreConfig) -> EngineConfig {
+    let mut e = config.engine.clone();
+    if let Some(sc) = &config.ipv8.stealth {
+        // Comparaison sur la chaine : un role non reconnu (invalide)
+        // neutralise aussi — direction fail-closed, `Ipv8Stack::start`
+        // refusera le demarrage de toute facon.
+        if sc.role != "gateway" {
+            e.enable_dht = false;
+            e.disable_trackers = true;
+            e.disable_lsd = true;
+            e.enable_upnp = false;
+            e.enable_natpmp = false;
+            e.listen_port = None;
+            e.listen_addr_v6 = None;
+        }
+    }
+    e
+}
+
+/// `true` si la session tourne en stealth sans droit de sortie
+/// publique (`client`/`bridge`) — les telechargements directs et les
+/// services emetteurs (RSS, torrent checker) sont alors interdits.
+fn stealth_blocks_direct(config: &CoreConfig) -> bool {
+    config
+        .ipv8
+        .stealth
+        .as_ref()
+        .is_some_and(|sc| sc.role != "gateway")
+}
+
 /// Demarre la stack IPv8 si `config.ipv8.enabled` (endpoint UDP,
-/// discovery, content discovery, tunnel + lanes anonymes).
+/// discovery, content discovery, tunnel + lanes anonymes) — ou en
+/// mode stealth ADR-0017 quand `stealth.enabled` (transport morphe,
+/// overlays legacy off). `stealth.enabled × ipv8.enabled` est un
+/// refus ferme : jamais de coexistence legacy/morphe sur un noeud.
 async fn start_ipv8(
     config: &CoreConfig,
     db: Arc<Database>,
     notifier: Notifier,
     tasks: crate::asyncio::TaskRegistry,
 ) -> Result<Option<Arc<crate::ipv8_stack::Ipv8Stack>>> {
-    if !config.ipv8.enabled {
+    if config.ipv8.enabled && config.ipv8.stealth.is_some() {
+        return Err(CoreError::InvalidState(
+            "stealth.enabled exclut ipv8.enabled — combinaison hybride refusee",
+        ));
+    }
+    if !config.ipv8.enabled && config.ipv8.stealth.is_none() {
         return Ok(None);
     }
     let stack = crate::ipv8_stack::Ipv8Stack::start(

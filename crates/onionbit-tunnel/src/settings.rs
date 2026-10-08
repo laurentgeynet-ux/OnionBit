@@ -165,6 +165,20 @@ pub struct TunnelSettings {
     /// `enabled` collecte (defaut), `enforce` arme la gate (defaut
     /// off — extension Rust, aucun changement filaire).
     pub ledger: LedgerConfig,
+
+    // -- Extension Rust (ADR-0017, transport stealth) ---------------
+    /// Taille d'un chunk `http-response` (defaut
+    /// [`crate::http_tunnel::HTTP_RESPONSE_CHUNK`] = 1400 o, valeur
+    /// `socket.rs` Python). En mode stealth le datagramme morphe est
+    /// borne par `STEALTH_MTU` (1280 o) : la valeur doit etre
+    /// reduite sinon chaque reponse fragmente ou est rejetee.
+    pub http_response_chunk: usize,
+    /// Plafond du `data` applicatif d'une cellule (octets) — filet
+    /// fail-closed contre la fragmentation UDP stealth : un payload
+    /// au-dela est refuse (`Err`), jamais tronque. Defaut
+    /// [`usize::MAX`] = inerte (la taille reelle est gouvernee par la
+    /// socket uTP / le chunking amont).
+    pub max_cell_data_payload: usize,
 }
 
 impl Default for TunnelSettings {
@@ -204,6 +218,8 @@ impl Default for TunnelSettings {
             served_rate_window: Duration::from_secs(5),
             guards: GuardsConfig::default(),
             ledger: LedgerConfig::default(),
+            http_response_chunk: crate::http_tunnel::HTTP_RESPONSE_CHUNK,
+            max_cell_data_payload: usize::MAX,
         }
     }
 }

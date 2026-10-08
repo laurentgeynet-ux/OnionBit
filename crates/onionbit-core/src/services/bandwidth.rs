@@ -265,10 +265,10 @@ pub async fn run_bandwidth_task(
     let ctrl = session.bandwidth();
     let probe = Arc::new(RttProbe::new());
     if let Some(stack) = session.ipv8() {
-        let p = probe.clone();
-        stack
-            .discovery
-            .set_pong_probe(Arc::new(move |addr, id| p.on_pong(addr, id)));
+        if let Some(discovery) = &stack.discovery {
+            let p = probe.clone();
+            discovery.set_pong_probe(Arc::new(move |addr, id| p.on_pong(addr, id)));
+        }
     }
     let mut tick = tokio::time::interval(Duration::from_secs(
         session.config().ipv8.bandwidth.sample_secs.max(1),
@@ -326,10 +326,16 @@ pub async fn run_bandwidth_task(
             continue;
         }
 
+        // ADR-0017 : pas de `DiscoveryCommunity` en stealth — la
+        // tache est de toute facon filtree en amont
+        // (`ipv8.enabled = false`), le `continue` est le filet.
+        let Some(discovery) = stack.discovery.as_ref() else {
+            continue;
+        };
         probe.clear();
         let mut sent = 0usize;
         for addr in &addrs {
-            if let Ok(id) = stack.discovery.send_ping(addr).await {
+            if let Ok(id) = discovery.send_ping(addr).await {
                 probe.register(addr, id);
                 sent += 1;
             }

@@ -161,6 +161,35 @@ tests hostiles, persistance, API) :
   s'appliquent integralement a la messagerie (pas de padding, pas
   de resistance a un adversaire observant les deux extremites).
 
+## Transport furtif (ADR-0017, etapes 49-55)
+
+Banc `scripts/bench_stealth_fingerprint.ps1` (daemon reel pont +
+client en loopback via relais consignant PCAP, `stealth_bench`) :
+
+- **Silence au probing** : 1200 sondes calibrees (tailles
+  `hs1`/trame, garbage, look-alikes IPv8/DNS/BitTorrent, rejeu de
+  datagrammes captures) → 0 reponse sur les deux roles ; rejet
+  uniforme quelle que soit la cause (MAC, timestamp, replay,
+  saturation) — pas d'oracle de probing differenciable.
+- **Amplification ≤ 1** : 1,68 Mo de sondes → 0 octet renvoye ;
+  aucune reponse pre-handshake n'est jamais emise vers une adresse
+  qui n'a pas complete `hs1`.
+- **Zero marqueur legacy sur le fil** : ni `LibNaCLPK:`, ni
+  community_id, ni `d1:` bencode, ni prefixe IPv8 dans 363
+  datagrammes captures ; entropie 7,99 bits/octet, zero constante
+  entre runs, zero datagramme duplique.
+- **Resilience** : session maintenue sous 5 % de perte/dup/
+  reordonnancement injectes au relais ; re-etablie apres restart
+  du pont (`dial_cooldown` borne le motif de retries) et apres
+  changement de port source du client ; survive a une rafale de
+  4000 sondes. Jamais de repli en clair (fail-closed : tout ce qui
+  n'est pas stealth est drope avant le socket).
+- **Scraping borne** (`ext::INTRO`, etape 54) : introductions
+  servees a quotas gradues (seed budget sans reputation →
+  expansion gatee ledger → push large reserve aux reciproques) ;
+  les `bridge_pk` annoncees doivent etre prouvees au handshake —
+  une intro forgee est inerte.
+
 ## Ce qui n'est PAS demontre
 
 Les points suivants sont hors perimetre de preuve des bancs actuels.
@@ -197,6 +226,12 @@ Un attaquant de cette classe n'est **pas** couvert :
   bootstrapper Tribler sont bloques n'est pas couvert.
 - **Endurance long terme** : pas de preuve multi-jours (churn reel,
   rotation de circuits en arriere-plan, pression memoire).
+- **Censeur classifiant (stealth)** : le banc mesure la separation
+  face a des corpus synthetiques (dns/quic/wg/noise/ipv8) — un
+  classifieur entraine sur du stealth reel, un adversaire qui
+  bloque par volume/timing, l'enumeration des ponts ou le
+  throttling UDP global ne sont pas couverts (voir
+  `fingerprinting.md` §Mode furtif pour les limites assumees).
 
 ## Limite de topologie de banc
 

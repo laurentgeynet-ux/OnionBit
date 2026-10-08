@@ -21,6 +21,7 @@ import '../widgets/network_section.dart';
 import '../widgets/onionbit_section.dart';
 import '../widgets/queue_section.dart';
 import '../widgets/seeding_section.dart';
+import '../widgets/stealth_section.dart';
 import '../widgets/versioning_section.dart';
 
 /// Identifiants des sections de réglages — les titres affichés sont
@@ -33,6 +34,7 @@ enum _SectionId {
   seeding,
   anonymity,
   onionbit,
+  stealth,
   identity,
   network,
   automation,
@@ -51,6 +53,7 @@ extension on _SectionId {
     _SectionId.seeding => l10n.sectionSeeding,
     _SectionId.anonymity => l10n.sectionAnonymity,
     _SectionId.onionbit => l10n.sectionOnionBit,
+    _SectionId.stealth => l10n.sectionStealth,
     _SectionId.identity => l10n.sectionIdentity,
     _SectionId.network => l10n.sectionNetwork,
     _SectionId.automation => l10n.sectionAutomation,
@@ -86,20 +89,23 @@ class _SectionEntry {
 final _kSections = <_SectionEntry>[
   _SectionEntry(
     id: _SectionId.appearance,
-    keywords: 'thème mode clair sombre accent couleur theme light dark '
+    keywords:
+        'thème mode clair sombre accent couleur theme light dark '
         'color language langue',
     child: const AppearanceSection(),
   ),
   _SectionEntry(
     id: _SectionId.downloads,
-    keywords: 'destination dossier espace disque download_defaults saveas '
+    keywords:
+        'destination dossier espace disque download_defaults saveas '
         'folder disk space default',
     sectionId: 'downloads',
     child: const DownloadsSection(),
   ),
   _SectionEntry(
     id: _SectionId.bandwidth,
-    keywords: 'limite débit vitesse ko/s max_download_rate max_upload_rate '
+    keywords:
+        'limite débit vitesse ko/s max_download_rate max_upload_rate '
         'limit rate speed kb/s',
     sectionId: 'bandwidth',
     child: const BandwidthSection(),
@@ -137,6 +143,15 @@ final _kSections = <_SectionEntry>[
         'confiance attest sign-then-serve enforce msg_v1',
     sectionId: 'onionbit',
     child: const OnionBitSection(),
+  ),
+  _SectionEntry(
+    id: _SectionId.stealth,
+    keywords:
+        'stealth furtif censure censure-resistant pont bridge '
+        'onionbit-bridge invitation cover traffic camouflage '
+        'role client gateway passerelle',
+    sectionId: 'stealth',
+    child: const StealthSection(),
   ),
   _SectionEntry(
     id: _SectionId.identity,
@@ -330,9 +345,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
               if (visible.isEmpty)
                 Padding(
                   padding: const EdgeInsets.all(AppSpacing.lg),
-                  child: Center(
-                    child: Text(l10n.noMatchingSection(_filter)),
-                  ),
+                  child: Center(child: Text(l10n.noMatchingSection(_filter))),
                 ),
             ],
           ),

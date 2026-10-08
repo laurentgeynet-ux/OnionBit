@@ -617,6 +617,14 @@ async fn async_main() -> ExitCode {
     let app = build(
         AppState::new(session.clone())
             .with_daemon_config(daemon_config.clone(), Some(config_path.clone()))
+            // ADR-0017 : expose le transport furtif a `/api/stealth`
+            // (metriques + ajout de pont a chaud) quand le mode est
+            // actif — `None` sinon.
+            .with_stealth_transport(
+                session
+                    .ipv8()
+                    .and_then(|stack| stack.stealth_transport.clone()),
+            )
             .with_shutdown_notify(shutdown_signal.notifier())
             .with_web_ui_dir(web_ui_dir.clone())
             .with_web_ui_inject_key(daemon_config.api.web_ui_inject_key),

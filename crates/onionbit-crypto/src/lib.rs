@@ -27,5 +27,8 @@ pub mod hash;
 pub mod ipv8;
 /// Blobs proteges par mot de passe (export d'identite portable).
 pub mod keyblob;
+/// Primitives du transport furtif (ADR-0017) : cles ephemeres
+/// Elligator2, DH/HKDF domaine `onionbit/stealth/v1`, AEAD.
+pub mod stealth;
 
 pub use error::CryptoError;

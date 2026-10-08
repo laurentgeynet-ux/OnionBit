@@ -311,3 +311,52 @@ ledger bilateral (Phase 9c rebasée sur master `0e70a85`).
 Baseline remplie : la mesure prealable exigee par ADR §7 avant
 l'obfuscation est acquise (`ext` ≈ invisible en volume ; la parite
 d'empreinte reste gouvernee par la divergence discovery connue).
+
+
+## Mode furtif ADR-0017 — banc `bench_stealth_fingerprint.ps1`
+
+Banc dédié, distinct de `fingerprint_mesh.ps1` : le mode stealth
+n'emet *aucun* paquet legacy, il n'y a donc rien a comparer avec
+Tribler — l'oracle est la **signature filaire** elle-meme, mesuree
+sur PCAP (pas sur des compteurs internes).
+
+### Adversaire modelise
+
+Un censeur classifiant sur la passerelle : observe tous les
+datagrammes UDP sortants/entrants, peut emettre des sondes actives
+(probing), rejeu de paquets captures, et saturation. Ne peut pas :
+decrypter sans la `bridge_pk`, distinguer le contenu (AEAD +
+padding + Elligator), ni lire les logs du daemon.
+
+### Ce que le banc mesure (etape 55, `report.json`)
+
+| Oracle | Mesure | Premier run |
+|---|---|---|
+| `oracle_silence` | reponses aux sondes calibrees (tailles hs1/trame, garbage, look-alikes IPv8/DNS/BT + rejeu de la capture) | 0 / 1200 sondes |
+| `oracle_amplification_le_1` | `bytes_recv / bytes_sent` sous probing | 0,0000 |
+| `oracle_no_markers` | `LibNaCLPK:`, community_ids (ext/discovery/dht/content), `onionbit`, `BitTorrent protocol`, prefixes `d1:` | 0 hit |
+| `oracle_no_constants` | part max d'un byte a un offset donne + doublons intra/inter-capture | < 2 %, 0 dup |
+| `oracle_entropy` | Shannon bits/octet sur le flux | 7,99 |
+| resilience | session sous 5 % perte/dup/reordonnancement ; restart du pont (re-dial apres `dial_cooldown`) ; nouveau port source client (rebinding) ; saturation par rafale de sondes | session conservee / re-etablie, jamais de repli clair |
+| classifieur | corpus {dns, quic, wg, noise, ipv8} vs stealth, features (taille, direction, cadence) par fenetre 2 s, 1-NN leave-one-out | stealth separable a 100 % du corpus simple — mesure honnete, pas objectif de dissimulation |
+
+### Limites assumees (non-objectifs du transport v1)
+
+- **Volume** : le transport morphe ne dissimule pas le debit — un
+  transfert soutenu reste visible en volume meme sans signature.
+- **Timing long-terme** : la correlation de bout en bout reste hors
+  perimetre (cf. threat_model.md, adversaire global).
+- **Bootstrap social** : les liens `onionbit-bridge://` circulent
+  hors-bande ; leur interception revient a decouvrir le pont — la
+  confidentialite du lien est une condition du modele.
+- **Blocage IP** : un pont connu du censeur est bloquable comme
+  n'importe quelle IP ; le transport ne promet pas de resilience a
+  l'enumeration des ponts (INTRO borne le scraping, pas le zero).
+- **Throttling UDP** : le filtrage global du protocole UDP est hors
+  modele — stealth suppose UDP tolere ou partiellement bridé.
+
+### Regles de non-regression
+
+Toute modification du transport stealth doit re-passer le banc ;
+les criteres de sortie Phase 10 de `roadmap_adr0017.md` restent la
+barre d'acceptation (oracles socket, probing, repli).

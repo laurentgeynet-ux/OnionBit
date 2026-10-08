@@ -941,6 +941,113 @@ impl Default for WatchFolderConfig {
     }
 }
 
+/// Section `stealth` — transport furtif ADR-0017. Le secret
+/// `bridge_sk` n'y vit **jamais** (il est genere a l'activation et
+/// stocke ailleurs — etape 53) ; les `bridges` sont des liens
+/// `onionbit-bridge://<ip>:<port>#<pk_hex>` (cle publique d'admission
+/// uniquement, pas de materiel privé).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct StealthFileConfig {
+    /// Mode stealth actif — **exclut** `ipv8` legacy (refus ferme au
+    /// demarrage si les deux, etape 53).
+    pub enabled: bool,
+    /// `client` | `bridge` | `gateway`.
+    pub role: String,
+    /// Liens d'invitation hors-bande.
+    pub bridges: Vec<String>,
+    /// Cover traffic (keepalive paddé, couteux — opt-in).
+    pub cover_traffic: bool,
+    /// Padding additif max (clampe `STEALTH_MTU`).
+    pub pad_max_extra: usize,
+    /// Fenetre de rejeu des trames par session (bits).
+    pub replay_window: usize,
+    /// Fenetre `±` de l'horodatage handshake (s).
+    pub hs_timestamp_skew_secs: u64,
+    /// Allowlist optionnelle des `client_id` acceptes (roles serveur)
+    /// — chaines hex de 64 chars ; vide = tous (v1 : le filtrage
+    /// s'applique apres auth, cf. etape 54 pour les tickets).
+    pub client_allowlist: Vec<String>,
+    /// Reglages fins du transport — defauts de production bornes de
+    /// `StealthConfig` ; exposés pour les bancs (redemarrage pont,
+    /// expiration de session mesuree sans attendre 5 min).
+    pub tuning: StealthTuningConfig,
+    /// Cles inconnues — preservees.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, Value>,
+}
+
+/// `stealth.tuning` — miroir borne des constantes de
+/// `onionbit_ipv8::stealth_transport::StealthConfig` pertinentes a
+/// l'exploitation. Toute valeur absente retombe sur le defaut.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct StealthTuningConfig {
+    /// Periode du tick interne (ms).
+    pub tick_ms: u64,
+    /// Reemission `hs1` tant que la session est `Pending` (s).
+    pub hs_retry_secs: u64,
+    /// Tentatives `hs1` max avant abandon.
+    pub hs_attempts_max: u8,
+    /// Timeout `Pending` sans reponse (s).
+    pub pending_timeout_secs: u64,
+    /// Cooldown avant re-dial d'un pont en echec (s).
+    pub dial_cooldown_secs: u64,
+    /// Idle timeout d'une session etablie (s).
+    pub session_idle_timeout_secs: u64,
+    /// Intervalle cover `[min,max]` (ms) quand `cover_traffic`.
+    pub cover_interval_min_ms: u64,
+    /// Voir `cover_interval_min_ms`.
+    pub cover_interval_max_ms: u64,
+    /// `hs1`/s/IP admis au plafond de budget pre-DH.
+    pub hs1_per_ip_per_sec: u32,
+    /// Rafale `hs1`/IP.
+    pub hs1_per_ip_burst: u32,
+    /// Plafond global `hs1`/s (anti-spoof : la vraie ligne CPU).
+    pub hs1_global_per_sec: u32,
+    /// Sessions max.
+    pub max_sessions: usize,
+    /// Table de ponts max.
+    pub max_bridges: usize,
+}
+
+impl Default for StealthTuningConfig {
+    fn default() -> Self {
+        Self {
+            tick_ms: 500,
+            hs_retry_secs: 2,
+            hs_attempts_max: 8,
+            pending_timeout_secs: 30,
+            dial_cooldown_secs: 120,
+            session_idle_timeout_secs: 300,
+            cover_interval_min_ms: 500,
+            cover_interval_max_ms: 2000,
+            hs1_per_ip_per_sec: 4,
+            hs1_per_ip_burst: 8,
+            hs1_global_per_sec: 256,
+            max_sessions: 10_000,
+            max_bridges: 256,
+        }
+    }
+}
+
+impl Default for StealthFileConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            role: "client".into(),
+            bridges: Vec::new(),
+            cover_traffic: false,
+            pad_max_extra: 400,
+            replay_window: 256,
+            hs_timestamp_skew_secs: 90,
+            client_allowlist: Vec::new(),
+            tuning: StealthTuningConfig::default(),
+            extra: serde_json::Map::new(),
+        }
+    }
+}
+
 /// Section `logging` — rétention des fichiers de log (extension
 /// propre au portage, absente de `TriblerConfig` Python).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -988,6 +1095,8 @@ pub struct DaemonConfig {
     /// Section `ext` — communaute d'extension OnionBit-only
     /// (ADR-0015).
     pub ext: ExtConfig,
+    /// Section `stealth` — transport furtif OnionBit-only (ADR-0017).
+    pub stealth: StealthFileConfig,
     /// Section `database`.
     pub database: EnabledSection,
     /// Section `dht_discovery`.
@@ -1041,6 +1150,7 @@ impl Default for DaemonConfig {
             libtorrent: LibtorrentConfig::default(),
             tunnel_community: TunnelCommunityConfig::default(),
             ext: ExtConfig::default(),
+            stealth: StealthFileConfig::default(),
             database: EnabledSection::enabled(),
             dht_discovery: EnabledSection::enabled(),
             content_discovery_community: EnabledSection::enabled(),
@@ -1627,6 +1737,12 @@ impl DaemonConfig {
             ext_hello_jitter_pct: self.ext.hello_jitter_pct,
             ext_peer_ttl_secs: self.ext.peer_ttl_secs,
             ext_peers_max: self.ext.peers_max,
+            // ADR-0017 : section `stealth` passee brute — la
+            // validation stricte (role, liens, exclusion `ipv8`) a
+            // lieu dans `Ipv8Stack::start`/`Session::start` ou un
+            // `Err` est possible ; `to_core_config` reste
+            // infaillible comme les autres sections.
+            stealth: self.stealth.enabled.then(|| self.stealth.clone()),
         };
 
         crate::CoreConfig {

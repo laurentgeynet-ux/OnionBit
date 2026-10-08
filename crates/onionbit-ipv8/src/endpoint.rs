@@ -3,25 +3,27 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! Endpoint UDP (equivalent de
-//! `messaging/interfaces/udp/endpoint.py`) : socket UDP liee,
-//! dispatch des datagrammes vers les communities par prefixe de 22
-//! octets, envoi.
+//! `messaging/interfaces/udp/endpoint.py`) : dispatch des
+//! datagrammes vers les communities par prefixe de 22 octets, envoi,
+//! statistiques par `msg_id`.
+//!
+//! L'I/O filaire est deleguee a un `DatagramTransport`
+//! (`transport::RawUdpTransport` en mode legacy ; ADR-0017 branchera
+//! un transport morphe pour le mode stealth — le dispatch ci-dessous
+//! travaille toujours sur le datagramme applicatif, plaintext
+//! post-demorph).
 
 use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-
-use tokio::net::UdpSocket;
-use tokio::sync::Mutex;
 
 use crate::address::UdpAddress;
 use crate::error::Ipv8Error;
 use crate::packet::{Packet, PREFIX_LEN};
+use crate::transport::{DatagramTransport, RawUdpTransport, RxHandler};
 
-/// Taille max d'un datagramme IPv8 lu (borne defensive ; les paquets
-/// pyipv8 tiennent largement sous 64 Ko).
-const MAX_DGRAM: usize = 65535;
+pub use crate::transport::{TapDir, TapEvent};
 
 /// Handler appele pour chaque paquet decode d'une community.
 ///
@@ -37,18 +39,6 @@ pub type PacketHandler = Arc<dyn Fn(SocketAddr, Packet) -> Result<(), Ipv8Error>
 /// du listener `PacketHandler` eventuel — c'est a lui de decider si
 /// les octets sont une cellule ou un paquet signe (`Packet::parse`).
 pub type RawPacketHandler = Arc<dyn Fn(SocketAddr, &[u8]) -> Result<(), Ipv8Error> + Send + Sync>;
-
-/// Sens d'un datagramme tapote (enregistrement interop/debug).
-#[derive(Debug, Clone, Copy)]
-pub enum TapDir {
-    /// Datagramme recu.
-    Rx,
-    /// Datagramme envoye.
-    Tx,
-}
-
-/// Evenement de tap : (sens, adresse distante, octets bruts).
-pub type TapEvent = (TapDir, SocketAddr, Vec<u8>);
 
 /// Endpoint UDP : dispatch par prefixe (community_id + version).
 ///
@@ -169,16 +159,20 @@ fn now_secs() -> f64 {
         .unwrap_or(0.0)
 }
 
+/// Verrouillage poison-tolerant : une panique sous verrou (handler de
+/// community) ne doit pas cascader en rendant l'endpoint sourd.
+fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 /// Equivalent de `endpoint.add_prefix_listener` : chaque community
 /// enregistre son prefixe de 22 octets et recoit les datagrammes
 /// correspondants.
 pub struct UdpEndpoint {
-    socket: Arc<UdpSocket>,
-    /// Socket IPv6 secondaire (`DispatcherEndpoint` pyipv8 : les
-    /// interfaces `UDPIPv4` et `UDPIPv6` partagent les memes
-    /// listeners ; l'envoi choisit le socket selon la famille de
-    /// l'adresse — un pair joint en v6 recoit sa reponse en v6).
-    socket_v6: Option<Arc<UdpSocket>>,
+    /// Couche d'I/O filaire (UDP clair aujourd'hui, transport morphe
+    /// en mode stealth — ADR-0017). Compteurs d'octets et tap vivent
+    /// dans le transport, a la frontiere socket.
+    transport: Arc<dyn DatagramTransport>,
     /// Listeners par prefixe de 22 octets (paquets `Packet` decodes) —
     /// chaque entree emporte la `WirePolicy` de sa community (le layout
     /// `auth`/`dist` depend du handler Python, pas du `msg_id` seul).
@@ -187,44 +181,43 @@ pub struct UdpEndpoint {
     /// cellules de tunnel, protocoles hybrides). Dispatch en plus du
     /// `PacketHandler` si les deux sont enregistres.
     raw_listeners: Mutex<HashMap<[u8; PREFIX_LEN], RawPacketHandler>>,
-    /// Tap optionnel : recoit chaque datagramme brut (rx+tx) pour
-    /// l'enregistrement d'echanges (jalon d'interop, debug).
-    tap: Mutex<Option<tokio::sync::broadcast::Sender<TapEvent>>>,
-    /// Octets envoyes (`IPv8StatsEndpoint.bytes_up` Python).
-    bytes_up: std::sync::atomic::AtomicU64,
-    /// Octets recus (`IPv8StatsEndpoint.bytes_down` Python).
-    bytes_down: std::sync::atomic::AtomicU64,
     /// Fenetre glissante de compteurs alimentee par
     /// `run_rate_sampler` — sert `bytes_rates()`.
-    rate_window: Mutex<RateWindow>,
+    rate_window: tokio::sync::Mutex<RateWindow>,
     /// `StatisticsEndpoint.statistics` : prefixes actives ->
     /// `msg_id` -> compteurs. Un prefixe absent n'est pas compte
-    /// (`enable_community_statistics` Python).
+    /// (`enable_community_statistics` Python). Mesures sur le
+    /// datagramme applicatif (le `msg_id` suit le prefixe — en
+    /// stealth il est interne a la trame morphee). `std::sync::Mutex` :
+    /// les gardes sont breves et le comptage doit rester exact dans
+    /// `dispatch` (contexte sync remonte par le transport).
     statistics: Mutex<HashMap<[u8; PREFIX_LEN], HashMap<u8, NetworkStat>>>,
 }
 
 impl UdpEndpoint {
+    /// Endpoint sur un transport de datagrammes fourni —
+    /// `RawUdpTransport` en mode legacy, transport morphe en mode
+    /// stealth (ADR-0017).
+    pub fn new(transport: Arc<dyn DatagramTransport>) -> Arc<Self> {
+        Arc::new(Self {
+            transport,
+            listeners: Mutex::new(HashMap::new()),
+            raw_listeners: Mutex::new(HashMap::new()),
+            rate_window: tokio::sync::Mutex::new(RateWindow::default()),
+            statistics: Mutex::new(HashMap::new()),
+        })
+    }
+
     /// Lie un socket UDP sur `bind` (ex. `"0.0.0.0:0"` ou
     /// `"127.0.0.1:0"` pour les tests).
     pub async fn bind(bind: &str) -> Result<Arc<Self>, Ipv8Error> {
-        let socket = UdpSocket::bind(bind).await?;
-        Ok(Arc::new(Self {
-            socket: Arc::new(socket),
-            socket_v6: None,
-            listeners: Mutex::new(HashMap::new()),
-            raw_listeners: Mutex::new(HashMap::new()),
-            tap: Mutex::new(None),
-            bytes_up: std::sync::atomic::AtomicU64::new(0),
-            bytes_down: std::sync::atomic::AtomicU64::new(0),
-            rate_window: Mutex::new(RateWindow::default()),
-            statistics: Mutex::new(HashMap::new()),
-        }))
+        Ok(Self::new(RawUdpTransport::bind(bind).await?))
     }
 
-    /// Compteurs d'octets pour `/api/statistics/ipv8`.
+    /// Compteurs d'octets filaires pour `/api/statistics/ipv8`
+    /// (mesures a la frontiere socket, dans le transport).
     pub fn bytes_counters(&self) -> (u64, u64) {
-        use std::sync::atomic::Ordering::Relaxed;
-        (self.bytes_up.load(Relaxed), self.bytes_down.load(Relaxed))
+        self.transport.bytes_counters()
     }
 
     /// Debit instantane `(up, down)` en octets/s, mesure sur la
@@ -256,7 +249,7 @@ impl UdpEndpoint {
     /// `enable_community_statistics` pyipv8 : active/desactive le
     /// comptage par `msg_id` pour un prefixe de community.
     pub async fn enable_community_statistics(&self, prefix: [u8; PREFIX_LEN], enabled: bool) {
-        let mut stats = self.statistics.lock().await;
+        let mut stats = lock(&self.statistics);
         if enabled {
             stats.entry(prefix).or_default();
         } else {
@@ -267,9 +260,7 @@ impl UdpEndpoint {
     /// `get_statistics(prefix)` pyipv8 : compteurs par `msg_id`
     /// (map vide si le prefixe n'est pas suivi).
     pub async fn get_statistics(&self, prefix: &[u8; PREFIX_LEN]) -> HashMap<u8, NetworkStat> {
-        self.statistics
-            .lock()
-            .await
+        lock(&self.statistics)
             .get(prefix)
             .cloned()
             .unwrap_or_default()
@@ -278,7 +269,7 @@ impl UdpEndpoint {
     /// `get_aggregate_statistics(prefix)` pyipv8 : somme des
     /// compteurs du prefixe (zeros si non suivi).
     pub async fn get_aggregate_statistics(&self, prefix: &[u8; PREFIX_LEN]) -> AggregateStats {
-        let stats = self.statistics.lock().await;
+        let stats = lock(&self.statistics);
         let mut agg = AggregateStats::default();
         let Some(per_msg) = stats.get(prefix) else {
             return agg;
@@ -311,8 +302,8 @@ impl UdpEndpoint {
     }
 
     /// `add_sent_stat` pyipv8 (interne : prefixe deja extrait).
-    async fn add_sent_stat(&self, prefix: &[u8; PREFIX_LEN], msg_id: u8, bytes: usize) {
-        if let Some(per_msg) = self.statistics.lock().await.get_mut(prefix) {
+    fn add_sent_stat(&self, prefix: &[u8; PREFIX_LEN], msg_id: u8, bytes: usize) {
+        if let Some(per_msg) = lock(&self.statistics).get_mut(prefix) {
             per_msg
                 .entry(msg_id)
                 .or_insert_with(|| NetworkStat {
@@ -324,8 +315,8 @@ impl UdpEndpoint {
     }
 
     /// `add_received_stat` pyipv8 (interne).
-    async fn add_received_stat(&self, prefix: &[u8; PREFIX_LEN], msg_id: u8, bytes: usize) {
-        if let Some(per_msg) = self.statistics.lock().await.get_mut(prefix) {
+    fn add_received_stat(&self, prefix: &[u8; PREFIX_LEN], msg_id: u8, bytes: usize) {
+        if let Some(per_msg) = lock(&self.statistics).get_mut(prefix) {
             per_msg
                 .entry(msg_id)
                 .or_insert_with(|| NetworkStat {
@@ -345,22 +336,7 @@ impl UdpEndpoint {
     /// famille d'adresse). Erreur de bind v6 propagee ; l'appelant
     /// decide du repli IPv4-seul.
     pub async fn bind_dual(bind: &str, bind_v6: Option<&str>) -> Result<Arc<Self>, Ipv8Error> {
-        let socket = UdpSocket::bind(bind).await?;
-        let socket_v6 = match bind_v6 {
-            Some(addr) => Some(Arc::new(UdpSocket::bind(addr).await?)),
-            None => None,
-        };
-        Ok(Arc::new(Self {
-            socket: Arc::new(socket),
-            socket_v6,
-            listeners: Mutex::new(HashMap::new()),
-            raw_listeners: Mutex::new(HashMap::new()),
-            tap: Mutex::new(None),
-            bytes_up: std::sync::atomic::AtomicU64::new(0),
-            bytes_down: std::sync::atomic::AtomicU64::new(0),
-            rate_window: Mutex::new(RateWindow::default()),
-            statistics: Mutex::new(HashMap::new()),
-        }))
+        Ok(Self::new(RawUdpTransport::bind_dual(bind, bind_v6).await?))
     }
 
     /// Lie un socket UDP IPv4 (et optionnellement IPv6) avec incrementation
@@ -374,81 +350,19 @@ impl UdpEndpoint {
         bind_v6: Option<&str>,
         max_attempts: u16,
     ) -> Result<Arc<Self>, Ipv8Error> {
-        let parsed_v4 = bind.parse::<SocketAddr>().ok();
-        let parsed_v6 = bind_v6.and_then(|s| s.parse::<SocketAddr>().ok());
-
-        // Si le port de depart est 0 ou adresse non parseable, bind direct sans boucle.
-        let (mut addr_v4, mut addr_v6) = match parsed_v4 {
-            Some(v4) if v4.port() != 0 => (Some(v4), parsed_v6),
-            _ => {
-                return Self::bind_dual(bind, bind_v6).await;
-            }
-        };
-
-        let attempts = max_attempts.max(1);
-        let mut last_err = None;
-
-        for _ in 0..attempts {
-            let v4_str = addr_v4
-                .map(|a| a.to_string())
-                .unwrap_or_else(|| bind.to_string());
-            let v6_str = addr_v6.map(|a| a.to_string());
-
-            // Tente dual-stack si v6 configure, sinon IPv4 seul
-            let res = match v6_str.as_deref() {
-                Some(v6) => match Self::bind_dual(&v4_str, Some(v6)).await {
-                    Ok(ep) => return Ok(ep),
-                    Err(e) => {
-                        // Si l'echec est du au v6 indisponible sur l'hote, tente v4 seul sur ce port
-                        match Self::bind(&v4_str).await {
-                            Ok(ep) => {
-                                tracing::debug!(
-                                    listen_v4 = %v4_str,
-                                    listen_v6 = %v6,
-                                    "bind UDP IPv8 v6 echoue, repli IPv4 seul retenu"
-                                );
-                                return Ok(ep);
-                            }
-                            Err(_) => Err(e),
-                        }
-                    }
-                },
-                None => Self::bind(&v4_str).await,
-            };
-
-            match res {
-                Ok(ep) => return Ok(ep),
-                Err(e) => {
-                    last_err = Some(e);
-                    if let Some(ref mut a4) = addr_v4 {
-                        a4.set_port(a4.port().saturating_add(1));
-                    }
-                    if let Some(ref mut a6) = addr_v6 {
-                        a6.set_port(a6.port().saturating_add(1));
-                    }
-                }
-            }
-        }
-
-        if let Some(e) = last_err {
-            tracing::warn!(
-                error = %e,
-                bind,
-                attempts,
-                "echec des tentatives d'incrementation de port UDP IPv8, repli sur port ephemere 0.0.0.0:0"
-            );
-        }
-        Self::bind("0.0.0.0:0").await
+        Ok(Self::new(
+            RawUdpTransport::bind_dual_with_retry(bind, bind_v6, max_attempts).await?,
+        ))
     }
 
     /// Adresse locale du socket.
     pub fn local_addr(&self) -> Result<SocketAddr, Ipv8Error> {
-        Ok(self.socket.local_addr()?)
+        self.transport.local_addr()
     }
 
     /// Adresse locale du socket IPv6 secondaire (`None` si non lie).
     pub fn local_addr_v6(&self) -> Option<Result<SocketAddr, Ipv8Error>> {
-        self.socket_v6.as_ref().map(|s| Ok(s.local_addr()?))
+        self.transport.local_addr_v6()
     }
 
     /// Enregistre un listener pour un prefixe de community. `policy`
@@ -460,10 +374,7 @@ impl UdpEndpoint {
         handler: PacketHandler,
         policy: crate::packet::WirePolicy,
     ) {
-        self.listeners
-            .lock()
-            .await
-            .insert(prefix, (handler, policy));
+        lock(&self.listeners).insert(prefix, (handler, policy));
     }
 
     /// Enregistre un listener brut pour un prefixe de community.
@@ -474,15 +385,14 @@ impl UdpEndpoint {
         prefix: [u8; PREFIX_LEN],
         handler: RawPacketHandler,
     ) {
-        self.raw_listeners.lock().await.insert(prefix, handler);
+        lock(&self.raw_listeners).insert(prefix, handler);
     }
 
-    /// Installe le tap de paquets (un seul canal broadcast).
+    /// Installe le tap de paquets (un seul canal broadcast) : recoit
+    /// chaque datagramme filaire — en stealth, la forme morphee.
     /// Retourne le receveur a consommer par l'appelant.
     pub async fn set_tap(&self) -> tokio::sync::broadcast::Receiver<TapEvent> {
-        let (tx, rx) = tokio::sync::broadcast::channel(1024);
-        *self.tap.lock().await = Some(tx);
-        rx
+        self.transport.set_tap()
     }
 
     /// Envoie des octets bruts a une adresse (UDP numerique
@@ -491,38 +401,21 @@ impl UdpEndpoint {
     pub async fn send_to(&self, addr: &UdpAddress, data: &[u8]) -> Result<(), Ipv8Error> {
         match addr.to_socket_addr() {
             Some(sa) => {
-                // `DispatcherEndpoint.send` pyipv8 : famille d'adresse
-                // -> interface. Sans socket v6, un envoi v6 est un
-                // no-op (comme un domaine non resolu).
-                let socket = if sa.is_ipv6() {
-                    match &self.socket_v6 {
-                        Some(s) => s.clone(),
-                        None => return Ok(()),
-                    }
-                } else {
-                    self.socket.clone()
-                };
-                socket.send_to(data, sa).await?;
-                self.bytes_up
-                    .fetch_add(data.len() as u64, std::sync::atomic::Ordering::Relaxed);
+                self.transport.send_to(sa, data).await?;
                 // `StatisticsEndpoint.send` : le msg_id suit le
                 // prefixe de 22 octets (paquet IPv8 = >= 23 octets).
                 if data.len() > PREFIX_LEN {
                     let mut prefix = [0u8; PREFIX_LEN];
                     prefix.copy_from_slice(&data[..PREFIX_LEN]);
-                    self.add_sent_stat(&prefix, data[PREFIX_LEN], data.len())
-                        .await;
-                }
-                if let Some(t) = self.tap.lock().await.as_ref() {
-                    let _ = t.send((TapDir::Tx, sa, data.to_vec()));
+                    self.add_sent_stat(&prefix, data[PREFIX_LEN], data.len());
                 }
                 // Rendement cooperatif : pyipv8 asyncio traite chaque
-                // envoi sur un tour d'event-loop. Le pacing historique
-                // etait implicite (budget coop des awaits de verrous
-                // ci-dessus) — fragilite mesuree au refactor ADR-0017 :
-                // sans yield, une rafale d'envois sur runtime
-                // mono-thread sature le buffer UDP du receveur avant
-                // qu'il ne soit ordonnance (300 ATTEST -> 240 rx).
+                // envoi sur un tour d'event-loop — l'endpoint original
+                // obtenait la meme cadence via ses awaits de verrous.
+                // Sans ce yield, une rafale d'envois sur runtime
+                // mono-thread (tests, `current_thread`) remplit le
+                // buffer UDP du receveur avant qu'il ne soit ordonnance
+                // (drops mesures pendant le refactor de l'etape 49).
                 tokio::task::yield_now().await;
                 Ok(())
             }
@@ -536,112 +429,76 @@ impl UdpEndpoint {
     }
 
     /// Boucle de reception : dispatch par prefixe vers les listeners.
-    /// Bloquante — a lancer dans une tache tokio.
-    ///
-    /// Les erreurs de `recv_from` (ex. `WSAECONNRESET` Windows quand un
-    /// ICMP « port injoignable » revient d'un envoi vers un pair mort)
-    /// ne doivent **pas** tuer la boucle — le socket reste utilisable.
+    /// Bloquante — a lancer dans une tache tokio. La boucle socket
+    /// elle-meme vit dans le transport ; ici on ne fait que le
+    /// dispatch applicatif sur les datagrammes remis.
     pub async fn run(self: &Arc<Self>) -> Result<(), Ipv8Error> {
-        // Socket IPv6 secondaire : sa boucle de reception partage les
-        // memes listeners (`DispatcherEndpoint` pyipv8 — la reception
-        // est accrochee directement au sous-endpoint).
-        let v6_task = self.socket_v6.clone().map(|sock| {
-            let me = self.clone();
-            tokio::spawn(async move { me.recv_loop(sock).await })
-        });
-        self.recv_loop(self.socket.clone()).await;
-        if let Some(t) = v6_task {
-            t.abort();
-        }
-        Ok(())
+        let me = self.clone();
+        let on_rx: RxHandler = Arc::new(move |src, data| me.dispatch(src, data));
+        self.transport.clone().run(on_rx).await
     }
 
-    /// Boucle de reception d'un socket : dispatch par prefixe vers
-    /// les listeners (partagee entre v4 et v6).
-    async fn recv_loop(self: &Arc<Self>, socket: Arc<UdpSocket>) {
-        let mut buf = vec![0u8; MAX_DGRAM];
-        loop {
-            let (n, src) = match socket.recv_from(&mut buf).await {
-                Ok(r) => r,
-                Err(e) => {
-                    tracing::warn!(error = %e, "recv_from en erreur — ecoute poursuivie");
-                    // Petite pause : evite un busy-loop si l'erreur est
-                    // persistante (interface down, etc.).
-                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-                    continue;
+    /// Dispatch d'un datagramme applicatif recu : comptage `msg_id`,
+    /// raw listener puis `PacketHandler` (parite pyipv8 — un raw
+    /// listener recoit le datagramme **en plus** du listener decode).
+    ///
+    /// `catch_unwind` : un panic dans un handler de community (ex.
+    /// bug dans `process_cell`) ne doit PAS tuer la boucle de
+    /// reception — sinon le noeud devient sourd definitivement tout
+    /// en continuant a emettre.
+    fn dispatch(&self, src: SocketAddr, data: &[u8]) {
+        if data.len() < PREFIX_LEN {
+            return;
+        }
+        let mut prefix = [0u8; PREFIX_LEN];
+        prefix.copy_from_slice(&data[..PREFIX_LEN]);
+        // `StatisticsEndpoint.on_packet` : compte la reception si
+        // le prefixe est suivi (avant tout dispatch).
+        if data.len() > PREFIX_LEN {
+            self.add_received_stat(&prefix, data[PREFIX_LEN], data.len());
+        }
+        let raw_handler = lock(&self.raw_listeners).get(&prefix).cloned();
+        if let Some(h) = raw_handler {
+            let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| h(src, data)));
+            match res {
+                Ok(Err(e)) => {
+                    tracing::debug!(error = %e, "raw handler de community en erreur");
                 }
-            };
-            self.bytes_down
-                .fetch_add(n as u64, std::sync::atomic::Ordering::Relaxed);
-            let data = &buf[..n];
-            if let Some(t) = self.tap.lock().await.as_ref() {
-                let _ = t.send((TapDir::Rx, src, data.to_vec()));
-            }
-            // Rendement cooperatif par datagramme (parite asyncio :
-            // un callback par datagramme, l'event-loop avance entre
-            // chacun). Sans yield explicite, un flot continu draine
-            // le buffer noyau entier sans re-ordonnancer les autres
-            // taches — famine sous flood sur runtime mono-thread.
-            tokio::task::yield_now().await;
-            if data.len() < PREFIX_LEN {
-                continue;
-            }
-            let mut prefix = [0u8; PREFIX_LEN];
-            prefix.copy_from_slice(&data[..PREFIX_LEN]);
-            // `StatisticsEndpoint.on_packet` : compte la reception si
-            // le prefixe est suivi (avant tout dispatch).
-            if data.len() > PREFIX_LEN {
-                self.add_received_stat(&prefix, data[PREFIX_LEN], n).await;
-            }
-            let raw_handler = { self.raw_listeners.lock().await.get(&prefix).cloned() };
-            if let Some(h) = raw_handler {
-                // `catch_unwind` : un panic dans un handler de community
-                // (ex. bug dans `process_cell`) ne doit PAS tuer la
-                // boucle de reception — sinon le noeud devient sourd
-                // definitivement tout en continuant a emettre.
-                let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| h(src, data)));
-                match res {
-                    Ok(Err(e)) => {
-                        tracing::debug!(error = %e, "raw handler de community en erreur");
-                    }
-                    Err(_) => {
-                        tracing::error!(%src, "raw handler de community a panicke — paquet ignore");
-                    }
-                    _ => {}
+                Err(_) => {
+                    tracing::error!(%src, "raw handler de community a panicke — paquet ignore");
                 }
+                _ => {}
             }
-            let handler = { self.listeners.lock().await.get(&prefix).cloned() };
-            if let Some((h, policy)) = handler {
-                match Packet::parse(data, None, &policy) {
-                    Ok(pkt) => {
-                        let msg_id = pkt.msg_id;
-                        let res =
-                            std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
-                                h(src, pkt)
-                            }));
-                        match res {
-                            Ok(Err(e)) => {
-                                tracing::debug!(
-                                    error = %e,
-                                    msg_id,
-                                    prefix = hex::encode(&prefix[..8]),
-                                    %src,
-                                    "handler de community en erreur"
-                                );
-                            }
-                            Err(_) => {
-                                tracing::error!(
-                                    msg_id,
-                                    %src,
-                                    "handler de community a panicke — paquet ignore"
-                                );
-                            }
-                            _ => {}
+        }
+        let handler = lock(&self.listeners).get(&prefix).cloned();
+        if let Some((h, policy)) = handler {
+            match Packet::parse(data, None, &policy) {
+                Ok(pkt) => {
+                    let msg_id = pkt.msg_id;
+                    let res =
+                        std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || h(src, pkt)));
+                    match res {
+                        Ok(Err(e)) => {
+                            tracing::debug!(
+                                error = %e,
+                                msg_id,
+                                prefix = hex::encode(&prefix[..8]),
+                                %src,
+                                "handler de community en erreur"
+                            );
                         }
+                        Err(_) => {
+                            tracing::error!(
+                                msg_id,
+                                %src,
+                                "handler de community a panicke — paquet ignore"
+                            );
+                        }
+                        _ => {}
                     }
-                    Err(e) => {
-                        tracing::trace!(error = %e, "paquet IPv8 rejete");
-                    }
+                }
+                Err(e) => {
+                    tracing::trace!(error = %e, "paquet IPv8 rejete");
                 }
             }
         }

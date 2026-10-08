@@ -97,3 +97,9 @@ name = "ext_packet"
 path = "fuzz_targets/ext_packet.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "stealth_frame"
+path = "fuzz_targets/stealth_frame.rs"
+test = false
+doc = false
