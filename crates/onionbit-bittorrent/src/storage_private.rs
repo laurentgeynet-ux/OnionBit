@@ -125,6 +125,7 @@ impl StorageFactory for PrivateStorageFactory {
             chunk_log2: self.chunk_log2,
             group_dir,
             files: Vec::new(),
+            retired: AtomicBool::new(false),
         })
     }
 
@@ -199,6 +200,7 @@ impl PrivateFile {
     /// illisible (corruption) est **recree** — le fastresume/hash de
     /// piece invalidera le contenu et le retirera.
     fn materialize(&self, st: &PrivateStorage) -> anyhow::Result<()> {
+        st.ensure_alive()?;
         if self.removed.load(Ordering::Acquire) {
             bail!("fichier prive supprime");
         }
@@ -277,11 +279,27 @@ pub struct PrivateStorage {
     chunk_log2: u8,
     group_dir: PathBuf,
     files: Vec<Arc<PrivateFile>>,
+    /// `take()` transfere la propriete au clone (parite
+    /// `FilesystemStorage::take` qui *deplace* les handles) : sans
+    /// cette marque l'ancien objet resterait pleinement fonctionnel
+    /// — les taches orphelines d'un torrent supprime ou mis en pause
+    /// poursuivraient leurs E/S, et `materialize` recreerait des
+    /// `.obd` fraichement effaces.
+    retired: AtomicBool,
 }
 
 impl PrivateStorage {
     fn file(&self, file_id: usize) -> anyhow::Result<&Arc<PrivateFile>> {
         self.files.get(file_id).context("no such file")
+    }
+
+    /// L'objet est-il encore vivant : `take()` l'a retire au profit
+    /// du clone retourne. Les acces sur un objet retire echouent.
+    fn ensure_alive(&self) -> anyhow::Result<()> {
+        if self.retired.load(Ordering::Acquire) {
+            bail!("stockage prive retire (take)");
+        }
+        Ok(())
     }
 }
 
@@ -327,6 +345,7 @@ impl TorrentStorage for PrivateStorage {
     }
 
     fn pread_exact(&self, file_id: usize, offset: u64, buf: &mut [u8]) -> anyhow::Result<()> {
+        self.ensure_alive()?;
         let f = self.file(file_id)?;
         if f.padding {
             buf.fill(0);
@@ -347,6 +366,7 @@ impl TorrentStorage for PrivateStorage {
     }
 
     fn pwrite_all(&self, file_id: usize, offset: u64, buf: &[u8]) -> anyhow::Result<()> {
+        self.ensure_alive()?;
         let f = self.file(file_id)?;
         if f.padding {
             return Ok(());
@@ -384,6 +404,7 @@ impl TorrentStorage for PrivateStorage {
     }
 
     fn ensure_file_length(&self, file_id: usize, length: u64) -> anyhow::Result<()> {
+        self.ensure_alive()?;
         let f = self.file(file_id)?;
         if f.padding {
             return Ok(());
@@ -400,8 +421,25 @@ impl TorrentStorage for PrivateStorage {
         Ok(())
     }
 
-    fn remove_file(&self, file_id: usize, _filename: &Path) -> anyhow::Result<()> {
-        let f = self.file(file_id)?;
+    fn remove_file(&self, file_id: usize, filename: &Path) -> anyhow::Result<()> {
+        fn remove_path(path: &Path) -> anyhow::Result<()> {
+            match std::fs::remove_file(path) {
+                Ok(()) => Ok(()),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                Err(e) => Err(e.into()),
+            }
+        }
+        let Ok(f) = self.file(file_id) else {
+            // Stockage jamais `init` (fallback `create` de
+            // `Session::delete` quand l'etat n'exposait pas de
+            // fichiers) : le nom `.obd` se derive du chemin relatif —
+            // la suppression reste possible.
+            let rel = relpath_bytes(filename);
+            let path = self
+                .group_dir
+                .join(self.keys.file_name(&self.infohash, &rel));
+            return remove_path(&path);
+        };
         if f.padding {
             return Ok(());
         }
@@ -412,11 +450,7 @@ impl TorrentStorage for PrivateStorage {
             let mut g = f.cell.write().unwrap_or_else(|e| e.into_inner());
             *g = None;
         }
-        match std::fs::remove_file(&f.path) {
-            Ok(()) => Ok(()),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(e) => Err(e.into()),
-        }
+        remove_path(&f.path)
     }
 
     fn remove_directory_if_empty(&self, _path: &Path) -> anyhow::Result<()> {
@@ -441,12 +475,20 @@ impl TorrentStorage for PrivateStorage {
     }
 
     fn take(&self) -> anyhow::Result<Box<dyn TorrentStorage>> {
+        self.ensure_alive()?;
+        // Retire l'ancien objet : les taches orphelines (check en vol,
+        // dial annule) echouent au prochain acces au lieu de recreer
+        // les fichiers qu'un `delete` vient d'effacer. Le clone herite
+        // les `Arc<PrivateFile>` — cellules partagees, handles
+        // conserves.
+        self.retired.store(true, Ordering::Release);
         Ok(Box::new(Self {
             keys: self.keys.clone(),
             infohash: self.infohash,
             chunk_log2: self.chunk_log2,
             group_dir: self.group_dir.clone(),
             files: self.files.clone(),
+            retired: AtomicBool::new(false),
         }))
     }
 
@@ -473,6 +515,7 @@ mod tests {
                 len,
             ))],
             group_dir,
+            retired: AtomicBool::new(false),
         }
     }
 
@@ -573,5 +616,58 @@ mod tests {
             writer.join().unwrap();
             reader.join().unwrap();
         });
+    }
+
+    /// `take()` retire l'ancien stockage (parite
+    /// `FilesystemStorage::take` qui deplace les handles) : les
+    /// taches orphelines d'un delete/pause echouent au lieu de
+    /// poursuivre leurs E/S, et `materialize` ne recree pas un
+    /// `.obd` fraichement efface.
+    #[test]
+    fn take_retire_l_ancien_stockage() {
+        let dir = tempfile::tempdir().unwrap();
+        let st = storage_de_test(&dir, 16384);
+        st.pwrite_all(0, 0, b"donnees").unwrap();
+        let obd_path = st.files[0].path.clone();
+        let new = st.take().unwrap();
+        assert!(
+            st.pread_exact(0, 0, &mut [0u8; 8]).is_err(),
+            "ancien stockage encore vivant apres take()"
+        );
+        assert!(st.pwrite_all(0, 0, b"x").is_err());
+        let mut buf = [0u8; 7];
+        new.pread_exact(0, 0, &mut buf).unwrap();
+        assert_eq!(&buf, b"donnees");
+        // Suppression via le stockage vivant : le fichier part et
+        // `removed` etant partage, aucun des deux objets ne le
+        // recree.
+        new.remove_file(0, Path::new("f.bin")).unwrap();
+        assert!(!obd_path.exists());
+        assert!(st.pread_exact(0, 0, &mut buf).is_err());
+        assert!(new.pread_exact(0, 0, &mut buf).is_err());
+        assert!(!obd_path.exists(), "obd recree apres remove_file");
+    }
+
+    /// `remove_file` sur un stockage jamais `init` (fallback
+    /// `storage_factory.create` de `Session::delete`) : le nom `.obd`
+    /// se derive du chemin relatif, la suppression fonctionne.
+    #[test]
+    fn remove_file_sans_init_derive_le_nom() {
+        let dir = tempfile::tempdir().unwrap();
+        let st = storage_de_test(&dir, 16384);
+        let rel = relpath_bytes(Path::new("f.bin"));
+        let derived = st.group_dir.join(st.keys.file_name(&st.infohash, &rel));
+        std::fs::write(&derived, b"junk").unwrap();
+        // Memes cles mais `files` vide — simule `create` sans `init`.
+        let fresh = PrivateStorage {
+            keys: st.keys.clone(),
+            infohash: st.infohash,
+            chunk_log2: st.chunk_log2,
+            group_dir: st.group_dir.clone(),
+            files: Vec::new(),
+            retired: AtomicBool::new(false),
+        };
+        fresh.remove_file(0, Path::new("f.bin")).unwrap();
+        assert!(!derived.exists());
     }
 }

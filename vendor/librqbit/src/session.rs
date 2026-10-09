@@ -1682,7 +1682,18 @@ impl Session {
             debug!("error pausing torrent before deletion: {e:#}")
         }
 
-        let metadata = removed.metadata.load_full().expect("TODO");
+        // Tribler : un magnet jamais resolu n'a pas de metadonnees —
+        // `expect` faisait paniquer la tache HTTP : le download etait
+        // retire de la carte mais la ligne persistante survivait.
+        let Some(metadata) = removed.metadata.load_full() else {
+            if let Some(p) = self.persistence.as_ref() {
+                if let Err(e) = p.delete(id).await {
+                    error!(?id, "error deleting torrent from persistence database: {e:#}");
+                }
+            }
+            warn!(id, "deleted torrent without resolved metadata — files untouched");
+            return Ok(());
+        };
 
         let storage = removed
             .with_state_mut(|s| match s.take() {

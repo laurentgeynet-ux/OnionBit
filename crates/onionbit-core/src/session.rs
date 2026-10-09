@@ -276,6 +276,12 @@ struct Inner {
     /// quand la tache de fond a termine ; [`Self::wait_restored`]
     /// permet aux tests de l'attendre.
     restore_done: tokio::sync::watch::Sender<bool>,
+    /// Serialise `remove` contre les cycles `remove_engine_only` +
+    /// `readd_row` (`recheck`, `move_storage`, `update_hops`,
+    /// rangement a completion) : sans lui un `DELETE` pendant le
+    /// deplacement supprimait la ligne puis le re-add ressuscitait le
+    /// torrent — orphelin actif, re-hash complet, fichiers conserves.
+    lifecycle_gate: tokio::sync::Mutex<()>,
     /// `AugmentedSearch` Python : vocabulaire de sous-mots appris des
     /// titres de torrents, utilise par `local_search` (`augmenter`
     /// du `DatabaseEndpoint`).
@@ -729,6 +735,7 @@ impl CoreSession {
                 pending_notify: std::sync::Mutex::new(std::collections::HashMap::new()),
                 stopped: std::sync::atomic::AtomicBool::new(false),
                 restore_done: tokio::sync::watch::channel(false).0,
+                lifecycle_gate: tokio::sync::Mutex::new(()),
                 augmenter,
                 bandwidth: Arc::new(crate::services::bandwidth::CongestionController::new()),
                 started_at: std::time::Instant::now(),
@@ -916,6 +923,14 @@ impl CoreSession {
             }
             match self.readd_row(&engine, &row).await {
                 Ok(dl) => {
+                    // La fenetre check→add de `readd_row` laisse une
+                    // course avec `DELETE` : ligne supprimee pendant
+                    // le re-add → pas de download orphelin dans le
+                    // moteur (meme garde que la restauration differee).
+                    if matches!(self.row_of(&dl.info_hash()), Ok(None)) {
+                        let _ = self.remove_engine_only(&dl.info_hash_hex(), false).await;
+                        continue;
+                    }
                     restored += 1;
                     // Zone privee : infohash reel et nom exclus des
                     // logs et du catalogue public (`index_channel_node`
@@ -1274,6 +1289,20 @@ impl CoreSession {
     /// librqbit refusionne les trackers de la source avec
     /// `opts.trackers` : seule une source purgee les honore.
     async fn readd_row(&self, engine: &BtEngine, row: &DownloadRow) -> Result<Download> {
+        // La ligne a pu etre supprimee (`DELETE`) pendant le
+        // `remove_engine_only` : ne pas ressusciter un download
+        // supprime — le torrent re-ajoute resterait un orphelin actif
+        // (re-hash complet, aucune entree UI).
+        let known = self
+            .inner
+            .db_arc()
+            .with(|c| onionbit_db::downloads::get(c, &row.infohash))?
+            .is_some();
+        if !known {
+            return Err(CoreError::Cancelled(
+                "telechargement supprime pendant l'operation",
+            ));
+        }
         let mut opts = self.row_add_options(row);
         // Ligne `private` : `row.infohash` est la cle HMAC opaque —
         // les vraies metadonnees viennent du manifeste OBM (infohash
@@ -3083,6 +3112,7 @@ impl CoreSession {
     /// la nouvelle lane — comme Python, ou le Download METADATA
     /// accepte `update_hops` (remove + re-add).
     pub async fn update_hops(&self, id_or_hash: &str, new_hops: u32) -> Result<()> {
+        let _lifecycle = self.inner.lifecycle_gate.lock().await;
         let Some(dl) = self.find_download(id_or_hash) else {
             return self.update_pending_hops(id_or_hash, new_hops);
         };
@@ -3428,6 +3458,12 @@ impl CoreSession {
     /// l'est. La suppression porte alors sur l'entree `pending` et
     /// la ligne `downloads`.
     pub async fn remove(&self, id_or_hash: &str, delete_files: bool) -> Result<()> {
+        // Cycle remove/re-add en vol (`recheck`, `move_storage`,
+        // `update_hops`, rangement a completion) : la porte le
+        // serialise — soit l'operation a fini (le download re-ajoute
+        // est supprime integralement ci-dessous), soit `readd_row`
+        // verra la ligne absente et abandonnera.
+        let _lifecycle = self.inner.lifecycle_gate.lock().await;
         let Some(dl) = self.find_download(id_or_hash) else {
             let ih = onionbit_crypto::hash::from_hex(id_or_hash)
                 .ok_or(CoreError::InvalidState("telechargement inconnu"))?;
@@ -3590,6 +3626,7 @@ impl CoreSession {
     /// non configuree) → remove + re-add = revalidation complete.
     /// Les reglages de la ligne sont preserves.
     pub async fn recheck(&self, id_or_hash: &str) -> Result<()> {
+        let _lifecycle = self.inner.lifecycle_gate.lock().await;
         let (dl, mut row) = self.download_and_row(id_or_hash)?;
         let ih = dl.info_hash();
         if row.torrent_data.is_none() {
@@ -3623,6 +3660,11 @@ impl CoreSession {
         dest_dir: &Path,
         completed_dir: Option<&Path>,
     ) -> Result<bool> {
+        // La porte est maintenue pendant tout le cycle
+        // remove/re-add : un `DELETE` concurrent attend la fin du
+        // deplacement puis supprime le download re-ajoute —
+        // integralement (fichiers a leur nouvel emplacement).
+        let _lifecycle = self.inner.lifecycle_gate.lock().await;
         // ADR-0018 : `dest_dir`/`completed_dir` acceptent les specs
         // `@root/…` (resolus ici — erreur sur spec mal forme).
         let dest_dir = self
@@ -3802,6 +3844,7 @@ impl CoreSession {
         dl: &Download,
         row: &DownloadRow,
     ) -> Result<()> {
+        let _lifecycle = self.inner.lifecycle_gate.lock().await;
         use crate::private_zone::PrivateSubdir;
         let Some(zone) = self.private_zone() else {
             return Ok(());

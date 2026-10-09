@@ -3,6 +3,37 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Correctif : suppression fiable d'un téléchargement (cycle remove/re-add) (2026-10-09)
+
+Symptôme : `DELETE /downloads` puis le daemon reste occupé plusieurs
+minutes et le fichier est toujours présent — la « tâche » est devenue
+intuable. Trois trous réels dans le cycle de vie :
+
+- **Résurrection par re-add** (`session.rs`) : `recheck`,
+  `move_storage`, `update_hops` et le rangement à complétion font tous
+  `remove_engine_only` puis `readd_row`. Un `DELETE` dans la fenêtre
+  supprimait la ligne DB puis le re-add recréait le torrent — orphelin
+  actif, re-hash complet, fichiers conservés. Nouvelle porte
+  `lifecycle_gate` (`tokio::Mutex`) : les opérations à cycle sont
+  sérialisées contre `remove`, qui attend leur fin puis supprime le
+  download re-ajouté — intégralement, fichiers à leur nouvel
+  emplacement. `readd_row` vérifie en outre que la ligne existe encore
+  et la restauration synchrone démonte le torrent matérialisé si la
+  ligne a disparu pendant le re-add (garde déjà présente côté
+  restauration différée).
+- **`PrivateStorage::take()` partageait les handles** au lieu de les
+  déplacer (`FilesystemStorage::take` vide ses `OpenedFile`) : les
+  tâches orphelines d'un torrent privé supprimé gardaient un stockage
+  fonctionnel — `materialize` recréait même les `.obd` effacés.
+  L'ancien objet est désormais marqué `retired` : tout accès échoue
+  (read/write/ensure_length/materialize). `remove_file` fonctionne
+  aussi sur un stockage jamais `init` (fallback `create` de
+  `Session::delete`) : le nom `.obd` est dérivé du chemin relatif.
+- **`Session::delete` vendored** : `metadata.load_full().expect("TODO")`
+  paniquait sur un magnet sans métadonnées résolues — le download était
+  retiré de la carte mais la ligne persistante survivait. Retour propre
+  (persistance purgée, fichiers intacts par définition).
+
 ## Correctif : décapsulation privée streamée (mémoire bornée) (2026-10-09)
 
 Audit de la couche stockage suite au rapport « fichier téléchargé en
