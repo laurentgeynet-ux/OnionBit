@@ -168,7 +168,7 @@ try {
 
     # Lien d'invitation pointant sur le TAP (tout le trafic client
     # transite par la capture socket).
-    $skFile = Join-Path $B.Dir 'stealth_bridge.key'
+    $skFile = Join-Path $B.Dir 'identity\stealth_bridge.key'
     $d1 = (Get-Date).AddSeconds(30)
     while (-not (Test-Path $skFile) -and (Get-Date) -lt $d1) { Start-Sleep -Milliseconds 400 }
     if (-not (Test-Path $skFile)) { throw "stealth_bridge.key absent" }

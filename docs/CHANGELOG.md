@@ -3,6 +3,42 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Validation + docs : banc `bench_profiles.ps1`, ADR implémentée (2026-10-09, worktree adr22, étape 81 ADR-0022)
+
+- **`scripts/bench_profiles.ps1`** (nouveau, UTF-8 BOM + prologue) :
+  banc inter-démons local à 4 phases — (a) deux démons `legacy`
+  (A API 8291 / IPv8 18801, L 8292/18802) s'interconnectent via
+  `ext` HELLO (peer_count 1/1, `effective=legacy` des deux côtés) ;
+  (b) `PUT full` sur L sans pont → `409 missing_prerequisites` +
+  corps `{missing:["stealth.bridges"]}`, ajout du pont via
+  `POST /stealth/bridges` (binaire `stealth_bench` en `--serve-key`),
+  `PUT full` accepté → `restart_required` + `restart_pending`,
+  redémarrage de L → session stealth établie (tap `UdpEndpoint`
+  du pont = vérité fil) ; (c) `PUT legacy` + restart → le mesh IPv8
+  se re-paire (`overlays` A=5, L=4) ; (d) `POST /settings` sur une
+  clé couverte → `effective=custom` + `diverged_keys`.
+- **Oracle PCAP « zéro legacy »** : capture du trafic du pont en
+  `full` — aucun marqueur `LibNaCLPK`, `community_id`, `onionbit`,
+  `bittorrent`, `dht` sur le fil ; tout le trafic de L transite
+  morphé par le pont. **13/13 oracles verts** (run
+  `target/bench-profiles-20261009-190117/`).
+- **Écart d'oracle documenté (non bloquant)** : l'oracle (c)
+  visait la re-convergence ext `peer_count` symétrique ; ramené au
+  re-pairage **mesh IPv8** — après un restart unilatéral, le pair
+  survivant garde l'entrée `ext_known` périmée et
+  `hello_cooldown` = 3 600 s fige les re-sondes. Reproduit à
+  l'identique par un restart `legacy` pur **sans** profil → trou
+  pré-existant de re-vérification IPv8, hors périmètre ADR-0022.
+- **`bench_stealth_fingerprint.ps1`** : chemins de clé de pont
+  corrigés (`identity/` depuis ADR-0018) — le banc était cassé.
+- **`rest_privacy_repository.dart`** : corps `POST /stealth/bridges`
+  corrigé (`{"bridge": <lien>}` — le handler attendait `bridge`,
+  pas `link`).
+- **`docs/security/fingerprinting.md`** : tableau « surface
+  identifiable par profil » (legacy / full / custom) + limite de
+  re-convergence ext consignée. **`bancs_tests.md`** : entrée
+  catalogue SE-8 + journal. **ADR-0022 → Implémentée.**
+
 ## App : `PrivacyProfileSwitch` dans la sidebar (2026-10-09, worktree adr22, étape 80 ADR-0022)
 
 - **Feature `privacy/`** (nouveau dossier — une fonctionnalité = un
@@ -43,6 +79,8 @@ en haut.
   invité inerte, snackbar erreur, rail + menu, FR. Goldens
   `shell_downloads_{medium,expanded}` régénérés.
 
+
+## API : `GET`/`PUT /api/privacy/profile` + gardes settings (2026-10-09, worktree adr22, étape 79 ADR-0022)
 
 - **`handlers/privacy.rs`** (nouveau) : `GET` expose `{stored,
   effective, diverged_keys, restart_pending, guest,

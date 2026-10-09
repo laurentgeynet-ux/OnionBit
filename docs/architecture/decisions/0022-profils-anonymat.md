@@ -1,13 +1,18 @@
 # ADR-0022 — Profils d'anonymat prédéfinis : « Legacy », « Full anonyme », « Personnalisé »
 
-Statut : **Acceptée** (2026-10-09, après une revue externe —
-corrections intégrées : `obf_enabled` reclassé clé froide, gardes
-hybride/invité documentées comme *ajouts* et non réutilisations,
-validateur de combinaison porté au niveau `DaemonConfig`, cycle de
-redémarrage vérifié sans endpoint nouveau). Dépendance d'interface :
-le sélecteur cible la coquille v2 d'ADR-0021 (`AppSidebar`, Privacy
-HUD) — l'implémentation se fait après sa fusion, ou sur un worktree
-`adr22` basé sur `adr21` si l'ordre s'inverse.
+Statut : **Implémentée** (2026-10-09 — worktree `adr22` basé sur
+`adr21`, fusion `master` incluse ; étapes 78–81 livrées :
+`PrivacyProfile` + presets dans `onionbit-core`, `GET`/`PUT
+/api/privacy/profile` + gardes settings/invité dans `onionbit-api`,
+sélecteur `PrivacyProfileSwitch` sidebar/rail/feuille compacte dans
+`app/`, banc `bench_profiles.ps1` 13/13 oracles dont PCAP « 0
+datagramme legacy » en `full`). Acceptée le même jour après une
+revue externe — corrections intégrées : `obf_enabled` reclassé clé
+froide, gardes hybride/invité documentées comme *ajouts* et non
+réutilisations, validateur de combinaison porté au niveau
+`DaemonConfig`, cycle de redémarrage vérifié sans endpoint nouveau.
+Dépendance d'interface résolue : la coquille v2 d'ADR-0021
+(`AppSidebar`, Privacy HUD) a été fusionnée avant l'étape 80.
 
 ## Contexte
 

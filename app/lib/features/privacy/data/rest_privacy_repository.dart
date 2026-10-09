@@ -33,7 +33,7 @@ class RestPrivacyRepository implements PrivacyRepository {
 
   @override
   Future<void> addBridge(String link) =>
-      _api.post('/stealth/bridges', body: {'link': link});
+      _api.post('/stealth/bridges', body: {'bridge': link});
 
   @override
   Future<void> shutdown() => _api.put('/shutdown');

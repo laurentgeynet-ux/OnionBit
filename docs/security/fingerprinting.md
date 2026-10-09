@@ -360,3 +360,42 @@ padding + Elligator), ni lire les logs du daemon.
 Toute modification du transport stealth doit re-passer le banc ;
 les criteres de sortie Phase 10 de `roadmap_adr0017.md` restent la
 barre d'acceptation (oracles socket, probing, repli).
+
+## Posture par profil (ADR-0022) — surface identifiable
+
+Le profil d'anonymat (`privacy.profile`, bascule via
+`PUT /api/privacy/profile`) est desormais un **etat visible et
+persiste** : `GET /api/privacy/profile` le remonte a tout client
+authentifie (`stored`, `effective`, `diverged_keys`,
+`restart_pending`). Le profil n'est jamais transporte sur le fil —
+mais les regimes qu'il materialise changent la surface observable :
+
+| Surface observable | `legacy` (defaut, compatible Tribler) | `full` (OnionBit-only) |
+|---|---|---|
+| Datagrammes UDP en clair | mesh IPv8 + ext + session BT legacy | **aucun** — toute l'emission est morphee (transport stealth ADR-0017) |
+| Marqueurs filaires | `LibNaCLPK:`, `community_id` discovery/dht/tunnel/ext presents | aucun (oracle PCAP `no_markers`, entropie ~8 bits/o — banc `bench_profiles.ps1`) |
+| Reponse au probing | reponses IPv8 normales | silence uniforme (oracle `bench_stealth_fingerprint`) |
+| Pairs joignables | Tribler + OnionBit | ponts OnionBit + noeuds introduits par eux |
+| Circuits anonymes | 1 saut (telechargements + messagerie) | 3 sauts |
+| ext `hello` / ledger | clair, cadence jitteree | transportes dans le tunnel morphe (`INTRO` des ponts) |
+| Zone de stockage par defaut | `public` | `private` (chiffree OBD) |
+| Contribution mesuree | ledger comptabilise, pas de gate | `ledger_enforce` + `messaging_consent_ledger` |
+| `obf` ext | off | on (inerte sous stealth — garde pour `custom`) |
+| Bascule | — | exige `stealth.bridges` >= 1 (`409 missing_prerequisites`) + redemarrage |
+
+`custom` n'est pas un regime : il designe toute combinaison qui
+diverge d'un preset — sa surface est la conjonction des reglages
+courants, sans garantie groupée (le badge UI le rappelle).
+
+Effet de bord mesure (`bench_profiles.ps1`, run
+`target/bench-profiles-*/report.json`) : apres la bascule
+`legacy → full` + redemarrage, la socket UDP du noeud n'emet
+**aucun datagramme legacy** (PCAP via `stealth_bench tap` :
+`oracle_no_markers` vert) ; le retour `full → legacy` re-paire le
+mesh IPv8 (`overlays` >= 1).
+
+Limite connue hors perimetre du preset (reproduite sur restart pur
+sans profil) : la re-convergence ext HELLO apres un restart
+unilateral peut exceder la fenetre de banc — le pair survivant ne
+re-verifie le noeud renait qu'a l'expiration de son association et
+`hello_cooldown` (3 600 s) fige les re-sondes entre-temps.
