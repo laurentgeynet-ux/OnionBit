@@ -174,19 +174,15 @@ impl Drop for SessionGuard {
     }
 }
 
-/// `GET /api/events` — ouvre le flux d'evenements SSE.
-pub async fn get_events(
-    State(state): State<AppState>,
-) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
-    let rx = state.session.notifier().subscribe();
-    let sessions = state
-        .sse_sessions
-        .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-        + 1;
-    let guard = SessionGuard(state.sse_sessions.clone());
-    // `public_key` Python : cle publique du noeud IPv8 de la session.
-    let public_key = state.session.public_key_hex();
-
+/// Flux SSE complet : message initial, notifications mappees, puis
+/// l'evenement d'arret terminal. Sorti de `get_events` pour etre
+/// testable sans `AppState`.
+fn build_stream(
+    rx: tokio::sync::broadcast::Receiver<Notification>,
+    public_key: String,
+    sessions: usize,
+    guard: SessionGuard,
+) -> impl Stream<Item = Result<Event, Infallible>> {
     // Message initial (equivalent de `initial_message()` Python).
     let pk = public_key.clone();
     let initial = stream::once(async move {
@@ -202,19 +198,49 @@ pub async fn get_events(
         )
     });
 
-    let events = BroadcastStream::new(rx).filter_map(move |msg| match msg {
-        Ok(n) => notification_to_event(&n, &public_key)
-            .map(|(topic, kwargs)| Ok(Event::default().event(topic).data(kwargs.to_string()))),
-        // Abonne lent : on saute les evenements perdus (lag).
-        Err(BroadcastStreamRecvError::Lagged(_)) => None,
+    // `SessionStopping` termine le flux : les connexions SSE restent
+    // sinon *in-flight* a vie — le graceful shutdown d'axum attend le
+    // drain des connexions sans borne et le daemon ne pouvait pas
+    // s'arreter tant qu'un client (UI, navigateur) etait connecte.
+    let events = BroadcastStream::new(rx)
+        .take_while(|msg| !matches!(msg, Ok(Notification::SessionStopping)))
+        .filter_map(move |msg| match msg {
+            Ok(n) => notification_to_event(&n, &public_key)
+                .map(|(topic, kwargs)| Ok(Event::default().event(topic).data(kwargs.to_string()))),
+            // Abonne lent : on saute les evenements perdus (lag).
+            Err(BroadcastStreamRecvError::Lagged(_)) => None,
+        });
+
+    // Le client recoit l'evenement d'arret puis la connexion se
+    // ferme, ce qui libere le drain du serveur.
+    let stop_event = stream::once(async move {
+        Ok::<_, Infallible>(
+            Event::default()
+                .event("tribler_shutdown_state")
+                .data(serde_json::json!({"state": "Shutting down."}).to_string()),
+        )
     });
 
     // Le garde est capture dans la closure : il vit tant que le flux
     // vit, et est droppe quand le client se deconnecte.
-    let stream = initial.chain(events).map(move |ev| {
+    initial.chain(events).chain(stop_event).map(move |ev| {
         let _ = &guard;
         ev
-    });
+    })
+}
+
+/// `GET /api/events` — ouvre le flux d'evenements SSE.
+pub async fn get_events(
+    State(state): State<AppState>,
+) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+    let rx = state.session.notifier().subscribe();
+    let sessions = state
+        .sse_sessions
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        + 1;
+    let guard = SessionGuard(state.sse_sessions.clone());
+    // `public_key` Python : cle publique du noeud IPv8 de la session.
+    let stream = build_stream(rx, state.session.public_key_hex(), sessions, guard);
     Sse::new(stream).keep_alive(KeepAlive::default())
 }
 
@@ -242,5 +268,27 @@ mod tests {
         let (topic, kwargs) = notification_to_event(&Notification::SettingsChanged, "aa").unwrap();
         assert_eq!(topic, "settings_changed");
         assert_eq!(kwargs, serde_json::json!({}));
+    }
+
+    /// `SessionStopping` doit fermer le flux : sans cela la connexion
+    /// SSE reste *in-flight* a vie et le graceful shutdown d'axum
+    /// attend le drain des connexions indefiniment.
+    #[tokio::test]
+    async fn le_flux_sse_se_termine_sur_session_stopping() {
+        let (tx, rx) = tokio::sync::broadcast::channel::<Notification>(8);
+        let compteur = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(1));
+        let flux = build_stream(rx, "aa".to_string(), 1, SessionGuard(compteur));
+
+        tx.send(Notification::SettingsChanged).ok();
+        tx.send(Notification::SessionStopping).ok();
+        // Apres SessionStopping : ne doit jamais etre livre.
+        tx.send(Notification::SettingsChanged).ok();
+
+        let evenements =
+            tokio::time::timeout(std::time::Duration::from_secs(5), flux.collect::<Vec<_>>())
+                .await
+                .expect("le flux doit se terminer apres SessionStopping");
+        // events_start + settings_changed + evenement d'arret final.
+        assert_eq!(evenements.len(), 3);
     }
 }

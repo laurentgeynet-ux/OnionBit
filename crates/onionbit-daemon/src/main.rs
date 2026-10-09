@@ -766,6 +766,9 @@ async fn async_main() -> ExitCode {
     // Arret propre : Ctrl-C / tray « Quitter » / PUT /api/shutdown ->
     // session.stop() -> fin du serveur. `stop()` est idempotent : la
     // sequence lancee par le handler shutdown n'est pas dedoublee.
+    // `drain_begin` marque la fin de `stop()` = le debut du drain des
+    // connexions : c'est cette phase seule qui est bornee plus bas.
+    let (drain_begin_tx, drain_begin_rx) = tokio::sync::oneshot::channel::<()>();
     let shutdown = {
         let signal = shutdown_signal.clone();
         let session = session.clone();
@@ -776,18 +779,34 @@ async fn async_main() -> ExitCode {
             if let Some(handle) = https_handle {
                 handle.graceful_shutdown(Some(https::SHUTDOWN_GRACE));
             }
+            let _ = drain_begin_tx.send(());
         }
     };
 
     // `ConnectInfo<SocketAddr>` : l'IP cliente est extraite par les
     // endpoints sensibles au brute-force (`POST /api/identity/unlock`,
     // ADR-0016 — rate-limit par IP + global).
-    let serve_result = axum::serve(
-        listener,
-        app.into_make_service_with_connect_info::<SocketAddr>(),
-    )
-    .with_graceful_shutdown(shutdown)
-    .await;
+    let server = async move {
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .with_graceful_shutdown(shutdown)
+        .await
+    };
+    tokio::pin!(server);
+    // Borne dure sur le drain : `with_graceful_shutdown` attend la
+    // fin des connexions en vol sans limite — un flux residuel
+    // (stream media, handler bloque) figeait le processus a jamais.
+    // Au-dela du delai, abandonner le serveur coupe les connexions.
+    let serve_result = tokio::select! {
+        r = &mut server => r,
+        _ = async {
+            let _ = drain_begin_rx.await;
+            tokio::time::sleep(https::SHUTDOWN_GRACE).await;
+            tracing::warn!("drain des connexions trop long — arret force");
+        } => Ok(()),
+    };
     if let Some(t) = tray {
         t.stop();
     }
