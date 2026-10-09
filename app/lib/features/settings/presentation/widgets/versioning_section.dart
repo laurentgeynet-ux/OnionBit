@@ -6,7 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/l10n/l10n_ext.dart';
-import '../../../../core/theme/app_theme.dart';
+import '../../../../core/design/design_tokens.dart';
 import '../../../../core/widgets/error_state.dart';
 import '../providers/settings_providers.dart';
 import 'settings_section.dart';
@@ -59,7 +59,7 @@ class VersioningSection extends ConsumerWidget {
                 onRetry: () => ref.invalidate(versionsProvider),
               ),
               data: (v) => Padding(
-                padding: const EdgeInsets.only(bottom: AppSpacing.sm),
+                padding: const EdgeInsets.only(bottom: AppSpace.sm),
                 child: Row(
                   children: [
                     Expanded(

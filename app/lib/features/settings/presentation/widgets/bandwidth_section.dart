@@ -8,7 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/l10n/l10n_ext.dart';
-import '../../../../core/theme/app_theme.dart';
+import '../../../../core/design/design_tokens.dart';
 import 'settings_section.dart';
 import 'settings_defaults.dart';
 
@@ -90,7 +90,7 @@ class _BandwidthSectionState extends ConsumerState<BandwidthSection> {
               controller: _down,
               onChanged: _deferred.markDirty,
             ),
-            const SizedBox(height: AppSpacing.sm),
+            const SizedBox(height: AppSpace.sm),
             _RateControl(
               label: l10n.bwUploadLabel,
               keyPath: const ['libtorrent', 'max_upload_rate'],
@@ -98,7 +98,7 @@ class _BandwidthSectionState extends ConsumerState<BandwidthSection> {
               controller: _up,
               onChanged: _deferred.markDirty,
             ),
-            const SizedBox(height: AppSpacing.md),
+            const SizedBox(height: AppSpace.md),
             Align(
               alignment: Alignment.centerRight,
               child: FilledButton.icon(
@@ -197,7 +197,7 @@ class _RateControl extends StatelessWidget {
             ),
             for (final (label, v) in presets)
               Padding(
-                padding: const EdgeInsets.only(left: AppSpacing.xs),
+                padding: const EdgeInsets.only(left: AppSpace.xs),
                 child: ChoiceChip(
                   label: Text(label),
                   selected: kb == v,

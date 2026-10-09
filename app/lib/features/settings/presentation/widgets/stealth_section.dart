@@ -9,7 +9,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/di/providers.dart';
 import '../../../../core/l10n/l10n_ext.dart';
-import '../../../../core/theme/app_theme.dart';
+import '../../../../core/design/design_tokens.dart';
 import 'settings_defaults.dart';
 import 'settings_section.dart';
 
@@ -133,7 +133,7 @@ class _StealthSectionState extends ConsumerState<StealthSection> {
               title: l10n.stealthEnabled,
               subtitle: l10n.stealthEnabledSub,
             ),
-            const SizedBox(height: AppSpacing.sm),
+            const SizedBox(height: AppSpace.sm),
             DropdownButtonFormField<String>(
               initialValue: _role,
               decoration: InputDecoration(
@@ -156,7 +156,7 @@ class _StealthSectionState extends ConsumerState<StealthSection> {
                 _deferred.markDirty();
               }),
             ),
-            const SizedBox(height: AppSpacing.sm),
+            const SizedBox(height: AppSpace.sm),
             TextField(
               controller: _bridges,
               maxLines: 4,
@@ -172,7 +172,7 @@ class _StealthSectionState extends ConsumerState<StealthSection> {
               ),
               onChanged: (_) => _deferred.markDirty(),
             ),
-            const SizedBox(height: AppSpacing.sm),
+            const SizedBox(height: AppSpace.sm),
             SettingsSwitch(
               path: [..._s, 'cover_traffic'],
               value: settingsBool(settings, [..._s, 'cover_traffic']),
@@ -180,7 +180,7 @@ class _StealthSectionState extends ConsumerState<StealthSection> {
               subtitle: l10n.stealthCoverSub,
             ),
             if (status != null) ...[
-              const Divider(height: AppSpacing.lg),
+              const Divider(height: AppSpace.lg),
               Text(
                 l10n.stealthStatus(
                   '${status['role']}',
@@ -190,11 +190,11 @@ class _StealthSectionState extends ConsumerState<StealthSection> {
                 style: theme.textTheme.bodySmall,
               ),
               if (clockSuspect) ...[
-                const SizedBox(height: AppSpacing.sm),
+                const SizedBox(height: AppSpace.sm),
                 Card(
                   color: theme.colorScheme.errorContainer,
                   child: Padding(
-                    padding: const EdgeInsets.all(AppSpacing.sm),
+                    padding: const EdgeInsets.all(AppSpace.sm),
                     child: Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
@@ -203,7 +203,7 @@ class _StealthSectionState extends ConsumerState<StealthSection> {
                           size: 20,
                           color: theme.colorScheme.onErrorContainer,
                         ),
-                        const SizedBox(width: AppSpacing.sm),
+                        const SizedBox(width: AppSpace.sm),
                         Expanded(
                           child: Text(
                             l10n.stealthClockWarning,

@@ -7,7 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/l10n/l10n_ext.dart';
 import '../../../../core/platform/pick_directory.dart';
-import '../../../../core/theme/app_theme.dart';
+import '../../../../core/design/design_tokens.dart';
 import '../providers/settings_providers.dart';
 import 'settings_section.dart';
 import 'settings_defaults.dart';
@@ -177,7 +177,7 @@ class _AutomationSectionState extends ConsumerState<AutomationSection> {
                   ),
                 ),
               ),
-              const SizedBox(height: AppSpacing.sm),
+              const SizedBox(height: AppSpace.sm),
               TextField(
                 controller: _watchInterval,
                 onChanged: (_) => _deferred.markDirty(),
@@ -191,7 +191,7 @@ class _AutomationSectionState extends ConsumerState<AutomationSection> {
                 ),
               ),
             ],
-            const Divider(height: AppSpacing.lg),
+            const Divider(height: AppSpace.lg),
             Text(l10n.rssTitle, style: theme.textTheme.labelMedium),
             SwitchListTile(
               value: _rssEnabled,
@@ -242,7 +242,7 @@ class _AutomationSectionState extends ConsumerState<AutomationSection> {
                 ],
               ),
               if (items.isNotEmpty) ...[
-                const SizedBox(height: AppSpacing.sm),
+                const SizedBox(height: AppSpace.sm),
                 Text(
                   l10n.rssLastItems,
                   style: theme.textTheme.labelMedium,
@@ -266,7 +266,7 @@ class _AutomationSectionState extends ConsumerState<AutomationSection> {
                   ),
               ],
             ],
-            const SizedBox(height: AppSpacing.sm),
+            const SizedBox(height: AppSpace.sm),
             Align(
               alignment: Alignment.centerRight,
               child: FilledButton.icon(

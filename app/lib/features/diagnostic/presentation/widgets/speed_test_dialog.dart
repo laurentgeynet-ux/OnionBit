@@ -8,7 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/l10n/l10n_ext.dart';
-import '../../../../core/theme/app_theme.dart';
+import '../../../../core/design/design_tokens.dart';
 import '../../domain/diagnostic_models.dart';
 import '../providers/diagnostic_providers.dart';
 
@@ -98,7 +98,7 @@ class _SpeedTestDialogState extends ConsumerState<SpeedTestDialog> {
               )
             else if (_last != null) ...[
               _rate(theme, Icons.arrow_upward, l10n.cardUpload, _last!.up),
-              const SizedBox(height: AppSpacing.sm),
+              const SizedBox(height: AppSpace.sm),
               _rate(
                 theme,
                 Icons.arrow_downward,
@@ -107,7 +107,7 @@ class _SpeedTestDialogState extends ConsumerState<SpeedTestDialog> {
               ),
             ] else
               Text(l10n.speedMeasuring),
-            const SizedBox(height: AppSpacing.md),
+            const SizedBox(height: AppSpace.md),
             if (!_done && _error == null)
               const LinearProgressIndicator()
             else
@@ -133,7 +133,7 @@ class _SpeedTestDialogState extends ConsumerState<SpeedTestDialog> {
       Row(
         children: [
           Icon(icon, size: 18),
-          const SizedBox(width: AppSpacing.sm),
+          const SizedBox(width: AppSpace.sm),
           Expanded(child: Text(label)),
           Text(
             '${v.toStringAsFixed(2)} MiB/s',

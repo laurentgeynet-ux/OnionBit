@@ -7,7 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/l10n/l10n_ext.dart';
 import '../../../../core/platform/pick_directory.dart';
-import '../../../../core/theme/app_theme.dart';
+import '../../../../core/design/design_tokens.dart';
 import '../providers/settings_providers.dart';
 import 'settings_section.dart';
 
@@ -101,18 +101,18 @@ class _DownloadsSectionState extends ConsumerState<DownloadsSection> {
 
     return Card(
       margin: const EdgeInsets.symmetric(
-        horizontal: AppSpacing.md,
-        vertical: AppSpacing.sm,
+        horizontal: AppSpace.md,
+        vertical: AppSpace.sm,
       ),
       child: Padding(
-        padding: const EdgeInsets.all(AppSpacing.md),
+        padding: const EdgeInsets.all(AppSpace.md),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
               children: [
                 const Icon(Icons.download),
-                const SizedBox(width: AppSpacing.sm),
+                const SizedBox(width: AppSpace.sm),
                 Expanded(
                   child: Text(
                     l10n.sectionDownloadsDefaults,
@@ -138,7 +138,7 @@ class _DownloadsSectionState extends ConsumerState<DownloadsSection> {
                   ),
               ],
             ),
-            const SizedBox(height: AppSpacing.md),
+            const SizedBox(height: AppSpace.md),
             async.when(
               loading: () => const Center(child: CircularProgressIndicator()),
               error: (e, _) => Text(l10n.errorMessage('$e')),
@@ -171,16 +171,16 @@ class _DownloadsSectionState extends ConsumerState<DownloadsSection> {
                         ),
                       ),
                     ),
-                    const SizedBox(height: AppSpacing.xs),
+                    const SizedBox(height: AppSpace.xs),
                     Text(
                       l10n.dlDestHelp,
                       style: theme.textTheme.bodySmall?.copyWith(
                         color: theme.colorScheme.outline,
                       ),
                     ),
-                    const SizedBox(height: AppSpacing.sm),
+                    const SizedBox(height: AppSpace.sm),
                     _DiskSpace(directory: _saveasController.text.trim()),
-                    const SizedBox(height: AppSpacing.md),
+                    const SizedBox(height: AppSpace.md),
                     Align(
                       alignment: Alignment.centerRight,
                       child: FilledButton.icon(
@@ -225,7 +225,7 @@ class _DiskSpace extends ConsumerWidget {
             size: 14,
             color: Theme.of(context).colorScheme.outline,
           ),
-          const SizedBox(width: AppSpacing.xs),
+          const SizedBox(width: AppSpace.xs),
           Expanded(
             child: Text(
               context.l10n.diskSpaceFree(

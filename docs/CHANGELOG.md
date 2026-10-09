@@ -3,6 +3,37 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## ADR-0021 étape 77 : portes qualité + suppression de l'ancien thème (2026-10-09, worktree adr21)
+
+- **Contraste WCAG AA vérifié** (`test/design/contrast_test.dart`) :
+  ratios calculés sur toutes les paires texte/fond des thèmes clair et
+  sombre — surfaces M3, rôles primaire/secondaire/tertiaire/erreur et
+  tokens sémantiques succès/avertissement/info. Premier défaut réel
+  détecté et corrigé : `onTertiary` blanc (défaut M3) sur le cyan de
+  marque `#4FD8E0` donnait 1.72:1 — remplacé par un foncé `#00252B`
+  dans les deux thèmes (le bug venait de l'ancien `AppTheme`).
+- **Goldens par palier** (`test/design/pages_golden_test.dart`) :
+  coquille + téléchargements en compact (390 px : bottom nav),
+  medium (800 px : rail icônes) et expanded (1440 px : rail libellés),
+  messagerie compact/expanded (`AdaptiveListDetail`), réglages
+  expanded (catégories). 6 images de référence sous
+  `test/design/goldens/`.
+- **Accessibilité** : `Semantics` (bouton étiqueté) ajouté au Privacy
+  HUD — en `compact` il n'est qu'une icône, sans label un lecteur
+  d'écran n'annonçait rien — et `tooltip` sur le bouton « clear » de
+  recherche (`top_bar.dart`). `test/design/a11y_test.dart` vérifie le
+  label sémantique dans les états disabled/ready.
+- **`verify_all.ps1`** : étape « audit a11y manuel » bloquante
+  (rappel TalkBack/VoiceOver/NVDA + clavier), contournable en CI via
+  `ONIONBIT_A11Y_ACK` ; les portes automatiques (goldens, contraste,
+  Semantics) restent couvertes par `flutter test`.
+- **`core/theme/app_theme.dart` supprimé** : les 20 derniers
+  fichiers (sections Réglages, Diagnostic, About) migrés de
+  `AppSpacing.`/`app_theme.dart` vers `AppSpace.`/`design_tokens.dart`
+  — zéro référence restante, `theme_settings.dart` conservé (provider
+  de réglage, pas le thème). Tests : 83 verts (+10), analyze 0 issue,
+  build web OK.
+
 ## ADR-0021 étape 76 : onboarding identité + appairage mobile par QR (2026-10-09, worktree adr21)
 
 - **Endpoint d'appairage** (`onionbit-api`) : `POST /api/pairing/token`

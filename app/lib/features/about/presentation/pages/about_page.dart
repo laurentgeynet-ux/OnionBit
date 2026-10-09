@@ -9,7 +9,7 @@ import 'package:flutter_svg/flutter_svg.dart';
 import '../../../../core/app_info.dart';
 import '../../../../core/l10n/l10n_ext.dart';
 import '../../../../core/platform/open_url.dart';
-import '../../../../core/theme/app_theme.dart';
+import '../../../../core/design/design_tokens.dart';
 import '../../../diagnostic/presentation/providers/diagnostic_providers.dart';
 
 /// Page « A propos » — identite du produit (logo, version app +
@@ -28,14 +28,14 @@ class AboutPage extends ConsumerWidget {
     // Bandeau hero pleine largeur + grille de cartes qui remplit
     // l'espace (2 colonnes en large, empilees en etroit).
     return ListView(
-      padding: const EdgeInsets.all(AppSpacing.lg),
+      padding: const EdgeInsets.all(AppSpace.lg),
       children: [
         // Hero : fond teinte `primaryContainer`, logo + badge version.
         Container(
           width: double.infinity,
           padding: const EdgeInsets.symmetric(
-            vertical: AppSpacing.xl,
-            horizontal: AppSpacing.lg,
+            vertical: AppSpace.xl,
+            horizontal: AppSpace.lg,
           ),
           decoration: BoxDecoration(
             gradient: LinearGradient(
@@ -65,16 +65,16 @@ class AboutPage extends ConsumerWidget {
                       size: 40,
                       color: theme.colorScheme.primary,
                     ),
-                    const SizedBox(width: AppSpacing.sm),
+                    const SizedBox(width: AppSpace.sm),
                     Text(kAppName, style: theme.textTheme.headlineMedium),
                   ],
                 ),
               ),
-              const SizedBox(height: AppSpacing.md),
+              const SizedBox(height: AppSpace.md),
               Container(
                 padding: const EdgeInsets.symmetric(
-                  horizontal: AppSpacing.md,
-                  vertical: AppSpacing.xs,
+                  horizontal: AppSpace.md,
+                  vertical: AppSpace.xs,
                 ),
                 decoration: BoxDecoration(
                   color: theme.colorScheme.primary.withValues(alpha: 0.12),
@@ -90,7 +90,7 @@ class AboutPage extends ConsumerWidget {
             ],
           ),
         ),
-        const SizedBox(height: AppSpacing.md),
+        const SizedBox(height: AppSpace.md),
 
         LayoutBuilder(
           builder: (context, constraints) {
@@ -121,8 +121,8 @@ class AboutPage extends ConsumerWidget {
               children: [
                 Padding(
                   padding: const EdgeInsets.symmetric(
-                    horizontal: AppSpacing.md,
-                    vertical: AppSpacing.sm,
+                    horizontal: AppSpace.md,
+                    vertical: AppSpace.sm,
                   ),
                   child: OutlinedButton.icon(
                     icon: const Icon(Icons.receipt_long_outlined),
@@ -138,10 +138,10 @@ class AboutPage extends ConsumerWidget {
                 ),
                 Padding(
                   padding: const EdgeInsets.fromLTRB(
-                    AppSpacing.md,
+                    AppSpace.md,
                     0,
-                    AppSpacing.md,
-                    AppSpacing.sm,
+                    AppSpace.md,
+                    AppSpace.sm,
                   ),
                   child: Text(
                     l10n.aboutLicensesSub,
@@ -159,7 +159,7 @@ class AboutPage extends ConsumerWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Expanded(child: versions),
-                      const SizedBox(width: AppSpacing.md),
+                      const SizedBox(width: AppSpace.md),
                       Expanded(child: licenses),
                     ],
                   )
@@ -220,7 +220,7 @@ class AboutPage extends ConsumerWidget {
   Widget _infoRow(ThemeData theme, String label, String value) {
     return Padding(
       padding: const EdgeInsets.symmetric(
-        horizontal: AppSpacing.md,
+        horizontal: AppSpace.md,
         vertical: 2,
       ),
       child: Row(
@@ -280,25 +280,25 @@ class _Section extends StatelessWidget {
     final theme = Theme.of(context);
     return Card(
       child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
+        padding: const EdgeInsets.symmetric(vertical: AppSpace.sm),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Padding(
               padding: const EdgeInsets.symmetric(
-                horizontal: AppSpacing.md,
-                vertical: AppSpacing.xs,
+                horizontal: AppSpace.md,
+                vertical: AppSpace.xs,
               ),
               child: Row(
                 children: [
                   Icon(icon, size: 18, color: theme.colorScheme.primary),
-                  const SizedBox(width: AppSpacing.sm),
+                  const SizedBox(width: AppSpace.sm),
                   Text(title, style: theme.textTheme.titleSmall),
                 ],
               ),
             ),
             const Divider(height: 1),
-            const SizedBox(height: AppSpacing.sm),
+            const SizedBox(height: AppSpace.sm),
             ...children,
           ],
         ),

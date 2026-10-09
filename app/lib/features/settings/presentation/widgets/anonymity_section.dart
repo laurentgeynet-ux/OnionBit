@@ -6,7 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/l10n/l10n_ext.dart';
-import '../../../../core/theme/app_theme.dart';
+import '../../../../core/design/design_tokens.dart';
 import 'settings_section.dart';
 import 'settings_defaults.dart';
 
@@ -128,7 +128,7 @@ class _AnonymitySectionState extends ConsumerState<AnonymitySection> {
               title: l10n.anonGuards,
               subtitle: l10n.anonGuardsSub,
             ),
-            const SizedBox(height: AppSpacing.sm),
+            const SizedBox(height: AppSpace.sm),
             Row(
               children: [
                 Expanded(
@@ -146,7 +146,7 @@ class _AnonymitySectionState extends ConsumerState<AnonymitySection> {
                     ),
                   ),
                 ),
-                const SizedBox(width: AppSpacing.sm),
+                const SizedBox(width: AppSpace.sm),
                 Expanded(
                   child: TextField(
                     controller: _maxCircuits,
@@ -164,7 +164,7 @@ class _AnonymitySectionState extends ConsumerState<AnonymitySection> {
                 ),
               ],
             ),
-            const SizedBox(height: AppSpacing.sm),
+            const SizedBox(height: AppSpace.sm),
             TextField(
               controller: _maxRelays,
               onChanged: (_) => _deferred.markDirty(),
@@ -180,7 +180,7 @@ class _AnonymitySectionState extends ConsumerState<AnonymitySection> {
                 ]),
               ),
             ),
-            const SizedBox(height: AppSpacing.sm),
+            const SizedBox(height: AppSpace.sm),
             // `max_relayed_rate` est auto (`-1`) : fraction de
             // l'upload mesure par l'estimateur — plus de saisie.
             Text(
@@ -189,14 +189,14 @@ class _AnonymitySectionState extends ConsumerState<AnonymitySection> {
                 color: theme.colorScheme.onSurfaceVariant,
               ),
             ),
-            const SizedBox(height: AppSpacing.xs),
+            const SizedBox(height: AppSpace.xs),
             Text(
               l10n.anonCircuitsNote,
               style: theme.textTheme.bodySmall?.copyWith(
                 color: theme.colorScheme.outline,
               ),
             ),
-            const SizedBox(height: AppSpacing.sm),
+            const SizedBox(height: AppSpace.sm),
             Align(
               alignment: Alignment.centerRight,
               child: FilledButton.icon(

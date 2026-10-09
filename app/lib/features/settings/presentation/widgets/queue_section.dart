@@ -6,7 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/l10n/l10n_ext.dart';
-import '../../../../core/theme/app_theme.dart';
+import '../../../../core/design/design_tokens.dart';
 import 'settings_section.dart';
 import 'settings_defaults.dart';
 
@@ -112,28 +112,28 @@ class _QueueSectionState extends ConsumerState<QueueSection> {
               style: Theme.of(context).textTheme.bodySmall
                   ?.copyWith(color: Theme.of(context).colorScheme.outline),
             ),
-            const SizedBox(height: AppSpacing.sm),
+            const SizedBox(height: AppSpace.sm),
             Row(
               children: [
                 _field(_downloads, l10n.queueActiveDownloads, 3, const [
                   'libtorrent',
                   'active_downloads',
                 ]),
-                const SizedBox(width: AppSpacing.sm),
+                const SizedBox(width: AppSpace.sm),
                 _field(_seeds, l10n.queueActiveSeeds, 5, const [
                   'libtorrent',
                   'active_seeds',
                 ]),
               ],
             ),
-            const SizedBox(height: AppSpacing.sm),
+            const SizedBox(height: AppSpace.sm),
             Row(
               children: [
                 _field(_checking, l10n.queueActiveChecking, 1, const [
                   'libtorrent',
                   'active_checking',
                 ]),
-                const SizedBox(width: AppSpacing.sm),
+                const SizedBox(width: AppSpace.sm),
                 _field(_limit, l10n.queueActiveLimit, 500, const [
                   'libtorrent',
                   'active_limit',

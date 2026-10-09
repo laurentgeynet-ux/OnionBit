@@ -6,7 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/l10n/l10n_ext.dart';
-import '../../../../core/theme/app_theme.dart';
+import '../../../../core/design/design_tokens.dart';
 import '../providers/settings_providers.dart';
 
 /// Section « Daemon » — résumé de la configuration effective
@@ -21,9 +21,9 @@ class DaemonSection extends ConsumerWidget {
     final settings = ref.watch(daemonSettingsProvider);
 
     return Card(
-      margin: const EdgeInsets.all(AppSpacing.md),
+      margin: const EdgeInsets.all(AppSpace.md),
       child: Padding(
-        padding: const EdgeInsets.all(AppSpacing.md),
+        padding: const EdgeInsets.all(AppSpace.md),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -44,7 +44,7 @@ class DaemonSection extends ConsumerWidget {
             ),
             settings.when(
               loading: () => const Padding(
-                padding: EdgeInsets.all(AppSpacing.sm),
+                padding: EdgeInsets.all(AppSpace.sm),
                 child: LinearProgressIndicator(),
               ),
               error: (e, _) => Text(
@@ -90,7 +90,7 @@ class DaemonSection extends ConsumerWidget {
                 );
               },
             ),
-            const SizedBox(height: AppSpacing.sm),
+            const SizedBox(height: AppSpace.sm),
             Align(
               alignment: Alignment.centerRight,
               child: OutlinedButton.icon(

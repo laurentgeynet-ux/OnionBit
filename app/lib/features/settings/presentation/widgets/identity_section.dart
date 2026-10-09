@@ -7,7 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/l10n/l10n_ext.dart';
-import '../../../../core/theme/app_theme.dart';
+import '../../../../core/design/design_tokens.dart';
 import '../providers/settings_providers.dart';
 import 'settings_section.dart';
 
@@ -106,7 +106,7 @@ class IdentitySection extends ConsumerWidget {
               ),
             ],
           ),
-        const SizedBox(height: AppSpacing.sm),
+        const SizedBox(height: AppSpace.sm),
         Text(
           l10n.identityExplain,
           style: Theme.of(
@@ -116,7 +116,7 @@ class IdentitySection extends ConsumerWidget {
           ),
         ),
         if (guest) ...[
-          const SizedBox(height: AppSpacing.sm),
+          const SizedBox(height: AppSpace.sm),
           Text(
             l10n.identityGuestNote,
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
@@ -127,11 +127,11 @@ class IdentitySection extends ConsumerWidget {
         // Rappel « noter la phrase » : affiche tant que l'utilisateur
         // n'a pas confirme — dismissible pour la session seulement.
         if (seeded && !guest && !acknowledged && !dismissed) ...[
-          const SizedBox(height: AppSpacing.sm),
+          const SizedBox(height: AppSpace.sm),
           Card(
             color: Theme.of(context).colorScheme.errorContainer,
             child: Padding(
-              padding: const EdgeInsets.all(AppSpacing.sm),
+              padding: const EdgeInsets.all(AppSpace.sm),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -139,14 +139,14 @@ class IdentitySection extends ConsumerWidget {
                     l10n.identityReminderTitle,
                     style: Theme.of(context).textTheme.titleSmall,
                   ),
-                  const SizedBox(height: AppSpacing.xs),
+                  const SizedBox(height: AppSpace.xs),
                   Text(
                     l10n.identityReminderBody,
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
-                  const SizedBox(height: AppSpacing.sm),
+                  const SizedBox(height: AppSpace.sm),
                   Wrap(
-                    spacing: AppSpacing.sm,
+                    spacing: AppSpace.sm,
                     children: [
                       FilledButton.tonalIcon(
                         icon: const Icon(Icons.key, size: 18),
@@ -170,10 +170,10 @@ class IdentitySection extends ConsumerWidget {
             ),
           ),
         ],
-        const SizedBox(height: AppSpacing.sm),
+        const SizedBox(height: AppSpace.sm),
         Wrap(
-          spacing: AppSpacing.sm,
-          runSpacing: AppSpacing.sm,
+          spacing: AppSpace.sm,
+          runSpacing: AppSpace.sm,
           children: [
             if (seeded)
               FilledButton.tonalIcon(
@@ -254,10 +254,10 @@ class IdentitySection extends ConsumerWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(l10n.identityPhraseExplain),
-                  const SizedBox(height: AppSpacing.sm),
+                  const SizedBox(height: AppSpace.sm),
                   Wrap(
-                    spacing: AppSpacing.xs,
-                    runSpacing: AppSpacing.xs,
+                    spacing: AppSpace.xs,
+                    runSpacing: AppSpace.xs,
                     children: [
                       for (var i = 0; i < words.length; i++)
                         Chip(
@@ -382,7 +382,7 @@ class IdentitySection extends ConsumerWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(l10n.identityAtRestSub),
-            const SizedBox(height: AppSpacing.sm),
+            const SizedBox(height: AppSpace.sm),
             TextField(
               controller: pw,
               obscureText: true,
@@ -439,7 +439,7 @@ class IdentitySection extends ConsumerWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(l10n.identityExportExplain),
-            const SizedBox(height: AppSpacing.sm),
+            const SizedBox(height: AppSpace.sm),
             TextField(
               controller: pw,
               obscureText: true,
@@ -502,7 +502,7 @@ class IdentitySection extends ConsumerWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(l10n.identityImportExplain),
-            const SizedBox(height: AppSpacing.sm),
+            const SizedBox(height: AppSpace.sm),
             TextField(
               controller: key,
               style: const TextStyle(fontFamily: 'monospace', fontSize: 11),
@@ -512,7 +512,7 @@ class IdentitySection extends ConsumerWidget {
                 border: const OutlineInputBorder(),
               ),
             ),
-            const SizedBox(height: AppSpacing.sm),
+            const SizedBox(height: AppSpace.sm),
             TextField(
               controller: pw,
               obscureText: true,

@@ -7,7 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/l10n/l10n_ext.dart';
 import '../../../../core/l10n/locale_settings.dart';
-import '../../../../core/theme/app_theme.dart';
+import '../../../../core/design/design_tokens.dart';
 import '../../../../core/theme/theme_settings.dart';
 
 /// Section « Apparence » de la page Réglages — accent Material You +
@@ -25,9 +25,9 @@ class AppearanceSection extends ConsumerWidget {
         ref.watch(localeSettingsProvider).value ?? AppLocale.en;
 
     return Card(
-      margin: const EdgeInsets.all(AppSpacing.md),
+      margin: const EdgeInsets.all(AppSpace.md),
       child: Padding(
-        padding: const EdgeInsets.all(AppSpacing.md),
+        padding: const EdgeInsets.all(AppSpace.md),
         child: settings.when(
           data: (s) => Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -36,12 +36,12 @@ class AppearanceSection extends ConsumerWidget {
                 l10n.settingsAppearanceTitle,
                 style: theme.textTheme.titleMedium,
               ),
-              const SizedBox(height: AppSpacing.sm),
+              const SizedBox(height: AppSpace.sm),
               Text(
                 l10n.settingsLanguage,
                 style: theme.textTheme.labelMedium,
               ),
-              const SizedBox(height: AppSpacing.xs),
+              const SizedBox(height: AppSpace.xs),
               SegmentedButton<AppLocale>(
                 segments: [
                   ButtonSegment(
@@ -63,12 +63,12 @@ class AppearanceSection extends ConsumerWidget {
                     .read(localeSettingsProvider.notifier)
                     .setLocale(m.first),
               ),
-              const SizedBox(height: AppSpacing.md),
+              const SizedBox(height: AppSpace.md),
               Text(
                 l10n.settingsThemeMode,
                 style: theme.textTheme.labelMedium,
               ),
-              const SizedBox(height: AppSpacing.xs),
+              const SizedBox(height: AppSpace.xs),
               SegmentedButton<ThemeMode>(
                 segments: [
                   ButtonSegment(
@@ -91,12 +91,12 @@ class AppearanceSection extends ConsumerWidget {
                 onSelectionChanged: (m) =>
                     ref.read(themeSettingsProvider.notifier).setMode(m.first),
               ),
-              const SizedBox(height: AppSpacing.md),
+              const SizedBox(height: AppSpace.md),
               Text(l10n.settingsAccent, style: theme.textTheme.labelMedium),
-              const SizedBox(height: AppSpacing.xs),
+              const SizedBox(height: AppSpace.xs),
               Wrap(
-                spacing: AppSpacing.sm,
-                runSpacing: AppSpacing.sm,
+                spacing: AppSpace.sm,
+                runSpacing: AppSpace.sm,
                 children: [
                   for (final (accent, color) in kAccentChoices)
                     _AccentDot(

@@ -82,6 +82,7 @@ class _TopBarState extends ConsumerState<TopBar> {
                     ? null
                     : IconButton(
                         icon: const Icon(Icons.clear, size: 18),
+                        tooltip: context.l10n.clearAll,
                         onPressed: () {
                           _controller.clear();
                           ref.read(searchQueryProvider.notifier).set('');

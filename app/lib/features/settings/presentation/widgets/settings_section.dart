@@ -6,7 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/l10n/l10n_ext.dart';
-import '../../../../core/theme/app_theme.dart';
+import '../../../../core/design/design_tokens.dart';
 import '../providers/settings_providers.dart';
 
 /// Carte « section de réglages » — titre + icône + contenu chargé des
@@ -43,18 +43,18 @@ class SettingsSection extends ConsumerWidget {
     final async = ref.watch(daemonSettingsProvider);
     return Card(
       margin: const EdgeInsets.symmetric(
-        horizontal: AppSpacing.md,
-        vertical: AppSpacing.sm,
+        horizontal: AppSpace.md,
+        vertical: AppSpace.sm,
       ),
       child: Padding(
-        padding: const EdgeInsets.all(AppSpacing.md),
+        padding: const EdgeInsets.all(AppSpace.md),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
               children: [
                 Icon(icon, size: 20),
-                const SizedBox(width: AppSpacing.sm),
+                const SizedBox(width: AppSpace.sm),
                 Expanded(
                   child: Text(title, style: theme.textTheme.titleMedium),
                 ),
@@ -93,10 +93,10 @@ class SettingsSection extends ConsumerWidget {
                   ),
               ],
             ),
-            const SizedBox(height: AppSpacing.sm),
+            const SizedBox(height: AppSpace.sm),
             async.when(
               loading: () => const Padding(
-                padding: EdgeInsets.all(AppSpacing.sm),
+                padding: EdgeInsets.all(AppSpace.sm),
                 child: LinearProgressIndicator(),
               ),
               error: (e, _) => Text(

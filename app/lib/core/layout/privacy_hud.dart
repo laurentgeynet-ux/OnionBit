@@ -51,30 +51,36 @@ class PrivacyHud extends ConsumerWidget {
       ),
     };
 
-    return Tooltip(
-      message: context.l10n.hudAnonTooltip,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(AppRadius.full),
-        onTap: () => context.go('/diagnostic'),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(
-            horizontal: AppSpace.sm,
-            vertical: AppSpace.xs,
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(icon, size: 18, color: color),
-              if (!compact) ...[
-                const SizedBox(width: AppSpace.xs),
-                Text(
-                  label,
-                  style: Theme.of(
-                    context,
-                  ).textTheme.labelMedium?.copyWith(color: color),
-                ),
+    // `Semantics` explicite : en `compact` l'indicateur est une icône
+    // seule — sans label, un lecteur d'écran n'annoncerait rien.
+    return Semantics(
+      button: true,
+      label: '$label — ${context.l10n.hudAnonTooltip}',
+      child: Tooltip(
+        message: context.l10n.hudAnonTooltip,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(AppRadius.full),
+          onTap: () => context.go('/diagnostic'),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(
+              horizontal: AppSpace.sm,
+              vertical: AppSpace.xs,
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(icon, size: 18, color: color),
+                if (!compact) ...[
+                  const SizedBox(width: AppSpace.xs),
+                  Text(
+                    label,
+                    style: Theme.of(
+                      context,
+                    ).textTheme.labelMedium?.copyWith(color: color),
+                  ),
+                ],
               ],
-            ],
+            ),
           ),
         ),
       ),

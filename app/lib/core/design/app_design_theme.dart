@@ -10,12 +10,11 @@ import 'tokens/radius_tokens.dart';
 import 'tokens/typography_tokens.dart';
 
 /// Design system OnionBit (ADR-0021) — successeur de l'ancien
-/// `core/theme/app_theme.dart` (`AppTheme`), construit à côté de lui
-/// le temps de la migration écran par écran (§2). Les deux thèmes
-/// partagent la même couleur de marque (`AppBrandColors.seed`) : rien
-/// ne change pour l'identité visuelle, seul le système qui la porte
-/// est reconstruit. Pas encore câblé dans `app.dart` — voir
-/// `core/design/style_guide/style_guide_page.dart` pour l'exercer.
+/// `core/theme/app_theme.dart` (`AppTheme`), qui l'a remplacé après
+/// la migration écran par écran (§2/§10 : étape 77 = suppression de
+/// l'ancien, zéro référence restante). La couleur de marque ne change
+/// pas (`AppBrandColors.seed`) : seul le système qui la porte a été
+/// reconstruit.
 abstract final class AppDesignTheme {
   static ThemeData light({Color seedColor = AppBrandColors.seed}) =>
       _build(seedColor: seedColor, brightness: Brightness.light);
@@ -30,7 +29,13 @@ abstract final class AppDesignTheme {
     final colorScheme = ColorScheme.fromSeed(
       seedColor: seedColor,
       brightness: brightness,
-    ).copyWith(tertiary: AppBrandColors.tertiary);
+    ).copyWith(
+      tertiary: AppBrandColors.tertiary,
+      // Le cyan de marque est trop clair pour du texte blanc (1.7:1,
+      // loin du AA — vérifié par test/design/contrast_test.dart) :
+      // `onTertiary` foncé dans les deux modes.
+      onTertiary: const Color(0xFF00252B),
+    );
     final semantic = brightness == Brightness.light
         ? AppSemanticColors.light
         : AppSemanticColors.dark;
