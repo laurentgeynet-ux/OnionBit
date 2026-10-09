@@ -8,6 +8,7 @@ import 'package:go_router/go_router.dart';
 
 import '../l10n/l10n_ext.dart';
 import '../router/nav_catalog.dart';
+import '../shortcuts/app_shortcuts.dart';
 import 'app_sidebar.dart';
 import 'breakpoints.dart';
 import 'daemon_unreachable_banner.dart';
@@ -18,13 +19,20 @@ import 'pending_files_handler.dart';
 import 'status_bar.dart';
 import 'top_bar.dart';
 
-/// Coquille responsive de l'application.
+/// Coquille responsive de l'application (ADR-0021 §5) :
 ///
-/// - `compact` (< 600 dp) : `NavigationBar` en bas (destinations
-///   primaires), le détail des téléchargements passe en bottom sheet.
-/// - ≥ 600 dp : sidebar fixe type Tribler à gauche.
-/// Les deux variantes portent la barre de recherche en haut et la
-/// barre d'état en bas.
+/// - `compact` (< 600 dp) : `NavigationBar` en bas, une colonne, le
+///   détail des téléchargements passe en bottom sheet.
+/// - `medium` (600-1024 dp) : sidebar forcée en rail (icônes seules) —
+///   pas assez de largeur pour justifier un choix utilisateur.
+/// - `expanded`/`large` (≥ 1024 dp) : sidebar pleine largeur par
+///   défaut, repliable manuellement (préférence persistée,
+///   `sidebarCollapsedProvider`) — comportement historique inchangé.
+///
+/// Toutes les variantes portent la barre de recherche en haut, la
+/// barre d'état en bas, les raccourcis clavier transverses
+/// (`AppShortcuts`) et un ordre de focus explicite par panneau
+/// (`FocusTraversalGroup`).
 class AppShell extends ConsumerWidget {
   const AppShell({
     super.key,
@@ -64,48 +72,61 @@ class AppShell extends ConsumerWidget {
       final selected = destinations
           .indexWhere((d) => currentPath.startsWith(d.path))
           .clamp(0, destinations.length - 1);
-      return Scaffold(
-        body: SafeArea(
-          child: Stack(
-            children: [
-              Positioned.fill(child: body),
-              const Positioned.fill(child: PendingFilesHandler()),
-              const Positioned.fill(child: NotificationsListener()),
+      return AppShortcuts(
+        child: Scaffold(
+          body: SafeArea(
+            child: Stack(
+              children: [
+                Positioned.fill(child: FocusTraversalGroup(child: body)),
+                const Positioned.fill(child: PendingFilesHandler()),
+                const Positioned.fill(child: NotificationsListener()),
+              ],
+            ),
+          ),
+          bottomNavigationBar: NavigationBar(
+            selectedIndex: selected,
+            onDestinationSelected: (i) => context.go(destinations[i].path),
+            destinations: [
+              for (final d in destinations)
+                NavigationDestination(
+                  icon: Icon(d.icon),
+                  selectedIcon: Icon(d.selectedIcon),
+                  label: d.label(context.l10n),
+                ),
             ],
           ),
-        ),
-        bottomNavigationBar: NavigationBar(
-          selectedIndex: selected,
-          onDestinationSelected: (i) => context.go(destinations[i].path),
-          destinations: [
-            for (final d in destinations)
-              NavigationDestination(
-                icon: Icon(d.icon),
-                selectedIcon: Icon(d.selectedIcon),
-                label: d.label(context.l10n),
-              ),
-          ],
         ),
       );
     }
 
-    return Scaffold(
-      body: Row(
-        children: [
-          AppSidebar(currentPath: currentPath, currentQuery: currentQuery),
-          const VerticalDivider(width: 1),
-          Expanded(
-            child: SafeArea(
-              child: Stack(
-                children: [
-                  Positioned.fill(child: body),
-                  const Positioned.fill(child: PendingFilesHandler()),
-                  const Positioned.fill(child: NotificationsListener()),
-                ],
+    // `medium` : rail forcé (pas de choix utilisateur, largeur trop
+    // juste) ; `expanded`/`large` : préférence persistée (historique,
+    // `collapsedOverride: null` laisse `AppSidebar` lire le provider).
+    final sidebar = AppSidebar(
+      currentPath: currentPath,
+      currentQuery: currentQuery,
+      collapsedOverride: breakpoint == AppBreakpoint.medium ? true : null,
+    );
+
+    return AppShortcuts(
+      child: Scaffold(
+        body: Row(
+          children: [
+            FocusTraversalGroup(child: sidebar),
+            const VerticalDivider(width: 1),
+            Expanded(
+              child: SafeArea(
+                child: Stack(
+                  children: [
+                    Positioned.fill(child: FocusTraversalGroup(child: body)),
+                    const Positioned.fill(child: PendingFilesHandler()),
+                    const Positioned.fill(child: NotificationsListener()),
+                  ],
+                ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

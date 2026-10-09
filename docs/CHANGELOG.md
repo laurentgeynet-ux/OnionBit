@@ -3,6 +3,41 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## ADR-0021 étape 71 : coquille adaptative v2 (2026-10-09, worktree adr21)
+
+- **`AppShell`/`AppSidebar`** : les paliers `medium`/`expanded`/`large`
+  sont enfin distincts (auparavant fusionnés en « non-compact »).
+  `AppSidebar.collapsedOverride` force le rail (icônes seules) en
+  `medium` — pas assez de largeur pour justifier un choix utilisateur ;
+  `expanded`/`large` gardent la préférence persistée
+  (`sidebarCollapsedProvider`) et sa bascule manuelle, comportement
+  historique inchangé. La bascule manuelle est masquée quand l'état
+  est forcé (rien à choisir).
+- **`AdaptiveListDetail`** (`core/design/primitives/`) : primitif
+  liste+détail côte à côte à partir du palier `expanded`, repli sur la
+  liste seule en dessous. Réutilisable, pas encore consommé par un
+  écran — les téléchargements gardent leur panneau de détail existant
+  (`DownloadDetailPanel`, empilé sous la table, mieux adapté à un
+  contenu tabulaire) ; candidat naturel : messagerie (étape 74,
+  conversations/fil).
+- **`core/shortcuts/`** (`AppIntents`, `AppShortcuts`) : raccourcis
+  clavier transverses câblés dans `AppShell` — Ctrl/Cmd+F (recherche),
+  Ctrl/Cmd+N (ajout de téléchargement) — généralisent le patron des
+  `CallbackShortcuts` jusque-là isolés dans `downloads_page.dart`
+  (qui restent en l'état : sélection de table, pas une navigation
+  globale). Deux `FocusTraversalGroup` (navigation, contenu) posent
+  l'ordre de focus par panneau ; la navigation par flèches dans les
+  listes elles-mêmes reste à traiter au fil des écrans migrés (aucune
+  liste concrète à câbler avant l'étape 73).
+- **Bug latent corrigé** : `StatusBar` (débits, trafic de session,
+  capacité de relais sur une seule ligne) débordait en dessous de
+  600dp — jamais exercé par un test avant l'étape 71. Version
+  condensée en `compact` (pastille de connexion + icône de lane avec
+  tooltip uniquement ; le détail reste dans l'onglet Diagnostic).
+- **Validation** : `flutter analyze` (0 issue), `flutter test` (38
+  verts, +7 : 2 breakpoints de coquille, 2 `AdaptiveListDetail`, 3
+  `AppShortcuts`), `flutter build web` OK.
+
 ## ADR-0021 étape 70 : fondations du design system (2026-10-09, worktree adr21)
 
 - **`core/design/`** : tokens couleur (`AppBrandColors`,

@@ -67,6 +67,7 @@ class AppSidebar extends ConsumerWidget {
     super.key,
     required this.currentPath,
     required this.currentQuery,
+    this.collapsedOverride,
   });
 
   /// `state.matchedLocation` courant.
@@ -74,6 +75,13 @@ class AppSidebar extends ConsumerWidget {
 
   /// `state.uri.queryParameters` courant (sous-filtre `f`).
   final Map<String, String> currentQuery;
+
+  /// Force l'état replié/déplié indépendamment de la préférence
+  /// persistée (ADR-0021 §5 — palier `medium` : pas de choix
+  /// utilisateur, largeur trop juste). `null` = comportement
+  /// historique, piloté par `sidebarCollapsedProvider` avec bascule
+  /// manuelle visible.
+  final bool? collapsedOverride;
 
   static const double width = 216;
 
@@ -93,7 +101,8 @@ class AppSidebar extends ConsumerWidget {
     final downloads = ref.watch(downloadsProvider).value;
     final errors = downloads?.where((d) => d.isError).length ?? 0;
     final filtersExpanded = ref.watch(sidebarFiltersExpandedProvider);
-    final collapsed = ref.watch(sidebarCollapsedProvider);
+    final persistedCollapsed = ref.watch(sidebarCollapsedProvider);
+    final collapsed = collapsedOverride ?? persistedCollapsed;
     final l10n = context.l10n;
     return Material(
       color: scheme.surface,
@@ -246,20 +255,25 @@ class AppSidebar extends ConsumerWidget {
             ),
             const Divider(height: 1),
             _DaemonFooter(collapsed: collapsed),
-            Align(
-              alignment: collapsed ? Alignment.center : Alignment.centerRight,
-              child: IconButton(
-                tooltip: collapsed
-                    ? l10n.sidebarExpand
-                    : l10n.sidebarCollapse,
-                icon: Icon(
-                  collapsed ? Icons.chevron_right : Icons.chevron_left,
-                  size: 20,
+            // Bascule manuelle masquée quand l'état est forcé par le
+            // palier (`medium`) : il n'y a alors rien à choisir.
+            if (collapsedOverride == null)
+              Align(
+                alignment: collapsed
+                    ? Alignment.center
+                    : Alignment.centerRight,
+                child: IconButton(
+                  tooltip: collapsed
+                      ? l10n.sidebarExpand
+                      : l10n.sidebarCollapse,
+                  icon: Icon(
+                    collapsed ? Icons.chevron_right : Icons.chevron_left,
+                    size: 20,
+                  ),
+                  onPressed: () =>
+                      ref.read(sidebarCollapsedProvider.notifier).toggle(),
                 ),
-                onPressed: () =>
-                    ref.read(sidebarCollapsedProvider.notifier).toggle(),
               ),
-            ),
           ],
         ),
       ),
