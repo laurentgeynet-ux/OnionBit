@@ -3,6 +3,28 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Correctif : phrase de récupération en session invitée / at-rest (2026-10-09, worktree adr21)
+
+- **`GET /api/identity/recovery_phrase` servi depuis la mémoire** :
+  le handler lisait `identity_seed.bin` sur disque — absent en
+  session invitée (graine éphémère) et scellé `OBSK` quand
+  `identity.at_rest` est actif — les deux cas répondaient 500.
+  `Ipv8Stack` conserve désormais `identity_seed` (`store_root` du
+  matériel résolu, `Some` si `kind == Seeded`) et expose
+  `recovery_seed()` ; plus aucune lecture disque. L'invité peut
+  ainsi noter sa phrase — sa **seule** fenêtre de sauvegarde avant
+  l'arrêt du daemon. `tests/api.rs` :
+  `identite_phrase_recuperation_memoire_invite_et_at_rest`.
+- **Dialogue Flutter « Phrase de récupération » — spinner infini** :
+  `FutureBuilder` testait `!snap.hasData`, or `hasData == data !=
+  null` — un retour `null` (legacy/erreur avalée par le repository)
+  laissait le `CircularProgressIndicator` tourner indéfiniment et
+  rendait la branche `identityPhraseUnavailable` morte. Bascule sur
+  `connectionState != done`. + `scrollable: true` sur l'
+  `AlertDialog` (24 puces débordaient des petits écrans — overflow
+  constaté en test). Régression couverte : `settings_page_test.dart`
+  (null → message, 24 mots numérotés).
+
 ## ADR-0021 étape 77 : portes qualité + suppression de l'ancien thème (2026-10-09, worktree adr21)
 
 - **Contraste WCAG AA vérifié** (`test/design/contrast_test.dart`) :

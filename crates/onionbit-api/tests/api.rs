@@ -4397,9 +4397,74 @@ async fn identite_locked_unlock_et_rate_limit() {
     srv.session.stop().await;
 }
 
-/// ADR-0016 etape 48e : `identity.at_rest` refuse via l'arbre
-/// generique `/api/settings` (le scellement OBSK exige un mot de
-/// passe — endpoint dedie) ; les autres cles `identity` passent.
+/// La phrase de recuperation est servie depuis la session **en
+/// memoire** (`Ipv8Stack::recovery_seed`) : le fichier
+/// `identity_seed.bin` est absent en session invitee et scelle
+/// `OBSK` en at-rest — les deux cas repondaient 500 avant.
+#[tokio::test]
+async fn identite_phrase_recuperation_memoire_invite_et_at_rest() {
+    use onionbit_format::bip39;
+
+    // Invite : aucun fichier identite sur disque — la phrase est la
+    // SEULE fenetre de sauvegarde de cette identite ephemere.
+    let srv = spawn_server_pending().await;
+    let state_dir = srv.session.config().state_dir.clone();
+    let resp = srv
+        .client
+        .post(srv.url("/api/identity/guest"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let resp = srv
+        .client
+        .get(srv.url("/api/identity/recovery_phrase"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let phrase = body["phrase"].as_str().unwrap();
+    assert_eq!(phrase.split(' ').count(), 24);
+    let seed_memoire = srv.session.ipv8().unwrap().recovery_seed().unwrap();
+    assert_eq!(
+        bip39::decode(phrase).unwrap().as_slice(),
+        seed_memoire.as_slice()
+    );
+    assert!(!state_dir
+        .join("identity")
+        .join("identity_seed.bin")
+        .exists());
+    srv.session.stop().await;
+
+    // At-rest deverrouille : `identity_seed.bin` reste `OBSK` sur
+    // disque, la phrase est quand meme servie (avant : 500).
+    let srv = spawn_server_locked().await;
+    let resp = srv
+        .client
+        .post(srv.url("/api/identity/unlock"))
+        .json(&serde_json::json!({"password": "pw-correct"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let resp = srv
+        .client
+        .get(srv.url("/api/identity/recovery_phrase"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let seed_memoire = srv.session.ipv8().unwrap().recovery_seed().unwrap();
+    assert_eq!(
+        bip39::decode(body["phrase"].as_str().unwrap())
+            .unwrap()
+            .as_slice(),
+        seed_memoire.as_slice()
+    );
+    srv.session.stop().await;
+}
 #[tokio::test]
 async fn identite_at_rest_refuse_via_settings() {
     let srv = spawn_server().await;

@@ -10,10 +10,17 @@ import 'package:onionbit_ui/features/settings/domain/settings_repository.dart';
 import 'package:onionbit_ui/features/settings/presentation/pages/settings_page.dart';
 import 'package:onionbit_ui/features/settings/presentation/providers/settings_providers.dart';
 import 'package:onionbit_ui/features/settings/presentation/widgets/daemon_section.dart';
+import 'package:onionbit_ui/features/settings/presentation/widgets/identity_section.dart';
 
 import 'helpers/l10n.dart';
 
 class _FakeSettings implements SettingsRepository {
+  _FakeSettings({this.phrase});
+
+  /// Phrase retournée par `identityRecoveryPhrase` — `null` simule
+  /// une identité legacy / erreur daemon (chemin « indisponible »).
+  final String? phrase;
+
   @override
   Future<Map<String, dynamic>> get() async => {
     'libtorrent': {
@@ -77,7 +84,7 @@ class _FakeSettings implements SettingsRepository {
     'public_key': 'aabbcc',
   };
   @override
-  Future<String?> identityRecoveryPhrase({String? lang}) async => null;
+  Future<String?> identityRecoveryPhrase({String? lang}) async => phrase;
   @override
   Future<Map<String, dynamic>> identityExport({String? password}) async =>
       {'key': 'deadbeef'};
@@ -218,6 +225,65 @@ void main() {
       find.byType(ListView).last,
       const Offset(0, -400),
     );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+    'phrase de récupération : repository null → « indisponible », pas de spinner infini',
+    (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            settingsRepositoryProvider.overrideWithValue(_FakeSettings()),
+          ],
+          child: l10nTestApp(const Scaffold(body: IdentitySection())),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Le bouton existe en double (carte de rappel + rangée
+      // d'actions) — les deux ouvrent le même dialogue.
+      await tester.tap(find.text('Show recovery phrase').first);
+      await tester.pumpAndSettle();
+
+      // `identityRecoveryPhrase → null` doit retomber sur le message
+      // dédié — un `!snap.hasData` laisserait le spinner tourner
+      // indéfiniment (hasData == data != null).
+      expect(
+        find.text(
+          'No recovery phrase — this is a legacy identity; use key export instead.',
+        ),
+        findsOneWidget,
+      );
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('phrase de récupération : 24 mots numérotés affichés', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    final words = List.generate(24, (i) => 'mot$i').join(' ');
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          settingsRepositoryProvider.overrideWithValue(
+            _FakeSettings(phrase: words),
+          ),
+        ],
+        child: l10nTestApp(const Scaffold(body: IdentitySection())),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Show recovery phrase').first);
+    await tester.pumpAndSettle();
+
+    expect(find.text('1. mot0'), findsOneWidget);
+    expect(find.text('24. mot23'), findsOneWidget);
+    expect(find.byType(CircularProgressIndicator), findsNothing);
     expect(tester.takeException(), isNull);
   });
 }

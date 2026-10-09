@@ -230,12 +230,13 @@ class IdentitySection extends ConsumerWidget {
       context: context,
       builder: (ctx) => AlertDialog(
         title: Text(l10n.identityPhraseTitle),
+        scrollable: true,
         content: FutureBuilder<String?>(
           future: ref
               .read(settingsRepositoryProvider)
               .identityRecoveryPhrase(lang: lang),
           builder: (ctx, snap) {
-            if (!snap.hasData) {
+            if (snap.connectionState != ConnectionState.done) {
               return const SizedBox(
                 width: 320,
                 height: 80,
