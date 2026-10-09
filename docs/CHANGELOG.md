@@ -3,6 +3,27 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Correctif : paquet .deb — entrées de menu + état XDG (2026-10-09, worktree adr21)
+
+- **`resolve_state_dir` ne choisit plus un `state/` non
+  inscriptible** : l'heuristique « bundle » (`web/index.html` voisin
+  de l'exe) exige désormais que `state/` existe ou soit créable —
+  sinon repli `$XDG_DATA_HOME/onionbit` (`~/.local/share/onionbit`,
+  `.onionbit` hors Unix/en dernier recours). Sans cela le `.deb`
+  (`/opt/onionbit`, root-owned) plaçait l'état sur un chemin non
+  inscriptible : daemon inutilisable hors root — menu, systemd et
+  terminal convergent désormais sur le même `state_dir`. Refactor
+  `resolve_state_dir_for(args, exe)` testable + 3 tests (défaut,
+  bundle inscriptible, lecture seule → XDG ; `#[cfg(unix)]` pour le
+  mode 0555).
+- **`package_posix.sh` (.deb)** : entrées de menu
+  `/usr/share/applications/onionbit.desktop` (daemon `--open-webui`
+  — idempotent : un re-clic rouvre le navigateur sur le port réel)
+  et `onionbit-daemon.desktop` (console `Terminal=true`) ; icônes
+  hicolor 192/512 depuis les PNG brandés `app/web/icons/` ; `postinst`
+  rafraîchit `update-desktop-database`/`gtk-update-icon-cache` ;
+  `Depends` += `xdg-utils` (`xdg-open` du `--open-webui`).
+
 ## Correctif : bundle Windows — lanceurs à la racine (2026-10-09, worktree adr21)
 
 - **`build_dist.ps1`** : trois raccourcis à la racine de

@@ -20,7 +20,10 @@
 # Layout du .deb : /opt/onionbit/{daemon,cli,web/} + liens /usr/bin —
 # l'auto-detection `<exe>/web` du daemon fonctionne car current_exe
 # resout le lien symbolique vers le vrai chemin. Unite systemd
-# utilisateur `onionbit-daemon.service` incluse.
+# utilisateur `onionbit-daemon.service` + entrees de menu `.desktop`
+# (OnionBit web UI / console daemon) + icone hicolor. L'etat vit sous
+# `$XDG_DATA_HOME/onionbit` (~/.local/share/onionbit) : /opt/onionbit
+# n'est pas inscriptible, `resolve_state_dir` y replie le state_dir.
 
 set -euo pipefail
 
@@ -111,11 +114,55 @@ if [ "$OS" = linux ] && [ -n "$DEB_ARCH" ] && command -v dpkg-deb >/dev/null; th
     PKG="$ROOT/dist/deb/onionbit_${VER}_${DEB_ARCH}"
     rm -rf "$PKG"
     mkdir -p "$PKG/DEBIAN" "$PKG/opt/onionbit" "$PKG/usr/bin" \
-             "$PKG/usr/lib/systemd/user" "$PKG/usr/share/doc/onionbit"
+             "$PKG/usr/lib/systemd/user" "$PKG/usr/share/doc/onionbit" \
+             "$PKG/usr/share/applications" \
+             "$PKG/usr/share/icons/hicolor/192x192/apps" \
+             "$PKG/usr/share/icons/hicolor/512x512/apps"
 
     cp "$SRC_DIR/onionbit-daemon" "$SRC_DIR/onionbit-cli" "$PKG/opt/onionbit/"
     [ -d "$OUT/web" ] && cp -r "$OUT/web" "$PKG/opt/onionbit/web"
     cp "$ROOT/LICENSE" "$PKG/usr/share/doc/onionbit/copyright"
+
+    # Icone hicolor : le PNG brande du build web Flutter.
+    for size in 192 512; do
+        icon="$ROOT/app/web/icons/Icon-$size.png"
+        [ -f "$icon" ] && cp "$icon" \
+            "$PKG/usr/share/icons/hicolor/${size}x${size}/apps/onionbit.png"
+    done
+
+    # Entrees de menu (equivalent des .lnk racine du bundle Windows) :
+    #   « OnionBit »        → daemon --open-webui (idempotent : un
+    #                         second lancement rouvre juste le
+    #                         navigateur sur le port reel)
+    #   « OnionBit Daemon » → console de logs du daemon
+    cat > "$PKG/usr/share/applications/onionbit.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Version=1.5
+Name=OnionBit
+GenericName=Anonymous BitTorrent client
+Comment=Start the OnionBit daemon and open the web UI
+Exec=/opt/onionbit/onionbit-daemon --open-webui
+Icon=onionbit
+Terminal=false
+Categories=Network;FileTransfer;P2P;
+Keywords=bittorrent;anonymous;onion;tribler;
+StartupNotify=true
+EOF
+
+    cat > "$PKG/usr/share/applications/onionbit-daemon.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Version=1.5
+Name=OnionBit Daemon
+GenericName=Anonymous BitTorrent daemon
+Comment=Run the OnionBit daemon in a console (logs + tray icon)
+Exec=/opt/onionbit/onionbit-daemon
+Icon=onionbit
+Terminal=true
+Categories=Network;FileTransfer;P2P;
+Keywords=bittorrent;anonymous;daemon;
+EOF
 
     # Liens /usr/bin : le daemon resout <exe>/web sur le vrai chemin
     # (/proc/self/exe suit les liens) -> /opt/onionbit/web trouve.
@@ -130,15 +177,29 @@ Maintainer: Laurent Geynet <laurent.geynet@gmail.com>
 Section: net
 Priority: optional
 Homepage: https://github.com/laurentgeynet-ux/OnionBit
-Depends: ca-certificates
+Depends: ca-certificates, xdg-utils
 Description: Anonymous BitTorrent daemon (native Rust port of Tribler)
  OnionBit provides anonymous BitTorrent downloads over multi-hop onion
  circuits (IPv8 overlay + TunnelCommunity protocol), exposed through a
  local REST API on 127.0.0.1:8085 with an embedded web UI.
  .
- The daemon starts on demand; a systemd user unit is included:
+ Desktop entries « OnionBit » (web UI) and « OnionBit Daemon »
+ (console) are installed; a systemd user unit is included:
    systemctl --user enable --now onionbit-daemon
 EOF
+
+    # postinst : rafraichir les caches menu/icones si les outils sont
+    # la (pas de dependance dure — les DE re-scannent aussi seuls).
+    cat > "$PKG/DEBIAN/postinst" <<'EOF'
+#!/bin/sh
+set -e
+command -v update-desktop-database >/dev/null 2>&1 && \
+    update-desktop-database -q /usr/share/applications || true
+command -v gtk-update-icon-cache >/dev/null 2>&1 && \
+    gtk-update-icon-cache -q /usr/share/icons/hicolor || true
+exit 0
+EOF
+    chmod 755 "$PKG/DEBIAN/postinst"
 
     cat > "$PKG/usr/lib/systemd/user/onionbit-daemon.service" <<EOF
 [Unit]

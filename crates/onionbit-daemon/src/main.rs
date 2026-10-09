@@ -28,7 +28,7 @@ mod shutdown;
 mod tray;
 
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::Parser;
@@ -51,16 +51,22 @@ const DEFAULT_STATE_DIR: &str = ".onionbit";
 /// daemon spawnne par l'UI (avant : `.onionbit` relatif au CWD, un
 /// etat orphelin voire `state\state` selon le dossier de travail).
 fn resolve_state_dir(args: &Args) -> PathBuf {
+    resolve_state_dir_for(args, std::env::current_exe().ok().as_deref())
+}
+
+/// Logique de resolution testable : `exe` est le chemin du binaire
+/// (dans la pratique `std::env::current_exe`).
+fn resolve_state_dir_for(args: &Args, exe: Option<&Path>) -> PathBuf {
     if let Some(d) = &args.state_dir {
         return d.clone();
     }
-    if let Ok(exe) = std::env::current_exe() {
+    if let Some(exe) = exe {
         // ADR-0018 : un marqueur `OnionBit.portable` a un ancetre de
         // l'exe (layout `<root>/<os>/onionbit-daemon`) fait remonter
         // `state/` a la racine du bundle — `data/` y est voisine
         // (`PathRoots::for_state_dir`). Avant la detection bundle
         // historique : le marqueur est le signal le plus explicite.
-        if let Some(root) = onionbit_core::paths::find_portable_root(&exe) {
+        if let Some(root) = onionbit_core::paths::find_portable_root(exe) {
             return root.join("state");
         }
         if let Some(dir) = exe.parent() {
@@ -69,10 +75,38 @@ fn resolve_state_dir(args: &Args) -> PathBuf {
                     .iter()
                     .any(|n| dir.join(n).is_file());
             if bundle {
-                return dir.join("state");
+                let state = dir.join("state");
+                // Un payload installe sous /opt ou /usr (paquet .deb)
+                // imite le layout tarball mais n'est PAS inscriptible
+                // pour l'utilisateur — l'etat ne peut vivre a cote de
+                // l'exe : repli sur le repertoire XDG.
+                if state.is_dir() || std::fs::create_dir(&state).is_ok() {
+                    return state;
+                }
+                return installed_state_dir();
             }
         }
     }
+    PathBuf::from(DEFAULT_STATE_DIR)
+}
+
+/// Repli d'etat pour un payload installe en lecture seule (paquet
+/// systeme) : `$XDG_DATA_HOME/onionbit`, sinon `~/.local/share/
+/// onionbit`, sinon `.onionbit` (historique). Hors Unix le marqueur
+/// portable couvre deja le cas — le fallback historique suffit.
+#[cfg(unix)]
+fn installed_state_dir() -> PathBuf {
+    if let Some(x) = std::env::var_os("XDG_DATA_HOME") {
+        return PathBuf::from(x).join("onionbit");
+    }
+    if let Some(h) = std::env::var_os("HOME") {
+        return PathBuf::from(h).join(".local/share/onionbit");
+    }
+    PathBuf::from(DEFAULT_STATE_DIR)
+}
+
+#[cfg(not(unix))]
+fn installed_state_dir() -> PathBuf {
     PathBuf::from(DEFAULT_STATE_DIR)
 }
 
@@ -767,12 +801,64 @@ async fn async_main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
+    use super::{resolve_state_dir_for, Args, DEFAULT_STATE_DIR};
+    use clap::Parser;
+    use std::path::PathBuf;
+
+    fn args_sans_flag() -> Args {
+        Args::try_parse_from(["onionbit-daemon"]).unwrap()
+    }
+
+    /// Exe isole (ni marqueur portable ni `web/` voisin) → le defaut
+    /// historique `.onionbit` relatif au CWD.
     #[test]
-    fn le_binaire_parse_ses_arguments() {
-        // Validation clap minimale (les tests e2e du daemon viendront
-        // avec le durcissement de l'etape 16 ; le chemin HTTP est
-        // deja couvert par onionbit-api/tests et onionbit-cli/tests).
-        use clap::CommandFactory;
-        super::Args::command().debug_assert();
+    fn state_dir_defaut_hors_bundle() {
+        let dir = tempfile::tempdir().unwrap();
+        let exe = dir.path().join("onionbit-daemon");
+        let got = resolve_state_dir_for(&args_sans_flag(), Some(&exe));
+        assert_eq!(got, PathBuf::from(DEFAULT_STATE_DIR));
+        // --state-dir prime toujours.
+        let args = Args::try_parse_from(["onionbit-daemon", "--state-dir", "/tmp/x"]).unwrap();
+        assert_eq!(
+            resolve_state_dir_for(&args, Some(&exe)),
+            PathBuf::from("/tmp/x")
+        );
+    }
+
+    /// Layout « tarball » (web/ voisin, repertoire inscriptible) →
+    /// `state/` a cote de l'exe — et il est cree au passage.
+    #[test]
+    fn state_dir_bundle_inscriptible() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("web")).unwrap();
+        std::fs::write(dir.path().join("web/index.html"), "x").unwrap();
+        let exe = dir.path().join("onionbit-daemon");
+        let got = resolve_state_dir_for(&args_sans_flag(), Some(&exe));
+        assert_eq!(got, dir.path().join("state"));
+        assert!(got.is_dir());
+    }
+
+    /// Meme layout mais repertoire en lecture seule (paquet .deb sous
+    /// /opt/onionbit) → repli `$XDG_DATA_HOME/onionbit` —
+    /// l'etat ne peut vivre a cote d'un exe non inscriptible.
+    /// (POSIX : le mode 0555 bloque la creation ; sous Windows le bit
+    /// readonly d'un dossier n'empeche pas l'ecriture — non teste.)
+    #[cfg(unix)]
+    #[test]
+    fn state_dir_bundle_lecture_seule_repli_xdg() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("web")).unwrap();
+        std::fs::write(dir.path().join("web/index.html"), "x").unwrap();
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o555)).unwrap();
+        let exe = dir.path().join("onionbit-daemon");
+        let got = resolve_state_dir_for(&args_sans_flag(), Some(&exe));
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert_ne!(got, dir.path().join("state"));
+        assert_eq!(got.file_name().unwrap(), "onionbit");
+        assert!(
+            got == std::path::Path::new(".onionbit") || got.is_absolute(),
+            "repli attendu XDG ou defaut, obtenu {got:?}"
+        );
     }
 }
