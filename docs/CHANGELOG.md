@@ -3,6 +3,43 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## ADR-0021 étape 73 : bascule du thème + migration Téléchargements/Recherche (2026-10-09, worktree adr21)
+
+- **`app.dart` bascule sur `AppDesignTheme`** : la nouvelle
+  typographie (Space Grotesk titres / Inter corps), l'extension
+  `AppSemanticColors` et les transitions par plateforme (Cupertino
+  sur Apple, Zoom ailleurs) deviennent actives **globalement** — y
+  compris sur les écrans pas encore migrés (messagerie, réglages,
+  diagnostic), qui conservent leurs tokens `AppSpacing`/`AppRadii`
+  tant que leur étape n'est pas venue. `theme_settings` lit le défaut
+  dans `AppBrandColors.seed` (même violet `#6C2EA6`, identité
+  inchangée).
+- **Migration tokens** : `app_theme.dart` → `design_tokens.dart`,
+  `AppSpacing`→`AppSpace`, `AppRadii`→`AppRadius` (mêmes valeurs —
+  renommage, pas de changement visuel) dans tout `core/` (shell :
+  `app_sidebar`, `status_bar`, `top_bar`, `daemon_unreachable_banner` ;
+  widgets : `empty_state`, `error_state`, `daemon_directory_picker`,
+  `status_chip` ; `identity_gate`, `notification_bell`,
+  `theme_settings`) + les 5 fichiers `downloads/presentation/` +
+  `search_page.dart`.
+- **Couleurs sémantiques adoptées** là où `ColorScheme` forçait des
+  contorsions : `StatusChip`/`DownloadProgressBar`/`AnonBadge`/
+  `StatusBar` — `positive`→`success` (vert thémé au lieu de
+  `Colors.green` brut ou `primary`), `warning`→`warning` (ambre au
+  lieu du cyan `tertiary` de marque, qui ne signifiait pas
+  « attention » : « en attente de circuit », métadonnées, hash check).
+- **JetBrains Mono** (`AppTypography.mono()`) sur les infohashes :
+  panneau de détail téléchargement (remplace `fontFamily:'monospace'`
+  générique) et tuiles de recherche sans nom (repli infohash).
+- **`check_i18n.ps1`** : exclusion documentée de `style_guide/` —
+  page specimen montée uniquement en debug ; ses chaînes accentuées
+  testent la couverture de glyphes des polices auto-hébergées.
+- **Test** : le smoke vérifie que `MaterialApp.theme`/`darkTheme`
+  portent `AppSemanticColorsExtension` et les familles Inter/Space
+  Grotesk — verrouille la bascule.
+- **Validation** : `flutter analyze` (0 issue), `flutter test` (38
+  verts), `flutter build web` OK, `check_i18n.ps1` propre.
+
 ## ADR-0021 étape 72 : scaffolding multiplateforme + Windows ARM64 (2026-10-09, worktree adr21)
 
 - **4 runners scaffoldés ensemble** : `flutter create

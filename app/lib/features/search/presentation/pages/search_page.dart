@@ -10,7 +10,7 @@ import '../../../../l10n/app_localizations.dart' show AppLocalizations;
 import '../../../../core/di/providers.dart';
 import '../../../../core/l10n/l10n_ext.dart';
 import '../../../../core/layout/breakpoints.dart';
-import '../../../../core/theme/app_theme.dart';
+import '../../../../core/design/design_tokens.dart';
 import '../../../../core/widgets/empty_state.dart';
 import '../../../../core/widgets/error_state.dart';
 import '../../../diagnostic/presentation/providers/diagnostic_providers.dart';
@@ -85,8 +85,8 @@ class SearchPage extends ConsumerWidget {
       children: [
         Padding(
           padding: const EdgeInsets.symmetric(
-            horizontal: AppSpacing.md,
-            vertical: AppSpacing.sm,
+            horizontal: AppSpace.md,
+            vertical: AppSpace.sm,
           ),
           child: Column(
             children: [
@@ -109,7 +109,7 @@ class SearchPage extends ConsumerWidget {
                       onPressed: () =>
                           _addSelected(context, ref, merged, selection),
                     ),
-                    const SizedBox(width: AppSpacing.xs),
+                    const SizedBox(width: AppSpace.xs),
                     IconButton(
                       tooltip: l10n.searchDeselect,
                       onPressed: ref
@@ -117,7 +117,7 @@ class SearchPage extends ConsumerWidget {
                           .clear,
                       icon: const Icon(Icons.close, size: 18),
                     ),
-                    const SizedBox(width: AppSpacing.xs),
+                    const SizedBox(width: AppSpace.xs),
                   ],
                   if (searching)
                     Row(
@@ -128,7 +128,7 @@ class SearchPage extends ConsumerWidget {
                           height: 14,
                           child: CircularProgressIndicator(strokeWidth: 2),
                         ),
-                        const SizedBox(width: AppSpacing.sm),
+                        const SizedBox(width: AppSpace.sm),
                         Text(
                           l10n.searchRemoteProgress(
                             remote.results.length,
@@ -148,7 +148,7 @@ class SearchPage extends ConsumerWidget {
                   else if (remote.state.finishedAt != null &&
                       remote.results.isNotEmpty)
                     Padding(
-                      padding: const EdgeInsets.only(right: AppSpacing.xs),
+                      padding: const EdgeInsets.only(right: AppSpace.xs),
                       child: Text(
                         l10n.searchRemoteFinished(
                           remote.results.length,
@@ -176,7 +176,7 @@ class SearchPage extends ConsumerWidget {
                 ],
               ),
               if (query.isEmpty && history.isNotEmpty) ...[
-                const SizedBox(height: AppSpacing.xs),
+                const SizedBox(height: AppSpace.xs),
                 SizedBox(
                   height: 32,
                   child: ListView(
@@ -184,7 +184,7 @@ class SearchPage extends ConsumerWidget {
                     children: [
                       Padding(
                         padding: const EdgeInsets.only(
-                          right: AppSpacing.xs,
+                          right: AppSpace.xs,
                           top: 6,
                         ),
                         child: Text(
@@ -194,7 +194,7 @@ class SearchPage extends ConsumerWidget {
                       ),
                       for (final h in history)
                         Padding(
-                          padding: const EdgeInsets.only(right: AppSpacing.xs),
+                          padding: const EdgeInsets.only(right: AppSpace.xs),
                           child: ActionChip(
                             label: Text(h),
                             avatar: const Icon(Icons.history, size: 16),
@@ -206,7 +206,7 @@ class SearchPage extends ConsumerWidget {
                   ),
                 ),
               ],
-              const SizedBox(height: AppSpacing.xs),
+              const SizedBox(height: AppSpace.xs),
               SizedBox(
                 height: 32,
                 child: ListView(
@@ -218,7 +218,7 @@ class SearchPage extends ConsumerWidget {
                       (l10n.searchSourceNetwork, TorrentSource.remote),
                     ])
                       Padding(
-                        padding: const EdgeInsets.only(right: AppSpacing.xs),
+                        padding: const EdgeInsets.only(right: AppSpace.xs),
                         child: ChoiceChip(
                           label: Text(label),
                           selected: filter.source == source,
@@ -261,7 +261,7 @@ class SearchPage extends ConsumerWidget {
                     child: compact
                         ? ListView.builder(
                             padding: const EdgeInsets.symmetric(
-                              horizontal: AppSpacing.sm,
+                              horizontal: AppSpace.sm,
                             ),
                             itemCount: merged.length,
                             itemBuilder: (context, i) => _ResultTile(
@@ -413,6 +413,8 @@ class _ResultTile extends StatelessWidget {
         title: Text(
           r.name.isEmpty ? r.infohash : r.name,
           overflow: TextOverflow.ellipsis,
+          // Infohash affiché en police mono dédiée (distingue 0/O, 1/l).
+          style: r.name.isEmpty ? AppTypography.mono() : null,
         ),
         subtitle: Text(
           [
@@ -539,8 +541,8 @@ class _HeaderRow extends ConsumerWidget {
 
     return Padding(
       padding: const EdgeInsets.symmetric(
-        horizontal: AppSpacing.sm,
-        vertical: AppSpacing.xs,
+        horizontal: AppSpace.sm,
+        vertical: AppSpace.xs,
       ),
       child: Row(
         children: [
@@ -584,8 +586,8 @@ class _ResultRow extends StatelessWidget {
             _SearchContextMenu.show(context, details.globalPosition, r),
         child: Padding(
           padding: const EdgeInsets.symmetric(
-            horizontal: AppSpacing.sm,
-            vertical: AppSpacing.xs,
+            horizontal: AppSpace.sm,
+            vertical: AppSpace.xs,
           ),
           child: Row(
             children: [

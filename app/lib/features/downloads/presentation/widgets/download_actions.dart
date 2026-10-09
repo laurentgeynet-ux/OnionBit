@@ -7,7 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/l10n/l10n_ext.dart';
 import '../../../../core/platform/pick_directory.dart';
-import '../../../../core/theme/app_theme.dart';
+import '../../../../core/design/design_tokens.dart';
 import '../../../../core/utils/byte_formatter.dart';
 import '../../domain/download.dart';
 import '../providers/downloads_providers.dart';
@@ -53,7 +53,7 @@ Future<void> showRateLimitsDialog(BuildContext context, Download d) async {
                 prefixIcon: const Icon(Icons.arrow_downward),
               ),
             ),
-            const SizedBox(height: AppSpacing.sm),
+            const SizedBox(height: AppSpace.sm),
             TextField(
               controller: up,
               keyboardType: TextInputType.number,

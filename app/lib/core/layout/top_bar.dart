@@ -11,7 +11,7 @@ import 'package:go_router/go_router.dart';
 import '../di/providers.dart';
 import '../l10n/l10n_ext.dart';
 import '../notifications/notification_bell.dart';
-import '../theme/app_theme.dart';
+import '../design/design_tokens.dart';
 
 /// Barre du haut : champ de recherche global (locale + distante).
 /// Taper (debounce 300 ms) met à jour `searchQueryProvider` et
@@ -64,7 +64,7 @@ class _TopBarState extends ConsumerState<TopBar> {
     });
     return Container(
       height: TopBar.height,
-      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+      padding: const EdgeInsets.symmetric(horizontal: AppSpace.md),
       child: Row(
         children: [
           Expanded(
@@ -75,7 +75,7 @@ class _TopBarState extends ConsumerState<TopBar> {
                 prefixIcon: const Icon(Icons.search),
                 isDense: true,
                 border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(AppRadii.small),
+                  borderRadius: BorderRadius.circular(AppRadius.small),
                 ),
                 suffixIcon: _controller.text.isEmpty
                     ? null
@@ -91,7 +91,7 @@ class _TopBarState extends ConsumerState<TopBar> {
               onSubmitted: _submit,
             ),
           ),
-          const SizedBox(width: AppSpacing.sm),
+          const SizedBox(width: AppSpace.sm),
           const NotificationBell(),
         ],
       ),

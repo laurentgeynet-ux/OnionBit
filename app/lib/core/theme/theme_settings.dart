@@ -7,7 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../l10n/app_localizations.dart' show AppLocalizations;
-import 'app_theme.dart';
+import '../design/design_tokens.dart';
 
 /// Préférences d'apparence persistées (`shared_preferences`) :
 /// couleur d'accent (seed `ColorScheme.fromSeed`) + mode de thème.
@@ -63,7 +63,7 @@ class ThemeSettingsNotifier extends AsyncNotifier<ThemeSettings> {
     final prefs = await SharedPreferences.getInstance();
     return ThemeSettings(
       seedColor: Color(
-        prefs.getInt(_kKeySeedColor) ?? AppTheme.defaultSeedColor.toARGB32(),
+        prefs.getInt(_kKeySeedColor) ?? AppBrandColors.seed.toARGB32(),
       ),
       mode:
           ThemeMode.values.asNameMap()[prefs.getString(_kKeyThemeMode)] ??

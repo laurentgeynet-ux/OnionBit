@@ -2,13 +2,14 @@
 // Copyright (C) 2026 Laurent Geynet <laurent.geynet@gmail.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-import 'package:flutter/material.dart' show NavigationBar, Size;
+import 'package:flutter/material.dart' show MaterialApp, NavigationBar, Size;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:onionbit_ui/app.dart';
 import 'package:onionbit_ui/core/api/sse_client.dart';
 import 'package:onionbit_ui/core/config/app_config.dart';
+import 'package:onionbit_ui/core/design/design_tokens.dart';
 import 'package:onionbit_ui/core/di/providers.dart';
 import 'package:onionbit_ui/core/layout/app_sidebar.dart';
 import 'package:onionbit_ui/features/diagnostic/domain/diagnostic_models.dart';
@@ -81,6 +82,17 @@ void main() {
     expect(find.text('Search'), findsOneWidget);
     expect(find.text('Diagnostics'), findsOneWidget);
     expect(find.text('No downloads'), findsOneWidget);
+
+    // Étape 73 : le thème applicatif est `AppDesignTheme` — extension
+    // sémantique enregistrée et typographie de marque (Inter en corps,
+    // Space Grotesk en titres) actives, pas le thème hérité.
+    final app = tester.widget<MaterialApp>(find.byType(MaterialApp));
+    final theme = app.theme!;
+    expect(theme.extension<AppSemanticColorsExtension>(), isNotNull);
+    expect(theme.textTheme.bodyMedium?.fontFamily, AppFontFamilies.body);
+    expect(theme.textTheme.titleLarge?.fontFamily, AppFontFamilies.display);
+    final dark = app.darkTheme!;
+    expect(dark.extension<AppSemanticColorsExtension>(), isNotNull);
   });
 
   // ADR-0021 §5 : la coquille distingue désormais les quatre paliers

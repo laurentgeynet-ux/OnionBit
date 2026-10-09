@@ -11,7 +11,7 @@ import '../../../../core/di/providers.dart';
 import '../../../../core/l10n/l10n_ext.dart';
 import '../../../../core/platform/desktop_shell.dart';
 import '../../../../core/platform/open_url.dart';
-import '../../../../core/theme/app_theme.dart';
+import '../../../../core/design/design_tokens.dart';
 import '../../../../core/widgets/empty_state.dart';
 import '../../../../core/widgets/error_state.dart';
 import '../../domain/download.dart';
@@ -120,15 +120,15 @@ class _DetailsTabState extends ConsumerState<_DetailsTab> {
     return Scrollbar(
       thumbVisibility: true,
       child: ListView(
-        padding: const EdgeInsets.all(AppSpacing.md),
+        padding: const EdgeInsets.all(AppSpace.md),
         children: [
           SpeedSparkline(history: _history),
-          const SizedBox(height: AppSpacing.sm),
+          const SizedBox(height: AppSpace.sm),
           LinearProgressIndicator(value: d.progress.clamp(0.0, 1.0)),
-          const SizedBox(height: AppSpacing.md),
+          const SizedBox(height: AppSpace.md),
           Wrap(
-            spacing: AppSpacing.sm,
-            runSpacing: AppSpacing.xs,
+            spacing: AppSpace.sm,
+            runSpacing: AppSpace.xs,
             children: [
               // « Ouvrir le dossier » : explorateur natif — sans objet
               // sur web (le chemin appartient à la machine du daemon).
@@ -188,7 +188,7 @@ class _DetailsTabState extends ConsumerState<_DetailsTab> {
               ),
             ],
           ),
-          const SizedBox(height: AppSpacing.md),
+          const SizedBox(height: AppSpace.md),
           _row(context, l10n.rowName, d.name.isEmpty ? l10n.noName : d.name),
           _row(context, l10n.rowStatus, d.status),
           _row(context, l10n.rowSize, context.fmtBytes(d.size)),
@@ -234,14 +234,16 @@ class _DetailsTabState extends ConsumerState<_DetailsTab> {
           _row(context, l10n.rowAdded, _date(d.timeAdded)),
           _row(context, l10n.rowFinished, _date(d.timeFinished)),
           if (d.error.isNotEmpty) _row(context, l10n.rowError, d.error),
-          const SizedBox(height: AppSpacing.sm),
+          const SizedBox(height: AppSpace.sm),
           Row(
             children: [
               Expanded(
                 child: SelectableText(
                   d.infohash,
-                  style: Theme.of(context).textTheme.bodySmall
-                      ?.copyWith(fontFamily: 'monospace'),
+                  style: AppTypography.mono(
+                    fontSize:
+                        Theme.of(context).textTheme.bodySmall?.fontSize ?? 12,
+                  ),
                 ),
               ),
             ],
@@ -300,7 +302,7 @@ class SpeedSparkline extends StatelessWidget {
               ' ${context.fmtRate(history.lastOrNull?.down ?? 0)}',
               style: small,
             ),
-            const SizedBox(width: AppSpacing.sm),
+            const SizedBox(width: AppSpace.sm),
             Icon(Icons.arrow_upward, size: 12, color: scheme.tertiary),
             Text(
               ' ${context.fmtRate(history.lastOrNull?.up ?? 0)}',
@@ -404,7 +406,7 @@ class _FilesTab extends ConsumerWidget {
               message: context.l10n.noFilesMeta,
             )
           : ListView.builder(
-              padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+              padding: const EdgeInsets.symmetric(horizontal: AppSpace.md),
               itemCount: fileList.length,
               itemBuilder: (context, i) {
                 final f = fileList[i];
@@ -631,8 +633,8 @@ class _TrackersTab extends ConsumerWidget {
       children: [
         Padding(
           padding: const EdgeInsets.symmetric(
-            horizontal: AppSpacing.md,
-            vertical: AppSpacing.xs,
+            horizontal: AppSpace.md,
+            vertical: AppSpace.xs,
           ),
           child: Row(
             children: [
@@ -651,7 +653,7 @@ class _TrackersTab extends ConsumerWidget {
                   () => notifier.addDefaultTrackers(ih),
                 ),
               ),
-              const SizedBox(width: AppSpacing.xs),
+              const SizedBox(width: AppSpace.xs),
               FilledButton.tonalIcon(
                 icon: const Icon(Icons.add, size: 16),
                 label: Text(l10n.addTracker),
@@ -674,7 +676,7 @@ class _TrackersTab extends ConsumerWidget {
                   ),
                 )
               : ListView.builder(
-                  padding: const EdgeInsets.all(AppSpacing.md),
+                  padding: const EdgeInsets.all(AppSpace.md),
                   itemCount: trackers.length,
                   itemBuilder: (context, i) {
                     final t = trackers[i];
@@ -750,11 +752,11 @@ class _PeersTab extends StatelessWidget {
     final theme = Theme.of(context);
 
     return ListView(
-      padding: const EdgeInsets.all(AppSpacing.md),
+      padding: const EdgeInsets.all(AppSpace.md),
       children: [
         Card(
           child: Padding(
-            padding: const EdgeInsets.all(AppSpacing.md),
+            padding: const EdgeInsets.all(AppSpace.md),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -762,7 +764,7 @@ class _PeersTab extends StatelessWidget {
                   context.l10n.swarmStats,
                   style: theme.textTheme.titleMedium,
                 ),
-                const SizedBox(height: AppSpacing.sm),
+                const SizedBox(height: AppSpace.sm),
                 _statRow(context.l10n.seedersConn, '${d.numSeeds}'),
                 _statRow(context.l10n.leechersConn, '${d.numPeers}'),
                 _statRow(context.l10n.totalPeersConn, '${d.numConnectedPeers}'),
@@ -782,19 +784,19 @@ class _PeersTab extends StatelessWidget {
           ),
         ),
         if (d.peers.isNotEmpty) ...[
-          const SizedBox(height: AppSpacing.md),
+          const SizedBox(height: AppSpace.md),
           Text(
             context.l10n.peersConnCount(d.peers.length),
             style: theme.textTheme.titleMedium,
           ),
-          const SizedBox(height: AppSpacing.sm),
+          const SizedBox(height: AppSpace.sm),
           SingleChildScrollView(
             scrollDirection: Axis.horizontal,
             child: DataTable(
               headingRowHeight: 32,
               dataRowMinHeight: 32,
               dataRowMaxHeight: 36,
-              columnSpacing: AppSpacing.md,
+              columnSpacing: AppSpace.md,
               columns: [
                 DataColumn(label: Text(context.l10n.colAddress)),
                 DataColumn(label: Text(context.l10n.colClient)),
@@ -848,7 +850,7 @@ class _PeersTab extends StatelessWidget {
             ),
           ),
         ] else if (d.isActive) ...[
-          const SizedBox(height: AppSpacing.md),
+          const SizedBox(height: AppSpace.md),
           EmptyState(
             icon: Icons.people_outline,
             title: context.l10n.noPeers,

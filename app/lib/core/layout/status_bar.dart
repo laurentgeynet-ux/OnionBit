@@ -10,7 +10,7 @@ import '../../features/diagnostic/presentation/providers/diagnostic_providers.da
 import '../../features/downloads/presentation/providers/downloads_providers.dart';
 import '../di/providers.dart';
 import '../l10n/l10n_ext.dart';
-import '../theme/app_theme.dart';
+import '../design/design_tokens.dart';
 import 'breakpoints.dart';
 
 /// Barre d'état inférieure : connexion daemon (SSE), état honnête de
@@ -45,9 +45,10 @@ class StatusBar extends ConsumerWidget {
         AppBreakpoints.of(MediaQuery.sizeOf(context).width) ==
         AppBreakpoint.compact;
 
+    final semantic = context.semanticColors;
     final laneColor = switch (lane?.state) {
-      AnonLaneState.ready => Colors.green,
-      AnonLaneState.waiting => scheme.tertiary,
+      AnonLaneState.ready => semantic.success,
+      AnonLaneState.waiting => semantic.warning,
       _ => scheme.outline,
     };
     final laneLabel = switch (lane?.state) {
@@ -59,7 +60,7 @@ class StatusBar extends ConsumerWidget {
 
     return Container(
       height: StatusBar.height,
-      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+      padding: const EdgeInsets.symmetric(horizontal: AppSpace.md),
       decoration: BoxDecoration(
         color: scheme.surface,
         border: Border(top: BorderSide(color: scheme.outlineVariant)),
@@ -69,9 +70,9 @@ class StatusBar extends ConsumerWidget {
           Icon(
             Icons.circle,
             size: 8,
-            color: connected ? Colors.green : scheme.error,
+            color: connected ? semantic.success : scheme.error,
           ),
-          const SizedBox(width: AppSpacing.xs),
+          const SizedBox(width: AppSpace.xs),
           if (!compact)
             Text(
               connected
@@ -79,7 +80,7 @@ class StatusBar extends ConsumerWidget {
                   : context.l10n.daemonUnreachable,
               style: small,
             ),
-          const SizedBox(width: AppSpacing.lg),
+          const SizedBox(width: AppSpace.lg),
           Expanded(
             child: Row(
               mainAxisSize: MainAxisSize.min,
@@ -89,7 +90,7 @@ class StatusBar extends ConsumerWidget {
                   child: Icon(Icons.shield_outlined, size: 14, color: laneColor),
                 ),
                 if (!compact) ...[
-                  const SizedBox(width: AppSpacing.xs),
+                  const SizedBox(width: AppSpace.xs),
                   Flexible(
                     child: Text(
                       laneLabel,
@@ -105,11 +106,11 @@ class StatusBar extends ConsumerWidget {
           // desktop uniquement (déjà repris en détail dans Diagnostic,
           // ADR-0021 §5 — inutile de les faire tenir sur un téléphone).
           if (!compact) ...[
-            const SizedBox(width: AppSpacing.md),
+            const SizedBox(width: AppSpace.md),
             Text('↓ ${context.fmtRate(speeds.down)}', style: small),
-            const SizedBox(width: AppSpacing.md),
+            const SizedBox(width: AppSpace.md),
             Text('↑ ${context.fmtRate(speeds.up)}', style: small),
-            const SizedBox(width: AppSpacing.md),
+            const SizedBox(width: AppSpace.md),
             Flexible(
               child: Tooltip(
                 message: context.l10n.statusSessionTrafficTip,
@@ -124,7 +125,7 @@ class StatusBar extends ConsumerWidget {
               ),
             ),
             if (relayBw != null && relayBw.effectiveRelayBps > 0) ...[
-              const SizedBox(width: AppSpacing.md),
+              const SizedBox(width: AppSpace.md),
               Tooltip(
                 message: context.l10n.statusRelayCapTip,
                 child: Text(

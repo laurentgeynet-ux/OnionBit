@@ -14,7 +14,11 @@
 #   - journaux developpeur (uiLog, debugPrint, log) ;
 #   - autonyme 'Francais' (selecteur de langue) ;
 #   - listes `keywords:` de recherche dans les reglages (non affichees
-#     telles quelles — termes de correspondance bilingues).
+#     telles quelles — termes de correspondance bilingues) ;
+#   - le guide de style `/_style-guide` (ADR-0021 §7) : page de
+#     specimen reservee aux developpeurs, montee uniquement en debug
+#     (kDebugMode) ; ses chaines accentuees testent deliberement la
+#     couverture de glyphes des polices auto-hebergees.
 #
 # Usage : pwsh -ExecutionPolicy Bypass -File scripts/check_i18n.ps1
 # Code de sortie : 0 = propre, 1 = litteraux francais detectes.
@@ -61,7 +65,8 @@ $violations = @()
 Get-ChildItem -Path $libDir -Recurse -Filter '*.dart' |
     Where-Object {
         $_.Name -notlike 'app_localizations*' -and
-        $_.DirectoryName -notlike '*\l10n'
+        $_.DirectoryName -notlike '*\l10n' -and
+        $_.DirectoryName -notlike '*\style_guide'
     } |
     ForEach-Object {
         $file = $_.FullName

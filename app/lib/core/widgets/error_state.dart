@@ -6,7 +6,7 @@ import 'package:flutter/material.dart';
 
 import '../api/api_client.dart';
 import '../l10n/l10n_ext.dart';
-import '../theme/app_theme.dart';
+import '../design/design_tokens.dart';
 
 /// État d'erreur générique avec action de nouvelle tentative — consommé
 /// par les écrans branchés sur un `AsyncValue.error` Riverpod.
@@ -35,12 +35,12 @@ class ErrorState extends StatelessWidget {
     };
     return Center(
       child: Padding(
-        padding: const EdgeInsets.all(AppSpacing.lg),
+        padding: const EdgeInsets.all(AppSpace.lg),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(icon, size: 48, color: theme.colorScheme.error),
-            const SizedBox(height: AppSpacing.md),
+            const SizedBox(height: AppSpace.md),
             Text(
               unreachable
                   ? context.l10n.daemonUnreachableTitle
@@ -49,7 +49,7 @@ class ErrorState extends StatelessWidget {
               textAlign: TextAlign.center,
             ),
             if (unreachable) ...[
-              const SizedBox(height: AppSpacing.sm),
+              const SizedBox(height: AppSpace.sm),
               Text(
                 message,
                 style: theme.textTheme.bodyMedium,
@@ -57,7 +57,7 @@ class ErrorState extends StatelessWidget {
               ),
             ],
             if (onRetry != null) ...[
-              const SizedBox(height: AppSpacing.md),
+              const SizedBox(height: AppSpace.md),
               FilledButton.tonal(
                 onPressed: onRetry,
                 child: Text(context.l10n.retry),

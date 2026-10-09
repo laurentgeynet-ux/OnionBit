@@ -9,7 +9,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../config/connection_settings.dart';
 import '../di/providers.dart';
 import '../l10n/l10n_ext.dart';
-import '../theme/app_theme.dart';
+import '../design/design_tokens.dart';
 
 /// Bannière « daemon injoignable » — visible tant que le SSE est
 /// coupé. Si l'API répond mais rejette l'auth (401 : cas nominal web,
@@ -29,8 +29,8 @@ class DaemonUnreachableBanner extends ConsumerWidget {
       color: scheme.errorContainer,
       child: Padding(
         padding: const EdgeInsets.symmetric(
-          horizontal: AppSpacing.md,
-          vertical: AppSpacing.xs,
+          horizontal: AppSpace.md,
+          vertical: AppSpace.xs,
         ),
         child: Row(
           children: [
@@ -39,7 +39,7 @@ class DaemonUnreachableBanner extends ConsumerWidget {
               size: 18,
               color: scheme.onErrorContainer,
             ),
-            const SizedBox(width: AppSpacing.sm),
+            const SizedBox(width: AppSpace.sm),
             Expanded(
               child: Text(
                 unauthorized
@@ -60,7 +60,7 @@ class DaemonUnreachableBanner extends ConsumerWidget {
                 icon: const Icon(Icons.refresh, size: 16),
                 label: Text(context.l10n.retry),
               ),
-              const SizedBox(width: AppSpacing.xs),
+              const SizedBox(width: AppSpace.xs),
             ],
             FilledButton.tonalIcon(
               onPressed: () => _ConnectionDialog.show(context),
@@ -146,7 +146,7 @@ class _ConnectionDialogState extends ConsumerState<_ConnectionDialog> {
                 errorText: _error,
               ),
             ),
-            const SizedBox(height: AppSpacing.sm),
+            const SizedBox(height: AppSpace.sm),
             TextField(
               controller: _key,
               obscureText: true,

@@ -4,6 +4,7 @@
 
 import 'package:flutter/material.dart';
 
+import '../../../../core/design/design_tokens.dart';
 import '../../../../core/l10n/l10n_ext.dart';
 import '../../../../core/widgets/status_chip.dart';
 import '../../../../l10n/app_localizations.dart' show AppLocalizations;
@@ -23,11 +24,12 @@ class DownloadProgressBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    final semantic = context.semanticColors;
     final (label, tone) = _mapStatus(context.l10n, download);
     final color = switch (tone) {
-      StatusTone.positive => scheme.primary,
+      StatusTone.positive => semantic.success,
       StatusTone.neutral => scheme.outline,
-      StatusTone.warning => scheme.tertiary,
+      StatusTone.warning => semantic.warning,
       StatusTone.negative => scheme.error,
     };
     return SizedBox(
@@ -87,7 +89,7 @@ class DownloadProgressBar extends StatelessWidget {
 
 /// Badge d'anonymat explicite : « Clair » (trafic direct, badge
 /// d'avertissement rempli — IP exposée) ou « Anon ×N » (N sauts de
-/// circuit, contour primaire). Couleur tertiaire = « en attente de
+/// circuit, contour primaire). Couleur `warning` = « en attente de
 /// circuit » (le kill switch bloque le trafic sans circuit).
 class AnonBadge extends StatelessWidget {
   const AnonBadge({super.key, required this.download});
@@ -98,6 +100,7 @@ class AnonBadge extends StatelessWidget {
   Widget build(BuildContext context) {
     final l10n = context.l10n;
     final scheme = Theme.of(context).colorScheme;
+    final semantic = context.semanticColors;
     final hops = download.hops;
     final anon = download.anonDownload && hops > 0;
     final waiting =
@@ -107,7 +110,7 @@ class AnonBadge extends StatelessWidget {
     final color = !anon
         ? scheme.onErrorContainer
         : waiting
-        ? scheme.tertiary
+        ? semantic.warning
         : scheme.primary;
     return Tooltip(
       message: !anon

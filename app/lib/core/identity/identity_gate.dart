@@ -26,7 +26,7 @@ import '../api/events.dart';
 import '../api/sse_client.dart';
 import '../di/providers.dart';
 import '../l10n/l10n_ext.dart';
-import '../theme/app_theme.dart';
+import '../design/design_tokens.dart';
 
 /// Statut identitaire du daemon (ADR-0016). Pas de polling (timers
 /// interdits en test) : réévalué sur `events_start` (session résolue
@@ -62,7 +62,7 @@ class IdentityGatePage extends StatelessWidget {
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 520),
           child: SingleChildScrollView(
-            padding: const EdgeInsets.all(AppSpacing.lg),
+            padding: const EdgeInsets.all(AppSpace.lg),
             child: locked
                 ? const _LockedGate()
                 : const _PendingGate(),
@@ -84,13 +84,13 @@ class GuestBanner extends StatelessWidget {
       color: scheme.tertiaryContainer,
       child: Padding(
         padding: const EdgeInsets.symmetric(
-          horizontal: AppSpacing.md,
-          vertical: AppSpacing.xs,
+          horizontal: AppSpace.md,
+          vertical: AppSpace.xs,
         ),
         child: Row(
           children: [
             Icon(Icons.person_off_outlined, size: 18, color: scheme.onTertiaryContainer),
-            const SizedBox(width: AppSpacing.sm),
+            const SizedBox(width: AppSpace.sm),
             Expanded(
               child: Text(
                 context.l10n.guestBanner,
@@ -135,7 +135,7 @@ class _RemovableStorageBannerState
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(l10n.removableBannerBody),
-            const SizedBox(height: AppSpacing.sm),
+            const SizedBox(height: AppSpace.sm),
             TextField(
               controller: pw,
               obscureText: true,
@@ -190,8 +190,8 @@ class _RemovableStorageBannerState
       color: scheme.errorContainer,
       child: Padding(
         padding: const EdgeInsets.symmetric(
-          horizontal: AppSpacing.md,
-          vertical: AppSpacing.xs,
+          horizontal: AppSpace.md,
+          vertical: AppSpace.xs,
         ),
         child: Row(
           children: [
@@ -200,7 +200,7 @@ class _RemovableStorageBannerState
               size: 18,
               color: scheme.onErrorContainer,
             ),
-            const SizedBox(width: AppSpacing.sm),
+            const SizedBox(width: AppSpace.sm),
             Expanded(
               child: Text(
                 l10n.removableBannerBody,
@@ -292,19 +292,19 @@ class _PendingGateState extends ConsumerState<_PendingGate> {
           size: 64,
           color: Theme.of(context).colorScheme.primary,
         ),
-        const SizedBox(height: AppSpacing.md),
+        const SizedBox(height: AppSpace.md),
         Text(
           l10n.gatePendingTitle,
           style: Theme.of(context).textTheme.headlineSmall,
           textAlign: TextAlign.center,
         ),
-        const SizedBox(height: AppSpacing.sm),
+        const SizedBox(height: AppSpace.sm),
         Text(
           l10n.gatePendingBody,
           style: Theme.of(context).textTheme.bodyMedium,
           textAlign: TextAlign.center,
         ),
-        const SizedBox(height: AppSpacing.lg),
+        const SizedBox(height: AppSpace.lg),
         _GateCard(
           icon: Icons.auto_awesome,
           title: l10n.gateNewIdentity,
@@ -317,7 +317,7 @@ class _PendingGateState extends ConsumerState<_PendingGate> {
                       .identityCreate(),
                 ),
         ),
-        const SizedBox(height: AppSpacing.sm),
+        const SizedBox(height: AppSpace.sm),
         _GateCard(
           icon: Icons.restore,
           title: l10n.gateRestore,
@@ -327,7 +327,7 @@ class _PendingGateState extends ConsumerState<_PendingGate> {
               : () => setState(() => _restoreOpen = !_restoreOpen),
         ),
         if (_restoreOpen) ...[
-          const SizedBox(height: AppSpacing.sm),
+          const SizedBox(height: AppSpace.sm),
           TextField(
             controller: _restoreField,
             enabled: !_busy,
@@ -338,7 +338,7 @@ class _PendingGateState extends ConsumerState<_PendingGate> {
               border: const OutlineInputBorder(),
             ),
           ),
-          const SizedBox(height: AppSpacing.sm),
+          const SizedBox(height: AppSpace.sm),
           TextField(
             controller: _restorePassword,
             enabled: !_busy,
@@ -349,14 +349,14 @@ class _PendingGateState extends ConsumerState<_PendingGate> {
             ),
             onSubmitted: (_) => _restore(),
           ),
-          const SizedBox(height: AppSpacing.sm),
+          const SizedBox(height: AppSpace.sm),
           FilledButton.icon(
             onPressed: _busy ? null : _restore,
             icon: const Icon(Icons.download_outlined, size: 18),
             label: Text(l10n.gateRestoreGo),
           ),
         ],
-        const SizedBox(height: AppSpacing.sm),
+        const SizedBox(height: AppSpace.sm),
         _GateCard(
           icon: Icons.person_off_outlined,
           title: l10n.gateGuest,
@@ -370,11 +370,11 @@ class _PendingGateState extends ConsumerState<_PendingGate> {
                 ),
         ),
         if (_busy) ...[
-          const SizedBox(height: AppSpacing.md),
+          const SizedBox(height: AppSpace.md),
           const Center(child: CircularProgressIndicator()),
         ],
         if (_error != null) ...[
-          const SizedBox(height: AppSpacing.md),
+          const SizedBox(height: AppSpace.md),
           Text(
             _error!,
             style: TextStyle(color: Theme.of(context).colorScheme.error),
@@ -458,19 +458,19 @@ class _LockedGateState extends ConsumerState<_LockedGate> {
           size: 64,
           color: Theme.of(context).colorScheme.primary,
         ),
-        const SizedBox(height: AppSpacing.md),
+        const SizedBox(height: AppSpace.md),
         Text(
           l10n.gateLockedTitle,
           style: Theme.of(context).textTheme.headlineSmall,
           textAlign: TextAlign.center,
         ),
-        const SizedBox(height: AppSpacing.sm),
+        const SizedBox(height: AppSpace.sm),
         Text(
           l10n.gateLockedBody,
           style: Theme.of(context).textTheme.bodyMedium,
           textAlign: TextAlign.center,
         ),
-        const SizedBox(height: AppSpacing.lg),
+        const SizedBox(height: AppSpace.lg),
         TextField(
           controller: _password,
           enabled: !_busy,
@@ -482,23 +482,23 @@ class _LockedGateState extends ConsumerState<_LockedGate> {
           ),
           onSubmitted: (_) => _unlock(),
         ),
-        const SizedBox(height: AppSpacing.md),
+        const SizedBox(height: AppSpace.md),
         FilledButton.icon(
           onPressed: _busy ? null : _unlock,
           icon: const Icon(Icons.lock_open, size: 18),
           label: Text(l10n.gateUnlock),
         ),
-        const SizedBox(height: AppSpacing.sm),
+        const SizedBox(height: AppSpace.sm),
         TextButton(
           onPressed: _busy ? null : _guest,
           child: Text(l10n.gateGuestEscape),
         ),
         if (_busy) ...[
-          const SizedBox(height: AppSpacing.md),
+          const SizedBox(height: AppSpace.md),
           const Center(child: CircularProgressIndicator()),
         ],
         if (_error != null) ...[
-          const SizedBox(height: AppSpacing.md),
+          const SizedBox(height: AppSpace.md),
           Text(
             _error!,
             style: TextStyle(color: Theme.of(context).colorScheme.error),

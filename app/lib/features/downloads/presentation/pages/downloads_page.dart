@@ -10,7 +10,7 @@ import 'package:go_router/go_router.dart';
 import '../../../../core/l10n/l10n_ext.dart';
 import '../../../../core/layout/breakpoints.dart';
 import '../../../../core/platform/desktop_shell.dart';
-import '../../../../core/theme/app_theme.dart';
+import '../../../../core/design/design_tokens.dart';
 import '../../../../core/widgets/empty_state.dart';
 import '../../../../core/widgets/error_state.dart';
 import '../../domain/download.dart';
@@ -309,8 +309,8 @@ class _Toolbar extends ConsumerWidget {
       color: Theme.of(context).colorScheme.surface,
       child: Padding(
         padding: const EdgeInsets.symmetric(
-          horizontal: AppSpacing.md,
-          vertical: AppSpacing.xs,
+          horizontal: AppSpace.md,
+          vertical: AppSpace.xs,
         ),
         child: Column(
           children: [
@@ -330,7 +330,7 @@ class _Toolbar extends ConsumerWidget {
                       mode: ref.watch(downloadViewModeProvider),
                     ),
                   if (onNameFilter != null) ...[
-                    const SizedBox(width: AppSpacing.sm),
+                    const SizedBox(width: AppSpace.sm),
                     SizedBox(
                       width: 180,
                       child: TextField(
@@ -349,7 +349,7 @@ class _Toolbar extends ConsumerWidget {
                     l10n.selectedCount(selection.length),
                     style: Theme.of(context).textTheme.titleSmall,
                   ),
-                  const SizedBox(width: AppSpacing.md),
+                  const SizedBox(width: AppSpace.md),
                   IconButton(
                     tooltip: l10n.resume,
                     onPressed: () => run(l10n.actResume, notifier.resume),
@@ -375,7 +375,7 @@ class _Toolbar extends ConsumerWidget {
               ],
             ),
             if (compact) ...[
-              const SizedBox(height: AppSpacing.xs),
+              const SizedBox(height: AppSpace.xs),
               SizedBox(
                 height: 36,
                 child: ListView(
@@ -383,7 +383,7 @@ class _Toolbar extends ConsumerWidget {
                   children: [
                     for (final f in DownloadFilter.values)
                       Padding(
-                        padding: const EdgeInsets.only(right: AppSpacing.xs),
+                        padding: const EdgeInsets.only(right: AppSpace.xs),
                         child: ChoiceChip(
                           label: Text(f.label(context.l10n)),
                           selected: f == filter,
@@ -495,8 +495,8 @@ class _HeaderRow extends ConsumerWidget {
 
     return Padding(
       padding: const EdgeInsets.symmetric(
-        horizontal: AppSpacing.sm,
-        vertical: AppSpacing.xs,
+        horizontal: AppSpace.sm,
+        vertical: AppSpace.xs,
       ),
       child: Row(
         children: [
@@ -552,8 +552,8 @@ class _DownloadRow extends ConsumerWidget {
             _DownloadsContextMenu.show(context, details.globalPosition, d),
         child: Padding(
           padding: const EdgeInsets.symmetric(
-            horizontal: AppSpacing.sm,
-            vertical: AppSpacing.xs,
+            horizontal: AppSpace.sm,
+            vertical: AppSpace.xs,
           ),
           child: Row(
             children: [
@@ -579,7 +579,7 @@ class _DownloadRow extends ConsumerWidget {
                 flex: 3,
                 child: Padding(
                   padding: const EdgeInsets.symmetric(
-                    horizontal: AppSpacing.sm,
+                    horizontal: AppSpace.sm,
                   ),
                   child: DownloadProgressBar(download: d),
                 ),
@@ -1176,12 +1176,12 @@ class _GridView extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     return GridView.builder(
-      padding: const EdgeInsets.all(AppSpacing.sm),
+      padding: const EdgeInsets.all(AppSpace.sm),
       gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
         maxCrossAxisExtent: 340,
         mainAxisExtent: 120,
-        mainAxisSpacing: AppSpacing.sm,
-        crossAxisSpacing: AppSpacing.sm,
+        mainAxisSpacing: AppSpace.sm,
+        crossAxisSpacing: AppSpace.sm,
       ),
       itemCount: downloads.length,
       itemBuilder: (context, i) =>
@@ -1222,14 +1222,14 @@ class _GridCard extends ConsumerWidget {
         onSecondaryTapUp: (details) =>
             _DownloadsContextMenu.show(context, details.globalPosition, d),
         child: Padding(
-          padding: const EdgeInsets.all(AppSpacing.sm),
+          padding: const EdgeInsets.all(AppSpace.sm),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Row(
                 children: [
                   _HealthDot(download: d),
-                  const SizedBox(width: AppSpacing.xs),
+                  const SizedBox(width: AppSpace.xs),
                   Expanded(
                     child: Text(
                       d.name.isEmpty ? d.infohash : d.name,
@@ -1240,7 +1240,7 @@ class _GridCard extends ConsumerWidget {
                   _RowBadges(download: d, twin: _isTwin(ordered, d)),
                 ],
               ),
-              const SizedBox(height: AppSpacing.xs),
+              const SizedBox(height: AppSpace.xs),
               DownloadProgressBar(download: d),
               const Spacer(),
               Text(

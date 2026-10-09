@@ -12,7 +12,7 @@ import '../../../../core/api/api_client.dart';
 import '../../../../core/l10n/l10n_ext.dart';
 import '../../../../core/platform/pick_directory.dart';
 import '../../../../core/platform/pick_file.dart';
-import '../../../../core/theme/app_theme.dart';
+import '../../../../core/design/design_tokens.dart';
 import '../../../settings/presentation/providers/settings_providers.dart';
 import '../../domain/torrent_preview.dart';
 import '../providers/downloads_providers.dart';
@@ -258,7 +258,7 @@ class _AddDownloadDialogState extends ConsumerState<AddDownloadDialog> {
               ),
               onChanged: (_) => setState(() {}),
             ),
-            const SizedBox(height: AppSpacing.sm),
+            const SizedBox(height: AppSpace.sm),
             Row(
               children: [
                 OutlinedButton.icon(
@@ -279,9 +279,9 @@ class _AddDownloadDialogState extends ConsumerState<AddDownloadDialog> {
               ],
             ),
             if (_privateTorrent) ...[
-              const SizedBox(height: AppSpacing.sm),
+              const SizedBox(height: AppSpace.sm),
               Container(
-                padding: const EdgeInsets.all(AppSpacing.sm),
+                padding: const EdgeInsets.all(AppSpace.sm),
                 decoration: BoxDecoration(
                   color: theme.colorScheme.errorContainer,
                   borderRadius: BorderRadius.circular(8),
@@ -295,7 +295,7 @@ class _AddDownloadDialogState extends ConsumerState<AddDownloadDialog> {
                       color: theme.colorScheme.error,
                       size: 22,
                     ),
-                    const SizedBox(width: AppSpacing.sm),
+                    const SizedBox(width: AppSpace.sm),
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -320,9 +320,9 @@ class _AddDownloadDialogState extends ConsumerState<AddDownloadDialog> {
                 ),
               ),
             ],
-            const SizedBox(height: AppSpacing.md),
+            const SizedBox(height: AppSpace.md),
             Text(l10n.storageAreaLabel, style: theme.textTheme.labelMedium),
-            const SizedBox(height: AppSpacing.xs),
+            const SizedBox(height: AppSpace.xs),
             SegmentedButton<String>(
               segments: [
                 ButtonSegment(
@@ -340,7 +340,7 @@ class _AddDownloadDialogState extends ConsumerState<AddDownloadDialog> {
               selected: {_area},
               onSelectionChanged: (s) => setState(() => _area = s.first),
             ),
-            const SizedBox(height: AppSpacing.xs),
+            const SizedBox(height: AppSpace.xs),
             Text(
               _area == 'private'
                   ? l10n.storageAreaPrivateHint
@@ -349,9 +349,9 @@ class _AddDownloadDialogState extends ConsumerState<AddDownloadDialog> {
                 color: theme.colorScheme.outline,
               ),
             ),
-            const SizedBox(height: AppSpacing.md),
+            const SizedBox(height: AppSpace.md),
             Text(l10n.rowAnon, style: theme.textTheme.labelMedium),
-            const SizedBox(height: AppSpacing.xs),
+            const SizedBox(height: AppSpace.xs),
             SegmentedButton<int>(
               segments: [
                 ButtonSegment(value: 0, label: Text(l10n.anonDirect)),
@@ -370,7 +370,7 @@ class _AddDownloadDialogState extends ConsumerState<AddDownloadDialog> {
                 _hopsInitialized = true;
               }),
             ),
-            const SizedBox(height: AppSpacing.xs),
+            const SizedBox(height: AppSpace.xs),
             Text(
               _hops == 0 ? l10n.anonDirectWarn : l10n.anonRelaysInfo(_hops),
               style: theme.textTheme.bodySmall?.copyWith(
@@ -382,7 +382,7 @@ class _AddDownloadDialogState extends ConsumerState<AddDownloadDialog> {
                     : theme.colorScheme.outline,
               ),
             ),
-            const SizedBox(height: AppSpacing.md),
+            const SizedBox(height: AppSpace.md),
             // Destination libre : zone publique uniquement — la zone
             // privée impose son arborescence opaque gérée par le
             // daemon (`data/private/temp|downloads/<hmac>/…`).
@@ -416,7 +416,7 @@ class _AddDownloadDialogState extends ConsumerState<AddDownloadDialog> {
               dense: true,
             ),
             if (_error != null) ...[
-              const SizedBox(height: AppSpacing.sm),
+              const SizedBox(height: AppSpace.sm),
               Text(
                 _error!,
                 style: theme.textTheme.bodySmall?.copyWith(
