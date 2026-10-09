@@ -36,11 +36,34 @@ pub async fn api_key_auth(
         return next.run(req).await;
     };
 
+    // `POST /api/pairing/redeem` est la seule route `/api` exemptee
+    // de cle : le mobile vient precisement la chercher — le jeton
+    // d'appairage (128 bits, usage unique, TTL court, `redeem`
+    // rate-limite) tient lieu d'authentification (ADR-0021 §8). La
+    // route passe quand meme par `identity_gate` (couche interne).
+    if is_pairing_redeem(&req) {
+        return next.run(req).await;
+    }
+
     if key_matches(&req, expected) {
         next.run(req).await
     } else {
         ApiError::unauthorized().into_response()
     }
+}
+
+/// `true` pour `POST /api/pairing/redeem` — unique exemption de la
+/// cle API. `OriginalUri` conserve le chemin complet sous
+/// `nest("/api", …)`, comme dans `router::identity_gate`.
+fn is_pairing_redeem(req: &Request<axum::body::Body>) -> bool {
+    if req.method() != axum::http::Method::POST {
+        return false;
+    }
+    let path = req
+        .extensions()
+        .get::<axum::extract::OriginalUri>()
+        .map_or_else(|| req.uri().path(), |u| u.path());
+    path == "/api/pairing/redeem"
 }
 
 /// La requete porte-t-elle la cle attendue ? Comparaison en temps

@@ -48,6 +48,8 @@ dependencies:
   flutter_svg: ^2.3.0
   fetch_client: ^1.2.1
   web: ^1.1.1
+  qr_flutter: ^4.1.0
+  mobile_scanner: ^7.4.2
 
 dev_dependencies:
   flutter_test:

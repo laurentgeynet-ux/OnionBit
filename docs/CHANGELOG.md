@@ -3,6 +3,54 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## ADR-0021 étape 76 : onboarding identité + appairage mobile par QR (2026-10-09, worktree adr21)
+
+- **Endpoint d'appairage** (`onionbit-api`) : `POST /api/pairing/token`
+  (authentifié — émet le jeton 128 bits à TTL court
+  `api.pairing.token_ttl_secs`) et `POST /api/pairing/redeem` —
+  unique exemption d'`api_key_auth` (`OriginalUri` + méthode POST
+  exacte : le mobile vient chercher la clé, il ne la possède pas).
+  Jeton en mémoire seulement (`PairingStore`), usage unique,
+  comparaison `subtle::ConstantTimeEq`, réémission = grant précédent
+  caduc ; `redeem` rate-limité (`UnlockRateLimiter` réutilisé : par
+  IP `ConnectInfo` + global, seuils `api.pairing.redeem_*`).
+  `409 pairing_disabled` sans clé API configurée ; `409` également
+  sous `identity_gate` en `pending`/`locked`.
+- **Onboarding en étapes** (`core/identity/onboarding_wizard.dart`,
+  remplace le gate `pending` en liste plate) : choix → création (mot
+  de passe at-rest optionnel) ou restauration (phrase BIP39 ou
+  blob `OBID`/hex auto-détecté). La phrase de récupération s'affiche
+  en dialogue modal posé sur le **navigateur racine** — il survit à
+  la résolution du gate (passage `ready`) ; grille de mots numérotés
+  en JetBrains Mono, copie presse-papiers, confirmation « j'ai noté »
+  obligatoire avant de terminer.
+- **Appairage QR** (`core/pairing/`) : payload versionné
+  `onionbit://pair/1?host&port&token` — la clé API n'y figure jamais.
+  Feuille desktop (`pairing_sheet.dart`) : émission du jeton, QR
+  `qr_flutter`, compte à rebours TTL, régénération, hôte éditable
+  avec suggestion des IP LAN (`lan_addresses` conditionnel `dart:io`)
+  et avertissement loopback. Scan mobile via `mobile_scanner` derrière
+  import conditionnel (`qr_scanner_native`/`_stub`) — web et
+  Windows/Linux non couverts par le plugin répondent proprement ;
+  `scan_support` masque les boutons hors cibles caméra. `PairingApi.
+  redeem` part **sans** clé API et persiste la connexion via
+  `connectionSettingsProvider` ; actions intégrées dans Réglages →
+  Connexion (`connection_section.dart`).
+- **Revue sécurité dédiée** (ADR-0021 §9) : exemption auth exacte
+  (chemin + méthode — ni préfixe ni slash final ne contournent),
+  entropie 128 bits, anti-rejeu TTL + usage unique, rate-limit sur IP
+  TCP réelle (`ConnectInfo`, `X-Forwarded-For` non lu), aucun secret
+  en log ni persistance, erreur 401 uniforme (invalide/expiré/consommé
+  indiscernables).
+- **Tests** (+20, 73 au total Flutter) : payload encode/parse strict
+  (11 formes rejetées), `redeem` sans `X-Api-Key` + 401 (`MockClient`),
+  feuille QR (TTL, régénération), section Connexion (boutons selon
+  plateforme), wizard (étape création, dialogue phrase bloquant).
+  Rust : 3 tests pairing dans `tests/api.rs` — désactivé sans clé,
+  réémission invalide l'ancien jeton, usage unique. Validation :
+  analyze 0 issue, 73 tests + build web verts, i18n + GPL propres,
+  `cargo fmt`/`clippy`/`test -p onionbit-api` (77 tests) verts.
+
 ## ADR-0021 étape 75 : réglages par paliers + Privacy HUD (2026-10-09, worktree adr21)
 
 - **Réglages par catégories repliables** : les 15 sections sont

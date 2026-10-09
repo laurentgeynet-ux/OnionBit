@@ -405,7 +405,12 @@ place).
   mobile (§8) nécessite un endpoint minimal côté `onionbit-api`
   (émission + validation d'un jeton court, usage unique). Traité
   comme partie de l'étape 76 (§10), avec sa propre revue de
-  sécurité — jamais comme un détail UI.
+  sécurité — jamais comme un détail UI. **Livré à l'étape 76** :
+  `POST /api/pairing/token` + `POST /api/pairing/redeem` (seule
+  exemption `api_key_auth`, `OriginalUri` + POST exact), revue
+  faite — entropie 128 bits, TTL/usage unique/réémission caduque,
+  rate-limit sur IP `ConnectInfo` réelle, 401 uniforme, aucun secret
+  en log ni persistance (détail dans `docs/CHANGELOG.md`, étape 76).
 
 ### 10. Découpage en étapes (Phase 13 de la roadmap, étapes 70–77)
 

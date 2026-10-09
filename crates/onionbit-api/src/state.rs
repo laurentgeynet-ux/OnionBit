@@ -137,6 +137,64 @@ impl Default for UnlockRateLimiter {
     }
 }
 
+/// Grant d'appairage en cours — memoire uniquement, jamais persiste.
+struct PairingGrant {
+    /// Jeton hex affiche dans le QR (128 bits aleatoires).
+    token: String,
+    /// Expiration absolue (`Instant` — pas d'horloge externe).
+    expires: std::time::Instant,
+}
+
+/// Jeton d'appairage mobile (ADR-0021 §8, etape 76) : un seul grant
+/// a la fois — regenerer le QR invalide immediatement le precedent
+/// (le jeton a l'ecran est le seul valable). Le jeton vit en clair
+/// ici : il est ephemere, en memoire seulement, et sa valeur est deja
+/// celle d'un bearer — comme la cle API dans `AppState`.
+pub struct PairingStore {
+    grant: Mutex<Option<PairingGrant>>,
+}
+
+impl PairingStore {
+    /// Remplace tout grant en cours (nouveau QR = ancien caduc).
+    pub fn issue(&self, token: String, ttl: std::time::Duration) {
+        *self.grant.lock().unwrap_or_else(|e| e.into_inner()) = Some(PairingGrant {
+            token,
+            expires: std::time::Instant::now() + ttl,
+        });
+    }
+
+    /// `true` si `token` correspond au grant vivant — le grant est
+    /// alors consomme (usage unique) ; un grant perime est purge a
+    /// la lecture. Comparaison en temps constant : meme menace de
+    /// timing que la cle API (`auth.rs`), l'API peut etre exposee
+    /// hors loopback par `api.http_host`.
+    pub fn redeem(&self, token: &str) -> bool {
+        let mut grant = self.grant.lock().unwrap_or_else(|e| e.into_inner());
+        match grant.as_ref() {
+            Some(g) if g.expires <= std::time::Instant::now() => {
+                *grant = None;
+                false
+            }
+            Some(g)
+                if subtle::ConstantTimeEq::ct_eq(g.token.as_bytes(), token.as_bytes()).into() =>
+            {
+                *grant = None;
+                true
+            }
+            Some(_) => false,
+            None => false,
+        }
+    }
+}
+
+impl Default for PairingStore {
+    fn default() -> Self {
+        Self {
+            grant: Mutex::new(None),
+        }
+    }
+}
+
 /// Etat injecte dans tous les handlers.
 #[derive(Clone)]
 pub struct AppState {
@@ -179,6 +237,13 @@ pub struct AppState {
     /// Rate-limiter de `POST /api/identity/unlock` (ADR-0016) —
     /// borne anti brute-force du mot de passe `OBSK`.
     pub unlock_limiter: Arc<UnlockRateLimiter>,
+    /// Jeton d'appairage mobile en cours (ADR-0021 §8) — grant
+    /// unique, TTL court, consomme au premier `redeem` reussi.
+    pub pairing: Arc<PairingStore>,
+    /// Rate-limiter de `POST /api/pairing/redeem` — borne anti
+    /// brute-force du jeton (instance separee d'`unlock_limiter` :
+    /// les budgets ne se partagent pas).
+    pub pairing_limiter: Arc<UnlockRateLimiter>,
 }
 
 impl AppState {
@@ -197,6 +262,8 @@ impl AppState {
             web_ui_dir: None,
             web_ui_inject_key: true,
             unlock_limiter: Arc::new(UnlockRateLimiter::default()),
+            pairing: Arc::new(PairingStore::default()),
+            pairing_limiter: Arc::new(UnlockRateLimiter::default()),
         }
     }
 

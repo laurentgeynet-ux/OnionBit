@@ -28,5 +28,7 @@
 	<string>MainMenu</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<key>NSCameraUsageDescription</key>
+	<string>La caméra sert uniquement à scanner le QR d'appairage affiché par un autre poste.</string>
 </dict>
 </plist>

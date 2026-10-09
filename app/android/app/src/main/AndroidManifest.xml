@@ -1,4 +1,10 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- INTERNET : l'app pilote le daemon par HTTP (modèle
+         « télécommande » — indispensable en release, les manifests
+         debug/profile ne couvrent que le développement). CAMERA :
+         scan du QR d'appairage (`mobile_scanner`, étape 76). -->
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <uses-permission android:name="android.permission.CAMERA"/>
     <application
         android:label="onionbit_ui"
         android:name="${applicationName}"

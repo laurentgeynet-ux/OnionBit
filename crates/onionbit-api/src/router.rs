@@ -261,6 +261,11 @@ fn api_router(state: AppState) -> Router<AppState> {
         .route("/identity/create", post(identity::create_identity))
         .route("/identity/guest", post(identity::guest_identity))
         .route("/identity/at_rest", post(identity::set_at_rest))
+        // Appairage mobile par QR (ADR-0021 §8) : `token` derriere la
+        // cle (le desktop est authentifie) ; `redeem` est exemptee
+        // dans `auth.rs` — le mobile vient chercher la cle.
+        .route("/pairing/token", post(pairing::post_token))
+        .route("/pairing/redeem", post(pairing::post_redeem))
         .route("/ipv8/ext/attest", post(ipv8::post_ext_attest))
         .route("/ipv8/ext/attestations", get(ipv8::get_ext_attestations))
         .route("/ipv8/ext/ledger", get(ipv8::get_ext_ledger))

@@ -42,7 +42,8 @@ class _FakeRepo implements SettingsRepository {
   @override
   Future<Map<String, dynamic>> identityStatus() async => {};
   @override
-  Future<String?> identityRecoveryPhrase({String? lang}) async => null;
+  Future<String?> identityRecoveryPhrase({String? lang}) async =>
+      'abandon ability able about above absent absorb abstract';
   @override
   Future<Map<String, dynamic>> identityExport({String? password}) async => {};
   @override
@@ -97,9 +98,26 @@ void main() {
     expect(find.text('Guest session'), findsOneWidget);
   });
 
-  testWidgets('gate pending : « nouvelle identité » appelle create', (
-    tester,
-  ) async {
+  testWidgets('gate pending : « nouvelle identité » → étape création '
+      'puis create (étape 76 — wizard)', (tester) async {
+    final repo = _FakeRepo();
+    await tester.pumpWidget(
+      _gateApp(repo, const IdentityGatePage(locked: false)),
+    );
+    await tester.pumpAndSettle();
+    // Étape « choix » : la carte n'appelle pas encore create, elle
+    // ouvre l'étape dédiée (mot de passe at-rest optionnel).
+    await tester.tap(find.text('New identity'));
+    await tester.pumpAndSettle();
+    expect(repo.createCalled, isFalse);
+    await tester.tap(find.text('Create my identity'));
+    await tester.pumpAndSettle();
+    expect(repo.createCalled, isTrue);
+    expect(repo.guestCalled, isFalse);
+  });
+
+  testWidgets('gate pending : phrase de récupération présentée après '
+      'create (dialogue navigateur racine)', (tester) async {
     final repo = _FakeRepo();
     await tester.pumpWidget(
       _gateApp(repo, const IdentityGatePage(locked: false)),
@@ -107,8 +125,20 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('New identity'));
     await tester.pumpAndSettle();
-    expect(repo.createCalled, isTrue);
-    expect(repo.guestCalled, isFalse);
+    await tester.tap(find.text('Create my identity'));
+    await tester.pumpAndSettle();
+    // Le fake rend une phrase → le dialogue de sauvegarde s'affiche.
+    expect(find.text('Recovery phrase'), findsOneWidget);
+    // « Done » reste désactivé tant que la phrase n'est pas confirmée.
+    final done = tester.widget<FilledButton>(
+      find.widgetWithText(FilledButton, 'Done'),
+    );
+    expect(done.onPressed, isNull);
+    await tester.tap(find.byType(CheckboxListTile));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Done'));
+    await tester.pumpAndSettle();
+    expect(find.text('Recovery phrase'), findsNothing);
   });
 
   testWidgets('gate pending : invité appelle guest', (tester) async {

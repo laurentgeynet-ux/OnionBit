@@ -4434,3 +4434,131 @@ async fn identite_at_rest_refuse_via_settings() {
     assert_eq!(body["settings"]["identity"]["at_rest"], false);
     srv.session.stop().await;
 }
+
+/// Appairage mobile (ADR-0021 §8, etape 76) : emission authentifiee
+/// du jeton, `redeem` exempte de cle (le mobile n'en a pas), usage
+/// unique, jeton inconnu rejete a l'identique.
+#[tokio::test]
+async fn pairing_token_redeem_usage_unique() {
+    let srv = spawn_server_with(|s| AppState::new(s).with_api_key("cle-de-test")).await;
+
+    // `token` reste derriere la cle (c'est l'UI desktop authentifiee
+    // qui affiche le QR).
+    let resp = srv
+        .client
+        .post(srv.url("/api/pairing/token"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 401);
+
+    let resp = srv
+        .client
+        .post(srv.url("/api/pairing/token"))
+        .header("x-api-key", "cle-de-test")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let token = body["token"].as_str().unwrap().to_string();
+    assert_eq!(token.len(), 32);
+    assert!(body["expires_in_secs"].as_u64().unwrap() > 0);
+
+    // `redeem` SANS cle — le mobile n'en a pas encore ; le jeton
+    // tient lieu d'authentification.
+    let resp = srv
+        .client
+        .post(srv.url("/api/pairing/redeem"))
+        .json(&serde_json::json!({"token": token}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["api_key"], "cle-de-test");
+
+    // Usage unique : un second redeem echoue, indiscernable d'un
+    // jeton inconnu (401 uniforme).
+    let resp = srv
+        .client
+        .post(srv.url("/api/pairing/redeem"))
+        .json(&serde_json::json!({"token": token}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 401);
+    let resp = srv
+        .client
+        .post(srv.url("/api/pairing/redeem"))
+        .json(&serde_json::json!({"token": "f".repeat(32)}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 401);
+
+    srv.session.stop().await;
+}
+
+/// Un nouveau jeton invalide le precedent — le QR affiche a l'ecran
+/// est le seul valable.
+#[tokio::test]
+async fn pairing_reemission_invalide_le_jeton_precedent() {
+    let srv = spawn_server_with(|s| AppState::new(s).with_api_key("cle-de-test")).await;
+    let issue = || {
+        srv.client
+            .post(srv.url("/api/pairing/token"))
+            .header("x-api-key", "cle-de-test")
+    };
+    let t1: serde_json::Value = issue().send().await.unwrap().json().await.unwrap();
+    let t2: serde_json::Value = issue().send().await.unwrap().json().await.unwrap();
+    let t1 = t1["token"].as_str().unwrap();
+    let t2 = t2["token"].as_str().unwrap();
+    assert_ne!(t1, t2);
+
+    // L'ancien jeton est caduc.
+    let resp = srv
+        .client
+        .post(srv.url("/api/pairing/redeem"))
+        .json(&serde_json::json!({"token": t1}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 401);
+    // Le nouveau passe.
+    let resp = srv
+        .client
+        .post(srv.url("/api/pairing/redeem"))
+        .json(&serde_json::json!({"token": t2}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    srv.session.stop().await;
+}
+
+/// Sans cle API configuree, l'appairage n'a pas de sens (l'API est
+/// ouverte) : `token` et `redeem` repondent `409 pairing_disabled`.
+#[tokio::test]
+async fn pairing_desactive_sans_cle_api() {
+    let srv = spawn_server().await;
+    let resp = srv
+        .client
+        .post(srv.url("/api/pairing/token"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 409);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["error"]["message"], "pairing_disabled");
+    let resp = srv
+        .client
+        .post(srv.url("/api/pairing/redeem"))
+        .json(&serde_json::json!({"token": "f".repeat(32)}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 409);
+    srv.session.stop().await;
+}
