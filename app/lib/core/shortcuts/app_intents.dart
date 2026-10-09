@@ -15,3 +15,8 @@ class GoToSearchIntent extends Intent {
 class AddDownloadIntent extends Intent {
   const AddDownloadIntent();
 }
+
+/// Ouvre la palette de commandes (Ctrl/Cmd+K, ADR-0021 §6).
+class OpenCommandPaletteIntent extends Intent {
+  const OpenCommandPaletteIntent();
+}

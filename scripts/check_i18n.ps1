@@ -13,8 +13,9 @@
 #   - fichiers generes gen_l10n (app_localizations*.dart) ;
 #   - journaux developpeur (uiLog, debugPrint, log) ;
 #   - autonyme 'Francais' (selecteur de langue) ;
-#   - listes `keywords:` de recherche dans les reglages (non affichees
-#     telles quelles — termes de correspondance bilingues) ;
+#   - listes `keywords:`/map `*Keywords = {}` de recherche dans les
+#     reglages et le catalogue de commandes (non affichees telles
+#     quelles — termes de correspondance bilingues, ADR-0021 §6) ;
 #   - le guide de style `/_style-guide` (ADR-0021 §7) : page de
 #     specimen reservee aux developpeurs, montee uniquement en debug
 #     (kDebugMode) ; ses chaines accentuees testent deliberement la
@@ -79,12 +80,18 @@ Get-ChildItem -Path $libDir -Recurse -Filter '*.dart' |
             $trim = $line.Trim()
             # Sortie du bloc keywords: des que le parametre nomme
             # suivant apparait (les chaines sont concatenees sur
-            # plusieurs lignes).
+            # plusieurs lignes) ou que la map `*Keywords = {…}` se
+            # referme (settings_catalog.dart — ADR-0021 §6).
             if ($inKeywords -and
-                $trim -match '^(sectionId|child|id|builder)\s*:') {
+                ($trim -match '^(sectionId|child|id|builder)\s*:' -or
+                 $trim -match '^\};?$')) {
                 $inKeywords = $false
             }
             if ($line -match 'keywords\s*:') {
+                $inKeywords = $true
+                continue
+            }
+            if ($line -match 'Keywords\s*=\s*(const\s*)?\{') {
                 $inKeywords = $true
                 continue
             }

@@ -59,6 +59,7 @@
   "msgLinkFailed": "Connection failed",
   "msgLinkOffline": "Offline",
   "msgConversations": "Conversations",
+  "msgBackToList": "Back to conversations",
   "msgNoConversations": "No conversations",
   "msgNewGroup": "New group",
   "msgGroupNameLabel": "Group name",
@@ -1204,5 +1205,13 @@
   "storageOrphansPurgeConfirm": "Delete orphan .obd/.bitv files? They are not referenced by the private manifest. This cannot be undone.",
   "removableBannerBody": "OnionBit runs from a removable or unprotected volume — your identity seed is stored in cleartext. Encrypt it with a password to protect it if the media is lost.",
   "removableBannerAction": "Encrypt identity",
-  "removableBannerDismiss": "Later"
+  "removableBannerDismiss": "Later",
+  "cmdPaletteHint": "Type a command or search…",
+  "cmdNoResults": "No matching command",
+  "cmdGroupNavigation": "Navigation",
+  "cmdGroupMessaging": "Conversations",
+  "cmdGroupSettings": "Settings",
+  "cmdGroupActions": "Actions",
+  "cmdAddDownload": "Add a download",
+  "cmdUnreadCount": "{count} unread"
 }

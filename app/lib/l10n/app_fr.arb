@@ -53,6 +53,7 @@
   "msgLinkFailed": "Échec de connexion",
   "msgLinkOffline": "Hors ligne",
   "msgConversations": "Conversations",
+  "msgBackToList": "Retour aux conversations",
   "msgNoConversations": "Aucune conversation",
   "msgNewGroup": "Nouveau groupe",
   "msgGroupNameLabel": "Nom du groupe",
@@ -860,5 +861,13 @@
   "storageOrphansPurgeConfirm": "Supprimer les fichiers .obd/.bitv orphelins ? Ils ne sont pas référencés par le manifeste privé. Action irréversible.",
   "removableBannerBody": "OnionBit tourne depuis un volume amovible ou non protégé — votre graine d'identité est stockée en clair. Chiffrez-la par mot de passe pour la protéger en cas de perte du média.",
   "removableBannerAction": "Chiffrer l'identité",
-  "removableBannerDismiss": "Plus tard"
+  "removableBannerDismiss": "Plus tard",
+  "cmdPaletteHint": "Tapez une commande ou recherchez…",
+  "cmdNoResults": "Aucune commande correspondante",
+  "cmdGroupNavigation": "Navigation",
+  "cmdGroupMessaging": "Conversations",
+  "cmdGroupSettings": "Réglages",
+  "cmdGroupActions": "Actions",
+  "cmdAddDownload": "Ajouter un téléchargement",
+  "cmdUnreadCount": "{count} non lu(s)"
 }

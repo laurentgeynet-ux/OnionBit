@@ -6,6 +6,7 @@
 // donne accès à tous les tokens et au thème.
 
 export 'app_design_theme.dart';
+export 'primitives/adaptive_list_detail.dart';
 export 'primitives/frosted_surface.dart';
 export 'tokens/color_tokens.dart';
 export 'tokens/elevation_tokens.dart';

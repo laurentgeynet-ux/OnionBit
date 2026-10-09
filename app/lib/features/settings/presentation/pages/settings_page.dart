@@ -5,10 +5,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../core/design/design_tokens.dart';
 import '../../../../core/l10n/l10n_ext.dart';
-import '../../../../core/theme/app_theme.dart';
 import '../../../../l10n/app_localizations.dart' show AppLocalizations;
 import '../providers/settings_providers.dart';
+import '../settings_catalog.dart';
 import '../widgets/anonymity_section.dart';
 import '../widgets/appearance_section.dart';
 import '../widgets/automation_section.dart';
@@ -25,62 +26,13 @@ import '../widgets/stealth_section.dart';
 import '../widgets/storage_section.dart';
 import '../widgets/versioning_section.dart';
 
-/// Identifiants des sections de réglages — les titres affichés sont
-/// localisés via [_SectionIdX.title] (ARB).
-enum _SectionId {
-  appearance,
-  downloads,
-  storage,
-  bandwidth,
-  queue,
-  seeding,
-  anonymity,
-  onionbit,
-  stealth,
-  identity,
-  network,
-  automation,
-  versioning,
-  connection,
-  daemon,
-}
-
-extension on _SectionId {
-  /// Titre localisé de la section (puce d'ancre + filtre).
-  String title(AppLocalizations l10n) => switch (this) {
-    _SectionId.appearance => l10n.settingsAppearanceTitle,
-    _SectionId.downloads => l10n.sectionDownloadsDefaults,
-    _SectionId.storage => l10n.sectionStorage,
-    _SectionId.bandwidth => l10n.sectionBandwidth,
-    _SectionId.queue => l10n.sectionQueue,
-    _SectionId.seeding => l10n.sectionSeeding,
-    _SectionId.anonymity => l10n.sectionAnonymity,
-    _SectionId.onionbit => l10n.sectionOnionBit,
-    _SectionId.stealth => l10n.sectionStealth,
-    _SectionId.identity => l10n.sectionIdentity,
-    _SectionId.network => l10n.sectionNetwork,
-    _SectionId.automation => l10n.sectionAutomation,
-    _SectionId.versioning => l10n.sectionVersioning,
-    _SectionId.connection => l10n.sectionConnection,
-    _SectionId.daemon => l10n.sectionDaemon,
-  };
-}
-
-/// Entrée du catalogue des sections — id de l'ancre + mots-clés de
-/// recherche (chemins de clés + termes FR/EN, non affichés).
+/// Entrée du catalogue des sections — id de l'ancre ; les mots-clés
+/// de recherche vivent dans `settings_catalog.dart`
+/// (`settingsSectionKeywords`), partagés avec la palette (ADR-0021 §6).
 class _SectionEntry {
-  _SectionEntry({
-    required this.id,
-    required this.keywords,
-    required this.child,
-    this.sectionId,
-  });
+  _SectionEntry({required this.id, required this.child, this.sectionId});
 
-  final _SectionId id;
-
-  /// Texte de recherche : termes FR+EN + noms de champs + chemins de
-  /// clés (jamais affiché — la recherche est une sous-chaîne simple).
-  final String keywords;
+  final SettingsSectionId id;
   final Widget child;
 
   /// Identifiant `settingsDirtyProvider` quand la section supporte la
@@ -91,121 +43,86 @@ class _SectionEntry {
 
 final _kSections = <_SectionEntry>[
   _SectionEntry(
-    id: _SectionId.appearance,
-    keywords:
-        'thème mode clair sombre accent couleur theme light dark '
-        'color language langue',
+    id: SettingsSectionId.appearance,
     child: const AppearanceSection(),
   ),
   _SectionEntry(
-    id: _SectionId.downloads,
-    keywords:
-        'destination dossier espace disque download_defaults saveas '
-        'folder disk space default',
+    id: SettingsSectionId.downloads,
     sectionId: 'downloads',
     child: const DownloadsSection(),
   ),
   _SectionEntry(
-    id: _SectionId.storage,
-    keywords:
-        'stockage storage zones public private privé chiffré '
-        'move_on_completion default_area private_enabled espace '
-        'portable orphelins orphans obd',
+    id: SettingsSectionId.storage,
     child: const StorageSection(),
   ),
   _SectionEntry(
-    id: _SectionId.bandwidth,
-    keywords:
-        'limite débit vitesse ko/s max_download_rate max_upload_rate '
-        'limit rate speed kb/s',
+    id: SettingsSectionId.bandwidth,
     sectionId: 'bandwidth',
     child: const BandwidthSection(),
   ),
   _SectionEntry(
-    id: _SectionId.queue,
-    keywords:
-        'queue active_downloads active_seeds active_checking '
-        'active_limit auto_managed fastresume vérification démarrage '
-        'startup check',
+    id: SettingsSectionId.queue,
     sectionId: 'queue',
     child: const QueueSection(),
   ),
   _SectionEntry(
-    id: _SectionId.seeding,
-    keywords:
-        'seeding ratio durée hops sauts safe seeding '
-        'download_defaults number_anon_downloads duration default',
+    id: SettingsSectionId.seeding,
     sectionId: 'seeding',
     child: const SeedingSection(),
   ),
   _SectionEntry(
-    id: _SectionId.anonymity,
-    keywords:
-        'tunnel community circuits min_circuits max_circuits '
-        'exitnode sortie test vitesse exit speed anonymous',
+    id: SettingsSectionId.anonymity,
     sectionId: 'anonymity',
     child: const AnonymitySection(),
   ),
   _SectionEntry(
-    id: _SectionId.onionbit,
-    keywords:
-        'onionbit ext extension ledger registre comptabilité '
-        'accounting obf obfuscation curateurs curators trust '
-        'confiance attest sign-then-serve enforce msg_v1',
+    id: SettingsSectionId.onionbit,
     sectionId: 'onionbit',
     child: const OnionBitSection(),
   ),
   _SectionEntry(
-    id: _SectionId.stealth,
-    keywords:
-        'stealth furtif censure censure-resistant pont bridge '
-        'onionbit-bridge invitation cover traffic camouflage '
-        'role client gateway passerelle',
+    id: SettingsSectionId.stealth,
     sectionId: 'stealth',
     child: const StealthSection(),
   ),
   _SectionEntry(
-    id: _SectionId.identity,
-    keywords:
-        'identité identity clé key export import backup sauvegarde '
-        'restaurer restore obid ipv8_keypair nomade portable',
+    id: SettingsSectionId.identity,
     sectionId: 'identity',
     child: const IdentitySection(),
   ),
   _SectionEntry(
-    id: _SectionId.network,
-    keywords:
-        'dht upnp natpmp lsd utp proxy socks port écoute '
-        'listen_interface listen',
+    id: SettingsSectionId.network,
     sectionId: 'network',
     child: const NetworkSection(),
   ),
   _SectionEntry(
-    id: _SectionId.automation,
-    keywords: 'watch folder rss flux dossier surveillance items feed',
+    id: SettingsSectionId.automation,
     sectionId: 'automation',
     child: const AutomationSection(),
   ),
   _SectionEntry(
-    id: _SectionId.versioning,
-    keywords: 'version mise à jour update checker versioning upgrade',
+    id: SettingsSectionId.versioning,
     child: const VersioningSection(),
   ),
   _SectionEntry(
-    id: _SectionId.connection,
-    keywords: 'daemon clé api port http connexion key url',
+    id: SettingsSectionId.connection,
     child: const ConnectionSection(),
   ),
   _SectionEntry(
-    id: _SectionId.daemon,
-    keywords: 'arrêt shutdown redémarrage logs stop restart state',
+    id: SettingsSectionId.daemon,
     child: const DaemonSection(),
   ),
 ];
 
 /// Page « Réglages » — rail d'ancres + filtre + sections du catalogue.
+/// `?s=<id>` (deep-link palette de commandes, ADR-0021 §6) défile
+/// jusqu'à la section demandée après la première frame.
 class SettingsPage extends ConsumerStatefulWidget {
-  const SettingsPage({super.key});
+  const SettingsPage({super.key, this.sectionId});
+
+  /// Ancre ciblée par `/settings?s=<name>` (`SettingsSectionId.name`) —
+  /// `null` hors deep-link ; une valeur inconnue est ignorée.
+  final String? sectionId;
 
   @override
   ConsumerState<SettingsPage> createState() => _SettingsPageState();
@@ -214,6 +131,46 @@ class SettingsPage extends ConsumerStatefulWidget {
 class _SettingsPageState extends ConsumerState<SettingsPage> {
   String _filter = '';
   bool _savingAll = false;
+  String? _scrolledTo;
+
+  /// Défile jusqu'à la section `?s=` demandée — post-frame (les
+  /// `GlobalKey` des entrées n'existent qu'après le premier layout) et
+  /// une fois par valeur (le paramètre peut changer sans recréer la
+  /// page, ex. deux commandes réglages d'affilée).
+  void _scrollToRequested() {
+    final wanted = widget.sectionId;
+    if (wanted == null || wanted == _scrolledTo) return;
+    _scrolledTo = wanted;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (_filter.isNotEmpty) {
+        // Un filtre actif masquerait la section : le deep-link est une
+        // intention de navigation — liste pleine d'abord, défilement à
+        // la frame suivante (l'ancre n'existe qu'une fois rendue).
+        setState(() => _filter = '');
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _doScroll(wanted);
+        });
+        return;
+      }
+      _doScroll(wanted);
+    });
+  }
+
+  void _doScroll(String wanted) {
+    for (final e in _kSections) {
+      if (e.id.name == wanted) {
+        final ctx = e.key.currentContext;
+        if (ctx != null) {
+          Scrollable.ensureVisible(
+            ctx,
+            duration: const Duration(milliseconds: 250),
+          );
+        }
+        break;
+      }
+    }
+  }
 
   Future<void> _saveAll() async {
     setState(() => _savingAll = true);
@@ -234,12 +191,13 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
 
   bool _matches(_SectionEntry e, AppLocalizations l10n) =>
       _filter.isEmpty ||
-      '${e.id.title(l10n)} ${e.keywords}'.toLowerCase().contains(
-        _filter.toLowerCase(),
-      );
+      '${e.id.title(l10n)} ${settingsSectionKeywords[e.id] ?? ''}'
+          .toLowerCase()
+          .contains(_filter.toLowerCase());
 
   @override
   Widget build(BuildContext context) {
+    _scrollToRequested();
     final l10n = context.l10n;
     final visible = _kSections.where((e) => _matches(e, l10n)).toList();
     final dirty = ref.watch(settingsDirtyProvider);
@@ -251,8 +209,8 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
             color: scheme.tertiaryContainer,
             child: Padding(
               padding: const EdgeInsets.symmetric(
-                horizontal: AppSpacing.md,
-                vertical: AppSpacing.xs,
+                horizontal: AppSpace.md,
+                vertical: AppSpace.xs,
               ),
               child: Row(
                 children: [
@@ -261,7 +219,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                     size: 20,
                     color: scheme.onTertiaryContainer,
                   ),
-                  const SizedBox(width: AppSpacing.sm),
+                  const SizedBox(width: AppSpace.sm),
                   Expanded(
                     child: Text(
                       l10n.settingsDirtyBanner(dirty.length),
@@ -273,7 +231,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                     onPressed: _discardAll,
                     child: Text(l10n.discardAll),
                   ),
-                  const SizedBox(width: AppSpacing.xs),
+                  const SizedBox(width: AppSpace.xs),
                   FilledButton.icon(
                     onPressed: _savingAll ? null : _saveAll,
                     icon: _savingAll
@@ -291,8 +249,8 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
           ),
         Padding(
           padding: const EdgeInsets.symmetric(
-            horizontal: AppSpacing.md,
-            vertical: AppSpacing.xs,
+            horizontal: AppSpace.md,
+            vertical: AppSpace.xs,
           ),
           child: Row(
             children: [
@@ -305,7 +263,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                     children: [
                       for (final e in visible)
                         Padding(
-                          padding: const EdgeInsets.only(right: AppSpacing.xs),
+                          padding: const EdgeInsets.only(right: AppSpace.xs),
                           child: ActionChip(
                             avatar:
                                 e.sectionId != null &&
@@ -333,7 +291,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                   ),
                 ),
               ),
-              const SizedBox(width: AppSpacing.sm),
+              const SizedBox(width: AppSpace.sm),
               SizedBox(
                 width: 220,
                 child: TextField(
@@ -355,7 +313,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
               for (final e in visible) KeyedSubtree(key: e.key, child: e.child),
               if (visible.isEmpty)
                 Padding(
-                  padding: const EdgeInsets.all(AppSpacing.lg),
+                  padding: const EdgeInsets.all(AppSpace.lg),
                   child: Center(child: Text(l10n.noMatchingSection(_filter))),
                 ),
             ],

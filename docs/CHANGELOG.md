@@ -3,6 +3,40 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## ADR-0021 étape 74 : migration Messagerie + palette de commandes (2026-10-09, worktree adr21)
+
+- **Messagerie adaptative** : `AdaptiveListDetail` dès le palier
+  `expanded` (liste conversations/contacts + `ConversationTabs`),
+  et sous ce palier le fil occupe tout l'écran après sélection dans
+  la liste — retour par flèche (patron standard des messageries
+  mobiles ; `_NarrowConversation`). Tokens `AppSpace`/`AppRadius`
+  partout, clés publiques/conv-id en JetBrains Mono
+  (`AppFontFamilies.mono`). Aucun changement de providers ni des
+  appels REST/SSE `/api/messaging/*`.
+- **Catalogue de commandes partagé** (`core/command/`) :
+  `AppCommand` (id stable, groupe, titre localisé, mots-clés, `run`)
+  et `buildCommandCatalog` — destinations `kNavCatalog`,
+  conversations (ouvre l'onglet via `openConversationsProvider` puis
+  route `/messages`), sections de réglages en deep-link
+  `/settings?s=<id>` et l'action « ajouter un téléchargement ».
+- **`settings_catalog.dart`** : les métadonnées privées de la page
+  (`_SectionId`, `keywords`) deviennent `SettingsSectionId` +
+  `settingsSectionKeywords` + `icon` — le filtre historique de la
+  page et la palette puisent à la même source. La page accepte le
+  paramètre `?s=` (résolution post-frame, ré-affiche la liste si un
+  filtre masquait la cible).
+- **Palette Ctrl/Cmd+K** (`CommandPalette`) : `FrostedSurface`,
+  recherche insensible à la casse, en-têtes de groupe, sélection
+  ↑/↓/Entrée interceptée via `FocusNode.onKeyEvent`, Échap ferme.
+  Nouvel `OpenCommandPaletteIntent` dans `AppShortcuts` — Ctrl/Cmd+F
+  et Ctrl/Cmd+N inchangés.
+- **`check_i18n.ps1`** : l'exclusion des mots-clés de recherche couvre
+  désormais les maps `*Keywords = {}` (le catalogue extrait), pas
+  seulement les paramètres nommés `keywords:`.
+- **Tests** (+10, 48 au total) : `command_palette_test.dart`,
+  `messaging_page_test.dart`, `settings_catalog_test.dart`.
+  Validation : analyze 0 issue, build web OK, i18n + GPL propres.
+
 ## ADR-0021 étape 73 : bascule du thème + migration Téléchargements/Recherche (2026-10-09, worktree adr21)
 
 - **`app.dart` bascule sur `AppDesignTheme`** : la nouvelle

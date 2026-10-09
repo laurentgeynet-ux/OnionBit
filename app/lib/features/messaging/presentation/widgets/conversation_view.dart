@@ -9,7 +9,7 @@ import '../../../../core/api/api_client.dart';
 import '../../../../core/l10n/l10n_ext.dart';
 import '../../../../core/layout/drop_detector.dart';
 import '../../../../core/platform/pick_file.dart';
-import '../../../../core/theme/app_theme.dart';
+import '../../../../core/design/design_tokens.dart';
 import '../../domain/messaging_attachment.dart';
 import '../../domain/messaging_conversation.dart';
 import '../../domain/messaging_message.dart';
@@ -51,7 +51,7 @@ class ConversationTabs extends ConsumerWidget {
           height: 40,
           child: ListView(
             scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm),
+            padding: const EdgeInsets.symmetric(horizontal: AppSpace.sm),
             children: [
               for (final t in tabs)
                 _TabChip(
@@ -96,7 +96,7 @@ class _TabChip extends ConsumerWidget {
     return Padding(
       padding: const EdgeInsets.symmetric(
         horizontal: 2,
-        vertical: AppSpacing.xs,
+        vertical: AppSpace.xs,
       ),
       child: InputChip(
         selected: selected,
@@ -109,7 +109,7 @@ class _TabChip extends ConsumerWidget {
           children: [
             Text(label),
             if (unread > 0) ...[
-              const SizedBox(width: AppSpacing.xs),
+              const SizedBox(width: AppSpace.xs),
               _UnreadBadge(count: unread),
             ],
           ],
@@ -206,7 +206,7 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
                   .colorScheme
                   .primaryContainer
                   .withValues(alpha: 0.4),
-              padding: const EdgeInsets.all(AppSpacing.sm),
+              padding: const EdgeInsets.all(AppSpace.sm),
               child: Text(
                 l10n.msgAttachDrop,
                 textAlign: TextAlign.center,
@@ -232,7 +232,7 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
                 ]..sort((a, b) => b.$1.compareTo(a.$1));
                 return ListView.builder(
                   reverse: true,
-                  padding: const EdgeInsets.all(AppSpacing.md),
+                  padding: const EdgeInsets.all(AppSpace.md),
                   itemCount: items.length,
                   itemBuilder: (ctx, i) {
                     final item = items[i].$2;
@@ -263,7 +263,7 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
   Widget _composer() {
     final l10n = context.l10n;
     return Padding(
-      padding: const EdgeInsets.all(AppSpacing.sm),
+      padding: const EdgeInsets.all(AppSpace.sm),
       child: Row(
         children: [
           IconButton(
@@ -282,7 +282,7 @@ class _ConversationViewState extends ConsumerState<ConversationView> {
               onSubmitted: (_) => _send(),
             ),
           ),
-          const SizedBox(width: AppSpacing.sm),
+          const SizedBox(width: AppSpace.sm),
           IconButton.filled(
             icon: const Icon(Icons.send, size: 18),
             tooltip: l10n.msgSend,
@@ -371,7 +371,7 @@ class _GroupHeader extends ConsumerWidget {
         ),
         subtitle: Text(l10n.msgGroupMembers(active)),
         trailing: Wrap(
-          spacing: AppSpacing.xs,
+          spacing: AppSpace.xs,
           children: [
             IconButton(
               icon: const Icon(Icons.person_add_alt_1_outlined, size: 18),
@@ -432,7 +432,7 @@ class _GroupHeader extends ConsumerWidget {
                 title: Text(
                   m.displayName,
                   style: m.alias.isEmpty
-                      ? const TextStyle(fontFamily: 'monospace', fontSize: 12)
+                      ? const TextStyle(fontFamily: AppFontFamilies.mono, fontSize: 12)
                       : null,
                 ),
                 subtitle: Text(
@@ -504,8 +504,8 @@ class _InviteBanner extends ConsumerWidget {
       color: theme.colorScheme.tertiaryContainer,
       child: Padding(
         padding: const EdgeInsets.symmetric(
-          horizontal: AppSpacing.md,
-          vertical: AppSpacing.sm,
+          horizontal: AppSpace.md,
+          vertical: AppSpace.sm,
         ),
         child: Row(
           children: [
@@ -589,16 +589,16 @@ class _Bubble extends ConsumerWidget {
         onLongPress: () => _delete(context, ref),
         child: Container(
           constraints: const BoxConstraints(maxWidth: 480),
-          margin: const EdgeInsets.symmetric(vertical: AppSpacing.xs / 2),
+          margin: const EdgeInsets.symmetric(vertical: AppSpace.xs / 2),
           padding: const EdgeInsets.symmetric(
-            horizontal: AppSpacing.md,
-            vertical: AppSpacing.sm,
+            horizontal: AppSpace.md,
+            vertical: AppSpace.sm,
           ),
           decoration: BoxDecoration(
             color: message.isOutgoing
                 ? theme.colorScheme.primaryContainer
                 : theme.colorScheme.surfaceContainerHighest,
-            borderRadius: BorderRadius.circular(AppRadii.medium),
+            borderRadius: BorderRadius.circular(AppRadius.medium),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.end,
@@ -610,14 +610,14 @@ class _Bubble extends ConsumerWidget {
                     author,
                     style: theme.textTheme.labelSmall?.copyWith(
                       color: theme.colorScheme.primary,
-                      fontFamily: 'monospace',
+                      fontFamily: AppFontFamilies.mono,
                     ),
                   ),
                 ),
               Text(message.body, style: theme.textTheme.bodyMedium),
               if (statusIcon != null)
                 Padding(
-                  padding: const EdgeInsets.only(top: AppSpacing.xs / 2),
+                  padding: const EdgeInsets.only(top: AppSpace.xs / 2),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
@@ -628,7 +628,7 @@ class _Bubble extends ConsumerWidget {
                             ? theme.colorScheme.error
                             : theme.colorScheme.onSurfaceVariant,
                       ),
-                      const SizedBox(width: AppSpacing.xs),
+                      const SizedBox(width: AppSpace.xs),
                       Text(
                         statusLabel,
                         style: theme.textTheme.labelSmall?.copyWith(
@@ -715,9 +715,9 @@ class _AttachCard extends ConsumerWidget {
       alignment:
           attach.isIncoming ? Alignment.centerLeft : Alignment.centerRight,
       child: Card(
-        margin: const EdgeInsets.symmetric(vertical: AppSpacing.xs / 2),
+        margin: const EdgeInsets.symmetric(vertical: AppSpace.xs / 2),
         child: Padding(
-          padding: const EdgeInsets.all(AppSpacing.sm),
+          padding: const EdgeInsets.all(AppSpace.sm),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
@@ -726,7 +726,7 @@ class _AttachCard extends ConsumerWidget {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   const Icon(Icons.insert_drive_file_outlined, size: 20),
-                  const SizedBox(width: AppSpacing.sm),
+                  const SizedBox(width: AppSpace.sm),
                   Flexible(
                     child: Text(
                       attach.name,
@@ -743,7 +743,7 @@ class _AttachCard extends ConsumerWidget {
               ),
               if (attach.isActionable)
                 Padding(
-                  padding: const EdgeInsets.only(top: AppSpacing.xs),
+                  padding: const EdgeInsets.only(top: AppSpace.xs),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
@@ -752,7 +752,7 @@ class _AttachCard extends ConsumerWidget {
                         label: Text(l10n.msgAttachDownload),
                         onPressed: () => _acceptDialog(context, ref),
                       ),
-                      const SizedBox(width: AppSpacing.sm),
+                      const SizedBox(width: AppSpace.sm),
                       TextButton(
                         onPressed: () => _decline(context, ref),
                         child: Text(l10n.msgDecline),
@@ -852,12 +852,12 @@ class _EmptyPane extends StatelessWidget {
     final theme = Theme.of(context);
     return Center(
       child: Padding(
-        padding: const EdgeInsets.all(AppSpacing.lg),
+        padding: const EdgeInsets.all(AppSpace.lg),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(icon, size: 48, color: theme.colorScheme.onSurfaceVariant),
-            const SizedBox(height: AppSpacing.md),
+            const SizedBox(height: AppSpace.md),
             Text(title, style: theme.textTheme.titleMedium),
           ],
         ),

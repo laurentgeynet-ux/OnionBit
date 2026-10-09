@@ -50,7 +50,8 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           ),
           GoRoute(
             path: '/settings',
-            builder: (context, state) => const SettingsPage(),
+            builder: (context, state) =>
+                SettingsPage(sectionId: state.uri.queryParameters['s']),
           ),
           GoRoute(
             path: '/about',

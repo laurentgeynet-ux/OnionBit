@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../features/downloads/presentation/widgets/add_download_dialog.dart';
+import '../command/command_palette.dart';
 import 'app_intents.dart';
 
 /// Raccourcis clavier transverses de la coquille (ADR-0021 §6) —
@@ -38,6 +39,10 @@ class AppShortcuts extends StatelessWidget {
             AddDownloadIntent(),
         SingleActivator(LogicalKeyboardKey.keyN, meta: true):
             AddDownloadIntent(),
+        SingleActivator(LogicalKeyboardKey.keyK, control: true):
+            OpenCommandPaletteIntent(),
+        SingleActivator(LogicalKeyboardKey.keyK, meta: true):
+            OpenCommandPaletteIntent(),
       },
       child: Actions(
         actions: {
@@ -53,6 +58,13 @@ class AppShortcuts extends StatelessWidget {
               return null;
             },
           ),
+          OpenCommandPaletteIntent:
+              CallbackAction<OpenCommandPaletteIntent>(
+                onInvoke: (intent) {
+                  CommandPalette.show(context);
+                  return null;
+                },
+              ),
         },
         child: child,
       ),
