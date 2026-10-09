@@ -12,7 +12,7 @@ identity — all over multi-hop onion circuits.**
 [![UI: Flutter](https://img.shields.io/badge/UI-Flutter-02569B.svg)](https://flutter.dev/)
 [![CI](https://github.com/laurentgeynet-ux/OnionBit/actions/workflows/ci.yml/badge.svg)](https://github.com/laurentgeynet-ux/OnionBit/actions/workflows/ci.yml)
 [![Interop: Tribler 8.x](https://img.shields.io/badge/Interop-Tribler%208.x-blueviolet.svg)](docs/interop/README.md)
-[![Version](https://img.shields.io/badge/Version-0.9.4--beta-red.svg)](https://github.com/laurentgeynet-ux/OnionBit/releases)
+[![Version](https://img.shields.io/badge/Version-1.0.0-brightgreen.svg)](https://github.com/laurentgeynet-ux/OnionBit/releases)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%C2%B7%20Linux%20%C2%B7%20macOS%20%C2%B7%20Android%20%C2%B7%20iOS%20%C2%B7%20Web-lightgrey.svg)]()
 
 [Features](#the-fabric--one-shared-onion-network) ·
@@ -281,13 +281,13 @@ and [docs/security/fingerprinting.md](docs/security/fingerprinting.md).
 
 ## Honest limits
 
-> **Status: beta.** The engine is under active development and validated
-> against the real Tribler network (Tribler 8.x interop testbench) —
-> including fail-closed transport under injected failures (see
-> `docs/P0-transport-manifest.md`). Not yet recommended for high-stakes
-> anonymity. Onion routing reduces network-level linkability; it does not
-> eliminate all privacy risks — see the
-> [threat model](docs/THREAT-MODEL.md).
+> **Status: stable — v1.0.0.** The engine is validated against the real
+> Tribler network (Tribler 8.x interop testbench) — including fail-closed
+> transport under injected failures (see `docs/P0-transport-manifest.md`).
+> That said, no anonymity tool has had an independent audit here yet:
+> keep the usual caution for high-stakes use. Onion routing reduces
+> network-level linkability; it does not eliminate all privacy risks —
+> see the [threat model](docs/THREAT-MODEL.md).
 >
 > Stealth mode removes static protocol markers — not traffic volume or
 > timing; distributing a first bridge link remains a social problem
@@ -455,7 +455,7 @@ See [SECURITY.md](SECURITY.md) for reporting and the threat model.
   self-hosted fonts, design system with golden tests
 - ✅ Web UI served by the daemon (same-origin)
 - ✅ In-app update check (GitHub releases probe)
-- ✅ Latest tagged release: [`v0.9.4-beta`](https://github.com/laurentgeynet-ux/OnionBit/releases/tag/v0.9.4-beta)
+- ✅ Latest release: [`v1.0.0`](https://github.com/laurentgeynet-ux/OnionBit/releases)
 - ✅ Windows portable bundle — three root launchers (UI / web / daemon)
 - ✅ Linux `.deb` — menu entries, icons, `systemd --user` unit, XDG state dir (+ portable tar.gz)
 - ✅ Windows ARM64 package (headless)

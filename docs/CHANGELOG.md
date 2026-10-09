@@ -3,6 +3,19 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Release : version 1.0.0 (2026-10-09, worktree adr21)
+
+- **Version workspace `0.9.4-beta` → `1.0.0`** (`Cargo.toml`,
+  `app/pubspec.yaml` `1.0.0+1`, `Cargo.lock` régénéré) — le projet
+  sort du statut beta : ~580 tests Rust + ~85 Flutter, interop
+  Tribler 8.4.3 validée, 9/9 oracles de fingerprinting, fail-closed
+  vérifié au niveau paquet.
+- **`README.md`** : badge version → `1.0.0` (vert), statut « beta »
+  remplacé par « stable — v1.0.0 » avec la réserve d'audit conservée
+  (pas d'audit indépendant → prudence hauts enjeux), lien « Latest
+  release » pointé sur v1.0.0. Le tag `v1.0.0` déclenchera le job
+  `publish` de la CI (déclencheur `v*` déjà en place).
+
 ## Docs : durcissement de la page d'accueil GitHub (2026-10-09, worktree adr21)
 
 - **`README.md`** : nouvelle section « Proof, not promises » — table

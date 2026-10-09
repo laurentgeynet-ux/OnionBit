@@ -26,7 +26,7 @@ exclude = [
     "vendor/librqbit-utp",
 ]
 [workspace.package]
-version = "0.9.4-beta"
+version = "1.0.0"
 edition = "2021"
 license = "GPL-3.0-or-later"
 authors = ["Laurent Geynet (Loulach) <laurent.geynet@gmail.com>"]
