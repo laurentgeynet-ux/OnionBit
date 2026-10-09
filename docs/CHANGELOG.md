@@ -3,6 +3,38 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Core : `PrivacyProfile` — profils d'anonymat prédéfinis (2026-10-09, worktree adr22, étape 78 ADR-0022)
+
+- **`onionbit-core/src/privacy.rs`** (nouveau) : énum `PrivacyProfile
+  {legacy, full, custom}` + section `privacy { profile }` de
+  `DaemonConfig` (`#[serde(default)]`, sparse — `config_version`
+  inchangé). Un profil est un **preset matérialisé** :
+  `preset_patch()` est la source unique de la table de correspondance
+  ADR-0022 §3 (20 clés couvertes : `ipv8.enabled`, `stealth.*`,
+  `download_defaults.*`, `tunnel_community.*`, `ext.*`,
+  `storage.default_area` ; jamais `stealth.bridges`, `ext.curators`,
+  `identity.*`, `api.*`). `effective()` dérive le profil affiché —
+  une clé couverte divergeant du preset stocké retombe sur `custom`
+  avec `diverged_keys`.
+- **`apply()`** : tout-ou-rien sur copie (même discipline que
+  `POST /api/settings`) — `full` refuse ferme sans pont
+  (`MissingPrerequisites(["stealth.bridges"])` → `409` côté API) ;
+  le résultat passe le validateur de combinaison avant mutation.
+  `ApplyOutcome { applied_keys, restart_required }` — le restart est
+  dérivé du diff ∩ clés froides (`ipv8.enabled`, `stealth.*`,
+  `ext.enabled`, `ext.obf_enabled` immuable, `tunnel_community.*`).
+- **`DaemonConfig::validate_combination()`** (nouveau, commun) :
+  `stealth.enabled × ipv8.enabled` refusé (ADR-0017 — aujourd'hui le
+  refus n'existe qu'au démarrage dans `session.rs`, l'arbre générique
+  acceptait de persister une config non-bootable) +
+  `identity.at_rest × stealth.role ≠ client` (ADR-0016). Sert aux
+  profils maintenant, à `update_settings` à l'étape 79.
+- **Tests** (11) : mapping exact des deux presets, couverture
+  identique legacy/full (20 clés), divergence→`custom` + clé hors
+  preset ignorée, `custom` no-op, refus `full` sans pont,
+  `full→legacy` restaure `ipv8.enabled` et préserve les ponts,
+  combinaisons refusées.
+
 ## UI : mot de passe choisi en double saisie (confirmation) (2026-10-09, worktree adr21)
 
 - **`core/widgets/password_pair_field.dart`** (nouveau) : paire
