@@ -66,6 +66,13 @@ $bundleRoot = Join-Path $dist "OnionBit"   # racine portable ADR-0018
 $osDir  = Join-Path $bundleRoot "windows"  # payload de l'OS hote
 $listen = "127.0.0.1:8085"   # DEFAULT_LISTEN de onionbit-daemon
 
+# Archi Windows de l'hote (x64 | arm64) — detectee depuis le triple
+# rustc hote. `flutter build windows` produit nativement dans
+# `build\windows\<arch>\` selon l'hote (pas de cross x64->arm64 dans
+# l'outil Flutter) : un runner windows-11-arm sort donc du arm64.
+$hostTriple = (rustc -vV | Select-String "host:").ToString().Split(":")[1].Trim()
+$winArch = if ($hostTriple -like "aarch64*") { "arm64" } else { "x64" }
+
 Push-Location $root
 try {
     # -- 1) Daemon + CLI ------------------------------------------------
@@ -91,7 +98,7 @@ try {
     # echoue ("No target ..."). Purge du build windows si la cible
     # cachee differe de `OnionBit`.
     $winBuildDir = Join-Path $app "build\windows"
-    $cmakeCache = Join-Path $winBuildDir "x64\CMakeCache.txt"
+    $cmakeCache = Join-Path $winBuildDir "$winArch\CMakeCache.txt"
     if (Test-Path $cmakeCache) {
         $m = Select-String -Path $cmakeCache -Pattern `
             'CMAKE_INSTALL_PREFIX:PATH=\$<TARGET_FILE_DIR:(\w+)>' |
@@ -118,7 +125,7 @@ try {
 
     # -- 3) Assemblage dans dist\ ---------------------------------------
     $cargoOut = Join-Path $root "target\$BuildProfile"
-    $flutterOut = Join-Path $app "build\windows\x64\runner\$(@{$true='Release';$false='Debug'}[$BuildProfile -eq 'release'])"
+    $flutterOut = Join-Path $app "build\windows\$winArch\runner\$(@{$true='Release';$false='Debug'}[$BuildProfile -eq 'release'])"
     if (-not (Test-Path "$cargoOut\onionbit-daemon.exe")) {
         throw "onionbit-daemon.exe introuvable dans $cargoOut"
     }
@@ -229,10 +236,6 @@ try {
     # -- 6) Bundle + zip de release GitHub (optionnel) ---------------------
     if ($ZipRelease) {
         $ver = (cargo pkgid -p onionbit-daemon).Split('#')[-1]
-        # Suffixe d'archi depuis la cible hote — le runner windows-11-arm
-        # produit nativement du aarch64-pc-windows-msvc.
-        $hostTriple = (rustc -vV | Select-String "host:").ToString().Split(":")[1].Trim()
-        $winArch = if ($hostTriple -like "aarch64*") { "arm64" } else { "x64" }
         Write-Host "== bundle release OnionBit-<ver>-windows-$winArch ==" -ForegroundColor Cyan
         $bundle  = Join-Path $dist "OnionBit-$ver-windows-$winArch"
         $zipPath = "$bundle.zip"

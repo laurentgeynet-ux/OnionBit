@@ -3,6 +3,46 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## ADR-0021 étape 72 : scaffolding multiplateforme + Windows ARM64 (2026-10-09, worktree adr21)
+
+- **4 runners scaffoldés ensemble** : `flutter create
+  --platforms=linux,macos,android,ios --org org.onionbit
+  --project-name onionbit_ui .` → `linux/`, `macos/`, `android/`,
+  `ios/` (~100 fichiers). Identifiants : `org.onionbit.onionbit_ui`
+  (Android `applicationId`/`namespace`), `org.onionbit.onionbitUi`
+  (iOS `PRODUCT_BUNDLE_IDENTIFIER`).
+- **En-têtes GPL** sur les 3 `linux/**/CMakeLists.txt` — seuls
+  fichiers « source » édités, selon la convention `windows/` (les
+  templates Kotlin/Swift/C++ générés — `my_application.cc`,
+  `AppDelegate.swift`, `MainActivity.kt` — ne portent pas d'en-tête,
+  cf. `windows/runner/flutter_window.cpp`).
+- **`test/widget_test.dart` du template supprimé** (référençait un
+  `MyApp` de compteur inexistant — cassait la compilation des tests).
+- **`analysis_options.yaml`** : `flutter create` a étendu les
+  exclusions à `android/`, `ios/`, `macos/`, `linux/` — conservé.
+- **`android/gradle.properties`** : `kotlin.incremental=false` —
+  sans lui, `compileDebugKotlin` des plugins échoue : le stockage
+  incrémental Kotlin ne sait pas relativiser les chemins entre le
+  projet (D:\) et le pub cache Gradle (C:\) — « this and base files
+  have different roots », bug Kotlin/Gradle connu sur Windows
+  multi-lecteurs.
+- **Windows ARM64** : `build_dist.ps1` détecte l'archi hôte via le
+  triple rustc (`aarch64*` → `arm64`) — `$winArch` paramètre
+  `build\windows\<arch>\` (cache CMake + sortie runner, auparavant
+  `x64` en dur) et le suffixe du zip release. `flutter build windows`
+  ne cross-compile pas x64→arm64 : le build ARM64 est natif sur hôte/
+  runner Windows ARM64 (ex. `windows-11-arm`). Côté daemon, `-Target
+  aarch64-pc-windows-msvc` existait déjà dans `build_release.ps1`.
+- **Correction d'ADR-0021** (§4 matrice + étape 72 du §10) : le
+  « build de fumée Linux immédiat » prévu était factuellement faux —
+  `flutter build linux` exige un hôte Linux (toolchain ninja/GTK),
+  comme macOS/iOS exigent Darwin et Windows ARM64 l'archi native.
+  Seul **Android** obtient un vrai build de fumée depuis cet hôte
+  Windows x64. Texte corrigé pour refléter ce qui a été livré.
+- **Validation** : `check_gpl_headers.ps1` OK, `flutter analyze`
+  (0 issue), `flutter test` (38 verts), `flutter build apk --debug`
+  OK (`build\app\outputs\flutter-apk\app-debug.apk`).
+
 ## ADR-0021 étape 71 : coquille adaptative v2 (2026-10-09, worktree adr21)
 
 - **`AppShell`/`AppSidebar`** : les paliers `medium`/`expanded`/`large`
