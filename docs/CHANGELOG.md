@@ -3,6 +3,26 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Correctif : « Create my identity » inerte dans le wizard d'onboarding (2026-10-09, worktree adr21)
+
+- **`onboarding_wizard.dart`** : `_create` appelait
+  `Navigator.of(context, rootNavigator: true)` avant la requête — or en
+  phase `pending` le `builder` de `MaterialApp.router` remplace tout le
+  contenu routé : **aucun `Navigator` n'existe dans l'arbre**, l'appel
+  levait une exception dans un Future non-awaité → échec muet (pas de
+  spinner, pas d'erreur, la requête `POST /identity/create` n'était
+  jamais émise). La phrase est désormais publiée au nouveau provider
+  `pendingRecoveryPhraseProvider` ; le masquage venait des tests :
+  `l10nTestApp` place le wizard **sous** un `MaterialApp` classique où
+  un Navigator existe toujours.
+- **`app.dart`** : la phrase est rendue en **overlay modal**
+  (`ModalBarrier` + `PhraseBackupDialog`) au-dessus du gate comme de la
+  coquille — aucune dépendance au Navigator, s'affiche pendant la
+  transition `pending`→`ready`. `PhraseBackupDialog` devient public
+  avec callback `onDone` (plus de `Navigator.pop` — pas une route).
+- **Tests** : le test wizard vérifie la remise au provider ; nouveau
+  test direct de `PhraseBackupDialog` (confirmation exigée, `onDone`).
+
 ## Correctif : lanceurs racine portables (remplacement des `.lnk`) (2026-10-09, worktree adr21)
 
 - **Nouveau crate `onionbit-launcher`** (~30 Ko, sous-système GUI) :

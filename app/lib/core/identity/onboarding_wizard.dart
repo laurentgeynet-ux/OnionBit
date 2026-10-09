@@ -7,10 +7,11 @@
 /// étapes : choix → création (mot de passe at-rest optionnel) ou
 /// restauration → sauvegarde de la phrase de récupération.
 ///
-/// La phrase est affichée dans un dialogue posé sur le **navigateur
-/// racine** : la résolution fait passer la session en `ready` et le
-/// gate disparaît sous la coquille — le dialogue de sauvegarde,
-/// lui, survit au changement de contenu.
+/// La phrase est remise à [pendingRecoveryPhraseProvider] et rendue en
+/// **overlay global** par `app.dart` — pendant `pending`, le `builder`
+/// de `MaterialApp` remplace tout le contenu routé : aucun `Navigator`
+/// n'existe pour `showDialog` (un `Navigator.of` y levait une
+/// exception silencieuse et « Create my identity » semblait inerte).
 library;
 
 import 'dart:async';
@@ -22,6 +23,24 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../features/settings/presentation/providers/settings_providers.dart';
 import '../design/design_tokens.dart';
 import '../l10n/l10n_ext.dart';
+
+/// Phrase BIP39 en attente de présentation après `identity/create`.
+/// Posée par le wizard, consommée par l'overlay de `app.dart` qui
+/// affiche [PhraseBackupDialog] au-dessus du gate comme de la
+/// coquille — la session est déjà `ready`, l'utilisateur doit
+/// confirmer la sauvegarde avant de continuer.
+final pendingRecoveryPhraseProvider =
+    NotifierProvider<PendingRecoveryPhraseNotifier, String?>(
+      PendingRecoveryPhraseNotifier.new,
+    );
+
+class PendingRecoveryPhraseNotifier extends Notifier<String?> {
+  @override
+  String? build() => null;
+
+  void present(String phrase) => state = phrase;
+  void clear() => state = null;
+}
 
 /// Premier boot — parcours en étapes des trois résolutions.
 class OnboardingWizard extends ConsumerStatefulWidget {
@@ -54,14 +73,11 @@ class _OnboardingWizardState extends ConsumerState<OnboardingWizard> {
     }
   }
 
-  /// Création → sauvegarde de la phrase : le dialogue est posé sur le
-  /// navigateur racine (contexte capturé avant la résolution) pour
-  /// survivre à la disparition du gate quand la session passe
-  /// `ready`. Il est lancé **après** `_run` — awaité dedans, `_busy`
-  /// resterait vrai tant que la phrase n'est pas confirmée (spinner
-  /// permanent derrière le dialogue).
+  /// Création → sauvegarde de la phrase : remise à
+  /// [pendingRecoveryPhraseProvider] après la résolution — l'overlay
+  /// de `app.dart` l'affiche au-dessus du gate/coquille, sans dépendre
+  /// d'un `Navigator` (absent de l'arbre tant que `pending`).
   Future<void> _create(String password) async {
-    final navContext = Navigator.of(context, rootNavigator: true).context;
     String? phrase;
     await _run(() async {
       final repo = ref.read(settingsRepositoryProvider);
@@ -71,14 +87,8 @@ class _OnboardingWizardState extends ConsumerState<OnboardingWizard> {
       phrase = await repo.identityRecoveryPhrase();
     });
     final p = phrase;
-    if (p != null && p.isNotEmpty && navContext.mounted) {
-      unawaited(
-        showDialog<void>(
-          context: navContext,
-          barrierDismissible: false,
-          builder: (_) => _PhraseBackupDialog(phrase: p),
-        ),
-      );
+    if (p != null && p.isNotEmpty && mounted) {
+      ref.read(pendingRecoveryPhraseProvider.notifier).present(p);
     }
   }
 
@@ -410,18 +420,25 @@ class _RestoreStepState extends State<_RestoreStep> {
 }
 
 /// Sauvegarde de la phrase de récupération — dialogue modal
-/// obligatoire affiché sur le navigateur racine après `create` (il
+/// obligatoire rendu en overlay par `app.dart` après `create` (il
 /// survit à la résolution du gate : la coquille apparaît dessous).
-class _PhraseBackupDialog extends StatefulWidget {
-  const _PhraseBackupDialog({required this.phrase});
+/// `onDone` referme l'overlay — ce widget n'est pas une route, il ne
+/// se pop pas lui-même.
+class PhraseBackupDialog extends StatefulWidget {
+  const PhraseBackupDialog({
+    super.key,
+    required this.phrase,
+    required this.onDone,
+  });
 
   final String phrase;
+  final VoidCallback onDone;
 
   @override
-  State<_PhraseBackupDialog> createState() => _PhraseBackupDialogState();
+  State<PhraseBackupDialog> createState() => _PhraseBackupDialogState();
 }
 
-class _PhraseBackupDialogState extends State<_PhraseBackupDialog> {
+class _PhraseBackupDialogState extends State<PhraseBackupDialog> {
   bool _noted = false;
 
   @override
@@ -494,7 +511,7 @@ class _PhraseBackupDialogState extends State<_PhraseBackupDialog> {
       ),
       actions: [
         FilledButton(
-          onPressed: _noted ? () => Navigator.of(context).pop() : null,
+          onPressed: _noted ? widget.onDone : null,
           child: Text(l10n.onboardDone),
         ),
       ],

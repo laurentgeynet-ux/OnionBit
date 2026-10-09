@@ -10,6 +10,8 @@ import 'package:onionbit_ui/core/identity/identity_gate.dart';
 import 'package:onionbit_ui/features/settings/domain/settings_repository.dart';
 import 'package:onionbit_ui/features/settings/presentation/providers/settings_providers.dart';
 
+import 'package:onionbit_ui/core/identity/onboarding_wizard.dart';
+
 import 'helpers/l10n.dart';
 
 /// Dépôt minimal pour les écrans du gate (ADR-0016, 48e) — les
@@ -116,29 +118,59 @@ void main() {
     expect(repo.guestCalled, isFalse);
   });
 
-  testWidgets('gate pending : phrase de récupération présentée après '
-      'create (dialogue navigateur racine)', (tester) async {
+  testWidgets('gate pending : phrase de récupération remise à '
+      'l\'overlay global après create (aucun Navigator sous le gate)',
+      (tester) async {
     final repo = _FakeRepo();
+    final container = ProviderContainer(
+      overrides: [settingsRepositoryProvider.overrideWithValue(repo)],
+    );
+    addTearDown(container.dispose);
     await tester.pumpWidget(
-      _gateApp(repo, const IdentityGatePage(locked: false)),
+      UncontrolledProviderScope(
+        container: container,
+        child: l10nTestApp(const IdentityGatePage(locked: false)),
+      ),
     );
     await tester.pumpAndSettle();
     await tester.tap(find.text('New identity'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Create my identity'));
     await tester.pumpAndSettle();
-    // Le fake rend une phrase → le dialogue de sauvegarde s'affiche.
+    // Le fake rend une phrase → elle est publiée au provider : c'est
+    // `app.dart` qui la rend en overlay (pendant `pending` le gate
+    // remplace le Navigator — un `showDialog` planterait en silence).
+    expect(
+      container.read(pendingRecoveryPhraseProvider),
+      'abandon ability able about above absent absorb abstract',
+    );
+  });
+
+  testWidgets('phrase backup : confirmation exigée avant « Done », '
+      'onDone referme l\'overlay', (tester) async {
+    var done = false;
+    await tester.pumpWidget(
+      l10nTestApp(
+        Scaffold(
+          body: PhraseBackupDialog(
+            phrase:
+                'abandon ability able about above absent absorb abstract',
+            onDone: () => done = true,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
     expect(find.text('Recovery phrase'), findsOneWidget);
     // « Done » reste désactivé tant que la phrase n'est pas confirmée.
-    final done = tester.widget<FilledButton>(
+    final button = tester.widget<FilledButton>(
       find.widgetWithText(FilledButton, 'Done'),
     );
-    expect(done.onPressed, isNull);
+    expect(button.onPressed, isNull);
     await tester.tap(find.byType(CheckboxListTile));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Done'));
-    await tester.pumpAndSettle();
-    expect(find.text('Recovery phrase'), findsNothing);
+    expect(done, isTrue);
   });
 
   testWidgets('gate pending : invité appelle guest', (tester) async {
