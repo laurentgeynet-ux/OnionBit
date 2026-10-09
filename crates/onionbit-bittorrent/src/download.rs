@@ -319,8 +319,11 @@ impl Download {
     /// `readd_bittorrent_peers`) : injecte une adresse de pair dans le
     /// torrent vivant — pour les pairs caches, l'adresse est le
     /// relais loopback de `udp_relay::dial` (ou l'IPv4 factice du
-    /// circuit cote SOCKS5). No-op si le torrent n'est pas `live`.
-    /// Retourne `true` si le pair etait nouveau.
+    /// circuit cote SOCKS5). Un pair deja connu a l'etat `Dead` est
+    /// releve immediatement (requeue, sinon le backoff exponentiel
+    /// interne 10 s -> 1 h figeait la source). No-op si le torrent
+    /// n'est pas `live`.
+    /// Retourne `true` si le pair etait nouveau ou releve de `Dead`.
     pub fn add_peer(&self, addr: std::net::SocketAddr) -> bool {
         self.inner
             .live()

@@ -39,8 +39,16 @@ async fn dht_intro_ping_store_find_loopback() {
     a.walk_to(&addr_b).await.unwrap();
 
     // Attente de la decouverte mutuelle (B ping A en decouvrant).
+    // L'oracle est `peers_for_service`, pas `node_count` : le ping
+    // emis par B en decouvrant A entre aussi dans la table de
+    // routage de A (`get_requesting_node` n'inscrit PAS au service —
+    // fidele a pyipv8) et peut arriver avant la reponse
+    // d'introduction qui, elle, fait `discover_service`.
     let deadline = Instant::now() + Duration::from_secs(8);
-    while (a.node_count() < 1 || b.node_count() < 1) && Instant::now() < deadline {
+    while (a.network().peers_for_service(&DHT_COMMUNITY_ID).is_empty()
+        || b.network().peers_for_service(&DHT_COMMUNITY_ID).is_empty())
+        && Instant::now() < deadline
+    {
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
     assert!(a.node_count() >= 1, "A n'a pas decouvert B");

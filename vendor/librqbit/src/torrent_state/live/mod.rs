@@ -724,10 +724,34 @@ impl TorrentStateLive {
     // de `TriblerTunnelCommunity`) passe par la couche domaine, pas
     // par l'API HTTP rqbit.
     pub fn add_peer_if_not_seen(&self, addr: SocketAddr) -> crate::Result<bool> {
+        // PATCH tribler : la re-injection doit relever un pair
+        // `Dead` — sinon un premier dial perdu laisse un seeder
+        // unique hors service pour toute la duree du backoff
+        // exponentiel interne (10 s -> 1 h), sans aucun re-dial
+        // (hors trackers/DHT rien ne re-annonce la source). La
+        // transition `Dead` -> `Queued` sous le verrou du pair :
+        // le waiter de backoff en vol saute de lui-meme puisqu'il
+        // ne requeue que si le pair est encore `Dead`.
         match self.peers.add_if_not_seen(addr) {
-            Some(handle) => handle,
-            None => return Ok(false),
-        };
+            Some(_) => {}
+            None => {
+                let revived = self
+                    .peers
+                    .with_peer_mut(addr, "requeue_dead_peer", |peer| {
+                        match peer.get_state() {
+                            PeerState::Dead => {
+                                peer.set_state(PeerState::Queued, &self.peers);
+                                true
+                            }
+                            _ => false,
+                        }
+                    })
+                    .unwrap_or(false);
+                if !revived {
+                    return Ok(false);
+                }
+            }
+        }
 
         self.peer_queue_tx
             .send(addr)

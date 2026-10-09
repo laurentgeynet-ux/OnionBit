@@ -75,13 +75,41 @@ Ordre de grandeur par poste, relié aux allocations du code :
    `similarity_request` ≈ **~5-15 Mo**.
 6. **Baseline** : binaire + Tokio (stacks workers) + axum + tracing ≈
    les ~16 Mo mesurés sur le banc idle.
-7. **mmap** (`libtorrent/allow_mmap = true`) : fichiers de seed mappés
-   — ~23 Mo de working set *partagé* (dans les 159 Mo, hors privé) et
-   les 10,7 Go d'espace virtuel (réservation d'adressage seulement,
+7. **mmap** (`libtorrent/allow_mmap`, alors `true` par défaut) :
+   fichiers de seed mappés — ~23 Mo de working set *partagé* (dans les
+   159 Mo, hors privé) et les 10,7 Go d'espace virtuel (réservation
+   d'adressage seulement,
    `vendor/librqbit/src/storage/examples/mmap.rs`).
 
 À titre de référence, Tribler Python atteint typiquement 400-800 Mo
 en charge ; ~135 Mo privés est sobre.
+
+## Addendum 2026-10-09 — mmap en téléchargement : pages sales non bornées
+
+Observation terrain : un téléchargement ~40 Go vers un HDD (D:) faisait
+monter la mémoire « Utilisée » du système de ~5 Go à ~10 Go (62 % de
+16 Go), chute nette à l'arrêt du téléchargement — l'impression « fichier
+téléchargé en mémoire ».
+
+**Cause** : `allow_mmap = true` installait `MmapFilesystemStorageFactory`
+— chaque bloc reçu (≤ 16 Kio) est `memcpy` dans le mapping du fichier au
+lieu d'un `WriteFile` positionné. « Écrit » = page salie dans le working
+set ; sous Windows les pages modifiées d'un mapping ne passent **pas**
+par le throttling du cache manager (dirty page threshold) — le
+modified-page-writer flushe paresseusement, le backlog de pages sales
+croît au rythme du téléchargement jusqu'à la pression mémoire. Le
+`check_piece` relu via le mapping ajoute encore des pages résidentes.
+
+**Ce n'est pas le comportement rqbit upstream** : `SessionOptions::
+default_storage_factory` vaut `None` → `FilesystemStorage` (chuncks
+écrits par `WriteFile` synchrone, cache NTFS auto-throttlé). Le mmap
+n'y est qu'un backend d'exemple opt-in (`storage_examples`).
+
+**Décision** : `allow_mmap` repasse à `false` par défaut (alignement
+sur le défaut upstream rqbit — écart assumé vs Tribler, cf.
+`docs/reference_tribler/ecarts_fidelite.md`). La clé
+`libtorrent/allow_mmap: true` reste disponible dans
+`configuration.json` pour retrouver la parité Tribler.
 
 ## Facteurs de croissance et caps
 

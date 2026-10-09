@@ -272,7 +272,7 @@ Source : `src/tribler/tribler_config.py` `DEFAULT_CONFIG` + `pyipv8/ipv8/configu
 | `active_limit` | `500` | |
 | `ask_download_settings` | `false` | si true + `cli` → event `ask_add_download` |
 | `clear_orphaned_parts` | `false` | |
-| `allow_mmap` | `true` | fichiers mappés mémoire |
+| `allow_mmap` | `false` | fichiers mappés mémoire (Tribler : `true` — défaut ramené à `false`, aligné sur rqbit upstream : pages sales mmap non bornées sous Windows, cf. `ecarts_fidelite.md`) |
 
 #### `libtorrent/download_defaults/`
 

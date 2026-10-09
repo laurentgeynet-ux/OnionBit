@@ -112,6 +112,10 @@ pub struct EngineConfig {
     /// `default_storage_factory` librqbit `MmapFilesystemStorageFactory`).
     /// Sans effet quand `utp_only` : Tribler restreint le mmap a la
     /// session par defaut (`enable_mmap and hops < 0` Python).
+    /// Defaut `false` : le defaut upstream rqbit est `FilesystemStorage`
+    /// — sous Windows les pages modifiees d'un mmap ne sont pas
+    /// throttlees par l'OS et la RAM gonflait sans borne sur un
+    /// telechargement plus rapide que le disque (diagnostic 2026-10-09).
     pub allow_mmap: bool,
     /// Purge des fichiers `.parts` orphelins du repertoire de sortie a
     /// l'arret (`libtorrent/clear_orphaned_parts` Tribler ->
@@ -234,7 +238,7 @@ impl Default for EngineConfig {
             utp_only: false,
             max_upload_bps: None,
             max_download_bps: None,
-            allow_mmap: true,
+            allow_mmap: false,
             clear_orphaned_parts: false,
             dht_readiness_timeout_secs: 0,
             utp_socket: None,

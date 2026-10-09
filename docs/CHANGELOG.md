@@ -599,6 +599,51 @@ en haut.
   ADR-0021 §2).
 - **Validation** : `flutter analyze` (0 issue), `flutter test` (31
   verts, dont les 2 golden), `flutter build web` OK.
+## `libtorrent/allow_mmap` : défaut `false` — alignement upstream rqbit (2026-10-09)
+
+Constat utilisateur : téléchargement ~40 Go vers un HDD — mémoire
+« Utilisée » montée de ~5 Go à ~10 Go puis effondrement à l'arrêt.
+Diagnostic : `allow_mmap = true` installait `MmapFilesystemStorage`
+(patch vendored pour l'ouverture paresseuse) ; chaque bloc reçu est
+`memcpy` dans le mapping — pages sales sans backpressure sous Windows,
+accumulées au rythme du réseau tant que le disque suit pas.
+
+- **Défaut basculé** : `LibtorrentConfig::default` et
+  `EngineConfig::default` passent `allow_mmap` à `false` →
+  `FilesystemStorage` upstream (blocs écrits par `WriteFile`
+  positionné synchrone, cache NTFS auto-throttlé — le comportement
+  rqbit d'origine, qui ne met mmap qu'en exemple opt-in).
+- **Clé conservée** : `libtorrent/allow_mmap: true` dans
+  `configuration.json` restaure le backend mmap (parité
+  `libtorrent/allow_mmap` Tribler).
+- **Docs** : écart de fidélité documenté
+  (`docs/reference_tribler/ecarts_fidelite.md`), addendum au
+  diagnostic mémoire (`docs/diagnostics/memoire_charge_reelle.md`),
+  tables de settings à jour (`api_endpoints_complet.md`,
+  `configuration_cablage.md`).
+
+## CI : réparation matrice (2026-10-09)
+
+- **Race `dht_loopback`** : le test attendait `node_count() >= 1` puis
+  assertait `peers_for_service` — or le ping émis par B en découvrant A
+  remplit la table de routage de A via `get_requesting_node` (fidèle à
+  pyipv8, sans `discover_service`) et peut précéder
+  `INTRODUCTION_RESPONSE`. L'attente porte désormais sur
+  `peers_for_service` des deux nœuds — l'oracle réellement asserté.
+- **Chemins `dist/` obsolètes** : ADR-0018 (étape 58) a migré les
+  scripts vers `dist/OnionBit/<os>/` sans mettre à jour `ci.yml` ; les
+  trois jobs packaging Windows échouaient au `smoke daemon` (fichier
+  introuvable). Workflow aligné : smoke `./dist/OnionBit/windows/`,
+  artefact x64 `dist/OnionBit/`, zip arm64 sur la racine portable.
+- **Relance des pairs `Dead`** (patch vendored librqbit) :
+  `add_peer_if_not_seen` relevait `None` sur pair déjà connu, y
+  compris `Dead` — un seeder dont le premier dial uTP s'était perdu
+  n'était retenté qu'au rythme du backoff exponentiel (10 s → 1 h),
+  ce qui figeait les transferts anonymes sous charge CI. La
+  ré-injection fait désormais `Dead → Queued` + refile immédiat
+  (sémantique `readd_bittorrent_peers` Tribler) ; le waiter de
+  backoff saute de lui-même. `live_bench` attend les transferts via
+  `wait_transfer` (ré-injection périodique du seeder).
 
 ## ADR-0019 étape 69 : validation + retours MG-13 (2026-10-09)
 
