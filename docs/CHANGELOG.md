@@ -3,7 +3,46 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
-## API : `GET`/`PUT /api/privacy/profile` + gardes settings (2026-10-09, worktree adr22, étape 79 ADR-0022)
+## App : `PrivacyProfileSwitch` dans la sidebar (2026-10-09, worktree adr22, étape 80 ADR-0022)
+
+- **Feature `privacy/`** (nouveau dossier — une fonctionnalité = un
+  propriétaire) : `domain/privacy_profile.dart` (`PrivacyProfileKind`
+  `legacy`/`full`/`custom` + `PrivacyProfileState` désérialisant
+  `{stored, effective, diverged_keys, restart_pending, guest,
+  stealth.bridges_configured}`), `domain/privacy_repository.dart`
+  (contrat), `data/rest_privacy_repository.dart` (`GET`/`PUT
+  /privacy/profile`, `POST /stealth/bridges`, `PUT /shutdown`),
+  `presentation/providers/privacy_providers.dart`
+  (`privacyProfileProvider` invalidé par SSE `settings_changed` — une
+  bascule d'un autre client ou une édition manuelle bascule
+  l'affichage sur « Personnalisé »).
+- **`PrivacyProfileSwitch`** : trois lignes pilule (style
+  `_SidebarItem` : `lock_outline` / `enhanced_encryption_outlined` /
+  `tune` + labels du copy deck ADR §5) insérées sous le bloc vitesses
+  de `AppSidebar` avec label de groupe « Profil d'anonymat » ; rail
+  repliée → icône du profil effectif + `PopupMenuButton` des trois
+  positions (coche sur effectif, `Badge` sur `restart_pending`) ;
+  palier `compact` → feuille depuis `PrivacyHud` (sélecteur + entrée
+  Diagnostic — le tap non-compact conserve `/diagnostic`).
+- **Flux de bascule** : `custom` direct (aucune clé réécrite) ;
+  `full` → dialogue de conséquences (interop Tribler sacrifiée,
+  redémarrage requis) + champ `onionbit-bridge://` inline quand
+  `bridges_configured == 0` (`POST /stealth/bridges` puis `PUT` —
+  `409 missing_prerequisites` replié sur le champ) ; retour `full`→
+  `legacy` → dialogue allégé ; erreurs → snackbar (`guest_session`
+  dédié). Session invitée : lignes inertes + tooltip.
+- **Redémarrage** : `restart_required` → dialogue (daemon local
+  loopback non-web : « Redémarrer maintenant » → `PUT /shutdown`,
+  respawn par `ensureDaemonRunning` à la reconnexion ; distant/web :
+  indication manuelle) ; `restart_pending` → puce « en attente » qui
+  le rouvre.
+- **i18n** : 27 clés `privacyProfile*` EN/FR (copy deck figé ADR §5).
+- **Tests** (10) : 3 positions, bascule `custom` directe, `full` avec
+  et sans pont (validation lien, `addBridge` → `PUT`), dialogue retour
+  `legacy`, `restart_required` → `shutdown`, puce `restart_pending`,
+  invité inerte, snackbar erreur, rail + menu, FR. Goldens
+  `shell_downloads_{medium,expanded}` régénérés.
+
 
 - **`handlers/privacy.rs`** (nouveau) : `GET` expose `{stored,
   effective, diverged_keys, restart_pending, guest,
