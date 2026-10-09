@@ -3,6 +3,22 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Correctif : décapsulation privée streamée (mémoire bornée) (2026-10-09)
+
+Audit de la couche stockage suite au rapport « fichier téléchargé en
+mémoire ». Une anomalie réelle trouvée et corrigée :
+
+- **`decapsulate_private_files` chargeait le `.obd` entier en RAM**
+  (`buf.resize(len, 0)` + `fs::write` atomique) — un fichier privé de
+  plusieurs Gio allouait sa taille complète lors d'un déplacement
+  privé → public. Copie désormais par tranches de 4 Mio, comme
+  l'encapsulation inverse (`encapsulate_public_files`).
+- **Reste de la chaîne vérifié sain** : `encapsulate` streame déjà ;
+  `create_torrent` hashe par blocs de 8 Kio ; `ObdFile` RMW par chunk
+  AEAD ; `OpenedFile` lazy (un fd par fichier, `try_mark_sparse`
+  idempotent) ; `.bitv`/staging attach/`.torrent` bornés ; aucun autre
+  buffer fichier-entier dans les chemins de données.
+
 ## UI : mot de passe choisi en double saisie (confirmation) (2026-10-09, worktree adr21)
 
 - **`core/widgets/password_pair_field.dart`** (nouveau) : paire

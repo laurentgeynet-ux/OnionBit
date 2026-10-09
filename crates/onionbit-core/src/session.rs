@@ -4682,7 +4682,10 @@ fn decapsulate_private_files(
 ) -> std::io::Result<()> {
     use onionbit_crypto::obdfile::ObdFile;
     let grp = zone.group_dir(ih, zone.subdir_of(ih));
-    let mut buf = Vec::new();
+    // Copie par tranches bornees (meme budget que l'encapsulation) —
+    // jamais le fichier entier en memoire : un `.obd` de plusieurs
+    // Gio ferait sinon une allocation de sa taille complete.
+    let mut buf = vec![0u8; 4 << 20];
     if let Ok(entries) = std::fs::read_dir(&grp) {
         for e in entries.flatten() {
             let p = e.path();
@@ -4706,9 +4709,15 @@ fn decapsulate_private_files(
                 std::fs::create_dir_all(parent)?;
             }
             let len = obd.plain_len();
-            buf.resize(len as usize, 0);
-            obd.read_range(0, &mut buf).map_err(std::io::Error::other)?;
-            std::fs::write(&dst, &buf)?;
+            let mut out = std::fs::File::create(&dst)?;
+            let mut off = 0u64;
+            while off < len {
+                let want = ((len - off).min(buf.len() as u64)) as usize;
+                obd.read_range(off, &mut buf[..want])
+                    .map_err(std::io::Error::other)?;
+                std::io::Write::write_all(&mut out, &buf[..want])?;
+                off += want as u64;
+            }
         }
     }
     if grp.exists() {
