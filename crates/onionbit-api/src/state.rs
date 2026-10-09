@@ -208,6 +208,11 @@ pub struct AppState {
     /// Configuration persistee du daemon (`configuration.json`) —
     /// partagee entre `GET`/`POST /api/settings` et le daemon.
     pub daemon_config: Arc<Mutex<DaemonConfig>>,
+    /// Snapshot de la configuration **au demarrage** (ADR-0022) —
+    /// reference de `restart_pending` dans `GET /api/privacy/profile` :
+    /// une cle a redemarrage divergeant du snapshot attend le prochain
+    /// boot. Immutable (jamais mutee par `POST /api/settings`).
+    pub startup_config: Arc<DaemonConfig>,
     /// Chemin du fichier de config (reecrit apres chaque `POST
     /// /api/settings` ; `None` = pas de persistance, tests).
     pub config_path: Option<PathBuf>,
@@ -254,6 +259,7 @@ impl AppState {
             session,
             api_key: None,
             daemon_config: Arc::new(Mutex::new(DaemonConfig::default())),
+            startup_config: Arc::new(DaemonConfig::default()),
             config_path: None,
             unhandled_cli: Arc::new(Mutex::new(std::collections::VecDeque::new())),
             sse_sessions: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
@@ -269,11 +275,13 @@ impl AppState {
 
     /// Adosse l'etat a une configuration de daemon persistee dans
     /// `config_path` (active l'authentification si `api.key` est
-    /// renseignee).
+    /// renseignee). `config` est aussi snapshottee comme reference
+    /// `restart_pending` — l'appelant lui passe la config du boot.
     pub fn with_daemon_config(self, config: DaemonConfig, config_path: Option<PathBuf>) -> Self {
         let api_key = config.api_key().map(String::from);
         Self {
             api_key,
+            startup_config: Arc::new(config.clone()),
             daemon_config: Arc::new(Mutex::new(config)),
             config_path,
             ..self

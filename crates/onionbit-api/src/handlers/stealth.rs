@@ -98,9 +98,15 @@ pub async fn add_bridge(
         cfg.stealth.bridges.push(link.to_string());
     }
     let total = cfg.stealth.bridges.len();
-    if let Some(path) = &state.config_path {
-        cfg.write(path)
-            .map_err(|e| ApiError::internal(format!("ecriture configuration.json: {e}")))?;
+    // ADR-0022 : session invitee = zero artefact — le pont est
+    // injecte dans le transport (memoire) mais jamais persiste dans
+    // le `configuration.json` du proprietaire.
+    let guest = state.session.is_guest();
+    if !guest {
+        if let Some(path) = &state.config_path {
+            cfg.write(path)
+                .map_err(|e| ApiError::internal(format!("ecriture configuration.json: {e}")))?;
+        }
     }
     drop(cfg);
 
@@ -114,6 +120,7 @@ pub async fn add_bridge(
 
     Ok(Json(serde_json::json!({
         "modified": true,
+        "persisted": !guest,
         "bridges": total,
     })))
 }

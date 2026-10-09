@@ -3,6 +3,48 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## API : `GET`/`PUT /api/privacy/profile` + gardes settings (2026-10-09, worktree adr22, étape 79 ADR-0022)
+
+- **`handlers/privacy.rs`** (nouveau) : `GET` expose `{stored,
+  effective, diverged_keys, restart_pending, guest,
+  stealth.bridges_configured}` — lecture libre y compris en invité ;
+  `PUT {profile}` applique le preset via `PrivacyProfile::apply`
+  (tout-ou-rien), persiste, `apply_service_settings` + SSE
+  `settings_changed`, répond `{modified, profile, effective,
+  diverged_keys, restart_required, applied_keys}`. Erreurs : `400`
+  profil inconnu, `409 missing_prerequisites` + corps
+  `{missing:["stealth.bridges"]}` lisible machine (l'UI ouvre le
+  dialogue pont), `409 guest_session` en invité.
+- **`restart_pending`** : nouvelle fonction `privacy::restart_pending`
+  — diff des clés froides entre la config persistée et le nouveau
+  snapshot `AppState.startup_config` (config au bind ; le mapping
+  inverse `CoreConfig` aurait été bancal, `enable_messaging` y est
+  irréversible).
+- **`update_settings` — trois gardes ajoutées** : écriture directe de
+  `privacy.profile` refusée `400` (précédent `identity.at_rest`, les
+  clés `privacy` inconnues restent mergeables) ; combinaisons
+  invalides refusées via le validateur commun
+  `DaemonConfig::validate_combination` — ferme le trou pré-existant
+  `stealth.enabled × ipv8.enabled` persistable (config non-bootable)
+  et remplace le garde inline `at_rest × role`.
+- **Session invitée — zéro artefact (repli documenté ADR)** :
+  `POST /api/settings` applique le merge en mémoire + SSE mais n'écrit
+  jamais le `configuration.json` du propriétaire — réponse
+  `{persisted:false}` ; refus sec écarté pour ne pas casser les
+  réglages session légitimes (saveas, RSS). Même discipline sur
+  `POST /api/stealth/bridges` (trou identique — un pont invité était
+  persisté). `PUT /api/privacy/profile` reste un refus dur : un profil
+  non persisté serait mensonger (clés structurantes à redémarrage).
+- **Routes** : `/api/privacy/profile` GET+PUT derrière `api_key_auth` ;
+  hors whitelist du gate identitaire → `409` en `pending`/`locked`.
+- **Tests** (10) : GET défauts, PUT legacy no-op/custom, `full` sans
+  pont `409`+`missing`, cycle `full`↔`legacy` avec pont (`restart_
+  required`/`restart_pending`), divergence→`custom`, refus
+  `privacy.profile` direct + clé inconnue acceptée, hybride `stealth ×
+  ipv8` refusé + paire atomique acceptée, corps malformés, auth `401`,
+  gate `pending`, invité (GET libre, PUT `guest_session`, settings/
+  ponts mémoire seuls — fichier inchangé vérifié sur disque).
+
 ## Core : `PrivacyProfile` — profils d'anonymat prédéfinis (2026-10-09, worktree adr22, étape 78 ADR-0022)
 
 - **`onionbit-core/src/privacy.rs`** (nouveau) : énum `PrivacyProfile

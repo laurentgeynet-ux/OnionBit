@@ -68,19 +68,34 @@ pub async fn update_settings(
             "identity.at_rest se bascule via POST /api/identity/at_rest (mot de passe requis)",
         ));
     }
-    // `at_rest` exige un redemarrage surveille — incompatible avec
-    // `stealth.role != "client"` dans les deux sens (activer at-rest
-    // sur un pont, ou passer un client at-rest en pont).
-    if candidate.identity.at_rest && candidate.stealth.enabled && candidate.stealth.role != "client"
-    {
+    // ADR-0022 : `privacy.profile` est une **intention** — elle ne
+    // se materialise que via `PUT /api/privacy/profile` (prerequis
+    // ponts, gardes, `restart_required`). Une ecriture directe dans
+    // l'arbre generique produirait un etat incoherent (stocke `full`,
+    // cles `legacy`) — meme precedent que `identity.at_rest`.
+    if patch.pointer("/privacy/profile").is_some() {
         return Err(ApiError::bad_request(
-            "identity.at_rest est incompatible avec stealth.role != \"client\" (un pont doit redemarrer sans surveillance)",
+            "privacy.profile se bascule via PUT /api/privacy/profile",
         ));
     }
+    // Combinaisons inter-sections — validateur commun `DaemonConfig`
+    // (ADR-0022) : hybride `stealth.enabled x ipv8.enabled` (trou
+    // pre-existant — persistable ici, refuse seulement au demarrage)
+    // et `identity.at_rest x stealth.role != "client"` (ADR-0016).
+    if let Err(msg) = candidate.validate_combination() {
+        return Err(ApiError::bad_request(msg));
+    }
     *cfg = candidate;
-    if let Some(path) = &state.config_path {
-        cfg.write(path)
-            .map_err(|e| ApiError::internal(format!("ecriture configuration.json: {e}")))?;
+    // ADR-0022 : session invitee = zero artefact — le merge s'applique
+    // en memoire (services a chaud + SSE) mais ne persiste JAMAIS dans
+    // le `configuration.json` du proprietaire. `persisted:false` le
+    // signale honnetement au client.
+    let guest = state.session.is_guest();
+    if !guest {
+        if let Some(path) = &state.config_path {
+            cfg.write(path)
+                .map_err(|e| ApiError::internal(format!("ecriture configuration.json: {e}")))?;
+        }
     }
     // Re-derive la config coeur depuis l'arbre persiste et applique le
     // sous-ensemble a chaud (RSS, watch folder, saveas).
@@ -94,5 +109,7 @@ pub async fn update_settings(
         .notifier()
         .notify(onionbit_core::Notification::SettingsChanged);
 
-    Ok(Json(serde_json::json!({ "modified": true })))
+    Ok(Json(
+        serde_json::json!({ "modified": true, "persisted": !guest }),
+    ))
 }

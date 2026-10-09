@@ -273,6 +273,21 @@ impl PrivacyProfile {
     }
 }
 
+/// `true` si une clé couverte **à redémarrage** de `persisted`
+/// diffère de la config chargée au démarrage du daemon (`startup`,
+/// snapshot au bind de l'API) — signal `restart_pending` du
+/// `GET /api/privacy/profile` : les clés froides écrites depuis le
+/// boot attendront le prochain lancement. Les clés à chaud ne
+/// comptent pas : `apply_service_settings` les rend effectives
+/// immédiatement.
+pub fn restart_pending(persisted: &DaemonConfig, startup: &DaemonConfig) -> bool {
+    let cur = serde_json::to_value(persisted).unwrap_or_default();
+    let boot = serde_json::to_value(startup).unwrap_or_default();
+    RESTART_BOUND_KEYS
+        .iter()
+        .any(|k| get_path(&cur, k) != get_path(&boot, k))
+}
+
 /// Aplatit un patch JSON en `(chemin, feuille)` — les objets sont
 /// descendus, toute autre valeur est une feuille couverte.
 fn flatten_patch(v: &Value, prefix: String, out: &mut Vec<(String, Value)>) {
@@ -302,6 +317,25 @@ fn get_path<'a>(v: &'a Value, path: &str) -> Option<&'a Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `restart_pending` : une clé froide modifiée depuis le boot
+    /// est détectée, une clé chaude ou hors couverture non.
+    #[test]
+    fn restart_pending_diff_sur_cles_froides() {
+        let startup = DaemonConfig::default();
+        let mut persisted = DaemonConfig::default();
+        assert!(!restart_pending(&persisted, &startup));
+        persisted.stealth.cover_traffic = true;
+        assert!(restart_pending(&persisted, &startup));
+        // Clé a chaud : appliquée sans redémarrage — pas de pending.
+        persisted.stealth.cover_traffic = false;
+        persisted.libtorrent.download_defaults.number_hops = 3;
+        assert!(!restart_pending(&persisted, &startup));
+        // Clé hors couverture : jamais « pending ».
+        persisted.libtorrent.download_defaults.number_hops = 1;
+        persisted.api.http_port = 9999;
+        assert!(!restart_pending(&persisted, &startup));
+    }
 
     /// Le preset `legacy` est exactement le défaut : une config par
     /// défaut affiche le profil `legacy` effectif sans divergence.

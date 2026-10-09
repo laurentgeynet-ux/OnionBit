@@ -4627,3 +4627,478 @@ async fn pairing_desactive_sans_cle_api() {
     assert_eq!(resp.status(), 409);
     srv.session.stop().await;
 }
+
+// ============================================================================
+// ADR-0022 — profils d'anonymat : GET/PUT /api/privacy/profile,
+// gardes update_settings (privacy.profile, hybride stealth x ipv8),
+// session invitée (lecture libre, mutation refusee, zero persistance)
+// ============================================================================
+
+#[tokio::test]
+async fn privacy_profile_get_defauts_legacy() {
+    let srv = spawn_server().await;
+    let resp = srv
+        .client
+        .get(srv.url("/api/privacy/profile"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["stored"], "legacy");
+    assert_eq!(body["effective"], "legacy");
+    assert_eq!(body["diverged_keys"], serde_json::json!([]));
+    assert_eq!(body["restart_pending"], false);
+    assert_eq!(body["guest"], false);
+    assert_eq!(body["stealth"]["bridges_configured"], 0);
+    srv.session.stop().await;
+}
+
+#[tokio::test]
+async fn privacy_profile_put_legacy_puis_custom() {
+    let srv = spawn_server().await;
+    // `legacy` sur les défauts : no-op honnête (modified=false).
+    let resp = srv
+        .client
+        .put(srv.url("/api/privacy/profile"))
+        .json(&serde_json::json!({"profile": "legacy"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["modified"], false);
+    assert_eq!(body["profile"], "legacy");
+    assert_eq!(body["effective"], "legacy");
+    assert_eq!(body["restart_required"], false);
+
+    // `custom` n'écrit aucune clé couverte mais change l'intention.
+    let resp = srv
+        .client
+        .put(srv.url("/api/privacy/profile"))
+        .json(&serde_json::json!({"profile": "custom"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["modified"], true);
+    assert_eq!(body["applied_keys"], serde_json::json!([]));
+    assert_eq!(body["effective"], "custom");
+    srv.session.stop().await;
+}
+
+#[tokio::test]
+async fn privacy_profile_full_sans_pont_409_puis_avec() {
+    let srv = spawn_server().await;
+    // `full` sans pont : 409 missing_prerequisites + `missing` lisible.
+    let resp = srv
+        .client
+        .put(srv.url("/api/privacy/profile"))
+        .json(&serde_json::json!({"profile": "full"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 409);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["error"]["handled"], true);
+    assert_eq!(body["error"]["message"], "missing_prerequisites");
+    assert_eq!(body["missing"], serde_json::json!(["stealth.bridges"]));
+    // Rien n'a été muté.
+    let body: serde_json::Value = srv
+        .client
+        .get(srv.url("/api/privacy/profile"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(body["stored"], "legacy");
+
+    // Ajout d'un pont via l'endpoint dédié (lien `onionbit-bridge://`
+    // syntaxiquement valide — 64 hex de cle X25519).
+    let link = format!("onionbit-bridge://127.0.0.1:9000#{}", "aa".repeat(32));
+    let resp = srv
+        .client
+        .post(srv.url("/api/stealth/bridges"))
+        .json(&serde_json::json!({"bridge": link}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    assert_eq!(
+        resp.json::<serde_json::Value>().await.unwrap()["persisted"],
+        true
+    );
+
+    // `full` accepté : paire stealth×ipv8 atomique, restart requis.
+    let resp = srv
+        .client
+        .put(srv.url("/api/privacy/profile"))
+        .json(&serde_json::json!({"profile": "full"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["modified"], true);
+    assert_eq!(body["profile"], "full");
+    assert_eq!(body["effective"], "full");
+    assert_eq!(body["restart_required"], true);
+    let applied: Vec<String> = serde_json::from_value(body["applied_keys"].clone()).unwrap();
+    assert!(applied.contains(&"stealth.enabled".to_string()));
+    assert!(applied.contains(&"ipv8.enabled".to_string()));
+
+    // GET : restart_pending (les clés froides divergent du boot legacy).
+    let body: serde_json::Value = srv
+        .client
+        .get(srv.url("/api/privacy/profile"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(body["stored"], "full");
+    assert_eq!(body["effective"], "full");
+    assert_eq!(body["restart_pending"], true);
+    assert_eq!(body["stealth"]["bridges_configured"], 1);
+
+    // Retour `legacy` : restauration atomique — le fichier retrouve
+    // la posture du boot, plus de pending, pont préservé.
+    let resp = srv
+        .client
+        .put(srv.url("/api/privacy/profile"))
+        .json(&serde_json::json!({"profile": "legacy"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    assert_eq!(
+        resp.json::<serde_json::Value>().await.unwrap()["restart_required"],
+        true
+    );
+    let body: serde_json::Value = srv
+        .client
+        .get(srv.url("/api/privacy/profile"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(body["stored"], "legacy");
+    assert_eq!(body["effective"], "legacy");
+    assert_eq!(body["restart_pending"], false);
+    assert_eq!(body["stealth"]["bridges_configured"], 1);
+    srv.session.stop().await;
+}
+
+#[tokio::test]
+async fn privacy_profile_divergence_donne_custom() {
+    let srv = spawn_server().await;
+    // Une clé couverte modifiée via l'arbre générique fait retomber
+    // l'effectif sur « custom » sans toucher `stored`.
+    let resp = srv
+        .client
+        .post(srv.url("/api/settings"))
+        .json(&serde_json::json!({
+            "libtorrent": {"download_defaults": {"number_hops": 2}}
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = srv
+        .client
+        .get(srv.url("/api/privacy/profile"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(body["stored"], "legacy");
+    assert_eq!(body["effective"], "custom");
+    assert_eq!(
+        body["diverged_keys"],
+        serde_json::json!(["libtorrent.download_defaults.number_hops"])
+    );
+    srv.session.stop().await;
+}
+
+#[tokio::test]
+async fn settings_refuse_privacy_profile_direct() {
+    let srv = spawn_server().await;
+    // `privacy.profile` est une intention — jamais via l'arbre
+    // générique (même précédent que `identity.at_rest`).
+    let resp = srv
+        .client
+        .post(srv.url("/api/settings"))
+        .json(&serde_json::json!({"privacy": {"profile": "full"}}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 400);
+    // Une clé `privacy` inconnue (extension future) reste mergeable.
+    let resp = srv
+        .client
+        .post(srv.url("/api/settings"))
+        .json(&serde_json::json!({"privacy": {"future_key": 1}}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = srv
+        .client
+        .get(srv.url("/api/privacy/profile"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(body["stored"], "legacy");
+    srv.session.stop().await;
+}
+
+#[tokio::test]
+async fn settings_refuse_hybride_stealth_ipv8() {
+    let srv = spawn_server().await;
+    // Trou pré-existant fermé : persister `stealth.enabled=true`
+    // avec `ipv8.enabled=true` (défaut) rendait le prochain boot
+    // impossible — désormais refusé par le validateur commun.
+    let resp = srv
+        .client
+        .post(srv.url("/api/settings"))
+        .json(&serde_json::json!({"stealth": {"enabled": true}}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 400);
+    // La paire atomique inverse est licite (stealth sans ipv8 legacy).
+    let resp = srv
+        .client
+        .post(srv.url("/api/settings"))
+        .json(&serde_json::json!({
+            "stealth": {"enabled": true},
+            "ipv8": {"enabled": false}
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = srv
+        .client
+        .get(srv.url("/api/settings"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(body["settings"]["stealth"]["enabled"], true);
+    assert_eq!(body["settings"]["ipv8"]["enabled"], false);
+    srv.session.stop().await;
+}
+
+#[tokio::test]
+async fn privacy_profile_corps_malforme_400() {
+    let srv = spawn_server().await;
+    for body in [
+        serde_json::json!({"profile": "nope"}),
+        serde_json::json!({"profile": 42}),
+        serde_json::json!({"profile": null}),
+        serde_json::json!({}),
+    ] {
+        let resp = srv
+            .client
+            .put(srv.url("/api/privacy/profile"))
+            .json(&body)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 400, "body={body}");
+    }
+    srv.session.stop().await;
+}
+
+#[tokio::test]
+async fn privacy_profile_auth_requise() {
+    let srv = spawn_server_with(|s| AppState::new(s).with_api_key("cle-de-test")).await;
+    let resp = srv
+        .client
+        .get(srv.url("/api/privacy/profile"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 401);
+    let resp = srv
+        .client
+        .put(srv.url("/api/privacy/profile"))
+        .json(&serde_json::json!({"profile": "legacy"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 401);
+    let resp = srv
+        .client
+        .get(srv.url("/api/privacy/profile"))
+        .header("X-Api-Key", "cle-de-test")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    srv.session.stop().await;
+}
+
+/// Serveur `identity_pending` adossé à un vrai `configuration.json` —
+/// pour vérifier qu'une session invitée n'y persiste rien.
+async fn spawn_server_pending_persisted() -> (TestServer, std::path::PathBuf) {
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("configuration.json");
+    let mut cfg = CoreConfig::offline(dir.path().into());
+    cfg.ipv8.enabled = true;
+    cfg.ipv8.listen_addr = "0.0.0.0:0".into();
+    cfg.ipv8.bootstrap_peers = Vec::new();
+    let session = CoreSession::start_gated(cfg, Notifier::new(), true)
+        .await
+        .unwrap();
+    let dcfg = onionbit_core::DaemonConfig::default();
+    dcfg.write(&config_path).unwrap();
+    let state = AppState::new(session.clone()).with_daemon_config(dcfg, Some(config_path.clone()));
+    let app = build(state.clone());
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    (
+        TestServer {
+            addr,
+            session,
+            state,
+            client: reqwest::Client::new(),
+            _dir: dir,
+        },
+        config_path,
+    )
+}
+
+#[tokio::test]
+async fn privacy_profile_gate_pending_409() {
+    let (srv, _path) = spawn_server_pending_persisted().await;
+    // Hors whitelist du gate identitaire : 409 uniforme tant que
+    // l'identité n'est pas résolue (ni GET ni PUT).
+    let resp = srv
+        .client
+        .get(srv.url("/api/privacy/profile"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 409);
+    assert_eq!(
+        resp.json::<serde_json::Value>().await.unwrap()["error"]["message"],
+        "identity_pending"
+    );
+    let resp = srv
+        .client
+        .put(srv.url("/api/privacy/profile"))
+        .json(&serde_json::json!({"profile": "legacy"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 409);
+    srv.session.stop().await;
+}
+
+#[tokio::test]
+async fn privacy_profile_guest_lecture_seule_zero_persistance() {
+    let (srv, config_path) = spawn_server_pending_persisted().await;
+    let before = std::fs::read_to_string(&config_path).unwrap();
+
+    // Résolution invitée.
+    let resp = srv
+        .client
+        .post(srv.url("/api/identity/guest"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    // GET libre : l'invité voit la posture du propriétaire.
+    let body: serde_json::Value = srv
+        .client
+        .get(srv.url("/api/privacy/profile"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(body["stored"], "legacy");
+    assert_eq!(body["guest"], true);
+
+    // PUT refusé : un profil non persisté serait mensonger.
+    let resp = srv
+        .client
+        .put(srv.url("/api/privacy/profile"))
+        .json(&serde_json::json!({"profile": "full"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 409);
+    assert_eq!(
+        resp.json::<serde_json::Value>().await.unwrap()["error"]["message"],
+        "guest_session"
+    );
+
+    // `POST /api/settings` en invité : appliqué en mémoire (le GET le
+    // reflète) mais JAMAIS persisté dans le fichier du propriétaire.
+    let resp = srv
+        .client
+        .post(srv.url("/api/settings"))
+        .json(&serde_json::json!({
+            "libtorrent": {"download_defaults": {"number_hops": 2}}
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    assert_eq!(
+        resp.json::<serde_json::Value>().await.unwrap()["persisted"],
+        false
+    );
+    assert_eq!(std::fs::read_to_string(&config_path).unwrap(), before);
+    // La valeur est bien en mémoire (session-scoped) : l'effectif
+    // retombe sur « custom » — une vue de la session, pas un artefact.
+    let body: serde_json::Value = srv
+        .client
+        .get(srv.url("/api/privacy/profile"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(body["effective"], "custom");
+
+    // `POST /api/stealth/bridges` en invité : même discipline.
+    let link = format!("onionbit-bridge://127.0.0.1:9000#{}", "bb".repeat(32));
+    let resp = srv
+        .client
+        .post(srv.url("/api/stealth/bridges"))
+        .json(&serde_json::json!({"bridge": link}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    assert_eq!(
+        resp.json::<serde_json::Value>().await.unwrap()["persisted"],
+        false
+    );
+    assert_eq!(std::fs::read_to_string(&config_path).unwrap(), before);
+
+    srv.session.stop().await;
+}

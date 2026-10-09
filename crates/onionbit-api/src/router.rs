@@ -177,6 +177,13 @@ fn api_router(state: AppState) -> Router<AppState> {
             "/statistics/dirspace",
             get(statistics::get_dirspace_stats).put(statistics::put_dirspace_stats),
         )
+        // Profils d'anonymat predefinis (ADR-0022 — extension Rust ;
+        // `PUT` refuse en session invitee, `GET` libre ; le gate
+        // identitaire couvre la route hors whitelist).
+        .route(
+            "/privacy/profile",
+            get(privacy::get_profile).put(privacy::put_profile),
+        )
         // -- Metadata / recherche (database_endpoint.py) ----------------
         .route(
             "/metadata/torrents/popular",
