@@ -196,10 +196,14 @@ impl PrivateFile {
         v
     }
 
-    /// Ouvre ou cree le `.obd` sous double-check ; un en-tete
-    /// illisible (corruption) est **recree** — le fastresume/hash de
-    /// piece invalidera le contenu et le retirera.
-    fn materialize(&self, st: &PrivateStorage) -> anyhow::Result<()> {
+    /// Ouvre le `.obd` sous double-check. `for_write=false` : aucune
+    /// creation — un fichier absent echoue en `NotFound` (le hashcheck
+    /// marque la piece manquante au lieu de materialiser un stub, ce
+    /// qui corromprait aussi la detection « fichiers manquants »).
+    /// `for_write=true` : creation paresseuse ; un en-tete illisible
+    /// (corruption) est **recree** — le fastresume/hash de piece
+    /// invalidera le contenu et le retirera.
+    fn materialize(&self, st: &PrivateStorage, for_write: bool) -> anyhow::Result<()> {
         st.ensure_alive()?;
         if self.removed.load(Ordering::Acquire) {
             bail!("fichier prive supprime");
@@ -221,10 +225,15 @@ impl PrivateFile {
         let expected = self.expected_len.load(Ordering::Acquire);
         let obd = match ObdFile::open(&self.path, &cipher) {
             Ok(o) => {
-                if o.plain_len() != expected {
+                if for_write && o.plain_len() != expected {
                     o.set_len(expected)?;
                 }
                 o
+            }
+            Err(onionbit_crypto::obdfile::ObdError::Io(e))
+                if e.kind() == std::io::ErrorKind::NotFound && !for_write =>
+            {
+                return Err(anyhow::anyhow!(e)).context("OBD absent");
             }
             Err(onionbit_crypto::obdfile::ObdError::Io(e))
                 if e.kind() == std::io::ErrorKind::NotFound =>
@@ -239,6 +248,9 @@ impl PrivateFile {
                 )?
             }
             Err(e) => {
+                if !for_write {
+                    return Err(anyhow::anyhow!(e)).context("OBD illisible");
+                }
                 // En-tete corrompu : recree a neuf — le contenu serait
                 // invalide au hash de piece de toute facon.
                 tracing::warn!(
@@ -261,12 +273,15 @@ impl PrivateFile {
     }
 
     /// Execute `f` sur le `.obd` materialise (verrou `cell` partage).
+    /// `for_write` propage la semantique creation/lecture a
+    /// `materialize`.
     fn with_obd<R>(
         &self,
         st: &PrivateStorage,
+        for_write: bool,
         f: impl FnOnce(&ObdFile) -> anyhow::Result<R>,
     ) -> anyhow::Result<R> {
-        self.materialize(st)?;
+        self.materialize(st, for_write)?;
         let g = self.cell.read().unwrap_or_else(|e| e.into_inner());
         f(g.as_ref().context("OBD vient d'etre materialise")?)
     }
@@ -339,7 +354,7 @@ impl TorrentStorage for PrivateStorage {
         // jamais (le nom de groupe et la ligne DB sont des HMAC
         // non inversibles). Les autres fichiers restent paresseux.
         if let Some(f) = self.files.iter().find(|f| !f.padding) {
-            f.materialize(self)?;
+            f.materialize(self, true)?;
         }
         Ok(())
     }
@@ -358,7 +373,7 @@ impl TorrentStorage for PrivateStorage {
             .iter()
             .map(|&s| f.stripes[s].read().unwrap_or_else(|e| e.into_inner()))
             .collect();
-        f.with_obd(self, |o| {
+        f.with_obd(self, false, |o| {
             o.read_range(offset, buf).map_err(|e| anyhow::anyhow!(e))
         })?;
         drop(guards);
@@ -378,7 +393,7 @@ impl TorrentStorage for PrivateStorage {
             .iter()
             .map(|&s| f.stripes[s].write().unwrap_or_else(|e| e.into_inner()))
             .collect();
-        f.with_obd(self, |o| {
+        f.with_obd(self, true, |o| {
             o.write_range(offset, buf).map_err(|e| anyhow::anyhow!(e))
         })?;
         drop(guards);

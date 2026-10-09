@@ -3,6 +3,65 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## État « fichiers manquants » + lecture paresseuse non créatrice (2026-10-09)
+
+Politique inspirée de qBittorrent (`TorrentState::MissingFiles`) au-dessus
+de rqbit, qui re-télécharge en silence dans le dossier final quand le
+contenu a disparu — le bug existe aussi chez upstream rqbit.
+
+- **Détection** : fichiers attendus absents sous `output_dir` persisté →
+  set mémoire `missing` (infohash hex) + ré-ajout *pausé* à la
+  restauration — le download reste visible, aucune écriture. Terminé :
+  chaque fichier sélectionné doit exister à la taille déclarée ; inachevé :
+  seulement si des octets avaient été vérifiés (`total_downloaded` persiste)
+  et que tout le contenu attendu a disparu — les fichiers paresseux d'un
+  téléchargement neuf ne sont jamais « manquants ». Zone privée : groupe
+  `OBD` absent/vide, et pour les terminés décompte des `.obd` contre les
+  fichiers sélectionnés non nuls (perte partielle détectée).
+- **Surface** : `downloads()` et `notify_state` patchent l'état exposé en
+  `Error` + `« fichiers manquants »` ; runtime : un download terminé dont
+  les fichiers disparaissent pendant le run est marqué puis pausé.
+- **`resume` explicite** (`resume_missing`, `lifecycle_gate`) : contenu
+  revenu → remove+re-add en place (le `check()` du re-add re-vérifie — un
+  simple `unpause` repartirait sur le verdict périmé du check pausé) ;
+  toujours absent → bascule `output_dir` vers `temp` public / `temp` privé,
+  re-add actif — `move_on_completion` refoule à la destination finale.
+  Hors paire temp/downloads (saveas externe) : reprise en place.
+- **Lecture paresseuse non créatrice — la cause racine des stubs** :
+  `OpenedFile` sépare l'ouverture lecture (`open_read`, `OpenOptions`
+  sans `create`) de l'écriture (`ensure_open`, création paresseuse,
+  upgrade ro→rw à la première écriture, `pending_len` appliquée alors) ;
+  `pread`/`lock_read` n'engendrent plus de fichier vide. `fs.rs` recâble
+  `pwrite*` sur le chemin créateur. `mmap.rs` : `pread_exact` délègue au
+  backend fichier (le mapping `map_mut` imposait un fd rw — toute lecture
+  créait le stub). `PrivateStorage::pread` : `materialize(false)` —
+  `OBD absent` = erreur de lecture, jamais de création.
+- Sans ce garde-fou, le hashcheck d'un re-add pausé recréait les stubs
+  vides → la détection voyait des fichiers « présents à la bonne taille »
+  → `resume` repartait en place et re-téléchargeait dans `downloads`.
+
+Tests `lifecycle` : `fichier_final_supprime_restaure_marque_manquant`,
+`resume_manquant_rebascule_en_temp`,
+`resume_manquant_fichiers_revenus_reprend_en_place` — 15/15 verts,
+suites `onionbit-core`/`onionbit-bittorrent` complètes vertes.
+
+## Correctif : le daemon ne pouvait plus s'arrêter (SSE jamais clos) (2026-10-09)
+
+Symptôme : « impossible de kill le daemon ». `axum::serve().with_graceful_shutdown`
+attend la fin des connexions **en vol** sans borne — et le flux SSE
+`/api/events` de l'UI ne se terminait jamais (le canal broadcast reste
+ouvert après `Session::stop`). Drain infini → arrêt bloqué à vie.
+
+- **`events.rs`** : le flux SSE se termine quand `SessionStopping` est
+  émis (`take_while` sur la notification — extraction `event_stream()`
+  testable + test de terminaison).
+- **`main.rs`** : borne dure sur le drain (`SHUTDOWN_GRACE` armée à la
+  fin de `session.stop()`, via oneshot — un checkpoint long consommait
+  le budget si armée au signal).
+- **`shutdown.rs`** : `ShutdownSignal::wait()` rendu multi-attendants
+  (`Notified` ne pouvait servir qu'un seul waiter — le watcher de
+  deadline en est un second) + test dédié.
+
 ## Correctif : suppression fiable d'un téléchargement (cycle remove/re-add) (2026-10-09)
 
 Symptôme : `DELETE /downloads` puis le daemon reste occupé plusieurs

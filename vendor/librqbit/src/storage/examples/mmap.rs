@@ -90,13 +90,13 @@ impl MmapFilesystemStorage {
 
 impl TorrentStorage for MmapFilesystemStorage {
     fn pread_exact(&self, file_id: usize, offset: u64, buf: &mut [u8]) -> anyhow::Result<()> {
-        let g = self.mmap(file_id)?;
-        let start = offset;
-        let end = offset + buf.len() as u64;
-        let start = start.try_into()?;
-        let end = end.try_into()?;
-        buf.copy_from_slice(g.get(start..end).context("bug")?);
-        Ok(())
+        // Lecture directe via le backend fichier : un `pread` ne cree
+        // PAS le fichier ni ne le mappe — un absent reste absent (le
+        // hashcheck marque la piece manquante au lieu de materialiser
+        // un stub vide, ce qui corromprait la detection « fichiers
+        // manquants »). Le page cache partage rend les ecritures mmap
+        // visibles meme sans flush.
+        self.fs.pread_exact(file_id, offset, buf)
     }
 
     fn pwrite_all(&self, file_id: usize, offset: u64, buf: &[u8]) -> anyhow::Result<()> {

@@ -117,6 +117,11 @@ struct OpenedFileLocked {
     /// Longueur demandee par `ensure_file_length` avant que le fichier
     /// ne soit ouvert — appliquee juste apres l'open.
     pending_len: Option<u64>,
+    /// Le `fd` courant est ouvert en ecriture : un `pread` ouvre en
+    /// lecture seule sans creer (un fichier absent reste absent — le
+    /// hashcheck marque la piece manquante au lieu de materialiser un
+    /// stub vide). La premiere ecriture re-ouvre alors en rw.
+    writable: bool,
     #[cfg(windows)]
     tried_marking_sparse: bool,
 }
@@ -152,6 +157,7 @@ impl OpenedFile {
                 fd: None,
                 allow_overwrite,
                 pending_len: None,
+                writable: false,
                 #[cfg(windows)]
                 tried_marking_sparse: false,
             }),
@@ -176,11 +182,16 @@ impl OpenedFile {
         })
     }
 
-    /// Ouvre le fichier sous `g` s'il ne l'est pas encore (creation du
-    /// dossier parent, options d'ouverture repliquees de l'init eager,
-    /// `pending_len` appliquee).
-    fn open_locked(g: &mut OpenedFileLocked) -> crate::Result<()> {
-        if g.fd.is_some() {
+    /// Ouvre le fichier sous `g` si necessaire. `for_write=false` :
+    /// lecture seule, JAMAIS de creation ni de dossier parent — un
+    /// fichier absent renvoie `NotFound` (le hashcheck marque la piece
+    /// manquante au lieu de materialiser un stub vide, ce qui
+    /// corromprait aussi la detection « fichiers manquants » en
+    /// surface). `for_write=true` : creation paresseuse inchangee ;
+    /// un `fd` deja ouvert en lecture seule est re-ouvert en rw
+    /// (upgrade — ex. piece ecrite apres un check).
+    fn open_locked(g: &mut OpenedFileLocked, for_write: bool) -> crate::Result<()> {
+        if g.fd.is_some() && (!for_write || g.writable) {
             return Ok(());
         }
         // Fichier "dummy" (padding) : jamais de fd.
@@ -188,12 +199,22 @@ impl OpenedFile {
             return Err(Error::FsFileIsNone);
         }
         let path = g.path.clone();
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| {
-                Error::Anyhow(anyhow::anyhow!("error creating dir {parent:?}: {e:#}"))
-            })?;
+        let upgrading = for_write && g.fd.is_some();
+        if for_write {
+            // Upgrade lecture → ecriture : l'ancien fd est referme.
+            g.fd = None;
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| {
+                    Error::Anyhow(anyhow::anyhow!("error creating dir {parent:?}: {e:#}"))
+                })?;
+            }
         }
-        let f = if g.allow_overwrite {
+        let f = if !for_write {
+            std::fs::OpenOptions::new().read(true).open(&path)
+        } else if upgrading || g.allow_overwrite {
+            // `allow_overwrite` protege la CREATION (`create_new`) ;
+            // re-ouvrir en rw un fichier deja ouvert en lecture n'en
+            // cree pas — un `create_new` echouerait `AlreadyExists`.
             std::fs::OpenOptions::new()
                 .create(true)
                 .truncate(false)
@@ -214,54 +235,71 @@ impl OpenedFile {
                 })
         }
         .map_err(|e| Error::Anyhow(anyhow::anyhow!("error opening {path:?}: {e:#}")))?;
-        if let Some(len) = g.pending_len.take() {
-            f.set_len(len).map_err(|e| {
-                Error::Anyhow(anyhow::anyhow!("error setting len {len} on {path:?}: {e:#}"))
-            })?;
+        if for_write {
+            if let Some(len) = g.pending_len.take() {
+                f.set_len(len).map_err(|e| {
+                    Error::Anyhow(anyhow::anyhow!("error setting len {len} on {path:?}: {e:#}"))
+                })?;
+            }
         }
+        g.writable = for_write;
         g.fd = Some(f);
         Ok(())
     }
 
-    /// Retourne un guard sur le `File`, en l'ouvrant si necessaire.
+    /// Retourne un guard sur le `File` ouvert en ecriture (creation
+    /// paresseuse — le fichier nait a la premiere E/S d'ecriture, et
+    /// un `fd` qui ne serait qu'en lecture est re-ouvert en rw).
     pub fn ensure_open(&self) -> crate::Result<impl Deref<Target = File>> {
+        self.ensure_open_mode(true)
+    }
+
+    /// Guard lecture : ouvre SANS creer — un fichier absent est
+    /// absent. Ne re-ouvre pas un `fd` deja ouvert en ecriture.
+    pub fn open_read(&self) -> crate::Result<impl Deref<Target = File>> {
+        self.ensure_open_mode(false)
+    }
+
+    fn ensure_open_mode(&self, for_write: bool) -> crate::Result<impl Deref<Target = File>> {
         {
             let g = self.file.read();
-            if g.fd.is_some() {
+            if g.fd.is_some() && (!for_write || g.writable) {
                 return RwLockReadGuard::try_map(g, |f| f.fd.as_ref())
                     .ok()
                     .ok_or(Error::FsFileIsNone);
             }
         }
         let mut g = self.file.write();
-        Self::open_locked(&mut g)?;
+        Self::open_locked(&mut g, for_write)?;
         let g = parking_lot::RwLockWriteGuard::downgrade(g);
         RwLockReadGuard::try_map(g, |f| f.fd.as_ref())
             .ok()
             .ok_or(Error::FsFileIsNone)
     }
 
-    /// `set_len` immediat si le fichier est ouvert, sinon la longueur
-    /// est enregistree et appliquee a l'ouverture paresseuse.
+    /// `set_len` immediat si le fichier est ouvert en ecriture, sinon
+    /// la longueur est enregistree et appliquee a la prochaine
+    /// ouverture en ecriture (un `fd` en lecture seule ne peut pas
+    /// `set_len` — et ne doit pas, elle tronquerait pendant un check).
     pub fn ensure_len(&self, len: u64) -> crate::Result<()> {
         let mut g = self.file.write();
-        if let Some(f) = g.fd.as_ref() {
-            f.set_len(len)
-                .map_err(|e| Error::Anyhow(anyhow::anyhow!("error setting len: {e:#}")))?;
-        } else {
-            g.pending_len = Some(len);
+        match g.fd.as_ref() {
+            Some(f) if g.writable => f
+                .set_len(len)
+                .map_err(|e| Error::Anyhow(anyhow::anyhow!("error setting len: {e:#}")))?,
+            _ => g.pending_len = Some(len),
         }
         Ok(())
     }
 
     pub fn lock_read(&self) -> crate::Result<impl Deref<Target = File>> {
-        self.ensure_open()
+        self.open_read()
     }
 
     #[allow(dead_code)]
     pub fn lock_write(&self) -> crate::Result<impl DerefMut<Target = File>> {
         let mut g = self.file.write();
-        Self::open_locked(&mut g)?;
+        Self::open_locked(&mut g, true)?;
         RwLockWriteGuard::try_map(g, |f| f.fd.as_mut())
             .ok()
             .ok_or(Error::FsFileIsNone)
@@ -278,7 +316,7 @@ impl OpenedFile {
             }
         }
         let mut g = self.file.write();
-        Self::open_locked(&mut g)?;
+        Self::open_locked(&mut g, true)?;
         if !g.tried_marking_sparse {
             g.tried_marking_sparse = true;
             let f = g.fd.as_ref().ok_or(Error::FsFileIsNone)?;

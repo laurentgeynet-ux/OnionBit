@@ -70,7 +70,7 @@ impl TorrentStorage for FilesystemStorage {
         #[cfg(windows)]
         return of.try_mark_sparse()?.pwrite_all(offset, buf);
         #[cfg(not(windows))]
-        return of.lock_read()?.pwrite_all(offset, buf);
+        return of.ensure_open()?.pwrite_all(offset, buf);
     }
 
     fn pwrite_all_vectored(
@@ -83,7 +83,7 @@ impl TorrentStorage for FilesystemStorage {
         #[cfg(windows)]
         return of.try_mark_sparse()?.pwrite_all_vectored(offset, bufs);
         #[cfg(not(windows))]
-        return of.lock_read()?.pwrite_all_vectored(offset, bufs);
+        return of.ensure_open()?.pwrite_all_vectored(offset, bufs);
     }
 
     fn remove_file(&self, _file_id: usize, filename: &Path) -> anyhow::Result<()> {

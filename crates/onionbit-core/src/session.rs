@@ -282,6 +282,13 @@ struct Inner {
     /// deplacement supprimait la ligne puis le re-add ressuscitait le
     /// torrent — orphelin actif, re-hash complet, fichiers conserves.
     lifecycle_gate: tokio::sync::Mutex<()>,
+    /// Infohashes hex dont les fichiers attendus sont absents du
+    /// dossier persiste (suppression/deplacement manuel — parite
+    /// qBittorrent « fichiers manquants »). Un download manquant est
+    /// re-ajoute en pause : visible et supprimable, mais rien n'est
+    /// re-telecharge en douce — la reprise explicite rebascule en
+    /// `temp`. Etat derive (recalcule a chaque boot), non persiste.
+    missing: std::sync::Mutex<std::collections::HashSet<String>>,
     /// `AugmentedSearch` Python : vocabulaire de sous-mots appris des
     /// titres de torrents, utilise par `local_search` (`augmenter`
     /// du `DatabaseEndpoint`).
@@ -736,6 +743,7 @@ impl CoreSession {
                 stopped: std::sync::atomic::AtomicBool::new(false),
                 restore_done: tokio::sync::watch::channel(false).0,
                 lifecycle_gate: tokio::sync::Mutex::new(()),
+                missing: std::sync::Mutex::new(std::collections::HashSet::new()),
                 augmenter,
                 bandwidth: Arc::new(crate::services::bandwidth::CongestionController::new()),
                 started_at: std::time::Instant::now(),
@@ -831,7 +839,7 @@ impl CoreSession {
         // downloads suivants de la meme lane passent directement.
         let mut awaited_lanes: std::collections::HashSet<u32> = std::collections::HashSet::new();
         let zone = self.private_zone();
-        for row in rows {
+        for mut row in rows {
             // `stop()` pendant la restauration : on abandonne — les
             // downloads non reinjectes seront relus au prochain run.
             if self.inner.stopped.load(std::sync::atomic::Ordering::SeqCst) {
@@ -850,11 +858,29 @@ impl CoreSession {
                         continue;
                     }
                     Some(z) => {
-                        if z.entry_by_row_key(&hex::encode(&row.infohash)).is_none() {
-                            tracing::warn!(
-                                "ligne privee sans entree manifeste — ignoree (orpheline)"
-                            );
-                            continue;
+                        match z.entry_by_row_key(&hex::encode(&row.infohash)) {
+                            None => {
+                                tracing::warn!(
+                                    "ligne privee sans entree manifeste — ignoree (orpheline)"
+                                );
+                                continue;
+                            }
+                            Some(entry) => {
+                                // Groupe OBD absent/vide (suppression
+                                // manuelle) : marquer plutot que
+                                // re-telecharger en douce — parite
+                                // qBittorrent « fichiers manquants ».
+                                if self.private_files_missing(&row) {
+                                    self.set_missing(&entry.infohash, true);
+                                    if row.finished {
+                                        row.finished = false;
+                                        let key = self.db_key(&row.infohash);
+                                        let _ = self.inner.db_arc().with(|c| {
+                                            onionbit_db::downloads::set_finished(c, &key, false)
+                                        });
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -920,6 +946,23 @@ impl CoreSession {
                 self.spawn_deferred_restore(row);
                 deferred += 1;
                 continue;
+            }
+            // Fichiers attendus absents du dossier persiste
+            // (suppression/deplacement manuel pendant que le daemon
+            // etait eteint) : marquer « fichiers manquants » a la
+            // qBittorrent au lieu de re-telecharger en douce dans le
+            // dossier final — le re-add ci-dessous se fait alors en
+            // pause et la reprise explicite rebascule en `temp`.
+            if self.files_missing(&row) {
+                self.set_missing(&hex::encode(&row.infohash), true);
+                if row.finished {
+                    row.finished = false;
+                    let key = self.db_key(&row.infohash);
+                    let _ = self
+                        .inner
+                        .db_arc()
+                        .with(|c| onionbit_db::downloads::set_finished(c, &key, false));
+                }
             }
             match self.readd_row(&engine, &row).await {
                 Ok(dl) => {
@@ -1254,6 +1297,206 @@ impl CoreSession {
     /// ajoutes a chaud, limites, dossier de sortie, pause) sont
     /// reappliques a chaque (re)creation, comme le `DownloadConfig`
     /// checkpointe Python.
+    /// Infohash hex marque « fichiers manquants » ?
+    fn is_missing_hex(&self, ih_hex: &str) -> bool {
+        self.inner
+            .missing
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .contains(ih_hex)
+    }
+
+    /// Marque/unmarque le download comme « fichiers manquants ».
+    fn set_missing(&self, ih_hex: &str, missing: bool) {
+        let mut set = self.inner.missing.lock().unwrap_or_else(|e| e.into_inner());
+        if missing {
+            set.insert(ih_hex.to_string());
+        } else {
+            set.remove(ih_hex);
+        }
+    }
+
+    /// Repercute le marquage sur l'instantane expose : un download
+    /// manquant se presente en erreur (parite qBittorrent
+    /// « fichiers manquants ») meme si le moteur le voit en pause.
+    fn apply_missing(&self, s: &mut DownloadStats) {
+        if self.is_missing_hex(&s.info_hash) {
+            s.state = DownloadState::Error;
+            if s.error.is_none() {
+                s.error = Some("fichiers manquants".to_string());
+            }
+        }
+    }
+
+    /// Zone publique : le contenu attendu a-t-il disparu sous le
+    /// `output_dir` persiste (suppression/deplacement manuel) ?
+    /// La presence est derivee du metainfo `torrent_data` —
+    /// `selected_files` borne l'attente ; les fichiers de taille
+    /// nulle ne comptent pas. Sans metainfo ou dossier non resoluble
+    /// : rien a verifier (`false`).
+    ///
+    /// Le stockage est paresseux (`OpenedFile` cree a la premiere
+    /// E/S) : pour une ligne inachevee des fichiers absents sont
+    /// normaux — « manquant » exige alors que la ligne atteste des
+    /// donnees (`total_downloaded > 0`) ET que tout le contenu
+    /// selectionne ait disparu (suppression en bloc). Une perte
+    /// partielle re-check + re-telecharge les seules pieces perdues,
+    /// comportement natif correct en `temp`.
+    fn files_missing(&self, row: &DownloadRow) -> bool {
+        let Some(bytes) = row.torrent_data.as_deref() else {
+            return false;
+        };
+        let Ok(meta) = onionbit_format::torrent::TorrentMeta::parse(bytes) else {
+            return false;
+        };
+        if row.output_dir.is_empty() {
+            return false;
+        }
+        let dir = self.inner.paths.resolve_persisted(&row.output_dir);
+        let selected: Option<std::collections::HashSet<usize>> = row
+            .selected_files
+            .as_ref()
+            .map(|l| l.iter().map(|&i| i as usize).collect());
+        let file_path = |f: &onionbit_format::torrent::TorrentFile| {
+            f.path.iter().fold(dir.clone(), |mut p, seg| {
+                p.push(seg);
+                p
+            })
+        };
+        let wanted = |i: usize, f: &onionbit_format::torrent::TorrentFile| {
+            f.length > 0 && !selected.as_ref().is_some_and(|s| !s.contains(&i))
+        };
+        if row.finished {
+            // Complete : chaque fichier selectionne doit exister a la
+            // taille declaree — absent ou tronque = supprime.
+            return meta.files.iter().enumerate().any(|(i, f)| {
+                if !wanted(i, f) {
+                    return false;
+                }
+                match std::fs::metadata(file_path(f)) {
+                    Ok(m) => m.len() != f.length,
+                    Err(_) => true,
+                }
+            });
+        }
+        if row.total_downloaded <= 0 {
+            return false;
+        }
+        // Des octets avaient ete verifies : tout le contenu attendu
+        // absent = suppression pendant l'arret.
+        let (mut n_wanted, mut n_present) = (0usize, 0usize);
+        for (i, f) in meta.files.iter().enumerate() {
+            if !wanted(i, f) {
+                continue;
+            }
+            n_wanted += 1;
+            if std::fs::metadata(file_path(f)).is_ok() {
+                n_present += 1;
+            }
+        }
+        n_wanted > 0 && n_present == 0
+    }
+
+    /// Zone privee : le groupe `OBD` du download a-t-il disparu ou
+    /// perdu des fichiers (`private/temp|<hmac>`/`private/downloads|
+    /// <hmac>`) ? `false` sans zone montee ni entree manifeste. Meme
+    /// garde que `files_missing` : les `.obd` naissent paresseusement
+    /// — une ligne inachevee sans octet telecharge n'a rien a perdre.
+    /// Terminee : le decompte des `.obd` doit egaler le nombre de
+    /// fichiers selectionnes non nuls (suppression partielle detectee).
+    fn private_files_missing(&self, row: &DownloadRow) -> bool {
+        if !row.finished && row.total_downloaded <= 0 {
+            return false;
+        }
+        let Some(z) = self.private_zone() else {
+            return false;
+        };
+        let Some(entry) = z.entry_by_row_key(&hex::encode(&row.infohash)) else {
+            return false;
+        };
+        let Some(ih_arr) = hex::decode(&entry.infohash)
+            .ok()
+            .and_then(|b| <[u8; 20]>::try_from(b.as_slice()).ok())
+        else {
+            return false;
+        };
+        let dir = z.group_dir(
+            &onionbit_bittorrent::Id20::new(ih_arr),
+            crate::private_zone::PrivateZone::subdir_of_spec_pub(&entry.output_dir),
+        );
+        if !dir.is_dir() {
+            return true;
+        }
+        let present = std::fs::read_dir(&dir)
+            .map(|it| it.filter_map(|e| e.ok()).count())
+            .unwrap_or(0);
+        if !row.finished {
+            // Inacheve mais des octets verifies : tout a disparu.
+            return present == 0;
+        }
+        // Termine : chaque fichier selectionne non nul a son `.obd`.
+        let Some(meta) = entry
+            .torrent_data
+            .as_deref()
+            .and_then(|h| hex::decode(h).ok())
+            .and_then(|b| onionbit_format::torrent::TorrentMeta::parse(&b).ok())
+        else {
+            return present == 0;
+        };
+        let selected: Option<std::collections::HashSet<usize>> = row
+            .selected_files
+            .as_ref()
+            .map(|l| l.iter().map(|&i| i as usize).collect());
+        let expected = meta
+            .files
+            .iter()
+            .enumerate()
+            .filter(|(i, f)| f.length > 0 && !selected.as_ref().is_some_and(|s| !s.contains(i)))
+            .count();
+        expected > 0 && present != expected
+    }
+
+    /// Detection unifiee public/prive (cle de la ligne `downloads`
+    /// choisie par `row.storage_area`).
+    fn row_files_missing(&self, row: &DownloadRow) -> bool {
+        if row.storage_area == "private" {
+            self.private_files_missing(row)
+        } else {
+            self.files_missing(row)
+        }
+    }
+
+    /// Meme detection sur le download moteur vivant (run-time :
+    /// suppression pendant que le daemon tourne). Reserve aux
+    /// telechargements `finished` : leurs fichiers selectionnes
+    /// doivent tous exister a la taille declaree.
+    /// Meme test sur l'objet `Download` vivant : le public lit la
+    /// liste de fichiers rqbit a jour ; le prive delegue a
+    /// `private_files_missing` (decompte des `.obd` du groupe).
+    fn live_files_missing(&self, dl: &Download, row: &DownloadRow) -> bool {
+        if self.storage_area_of(&dl.info_hash()) == crate::config::StorageArea::Private {
+            return self.private_files_missing(row);
+        }
+        let Some(files) = dl.files() else {
+            return false;
+        };
+        let dir = dl.output_folder();
+        if !dir.is_dir() {
+            return !files.is_empty();
+        }
+        let only = dl.only_files();
+        files.iter().any(|f| {
+            if f.length == 0 || only.as_ref().is_some_and(|o| !o.contains(&f.index)) {
+                return false;
+            }
+            let path = dir.join(&f.name);
+            match std::fs::metadata(&path) {
+                Ok(m) => m.len() != f.length,
+                Err(_) => true,
+            }
+        })
+    }
+
     fn row_add_options(&self, row: &DownloadRow) -> AddDownloadOptions {
         AddDownloadOptions {
             paused: row.paused,
@@ -1323,6 +1566,12 @@ impl CoreSession {
             let sub = crate::private_zone::PrivateZone::subdir_of_spec_pub(&entry.output_dir);
             opts.storage_factory = Some(zone.factory(sub));
             opts.output_folder = Some(zone.subdir_root(sub));
+            // Marque « fichiers manquants » : tout re-add (recheck,
+            // move, lane) reste en pause tant que la marque tient —
+            // seule `resume_missing` la leve.
+            if self.is_missing_hex(&entry.infohash) {
+                opts.paused = true;
+            }
             (
                 entry
                     .torrent_data
@@ -1331,6 +1580,9 @@ impl CoreSession {
                 entry.source_uri,
             )
         } else {
+            if self.is_missing_hex(&hex::encode(&row.infohash)) {
+                opts.paused = true;
+            }
             crate::trackers::effective_source(row)
         };
         Ok(if let Some(bytes) = torrent_data {
@@ -1459,89 +1711,129 @@ impl CoreSession {
                         // `insert` = passage a termine observe dans
                         // cette session : notification + drapeau
                         // persistant + recheck optionnel.
+                        // Un `.bitv` de confiance
+                        // (`fastresume_sampled_check=false`) rapporte
+                        // « termine » SANS relire le disque — un
+                        // download marque « manquant » verrait sa marque
+                        // sauter au premier tick sans que rien n'ait ete
+                        // reverifie. La transition n'est pas consommee
+                        // (`remove`) : le vrai passage a terme — apres
+                        // `resume_missing` → re-add → check reel —
+                        // entrera dans le bloc et notifiera normalement.
                         if finished.insert(stats.info_hash.clone()) {
-                            session
-                                .inner
-                                .notifier
-                                .notify(Notification::DownloadFinished {
-                                    infohash: stats.info_hash.clone(),
-                                    name: stats.name.clone(),
-                                });
-                            let ih = onionbit_crypto::hash::from_hex(&stats.info_hash);
-                            if let Some(ih) = ih {
+                            if session.is_missing_hex(&stats.info_hash) {
+                                finished.remove(&stats.info_hash);
+                            } else {
+                                // Termine : la marque « fichiers
+                                // manquants » saute d'elle-meme
+                                // (re-download ou recheck ayant retrouve
+                                // le contenu complet).
+                                session.set_missing(&stats.info_hash, false);
+                                session
+                                    .inner
+                                    .notifier
+                                    .notify(Notification::DownloadFinished {
+                                        infohash: stats.info_hash.clone(),
+                                        name: stats.name.clone(),
+                                    });
+                                let ih = onionbit_crypto::hash::from_hex(&stats.info_hash);
+                                if let Some(ih) = ih {
+                                    let key = session.db_key(&ih);
+                                    let _ = session.inner.db_arc().with(|c| {
+                                        onionbit_db::downloads::set_finished(c, &key, true)
+                                    });
+                                    // `add_download_to_channel` Python : les
+                                    // canaux ne sont pas portes — l'attribut
+                                    // persiste en base et le manque est trace.
+                                    let channel = session
+                                        .inner
+                                        .db_arc()
+                                        .with(|c| onionbit_db::downloads::get(c, &key))
+                                        .ok()
+                                        .flatten()
+                                        .map(|r| r.add_download_to_channel)
+                                        .unwrap_or(false);
+                                    if channel {
+                                        tracing::debug!(
+                                            infohash = %stats.info_hash,
+                                            "add_download_to_channel : les canaux ne sont pas implementes"
+                                        );
+                                    }
+                                }
+                                // ADR-0018 etape 59 + `check_after_complete`
+                                // Python : rangement `temp` → `downloads` puis
+                                // recheck. Les deux font remove + re-add du
+                                // torrent — serialises dans UN seul spawn pour
+                                // eviter toute course concurrente.
+                                {
+                                    let session = session.clone();
+                                    let ih = stats.info_hash.clone();
+                                    let recheck = session.inner.config.check_after_complete;
+                                    // Zone privee : l'infohash reel ne va
+                                    // jamais dans les logs ni les events —
+                                    // etiquette opacifiee (`<prive>`).
+                                    let label = onionbit_crypto::hash::from_hex(&ih)
+                                        .map(|b| {
+                                            if session.storage_area_of(&b)
+                                                == crate::config::StorageArea::Private
+                                            {
+                                                "<prive>".to_string()
+                                            } else {
+                                                ih.clone()
+                                            }
+                                        })
+                                        .unwrap_or_else(|| ih.clone());
+                                    tokio::spawn(async move {
+                                        if let Err(e) = session.move_on_completion(&ih).await {
+                                            // Jamais de perte : le contenu
+                                            // reste en `temp` (rollback
+                                            // interne de `move_storage`).
+                                            tracing::warn!(
+                                                error = %e,
+                                                infohash = %label,
+                                                "move_on_completion en echec — le torrent reste en temp"
+                                            );
+                                            session.inner.notifier.notify(
+                                                Notification::TriblerException {
+                                                    error: format!(
+                                                        "move_on_completion {label}: {e}"
+                                                    ),
+                                                },
+                                            );
+                                        }
+                                        if recheck {
+                                            if let Err(e) = session.recheck(&ih).await {
+                                                tracing::warn!(
+                                                    error = %e,
+                                                    infohash = %ih,
+                                                    "check_after_complete en erreur"
+                                                );
+                                            }
+                                        }
+                                    });
+                                }
+                            }
+                        } else if !session.is_missing_hex(&stats.info_hash)
+                            && session
+                                .download_and_row(&stats.info_hash)
+                                .ok()
+                                .is_some_and(|(dl, row)| session.live_files_missing(&dl, &row))
+                        {
+                            // Fichiers d'un telechargement termine
+                            // supprimes pendant le run : marquer
+                            // « fichiers manquants » + figer — parite
+                            // qBittorrent (choix laisse a
+                            // l'utilisateur : supprimer ou repartir
+                            // en `temp` via resume).
+                            session.set_missing(&stats.info_hash, true);
+                            if let Some(ih) = onionbit_crypto::hash::from_hex(&stats.info_hash) {
                                 let key = session.db_key(&ih);
                                 let _ = session
                                     .inner
                                     .db_arc()
-                                    .with(|c| onionbit_db::downloads::set_finished(c, &key, true));
-                                // `add_download_to_channel` Python : les
-                                // canaux ne sont pas portes — l'attribut
-                                // persiste en base et le manque est trace.
-                                let channel = session
-                                    .inner
-                                    .db_arc()
-                                    .with(|c| onionbit_db::downloads::get(c, &key))
-                                    .ok()
-                                    .flatten()
-                                    .map(|r| r.add_download_to_channel)
-                                    .unwrap_or(false);
-                                if channel {
-                                    tracing::debug!(
-                                        infohash = %stats.info_hash,
-                                        "add_download_to_channel : les canaux ne sont pas implementes"
-                                    );
-                                }
+                                    .with(|c| onionbit_db::downloads::set_finished(c, &key, false));
                             }
-                            // ADR-0018 etape 59 + `check_after_complete`
-                            // Python : rangement `temp` → `downloads` puis
-                            // recheck. Les deux font remove + re-add du
-                            // torrent — serialises dans UN seul spawn pour
-                            // eviter toute course concurrente.
-                            {
-                                let session = session.clone();
-                                let ih = stats.info_hash.clone();
-                                let recheck = session.inner.config.check_after_complete;
-                                // Zone privee : l'infohash reel ne va
-                                // jamais dans les logs ni les events —
-                                // etiquette opacifiee (`<prive>`).
-                                let label = onionbit_crypto::hash::from_hex(&ih)
-                                    .map(|b| {
-                                        if session.storage_area_of(&b)
-                                            == crate::config::StorageArea::Private
-                                        {
-                                            "<prive>".to_string()
-                                        } else {
-                                            ih.clone()
-                                        }
-                                    })
-                                    .unwrap_or_else(|| ih.clone());
-                                tokio::spawn(async move {
-                                    if let Err(e) = session.move_on_completion(&ih).await {
-                                        // Jamais de perte : le contenu
-                                        // reste en `temp` (rollback
-                                        // interne de `move_storage`).
-                                        tracing::warn!(
-                                            error = %e,
-                                            infohash = %label,
-                                            "move_on_completion en echec — le torrent reste en temp"
-                                        );
-                                        session.inner.notifier.notify(
-                                            Notification::TriblerException {
-                                                error: format!("move_on_completion {label}: {e}"),
-                                            },
-                                        );
-                                    }
-                                    if recheck {
-                                        if let Err(e) = session.recheck(&ih).await {
-                                            tracing::warn!(
-                                                error = %e,
-                                                infohash = %ih,
-                                                "check_after_complete en erreur"
-                                            );
-                                        }
-                                    }
-                                });
-                            }
+                            let _ = session.pause(&stats.info_hash).await;
                         }
                     } else if !matches!(
                         stats.state,
@@ -1558,6 +1850,25 @@ impl CoreSession {
                         // `finished=false` pendant son hashcheck —
                         // retirer le drapeau ici redeclenchait
                         // `torrent_finished` a chaque boot.
+                        // Contenu attendu absent (suppression manuelle
+                        // detectee par le hashcheck ou entre-temps) :
+                        // marquer + figer plutot que re-telecharger dans
+                        // le dossier final. Verifie AVANT d'abaisser le
+                        // drapeau persistant : la ligne relue avec
+                        // `finished=false` exigerait que TOUS les
+                        // fichiers soient absents et manquerait une
+                        // perte partielle — le download vivant porte la
+                        // semantique « termine » (fichier tronque =
+                        // manquant).
+                        if !session.is_missing_hex(&stats.info_hash)
+                            && session
+                                .download_and_row(&stats.info_hash)
+                                .ok()
+                                .is_some_and(|(dl, row)| session.live_files_missing(&dl, &row))
+                        {
+                            session.set_missing(&stats.info_hash, true);
+                            let _ = session.pause(&stats.info_hash).await;
+                        }
                         if let Some(ih) = onionbit_crypto::hash::from_hex(&stats.info_hash) {
                             let key = session.db_key(&ih);
                             let _ = session
@@ -3226,7 +3537,14 @@ impl CoreSession {
 
     /// Liste les telechargements (moteur principal + lanes anonymes).
     pub fn downloads(&self) -> Vec<DownloadStats> {
-        self.all_engines().iter().flat_map(|e| e.list()).collect()
+        self.all_engines()
+            .iter()
+            .flat_map(|e| e.list())
+            .map(|mut s| {
+                self.apply_missing(&mut s);
+                s
+            })
+            .collect()
     }
 
     /// Stats par pair d'un telechargement (tous moteurs — principal
@@ -3378,6 +3696,16 @@ impl CoreSession {
 
     /// Reprend un telechargement (idempotent, comme `resume` Python).
     pub async fn resume(&self, id_or_hash: &str) -> Result<()> {
+        // Marque « fichiers manquants » : la reprise est un choix
+        // explicite — fichiers revenus → reprise en place ; toujours
+        // absents → repartir en `temp` (jamais de re-telechargement
+        // silencieux dans le dossier final).
+        if self
+            .find_download(id_or_hash)
+            .is_some_and(|d| self.is_missing_hex(&d.info_hash_hex()))
+        {
+            return self.resume_missing(id_or_hash).await;
+        }
         let Some(engine) = self.owner_engine(id_or_hash) else {
             return self.set_pending_paused(id_or_hash, false);
         };
@@ -3390,6 +3718,80 @@ impl CoreSession {
         }
         self.notify_state(id_or_hash);
         Ok(())
+    }
+
+    /// Reprise d'un download marque « fichiers manquants » : le
+    /// contenu revenu est repris en place ; sinon le download repart
+    /// en `temp` (`move_on_completion` le refoule a la destination
+    /// finale) — comme `resume` qBittorrent sur un torrent en
+    /// « missing files ». Ligne externe a la paire temp/downloads
+    /// geree : reprise sur place (elle n'a jamais eu d'etape tampon).
+    ///
+    /// Dans tous les cas le torrent est retire puis re-ajoute (le
+    /// `reload()` de qBit) : le `check()` du re-add en pause a deja
+    /// tourne — un simple `unpause` repartirait sur un verdict perime
+    /// (0 % alors que le contenu est revenu entre-temps, ou
+    /// inversement). Le re-add est donc systematique, non pause,
+    /// et c'est lui qui re-verifie le disque.
+    async fn resume_missing(&self, id_or_hash: &str) -> Result<()> {
+        let _lifecycle = self.inner.lifecycle_gate.lock().await;
+        let (dl, mut row) = self.download_and_row(id_or_hash)?;
+        let ih_hex = dl.info_hash_hex();
+        if self.row_files_missing(&row) {
+            // Toujours absent : bascule vers le tampon quand la paire
+            // temp/downloads s'applique — sinon sur place.
+            if row.storage_area == "private" {
+                // Rebascule le groupe OBD vers `private/temp`.
+                let zone = self
+                    .private_zone()
+                    .ok_or(CoreError::InvalidState("zone privee verrouillee"))?;
+                let id = onionbit_bittorrent::Id20::new(dl.info_hash());
+                if let Some(mut entry) = zone.entry(&id) {
+                    entry.output_dir = crate::private_zone::PrivateSubdir::Temp.spec().to_string();
+                    zone.upsert(&id, entry)?;
+                }
+                row.output_dir = crate::private_zone::PrivateSubdir::Temp.spec().to_string();
+            } else {
+                // La paire `temp`/`downloads` n'existe que pour les
+                // dossiers de la zone publique geree ; un `saveas`
+                // externe repart sur place.
+                let current = self.inner.paths.resolve_persisted(&row.output_dir);
+                if self.storage_settings().move_on_completion && self.in_public_zone(&current) {
+                    let temp = self.inner.paths.public_temp();
+                    let target = match row
+                        .torrent_data
+                        .as_deref()
+                        .and_then(|b| onionbit_format::torrent::TorrentMeta::parse(b).ok())
+                    {
+                        Some(m) if m.files.len() > 1 => temp.join(&m.name),
+                        _ => temp,
+                    };
+                    row.output_dir = self.persisted_path(&target);
+                }
+            }
+        }
+        // Contenu revenu : `row.output_dir` reste tel quel — le re-add
+        // re-verifie et re-termine sur place.
+        row.paused = false;
+        row.user_stopped = false;
+        // La marque saute avant le re-add : `readd_row` forcait
+        // `paused` tant qu'elle tenait.
+        self.set_missing(&ih_hex, false);
+        self.inner
+            .db_arc()
+            .with(|c| onionbit_db::downloads::upsert(c, &row))?;
+        let engine = self.engine_for(row.anon_hops.max(0) as u32).await?;
+        self.remove_engine_only(id_or_hash, false).await?;
+        match self.readd_row(&engine, &row).await {
+            Ok(_) => {
+                self.notify_state(&ih_hex);
+                Ok(())
+            }
+            Err(e) => {
+                self.set_missing(&ih_hex, true);
+                Err(e)
+            }
+        }
     }
 
     /// Pause/reprise sur un magnet en resolution : pas d'objet moteur
@@ -3580,6 +3982,8 @@ impl CoreSession {
             // Cle opaque capturee avant le retrait moteur : une
             // ligne `private` est supprimee sous son HMAC, jamais
             // sous l'infohash reel (absent de la base).
+            // La marque « fichiers manquants » suit la ligne.
+            self.set_missing(&h, false);
             let _ = self
                 .inner
                 .db_arc()
@@ -3598,7 +4002,8 @@ impl CoreSession {
     fn notify_state(&self, id_or_hash: &str) {
         if let Some(engine) = self.owner_engine(id_or_hash) {
             if let Some(d) = engine.get(id_or_hash) {
-                let s = d.stats();
+                let mut s = d.stats();
+                self.apply_missing(&mut s);
                 self.inner
                     .notifier
                     .notify(Notification::DownloadStateChanged {

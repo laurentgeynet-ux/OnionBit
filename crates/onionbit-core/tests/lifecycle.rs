@@ -426,6 +426,246 @@ async fn torrent_fini_restaure_ne_renotifie_pas() {
     session.stop().await;
 }
 
+/// Etat « fichiers manquants » (parite qBittorrent `MissingFiles`) :
+/// un telechargement termine dont le contenu a ete supprime pendant
+/// l'arret est restaure marque + pause — JAMAIS re-telecharge en
+/// douce dans le dossier final. La ligne persiste : l'utilisateur
+/// choisit ensuite suppression ou re-telechargement explicite.
+#[tokio::test]
+async fn fichier_final_supprime_restaure_marque_manquant() {
+    use onionbit_bittorrent::DownloadState;
+
+    let dir = tempfile::tempdir().unwrap();
+    let mut cfg = CoreConfig::offline(dir.path().to_path_buf());
+    cfg.progress_interval_ms = 50;
+
+    let content = b"contenu supprime pendant l'arret".to_vec();
+    let bytes = torrent_complet("gone.bin", &content);
+    let meta = onionbit_format::torrent::TorrentMeta::parse(&bytes).unwrap();
+    let ih = meta.info_hash_hex();
+    let ih_bin = || onionbit_crypto::hash::from_hex(&ih).unwrap();
+
+    // Session 1 : contenu complet sur disque → `finished` persiste.
+    let session = CoreSession::start(cfg.clone(), Notifier::new())
+        .await
+        .expect("start #1");
+    std::fs::create_dir_all(&cfg.engine.output_dir).unwrap();
+    let file = cfg.engine.output_dir.join("gone.bin");
+    std::fs::write(&file, &content).unwrap();
+    session.add_torrent_bytes(bytes, false).await.unwrap();
+    let done = onionbit_test_support::wait_for(std::time::Duration::from_secs(10), || {
+        session
+            .db()
+            .with(|c| onionbit_db::downloads::get(c, &ih_bin()))
+            .ok()
+            .flatten()
+            .map(|r| r.finished)
+            .unwrap_or(false)
+    })
+    .await;
+    assert!(done, "drapeau finished non persiste");
+    session.stop().await;
+
+    // Suppression manuelle du fichier termine pendant l'arret.
+    std::fs::remove_file(&file).unwrap();
+
+    // Session 2 : la ligne est restauree marquee « fichiers manquants »
+    // et pausee — visible dans `downloads()` (Error + motif), pas
+    // silencieusement relancee.
+    let session = CoreSession::start(cfg, Notifier::new())
+        .await
+        .expect("start #2");
+    session.wait_restored().await;
+    let restored = session
+        .find_download(&ih)
+        .unwrap_or_else(|| panic!("download {ih} non restaure"));
+    assert!(restored.is_paused(), "download manquant non pause");
+    let stats = session
+        .downloads()
+        .into_iter()
+        .find(|s| s.info_hash == ih)
+        .expect("stats manquantes");
+    assert_eq!(stats.state, DownloadState::Error, "etat expose: {stats:?}");
+    assert!(
+        stats.error.as_deref().unwrap_or("").contains("manquant"),
+        "motif absent: {:?}",
+        stats.error
+    );
+    // La ligne reste en base (choix laisse a l'utilisateur) mais le
+    // drapeau `finished` est retombe — plus de « termine » fictif.
+    let row = session
+        .db()
+        .with(|c| onionbit_db::downloads::get(c, &ih_bin()))
+        .expect("get downloads")
+        .expect("ligne supprimee");
+    assert!(!row.finished);
+
+    // Suppression explicite : ligne + marque purges, liste vide.
+    session.remove(&ih, true).await.expect("remove");
+    assert!(session.downloads().is_empty());
+    assert!(
+        session
+            .db()
+            .with(|c| onionbit_db::downloads::get(c, &ih_bin()))
+            .expect("get downloads")
+            .is_none(),
+        "ligne persistee non supprimee"
+    );
+    session.stop().await;
+}
+
+/// Reprise explicite d'un download « fichiers manquants » toujours
+/// absent : le telechargement repart en `temp` (move_on_completion
+/// le refoulera a la destination finale) — jamais dans le dossier
+/// final, parite qBittorrent + layout temp/downloads Tribler.
+#[tokio::test]
+async fn resume_manquant_rebascule_en_temp() {
+    use onionbit_bittorrent::DownloadState;
+
+    let dir = tempfile::tempdir().unwrap();
+    let mut cfg = CoreConfig::offline(dir.path().to_path_buf());
+    cfg.progress_interval_ms = 50;
+    cfg.storage.move_on_completion = true;
+    let roots = onionbit_core::paths::PathRoots::for_state_dir(dir.path());
+    let temp = roots.public_temp();
+    let downloads = roots.public_downloads();
+
+    let content = b"payload manquant retelecharge en temp".to_vec();
+    let bytes = torrent_complet("relocate.bin", &content);
+    let meta = onionbit_format::torrent::TorrentMeta::parse(&bytes).unwrap();
+    let ih = meta.info_hash_hex();
+
+    // Session 1 : contenu complet en temp → completion →
+    // move_on_completion le range en `downloads`.
+    let session = CoreSession::start(cfg.clone(), Notifier::new())
+        .await
+        .expect("start #1");
+    std::fs::create_dir_all(&temp).unwrap();
+    std::fs::write(temp.join("relocate.bin"), &content).unwrap();
+    session.add_torrent_bytes(bytes, false).await.unwrap();
+    let moved = onionbit_test_support::wait_for(std::time::Duration::from_secs(15), || {
+        downloads.join("relocate.bin").is_file()
+    })
+    .await;
+    assert!(moved, "move_on_completion n'a pas range le fichier");
+    session.stop().await;
+
+    // Suppression du fichier final pendant l'arret.
+    std::fs::remove_file(downloads.join("relocate.bin")).unwrap();
+
+    let session = CoreSession::start(cfg, Notifier::new())
+        .await
+        .expect("start #2");
+    session.wait_restored().await;
+    let restored = session.find_download(&ih).expect("non restaure");
+    assert!(restored.is_paused(), "manquant non pause a la restauration");
+    // La restauration ne doit pas avoir recree de stub : la lecture
+    // paresseuse du hashcheck ne materialise plus les fichiers absents.
+    assert!(
+        !downloads.join("relocate.bin").exists(),
+        "stub recree par le check de restauration"
+    );
+
+    // Reprise explicite : repart en `temp` (pas de re-download en
+    // douce dans `downloads`), la marque saute.
+    session.resume(&ih).await.expect("resume manquant");
+    let dl = session.find_download(&ih).expect("download absent");
+    assert!(
+        dl.output_folder().starts_with(&temp),
+        "reprise hors de temp : {:?} (attendu sous {:?})",
+        dl.output_folder(),
+        temp
+    );
+    let stats = session
+        .downloads()
+        .into_iter()
+        .find(|s| s.info_hash == ih)
+        .expect("stats manquantes");
+    assert_ne!(
+        stats.state,
+        DownloadState::Error,
+        "encore expose en erreur: {:?}",
+        stats.error
+    );
+    session.stop().await;
+}
+
+/// Reprise d'un download « manquant » dont le contenu est revenu :
+/// reprise en place (pas de relocalisation), le hashcheck a la
+/// reprise retrouve les pieces et le torrent re-termine.
+#[tokio::test]
+async fn resume_manquant_fichiers_revenus_reprend_en_place() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut cfg = CoreConfig::offline(dir.path().to_path_buf());
+    cfg.progress_interval_ms = 50;
+
+    let content = b"contenu retrouve".to_vec();
+    let bytes = torrent_complet("back.bin", &content);
+    let meta = onionbit_format::torrent::TorrentMeta::parse(&bytes).unwrap();
+    let ih = meta.info_hash_hex();
+
+    // Session 1 : contenu complet → `finished` persiste.
+    let session = CoreSession::start(cfg.clone(), Notifier::new())
+        .await
+        .expect("start #1");
+    std::fs::create_dir_all(&cfg.engine.output_dir).unwrap();
+    let file = cfg.engine.output_dir.join("back.bin");
+    std::fs::write(&file, &content).unwrap();
+    session.add_torrent_bytes(bytes, false).await.unwrap();
+    let done = onionbit_test_support::wait_for(std::time::Duration::from_secs(10), || {
+        session
+            .downloads()
+            .iter()
+            .find(|s| s.info_hash == ih)
+            .map(|s| s.finished)
+            .unwrap_or(false)
+    })
+    .await;
+    assert!(done, "jamais finished");
+    session.stop().await;
+
+    // Deplacement manuel du fichier → restauration « manquant ».
+    let stash = dir.path().join("stash.bin");
+    std::fs::rename(&file, &stash).unwrap();
+    let out_dir = cfg.engine.output_dir.clone();
+    let session = CoreSession::start(cfg, Notifier::new())
+        .await
+        .expect("start #2");
+    session.wait_restored().await;
+    let stats = session
+        .downloads()
+        .into_iter()
+        .find(|s| s.info_hash == ih)
+        .expect("stats manquantes");
+    assert!(
+        stats.error.as_deref().unwrap_or("").contains("manquant"),
+        "non marque manquant: {stats:?}"
+    );
+
+    // Le fichier revient → reprise en place, pas de bascule en temp.
+    std::fs::rename(&stash, &file).unwrap();
+    session.resume(&ih).await.expect("resume");
+    let dl = session.find_download(&ih).expect("download absent");
+    assert_eq!(
+        dl.output_folder()
+            .components()
+            .collect::<std::path::PathBuf>(),
+        out_dir.components().collect::<std::path::PathBuf>(),
+        "relocalise alors que le contenu est revenu"
+    );
+    let again = onionbit_test_support::wait_for(std::time::Duration::from_secs(10), || {
+        session
+            .downloads()
+            .iter()
+            .find(|s| s.info_hash == ih)
+            .map(|s| s.finished)
+            .unwrap_or(false)
+    })
+    .await;
+    assert!(again, "jamais revenu finished apres reprise");
+    session.stop().await;
+}
+
 /// `pause_all`/`resume_all` : tous les telechargements d'une session
 /// basculent ensemble (suspension mobile / arret rapide — etape 19).
 #[tokio::test]
