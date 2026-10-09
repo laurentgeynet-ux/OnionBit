@@ -3,6 +3,17 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## UI : sélecteur de langue au premier écran du wizard (2026-10-09, worktree adr21)
+
+- **`onboarding_wizard.dart`** : `_ChoiceStep` devient `ConsumerWidget`
+  et affiche un `SegmentedButton` Système/English/Français sous le
+  titre — même canal que Réglages (`localeSettingsProvider`) : le choix
+  persiste (`ui.locale`) et relocalise tout le wizard instantanément
+  via `MaterialApp.locale`. Grisé pendant une résolution en cours.
+- **Test** : nouveau harnais dont `MaterialApp.locale` suit le provider
+  (comme la prod) — taper « Français » fait passer « Choose your
+  identity » → « Choisissez votre identité » + persistance vérifiée.
+
 ## Correctif : « Create my identity » inerte dans le wizard d'onboarding (2026-10-09, worktree adr21)
 
 - **`onboarding_wizard.dart`** : `_create` appelait

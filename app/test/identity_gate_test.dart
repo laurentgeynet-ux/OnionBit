@@ -11,6 +11,9 @@ import 'package:onionbit_ui/features/settings/domain/settings_repository.dart';
 import 'package:onionbit_ui/features/settings/presentation/providers/settings_providers.dart';
 
 import 'package:onionbit_ui/core/identity/onboarding_wizard.dart';
+import 'package:onionbit_ui/core/l10n/locale_settings.dart';
+import 'package:onionbit_ui/l10n/app_localizations.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'helpers/l10n.dart';
 
@@ -171,6 +174,43 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Done'));
     expect(done, isTrue);
+  });
+
+  testWidgets('gate pending : le sélecteur de langue relocalise le '
+      'wizard et persiste le choix', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final repo = _FakeRepo();
+    // Harnais fidèle à la prod : `MaterialApp.locale` suit
+    // `localeSettingsProvider` (l10nTestApp figerait `en`).
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          settingsRepositoryProvider.overrideWithValue(repo),
+        ],
+        child: Consumer(
+          builder: (context, ref, _) {
+            final locale = resolveFlutterLocale(
+              ref.watch(localeSettingsProvider).value,
+            );
+            return MaterialApp(
+              locale: locale,
+              localizationsDelegates:
+                  AppLocalizations.localizationsDelegates,
+              supportedLocales: AppLocalizations.supportedLocales,
+              home: const IdentityGatePage(locked: false),
+            );
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Choose your identity'), findsOneWidget);
+
+    await tester.tap(find.text('Français'));
+    await tester.pumpAndSettle();
+    expect(find.text('Choisissez votre identité'), findsOneWidget);
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getString('ui.locale'), 'fr');
   });
 
   testWidgets('gate pending : invité appelle guest', (tester) async {

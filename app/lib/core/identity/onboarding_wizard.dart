@@ -23,6 +23,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../features/settings/presentation/providers/settings_providers.dart';
 import '../design/design_tokens.dart';
 import '../l10n/l10n_ext.dart';
+import '../l10n/locale_settings.dart';
 
 /// Phrase BIP39 en attente de présentation après `identity/create`.
 /// Posée par le wizard, consommée par l'overlay de `app.dart` qui
@@ -187,8 +188,10 @@ Widget _busyError(bool busy, String? error, BuildContext context) =>
       ],
     );
 
-/// Étape 1 — les trois résolutions du gate en cartes premium.
-class _ChoiceStep extends StatelessWidget {
+/// Étape 1 — les trois résolutions du gate en cartes premium, avec le
+/// sélecteur de langue dès le premier écran (même canal que Réglages :
+/// la préférence persiste et tout le wizard se relocalise aussitôt).
+class _ChoiceStep extends ConsumerWidget {
   const _ChoiceStep({
     required this.busy,
     required this.error,
@@ -204,8 +207,10 @@ class _ChoiceStep extends StatelessWidget {
   final VoidCallback? onGuest;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final l10n = context.l10n;
+    final appLocale =
+        ref.watch(localeSettingsProvider).value ?? AppLocale.en;
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -226,6 +231,34 @@ class _ChoiceStep extends StatelessWidget {
           l10n.gatePendingBody,
           style: Theme.of(context).textTheme.bodyMedium,
           textAlign: TextAlign.center,
+        ),
+        const SizedBox(height: AppSpace.md),
+        // Langue au premier contact : un changement relocalise tout le
+        // wizard immédiatement (`MaterialApp.locale` suit le provider).
+        Center(
+          child: SegmentedButton<AppLocale>(
+            segments: [
+              ButtonSegment(
+                value: AppLocale.system,
+                icon: const Icon(Icons.language, size: 18),
+                label: Text(l10n.languageSystem),
+              ),
+              const ButtonSegment(
+                value: AppLocale.en,
+                label: Text('English'),
+              ),
+              const ButtonSegment(
+                value: AppLocale.fr,
+                label: Text('Français'),
+              ),
+            ],
+            selected: {appLocale},
+            onSelectionChanged: busy
+                ? null
+                : (m) => ref
+                    .read(localeSettingsProvider.notifier)
+                    .setLocale(m.first),
+          ),
         ),
         const SizedBox(height: AppSpace.lg),
         _GateCard(
