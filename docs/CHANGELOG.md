@@ -3,6 +3,20 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## CI : réparation matrice (2026-10-09)
+
+- **Race `dht_loopback`** : le test attendait `node_count() >= 1` puis
+  assertait `peers_for_service` — or le ping émis par B en découvrant A
+  remplit la table de routage de A via `get_requesting_node` (fidèle à
+  pyipv8, sans `discover_service`) et peut précéder
+  `INTRODUCTION_RESPONSE`. L'attente porte désormais sur
+  `peers_for_service` des deux nœuds — l'oracle réellement asserté.
+- **Chemins `dist/` obsolètes** : ADR-0018 (étape 58) a migré les
+  scripts vers `dist/OnionBit/<os>/` sans mettre à jour `ci.yml` ; les
+  trois jobs packaging Windows échouaient au `smoke daemon` (fichier
+  introuvable). Workflow aligné : smoke `./dist/OnionBit/windows/`,
+  artefact x64 `dist/OnionBit/`, zip arm64 sur la racine portable.
+
 ## ADR-0019 étape 69 : validation + retours MG-13 (2026-10-09)
 
 - **`CAP_MSG_V2` annoncé** : `messaging_groups_enabled` plombé

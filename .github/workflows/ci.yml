@@ -106,11 +106,11 @@ jobs:
       - name: build release + manifest
         run: ./scripts/build_release.ps1 -SkipCheck
       - name: smoke daemon
-        run: dist/x86_64-pc-windows-msvc/onionbit-daemon.exe --help
+        run: ./dist/OnionBit/windows/onionbit-daemon.exe --help
       - uses: actions/upload-artifact@v7
         with:
           name: onionbit-windows-x64
-          path: dist/x86_64-pc-windows-msvc/
+          path: dist/OnionBit/
 
   # Packaging par plateforme : zips Windows complets (daemon + UI
   # Flutter + web/) via build_dist.ps1 ; Linux = daemon + cli + web/
@@ -160,7 +160,7 @@ jobs:
       - name: build dist + zip release
         run: ./scripts/build_dist.ps1 -SkipCheck -ZipRelease
       - name: smoke daemon
-        run: dist/onionbit-daemon.exe --help
+        run: ./dist/OnionBit/windows/onionbit-daemon.exe --help
       - uses: actions/upload-artifact@v7
         with:
           name: onionbit-windows-x64-zip
@@ -183,11 +183,11 @@ jobs:
       - name: build release daemon + cli
         run: ./scripts/build_release.ps1 -SkipCheck
       - name: smoke daemon
-        run: dist/aarch64-pc-windows-msvc/onionbit-daemon.exe --help
+        run: ./dist/OnionBit/windows/onionbit-daemon.exe --help
       - name: zip
         run: |
           $ver = (cargo pkgid -p onionbit-daemon).Split('#')[-1]
-          Compress-Archive -Path dist/aarch64-pc-windows-msvc `
+          Compress-Archive -Path dist/OnionBit `
             -DestinationPath "dist/OnionBit-$ver-windows-arm64-headless.zip"
       - uses: actions/upload-artifact@v7
         with:
