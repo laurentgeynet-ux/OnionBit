@@ -3,6 +3,18 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Docs : durcissement de la page d'accueil GitHub (2026-10-09, worktree adr21)
+
+- **`README.md`** : nouvelle section « Proof, not promises » — table
+  d'évidence reliant chaque affirmation à sa preuve reproductible
+  (~580 tests Rust + ~85 Flutter, interop Tribler 8.4.3 bidirectionnelle,
+  9/9 oracles de fingerprinting, manifeste transport P0, journal de fuzz,
+  21 ADR, threat model) ; barre de navigation sous les badges ; matrice
+  « Platform status » explicite (packagé / source / scaffoldé par OS) ;
+  Getting started réécrit pour les trois lanceurs racine Windows et les
+  entrées de menu du `.deb` ; roadmap : QR pairing, coquille adaptative,
+  bundle portable.
+
 ## Correctif : paquet .deb — entrées de menu + état XDG (2026-10-09, worktree adr21)
 
 - **`resolve_state_dir` ne choisit plus un `state/` non

@@ -15,6 +15,13 @@ identity — all over multi-hop onion circuits.**
 [![Version](https://img.shields.io/badge/Version-0.9.4--beta-red.svg)](https://github.com/laurentgeynet-ux/OnionBit/releases)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%C2%B7%20Linux%20%C2%B7%20macOS%20%C2%B7%20Android%20%C2%B7%20iOS%20%C2%B7%20Web-lightgrey.svg)]()
 
+[Features](#the-fabric--one-shared-onion-network) ·
+[Evidence](#proof-not-promises) ·
+[Install](#getting-started) ·
+[Screenshots](#screenshots) ·
+[Security](#security-model) ·
+[Docs](docs/INDEX.md)
+
 </div>
 
 ---
@@ -37,6 +44,21 @@ services: file sharing, messaging, trust and a portable identity.
 
 OnionBit is written in Rust (memory-safe, single binary) with a
 cross-platform Flutter UI — Windows, Linux, macOS, Android, iOS and Web.
+
+## Proof, not promises
+
+A README can only *claim* — the evidence lives in the repo. Every line in
+this table is reproducible:
+
+| Evidence | Where |
+| :--- | :--- |
+| ~580 Rust + ~85 Flutter automated tests, gated by `fmt`, `clippy -D warnings`, i18n lint, golden renders and **WCAG AA contrast checks** — one script runs them all | [`scripts/verify_all.ps1`](scripts/verify_all.ps1) + CI |
+| **Bidirectional hidden-service transfers with unmodified Tribler 8.4.3** — 2- and 3-hop, kill/recovery, double integrity check (piece hashing + SHA-256) | [docs/interop](docs/interop/README.md) |
+| **9/9 fingerprinting oracles PASS** — two real stealth daemons measured through a UDP tap: probing silence, amplification 0, zero static marker | [docs/security/fingerprinting.md](docs/security/fingerprinting.md) |
+| Kill switch verified at the **OS packet level** — 4 injected-failure scenarios, zero forbidden traffic | [docs/P0-transport-manifest.md](docs/P0-transport-manifest.md) |
+| Fuzzing campaign journal — what broke, how it was fixed | [docs/security/fuzz_journal.md](docs/security/fuzz_journal.md) |
+| **21 Architecture Decision Records** — every non-obvious choice is written down, in the open | [docs/architecture/decisions](docs/architecture/decisions/) |
+| Threat model written *before* the features, kept honest | [docs/THREAT-MODEL.md](docs/THREAT-MODEL.md) |
 
 ## The fabric — one shared onion network
 
@@ -341,19 +363,34 @@ Tribler 8.x network.*
 > Prebuilt packages are on the
 > [Releases](https://github.com/laurentgeynet-ux/OnionBit/releases) page:
 >
-> - **Windows x64** — `OnionBit-0.9.4-beta-windows-x64.zip`: unzip, run
->   `OnionBit.exe` — it starts the daemon automatically. Prefer a browser?
->   `OnionBit Web.lnk` opens the same UI at `http://127.0.0.1:8085/` (API
->   key in `state\configuration.json`).
-> - **Windows ARM64** — `OnionBit-0.9.4-beta-windows-arm64-headless.zip`: daemon + CLI
->   (headless — no native Flutter ARM64 build yet; use the web UI in your
->   browser).
-> - **Linux x64** — `onionbit_0.9.4-beta_amd64.deb` (Debian/Ubuntu/Mint) or
->   `OnionBit-0.9.4-beta-linux-x64.tar.gz`: daemon + CLI + web UI, optional
->   `systemctl --user enable --now onionbit-daemon`.
+> - **Windows x64** — `OnionBit-*-windows-x64.zip`: unzip anywhere,
+>   double-click **`OnionBit`** at the bundle root — the native UI starts
+>   the daemon itself. Two siblings sit next to it: `OnionBit Web` (same UI
+>   in your browser at `http://127.0.0.1:8085/`) and `OnionBit Daemon`
+>   (backend alone, console + tray). Fully portable: `state\` and `data\`
+>   live beside the launchers — carry the folder, keep your identity.
+> - **Windows ARM64** — `OnionBit-*-windows-arm64-headless.zip`: daemon + CLI +
+>   web UI (headless — no native Flutter ARM64 build yet).
+> - **Linux x64** — `onionbit_*_amd64.deb` (Debian/Ubuntu/Mint): installs
+>   application-menu entries (OnionBit → web UI, OnionBit Daemon → console),
+>   icons, `onionbit-daemon`/`onionbit-cli` in PATH and a `systemd --user`
+>   unit. Per-user state lands in `~/.local/share/onionbit` — no root
+>   needed. Or use the `*-linux-x64.tar.gz` portable tarball.
 >
 > Other platforms (macOS, Android, iOS): build from source
 > (see [docs/BUILDING.md](docs/BUILDING.md)).
+
+### Platform status — what ships today
+
+| Platform | Status |
+| :--- | :--- |
+| Windows x64 | ✅ packaged portable bundle — native UI + daemon + CLI + web UI |
+| Windows ARM64 | ✅ packaged zip — headless (daemon + CLI + web UI) |
+| Linux x64 | ✅ `.deb` with menu entries + systemd unit, and portable tarball |
+| Web | ✅ same UI served same-origin by the daemon on every platform |
+| macOS / iOS | 🔨 builds from source — runners ready, needs a signed Mac build host |
+| Android | 🔨 builds from source — QR pairing + touch UI ready |
+| Linux native UI | 📋 runner scaffolded — packaged path is the web UI today |
 
 **Prerequisites:** Rust stable, Flutter stable (UI only).
 
@@ -404,6 +441,7 @@ See [SECURITY.md](SECURITY.md) for reporting and the threat model.
 - ✅ OnionBit extension layer: signed hello, attestations, ledger, OBF ([ADR-0015](docs/architecture/decisions/0015-extensions-onionbit-legacy-tribler.md))
 - ✅ Trust-gated messaging + `OBV1` contact vault ([ADR-0015 §9](docs/architecture/decisions/0015-extensions-onionbit-legacy-tribler.md))
 - ✅ Seed identity: HKDF root seed + 24-word BIP39 phrase (EN/FR), guest & locked modes, `OBID` ([ADR-0016](docs/architecture/decisions/0016-identite-portable.md))
+- ✅ Mobile pairing by QR — short-lived one-time token, `POST /api/pairing/*` (rate-limited, single-use)
 
 **Stealth & anti-censorship**
 
@@ -413,11 +451,13 @@ See [SECURITY.md](SECURITY.md) for reporting and the threat model.
 
 - ✅ IPv8 overlay (discovery, communities, DHT)
 - ✅ REST + SSE control plane, CLI
-- ✅ Flutter UI (desktop first)
+- ✅ Flutter UI — adaptive shell (compact → large), touch + keyboard + mouse,
+  self-hosted fonts, design system with golden tests
 - ✅ Web UI served by the daemon (same-origin)
 - ✅ In-app update check (GitHub releases probe)
 - ✅ Latest tagged release: [`v0.9.4-beta`](https://github.com/laurentgeynet-ux/OnionBit/releases/tag/v0.9.4-beta)
-- ✅ Linux packages (.deb + tar.gz)
+- ✅ Windows portable bundle — three root launchers (UI / web / daemon)
+- ✅ Linux `.deb` — menu entries, icons, `systemd --user` unit, XDG state dir (+ portable tar.gz)
 - ✅ Windows ARM64 package (headless)
 - 📋 Mobile execution model (Android/iOS)
 - 📋 macOS package, native Linux UI
