@@ -9,6 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:onionbit_ui/features/settings/domain/settings_repository.dart';
 import 'package:onionbit_ui/features/settings/presentation/pages/settings_page.dart';
 import 'package:onionbit_ui/features/settings/presentation/providers/settings_providers.dart';
+import 'package:onionbit_ui/features/settings/presentation/widgets/daemon_section.dart';
 
 import 'helpers/l10n.dart';
 
@@ -147,8 +148,76 @@ void main() {
       const Offset(0, -2000),
     );
     await tester.pumpAndSettle();
+    // Les en-têtes de catégorie (étape 75) ont allongé la page —
+    // défile jusqu'à la dernière section (« Daemon state » de
+    // `DaemonSection`, tout en bas) peu importe sa hauteur.
+    // `dragUntilVisible` cible la ListView (hit-test du scrollable) —
+    // `byType(Scrollable)` attraperait les scrollables internes des
+    // champs de saisie (`restorationId: 'editable'`).
+    await tester.dragUntilVisible(
+      find.text('Daemon state'),
+      find.byType(ListView).last,
+      const Offset(0, -400),
+    );
 
     expect(tester.takeException(), isNull);
-    expect(find.text('Daemon'), findsWidgets);
+    expect(find.text('Daemon state'), findsWidgets);
+  });
+
+  testWidgets('catégories repliables : repli et deep-link ?s=', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    tester.view.physicalSize = const Size(1400, 3000);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          settingsRepositoryProvider.overrideWithValue(_FakeSettings()),
+        ],
+        child: l10nTestApp(
+          const Scaffold(body: SettingsPage(sectionId: 'daemon')),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // Deep-link `?s=daemon` : la page défile jusqu'à la section cible
+    // (catégorie « Avancé », tout en bas) sans exception — la section
+    // n'est montée qu'une fois le viewport atteint (ListView
+    // paresseuse), sa présence prouve le défilement.
+    expect(tester.takeException(), isNull);
+    expect(find.byType(DaemonSection), findsOneWidget);
+
+    // Les en-têtes de catégorie (étape 75 — petites capitales) sont
+    // joignables par défilement.
+    await tester.dragUntilVisible(
+      find.text('ADVANCED'),
+      find.byType(ListView).last,
+      const Offset(0, 400),
+    );
+    await tester.dragUntilVisible(
+      find.text('ESSENTIALS'),
+      find.byType(ListView).last,
+      const Offset(0, 400),
+    );
+
+    // Replier « Essentiels » retire ses sections de l'arbre — le
+    // chevron bascule d'`expand_less` à `expand_more`.
+    expect(find.byIcon(Icons.expand_more), findsNothing);
+    await tester.tap(find.text('ESSENTIALS'));
+    await tester.pumpAndSettle();
+    expect(find.byIcon(Icons.expand_more), findsOneWidget);
+
+    // L'en-tête voisin reste joignable — le regroupement n'a pas
+    // cassé le défilement.
+    await tester.dragUntilVisible(
+      find.text('NETWORK & ANONYMITY'),
+      find.byType(ListView).last,
+      const Offset(0, -400),
+    );
+    expect(tester.takeException(), isNull);
   });
 }

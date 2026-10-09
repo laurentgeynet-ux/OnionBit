@@ -1213,5 +1213,13 @@
   "cmdGroupSettings": "Settings",
   "cmdGroupActions": "Actions",
   "cmdAddDownload": "Add a download",
-  "cmdUnreadCount": "{count} unread"
+  "cmdUnreadCount": "{count} unread",
+  "settingsCatEssentials": "Essentials",
+  "settingsCatNetworkAnonymity": "Network & anonymity",
+  "settingsCatAutomation": "Automation",
+  "settingsCatAdvanced": "Advanced",
+  "hudAnonReady": "{circuits} circuits · {hops} hops",
+  "hudAnonWaiting": "Building circuits…",
+  "hudAnonDisabled": "Anonymity off",
+  "hudAnonTooltip": "Anonymity posture — open network diagnostics"
 }

@@ -869,5 +869,13 @@
   "cmdGroupSettings": "Réglages",
   "cmdGroupActions": "Actions",
   "cmdAddDownload": "Ajouter un téléchargement",
-  "cmdUnreadCount": "{count} non lu(s)"
+  "cmdUnreadCount": "{count} non lu(s)",
+  "settingsCatEssentials": "Essentiels",
+  "settingsCatNetworkAnonymity": "Réseau et anonymat",
+  "settingsCatAutomation": "Automatisation",
+  "settingsCatAdvanced": "Avancé",
+  "hudAnonReady": "{circuits} circuits · {hops} sauts",
+  "hudAnonWaiting": "Circuits en construction…",
+  "hudAnonDisabled": "Anonymat inactif",
+  "hudAnonTooltip": "Posture d'anonymat — ouvrir le diagnostic réseau"
 }

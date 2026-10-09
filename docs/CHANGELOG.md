@@ -3,6 +3,36 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## ADR-0021 étape 75 : réglages par paliers + Privacy HUD (2026-10-09, worktree adr21)
+
+- **Réglages par catégories repliables** : les 15 sections sont
+  regroupées en `SettingsCategory` (`settings_catalog.dart`) —
+  Essentiels / Réseau & anonymat / Automatisation / Avancé — avec
+  `_CategoryHeader` (icône, titre en petites capitales, chevron) et
+  `_expanded` dans `_SettingsPageState`. Le rail d'ancres devient une
+  chip par catégorie (pastille « modifié » si une section dirty y
+  vit) ; les sections restent joignables via la palette Ctrl/Cmd+K.
+- **Deep-link `?s=` robuste** : déplie la catégorie cible et vide le
+  filtre quand ils masquent la cible ; le défilement utilise une
+  boucle post-frame bornée — sauts par écrans tant que la section
+  n'est pas montée (ListView paresseuse), `ensureVisible` à
+  l'apparition, puis vérification jusqu'à deux mesures stables
+  (pixels+étendue). Corrige un cas réel : pendant le chargement des
+  providers la cible se montait prématurément, puis ressortait du
+  `cacheExtent` quand le contenu grandissait — et se démontait.
+  Ancres déplacées des `GlobalKey` globales (contextes périmés entre
+  instances) vers `_sectionKeys`/`_catKeys` par `State`.
+- **Privacy HUD** (`core/layout/privacy_hud.dart`) dans `TopBar` :
+  indicateur ambiant de posture d'anonymat — `AnonLaneStatus` étendu
+  de `minReadyHops` (pire cas `actual_hops` des circuits READY,
+  route vérifiée) via `anonLaneProvider` (sondage 10 s partagé avec
+  la barre d'état). Icône seule sous le palier `expanded`, pastille
+  « N circuits · M sauts » au-delà ; un tap ouvre `/diagnostic`.
+  Chaînes localisées (`app_en.arb`/`app_fr.arb`).
+- **Tests** (+5, 53 au total) : `privacy_hud_test.dart`, régression
+  catégories/repli/deep-link dans `settings_page_test.dart`.
+  Validation : analyze 0 issue, build web OK, i18n + GPL propres.
+
 ## ADR-0021 étape 74 : migration Messagerie + palette de commandes (2026-10-09, worktree adr21)
 
 - **Messagerie adaptative** : `AdaptiveListDetail` dès le palier

@@ -68,6 +68,55 @@ extension SettingsSectionIdX on SettingsSectionId {
   };
 }
 
+/// Catégories de regroupement des 15 sections (ADR-0021, étape 75 —
+/// « réglages par paliers ») : l'énumération ordonne l'affichage,
+/// chaque section déclare sa catégorie via
+/// [SettingsSectionCategoryX.category].
+enum SettingsCategory {
+  essentials,
+  networkAnonymity,
+  automation,
+  advanced;
+
+  /// Titre localisé de l'en-tête repliable.
+  String title(AppLocalizations l10n) => switch (this) {
+    SettingsCategory.essentials => l10n.settingsCatEssentials,
+    SettingsCategory.networkAnonymity => l10n.settingsCatNetworkAnonymity,
+    SettingsCategory.automation => l10n.settingsCatAutomation,
+    SettingsCategory.advanced => l10n.settingsCatAdvanced,
+  };
+
+  /// Icône de l'en-tête de catégorie.
+  IconData get icon => switch (this) {
+    SettingsCategory.essentials => Icons.star_outline,
+    SettingsCategory.networkAnonymity => Icons.vpn_lock_outlined,
+    SettingsCategory.automation => Icons.bolt_outlined,
+    SettingsCategory.advanced => Icons.tune,
+  };
+}
+
+/// Catégorie d'appartenance de chaque section — même source pour la
+/// page (groupes repliables) et la palette de commandes.
+extension SettingsSectionCategoryX on SettingsSectionId {
+  SettingsCategory get category => switch (this) {
+    SettingsSectionId.appearance ||
+    SettingsSectionId.downloads ||
+    SettingsSectionId.identity ||
+    SettingsSectionId.connection => SettingsCategory.essentials,
+    SettingsSectionId.anonymity ||
+    SettingsSectionId.stealth ||
+    SettingsSectionId.onionbit ||
+    SettingsSectionId.network => SettingsCategory.networkAnonymity,
+    SettingsSectionId.queue ||
+    SettingsSectionId.bandwidth ||
+    SettingsSectionId.seeding ||
+    SettingsSectionId.automation ||
+    SettingsSectionId.versioning => SettingsCategory.automation,
+    SettingsSectionId.storage ||
+    SettingsSectionId.daemon => SettingsCategory.advanced,
+  };
+}
+
 /// Mots-clés de recherche par section — termes FR+EN, noms de champs
 /// et chemins de clés (jamais affichés ; la correspondance est une
 /// sous-chaîne insensible à la casse, comme le filtre historique).
