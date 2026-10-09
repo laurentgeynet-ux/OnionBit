@@ -3,6 +3,20 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## UI : changement de zone dans « Déplacer le stockage » (2026-10-09, worktree adr21)
+
+- **`download_actions.dart`** : le dialogue « Move files » gagne un
+  `SegmentedButton` Public/Privée au-dessus du champ de destination.
+  Un clic remplit la spec portable (`@public/downloads` /
+  `@private/downloads`) — le daemon franchit alors la zone via
+  `move_across_zones` (ADR-0018 étape 62 : encapsulation OBD ou
+  déchiffrement, remove/re-add), capacité qui existait déjà mais
+  n'était pas exposée. Segment « Privée » grisé si la zone est
+  verrouillée (`privateZoneProvider` — sinon le backend répond 409) ;
+  hint public/privée affiché quand le champ contient une spec ;
+  chemin libre toujours possible (aucun segment sélectionné).
+- **`AndroidManifest.xml`** : `android:label` `onionbit_ui` → `OnionBit`.
+
 ## Docs : nouvelles captures v1.0.0 + correctif badge anonymat (2026-10-09, worktree adr21)
 
 - **`assets/screenshots/`** : captures réelles de la nouvelle UI —

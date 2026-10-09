@@ -9,6 +9,7 @@ import '../../../../core/l10n/l10n_ext.dart';
 import '../../../../core/platform/pick_directory.dart';
 import '../../../../core/design/design_tokens.dart';
 import '../../../../core/utils/byte_formatter.dart';
+import '../../../settings/presentation/providers/settings_providers.dart';
 import '../../domain/download.dart';
 import '../providers/downloads_providers.dart';
 
@@ -189,42 +190,109 @@ Future<void> showSeedingRatioDialog(
 /// `dest_dir`, `completed_dir` optionnel).
 Future<void> showMoveStorageDialog(BuildContext context, Download d) async {
   final dest = TextEditingController(text: d.destination);
+  // Zone privee proposable seulement si montee (ou invitee) — sinon le
+  // backend repond 409 (« zone privee verrouillee »).
+  final privateState =
+      ProviderScope.containerOf(
+            context,
+          ).read(privateZoneProvider).value?['state']
+          as String?;
+  final privateOk = privateState == 'mounted' || privateState == 'guest';
   final ok = await showDialog<bool>(
     context: context,
-    builder: (ctx) => AlertDialog(
-      title: Text(ctx.l10n.moveTitle),
-      content: SizedBox(
-        width: 420,
-        child: TextField(
-          controller: dest,
-          autofocus: true,
-          decoration: InputDecoration(
-            labelText: ctx.l10n.newDest,
-            prefixIcon: const Icon(Icons.drive_file_move_outlined),
-            suffixIcon: IconButton(
-              tooltip: ctx.l10n.browse,
-              icon: const Icon(Icons.folder_open),
-              onPressed: () async {
-                final dir = await pickDaemonDirectory(
-                  ctx,
-                  initialPath: dest.text.trim(),
-                );
-                if (dir != null) dest.text = dir;
-              },
+    builder: (ctx) => StatefulBuilder(
+      builder: (ctx, setState) {
+        // La zone se choisit par spec portable : `@private/…` bascule
+        // vers l'encapsulation OBD, `@public/…` dechiffre — cf.
+        // `move_across_zones` (ADR-0018 etape 62).
+        final spec = dest.text.trim();
+        final String? zone = spec == '@private' || spec.startsWith('@private/')
+            ? 'private'
+            : spec == '@public' || spec.startsWith('@public/')
+            ? 'public'
+            : null;
+        return AlertDialog(
+          title: Text(ctx.l10n.moveTitle),
+          content: SizedBox(
+            width: 420,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  ctx.l10n.storageAreaLabel,
+                  style: Theme.of(ctx).textTheme.labelMedium,
+                ),
+                const SizedBox(height: AppSpace.xs),
+                SegmentedButton<String>(
+                  emptySelectionAllowed: true,
+                  segments: [
+                    ButtonSegment(
+                      value: 'public',
+                      label: Text(ctx.l10n.storageAreaPublic),
+                      icon: const Icon(Icons.folder_open, size: 16),
+                    ),
+                    ButtonSegment(
+                      value: 'private',
+                      enabled: privateOk,
+                      label: Text(ctx.l10n.storageAreaPrivate),
+                      icon: const Icon(Icons.lock_outline, size: 16),
+                    ),
+                  ],
+                  selected: {?zone},
+                  onSelectionChanged: (s) => setState(
+                    () => dest.text = s.first == 'private'
+                        ? '@private/downloads'
+                        : '@public/downloads',
+                  ),
+                ),
+                if (zone != null) ...[
+                  const SizedBox(height: AppSpace.xs),
+                  Text(
+                    zone == 'private'
+                        ? ctx.l10n.storageAreaPrivateHint
+                        : ctx.l10n.storageAreaPublicHint,
+                    style: Theme.of(ctx).textTheme.bodySmall?.copyWith(
+                      color: Theme.of(ctx).colorScheme.outline,
+                    ),
+                  ),
+                ],
+                const SizedBox(height: AppSpace.md),
+                TextField(
+                  controller: dest,
+                  autofocus: true,
+                  onChanged: (_) => setState(() {}),
+                  decoration: InputDecoration(
+                    labelText: ctx.l10n.newDest,
+                    prefixIcon: const Icon(Icons.drive_file_move_outlined),
+                    suffixIcon: IconButton(
+                      tooltip: ctx.l10n.browse,
+                      icon: const Icon(Icons.folder_open),
+                      onPressed: () async {
+                        final dir = await pickDaemonDirectory(
+                          ctx,
+                          initialPath: dest.text.trim(),
+                        );
+                        if (dir != null) setState(() => dest.text = dir);
+                      },
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(ctx).pop(false),
-          child: Text(ctx.l10n.cancel),
-        ),
-        FilledButton(
-          onPressed: () => Navigator.of(ctx).pop(true),
-          child: Text(ctx.l10n.moveConfirm),
-        ),
-      ],
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: Text(ctx.l10n.cancel),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: Text(ctx.l10n.moveConfirm),
+            ),
+          ],
+        );
+      },
     ),
   );
   if (ok != true || !context.mounted) return;
