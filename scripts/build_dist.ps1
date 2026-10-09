@@ -14,9 +14,10 @@
 # Layout produit (etape 58 — une cle USB embarque tous les OS sur le
 # meme etat) :
 #   dist\OnionBit\
-#     OnionBit.lnk                    - UI desktop (lanceur principal)
-#     OnionBit Daemon.lnk             - backend seul (console + systray)
-#     OnionBit Web.lnk                - daemon + navigateur sur l'UI web
+#     OnionBit.exe                    - lanceur UI desktop (principal)
+#     OnionBit Daemon.exe             - lanceur backend seul (systray)
+#     OnionBit Web.exe                - lanceur daemon + UI web
+#                                       (--open-webui)
 #     LISEZMOI.txt                    - notice d'utilisation
 #     OnionBit.portable               - marqueur : state/ et data/ a la
 #                                       racine du bundle
@@ -86,7 +87,10 @@ try {
     # cargo n'a pas de profil « debug » : c'est « dev » (sortie
     # target\debug — inchangée pour la suite du script).
     $cargoProfile = if ($BuildProfile -eq "release") { "release" } else { "dev" }
-    cargo build --profile $cargoProfile -p onionbit-daemon -p onionbit-cli
+    # onionbit-launcher : les trois lanceurs portables de la racine
+    # (copies renommees du meme mini-exe, resolution relative a sa
+    # position — aucun chemin de build n'est fige).
+    cargo build --profile $cargoProfile -p onionbit-daemon -p onionbit-cli -p onionbit-launcher
     if ($LASTEXITCODE -ne 0) { throw "cargo build a echoue ($LASTEXITCODE)" }
 
     # -- 2) Interface Flutter Windows -----------------------------------
@@ -179,58 +183,48 @@ try {
     if (Test-Path $webDist) { Remove-Item $webDist -Recurse -Force }
     Copy-Item $webOut -Destination $webDist -Recurse -Force
 
-    # Lanceurs a la RACINE du bundle — un par role, l'utilisateur
-    # choisit son interface sans descendre dans `windows\` :
-    #   OnionBit.lnk         → UI desktop (demarre le daemon au
-    #                          besoin via daemon_launcher)
-    #   OnionBit Daemon.lnk  → backend seul (console de logs + systray)
-    #   OnionBit Web.lnk     → daemon + navigateur sur l'UI web
-    #                          (`--open-webui`)
-    # Un .lnk n'ouvre aucune fenetre parasite (binaire GUI) et Windows
-    # re-resout la cible par chemin relatif quand le bundle est
-    # deplace/dezippe ailleurs. Icones : ressources embarquees des
-    # exe — PAS de .ico lache a la racine (confondu avec l'app dans
-    # l'Explorateur quand les extensions sont masquees).
-    $wsh = New-Object -ComObject WScript.Shell
-    foreach ($l in @(
-        @{ Name  = "OnionBit"
-           Exe   = "OnionBit.exe"
-           Args  = ""
-           Desc  = "Interface graphique OnionBit (demarre le daemon)" },
-        @{ Name  = "OnionBit Daemon"
-           Exe   = "onionbit-daemon.exe"
-           Args  = ""
-           Desc  = "Daemon OnionBit seul — console de logs + systray" },
-        @{ Name  = "OnionBit Web"
-           Exe   = "onionbit-daemon.exe"
-           Args  = "--open-webui"
-           Desc  = "Interface web OnionBit (navigateur)" }
-    )) {
-        $lnk = $wsh.CreateShortcut((Join-Path $bundleRoot "$($l.Name).lnk"))
-        $lnk.TargetPath = Join-Path $osDir $l.Exe
-        $lnk.Arguments = $l.Args
-        $lnk.WorkingDirectory = $osDir
-        $lnk.IconLocation = "$(Join-Path $osDir $l.Exe),0"
-        $lnk.Description = $l.Desc
-        $lnk.Save()
+    # Lanceurs a la RACINE du bundle — trois copies renommees du meme
+    # `onionbit-launcher.exe` (~30 Ko) : chacune choisit sa cible d'apres
+    # son propre nom et la resout RELATIVEMENT a sa position
+    # (`windows\<cible>`). Portable a 100 % — un `.lnk` figerait le
+    # chemin absolu du build dans TargetPath et lancerait l'ancienne
+    # copie tant que `dist\` existe encore (ou se casserait ailleurs).
+    #   OnionBit.exe         → windows\OnionBit.exe (demarre le daemon
+    #                          au besoin via daemon_launcher)
+    #   OnionBit Daemon.exe  → windows\onionbit-daemon.exe (systray)
+    #   OnionBit Web.exe     → windows\onionbit-daemon.exe --open-webui
+    # Icone : `onionbit.ico` embarquee dans le lanceur (resources.rc).
+    $launcherSrc = Join-Path $cargoOut "onionbit-launcher.exe"
+    if (-not (Test-Path $launcherSrc)) {
+        throw "onionbit-launcher.exe introuvable dans $cargoOut"
+    }
+    foreach ($name in @("OnionBit", "OnionBit Daemon", "OnionBit Web")) {
+        Copy-Item $launcherSrc `
+            -Destination (Join-Path $bundleRoot "$name.exe") -Force
+    }
+    # Restes de l'ere .lnk : chemins absolus perimes — supprimes plutot
+    # que laisses trompeurs a cote des nouveaux lanceurs.
+    foreach ($name in @("OnionBit", "OnionBit Daemon", "OnionBit Web")) {
+        Remove-Item (Join-Path $bundleRoot "$name.lnk") -Force `
+            -ErrorAction SilentlyContinue
     }
 
     # -- 4) Nettoyage des artefacts historiques -------------------------
     # demarrer/arreter n'ont plus lieu d'etre (lancement par l'UI, arret
     # via le systray ou PUT /api/shutdown) — retirer les restes des
     # builds precedents : binaires de l'ere tribler-*, l'ancien exe UI
-    # `onionbit_ui` (renomme OnionBit) et le lanceur .cmd/.ps1 remplace
-    # par le raccourci .lnk --open-webui. Idem pour le layout plat
-    # pre-ADR-0018 : binaires/dlls/web/ a la racine de `dist\`.
-    # `onionbit.ico` lache a cote des exe (ere du .lnk) : supprime —
-    # sans extension visible il se confondait avec l'application.
-    # L'ancien « OnionBit Web.lnk » vivait sous windows\ — les
-    # lanceurs sont desormais a la racine du bundle.
+    # `onionbit_ui` (renomme OnionBit), les lanceurs .cmd/.ps1 et l'ere
+    # .lnk a chemins absolus (remplaces par les lanceurs .exe
+    # `onionbit-launcher`). Idem pour le layout plat pre-ADR-0018 :
+    # binaires/dlls/web/ a la racine de `dist\`. `onionbit.ico` lache a
+    # cote des exe (ere du .lnk) : supprime — sans extension visible il
+    # se confondait avec l'application. L'ancien « OnionBit Web.lnk »
+    # vivait sous windows\ — les lanceurs .exe sont a la racine du bundle.
     foreach ($f in @("demarrer.cmd", "demarrer.ps1", "arreter.cmd", "arreter.ps1",
                      "tribler-daemon.exe", "tribler-cli.exe", "tribler_ui.exe",
                      "tribler_ui.pdb", "onionbit_ui.exe", "onionbit_ui.pdb",
                      "OnionBit Web.cmd", "web-launch.ps1", "onionbit.ico",
-                     "OnionBit Web.lnk")) {
+                     "OnionBit.lnk", "OnionBit Daemon.lnk", "OnionBit Web.lnk")) {
         Remove-Item (Join-Path $osDir $f) -Force -ErrorAction SilentlyContinue
         Remove-Item (Join-Path $dist $f) -Force -ErrorAction SilentlyContinue
     }
@@ -238,7 +232,8 @@ try {
     # de `dist\` appartient a l'ancienne assemblee (le nouveau payload
     # vit sous `OnionBit\windows\`).
     foreach ($f in @("onionbit-daemon.exe", "onionbit-cli.exe", "OnionBit.exe",
-                     "onionbit.ico", "OnionBit Web.lnk")) {
+                     "onionbit.ico", "OnionBit.lnk", "OnionBit Daemon.lnk",
+                     "OnionBit Web.lnk")) {
         Remove-Item (Join-Path $dist $f) -Force -ErrorAction SilentlyContinue
     }
     Remove-Item (Join-Path $dist "*.dll") -Force -ErrorAction SilentlyContinue
@@ -297,9 +292,9 @@ try {
 
     Write-Host ""
     Write-Host "Build OK -> dist\OnionBit\ (bundle portable ADR-0018)" -ForegroundColor Green
-    Write-Host "  Lancement  : dist\OnionBit\OnionBit.lnk (UI desktop, demarre"
-    Write-Host "               le daemon au besoin) — aussi OnionBit Daemon.lnk et"
-    Write-Host "               OnionBit Web.lnk a la racine du bundle"
+    Write-Host "  Lancement  : dist\OnionBit\OnionBit.exe (UI desktop, demarre"
+    Write-Host "               le daemon au besoin) — aussi OnionBit Daemon.exe et"
+    Write-Host "               OnionBit Web.exe a la racine du bundle"
     Write-Host "  UI web     : http://127.0.0.1:8085/ une fois le daemon lance"
     Write-Host "               (cle API injectee automatiquement)"
     Write-Host "  Arret      : systray « Quitter » ou PUT /api/shutdown"

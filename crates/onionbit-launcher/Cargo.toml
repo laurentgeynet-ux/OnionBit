@@ -1,0 +1,25 @@
+[package]
+name = "onionbit-launcher"
+description = "Mini-lanceur portable du bundle Windows : copie a la racine sous trois noms (OnionBit, OnionBit Daemon, OnionBit Web), il resout windows\\<cible> relativement a sa propre position — remplace les .lnk a chemins absolus."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "onionbit-launcher"
+path = "src/main.rs"
+
+[dependencies]
+
+# MessageBox d'erreur quand la cible est introuvable (sous-systeme GUI :
+# sans lui un echec de lancement serait invisible).
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, features = [
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+# Icone OnionBit embarquee dans l'exe (resources.rc) — sert d'icone de
+# fichier pour les trois copies a la racine du bundle.
+[target.'cfg(windows)'.build-dependencies]
+embed-resource.workspace = true

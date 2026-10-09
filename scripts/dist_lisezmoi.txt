@@ -5,10 +5,10 @@
 
 DEMARRAGE RAPIDE
   1. Extraire le zip complet dans un dossier (ex. C:\OnionBit).
-  2. Double-cliquer « OnionBit » (raccourci a la racine) — l'interface
+  2. Double-cliquer « OnionBit.exe » (a la racine) — l'interface
      graphique s'ouvre et demarre le daemon automatiquement.
   3. Premier lancement : l'etat est cree dans state\ a cote des
-     raccourcis (configuration.json, api key, base SQLite, logs).
+     lanceurs (configuration.json, api key, base SQLite, logs).
 
 TROIS LANCEURS A LA RACINE — choisissez votre interface :
   OnionBit           Interface graphique Windows (Flutter) —
@@ -23,8 +23,9 @@ TROIS LANCEURS A LA RACINE — choisissez votre interface :
                      onionbit-cli, pilotage a distance).
 
 CONTENU
-  OnionBit.lnk / OnionBit Daemon.lnk / OnionBit Web.lnk
-                        Lanceurs racine — voir ci-dessus
+  OnionBit.exe / OnionBit Daemon.exe / OnionBit Web.exe
+                        Lanceurs racine portables (resolvent windows\
+                        relativement — le bundle se deplace tel quel)
   OnionBit.portable     Marqueur du mode portable : state\ et data\
                         vivent a cote. Ne pas supprimer.
   LISEZMOI.txt          Ce fichier

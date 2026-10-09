@@ -43,7 +43,7 @@ Compress-Archive -Path dist/OnionBit-<version>-windows-x64 `
 - `onionbit-daemon.exe` — headless daemon; state goes to `state/` next to
   the bundle root, `.onionbit/` elsewhere (configuration.json, api key,
   SQLite db, logs). `--open-webui` also opens the web UI in the default
-  browser (used by `OnionBit Web.lnk`)
+  browser (used by `OnionBit Web.exe`, the portable root launcher)
 - `onionbit-cli.exe --help` — CLI control
 
 Environment overrides: `ONIONBIT_API_KEY`, `ONIONBIT_API`, `ONIONBIT_DAEMON_EXE`.

@@ -3,6 +3,27 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Correctif : lanceurs racine portables (remplacement des `.lnk`) (2026-10-09, worktree adr21)
+
+- **Nouveau crate `onionbit-launcher`** (~30 Ko, sous-système GUI) :
+  copié trois fois à la racine du bundle (`OnionBit.exe`,
+  `OnionBit Daemon.exe`, `OnionBit Web.exe`), chaque copie choisit sa
+  cible d'après son propre nom de fichier et résout `windows\<cible>`
+  relativement à `current_exe` — un nom inconnu replie sur l'UI,
+  les arguments CLI sont relayés, erreur de lancement → `MessageBoxW`
+  native. Icône `onionbit.ico` embarquée via `resources.rc` partagée
+  avec `onionbit-daemon`. 5 tests unitaires (mapping nom→cible,
+  repli, résolution relative).
+- **`build_dist.ps1`** : build `-p onionbit-launcher` et copies
+  renommées à la racine — remplace les `.lnk` générés par
+  `WScript.Shell`. Ceux-ci gravaient le **chemin absolu du build**
+  dans `TargetPath` : une copie du bundle sur Desktop ou une clé USB
+  lançait silencieusement l'ancienne installation `dist\` tant
+  qu'elle existait (state mélangé, identité introuvable sur la bonne
+  racine). Les `.lnk` résiduels sont purgés à la racine du bundle.
+- **`dist_lisezmoi.txt` / `docs/BUILDING.md`** : références `.lnk` →
+  lanceurs `.exe` portables.
+
 ## UI : changement de zone dans « Déplacer le stockage » (2026-10-09, worktree adr21)
 
 - **`download_actions.dart`** : le dialogue « Move files » gagne un

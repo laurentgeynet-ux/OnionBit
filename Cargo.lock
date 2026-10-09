@@ -3232,6 +3232,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "onionbit-launcher"
+version = "1.0.0"
+dependencies = [
+ "embed-resource",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "onionbit-messaging"
 version = "1.0.0"
 dependencies = [
