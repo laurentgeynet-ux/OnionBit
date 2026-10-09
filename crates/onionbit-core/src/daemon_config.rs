@@ -387,7 +387,13 @@ pub struct LibtorrentConfig {
     pub ask_download_settings: bool,
     /// Nettoie les .parts orphelins.
     pub clear_orphaned_parts: bool,
-    /// Fichiers mappés mémoire.
+    /// Fichiers mappés mémoire. Défaut `false` : upstream rqbit n'en
+    /// fait pas le backend par défaut (mmap = exemple opt-in), et sous
+    /// Windows les pages sales d'un mapping n'ont aucun backpressure —
+    /// un téléchargement plus rapide que le disque gonflait la RAM sans
+    /// borne (écart documenté, `docs/reference_tribler/ecarts_fidelite.md`).
+    /// `true` restaure le backend `MmapFilesystemStorageFactory` (parité
+    /// `libtorrent/allow_mmap` Tribler).
     pub allow_mmap: bool,
     /// Défauts des nouveaux téléchargements.
     pub download_defaults: DownloadDefaultsConfig,
@@ -432,7 +438,7 @@ impl Default for LibtorrentConfig {
             active_limit: 500,
             ask_download_settings: false,
             clear_orphaned_parts: false,
-            allow_mmap: true,
+            allow_mmap: false,
             download_defaults: DownloadDefaultsConfig::default(),
             extra: serde_json::Map::new(),
         }

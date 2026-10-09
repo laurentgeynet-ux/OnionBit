@@ -48,7 +48,7 @@ redémarrage) — parité `set_session_limits` Python + services :
 | Domaine | Python Tribler | Portage Rust |
 | :--- | :--- | :--- |
 | `api/https_certfile` absent/invalide | échec au `load_cert_chain` (le site HTTPS ne démarre pas) | certificat auto-signé `rcgen` (SAN `localhost`/`127.0.0.1`/`::1`) généré et écrit au chemin configuré |
-| `libtorrent/allow_mmap` | backend libtorrent mmap | `MmapFilesystemStorageFactory` rqbit quand `true` |
+| `libtorrent/allow_mmap` | backend libtorrent mmap (défaut `true`) | `MmapFilesystemStorageFactory` rqbit quand `true` — **défaut `false`** (aligné sur le défaut upstream rqbit `FilesystemStorage` ; sous Windows les pages sales d'un mapping ne sont pas throttlees et gonflaient la RAM sans borne en téléchargement — `ecarts_fidelite.md`) |
 | `libtorrent/clear_orphaned_parts` | purge des `.parts` orphelins libtorrent | purge des `*.parts` sans torrent associé dans `saveas` au démarrage de session |
 | `libtorrent/check_after_complete` | `force_recheck` libtorrent | `session.recheck` rqbit sur transition vers `Seeding` |
 | `libtorrent/active_*` (file) | gestionnaire interne libtorrent | queue manager `onionbit-core` (`enforce_queue_limits`) : seuls les torrents `auto_managed` comptent, pause/reprise par `queue_position` |

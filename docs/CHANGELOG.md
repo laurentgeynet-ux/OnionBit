@@ -3,6 +3,29 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## `libtorrent/allow_mmap` : défaut `false` — alignement upstream rqbit (2026-10-09)
+
+Constat utilisateur : téléchargement ~40 Go vers un HDD — mémoire
+« Utilisée » montée de ~5 Go à ~10 Go puis effondrement à l'arrêt.
+Diagnostic : `allow_mmap = true` installait `MmapFilesystemStorage`
+(patch vendored pour l'ouverture paresseuse) ; chaque bloc reçu est
+`memcpy` dans le mapping — pages sales sans backpressure sous Windows,
+accumulées au rythme du réseau tant que le disque suit pas.
+
+- **Défaut basculé** : `LibtorrentConfig::default` et
+  `EngineConfig::default` passent `allow_mmap` à `false` →
+  `FilesystemStorage` upstream (blocs écrits par `WriteFile`
+  positionné synchrone, cache NTFS auto-throttlé — le comportement
+  rqbit d'origine, qui ne met mmap qu'en exemple opt-in).
+- **Clé conservée** : `libtorrent/allow_mmap: true` dans
+  `configuration.json` restaure le backend mmap (parité
+  `libtorrent/allow_mmap` Tribler).
+- **Docs** : écart de fidélité documenté
+  (`docs/reference_tribler/ecarts_fidelite.md`), addendum au
+  diagnostic mémoire (`docs/diagnostics/memoire_charge_reelle.md`),
+  tables de settings à jour (`api_endpoints_complet.md`,
+  `configuration_cablage.md`).
+
 ## CI : réparation matrice (2026-10-09)
 
 - **Race `dht_loopback`** : le test attendait `node_count() >= 1` puis
