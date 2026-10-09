@@ -14,6 +14,10 @@
 # Layout produit (etape 58 — une cle USB embarque tous les OS sur le
 # meme etat) :
 #   dist\OnionBit\
+#     OnionBit.lnk                    - UI desktop (lanceur principal)
+#     OnionBit Daemon.lnk             - backend seul (console + systray)
+#     OnionBit Web.lnk                - daemon + navigateur sur l'UI web
+#     LISEZMOI.txt                    - notice d'utilisation
 #     OnionBit.portable               - marqueur : state/ et data/ a la
 #                                       racine du bundle
 #     windows\onionbit-daemon.exe     - backend Rust (plan de controle)
@@ -21,8 +25,6 @@
 #     windows\OnionBit.exe + *.dll + data\  - UI Flutter Windows
 #     windows\web\                    - interface web servie sur
 #                                       http://127.0.0.1:<port>/
-#     windows\OnionBit Web.lnk        - raccourci navigateur
-#                                       (daemon --open-webui)
 #     build-manifest.json             - version, commit, rustc, date UTC
 #     state\, data\                   - crees au premier lancement
 #
@@ -177,22 +179,41 @@ try {
     if (Test-Path $webDist) { Remove-Item $webDist -Recurse -Force }
     Copy-Item $webOut -Destination $webDist -Recurse -Force
 
-    # Raccourci navigateur « OnionBit Web.lnk » : cible directe sur
-    # `onionbit-daemon.exe --open-webui` — le daemon demarre au besoin
-    # (state resolu par le marqueur portable) puis ouvre l'URL dans le
-    # navigateur par defaut. Un .cmd affichait une fenetre de console ;
-    # un .lnk n'en ouvre aucune (binaire en sous-systeme GUI).
-    # Icone : la ressource embarquee de l'exe (`onionbit.ico` compilee
-    # via resources.rc) — PAS de .ico lache a cote : sans extension
-    # visible il se confondait avec l'application dans l'Explorateur.
+    # Lanceurs a la RACINE du bundle — un par role, l'utilisateur
+    # choisit son interface sans descendre dans `windows\` :
+    #   OnionBit.lnk         → UI desktop (demarre le daemon au
+    #                          besoin via daemon_launcher)
+    #   OnionBit Daemon.lnk  → backend seul (console de logs + systray)
+    #   OnionBit Web.lnk     → daemon + navigateur sur l'UI web
+    #                          (`--open-webui`)
+    # Un .lnk n'ouvre aucune fenetre parasite (binaire GUI) et Windows
+    # re-resout la cible par chemin relatif quand le bundle est
+    # deplace/dezippe ailleurs. Icones : ressources embarquees des
+    # exe — PAS de .ico lache a la racine (confondu avec l'app dans
+    # l'Explorateur quand les extensions sont masquees).
     $wsh = New-Object -ComObject WScript.Shell
-    $lnk = $wsh.CreateShortcut((Join-Path $osDir "OnionBit Web.lnk"))
-    $lnk.TargetPath = Join-Path $osDir "onionbit-daemon.exe"
-    $lnk.Arguments = "--open-webui"
-    $lnk.WorkingDirectory = $osDir
-    $lnk.IconLocation = "$(Join-Path $osDir 'onionbit-daemon.exe'),0"
-    $lnk.Description = "Interface web OnionBit"
-    $lnk.Save()
+    foreach ($l in @(
+        @{ Name  = "OnionBit"
+           Exe   = "OnionBit.exe"
+           Args  = ""
+           Desc  = "Interface graphique OnionBit (demarre le daemon)" },
+        @{ Name  = "OnionBit Daemon"
+           Exe   = "onionbit-daemon.exe"
+           Args  = ""
+           Desc  = "Daemon OnionBit seul — console de logs + systray" },
+        @{ Name  = "OnionBit Web"
+           Exe   = "onionbit-daemon.exe"
+           Args  = "--open-webui"
+           Desc  = "Interface web OnionBit (navigateur)" }
+    )) {
+        $lnk = $wsh.CreateShortcut((Join-Path $bundleRoot "$($l.Name).lnk"))
+        $lnk.TargetPath = Join-Path $osDir $l.Exe
+        $lnk.Arguments = $l.Args
+        $lnk.WorkingDirectory = $osDir
+        $lnk.IconLocation = "$(Join-Path $osDir $l.Exe),0"
+        $lnk.Description = $l.Desc
+        $lnk.Save()
+    }
 
     # -- 4) Nettoyage des artefacts historiques -------------------------
     # demarrer/arreter n'ont plus lieu d'etre (lancement par l'UI, arret
@@ -203,10 +224,13 @@ try {
     # pre-ADR-0018 : binaires/dlls/web/ a la racine de `dist\`.
     # `onionbit.ico` lache a cote des exe (ere du .lnk) : supprime —
     # sans extension visible il se confondait avec l'application.
+    # L'ancien « OnionBit Web.lnk » vivait sous windows\ — les
+    # lanceurs sont desormais a la racine du bundle.
     foreach ($f in @("demarrer.cmd", "demarrer.ps1", "arreter.cmd", "arreter.ps1",
                      "tribler-daemon.exe", "tribler-cli.exe", "tribler_ui.exe",
                      "tribler_ui.pdb", "onionbit_ui.exe", "onionbit_ui.pdb",
-                     "OnionBit Web.cmd", "web-launch.ps1", "onionbit.ico")) {
+                     "OnionBit Web.cmd", "web-launch.ps1", "onionbit.ico",
+                     "OnionBit Web.lnk")) {
         Remove-Item (Join-Path $osDir $f) -Force -ErrorAction SilentlyContinue
         Remove-Item (Join-Path $dist $f) -Force -ErrorAction SilentlyContinue
     }
@@ -233,9 +257,16 @@ try {
     }
     $manifest | ConvertTo-Json | Set-Content (Join-Path $bundleRoot "build-manifest.json")
 
+    # LISEZMOI a la racine du bundle, dans tous les builds (pas
+    # seulement -ZipRelease) : c'est lui qui indique les trois
+    # lanceurs si l'utilisateur ouvre le dossier.
+    $ver = (cargo pkgid -p onionbit-daemon).Split('#')[-1]
+    (Get-Content (Join-Path $PSScriptRoot 'dist_lisezmoi.txt') -Raw -Encoding UTF8).
+        Replace('{{VERSION}}', $ver) |
+        Set-Content (Join-Path $bundleRoot 'LISEZMOI.txt') -Encoding UTF8
+
     # -- 6) Bundle + zip de release GitHub (optionnel) ---------------------
     if ($ZipRelease) {
-        $ver = (cargo pkgid -p onionbit-daemon).Split('#')[-1]
         Write-Host "== bundle release OnionBit-<ver>-windows-$winArch ==" -ForegroundColor Cyan
         $bundle  = Join-Path $dist "OnionBit-$ver-windows-$winArch"
         $zipPath = "$bundle.zip"
@@ -256,10 +287,8 @@ try {
 
         Copy-Item (Join-Path $root 'LICENSE') -Destination $bundle
         Copy-Item (Join-Path $bundleRoot 'build-manifest.json') -Destination $bundle
-        # LISEZMOI : gabarit versionne (placeholder {{VERSION}}).
-        (Get-Content (Join-Path $PSScriptRoot 'dist_lisezmoi.txt') -Raw -Encoding UTF8).
-            Replace('{{VERSION}}', $ver) |
-            Set-Content (Join-Path $bundle 'LISEZMOI.txt') -Encoding UTF8
+        # LISEZMOI.txt deja ecrit a la racine du bundle — emporte par
+        # le `Get-ChildItem $bundleRoot | Copy-Item` ci-dessus.
 
         Compress-Archive -Path $bundle -DestinationPath $zipPath -CompressionLevel Optimal
         Write-Host "  Zip release : $zipPath" -ForegroundColor Green
@@ -268,9 +297,10 @@ try {
 
     Write-Host ""
     Write-Host "Build OK -> dist\OnionBit\ (bundle portable ADR-0018)" -ForegroundColor Green
-    Write-Host "  Lancement  : dist\OnionBit\windows\OnionBit.exe (demarre le daemon au besoin)"
-    Write-Host "  UI web     : dist\OnionBit\windows\`"OnionBit Web.lnk`" ou"
-    Write-Host "               http://127.0.0.1:8085/ une fois le daemon lance"
+    Write-Host "  Lancement  : dist\OnionBit\OnionBit.lnk (UI desktop, demarre"
+    Write-Host "               le daemon au besoin) — aussi OnionBit Daemon.lnk et"
+    Write-Host "               OnionBit Web.lnk a la racine du bundle"
+    Write-Host "  UI web     : http://127.0.0.1:8085/ une fois le daemon lance"
     Write-Host "               (cle API injectee automatiquement)"
     Write-Host "  Arret      : systray « Quitter » ou PUT /api/shutdown"
     Write-Host "  Etat/datas : dist\OnionBit\{state,data}\ (conserves entre builds,"

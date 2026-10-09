@@ -3,6 +3,22 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Correctif : bundle Windows — lanceurs à la racine (2026-10-09, worktree adr21)
+
+- **`build_dist.ps1`** : trois raccourcis à la racine de
+  `dist\OnionBit\` — `OnionBit.lnk` (UI desktop, lanceur principal),
+  `OnionBit Daemon.lnk` (backend seul : console de logs + systray) et
+  `OnionBit Web.lnk` (daemon + navigateur sur l'UI web). L'utilisateur
+  choisit son interface sans descendre dans `windows\` ; Windows
+  re-résout les cibles par chemin relatif après dézip/déplacement du
+  bundle. L'ancien `windows\OnionBit Web.lnk` est purgé (montée des
+  lanceurs à la racine).
+- **`LISEZMOI.txt` écrit dans tous les builds** (auparavant
+  `-ZipRelease` seul) et réécrit : contenu aligné sur le layout
+  ADR-0018 (`windows\` payload, marqueur `OnionBit.portable`,
+  `state\`/`data\`), description des trois lanceurs — il présentait
+  encore `OnionBit.exe` comme s'il était à la racine.
+
 ## Correctif : bundle Windows — `onionbit.ico` confondu avec l'application (2026-10-09, worktree adr21)
 
 - **`build_dist.ps1`** : le `.ico` lâche copié à côté des exécutables
