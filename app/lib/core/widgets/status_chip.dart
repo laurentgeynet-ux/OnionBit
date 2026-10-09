@@ -4,6 +4,8 @@
 
 import 'package:flutter/material.dart';
 
+import '../design/design_tokens.dart';
+
 /// Puce de statut compacte (connecté/déconnecté, seeding/arrêté…),
 /// réutilisée par toutes les features plutôt que réimplémentée par écran.
 class StatusChip extends StatelessWidget {
@@ -15,18 +17,19 @@ class StatusChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    final semantic = context.semanticColors;
     final (background, foreground) = switch (tone) {
       StatusTone.positive => (
-        scheme.primaryContainer,
-        scheme.onPrimaryContainer,
+        semantic.successContainer,
+        semantic.onSuccessContainer,
       ),
       StatusTone.neutral => (
         scheme.surfaceContainerHighest,
         scheme.onSurfaceVariant,
       ),
       StatusTone.warning => (
-        scheme.tertiaryContainer,
-        scheme.onTertiaryContainer,
+        semantic.warningContainer,
+        semantic.onWarningContainer,
       ),
       StatusTone.negative => (scheme.errorContainer, scheme.onErrorContainer),
     };

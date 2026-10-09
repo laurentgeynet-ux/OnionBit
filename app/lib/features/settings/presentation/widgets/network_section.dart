@@ -6,7 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/l10n/l10n_ext.dart';
-import '../../../../core/theme/app_theme.dart';
+import '../../../../core/design/design_tokens.dart';
 import '../../../../l10n/app_localizations.dart' show AppLocalizations;
 import '../../../diagnostic/presentation/providers/diagnostic_providers.dart';
 import 'settings_section.dart';
@@ -114,9 +114,9 @@ class _NetworkSectionState extends ConsumerState<NetworkSection> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             _EffectiveState(settings: settings),
-            const Divider(height: AppSpacing.lg),
+            const Divider(height: AppSpace.lg),
             Text(l10n.netDiscovery, style: theme.textTheme.labelMedium),
-            const SizedBox(height: AppSpacing.sm),
+            const SizedBox(height: AppSpace.sm),
             SizedBox(
               width: 220,
               child: TextField(
@@ -131,7 +131,7 @@ class _NetworkSectionState extends ConsumerState<NetworkSection> {
                 ),
               ),
             ),
-            const SizedBox(height: AppSpacing.sm),
+            const SizedBox(height: AppSpace.sm),
             SettingsSwitch(
               path: [...lt, 'dht'],
               value: settingsBool(settings, [...lt, 'dht'], def: true),
@@ -162,9 +162,9 @@ class _NetworkSectionState extends ConsumerState<NetworkSection> {
               title: 'uTP',
               subtitle: l10n.appliedOnRestartOn,
             ),
-            const Divider(height: AppSpacing.lg),
+            const Divider(height: AppSpace.lg),
             Text(l10n.proxySection, style: theme.textTheme.labelMedium),
-            const SizedBox(height: AppSpacing.xs),
+            const SizedBox(height: AppSpace.xs),
             DropdownButtonFormField<int>(
               initialValue: _proxyType,
               decoration: InputDecoration(
@@ -184,7 +184,7 @@ class _NetworkSectionState extends ConsumerState<NetworkSection> {
               }),
             ),
             if (_proxyType != 0) ...[
-              const SizedBox(height: AppSpacing.sm),
+              const SizedBox(height: AppSpace.sm),
               TextField(
                 controller: _proxyServer,
                 onChanged: (_) => _deferred.markDirty(),
@@ -195,7 +195,7 @@ class _NetworkSectionState extends ConsumerState<NetworkSection> {
                 ),
               ),
               if (_proxyType == 3 || _proxyType == 5) ...[
-                const SizedBox(height: AppSpacing.sm),
+                const SizedBox(height: AppSpace.sm),
                 TextField(
                   controller: _proxyAuth,
                   onChanged: (_) => _deferred.markDirty(),
@@ -210,7 +210,7 @@ class _NetworkSectionState extends ConsumerState<NetworkSection> {
                 ),
               ],
             ],
-            const SizedBox(height: AppSpacing.md),
+            const SizedBox(height: AppSpace.md),
             Align(
               alignment: Alignment.centerRight,
               child: FilledButton.icon(
@@ -265,7 +265,7 @@ class _EffectiveState extends ConsumerWidget {
         Row(
           children: [
             Text(l10n.effectiveState, style: theme.textTheme.labelMedium),
-            const SizedBox(width: AppSpacing.xs),
+            const SizedBox(width: AppSpace.xs),
             Tooltip(
               message: l10n.effectiveStateTip,
               child: Icon(
@@ -276,10 +276,10 @@ class _EffectiveState extends ConsumerWidget {
             ),
           ],
         ),
-        const SizedBox(height: AppSpacing.xs),
+        const SizedBox(height: AppSpace.xs),
         Wrap(
-          spacing: AppSpacing.xs,
-          runSpacing: AppSpacing.xs,
+          spacing: AppSpace.xs,
+          runSpacing: AppSpace.xs,
           children: [
             Chip(
               label: Text(

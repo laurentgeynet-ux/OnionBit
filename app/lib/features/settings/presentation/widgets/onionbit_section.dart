@@ -6,7 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/l10n/l10n_ext.dart';
-import '../../../../core/theme/app_theme.dart';
+import '../../../../core/design/design_tokens.dart';
 import 'settings_defaults.dart';
 import 'settings_section.dart';
 
@@ -111,7 +111,7 @@ class _OnionBitSectionState extends ConsumerState<OnionBitSection> {
               title: l10n.onionbitObf,
               subtitle: l10n.onionbitObfSub,
             ),
-            const Divider(height: AppSpacing.lg),
+            const Divider(height: AppSpace.lg),
             // Comptabilité tunnel (ADR-0015 §3) — rechargée à chaud.
             SettingsSwitch(
               path: [..._t, 'ledger_enabled'],
@@ -129,7 +129,7 @@ class _OnionBitSectionState extends ConsumerState<OnionBitSection> {
               title: l10n.onionbitLedgerEnforce,
               subtitle: l10n.onionbitLedgerEnforceSub,
             ),
-            const Divider(height: AppSpacing.lg),
+            const Divider(height: AppSpace.lg),
             // Consentement messagerie assisté par la confiance
             // ADR-0015 (attestations `identity` + solde du registre
             // tunnel) — politique locale, appliquée au redémarrage.
@@ -160,7 +160,7 @@ class _OnionBitSectionState extends ConsumerState<OnionBitSection> {
               title: l10n.onionbitConsentLedger,
               subtitle: l10n.onionbitConsentLedgerSub,
             ),
-            const Divider(height: AppSpacing.lg),
+            const Divider(height: AppSpace.lg),
             TextField(
               controller: _curators,
               onChanged: (_) => _deferred.markDirty(),
@@ -174,7 +174,7 @@ class _OnionBitSectionState extends ConsumerState<OnionBitSection> {
                 suffixIcon: const KeyInfoIcon(['ext', 'curators']),
               ),
             ),
-            const SizedBox(height: AppSpacing.sm),
+            const SizedBox(height: AppSpace.sm),
             Align(
               alignment: Alignment.centerRight,
               child: FilledButton.icon(
@@ -183,7 +183,7 @@ class _OnionBitSectionState extends ConsumerState<OnionBitSection> {
                 label: Text(l10n.save),
               ),
             ),
-            const SizedBox(height: AppSpacing.xs),
+            const SizedBox(height: AppSpace.xs),
             Text(
               l10n.onionbitNote,
               style: theme.textTheme.bodySmall?.copyWith(

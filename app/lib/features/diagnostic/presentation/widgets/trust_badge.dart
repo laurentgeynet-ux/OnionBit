@@ -6,7 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/l10n/l10n_ext.dart';
-import '../../../../core/theme/app_theme.dart';
+import '../../../../core/design/design_tokens.dart';
 import '../providers/diagnostic_providers.dart';
 
 /// Pastille de confiance locale (ADR-0015 §6) : `+n` vert si les
@@ -48,7 +48,7 @@ class TrustBadge extends ConsumerWidget {
           )
         : context.l10n.trustTooltipUnscored(trust.attestationCount);
     return Padding(
-      padding: const EdgeInsets.only(left: AppSpacing.xs),
+      padding: const EdgeInsets.only(left: AppSpace.xs),
       child: Tooltip(
         message: detail,
         child: Icon(icon, size: 14, color: color),

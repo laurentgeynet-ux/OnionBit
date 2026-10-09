@@ -17,7 +17,7 @@ import '../../features/settings/presentation/providers/settings_providers.dart';
 import '../di/providers.dart';
 import '../l10n/l10n_ext.dart';
 import '../router/nav_catalog.dart';
-import '../theme/app_theme.dart';
+import '../design/design_tokens.dart';
 import '../config/ui_prefs.dart';
 
 /// Replie/déplie le groupe des sous-filtres Téléchargements (état de
@@ -67,6 +67,7 @@ class AppSidebar extends ConsumerWidget {
     super.key,
     required this.currentPath,
     required this.currentQuery,
+    this.collapsedOverride,
   });
 
   /// `state.matchedLocation` courant.
@@ -74,6 +75,13 @@ class AppSidebar extends ConsumerWidget {
 
   /// `state.uri.queryParameters` courant (sous-filtre `f`).
   final Map<String, String> currentQuery;
+
+  /// Force l'état replié/déplié indépendamment de la préférence
+  /// persistée (ADR-0021 §5 — palier `medium` : pas de choix
+  /// utilisateur, largeur trop juste). `null` = comportement
+  /// historique, piloté par `sidebarCollapsedProvider` avec bascule
+  /// manuelle visible.
+  final bool? collapsedOverride;
 
   static const double width = 216;
 
@@ -93,7 +101,8 @@ class AppSidebar extends ConsumerWidget {
     final downloads = ref.watch(downloadsProvider).value;
     final errors = downloads?.where((d) => d.isError).length ?? 0;
     final filtersExpanded = ref.watch(sidebarFiltersExpandedProvider);
-    final collapsed = ref.watch(sidebarCollapsedProvider);
+    final persistedCollapsed = ref.watch(sidebarCollapsedProvider);
+    final collapsed = collapsedOverride ?? persistedCollapsed;
     final l10n = context.l10n;
     return Material(
       color: scheme.surface,
@@ -104,7 +113,7 @@ class AppSidebar extends ConsumerWidget {
           children: [
             Padding(
               padding: EdgeInsets.all(
-                collapsed ? AppSpacing.xs : AppSpacing.md,
+                collapsed ? AppSpace.xs : AppSpace.md,
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -121,7 +130,7 @@ class AppSidebar extends ConsumerWidget {
                     placeholderBuilder: (_) => Row(
                       children: [
                         Icon(Icons.shield_outlined, color: scheme.primary),
-                        const SizedBox(width: AppSpacing.sm),
+                        const SizedBox(width: AppSpace.sm),
                         Flexible(
                           child: Text(
                             'OnionBit',
@@ -132,7 +141,7 @@ class AppSidebar extends ConsumerWidget {
                       ],
                     ),
                   ),
-                  const SizedBox(height: AppSpacing.md),
+                  const SizedBox(height: AppSpace.md),
                   if (collapsed) ...[
                     Tooltip(
                       message: l10n.sidebarAddDownloadTooltip,
@@ -163,7 +172,7 @@ class AppSidebar extends ConsumerWidget {
                             label: Text(l10n.add),
                           ),
                         ),
-                        const SizedBox(width: AppSpacing.xs),
+                        const SizedBox(width: AppSpace.xs),
                         Tooltip(
                           message: l10n.createTorrent,
                           child: OutlinedButton(
@@ -179,7 +188,7 @@ class AppSidebar extends ConsumerWidget {
                       ],
                     ),
                   if (!collapsed) ...[
-                    const SizedBox(height: AppSpacing.sm),
+                    const SizedBox(height: AppSpace.sm),
                     const _SpeedsRow(),
                   ],
                 ],
@@ -187,7 +196,7 @@ class AppSidebar extends ConsumerWidget {
             ),
             Expanded(
               child: ListView(
-                padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm),
+                padding: const EdgeInsets.symmetric(horizontal: AppSpace.sm),
                 children: [
                   if (!collapsed) _GroupLabel(l10n.sidebarGroupLibrary),
                   _NavItem(
@@ -230,7 +239,7 @@ class AppSidebar extends ConsumerWidget {
                     selected: currentPath == '/search',
                   ),
                   if (!collapsed)
-                    const Divider(height: AppSpacing.lg)
+                    const Divider(height: AppSpace.lg)
                   else
                     _GroupLabel(l10n.sidebarGroupSystem),
                   // Data-driven : `selected` suit `d.path` — un index
@@ -246,20 +255,25 @@ class AppSidebar extends ConsumerWidget {
             ),
             const Divider(height: 1),
             _DaemonFooter(collapsed: collapsed),
-            Align(
-              alignment: collapsed ? Alignment.center : Alignment.centerRight,
-              child: IconButton(
-                tooltip: collapsed
-                    ? l10n.sidebarExpand
-                    : l10n.sidebarCollapse,
-                icon: Icon(
-                  collapsed ? Icons.chevron_right : Icons.chevron_left,
-                  size: 20,
+            // Bascule manuelle masquée quand l'état est forcé par le
+            // palier (`medium`) : il n'y a alors rien à choisir.
+            if (collapsedOverride == null)
+              Align(
+                alignment: collapsed
+                    ? Alignment.center
+                    : Alignment.centerRight,
+                child: IconButton(
+                  tooltip: collapsed
+                      ? l10n.sidebarExpand
+                      : l10n.sidebarCollapse,
+                  icon: Icon(
+                    collapsed ? Icons.chevron_right : Icons.chevron_left,
+                    size: 20,
+                  ),
+                  onPressed: () =>
+                      ref.read(sidebarCollapsedProvider.notifier).toggle(),
                 ),
-                onPressed: () =>
-                    ref.read(sidebarCollapsedProvider.notifier).toggle(),
               ),
-            ),
           ],
         ),
       ),
@@ -278,10 +292,10 @@ class _GroupLabel extends StatelessWidget {
     final theme = Theme.of(context);
     return Padding(
       padding: const EdgeInsets.fromLTRB(
-        AppSpacing.sm,
-        AppSpacing.sm,
-        AppSpacing.sm,
-        AppSpacing.xs,
+        AppSpace.sm,
+        AppSpace.sm,
+        AppSpace.sm,
+        AppSpace.xs,
       ),
       child: Text(
         label.toUpperCase(),
@@ -350,7 +364,7 @@ class _FilterItem extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: EdgeInsets.only(left: collapsed ? 0 : AppSpacing.lg),
+      padding: EdgeInsets.only(left: collapsed ? 0 : AppSpace.lg),
       child: _SidebarItem(
         icon: icon,
         label: filter.label(context.l10n),
@@ -403,7 +417,7 @@ class _SidebarItem extends StatelessWidget {
                 color: selected ? scheme.primaryContainer : Colors.transparent,
                 borderRadius: BorderRadius.circular(24),
               ),
-              padding: const EdgeInsets.all(AppSpacing.sm - 2),
+              padding: const EdgeInsets.all(AppSpace.sm - 2),
               child: Center(child: Icon(icon, size: 20, color: color)),
             ),
           ),
@@ -421,14 +435,14 @@ class _SidebarItem extends StatelessWidget {
             borderRadius: BorderRadius.circular(24),
           ),
           padding: const EdgeInsets.symmetric(
-            horizontal: AppSpacing.sm,
-            vertical: AppSpacing.sm - 2,
+            horizontal: AppSpace.sm,
+            vertical: AppSpace.sm - 2,
           ),
           child: Row(
             children: [
               if (icon != null) ...[
                 Icon(icon, size: 18, color: color),
-                const SizedBox(width: AppSpacing.sm),
+                const SizedBox(width: AppSpace.sm),
               ],
               Expanded(
                 child: Text(
@@ -569,7 +583,7 @@ class _DaemonFooter extends ConsumerWidget {
     );
     if (collapsed) {
       return Padding(
-        padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
+        padding: const EdgeInsets.symmetric(vertical: AppSpace.xs),
         child: Tooltip(
           message: connected
               ? (version != null
@@ -582,13 +596,13 @@ class _DaemonFooter extends ConsumerWidget {
     }
     return Padding(
       padding: const EdgeInsets.symmetric(
-        horizontal: AppSpacing.md,
-        vertical: AppSpacing.xs,
+        horizontal: AppSpace.md,
+        vertical: AppSpace.xs,
       ),
       child: Row(
         children: [
           dot,
-          const SizedBox(width: AppSpacing.xs),
+          const SizedBox(width: AppSpace.xs),
           Expanded(
             child: Text(
               connected

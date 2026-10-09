@@ -6,7 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/l10n/l10n_ext.dart';
-import '../../../../core/theme/app_theme.dart';
+import '../../../../core/design/design_tokens.dart';
 import '../../../../core/widgets/daemon_directory_picker.dart';
 import '../providers/downloads_providers.dart';
 
@@ -141,12 +141,12 @@ class _CreateTorrentDialogState extends ConsumerState<CreateTorrentDialog> {
                   ),
                 ),
               ),
-              const SizedBox(height: AppSpacing.sm),
+              const SizedBox(height: AppSpace.sm),
               TextField(
                 controller: _nameCtrl,
                 decoration: InputDecoration(labelText: l10n.ctName),
               ),
-              const SizedBox(height: AppSpacing.sm),
+              const SizedBox(height: AppSpace.sm),
               TextField(
                 controller: _trackerCtrl,
                 decoration: InputDecoration(
@@ -154,12 +154,12 @@ class _CreateTorrentDialogState extends ConsumerState<CreateTorrentDialog> {
                   hintText: 'https://tracker.example/announce',
                 ),
               ),
-              const SizedBox(height: AppSpacing.sm),
+              const SizedBox(height: AppSpace.sm),
               TextField(
                 controller: _descCtrl,
                 decoration: InputDecoration(labelText: l10n.ctDesc),
               ),
-              const SizedBox(height: AppSpacing.sm),
+              const SizedBox(height: AppSpace.sm),
               TextField(
                 controller: _exportCtrl,
                 decoration: InputDecoration(
@@ -180,7 +180,7 @@ class _CreateTorrentDialogState extends ConsumerState<CreateTorrentDialog> {
                   ),
                 ),
               ),
-              const SizedBox(height: AppSpacing.md),
+              const SizedBox(height: AppSpace.md),
               CheckboxListTile(
                 dense: true,
                 contentPadding: EdgeInsets.zero,
@@ -193,7 +193,7 @@ class _CreateTorrentDialogState extends ConsumerState<CreateTorrentDialog> {
                 onChanged: (v) => setState(() => _seed = v ?? false),
               ),
               if (_seed) ...[
-                const SizedBox(height: AppSpacing.xs),
+                const SizedBox(height: AppSpace.xs),
                 SegmentedButton<int>(
                   segments: [
                     ButtonSegment(value: 0, label: Text(l10n.anonDirect)),
@@ -204,7 +204,7 @@ class _CreateTorrentDialogState extends ConsumerState<CreateTorrentDialog> {
                   onSelectionChanged: (s) =>
                       setState(() => _hops = s.first),
                 ),
-                const SizedBox(height: AppSpacing.xs),
+                const SizedBox(height: AppSpace.xs),
                 Text(
                   _hops == 0
                       ? l10n.anonDirectWarn
@@ -217,7 +217,7 @@ class _CreateTorrentDialogState extends ConsumerState<CreateTorrentDialog> {
                 ),
               ],
               if (_error != null) ...[
-                const SizedBox(height: AppSpacing.sm),
+                const SizedBox(height: AppSpace.sm),
                 Text(
                   _error!,
                   style: theme.textTheme.bodySmall?.copyWith(

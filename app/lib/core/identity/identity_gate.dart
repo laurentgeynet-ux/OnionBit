@@ -26,7 +26,9 @@ import '../api/events.dart';
 import '../api/sse_client.dart';
 import '../di/providers.dart';
 import '../l10n/l10n_ext.dart';
-import '../theme/app_theme.dart';
+import '../design/design_tokens.dart';
+import '../widgets/password_pair_field.dart';
+import 'onboarding_wizard.dart';
 
 /// Statut identitaire du daemon (ADR-0016). Pas de polling (timers
 /// interdits en test) : réévalué sur `events_start` (session résolue
@@ -62,7 +64,7 @@ class IdentityGatePage extends StatelessWidget {
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 520),
           child: SingleChildScrollView(
-            padding: const EdgeInsets.all(AppSpacing.lg),
+            padding: const EdgeInsets.all(AppSpace.lg),
             child: locked
                 ? const _LockedGate()
                 : const _PendingGate(),
@@ -84,13 +86,13 @@ class GuestBanner extends StatelessWidget {
       color: scheme.tertiaryContainer,
       child: Padding(
         padding: const EdgeInsets.symmetric(
-          horizontal: AppSpacing.md,
-          vertical: AppSpacing.xs,
+          horizontal: AppSpace.md,
+          vertical: AppSpace.xs,
         ),
         child: Row(
           children: [
             Icon(Icons.person_off_outlined, size: 18, color: scheme.onTertiaryContainer),
-            const SizedBox(width: AppSpacing.sm),
+            const SizedBox(width: AppSpace.sm),
             Expanded(
               child: Text(
                 context.l10n.guestBanner,
@@ -123,50 +125,51 @@ class _RemovableStorageBannerState
   bool _dismissed = false;
   bool _busy = false;
 
-  /// `identity.at_rest` exige un mot de passe (scellement `OBSK`).
+  /// `identity.at_rest` exige un mot de passe (scellement `OBSK`) —
+  /// choisi en double saisie : masqué, une coquille serait invisible.
   Future<void> _enableAtRest() async {
     final l10n = context.l10n;
-    final pw = TextEditingController();
+    String? password = '';
     final ok = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(l10n.identityAtRest),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(l10n.removableBannerBody),
-            const SizedBox(height: AppSpacing.sm),
-            TextField(
-              controller: pw,
-              obscureText: true,
-              autofocus: true,
-              decoration: InputDecoration(
-                labelText: l10n.identityAtRestPasswordNew,
-                border: const OutlineInputBorder(),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSt) => AlertDialog(
+          title: Text(l10n.identityAtRest),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(l10n.removableBannerBody),
+              const SizedBox(height: AppSpace.sm),
+              PasswordPairField(
+                newLabel: l10n.identityAtRestPasswordNew,
+                onChanged: (p) => setSt(() => password = p),
+                onSubmitted: (p) => Navigator.pop(ctx, true),
               ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: Text(l10n.cancel),
+            ),
+            FilledButton(
+              onPressed: password == null
+                  ? null
+                  : () => Navigator.pop(ctx, true),
+              child: Text(l10n.apply),
             ),
           ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: Text(l10n.cancel),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: Text(l10n.apply),
-          ),
-        ],
       ),
     );
-    final password = pw.text;
-    pw.dispose();
-    if (ok != true || !mounted || password.isEmpty) return;
+    if (ok != true || !mounted || password == null || password!.isEmpty) {
+      return;
+    }
     setState(() => _busy = true);
     try {
       await ref
           .read(settingsRepositoryProvider)
-          .identitySetAtRest(enabled: true, password: password);
+          .identitySetAtRest(enabled: true, password: password!);
       ref.invalidate(daemonSettingsProvider);
       ref.invalidate(identityGateProvider);
       if (mounted) setState(() => _dismissed = true);
@@ -190,8 +193,8 @@ class _RemovableStorageBannerState
       color: scheme.errorContainer,
       child: Padding(
         padding: const EdgeInsets.symmetric(
-          horizontal: AppSpacing.md,
-          vertical: AppSpacing.xs,
+          horizontal: AppSpace.md,
+          vertical: AppSpace.xs,
         ),
         child: Row(
           children: [
@@ -200,7 +203,7 @@ class _RemovableStorageBannerState
               size: 18,
               color: scheme.onErrorContainer,
             ),
-            const SizedBox(width: AppSpacing.sm),
+            const SizedBox(width: AppSpace.sm),
             Expanded(
               child: Text(
                 l10n.removableBannerBody,
@@ -222,168 +225,14 @@ class _RemovableStorageBannerState
   }
 }
 
-/// Premier boot : trois résolutions du gate `identity_pending`.
-class _PendingGate extends ConsumerStatefulWidget {
+/// Premier boot : assistant d'onboarding en étapes (ADR-0021 §8) —
+/// choix → création/restauration → sauvegarde de la phrase. Le corps
+/// vit dans `onboarding_wizard.dart`.
+class _PendingGate extends StatelessWidget {
   const _PendingGate();
 
   @override
-  ConsumerState<_PendingGate> createState() => _PendingGateState();
-}
-
-class _PendingGateState extends ConsumerState<_PendingGate> {
-  final _restoreField = TextEditingController();
-  final _restorePassword = TextEditingController();
-  bool _restoreOpen = false;
-  bool _busy = false;
-  String? _error;
-
-  @override
-  void dispose() {
-    _restoreField.dispose();
-    _restorePassword.dispose();
-    super.dispose();
-  }
-
-  Future<void> _run(Future<void> Function() action) async {
-    setState(() {
-      _busy = true;
-      _error = null;
-    });
-    try {
-      await action();
-      // La résolution fait passer la session en `ready` — le provider
-      // rafraîchit et l'écran disparaît de lui-même.
-    } catch (e) {
-      if (mounted) setState(() => _error = '$e');
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  void _restore() {
-    final input = _restoreField.text.trim();
-    if (input.isEmpty) return;
-    final password = _restorePassword.text;
-    final repo = ref.read(settingsRepositoryProvider);
-    // Hex pur = clé/blob `OBID` ; le reste = phrase BIP39 (EN/FR).
-    final compact = input.replaceAll(RegExp(r'\s'), '');
-    if (RegExp(r'^[0-9a-fA-F]+$').hasMatch(compact) &&
-        compact.length >= 64) {
-      _run(
-        () => repo.identityRestore(
-          compact,
-          password: password.isEmpty ? null : password,
-        ),
-      );
-    } else {
-      _run(() => repo.identityRestorePhrase(input));
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final l10n = context.l10n;
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Icon(
-          Icons.fingerprint,
-          size: 64,
-          color: Theme.of(context).colorScheme.primary,
-        ),
-        const SizedBox(height: AppSpacing.md),
-        Text(
-          l10n.gatePendingTitle,
-          style: Theme.of(context).textTheme.headlineSmall,
-          textAlign: TextAlign.center,
-        ),
-        const SizedBox(height: AppSpacing.sm),
-        Text(
-          l10n.gatePendingBody,
-          style: Theme.of(context).textTheme.bodyMedium,
-          textAlign: TextAlign.center,
-        ),
-        const SizedBox(height: AppSpacing.lg),
-        _GateCard(
-          icon: Icons.auto_awesome,
-          title: l10n.gateNewIdentity,
-          subtitle: l10n.gateNewIdentitySub,
-          onTap: _busy
-              ? null
-              : () => _run(
-                  () => ref
-                      .read(settingsRepositoryProvider)
-                      .identityCreate(),
-                ),
-        ),
-        const SizedBox(height: AppSpacing.sm),
-        _GateCard(
-          icon: Icons.restore,
-          title: l10n.gateRestore,
-          subtitle: l10n.gateRestoreSub,
-          onTap: _busy
-              ? null
-              : () => setState(() => _restoreOpen = !_restoreOpen),
-        ),
-        if (_restoreOpen) ...[
-          const SizedBox(height: AppSpacing.sm),
-          TextField(
-            controller: _restoreField,
-            enabled: !_busy,
-            maxLines: 3,
-            style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
-            decoration: InputDecoration(
-              labelText: l10n.identityKeyOrPhrase,
-              border: const OutlineInputBorder(),
-            ),
-          ),
-          const SizedBox(height: AppSpacing.sm),
-          TextField(
-            controller: _restorePassword,
-            enabled: !_busy,
-            obscureText: true,
-            decoration: InputDecoration(
-              labelText: l10n.identityPasswordOptional,
-              border: const OutlineInputBorder(),
-            ),
-            onSubmitted: (_) => _restore(),
-          ),
-          const SizedBox(height: AppSpacing.sm),
-          FilledButton.icon(
-            onPressed: _busy ? null : _restore,
-            icon: const Icon(Icons.download_outlined, size: 18),
-            label: Text(l10n.gateRestoreGo),
-          ),
-        ],
-        const SizedBox(height: AppSpacing.sm),
-        _GateCard(
-          icon: Icons.person_off_outlined,
-          title: l10n.gateGuest,
-          subtitle: l10n.gateGuestSub,
-          onTap: _busy
-              ? null
-              : () => _run(
-                  () => ref
-                      .read(settingsRepositoryProvider)
-                      .identityGuest(),
-                ),
-        ),
-        if (_busy) ...[
-          const SizedBox(height: AppSpacing.md),
-          const Center(child: CircularProgressIndicator()),
-        ],
-        if (_error != null) ...[
-          const SizedBox(height: AppSpacing.md),
-          Text(
-            _error!,
-            style: TextStyle(color: Theme.of(context).colorScheme.error),
-            textAlign: TextAlign.center,
-          ),
-        ],
-      ],
-    );
-  }
+  Widget build(BuildContext context) => const OnboardingWizard();
 }
 
 /// Boot `locked` : mot de passe `OBSK` → `unlock` (400/429 typés) ;
@@ -458,19 +307,19 @@ class _LockedGateState extends ConsumerState<_LockedGate> {
           size: 64,
           color: Theme.of(context).colorScheme.primary,
         ),
-        const SizedBox(height: AppSpacing.md),
+        const SizedBox(height: AppSpace.md),
         Text(
           l10n.gateLockedTitle,
           style: Theme.of(context).textTheme.headlineSmall,
           textAlign: TextAlign.center,
         ),
-        const SizedBox(height: AppSpacing.sm),
+        const SizedBox(height: AppSpace.sm),
         Text(
           l10n.gateLockedBody,
           style: Theme.of(context).textTheme.bodyMedium,
           textAlign: TextAlign.center,
         ),
-        const SizedBox(height: AppSpacing.lg),
+        const SizedBox(height: AppSpace.lg),
         TextField(
           controller: _password,
           enabled: !_busy,
@@ -482,23 +331,23 @@ class _LockedGateState extends ConsumerState<_LockedGate> {
           ),
           onSubmitted: (_) => _unlock(),
         ),
-        const SizedBox(height: AppSpacing.md),
+        const SizedBox(height: AppSpace.md),
         FilledButton.icon(
           onPressed: _busy ? null : _unlock,
           icon: const Icon(Icons.lock_open, size: 18),
           label: Text(l10n.gateUnlock),
         ),
-        const SizedBox(height: AppSpacing.sm),
+        const SizedBox(height: AppSpace.sm),
         TextButton(
           onPressed: _busy ? null : _guest,
           child: Text(l10n.gateGuestEscape),
         ),
         if (_busy) ...[
-          const SizedBox(height: AppSpacing.md),
+          const SizedBox(height: AppSpace.md),
           const Center(child: CircularProgressIndicator()),
         ],
         if (_error != null) ...[
-          const SizedBox(height: AppSpacing.md),
+          const SizedBox(height: AppSpace.md),
           Text(
             _error!,
             style: TextStyle(color: Theme.of(context).colorScheme.error),
@@ -510,30 +359,4 @@ class _LockedGateState extends ConsumerState<_LockedGate> {
   }
 }
 
-/// Carte de choix cliquable (gate pending).
-class _GateCard extends StatelessWidget {
-  const _GateCard({
-    required this.icon,
-    required this.title,
-    required this.subtitle,
-    this.onTap,
-  });
 
-  final IconData icon;
-  final String title;
-  final String subtitle;
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      clipBehavior: Clip.antiAlias,
-      child: ListTile(
-        leading: Icon(icon),
-        title: Text(title),
-        subtitle: Text(subtitle),
-        onTap: onTap,
-      ),
-    );
-  }
-}

@@ -6,7 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../l10n/l10n_ext.dart';
-import '../theme/app_theme.dart';
+import '../design/design_tokens.dart';
 import 'app_notification.dart';
 import 'notifications_provider.dart';
 
@@ -25,8 +25,8 @@ class NotificationBell extends ConsumerWidget {
       menuChildren: [
         Padding(
           padding: const EdgeInsets.symmetric(
-            horizontal: AppSpacing.md,
-            vertical: AppSpacing.xs,
+            horizontal: AppSpace.md,
+            vertical: AppSpace.xs,
           ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
@@ -35,7 +35,7 @@ class NotificationBell extends ConsumerWidget {
                 l10n.notifications,
                 style: Theme.of(context).textTheme.titleSmall,
               ),
-              const SizedBox(width: AppSpacing.md),
+              const SizedBox(width: AppSpace.md),
               TextButton(
                 onPressed: unread == 0
                     ? null
@@ -56,7 +56,7 @@ class NotificationBell extends ConsumerWidget {
         const Divider(height: 1),
         if (items.isEmpty)
           Padding(
-            padding: const EdgeInsets.all(AppSpacing.md),
+            padding: const EdgeInsets.all(AppSpace.md),
             child: Text(l10n.noNotifications),
           )
         else

@@ -1,0 +1,4 @@
+// resources.rc — icone OnionBit du lanceur (fichier partage avec
+// onionbit-daemon : un seul asset, meme identite visuelle).
+#define IDI_ICON 101
+IDI_ICON ICON "..\\onionbit-daemon\\resources\\onionbit.ico"

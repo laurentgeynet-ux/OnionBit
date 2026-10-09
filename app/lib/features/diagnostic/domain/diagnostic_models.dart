@@ -518,11 +518,17 @@ class AnonLaneStatus {
     required this.state,
     required this.readyCircuits,
     required this.totalCircuits,
+    this.minReadyHops = 0,
   });
 
   final AnonLaneState state;
   final int readyCircuits;
   final int totalCircuits;
+
+  /// Profondeur réelle (`actual_hops`, route vérifiée) du circuit
+  /// READY le *moins* profond — posture « pire cas » affichée par le
+  /// HUD d'anonymat (ADR-0021 §8) ; 0 quand aucun circuit n'est prêt.
+  final int minReadyHops;
 
   static const disabled = AnonLaneStatus(
     state: AnonLaneState.disabled,

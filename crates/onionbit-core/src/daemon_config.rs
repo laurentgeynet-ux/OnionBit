@@ -127,6 +127,38 @@ pub struct ApiConfig {
     /// site ne peut pas lire la reponse (same-origin policy).
     /// `false` = saisie manuelle de la cle dans l'UI.
     pub web_ui_inject_key: bool,
+    /// Sous-section `api/pairing` — appairage mobile par QR
+    /// (ADR-0021 §8, etape 76).
+    pub pairing: PairingConfig,
+}
+
+/// Section `api/pairing` — jeton d'appairage mobile a courte duree
+/// de vie et usage unique, affiche en QR par le desktop et echange
+/// contre la cle API par `POST /api/pairing/redeem`. Aucun secret n'y
+/// vit : uniquement les seuils.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PairingConfig {
+    /// Duree de vie du jeton emis (s) — borne anti-rejeu.
+    pub token_ttl_secs: u64,
+    /// Plafond de `POST /api/pairing/redeem` par IP cliente et par
+    /// fenetre (anti brute-force du jeton).
+    pub redeem_per_ip_per_min: u32,
+    /// Plafond global de `redeem` par fenetre.
+    pub redeem_global_per_min: u32,
+    /// Fenetre glissante des plafonds `redeem_*` (s).
+    pub redeem_window_secs: u64,
+}
+
+impl Default for PairingConfig {
+    fn default() -> Self {
+        Self {
+            token_ttl_secs: 120,
+            redeem_per_ip_per_min: 10,
+            redeem_global_per_min: 30,
+            redeem_window_secs: 60,
+        }
+    }
 }
 
 impl Default for ApiConfig {
@@ -145,6 +177,7 @@ impl Default for ApiConfig {
             web_ui_enabled: true,
             web_ui_dir: String::new(),
             web_ui_inject_key: true,
+            pairing: PairingConfig::default(),
         }
     }
 }

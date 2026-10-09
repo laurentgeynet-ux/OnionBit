@@ -6,7 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/l10n/l10n_ext.dart';
-import '../../../../core/theme/app_theme.dart';
+import '../../../../core/design/design_tokens.dart';
 import '../../../../l10n/app_localizations.dart' show AppLocalizations;
 import 'settings_section.dart';
 import 'settings_defaults.dart';
@@ -114,7 +114,7 @@ class _SeedingSectionState extends ConsumerState<SeedingSection> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(l10n.seedMode, style: theme.textTheme.labelMedium),
-            const SizedBox(height: AppSpacing.xs),
+            const SizedBox(height: AppSpace.xs),
             SegmentedButton<String>(
               segments: [
                 for (final m in _modeKeys)
@@ -126,14 +126,14 @@ class _SeedingSectionState extends ConsumerState<SeedingSection> {
                 _deferred.markDirty();
               }),
             ),
-            const SizedBox(height: AppSpacing.xs),
+            const SizedBox(height: AppSpace.xs),
             Text(
               l10n.seedModeDefault,
               style: theme.textTheme.bodySmall?.copyWith(
                 color: theme.colorScheme.outline,
               ),
             ),
-            const SizedBox(height: AppSpacing.sm),
+            const SizedBox(height: AppSpace.sm),
             if (_mode == 'ratio')
               TextField(
                 controller: _ratio,
@@ -166,7 +166,7 @@ class _SeedingSectionState extends ConsumerState<SeedingSection> {
                   ]),
                 ),
               ),
-            const Divider(height: AppSpacing.lg),
+            const Divider(height: AppSpace.lg),
             Text(l10n.seedAnonTitle, style: theme.textTheme.labelMedium),
             SettingsSwitch(
               path: [..._dd, 'anonymity_enabled'],
@@ -182,7 +182,7 @@ class _SeedingSectionState extends ConsumerState<SeedingSection> {
               }),
             ),
             if (_anonymity) ...[
-              const SizedBox(height: AppSpacing.xs),
+              const SizedBox(height: AppSpace.xs),
               SegmentedButton<int>(
                 segments: [
                   for (final n in const [1, 2, 3])
@@ -210,7 +210,7 @@ class _SeedingSectionState extends ConsumerState<SeedingSection> {
                 dense: true,
               ),
             ],
-            const SizedBox(height: AppSpacing.sm),
+            const SizedBox(height: AppSpace.sm),
             Align(
               alignment: Alignment.centerRight,
               child: FilledButton.icon(

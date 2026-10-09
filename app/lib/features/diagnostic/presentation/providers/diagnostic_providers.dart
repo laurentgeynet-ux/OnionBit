@@ -177,11 +177,18 @@ final anonLaneProvider = FutureProvider.autoDispose<AnonLaneStatus>((
   ref.watch(tickProvider(const Duration(seconds: 10)));
   try {
     final circuits = await ref.watch(diagnosticRepositoryProvider).circuits();
-    final ready = circuits.where((c) => c.ready).length;
+    final readyCircuits = circuits.where((c) => c.ready).toList();
     return AnonLaneStatus(
-      state: ready > 0 ? AnonLaneState.ready : AnonLaneState.waiting,
-      readyCircuits: ready,
+      state: readyCircuits.isNotEmpty
+          ? AnonLaneState.ready
+          : AnonLaneState.waiting,
+      readyCircuits: readyCircuits.length,
       totalCircuits: circuits.length,
+      minReadyHops: readyCircuits.isEmpty
+          ? 0
+          : readyCircuits
+                .map((c) => c.actualHops)
+                .reduce((a, b) => a < b ? a : b),
     );
   } catch (_) {
     return AnonLaneStatus.disabled;

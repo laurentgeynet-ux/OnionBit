@@ -3,39 +3,51 @@
  Anonymous BitTorrent client, native in Rust (Tribler port)
 ================================================================
 
-CONTENU
-  OnionBit.exe          Application graphique (lance le daemon auto)
-  OnionBit Web.lnk      Interface web : demarre le daemon au besoin
-                        puis ouvre le navigateur sur l'UI
-  onionbit-daemon.exe   Daemon BitTorrent + API (peut tourner seul)
-  onionbit-cli.exe      Pilotage en ligne de commande du daemon
-  web\                  Interface web servie par le daemon
-  *.dll, data\          Runtime Flutter — ne pas separer de l'exe
-  LICENSE               GPL-3.0-or-later
-
 DEMARRAGE RAPIDE
   1. Extraire le zip complet dans un dossier (ex. C:\OnionBit).
-  2. Lancer OnionBit.exe — l'application demarre le daemon
-     automatiquement (le daemon doit rester dans le meme dossier).
+  2. Double-cliquer « OnionBit.exe » (a la racine) — l'interface
+     graphique s'ouvre et demarre le daemon automatiquement.
   3. Premier lancement : l'etat est cree dans state\ a cote des
-     executables (configuration.json, api key, base SQLite, logs).
+     lanceurs (configuration.json, api key, base SQLite, logs).
 
-INTERFACE WEB
-  Double-cliquer « OnionBit Web.lnk » : il lance le daemon s'il ne
-  tourne pas deja puis ouvre le navigateur sur
-  http://127.0.0.1:8085/ (entree systray « Ouvrir dans le navigateur »
-  equivalente). La cle API est injectee automatiquement par le daemon
-  dans la page servie — rien a saisir. Pour la desactiver :
+TROIS LANCEURS A LA RACINE — choisissez votre interface :
+  OnionBit           Interface graphique Windows (Flutter) —
+                     demarre le daemon au besoin. Usage courant.
+  OnionBit Web       Interface web : demarre le daemon s'il ne
+                     tourne pas puis ouvre le navigateur sur
+                     http://127.0.0.1:8085/ — meme UI, sans installer
+                     l'application desktop. Ideal aussi pour un second
+                     poste du reseau local.
+  OnionBit Daemon    Backend seul : console de logs + icone systray,
+                     sans UI. Pour les usages avances (API,
+                     onionbit-cli, pilotage a distance).
+
+CONTENU
+  OnionBit.exe / OnionBit Daemon.exe / OnionBit Web.exe
+                        Lanceurs racine portables (resolvent windows\
+                        relativement — le bundle se deplace tel quel)
+  OnionBit.portable     Marqueur du mode portable : state\ et data\
+                        vivent a cote. Ne pas supprimer.
+  LISEZMOI.txt          Ce fichier
+  build-manifest.json   Version, commit, toolchain du build
+  windows\              Payload Windows (exe, dll, web\) — ouvrir via
+                        les lanceurs racine, pas besoin d'y entrer
+  state\, data\         Votre etat et vos donnees — crees au premier
+                        lancement, a sauvegarder avec le bundle
+  LICENSE               GPL-3.0-or-later
+
+INTERFACE WEB — CLE API
+  La cle API est injectee automatiquement par le daemon dans la page
+  servie — rien a saisir. Pour la desactiver :
   api/web_ui_inject_key = false dans state\configuration.json, et
   saisir alors la cle « api/key » dans l'UI (ou ?key=<cle>).
 
-LIGNES DE COMMANDE (optionnel)
-  onionbit-daemon.exe                 lance le daemon (API sur
-                                      http://127.0.0.1:8085, loopback)
-  onionbit-daemon.exe --open-webui    idem + ouvre l'UI web dans le
-                                      navigateur (equivalent du .lnk)
-  onionbit-daemon.exe --web-ui-dir D  sert une UI web depuis D
-  onionbit-cli.exe --help             commandes disponibles
+LIGNES DE COMMANDE (optionnel, tout est dans windows\)
+  windows\onionbit-daemon.exe                 daemon seul (API sur
+                                              http://127.0.0.1:8085)
+  windows\onionbit-daemon.exe --open-webui    idem + ouvre l'UI web
+  windows\onionbit-daemon.exe --web-ui-dir D  sert une UI web depuis D
+  windows\onionbit-cli.exe --help             commandes disponibles
   Variables d'environnement utiles :
     ONIONBIT_DAEMON_EXE=<chemin>      force l'exe du daemon pour l'UI
     ONIONBIT_API_KEY=<cle>            cle d'API (sinon lue depuis

@@ -8,7 +8,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../api/api_client.dart';
 import '../di/providers.dart';
 import '../l10n/l10n_ext.dart';
-import '../theme/app_theme.dart';
+import '../design/design_tokens.dart';
 
 /// Dialogue de choix d'un dossier **sur la machine du daemon**,
 /// naviguant `GET /api/files/browse` (`current`, `paths[]`, `..` en
@@ -115,7 +115,7 @@ class _DaemonDirectoryPickerState
                   size: 16,
                   color: theme.colorScheme.outline,
                 ),
-                const SizedBox(width: AppSpacing.xs),
+                const SizedBox(width: AppSpace.xs),
                 Expanded(
                   child: Text(
                     _current,
@@ -125,7 +125,7 @@ class _DaemonDirectoryPickerState
                 ),
               ],
             ),
-            const SizedBox(height: AppSpacing.sm),
+            const SizedBox(height: AppSpace.sm),
             Expanded(
               child: _loading
                   ? const Center(child: CircularProgressIndicator())

@@ -6,7 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/l10n/l10n_ext.dart';
-import '../../../../core/theme/app_theme.dart';
+import '../../../../core/design/design_tokens.dart';
 import '../providers/diagnostic_providers.dart';
 
 /// Dialogue « Publier une attestation » (`POST /api/ipv8/ext/attest`,
@@ -131,7 +131,7 @@ class _AttestDialogState extends ConsumerState<AttestDialog> {
             ),
             style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
           ),
-          const SizedBox(height: AppSpacing.sm),
+          const SizedBox(height: AppSpace.sm),
           SegmentedButton<String>(
             segments: [
               ButtonSegment(

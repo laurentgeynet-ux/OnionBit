@@ -9,13 +9,15 @@ import '../l10n/app_localizations.dart';
 import 'core/config/ui_prefs.dart';
 import 'core/di/providers.dart';
 import 'core/identity/identity_gate.dart';
+import 'core/identity/onboarding_wizard.dart';
 import 'features/settings/presentation/providers/settings_providers.dart';
 import 'core/l10n/locale_settings.dart';
+import 'core/design/design_tokens.dart';
 import 'core/router/app_router.dart';
-import 'core/theme/app_theme.dart';
 import 'core/theme/theme_settings.dart';
 
-/// Racine de l'application — thème Material 3 + routeur `go_router`.
+/// Racine de l'application — thème `AppDesignTheme` (ADR-0021, successeur
+/// de l'ancien `AppTheme` hérité) + routeur `go_router`.
 class OnionbitApp extends ConsumerWidget {
   const OnionbitApp({super.key});
 
@@ -30,7 +32,7 @@ class OnionbitApp extends ConsumerWidget {
     // Accent + mode persistés ; repli sur les défauts tant que les
     // préférences ne sont pas chargées.
     final appearance = ref.watch(themeSettingsProvider).value;
-    final seed = appearance?.seedColor ?? AppTheme.defaultSeedColor;
+    final seed = appearance?.seedColor ?? AppBrandColors.seed;
     final mode = appearance?.mode ?? ThemeMode.system;
     // Langue persistée — `null` = suit la locale de l'OS (défaut : en).
     final locale = resolveFlutterLocale(
@@ -46,35 +48,64 @@ class OnionbitApp extends ConsumerWidget {
     return MaterialApp.router(
       title: 'OnionBit',
       debugShowCheckedModeBanner: false,
-      theme: AppTheme.light(seedColor: seed),
-      darkTheme: AppTheme.dark(seedColor: seed),
+      theme: AppDesignTheme.light(seedColor: seed),
+      darkTheme: AppDesignTheme.dark(seedColor: seed),
       themeMode: mode,
       locale: locale,
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
       routerConfig: router,
       builder: (context, child) {
+        Widget content;
         if (identityState == 'pending' || identityState == 'locked') {
-          return IdentityGatePage(locked: identityState == 'locked');
+          content = IdentityGatePage(locked: identityState == 'locked');
+        } else {
+          final routed = child ?? const SizedBox.shrink();
+          // Bandeau « média amovible » (ADR-0018) : racine du bundle
+          // sur volume amovible/sans ACL + graine non scellée →
+          // proposition `identity.at_rest` (non bloquante, masquable
+          // pour la session). Ignorée en session invitée : rien ne
+          // persiste.
+          final identityCfg =
+              ref.watch(daemonSettingsProvider).value?['identity'];
+          final atRest =
+              identityCfg is Map && identityCfg['at_rest'] == true;
+          final showRemovable = !guest &&
+              identityState == 'ready' &&
+              status['storage_removable'] == true &&
+              !atRest;
+          final banners = <Widget>[
+            if (guest) const GuestBanner(),
+            if (showRemovable) const RemovableStorageBanner(),
+          ];
+          content = banners.isEmpty
+              ? routed
+              : Column(
+                  children: [...banners, Expanded(child: routed)],
+                );
         }
-        final content = child ?? const SizedBox.shrink();
-        // Bandeau « média amovible » (ADR-0018) : racine du bundle sur
-        // volume amovible/sans ACL + graine non scellée → proposition
-        // `identity.at_rest` (non bloquante, masquable pour la
-        // session). Ignorée en session invitée : rien ne persiste.
-        final identityCfg =
-            ref.watch(daemonSettingsProvider).value?['identity'];
-        final atRest = identityCfg is Map && identityCfg['at_rest'] == true;
-        final showRemovable = !guest &&
-            identityState == 'ready' &&
-            status['storage_removable'] == true &&
-            !atRest;
-        final banners = <Widget>[
-          if (guest) const GuestBanner(),
-          if (showRemovable) const RemovableStorageBanner(),
-        ];
-        if (banners.isEmpty) return content;
-        return Column(children: [...banners, Expanded(child: content)]);
+        // Phrase de récupération post-`identity/create` : rendue en
+        // overlay au-dessus du gate comme de la coquille — sous
+        // `pending` aucun Navigator n'existe dans l'arbre (le contenu
+        // routé est remplacé), un `showDialog` y planterait.
+        final phrase = ref.watch(pendingRecoveryPhraseProvider);
+        if (phrase == null) return content;
+        return Stack(
+          children: [
+            content,
+            const ModalBarrier(dismissible: false, color: Colors.black54),
+            Center(
+              child: SingleChildScrollView(
+                child: PhraseBackupDialog(
+                  phrase: phrase,
+                  onDone: () => ref
+                      .read(pendingRecoveryPhraseProvider.notifier)
+                      .clear(),
+                ),
+              ),
+            ),
+          ],
+        );
       },
     );
   }

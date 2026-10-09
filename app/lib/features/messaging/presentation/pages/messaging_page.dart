@@ -7,8 +7,9 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/api/api_client.dart';
+import '../../../../core/design/design_tokens.dart';
 import '../../../../core/l10n/l10n_ext.dart';
-import '../../../../core/theme/app_theme.dart';
+import '../../../../core/layout/breakpoints.dart';
 import '../../../diagnostic/presentation/providers/diagnostic_providers.dart';
 import '../../../diagnostic/presentation/widgets/attest_dialog.dart';
 import '../../../diagnostic/presentation/widgets/trust_badge.dart';
@@ -40,14 +41,23 @@ class MessagingPage extends ConsumerWidget {
       ),
       data: (on) {
         if (!on) return const _DisabledPane();
-        return const Row(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            SizedBox(width: 300, child: _ContactsPane()),
-            VerticalDivider(width: 1),
-            Expanded(child: ConversationTabs()),
-          ],
+        final breakpoint = AppBreakpoints.of(
+          MediaQuery.sizeOf(context).width,
         );
+        if (breakpoint.index >= AppBreakpoint.expanded.index) {
+          // ≥ 1024 dp : deux panneaux — conversations/contacts à
+          // gauche, fil (rangée d'onglets) à droite (ADR-0021 §5).
+          return const AdaptiveListDetail(
+            list: _ContactsPane(),
+            detail: ConversationTabs(),
+            listWidth: 300,
+          );
+        }
+        // compact/medium : la liste OU le fil sélectionné, jamais les
+        // deux — le thread pousse en plein écran plutôt qu'en bottom
+        // sheet (clavier + défilement des messages y tiennent mal ;
+        // patron standard des messageries mobiles).
+        return const _NarrowConversation();
       },
     );
   }
@@ -82,15 +92,15 @@ class _MessagePane extends StatelessWidget {
     final theme = Theme.of(context);
     return Center(
       child: Padding(
-        padding: const EdgeInsets.all(AppSpacing.lg),
+        padding: const EdgeInsets.all(AppSpace.lg),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(icon, size: 48, color: theme.colorScheme.onSurfaceVariant),
-            const SizedBox(height: AppSpacing.md),
+            const SizedBox(height: AppSpace.md),
             Text(title, style: theme.textTheme.titleMedium),
             if (body != null) ...[
-              const SizedBox(height: AppSpacing.sm),
+              const SizedBox(height: AppSpace.sm),
               Text(
                 body!,
                 style: theme.textTheme.bodyMedium,
@@ -134,7 +144,7 @@ class _ContactsPane extends ConsumerWidget {
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: Theme.of(context).textTheme.bodySmall
-                  ?.copyWith(fontFamily: 'monospace'),
+                  ?.copyWith(fontFamily: AppFontFamilies.mono),
             ),
             trailing: IconButton(
               icon: const Icon(Icons.copy, size: 18),
@@ -151,10 +161,10 @@ class _ContactsPane extends ConsumerWidget {
               // tete — clic = onglet dans le panneau de droite.
               Padding(
                 padding: const EdgeInsets.fromLTRB(
-                  AppSpacing.md,
-                  AppSpacing.md,
-                  AppSpacing.xs,
-                  AppSpacing.xs,
+                  AppSpace.md,
+                  AppSpace.md,
+                  AppSpace.xs,
+                  AppSpace.xs,
                 ),
                 child: Row(
                   children: [
@@ -175,8 +185,8 @@ class _ContactsPane extends ConsumerWidget {
               if (convs.isEmpty)
                 Padding(
                   padding: const EdgeInsets.symmetric(
-                    horizontal: AppSpacing.lg,
-                    vertical: AppSpacing.xs,
+                    horizontal: AppSpace.lg,
+                    vertical: AppSpace.xs,
                   ),
                   child: Text(
                     l10n.msgNoConversations,
@@ -185,16 +195,16 @@ class _ContactsPane extends ConsumerWidget {
                 ),
               for (final c in convs)
                 _ConvTile(conv: c, selected: c.convId == selectedConv),
-              const Divider(height: AppSpacing.lg),
+              const Divider(height: AppSpace.lg),
               // Demandes de consentement en attente — actions
               // accepter / refuser / bloquer.
               if (pending.isNotEmpty) ...[
                 Padding(
                   padding: const EdgeInsets.fromLTRB(
-                    AppSpacing.md,
-                    AppSpacing.md,
-                    AppSpacing.md,
-                    AppSpacing.xs,
+                    AppSpace.md,
+                    AppSpace.md,
+                    AppSpace.md,
+                    AppSpace.xs,
                   ),
                   child: Text(
                     l10n.msgPendingTitle,
@@ -202,7 +212,7 @@ class _ContactsPane extends ConsumerWidget {
                   ),
                 ),
                 for (final c in pending) _PendingTile(contact: c),
-                const Divider(height: AppSpacing.lg),
+                const Divider(height: AppSpace.lg),
               ],
               _FriendsVaultSection(
                 selfPk: stats?.publicKey ?? '',
@@ -214,7 +224,7 @@ class _ContactsPane extends ConsumerWidget {
               ),
               if (contacts.isEmpty && pending.isEmpty)
                 Padding(
-                  padding: const EdgeInsets.all(AppSpacing.lg),
+                  padding: const EdgeInsets.all(AppSpace.lg),
                   child: Text(
                     l10n.msgNoContacts,
                     style: Theme.of(context).textTheme.bodyMedium,
@@ -234,7 +244,7 @@ class _ContactsPane extends ConsumerWidget {
         // « Ajouter un contact » + coffre export/import (chiffre
         // pour soi — portable entre devices de meme identite).
         Padding(
-          padding: const EdgeInsets.all(AppSpacing.sm),
+          padding: const EdgeInsets.all(AppSpace.sm),
           child: Row(
             children: [
               Expanded(
@@ -276,7 +286,7 @@ class _ContactsPane extends ConsumerWidget {
             labelText: l10n.msgPublicKeyLabel,
             border: const OutlineInputBorder(),
           ),
-          style: const TextStyle(fontFamily: 'monospace'),
+          style: const TextStyle(fontFamily: AppFontFamilies.mono),
           autofocus: true,
         ),
         actions: [
@@ -357,7 +367,7 @@ class _ContactsPane extends ConsumerWidget {
                   ),
                   autofocus: true,
                 ),
-                const SizedBox(height: AppSpacing.sm),
+                const SizedBox(height: AppSpace.sm),
                 Align(
                   alignment: Alignment.centerLeft,
                   child: Text(
@@ -446,7 +456,7 @@ class _ContactsPane extends ConsumerWidget {
             labelText: l10n.msgVaultPasteHint,
             border: const OutlineInputBorder(),
           ),
-          style: const TextStyle(fontFamily: 'monospace', fontSize: 11),
+          style: const TextStyle(fontFamily: AppFontFamilies.mono, fontSize: 11),
           maxLines: 4,
           autofocus: true,
         ),
@@ -506,7 +516,7 @@ class _ConvTile extends ConsumerWidget {
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
         style: conv.alias.isEmpty && !conv.isGroup && conv.name.isEmpty
-            ? const TextStyle(fontFamily: 'monospace', fontSize: 12)
+            ? const TextStyle(fontFamily: AppFontFamilies.mono, fontSize: 12)
             : null,
       ),
       subtitle: conv.isInvited ? Text(l10n.msgStatePending) : null,
@@ -596,7 +606,7 @@ class _PendingTile extends ConsumerWidget {
               contact.displayName,
               style: contact.alias.isNotEmpty
                   ? null
-                  : const TextStyle(fontFamily: 'monospace'),
+                  : const TextStyle(fontFamily: AppFontFamilies.mono),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
             ),
@@ -611,7 +621,7 @@ class _PendingTile extends ConsumerWidget {
           ? Text('${contact.pendingSinceSecs} s')
           : null,
       trailing: Wrap(
-        spacing: AppSpacing.xs,
+        spacing: AppSpace.xs,
         children: [
           IconButton(
             icon: const Icon(Icons.check, size: 18),
@@ -704,7 +714,7 @@ class _ContactTile extends ConsumerWidget {
               contact.displayName,
               style: contact.alias.isNotEmpty
                   ? null
-                  : const TextStyle(fontFamily: 'monospace'),
+                  : const TextStyle(fontFamily: AppFontFamilies.mono),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
             ),
@@ -721,7 +731,7 @@ class _ContactTile extends ConsumerWidget {
           : contact.alias.isNotEmpty
           ? Text(
               contact.shortKey,
-              style: const TextStyle(fontFamily: 'monospace'),
+              style: const TextStyle(fontFamily: AppFontFamilies.mono),
             )
           : null,
       trailing: PopupMenuButton<String>(
@@ -980,7 +990,7 @@ class _FriendsVaultSection extends ConsumerWidget {
             leading: const Icon(Icons.key, size: 16),
             title: Text(
               pk.length > 16 ? '${pk.substring(0, 16)}…' : pk,
-              style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+              style: const TextStyle(fontFamily: AppFontFamilies.mono, fontSize: 12),
             ),
             trailing: IconButton(
               icon: const Icon(Icons.person_add_alt_1, size: 18),
@@ -1044,7 +1054,7 @@ class _ExtPeersSection extends ConsumerWidget {
                 title: Text(
                   p.mid,
                   style: const TextStyle(
-                    fontFamily: 'monospace',
+                    fontFamily: AppFontFamilies.mono,
                     fontSize: 12,
                   ),
                 ),
@@ -1091,6 +1101,61 @@ class _ExtPeersSection extends ConsumerWidget {
           ],
         );
       },
+    );
+  }
+}
+
+/// Vue étroite (compact/medium) : la liste des conversations OU le fil
+/// sélectionné — jamais les deux. En-tête minimal avec retour à la
+/// liste ; la rangée d'onglets de `ConversationTabs` n'a pas de sens
+/// sous `expanded` (un seul fil visible à la fois).
+class _NarrowConversation extends ConsumerWidget {
+  const _NarrowConversation();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final sel = ref.watch(selectedConversationProvider);
+    if (sel == null) return const _ContactsPane();
+    final tabs = ref.watch(openConversationsProvider);
+    final convs =
+        ref.watch(messagingConversationsProvider).value ?? const [];
+    OpenConvTab tab = (convId: sel, peer: null);
+    MessagingConversation? conv;
+    for (final t in tabs) {
+      if (t.convId == sel) tab = t;
+    }
+    for (final c in convs) {
+      if (c.convId == sel) conv = c;
+    }
+    final title = conv?.displayName ?? tab.peer ?? tab.convId;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: AppSpace.xs),
+          child: Row(
+            children: [
+              IconButton(
+                icon: const Icon(Icons.arrow_back),
+                tooltip: context.l10n.msgBackToList,
+                onPressed: () => ref
+                    .read(selectedConversationProvider.notifier)
+                    .set(null),
+              ),
+              Expanded(
+                child: Text(
+                  title,
+                  style: Theme.of(context).textTheme.titleSmall,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const Divider(height: 1),
+        Expanded(child: ConversationView(tab: tab, conv: conv)),
+      ],
     );
   }
 }

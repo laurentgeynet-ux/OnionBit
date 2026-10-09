@@ -352,8 +352,11 @@ pub async fn set_at_rest(
 /// `GET /api/identity/recovery_phrase?lang=en|fr` — phrase BIP39 de
 /// 24 mots de l'identite seedee. **Secret complet** : derriere
 /// `api_key_auth` comme tout `/api`, jamais loggé, jamais dans les
-/// events SSE. 404 sur une identite legacy (pas de graine = pas de
-/// phrase — la seule sauvegarde reste l'export `OBID`).
+/// events SSE. La graine vient de la session **en memoire** — le
+/// fichier `identity_seed.bin` est absent en session invitee et
+/// scelle `OBSK` quand `identity.at_rest` est actif. 404 sur une
+/// identite legacy (pas de graine = pas de phrase — la seule
+/// sauvegarde reste l'export `OBID`).
 pub async fn recovery_phrase(
     State(state): State<AppState>,
     Query(q): Query<RecoveryPhraseQuery>,
@@ -361,26 +364,21 @@ pub async fn recovery_phrase(
     let Some(stack) = state.session.ipv8() else {
         return Err(ApiError::not_found("ipv8 desactive"));
     };
-    if stack.identity_kind() != IdentityKind::Seeded {
+    let Some(seed) = stack.recovery_seed() else {
         return Err(ApiError::not_found(
             "identite legacy — pas de phrase de recuperation (export OBID uniquement)",
         ));
-    }
+    };
     let lang = match q.lang.as_deref().unwrap_or("en") {
         "en" => Language::English,
         "fr" => Language::French,
         other => return Err(ApiError::bad_request(format!("langue inconnue : {other}"))),
     };
-    let state_dir = state.session.config().state_dir.clone();
-    let raw = std::fs::read(onionbit_core::identity::seed_path(&state_dir))
-        .map_err(|_| ApiError::internal("identity_seed.bin illisible"))?;
-    let seed = IdentitySeed::from_bytes(&raw)
-        .map_err(|_| ApiError::internal("identity_seed.bin corrompu"))?;
     // Revelation d'un secret complet — evenement notable (tracé warn,
     // la phrase elle-meme n'est JAMAIS logguee).
     tracing::warn!("phrase de recuperation revelee via l'API");
     Ok(Json(serde_json::json!({
-        "phrase": bip39::encode(seed.as_bytes(), lang),
+        "phrase": bip39::encode(&seed, lang),
     })))
 }
 

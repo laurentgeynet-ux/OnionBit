@@ -4,7 +4,7 @@
 
 import 'package:flutter/material.dart';
 
-import '../theme/app_theme.dart';
+import '../design/design_tokens.dart';
 
 /// État vide générique (liste sans résultat) — un seul composant partagé.
 class EmptyState extends StatelessWidget {
@@ -26,19 +26,19 @@ class EmptyState extends StatelessWidget {
     final theme = Theme.of(context);
     return Center(
       child: Padding(
-        padding: const EdgeInsets.all(AppSpacing.lg),
+        padding: const EdgeInsets.all(AppSpace.lg),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(icon, size: 48, color: theme.colorScheme.outline),
-            const SizedBox(height: AppSpacing.md),
+            const SizedBox(height: AppSpace.md),
             Text(
               title,
               style: theme.textTheme.titleMedium,
               textAlign: TextAlign.center,
             ),
             if (message != null) ...[
-              const SizedBox(height: AppSpacing.sm),
+              const SizedBox(height: AppSpace.sm),
               Text(
                 message!,
                 style: theme.textTheme.bodyMedium?.copyWith(
@@ -48,7 +48,7 @@ class EmptyState extends StatelessWidget {
               ),
             ],
             if (action != null) ...[
-              const SizedBox(height: AppSpacing.md),
+              const SizedBox(height: AppSpace.md),
               action!,
             ],
           ],

@@ -6,7 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/l10n/l10n_ext.dart';
-import '../../../../core/theme/app_theme.dart';
+import '../../../../core/design/design_tokens.dart';
 import '../../../../l10n/app_localizations.dart';
 import '../providers/settings_providers.dart';
 import 'settings_section.dart';
@@ -69,7 +69,7 @@ class StorageSection extends ConsumerWidget {
               ),
             ),
             KeyInfoIcon(const ['storage', 'default_area']),
-            const SizedBox(width: AppSpacing.sm),
+            const SizedBox(width: AppSpace.sm),
             SegmentedButton<String>(
               segments: [
                 ButtonSegment(
@@ -102,14 +102,14 @@ class StorageSection extends ConsumerWidget {
           subtitle: l10n.storagePrivateEnabledSub,
         ),
         if (nonPortable) ...[
-          const SizedBox(height: AppSpacing.sm),
+          const SizedBox(height: AppSpace.sm),
           _WarningCard(
             icon: Icons.folder_off_outlined,
             title: l10n.storageNonPortableTitle,
             body: l10n.storageNonPortableBody(saveas),
           ),
         ],
-        const SizedBox(height: AppSpacing.sm),
+        const SizedBox(height: AppSpace.sm),
         // État de la zone privée (manifeste OBM + orphelins).
         privateAsync.when(
           loading: () => const LinearProgressIndicator(),
@@ -128,7 +128,7 @@ class StorageSection extends ConsumerWidget {
                     size: 16,
                     color: theme.colorScheme.outline,
                   ),
-                  const SizedBox(width: AppSpacing.xs),
+                  const SizedBox(width: AppSpace.xs),
                   Expanded(
                     child: Text(
                       l10n.storagePrivateState(
@@ -146,7 +146,7 @@ class StorageSection extends ConsumerWidget {
               // Orphelins `.obd`/`.bitv` détectés au montage : purge
               // explicite uniquement — jamais de suppression silencieuse.
               if (_orphans(zone) > 0) ...[
-                const SizedBox(height: AppSpacing.xs),
+                const SizedBox(height: AppSpace.xs),
                 _WarningCard(
                   icon: Icons.cleaning_services_outlined,
                   title: l10n.storageOrphansTitle,
@@ -160,7 +160,7 @@ class StorageSection extends ConsumerWidget {
             ],
           ),
         ),
-        const SizedBox(height: AppSpacing.sm),
+        const SizedBox(height: AppSpace.sm),
         // Espace disque par zone (`PUT /api/statistics/dirspace`,
         // paramètre `area` ADR-0018).
         _ZoneSpace(area: 'public', label: l10n.storageAreaPublic),
@@ -227,7 +227,7 @@ class _WarningCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     return Container(
-      padding: const EdgeInsets.all(AppSpacing.sm),
+      padding: const EdgeInsets.all(AppSpace.sm),
       decoration: BoxDecoration(
         color: scheme.tertiaryContainer.withAlpha(120),
         borderRadius: BorderRadius.circular(8),
@@ -237,7 +237,7 @@ class _WarningCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Icon(icon, size: 20, color: scheme.tertiary),
-          const SizedBox(width: AppSpacing.sm),
+          const SizedBox(width: AppSpace.sm),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,

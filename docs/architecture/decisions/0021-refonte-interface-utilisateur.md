@@ -219,7 +219,7 @@ le desktop.
 | Cible | État aujourd'hui | Travail de cet ADR |
 | :--- | :--- | :--- |
 | Windows x64 | Runner `app/windows/` présent, livré (étape 20) | Migration design system uniquement |
-| Windows ARM64 | Pas de build dédié | Ajout `--target-platform windows-arm64` (même runner) à `build_dist.ps1`/`build_release.ps1` — cible officiellement « Supported » par Flutter (Windows 10/11, SDK Dart ciblant nativement arm64 côté stable) |
+| Windows ARM64 | Pas de build dédié | Détection de l'archi hôte (triple rustc `aarch64-pc-windows-msvc` → `arm64`) dans `build_dist.ps1` — les chemins `build\windows\<arch>\` deviennent paramétrés. `flutter build windows` ne cross-compile pas x64→arm64 : le build ARM64 est natif sur hôte/runner Windows ARM64 (ex. `windows-11-arm`) ; le daemon a déjà `-Target aarch64-pc-windows-msvc` (`build_release.ps1`) |
 | Web | Runner `app/web/` présent, livré (Phase 7) | Migration design system + shell adaptatif |
 | Linux | Aucun runner | `flutter create --platforms=linux .` + revue de parité des plugins natifs (`window_manager`/`tray_manager`) |
 | macOS | Aucun runner | `flutter create --platforms=macos .` — **scaffoldable dès maintenant depuis le worktree Windows** ; build/signature réels différés jusqu'à un hôte macOS (cf. Limites) |
@@ -236,10 +236,14 @@ des dossiers ; cette génération est indépendante de l'hôte (confirmé :
 Linux/Windows génèrent valablement des dossiers `ios/`/`macos/`).
 Seules la compilation et la signature exigent Xcode, donc un Mac.
 Conséquence pour le §10 : les quatre runners manquants sont
-scaffoldés **ensemble** dès l'étape 72, mais seuls Linux/Android/
-Windows ARM64 obtiennent un vrai build de fumée immédiat — macOS/iOS
-attendent un hôte macOS (local ou CI, ex. runner `macos-latest`) pour
-la même validation, sans bloquer la suite du §10.
+scaffoldés **ensemble** dès l'étape 72, mais depuis l'hôte Windows
+x64 du chantier, **seul Android** obtient un vrai build de fumée
+immédiat (`flutter build apk` — SDK présent, toolchain
+cross-host). `flutter build linux` exige un hôte Linux (toolchain
+ninja/GTK — pas de cross desktop dans l'outil Flutter), le Windows
+ARM64 un hôte Windows ARM64 (cf. ligne ci-dessus), macOS/iOS un hôte
+macOS (local ou CI, ex. runner `macos-latest`). Ces trois validations
+sont reportées à leurs hôtes respectifs sans bloquer la suite du §10.
 
 ### 5. Shell adaptatif : des breakpoints déclarés aux layouts canoniques
 
@@ -401,7 +405,12 @@ place).
   mobile (§8) nécessite un endpoint minimal côté `onionbit-api`
   (émission + validation d'un jeton court, usage unique). Traité
   comme partie de l'étape 76 (§10), avec sa propre revue de
-  sécurité — jamais comme un détail UI.
+  sécurité — jamais comme un détail UI. **Livré à l'étape 76** :
+  `POST /api/pairing/token` + `POST /api/pairing/redeem` (seule
+  exemption `api_key_auth`, `OriginalUri` + POST exact), revue
+  faite — entropie 128 bits, TTL/usage unique/réémission caduque,
+  rate-limit sur IP `ConnectInfo` réelle, 401 uniforme, aucun secret
+  en log ni persistance (détail dans `docs/CHANGELOG.md`, étape 76).
 
 ### 10. Découpage en étapes (Phase 13 de la roadmap, étapes 70–77)
 
@@ -417,9 +426,12 @@ continue d'y vivre ; cet ADR n'en garde que le squelette :
   transverse.
 - **Étape 72.** Scaffolding des quatre runners manquants (Linux,
   macOS, Android, iOS) + cible Windows ARM64. Build de fumée immédiat
-  sur Linux/Android/Windows ARM64 ; macOS/iOS restent scaffoldés et
-  prêts, build de fumée réel reporté à la disponibilité d'un hôte
-  macOS (§4/Limites) — sans bloquer les étapes suivantes.
+  sur **Android** depuis l'hôte Windows x64 (`flutter build apk` ;
+  `kotlin.incremental=false` requis si projet/pub cache sur lecteurs
+  distincts). Linux/macOS/iOS/Windows ARM64 restent scaffoldés et
+  prêts : chacun exige son hôte natif (Linux pour `flutter build
+  linux`, macOS pour Darwin, Windows ARM64 pour l'archi — cf. §4) —
+  sans bloquer les étapes suivantes.
 - **Étape 73.** Migration Téléchargements + Recherche vers le nouveau
   design system/shell.
 - **Étape 74.** Migration Messagerie (+ palette de commandes v1).

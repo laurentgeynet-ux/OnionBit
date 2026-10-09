@@ -7,7 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../l10n/app_localizations.dart' show AppLocalizations;
 import '../../../../core/l10n/l10n_ext.dart';
-import '../../../../core/theme/app_theme.dart';
+import '../../../../core/design/design_tokens.dart';
 import '../../../../core/widgets/empty_state.dart';
 import '../../../../core/widgets/error_state.dart';
 import '../../../downloads/presentation/providers/downloads_providers.dart';
@@ -123,7 +123,7 @@ class _TabScaffold<T> extends StatelessWidget {
                   )
                 : ListView(
                     padding: const EdgeInsets.symmetric(
-                      horizontal: AppSpacing.md,
+                      horizontal: AppSpace.md,
                     ),
                     children: [for (final i in items) itemBuilder(i)],
                   ),
@@ -204,12 +204,12 @@ class _ConnectionsTab extends ConsumerWidget {
                   )
                 : ListView(
                     padding: const EdgeInsets.symmetric(
-                      horizontal: AppSpacing.md,
+                      horizontal: AppSpace.md,
                     ),
                     children: [
                       if (r.listeners.isNotEmpty) ...[
                         Padding(
-                          padding: const EdgeInsets.only(bottom: AppSpacing.xs),
+                          padding: const EdgeInsets.only(bottom: AppSpace.xs),
                           child: Text(
                             l10n.listenersSection,
                             style: Theme.of(context).textTheme.labelLarge
@@ -269,7 +269,7 @@ class _ConnectionsTab extends ConsumerWidget {
       ),
       subtitle: chips.isEmpty
           ? null
-          : Wrap(spacing: AppSpacing.xs, runSpacing: 2, children: chips),
+          : Wrap(spacing: AppSpace.xs, runSpacing: 2, children: chips),
       children: [
         for (final b in c.bittorrent)
           ListTile(
@@ -594,7 +594,7 @@ class _ExtTab extends ConsumerWidget {
             loading: () => const Center(child: CircularProgressIndicator()),
             error: (e, _) => ErrorState(error: e, onRetry: retry),
             data: (info) => ListView(
-              padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+              padding: const EdgeInsets.symmetric(horizontal: AppSpace.md),
               children: [
                 // État local : activation + capacités annoncées.
                 Card(
@@ -629,7 +629,7 @@ class _ExtTab extends ConsumerWidget {
                 ),
                 if (info.peers.isEmpty)
                   Padding(
-                    padding: const EdgeInsets.only(top: AppSpacing.xl),
+                    padding: const EdgeInsets.only(top: AppSpace.xl),
                     child: EmptyState(
                       icon: Icons.hub_outlined,
                       title: l10n.emptyExtPeers,
@@ -702,7 +702,7 @@ class _ExtLedgerCard extends ConsumerWidget {
           ...value.when(
             loading: () => [
               const Padding(
-                padding: EdgeInsets.all(AppSpacing.sm),
+                padding: EdgeInsets.all(AppSpace.sm),
                 child: LinearProgressIndicator(),
               ),
             ],
@@ -805,15 +805,15 @@ class _ExtAttestationsCard extends ConsumerWidget {
             ),
           if (atts.isEmpty)
             Padding(
-              padding: const EdgeInsets.all(AppSpacing.sm),
+              padding: const EdgeInsets.all(AppSpace.sm),
               child: Text(l10n.emptyAttestations),
             ),
           Align(
             alignment: Alignment.centerRight,
             child: Padding(
               padding: const EdgeInsets.only(
-                right: AppSpacing.md,
-                bottom: AppSpacing.sm,
+                right: AppSpace.md,
+                bottom: AppSpace.sm,
               ),
               child: FilledButton.tonalIcon(
                 onPressed: () => _publish(context, ref),
@@ -901,7 +901,7 @@ class _SwarmPeersTab extends ConsumerWidget {
       emptyTitle: emptyTitle,
       emptyMessage: context.l10n.emptyIntroPointsMsg,
       itemBuilder: (s) => Card(
-        margin: const EdgeInsets.only(bottom: AppSpacing.sm),
+        margin: const EdgeInsets.only(bottom: AppSpace.sm),
         child: ExpansionTile(
           dense: true,
           leading: const Icon(Icons.hub_outlined, size: 20),
@@ -1024,7 +1024,7 @@ class _StatsTab extends ConsumerWidget {
     final activeExits = exits.where((e) => e.enabled).length;
 
     return ListView(
-      padding: const EdgeInsets.all(AppSpacing.md),
+      padding: const EdgeInsets.all(AppSpace.md),
       children: [
         _section(context, l10n.sectionDaemon),
         _stat(context, l10n.statDaemonVersion, s.version),
@@ -1135,7 +1135,7 @@ class _StatsTab extends ConsumerWidget {
   Widget _section(BuildContext context, String title) {
     final theme = Theme.of(context);
     return Padding(
-      padding: const EdgeInsets.only(top: AppSpacing.md, bottom: AppSpacing.xs),
+      padding: const EdgeInsets.only(top: AppSpace.md, bottom: AppSpace.xs),
       child: Text(
         title,
         style: theme.textTheme.labelLarge?.copyWith(
@@ -1148,7 +1148,7 @@ class _StatsTab extends ConsumerWidget {
   Widget _stat(BuildContext context, String label, String value) {
     final theme = Theme.of(context);
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
+      padding: const EdgeInsets.symmetric(vertical: AppSpace.xs),
       child: Row(
         children: [
           Expanded(
@@ -1224,7 +1224,7 @@ class _LogsTab extends ConsumerWidget {
               Align(
                 alignment: Alignment.centerLeft,
                 child: Padding(
-                  padding: const EdgeInsets.all(AppSpacing.md),
+                  padding: const EdgeInsets.all(AppSpace.md),
                   child: SelectableText(
                     uiLog,
                     style: Theme.of(context).textTheme.bodySmall
@@ -1248,7 +1248,7 @@ class _LogsTab extends ConsumerWidget {
                     message: context.l10n.emptyLogsMsg,
                   )
                 : SingleChildScrollView(
-                    padding: const EdgeInsets.all(AppSpacing.md),
+                    padding: const EdgeInsets.all(AppSpace.md),
                     child: SelectableText(
                       text,
                       style: Theme.of(context).textTheme.bodySmall
@@ -1309,9 +1309,9 @@ class _OverviewTab extends ConsumerWidget {
       children: [
         Row(
           children: [
-            const SizedBox(width: AppSpacing.md),
+            const SizedBox(width: AppSpace.md),
             Icon(Icons.circle, size: 10, color: healthColor),
-            const SizedBox(width: AppSpacing.xs),
+            const SizedBox(width: AppSpace.xs),
             Text(
               !tunnelsUp
                   ? context.l10n.overviewTunnelInactive
@@ -1337,9 +1337,9 @@ class _OverviewTab extends ConsumerWidget {
           child: GridView.count(
             crossAxisCount: 3,
             childAspectRatio: 3.2,
-            padding: const EdgeInsets.all(AppSpacing.md),
-            mainAxisSpacing: AppSpacing.sm,
-            crossAxisSpacing: AppSpacing.sm,
+            padding: const EdgeInsets.all(AppSpace.md),
+            mainAxisSpacing: AppSpace.sm,
+            crossAxisSpacing: AppSpace.sm,
             children: [
               _StatCard(
                 icon: Icons.hub_outlined,
@@ -1433,7 +1433,7 @@ class _StatCard extends StatelessWidget {
     final theme = Theme.of(context);
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(AppSpacing.md),
+        padding: const EdgeInsets.all(AppSpace.md),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisAlignment: MainAxisAlignment.center,
@@ -1441,7 +1441,7 @@ class _StatCard extends StatelessWidget {
             Row(
               children: [
                 Icon(icon, size: 16, color: theme.colorScheme.outline),
-                const SizedBox(width: AppSpacing.xs),
+                const SizedBox(width: AppSpace.xs),
                 Expanded(
                   child: Text(
                     label,
@@ -1453,7 +1453,7 @@ class _StatCard extends StatelessWidget {
                 ),
               ],
             ),
-            const SizedBox(height: AppSpacing.xs),
+            const SizedBox(height: AppSpace.xs),
             Text(value, style: theme.textTheme.titleMedium),
             if (caption case final c?)
               Text(

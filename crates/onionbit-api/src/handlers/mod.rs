@@ -18,6 +18,7 @@ pub mod libtorrent;
 pub mod logging;
 pub mod messaging;
 pub mod metadata;
+pub mod pairing;
 pub mod rss;
 pub mod search;
 pub mod settings;

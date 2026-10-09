@@ -3,6 +3,489 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## UI : mot de passe choisi en double saisie (confirmation) (2026-10-09, worktree adr21)
+
+- **`core/widgets/password_pair_field.dart`** (nouveau) : paire
+  « mot de passe + confirmation » masquée — la saisie cachée rendait
+  une coquille de casse indétectable avant le scellement `OBSK`.
+  Concordance vérifiée à chaque frappe : `onChanged` remonte le secret
+  (ou `null` tant que divergence → bouton de validation grisé) et le
+  champ de confirmation affiche « Passwords do not match / Les mots de
+  passe ne correspondent pas » (`identityPasswordConfirm`,
+  `identityPasswordMismatch` — EN/FR).
+- **`onboarding_wizard.dart`** : `_CreateStep` utilise la paire — la
+  création reste sans mot de passe si les deux champs sont vides, et
+  Entrée ne soumet que si les deux concordent.
+- **`identity_gate.dart` (`RemovableStorageBanner`)** et
+  **`identity_section.dart`** (`_setAtRest` scellement, `_export`
+  `OBID`) : mêmes dialogues de double saisie partout où un mot de
+  passe est *choisi*. Les dialogues qui en *demandent* un existant
+  (unlock, restauration, import, déscellement) gardent un champ
+  unique — la confirmation n'y aurait aucun sens.
+- **Tests** : divergence → bouton grisé + erreur + `create` non appelé ;
+  concordance → `identityCreate` reçoit le secret ; champs vides →
+  `password: null` préservé.
+
+## UI : sélecteur de langue au premier écran du wizard (2026-10-09, worktree adr21)
+
+- **`onboarding_wizard.dart`** : `_ChoiceStep` devient `ConsumerWidget`
+  et affiche un `SegmentedButton` Système/English/Français sous le
+  titre — même canal que Réglages (`localeSettingsProvider`) : le choix
+  persiste (`ui.locale`) et relocalise tout le wizard instantanément
+  via `MaterialApp.locale`. Grisé pendant une résolution en cours.
+- **Test** : nouveau harnais dont `MaterialApp.locale` suit le provider
+  (comme la prod) — taper « Français » fait passer « Choose your
+  identity » → « Choisissez votre identité » + persistance vérifiée.
+
+## Correctif : « Create my identity » inerte dans le wizard d'onboarding (2026-10-09, worktree adr21)
+
+- **`onboarding_wizard.dart`** : `_create` appelait
+  `Navigator.of(context, rootNavigator: true)` avant la requête — or en
+  phase `pending` le `builder` de `MaterialApp.router` remplace tout le
+  contenu routé : **aucun `Navigator` n'existe dans l'arbre**, l'appel
+  levait une exception dans un Future non-awaité → échec muet (pas de
+  spinner, pas d'erreur, la requête `POST /identity/create` n'était
+  jamais émise). La phrase est désormais publiée au nouveau provider
+  `pendingRecoveryPhraseProvider` ; le masquage venait des tests :
+  `l10nTestApp` place le wizard **sous** un `MaterialApp` classique où
+  un Navigator existe toujours.
+- **`app.dart`** : la phrase est rendue en **overlay modal**
+  (`ModalBarrier` + `PhraseBackupDialog`) au-dessus du gate comme de la
+  coquille — aucune dépendance au Navigator, s'affiche pendant la
+  transition `pending`→`ready`. `PhraseBackupDialog` devient public
+  avec callback `onDone` (plus de `Navigator.pop` — pas une route).
+- **Tests** : le test wizard vérifie la remise au provider ; nouveau
+  test direct de `PhraseBackupDialog` (confirmation exigée, `onDone`).
+
+## Correctif : lanceurs racine portables (remplacement des `.lnk`) (2026-10-09, worktree adr21)
+
+- **Nouveau crate `onionbit-launcher`** (~30 Ko, sous-système GUI) :
+  copié trois fois à la racine du bundle (`OnionBit.exe`,
+  `OnionBit Daemon.exe`, `OnionBit Web.exe`), chaque copie choisit sa
+  cible d'après son propre nom de fichier et résout `windows\<cible>`
+  relativement à `current_exe` — un nom inconnu replie sur l'UI,
+  les arguments CLI sont relayés, erreur de lancement → `MessageBoxW`
+  native. Icône `onionbit.ico` embarquée via `resources.rc` partagée
+  avec `onionbit-daemon`. 5 tests unitaires (mapping nom→cible,
+  repli, résolution relative).
+- **`build_dist.ps1`** : build `-p onionbit-launcher` et copies
+  renommées à la racine — remplace les `.lnk` générés par
+  `WScript.Shell`. Ceux-ci gravaient le **chemin absolu du build**
+  dans `TargetPath` : une copie du bundle sur Desktop ou une clé USB
+  lançait silencieusement l'ancienne installation `dist\` tant
+  qu'elle existait (state mélangé, identité introuvable sur la bonne
+  racine). Les `.lnk` résiduels sont purgés à la racine du bundle.
+- **`dist_lisezmoi.txt` / `docs/BUILDING.md`** : références `.lnk` →
+  lanceurs `.exe` portables.
+
+## UI : changement de zone dans « Déplacer le stockage » (2026-10-09, worktree adr21)
+
+- **`download_actions.dart`** : le dialogue « Move files » gagne un
+  `SegmentedButton` Public/Privée au-dessus du champ de destination.
+  Un clic remplit la spec portable (`@public/downloads` /
+  `@private/downloads`) — le daemon franchit alors la zone via
+  `move_across_zones` (ADR-0018 étape 62 : encapsulation OBD ou
+  déchiffrement, remove/re-add), capacité qui existait déjà mais
+  n'était pas exposée. Segment « Privée » grisé si la zone est
+  verrouillée (`privateZoneProvider` — sinon le backend répond 409) ;
+  hint public/privée affiché quand le champ contient une spec ;
+  chemin libre toujours possible (aucun segment sélectionné).
+- **`AndroidManifest.xml`** : `android:label` `onionbit_ui` → `OnionBit`.
+
+## Docs : nouvelles captures v1.0.0 + correctif badge anonymat (2026-10-09, worktree adr21)
+
+- **`assets/screenshots/`** : captures réelles de la nouvelle UI —
+  téléchargements sombre EN (badges « Anon +N » live), diagnostic
+  (circuits/relais/exits), recherche (306 résultats, badge confiance),
+  messagerie, réglages, mode clair FR ; `fr/screenshot-downloads` et
+  `screenshot-dark` régénérés. Table README étendue à 6 captures.
+- **`download_status.dart`** : badge `Clear`/`Anon` borné à 76 px +
+  `TextOverflow.ellipsis` — dans la cellule de 88 px, « Clear » était
+  rogné au milieu d'un glyphe (« Cleui »).
+
+## Release : version 1.0.0 (2026-10-09, worktree adr21)
+
+- **Version workspace `0.9.4-beta` → `1.0.0`** (`Cargo.toml`,
+  `app/pubspec.yaml` `1.0.0+1`, `Cargo.lock` régénéré) — le projet
+  sort du statut beta : ~580 tests Rust + ~85 Flutter, interop
+  Tribler 8.4.3 validée, 9/9 oracles de fingerprinting, fail-closed
+  vérifié au niveau paquet.
+- **`README.md`** : badge version → `1.0.0` (vert), statut « beta »
+  remplacé par « stable — v1.0.0 » avec la réserve d'audit conservée
+  (pas d'audit indépendant → prudence hauts enjeux), lien « Latest
+  release » pointé sur v1.0.0. Le tag `v1.0.0` déclenchera le job
+  `publish` de la CI (déclencheur `v*` déjà en place).
+
+## Docs : durcissement de la page d'accueil GitHub (2026-10-09, worktree adr21)
+
+- **`README.md`** : nouvelle section « Proof, not promises » — table
+  d'évidence reliant chaque affirmation à sa preuve reproductible
+  (~580 tests Rust + ~85 Flutter, interop Tribler 8.4.3 bidirectionnelle,
+  9/9 oracles de fingerprinting, manifeste transport P0, journal de fuzz,
+  21 ADR, threat model) ; barre de navigation sous les badges ; matrice
+  « Platform status » explicite (packagé / source / scaffoldé par OS) ;
+  Getting started réécrit pour les trois lanceurs racine Windows et les
+  entrées de menu du `.deb` ; roadmap : QR pairing, coquille adaptative,
+  bundle portable.
+
+## Correctif : paquet .deb — entrées de menu + état XDG (2026-10-09, worktree adr21)
+
+- **`resolve_state_dir` ne choisit plus un `state/` non
+  inscriptible** : l'heuristique « bundle » (`web/index.html` voisin
+  de l'exe) exige désormais que `state/` existe ou soit créable —
+  sinon repli `$XDG_DATA_HOME/onionbit` (`~/.local/share/onionbit`,
+  `.onionbit` hors Unix/en dernier recours). Sans cela le `.deb`
+  (`/opt/onionbit`, root-owned) plaçait l'état sur un chemin non
+  inscriptible : daemon inutilisable hors root — menu, systemd et
+  terminal convergent désormais sur le même `state_dir`. Refactor
+  `resolve_state_dir_for(args, exe)` testable + 3 tests (défaut,
+  bundle inscriptible, lecture seule → XDG ; `#[cfg(unix)]` pour le
+  mode 0555).
+- **`package_posix.sh` (.deb)** : entrées de menu
+  `/usr/share/applications/onionbit.desktop` (daemon `--open-webui`
+  — idempotent : un re-clic rouvre le navigateur sur le port réel)
+  et `onionbit-daemon.desktop` (console `Terminal=true`) ; icônes
+  hicolor 192/512 depuis les PNG brandés `app/web/icons/` ; `postinst`
+  rafraîchit `update-desktop-database`/`gtk-update-icon-cache` ;
+  `Depends` += `xdg-utils` (`xdg-open` du `--open-webui`).
+
+## Correctif : bundle Windows — lanceurs à la racine (2026-10-09, worktree adr21)
+
+- **`build_dist.ps1`** : trois raccourcis à la racine de
+  `dist\OnionBit\` — `OnionBit.lnk` (UI desktop, lanceur principal),
+  `OnionBit Daemon.lnk` (backend seul : console de logs + systray) et
+  `OnionBit Web.lnk` (daemon + navigateur sur l'UI web). L'utilisateur
+  choisit son interface sans descendre dans `windows\` ; Windows
+  re-résout les cibles par chemin relatif après dézip/déplacement du
+  bundle. L'ancien `windows\OnionBit Web.lnk` est purgé (montée des
+  lanceurs à la racine).
+- **`LISEZMOI.txt` écrit dans tous les builds** (auparavant
+  `-ZipRelease` seul) et réécrit : contenu aligné sur le layout
+  ADR-0018 (`windows\` payload, marqueur `OnionBit.portable`,
+  `state\`/`data\`), description des trois lanceurs — il présentait
+  encore `OnionBit.exe` comme s'il était à la racine.
+
+## Correctif : bundle Windows — `onionbit.ico` confondu avec l'application (2026-10-09, worktree adr21)
+
+- **`build_dist.ps1`** : le `.ico` lâche copié à côté des exécutables
+  pour `IconLocation` du raccourci « OnionBit Web » s'affichait comme
+  une application « onionbit » dans l'Explorateur (extensions masquées
+  par défaut) — cliquable mais inerte. Le raccourci pointe désormais
+  l'icône **embarquée** de `onionbit-daemon.exe` (`IconLocation =
+  …\onionbit-daemon.exe,0` — la ressource `resources.rc` est compilée
+  dans l'exe depuis toujours) ; le fichier lâche n'est plus copié et
+  est purgé des builds existants (liste de nettoyage).
+
+## Correctif : phrase de récupération en session invitée / at-rest (2026-10-09, worktree adr21)
+
+- **`GET /api/identity/recovery_phrase` servi depuis la mémoire** :
+  le handler lisait `identity_seed.bin` sur disque — absent en
+  session invitée (graine éphémère) et scellé `OBSK` quand
+  `identity.at_rest` est actif — les deux cas répondaient 500.
+  `Ipv8Stack` conserve désormais `identity_seed` (`store_root` du
+  matériel résolu, `Some` si `kind == Seeded`) et expose
+  `recovery_seed()` ; plus aucune lecture disque. L'invité peut
+  ainsi noter sa phrase — sa **seule** fenêtre de sauvegarde avant
+  l'arrêt du daemon. `tests/api.rs` :
+  `identite_phrase_recuperation_memoire_invite_et_at_rest`.
+- **Dialogue Flutter « Phrase de récupération » — spinner infini** :
+  `FutureBuilder` testait `!snap.hasData`, or `hasData == data !=
+  null` — un retour `null` (legacy/erreur avalée par le repository)
+  laissait le `CircularProgressIndicator` tourner indéfiniment et
+  rendait la branche `identityPhraseUnavailable` morte. Bascule sur
+  `connectionState != done`. + `scrollable: true` sur l'
+  `AlertDialog` (24 puces débordaient des petits écrans — overflow
+  constaté en test). Régression couverte : `settings_page_test.dart`
+  (null → message, 24 mots numérotés).
+
+## ADR-0021 étape 77 : portes qualité + suppression de l'ancien thème (2026-10-09, worktree adr21)
+
+- **Contraste WCAG AA vérifié** (`test/design/contrast_test.dart`) :
+  ratios calculés sur toutes les paires texte/fond des thèmes clair et
+  sombre — surfaces M3, rôles primaire/secondaire/tertiaire/erreur et
+  tokens sémantiques succès/avertissement/info. Premier défaut réel
+  détecté et corrigé : `onTertiary` blanc (défaut M3) sur le cyan de
+  marque `#4FD8E0` donnait 1.72:1 — remplacé par un foncé `#00252B`
+  dans les deux thèmes (le bug venait de l'ancien `AppTheme`).
+- **Goldens par palier** (`test/design/pages_golden_test.dart`) :
+  coquille + téléchargements en compact (390 px : bottom nav),
+  medium (800 px : rail icônes) et expanded (1440 px : rail libellés),
+  messagerie compact/expanded (`AdaptiveListDetail`), réglages
+  expanded (catégories). 6 images de référence sous
+  `test/design/goldens/`.
+- **Accessibilité** : `Semantics` (bouton étiqueté) ajouté au Privacy
+  HUD — en `compact` il n'est qu'une icône, sans label un lecteur
+  d'écran n'annonçait rien — et `tooltip` sur le bouton « clear » de
+  recherche (`top_bar.dart`). `test/design/a11y_test.dart` vérifie le
+  label sémantique dans les états disabled/ready.
+- **`verify_all.ps1`** : étape « audit a11y manuel » bloquante
+  (rappel TalkBack/VoiceOver/NVDA + clavier), contournable en CI via
+  `ONIONBIT_A11Y_ACK` ; les portes automatiques (goldens, contraste,
+  Semantics) restent couvertes par `flutter test`.
+- **`core/theme/app_theme.dart` supprimé** : les 20 derniers
+  fichiers (sections Réglages, Diagnostic, About) migrés de
+  `AppSpacing.`/`app_theme.dart` vers `AppSpace.`/`design_tokens.dart`
+  — zéro référence restante, `theme_settings.dart` conservé (provider
+  de réglage, pas le thème). Tests : 83 verts (+10), analyze 0 issue,
+  build web OK.
+
+## ADR-0021 étape 76 : onboarding identité + appairage mobile par QR (2026-10-09, worktree adr21)
+
+- **Endpoint d'appairage** (`onionbit-api`) : `POST /api/pairing/token`
+  (authentifié — émet le jeton 128 bits à TTL court
+  `api.pairing.token_ttl_secs`) et `POST /api/pairing/redeem` —
+  unique exemption d'`api_key_auth` (`OriginalUri` + méthode POST
+  exacte : le mobile vient chercher la clé, il ne la possède pas).
+  Jeton en mémoire seulement (`PairingStore`), usage unique,
+  comparaison `subtle::ConstantTimeEq`, réémission = grant précédent
+  caduc ; `redeem` rate-limité (`UnlockRateLimiter` réutilisé : par
+  IP `ConnectInfo` + global, seuils `api.pairing.redeem_*`).
+  `409 pairing_disabled` sans clé API configurée ; `409` également
+  sous `identity_gate` en `pending`/`locked`.
+- **Onboarding en étapes** (`core/identity/onboarding_wizard.dart`,
+  remplace le gate `pending` en liste plate) : choix → création (mot
+  de passe at-rest optionnel) ou restauration (phrase BIP39 ou
+  blob `OBID`/hex auto-détecté). La phrase de récupération s'affiche
+  en dialogue modal posé sur le **navigateur racine** — il survit à
+  la résolution du gate (passage `ready`) ; grille de mots numérotés
+  en JetBrains Mono, copie presse-papiers, confirmation « j'ai noté »
+  obligatoire avant de terminer.
+- **Appairage QR** (`core/pairing/`) : payload versionné
+  `onionbit://pair/1?host&port&token` — la clé API n'y figure jamais.
+  Feuille desktop (`pairing_sheet.dart`) : émission du jeton, QR
+  `qr_flutter`, compte à rebours TTL, régénération, hôte éditable
+  avec suggestion des IP LAN (`lan_addresses` conditionnel `dart:io`)
+  et avertissement loopback. Scan mobile via `mobile_scanner` derrière
+  import conditionnel (`qr_scanner_native`/`_stub`) — web et
+  Windows/Linux non couverts par le plugin répondent proprement ;
+  `scan_support` masque les boutons hors cibles caméra. `PairingApi.
+  redeem` part **sans** clé API et persiste la connexion via
+  `connectionSettingsProvider` ; actions intégrées dans Réglages →
+  Connexion (`connection_section.dart`).
+- **Revue sécurité dédiée** (ADR-0021 §9) : exemption auth exacte
+  (chemin + méthode — ni préfixe ni slash final ne contournent),
+  entropie 128 bits, anti-rejeu TTL + usage unique, rate-limit sur IP
+  TCP réelle (`ConnectInfo`, `X-Forwarded-For` non lu), aucun secret
+  en log ni persistance, erreur 401 uniforme (invalide/expiré/consommé
+  indiscernables).
+- **Tests** (+20, 73 au total Flutter) : payload encode/parse strict
+  (11 formes rejetées), `redeem` sans `X-Api-Key` + 401 (`MockClient`),
+  feuille QR (TTL, régénération), section Connexion (boutons selon
+  plateforme), wizard (étape création, dialogue phrase bloquant).
+  Rust : 3 tests pairing dans `tests/api.rs` — désactivé sans clé,
+  réémission invalide l'ancien jeton, usage unique. Validation :
+  analyze 0 issue, 73 tests + build web verts, i18n + GPL propres,
+  `cargo fmt`/`clippy`/`test -p onionbit-api` (77 tests) verts.
+
+## ADR-0021 étape 75 : réglages par paliers + Privacy HUD (2026-10-09, worktree adr21)
+
+- **Réglages par catégories repliables** : les 15 sections sont
+  regroupées en `SettingsCategory` (`settings_catalog.dart`) —
+  Essentiels / Réseau & anonymat / Automatisation / Avancé — avec
+  `_CategoryHeader` (icône, titre en petites capitales, chevron) et
+  `_expanded` dans `_SettingsPageState`. Le rail d'ancres devient une
+  chip par catégorie (pastille « modifié » si une section dirty y
+  vit) ; les sections restent joignables via la palette Ctrl/Cmd+K.
+- **Deep-link `?s=` robuste** : déplie la catégorie cible et vide le
+  filtre quand ils masquent la cible ; le défilement utilise une
+  boucle post-frame bornée — sauts par écrans tant que la section
+  n'est pas montée (ListView paresseuse), `ensureVisible` à
+  l'apparition, puis vérification jusqu'à deux mesures stables
+  (pixels+étendue). Corrige un cas réel : pendant le chargement des
+  providers la cible se montait prématurément, puis ressortait du
+  `cacheExtent` quand le contenu grandissait — et se démontait.
+  Ancres déplacées des `GlobalKey` globales (contextes périmés entre
+  instances) vers `_sectionKeys`/`_catKeys` par `State`.
+- **Privacy HUD** (`core/layout/privacy_hud.dart`) dans `TopBar` :
+  indicateur ambiant de posture d'anonymat — `AnonLaneStatus` étendu
+  de `minReadyHops` (pire cas `actual_hops` des circuits READY,
+  route vérifiée) via `anonLaneProvider` (sondage 10 s partagé avec
+  la barre d'état). Icône seule sous le palier `expanded`, pastille
+  « N circuits · M sauts » au-delà ; un tap ouvre `/diagnostic`.
+  Chaînes localisées (`app_en.arb`/`app_fr.arb`).
+- **Tests** (+5, 53 au total) : `privacy_hud_test.dart`, régression
+  catégories/repli/deep-link dans `settings_page_test.dart`.
+  Validation : analyze 0 issue, build web OK, i18n + GPL propres.
+
+## ADR-0021 étape 74 : migration Messagerie + palette de commandes (2026-10-09, worktree adr21)
+
+- **Messagerie adaptative** : `AdaptiveListDetail` dès le palier
+  `expanded` (liste conversations/contacts + `ConversationTabs`),
+  et sous ce palier le fil occupe tout l'écran après sélection dans
+  la liste — retour par flèche (patron standard des messageries
+  mobiles ; `_NarrowConversation`). Tokens `AppSpace`/`AppRadius`
+  partout, clés publiques/conv-id en JetBrains Mono
+  (`AppFontFamilies.mono`). Aucun changement de providers ni des
+  appels REST/SSE `/api/messaging/*`.
+- **Catalogue de commandes partagé** (`core/command/`) :
+  `AppCommand` (id stable, groupe, titre localisé, mots-clés, `run`)
+  et `buildCommandCatalog` — destinations `kNavCatalog`,
+  conversations (ouvre l'onglet via `openConversationsProvider` puis
+  route `/messages`), sections de réglages en deep-link
+  `/settings?s=<id>` et l'action « ajouter un téléchargement ».
+- **`settings_catalog.dart`** : les métadonnées privées de la page
+  (`_SectionId`, `keywords`) deviennent `SettingsSectionId` +
+  `settingsSectionKeywords` + `icon` — le filtre historique de la
+  page et la palette puisent à la même source. La page accepte le
+  paramètre `?s=` (résolution post-frame, ré-affiche la liste si un
+  filtre masquait la cible).
+- **Palette Ctrl/Cmd+K** (`CommandPalette`) : `FrostedSurface`,
+  recherche insensible à la casse, en-têtes de groupe, sélection
+  ↑/↓/Entrée interceptée via `FocusNode.onKeyEvent`, Échap ferme.
+  Nouvel `OpenCommandPaletteIntent` dans `AppShortcuts` — Ctrl/Cmd+F
+  et Ctrl/Cmd+N inchangés.
+- **`check_i18n.ps1`** : l'exclusion des mots-clés de recherche couvre
+  désormais les maps `*Keywords = {}` (le catalogue extrait), pas
+  seulement les paramètres nommés `keywords:`.
+- **Tests** (+10, 48 au total) : `command_palette_test.dart`,
+  `messaging_page_test.dart`, `settings_catalog_test.dart`.
+  Validation : analyze 0 issue, build web OK, i18n + GPL propres.
+
+## ADR-0021 étape 73 : bascule du thème + migration Téléchargements/Recherche (2026-10-09, worktree adr21)
+
+- **`app.dart` bascule sur `AppDesignTheme`** : la nouvelle
+  typographie (Space Grotesk titres / Inter corps), l'extension
+  `AppSemanticColors` et les transitions par plateforme (Cupertino
+  sur Apple, Zoom ailleurs) deviennent actives **globalement** — y
+  compris sur les écrans pas encore migrés (messagerie, réglages,
+  diagnostic), qui conservent leurs tokens `AppSpacing`/`AppRadii`
+  tant que leur étape n'est pas venue. `theme_settings` lit le défaut
+  dans `AppBrandColors.seed` (même violet `#6C2EA6`, identité
+  inchangée).
+- **Migration tokens** : `app_theme.dart` → `design_tokens.dart`,
+  `AppSpacing`→`AppSpace`, `AppRadii`→`AppRadius` (mêmes valeurs —
+  renommage, pas de changement visuel) dans tout `core/` (shell :
+  `app_sidebar`, `status_bar`, `top_bar`, `daemon_unreachable_banner` ;
+  widgets : `empty_state`, `error_state`, `daemon_directory_picker`,
+  `status_chip` ; `identity_gate`, `notification_bell`,
+  `theme_settings`) + les 5 fichiers `downloads/presentation/` +
+  `search_page.dart`.
+- **Couleurs sémantiques adoptées** là où `ColorScheme` forçait des
+  contorsions : `StatusChip`/`DownloadProgressBar`/`AnonBadge`/
+  `StatusBar` — `positive`→`success` (vert thémé au lieu de
+  `Colors.green` brut ou `primary`), `warning`→`warning` (ambre au
+  lieu du cyan `tertiary` de marque, qui ne signifiait pas
+  « attention » : « en attente de circuit », métadonnées, hash check).
+- **JetBrains Mono** (`AppTypography.mono()`) sur les infohashes :
+  panneau de détail téléchargement (remplace `fontFamily:'monospace'`
+  générique) et tuiles de recherche sans nom (repli infohash).
+- **`check_i18n.ps1`** : exclusion documentée de `style_guide/` —
+  page specimen montée uniquement en debug ; ses chaînes accentuées
+  testent la couverture de glyphes des polices auto-hébergées.
+- **Test** : le smoke vérifie que `MaterialApp.theme`/`darkTheme`
+  portent `AppSemanticColorsExtension` et les familles Inter/Space
+  Grotesk — verrouille la bascule.
+- **Validation** : `flutter analyze` (0 issue), `flutter test` (38
+  verts), `flutter build web` OK, `check_i18n.ps1` propre.
+
+## ADR-0021 étape 72 : scaffolding multiplateforme + Windows ARM64 (2026-10-09, worktree adr21)
+
+- **4 runners scaffoldés ensemble** : `flutter create
+  --platforms=linux,macos,android,ios --org org.onionbit
+  --project-name onionbit_ui .` → `linux/`, `macos/`, `android/`,
+  `ios/` (~100 fichiers). Identifiants : `org.onionbit.onionbit_ui`
+  (Android `applicationId`/`namespace`), `org.onionbit.onionbitUi`
+  (iOS `PRODUCT_BUNDLE_IDENTIFIER`).
+- **En-têtes GPL** sur les 3 `linux/**/CMakeLists.txt` — seuls
+  fichiers « source » édités, selon la convention `windows/` (les
+  templates Kotlin/Swift/C++ générés — `my_application.cc`,
+  `AppDelegate.swift`, `MainActivity.kt` — ne portent pas d'en-tête,
+  cf. `windows/runner/flutter_window.cpp`).
+- **`test/widget_test.dart` du template supprimé** (référençait un
+  `MyApp` de compteur inexistant — cassait la compilation des tests).
+- **`analysis_options.yaml`** : `flutter create` a étendu les
+  exclusions à `android/`, `ios/`, `macos/`, `linux/` — conservé.
+- **`android/gradle.properties`** : `kotlin.incremental=false` —
+  sans lui, `compileDebugKotlin` des plugins échoue : le stockage
+  incrémental Kotlin ne sait pas relativiser les chemins entre le
+  projet (D:\) et le pub cache Gradle (C:\) — « this and base files
+  have different roots », bug Kotlin/Gradle connu sur Windows
+  multi-lecteurs.
+- **Windows ARM64** : `build_dist.ps1` détecte l'archi hôte via le
+  triple rustc (`aarch64*` → `arm64`) — `$winArch` paramètre
+  `build\windows\<arch>\` (cache CMake + sortie runner, auparavant
+  `x64` en dur) et le suffixe du zip release. `flutter build windows`
+  ne cross-compile pas x64→arm64 : le build ARM64 est natif sur hôte/
+  runner Windows ARM64 (ex. `windows-11-arm`). Côté daemon, `-Target
+  aarch64-pc-windows-msvc` existait déjà dans `build_release.ps1`.
+- **Correction d'ADR-0021** (§4 matrice + étape 72 du §10) : le
+  « build de fumée Linux immédiat » prévu était factuellement faux —
+  `flutter build linux` exige un hôte Linux (toolchain ninja/GTK),
+  comme macOS/iOS exigent Darwin et Windows ARM64 l'archi native.
+  Seul **Android** obtient un vrai build de fumée depuis cet hôte
+  Windows x64. Texte corrigé pour refléter ce qui a été livré.
+- **Validation** : `check_gpl_headers.ps1` OK, `flutter analyze`
+  (0 issue), `flutter test` (38 verts), `flutter build apk --debug`
+  OK (`build\app\outputs\flutter-apk\app-debug.apk`).
+
+## ADR-0021 étape 71 : coquille adaptative v2 (2026-10-09, worktree adr21)
+
+- **`AppShell`/`AppSidebar`** : les paliers `medium`/`expanded`/`large`
+  sont enfin distincts (auparavant fusionnés en « non-compact »).
+  `AppSidebar.collapsedOverride` force le rail (icônes seules) en
+  `medium` — pas assez de largeur pour justifier un choix utilisateur ;
+  `expanded`/`large` gardent la préférence persistée
+  (`sidebarCollapsedProvider`) et sa bascule manuelle, comportement
+  historique inchangé. La bascule manuelle est masquée quand l'état
+  est forcé (rien à choisir).
+- **`AdaptiveListDetail`** (`core/design/primitives/`) : primitif
+  liste+détail côte à côte à partir du palier `expanded`, repli sur la
+  liste seule en dessous. Réutilisable, pas encore consommé par un
+  écran — les téléchargements gardent leur panneau de détail existant
+  (`DownloadDetailPanel`, empilé sous la table, mieux adapté à un
+  contenu tabulaire) ; candidat naturel : messagerie (étape 74,
+  conversations/fil).
+- **`core/shortcuts/`** (`AppIntents`, `AppShortcuts`) : raccourcis
+  clavier transverses câblés dans `AppShell` — Ctrl/Cmd+F (recherche),
+  Ctrl/Cmd+N (ajout de téléchargement) — généralisent le patron des
+  `CallbackShortcuts` jusque-là isolés dans `downloads_page.dart`
+  (qui restent en l'état : sélection de table, pas une navigation
+  globale). Deux `FocusTraversalGroup` (navigation, contenu) posent
+  l'ordre de focus par panneau ; la navigation par flèches dans les
+  listes elles-mêmes reste à traiter au fil des écrans migrés (aucune
+  liste concrète à câbler avant l'étape 73).
+- **Bug latent corrigé** : `StatusBar` (débits, trafic de session,
+  capacité de relais sur une seule ligne) débordait en dessous de
+  600dp — jamais exercé par un test avant l'étape 71. Version
+  condensée en `compact` (pastille de connexion + icône de lane avec
+  tooltip uniquement ; le détail reste dans l'onglet Diagnostic).
+- **Validation** : `flutter analyze` (0 issue), `flutter test` (38
+  verts, +7 : 2 breakpoints de coquille, 2 `AdaptiveListDetail`, 3
+  `AppShortcuts`), `flutter build web` OK.
+
+## ADR-0021 étape 70 : fondations du design system (2026-10-09, worktree adr21)
+
+- **`core/design/`** : tokens couleur (`AppBrandColors`,
+  `AppSemanticColors` + `ThemeExtension`), typographie
+  (`AppTypography`, échelle M3 Space Grotesk/Inter), espacement
+  (`AppSpace`), rayons (`AppRadius`), élévation (`AppElevation`),
+  motion (`AppMotionDuration`/`Curve`) ; `AppDesignTheme` (successeur
+  de l'ancien `AppTheme`, pas encore câblé dans `app.dart` —
+  cohabitation le temps de la migration, ADR-0021 §2).
+- **`FrostedSurface`** : premier primitif (flou + dégradé), réservé
+  aux moments de marque (futur Privacy HUD, ADR-0021 §8) — les autres
+  primitifs (boutons, champs, chips, navigation, dialogues) arrivent
+  au fil des écrans migrés plutôt que devinés à l'avance.
+- **Polices auto-hébergées** (`assets/fonts/`, licence OFL, provenance
+  `SOURCES.md`) : Space Grotesk (titres), Inter (corps), JetBrains
+  Mono (hex/clés/phrases de seed ADR-0016) — zéro dépendance
+  `google_fonts`, zéro requête réseau (posture `onionbit-network-policy`).
+- **Guide de style vivant** (`/_style-guide`,
+  `core/design/style_guide/`), route enregistrée uniquement en
+  `kDebugMode`. Note technique : `CupertinoPageTransitionsBuilder` vit
+  désormais dans `package:flutter/cupertino.dart` (découplage récent
+  de Flutter stable 3.47, pas de `material_ui`/`cupertino_ui` séparés
+  nécessaires) — import ajouté dans `app_design_theme.dart`.
+- **Harnais de tests golden** (`test/design/`) :
+  `flutter_test_config.dart` charge les polices réelles via
+  `FontLoader`, scopé à `test/design/` (et non `test/` global) pour ne
+  pas casser les tests Dart purs existants qui n'initialisent pas le
+  binding Flutter ; 2 golden clair/sombre du guide de style.
+- Aucun écran existant modifié visuellement — l'ancien `AppTheme`
+  reste intact et utilisé par `app.dart` (stratégie de l'étrangleur,
+  ADR-0021 §2).
+- **Validation** : `flutter analyze` (0 issue), `flutter test` (31
+  verts, dont les 2 golden), `flutter build web` OK.
 ## `libtorrent/allow_mmap` : défaut `false` — alignement upstream rqbit (2026-10-09)
 
 Constat utilisateur : téléchargement ~40 Go vers un HDD — mémoire

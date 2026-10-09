@@ -73,7 +73,27 @@ Invoke-Step "flutter analyze (app)" {
 
 Invoke-Step "flutter test (app)" {
     Push-Location (Join-Path $root "app")
+    # Couvre les portes ADR-0021 §9 automatiques : golden
+    # (test/design/), contraste WCAG AA (contrast_test), Semantics
+    # (a11y_test) — en plus des tests fonctionnels.
     try { flutter test } finally { Pop-Location }
+}
+
+# ADR-0021 §9 — audit d'accessibilite MANUEL, non automatisable :
+# rappel bloquant, la suite ne peut pas le faire a la place du
+# reviewer (lecteurs d'ecran, navigation clavier reelle).
+Write-Host "== Audit a11y manuel (ADR-0021 §9) ==" -ForegroundColor Cyan
+Write-Host ("    Avant de fusionner l'etape : TalkBack/VoiceOver/NVDA " +
+    "sur un ecran migre, navigation clavier Tab/fleches sur la " +
+    "coquille, focus visible. Automatique deja couvert par " +
+    "flutter test : contraste AA, Semantics des icon-only, goldens " +
+    "par palier.") -ForegroundColor Yellow
+if (-not $env:CI -and -not $env:ONIONBIT_A11Y_ACK) {
+    $rep = Read-Host "Audit manuel fait ? [o/N]"
+    if ($rep -notmatch '^(o|O|y|Y|oui)$') {
+        Write-Host "ECHEC (audit a11y manuel requis - ONIONBIT_A11Y_ACK=1 pour passer en CI)" -ForegroundColor Red
+        exit 1
+    }
 }
 
 Invoke-Step "flutter build web (app)" {

@@ -10,6 +10,11 @@ import 'package:onionbit_ui/core/identity/identity_gate.dart';
 import 'package:onionbit_ui/features/settings/domain/settings_repository.dart';
 import 'package:onionbit_ui/features/settings/presentation/providers/settings_providers.dart';
 
+import 'package:onionbit_ui/core/identity/onboarding_wizard.dart';
+import 'package:onionbit_ui/core/l10n/locale_settings.dart';
+import 'package:onionbit_ui/l10n/app_localizations.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
 import 'helpers/l10n.dart';
 
 /// Dépôt minimal pour les écrans du gate (ADR-0016, 48e) — les
@@ -18,6 +23,7 @@ class _FakeRepo implements SettingsRepository {
   String? unlockedWith;
   bool guestCalled = false;
   bool createCalled = false;
+  String? createPassword;
   Object? unlockError;
 
   @override
@@ -42,7 +48,8 @@ class _FakeRepo implements SettingsRepository {
   @override
   Future<Map<String, dynamic>> identityStatus() async => {};
   @override
-  Future<String?> identityRecoveryPhrase({String? lang}) async => null;
+  Future<String?> identityRecoveryPhrase({String? lang}) async =>
+      'abandon ability able about above absent absorb abstract';
   @override
   Future<Map<String, dynamic>> identityExport({String? password}) async => {};
   @override
@@ -59,8 +66,10 @@ class _FakeRepo implements SettingsRepository {
     required String password,
   }) async {}
   @override
-  Future<void> identityCreate({String? password}) async =>
-      createCalled = true;
+  Future<void> identityCreate({String? password}) async {
+    createCalled = true;
+    createPassword = password;
+  }
   @override
   Future<void> identityGuest() async => guestCalled = true;
   @override
@@ -97,9 +106,27 @@ void main() {
     expect(find.text('Guest session'), findsOneWidget);
   });
 
-  testWidgets('gate pending : « nouvelle identité » appelle create', (
-    tester,
-  ) async {
+  testWidgets('gate pending : « nouvelle identité » → étape création '
+      'puis create (étape 76 — wizard)', (tester) async {
+    final repo = _FakeRepo();
+    await tester.pumpWidget(
+      _gateApp(repo, const IdentityGatePage(locked: false)),
+    );
+    await tester.pumpAndSettle();
+    // Étape « choix » : la carte n'appelle pas encore create, elle
+    // ouvre l'étape dédiée (mot de passe at-rest optionnel).
+    await tester.tap(find.text('New identity'));
+    await tester.pumpAndSettle();
+    expect(repo.createCalled, isFalse);
+    await tester.tap(find.text('Create my identity'));
+    await tester.pumpAndSettle();
+    expect(repo.createCalled, isTrue);
+    expect(repo.createPassword, isNull); // les deux champs vides = sans mot de passe
+    expect(repo.guestCalled, isFalse);
+  });
+
+  testWidgets('gate pending : mot de passe confirmé en double saisie, '
+      'divergence → bouton grisé + erreur localisée', (tester) async {
     final repo = _FakeRepo();
     await tester.pumpWidget(
       _gateApp(repo, const IdentityGatePage(locked: false)),
@@ -107,8 +134,138 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('New identity'));
     await tester.pumpAndSettle();
+
+    // Deux champs masqués : saisie + confirmation.
+    final fields = find.byType(TextField);
+    expect(fields, findsNWidgets(2));
+    // Coquille de casse : « S3cret » ≠ « s3cret » — sans confirmation
+    // elle était invisible et scellait la graine avec le mauvais mot.
+    await tester.enterText(fields.first, 'S3cret');
+    await tester.enterText(fields.at(1), 's3cret');
+    await tester.pumpAndSettle();
+
+    expect(find.text('Passwords do not match'), findsOneWidget);
+    final button = tester.widget<FilledButton>(
+      find.widgetWithText(FilledButton, 'Create my identity'),
+    );
+    expect(button.onPressed, isNull);
+    await tester.tap(find.text('Create my identity'));
+    await tester.pumpAndSettle();
+    expect(repo.createCalled, isFalse);
+  });
+
+  testWidgets('gate pending : double saisie concordante → create '
+      'reçoit le mot de passe', (tester) async {
+    final repo = _FakeRepo();
+    await tester.pumpWidget(
+      _gateApp(repo, const IdentityGatePage(locked: false)),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('New identity'));
+    await tester.pumpAndSettle();
+
+    final fields = find.byType(TextField);
+    await tester.enterText(fields.first, 'S3cret');
+    await tester.enterText(fields.at(1), 'S3cret');
+    await tester.pumpAndSettle();
+    expect(find.text('Passwords do not match'), findsNothing);
+
+    await tester.tap(find.text('Create my identity'));
+    await tester.pumpAndSettle();
     expect(repo.createCalled, isTrue);
-    expect(repo.guestCalled, isFalse);
+    expect(repo.createPassword, 'S3cret');
+  });
+
+  testWidgets('gate pending : phrase de récupération remise à '
+      'l\'overlay global après create (aucun Navigator sous le gate)',
+      (tester) async {
+    final repo = _FakeRepo();
+    final container = ProviderContainer(
+      overrides: [settingsRepositoryProvider.overrideWithValue(repo)],
+    );
+    addTearDown(container.dispose);
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: l10nTestApp(const IdentityGatePage(locked: false)),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('New identity'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Create my identity'));
+    await tester.pumpAndSettle();
+    // Le fake rend une phrase → elle est publiée au provider : c'est
+    // `app.dart` qui la rend en overlay (pendant `pending` le gate
+    // remplace le Navigator — un `showDialog` planterait en silence).
+    expect(
+      container.read(pendingRecoveryPhraseProvider),
+      'abandon ability able about above absent absorb abstract',
+    );
+  });
+
+  testWidgets('phrase backup : confirmation exigée avant « Done », '
+      'onDone referme l\'overlay', (tester) async {
+    var done = false;
+    await tester.pumpWidget(
+      l10nTestApp(
+        Scaffold(
+          body: PhraseBackupDialog(
+            phrase:
+                'abandon ability able about above absent absorb abstract',
+            onDone: () => done = true,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Recovery phrase'), findsOneWidget);
+    // « Done » reste désactivé tant que la phrase n'est pas confirmée.
+    final button = tester.widget<FilledButton>(
+      find.widgetWithText(FilledButton, 'Done'),
+    );
+    expect(button.onPressed, isNull);
+    await tester.tap(find.byType(CheckboxListTile));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Done'));
+    expect(done, isTrue);
+  });
+
+  testWidgets('gate pending : le sélecteur de langue relocalise le '
+      'wizard et persiste le choix', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final repo = _FakeRepo();
+    // Harnais fidèle à la prod : `MaterialApp.locale` suit
+    // `localeSettingsProvider` (l10nTestApp figerait `en`).
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          settingsRepositoryProvider.overrideWithValue(repo),
+        ],
+        child: Consumer(
+          builder: (context, ref, _) {
+            final locale = resolveFlutterLocale(
+              ref.watch(localeSettingsProvider).value,
+            );
+            return MaterialApp(
+              locale: locale,
+              localizationsDelegates:
+                  AppLocalizations.localizationsDelegates,
+              supportedLocales: AppLocalizations.supportedLocales,
+              home: const IdentityGatePage(locked: false),
+            );
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Choose your identity'), findsOneWidget);
+
+    await tester.tap(find.text('Français'));
+    await tester.pumpAndSettle();
+    expect(find.text('Choisissez votre identité'), findsOneWidget);
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getString('ui.locale'), 'fr');
   });
 
   testWidgets('gate pending : invité appelle guest', (tester) async {

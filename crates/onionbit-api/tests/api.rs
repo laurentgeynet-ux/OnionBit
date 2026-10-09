@@ -4397,9 +4397,74 @@ async fn identite_locked_unlock_et_rate_limit() {
     srv.session.stop().await;
 }
 
-/// ADR-0016 etape 48e : `identity.at_rest` refuse via l'arbre
-/// generique `/api/settings` (le scellement OBSK exige un mot de
-/// passe — endpoint dedie) ; les autres cles `identity` passent.
+/// La phrase de recuperation est servie depuis la session **en
+/// memoire** (`Ipv8Stack::recovery_seed`) : le fichier
+/// `identity_seed.bin` est absent en session invitee et scelle
+/// `OBSK` en at-rest — les deux cas repondaient 500 avant.
+#[tokio::test]
+async fn identite_phrase_recuperation_memoire_invite_et_at_rest() {
+    use onionbit_format::bip39;
+
+    // Invite : aucun fichier identite sur disque — la phrase est la
+    // SEULE fenetre de sauvegarde de cette identite ephemere.
+    let srv = spawn_server_pending().await;
+    let state_dir = srv.session.config().state_dir.clone();
+    let resp = srv
+        .client
+        .post(srv.url("/api/identity/guest"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let resp = srv
+        .client
+        .get(srv.url("/api/identity/recovery_phrase"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let phrase = body["phrase"].as_str().unwrap();
+    assert_eq!(phrase.split(' ').count(), 24);
+    let seed_memoire = srv.session.ipv8().unwrap().recovery_seed().unwrap();
+    assert_eq!(
+        bip39::decode(phrase).unwrap().as_slice(),
+        seed_memoire.as_slice()
+    );
+    assert!(!state_dir
+        .join("identity")
+        .join("identity_seed.bin")
+        .exists());
+    srv.session.stop().await;
+
+    // At-rest deverrouille : `identity_seed.bin` reste `OBSK` sur
+    // disque, la phrase est quand meme servie (avant : 500).
+    let srv = spawn_server_locked().await;
+    let resp = srv
+        .client
+        .post(srv.url("/api/identity/unlock"))
+        .json(&serde_json::json!({"password": "pw-correct"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let resp = srv
+        .client
+        .get(srv.url("/api/identity/recovery_phrase"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let seed_memoire = srv.session.ipv8().unwrap().recovery_seed().unwrap();
+    assert_eq!(
+        bip39::decode(body["phrase"].as_str().unwrap())
+            .unwrap()
+            .as_slice(),
+        seed_memoire.as_slice()
+    );
+    srv.session.stop().await;
+}
 #[tokio::test]
 async fn identite_at_rest_refuse_via_settings() {
     let srv = spawn_server().await;
@@ -4432,5 +4497,133 @@ async fn identite_at_rest_refuse_via_settings() {
         .unwrap();
     assert_eq!(body["settings"]["identity"]["seed_acknowledged"], true);
     assert_eq!(body["settings"]["identity"]["at_rest"], false);
+    srv.session.stop().await;
+}
+
+/// Appairage mobile (ADR-0021 §8, etape 76) : emission authentifiee
+/// du jeton, `redeem` exempte de cle (le mobile n'en a pas), usage
+/// unique, jeton inconnu rejete a l'identique.
+#[tokio::test]
+async fn pairing_token_redeem_usage_unique() {
+    let srv = spawn_server_with(|s| AppState::new(s).with_api_key("cle-de-test")).await;
+
+    // `token` reste derriere la cle (c'est l'UI desktop authentifiee
+    // qui affiche le QR).
+    let resp = srv
+        .client
+        .post(srv.url("/api/pairing/token"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 401);
+
+    let resp = srv
+        .client
+        .post(srv.url("/api/pairing/token"))
+        .header("x-api-key", "cle-de-test")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let token = body["token"].as_str().unwrap().to_string();
+    assert_eq!(token.len(), 32);
+    assert!(body["expires_in_secs"].as_u64().unwrap() > 0);
+
+    // `redeem` SANS cle — le mobile n'en a pas encore ; le jeton
+    // tient lieu d'authentification.
+    let resp = srv
+        .client
+        .post(srv.url("/api/pairing/redeem"))
+        .json(&serde_json::json!({"token": token}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["api_key"], "cle-de-test");
+
+    // Usage unique : un second redeem echoue, indiscernable d'un
+    // jeton inconnu (401 uniforme).
+    let resp = srv
+        .client
+        .post(srv.url("/api/pairing/redeem"))
+        .json(&serde_json::json!({"token": token}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 401);
+    let resp = srv
+        .client
+        .post(srv.url("/api/pairing/redeem"))
+        .json(&serde_json::json!({"token": "f".repeat(32)}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 401);
+
+    srv.session.stop().await;
+}
+
+/// Un nouveau jeton invalide le precedent — le QR affiche a l'ecran
+/// est le seul valable.
+#[tokio::test]
+async fn pairing_reemission_invalide_le_jeton_precedent() {
+    let srv = spawn_server_with(|s| AppState::new(s).with_api_key("cle-de-test")).await;
+    let issue = || {
+        srv.client
+            .post(srv.url("/api/pairing/token"))
+            .header("x-api-key", "cle-de-test")
+    };
+    let t1: serde_json::Value = issue().send().await.unwrap().json().await.unwrap();
+    let t2: serde_json::Value = issue().send().await.unwrap().json().await.unwrap();
+    let t1 = t1["token"].as_str().unwrap();
+    let t2 = t2["token"].as_str().unwrap();
+    assert_ne!(t1, t2);
+
+    // L'ancien jeton est caduc.
+    let resp = srv
+        .client
+        .post(srv.url("/api/pairing/redeem"))
+        .json(&serde_json::json!({"token": t1}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 401);
+    // Le nouveau passe.
+    let resp = srv
+        .client
+        .post(srv.url("/api/pairing/redeem"))
+        .json(&serde_json::json!({"token": t2}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    srv.session.stop().await;
+}
+
+/// Sans cle API configuree, l'appairage n'a pas de sens (l'API est
+/// ouverte) : `token` et `redeem` repondent `409 pairing_disabled`.
+#[tokio::test]
+async fn pairing_desactive_sans_cle_api() {
+    let srv = spawn_server().await;
+    let resp = srv
+        .client
+        .post(srv.url("/api/pairing/token"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 409);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["error"]["message"], "pairing_disabled");
+    let resp = srv
+        .client
+        .post(srv.url("/api/pairing/redeem"))
+        .json(&serde_json::json!({"token": "f".repeat(32)}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 409);
     srv.session.stop().await;
 }

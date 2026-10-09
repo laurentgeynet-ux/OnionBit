@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 0.9.4+1
+version: 1.0.0+1
 
 environment:
   sdk: ^3.13.2
@@ -48,6 +48,8 @@ dependencies:
   flutter_svg: ^2.3.0
   fetch_client: ^1.2.1
   web: ^1.1.1
+  qr_flutter: ^4.1.0
+  mobile_scanner: ^7.4.2
 
 dev_dependencies:
   flutter_test:
@@ -88,22 +90,36 @@ flutter:
   # For details regarding adding assets from package dependencies, see
   # https://flutter.dev/to/asset-from-package
 
-  # To add custom fonts to your application, add a fonts section here,
-  # in this "flutter" section. Each entry in this list should have a
-  # "family" key with the font family name, and a "fonts" key with a
-  # list giving the asset and other descriptors for the font. For
-  # example:
-  # fonts:
-  #   - family: Schyler
-  #     fonts:
-  #       - asset: fonts/Schyler-Regular.ttf
-  #       - asset: fonts/Schyler-Italic.ttf
-  #         style: italic
-  #   - family: Trajan Pro
-  #     fonts:
-  #       - asset: fonts/TrajanPro.ttf
-  #       - asset: fonts/TrajanPro_Bold.ttf
-  #         weight: 700
-  #
-  # For details regarding fonts from package dependencies,
-  # see https://flutter.dev/to/font-from-package
+  # Polices auto-hébergées du design system (ADR-0021 §3) — zéro
+  # requête réseau, provenance/licence OFL : assets/fonts/SOURCES.md.
+  # Polices variables (un seul fichier par famille) : plusieurs entrées
+  # "weight" vers le même asset, technique standard Flutter pour
+  # exposer les graisses d'une police variable à `TextStyle(fontWeight:)`
+  # sans recourir à `FontVariation` dans chaque site d'appel.
+  fonts:
+    - family: Space Grotesk
+      fonts:
+        - asset: assets/fonts/SpaceGrotesk/SpaceGrotesk-Variable.ttf
+          weight: 500
+        - asset: assets/fonts/SpaceGrotesk/SpaceGrotesk-Variable.ttf
+          weight: 600
+        - asset: assets/fonts/SpaceGrotesk/SpaceGrotesk-Variable.ttf
+          weight: 700
+    - family: Inter
+      fonts:
+        - asset: assets/fonts/Inter/Inter-Variable.ttf
+          weight: 400
+        - asset: assets/fonts/Inter/Inter-Variable.ttf
+          weight: 500
+        - asset: assets/fonts/Inter/Inter-Variable.ttf
+          weight: 600
+        - asset: assets/fonts/Inter/Inter-Variable.ttf
+          weight: 700
+    - family: JetBrains Mono
+      fonts:
+        - asset: assets/fonts/JetBrainsMono/JetBrainsMono-Variable.ttf
+          weight: 400
+        - asset: assets/fonts/JetBrainsMono/JetBrainsMono-Variable.ttf
+          weight: 500
+        - asset: assets/fonts/JetBrainsMono/JetBrainsMono-Variable.ttf
+          weight: 700

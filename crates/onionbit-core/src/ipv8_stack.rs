@@ -1569,6 +1569,12 @@ pub struct Ipv8Stack {
     /// racinee sur `identity_seed.bin` (phrase de recuperation
     /// disponible), `Legacy` = fichier seul d'avant ADR-0016.
     identity_kind: IdentityKind,
+    /// Graine d'identite gardee en memoire (`Some` si `kind ==
+    /// Seeded`, invite compris) — seule source fiable pour
+    /// `GET /api/identity/recovery_phrase` : le fichier
+    /// `identity_seed.bin` est absent en session invitee et scelle
+    /// `OBSK` quand `identity.at_rest` est actif.
+    identity_seed: Option<[u8; 32]>,
     /// Arret de la tache de maintenance DHT.
     dht_maintenance_stop: Option<tokio::sync::watch::Sender<bool>>,
     /// Moteurs anonymes par nombre de sauts (1..=3).
@@ -1689,6 +1695,9 @@ impl Ipv8Stack {
         // la session (`identity::load_or_generate`, `unlock_seed`,
         // invite ephemere) — le stack ne touche plus aux fichiers.
         let identity_kind = identity.kind;
+        // `store_root` EST la graine en mode `Seeded` (et invite) ;
+        // `None` en `Legacy` (la phrase n'existe pas par definition).
+        let identity_seed = (identity_kind == IdentityKind::Seeded).then_some(identity.store_root);
         // ADR-0017 : `stealth.enabled` × `ipv8.enabled` est refuse
         // fermement sur CHAQUE chemin de demarrage (ici +
         // `start_ipv8` + `Session::start`) — une combinaison
@@ -2509,6 +2518,7 @@ impl Ipv8Stack {
             stealth_link_mtu,
             key,
             identity_kind,
+            identity_seed,
             messaging,
             dht_maintenance_stop,
             anon_lanes: Mutex::new(HashMap::new()),
@@ -2551,6 +2561,14 @@ impl Ipv8Stack {
     /// `GET /api/identity/recovery_phrase`.
     pub fn identity_kind(&self) -> IdentityKind {
         self.identity_kind
+    }
+
+    /// Graine d'identite en memoire (`Some` en mode `Seeded`, invite
+    /// compris) — la revelation de la phrase de recuperation doit
+    /// passer par ici : le fichier `identity_seed.bin` est absent en
+    /// session invitee et scelle `OBSK` en at-rest.
+    pub fn recovery_seed(&self) -> Option<[u8; 32]> {
+        self.identity_seed
     }
 
     /// `session.overlays` : instantanes `OverlaySchema` de toutes les
