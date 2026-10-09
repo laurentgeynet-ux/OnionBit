@@ -301,6 +301,8 @@
   "identityExport": "Exporter la clé d'identité",
   "identityExportExplain": "La clé secrète sera copiée dans le presse-papiers. Définissez un mot de passe pour chiffrer l'export (recommandé) — ou laissez vide pour une clé hex brute.",
   "identityPasswordOptional": "Mot de passe (optionnel)",
+  "identityPasswordConfirm": "Confirmez le mot de passe",
+  "identityPasswordMismatch": "Les mots de passe ne correspondent pas",
   "identityExported": "Clé d'identité copiée dans le presse-papiers — conservez-la en lieu sûr",
   "identityImport": "Importer une clé d'identité",
   "identityImportExplain": "Collez une phrase de récupération de 24 mots ou une clé exportée (hex ou blob OBID). L'identité actuelle sera remplacée au prochain démarrage du daemon.",

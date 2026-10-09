@@ -419,6 +419,8 @@
   "identityExport": "Export identity key",
   "identityExportExplain": "The secret key will be copied to the clipboard. Set a password to encrypt the export (recommended) — or leave empty for a raw hex key.",
   "identityPasswordOptional": "Password (optional)",
+  "identityPasswordConfirm": "Confirm password",
+  "identityPasswordMismatch": "Passwords do not match",
   "identityExported": "Identity key copied to clipboard — keep it safe",
   "identityImport": "Import identity key",
   "identityImportExplain": "Paste a 24-word recovery phrase or an exported key (hex or OBID blob). This replaces the current identity after a daemon restart.",

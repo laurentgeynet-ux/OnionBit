@@ -3,6 +3,29 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## UI : mot de passe choisi en double saisie (confirmation) (2026-10-09, worktree adr21)
+
+- **`core/widgets/password_pair_field.dart`** (nouveau) : paire
+  « mot de passe + confirmation » masquée — la saisie cachée rendait
+  une coquille de casse indétectable avant le scellement `OBSK`.
+  Concordance vérifiée à chaque frappe : `onChanged` remonte le secret
+  (ou `null` tant que divergence → bouton de validation grisé) et le
+  champ de confirmation affiche « Passwords do not match / Les mots de
+  passe ne correspondent pas » (`identityPasswordConfirm`,
+  `identityPasswordMismatch` — EN/FR).
+- **`onboarding_wizard.dart`** : `_CreateStep` utilise la paire — la
+  création reste sans mot de passe si les deux champs sont vides, et
+  Entrée ne soumet que si les deux concordent.
+- **`identity_gate.dart` (`RemovableStorageBanner`)** et
+  **`identity_section.dart`** (`_setAtRest` scellement, `_export`
+  `OBID`) : mêmes dialogues de double saisie partout où un mot de
+  passe est *choisi*. Les dialogues qui en *demandent* un existant
+  (unlock, restauration, import, déscellement) gardent un champ
+  unique — la confirmation n'y aurait aucun sens.
+- **Tests** : divergence → bouton grisé + erreur + `create` non appelé ;
+  concordance → `identityCreate` reçoit le secret ; champs vides →
+  `password: null` préservé.
+
 ## UI : sélecteur de langue au premier écran du wizard (2026-10-09, worktree adr21)
 
 - **`onboarding_wizard.dart`** : `_ChoiceStep` devient `ConsumerWidget`

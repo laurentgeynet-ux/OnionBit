@@ -27,6 +27,7 @@ import '../api/sse_client.dart';
 import '../di/providers.dart';
 import '../l10n/l10n_ext.dart';
 import '../design/design_tokens.dart';
+import '../widgets/password_pair_field.dart';
 import 'onboarding_wizard.dart';
 
 /// Statut identitaire du daemon (ADR-0016). Pas de polling (timers
@@ -124,50 +125,51 @@ class _RemovableStorageBannerState
   bool _dismissed = false;
   bool _busy = false;
 
-  /// `identity.at_rest` exige un mot de passe (scellement `OBSK`).
+  /// `identity.at_rest` exige un mot de passe (scellement `OBSK`) —
+  /// choisi en double saisie : masqué, une coquille serait invisible.
   Future<void> _enableAtRest() async {
     final l10n = context.l10n;
-    final pw = TextEditingController();
+    String? password = '';
     final ok = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(l10n.identityAtRest),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(l10n.removableBannerBody),
-            const SizedBox(height: AppSpace.sm),
-            TextField(
-              controller: pw,
-              obscureText: true,
-              autofocus: true,
-              decoration: InputDecoration(
-                labelText: l10n.identityAtRestPasswordNew,
-                border: const OutlineInputBorder(),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSt) => AlertDialog(
+          title: Text(l10n.identityAtRest),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(l10n.removableBannerBody),
+              const SizedBox(height: AppSpace.sm),
+              PasswordPairField(
+                newLabel: l10n.identityAtRestPasswordNew,
+                onChanged: (p) => setSt(() => password = p),
+                onSubmitted: (p) => Navigator.pop(ctx, true),
               ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: Text(l10n.cancel),
+            ),
+            FilledButton(
+              onPressed: password == null
+                  ? null
+                  : () => Navigator.pop(ctx, true),
+              child: Text(l10n.apply),
             ),
           ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: Text(l10n.cancel),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: Text(l10n.apply),
-          ),
-        ],
       ),
     );
-    final password = pw.text;
-    pw.dispose();
-    if (ok != true || !mounted || password.isEmpty) return;
+    if (ok != true || !mounted || password == null || password!.isEmpty) {
+      return;
+    }
     setState(() => _busy = true);
     try {
       await ref
           .read(settingsRepositoryProvider)
-          .identitySetAtRest(enabled: true, password: password);
+          .identitySetAtRest(enabled: true, password: password!);
       ref.invalidate(daemonSettingsProvider);
       ref.invalidate(identityGateProvider);
       if (mounted) setState(() => _dismissed = true);

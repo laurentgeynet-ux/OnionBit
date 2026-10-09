@@ -8,6 +8,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/l10n/l10n_ext.dart';
 import '../../../../core/design/design_tokens.dart';
+import '../../../../core/widgets/password_pair_field.dart';
 import '../providers/settings_providers.dart';
 import 'settings_section.dart';
 
@@ -374,43 +375,56 @@ class IdentitySection extends ConsumerWidget {
     bool enabled,
   ) async {
     final l10n = context.l10n;
-    final pw = TextEditingController();
+    // Sceller = mot de passe *choisi* → double saisie (coquille
+    // invisible en masqué) ; désceller = mot de passe *existant* →
+    // champ unique, la confirmation n'y aurait aucun sens.
+    final current = enabled ? null : TextEditingController();
+    String? chosen = '';
     final ok = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(l10n.identityAtRest),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(l10n.identityAtRestSub),
-            const SizedBox(height: AppSpace.sm),
-            TextField(
-              controller: pw,
-              obscureText: true,
-              autofocus: true,
-              decoration: InputDecoration(
-                labelText: enabled
-                    ? l10n.identityAtRestPasswordNew
-                    : l10n.identityAtRestPasswordCurrent,
-                border: const OutlineInputBorder(),
-              ),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSt) => AlertDialog(
+          title: Text(l10n.identityAtRest),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(l10n.identityAtRestSub),
+              const SizedBox(height: AppSpace.sm),
+              if (enabled)
+                PasswordPairField(
+                  newLabel: l10n.identityAtRestPasswordNew,
+                  onChanged: (p) => setSt(() => chosen = p),
+                  onSubmitted: (p) => Navigator.pop(ctx, true),
+                )
+              else
+                TextField(
+                  controller: current,
+                  obscureText: true,
+                  autofocus: true,
+                  decoration: InputDecoration(
+                    labelText: l10n.identityAtRestPasswordCurrent,
+                    border: const OutlineInputBorder(),
+                  ),
+                ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: Text(l10n.cancel),
+            ),
+            FilledButton(
+              onPressed: enabled && chosen == null
+                  ? null
+                  : () => Navigator.pop(ctx, true),
+              child: Text(l10n.apply),
             ),
           ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: Text(l10n.cancel),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: Text(l10n.apply),
-          ),
-        ],
       ),
     );
-    final password = pw.text;
-    pw.dispose();
+    final password = enabled ? chosen ?? '' : current!.text;
+    current?.dispose();
     if (ok != true || !context.mounted || password.isEmpty) return;
     try {
       await ref
@@ -431,43 +445,46 @@ class IdentitySection extends ConsumerWidget {
   /// chiffré si renseigné) → copie hex dans le presse-papiers.
   Future<void> _export(BuildContext context, WidgetRef ref) async {
     final l10n = context.l10n;
-    final pw = TextEditingController();
+    // Mot de passe d'export *choisi* ici — double saisie : une coquille
+    // dans le secret masqué rendrait le blob `OBID` indéchiffrable.
+    String? password = '';
     final ok = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(l10n.identityExport),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(l10n.identityExportExplain),
-            const SizedBox(height: AppSpace.sm),
-            TextField(
-              controller: pw,
-              obscureText: true,
-              decoration: InputDecoration(
-                labelText: l10n.identityPasswordOptional,
-                border: const OutlineInputBorder(),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSt) => AlertDialog(
+          title: Text(l10n.identityExport),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(l10n.identityExportExplain),
+              const SizedBox(height: AppSpace.sm),
+              PasswordPairField(
+                newLabel: l10n.identityPasswordOptional,
+                onChanged: (p) => setSt(() => password = p),
+                onSubmitted: (p) => Navigator.pop(ctx, true),
               ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: Text(l10n.cancel),
+            ),
+            FilledButton(
+              onPressed: password == null
+                  ? null
+                  : () => Navigator.pop(ctx, true),
+              child: Text(l10n.identityExport),
             ),
           ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: Text(l10n.cancel),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: Text(l10n.identityExport),
-          ),
-        ],
       ),
     );
-    if (ok != true || !context.mounted) return;
+    if (ok != true || !context.mounted || password == null) return;
     try {
       final resp = await ref
           .read(settingsRepositoryProvider)
-          .identityExport(password: pw.text.isEmpty ? null : pw.text);
+          .identityExport(password: password!.isEmpty ? null : password);
       final key = resp['key'] as String? ?? '';
       await Clipboard.setData(ClipboardData(text: key));
       if (context.mounted) {
@@ -477,8 +494,6 @@ class IdentitySection extends ConsumerWidget {
       }
     } catch (e) {
       if (context.mounted) _error(context, e);
-    } finally {
-      pw.dispose();
     }
   }
 

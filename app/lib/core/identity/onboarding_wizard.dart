@@ -24,6 +24,7 @@ import '../../features/settings/presentation/providers/settings_providers.dart';
 import '../design/design_tokens.dart';
 import '../l10n/l10n_ext.dart';
 import '../l10n/locale_settings.dart';
+import '../widgets/password_pair_field.dart';
 
 /// Phrase BIP39 en attente de présentation après `identity/create`.
 /// Posée par le wizard, consommée par l'overlay de `app.dart` qui
@@ -307,13 +308,9 @@ class _CreateStep extends StatefulWidget {
 }
 
 class _CreateStepState extends State<_CreateStep> {
-  final _password = TextEditingController();
-
-  @override
-  void dispose() {
-    _password.dispose();
-    super.dispose();
-  }
+  /// `null` = divergence entre les deux champs (bouton grisé) ;
+  /// `''` = aucun mot de passe at-rest ; sinon le secret confirmé.
+  String? _password = '';
 
   @override
   Widget build(BuildContext context) {
@@ -335,23 +332,22 @@ class _CreateStepState extends State<_CreateStep> {
           textAlign: TextAlign.center,
         ),
         const SizedBox(height: AppSpace.lg),
-        TextField(
-          controller: _password,
+        // Double saisie : le champ masqué rend une coquille invisible —
+        // la confirmation l'élimine avant le scellement `OBSK`.
+        PasswordPairField(
+          newLabel: l10n.identityAtRestPasswordNew,
+          helperText: l10n.onboardCreatePasswordHint,
           enabled: !widget.busy,
-          obscureText: true,
-          decoration: InputDecoration(
-            labelText: l10n.identityAtRestPasswordNew,
-            helperText: l10n.onboardCreatePasswordHint,
-            prefixIcon: const Icon(Icons.lock_outline, size: 18),
-            border: const OutlineInputBorder(),
-          ),
-          onSubmitted: (_) => widget.onCreate(_password.text),
+          onChanged: (p) => setState(() => _password = p),
+          onSubmitted: widget.busy
+              ? null
+              : (p) => widget.onCreate(p),
         ),
         const SizedBox(height: AppSpace.md),
         FilledButton.icon(
-          onPressed: widget.busy
+          onPressed: widget.busy || _password == null
               ? null
-              : () => widget.onCreate(_password.text),
+              : () => widget.onCreate(_password ?? ''),
           icon: const Icon(Icons.fingerprint, size: 18),
           label: Text(l10n.onboardCreateGo),
         ),
