@@ -16,6 +16,15 @@ en haut.
   trois jobs packaging Windows échouaient au `smoke daemon` (fichier
   introuvable). Workflow aligné : smoke `./dist/OnionBit/windows/`,
   artefact x64 `dist/OnionBit/`, zip arm64 sur la racine portable.
+- **Relance des pairs `Dead`** (patch vendored librqbit) :
+  `add_peer_if_not_seen` relevait `None` sur pair déjà connu, y
+  compris `Dead` — un seeder dont le premier dial uTP s'était perdu
+  n'était retenté qu'au rythme du backoff exponentiel (10 s → 1 h),
+  ce qui figeait les transferts anonymes sous charge CI. La
+  ré-injection fait désormais `Dead → Queued` + refile immédiat
+  (sémantique `readd_bittorrent_peers` Tribler) ; le waiter de
+  backoff saute de lui-même. `live_bench` attend les transferts via
+  `wait_transfer` (ré-injection périodique du seeder).
 
 ## ADR-0019 étape 69 : validation + retours MG-13 (2026-10-09)
 

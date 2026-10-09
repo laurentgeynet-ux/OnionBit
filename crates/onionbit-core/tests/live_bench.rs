@@ -32,6 +32,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use onionbit_bittorrent::config::EngineConfig;
+use onionbit_bittorrent::download::Download;
 use onionbit_bittorrent::engine::BtEngine;
 use onionbit_core::{CoreConfig, CoreSession, Ipv8Stack, Notifier};
 use onionbit_crypto::hash::ipv8_mid;
@@ -143,6 +144,27 @@ async fn wait_until(wait: Duration, mut f: impl FnMut() -> bool) -> bool {
         tokio::time::sleep(POLL).await;
     }
     f()
+}
+
+/// `wait_completed` borne a `TRANSFER_WAIT` avec re-injection
+/// periodique du seeder : hors ligne (ni DHT ni trackers pour
+/// re-annoncer), un premier dial uTP perdu n'etait retente qu'au
+/// rythme du backoff interne (10 s -> 1 h) — sous charge CI le seul
+/// pair du swarm mourait et le transfert se figeait jusqu'au
+/// timeout. `add_peer` refile immediatement un pair `Dead` (patch
+/// vendored `add_peer_if_not_seen`).
+async fn wait_transfer(dl: &Download, seed: SocketAddr) -> bool {
+    let deadline = Instant::now() + TRANSFER_WAIT;
+    while Instant::now() < deadline {
+        if dl.stats().finished {
+            return true;
+        }
+        dl.add_peer(seed);
+        if let Ok(done) = tokio::time::timeout(Duration::from_secs(2), dl.wait_completed()).await {
+            return done.is_ok();
+        }
+    }
+    dl.stats().finished
 }
 
 /// Instantane des circuits `DATA READY` de `hops` sauts.
@@ -424,10 +446,10 @@ async fn live_torrent_clair() {
         )
         .await
         .expect("add hops=0");
-    tokio::time::timeout(TRANSFER_WAIT, dl.wait_completed())
-        .await
-        .expect("transfert clair en timeout")
-        .expect("wait_completed");
+    assert!(
+        wait_transfer(&dl, bench.seed_addr).await,
+        "transfert clair en timeout"
+    );
     assert_eq!(
         bench.session.owner_engine_hops(&bench.infohash_hex),
         Some(0)
@@ -459,10 +481,10 @@ async fn live_torrent_hops_1_2_3() {
             )
             .await
             .unwrap_or_else(|e| panic!("add hops={hops}: {e}"));
-        tokio::time::timeout(TRANSFER_WAIT, dl.wait_completed())
-            .await
-            .unwrap_or_else(|_| panic!("transfert hops={hops} en timeout"))
-            .expect("wait_completed");
+        assert!(
+            wait_transfer(&dl, bench.seed_addr).await,
+            "transfert hops={hops} en timeout"
+        );
         eprintln!(
             "live hops={hops}: transfert en {:?}, route={:?}, octets circuit +{}",
             t0.elapsed(),
@@ -512,10 +534,10 @@ async fn live_magnet_hops_2() {
     .await
     .expect("add magnet hops=2 en timeout")
     .expect("add magnet hops=2");
-    tokio::time::timeout(TRANSFER_WAIT, dl.wait_completed())
-        .await
-        .expect("transfert magnet en timeout")
-        .expect("wait_completed");
+    assert!(
+        wait_transfer(&dl, bench.seed_addr).await,
+        "transfert magnet en timeout"
+    );
     eprintln!(
         "live magnet hops=2: route={:?}, octets circuit +{}",
         route,
@@ -575,10 +597,10 @@ async fn live_magnet_patch_lane_pendant_resolution() {
         .expect("add_task en timeout")
         .expect("join")
         .expect("resolution magnet");
-    tokio::time::timeout(TRANSFER_WAIT, dl.wait_completed())
-        .await
-        .expect("transfert en timeout")
-        .expect("wait_completed");
+    assert!(
+        wait_transfer(&dl, bench.seed_addr).await,
+        "transfert en timeout"
+    );
     eprintln!(
         "live magnet PATCH 3->2: route={:?}, octets circuit +{}",
         route,
@@ -672,10 +694,10 @@ async fn live_update_hops_en_transfert() {
         s.live && s.peers_seen > 0,
         "download migre pas live / pair non injecte: {s:?}"
     );
-    tokio::time::timeout(TRANSFER_WAIT, dl3.wait_completed())
-        .await
-        .expect("transfert lane 3 en timeout")
-        .expect("wait_completed");
+    assert!(
+        wait_transfer(&dl3, bench.seed_addr).await,
+        "transfert lane 3 en timeout"
+    );
     drop(dl);
     eprintln!(
         "live migration 1->3: octets circuit x3 +{}",
@@ -725,10 +747,10 @@ async fn live_pause_resume_tunnel() {
         .resume(&bench.infohash_hex)
         .await
         .expect("resume");
-    tokio::time::timeout(TRANSFER_WAIT, dl.wait_completed())
-        .await
-        .expect("transfert post-resume en timeout")
-        .expect("wait_completed");
+    assert!(
+        wait_transfer(&dl, bench.seed_addr).await,
+        "transfert post-resume en timeout"
+    );
     assert_lane_transfer(&bench, 1, 0).await;
     stop_bounded(&bench.session).await;
 }
@@ -779,10 +801,10 @@ async fn live_doublon_refuse_en_transfert() {
         .filter(|d| d.info_hash == bench.infohash_hex)
         .count();
     assert_eq!(visible, 1, "doublon visible dans la liste");
-    tokio::time::timeout(TRANSFER_WAIT, dl.wait_completed())
-        .await
-        .expect("transfert en timeout")
-        .expect("wait_completed");
+    assert!(
+        wait_transfer(&dl, bench.seed_addr).await,
+        "transfert en timeout"
+    );
     assert_eq!(dl.info_hash(), dup.info_hash(), "meme download retourne");
     stop_bounded(&bench.session).await;
 }
@@ -1927,10 +1949,10 @@ fn live_crash_pending_magnet_et_restart() {
             .add_download_anon_with_peers(&uri, false, 0, false, None, vec![fleet.seed_addr])
             .await
             .expect("re-add magnet post-crash");
-        tokio::time::timeout(TRANSFER_WAIT, dl.wait_completed())
-            .await
-            .expect("resolution/transfert post-crash en timeout")
-            .expect("wait_completed");
+        assert!(
+            wait_transfer(&dl, fleet.seed_addr).await,
+            "resolution/transfert post-crash en timeout"
+        );
         // Integrite des 3 contenus.
         for t in &fleet.torrents {
             assert!(
