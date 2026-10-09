@@ -3,6 +3,17 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Docs : nouvelles captures v1.0.0 + correctif badge anonymat (2026-10-09, worktree adr21)
+
+- **`assets/screenshots/`** : captures réelles de la nouvelle UI —
+  téléchargements sombre EN (badges « Anon +N » live), diagnostic
+  (circuits/relais/exits), recherche (306 résultats, badge confiance),
+  messagerie, réglages, mode clair FR ; `fr/screenshot-downloads` et
+  `screenshot-dark` régénérés. Table README étendue à 6 captures.
+- **`download_status.dart`** : badge `Clear`/`Anon` borné à 76 px +
+  `TextOverflow.ellipsis` — dans la cellule de 88 px, « Clear » était
+  rogné au milieu d'un glyphe (« Cleui »).
+
 ## Release : version 1.0.0 (2026-10-09, worktree adr21)
 
 - **Version workspace `0.9.4-beta` → `1.0.0`** (`Cargo.toml`,

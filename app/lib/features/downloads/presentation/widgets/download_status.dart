@@ -117,6 +117,9 @@ class AnonBadge extends StatelessWidget {
           ? l10n.trafficDirect
           : l10n.anonTip(hops, waiting ? l10n.waitingCircuit : ''),
       child: Container(
+        // La cellule _RowBadges impose ~88 px : borner le badge sinon le
+        // texte est rogne au milieu d'un glyphe (« Clear » -> « Cleui »).
+        constraints: const BoxConstraints(maxWidth: 76),
         padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
         decoration: BoxDecoration(
           border: Border.all(color: !anon ? scheme.error : color),
@@ -138,9 +141,13 @@ class AnonBadge extends StatelessWidget {
               color: color,
             ),
             const SizedBox(width: 3),
-            Text(
-              !anon ? l10n.badgeClear : l10n.badgeAnon(hops),
-              style: TextStyle(fontSize: 10, color: color),
+            Flexible(
+              child: Text(
+                !anon ? l10n.badgeClear : l10n.badgeAnon(hops),
+                style: TextStyle(fontSize: 10, color: color),
+                overflow: TextOverflow.ellipsis,
+                softWrap: false,
+              ),
             ),
           ],
         ),

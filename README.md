@@ -315,15 +315,20 @@ Tribler 8.x network.*
 
 ## Screenshots
 
-| Downloads — multi-hop anonymity badges | Diagnostics — live circuits & relays |
+| Downloads — anonymous swarms, per-torrent hop badges | Diagnostics — live circuits, relays & exits |
 | :---: | :---: |
 | ![Downloads](assets/screenshots/screenshot-downloads.png) | ![Diagnostics](assets/screenshots/screenshot-diagnostic.png) |
 
-| Decentralized search | Settings & dark mode |
+| Decentralized search — trust badges, seed filters | Messaging — serverless e2e conversations |
 | :---: | :---: |
-| ![Search](assets/screenshots/screenshot-search.png) | ![Dark mode](assets/screenshots/screenshot-dark.png) |
+| ![Search](assets/screenshots/screenshot-search.png) | ![Messaging](assets/screenshots/screenshot-messaging.png) |
 
-*UI in English and French (System / English / Français in Settings → Appearance).*
+| Settings — categories, accents, free space | Light mode & French UI |
+| :---: | :---: |
+| ![Settings](assets/screenshots/screenshot-settings.png) | ![Light + FR](assets/screenshots/screenshot-light-fr.png) |
+
+*Real captures of v1.0.0 — adaptive shell, dark/light themes, English and
+French (System / English / Français in Settings → Appearance).*
 
 ## Architecture
 
