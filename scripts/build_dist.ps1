@@ -182,17 +182,15 @@ try {
     # (state resolu par le marqueur portable) puis ouvre l'URL dans le
     # navigateur par defaut. Un .cmd affichait une fenetre de console ;
     # un .lnk n'en ouvre aucune (binaire en sous-systeme GUI).
-    # Icone : le .ico embarque dans l'exe est aussi copie a cote
-    # — un raccourci pointe plus fiablement un .ico qu'un index de
-    # ressource d'exe.
-    Copy-Item (Join-Path $root "crates\onionbit-daemon\resources\onionbit.ico") `
-        -Destination (Join-Path $osDir "onionbit.ico") -Force
+    # Icone : la ressource embarquee de l'exe (`onionbit.ico` compilee
+    # via resources.rc) — PAS de .ico lache a cote : sans extension
+    # visible il se confondait avec l'application dans l'Explorateur.
     $wsh = New-Object -ComObject WScript.Shell
     $lnk = $wsh.CreateShortcut((Join-Path $osDir "OnionBit Web.lnk"))
     $lnk.TargetPath = Join-Path $osDir "onionbit-daemon.exe"
     $lnk.Arguments = "--open-webui"
     $lnk.WorkingDirectory = $osDir
-    $lnk.IconLocation = "$(Join-Path $osDir 'onionbit.ico'),0"
+    $lnk.IconLocation = "$(Join-Path $osDir 'onionbit-daemon.exe'),0"
     $lnk.Description = "Interface web OnionBit"
     $lnk.Save()
 
@@ -203,10 +201,12 @@ try {
     # `onionbit_ui` (renomme OnionBit) et le lanceur .cmd/.ps1 remplace
     # par le raccourci .lnk --open-webui. Idem pour le layout plat
     # pre-ADR-0018 : binaires/dlls/web/ a la racine de `dist\`.
+    # `onionbit.ico` lache a cote des exe (ere du .lnk) : supprime —
+    # sans extension visible il se confondait avec l'application.
     foreach ($f in @("demarrer.cmd", "demarrer.ps1", "arreter.cmd", "arreter.ps1",
                      "tribler-daemon.exe", "tribler-cli.exe", "tribler_ui.exe",
                      "tribler_ui.pdb", "onionbit_ui.exe", "onionbit_ui.pdb",
-                     "OnionBit Web.cmd", "web-launch.ps1")) {
+                     "OnionBit Web.cmd", "web-launch.ps1", "onionbit.ico")) {
         Remove-Item (Join-Path $osDir $f) -Force -ErrorAction SilentlyContinue
         Remove-Item (Join-Path $dist $f) -Force -ErrorAction SilentlyContinue
     }

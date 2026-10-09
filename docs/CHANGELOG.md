@@ -3,6 +3,17 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Correctif : bundle Windows — `onionbit.ico` confondu avec l'application (2026-10-09, worktree adr21)
+
+- **`build_dist.ps1`** : le `.ico` lâche copié à côté des exécutables
+  pour `IconLocation` du raccourci « OnionBit Web » s'affichait comme
+  une application « onionbit » dans l'Explorateur (extensions masquées
+  par défaut) — cliquable mais inerte. Le raccourci pointe désormais
+  l'icône **embarquée** de `onionbit-daemon.exe` (`IconLocation =
+  …\onionbit-daemon.exe,0` — la ressource `resources.rc` est compilée
+  dans l'exe depuis toujours) ; le fichier lâche n'est plus copié et
+  est purgé des builds existants (liste de nettoyage).
+
 ## Correctif : phrase de récupération en session invitée / at-rest (2026-10-09, worktree adr21)
 
 - **`GET /api/identity/recovery_phrase` servi depuis la mémoire** :
