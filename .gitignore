@@ -31,3 +31,5 @@ docs/plans/*
 *.keystore
 keystore.b64
 key.properties
+.env
+.env.*
