@@ -49,3 +49,6 @@ lib/l10n/app_localizations*.dart
 
 # Widget Preview related
 .widget_preview/
+
+# Artefacts de comparaison des goldens en echec (`flutter test`)
+test/**/failures/
