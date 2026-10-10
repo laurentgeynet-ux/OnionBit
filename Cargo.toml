@@ -27,7 +27,7 @@ exclude = [
     "vendor/librqbit-utp",
 ]
 [workspace.package]
-version = "1.0.0"
+version = "1.1.0"
 edition = "2021"
 license = "GPL-3.0-or-later"
 authors = ["Laurent Geynet (Loulach) <laurent.geynet@gmail.com>"]
@@ -120,13 +120,16 @@ librqbit-utp = "0.7"
 librqbit-upnp = "9.0.1"
 network-interface = "2"
 
-# Port Rust de la couche disque de libtorrent (`D:\Projet\LibtorrentRust`)
-# — consomme par l'adaptateur `storage_bitdaemon` qui remplace le stockage
-# fichier de rqbit par `file_pool` (LRU + ouverture paresseuse) +
-# `part_file` (fichiers non selectionnes) + E/S positionnees.
-bitdaemon-common = { path = "../LibtorrentRust/crates/bitdaemon-common" }
-bitdaemon-core = { path = "../LibtorrentRust/crates/bitdaemon-core" }
-bitdaemon-disk = { path = "../LibtorrentRust/crates/bitdaemon-disk" }
+# Port Rust de libtorrent — depot officiel
+# https://github.com/laurentgeynet-ux/BitDeamonRust.git
+# Dependances `git` epinglees par `rev` : reproductible en CI (les
+# `path = ../LibtorrentRust` de co-developpement n'existent pas sur
+# les runners). L'adaptateur `storage_bitdaemon` consomme
+# `file_pool`/`pread_storage`/`part_file`. Pour iterer en local sans
+# cycle push/pin, utiliser `[patch]` ou un checkout a cote.
+bitdaemon-common = { git = "https://github.com/laurentgeynet-ux/BitDeamonRust.git", rev = "3174024f696535d07bb85dd696e579b71b9744a0" }
+bitdaemon-core = { git = "https://github.com/laurentgeynet-ux/BitDeamonRust.git", rev = "3174024f696535d07bb85dd696e579b71b9744a0" }
+bitdaemon-disk = { git = "https://github.com/laurentgeynet-ux/BitDeamonRust.git", rev = "3174024f696535d07bb85dd696e579b71b9744a0" }
 
 # Copie vendored + patchee de librqbit 9.0.1 : les tunnels anonymes
 # Tribler n'ont pas de relais TCP generique — le trafic pair anonyme doit

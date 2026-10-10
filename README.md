@@ -12,7 +12,7 @@ identity — all over multi-hop onion circuits.**
 [![UI: Flutter](https://img.shields.io/badge/UI-Flutter-02569B.svg)](https://flutter.dev/)
 [![CI](https://github.com/laurentgeynet-ux/OnionBit/actions/workflows/ci.yml/badge.svg)](https://github.com/laurentgeynet-ux/OnionBit/actions/workflows/ci.yml)
 [![Interop: Tribler 8.x](https://img.shields.io/badge/Interop-Tribler%208.x-blueviolet.svg)](docs/interop/README.md)
-[![Version](https://img.shields.io/badge/Version-1.0.0-brightgreen.svg)](https://github.com/laurentgeynet-ux/OnionBit/releases)
+[![Version](https://img.shields.io/badge/Version-1.1.0-brightgreen.svg)](https://github.com/laurentgeynet-ux/OnionBit/releases)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%C2%B7%20Linux%20%C2%B7%20macOS%20%C2%B7%20Android%20%C2%B7%20iOS%20%C2%B7%20Web-lightgrey.svg)]()
 
 [Features](#the-fabric--one-shared-onion-network) ·
@@ -321,7 +321,7 @@ signals, and the mode is only as strong as the stealth network it joins.
 
 ## Honest limits
 
-> **Status: stable — v1.0.0.** The engine is validated against the real
+> **Status: stable — v1.1.0.** The engine is validated against the real
 > Tribler network (Tribler 8.x interop testbench) — including fail-closed
 > transport under injected failures (see `docs/P0-transport-manifest.md`).
 > That said, no anonymity tool has had an independent audit here yet:
@@ -500,7 +500,7 @@ See [SECURITY.md](SECURITY.md) for reporting and the threat model.
   self-hosted fonts, design system with golden tests
 - ✅ Web UI served by the daemon (same-origin)
 - ✅ In-app update check (GitHub releases probe)
-- ✅ Latest release: [`v1.0.0`](https://github.com/laurentgeynet-ux/OnionBit/releases)
+- ✅ Latest release: [`v1.1.0`](https://github.com/laurentgeynet-ux/OnionBit/releases)
 - ✅ Windows portable bundle — three root launchers (UI / web / daemon)
 - ✅ Linux `.deb` — menu entries, icons, `systemd --user` unit, XDG state dir (+ portable tar.gz)
 - ✅ Windows ARM64 package (headless)

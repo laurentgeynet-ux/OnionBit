@@ -3,6 +3,18 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Release : version 1.1.0 (2026-10-10)
+
+- **Version workspace `1.0.0` → `1.1.0`** (`Cargo.toml`, `app/pubspec.yaml`
+  `1.1.0+1`, `Cargo.lock` régénéré) ; README badge/statut/lien release
+  alignés. Le tag `v1.1.0` déclenche le job `publish` de `ci.yml`
+  (release GitHub « Latest » avec les artefacts de package).
+- **Dépendances `bitdaemon-*` basculées de `path` → `git` épinglé**
+  (`rev 3174024f`, dépôt `BitDeamonRust`) : les `path = ../LibtorrentRust`
+  de co-développement n'existent pas sur les runners CI — le pin par
+  commit rend le build reproductible. Itération locale : `[patch]` ou
+  checkout à côté.
+
 ## Stockage par defaut : adaptateur `bitdaemon-disk` (port libtorrent) (2026-10-10)
 
 Greffe du port Rust de la couche disque de libtorrent
