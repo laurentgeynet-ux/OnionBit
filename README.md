@@ -57,7 +57,7 @@ this table is reproducible:
 | **9/9 fingerprinting oracles PASS** — two real stealth daemons measured through a UDP tap: probing silence, amplification 0, zero static marker | [docs/security/fingerprinting.md](docs/security/fingerprinting.md) |
 | Kill switch verified at the **OS packet level** — 4 injected-failure scenarios, zero forbidden traffic | [docs/P0-transport-manifest.md](docs/P0-transport-manifest.md) |
 | Fuzzing campaign journal — what broke, how it was fixed | [docs/security/fuzz_journal.md](docs/security/fuzz_journal.md) |
-| **21 Architecture Decision Records** — every non-obvious choice is written down, in the open | [docs/architecture/decisions](docs/architecture/decisions/) |
+| **23 Architecture Decision Records** — every non-obvious choice is written down, in the open | [docs/architecture/decisions](docs/architecture/decisions/) |
 | Threat model written *before* the features, kept honest | [docs/THREAT-MODEL.md](docs/THREAT-MODEL.md) |
 
 ## The fabric — one shared onion network
@@ -278,6 +278,46 @@ signal, blanket UDP throttling breaks the transport, and distributing the
 first bridge link remains a social problem — see
 [ADR-0017](docs/architecture/decisions/0017-transport-furtif-anti-censure.md)
 and [docs/security/fingerprinting.md](docs/security/fingerprinting.md).
+
+### 🎚️ Privacy profiles — one switch, three postures ([ADR-0022](docs/architecture/decisions/0022-profils-anonymat.md))
+
+Your anonymity posture is not one setting — it is a combination of ~20
+keys scattered across `configuration.json`. So OnionBit materializes it as
+a **three-position switch** in the sidebar (and inside the Privacy HUD on
+compact layouts): one control, the whole regime.
+
+| Profile | Posture |
+| :--- | :--- |
+| **Compatible** (`legacy`) | Today's defaults — interop with the Tribler 8.x network: cleartext IPv8 mesh, anonymous downloads at 1 hop, e2e messaging, guard nodes, OnionBit extension community on the wire (peers recognize each other), measured-not-enforced ledger, public download zone |
+| **Full anonymous** (`full`) | **OnionBit↔OnionBit only** — the stealth transport replaces the whole legacy wire: morphed traffic with zero static marker, cover traffic, 3 hops on downloads *and* messaging, encrypted private storage zone by default (ADR-0018), enforced contribution ledger. Tribler interop is sacrificed by design |
+| **Custom** (`custom`) | Free combination, edited key-by-key in Settings — also displayed automatically the moment one covered key diverges from the stored preset |
+
+- 🌐 **Full anonymous depends on the deployed OnionBit network.** It is
+  only as real as the stealth fleet it joins: a stealth `client` cannot
+  reach anything without at least one `bridge`, and only `gateway` nodes
+  offer an exit toward the public BitTorrent swarm. No deployed
+  bridges/gateways → an empty enclave, however strong the transport.
+  That's a hard prerequisite, not a warning: switching to `full` without
+  a `onionbit-bridge://` link is **refused** (`409 missing_prerequisites`)
+  and the UI offers to paste an invitation inline instead.
+- 🧾 **A preset is materialized, not layered** — picking a profile rewrites
+  the covered keys atomically through the same merge path as
+  `POST /api/settings` (all-or-nothing, validated). The displayed profile
+  is *derived*: edit a covered key and the badge honestly falls back to
+  « Custom », listing the diverged keys.
+- 🔁 **A wire regime needs a restart** — `legacy ↔ full` flips
+  `ipv8.enabled × stealth.enabled` together (the hybrid is refused on
+  every path, not just at boot); `restart_required` triggers the one-click
+  restart flow on local daemons, manual guidance on remote ones.
+- 🚫 **Never touched by a preset** — `stealth.bridges`, `identity.at_rest`
+  (recommended via the UI, never forced — sealing needs its own password
+  flow, ADR-0016), ports, API keys, and the hop counts of downloads
+  already running. Guest sessions see the switch read-only: a guest
+  writes nothing into your real `configuration.json`.
+
+Honest wording, as always: « Full anonymous » means *OnionBit-only,
+unclassifiable wire traffic* — volume and timing remain observable
+signals, and the mode is only as strong as the stealth network it joins.
 
 ## Honest limits
 
