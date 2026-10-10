@@ -117,6 +117,13 @@ pub(crate) struct ManagedTorrentOptions {
     pub ratelimits: LimitsConfig,
     pub initial_peers: Vec<SocketAddr>,
     pub peer_limit: Option<usize>,
+    // Tribler : la selection `only_files` est connue avant la creation
+    // du storage (create_and_init) — on la duplique ici pour que les
+    // StorageFactory externes puissent l'utiliser (priorites par
+    // fichier, part-file). Upstream n'expose pas la selection au
+    // storage ; les ecritures des fichiers non selectionnes sont alors
+    // redirigees vers le part-file au lieu de creer le fichier.
+    pub(crate) only_files: Option<Vec<usize>>,
     #[cfg(feature = "disable-upload")]
     pub _disable_upload: bool,
 }
@@ -199,6 +206,20 @@ pub struct ManagedTorrentShared {
 impl ManagedTorrentShared {
     pub(crate) fn client_name_and_version(&self) -> &str {
         &self.client_name_and_version
+    }
+
+    // Tribler : accesseurs publics pour les StorageFactory definies
+    // hors du crate (l'adaptateur bitdaemon-disk cote OnionBit).
+    pub fn output_folder(&self) -> &Path {
+        &self.options.output_folder
+    }
+
+    pub fn allow_overwrite(&self) -> bool {
+        self.options.allow_overwrite
+    }
+
+    pub fn only_files(&self) -> Option<&[usize]> {
+        self.options.only_files.as_deref()
     }
 }
 

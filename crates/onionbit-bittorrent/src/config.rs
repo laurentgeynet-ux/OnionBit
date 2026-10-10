@@ -396,10 +396,17 @@ impl EngineConfig {
             },
             peer_limit: self.peer_limit,
             concurrent_init_limit: self.concurrent_init_limit,
-            default_storage_factory: (self.allow_mmap && !self.utp_only).then(|| {
+            default_storage_factory: if self.allow_mmap && !self.utp_only {
+                // `allow_mmap` reste un opt-in banc/mesure : le
+                // FilesystemStorage mmap compare l'impact memoire.
                 use librqbit::storage::StorageFactoryExt;
-                librqbit::storage::examples::mmap::MmapFilesystemStorageFactory {}.boxed()
-            }),
+                Some(librqbit::storage::examples::mmap::MmapFilesystemStorageFactory {}.boxed())
+            } else {
+                // Defaut : stockage `bitdaemon-disk` (port libtorrent)
+                // — FilePool LRU + ouverture paresseuse + PartFile.
+                use librqbit::storage::StorageFactoryExt;
+                Some(crate::storage_bitdaemon::BitdaemonStorageFactory::default().boxed())
+            },
             client_name_and_version: Some(CLIENT_NAME.to_string()),
             listen: if let Some(acceptor) = self.utp_listen_socket.clone() {
                 // Lane anonyme : ecoute uTP sur le transport tunnelse

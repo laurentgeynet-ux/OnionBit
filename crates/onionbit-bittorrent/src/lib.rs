@@ -27,6 +27,7 @@ pub mod download;
 pub mod engine;
 pub mod error;
 pub mod natpmp;
+pub mod storage_bitdaemon;
 pub mod storage_private;
 pub mod upnp;
 

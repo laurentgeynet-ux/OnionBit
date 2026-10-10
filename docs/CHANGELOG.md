@@ -3,6 +3,43 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Stockage par defaut : adaptateur `bitdaemon-disk` (port libtorrent) (2026-10-10)
+
+Greffe du port Rust de la couche disque de libtorrent
+(`D:\Projet\LibtorrentRust`, crates `bitdaemon-{common,core,disk}`) comme
+`default_storage_factory` de la session — a la place du
+`FilesystemStorage` de rqbit — via le nouveau module
+`onionbit-bittorrent::storage_bitdaemon` :
+
+- **`FilePool` LRU** (`file_pool_impl` upstream) : handles partages par
+  cle `(storage_index, file_index)`, eviction du moins recemment utilise,
+  waiters dedup — fin des handles ouverts a vie et des re-init couteux.
+- **`PartFile`** (`part_file.cpp`) : les fichiers `dont_download`
+  (selection `only_files`) absents du disque recoivent les donnees des
+  pieces a cheval dans `.{infohash}.parts` au lieu de materialiser le
+  fichier — header byte-compatible libtorrent, slots reutilises,
+  metadatas flushees a `on_piece_completed`.
+- **`pread`/`pwritev` positionnes** via `bitdaemon_disk::file` —
+  coherents avec le staging par piece entiere.
+- **Ouverture paresseuse conservee** : `init` ne touche rien (erreur
+  differee au premier acces, parite `FilesystemStorage` OnionBit) ; les
+  dossiers parents sont crees au premier write ; `ensure_file_length`
+  enregistre une longueur appliquee a l'ouverture.
+- **Sparse Windows** : `mark_file_sparse` (FSCTL_SET_SPARSE, vendored)
+  rappele apres chaque open en ecriture — `bitdaemon` declare
+  `OpenMode::SPARSE` mais ne l'applique pas encore dans
+  `FileHandle::open` (ecart du port, a combler cote LibtorrentRust).
+- `allow_mmap` conserve son role d'opt-in banc (mmap) ; la lane privee
+  garde `PrivateStorageFactory` (override par-add).
+
+Patches vendored minimaux : `ManagedTorrentOptions::only_files` duplique
+a la creation (upstream ne l'expose pas au storage) + accesseurs
+`output_folder`/`allow_overwrite`/`only_files` sur
+`ManagedTorrentShared` + export `mark_file_sparse`.
+
+Validation : lifecycle 15/15 (exerce la session reelle, donc la
+factory par defaut), workspace check/clippy/fmt propres.
+
 ## Base SQLite hors executor + batching des ecritures chaudes (2026-10-10)
 
 Diagnostic : sous pression disque, chaque `db.with()` synchrone appelé

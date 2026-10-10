@@ -35,6 +35,12 @@ futures-util.workspace = true
 # `TorrentStorage`/`BitVFactory` implementes par la zone privee.
 anyhow = "1"
 async-trait = "0.1"
+# Adaptateur de stockage `bitdaemon-disk` (port libtorrent) :
+# `FilePool` LRU + ouverture paresseuse + `PartFile` pour les fichiers
+# non selectionnes (`storage_bitdaemon.rs`).
+bitdaemon-common.workspace = true
+bitdaemon-core.workspace = true
+bitdaemon-disk.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
