@@ -3,6 +3,26 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Étape 97 : abonnement et synchronisation des canaux (ADR-0025 §2) (2026-10-10)
+
+Les canaux deviennent suivis et curés : migration v23
+`channel_node.subscribed` (placeholder racine `CHANNEL_NODE`
+créé à l'abonnement d'un canal inconnu), tâche `channel_sync`
+round-robin — un select `{channel_pk, origin_id,
+metadata_type:[400]}` par fenêtre de 5 min vers un pair
+aléatoire de l'overlay — et chemin d'ingestion **persistant**
+dans `process_select_response` : signature Ed25519 vérifiée
+**et** `public_key == channel_pk` (anti-poisoning),
+`DELETED` (500) traité en pierre tombale par
+`delete_signature` et exclu des recherches (`build_where`),
+plafond `channel_max_entries=5000` avec purge FIFO qui préserve
+tombes et racine. Le chemin éphémère recherche reste
+mémoire-seule (leçon des ~26k lignes). API :
+`GET /api/channels`, `GET /api/channels/{pk}/{id}`,
+`PUT|DELETE /api/channels/{pk}/{id}/subscribe` — `copy` reporté
+à l'étape 98 (exige le canal personnel). Tests verts : 3 db +
+2 core (anti-poisoning, tombale).
+
 ## Étape 96 : budget anti-DoS des selects entrants (ADR-0025 §4) (2026-10-10)
 
 La surface DoS du select entrant existait déjà — ce chantier

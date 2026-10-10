@@ -211,6 +211,13 @@ fn api_router(state: AppState) -> Router<AppState> {
         .route("/metadata/search/vocabulary", get(metadata::vocabulary))
         // -- Recherche distante (search_endpoint.py) --------------------
         .route("/search/remote", put(search::remote_search))
+        // -- Canaux suivis (channels_endpoint.py — ADR-0025 etape 97) ---
+        .route("/channels", get(channels::list_channels))
+        .route("/channels/{pk}/{id}", get(channels::channel_contents))
+        .route(
+            "/channels/{pk}/{id}/subscribe",
+            put(channels::subscribe).delete(channels::unsubscribe),
+        )
         // -- Info torrent / creation ------------------------------------
         .route("/torrentinfo/uri", post(torrentinfo::get_torrent_info))
         .route(

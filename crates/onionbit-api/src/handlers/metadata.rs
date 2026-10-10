@@ -19,7 +19,7 @@ const LIST_LIMIT: u32 = 200;
 
 /// Ligne `channel_node` -> objet `torrent` de la reponse Python
 /// (`TorrentMetadata.to_json`-equivalent), avec la liste de trackers connus.
-fn row_json_with_trackers(
+pub(crate) fn row_json_with_trackers(
     row: &onionbit_db::ChannelNodeRow,
     mut trackers: Vec<String>,
 ) -> serde_json::Value {

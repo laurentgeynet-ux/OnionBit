@@ -193,6 +193,14 @@ pub struct Ipv8Config {
     /// n'apporte rien et chaque requete SQL bloque la connexion
     /// partagee (mesure : jusqu'a 24 s d'attente mutex sous charge).
     pub content_healths_cache_secs: u64,
+    /// ADR-0025 §2 : intervalle entre deux selects de sync d'un
+    /// canal suivi (s — round-robin : un canal par fenetre, jamais
+    /// tous en rafale).
+    pub channel_sync_interval_secs: u64,
+    /// ADR-0025 §2 : plafond d'entrees persistees par canal suivi
+    /// (purge FIFO au-dela — reproduit le garde-fou du retrait de la
+    /// persistance gossip).
+    pub channel_max_entries: usize,
     /// Extension Rust : plafond de debit de la socket DHT d'une lane
     /// anonyme, en datagrammes/s sortants (seau a jetons, rafale de
     /// 1 s). `0` = illimite. La DHT mainline tunnelisee d'un magnet
@@ -402,6 +410,8 @@ impl Ipv8Config {
             peer_cache_max_age_secs: DEFAULT_PEER_CACHE_MAX_AGE_SECS,
             peer_persist_interval_secs: DEFAULT_PEER_PERSIST_INTERVAL_SECS,
             content_healths_cache_secs: DEFAULT_CONTENT_HEALTHS_CACHE_SECS,
+            channel_sync_interval_secs: DEFAULT_CHANNEL_SYNC_INTERVAL_SECS,
+            channel_max_entries: DEFAULT_CHANNEL_MAX_ENTRIES,
             anon_dht_rate_pps: DEFAULT_ANON_DHT_RATE_PPS,
             anon_dht_client_only: true,
             anon_dht_backoff_cap_secs: DEFAULT_ANON_DHT_BACKOFF_CAP_SECS,
@@ -489,6 +499,8 @@ impl Default for Ipv8Config {
             peer_cache_max_age_secs: DEFAULT_PEER_CACHE_MAX_AGE_SECS,
             peer_persist_interval_secs: DEFAULT_PEER_PERSIST_INTERVAL_SECS,
             content_healths_cache_secs: DEFAULT_CONTENT_HEALTHS_CACHE_SECS,
+            channel_sync_interval_secs: DEFAULT_CHANNEL_SYNC_INTERVAL_SECS,
+            channel_max_entries: DEFAULT_CHANNEL_MAX_ENTRIES,
             anon_dht_rate_pps: DEFAULT_ANON_DHT_RATE_PPS,
             anon_dht_client_only: true,
             anon_dht_backoff_cap_secs: DEFAULT_ANON_DHT_BACKOFF_CAP_SECS,
@@ -637,6 +649,14 @@ pub const DEFAULT_PEER_PERSIST_INTERVAL_SECS: u64 = 120;
 /// TTL du cache `healths_for` (30 s) — assez court pour rester
 /// pertinent, assez long pour absorber les rafales de requetes.
 pub const DEFAULT_CONTENT_HEALTHS_CACHE_SECS: u64 = 30;
+/// Intervalle par defaut entre deux selects de sync d'un canal
+/// (ADR-0025 — 5 min : un canal abonne = un select par fenetre,
+/// round-robin avec les autres abonnements).
+pub const DEFAULT_CHANNEL_SYNC_INTERVAL_SECS: u64 = 300;
+/// Plafond par defaut d'entrees persistees par canal suivi
+/// (ADR-0025 — borne la place disque et le cout des scans ;
+/// 5000 reste large pour un canal curé).
+pub const DEFAULT_CHANNEL_MAX_ENTRIES: usize = 5000;
 /// Plafond par defaut de la socket DHT d'une lane anonyme
 /// (datagrammes/s sortants). ~30 pps couvre bootstrap et passes
 /// `get_peers` (~8-32 datagrammes par vague) tout en bornant le
@@ -913,6 +933,10 @@ struct SessionContentProvider {
     seen_nodes: Mutex<std::collections::HashSet<(Vec<u8>, i64)>>,
     /// Memoire gossip : santes connues + infohashes affiches.
     gossip: Mutex<GossipMemory>,
+    /// Plafond de persistance par canal suivi (ADR-0025 §2 —
+    /// `channel_max_entries` : purge FIFO au-dela, hors pierres
+    /// tombales et racine placeholder).
+    channel_max_entries: usize,
 }
 
 /// Memoire gossip du provider (tout est volatil, jamais persistee).
@@ -1318,7 +1342,61 @@ impl ContentProvider for SessionContentProvider {
             };
             // Les resultats ne sont plus persistes dans `channel_node`
             // (la table accumulait ~26k entrees de gossip et ses scans
-            // figeaient la connexion sqlite partagee). Dedup en
+            // figeaient la connexion sqlite partagee) — **sauf** les
+            // entrees des canaux suivis (ADR-0025 §2 : la sync de
+            // canal est persistante, signature verifiee ET
+            // `public_key == channel_pk` — anti-poisoning ; le chemin
+            // ephemere recherche reste memoire-seule).
+            let mut rows_to_persist = Vec::new();
+            let mut tombstones: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
+            for e in &entries {
+                match e {
+                    onionbit_format::mdblob::MetadataEntry::Deleted(d) => {
+                        if d.header.verify_signature() {
+                            tombstones
+                                .push((d.header.public_key.to_vec(), d.delete_signature.to_vec()));
+                        }
+                    }
+                    _ => {
+                        if e.header().is_some_and(|h| h.verify_signature()) {
+                            if let Some(row) = entry_to_row(e) {
+                                rows_to_persist.push(row);
+                            }
+                        }
+                    }
+                }
+            }
+            if !rows_to_persist.is_empty() || !tombstones.is_empty() {
+                let cap = self.channel_max_entries as i64;
+                let rows = std::mem::take(&mut rows_to_persist);
+                let tbs = std::mem::take(&mut tombstones);
+                self.db
+                    .call("content.channel_ingest", move |conn| {
+                        for row in &rows {
+                            if onionbit_db::channel::is_subscribed(
+                                conn,
+                                &row.public_key,
+                                row.origin_id,
+                            )? {
+                                let pk = row.public_key.clone();
+                                let _ = onionbit_db::channel::insert(conn, row)?;
+                                // Plafond par canal — sinon le piege
+                                // « 26k lignes » revient par la sync.
+                                let _ = onionbit_db::channel::prune_channel(conn, &pk, cap);
+                            }
+                        }
+                        for (pk, sig) in &tbs {
+                            if onionbit_db::channel::is_subscribed_any(conn, pk)? {
+                                let _ =
+                                    onionbit_db::channel::mark_deleted_by_signature(conn, pk, sig);
+                            }
+                        }
+                        Ok(())
+                    })
+                    .await
+                    .ok();
+            }
+            // Dedup en
             // memoire sur `(public_key, id_)` — meme semantique
             // `NEW_OBJECT` que `channel::insert`.
             let new_rows: Vec<onionbit_db::models::ChannelNodeRow> = {
@@ -1435,6 +1513,7 @@ fn entry_to_row(
         xxx: 0.0,
         health_rowid: None,
         tag_processor_version: 0,
+        subscribed: false,
         health_seeders: None,
         health_leechers: None,
         health_last_check: None,
@@ -1844,6 +1923,7 @@ impl Ipv8Stack {
                     ),
                     seen_nodes: Mutex::new(std::collections::HashSet::new()),
                     gossip: Mutex::new(GossipMemory::default()),
+                    channel_max_entries: config.channel_max_entries,
                 });
                 Some(
                     ContentDiscoveryCommunity::new(
@@ -3748,6 +3828,7 @@ mod tests {
             healths_cache_ttl: std::time::Duration::from_secs(60),
             seen_nodes: Mutex::new(std::collections::HashSet::new()),
             gossip: Mutex::new(GossipMemory::default()),
+            channel_max_entries: 5000,
         }
     }
 
@@ -3981,5 +4062,155 @@ mod tests {
         assert_ne!(chargee.public_key().to_bin(), cle_a.public_key().to_bin());
         // Pas de residu temporaire apres le rename.
         assert!(!key_path.with_extension("tmp").exists());
+    }
+
+    /// Sync de canal (ADR-0025 §2) : les entrees signees d'un canal
+    /// suivi sont persistees dans `channel_node` ; les autres restent
+    /// ephemeres. Anti-poisoning : une entree signee par une AUTRE
+    /// cle n'est jamais ingeree dans le canal suivi.
+    #[tokio::test]
+    async fn sync_canal_persiste_anti_poisoning() {
+        let provider = test_provider(crate::notifier::Notifier::new());
+        let sk_channel = LibNaClSecretKey::generate();
+        let pk_channel: Vec<u8> = sk_channel.public_key().to_bin()[10..].to_vec();
+        let sk_evil = LibNaClSecretKey::generate();
+        let pk_evil: Vec<u8> = sk_evil.public_key().to_bin()[10..].to_vec();
+        let origin = 42i64;
+
+        let pk_sub = pk_channel.clone();
+        provider
+            .db
+            .call("t.subscribe", move |c| {
+                onionbit_db::channel::set_subscribed(c, &pk_sub, origin, true)
+            })
+            .await
+            .unwrap();
+
+        let mk = |pk: [u8; 64], id: u64, ih: u8| {
+            MetadataEntry::ChannelTorrent(ChannelMetadataPayload {
+                torrent: TorrentMetadataPayload {
+                    node: ChannelNodePayload {
+                        header: SignedPayloadHeader::new(types::CHANNEL_TORRENT, 0, pk),
+                        id,
+                        origin_id: origin as u64,
+                        timestamp: 1_700_000_000,
+                    },
+                    infohash: [ih; 20],
+                    size: 1,
+                    torrent_date: 1_700_000_000,
+                    title: format!("t{id}"),
+                    tags: String::new(),
+                    tracker_info: String::new(),
+                },
+                num_entries: 0,
+                start_timestamp: 1_700_000_000,
+            })
+        };
+        let pk64 = |p: &[u8]| -> [u8; 64] { p.try_into().unwrap() };
+
+        // Entree signee par la cle du canal suivi.
+        let good = encode_entry(&mk(pk64(&pk_channel), 7, 1), &sk_channel).unwrap();
+        // Entree du meme canal mais signee par une autre cle
+        // (injection : la signature ne correspond pas a channel_pk).
+        let evil = encode_entry(&mk(pk64(&pk_evil), 8, 2), &sk_evil).unwrap();
+
+        let blob = lz4_frame(&[good, evil].concat());
+        provider.process_select_response(&blob).await;
+
+        provider
+            .db
+            .call("t.check", move |c| {
+                let rows = onionbit_db::channel::select_entries(
+                    c,
+                    &onionbit_db::channel::SelectParams {
+                        channel_pk: Some(pk_channel.clone()),
+                        ..Default::default()
+                    },
+                )?;
+                // Racine placeholder + l'entree 7 — l'entree 8 (autre
+                // cle) n'a pas ete ingeree.
+                assert_eq!(rows.len(), 2);
+                assert!(rows.iter().any(|r| r.id_ == 7));
+                assert!(!rows.iter().any(|r| r.id_ == 8));
+                // Le canal de l'attaquant n'a rien non plus.
+                assert!(!onionbit_db::channel::is_subscribed_any(c, &pk_evil)?);
+                Ok(())
+            })
+            .await
+            .unwrap();
+    }
+
+    /// Pierre tombale `DELETED` : une entree 500 signee par la cle du
+    /// canal retire l'entree ciblee par `delete_signature`.
+    #[tokio::test]
+    async fn sync_canal_deleted_retire_l_entree() {
+        let provider = test_provider(crate::notifier::Notifier::new());
+        let sk = LibNaClSecretKey::generate();
+        let pk: Vec<u8> = sk.public_key().to_bin()[10..].to_vec();
+        let pk64: [u8; 64] = pk.clone().try_into().unwrap();
+        let origin = 7i64;
+        let pk_sub = pk.clone();
+        provider
+            .db
+            .call("t.subscribe", move |c| {
+                onionbit_db::channel::set_subscribed(c, &pk_sub, origin, true)
+            })
+            .await
+            .unwrap();
+
+        // Entree vivante du canal (signature recuperee pour la
+        // cibler ensuite).
+        let alive = MetadataEntry::ChannelTorrent(ChannelMetadataPayload {
+            torrent: TorrentMetadataPayload {
+                node: ChannelNodePayload {
+                    header: SignedPayloadHeader::new(types::CHANNEL_TORRENT, 0, pk64),
+                    id: 9,
+                    origin_id: origin as u64,
+                    timestamp: 1_700_000_000,
+                },
+                infohash: [3u8; 20],
+                size: 1,
+                torrent_date: 1_700_000_000,
+                title: "a retirer".into(),
+                tags: String::new(),
+                tracker_info: String::new(),
+            },
+            num_entries: 0,
+            start_timestamp: 1_700_000_000,
+        });
+        let alive_bytes = encode_entry(&alive, &sk).unwrap();
+        let alive_sig: [u8; 64] = alive_bytes[alive_bytes.len() - 64..].try_into().unwrap();
+        provider
+            .process_select_response(&lz4_frame(&alive_bytes))
+            .await;
+        let pk_c = pk.clone();
+        provider
+            .db
+            .call("t.n", move |c| {
+                onionbit_db::channel::count_channel_entries(c, &pk_c)
+            })
+            .await
+            .map(|n| assert_eq!(n, 1))
+            .unwrap();
+
+        // DELETED signe par la cle du canal → l'entree devient
+        // pierre tombale (hors des recherches).
+        let del = MetadataEntry::Deleted(DeletedPayload {
+            header: SignedPayloadHeader::new(types::DELETED, 0, pk64),
+            delete_signature: alive_sig,
+        });
+        let del_bytes = encode_entry(&del, &sk).unwrap();
+        provider
+            .process_select_response(&lz4_frame(&del_bytes))
+            .await;
+        let pk_c2 = pk.clone();
+        provider
+            .db
+            .call("t.n2", move |c| {
+                onionbit_db::channel::count_channel_entries(c, &pk_c2)
+            })
+            .await
+            .map(|n| assert_eq!(n, 0))
+            .unwrap();
     }
 }

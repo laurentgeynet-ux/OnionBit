@@ -72,6 +72,9 @@ struct Services {
     checker_stop: Option<tokio::sync::watch::Sender<bool>>,
     /// Arret de la tache de mesure de capacite (`bandwidth`).
     bandwidth_stop: Option<tokio::sync::watch::Sender<bool>>,
+    /// Arret de la boucle `channel_sync` (ADR-0025 — pull
+    /// periodique des canaux suivis).
+    channel_sync_stop: Option<tokio::sync::watch::Sender<bool>>,
 }
 
 /// Reglages applicables a chaud sans redemarrer la session.
@@ -4762,6 +4765,33 @@ impl CoreSession {
                     services.checker_stop = Some(stop_tx);
                 }
                 Err(e) => tracing::warn!(error = %e, "torrent checker indisponible"),
+            }
+        }
+        // `channel_sync` (ADR-0025 §2) : pull periodique des canaux
+        // suivis — round-robin un canal par fenetre. Absent de la
+        // stack en stealth (content_discovery == None) : la boucle
+        // s'installe quand meme, elle no-op jusqu'a l'etape 100.
+        if let Some(stack) = self.ipv8() {
+            if stack.content_discovery.is_some() {
+                let interval =
+                    std::time::Duration::from_secs(config.ipv8.channel_sync_interval_secs);
+                self.inner.asyncio.tasks.register(
+                    Some("ContentDiscovery"),
+                    "channel_sync",
+                    Some(interval.as_secs_f64()),
+                );
+                let (stop_tx, mut stop_rx) = tokio::sync::watch::channel(false);
+                let db = self.inner.db_arc();
+                tokio::spawn(async move {
+                    crate::services::channel_sync::run_channel_sync(
+                        stack,
+                        db,
+                        interval,
+                        &mut stop_rx,
+                    )
+                    .await;
+                });
+                services.channel_sync_stop = Some(stop_tx);
             }
         }
         // Estimateur de capacite upload (`tunnel_community/bandwidth`) :

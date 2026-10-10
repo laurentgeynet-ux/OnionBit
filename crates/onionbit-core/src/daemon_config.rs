@@ -1828,6 +1828,8 @@ impl DaemonConfig {
             peer_cache_max_age_secs: crate::ipv8_stack::DEFAULT_PEER_CACHE_MAX_AGE_SECS,
             peer_persist_interval_secs: crate::ipv8_stack::DEFAULT_PEER_PERSIST_INTERVAL_SECS,
             content_healths_cache_secs: crate::ipv8_stack::DEFAULT_CONTENT_HEALTHS_CACHE_SECS,
+            channel_sync_interval_secs: crate::ipv8_stack::DEFAULT_CHANNEL_SYNC_INTERVAL_SECS,
+            channel_max_entries: crate::ipv8_stack::DEFAULT_CHANNEL_MAX_ENTRIES,
             anon_dht_rate_pps: self.tunnel_community.anon_dht_rate_pps,
             anon_dht_client_only: self.tunnel_community.anon_dht_client_only,
             anon_dht_backoff_cap_secs: self.tunnel_community.anon_dht_backoff_cap_secs,

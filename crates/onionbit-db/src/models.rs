@@ -83,6 +83,9 @@ pub struct ChannelNodeRow {
     pub health_rowid: Option<i64>,
     /// Version du processeur de tags appliquee.
     pub tag_processor_version: i64,
+    /// `subscribed` Pony : le noeud suit ce canal (colonne v23,
+    /// ADR-0025 — portee par la ligne racine du canal).
+    pub subscribed: bool,
     /// `health.seeders` Python : sante jointe de `torrent_state`
     /// (peuplee uniquement par les requetes avec `LEFT JOIN`,
     /// jamais persistee par `insert`).

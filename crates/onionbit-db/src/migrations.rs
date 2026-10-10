@@ -470,6 +470,13 @@ ALTER TABLE downloads ADD COLUMN origin TEXT NOT NULL
 ALTER TABLE msg_delivery ADD COLUMN frame_id BLOB;
 CREATE INDEX idx_msg_delivery_frame ON msg_delivery(frame_id);
 ",
+    // v23 : abonnements aux canaux (ADR-0025) — `subscribed` Pony
+    // porte par la ligne racine du canal ; une ligne placeholder
+    // suffit a suivre un canal encore inconnu.
+    "
+ALTER TABLE channel_node ADD COLUMN subscribed INTEGER NOT NULL DEFAULT 0;
+CREATE INDEX idx_channel_node_subscribed ON channel_node(subscribed);
+",
 ];
 
 /// Applique les migrations en attente sur une connexion ouverte.

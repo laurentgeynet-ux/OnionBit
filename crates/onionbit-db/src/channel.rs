@@ -14,7 +14,7 @@ use crate::Result;
 const COLS: &str = "rowid, infohash, size, torrent_date, tracker_info, title,
                     tags, metadata_type, reserved_flags, origin_id, public_key,
                     id_, timestamp, signature, added_on, status, xxx,
-                    health_rowid, tag_processor_version";
+                    health_rowid, tag_processor_version, subscribed";
 
 fn from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<ChannelNodeRow> {
     Ok(ChannelNodeRow {
@@ -37,6 +37,7 @@ fn from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<ChannelNodeRow> {
         xxx: r.get("xxx")?,
         health_rowid: r.get("health_rowid")?,
         tag_processor_version: r.get("tag_processor_version")?,
+        subscribed: r.get("subscribed")?,
         // Colonnes presentes seulement quand la requete joint
         // `torrent_state` (`select_filtered`/`popular_entries`).
         health_seeders: r.get::<_, Option<i64>>("seeders").unwrap_or_default(),
@@ -62,8 +63,8 @@ pub fn insert(conn: &Connection, row: &ChannelNodeRow) -> Result<Option<i64>> {
             infohash, size, torrent_date, tracker_info, title, tags,
             metadata_type, reserved_flags, origin_id, public_key, id_,
             timestamp, signature, added_on, status, xxx, health_rowid,
-            tag_processor_version
-         ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18)
+            tag_processor_version, subscribed
+         ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19)
          ON CONFLICT(public_key, id_) DO NOTHING",
         params![
             row.infohash,
@@ -84,6 +85,7 @@ pub fn insert(conn: &Connection, row: &ChannelNodeRow) -> Result<Option<i64>> {
             row.xxx,
             health_rowid,
             row.tag_processor_version,
+            row.subscribed,
         ],
     )?;
     if n == 0 {
@@ -329,6 +331,133 @@ pub fn max_rowid(conn: &Connection) -> Result<i64> {
     )?)
 }
 
+// --- Abonnements aux canaux (ADR-0025) ---------------------------------
+
+/// Marque l'abonnement a un canal `(public_key, origin_id)`.
+///
+/// Le canal n'a pas forcement d'entree connue : une **ligne racine
+/// placeholder** (`metadata_type=200` `CHANNEL_NODE`, `id_ =
+/// origin_id`, titre vide) est creee si besoin — abonner un
+/// `{pk, id}` jamais vu ne doit pas echouer (le contenu arrive a la
+/// premiere sync).
+pub fn set_subscribed(
+    conn: &Connection,
+    public_key: &[u8],
+    origin_id: i64,
+    flag: bool,
+) -> Result<()> {
+    if flag {
+        // Placeholder : `metadata_type=200` (racine de canal). La
+        // contrainte UNIQUE(public_key, id_) deduplique si la vraie
+        // racine existe deja.
+        let ph = ChannelNodeRow {
+            infohash: Vec::new(),
+            metadata_type: 200,
+            origin_id,
+            public_key: public_key.to_vec(),
+            id_: origin_id,
+            added_on: unix_now(),
+            status: 1,
+            ..Default::default()
+        };
+        insert(conn, &ph)?;
+    }
+    conn.execute(
+        "UPDATE channel_node SET subscribed = ?1
+         WHERE public_key = ?2 AND origin_id = ?3",
+        params![flag as i64, public_key, origin_id],
+    )?;
+    Ok(())
+}
+
+/// Canaux suivis : `(public_key, origin_id)` distincts — source de
+/// verite de la tache `channel_sync`.
+pub fn subscribed_channels(conn: &Connection) -> Result<Vec<(Vec<u8>, i64)>> {
+    let mut stmt = conn
+        .prepare("SELECT DISTINCT public_key, origin_id FROM channel_node WHERE subscribed = 1")?;
+    let rows = stmt.query_map([], |r| Ok((r.get::<_, Vec<u8>>(0)?, r.get::<_, i64>(1)?)))?;
+    Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+}
+
+/// Le canal `(public_key, origin_id)` est-il suivi ? (garde
+/// d'ingestion persistante — `process_select_response`).
+pub fn is_subscribed(conn: &Connection, public_key: &[u8], origin_id: i64) -> Result<bool> {
+    Ok(conn
+        .query_row(
+            "SELECT 1 FROM channel_node
+         WHERE subscribed = 1 AND public_key = ?1 AND origin_id = ?2
+         LIMIT 1",
+            params![public_key, origin_id],
+            |_| Ok(()),
+        )
+        .optional()?
+        .is_some())
+}
+
+/// Au moins une ligne `subscribed` existe pour cette cle de canal
+/// (garde des pierres tombales — un `DELETED` ne porte pas
+/// d'`origin_id`).
+pub fn is_subscribed_any(conn: &Connection, public_key: &[u8]) -> Result<bool> {
+    Ok(conn
+        .query_row(
+            "SELECT 1 FROM channel_node WHERE subscribed = 1 AND public_key = ?1 LIMIT 1",
+            params![public_key],
+            |_| Ok(()),
+        )
+        .optional()?
+        .is_some())
+}
+
+/// Pierre tombale `DELETED` : le payload 500 reference l'entree
+/// supprimee par sa signature (`delete_signature` — la colonne
+/// `signature` est `UNIQUE`). Retourne le nombre de lignes marquees.
+pub fn mark_deleted_by_signature(
+    conn: &Connection,
+    public_key: &[u8],
+    delete_signature: &[u8],
+) -> Result<usize> {
+    Ok(conn.execute(
+        "UPDATE channel_node SET metadata_type = 500
+         WHERE signature = ?1 AND public_key = ?2 AND metadata_type <> 500",
+        params![delete_signature, public_key],
+    )?)
+}
+
+/// Plafond de persistance par canal (ADR-0025 §2) : supprime les
+/// entrees les plus anciennes au-dela de `keep` — les pierres
+/// tombales (500) sont conservees pour eviter la reinsertion a la
+/// resync ; la ligne racine placeholder aussi.
+pub fn prune_channel(conn: &Connection, public_key: &[u8], keep: i64) -> Result<usize> {
+    Ok(conn.execute(
+        "DELETE FROM channel_node
+         WHERE public_key = ?1 AND metadata_type <> 500 AND metadata_type <> 200
+           AND rowid NOT IN (
+               SELECT rowid FROM channel_node
+               WHERE public_key = ?1 AND metadata_type <> 500 AND metadata_type <> 200
+               ORDER BY added_on DESC, rowid DESC LIMIT ?2
+           )",
+        params![public_key, keep],
+    )?)
+}
+
+/// Nombre d'entrees de contenu d'un canal (hors pierres tombales
+/// et racine placeholder `CHANNEL_NODE`).
+pub fn count_channel_entries(conn: &Connection, public_key: &[u8]) -> Result<i64> {
+    Ok(conn.query_row(
+        "SELECT COUNT(*) FROM channel_node
+         WHERE public_key = ?1 AND metadata_type <> 500 AND metadata_type <> 200",
+        params![public_key],
+        |r| r.get(0),
+    )?)
+}
+
+fn unix_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
 /// Clause `WHERE` commune a `select_entries`/`count_entries` :
 /// retourne `(sql, args, use_fts)`.
 fn build_where(
@@ -376,6 +505,13 @@ fn build_where(
                 args.push(Box::new(*m));
             }
         }
+    }
+    // Pierres tombales `DELETED` (500) : jamais retournees par une
+    // recherche/liste sauf demande explicite `metadata_type=500`
+    // (ADR-0025 §3 — un torrent retire par le curateur ne doit pas
+    // rester trouvable).
+    if !p.metadata_types.as_ref().is_some_and(|m| m.contains(&500)) {
+        parts.push("cn.metadata_type <> 500".into());
     }
     if let Some(pk) = &p.channel_pk {
         parts.push("cn.public_key = ?".into());
@@ -596,4 +732,99 @@ fn continuation(title_lower: &str, words: &[String]) -> Option<(String, String)>
     }
     let g2: String = chars[g2_start..pos].iter().collect();
     Some((g1, g2))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn row(pk: &[u8], id: i64, origin: i64) -> ChannelNodeRow {
+        ChannelNodeRow {
+            infohash: vec![id as u8; 20],
+            title: format!("t{id}"),
+            metadata_type: 400,
+            public_key: pk.to_vec(),
+            id_: id,
+            origin_id: origin,
+            signature: Some(vec![id as u8; 64]),
+            timestamp: 1_700_000_000,
+            added_on: 1_700_000_000,
+            status: 1,
+            ..Default::default()
+        }
+    }
+
+    /// `subscribed` (v23) : placeholder + bascule + liste.
+    #[test]
+    fn abonnement_placeholder_et_liste() {
+        let db = crate::Database::memory().unwrap();
+        db.with(|c| {
+            let pk = vec![7u8; 64];
+            assert!(!is_subscribed(c, &pk, 42)?);
+            set_subscribed(c, &pk, 42, true)?;
+            assert!(is_subscribed(c, &pk, 42)?);
+            assert!(is_subscribed_any(c, &pk)?);
+            assert_eq!(subscribed_channels(c)?, vec![(pk.clone(), 42)]);
+            // Le placeholder porte la racine du canal.
+            let root = get_by_pk_id(c, &pk, 42)?.unwrap();
+            assert_eq!(root.metadata_type, 200);
+            assert!(root.subscribed);
+            set_subscribed(c, &pk, 42, false)?;
+            assert!(!is_subscribed(c, &pk, 42)?);
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    /// Pierre tombale : `metadata_type=500` par `delete_signature`,
+    /// exclue des recherches (build_where) sauf demande explicite.
+    #[test]
+    fn tombstone_exclue_des_recherches() {
+        let db = crate::Database::memory().unwrap();
+        db.with(|c| {
+            let pk = vec![8u8; 64];
+            let r = row(&pk, 7, 42);
+            let sig = r.signature.clone().unwrap();
+            insert(c, &r)?;
+            let p = SelectParams {
+                channel_pk: Some(pk.clone()),
+                ..Default::default()
+            };
+            assert_eq!(select_entries(c, &p)?.len(), 1);
+            assert_eq!(mark_deleted_by_signature(c, &pk, &sig)?, 1);
+            // Exclue de la recherche par defaut, comptee hors 500.
+            assert_eq!(select_entries(c, &p)?.len(), 0);
+            let p500 = SelectParams {
+                channel_pk: Some(pk.clone()),
+                metadata_types: Some(vec![500]),
+                ..Default::default()
+            };
+            assert_eq!(select_entries(c, &p500)?.len(), 1);
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    /// Plafond par canal : purge FIFO hors tombales et racine.
+    #[test]
+    fn purge_fifo_par_canal() {
+        let db = crate::Database::memory().unwrap();
+        db.with(|c| {
+            let pk = vec![9u8; 64];
+            set_subscribed(c, &pk, 1, true)?; // racine placeholder
+            for i in 1..=5 {
+                insert(c, &row(&pk, i + 1, 1))?;
+            }
+            // Pierre tombale conservee hors du comptage.
+            let sig = vec![0xEEu8; 64];
+            let mut del = row(&pk, 99, 1);
+            del.metadata_type = 500;
+            del.signature = Some(sig.clone());
+            insert(c, &del)?;
+            assert_eq!(prune_channel(c, &pk, 3)?, 2);
+            assert_eq!(count_channel_entries(c, &pk)?, 3);
+            Ok(())
+        })
+        .unwrap();
+    }
 }
