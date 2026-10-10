@@ -111,6 +111,14 @@ pub trait PeerStatsStore: Send + Sync {
     /// Persiste une entree (upsert — appele sur les lignes
     /// modifiees depuis le dernier flush).
     fn upsert_peer_stat(&self, public_key: &[u8], stat: &PeerStat);
+    /// Persiste un lot d'entrees — le store DB le realise en une
+    /// transaction (un commit au lieu d'un fsync par ligne). Defaut :
+    /// reboucle sur `upsert_peer_stat`.
+    fn upsert_peer_stats(&self, batch: &[(Vec<u8>, PeerStat)]) {
+        for (pk, stat) in batch {
+            self.upsert_peer_stat(pk, stat);
+        }
+    }
 }
 
 /// Store volatile : comportement identique sans persistance (tests,
@@ -422,9 +430,7 @@ impl PeerStatsBook {
                 .filter_map(|pk| st.stats.get(&pk).map(|s| (pk, s.clone())))
                 .collect()
         };
-        for (pk, stat) in batch {
-            store.upsert_peer_stat(&pk, &stat);
-        }
+        store.upsert_peer_stats(&batch);
     }
 
     /// Instantane complet pour l'API : reglages effectifs, totaux et

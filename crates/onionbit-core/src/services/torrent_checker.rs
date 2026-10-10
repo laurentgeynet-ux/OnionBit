@@ -109,10 +109,22 @@ impl TorrentChecker {
         tracker_url: &str,
         infohashes: &[[u8; 20]],
     ) -> Result<Vec<HealthInfo>> {
+        // Un seul `list` pour l'exclusion des swarms anonymes —
+        // avant, `is_anonymous_download` faisait un `get` par
+        // infohash (N acquisitions du mutex par scrape).
+        let anon_rows: std::collections::HashSet<Vec<u8>> = self
+            .db
+            .call("checker.anon_rows", onionbit_db::downloads::list)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|r| r.anon_hops > 0)
+            .map(|r| r.infohash)
+            .collect();
         let public: Vec<[u8; 20]> = infohashes
             .iter()
             .copied()
-            .filter(|ih| !self.is_anonymous_download(ih))
+            .filter(|ih| !anon_rows.contains(ih.as_slice()))
             .collect();
         if public.is_empty() {
             return Ok(Vec::new());
@@ -150,13 +162,18 @@ impl TorrentChecker {
         };
         // `tracker_state` Python (`alive`/`failures`/`last_check`) —
         // alimente le statut affiche par tracker dans l'API.
+        let url_owned = tracker_url.to_string();
         match result {
             Ok(healths) => {
-                let _ = self.db.with(|c| {
-                    onionbit_db::health::upsert_tracker(c, tracker_url)?;
-                    onionbit_db::health::update_tracker(c, tracker_url, true, now_unix(), 0)
-                });
-                self.record_healths(tracker_url, &healths);
+                let url = url_owned.clone();
+                let _ = self
+                    .db
+                    .call("checker.tracker_ok", move |c| {
+                        onionbit_db::health::upsert_tracker(c, &url)?;
+                        onionbit_db::health::update_tracker(c, &url, true, now_unix(), 0)
+                    })
+                    .await;
+                self.record_healths(tracker_url, &healths).await;
                 Ok(healths)
             }
             Err(e) => {
@@ -165,49 +182,67 @@ impl TorrentChecker {
                 // vivant — l'afficher en `Error` mentirait. Seules
                 // les pannes (DNS, TCP, timeout) comptent un echec.
                 let alive = matches!(e, CoreError::ScrapeRefused(_));
-                let _ = self.db.with(|c| {
-                    onionbit_db::health::upsert_tracker(c, tracker_url)?;
-                    let failures = if alive {
-                        0
-                    } else {
-                        onionbit_db::health::get_tracker(c, tracker_url)?
-                            .map(|t| t.failures + 1)
-                            .unwrap_or(1)
-                    };
-                    onionbit_db::health::update_tracker(c, tracker_url, alive, now_unix(), failures)
-                });
+                let url = url_owned;
+                let _ = self
+                    .db
+                    .call("checker.tracker_err", move |c| {
+                        onionbit_db::health::upsert_tracker(c, &url)?;
+                        let failures = if alive {
+                            0
+                        } else {
+                            onionbit_db::health::get_tracker(c, &url)?
+                                .map(|t| t.failures + 1)
+                                .unwrap_or(1)
+                        };
+                        onionbit_db::health::update_tracker(c, &url, alive, now_unix(), failures)
+                    })
+                    .await;
                 Err(e)
             }
         }
     }
 
-    /// Vrai si l'infohash est un telechargement/seeding anonyme
-    /// persiste (`downloads.anon_hops > 0`) — jamais scrape en clair.
-    fn is_anonymous_download(&self, infohash: &[u8; 20]) -> bool {
-        self.db
-            .with(|c| onionbit_db::downloads::get(c, infohash))
-            .ok()
-            .flatten()
-            .is_some_and(|row| row.anon_hops > 0)
-    }
-
     /// Persiste les santes et notifie (`process_torrents_health` +
-    /// tracker_state update Python).
-    fn record_healths(&self, tracker_url: &str, healths: &[HealthInfo]) {
-        for h in healths {
-            let _ = self.db.with(|c| {
-                onionbit_db::health::upsert_tracker(c, tracker_url)?;
-                onionbit_db::health::upsert_torrent_state(c, &h.infohash)?;
-                onionbit_db::health::link_tracker(c, &h.infohash, tracker_url)?;
-                onionbit_db::health::update_torrent_health(
-                    c,
-                    &h.infohash,
+    /// tracker_state update Python). Toutes les ecritures vont dans
+    /// UNE transaction sur le pool bloquant — avant, chaque infohash
+    /// faisait son `.with` propre (4 ops + `upsert_tracker` duplique,
+    /// commit/fsync par ligne) et figeait l'executor sous pression.
+    async fn record_healths(&self, tracker_url: &str, healths: &[HealthInfo]) {
+        let url = tracker_url.to_string();
+        let batch: Vec<([u8; 20], i64, i64, i64, bool)> = healths
+            .iter()
+            .map(|h| {
+                (
+                    h.infohash,
                     h.seeders,
                     h.leechers,
                     h.last_check,
                     h.self_checked,
                 )
-            });
+            })
+            .collect();
+        let _ = self
+            .db
+            .call("checker.record", move |c| {
+                let tx = c.unchecked_transaction()?;
+                onionbit_db::health::upsert_tracker(&tx, &url)?;
+                for (ih, seeders, leechers, last_check, self_checked) in &batch {
+                    onionbit_db::health::upsert_torrent_state(&tx, ih)?;
+                    onionbit_db::health::link_tracker(&tx, ih, &url)?;
+                    onionbit_db::health::update_torrent_health(
+                        &tx,
+                        ih,
+                        *seeders,
+                        *leechers,
+                        *last_check,
+                        *self_checked,
+                    )?;
+                }
+                tx.commit()?;
+                Ok(())
+            })
+            .await;
+        for h in healths {
             self.notifier.notify(Notification::TorrentHealthUpdated {
                 infohash: hex::encode(h.infohash),
                 seeders: h.seeders,
@@ -426,26 +461,33 @@ impl TorrentChecker {
         // Les swarms anonymes (`anon_hops > 0`) sont exclus de la
         // rotation : ils ne doivent jamais etre scrapes en clair —
         // leur sante vient du tunnel (`peers-request`).
-        let row: std::result::Result<Vec<u8>, _> = self.db.with(|c| {
-            c.query_row(
-                "SELECT ts.infohash FROM torrent_state ts
-                 WHERE ts.last_check < ?1
-                   AND NOT EXISTS (
-                     SELECT 1 FROM downloads d
-                     WHERE d.infohash = ts.infohash AND d.anon_hops > 0
-                 )
-                 ORDER BY ts.last_check ASC LIMIT 1",
-                [now - MIN_TORRENT_CHECK_INTERVAL],
-                |r| r.get::<_, Vec<u8>>(0),
-            )
-            .map_err(onionbit_db::DbError::from)
-        });
+        let row: std::result::Result<Vec<u8>, _> = self
+            .db
+            .call("checker.oldest", move |c| {
+                c.query_row(
+                    "SELECT ts.infohash FROM torrent_state ts
+                     WHERE ts.last_check < ?1
+                       AND NOT EXISTS (
+                         SELECT 1 FROM downloads d
+                         WHERE d.infohash = ts.infohash AND d.anon_hops > 0
+                     )
+                     ORDER BY ts.last_check ASC LIMIT 1",
+                    [now - MIN_TORRENT_CHECK_INTERVAL],
+                    |r| r.get::<_, Vec<u8>>(0),
+                )
+                .map_err(onionbit_db::DbError::from)
+            })
+            .await;
         let Ok(ih) = row else {
             return Ok(0);
         };
+        let ih2 = ih.clone();
         let mut trackers = self
             .db
-            .with(|c| onionbit_db::health::trackers_of(c, &ih))
+            .call("checker.trackers_of", move |c| {
+                onionbit_db::health::trackers_of(c, &ih2)
+            })
+            .await
             .unwrap_or_default();
         if trackers.is_empty() {
             // Aucun tracker lie (`torrent_state_tracker` n'est rempli
@@ -453,10 +495,11 @@ impl TorrentChecker {
             // les trackers propres du torrent — repli sur la ligne
             // `downloads` (announce du `.torrent`, `tr=` du magnet,
             // ajouts a chaud, moins les retraits).
+            let ih3 = ih.clone();
             trackers = self
                 .db
-                .with(|c| {
-                    let Some(row) = onionbit_db::downloads::get(c, &ih)? else {
+                .call("checker.src_trackers", move |c| {
+                    let Some(row) = onionbit_db::downloads::get(c, &ih3)? else {
                         return Ok(Vec::new());
                     };
                     let mut set: std::collections::BTreeSet<String> =
@@ -469,19 +512,23 @@ impl TorrentChecker {
                         .filter(|u| !removed.contains(u.as_str()))
                         .collect::<Vec<_>>())
                 })
+                .await
                 .unwrap_or_default();
         }
         if trackers.is_empty() {
             // Rien a scraper : le controle est consomme pour ne pas
             // reprendre eternellement cette ligne `last_check=0` —
             // sinon elle affamait toute la rotation.
-            let _ = self.db.with(|c| {
-                c.execute(
-                    "UPDATE torrent_state SET last_check = ?1 WHERE infohash = ?2",
-                    rusqlite::params![now, ih],
-                )
-                .map_err(onionbit_db::DbError::from)
-            });
+            let _ = self
+                .db
+                .call("checker.touch", move |c| {
+                    c.execute(
+                        "UPDATE torrent_state SET last_check = ?1 WHERE infohash = ?2",
+                        rusqlite::params![now, ih],
+                    )
+                    .map_err(onionbit_db::DbError::from)
+                })
+                .await;
             return Ok(0);
         }
         let mut infohash = [0u8; 20];

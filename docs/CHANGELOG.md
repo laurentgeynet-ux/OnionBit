@@ -3,6 +3,44 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Base SQLite hors executor + batching des ecritures chaudes (2026-10-10)
+
+Diagnostic : sous pression disque, chaque `db.with()` synchrone appelé
+depuis une tache Tokio bloquait un worker des secondes entieres
+(mutex unique + fsync par transaction implicite) — l'executor finissait
+paralyse (`lag_ms` jusqu'a ~283 s observes), l'API gelee, le download
+visuellement bloque pendant que le kernel ecrivait. Correction :
+
+- **Tick de stats** (`session.rs`) : `downloads::list` est preleve une
+  fois par tick via `Database::call` (spawn_blocking — existant), les
+  ecritures (`add_transferred`, transitions `paused`/`finished`,
+  politique de seed) sont accumulees dans `TickWrite` puis rejouees en
+  **une seule transaction** ; les checks « fichiers manquants » reutilisent
+  le snapshot au lieu d'un `downloads::get` par torrent.
+- **Ledger peers** (`peer_stats.rs`, `peer_stats_store.rs`) : nouveau
+  `upsert_peer_stats` batche — une transaction pour tout le flush au
+  lieu d'un commit par pair (banc : ~1,5 ms les 200 upserts contre
+  ~12 ms/op et un lock par op).
+- **`run_maintenance`** : accounting ledger + persistence guards via
+  `spawn_blocking`.
+- **`torrent_checker`** : tous les acces DB via `.call` ; suppression
+  de l'`upsert_tracker` duplique dans `record_healths` (deja fait par
+  `check_tracker`) ; les updates de sante groupes.
+- **Banc de pression** (`onionbit-db/tests/pressure.rs`, opt-in
+  `--ignored`) : compare ecritures isolees vs transaction groupee,
+  avec et sans contention disque — confirme que le cout dominant est le
+  commit/fsync, pas la requete.
+
+Vendored rqbit :
+
+- `OpenedFile::open_locked` : le `pending_len` applique lors de
+  l'ouverture paresseuse passe desormais par le marquage *sparse* —
+  un fichier de 40 Go n'alloue plus son empreinte disque complete a la
+  premiere ecriture.
+- `on_peer_died` : `ChunkTrackerEmpty` traite comme condition attendue
+  de pause (les pieces sont deja relachees) — fin du spam
+  `manage_peer finished with error` en pause.
+
 ## Phase 15 — staging RAM → hash → écriture unique (étapes 83, 85) (2026-10-10)
 
 Remplacement du chemin « `pwritev` par chunk puis relecture de la pièce »

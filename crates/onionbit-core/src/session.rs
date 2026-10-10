@@ -1473,6 +1473,25 @@ impl CoreSession {
     /// Meme test sur l'objet `Download` vivant : le public lit la
     /// liste de fichiers rqbit a jour ; le prive delegue a
     /// `private_files_missing` (decompte des `.obd` du groupe).
+    /// `download_and_row` + `live_files_missing` alimentes par le
+    /// snapshot `rows` du tick — zero acces sqlite, la boucle de
+    /// stats tourne sur l'executor (`row` resolue via `db_key`,
+    /// meme cle que `row_of` — une ligne privee est matchee par sa
+    /// cle opaque).
+    fn live_missing_now(&self, stats: &DownloadStats, rows: &[DownloadRow]) -> bool {
+        let Some(dl) = self.find_download_hex(&stats.info_hash) else {
+            return false;
+        };
+        let Some(ih) = onionbit_crypto::hash::from_hex(&stats.info_hash) else {
+            return false;
+        };
+        let key = self.db_key(&ih);
+        let Some(row) = rows.iter().find(|r| r.infohash == key) else {
+            return false;
+        };
+        self.live_files_missing(&dl, row)
+    }
+
     fn live_files_missing(&self, dl: &Download, row: &DownloadRow) -> bool {
         if self.storage_area_of(&dl.info_hash()) == crate::config::StorageArea::Private {
             return self.private_files_missing(row);
@@ -1536,10 +1555,14 @@ impl CoreSession {
         // `remove_engine_only` : ne pas ressusciter un download
         // supprime — le torrent re-ajoute resterait un orphelin actif
         // (re-hash complet, aucune entree UI).
+        let known_key = row.infohash.clone();
         let known = self
             .inner
             .db_arc()
-            .with(|c| onionbit_db::downloads::get(c, &row.infohash))?
+            .call("downloads.row_exists", move |c| {
+                onionbit_db::downloads::get(c, &known_key)
+            })
+            .await?
             .is_some();
         if !known {
             return Err(CoreError::Cancelled(
@@ -1622,6 +1645,44 @@ impl CoreSession {
     /// Boucle periodique : publie `DownloadProgress` pour chaque
     /// telechargement actif et detecte les fins de telechargement.
     fn spawn_progress_loop(&self) {
+        /// Ecriture sqlite differee d'un tick de stats — rejeu en
+        /// transaction groupee en fin de tick (`Database::call`,
+        /// pool bloquant) au lieu d'un commit/fsync par appel.
+        enum TickWrite {
+            /// `downloads::add_transferred` — deltas du tick.
+            Transferred { key: Vec<u8>, up: u64, down: u64 },
+            /// `conversations::set_attach_done_by_ih` — infohash reel.
+            AttachDone { ih: Vec<u8> },
+            /// `downloads::set_finished` — cle de ligne (`db_key`).
+            SetFinished { key: Vec<u8>, finished: bool },
+            /// `update_download_row(r.paused = true)` — fin de seed.
+            RowPaused { key: Vec<u8> },
+        }
+
+        impl TickWrite {
+            fn replay(&self, c: &rusqlite::Connection) -> onionbit_db::Result<()> {
+                match self {
+                    Self::Transferred { key, up, down } => {
+                        onionbit_db::downloads::add_transferred(c, key, *up, *down)
+                    }
+                    Self::AttachDone { ih } => {
+                        onionbit_db::conversations::set_attach_done_by_ih(c, ih).map(|_| ())
+                    }
+                    Self::SetFinished { key, finished } => {
+                        onionbit_db::downloads::set_finished(c, key, *finished)
+                    }
+                    Self::RowPaused { key } => match onionbit_db::downloads::get(c, key) {
+                        Ok(Some(mut row)) => {
+                            row.paused = true;
+                            onionbit_db::downloads::upsert(c, &row).map(|_| ())
+                        }
+                        Ok(None) => Ok(()),
+                        Err(e) => Err(e),
+                    },
+                }
+            }
+        }
+
         let session = self.clone();
         let interval = std::time::Duration::from_millis(self.inner.config.progress_interval_ms);
         self.inner.asyncio.tasks.register(
@@ -1636,10 +1697,11 @@ impl CoreSession {
             // de libtorrent ne se rejoue pas au chargement d'un
             // checkpoint. Sans cela, chaque demarrage re-notifiait tous
             // les telechargements termines (et relancait leur recheck).
+            let boot_zone = session.private_zone();
             let mut finished: std::collections::HashSet<String> = session
                 .inner
                 .db_arc()
-                .with(|c| {
+                .call("stats.boot_finished", move |c| {
                     Ok(onionbit_db::downloads::list(c)?
                         .into_iter()
                         .filter(|r| r.finished)
@@ -1649,8 +1711,8 @@ impl CoreSession {
                             // moteur (`stats.info_hash`) : traduction via
                             // le manifeste.
                             if r.storage_area == "private" {
-                                session
-                                    .private_zone()
+                                boot_zone
+                                    .as_ref()
                                     .and_then(|z| z.entry_by_row_key(&hex::encode(&r.infohash)))
                                     .map(|e| e.infohash)
                                     .unwrap_or_else(|| onionbit_crypto::hash::to_hex(&r.infohash))
@@ -1660,6 +1722,7 @@ impl CoreSession {
                         })
                         .collect())
                 })
+                .await
                 .unwrap_or_default();
             let mut queue_paused: std::collections::HashSet<String> =
                 std::collections::HashSet::new();
@@ -1674,6 +1737,21 @@ impl CoreSession {
             tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
                 tick.tick().await;
+                // ADR-0023 : les acces sqlite du tick ne passent plus
+                // par l'executor — `db.with()` est synchrone et sous
+                // pression disque chaque appel figeait un worker tokio
+                // des secondes entieres (attente du mutex de connexion
+                // + fsync par transaction implicite). Les lectures du
+                // tick puisent dans un snapshot pris une fois sur le
+                // pool bloquant ; les ecritures sont differes puis
+                // rejouees en une seule transaction a la fin du tick.
+                let rows: Vec<DownloadRow> = session
+                    .inner
+                    .db_arc()
+                    .call("stats.tick_rows", onionbit_db::downloads::list)
+                    .await
+                    .unwrap_or_default();
+                let mut tick_writes: Vec<TickWrite> = Vec::new();
                 for stats in session.downloads() {
                     // `all_time_upload`/`all_time_download` Python :
                     // cumuls persistants par delta de session.
@@ -1691,11 +1769,11 @@ impl CoreSession {
                     let dd = stats.progress_bytes.saturating_sub(prev_down);
                     if du > 0 || dd > 0 {
                         if let Some(ih) = onionbit_crypto::hash::from_hex(&stats.info_hash) {
-                            let key = session.db_key(&ih);
-                            let _ = session
-                                .inner
-                                .db_arc()
-                                .with(|c| onionbit_db::downloads::add_transferred(c, &key, du, dd));
+                            tick_writes.push(TickWrite::Transferred {
+                                key: session.db_key(&ih),
+                                up: du,
+                                down: dd,
+                            });
                         }
                     }
                     if stats.finished {
@@ -1704,9 +1782,7 @@ impl CoreSession {
                         // downloading → done` (tick de progression,
                         // pas le reaper horaire).
                         if let Some(ih) = onionbit_crypto::hash::from_hex(&stats.info_hash) {
-                            let _ = session.inner.db_arc().with(|c| {
-                                onionbit_db::conversations::set_attach_done_by_ih(c, &ih)
-                            });
+                            tick_writes.push(TickWrite::AttachDone { ih });
                         }
                         // `insert` = passage a termine observe dans
                         // cette session : notification + drapeau
@@ -1739,18 +1815,17 @@ impl CoreSession {
                                 let ih = onionbit_crypto::hash::from_hex(&stats.info_hash);
                                 if let Some(ih) = ih {
                                     let key = session.db_key(&ih);
-                                    let _ = session.inner.db_arc().with(|c| {
-                                        onionbit_db::downloads::set_finished(c, &key, true)
+                                    tick_writes.push(TickWrite::SetFinished {
+                                        key: key.clone(),
+                                        finished: true,
                                     });
                                     // `add_download_to_channel` Python : les
                                     // canaux ne sont pas portes — l'attribut
                                     // persiste en base et le manque est trace.
-                                    let channel = session
-                                        .inner
-                                        .db_arc()
-                                        .with(|c| onionbit_db::downloads::get(c, &key))
-                                        .ok()
-                                        .flatten()
+                                    // Lu depuis le snapshot `rows` du tick.
+                                    let channel = rows
+                                        .iter()
+                                        .find(|r| r.infohash == key)
                                         .map(|r| r.add_download_to_channel)
                                         .unwrap_or(false);
                                     if channel {
@@ -1814,10 +1889,7 @@ impl CoreSession {
                                 }
                             }
                         } else if !session.is_missing_hex(&stats.info_hash)
-                            && session
-                                .download_and_row(&stats.info_hash)
-                                .ok()
-                                .is_some_and(|(dl, row)| session.live_files_missing(&dl, &row))
+                            && session.live_missing_now(&stats, &rows)
                         {
                             // Fichiers d'un telechargement termine
                             // supprimes pendant le run : marquer
@@ -1827,11 +1899,10 @@ impl CoreSession {
                             // en `temp` via resume).
                             session.set_missing(&stats.info_hash, true);
                             if let Some(ih) = onionbit_crypto::hash::from_hex(&stats.info_hash) {
-                                let key = session.db_key(&ih);
-                                let _ = session
-                                    .inner
-                                    .db_arc()
-                                    .with(|c| onionbit_db::downloads::set_finished(c, &key, false));
+                                tick_writes.push(TickWrite::SetFinished {
+                                    key: session.db_key(&ih),
+                                    finished: false,
+                                });
                             }
                             let _ = session.pause(&stats.info_hash).await;
                         }
@@ -1861,23 +1932,21 @@ impl CoreSession {
                         // semantique « termine » (fichier tronque =
                         // manquant).
                         if !session.is_missing_hex(&stats.info_hash)
-                            && session
-                                .download_and_row(&stats.info_hash)
-                                .ok()
-                                .is_some_and(|(dl, row)| session.live_files_missing(&dl, &row))
+                            && session.live_missing_now(&stats, &rows)
                         {
                             session.set_missing(&stats.info_hash, true);
                             let _ = session.pause(&stats.info_hash).await;
                         }
                         if let Some(ih) = onionbit_crypto::hash::from_hex(&stats.info_hash) {
-                            let key = session.db_key(&ih);
-                            let _ = session
-                                .inner
-                                .db_arc()
-                                .with(|c| onionbit_db::downloads::set_finished(c, &key, false));
+                            tick_writes.push(TickWrite::SetFinished {
+                                key: session.db_key(&ih),
+                                finished: false,
+                            });
                         }
                     }
-                    session.enforce_seeding_policy(&stats);
+                    if let Some(key) = session.enforce_seeding_policy(&stats, &rows) {
+                        tick_writes.push(TickWrite::RowPaused { key });
+                    }
                     // `download_defaults/torrent_folder` Python
                     // (`PostHandleOp.WRITE_BACKUP_TORRENT`) : sauvegarde
                     // du .torrent des que le metainfo est connu.
@@ -1905,7 +1974,27 @@ impl CoreSession {
                         .notifier
                         .notify(Notification::DownloadProgress(stats));
                 }
-                session.enforce_queue_limits(&mut queue_paused).await;
+                // Rejeu des ecritures du tick en UNE transaction sur
+                // le pool bloquant : avant, chaque `.with` isol etait
+                // une transaction implicite = un commit/fsync par
+                // ecriture — sous pression disque la connexion restait
+                // verrouillee en continu et chaque appel figeait un
+                // worker tokio (lags multi-secondes, UI/API figee).
+                if !tick_writes.is_empty() {
+                    let _ = session
+                        .inner
+                        .db_arc()
+                        .call("stats.tick", move |c| {
+                            let tx = c.unchecked_transaction()?;
+                            for op in &tick_writes {
+                                let _ = op.replay(&tx);
+                            }
+                            tx.commit()?;
+                            Ok(())
+                        })
+                        .await;
+                }
+                session.enforce_queue_limits(&mut queue_paused, &rows).await;
             }
         });
     }
@@ -2027,21 +2116,25 @@ impl CoreSession {
     ///   en priorite, sinon le defaut) ;
     /// - `time` apres `seeding_time` secondes de seed ;
     /// - `forever` ne stoppe que sur ratio individuel explicite.
-    fn enforce_seeding_policy(&self, stats: &DownloadStats) {
+    ///
+    /// Retourne la cle de ligne a marquer `paused` quand la politique
+    /// de seed impose l'arret — l'ecriture est differee dans le batch
+    /// du tick par l'appelant ; la pause moteur est deja ordonnee ici.
+    /// `rows` est le snapshot du tick (lookup par infohash reel, comme
+    /// l'ancien `downloads::get` — une ligne privee n'est jamais
+    /// matchee par sa cle opaque, comportement conserve).
+    fn enforce_seeding_policy(
+        &self,
+        stats: &DownloadStats,
+        rows: &[DownloadRow],
+    ) -> Option<Vec<u8>> {
         if !stats.finished {
-            return;
+            return None;
         }
-        let Some(ih) = onionbit_crypto::hash::from_hex(&stats.info_hash) else {
-            return;
-        };
-        let row = self
-            .inner
-            .db_arc()
-            .with(|c| onionbit_db::downloads::get(c, &ih))
-            .unwrap_or(None);
-        let Some(row) = row else { return };
+        let ih = onionbit_crypto::hash::from_hex(&stats.info_hash)?;
+        let row = rows.iter().find(|r| r.infohash == ih)?;
         if row.paused || row.user_stopped {
-            return;
+            return None;
         }
         // Reglages lus a chaud : un changement de `seeding_mode` dans
         // `POST /api/settings` s'applique aux seeds existants au tick
@@ -2064,7 +2157,7 @@ impl CoreSession {
             }
         };
         if !stop {
-            return;
+            return None;
         }
         if let Some(engine) = self.owner_engine(&stats.info_hash) {
             let ih_hex = stats.info_hash.clone();
@@ -2073,7 +2166,9 @@ impl CoreSession {
                     tracing::warn!(error = %e, "arret de seed automatique impossible");
                 }
             });
-            let _ = self.update_download_row(&ih, |r| r.paused = true);
+            Some(self.db_key(&ih))
+        } else {
+            None
         }
     }
 
@@ -2086,7 +2181,13 @@ impl CoreSession {
     /// `paused`/`user_stopped` persistes (distinction `queued` Python)
     /// ; si l'utilisateur pause ou reprend un torrent mis en file, la
     /// ligne reprend la main et l'entree est purgee de `queue_paused`.
-    async fn enforce_queue_limits(&self, queue_paused: &mut std::collections::HashSet<String>) {
+    /// `rows` : snapshot `downloads` du tick — la boucle le lit une
+    /// fois sur le pool bloquant au lieu de relister la table ici.
+    async fn enforce_queue_limits(
+        &self,
+        queue_paused: &mut std::collections::HashSet<String>,
+        rows: &[DownloadRow],
+    ) {
         // Config effective : les `active_*` modifies par
         // `POST /api/settings` s'appliquent des le tick suivant
         // (`set_session_limits` Python).
@@ -2096,11 +2197,6 @@ impl CoreSession {
             queue_paused.clear();
             return;
         }
-        let rows = self
-            .inner
-            .db_arc()
-            .with(onionbit_db::downloads::list)
-            .unwrap_or_default();
         let row_of = |hash: &str| {
             onionbit_crypto::hash::from_hex(hash)
                 .and_then(|ih| rows.iter().find(|r| r.infohash == ih))
@@ -4040,9 +4136,13 @@ impl CoreSession {
         let engine = self.engine_for(row.anon_hops.max(0) as u32).await?;
         self.remove_engine_only(id_or_hash, false).await?;
         self.readd_row(&engine, &row).await?;
+        let row2 = row.clone();
         self.inner
             .db_arc()
-            .with(|c| onionbit_db::downloads::upsert(c, &row))?;
+            .call("downloads.upsert", move |c| {
+                onionbit_db::downloads::upsert(c, &row2)
+            })
+            .await?;
         self.notify_state(&onionbit_crypto::hash::to_hex(&ih));
         Ok(())
     }

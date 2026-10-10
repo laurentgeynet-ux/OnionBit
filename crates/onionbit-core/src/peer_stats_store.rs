@@ -65,16 +65,34 @@ impl PeerStatsStore for DbPeerStatsStore {
     }
 
     fn upsert_peer_stat(&self, public_key: &[u8], stat: &PeerStat) {
-        let row = PeerStatRow {
-            public_key: public_key.to_vec(),
-            bytes_served: clamp_i64(stat.bytes_served),
-            bytes_used: clamp_i64(stat.bytes_used),
-            circuits_served: clamp_i64(stat.circuits_served),
-            circuits_used: clamp_i64(stat.circuits_used),
-            first_seen: clamp_i64(stat.first_seen),
-            last_seen: clamp_i64(stat.last_seen),
-        };
-        if let Err(e) = self.db.with(|c| onionbit_db::peer_stats::upsert(c, &row)) {
+        self.upsert_peer_stats(&[(public_key.to_vec(), stat.clone())]);
+    }
+
+    /// Lot d'upserts en UNE transaction : le flush du ledger persiste
+    /// des centaines d'entrees — un `.with` par ligne signifiait un
+    /// commit/fsync chacun et la connexion verrouillee en continu
+    /// (lags executor multi-secondes observes en session).
+    fn upsert_peer_stats(&self, batch: &[(Vec<u8>, PeerStat)]) {
+        let rows: Vec<PeerStatRow> = batch
+            .iter()
+            .map(|(public_key, stat)| PeerStatRow {
+                public_key: public_key.clone(),
+                bytes_served: clamp_i64(stat.bytes_served),
+                bytes_used: clamp_i64(stat.bytes_used),
+                circuits_served: clamp_i64(stat.circuits_served),
+                circuits_used: clamp_i64(stat.circuits_used),
+                first_seen: clamp_i64(stat.first_seen),
+                last_seen: clamp_i64(stat.last_seen),
+            })
+            .collect();
+        if let Err(e) = self.db.with(|c| {
+            let tx = c.unchecked_transaction()?;
+            for r in &rows {
+                onionbit_db::peer_stats::upsert(&tx, r)?;
+            }
+            tx.commit()?;
+            Ok(())
+        }) {
             tracing::warn!(error = %e, "persistance de peer_stats impossible");
         }
     }

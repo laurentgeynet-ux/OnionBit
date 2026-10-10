@@ -3088,8 +3088,17 @@ impl TunnelCommunity {
                 }
                 _ = ping_tick.tick() => self.do_ping().await,
                 _ = discovery_tick.tick() => self.do_peer_discovery().await,
-                _ = guards_tick.tick() => self.do_guard_maintenance(),
-                _ = ledger_tick.tick() => self.do_ledger_accounting(),
+                _ = guards_tick.tick() => {
+                    // `persist`/`flush` font du sqlite synchrone — sur
+                    // le pool bloquant pour ne pas figer l'executor
+                    // sous pression disque (ADR-0023).
+                    let this = self.clone();
+                    let _ = tokio::task::spawn_blocking(move || this.do_guard_maintenance()).await;
+                }
+                _ = ledger_tick.tick() => {
+                    let this = self.clone();
+                    let _ = tokio::task::spawn_blocking(move || this.do_ledger_accounting()).await;
+                }
             }
         }
     }

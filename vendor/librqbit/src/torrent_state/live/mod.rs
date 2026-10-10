@@ -1348,7 +1348,14 @@ impl PeerHandler {
 
                 // Release all pieces owned by this peer (fixes the bug where pieces
                 // could be in both queue_pieces AND inflight_pieces after peer death)
-                let released = g.get_pieces_mut()?.release_pieces_owned_by(self.addr);
+                // Torrent mis en pause entre-temps : le tracker est parti —
+                // rien a reliberer. Sans cela chaque peer mourait en
+                // `ChunkTrackerEmpty` (spam ERROR + re-queue inutile).
+                let released = match g.get_pieces_mut() {
+                    Ok(p) => p.release_pieces_owned_by(self.addr),
+                    Err(Error::ChunkTrackerEmpty) => Vec::new(),
+                    Err(e) => return Err(e),
+                };
                 let released_count = released.len();
                 if !released.is_empty() {
                     trace!(
@@ -2018,15 +2025,14 @@ impl PeerHandler {
             if hash_ok
                 && let Some(buf) = &staged
                 && !cfg!(feature = "_disable_disk_write_net_benchmark")
+                && let Err(e) = state.file_ops().write_piece(chunk_info.piece_index, buf)
             {
-                if let Err(e) = state.file_ops().write_piece(chunk_info.piece_index, buf) {
-                    error!(
-                        id = state.shared.id,
-                        info_hash = ?state.shared.info_hash,
-                        "FATAL: error writing piece to disk: {e:#}"
-                    );
-                    return state.on_fatal_error(e);
-                }
+                error!(
+                    id = state.shared.id,
+                    info_hash = ?state.shared.info_hash,
+                    "FATAL: error writing piece to disk: {e:#}"
+                );
+                return state.on_fatal_error(e);
             }
 
             match hash_ok {

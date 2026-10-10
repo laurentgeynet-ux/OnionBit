@@ -236,6 +236,18 @@ impl OpenedFile {
         }
         .map_err(|e| Error::Anyhow(anyhow::anyhow!("error opening {path:?}: {e:#}")))?;
         if for_write && let Some(len) = g.pending_len.take() {
+            // Fichier paresseux : `ensure_len` n'a pu marquer sparse
+            // (`is_open()` faux a l'enregistrement) — on le fait ici,
+            // AVANT `set_len`, sinon l'allocation est dense.
+            #[cfg(windows)]
+            if !g.tried_marking_sparse {
+                g.tried_marking_sparse = true;
+                tracing::debug!(
+                    path = ?g.path,
+                    marked = super::sparse::mark_file_sparse(&f),
+                    "marking sparse"
+                );
+            }
             f.set_len(len).map_err(|e| {
                 Error::Anyhow(anyhow::anyhow!(
                     "error setting len {len} on {path:?}: {e:#}"
