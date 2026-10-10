@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/l10n/l10n_ext.dart';
 import '../../../../core/design/design_tokens.dart';
+import '../../../privacy/presentation/widgets/privacy_profile_switch.dart';
 import 'settings_section.dart';
 import 'settings_defaults.dart';
 
@@ -98,6 +99,13 @@ class _AnonymitySectionState extends ConsumerState<AnonymitySection> {
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            Text(
+              l10n.privacyProfileTitle,
+              style: theme.textTheme.titleSmall,
+            ),
+            const SizedBox(height: AppSpace.xs),
+            const PrivacyProfileSwitch(),
+            const Divider(height: AppSpace.lg),
             SettingsSwitch(
               path: [..._t, 'enabled'],
               value: enabled,

@@ -57,7 +57,7 @@ void main() {
   ) async {
     await pump(tester, stateLegacy);
     expect(find.text('Compatible'), findsOneWidget);
-    expect(find.text('Full anonymous'), findsOneWidget);
+    expect(find.text('Max protection'), findsOneWidget);
     expect(find.text('Custom'), findsOneWidget);
     expect(find.byIcon(Icons.lock_outline), findsOneWidget);
     expect(find.byIcon(Icons.enhanced_encryption_outlined), findsOneWidget);
@@ -91,9 +91,9 @@ void main() {
       ),
       repo: repo,
     );
-    await tester.tap(find.text('Full anonymous'));
+    await tester.tap(find.text('Max protection'));
     await tester.pumpAndSettle();
-    expect(find.text('Switch to Full anonymous mode?'), findsOneWidget);
+    expect(find.text('Enable Max protection?'), findsOneWidget);
     // Pont déjà configuré : pas de champ de saisie.
     expect(find.byType(TextField), findsNothing);
     await tester.tap(find.widgetWithText(FilledButton, 'Enable'));
@@ -105,7 +105,7 @@ void main() {
       'ajout + bascule', (tester) async {
     final repo = _FakePrivacyRepository();
     await pump(tester, stateLegacy, repo: repo);
-    await tester.tap(find.text('Full anonymous'));
+    await tester.tap(find.text('Max protection'));
     await tester.pumpAndSettle();
     expect(find.byType(TextField), findsOneWidget);
     // Lien invalide → erreur locale, aucun appel.
@@ -209,7 +209,7 @@ void main() {
       ),
       repo: repo,
     );
-    await tester.tap(find.text('Full anonymous'));
+    await tester.tap(find.text('Max protection'));
     await tester.pumpAndSettle();
     expect(find.byType(AlertDialog), findsNothing);
     expect(repo.calls, isEmpty);
@@ -243,7 +243,7 @@ void main() {
 
   testWidgets('FR : libellés localisés', (tester) async {
     await pump(tester, stateLegacy, locale: const Locale('fr'));
-    expect(find.text('Full anonyme'), findsOneWidget);
+    expect(find.text('Protection max'), findsOneWidget);
     expect(find.text('Personnalisé'), findsOneWidget);
   });
 }

@@ -13,7 +13,6 @@ import '../../features/downloads/domain/download_filter.dart';
 import '../../features/downloads/presentation/providers/downloads_providers.dart';
 import '../../features/downloads/presentation/widgets/add_download_dialog.dart';
 import '../../features/downloads/presentation/widgets/create_torrent_dialog.dart';
-import '../../features/privacy/presentation/widgets/privacy_profile_switch.dart';
 import '../../features/settings/presentation/providers/settings_providers.dart';
 import '../di/providers.dart';
 import '../l10n/l10n_ext.dart';
@@ -191,14 +190,8 @@ class AppSidebar extends ConsumerWidget {
                   if (!collapsed) ...[
                     const SizedBox(height: AppSpace.sm),
                     const _SpeedsRow(),
+                  ] else
                     const SizedBox(height: AppSpace.xs),
-                    const Divider(height: AppSpace.sm),
-                    _GroupLabel(l10n.privacyProfileTitle),
-                    const PrivacyProfileSwitch(),
-                  ] else ...[
-                    const SizedBox(height: AppSpace.xs),
-                    const PrivacyProfileSwitch(collapsed: true),
-                  ],
                 ],
               ),
             ),

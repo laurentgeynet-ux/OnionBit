@@ -394,7 +394,7 @@ Future<void> requestProfileSwitch(
   }
 }
 
-/// Dialogue « Passer en mode Full anonyme ? » — conséquences
+/// Dialogue « Activer la Protection max ? » — conséquences
 /// (interop Tribler sacrifiée, redémarrage) + saisie inline du lien
 /// `onionbit-bridge://` quand aucun pont n'est configuré : le
 /// prérequis serveur `stealth.bridges` est satisfait juste avant la
@@ -474,6 +474,7 @@ class _FullConsequencesDialogState extends State<_FullConsequencesDialog> {
     final l10n = context.l10n;
     return AlertDialog(
       title: Text(l10n.privacyProfileFullTitle),
+      scrollable: true,
       content: SizedBox(
         width: 440,
         child: Column(
