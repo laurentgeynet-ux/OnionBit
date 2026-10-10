@@ -71,6 +71,7 @@ async fn staged_piece_memory_hash_and_single_write() -> anyhow::Result<()> {
                 }
             })
             .collect(),
+        io: Default::default(),
     };
     let fo = FileOps::new(&metadata.info, &storage, &metadata.file_infos);
 

@@ -11,7 +11,7 @@ use crate::{
     torrent_state::{ManagedTorrentShared, TorrentMetadata},
 };
 
-use crate::storage::{StorageFactory, TorrentStorage};
+use crate::storage::{StorageFactory, TorrentStorage, io_counters};
 
 use super::opened_file::OpenedFile;
 
@@ -29,6 +29,7 @@ impl StorageFactory for FilesystemStorageFactory {
         Ok(FilesystemStorage {
             output_folder: shared.options.output_folder.clone(),
             opened_files: Default::default(),
+            io: Default::default(),
         })
     }
 
@@ -40,6 +41,8 @@ impl StorageFactory for FilesystemStorageFactory {
 pub struct FilesystemStorage {
     pub(crate) output_folder: PathBuf,
     pub(crate) opened_files: Vec<OpenedFile>,
+    /// Compteurs pread/pwrite propres a ce stockage (ADR-0023, 84).
+    pub(crate) io: std::sync::Arc<io_counters::IoCountersShared>,
 }
 
 impl FilesystemStorage {
@@ -52,6 +55,9 @@ impl FilesystemStorage {
                 .map(|f| f.take_clone())
                 .collect::<anyhow::Result<Vec<_>>>()?,
             output_folder: self.output_folder.clone(),
+            // Nouveau stockage = nouveaux compteurs (le take remplace
+            // l'instance, il ne la prolonge pas).
+            io: Default::default(),
         })
     }
 }
@@ -62,15 +68,20 @@ impl TorrentStorage for FilesystemStorage {
             .get(file_id)
             .context("no such file")?
             .lock_read()?
-            .pread_exact(offset, buf)
+            .pread_exact(offset, buf)?;
+        // Instrumentation ADR-0023 etape 84 — ops + octets, apres succes.
+        self.io.count_pread(buf.len() as u64);
+        Ok(())
     }
 
     fn pwrite_all(&self, file_id: usize, offset: u64, buf: &[u8]) -> anyhow::Result<()> {
         let of = self.opened_files.get(file_id).context("no such file")?;
         #[cfg(windows)]
-        return of.try_mark_sparse()?.pwrite_all(offset, buf);
+        of.try_mark_sparse()?.pwrite_all(offset, buf)?;
         #[cfg(not(windows))]
-        return of.ensure_open()?.pwrite_all(offset, buf);
+        of.ensure_open()?.pwrite_all(offset, buf)?;
+        self.io.count_pwrite(buf.len() as u64);
+        Ok(())
     }
 
     fn pwrite_all_vectored(
@@ -81,9 +92,11 @@ impl TorrentStorage for FilesystemStorage {
     ) -> anyhow::Result<usize> {
         let of = self.opened_files.get(file_id).context("no such file")?;
         #[cfg(windows)]
-        return of.try_mark_sparse()?.pwrite_all_vectored(offset, bufs);
+        let n = of.try_mark_sparse()?.pwrite_all_vectored(offset, bufs)?;
         #[cfg(not(windows))]
-        return of.ensure_open()?.pwrite_all_vectored(offset, bufs);
+        let n = of.ensure_open()?.pwrite_all_vectored(offset, bufs)?;
+        self.io.count_pwrite(n as u64);
+        Ok(n)
     }
 
     fn remove_file(&self, _file_id: usize, filename: &Path) -> anyhow::Result<()> {
@@ -109,6 +122,7 @@ impl TorrentStorage for FilesystemStorage {
                 .map(|f| f.take_clone())
                 .collect::<anyhow::Result<Vec<_>>>()?,
             output_folder: self.output_folder.clone(),
+            io: Default::default(),
         }))
     }
 
@@ -173,6 +187,7 @@ mod tests {
         let storage = FilesystemStorage {
             output_folder: td.path().to_path_buf(),
             opened_files: vec![OpenedFile::new_lazy(blocker.join("f.bin"), true)],
+            io: Default::default(),
         };
 
         // ensure_file_length reste differe (aucun acces disque).

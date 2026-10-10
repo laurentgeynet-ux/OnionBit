@@ -2,6 +2,7 @@ use serde::Serialize;
 
 use crate::{
     session_stats::SessionCountersSnapshot,
+    storage::io_counters::{self, IoCounters},
     stream_connect::ConnectStatsSnapshot,
     torrent_state::{peers::stats::AggregatePeerStats, stats::Speed},
 };
@@ -16,6 +17,9 @@ pub struct SessionStatsSnapshot {
     pub peers: AggregatePeerStats,
     pub uptime_seconds: u64,
     pub connections: ConnectStatsSnapshot,
+    /// E/S positionnees du stockage (ADR-0023 etape 84 — global
+    /// processus, toutes sessions confondues).
+    pub storage_io: IoCounters,
 }
 
 impl From<(&SessionStats, ConnectStatsSnapshot)> for SessionStatsSnapshot {
@@ -27,6 +31,7 @@ impl From<(&SessionStats, ConnectStatsSnapshot)> for SessionStatsSnapshot {
             peers: s.peers.snapshot(),
             uptime_seconds: s.startup_time.elapsed().as_secs(),
             connections: c,
+            storage_io: io_counters::io_counters(),
         }
     }
 }
@@ -48,6 +53,10 @@ impl SessionStatsSnapshot {
             }};
         }
 
+        m!(counter, rqbit_pread_ops, self.storage_io.pread_ops);
+        m!(counter, rqbit_pread_bytes, self.storage_io.pread_bytes);
+        m!(counter, rqbit_pwrite_ops, self.storage_io.pwrite_ops);
+        m!(counter, rqbit_pwrite_bytes, self.storage_io.pwrite_bytes);
         m!(counter, rqbit_fetched_bytes, self.counters.fetched_bytes);
         m!(counter, rqbit_uploaded_bytes, self.counters.uploaded_bytes);
         m!(

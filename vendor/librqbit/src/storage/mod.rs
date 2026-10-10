@@ -23,6 +23,7 @@
 //! Vectored so that we issue 1 write call for a potentially non-contiguous chunk.
 
 pub mod filesystem;
+pub mod io_counters;
 
 #[cfg(feature = "storage_examples")]
 pub mod examples;

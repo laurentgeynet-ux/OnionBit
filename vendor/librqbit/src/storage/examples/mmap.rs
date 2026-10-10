@@ -192,6 +192,7 @@ mod tests {
             fs: FilesystemStorage {
                 output_folder: td.path().to_path_buf(),
                 opened_files: vec![OpenedFile::new_lazy(blocker.join("f.bin"), true)],
+                io: Default::default(),
             },
         };
 

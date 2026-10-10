@@ -3,6 +3,23 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Étape 84 : instrumentation I/O — compteurs `pread`/`pwrite` (2026-10-11)
+
+ADR-0023 mesurée : `vendor/librqbit/src/storage/io_counters.rs`
+comptabilise ops + octets de chaque `pread`/`pwrite`/`pwritev`
+réussi sur `FilesystemStorage` — **globaux** (exposés dans
+`SessionStatsSnapshot.storage_io` et en métriques Prometheus
+`rqbit_pread_*`/`rqbit_pwrite_*`) et **par instance**
+(`FilesystemStorage.io : Arc<IoCountersShared>` — immunisés aux
+E/S concurrentes, condition de la mesure en processus de test
+parallèle). Mesure `io_counters_telechargement_sans_pread` :
+phase téléchargement (`check_piece_data` + `write_piece`) →
+**0 `pread`**, `pwrite_bytes == total_length` ; `initial_check`
+relit ≥ `total_length` — l'invariant de l'étape 83 est confirmé
+par la métrique, pas seulement par lecture de code. `PrivateStorage`
+et `storage_bitdaemon` ont leurs propres chemins non instrumentés
+(périmètre documenté). 39/39 tests lib verts (e2e TCP/uTP inclus).
+
 ## Étape 101 : UI Flutter — page « Canaux » (2026-10-11)
 
 ADR-0025 bouclée côté client : nouvelle feature
