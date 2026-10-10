@@ -242,6 +242,11 @@ jobs:
       contents: write
     steps:
       - uses: actions/download-artifact@v7
+        with:
+          # L'artefact `*.dockerbuild` exporte par build-push-action
+          # ne matche pas ce motif : il est parfois corrompu (zip
+          # invalide) et faisait echouer le telechargement en bloc.
+          pattern: onionbit-*
       - name: publier la release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
