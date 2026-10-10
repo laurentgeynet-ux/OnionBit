@@ -318,12 +318,38 @@ async fn ctrl_c_or_never() {
     }
 }
 
+/// SIGTERM unix (`docker stop`, `systemctl stop`, `kill`) — meme
+/// sequence d'arret propre que Ctrl-C (ADR-0024, etape 89). Sous
+/// Windows ou si l'enregistrement echoue, le futur ne se resout
+/// jamais (les autres sources d'arrest restent les seules voies).
+#[cfg(unix)]
+async fn sigterm_or_never() {
+    use tokio::signal::unix::{signal, SignalKind};
+    match signal(SignalKind::terminate()) {
+        Ok(mut term) => {
+            term.recv().await;
+            tracing::info!("SIGTERM recu, arret propre");
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "handler SIGTERM impossible");
+            std::future::pending::<()>().await;
+        }
+    }
+}
+
+/// Hors unix : pas de SIGTERM — futur jamais resolu.
+#[cfg(not(unix))]
+async fn sigterm_or_never() {
+    std::future::pending::<()>().await;
+}
+
 /// Attend la premiere source d'arret : `ShutdownSignal` (tray «
-/// Quitter », `PUT /api/shutdown`) ou Ctrl-C.
+/// Quitter », `PUT /api/shutdown`), Ctrl-C ou SIGTERM (unix).
 async fn wait_shutdown_sources(signal: &ShutdownSignal) {
     tokio::select! {
         _ = signal.wait() => {}
         _ = ctrl_c_or_never() => {}
+        _ = sigterm_or_never() => {}
     }
 }
 

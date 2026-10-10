@@ -49,7 +49,10 @@ thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json", "local-time"] }
 tracing-appender = "0.2"
-clap = { version = "4", features = ["derive"] }
+# `env` : `ONIONBIT_STATE_DIR` d'onionbit-cli (ADR-0024, etape 89) —
+# active au niveau workspace, tous les consommateurs de clap la
+# tirent (inoffensif).
+clap = { version = "4", features = ["derive", "env"] }
 rusqlite = { version = "0.40", features = ["bundled", "functions"] }
 rand = "0.10"
 sha1 = "0.11"

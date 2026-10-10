@@ -218,3 +218,48 @@ async fn daemon_offline_sert_l_api_en_https() {
     child.kill().await.unwrap();
     let _ = child.wait().await;
 }
+
+/// Etape 89 (ADR-0024) : SIGTERM declenche le meme arret propre que
+/// Ctrl-C — sous Docker, `docker stop` envoie SIGTERM puis SIGKILL
+/// apres timeout ; le daemon doit terminer seul avant le SIGKILL.
+/// Unix seulement (Windows n'a pas de SIGTERM).
+#[cfg(unix)]
+#[tokio::test]
+async fn daemon_offline_sigterm_arret_propre() {
+    let dir = tempfile::tempdir().unwrap();
+    let port = free_port();
+    let listen = format!("127.0.0.1:{port}");
+
+    let bin = env!("CARGO_BIN_EXE_onionbit-daemon");
+    let mut child = tokio::process::Command::new(bin)
+        .arg("--listen")
+        .arg(&listen)
+        .arg("--state-dir")
+        .arg(dir.path())
+        .arg("--offline")
+        .arg("--no-tray")
+        .kill_on_drop(true)
+        .spawn()
+        .expect("lancement onionbit-daemon");
+
+    // Demarrage reel acte : configuration.json ecrit.
+    let config_path = dir.path().join("configuration.json");
+    let _ = read_config(&config_path).await;
+
+    let pid = child.id().expect("pid du daemon");
+    let kill = tokio::process::Command::new("kill")
+        .arg("-TERM")
+        .arg(pid.to_string())
+        .status()
+        .await
+        .expect("kill -TERM");
+    assert!(kill.success(), "kill -TERM a echoue : {kill:?}");
+
+    // Arret propre : session.stop() + drain -> exit 0, borne a 30 s
+    // (le SIGKILL de docker arriverait apres ~10 s).
+    let status = tokio::time::timeout(Duration::from_secs(30), child.wait())
+        .await
+        .expect("le daemon n'a pas quitte sous SIGTERM")
+        .expect("wait");
+    assert!(status.success(), "exit non propre : {status:?}");
+}

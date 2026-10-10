@@ -49,7 +49,10 @@ struct Cli {
     api_key: Option<String>,
 
     /// Repertoire d'etat du daemon (contient `configuration.json`).
-    #[arg(long, default_value = DEFAULT_STATE_DIR, global = true)]
+    /// Priorite : `--state-dir` > `ONIONBIT_STATE_DIR` > `.onionbit`
+    /// (l'env sert surtout au conteneur Docker — `ENV
+    /// ONIONBIT_STATE_DIR=/data/state`, ADR-0024).
+    #[arg(long, env = "ONIONBIT_STATE_DIR", default_value = DEFAULT_STATE_DIR, global = true)]
     state_dir: PathBuf,
 
     #[command(subcommand)]

@@ -46,12 +46,19 @@ async fn run_cli(api: &str, args: &[&str]) -> std::process::Output {
 /// Execute `onionbit-cli` avec des arguments bruts (sans `--api`
 /// injecte — pour tester la decouverte via `configuration.json`).
 async fn run_cli_args(args: &[String]) -> std::process::Output {
+    run_cli_args_env(args, &[]).await
+}
+
+/// Variante avec variables d'environnement (etape 89 —
+/// `ONIONBIT_STATE_DIR`).
+async fn run_cli_args_env(args: &[String], envs: &[(&str, String)]) -> std::process::Output {
     let bin = env!("CARGO_BIN_EXE_onionbit-cli");
-    tokio::process::Command::new(bin)
-        .args(args)
-        .output()
-        .await
-        .expect("lancement onionbit-cli")
+    let mut cmd = tokio::process::Command::new(bin);
+    cmd.args(args);
+    for (k, v) in envs {
+        cmd.env(k, v);
+    }
+    cmd.output().await.expect("lancement onionbit-cli")
 }
 
 #[tokio::test]
@@ -177,6 +184,85 @@ async fn cli_cle_api_explicite_et_decouverte_state_dir() {
         out.status.success(),
         "decouverte via configuration.json — stderr={}",
         String::from_utf8_lossy(&out.stderr)
+    );
+
+    session.stop().await;
+}
+
+/// Etape 89 (ADR-0024) : `ONIONBIT_STATE_DIR` substitue `--state-dir`
+/// dans le conteneur (`ENV ONIONBIT_STATE_DIR=/data/state`) — le CLI
+/// lit `configuration.json` via l'env ; le flag reste prioritaire.
+#[tokio::test]
+async fn cli_state_dir_via_env() {
+    // Serveur avec cle API activee (meme montage que le test de
+    // decouverte ci-dessus).
+    let dir = tempfile::tempdir().unwrap();
+    let session =
+        CoreSession::start_offline(CoreConfig::offline(dir.path().into()), Notifier::new())
+            .await
+            .unwrap();
+    let app = build(AppState::new(session.clone()).with_api_key("cle-cli-env"));
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr: SocketAddr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    // `configuration.json` du conteneur : cle + port reels.
+    let state_dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        state_dir.path().join("configuration.json"),
+        serde_json::json!({
+            "api": {
+                "key": "cle-cli-env",
+                "http_host": "127.0.0.1",
+                "http_port_running": addr.port()
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    // Env seul (aucun --state-dir ni --api) : status reussit.
+    let out = run_cli_args_env(
+        &["status".into()],
+        &[("ONIONBIT_STATE_DIR", state_dir.path().display().to_string())],
+    )
+    .await;
+    assert!(
+        out.status.success(),
+        "decouverte via ONIONBIT_STATE_DIR — stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    // Priorite : --state-dir l'emporte sur l'env — ici il pointe vers
+    // une config sans serveur (port 1) : echec attendu, l'env vers le
+    // bon state_dir n'est PAS utilise.
+    let dead_dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dead_dir.path().join("configuration.json"),
+        serde_json::json!({
+            "api": {
+                "key": "cle-cli-env",
+                "http_host": "127.0.0.1",
+                "http_port_running": 1
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let out = run_cli_args_env(
+        &[
+            "--state-dir".into(),
+            dead_dir.path().display().to_string(),
+            "status".into(),
+        ],
+        &[("ONIONBIT_STATE_DIR", state_dir.path().display().to_string())],
+    )
+    .await;
+    assert!(
+        !out.status.success(),
+        "--state-dir doit primer sur ONIONBIT_STATE_DIR"
     );
 
     session.stop().await;
