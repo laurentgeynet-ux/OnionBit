@@ -1,6 +1,6 @@
 # ADR-0026 — Pull / store-and-forward : coffre répliqué, messagerie offline, backfill d'attestations
 
-Statut : Proposée (2026-10-11).
+Statut : Acceptée (2026-10-11 — étapes 102-107 livrées).
 
 ## Contexte
 
@@ -30,21 +30,27 @@ store — **un seul mécanisme, trois usages**.
 
 ### 1. Store chiffré borné sur les ponts
 
-Nouvelle table `pull_store` (créée uniquement lorsque le rôle
-annonce `CAP_PULL_STORE`) :
+Nouvelle table `pull_store` (migration v24) :
 
 ```text
-slot_key    BLOB PRIMARY KEY   -- H(recipient_pk) ou H(vault_id)
-kind        INTEGER            -- encap_kind du dépôt
-blob        BLOB               -- payload opaque (déjà chiffré e2e)
-stored_at   INTEGER            -- epoch s
-expires_at  INTEGER            -- stored_at + ttl (défaut 7 j)
+seq         INTEGER PRIMARY KEY AUTOINCREMENT  -- ordre FIFO
+slot        BLOB NOT NULL      -- sha256(domaine‖pk), 32 o
+kind        INTEGER NOT NULL   -- 1 mailbox, 2 vault
+blob        BLOB NOT NULL      -- payload opaque (déjà chiffré e2e)
+stored_at   INTEGER NOT NULL   -- epoch s
+expires_at  INTEGER NOT NULL   -- stored_at + ttl (défaut 7 j)
 ```
 
-- **Bornes** (config, jamais en dur) : `pull_store_max_per_slot`
-  (dépôts par `slot_key`), `pull_store_max_total` (globale),
-  `pull_store_ttl_secs`, `pull_blob_max` (≤ `ENCAP` payload).
-  Éviction : expiration puis FIFO hors plus récent par slot.
+`slot` n'est **pas** une clé primaire : la boîte aux lettres
+empile plusieurs dépôts par slot (FIFO), le coffre n'en garde
+qu'un (`put` remplace). L'index de slot n'est jamais transporté
+sur le fil — il est **dérivé serveur** de la clé prouvée :
+`pull_slot("obmbox:"‖pk)` / `pull_slot("obvault:"‖pk)`.
+
+- **Bornes** (`PullStoreConfig`, jamais en dur) :
+  `max_per_slot` (64), `max_total` (65 536), `ttl_secs` (7 j),
+  `blob_max` (1 800 o ≤ `ENCAP` payload), `pull_limit` (32).
+  Éviction : expiration puis FIFO par slot puis globale.
 - **Le pont est aveugle** : il stocke des octets ; seul le
   destinataire (ou le détenteur de la phrase) peut déchiffrer.
 
@@ -52,34 +58,53 @@ expires_at  INTEGER            -- stored_at + ttl (défaut 7 j)
 
 | kind | sens | payload requête | payload réponse |
 |------|------|-----------------|-----------------|
-| `MAILBOX_PUT=3` | client → pont | `{slot_key, blob, ttl_hint}` | ack `MAILBOX_RESP` |
-| `MAILBOX_PULL=4` | client → pont | `{recipient_pk, sig}` | `MAILBOX_RESP` : liste de blobs, puis **suppression** |
-| `VAULT_PUT=5` | client → pont | `{slot_key, blob}` | ack `VAULT_RESP` (remplace l'existant) |
-| `VAULT_GET=6` | client → pont | `{slot_key, auth}` | `VAULT_RESP` : blob ou `not_found` |
-| `ATTEST_REQ=7` | client → pont | `{kind, subject}` | `ATTEST_RESP=8` : attestations `by_subject` bornées |
+| `MAILBOX_PUT` | client → pont | `{slot:32, varlen blob}` | `MAILBOX_RESP` : ack `{0/1}` |
+| `MAILBOX_PULL` | client → pont | `{varlen pk, sig:64}` | `MAILBOX_RESP` : blobs, puis **suppression** |
+| `VAULT_PUT` | client → pont | `{varlen pk, sig:64, varlen blob}` | `VAULT_RESP` : ack (remplace) |
+| `VAULT_GET` | client → pont | `{varlen pk, sig:64}` | `VAULT_RESP` : blob ou terminateur vide |
+| `ATTEST_REQ` | client → pont | `{kind:u8, varlen subject}` | `ATTEST_RESP` : attestations `by_subject` bornées |
 
-- `MAILBOX_PULL`/`VAULT_GET` portent une **signature Ed25519**
-  `{kind, req_id, slot_key}` par la clé concernée — le pont ne
-  livre un slot qu'à son propriétaire cryptographique (un relais
-  curieux ne peut pas énumérer les slots d'autrui).
+Réponses : une trame `*_RESP` par élément, payload
+`{more:u8, varlen data}` — terminateur vide = slot vide /
+`not_found`.
+
+- `MAILBOX_PULL`/`VAULT_GET`/`VAULT_PUT` portent une **signature
+  Ed25519** `{kind, req_id, pk}` (`pull_auth_msg`) par la clé
+  concernée — `pk` est la `LibNaClPK` sérialisée prouvée, le
+  `slot` est dérivé serveur : un relais curieux ne peut pas
+  énumérer les slots d'autrui (le hash n'est pas dans le signé,
+  il *est* déterminé par le signataire). `VAULT_PUT` est signée :
+  sans elle, n'importe qui pourrait écraser le coffre d'autrui.
+- `MAILBOX_PUT` est **anonyme par design** : n'importe qui peut
+  déposer dans une boîte (c'est le principe d'une boîte aux
+  lettres), seul le propriétaire peut retirer.
 - `MAILBOX_PULL` **consomme** : les blobs rendus sont supprimés —
   le pull est le drain naturel, la TTL le filet de sécurité.
-- `req_id` réutilise le corrélateur existant ; réponses à
-  `req_id` inconnu droppées (comportement déjà en place).
+- `req_id` réutilise le corrélateur existant ; la signature le
+  couvre → pas de rejeu d'une auth sur une autre requête.
 
 ### 3. Câblage des trois usages
 
-- **Messagerie** : `send` sans circuit → option `deliver_offline`
-  (config, défaut actif si ponts relais disponibles) : la trame
-  e2e est encapsulée dans `MAILBOX_PUT` vers un pont tiré
-  déterministement par `slot_key = H(dest_pk)` ; le destinataire
-  exécute `MAILBOX_PULL` périodique (intervalle config, jitter —
-  même discipline que `channel_sync`) au démarrage puis à chaque
-  session. Réception → pipeline `on_gmsg`/`on_obf` existant,
-  sans chemin parallèle.
-- **Coffre** : export identité+contacts sérialisé puis chiffré
-  AEAD selon la convention `OBV1` (magic+version+sel+nonce+AEAD,
-  borne à l'ouverture) ; `slot_key = H("vault"|pubkey)`.
+- **Messagerie** : `send` sans circuit → `deliver_offline`
+  (`MessagingConfig`, défaut actif ; clés daemon
+  `messaging_deliver_offline` + `messaging_offline_poll_secs`) :
+  la trame `msg` **filaire identique** (AEAD + signature
+  Ed25519) est scellée avec une `send_key` dérivée du **DH
+  statique de paire** (`crypt_pk` destinataire × `crypt_sk`
+  émetteur — module `obox`), encapsulée `{f: wire, p: pk}` dans
+  `MAILBOX_PUT` vers tous les ponts `CAP_PULL_STORE` connus ;
+  le destinataire exécute `MAILBOX_PULL` périodique jitter au
+  tick de maintenance. Réception → `ingest_offline` : même
+  `Frame::open` (vérification de signature inchangée),
+  consentement `Active` requis, dedup `id`, livraison
+  `received` — sans chemin parallèle de codec. Les clés de
+  **circuit** ne pouvaient pas être réutilisées (elles dérivent
+  du secret e2e du lien) : le DH statique de paire est la
+  solution — la trame reste la même, seule la dérivation
+  change.
+- **Coffre** : blob `export_vault()` existant (convention
+  `OBV1` : magic+version, `pair_seal_in` pour soi-même, borne à
+  l'ouverture) ; `slot = pull_slot("obvault:", pk)`.
   `VAULT_PUT` sur **tous** les ponts annonçant `CAP_PULL_STORE`
   (réplication N = nb de ponts, pas de consensus), `VAULT_GET`
   à la restauration. `VAULT_PUT` remplace : le coffre n'est pas
@@ -129,13 +154,24 @@ capacité ignorent les kinds inconnus (déjà le comportement).
 
 ## Conséquences
 
-- `encap_kind` passe en v2 : kinds 3-8. Les kinds inconnus sont
-  déjà droppés → déploiement progressif sans flag day.
+- `encap_kind` passe en v2 : kinds 3-10 (`MAILBOX_PUT=3`,
+  `MAILBOX_PULL=4`, `MAILBOX_RESP=5`, `VAULT_PUT=6`,
+  `VAULT_GET=7`, `VAULT_RESP=8`, `ATTEST_REQ=9`,
+  `ATTEST_RESP=10`). Les kinds inconnus sont déjà droppés →
+  déploiement progressif sans flag day.
 - `encap_relay` ne suffit plus : le pont exécute le pull contre
-  son `pull_store` local en plus du provider de découverte.
-- Aucune exposition REST nouvelle en v1 pour le coffre (commande
-  CLI/daemon `identity vault push/restore` à décider à
-  l'implantation) ; messagerie et attestations internes.
+  son `pull_store` local (trait `PullStoreBackend`, adaptateur
+  `DbPullStore` SQLite) en plus du provider de découverte, sous
+  `pull_store_relay` (rôles `bridge`/`gateway`).
+- Surface REST du coffre (tranchée à l'implantation) :
+  `POST /api/messaging/vault/replicate` (push multi-ponts,
+  `{replicated}`) et `POST /api/messaging/vault/restore`
+  (`VAULT_GET` + import, `{restored}`) — même périmètre
+  `api_key_auth` que le reste de la messagerie.
+- Le backfill `ATTEST_REQ` part au démarrage pour `IDENTITY`/
+  propre clé (retardé — les `caps` des ponts doivent être
+  connues) ; ingestion `ingest_backfilled_attestation` = pipeline
+  `attest` sans re-gossip.
 - Dépend du P0 « gateway déployé » : les ponts actuels partagent
   le même VPS — la réplication N réplique sur le même opérateur
   tant que la diversité d'hébergeur n'existe pas (ADR-0024 §8).

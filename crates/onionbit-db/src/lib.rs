@@ -33,6 +33,7 @@ pub mod models;
 pub mod peer_stats;
 pub mod peers;
 pub mod pex;
+pub mod pull_store;
 pub mod ranks;
 pub mod rss;
 

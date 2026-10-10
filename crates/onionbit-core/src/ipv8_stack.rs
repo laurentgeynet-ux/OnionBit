@@ -279,6 +279,13 @@ pub struct Ipv8Config {
     /// l'annonce `CAP_MSG_V2` des `hello` ext (pas de promesse
     /// mensongere). `true` par defaut.
     pub messaging_groups_enabled: bool,
+    /// ADR-0026 : `send` sans circuit depose la trame offline e2e
+    /// (`obox`) sur les ponts `CAP_PULL_STORE` — `false` retombe
+    /// sur le comportement online-only (`failed` + `Undeliverable`).
+    pub messaging_deliver_offline: bool,
+    /// Cadence (s) du `MAILBOX_PULL` periodique (jitter applique
+    /// par le service).
+    pub messaging_offline_poll_secs: u64,
     /// Octets servis gratuitement avant tout refus (periode de
     /// gratuite pour les nouveaux pairs).
     pub ledger_soft_cap: usize,
@@ -373,6 +380,12 @@ pub struct Ipv8Config {
     /// non-hex → `Err` (un noeud stealth ne demarre jamais a moitie
     /// configure).
     pub stealth: Option<crate::daemon_config::StealthFileConfig>,
+    /// ADR-0026 : `pull_store.enabled` — sert le store chiffre
+    /// pull quand `stealth.role` est `bridge`/`gateway` (defaut
+    /// actif pour ces roles : c'est leur fonction).
+    pub pull_store_enabled: bool,
+    /// Bornes du store pull (`pull_store` de `onionbit-db`).
+    pub pull_store_cfg: onionbit_db::pull_store::PullStoreConfig,
 }
 
 impl Ipv8Config {
@@ -428,6 +441,8 @@ impl Ipv8Config {
             messaging_consent_endorsed: false,
             messaging_consent_ledger: false,
             messaging_groups_enabled: true,
+            messaging_deliver_offline: true,
+            messaging_offline_poll_secs: 120,
             ledger_enabled: true,
             ledger_enforce: false,
             ledger_soft_cap: DEFAULT_LEDGER_SOFT_CAP as usize,
@@ -465,6 +480,8 @@ impl Ipv8Config {
             ext_peer_ttl_secs: DEFAULT_EXT_PEER_TTL_SECS,
             ext_peers_max: DEFAULT_EXT_PEERS_MAX,
             stealth: None,
+            pull_store_enabled: true,
+            pull_store_cfg: onionbit_db::pull_store::PullStoreConfig::default(),
         }
     }
 }
@@ -514,6 +531,8 @@ impl Default for Ipv8Config {
             messaging_consent_endorsed: false,
             messaging_consent_ledger: false,
             messaging_groups_enabled: true,
+            messaging_deliver_offline: true,
+            messaging_offline_poll_secs: 120,
             ledger_enabled: true,
             ledger_enforce: false,
             ledger_soft_cap: DEFAULT_LEDGER_SOFT_CAP as usize,
@@ -550,6 +569,8 @@ impl Default for Ipv8Config {
             ext_peer_ttl_secs: DEFAULT_EXT_PEER_TTL_SECS,
             ext_peers_max: DEFAULT_EXT_PEERS_MAX,
             stealth: None,
+            pull_store_enabled: true,
+            pull_store_cfg: onionbit_db::pull_store::PullStoreConfig::default(),
         }
     }
 }
@@ -1771,6 +1792,47 @@ struct EncapPending {
 /// de reponses branche sur l'ext.
 type EncapPendingMap = Arc<Mutex<HashMap<u32, EncapPending>>>;
 
+/// `req_id -> attente d'une reponse pull` (ADR-0026) — correlation
+/// `VAULT_RESP`/`ATTEST_RESP` pour les requetes synchrones de la
+/// stack (`vault_pull`). La premiere donnee non vide gagne ;
+/// `oneshot` absorbe naturellement les doublons.
+type PullPendingMap = Arc<Mutex<HashMap<u32, tokio::sync::oneshot::Sender<Vec<u8>>>>>;
+
+/// Adaptateur [`OfflineTransport`] sur la communaute ext : depots
+/// `MAILBOX_PUT` et pulls `MAILBOX_PULL` encapsules vers les pairs
+/// `CAP_PULL_STORE` connus. Les envois sont spawnes (l'appelant —
+/// `MessagingService` — n'est pas async sur `put`/`poll`).
+struct ExtOfflineTransport {
+    /// Communaute ext qui porte `send_mailbox_*`.
+    ext: Arc<onionbit_ipv8::ext::OnionbitExtCommunity>,
+    /// Generateur de `req_id` partage (selects + pulls).
+    ids: Arc<AtomicU32>,
+}
+
+impl crate::services::messaging::OfflineTransport for ExtOfflineTransport {
+    fn put(&self, pk_owner: &[u8], blob: &[u8]) {
+        for (_pk, addr) in self.ext.pull_store_peers() {
+            let e = self.ext.clone();
+            let req_id = self.ids.fetch_add(1, Ordering::Relaxed);
+            let blob = blob.to_vec();
+            let pk = pk_owner.to_vec();
+            tokio::spawn(async move {
+                let _ = e.send_mailbox_put(&addr, req_id, &pk, &blob).await;
+            });
+        }
+    }
+
+    fn poll(&self) {
+        for (_pk, addr) in self.ext.pull_store_peers() {
+            let e = self.ext.clone();
+            let req_id = self.ids.fetch_add(1, Ordering::Relaxed);
+            tokio::spawn(async move {
+                let _ = e.send_mailbox_pull(&addr, req_id).await;
+            });
+        }
+    }
+}
+
 /// Stack IPv8 de session (endpoint + communities + lanes anonymes).
 pub struct Ipv8Stack {
     /// Endpoint UDP IPv8 partage.
@@ -1882,6 +1944,12 @@ pub struct Ipv8Stack {
     encap_pending: EncapPendingMap,
     /// Compteur d'identifiants `req_id` des selects encapsules.
     encap_select_ids: AtomicU32,
+    /// `req_id -> oneshot` des requetes pull synchrones
+    /// (`vault_pull`) — alimentee par le puits `*_RESP`.
+    pull_pending: PullPendingMap,
+    /// Compteur `req_id` des operations pull (partage avec le
+    /// transport offline de la messagerie).
+    pull_ids: Arc<AtomicU32>,
 }
 
 /// Fichier de persistance des noeuds de sortie (`exitnode_cache`
@@ -2078,6 +2146,15 @@ impl Ipv8Stack {
         // bootstrap n'est jamais sondee sur ce prefixe) ; le peer set
         // de l'overlay *est* la population OnionBit visible.
         let ext = if config.ext_enabled {
+            // ADR-0026 : relais pull — roles serveur stealth +
+            // `pull_store.enabled` (borne le store SQLite injecte
+            // plus bas).
+            let pull_store_cfg = config.pull_store_cfg.clone();
+            let pull_store_relay = config.pull_store_enabled
+                && stealth
+                && stealth_transport
+                    .as_ref()
+                    .is_some_and(|t| t.role() != StealthRole::Client);
             let e = onionbit_ipv8::ext::OnionbitExtCommunity::new(
                 key.clone(),
                 network.clone(),
@@ -2159,13 +2236,29 @@ impl Ipv8Stack {
                         && stealth_transport
                             .as_ref()
                             .is_some_and(|t| t.role() != StealthRole::Client),
+                    // ADR-0026 : les roles serveur hebergent le
+                    // store chiffre pull (mailbox offline, coffre,
+                    // backfill d'attestations) — defaut actif pour
+                    // eux, `pull_store.enabled` peut le couper.
+                    pull_store_relay,
                     ..onionbit_ipv8::ext::ExtSettings::default()
                 },
             )
             .await;
-            e.set_attestation_store(Arc::new(crate::attestation_store::DbAttestationStore::new(
+            let attestation_store = Arc::new(crate::attestation_store::DbAttestationStore::new(
                 db.clone(),
-            )));
+            ));
+            e.set_attestation_store(attestation_store.clone());
+            // ADR-0026 : store chiffre pull sur les roles serveur —
+            // backend SQLite borne (`pull_store.*` de la config) +
+            // backfill d'attestations sur le store partage.
+            if pull_store_relay {
+                e.set_pull_store(Arc::new(crate::pull_store::DbPullStore::new(
+                    db.clone(),
+                    pull_store_cfg.clone(),
+                    attestation_store,
+                )));
+            }
             // Phase 9c : persistance des liens du ledger bilateral
             // dans `ext_ledger_links` (v18).
             e.set_ledger_store(Arc::new(crate::ext_ledger_store::DbLedgerStore::new(
@@ -2770,6 +2863,10 @@ impl Ipv8Stack {
                         consent_gate_endorsed: config.messaging_consent_endorsed,
                         consent_gate_ledger: config.messaging_consent_ledger,
                         groups_enabled: config.messaging_groups_enabled,
+                        deliver_offline: config.messaging_deliver_offline,
+                        offline_poll_interval: std::time::Duration::from_secs(
+                            config.messaging_offline_poll_secs.max(1),
+                        ),
                         ..onionbit_messaging::MessagingConfig::default()
                     },
                     config.messaging_hops,
@@ -2794,6 +2891,57 @@ impl Ipv8Stack {
             m.set_trust_lookup(std::sync::Arc::new(move |pk| {
                 ext.trust_info(onionbit_ipv8::ext::attest_kind::IDENTITY, pk)
                     .score
+            }));
+        }
+
+        // ADR-0026 : transport offline de la messagerie (depots
+        // `MAILBOX_PUT` + pulls periodiques) et puits des reponses
+        // pull — `MAILBOX_RESP` -> ingestion `obox`, `VAULT_RESP`
+        // -> correlation `vault_pull`, `ATTEST_RESP` -> pipeline
+        // attest (verification + dedup inchanges, sans re-gossip).
+        let pull_pending: PullPendingMap = Arc::new(Mutex::new(HashMap::new()));
+        let pull_ids = Arc::new(AtomicU32::new(0));
+        if let Some(e) = &ext {
+            if let Some(m) = &messaging {
+                m.set_offline_transport(Arc::new(ExtOfflineTransport {
+                    ext: e.clone(),
+                    ids: pull_ids.clone(),
+                }));
+            }
+            let m = messaging.clone();
+            let e2 = e.clone();
+            let pend = pull_pending.clone();
+            e.set_pull_resp_sink(Arc::new(move |_pk, _src, kind, req_id, payload| {
+                let Ok((_more, data)) = onionbit_ipv8::ext::pull_resp_unpack(&payload) else {
+                    return;
+                };
+                match kind {
+                    onionbit_ipv8::ext::encap_kind::MAILBOX_RESP => {
+                        if !data.is_empty() {
+                            if let Some(m) = &m {
+                                m.ingest_offline(&data);
+                            }
+                        }
+                    }
+                    onionbit_ipv8::ext::encap_kind::VAULT_RESP => {
+                        if !data.is_empty() {
+                            let tx = pend
+                                .lock()
+                                .unwrap_or_else(|e| e.into_inner())
+                                .remove(&req_id);
+                            if let Some(tx) = tx {
+                                let _ = tx.send(data);
+                            }
+                        }
+                    }
+                    onionbit_ipv8::ext::encap_kind::ATTEST_RESP => {
+                        let mut r = onionbit_ipv8::serializer::Reader::new(&data);
+                        if let Ok(att) = onionbit_ipv8::ext::Attestation::unpack(&mut r) {
+                            e2.ingest_backfilled_attestation(&att);
+                        }
+                    }
+                    _ => {}
+                }
             }));
         }
 
@@ -2825,6 +2973,8 @@ impl Ipv8Stack {
             stealth_link_mtu,
             encap_pending,
             encap_select_ids: AtomicU32::new(0),
+            pull_pending,
+            pull_ids,
             key,
             identity_kind,
             identity_seed,
@@ -2851,6 +3001,20 @@ impl Ipv8Stack {
             self_weak: Mutex::new(std::sync::Weak::new()),
         });
         *stack.self_weak.lock().unwrap_or_else(|e| e.into_inner()) = Arc::downgrade(&stack);
+        // ADR-0026 : backfill initial des attestations `identity`
+        // qui nous concernent — un noeud neuf (ou une identite
+        // restauree) recupere des ponts `CAP_PULL_STORE` ce que le
+        // gossip n'a pas encore atteint. Retarde : les `hello`/
+        // `caps` doivent d'abord peupler `pull_store_peers`.
+        if stack.ext.is_some() {
+            let s = stack.clone();
+            let pk = stack.key.public_key().to_bin();
+            tokio::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_secs(15)).await;
+                s.attest_backfill(onionbit_ipv8::ext::attest_kind::IDENTITY, &pk)
+                    .await;
+            });
+        }
         Ok(stack)
     }
 
@@ -3009,6 +3173,76 @@ impl Ipv8Stack {
                 false
             }
         }
+    }
+
+    // -- ADR-0026 : operations pull cote stack ------------------------
+
+    /// `VAULT_PUT` : replique `blob` (coffre `OBV1` deja chiffre
+    /// pour soi-meme) sur **tous** les ponts `CAP_PULL_STORE`
+    /// connus — la replication multi-ponts est le but (un pont
+    /// indisponible ne perd pas le coffre). Retourne le nombre de
+    /// ponts touches (`0` = aucun — l'appelant decide d'echouer).
+    pub async fn vault_push(&self, blob: &[u8]) -> usize {
+        let Some(ext) = &self.ext else { return 0 };
+        let peers = ext.pull_store_peers();
+        let mut sent = 0usize;
+        for (_pk, addr) in peers {
+            let req_id = self.pull_ids.fetch_add(1, Ordering::Relaxed);
+            if ext.send_vault_put(&addr, req_id, blob).await.is_ok() {
+                sent += 1;
+            }
+        }
+        sent
+    }
+
+    /// `VAULT_GET` : demande notre coffre au premier pont
+    /// `CAP_PULL_STORE` connu et attend la `VAULT_RESP`
+    /// (`timeout` borne l'attente — un pont muet n'est pas
+    /// bloquant pour l'appelant). `None` = aucun pont, pas de
+    /// coffre chez ce pont (`not_found`), ou timeout.
+    pub async fn vault_pull(&self, timeout: std::time::Duration) -> Option<Vec<u8>> {
+        let ext = self.ext.clone()?;
+        let (_pk, addr) = ext.pull_store_peers().into_iter().next()?;
+        let req_id = self.pull_ids.fetch_add(1, Ordering::Relaxed);
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.pull_pending
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(req_id, tx);
+        let send = ext.send_vault_get(&addr, req_id).await;
+        let out = match send {
+            Ok(()) => tokio::time::timeout(timeout, rx)
+                .await
+                .ok()
+                .and_then(|r| r.ok()),
+            Err(_) => None,
+        };
+        self.pull_pending
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&req_id);
+        out
+    }
+
+    /// `ATTEST_REQ` : backfill des attestations `(kind, subject)`
+    /// aupres de tous les ponts `CAP_PULL_STORE` — les reponses
+    /// passent par le pipeline `ingest_backfilled_attestation`
+    /// (signature + dedup + derive inchanges). Retourne le nombre
+    /// de ponts interroges.
+    pub async fn attest_backfill(&self, kind: u8, subject: &[u8]) -> usize {
+        let Some(ext) = &self.ext else { return 0 };
+        let mut sent = 0usize;
+        for (_pk, addr) in ext.pull_store_peers() {
+            let req_id = self.pull_ids.fetch_add(1, Ordering::Relaxed);
+            if ext
+                .send_attest_req(&addr, req_id, kind, subject)
+                .await
+                .is_ok()
+            {
+                sent += 1;
+            }
+        }
+        sent
     }
 
     /// `session.overlays` : instantanes `OverlaySchema` de toutes les

@@ -351,6 +351,51 @@ pub async fn post_vault_import(
     Ok(Json(serde_json::json!({ "restored": restored })))
 }
 
+/// Delai d'attente d'une `VAULT_RESP` pour `/vault/restore` — un
+/// pont muet ne doit pas bloquer la requete indefiniment.
+const VAULT_PULL_TIMEOUT_SECS: u64 = 10;
+
+/// Stack IPv8 de la session (pull store — ADR-0026), ou 404.
+fn ipv8(state: &AppState) -> Result<Arc<onionbit_core::ipv8_stack::Ipv8Stack>, ApiError> {
+    state
+        .session
+        .ipv8()
+        .ok_or_else(|| ApiError::not_found("ipv8 desactive"))
+}
+
+/// `POST /api/messaging/vault/replicate` — `VAULT_PUT` du coffre
+/// `OBV1` courant (contacts chiffres pour notre identite) vers
+/// **tous** les ponts `CAP_PULL_STORE` connus : la replication
+/// multi-ponts est la resilience (remplacement a chaque pont).
+/// Renvoie `{replicated: n}` ; 404 sans pont disponible.
+pub async fn post_vault_replicate(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let blob = svc(&state)?.export_vault();
+    let sent = ipv8(&state)?.vault_push(&blob).await;
+    if sent == 0 {
+        return Err(ApiError::not_found("aucun pont pull_store disponible"));
+    }
+    Ok(Json(serde_json::json!({ "replicated": sent })))
+}
+
+/// `POST /api/messaging/vault/restore` — `VAULT_GET` sur un pont
+/// `CAP_PULL_STORE` puis [`import_vault`] du blob rendu. Renvoie
+/// `{restored: n}` ; 404 si aucun pont ou coffre absent (`not_found`
+/// du store).
+pub async fn post_vault_restore(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let Some(blob) = ipv8(&state)?
+        .vault_pull(std::time::Duration::from_secs(VAULT_PULL_TIMEOUT_SECS))
+        .await
+    else {
+        return Err(ApiError::not_found("aucun coffre chez les ponts"));
+    };
+    let restored = svc(&state)?.import_vault(&blob)?;
+    Ok(Json(serde_json::json!({ "restored": restored })))
+}
+
 /// `MessagingEvent` → `(topic, json)` du flux SSE dedie.
 fn event_to_sse(ev: &MessagingEvent) -> Option<(String, serde_json::Value)> {
     let (topic, kwargs) = match ev {

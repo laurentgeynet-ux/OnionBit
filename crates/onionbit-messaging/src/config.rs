@@ -99,6 +99,14 @@ pub struct MessagingConfig {
     pub attach_area: String,
     /// TTL d'un upload stage jamais attache.
     pub upload_ttl: Duration,
+    /// Depot boite aux lettres (ADR-0026) : un `send` sans circuit
+    /// lie depose la trame offline e2e (`obox`) sur les ponts
+    /// `CAP_PULL_STORE` au lieu d'echouer `Undeliverable`. Inerte
+    /// sans `OfflineTransport` injecte cote service.
+    pub deliver_offline: bool,
+    /// Cadence du `MAILBOX_PULL` sur nos boites (avec jitter
+    /// implicite — la tache applique un dephasage aleatoire).
+    pub offline_poll_interval: Duration,
 }
 
 impl Default for MessagingConfig {
@@ -132,6 +140,8 @@ impl Default for MessagingConfig {
             attach_purge_on_expire: true,
             attach_area: "public".to_string(),
             upload_ttl: Duration::from_secs(86400),
+            deliver_offline: true,
+            offline_poll_interval: Duration::from_secs(120),
         }
     }
 }

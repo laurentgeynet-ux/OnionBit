@@ -437,6 +437,19 @@ struct CircuitBinding {
     contact: Option<Vec<u8>>,
 }
 
+/// Transport du store-and-forward (ADR-0026) — adapte par
+/// `ipv8_stack` sur la communaute ext (`MAILBOX_PUT`/`PULL`
+/// encapsules). Les deux methodes sont non-bloquantes :
+/// l'adaptateur ordonnance les emissions (spawn UDP + store).
+pub trait OfflineTransport: Send + Sync {
+    /// Depose `blob` (trame offline e2e `obox`) dans la boite de
+    /// `pk_owner` sur les ponts `CAP_PULL_STORE` connus.
+    fn put(&self, pk_owner: &[u8], blob: &[u8]);
+    /// Envoie un `MAILBOX_PULL` authentifie vers les ponts connus —
+    /// les reponses arrivent par [`MessagingService::ingest_offline`].
+    fn poll(&self);
+}
+
 /// Service de messagerie e2e (une instance par `Ipv8Stack`).
 pub struct MessagingService {
     /// Community tunnel — transport uniquement.
@@ -474,6 +487,11 @@ pub struct MessagingService {
     /// — injecte par `Ipv8Stack` quand la communaute ext tourne
     /// (`None` sinon : les gates `consent_gate_*` sont inertes).
     trust_lookup: Mutex<Option<TrustLookup>>,
+    /// Transport boite aux lettres (ADR-0026) — injecte par
+    /// `set_offline_transport` quand la communaute ext tourne ;
+    /// les reponses `MAILBOX_RESP` reviennent par
+    /// [`Self::ingest_offline`].
+    offline: Mutex<Option<Arc<dyn OfflineTransport>>>,
     /// Arrets des taches du service.
     stops: Mutex<Vec<watch::Sender<bool>>>,
 }
@@ -517,12 +535,120 @@ impl MessagingService {
             stats: MessagingStats::default(),
             events_tx,
             trust_lookup: Mutex::new(None),
+            offline: Mutex::new(None),
             stops: Mutex::new(Vec::new()),
         });
         svc.load_state();
         svc.spawn_e2e_listener();
         svc.spawn_presence_monitor();
         svc
+    }
+
+    /// Injecte le transport boite aux lettres (ADR-0026) — appele
+    /// par `Ipv8Stack` quand la communaute ext tourne. Sans lui,
+    /// `deliver_offline` n'a aucun effet (comportement MS-7
+    /// historique).
+    pub fn set_offline_transport(&self, t: Arc<dyn OfflineTransport>) {
+        *self.offline.lock().unwrap_or_else(|e| e.into_inner()) = Some(t);
+    }
+
+    /// Depot boite aux lettres d'un `send` sans circuit (ADR-0026) :
+    /// trame `msg` e2e `obox` (AEAD sous cle statique de paire +
+    /// signature Ed25519 du filaire — le pont est aveugle),
+    /// deposee dans la boite du contact via le transport.
+    /// `None` = pas de transport → l'appelant retombe sur `failed`.
+    fn send_offline(&self, contact_pk: &[u8], body: &[u8]) -> Result<Option<[u8; 16]>> {
+        let Some(t) = self
+            .offline
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+        else {
+            return Ok(None);
+        };
+        let (pk, seq) = {
+            let mut contacts = self.contacts.lock().unwrap_or_else(|e| e.into_inner());
+            let Some(c) = contacts.get_mut(contact_pk) else {
+                return Ok(None);
+            };
+            let seq = c.send_seq;
+            c.send_seq += 1;
+            (c.pk.clone(), seq)
+        };
+        let frame = Frame::new(MsgKind::Msg, seq, now_secs(), body.to_vec());
+        let blob = onionbit_messaging::obox::seal(&frame, &self.key, &pk, &self.cfg)
+            .map_err(|e| CoreError::State(format!("obox : {e}")))?;
+        t.put(contact_pk, &blob);
+        self.persist_message(Self::msg_row(
+            contact_pk,
+            "out",
+            frame.seq,
+            frame.ts,
+            &frame.body,
+            "sent",
+            &frame.id,
+        ));
+        self.persist_seqs(contact_pk);
+        Ok(Some(frame.id))
+    }
+
+    /// Ingestion d'un blob `MAILBOX_RESP` (ADR-0026) : ouverture
+    /// `obox` (AEAD de paire + signature Ed25519 verifiee dans
+    /// `Frame::open`), barriere de consentement (contact `Active`
+    /// exige — un expéditeur `pending`/`blocked`/inconnu est drope
+    /// comme en direct), dedup `id` puis livraison par le meme
+    /// chemin `received`. La fenetre `seq` est *consultee* en
+    /// dedup seulement : un `seq` hors fenetre n'invalide pas la
+    /// livraison (le compteur peut avoir avance sur un autre
+    /// appareil de la meme identite).
+    pub fn ingest_offline(self: &Arc<Self>, blob: &[u8]) {
+        let Ok((sender, frame)) = onionbit_messaging::obox::open(blob, &self.key, &self.cfg) else {
+            self.stats.codec.fetch_add(1, Ordering::Relaxed);
+            return;
+        };
+        let pk_bin = sender.to_bin();
+        if self.contact_state(&pk_bin) != Some(ContactState::Active) {
+            self.stats.pending_drop.fetch_add(1, Ordering::Relaxed);
+            return;
+        }
+        let dup = {
+            let mut contacts = self.contacts.lock().unwrap_or_else(|e| e.into_inner());
+            match contacts.get_mut(&pk_bin) {
+                None => return,
+                Some(c) => {
+                    if c.recv_window.seen_id(&frame.id) {
+                        true
+                    } else {
+                        // Marque l'id (dedup) sans exiger la fenetre —
+                        // `admit` echoue sur un seq hors fenetre, la
+                        // livraison reste acquise (dedup DB
+                        // `INSERT OR IGNORE` en second rideau).
+                        let _ = c.recv_window.admit(frame.seq, &frame.id);
+                        false
+                    }
+                }
+            }
+        };
+        if dup {
+            self.stats.replay.fetch_add(1, Ordering::Relaxed);
+            return;
+        }
+        let row = Self::msg_row(
+            &pk_bin,
+            "in",
+            frame.seq,
+            frame.ts,
+            &frame.body,
+            "received",
+            &frame.id,
+        );
+        self.persist_message(row);
+        let _ = self.events_tx.send(MessagingEvent::Frame {
+            contact: pk_bin,
+            kind: frame.kind,
+            id: frame.id,
+            body: frame.body,
+        });
     }
 
     /// Injecte le lookup de confiance ext (`kind=identity`) —
@@ -921,6 +1047,16 @@ impl MessagingService {
             ));
         }
         let Some(cid) = self.contact_circuit(contact_pk) else {
+            // ADR-0026 : store-and-forward — la trame offline e2e
+            // (`obox`) part sur les ponts `CAP_PULL_STORE` quand un
+            // transport est injecte ; statut `sent` (la livraison
+            // est asynchrone, sans ACK tant que le circuit n'est
+            // pas relie).
+            if self.cfg.deliver_offline {
+                if let Some(id) = self.send_offline(contact_pk, &body)? {
+                    return Ok(id);
+                }
+            }
             // Online-only : pas de file — le message est enregistre
             // `failed` (visible en historique) et signale
             // `Undeliverable` (MS-7).
@@ -3376,6 +3512,26 @@ impl MessagingService {
                     _ = tick.tick() => {}
                 }
                 crate::ipv8_stack::ensure_introduction_points(&svc.tunnel, svc.own_mh);
+                // ADR-0026 : pull periodique jitter de notre boite
+                // (le transport envoie `MAILBOX_PULL` authentifie
+                // aux ponts `CAP_PULL_STORE` connus ; les reponses
+                // arrivent par `ingest_offline`).
+                if svc.cfg.deliver_offline {
+                    let jitter = Duration::from_millis(
+                        rand::random::<u64>() % svc.cfg.offline_poll_interval.as_millis() as u64,
+                    );
+                    if let Some(t) = svc
+                        .offline
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .clone()
+                    {
+                        tokio::spawn(async move {
+                            tokio::time::sleep(jitter).await;
+                            t.poll();
+                        });
+                    }
+                }
                 svc.purge_expired_pending();
                 // Retention : purge des messages expires (DELETE
                 // reel, `secure_delete` zeroise le corps avant).
@@ -5029,5 +5185,96 @@ mod tests {
             .with(|c| dbc::get_attachment(c, &[7u8; 16]))
             .unwrap()
             .is_none());
+    }
+
+    // -- ADR-0026 : store-and-forward offline ------------------------
+
+    /// Transport de banc : capture les depots `put` (le `poll` est
+    /// no-op — les pulls n'ont pas de puits dans ce banc).
+    #[derive(Default)]
+    struct StubTransport {
+        puts: Mutex<Vec<(Vec<u8>, Vec<u8>)>>,
+    }
+
+    impl OfflineTransport for StubTransport {
+        fn put(&self, pk_owner: &[u8], blob: &[u8]) {
+            self.puts
+                .lock()
+                .unwrap()
+                .push((pk_owner.to_vec(), blob.to_vec()));
+        }
+        fn poll(&self) {}
+    }
+
+    /// A hors ligne → `send` depose la trame `obox` sur le pont
+    /// (transport injecte) → B ingere le blob tire : livraison
+    /// `received` + evenement `Frame`, signee par A.
+    #[tokio::test]
+    async fn offline_send_depose_et_ingestion_livre() {
+        let (svc_a, key_a) = make_service(0).await;
+        let (svc_b, key_b) = make_service(0).await;
+        let pk_b = key_b.public_key().to_bin();
+        let pk_a = key_a.public_key().to_bin();
+        // Contacts `Active` des deux cotes, sans circuit lie.
+        svc_a
+            .contacts
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(
+                pk_b.clone(),
+                Contact::active(key_b.public_key(), &svc_a.cfg),
+            );
+        svc_b
+            .contacts
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(
+                pk_a.clone(),
+                Contact::active(key_a.public_key(), &svc_b.cfg),
+            );
+        let transport = Arc::new(StubTransport::default());
+        svc_a.set_offline_transport(transport.clone());
+        let mut events = svc_b.subscribe();
+
+        let id = svc_a
+            .send(&pk_b, b"salut depuis le coffre".to_vec())
+            .await
+            .unwrap();
+        let puts = transport.puts.lock().unwrap().clone();
+        assert_eq!(puts.len(), 1);
+        assert_eq!(puts[0].0, pk_b, "depot dans la boite du contact");
+
+        svc_b.ingest_offline(&puts[0].1);
+        let MessagingEvent::Frame {
+            contact,
+            id: got,
+            body,
+            ..
+        } = events
+            .try_recv()
+            .expect("la trame offline produit un evenement Frame")
+        else {
+            panic!("evenement inattendu");
+        };
+        assert_eq!(contact, pk_a);
+        assert_eq!(got, id, "l'id de trame est conserve (dedup)");
+        assert_eq!(body, b"salut depuis le coffre");
+        // Re-ingestion du meme blob : dedup `id` absorbe.
+        svc_b.ingest_offline(&puts[0].1);
+        assert!(events.try_recv().is_err());
+    }
+
+    /// Sans transport injecte, `send` hors ligne retombe sur
+    /// `failed` + `Undeliverable` (comportement MS-7 historique).
+    #[tokio::test]
+    async fn offline_sans_transport_failed() {
+        let (svc, _k) = make_service(0).await;
+        let peer = LibNaClSecretKey::generate();
+        let pk = peer.public_key().to_bin();
+        svc.contacts
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(pk.clone(), Contact::active(peer.public_key(), &svc.cfg));
+        assert!(svc.send(&pk, b"perdu".to_vec()).await.is_err());
     }
 }

@@ -801,6 +801,14 @@ pub struct TunnelCommunityConfig {
     /// `attach` refuses cote service, `CAP_MSG_V2` non annoncee).
     /// `true` par defaut.
     pub messaging_groups_enabled: bool,
+    /// Extension Rust (ADR-0026) : `send` sans circuit depose la
+    /// trame offline e2e sur les ponts `CAP_PULL_STORE` (boite
+    /// aux lettres) au lieu de `failed`. `true` par defaut ;
+    /// inerte sans transport (ext inactive).
+    pub messaging_deliver_offline: bool,
+    /// Cadence (s) du `MAILBOX_PULL` periodique (jitter applique
+    /// par le service). Defaut 120.
+    pub messaging_offline_poll_secs: u64,
     /// Extension Rust (ADR-0015) : comptabilite locale des octets de
     /// tunnel servis/utilises par pair — persistance `peer_stats` et
     /// exposition `/api/ipv8/tunnel/ledger`. `true` par defaut :
@@ -858,6 +866,8 @@ impl Default for TunnelCommunityConfig {
             messaging_consent_endorsed: false,
             messaging_consent_ledger: false,
             messaging_groups_enabled: true,
+            messaging_deliver_offline: true,
+            messaging_offline_poll_secs: 120,
             ledger_enabled: true,
             ledger_enforce: false,
             ledger_soft_cap: crate::ipv8_stack::DEFAULT_LEDGER_SOFT_CAP,
@@ -1020,6 +1030,45 @@ pub struct StealthFileConfig {
     /// Cles inconnues — preservees.
     #[serde(flatten)]
     pub extra: serde_json::Map<String, Value>,
+}
+
+/// `pull_store` — bornes du store chiffre des ponts (ADR-0026).
+/// Effectif uniquement quand `stealth.role` est `bridge`/`gateway`
+/// (un client n'a pas de store a servir) ; les valeurs alimentent
+/// `onionbit_db::pull_store::PullStoreConfig`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PullStoreFileConfig {
+    /// Sert les kinds pull (`MAILBOX_*`/`VAULT_*`/`ATTEST_*`) —
+    /// defaut actif pour les roles serveur : c'est leur fonction.
+    pub enabled: bool,
+    /// Depots mailbox conserves par slot au maximum (FIFO au-dela).
+    pub max_per_slot: i64,
+    /// Lignes totales conservees au maximum (FIFO global).
+    pub max_total: i64,
+    /// Duree de vie d'un depot en secondes (defaut 7 jours).
+    pub ttl_secs: i64,
+    /// Taille max d'un blob depose (octets).
+    pub blob_max: usize,
+    /// Blobs rendus par pull/get au maximum.
+    pub pull_limit: usize,
+    /// Cles inconnues — preservees.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, Value>,
+}
+
+impl Default for PullStoreFileConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            max_per_slot: 64,
+            max_total: 65_536,
+            ttl_secs: 7 * 24 * 3600,
+            blob_max: 1800,
+            pull_limit: 32,
+            extra: serde_json::Map::new(),
+        }
+    }
 }
 
 /// `stealth.tuning` — miroir borne des constantes de
@@ -1215,6 +1264,9 @@ pub struct DaemonConfig {
     pub ext: ExtConfig,
     /// Section `stealth` — transport furtif OnionBit-only (ADR-0017).
     pub stealth: StealthFileConfig,
+    /// Section `pull_store` — store-and-forward des ponts
+    /// (ADR-0026 : bornes du store chiffre `pull_store`).
+    pub pull_store: PullStoreFileConfig,
     /// Section `identity` — identite portable ADR-0016 (at-rest,
     /// acquittement de la phrase).
     pub identity: IdentityFileConfig,
@@ -1279,6 +1331,7 @@ impl Default for DaemonConfig {
             tunnel_community: TunnelCommunityConfig::default(),
             ext: ExtConfig::default(),
             stealth: StealthFileConfig::default(),
+            pull_store: PullStoreFileConfig::default(),
             identity: IdentityFileConfig::default(),
             storage: StorageConfig::default(),
             privacy: crate::privacy::PrivacyFileConfig::default(),
@@ -1847,6 +1900,8 @@ impl DaemonConfig {
             messaging_consent_endorsed: self.tunnel_community.messaging_consent_endorsed,
             messaging_consent_ledger: self.tunnel_community.messaging_consent_ledger,
             messaging_groups_enabled: self.tunnel_community.messaging_groups_enabled,
+            messaging_deliver_offline: self.tunnel_community.messaging_deliver_offline,
+            messaging_offline_poll_secs: self.tunnel_community.messaging_offline_poll_secs,
             ledger_enabled: self.tunnel_community.ledger_enabled,
             ledger_enforce: self.tunnel_community.ledger_enforce,
             ledger_soft_cap: self.tunnel_community.ledger_soft_cap as usize,
@@ -1905,6 +1960,15 @@ impl DaemonConfig {
             // `Err` est possible ; `to_core_config` reste
             // infaillible comme les autres sections.
             stealth: self.stealth.enabled.then(|| self.stealth.clone()),
+            // ADR-0026 : bornes du store pull des ponts.
+            pull_store_enabled: self.pull_store.enabled,
+            pull_store_cfg: onionbit_db::pull_store::PullStoreConfig {
+                max_per_slot: self.pull_store.max_per_slot.max(1),
+                max_total: self.pull_store.max_total.max(1),
+                ttl_secs: self.pull_store.ttl_secs.max(1),
+                blob_max: self.pull_store.blob_max.clamp(64, 2048),
+                pull_limit: self.pull_store.pull_limit.max(1),
+            },
         };
 
         crate::CoreConfig {

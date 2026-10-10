@@ -226,6 +226,69 @@ pub fn pair_open(peer_pk: &[u8], my_sk: &[u8], blob: &[u8]) -> Result<Vec<u8>, C
     pair_open_in(peer_pk, my_sk, PAIRBOX_HKDF_INFO, blob)
 }
 
+/// Taille de la cle X25519 ephemere prefixee au blob scelle
+/// anonymement ([`anon_seal_in`]).
+pub const ANON_EPK_LEN: usize = 32;
+
+/// Chiffre `plain` pour `recipient_pk` (X25519, 32 octets) en
+/// **boite scellee anonyme** : une cle ephemere est tiree au hasard,
+/// le secret est `DH(eph_sk, recipient_pk)` passe par le meme HKDF
+/// que [`pair_seal_in`] (domaine `info`), et la cle publique
+/// ephemere est prefixee au blob —
+/// `eph_pk(32) || nonce(12) || ciphertext || tag(16)`. Le destinataire
+/// ouvre sans connaitre l'expediteur (l'authenticite est portee par
+/// le contenu — ex. signature Ed25519 dans le document). Usage :
+/// depots boite aux lettres ADR-0026 (le pont relais ne voit aucune
+/// identite).
+pub fn anon_seal_in(
+    recipient_pk: &[u8; 32],
+    info: &[u8],
+    plain: &[u8],
+) -> Result<Vec<u8>, CryptoError> {
+    use chacha20poly1305::aead::Aead;
+    let eph_sk = StaticSecret::random();
+    let eph_pk = X25519PublicKey::from(&eph_sk);
+    let cipher = pair_key_in(recipient_pk, &eph_sk.to_bytes(), info)?;
+    let mut nonce_bytes = [0u8; PAIRBOX_NONCE_LEN];
+    rand::Rng::fill_bytes(&mut rand::rng(), &mut nonce_bytes);
+    let nonce = chacha20poly1305::Nonce::from(nonce_bytes);
+    let ct = cipher
+        .encrypt(&nonce, plain)
+        .map_err(|_| CryptoError::Aead)?;
+    let mut out = Vec::with_capacity(ANON_EPK_LEN + PAIRBOX_NONCE_LEN + ct.len());
+    out.extend_from_slice(&eph_pk.to_bytes());
+    out.extend_from_slice(&nonce_bytes);
+    out.extend_from_slice(&ct);
+    Ok(out)
+}
+
+/// Dechiffre un blob [`anon_seal_in`] avec notre cle privee X25519
+/// (32 octets bruts, telle que `crypt_x25519().to_bytes()`).
+pub fn anon_open_in(
+    recipient_sk: &[u8; 32],
+    info: &[u8],
+    blob: &[u8],
+) -> Result<Vec<u8>, CryptoError> {
+    use chacha20poly1305::aead::Aead;
+    if blob.len() < ANON_EPK_LEN + PAIRBOX_NONCE_LEN + 16 {
+        return Err(CryptoError::Truncated {
+            expected: ANON_EPK_LEN + PAIRBOX_NONCE_LEN + 16,
+            actual: blob.len(),
+        });
+    }
+    let eph_pk: [u8; 32] = blob[..ANON_EPK_LEN]
+        .try_into()
+        .expect("epk de 32 octets borne");
+    let cipher = pair_key_in(&eph_pk, recipient_sk, info)?;
+    let nonce = chacha20poly1305::Nonce::from(
+        <[u8; PAIRBOX_NONCE_LEN]>::try_from(&blob[ANON_EPK_LEN..ANON_EPK_LEN + PAIRBOX_NONCE_LEN])
+            .expect("nonce de 12 octets borne"),
+    );
+    cipher
+        .decrypt(&nonce, &blob[ANON_EPK_LEN + PAIRBOX_NONCE_LEN..])
+        .map_err(|_| CryptoError::Aead)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -33,6 +33,10 @@ pub mod privacy;
 /// etape 62) : manifeste `manifest.obm` AEAD, fabriques rqbit
 /// (`PrivateStorageFactory`/`OpaqueBitV`), GC d'orphelins.
 pub mod private_zone;
+/// Adaptateur `pull_store` SQLite → `PullStoreBackend` ext
+/// (ADR-0026) : store chiffre borne des ponts (mailbox offline,
+/// coffre replique, backfill d'attestations).
+pub mod pull_store;
 pub mod queries;
 pub mod services;
 pub mod session;

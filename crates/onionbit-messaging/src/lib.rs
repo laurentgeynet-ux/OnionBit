@@ -38,6 +38,7 @@ pub mod gmsg;
 pub mod hash;
 pub mod hello;
 pub mod keys;
+pub mod obox;
 pub mod replay;
 
 pub use attach::{AttachDesc, IH_LEN, MID_LEN};

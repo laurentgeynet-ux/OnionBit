@@ -402,6 +402,16 @@ fn api_router(state: AppState) -> Router<AppState> {
             "/messaging/vault/import",
             post(messaging::post_vault_import),
         )
+        // Coffre replique sur les ponts `CAP_PULL_STORE`
+        // (ADR-0026 : VAULT_PUT multi-ponts, VAULT_GET + import).
+        .route(
+            "/messaging/vault/replicate",
+            post(messaging::post_vault_replicate),
+        )
+        .route(
+            "/messaging/vault/restore",
+            post(messaging::post_vault_restore),
+        )
         .route("/ipv8/tunnel/guards", get(ipv8::get_tunnel_guards))
         .route("/ipv8/tunnel/peers/dht", get(ipv8::get_dht_peers))
         .route("/ipv8/tunnel/peers/pex", get(ipv8::get_pex_peers))

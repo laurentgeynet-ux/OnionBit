@@ -162,6 +162,36 @@ pub mod encap_kind {
     /// identique au `blob` de `SelectResponsePayload` — un ENCAP
     /// `SELECT_RESP` par chunk, `req_id` = `RemoteSelect::id`.
     pub const SELECT_RESP: u8 = 2;
+    /// Depot dans la boite aux lettres d'un destinataire hors ligne
+    /// (ADR-0026 §2) : payload `{slot:32, varlen blob}` — le blob est
+    /// deja chiffre e2e, le pont est aveugle.
+    pub const MAILBOX_PUT: u8 = 3;
+    /// Vidage de sa propre boite aux lettres : payload
+    /// `{varlen pk, sig:64}` signe `{kind, req_id, pk}` — le pont
+    /// derive `slot = sha256("obmbox:"||pk)` et ne livre qu'au
+    /// proprietaire cryptographique du slot (consomme).
+    pub const MAILBOX_PULL: u8 = 4;
+    /// Reponse boite aux lettres : `{more:u8, varlen data}` — un
+    /// ENCAP par blob stocke, `more=0` sur la derniere trame (blob
+    /// vide si le slot etait vide).
+    pub const MAILBOX_RESP: u8 = 5;
+    /// Depot du coffre d'identite replique : payload
+    /// `{varlen pk, sig:64, varlen blob}` — authentifie (un tiers ne
+    /// peut pas ecraser le coffre d'autrui), `slot =
+    /// sha256("obvault:"||pk)` ; remplace l'etat courant.
+    pub const VAULT_PUT: u8 = 6;
+    /// Lecture du coffre : payload `{varlen pk, sig:64}` (meme auth
+    /// que `MAILBOX_PULL`, `slot` derive `obvault`).
+    pub const VAULT_GET: u8 = 7;
+    /// Reponse coffre : `{more:u8, varlen data}` — meme encodage
+    /// que `MAILBOX_RESP` (`data` vide = `not_found`).
+    pub const VAULT_RESP: u8 = 8;
+    /// Backfill d'attestations : payload `{att_kind:u8, varlen
+    /// subject}` — le pont rend ses attestations connues du sujet.
+    pub const ATTEST_REQ: u8 = 9;
+    /// Reponse attestations : `{more:u8, varlen attestation}` — une
+    /// attestation serialisee (`attest` pack) par trame.
+    pub const ATTEST_RESP: u8 = 10;
 }
 
 /// Borne du payload `INTRO` — `count` est borne par
@@ -180,6 +210,13 @@ pub const ENCAP_FRAME_MAX: usize = 2048;
 /// n'annonce pas la capacite ignore silencieusement les `SELECT_REQ`
 /// recus — pas de degradation.
 pub const CAP_DISCOVERY_RELAY: u64 = 1 << 3;
+
+/// Bit de capacite `hello.caps` : le pair sert le pull /
+/// store-and-forward (ADR-0026 — kinds `MAILBOX_*`/`VAULT_*`/
+/// `ATTEST_*` encapsules : store chiffre borne sur les ponts).
+/// Annonce par `bridge`/`gateway` quand `pull_store` est actif ;
+/// les pairs sans la capacite droppent les kinds inconnus.
+pub const CAP_PULL_STORE: u64 = 1 << 4;
 
 /// Capacites transport annoncees dans `hello.caps` — bitmap extensible.
 /// Bit 0 = `obf::CAP_OBF_V1` (enveloppes OBF, Phase 9e) — annonce
@@ -222,6 +259,9 @@ pub fn cap_names(caps: u64) -> Vec<&'static str> {
     }
     if caps & CAP_DISCOVERY_RELAY != 0 {
         names.push("discovery_relay");
+    }
+    if caps & CAP_PULL_STORE != 0 {
+        names.push("pull_store");
     }
     names
 }
@@ -508,6 +548,13 @@ pub struct ExtSettings {
     pub encap_rate_max: u32,
     /// Borne memoire de la table de budget `ENCAP`.
     pub encap_rate_table_max: usize,
+
+    // -- ADR-0026 : pull / store-and-forward -----------------------
+    /// Sert les `ENCAP` kinds pull (`MAILBOX_*`/`VAULT_*`/`ATTEST_*`)
+    /// — roles `bridge`/`gateway` avec `pull_store` actif ; le
+    /// backend est injecte via `set_pull_store`. `false` = les
+    /// requetes pull sont dropees silencieusement.
+    pub pull_store_relay: bool,
 }
 
 impl Default for ExtSettings {
@@ -559,6 +606,7 @@ impl Default for ExtSettings {
             encap_rate_window: Duration::from_secs(60),
             encap_rate_max: 20,
             encap_rate_table_max: 4096,
+            pull_store_relay: false,
         }
     }
 }
@@ -749,6 +797,160 @@ impl Encap {
         })
     }
 }
+
+// --------------- ADR-0026 : pull / store-and-forward ---------------
+
+/// Domaine de derivation du `slot` boite aux lettres :
+/// `slot = sha256("obmbox:" || pk)` — le pont indexe sans
+/// connaitre la cle (et ne livre le slot qu'a son proprietaire
+/// cryptographique : la signature du pull prouve `pk`, le hash
+/// derive l'index).
+pub const PULL_DOMAIN_MAILBOX: &[u8] = b"obmbox:";
+/// Domaine de derivation du `slot` coffre (`VAULT_*`).
+pub const PULL_DOMAIN_VAULT: &[u8] = b"obvault:";
+
+/// Derive l'index de slot d'un proprietaire : `sha256(domain || pk)`.
+pub fn pull_slot(domain: &[u8], pk: &[u8]) -> [u8; 32] {
+    let mut data = Vec::with_capacity(domain.len() + pk.len());
+    data.extend_from_slice(domain);
+    data.extend_from_slice(pk);
+    onionbit_crypto::hash::sha256(&data)
+}
+
+/// Message signe pour l'auth de retrait/depot (`MAILBOX_PULL`,
+/// `VAULT_GET`, `VAULT_PUT`) : `{kind, req_id, pk}` — `req_id`
+/// borne le rejeu (correlateur unique par requete), `kind` separe
+/// les usages.
+pub fn pull_auth_msg(kind: u8, req_id: u32, pk: &[u8]) -> Vec<u8> {
+    let mut w = Writer::new();
+    w.u8(kind).u32(req_id).bytes(pk);
+    w.into_bytes()
+}
+
+/// Backend du `pull_store` — injecte par le core (adaptateur sur
+/// `onionbit-db::pull_store`). Toutes les methodes sont bornees par
+/// la config du store (per-slot, total, TTL, taille, pull_limit) ;
+/// le trait ne connait que des octets (le pont est aveugle).
+pub trait PullStoreBackend: Send + Sync {
+    /// `MAILBOX_PUT` : empile `blob` dans `slot` (FIFO borne).
+    /// Retourne `false` si refuse (blob trop gros).
+    fn mailbox_put(&self, slot: &[u8], blob: &[u8]) -> bool;
+    /// `MAILBOX_PULL` : retire et rend les blobs du slot (FIFO).
+    fn mailbox_pull(&self, slot: &[u8]) -> Vec<Vec<u8>>;
+    /// `VAULT_PUT` : remplace l'etat courant du slot.
+    fn vault_put(&self, slot: &[u8], blob: &[u8]);
+    /// `VAULT_GET` : lit l'etat courant sans consommer.
+    fn vault_get(&self, slot: &[u8]) -> Option<Vec<u8>>;
+    /// `ATTEST_REQ` : attestations serialisees connues du sujet
+    /// (bornees — `pull_limit` du store cote core).
+    fn attest_backfill(&self, kind: u8, subject: &[u8]) -> Vec<Vec<u8>>;
+}
+
+/// `{slot:32, varlen blob}` — payload `MAILBOX_PUT`.
+pub fn mailbox_put_pack(slot: &[u8; 32], blob: &[u8]) -> Vec<u8> {
+    let mut w = Writer::new();
+    w.bytes(slot).varlen_h(blob);
+    w.into_bytes()
+}
+
+/// Parse le payload `MAILBOX_PUT` → `(slot, blob)`.
+pub fn mailbox_put_unpack(payload: &[u8]) -> Result<([u8; 32], Vec<u8>), Ipv8Error> {
+    let mut r = Reader::new(payload);
+    let slot: [u8; 32] = r
+        .take(32)?
+        .try_into()
+        .map_err(|_| Ipv8Error::Malformed("mailbox_put : slot"))?;
+    let blob = r.varlen_h()?.to_vec();
+    Ok((slot, blob))
+}
+
+/// `{varlen pk, sig:64}` — payload `MAILBOX_PULL`/`VAULT_GET`.
+/// `pk` = cle publique LibNaCl serialisee du proprietaire du slot.
+pub fn pull_req_pack(pk: &[u8], sig: &[u8; 64]) -> Vec<u8> {
+    let mut w = Writer::new();
+    w.varlen_h(pk).bytes(sig);
+    w.into_bytes()
+}
+
+/// Parse le payload `*_PULL`/`*_GET` → `(pk, sig)`.
+pub fn pull_req_unpack(payload: &[u8]) -> Result<(Vec<u8>, [u8; 64]), Ipv8Error> {
+    let mut r = Reader::new(payload);
+    let pk = r.varlen_h()?.to_vec();
+    let sig: [u8; 64] = r
+        .take(64)?
+        .try_into()
+        .map_err(|_| Ipv8Error::Malformed("pull_req : signature"))?;
+    Ok((pk, sig))
+}
+
+/// `{varlen pk, sig:64, varlen blob}` — payload `VAULT_PUT`.
+pub fn vault_put_pack(pk: &[u8], sig: &[u8; 64], blob: &[u8]) -> Vec<u8> {
+    let mut w = Writer::new();
+    w.varlen_h(pk).bytes(sig).varlen_h(blob);
+    w.into_bytes()
+}
+
+/// `(pk, sig, blob)` d'un payload `VAULT_PUT` parse.
+pub type VaultPut = (Vec<u8>, [u8; 64], Vec<u8>);
+
+/// Parse le payload `VAULT_PUT` → `(pk, sig, blob)`.
+pub fn vault_put_unpack(payload: &[u8]) -> Result<VaultPut, Ipv8Error> {
+    let mut r = Reader::new(payload);
+    let pk = r.varlen_h()?.to_vec();
+    let sig: [u8; 64] = r
+        .take(64)?
+        .try_into()
+        .map_err(|_| Ipv8Error::Malformed("vault_put : signature"))?;
+    let blob = r.varlen_h()?.to_vec();
+    Ok((pk, sig, blob))
+}
+
+/// `{att_kind:u8, varlen subject}` — payload `ATTEST_REQ`.
+pub fn attest_req_pack(kind: u8, subject: &[u8]) -> Vec<u8> {
+    let mut w = Writer::new();
+    w.u8(kind).varlen_h(subject);
+    w.into_bytes()
+}
+
+/// Parse le payload `ATTEST_REQ` → `(kind, subject)`.
+pub fn attest_req_unpack(payload: &[u8]) -> Result<(u8, Vec<u8>), Ipv8Error> {
+    let mut r = Reader::new(payload);
+    let kind = r.u8()?;
+    let subject = r.varlen_h()?.to_vec();
+    Ok((kind, subject))
+}
+
+/// `{more:u8, varlen data}` — payload `*_RESP` : un ENCAP par
+/// element, `more=0` sur la derniere trame (element vide possible
+/// = slot vide / fin de liste).
+pub fn pull_resp_pack(more: bool, data: &[u8]) -> Vec<u8> {
+    let mut w = Writer::new();
+    w.u8(u8::from(more)).varlen_h(data);
+    w.into_bytes()
+}
+
+/// Parse le payload `*_RESP` → `(more, data)`.
+pub fn pull_resp_unpack(payload: &[u8]) -> Result<(bool, Vec<u8>), Ipv8Error> {
+    let mut r = Reader::new(payload);
+    let more = r.u8()? != 0;
+    let data = r.varlen_h()?.to_vec();
+    Ok((more, data))
+}
+
+/// Verifie l'auth d'un pull/get/put authentifie : `pk` parseable
+/// LibNaCl **et** `sig` Ed25519 valide sur
+/// [`pull_auth_msg`]. `slot` n'est pas dans le signe — il est
+/// derive de `pk` par le serveur, impossible a usurper.
+fn pull_auth_ok(kind: u8, req_id: u32, pk: &[u8], sig: &[u8; 64]) -> bool {
+    let Ok(pubkey) = LibNaClPublicKey::from_bin(pk) else {
+        return false;
+    };
+    pubkey.verify(&pull_auth_msg(kind, req_id, pk), sig)
+}
+
+/// Puits des reponses pull (`*_RESP` encapsules) : `f(cle_emetteur,
+/// adresse, kind, req_id, payload)` — sync ; le core deporte.
+pub type PullRespSink = Arc<dyn Fn(&[u8], UdpAddress, u8, u32, Vec<u8>) + Send + Sync>;
 
 /// Entree de la table de ponts connue localement : `learned`
 /// mesure le TTL des entrees **apprises** ; `seeded` marque les
@@ -995,6 +1197,15 @@ pub struct OnionbitExtCommunity {
     /// deportee par l'appelant (le handler reste sync — appele sous
     /// le dispatch `on_packet`).
     encap_sink: Mutex<Option<EncapSink>>,
+    /// Store pull des ponts (ADR-0026) — injecte par le core
+    /// (`set_pull_store` : adaptateur `onionbit-db::pull_store`) ;
+    /// sert `MAILBOX_*`/`VAULT_*`/`ATTEST_*` quand
+    /// `pull_store_relay` est vrai.
+    pull_store: Mutex<Option<Arc<dyn PullStoreBackend>>>,
+    /// Puits des `*_RESP` pull recus cote client
+    /// (`set_pull_resp_sink`) ; `f(cle, source, kind, req_id,
+    /// payload)` — le core correle par `req_id`.
+    pull_sink: Mutex<Option<PullRespSink>>,
     /// Budget `ENCAP` par emetteur (meme schema que `intro_rate`) —
     /// cle = `public_key_bin` signataire (identite de session).
     encap_rate: Mutex<HashMap<Vec<u8>, (Instant, u32)>>,
@@ -1064,6 +1275,12 @@ impl OnionbitExtCommunity {
         if settings.encap_relay {
             settings.caps |= CAP_DISCOVERY_RELAY;
         }
+        // `CAP_PULL_STORE` (ADR-0026) : annoncee quand le relais
+        // pull est configure (roles bridge/gateway) — le backend
+        // est injecte par le core avant tout trafic.
+        if settings.pull_store_relay {
+            settings.caps |= CAP_PULL_STORE;
+        }
         let ledger_store_max = settings.ledger_store_max;
         let community = Arc::new(Self {
             key,
@@ -1107,6 +1324,8 @@ impl OnionbitExtCommunity {
             intro_dropped: AtomicU64::new(0),
             encap_handler: Mutex::new(None),
             encap_sink: Mutex::new(None),
+            pull_store: Mutex::new(None),
+            pull_sink: Mutex::new(None),
             encap_rate: Mutex::new(HashMap::new()),
             encap_rx: AtomicU64::new(0),
             encap_tx: AtomicU64::new(0),
@@ -1441,6 +1660,44 @@ impl OnionbitExtCommunity {
             });
         }
         Ok(())
+    }
+
+    /// Ingestion d'une attestation arrivee par backfill
+    /// (`ATTEST_RESP`, ADR-0026) : meme pipeline qu'`on_attest`
+    /// a partir de (4) — prefiltre curateur, dedup, derive
+    /// d'horloge, signature, equivoque, `put` — mais **sans
+    /// re-gossip** (le backfill est une synchronisation
+    /// silencieuse, pas une emission).
+    pub fn ingest_backfilled_attestation(&self, att: &Attestation) -> bool {
+        if !self.is_followed(&att.curator) {
+            return false;
+        }
+        let existing = self
+            .attest_store
+            .lock()
+            .unwrap()
+            .get(&att.curator, att.kind, &att.subject);
+        if let Some(old) = &existing {
+            if old.ts >= att.ts {
+                return false;
+            }
+        }
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        if att.ts > now.saturating_add(self.settings.attest_max_future_skew.as_secs()) {
+            return false;
+        }
+        if !att.verify() {
+            return false;
+        }
+        if self.attest_store.lock().unwrap().put(att) {
+            self.attest_stored.fetch_add(1, Ordering::Relaxed);
+            true
+        } else {
+            false
+        }
     }
 
     /// Score de confiance local d'un sujet : +1 endorse / -1 flag par
@@ -2833,13 +3090,37 @@ impl OnionbitExtCommunity {
     /// — la population a laquelle un select encapsule peut etre
     /// envoye (roles `bridge`/`gateway`).
     pub fn relay_peers(&self) -> Vec<(Vec<u8>, UdpAddress)> {
+        self.peers_with_caps(CAP_DISCOVERY_RELAY)
+    }
+
+    /// Pairs ext annoncant `CAP_PULL_STORE` avec adresse connue —
+    /// la population a laquelle un depot/retrait pull peut etre
+    /// envoye (ponts `bridge`/`gateway` ADR-0026).
+    pub fn pull_store_peers(&self) -> Vec<(Vec<u8>, UdpAddress)> {
+        self.peers_with_caps(CAP_PULL_STORE)
+    }
+
+    /// Pairs ext portant `cap` dans `hello.caps` avec adresse connue.
+    fn peers_with_caps(&self, cap: u64) -> Vec<(Vec<u8>, UdpAddress)> {
         self.ext_peers
             .lock()
             .unwrap()
             .iter()
-            .filter(|(_, e)| e.caps & CAP_DISCOVERY_RELAY != 0)
+            .filter(|(_, e)| e.caps & cap != 0)
             .filter_map(|(pk, e)| e.addr.clone().map(|a| (pk.clone(), a)))
             .collect()
+    }
+
+    /// Injecte le backend `pull_store` des ponts (le core y branche
+    /// l'adaptateur `onionbit-db`). A appeler avant tout trafic.
+    pub fn set_pull_store(&self, backend: Arc<dyn PullStoreBackend>) {
+        *self.pull_store.lock().unwrap() = Some(backend);
+    }
+
+    /// Injecte le puits des reponses pull (`*_RESP`) cote client —
+    /// le core y correle les retraits en cours par `req_id`.
+    pub fn set_pull_resp_sink(&self, sink: PullRespSink) {
+        *self.pull_sink.lock().unwrap() = Some(sink);
     }
 
     /// Envoie une trame `ENCAP` signee a `addr` — generique
@@ -2866,6 +3147,102 @@ impl OnionbitExtCommunity {
         let pkt = Packet::sign_no_dist(&EXT_COMMUNITY_ID, msg::ENCAP, &self.key, &w.into_bytes());
         self.encap_tx.fetch_add(1, Ordering::Relaxed);
         self.endpoint.send_to(addr, &pkt).await
+    }
+
+    // -- ADR-0026 : operations pull cote client ----------------------
+    // Chaque operation est un ENCAP signe dont le *payload* porte
+    // l'auth Ed25519 de [`pull_auth_msg`] quand la sémantique
+    // l'exige (retraits et depots de coffre ; le depot boite aux
+    // lettres est anonyme par design — le slot est un hash).
+
+    /// `MAILBOX_PUT` : depose `blob` (deja chiffre e2e) dans le
+    /// slot du destinataire `pk_owner` — pas d'auth : n'importe
+    /// qui peut deposer, seul le proprietaire peut retirer.
+    pub async fn send_mailbox_put(
+        &self,
+        addr: &UdpAddress,
+        req_id: u32,
+        pk_owner: &[u8],
+        blob: &[u8],
+    ) -> Result<(), Ipv8Error> {
+        let slot = pull_slot(PULL_DOMAIN_MAILBOX, pk_owner);
+        self.send_encap(
+            addr,
+            encap_kind::MAILBOX_PUT,
+            req_id,
+            mailbox_put_pack(&slot, blob),
+        )
+        .await
+    }
+
+    /// `MAILBOX_PULL` : retire les blobs du slot de notre propre
+    /// cle (consommation FIFO cote pont).
+    pub async fn send_mailbox_pull(&self, addr: &UdpAddress, req_id: u32) -> Result<(), Ipv8Error> {
+        let pk = self.key.public_key().to_bin();
+        let sig = self
+            .key
+            .sign(&pull_auth_msg(encap_kind::MAILBOX_PULL, req_id, &pk));
+        self.send_encap(
+            addr,
+            encap_kind::MAILBOX_PULL,
+            req_id,
+            pull_req_pack(&pk, &sig),
+        )
+        .await
+    }
+
+    /// `VAULT_PUT` : remplace l'etat du coffre de notre cle.
+    pub async fn send_vault_put(
+        &self,
+        addr: &UdpAddress,
+        req_id: u32,
+        blob: &[u8],
+    ) -> Result<(), Ipv8Error> {
+        let pk = self.key.public_key().to_bin();
+        let sig = self
+            .key
+            .sign(&pull_auth_msg(encap_kind::VAULT_PUT, req_id, &pk));
+        self.send_encap(
+            addr,
+            encap_kind::VAULT_PUT,
+            req_id,
+            vault_put_pack(&pk, &sig, blob),
+        )
+        .await
+    }
+
+    /// `VAULT_GET` : lit l'etat du coffre de notre cle.
+    pub async fn send_vault_get(&self, addr: &UdpAddress, req_id: u32) -> Result<(), Ipv8Error> {
+        let pk = self.key.public_key().to_bin();
+        let sig = self
+            .key
+            .sign(&pull_auth_msg(encap_kind::VAULT_GET, req_id, &pk));
+        self.send_encap(
+            addr,
+            encap_kind::VAULT_GET,
+            req_id,
+            pull_req_pack(&pk, &sig),
+        )
+        .await
+    }
+
+    /// `ATTEST_REQ` : demande le backfill des attestations de
+    /// `subject` pour `att_kind` — non authentifie (donnee
+    /// publique par nature, deja signee par l'emetteur).
+    pub async fn send_attest_req(
+        &self,
+        addr: &UdpAddress,
+        req_id: u32,
+        att_kind: u8,
+        subject: &[u8],
+    ) -> Result<(), Ipv8Error> {
+        self.send_encap(
+            addr,
+            encap_kind::ATTEST_REQ,
+            req_id,
+            attest_req_pack(att_kind, subject),
+        )
+        .await
     }
 
     /// Budget `ENCAP` par emetteur (meme schema que `intro_rate_ok`)
@@ -2947,11 +3324,112 @@ impl OnionbitExtCommunity {
                     encap.payload,
                 );
             }
+            encap_kind::MAILBOX_PUT
+            | encap_kind::MAILBOX_PULL
+            | encap_kind::VAULT_PUT
+            | encap_kind::VAULT_GET
+            | encap_kind::ATTEST_REQ => {
+                self.on_pull_req(pkt, src, &encap);
+            }
+            encap_kind::MAILBOX_RESP | encap_kind::VAULT_RESP | encap_kind::ATTEST_RESP => {
+                let sink = self.pull_sink.lock().unwrap().clone();
+                let Some(sink) = sink else {
+                    self.encap_dropped.fetch_add(1, Ordering::Relaxed);
+                    return Ok(());
+                };
+                sink(
+                    &pkt.public_key_bin,
+                    UdpAddress::from(*src),
+                    encap.kind,
+                    encap.req_id,
+                    encap.payload,
+                );
+            }
             _ => {
                 self.encap_dropped.fetch_add(1, Ordering::Relaxed);
             }
         }
         Ok(())
+    }
+
+    /// Sert une requete pull (`MAILBOX_*`/`VAULT_*`/`ATTEST_REQ`) :
+    /// gate `pull_store_relay` + backend injecte (kinds inconnus de
+    /// pairs sans capacite — drop silencieux), parse du payload,
+    /// auth Ed25519 sur les retraits/depots de coffre, puis un
+    /// ENCAP `*_RESP` par element rendu (`{more, varlen data}`).
+    /// Le store est aveugle : aucun blob n'est dechiffre ici.
+    fn on_pull_req(self: &Arc<Self>, _pkt: &Packet, src: &SocketAddr, encap: &Encap) {
+        let backend = self.pull_store.lock().unwrap().clone();
+        let Some(backend) = backend.filter(|_| self.settings.pull_store_relay) else {
+            self.encap_dropped.fetch_add(1, Ordering::Relaxed);
+            return;
+        };
+        let addr = UdpAddress::from(*src);
+        let c = self.clone();
+        let kind = encap.kind;
+        let req_id = encap.req_id;
+        // `serve` rend les elements a envoyer ; chacun part en une
+        // trame RESP `{more, data}` — la tache garde le dispatch
+        // `on_packet` non bloquant (store SQLite borne).
+        let serve: Option<Vec<Vec<u8>>> = match kind {
+            encap_kind::MAILBOX_PUT => mailbox_put_unpack(&encap.payload)
+                .ok()
+                .map(|(slot, blob)| vec![vec![u8::from(backend.mailbox_put(&slot, &blob))]]),
+            encap_kind::MAILBOX_PULL => {
+                pull_req_unpack(&encap.payload).ok().and_then(|(pk, sig)| {
+                    pull_auth_ok(kind, req_id, &pk, &sig)
+                        .then(|| backend.mailbox_pull(&pull_slot(PULL_DOMAIN_MAILBOX, &pk)))
+                })
+            }
+            encap_kind::VAULT_PUT => {
+                vault_put_unpack(&encap.payload)
+                    .ok()
+                    .and_then(|(pk, sig, blob)| {
+                        pull_auth_ok(kind, req_id, &pk, &sig).then(|| {
+                            backend.vault_put(&pull_slot(PULL_DOMAIN_VAULT, &pk), &blob);
+                            vec![vec![1u8]]
+                        })
+                    })
+            }
+            encap_kind::VAULT_GET => pull_req_unpack(&encap.payload).ok().and_then(|(pk, sig)| {
+                pull_auth_ok(kind, req_id, &pk, &sig).then(|| {
+                    backend
+                        .vault_get(&pull_slot(PULL_DOMAIN_VAULT, &pk))
+                        .map(|b| vec![b])
+                        .unwrap_or_default()
+                })
+            }),
+            encap_kind::ATTEST_REQ => attest_req_unpack(&encap.payload)
+                .ok()
+                .map(|(k, subject)| backend.attest_backfill(k, &subject)),
+            _ => None,
+        };
+        let Some(items) = serve else {
+            self.encap_dropped.fetch_add(1, Ordering::Relaxed);
+            return;
+        };
+        let resp_kind = match kind {
+            encap_kind::MAILBOX_PUT | encap_kind::MAILBOX_PULL => encap_kind::MAILBOX_RESP,
+            encap_kind::VAULT_PUT | encap_kind::VAULT_GET => encap_kind::VAULT_RESP,
+            _ => encap_kind::ATTEST_RESP,
+        };
+        tokio::spawn(async move {
+            let last = items.len().saturating_sub(1);
+            for (i, item) in items.iter().enumerate() {
+                let more = i < last;
+                let _ = c
+                    .send_encap(&addr, resp_kind, req_id, pull_resp_pack(more, item))
+                    .await;
+            }
+            if items.is_empty() {
+                // Terminateur seul : slot vide / not_found — le
+                // client doit recevoir une reponse pour debloquer
+                // son correlateur `req_id`.
+                let _ = c
+                    .send_encap(&addr, resp_kind, req_id, pull_resp_pack(false, &[]))
+                    .await;
+            }
+        });
     }
 
     /// Compteurs `ENCAP` `(rx, tx, dropped)` — oracles de banc.
@@ -4395,5 +4873,209 @@ mod tests {
         // Premiere servie (2 chunks), seconde dropee par le budget.
         assert_eq!(*got.lock().unwrap(), 2);
         assert_eq!(a.encap_counters().2, 1);
+    }
+
+    // -- ADR-0026 : pull / store-and-forward -------------------------
+
+    /// Backend memoire des bancs pull : boite FIFO par slot +
+    /// coffre a remplacement (meme semantique que `onionbit-db`).
+    #[derive(Default)]
+    struct StubPullStore {
+        mailbox: Mutex<HashMap<[u8; 32], Vec<Vec<u8>>>>,
+        vault: Mutex<HashMap<[u8; 32], Vec<u8>>>,
+    }
+
+    impl PullStoreBackend for StubPullStore {
+        fn mailbox_put(&self, slot: &[u8], blob: &[u8]) -> bool {
+            let Ok(slot) = <[u8; 32]>::try_from(slot) else {
+                return false;
+            };
+            self.mailbox
+                .lock()
+                .unwrap()
+                .entry(slot)
+                .or_default()
+                .push(blob.to_vec());
+            true
+        }
+        fn mailbox_pull(&self, slot: &[u8]) -> Vec<Vec<u8>> {
+            self.mailbox
+                .lock()
+                .unwrap()
+                .remove(slot)
+                .unwrap_or_default()
+        }
+        fn vault_put(&self, slot: &[u8], blob: &[u8]) {
+            if let Ok(slot) = <[u8; 32]>::try_from(slot) {
+                self.vault.lock().unwrap().insert(slot, blob.to_vec());
+            }
+        }
+        fn vault_get(&self, slot: &[u8]) -> Option<Vec<u8>> {
+            self.vault.lock().unwrap().get(slot).cloned()
+        }
+        fn attest_backfill(&self, _kind: u8, _subject: &[u8]) -> Vec<Vec<u8>> {
+            vec![b"att-1".to_vec(), b"att-2".to_vec()]
+        }
+    }
+
+    /// Noeud relais pull (`pull_store_relay` + backend memoire).
+    async fn pull_relay() -> (Arc<OnionbitExtCommunity>, UdpAddress, LibNaClSecretKey) {
+        let (a, _e, addr, k) = node_full(ExtSettings {
+            pull_store_relay: true,
+            ..ExtSettings::default()
+        })
+        .await;
+        a.set_pull_store(Arc::new(StubPullStore::default()));
+        (a, addr, k)
+    }
+
+    /// `(kind, req_id, more, data)` d'une `*_RESP` collectee.
+    type PullResp = (u8, u32, bool, Vec<u8>);
+
+    /// Collecteur de `*_RESP` sur un client : `(kind, req_id,
+    /// more, data)` empiles via `set_pull_resp_sink` +
+    /// `pull_resp_unpack`.
+    fn resp_collector(c: &Arc<OnionbitExtCommunity>) -> Arc<Mutex<Vec<PullResp>>> {
+        let got = Arc::new(Mutex::new(Vec::new()));
+        let g = got.clone();
+        c.set_pull_resp_sink(Arc::new(move |_pk, _src, kind, req_id, payload| {
+            if let Ok((more, data)) = pull_resp_unpack(&payload) {
+                g.lock().unwrap().push((kind, req_id, more, data));
+            }
+        }));
+        got
+    }
+
+    /// `MAILBOX_PUT` (anonyme) puis `MAILBOX_PULL` authentifie par
+    /// le destinataire : les blobs reviennent dans l'ordre FIFO et
+    /// le pull consomme (second pull = terminateur vide).
+    #[tokio::test]
+    async fn pull_mailbox_put_pull_roundtrip() {
+        let (relay, addr_r, _kr) = pull_relay().await;
+        let (owner, _eo, _ao, key_o) = node(0).await;
+        let (sender, _es, _as, _ks) = node(0).await;
+        let got = resp_collector(&owner);
+
+        let pk_o = key_o.public_key().to_bin();
+        sender
+            .send_mailbox_put(&addr_r, 1, &pk_o, b"m1")
+            .await
+            .unwrap();
+        sender
+            .send_mailbox_put(&addr_r, 2, &pk_o, b"m2")
+            .await
+            .unwrap();
+        owner.send_mailbox_pull(&addr_r, 10).await.unwrap();
+
+        // `owner` ne recoit que les reponses de son pull (id 10) :
+        // m1, m2 — les acks des `PUT` partent chez `sender`.
+        let g = got.clone();
+        wait_until(move || {
+            g.lock()
+                .unwrap()
+                .iter()
+                .filter(|(k, id, _, _)| *k == encap_kind::MAILBOX_RESP && *id == 10)
+                .count()
+                >= 2
+        })
+        .await;
+        let items: Vec<Vec<u8>> = got
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(k, id, _, _)| *k == encap_kind::MAILBOX_RESP && *id == 10)
+            .map(|(_, _, _, d)| d.clone())
+            .filter(|d| !d.is_empty())
+            .collect();
+        assert!(items.contains(&b"m1".to_vec()));
+        assert!(items.contains(&b"m2".to_vec()));
+        let (rx, _tx, _) = relay.encap_counters();
+        assert_eq!(rx, 3);
+    }
+
+    /// `VAULT_PUT` authentifie puis `VAULT_GET` : l'etat remplace,
+    /// pas de consommation ; un pull avec signature fausse est
+    /// drope.
+    #[tokio::test]
+    async fn pull_vault_remplace_et_auth_requise() {
+        let (relay, addr_r, _kr) = pull_relay().await;
+        let (owner, _eo, _ao, _key_o) = node(0).await;
+        let got = resp_collector(&owner);
+
+        owner.send_vault_put(&addr_r, 1, b"obv1-a").await.unwrap();
+        owner.send_vault_put(&addr_r, 2, b"obv1-b").await.unwrap();
+        owner.send_vault_get(&addr_r, 3).await.unwrap();
+        let g = got.clone();
+        wait_until(move || {
+            g.lock()
+                .unwrap()
+                .iter()
+                .any(|(k, id, _, d)| *k == encap_kind::VAULT_RESP && *id == 3 && !d.is_empty())
+        })
+        .await;
+        let blob = got
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(k, id, _, _)| *k == encap_kind::VAULT_RESP && *id == 3)
+            .unwrap()
+            .3
+            .clone();
+        assert_eq!(blob, b"obv1-b", "le second put a remplace le premier");
+
+        // Pull avec une signature verifiee sur un autre req_id →
+        // drop (auth liee au correlateur).
+        let (mallory, _em, _am, key_m) = node(0).await;
+        let pk_m = key_m.public_key().to_bin();
+        let sig = key_m.sign(&pull_auth_msg(encap_kind::MAILBOX_PULL, 999, &pk_m));
+        mallory
+            .send_encap(
+                &addr_r,
+                encap_kind::MAILBOX_PULL,
+                42, // req_id != 999 signe → auth invalide
+                pull_req_pack(&pk_m, &sig),
+            )
+            .await
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        let (_rx, _tx, dropped) = relay.encap_counters();
+        assert!(dropped >= 1);
+    }
+
+    /// `ATTEST_REQ` : backfill borne du store attestation — les
+    /// trames reviennent en `ATTEST_RESP` chainees `more`.
+    #[tokio::test]
+    async fn pull_attest_backfill() {
+        let (_relay, addr_r, _kr) = pull_relay().await;
+        let (client, _ec, _ac, _kc) = node(0).await;
+        let got = resp_collector(&client);
+        client
+            .send_attest_req(&addr_r, 7, 1, b"sujet")
+            .await
+            .unwrap();
+        let g = got.clone();
+        wait_until(move || {
+            g.lock()
+                .unwrap()
+                .iter()
+                .filter(|(k, id, _, _)| *k == encap_kind::ATTEST_RESP && *id == 7)
+                .count()
+                >= 2
+        })
+        .await;
+    }
+
+    /// Sans `pull_store_relay`, une requete pull est dropee meme
+    /// avec un backend injecte — opt-in explicite.
+    #[tokio::test]
+    async fn pull_drope_sans_relay() {
+        let (relay, _er, addr_r, _kr) = node(0).await;
+        relay.set_pull_store(Arc::new(StubPullStore::default()));
+        let (client, _ec, _ac, _kc) = node(0).await;
+        client.send_mailbox_pull(&addr_r, 1).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let (_rx, tx, dropped) = relay.encap_counters();
+        assert_eq!(tx, 0);
+        assert!(dropped >= 1);
     }
 }

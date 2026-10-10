@@ -477,6 +477,22 @@ CREATE INDEX idx_msg_delivery_frame ON msg_delivery(frame_id);
 ALTER TABLE channel_node ADD COLUMN subscribed INTEGER NOT NULL DEFAULT 0;
 CREATE INDEX idx_channel_node_subscribed ON channel_node(subscribed);
 ",
+    // v24 : pull / store-and-forward (ADR-0026) — store chiffre
+    // borne des ponts : `slot` = H(domaine||cle), `kind` separe
+    // boite aux lettres (multi-depots, pull consomme) et coffre
+    // (etat unique, put remplace). `seq` AUTOINCREMENT = ordre FIFO.
+    "
+CREATE TABLE pull_store (
+    seq        INTEGER PRIMARY KEY AUTOINCREMENT,
+    slot       BLOB NOT NULL,
+    kind       INTEGER NOT NULL,
+    blob       BLOB NOT NULL,
+    stored_at  INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL
+);
+CREATE INDEX idx_pull_store_slot ON pull_store(slot, kind);
+CREATE INDEX idx_pull_store_expiry ON pull_store(expires_at);
+",
 ];
 
 /// Applique les migrations en attente sur une connexion ouverte.
