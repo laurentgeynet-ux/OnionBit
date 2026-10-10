@@ -1,10 +1,11 @@
 # ADR-0024 — Image Docker du daemon (déploiement headless conteneurisé)
 
-Statut : Proposée (2026-10-10). Partiellement implantée — étapes
-89-92 et 94 livrées, l'étape 93 (validation e2e sous docker) reste
-ouverte ; le statut passera à Acceptée après elle. Plan
-d'implantation : `docs/plans/roadmap_adr0024.md` (Phase 16,
-étapes 89-94).
+Statut : Acceptée (2026-10-10). Toutes les étapes 89-94 sont
+livrées, l'étape 93 (validation e2e sous docker) est validée sur
+le déploiement VPS (§10) ; la seule réserve est la vérification
+`inject_key` sur l'image `final-webui`, qui sera contrôlée au
+prochain tag. Plan d'implantation :
+`docs/plans/roadmap_adr0024.md` (Phase 16, étapes 89-94).
 
 ## Contexte
 
@@ -260,6 +261,49 @@ conserve les mtimes du contexte BuildKit → les vraies sources
 stubs liées, `unresolved imports`). `RUN find crates -type f -exec
 touch {} +` après le `COPY` — commit `e5a04fa`, tag `v1.1.2`
 re-pointé pour republier l'image ghcr.io saine.
+
+### 10. Validation end-to-end (étape 93 — 2026-10-10)
+
+Exécutée sur le VPS §8 avec l'image `onionbit:dev` (206 Mio) :
+
+- **Persistance restart** : `docker restart` → SIGTERM →
+  `signal d'arret recu, fermeture de la session` → arrêt propre
+  complet (pas de SIGKILL), redémarrage `stealth_mode=on
+  role=bridge`.
+- **Identité** : sha256 de `state/identity/stealth_bridge.key`
+  inchangé après restart — le lien `onionbit-bridge://` publié
+  reste valide.
+- **Fastresume** : `.torrent` ajouté en `anon_hops=1` + zone
+  privée → ligne opaque persistée (clé HMAC, métadonnées dans
+  `manifest.obm`) → au redémarrage `restored=1` (restauration
+  anonyme poursuivie même « sans circuit prêt » —
+  `next_hop_timeout` dégrade en WARN, pas en échec) → le
+  téléchargement réapparaît dans `list` en `STOPPED` (flag
+  `paused` préservé).
+- **Caveat constaté** : un **magnet** ajouté en mode stealth n'est
+  jamais persisté tant que le metainfo n'est pas résolu —
+  `add_uri_opts` n'écrit la ligne `downloads` qu'après résolution
+  (le `.torrent` sauvegardé évite de re-résoudre au boot, même
+  convention que le checkpoint Python). Sans pairs pour résoudre
+  le magnet, il disparaît au restart. Cohérent avec le modèle
+  « le `.torrent` est l'unité de persistance » ; à documenter
+  pour les clients `full` (préférer l'upload `.torrent`, ou le
+  magnet reste volatil jusqu'à résolution).
+- **`--offline`** : conteneur en mode bridge
+  (`-p 127.0.0.1:8088:8085`) → `dht=false`, `listen=None`, aucune
+  stack IPv8/stealth, API loopback, `onionbit-cli status` OK,
+  `HEALTHCHECK` vert.
+- **Forwarder (93d)** : sidecar `alpine/socat` en
+  `network_mode: container:onionbit-boot-a`
+  (`tcp-listen:8080,fork → 127.0.0.1:8085`) → l'API authentifiée
+  répond à travers le sidecar ; la mécanique « partage de
+  namespace » est prouvée. La vérification de la `<meta>`
+  `inject_key` sur la web UI reste à faire sur l'image
+  `final-webui` (cible non buildée dans ce déploiement) — le
+  prérequis `inject_key=false` reste documenté obligatoire.
+- **Permissions volume** : un bind mount créé en root refuse
+  l'écriture au daemon (uid 10001) — `chown -R 10001:10001` sur
+  le dossier hôte est bien nécessaire (constaté en run offline).
 
 ## Conséquences
 

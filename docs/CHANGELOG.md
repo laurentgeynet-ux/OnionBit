@@ -3,6 +3,21 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Étape 93 : validation end-to-end Docker sur le VPS (ADR-0024 §10) (2026-10-10)
+
+Bilan complet exécuté sur le déploiement `onionbit-boot-*` :
+restart → SIGTERM propre (pas de SIGKILL), clé `stealth_bridge.key`
+inchangée, download anonyme privé (`anon_hops=1`, `.torrent`)
+persisté puis `restored=1` au redémarrage (flag `paused`
+conservé) ; run `--offline` vérifié (`dht=false`, aucun réseau,
+API loopback, healthcheck vert) ; forwarder socat
+`network_mode: container:` prouvé (API joignable via le sidecar).
+Constats : un magnet stealth non résolu n'est jamais persisté
+(la ligne `downloads` n'est écrite qu'au metainfo — préférer
+l'upload `.torrent`) ; un bind mount root exige `chown 10001`.
+Réserve ouverte : contrôle de la `<meta>` `inject_key` sur
+l'image `final-webui` au prochain tag. ADR-0024 → **Acceptée**.
+
 ## Fix : SIGTERM reçu pendant le démarrage n'est plus fatal (étape 89) (2026-10-10)
 
 `daemon_offline_sigterm_arret_propre` échouait de façon déterministe
