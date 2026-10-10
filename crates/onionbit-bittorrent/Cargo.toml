@@ -41,6 +41,11 @@ async-trait = "0.1"
 bitdaemon-common.workspace = true
 bitdaemon-core.workspace = true
 bitdaemon-disk.workspace = true
+# Backend moteur `bitdaemon` (`EngineBackend::Bitdaemon`) : session,
+# transports OS et facade — swap rqbit (ONIONBIT-1, opt-in).
+bitdaemon-net.workspace = true
+bitdaemon-session.workspace = true
+bitdaemon.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

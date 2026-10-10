@@ -428,6 +428,12 @@ pub struct LibtorrentConfig {
     /// `true` restaure le backend `MmapFilesystemStorageFactory` (parité
     /// `libtorrent/allow_mmap` Tribler).
     pub allow_mmap: bool,
+    /// Moteur BitTorrent : `"rqbit"` (défaut, vendored) ou
+    /// `"bitdaemon"` (port libtorrent — opt-in ONIONBIT-1, comparaison
+    /// A/B à config égale ; zone privée et lanes anonymes non encore
+    /// portées sous ce backend).
+    #[serde(default)]
+    pub engine_backend: String,
     /// Défauts des nouveaux téléchargements.
     pub download_defaults: DownloadDefaultsConfig,
     /// Clés libtorrent additionnelles (`advanced_rate_limits`, …).
@@ -472,6 +478,7 @@ impl Default for LibtorrentConfig {
             ask_download_settings: false,
             clear_orphaned_parts: false,
             allow_mmap: false,
+            engine_backend: "rqbit".into(),
             download_defaults: DownloadDefaultsConfig::default(),
             extra: serde_json::Map::new(),
         }
@@ -1671,7 +1678,16 @@ impl DaemonConfig {
                 "port libtorrent occupe — port effectif decale"
             );
         }
+        let backend = match self.libtorrent.engine_backend.as_str() {
+            "rqbit" | "" => onionbit_bittorrent::EngineBackend::Rqbit,
+            "bitdaemon" => onionbit_bittorrent::EngineBackend::Bitdaemon,
+            other => {
+                tracing::warn!(backend = other, "engine_backend inconnu — repli rqbit");
+                onionbit_bittorrent::EngineBackend::Rqbit
+            }
+        };
         let mut engine = onionbit_bittorrent::EngineConfig {
+            backend,
             output_dir: downloads_dir.clone(),
             enable_dht: self.libtorrent.dht,
             disable_lsd: !self.libtorrent.lsd,

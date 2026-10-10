@@ -31,9 +31,19 @@ const PROXY_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 /// `tribler.core.libtorrent.download_manager.DownloadManager`).
 ///
 /// Clone leger (`Arc` interne).
+/// Backend moteur concret (swap ONIONBIT-1) : la surface `BtEngine`
+/// est inchangee, chaque methode dispatche sur la variante.
+#[derive(Clone)]
+enum SessionBackend {
+    /// `librqbit` vendored (reference actuelle).
+    Rqbit(Arc<librqbit::Session>),
+    /// Port libtorrent `bitdaemon`.
+    Bd(Arc<crate::engine_bitdaemon::BdBackend>),
+}
+
 #[derive(Clone)]
 pub struct BtEngine {
-    session: Arc<librqbit::Session>,
+    session: SessionBackend,
     config: EngineConfig,
     /// Kill switch d'anonymat : present uniquement quand
     /// `socks5_proxy` est configure. Sonde le proxy et suspend tout
@@ -74,6 +84,25 @@ impl BtEngine {
     /// Cree le repertoire de sortie si absent. En config `offline`
     /// (tests), aucun trafic reseau n'est emis.
     pub async fn start(config: EngineConfig) -> Result<Self> {
+        // Backend `bitdaemon` (opt-in ONIONBIT-1) : moteur alternatif,
+        // meme surface. Le demarrage rqbit ci-dessous reste la
+        // reference de comparaison A/B.
+        if config.backend == crate::config::EngineBackend::Bitdaemon {
+            let bd = crate::engine_bitdaemon::BdBackend::start(&config).await?;
+            tracing::info!(
+                output_dir = %config.output_dir.display(),
+                "session bittorrent demarree (backend bitdaemon)"
+            );
+            return Ok(Self {
+                session: SessionBackend::Bd(Arc::new(bd)),
+                config,
+                kill_switch: None,
+                watchdog_stop: None,
+                natpmp_stop: None,
+                upnp_udp_stop: None,
+                extra_trackers: Default::default(),
+            });
+        }
         std::fs::create_dir_all(&config.output_dir)?;
         // Proxy guard : le SOCKS5 doit etre le proxy local des tunnels
         // — une URL distante fait echouer le demarrage (pas de repli
@@ -155,7 +184,7 @@ impl BtEngine {
             "session bittorrent demarree"
         );
         Ok(Self {
-            session,
+            session: SessionBackend::Rqbit(session),
             config,
             kill_switch,
             watchdog_stop,
@@ -224,7 +253,10 @@ impl BtEngine {
         if self.config.clear_orphaned_parts {
             self.remove_orphaned_parts();
         }
-        self.session.stop().await;
+        match &self.session {
+            SessionBackend::Rqbit(s) => s.stop().await,
+            SessionBackend::Bd(b) => b.stop().await,
+        }
         tracing::info!("session bittorrent arretee");
     }
 
@@ -235,9 +267,8 @@ impl BtEngine {
     /// librqbit n'ecrit pas de `.parts` lui-meme — le nettoyage couvre
     /// les restes laisses par d'autres clients dans le meme dossier.
     fn remove_orphaned_parts(&self) {
-        let known: std::collections::HashSet<String> = self
-            .session
-            .with_torrents(|it| it.map(|(_, t)| hex::encode(t.info_hash().0)).collect());
+        let known: std::collections::HashSet<String> =
+            self.list().iter().map(|s| s.info_hash.clone()).collect();
         let Ok(entries) = std::fs::read_dir(&self.config.output_dir) else {
             return;
         };
@@ -292,7 +323,10 @@ impl BtEngine {
 
     /// Port TCP/uTP d'ecoute effectif (si l'ecoute est activee).
     pub fn listen_addr(&self) -> Option<std::net::SocketAddr> {
-        self.session.listen_addr()
+        match &self.session {
+            SessionBackend::Rqbit(s) => s.listen_addr(),
+            SessionBackend::Bd(b) => b.listen_addr(),
+        }
     }
 
     /// Ajoute un telechargement depuis une URI `magnet:` ou `http(s):`
@@ -354,8 +388,10 @@ impl BtEngine {
         if let Some(ks) = &self.kill_switch {
             ks.guard_add()?;
         }
-        let response = self
-            .session
+        let SessionBackend::Rqbit(session) = &self.session else {
+            return self.add_bd(add, opts).await;
+        };
+        let response = session
             .add_torrent(add, opts)
             .await
             .map_err(|e| BtError::Engine(e.to_string()))?;
@@ -364,6 +400,107 @@ impl BtEngine {
             | AddTorrentResponse::Added(_, handle) => Ok(self.wrap(handle)),
             AddTorrentResponse::ListOnly(_) => Err(BtError::NoHandle),
         }
+    }
+
+    /// Traduction `AddTorrent` + `AddTorrentOptions` (rqbit) ->
+    /// `AddTorrentParams` bitdaemon. Le `name_subfolder` rqbit est
+    /// natif chez libtorrent (`save_path` = base, le nom du torrent
+    /// cree son dossier pour le multi-fichiers) — rien a ajouter.
+    async fn add_bd(
+        &self,
+        add: AddTorrent<'_>,
+        opts: Option<AddTorrentOptions>,
+    ) -> Result<Download> {
+        use bitdaemon::core::torrent_info::load_torrent;
+        let SessionBackend::Bd(bd) = &self.session else {
+            return Err(BtError::Engine("backend attendu bitdaemon".into()));
+        };
+        // Zone privee : un `storage_factory` demande sans portage =
+        // refus ferme (jamais d'ecriture en clair par repli silencieux).
+        if opts.as_ref().is_some_and(|o| o.storage_factory.is_some()) {
+            return Err(BtError::Engine(
+                "backend bitdaemon : storage_factory (zone privee) non portee".into(),
+            ));
+        }
+        let (mut atp, torrent_bytes) = match add {
+            AddTorrent::Url(u) => {
+                let u = u.into_owned();
+                if u.starts_with("magnet:") || (u.len() == 40 && hex::decode(&u).is_ok()) {
+                    let uri = if u.starts_with("magnet:") {
+                        u
+                    } else {
+                        format!("magnet:?xt=urn:btih:{u}")
+                    };
+                    (
+                        bitdaemon::core::magnet_uri::parse_magnet(uri.as_bytes())
+                            .map_err(|e| BtError::Engine(format!("magnet : {e}")))?,
+                        None,
+                    )
+                } else {
+                    return Err(BtError::Engine(
+                        "backend bitdaemon : telechargement .torrent par URL non supporte".into(),
+                    ));
+                }
+            }
+            AddTorrent::TorrentFileBytes(b) => (
+                load_torrent(&b).map_err(|e| BtError::Engine(format!("torrent : {e}")))?,
+                Some(b),
+            ),
+        };
+        let Some(o) = opts else {
+            let h = bd.add_torrent_params(&atp)?;
+            return Ok(self.wrap_bd(h, &bd.handle, torrent_bytes));
+        };
+        // Dossier de sortie : `output_folder` explicite > session.
+        let save = o
+            .output_folder
+            .as_ref()
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| self.config.output_dir.clone());
+        atp.save_path = save.as_os_str().as_encoded_bytes().to_vec();
+        if o.paused {
+            atp.flags |= bitdaemon_common::flags::TorrentFlags::PAUSED;
+        }
+        if let Some(files) = &o.only_files {
+            if let Some(ti) = &atp.ti {
+                let n = ti.num_files().max(0);
+                let mut prios =
+                    vec![bitdaemon_common::types::DownloadPriority::DEFAULT; n as usize];
+                for (i, p) in prios.iter_mut().enumerate() {
+                    if !files.contains(&i) {
+                        *p = bitdaemon_common::types::DownloadPriority::DONT_DOWNLOAD;
+                    }
+                }
+                atp.file_priorities = prios;
+            }
+        }
+        for t in o.trackers.iter().flatten() {
+            atp.trackers.push(t.clone().into_bytes());
+            let tier = (atp.tracker_tiers.last().copied().unwrap_or(-1)) + 1;
+            atp.tracker_tiers.push(tier);
+        }
+        if let Some(peers) = &o.initial_peers {
+            atp.peers.extend(peers.iter().copied());
+        }
+        let h = bd.add_torrent_params(&atp)?;
+        if let Some(up) = o.ratelimits.upload_bps {
+            h.set_upload_limit(i64::from(up.get()));
+        }
+        if let Some(down) = o.ratelimits.download_bps {
+            h.set_download_limit(i64::from(down.get()));
+        }
+        // Flux de pairs e2e (`extra_peers_rx`) : consomme une fois —
+        // chaque adresse arrive en `connect_peer` immediat.
+        if let Some(mut rx) = o.extra_peers_rx {
+            let h2 = h.clone();
+            tokio::spawn(async move {
+                use futures_util::StreamExt as _;
+                while let Some(addr) = rx.next().await {
+                    h2.connect_peer(addr);
+                }
+            });
+        }
+        Ok(self.wrap_bd(h, &bd.handle, torrent_bytes))
     }
 
     /// Enveloppe un handle rqbit en `Download` (avec la liste de
@@ -378,18 +515,54 @@ impl BtEngine {
             .or_default()
             .clone();
         Download {
-            inner,
+            inner: crate::download::DownloadInner::Rqbit(inner),
+            extra_trackers,
+        }
+    }
+
+    /// Enveloppe un `TorrentHandle` bitdaemon en `Download` (meme
+    /// liste de trackers additionnels que [`Self::wrap`]).
+    fn wrap_bd(
+        &self,
+        handle: bitdaemon_session::session_handle::TorrentHandle,
+        session: &bitdaemon_session::session_handle::SessionHandle,
+        torrent_bytes: Option<bytes::Bytes>,
+    ) -> Download {
+        let info_hash = *handle.info_hash.as_bytes();
+        let extra_trackers = self
+            .extra_trackers
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .entry(info_hash)
+            .or_default()
+            .clone();
+        Download {
+            inner: crate::download::DownloadInner::Bd(crate::download::BdTorrent {
+                handle,
+                session: session.clone(),
+                info_hash,
+                torrent_bytes,
+            }),
             extra_trackers,
         }
     }
 
     /// Liste les telechargements courants (instantanes d'etat).
     pub fn list(&self) -> Vec<DownloadStats> {
-        self.session.with_torrents(|it| {
-            it.map(|(_, t)| self.wrap(Arc::clone(t)))
-                .map(|d| d.stats())
-                .collect()
-        })
+        match &self.session {
+            SessionBackend::Rqbit(s) => s.with_torrents(|it| {
+                it.map(|(_, t)| self.wrap(Arc::clone(t)))
+                    .map(|d| d.stats())
+                    .collect()
+            }),
+            SessionBackend::Bd(b) => b
+                .handle
+                .torrent_statuses()
+                .into_iter()
+                .filter_map(|st| b.handle.find_torrent(&st.info_hash))
+                .map(|h| self.wrap_bd(h, &b.handle, None).stats())
+                .collect(),
+        }
     }
 
     /// Recupere un telechargement par id interne ou info-hash hex.
@@ -398,8 +571,20 @@ impl BtEngine {
     /// couche API (lookup strict par info-hash comme `unhexlify`
     /// Python), preferer [`Self::get_by_hash`].
     pub fn get(&self, id_or_hash: &str) -> Option<Download> {
-        let key = parse_id_or_hash(id_or_hash)?;
-        self.session.get(key).map(|inner| self.wrap(inner))
+        match &self.session {
+            SessionBackend::Rqbit(s) => {
+                let key = parse_id_or_hash(id_or_hash)?;
+                s.get(key).map(|inner| self.wrap(inner))
+            }
+            // bitdaemon : pas d'id numerique — info-hash hex 40c
+            // uniquement (le comportement numerique n'existe pas).
+            SessionBackend::Bd(b) => {
+                let ih = parse_sha1(id_or_hash)?;
+                b.handle
+                    .find_torrent(&ih)
+                    .map(|h| self.wrap_bd(h, &b.handle, None))
+            }
+        }
     }
 
     /// Recupere un telechargement par info-hash **v1 brut** (20 octets)
@@ -408,9 +593,15 @@ impl BtEngine {
     /// `"00..0"` tout-chiffres serait sinon pris pour l'id 0).
     pub fn get_by_hash(&self, infohash: &[u8]) -> Option<Download> {
         let id: [u8; 20] = infohash.try_into().ok()?;
-        self.session
-            .get(TorrentIdOrHash::Hash(librqbit_core::hash_id::Id20::new(id)))
-            .map(|inner| self.wrap(inner))
+        match &self.session {
+            SessionBackend::Rqbit(s) => s
+                .get(TorrentIdOrHash::Hash(librqbit_core::hash_id::Id20::new(id)))
+                .map(|inner| self.wrap(inner)),
+            SessionBackend::Bd(b) => b
+                .handle
+                .find_torrent(&bitdaemon_common::hash::Sha1Hash::from_bytes(&id)?)
+                .map(|h| self.wrap_bd(h, &b.handle, None)),
+        }
     }
 
     /// Met en pause un telechargement.
@@ -418,10 +609,21 @@ impl BtEngine {
         let d = self
             .get(id_or_hash)
             .ok_or_else(|| BtError::NotFound(id_or_hash.to_string()))?;
-        self.session
-            .pause(&d.inner)
-            .await
-            .map_err(|e| BtError::Engine(e.to_string()))
+        match &self.session {
+            SessionBackend::Rqbit(s) => {
+                let crate::download::DownloadInner::Rqbit(inner) = d.inner else {
+                    return Err(BtError::Engine("download/backend incoherents".into()));
+                };
+                s.pause(&inner)
+                    .await
+                    .map_err(|e| BtError::Engine(e.to_string()))
+            }
+            SessionBackend::Bd(b) => {
+                let ih = parse_sha1(id_or_hash)
+                    .ok_or_else(|| BtError::NotFound(id_or_hash.to_string()))?;
+                b.set_paused(&ih, true)
+            }
+        }
     }
 
     /// Reprend un telechargement en pause.
@@ -432,25 +634,35 @@ impl BtEngine {
         let d = self
             .get(id_or_hash)
             .ok_or_else(|| BtError::NotFound(id_or_hash.to_string()))?;
-        self.session.unpause(&d.inner).await.or_else(|e| {
-            // « already live » = une pause demandee pendant le check
-            // initial a ete perdue en course — l'etat est deja celui
-            // vise, la reprise reste idempotente.
-            if e.to_string().contains("already live") {
-                Ok(())
-            } else {
-                Err(BtError::Engine(e.to_string()))
+        match &self.session {
+            SessionBackend::Rqbit(s) => {
+                let crate::download::DownloadInner::Rqbit(inner) = d.inner else {
+                    return Err(BtError::Engine("download/backend incoherents".into()));
+                };
+                s.unpause(&inner).await.or_else(|e| {
+                    // « already live » = une pause demandee pendant le check
+                    // initial a ete perdue en course — l'etat est deja celui
+                    // vise, la reprise reste idempotente.
+                    if e.to_string().contains("already live") {
+                        Ok(())
+                    } else {
+                        Err(BtError::Engine(e.to_string()))
+                    }
+                })
             }
-        })
+            SessionBackend::Bd(b) => {
+                let ih = parse_sha1(id_or_hash)
+                    .ok_or_else(|| BtError::NotFound(id_or_hash.to_string()))?;
+                b.set_paused(&ih, false)
+            }
+        }
     }
 
     /// Met en pause tous les telechargements (suspension mobile /
     /// arret rapide). Les pauses unitaires qui echouent sont
     /// collectees, pas fatales.
     pub async fn pause_all(&self) -> Vec<String> {
-        let ids: Vec<String> = self
-            .session
-            .with_torrents(|it| it.map(|(id, _)| id.to_string()).collect());
+        let ids: Vec<String> = self.download_keys();
         let mut errors = Vec::new();
         for id in ids {
             if let Err(e) = self.pause(&id).await {
@@ -469,9 +681,7 @@ impl BtEngine {
                 return vec![e.to_string()];
             }
         }
-        let ids: Vec<String> = self
-            .session
-            .with_torrents(|it| it.map(|(id, _)| id.to_string()).collect());
+        let ids: Vec<String> = self.download_keys();
         let mut errors = Vec::new();
         for id in ids {
             if let Err(e) = self.resume(&id).await {
@@ -479,6 +689,22 @@ impl BtEngine {
             }
         }
         errors
+    }
+
+    /// Cles des telechargements pour `get` : ids numeriques rqbit ou
+    /// info-hashs hex bitdaemon (le format depend du backend).
+    fn download_keys(&self) -> Vec<String> {
+        match &self.session {
+            SessionBackend::Rqbit(s) => {
+                s.with_torrents(|it| it.map(|(id, _)| id.to_string()).collect())
+            }
+            SessionBackend::Bd(b) => b
+                .handle
+                .torrent_statuses()
+                .iter()
+                .map(|st| bitdaemon_common::hex::to_hex(st.info_hash.as_bytes()))
+                .collect(),
+        }
     }
 
     /// Supprime un telechargement de la session.
@@ -492,22 +718,30 @@ impl BtEngine {
     }
 
     pub async fn remove(&self, id_or_hash: &str, delete_files: bool) -> Result<()> {
-        let key = parse_id_or_hash(id_or_hash)
-            .ok_or_else(|| BtError::NotFound(id_or_hash.to_string()))?;
         // Infohash resolu avant la suppression — le `<hmac>.bitv`
         // d'un prive est invisible pour `SessionPersistenceStore`
         // (skip `update_db`) : `clear_files` le supprime a la main,
         // ainsi que le residu `<ih>.bitv` d'une bascule public→privee.
-        let ih = match key {
-            TorrentIdOrHash::Hash(h) => Some(h),
-            TorrentIdOrHash::Id(_) => self.get(id_or_hash).map(|d| d.inner.info_hash()),
-        };
-        self.session
-            .delete(key, delete_files)
-            .await
-            .map_err(|e| BtError::Engine(e.to_string()))?;
-        if let (Some(opaque), Some(h)) = (self.config.opaque_bitv.as_ref(), ih) {
-            opaque.clear_files(&h);
+        let ih: [u8; 20] = self
+            .get(id_or_hash)
+            .map(|d| d.info_hash())
+            .ok_or_else(|| BtError::NotFound(id_or_hash.to_string()))?;
+        match &self.session {
+            SessionBackend::Rqbit(s) => {
+                let key = parse_id_or_hash(id_or_hash)
+                    .ok_or_else(|| BtError::NotFound(id_or_hash.to_string()))?;
+                s.delete(key, delete_files)
+                    .await
+                    .map_err(|e| BtError::Engine(e.to_string()))?;
+            }
+            SessionBackend::Bd(b) => {
+                let hash = bitdaemon_common::hash::Sha1Hash::from_bytes(&ih)
+                    .ok_or_else(|| BtError::NotFound(id_or_hash.to_string()))?;
+                b.remove(&hash, delete_files)?;
+            }
+        }
+        if let Some(opaque) = self.config.opaque_bitv.as_ref() {
+            opaque.clear_files(&librqbit_core::hash_id::Id20::new(ih));
         }
         Ok(())
     }
@@ -523,38 +757,61 @@ impl BtEngine {
         let d = self
             .get(id_or_hash)
             .ok_or_else(|| BtError::NotFound(id_or_hash.to_string()))?;
-        self.session
-            .update_only_files(&d.inner, only_files)
-            .await
-            .map_err(|e| BtError::Engine(e.to_string()))
+        match (&self.session, d.inner) {
+            (SessionBackend::Rqbit(s), crate::download::DownloadInner::Rqbit(inner)) => s
+                .update_only_files(&inner, only_files)
+                .await
+                .map_err(|e| BtError::Engine(e.to_string())),
+            (SessionBackend::Bd(_), crate::download::DownloadInner::Bd(t)) => {
+                // `prioritize_files` : selection = DEFAULT, exclusion
+                // = DONT_DOWNLOAD (upstream `file_priority` 0).
+                let n = t
+                    .handle
+                    .torrent_file()
+                    .map(|ti| ti.num_files().max(0) as usize)
+                    .unwrap_or(0);
+                let prios: Vec<_> = (0..n)
+                    .map(|i| {
+                        if only_files.contains(&i) {
+                            bitdaemon_common::types::DownloadPriority::DEFAULT
+                        } else {
+                            bitdaemon_common::types::DownloadPriority::DONT_DOWNLOAD
+                        }
+                    })
+                    .collect();
+                t.handle.prioritize_files(&prios);
+                Ok(())
+            }
+            _ => Err(BtError::Engine("download/backend incoherents".into())),
+        }
     }
 
     /// Limites de debit de la session entiere (octets/s, `None` =
     /// illimite) — `Session::ratelimits` rqbit, modifiable a chaud
     /// (`libtorrent/max_upload_rate`/`max_download_rate` Tribler).
     pub fn set_ratelimits(&self, upload_bps: Option<u64>, download_bps: Option<u64>) {
-        let to_nz = |v: Option<u64>| {
-            v.and_then(|v| u32::try_from(v).ok())
-                .and_then(std::num::NonZeroU32::new)
-        };
-        self.session.ratelimits.set_upload_bps(to_nz(upload_bps));
-        self.session
-            .ratelimits
-            .set_download_bps(to_nz(download_bps));
+        match &self.session {
+            SessionBackend::Rqbit(s) => {
+                let to_nz = |v: Option<u64>| {
+                    v.and_then(|v| u32::try_from(v).ok())
+                        .and_then(std::num::NonZeroU32::new)
+                };
+                s.ratelimits.set_upload_bps(to_nz(upload_bps));
+                s.ratelimits.set_download_bps(to_nz(download_bps));
+            }
+            SessionBackend::Bd(b) => b.set_ratelimits(upload_bps, download_bps),
+        }
     }
 
     /// Limites de session courantes (octets/s).
     pub fn ratelimits(&self) -> (Option<u64>, Option<u64>) {
-        (
-            self.session
-                .ratelimits
-                .get_upload_bps()
-                .map(|v| v.get() as u64),
-            self.session
-                .ratelimits
-                .get_download_bps()
-                .map(|v| v.get() as u64),
-        )
+        match &self.session {
+            SessionBackend::Rqbit(s) => (
+                s.ratelimits.get_upload_bps().map(|v| v.get() as u64),
+                s.ratelimits.get_download_bps().map(|v| v.get() as u64),
+            ),
+            SessionBackend::Bd(b) => b.ratelimits(),
+        }
     }
 
     /// Re-annonce aux trackers : librqbit recree ses boucles
@@ -571,14 +828,24 @@ impl BtEngine {
         if d.is_paused() {
             return Ok(());
         }
-        self.session
-            .pause(&d.inner)
-            .await
-            .map_err(|e| BtError::Engine(e.to_string()))?;
-        self.session
-            .unpause(&d.inner)
-            .await
-            .map_err(|e| BtError::Engine(e.to_string()))
+        match (&self.session, d.inner) {
+            (SessionBackend::Rqbit(s), crate::download::DownloadInner::Rqbit(inner)) => {
+                s.pause(&inner)
+                    .await
+                    .map_err(|e| BtError::Engine(e.to_string()))?;
+                s.unpause(&inner)
+                    .await
+                    .map_err(|e| BtError::Engine(e.to_string()))
+            }
+            // bitdaemon : `force_announce` natif — pas de contournement
+            // pause/reprise (le hack n'existe que pour rqbit).
+            (SessionBackend::Bd(b), crate::download::DownloadInner::Bd(t)) => {
+                let ih = bitdaemon_common::hash::Sha1Hash::from_bytes(&t.info_hash)
+                    .ok_or_else(|| BtError::NotFound(id_or_hash.to_string()))?;
+                b.force_announce(&ih)
+            }
+            _ => Err(BtError::Engine("download/backend incoherents".into())),
+        }
     }
 
     /// Bitfield des pieces detenues, base64 MSB-first (meme encodage
@@ -586,11 +853,20 @@ impl BtEngine {
     /// torrent n'est pas dans un etat live (equivalent du `""` Python
     /// sans handle — l'appelant traduit).
     pub fn have_pieces_base64(&self, id_or_hash: &str) -> Option<String> {
-        let key = parse_id_or_hash(id_or_hash)?;
-        let api = librqbit::Api::new(self.session.clone(), None);
-        let (bf, _len) = api.api_dump_haves(key).ok()?;
         use base64::Engine as _;
-        Some(base64::engine::general_purpose::STANDARD.encode(bf.as_raw_slice()))
+        match &self.session {
+            SessionBackend::Rqbit(s) => {
+                let key = parse_id_or_hash(id_or_hash)?;
+                let api = librqbit::Api::new(s.clone(), None);
+                let (bf, _len) = api.api_dump_haves(key).ok()?;
+                Some(base64::engine::general_purpose::STANDARD.encode(bf.as_raw_slice()))
+            }
+            SessionBackend::Bd(b) => {
+                let ih = parse_sha1(id_or_hash)?;
+                let st = b.handle.find_torrent(&ih)?.status()?;
+                Some(base64::engine::general_purpose::STANDARD.encode(st.pieces.bytes()))
+            }
+        }
     }
 
     /// Stats par pair du torrent (snapshot `per_peer_stats` rqbit) —
@@ -598,7 +874,40 @@ impl BtEngine {
     /// `None` si le torrent n'est pas live (pas de connexions).
     pub fn peer_stats(&self, id_or_hash: &str) -> Option<Vec<DownloadPeer>> {
         let d = self.get(id_or_hash)?;
-        let live = d.inner.live()?;
+        if let (SessionBackend::Bd(_), crate::download::DownloadInner::Bd(t)) =
+            (&self.session, &d.inner)
+        {
+            // `Torrent::peers` — snapshot brut : adresse, client et
+            // compteurs cumules (pas de tri live/connecting upstream).
+            let sess = t.session.session();
+            let s = bitdaemon_session::session_handle::lock(&sess);
+            let t = s
+                .torrents
+                .get(&bitdaemon_common::hash::Sha1Hash::from_bytes(&t.info_hash)?)?;
+            return Some(
+                t.peers
+                    .values()
+                    .filter_map(|c| {
+                        let addr = c.remote?;
+                        Some(DownloadPeer {
+                            ip: addr.ip().to_string(),
+                            port: addr.port(),
+                            state: "live",
+                            connection_kind: Some("Tcp".into()),
+                            client_name: (!c.client_version.is_empty())
+                                .then(|| String::from_utf8_lossy(&c.client_version).into_owned()),
+                            uploaded_bytes: c.stat_up_total.max(0) as u64,
+                            downloaded_bytes: c.stat_down_total.max(0) as u64,
+                            incoming: false,
+                        })
+                    })
+                    .collect(),
+            );
+        }
+        let crate::download::DownloadInner::Rqbit(inner) = &d.inner else {
+            return None;
+        };
+        let live = inner.live()?;
         let snap = live.per_peer_stats_snapshot(Default::default());
         Some(
             snap.peers
@@ -698,6 +1007,16 @@ pub struct DownloadPeer {
 /// chaine tout-chiffres de 40c est un info-hash legitime — la lire
 /// comme un id interne resoudrait le mauvais torrent, ex. `"00..0"`),
 /// puis id numerique interne (`usize`) en repli.
+/// Parse un info-hash hex 40 caracteres en `Sha1Hash` bitdaemon
+/// (`None` sinon — pas de repli id numerique pour ce backend).
+fn parse_sha1(s: &str) -> Option<bitdaemon_common::hash::Sha1Hash> {
+    if s.len() != 40 {
+        return None;
+    }
+    let bytes = hex::decode(s).ok()?;
+    bitdaemon_common::hash::Sha1Hash::from_bytes(&bytes)
+}
+
 fn parse_id_or_hash(s: &str) -> Option<TorrentIdOrHash> {
     if s.len() == 40 {
         if let Ok(bytes) = hex::decode(s) {

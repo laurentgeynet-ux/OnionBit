@@ -25,6 +25,7 @@ pub mod bitv_opaque;
 pub mod config;
 pub mod download;
 pub mod engine;
+pub mod engine_bitdaemon;
 pub mod error;
 pub mod natpmp;
 pub mod storage_bitdaemon;
@@ -33,7 +34,7 @@ pub mod upnp;
 
 pub use add_options::AddDownloadOptions;
 pub use bitv_opaque::{OpaqueBitV, OpaqueBitVFactory};
-pub use config::EngineConfig;
+pub use config::{EngineBackend, EngineConfig};
 pub use download::{Download, DownloadState, DownloadStats};
 pub use engine::{BtEngine, DownloadPeer};
 pub use error::{BtError, Result};

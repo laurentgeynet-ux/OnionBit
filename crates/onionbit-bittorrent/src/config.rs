@@ -28,8 +28,27 @@ pub const CLIENT_NAME: &str = "Tribler 8.3.0-rust";
 const UTP_TX_INITIAL_DEFAULT_BYTES: usize = 32 * 1024;
 
 /// Configuration d'une session BitTorrent.
+/// Backend moteur BitTorrent (swap rqbit → bitdaemon, ONIONBIT-1).
+///
+/// `Rqbit` reste le defaut : le backend `bitdaemon` est opt-in tant
+/// que la parite fonctionnelle n'est pas validee (fastresume, zone
+/// privee `.bitv`, lanes anonymes). Les deux partagent la surface
+/// `BtEngine`/`Download` — la comparaison A/B se fait a config egale.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum EngineBackend {
+    /// `librqbit` vendored (moteur actuel, reference de comparaison).
+    #[default]
+    Rqbit,
+    /// Port libtorrent `bitdaemon` (depot BitDeamonRust) — transports
+    /// OS injectes, `PreadDiskIo` + `StorageFactory`.
+    Bitdaemon,
+}
+
 #[derive(Debug, Clone)]
 pub struct EngineConfig {
+    /// Moteur BitTorrent utilise par la session (`engine` du
+    /// `daemon_config` — `rqbit` defaut, `bitdaemon` opt-in).
+    pub backend: EngineBackend,
     /// Repertoire de telechargement par defaut.
     pub output_dir: PathBuf,
     /// Activer la DHT mainline (BEP 5). Desactiver pour les tests
@@ -218,6 +237,7 @@ pub type BitVWrapperFn = std::sync::Arc<
 impl Default for EngineConfig {
     fn default() -> Self {
         Self {
+            backend: EngineBackend::default(),
             output_dir: PathBuf::from("downloads"),
             enable_dht: true,
             disable_trackers: false,
@@ -262,6 +282,7 @@ impl EngineConfig {
     /// (pas de DHT, pas de trackers, pas d'ecoute, pas de LSD).
     pub fn offline(output_dir: PathBuf) -> Self {
         Self {
+            backend: EngineBackend::default(),
             output_dir,
             enable_dht: false,
             disable_trackers: true,

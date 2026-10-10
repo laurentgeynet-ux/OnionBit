@@ -393,6 +393,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5e764a1d40d510daf35e07be9eb06e75770908c27d411ee6c92109c9840eaaf7"
 
 [[package]]
+name = "bitdaemon"
+version = "0.1.0"
+source = "git+https://github.com/laurentgeynet-ux/BitDeamonRust.git?rev=ae527a68b840f468e70fae8e3461b0863d15455f#ae527a68b840f468e70fae8e3461b0863d15455f"
+dependencies = [
+ "bitdaemon-bencode",
+ "bitdaemon-common",
+ "bitdaemon-core",
+ "bitdaemon-dht",
+ "bitdaemon-disk",
+ "bitdaemon-net",
+ "bitdaemon-session",
+ "rand 0.9.5",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "bitdaemon-bencode"
 version = "0.1.0"
 source = "git+https://github.com/laurentgeynet-ux/BitDeamonRust.git?rev=ae527a68b840f468e70fae8e3461b0863d15455f#ae527a68b840f468e70fae8e3461b0863d15455f"
@@ -432,6 +449,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "bitdaemon-dht"
+version = "0.1.0"
+source = "git+https://github.com/laurentgeynet-ux/BitDeamonRust.git?rev=ae527a68b840f468e70fae8e3461b0863d15455f#ae527a68b840f468e70fae8e3461b0863d15455f"
+dependencies = [
+ "bitdaemon-bencode",
+ "bitdaemon-common",
+ "bitdaemon-net",
+ "bytes",
+ "ed25519-dalek 2.2.0",
+ "rand 0.9.5",
+ "serde",
+ "sha1 0.10.7",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "bitdaemon-disk"
 version = "0.1.0"
 source = "git+https://github.com/laurentgeynet-ux/BitDeamonRust.git?rev=ae527a68b840f468e70fae8e3461b0863d15455f#ae527a68b840f468e70fae8e3461b0863d15455f"
@@ -443,6 +478,49 @@ dependencies = [
  "fs2",
  "sha1 0.10.7",
  "sha2 0.10.9",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "bitdaemon-net"
+version = "0.1.0"
+source = "git+https://github.com/laurentgeynet-ux/BitDeamonRust.git?rev=ae527a68b840f468e70fae8e3461b0863d15455f#ae527a68b840f468e70fae8e3461b0863d15455f"
+dependencies = [
+ "bitdaemon-bencode",
+ "bitdaemon-common",
+ "bitdaemon-core",
+ "bytes",
+ "flate2",
+ "futures",
+ "num-bigint",
+ "num-traits",
+ "rand 0.9.5",
+ "serde_json",
+ "sha1 0.10.7",
+ "thiserror 2.0.21",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "url",
+]
+
+[[package]]
+name = "bitdaemon-session"
+version = "0.1.0"
+source = "git+https://github.com/laurentgeynet-ux/BitDeamonRust.git?rev=ae527a68b840f468e70fae8e3461b0863d15455f#ae527a68b840f468e70fae8e3461b0863d15455f"
+dependencies = [
+ "bitdaemon-bencode",
+ "bitdaemon-common",
+ "bitdaemon-core",
+ "bitdaemon-dht",
+ "bitdaemon-disk",
+ "bitdaemon-net",
+ "bytes",
+ "futures",
+ "rand 0.9.5",
+ "sha1 0.10.7",
  "thiserror 2.0.21",
  "tokio",
  "tracing",
@@ -773,6 +851,12 @@ checksum = "6e8ccc4ea9f6acc32d102c0f6d471d11d913ad15f20c04de743374861fa1d414"
 
 [[package]]
 name = "const-oid"
+version = "0.9.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c2459377285ad874054d797f3ccebf984978aa39129f6eafde5cdc8315b612f8"
+
+[[package]]
+name = "const-oid"
 version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a6ef517f0926dd24a1582492c791b6a4818a4d94e789a334894aa15b0d12f55c"
@@ -939,6 +1023,7 @@ dependencies = [
  "cfg-if",
  "cpufeatures 0.2.17",
  "curve25519-dalek-derive",
+ "digest 0.10.7",
  "fiat-crypto 0.2.9",
  "rustc_version",
  "subtle",
@@ -1059,6 +1144,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "der"
+version = "0.7.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e7c1832837b905bbfb5101e07cc24c8deddf52f93225eee6ead5f4d63d53ddcb"
+dependencies = [
+ "const-oid 0.9.6",
+ "zeroize",
+]
+
+[[package]]
 name = "deranged"
 version = "0.5.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1085,7 +1180,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f1dd6dbb5841937940781866fa1281a1ff7bd3bf827091440879f9994983d5c2"
 dependencies = [
  "block-buffer 0.12.1",
- "const-oid",
+ "const-oid 0.10.2",
  "crypto-common 0.2.2",
  "ctutils",
 ]
@@ -1117,7 +1212,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -1173,11 +1268,35 @@ checksum = "d0881ea181b1df73ff77ffaaf9c7544ecc11e82fba9b5f27b262a3c73a332555"
 
 [[package]]
 name = "ed25519"
+version = "2.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "115531babc129696a58c64a4fef0a8bf9e9698629fb97e9e40767d235cfbcd53"
+dependencies = [
+ "pkcs8",
+ "signature 2.2.0",
+]
+
+[[package]]
+name = "ed25519"
 version = "3.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "29fcf32e6c73d1079f83ab4d782de2d81620346a5f38c6237a86a22f8368980a"
 dependencies = [
- "signature",
+ "signature 3.0.0",
+]
+
+[[package]]
+name = "ed25519-dalek"
+version = "2.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "70e796c081cee67dc755e1a36a0a172b897fab85fc3f6bc48307991f64e4eca9"
+dependencies = [
+ "curve25519-dalek 4.1.3",
+ "ed25519 2.2.3",
+ "serde",
+ "sha2 0.10.9",
+ "subtle",
+ "zeroize",
 ]
 
 [[package]]
@@ -1187,7 +1306,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6ebaa1a2bf1290ab3bfe5a7b771d050ebffab2711c19a81691c683a5144a25de"
 dependencies = [
  "curve25519-dalek 5.0.0",
- "ed25519",
+ "ed25519 3.0.0",
  "sha2 0.11.0",
  "subtle",
  "zeroize",
@@ -1253,7 +1372,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2941,7 +3060,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -2954,6 +3073,16 @@ dependencies = [
  "num-integer",
  "num-iter",
  "num-rational",
+ "num-traits",
+]
+
+[[package]]
+name = "num-bigint"
+version = "0.4.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c89e69e7e0f03bea5ef08013795c25018e101932225a656383bd384495ecc367"
+dependencies = [
+ "num-integer",
  "num-traits",
 ]
 
@@ -3133,9 +3262,12 @@ dependencies = [
  "anyhow",
  "async-trait",
  "base64 0.23.1",
+ "bitdaemon",
  "bitdaemon-common",
  "bitdaemon-core",
  "bitdaemon-disk",
+ "bitdaemon-net",
+ "bitdaemon-session",
  "bytes",
  "futures-util",
  "hex 0.4.3",
@@ -3217,7 +3349,7 @@ version = "1.1.2"
 dependencies = [
  "argon2",
  "chacha20poly1305",
- "ed25519-dalek",
+ "ed25519-dalek 3.0.0",
  "elligator2",
  "hex 0.4.3",
  "hkdf",
@@ -3492,6 +3624,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
+name = "pkcs8"
+version = "0.10.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f950b2377845cebe5cf8b5165cb3cc1a5e0fa5cfa3e1f7f55707d8fd82e0a7b7"
+dependencies = [
+ "der",
+ "spki",
+]
+
+[[package]]
 name = "pkg-config"
 version = "0.3.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3716,7 +3858,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -4065,7 +4207,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -4131,7 +4273,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -4454,6 +4596,15 @@ dependencies = [
 
 [[package]]
 name = "signature"
+version = "2.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "77549399552de45a898a580c1b41d445bf730df867cc44e6c0233bbc4b8329de"
+dependencies = [
+ "rand_core 0.6.4",
+]
+
+[[package]]
+name = "signature"
 version = "3.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "28d567dcbaf0049cb8ac2608a76cd95ff9e4412e1899d389ee400918ca7537f5"
@@ -4519,6 +4670,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d96d2d1d716fb500937168cc09353ffdc7a012be8475ac7308e1bdf0e3923300"
 dependencies = [
  "lock_api",
+]
+
+[[package]]
+name = "spki"
+version = "0.7.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d91ed6c858b01f942cd56b37a94b3e0a1798290327d1236e4d9cf4eaca44d29d"
+dependencies = [
+ "base64ct",
+ "der",
 ]
 
 [[package]]
@@ -4679,7 +4840,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -5449,7 +5610,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
