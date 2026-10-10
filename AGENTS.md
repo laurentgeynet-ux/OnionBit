@@ -10,10 +10,11 @@ Licence : **GPL-3.0-or-later**.
 
 ## Structure
 
-- `crates/onionbit-*` — 13 crates : `format`, `crypto`, `bittorrent`
+- `crates/onionbit-*` — 14 crates : `format`, `crypto`, `bittorrent`
   (enveloppe librqbit vendored sous `vendor/`), `ipv8`, `tunnel`,
   `messaging`, `core`, `db`, `network-policy`, `api` (REST+SSE axum),
-  `cli`, `daemon`, `test-support`.
+  `cli`, `daemon`, `launcher` (mini-lanceur du bundle Windows,
+  ADR-0018), `test-support`.
 - `app/` — UI Flutter ; consomme uniquement l'API, jamais le core.
 - `docs/plans/roadmap.md` — source de vérité de l'avancement ;
   `docs/CHANGELOG.md` — historique ; `docs/architecture/decisions/` — ADRs.

@@ -13,7 +13,7 @@ chaque étape (cf. `AGENTS.md`, "Workflow par étape").
 | :--- | :--- |
 | `AGENTS.md` | Règles pour agents IA (règles critiques, conventions, workflow) |
 | `LICENSE` | Texte complet GPL-3.0 |
-| `Cargo.toml` | Workspace Cargo, 13 crates, dépendances partagées |
+| `Cargo.toml` | Workspace Cargo, 14 crates, dépendances partagées |
 | `crates/onionbit-format/` | Bencode, `.torrent`, magnet, `.mdblob` |
 | `crates/onionbit-crypto/` | Hachage, clés IPv8, crypto tunnel |
 | `crates/onionbit-bittorrent/` | Intégration `librqbit`, sessions de téléchargement |
@@ -26,6 +26,7 @@ chaque étape (cf. `AGENTS.md`, "Workflow par étape").
 | `crates/onionbit-api/` | API REST + SSE (axum) |
 | `crates/onionbit-cli/` | CLI de pilotage |
 | `crates/onionbit-daemon/` | Binaire principal (composition racine) |
+| `crates/onionbit-launcher/` | Mini-lanceur portable du bundle Windows (ADR-0018) : copié sous 3 noms à la racine (`OnionBit`, `OnionBit Daemon`, `OnionBit Web`), résout `windows\<cible>` relativement à sa position |
 | `crates/onionbit-test-support/` | Fixtures/helpers de tests partagés |
 | `vendor/` | `librqbit*` vendored+patchés (`[patch.crates-io]`) : `DatagramSocket` injectable, uTP/DHT/tracker-UDP sur tunnel (ADR-0007) |
 | `app/` | Interface Flutter desktop (Riverpod + go_router, consomme `onionbit-api` REST/SSE) |
