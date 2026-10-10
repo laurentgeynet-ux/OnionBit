@@ -933,7 +933,7 @@ impl CoreSession {
                 tracing::info!("restauration interrompue par l'arret de la session");
                 return;
             }
-            if row.torrent_data.is_none() {
+            if row.torrent_data.is_none() && row.storage_area != "private" {
                 // Sans metainfo persistee (lignes laissees par un ajout
                 // magnet/URI des versions anterieures), `readd_row`
                 // attend la resolution BEP 9 ou le fetch HTTP de la
