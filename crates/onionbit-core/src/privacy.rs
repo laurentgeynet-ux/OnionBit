@@ -364,7 +364,7 @@ mod tests {
     fn apply_full_sans_pont_refuse() {
         let cfg = DaemonConfig::default();
         let err = PrivacyProfile::apply(&cfg, PrivacyProfile::Full).unwrap_err();
-        assert!(matches!(err, PrivacyError::MissingPrerequisites(m) if m == &["stealth.bridges"]));
+        assert!(matches!(err, PrivacyError::MissingPrerequisites(m) if m == ["stealth.bridges"]));
     }
 
     /// `full` avec pont : bascule complète — stealth on, ipv8 off,
@@ -374,7 +374,7 @@ mod tests {
         let mut cfg = DaemonConfig::default();
         cfg.stealth
             .bridges
-            .push("onionbit-bridge://127.0.0.1:9000#aa".repeat(1));
+            .push("onionbit-bridge://127.0.0.1:9000#aa".to_string());
         let (next, out) = PrivacyProfile::apply(&cfg, PrivacyProfile::Full).expect("apply full");
         assert!(!next.ipv8.enabled);
         assert!(next.stealth.enabled);
