@@ -3,6 +3,36 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Étape 100 : découverte encapsulée stealth — trame `ENCAP` (2026-10-11)
+
+Le réseau onionbit-only (`full`/stealth) gagne la découverte de
+contenu — ADR-0025 §5 implémentée. Nouveau `msg_id` **`ENCAP`**
+(11) de `OnionbitExtCommunity` : enveloppe générique signée
+`{v, kind, req_id, varlen(payload)}` bornée `ENCAP_FRAME_MAX`
+(2048 o) — le véhicule prévu aussi pour `VAULT_GET`/
+`MAILBOX_PULL` au lieu d'un mécanisme parallèle. `kind` v1 :
+`SELECT_REQ` (JSON identique à `RemoteSelectPayload`) et
+`SELECT_RESP` (un chunk LZ4 de mdblob par trame, `req_id` =
+`RemoteSelect::id`). Choix d'implémentation : la trame ext *est*
+l'encapsulation — `ContentDiscoveryCommunity` exige
+`DiscoveryCommunity` (random walk), inexistante sous transport
+morphe ; `SessionContentProvider` est désormais construit aussi
+en stealth et sert/ingère par le même code que le chemin UDP
+clair (sanitize, chunks, persistance des canaux suivis,
+`remote_query_results`). Les rôles `bridge`/`gateway` annoncent
+`CAP_DISCOVERY_RELAY` (bit 3 de `hello.caps`) et servent les
+`SELECT_REQ` ; le budget `encap_rate_*` est appliqué **par clé
+signataire** (identité de session cliente, pas par mid).
+`send_search_request` et `channel_sync` basculent
+automatiquement : community si présente, sinon `ENCAP` vers les
+relais — `/api/search/remote` inchangée ; le relais est choisi de
+façon déterministe par `channel_pk` (répartition inter-ponts,
+§5). Réponses à `req_id` inconnu droppées. Tests :
+`encap_relay_annonce_la_capacite`,
+`encap_select_roundtrip_deux_chunks`,
+`encap_requete_dropee_sans_relay`,
+`encap_budget_par_cle_signataire`.
+
 ## Étape 99 : santé interne — sélection `torrents_to_check` (2026-10-11)
 
 `TorrentChecker::check_oldest` (une ligne, la plus ancienne)

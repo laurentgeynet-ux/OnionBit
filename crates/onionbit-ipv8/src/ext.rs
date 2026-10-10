@@ -143,12 +143,43 @@ pub mod msg {
     /// `INTRO_REQ` ou diffusion poussee aux pairs reciproques quand
     /// la table locale gagne une entree nouvelle.
     pub const INTRO: u8 = 10;
+    /// `ENCAP` — `{v, kind, req_id, varlen(payload)}` : enveloppe
+    /// generique requete/reponse (ADR-0025 §5, etape 100). Le
+    /// `kind` est le type opaque porte — v1 n'utilise que les
+    /// selects de decouverte (`encap_kind::*`), mais la trame est
+    /// le vehicule prevu pour `VAULT_GET`/`MAILBOX_PULL` (pull
+    /// store-and-forward) au lieu d'un mecanisme parallele.
+    pub const ENCAP: u8 = 11;
+}
+
+/// Types opaques portes par `ENCAP` (`kind`) — espace propre,
+/// reserve aux requetes/reponses ponctuelles entre deux pairs.
+pub mod encap_kind {
+    /// Select de decouverte encapsule : payload = JSON identique a
+    /// `RemoteSelectPayload.json` (meme sanitize cote serveur).
+    pub const SELECT_REQ: u8 = 1;
+    /// Reponse encapsulee : payload = un chunk LZ4 de mdblob,
+    /// identique au `blob` de `SelectResponsePayload` — un ENCAP
+    /// `SELECT_RESP` par chunk, `req_id` = `RemoteSelect::id`.
+    pub const SELECT_RESP: u8 = 2;
 }
 
 /// Borne du payload `INTRO` — `count` est borne par
 /// `intro_resp_max` et une entree fait ≤ 51 octets (addr v6 +
 /// `bridge_pk`) ; le filet refuse les trames gonflees avant parse.
 pub const INTRO_FRAME_MAX: usize = 512;
+
+/// Borne du payload `ENCAP` : un chunk `SELECT_RESP` pese au plus
+/// `maximum_payload_size` (~1300 o) et une requete JSON tient
+/// largement dedans — le filet borne avant parse.
+pub const ENCAP_FRAME_MAX: usize = 2048;
+
+/// Bit de capacite `hello.caps` : le pair sert les selects
+/// encapsules `ENCAP`/`SELECT_REQ` (ADR-0025 §5 — roles `bridge`/
+/// `gateway` en stealth : index relais de contenu). Un client qui
+/// n'annonce pas la capacite ignore silencieusement les `SELECT_REQ`
+/// recus — pas de degradation.
+pub const CAP_DISCOVERY_RELAY: u64 = 1 << 3;
 
 /// Capacites transport annoncees dans `hello.caps` — bitmap extensible.
 /// Bit 0 = `obf::CAP_OBF_V1` (enveloppes OBF, Phase 9e) — annonce
@@ -188,6 +219,9 @@ pub fn cap_names(caps: u64) -> Vec<&'static str> {
     }
     if caps & CAP_MSG_V2 != 0 {
         names.push("msg_v2");
+    }
+    if caps & CAP_DISCOVERY_RELAY != 0 {
+        names.push("discovery_relay");
     }
     names
 }
@@ -457,6 +491,23 @@ pub struct ExtSettings {
     pub intro_push_fanout: usize,
     /// Cooldown entre deux `INTRO_REQ` emis vers le meme pair.
     pub intro_req_cooldown: Duration,
+
+    // -- ADR-0025 §5 : selects encapsules `ENCAP` ------------------
+    /// Sert les `ENCAP`/`SELECT_REQ` entrants (roles `bridge`/
+    /// `gateway` stealth — index relais de contenu) : annonce
+    /// `CAP_DISCOVERY_RELAY` dans `hello.caps` et execute le select
+    /// via le provider injecte (`set_encap_handler`). `false` =
+    /// les requetes recues sont droppees silencieusement.
+    pub encap_relay: bool,
+    /// Fenetre du budget `ENCAP` par emetteur — le quota est applique
+    /// par **cle signataire** (= session/identite cliente stealth),
+    /// pas par mid/adresse : un client furtif ne contourne pas son
+    /// propre quota en renouvelant sa session.
+    pub encap_rate_window: Duration,
+    /// `ENCAP` acceptes par emetteur et par fenetre.
+    pub encap_rate_max: u32,
+    /// Borne memoire de la table de budget `ENCAP`.
+    pub encap_rate_table_max: usize,
 }
 
 impl Default for ExtSettings {
@@ -504,6 +555,10 @@ impl Default for ExtSettings {
             intro_ttl: Duration::from_secs(3600),
             intro_push_fanout: 3,
             intro_req_cooldown: Duration::from_secs(300),
+            encap_relay: false,
+            encap_rate_window: Duration::from_secs(60),
+            encap_rate_max: 20,
+            encap_rate_table_max: 4096,
         }
     }
 }
@@ -648,6 +703,50 @@ impl Intro {
             entries.push(IntroEntry::unpack(r)?);
         }
         Ok(Self { version, entries })
+    }
+}
+
+/// Trame `encap` (`{v, kind, req_id, varlen(payload)}`) : enveloppe
+/// generique requete/reponse (ADR-0025 §5) — `kind` choisit le type
+/// opaque porte, `req_id` correle la reponse a la requete (meme role
+/// que `RemoteSelect::id`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Encap {
+    /// Version du protocole d'extension.
+    pub version: u8,
+    /// Type opaque porte (`encap_kind::*`) — kinds inconnus dropes.
+    pub kind: u8,
+    /// Identifiant de correlation (echo cote reponse).
+    pub req_id: u32,
+    /// Payload opaque (borne `ENCAP_FRAME_MAX` a la reception).
+    pub payload: Vec<u8>,
+}
+
+impl Encap {
+    /// `onionbit_ext.encap` — `msg_id` filaire.
+    pub const MSG_ID: u8 = msg::ENCAP;
+
+    /// Serialise (`{v: u8, kind: u8, req_id: u32, varlen payload}`).
+    pub fn pack(&self, w: &mut Writer) -> Result<(), Ipv8Error> {
+        w.u8(self.version);
+        w.u8(self.kind);
+        w.u32(self.req_id);
+        w.varlen_h(&self.payload);
+        Ok(())
+    }
+
+    /// Deserialise ; `TrailingBytes` tolere.
+    pub fn unpack(r: &mut Reader) -> Result<Self, Ipv8Error> {
+        let version = r.u8()?;
+        let kind = r.u8()?;
+        let req_id = r.u32()?;
+        let payload = r.varlen_h()?.to_vec();
+        Ok(Self {
+            version,
+            kind,
+            req_id,
+            payload,
+        })
     }
 }
 
@@ -885,7 +984,30 @@ pub struct OnionbitExtCommunity {
     intro_rx: AtomicU64,
     intro_tx: AtomicU64,
     intro_dropped: AtomicU64,
+    /// Executant des `SELECT_REQ` encapsules — injecte par le core
+    /// (`SessionContentProvider`, meme port `ContentProvider` que la
+    /// community : meme sanitize, memes chunks LZ4). `None` = le
+    /// noeud ne sert pas (client).
+    encap_handler: Mutex<Option<Arc<dyn crate::content_discovery::ContentProvider>>>,
+    /// Puits des `SELECT_RESP` encapsules recus — injecte par le
+    /// core : `f(pk_emetteur, src, req_id, payload)` ; l'ingestion
+    /// (decompression LZ4 + parse mdblob + dedup/persistance) est
+    /// deportee par l'appelant (le handler reste sync — appele sous
+    /// le dispatch `on_packet`).
+    encap_sink: Mutex<Option<EncapSink>>,
+    /// Budget `ENCAP` par emetteur (meme schema que `intro_rate`) —
+    /// cle = `public_key_bin` signataire (identite de session).
+    encap_rate: Mutex<HashMap<Vec<u8>, (Instant, u32)>>,
+    /// `ENCAP` recus/emis/droppes (oracles de banc).
+    encap_rx: AtomicU64,
+    encap_tx: AtomicU64,
+    encap_dropped: AtomicU64,
 }
+
+/// Puits des reponses `ENCAP` (kind `SELECT_RESP` et kinds futurs) :
+/// `f(cle_emetteur, adresse_source, req_id, payload)` — sync, le core
+/// deporte l'ingestion sur une tache.
+pub type EncapSink = Arc<dyn Fn(&[u8], UdpAddress, u32, Vec<u8>) + Send + Sync>;
 
 /// Source de comptabilite locale injectee (adapte
 /// `PeerStatsBook` cote core) : `f(pk)` -> `Some((bytes_served,
@@ -936,6 +1058,12 @@ impl OnionbitExtCommunity {
         if settings.messaging_v2_enabled {
             settings.caps |= CAP_MSG_V2;
         }
+        // `CAP_DISCOVERY_RELAY` (ADR-0025) : annoncee seulement quand
+        // le service de selects encapsules est actif — un noeud qui
+        // ne sert pas ne promet pas la capacite.
+        if settings.encap_relay {
+            settings.caps |= CAP_DISCOVERY_RELAY;
+        }
         let ledger_store_max = settings.ledger_store_max;
         let community = Arc::new(Self {
             key,
@@ -977,6 +1105,12 @@ impl OnionbitExtCommunity {
             intro_rx: AtomicU64::new(0),
             intro_tx: AtomicU64::new(0),
             intro_dropped: AtomicU64::new(0),
+            encap_handler: Mutex::new(None),
+            encap_sink: Mutex::new(None),
+            encap_rate: Mutex::new(HashMap::new()),
+            encap_rx: AtomicU64::new(0),
+            encap_tx: AtomicU64::new(0),
+            encap_dropped: AtomicU64::new(0),
         });
         let prefix = prefix_of(&EXT_COMMUNITY_ID);
         let c = community.clone();
@@ -2294,6 +2428,7 @@ impl OnionbitExtCommunity {
             msg::OBF => self.on_obf(&pkt, &src)?,
             msg::INTRO_REQ => self.on_intro_req(&pkt, &src)?,
             msg::INTRO => self.on_intro(&pkt, &src)?,
+            msg::ENCAP => self.on_encap(&pkt, &src)?,
             _ => {}
         }
         Ok(())
@@ -2676,6 +2811,156 @@ impl OnionbitExtCommunity {
             });
         }
         Ok(())
+    }
+
+    // --------------- ADR-0025 §5 : selects encapsules `ENCAP` -------
+
+    /// Injecte l'executant des `SELECT_REQ` encapsules (le core y
+    /// branche `SessionContentProvider` — meme sanitize et memes
+    /// chunks que le select filaire). A appeler avant tout trafic.
+    pub fn set_encap_handler(&self, handler: Arc<dyn crate::content_discovery::ContentProvider>) {
+        *self.encap_handler.lock().unwrap() = Some(handler);
+    }
+
+    /// Injecte le puits des `SELECT_RESP` encapsules (le core y
+    /// branche son ingestion `process_select_response` + le dispatch
+    /// des callbacks de recherche par `req_id`).
+    pub fn set_encap_sink(&self, sink: EncapSink) {
+        *self.encap_sink.lock().unwrap() = Some(sink);
+    }
+
+    /// Pairs ext annoncant `CAP_DISCOVERY_RELAY` avec adresse connue
+    /// — la population a laquelle un select encapsule peut etre
+    /// envoye (roles `bridge`/`gateway`).
+    pub fn relay_peers(&self) -> Vec<(Vec<u8>, UdpAddress)> {
+        self.ext_peers
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(_, e)| e.caps & CAP_DISCOVERY_RELAY != 0)
+            .filter_map(|(pk, e)| e.addr.clone().map(|a| (pk.clone(), a)))
+            .collect()
+    }
+
+    /// Envoie une trame `ENCAP` signee a `addr` — generique
+    /// (`kind` + `req_id` + payload opaque) ; la borne filaire
+    /// `ENCAP_FRAME_MAX` est appliquee cote emetteur aussi.
+    pub async fn send_encap(
+        &self,
+        addr: &UdpAddress,
+        kind: u8,
+        req_id: u32,
+        payload: Vec<u8>,
+    ) -> Result<(), Ipv8Error> {
+        if payload.len() > ENCAP_FRAME_MAX {
+            return Err(Ipv8Error::Malformed("encap : payload trop grand"));
+        }
+        let mut w = Writer::new();
+        Encap {
+            version: EXT_PROTO_VERSION,
+            kind,
+            req_id,
+            payload,
+        }
+        .pack(&mut w)?;
+        let pkt = Packet::sign_no_dist(&EXT_COMMUNITY_ID, msg::ENCAP, &self.key, &w.into_bytes());
+        self.encap_tx.fetch_add(1, Ordering::Relaxed);
+        self.endpoint.send_to(addr, &pkt).await
+    }
+
+    /// Budget `ENCAP` par emetteur (meme schema que `intro_rate_ok`)
+    /// — la cle est la `public_key_bin` signataire, c'est-a-dire
+    /// l'identite de la session cliente (ADR-0025 §5 : par session,
+    /// pas par mid).
+    fn encap_rate_ok(&self, sender_pk: &[u8]) -> bool {
+        let mut rates = self.encap_rate.lock().unwrap();
+        match rates.get_mut(sender_pk) {
+            Some((start, n)) => {
+                if start.elapsed() >= self.settings.encap_rate_window {
+                    *start = Instant::now();
+                    *n = 0;
+                }
+                *n += 1;
+                *n <= self.settings.encap_rate_max
+            }
+            None => {
+                if rates.len() >= self.settings.encap_rate_table_max
+                    && self.settings.encap_rate_table_max > 0
+                {
+                    false
+                } else {
+                    rates.insert(sender_pk.to_vec(), (Instant::now(), 1));
+                    true
+                }
+            }
+        }
+    }
+
+    /// `on_encap` : pipeline borne — budget par identite signataire,
+    /// taille, parse, version. Un `SELECT_REQ` est servi quand
+    /// `encap_relay` + handler injecte (le SQL part en tache, un
+    /// `SELECT_RESP` par chunk — meme decoupage que
+    /// `send_db_results`) ; un `SELECT_RESP` est remis au puits
+    /// injecte ; les kinds inconnus sont droppes silencieusement
+    /// (point d'extension prevu — `VAULT_GET`/`MAILBOX_PULL` demain).
+    fn on_encap(self: &Arc<Self>, pkt: &Packet, src: &SocketAddr) -> Result<(), Ipv8Error> {
+        self.encap_rx.fetch_add(1, Ordering::Relaxed);
+        if !self.encap_rate_ok(&pkt.public_key_bin) || pkt.payload.len() > ENCAP_FRAME_MAX {
+            self.encap_dropped.fetch_add(1, Ordering::Relaxed);
+            return Ok(());
+        }
+        let mut r = Reader::new(&pkt.payload);
+        let encap = Encap::unpack(&mut r)?;
+        if encap.version != EXT_PROTO_VERSION {
+            self.encap_dropped.fetch_add(1, Ordering::Relaxed);
+            return Ok(());
+        }
+        match encap.kind {
+            encap_kind::SELECT_REQ => {
+                let handler = self.encap_handler.lock().unwrap().clone();
+                let Some(handler) = handler.filter(|_| self.settings.encap_relay) else {
+                    self.encap_dropped.fetch_add(1, Ordering::Relaxed);
+                    return Ok(());
+                };
+                let c = self.clone();
+                let addr = UdpAddress::from(*src);
+                let json = encap.payload;
+                let req_id = encap.req_id;
+                tokio::spawn(async move {
+                    for chunk in handler.remote_select(&json).await {
+                        let _ = c
+                            .send_encap(&addr, encap_kind::SELECT_RESP, req_id, chunk)
+                            .await;
+                    }
+                });
+            }
+            encap_kind::SELECT_RESP => {
+                let sink = self.encap_sink.lock().unwrap().clone();
+                let Some(sink) = sink else {
+                    self.encap_dropped.fetch_add(1, Ordering::Relaxed);
+                    return Ok(());
+                };
+                sink(
+                    &pkt.public_key_bin,
+                    UdpAddress::from(*src),
+                    encap.req_id,
+                    encap.payload,
+                );
+            }
+            _ => {
+                self.encap_dropped.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+        Ok(())
+    }
+
+    /// Compteurs `ENCAP` `(rx, tx, dropped)` — oracles de banc.
+    pub fn encap_counters(&self) -> (u64, u64, u64) {
+        (
+            self.encap_rx.load(Ordering::Relaxed),
+            self.encap_tx.load(Ordering::Relaxed),
+            self.encap_dropped.load(Ordering::Relaxed),
+        )
     }
 
     /// Purge des entrees apprises perimees (TTL `intro_ttl`) —
@@ -3957,5 +4242,158 @@ mod tests {
         let table = a.intro_table.lock().unwrap();
         assert_eq!(table.len(), 1);
         assert!(table.values().all(|e| e.seeded));
+    }
+
+    // ---------------- ADR-0025 etape 100 : `ENCAP` ----------------
+
+    /// Provider minimal : sert deux chunks quel que soit le select.
+    struct StubProvider;
+
+    impl crate::content_discovery::ContentProvider for StubProvider {
+        fn healths_for<'a>(
+            &'a self,
+            _request_type: u8,
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<Output = Vec<crate::content_discovery::HealthInfo>>
+                    + Send
+                    + 'a,
+            >,
+        > {
+            Box::pin(async { Vec::new() })
+        }
+        fn process_health<'a>(
+            &'a self,
+            _healths: &'a [crate::content_discovery::HealthInfo],
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Vec<[u8; 20]>> + Send + 'a>>
+        {
+            Box::pin(async { Vec::new() })
+        }
+        fn remote_select<'a>(
+            &'a self,
+            _json: &'a [u8],
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Vec<Vec<u8>>> + Send + 'a>>
+        {
+            Box::pin(async { vec![b"chunk-a".to_vec(), b"chunk-b".to_vec()] })
+        }
+        fn process_select_response<'a>(
+            &'a self,
+            _blob: &'a [u8],
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Vec<serde_json::Value>> + Send + 'a>>
+        {
+            Box::pin(async { Vec::new() })
+        }
+        fn version_info(&self) -> (String, String) {
+            ("x".into(), "y".into())
+        }
+    }
+
+    /// `encap_relay` pose le bit `CAP_DISCOVERY_RELAY` dans `hello.
+    /// caps` — les pairs clients peuvent choisir leurs relais.
+    #[tokio::test]
+    async fn encap_relay_annonce_la_capacite() {
+        let (a, _ea, _aa, ka) = node_full(ExtSettings {
+            encap_relay: true,
+            ..ExtSettings::default()
+        })
+        .await;
+        assert_ne!(a.settings.caps & CAP_DISCOVERY_RELAY, 0);
+        assert!(cap_names(a.settings.caps).contains(&"discovery_relay"));
+        let (b, _eb, addr_b, kb) = node_full(ExtSettings::default()).await;
+        // B apprend A via l'echange hello → `relay_peers` liste A.
+        let pk_a = ka.public_key().to_bin();
+        a.send_hello(&addr_b, &kb.public_key().to_bin()).await;
+        let b2 = b.clone();
+        wait_until(move || !b2.relay_peers().is_empty()).await;
+        assert_eq!(b.relay_peers()[0].0, pk_a);
+    }
+
+    /// Roundtrip : le client envoie `SELECT_REQ` au relais, recoit
+    /// un `SELECT_RESP` par chunk avec le `req_id` miroir.
+    #[tokio::test]
+    async fn encap_select_roundtrip_deux_chunks() {
+        let (relay, _er, addr_relay, _kr) = node_full(ExtSettings {
+            encap_relay: true,
+            ..ExtSettings::default()
+        })
+        .await;
+        relay.set_encap_handler(Arc::new(StubProvider));
+        let (client, _ec, _ac, _kc) = node_full(ExtSettings::default()).await;
+        let got = Arc::new(Mutex::new(Vec::<(u32, Vec<u8>)>::new()));
+        {
+            let got = got.clone();
+            client.set_encap_sink(Arc::new(move |_pk, _src, req_id, payload| {
+                got.lock().unwrap().push((req_id, payload));
+            }));
+        }
+        client
+            .send_encap(
+                &addr_relay,
+                encap_kind::SELECT_REQ,
+                42,
+                b"{\"first\":1}".to_vec(),
+            )
+            .await
+            .unwrap();
+        let got2 = got.clone();
+        wait_until(move || got2.lock().unwrap().len() == 2).await;
+        let got = got.lock().unwrap();
+        assert_eq!(got[0], (42, b"chunk-a".to_vec()));
+        assert_eq!(got[1], (42, b"chunk-b".to_vec()));
+        // Le relais a recu 1 requete et emis 2 reponses.
+        let (rx, tx, _) = relay.encap_counters();
+        assert_eq!(rx, 1);
+        assert_eq!(tx, 2);
+    }
+
+    /// Sans `encap_relay`, un `SELECT_REQ` est drope meme avec un
+    /// handler injecte — le service est explicitement opt-in.
+    #[tokio::test]
+    async fn encap_requete_dropee_sans_relay() {
+        let (a, _ea, addr_a, _ka) = node_full(ExtSettings::default()).await;
+        a.set_encap_handler(Arc::new(StubProvider));
+        let (b, _eb, _ab, _kb) = node_full(ExtSettings::default()).await;
+        b.send_encap(&addr_a, encap_kind::SELECT_REQ, 1, b"{}".to_vec())
+            .await
+            .unwrap();
+        let a2 = a.clone();
+        wait_until(move || a2.encap_counters().0 == 1).await;
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        let (_, tx, dropped) = a.encap_counters();
+        assert_eq!(tx, 0, "aucune reponse sans relay");
+        assert_eq!(dropped, 1);
+    }
+
+    /// Le budget est par **cle signataire** (identite de session) :
+    /// la seconde requete du meme pair est refusee.
+    #[tokio::test]
+    async fn encap_budget_par_cle_signataire() {
+        let (a, _ea, addr_a, _ka) = node_full(ExtSettings {
+            encap_relay: true,
+            encap_rate_max: 1,
+            encap_rate_window: Duration::from_secs(3600),
+            ..ExtSettings::default()
+        })
+        .await;
+        a.set_encap_handler(Arc::new(StubProvider));
+        let (b, _eb, _ab, _kb) = node_full(ExtSettings::default()).await;
+        let got = Arc::new(Mutex::new(0u64));
+        {
+            let got = got.clone();
+            b.set_encap_sink(Arc::new(move |_pk, _src, _id, _p| {
+                *got.lock().unwrap() += 1;
+            }));
+        }
+        for id in 1..=2u32 {
+            b.send_encap(&addr_a, encap_kind::SELECT_REQ, id, b"{}".to_vec())
+                .await
+                .unwrap();
+        }
+        let a2 = a.clone();
+        wait_until(move || a2.encap_counters().0 == 2).await;
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        // Premiere servie (2 chunks), seconde dropee par le budget.
+        assert_eq!(*got.lock().unwrap(), 2);
+        assert_eq!(a.encap_counters().2, 1);
     }
 }

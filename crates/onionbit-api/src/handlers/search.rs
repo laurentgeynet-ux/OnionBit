@@ -132,12 +132,11 @@ pub async fn remote_search(
             });
         });
     // `content_discovery_community/enabled=false` : pas de community
-    // -> aucun pair interroge (la recherche locale REST reste
-    // disponible via `/api/metadata/search/local`).
-    let queried = match &stack.content_discovery {
-        Some(cd) => cd.send_search_request(body, cb).await,
-        None => Vec::new(),
-    };
+    // -> aucun pair interroge en UDP clair ; en stealth le select
+    // part encapsule (`ENCAP`) vers les relais `CAP_DISCOVERY_RELAY`
+    // (ADR-0025 §5). La recherche locale REST reste disponible via
+    // `/api/metadata/search/local` dans tous les cas.
+    let queried = stack.send_search_request(body, cb).await;
     tracing::info!(
         %uuid,
         query = %query_text,

@@ -17,7 +17,7 @@
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use onionbit_bittorrent::{BtEngine, EngineConfig};
@@ -1756,6 +1756,21 @@ fn select_rows(
     onionbit_db::channel::select_entries(conn, &params)
 }
 
+/// Requete `ENCAP`/`SELECT_REQ` en vol cote requeteur stealth
+/// (ADR-0025 §5) : le callback est `Some` pour `send_search_request`
+/// (notification `remote_query_results`), `None` pour `channel_sync`
+/// (l'ingestion persistante suffit).
+struct EncapPending {
+    /// `processing_callback` Python (`None` = pas de notification).
+    callback: Option<onionbit_ipv8::content_discovery::SelectCallback>,
+    /// Instant d'emission — TTL `select_ttl` (10 s, defaut filaire).
+    sent_at: std::time::Instant,
+}
+
+/// `req_id -> requete en vol` — partage entre la stack et le puits
+/// de reponses branche sur l'ext.
+type EncapPendingMap = Arc<Mutex<HashMap<u32, EncapPending>>>;
+
 /// Stack IPv8 de session (endpoint + communities + lanes anonymes).
 pub struct Ipv8Stack {
     /// Endpoint UDP IPv8 partage.
@@ -1863,6 +1878,10 @@ pub struct Ipv8Stack {
     /// trame stealth) sous `STEALTH_MTU` — sinon `send_to` refuse et
     /// le debit s'effondre en retransmissions. `None` hors stealth.
     stealth_link_mtu: Option<std::num::NonZeroUsize>,
+    /// Requetes `ENCAP`/`SELECT_REQ` en vol (stealth — ADR-0025 §5).
+    encap_pending: EncapPendingMap,
+    /// Compteur d'identifiants `req_id` des selects encapsules.
+    encap_select_ids: AtomicU32,
 }
 
 /// Fichier de persistance des noeuds de sortie (`exitnode_cache`
@@ -1990,42 +2009,61 @@ impl Ipv8Stack {
             }
             Some(d)
         };
+        // ADR-0025 §5 : le provider de contenu est construit des que
+        // la decouverte est demandee — y compris en stealth : il sert
+        // les `ENCAP`/`SELECT_REQ` (roles serveur) et ingere les
+        // `SELECT_RESP` (tous les noeuds). La community filaire,
+        // elle, reste reservee au chemin UDP clair (elle exige
+        // `DiscoveryCommunity`, inexistante sous transport morphe).
+        let provider = if config.enable_content_discovery {
+            Some(Arc::new(SessionContentProvider {
+                db: db.clone(),
+                notifier: notifier.clone(),
+                remote_queries_in_progress: std::sync::atomic::AtomicUsize::new(0),
+                max_response_size: 100,
+                max_payload_size: 1300,
+                healths_cache: Mutex::new(HashMap::new()),
+                healths_cache_ttl: std::time::Duration::from_secs(
+                    config.content_healths_cache_secs,
+                ),
+                seen_nodes: Mutex::new(std::collections::HashSet::new()),
+                gossip: Mutex::new(GossipMemory::default()),
+                channel_max_entries: config.channel_max_entries,
+                signer: key.clone(),
+                our_pk: {
+                    let mut pk = [0u8; 64];
+                    pk.copy_from_slice(&key.public_key().to_bin()[10..]);
+                    pk
+                },
+            }))
+        } else {
+            None
+        };
+        // Requetes `ENCAP` en vol (stealth) : `req_id -> callback` —
+        // meme role que `pending_selects` de la community, pour les
+        // selects emis hors du chemin UDP clair.
+        let encap_pending: EncapPendingMap = Arc::new(Mutex::new(HashMap::new()));
+        // `select_ttl` filaire (10 s) — meme fenetre que
+        // `pending_selects` de la community : au-dela, une reponse
+        // encapsulee n'est plus attendue.
+        let encap_select_ttl =
+            onionbit_ipv8::content_discovery::ContentDiscoverySettings::default().select_ttl;
         // `ContentDiscoveryComponent` Python : cree seulement si
         // `content_discovery_community/enabled` (la recherche distante
         // et `/api/search` retournent alors 503-vide cote REST).
         // ADR-0017 : jamais en stealth (overlay legacy public).
-        let content_discovery = match (config.enable_content_discovery && !stealth, &discovery) {
-            (true, Some(discovery)) => {
+        let content_discovery = match (&provider, &discovery) {
+            (Some(provider), Some(discovery)) if !stealth => {
                 // `ContentDiscoverySettings` Python : defauts filaires
                 // (gossip 5 s, max 20 pairs, TTL 10 s, 10 paquets max).
                 let cd_settings =
                     onionbit_ipv8::content_discovery::ContentDiscoverySettings::default();
-                let provider = Arc::new(SessionContentProvider {
-                    db: db.clone(),
-                    notifier: notifier.clone(),
-                    remote_queries_in_progress: std::sync::atomic::AtomicUsize::new(0),
-                    max_response_size: 100,
-                    max_payload_size: 1300,
-                    healths_cache: Mutex::new(HashMap::new()),
-                    healths_cache_ttl: std::time::Duration::from_secs(
-                        config.content_healths_cache_secs,
-                    ),
-                    seen_nodes: Mutex::new(std::collections::HashSet::new()),
-                    gossip: Mutex::new(GossipMemory::default()),
-                    channel_max_entries: config.channel_max_entries,
-                    signer: key.clone(),
-                    our_pk: {
-                        let mut pk = [0u8; 64];
-                        pk.copy_from_slice(&key.public_key().to_bin()[10..]);
-                        pk
-                    },
-                });
                 Some(
                     ContentDiscoveryCommunity::new(
                         key.clone(),
                         network.clone(),
                         endpoint.clone(),
-                        provider,
+                        provider.clone(),
                         cd_settings,
                         discovery.clone(),
                     )
@@ -2112,6 +2150,15 @@ impl Ipv8Stack {
                         && stealth_transport
                             .as_ref()
                             .is_some_and(|t| t.role() != StealthRole::Client),
+                    // ADR-0025 §5 : les roles serveur (`bridge`/
+                    // `gateway`) sont index relais de contenu — un
+                    // `client` n'annonce pas la capacite et drope
+                    // les `SELECT_REQ` recus (budget par identite
+                    // signataire — session cliente stealth).
+                    encap_relay: stealth
+                        && stealth_transport
+                            .as_ref()
+                            .is_some_and(|t| t.role() != StealthRole::Client),
                     ..onionbit_ipv8::ext::ExtSettings::default()
                 },
             )
@@ -2160,6 +2207,42 @@ impl Ipv8Stack {
                     net.add_verified(p);
                 }
             }));
+        }
+        // ADR-0025 §5 : chemin de decouverte encapsule (stealth). Le
+        // provider sert les `SELECT_REQ` quand `encap_relay` est on
+        // (roles bridge/gateway) ; le puits ingere les `SELECT_RESP`
+        // sur tout noeud stealth — la persistance des canaux suivis
+        // et la notification `remote_query_results` passent par le
+        // meme `process_select_response` que le chemin UDP clair.
+        // Une reponse dont le `req_id` n'est pas en vol est dropee
+        // (jamais de traitement non sollicite).
+        if let (Some(e), Some(p)) = (&ext, &provider) {
+            e.set_encap_handler(p.clone());
+            if stealth {
+                let pend = encap_pending.clone();
+                let prov = p.clone();
+                let ttl = encap_select_ttl;
+                e.set_encap_sink(Arc::new(move |sender_pk, _src, req_id, payload| {
+                    let maybe_cb = {
+                        let mut m = pend.lock().unwrap_or_else(|e| e.into_inner());
+                        m.retain(|_, q| q.sent_at.elapsed() < ttl);
+                        m.get(&req_id).map(|q| q.callback.clone())
+                    };
+                    let Some(maybe_cb) = maybe_cb else {
+                        return;
+                    };
+                    let prov = prov.clone();
+                    let mid = Peer::new(sender_pk.to_vec(), None)
+                        .map(|p| p.mid.to_vec())
+                        .unwrap_or_default();
+                    tokio::spawn(async move {
+                        let results = prov.process_select_response(&payload).await;
+                        if let Some(cb) = maybe_cb {
+                            cb(&mid, results);
+                        }
+                    });
+                }));
+            }
         }
         // ADR-0017 : pas de `DHTDiscoveryCommunity` en stealth —
         // son trafic mainline sur l'endpoint serait non-morphe par
@@ -2740,6 +2823,8 @@ impl Ipv8Stack {
             ext,
             stealth_transport,
             stealth_link_mtu,
+            encap_pending,
+            encap_select_ids: AtomicU32::new(0),
             key,
             identity_kind,
             identity_seed,
@@ -2800,6 +2885,130 @@ impl Ipv8Stack {
     /// session invitee et scelle `OBSK` en at-rest.
     pub fn recovery_seed(&self) -> Option<[u8; 32]> {
         self.identity_seed
+    }
+
+    /// `send_search_request` (ADR-0025 §5) : chemin UDP clair
+    /// (`ContentDiscoveryCommunity`) ou **encapsule stealth** — la
+    /// trame `ENCAP`/`SELECT_REQ` part vers les pairs ext annoncant
+    /// `CAP_DISCOVERY_RELAY` (roles `bridge`/`gateway`) ; les
+    /// `SELECT_RESP` reviennent par le puits branche a la
+    /// construction et alimentent `remote_query_results` via le
+    /// `callback`. Retourne les mids hex interroges (`[]` si aucun
+    /// chemin disponible — `subscribed`/recherche restent alors
+    /// en attente, documente a l'API).
+    pub async fn send_search_request(
+        &self,
+        json: Vec<u8>,
+        callback: onionbit_ipv8::content_discovery::SelectCallback,
+    ) -> Vec<String> {
+        if let Some(cd) = &self.content_discovery {
+            return cd.send_search_request(json, callback).await;
+        }
+        let Some(ext) = &self.ext else {
+            return Vec::new();
+        };
+        let peers = ext.relay_peers();
+        if peers.is_empty() {
+            return Vec::new();
+        }
+        let req_id = self.encap_select_ids.fetch_add(1, Ordering::Relaxed);
+        self.encap_pending
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(
+                req_id,
+                EncapPending {
+                    callback: Some(callback),
+                    sent_at: std::time::Instant::now(),
+                },
+            );
+        let mut queried = Vec::new();
+        for (pk, addr) in peers {
+            if ext
+                .send_encap(
+                    &addr,
+                    onionbit_ipv8::ext::encap_kind::SELECT_REQ,
+                    req_id,
+                    json.clone(),
+                )
+                .await
+                .is_ok()
+            {
+                let mid = Peer::new(pk, None).map(|p| hex::encode(p.mid));
+                if let Some(mid) = mid {
+                    queried.push(mid);
+                }
+            }
+        }
+        if queried.is_empty() {
+            self.encap_pending
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .remove(&req_id);
+        }
+        queried
+    }
+
+    /// Select cible (sync de canal, ADR-0025 §2) : un pair — UDP
+    /// clair (hasard) ou encapsule stealth (**choix deterministe**
+    /// par `seed` : `channel_pk` replie sur le nombre de pairs
+    /// relais — un canal donne revient au meme pont, la repartition
+    /// inter-ponts limite l'agregation des interets, §5).
+    /// `false` si aucun chemin disponible.
+    pub async fn send_channel_select(&self, json: Vec<u8>, seed: u64) -> bool {
+        if let Some(cd) = &self.content_discovery {
+            use rand::seq::IndexedRandom;
+            let peers = cd.network().peers_for_service(
+                &onionbit_ipv8::content_discovery::CONTENT_DISCOVERY_COMMUNITY_ID,
+            );
+            let Some(peer) = peers
+                .iter()
+                .filter_map(|p| p.address.clone())
+                .collect::<Vec<_>>()
+                .choose(&mut rand::rng())
+                .cloned()
+            else {
+                return false;
+            };
+            return cd.send_remote_select(&peer, json).await.is_ok();
+        }
+        let Some(ext) = &self.ext else {
+            return false;
+        };
+        let peers = ext.relay_peers();
+        if peers.is_empty() {
+            return false;
+        }
+        let (_, addr) = &peers[(seed as usize) % peers.len()];
+        let req_id = self.encap_select_ids.fetch_add(1, Ordering::Relaxed);
+        self.encap_pending
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(
+                req_id,
+                EncapPending {
+                    callback: None,
+                    sent_at: std::time::Instant::now(),
+                },
+            );
+        match ext
+            .send_encap(
+                addr,
+                onionbit_ipv8::ext::encap_kind::SELECT_REQ,
+                req_id,
+                json,
+            )
+            .await
+        {
+            Ok(()) => true,
+            Err(_) => {
+                self.encap_pending
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .remove(&req_id);
+                false
+            }
+        }
     }
 
     /// `session.overlays` : instantanes `OverlaySchema` de toutes les

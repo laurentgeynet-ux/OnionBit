@@ -4770,11 +4770,12 @@ impl CoreSession {
             }
         }
         // `channel_sync` (ADR-0025 §2) : pull periodique des canaux
-        // suivis — round-robin un canal par fenetre. Absent de la
-        // stack en stealth (content_discovery == None) : la boucle
-        // s'installe quand meme, elle no-op jusqu'a l'etape 100.
+        // suivis — round-robin un canal par fenetre. En stealth le
+        // select part encapsule (`ENCAP`, etape 100) vers les
+        // relais `CAP_DISCOVERY_RELAY` — la boucle s'installe des
+        // qu'un chemin de select existe (community ou ext).
         if let Some(stack) = self.ipv8() {
-            if stack.content_discovery.is_some() {
+            if stack.content_discovery.is_some() || stack.ext.is_some() {
                 let interval =
                     std::time::Duration::from_secs(config.ipv8.channel_sync_interval_secs);
                 self.inner.asyncio.tasks.register(

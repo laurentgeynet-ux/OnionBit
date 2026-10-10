@@ -207,12 +207,25 @@ claire (le select révèle l'intérêt du requêteur au pair). Décision
   l'expéditeur), mais à ne pas survendre : les abonnements
   `channel_sync` sont des intérêts *persistants* visibles du
   pont — pire qu'une requête ponctuelle.
-- Format : extension payload `msg` OnionBit-only prévue par
-  ADR-0015. **La trame `data` encapsulée est spécifiée
-  génériquement** (type + payload opaque) — pas ad-hoc au
-  `RemoteSelect` : c'est le véhicule prévu pour `VAULT_GET`/
-  `MAILBOX_PULL` (pull store-and-forward, backlog P0) au lieu
-  d'un mécanisme parallèle. Spec précise à l'étape 100.
+- Format (étape 100, implémenté) : nouveau `msg_id` **`ENCAP`**
+  (11) de `OnionbitExtCommunity` — trame générique
+  `{v: u8, kind: u8, req_id: u32, varlen(payload)}`, signée
+  `ez_send` comme tout message ext, bornée `ENCAP_FRAME_MAX`
+  (2048 o). `kind` v1 : `SELECT_REQ` (payload = JSON identique à
+  `RemoteSelectPayload.json`) et `SELECT_RESP` (payload = un chunk
+  LZ4 de mdblob, identique au `blob` de `SelectResponsePayload` —
+  un ENCAP par chunk, `req_id` = `RemoteSelect::id`). Le relais
+  annonce `CAP_DISCOVERY_RELAY` (bit 3 de `hello.caps`) et exécute
+  le select via le même `ContentProvider` que la community (même
+  sanitize, mêmes chunks) ; le requêteur ingère les réponses par
+  le même `process_select_response` (persistance des canaux
+  suivis + `remote_query_results` inchangés). Kinds inconnus :
+  drop silencieux — point d'extension pour `VAULT_GET`/
+  `MAILBOX_PULL`. Non adopté à l'implémentation : activer
+  `ContentDiscoveryCommunity` en stealth (elle exige
+  `DiscoveryCommunity` — random walk, estimations WAN — dont le
+  trafic serait non-morphe ; l'ext community est le véhicule
+  naturel, déjà active en stealth).
 - **Budget par session cliente** : le pont applique le budget
   de l'étape 96 **par session/identité cliente stealth**, pas
   par mid (un client furtif ne doit pas pouvoir faire exécuter
