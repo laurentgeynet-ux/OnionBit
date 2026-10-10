@@ -416,6 +416,86 @@ async fn torrent_checker_consomme_ligne_sans_tracker() {
     );
 }
 
+/// Selection `check_selected` (ADR-0025 etape 99, `torrents_to_check`
+/// Python) : `pool_size` lignes **perimees** sont consommees par tick ;
+/// les lignes fraiches et les swarms anonymes restent hors selection.
+#[tokio::test(flavor = "multi_thread")]
+async fn torrent_checker_selection_consomme_pool_borne() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = Arc::new(Database::open(&dir.path().join("t.db")).unwrap());
+    // 6 lignes perimees (last_check = 0), 1 fraiche, 1 perimee mais
+    // anonyme (`anon_hops > 0` — jamais scrapee, jamais touchee).
+    let mut stale_ihs = Vec::new();
+    for i in 0..6u8 {
+        let mut ih = [0u8; 20];
+        ih[0] = 0x50 + i;
+        stale_ihs.push(ih);
+        db.with(move |c| onionbit_db::health::upsert_torrent_state(c, &ih))
+            .unwrap();
+    }
+    let mut fresh_ih = [0u8; 20];
+    fresh_ih[0] = 0x60;
+    let mut anon_ih = [0u8; 20];
+    anon_ih[0] = 0x61;
+    db.with(move |c| {
+        onionbit_db::health::upsert_torrent_state(c, &fresh_ih)?;
+        c.execute(
+            "UPDATE torrent_state SET last_check = ?1 WHERE infohash = ?2",
+            rusqlite::params![999_999_999i64, fresh_ih.as_slice()],
+        )?;
+        onionbit_db::downloads::upsert(
+            c,
+            &onionbit_db::models::DownloadRow {
+                infohash: anon_ih.to_vec(),
+                name: Some("anon.bin".to_string()),
+                anon_hops: 1,
+                ..Default::default()
+            },
+        )?;
+        onionbit_db::health::upsert_torrent_state(c, &anon_ih)
+    })
+    .unwrap();
+
+    let checker = TorrentChecker::new(
+        db.clone(),
+        Notifier::new(),
+        onionbit_network_policy::IpPolicy::permissive(),
+    )
+    .await
+    .unwrap();
+
+    // Aucun tracker connu : chaque selectionnee est « touchee »
+    // (last_check maj) sans scrape — 3 sur 6 consommees.
+    let checked = checker.check_selected(3, 3600).await.unwrap();
+    assert_eq!(checked, 0, "pas de tracker : rien de scrape");
+    let (remaining, fresh_check, anon_check) = db
+        .with(|c| {
+            let mut n_stale = 0usize;
+            for ih in &stale_ihs {
+                let st = onionbit_db::health::get_torrent_state(c, ih)?.unwrap();
+                if st.last_check == 0 {
+                    n_stale += 1;
+                }
+            }
+            Ok((
+                n_stale,
+                onionbit_db::health::get_torrent_state(c, &fresh_ih)?
+                    .unwrap()
+                    .last_check,
+                onionbit_db::health::get_torrent_state(c, &anon_ih)?
+                    .unwrap()
+                    .last_check,
+            ))
+        })
+        .unwrap();
+    assert_eq!(remaining, 3, "pool_size = 3 : 3 lignes consommees");
+    assert_eq!(
+        fresh_check, 999_999_999,
+        "la ligne fraiche n'est pas selectionnee"
+    );
+    assert_eq!(anon_check, 0, "le swarm anonyme n'est jamais touche");
+}
+
 /// RSS : un flux annoncant un `.torrent` -> `TorrentMetadataCreated`.
 #[tokio::test(flavor = "multi_thread")]
 async fn rss_discovers_torrent_and_notifies() {

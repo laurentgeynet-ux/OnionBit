@@ -1706,7 +1706,7 @@ impl DaemonConfig {
         // meme (declarees dans `tribler_config.py`, jamais relues —
         // vestiges des composants 7.x). Leur fonction historique est
         // absorbee : `recommender` -> tache periodique "check local
-        // torrents" du torrent_checker (`TorrentChecker::check_oldest`),
+        // torrents" du torrent_checker (`TorrentChecker::check_selected`),
         // `rendezvous` -> points de rendez-vous des hidden services
         // dans `TunnelCommunity` (`hidden_services.rs`). Un `enabled`
         // a `false` n'est donc pas honore — parite stricte avec le

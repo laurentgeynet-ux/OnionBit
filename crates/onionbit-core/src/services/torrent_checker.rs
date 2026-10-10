@@ -481,6 +481,78 @@ impl TorrentChecker {
         let Ok(ih) = row else {
             return Ok(0);
         };
+        self.check_one(ih).await
+    }
+
+    /// `check_local_torrents` Python (ADR-0025 etape 99) : selection
+    /// `torrents_to_check` — deux pools de `torrent_state` **perimes**
+    /// (`last_check < now - freshness_secs`, `HEALTH_FRESHNESS_
+    /// SECONDS = 4 h` Python) : moitie **populaire** (`seeders`
+    /// decroissant), moitie **ancienne** (`last_check` croissant),
+    /// union puis `random.sample` de `pool_size` (`TORRENT_
+    /// SELECTION_POOL_SIZE = 5`). Chaque infohash selectionne est
+    /// scrape sur ses trackers connus (`check_torrent_health`).
+    ///
+    /// Les swarms anonymes (`anon_hops > 0`) sont exclus (meme garde
+    /// que `check_oldest`/`check_tracker`) ; les entrees `channel_
+    /// node` des canaux suivis ont leur `torrent_state` cree a
+    /// l'insertion — elles entrent donc naturellement dans la
+    /// rotation (la racine 200/220 sans infohash n'a pas de
+    /// `torrent_state` : jamais selectionnee).
+    pub async fn check_selected(&self, pool_size: usize, freshness_secs: i64) -> Result<usize> {
+        use rand::seq::IndexedRandom;
+        let now = now_unix();
+        let stale = now - freshness_secs;
+        let pool: Vec<Vec<u8>> = self
+            .db
+            .call("checker.select", move |c| {
+                let not_anon = "NOT EXISTS (
+                         SELECT 1 FROM downloads d
+                         WHERE d.infohash = ts.infohash AND d.anon_hops > 0
+                     )";
+                // `has_data` n'est pas filtre : la colonne n'est pas
+                // peuplee chez nous (Python la leve a la
+                // verification du contenu — son usage ici est un
+                // detail d'index, pas une regle fonctionnelle).
+                let sql = format!(
+                    "SELECT infohash FROM (
+                         SELECT ts.infohash FROM torrent_state ts
+                         WHERE ts.last_check < ?1 AND {not_anon}
+                         ORDER BY ts.seeders DESC, ts.last_check ASC
+                         LIMIT ?2
+                     )
+                     UNION
+                     SELECT infohash FROM (
+                         SELECT ts.infohash FROM torrent_state ts
+                         WHERE ts.last_check < ?1 AND {not_anon}
+                         ORDER BY ts.last_check ASC, ts.seeders DESC
+                         LIMIT ?2
+                     )"
+                );
+                let mut stmt = c.prepare(&sql)?;
+                let rows = stmt.query_map(rusqlite::params![stale, pool_size as i64], |r| {
+                    r.get::<_, Vec<u8>>(0)
+                })?;
+                Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+            })
+            .await
+            .unwrap_or_default();
+        let sample: Vec<Vec<u8>> = {
+            let mut rng = rand::rng();
+            pool.sample(&mut rng, pool_size).cloned().collect()
+        };
+        let mut checked = 0;
+        for ih in sample {
+            checked += self.check_one(ih).await.unwrap_or(0);
+        }
+        Ok(checked)
+    }
+
+    /// Scrape un torrent sur ses trackers connus (`check_torrent_
+    /// health` sans le repli swarm — le `get_metainfo` Python passe
+    /// par `download_manager`, non applicable ici).
+    async fn check_one(&self, ih: Vec<u8>) -> Result<usize> {
+        let now = now_unix();
         let ih2 = ih.clone();
         let mut trackers = self
             .db

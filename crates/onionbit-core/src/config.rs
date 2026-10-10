@@ -224,6 +224,13 @@ pub struct CoreConfig {
     pub enable_torrent_checker: bool,
     /// Intervalle de controle du torrent checker (ms).
     pub torrent_checker_interval_ms: u64,
+    /// `TORRENT_SELECTION_POOL_SIZE` Python (5) : torrents scrapes
+    /// par tick de `check_local_torrents` (moitie populaires,
+    /// moitie anciens — `torrents_to_check`).
+    pub torrent_selection_pool_size: usize,
+    /// `HEALTH_FRESHNESS_SECONDS` Python (4 h) : une sante plus
+    /// recente n'est pas re-scrapee par la rotation.
+    pub health_freshness_secs: u64,
     /// Stack IPv8 de session (decouverte, content discovery, tunnels
     /// anonymes — etape 15). `enabled = false` par defaut.
     pub ipv8: crate::ipv8_stack::Ipv8Config,
@@ -264,6 +271,8 @@ impl Default for CoreConfig {
             rss_urls: Vec::new(),
             enable_torrent_checker: true,
             torrent_checker_interval_ms: 10_000,
+            torrent_selection_pool_size: 5,
+            health_freshness_secs: 4 * 3600,
             ipv8: crate::ipv8_stack::Ipv8Config::default(),
             engine: onionbit_bittorrent::EngineConfig::default(),
             download_defaults: DownloadDefaults::default(),
@@ -302,6 +311,8 @@ impl CoreConfig {
             rss_urls: Vec::new(),
             enable_torrent_checker: false,
             torrent_checker_interval_ms: 10_000,
+            torrent_selection_pool_size: 5,
+            health_freshness_secs: 4 * 3600,
             ipv8: crate::ipv8_stack::Ipv8Config::default(),
             // Les defauts de telechargement s'appliquent aussi en
             // offline : la politique de seed et les tests de

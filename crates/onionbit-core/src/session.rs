@@ -4741,9 +4741,11 @@ impl CoreSession {
                 Ok(checker) => {
                     let interval =
                         std::time::Duration::from_millis(config.torrent_checker_interval_ms);
+                    let pool_size = config.torrent_selection_pool_size;
+                    let freshness = config.health_freshness_secs as i64;
                     self.inner.asyncio.tasks.register(
                         Some("TorrentChecker"),
-                        "check_oldest",
+                        "check_local_torrents",
                         Some(interval.as_secs_f64()),
                     );
                     let checker = Arc::new(checker);
@@ -4756,7 +4758,7 @@ impl CoreSession {
                             tokio::select! {
                                 _ = stop_rx.changed() => break,
                                 _ = tick.tick() => {
-                                    let _ = c.check_oldest().await;
+                                    let _ = c.check_selected(pool_size, freshness).await;
                                 }
                             }
                         }

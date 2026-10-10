@@ -3,6 +3,28 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Étape 99 : santé interne — sélection `torrents_to_check` (2026-10-11)
+
+`TorrentChecker::check_oldest` (une ligne, la plus ancienne)
+devient `check_selected` fidèle à `torrents_to_check()` Python
+(`torrent_checker.py:243`) : deux pools de `torrent_state`
+**périmés** (`last_check < now - health_freshness_secs`, défaut
+4 h = `HEALTH_FRESHNESS_SECONDS`) — moitié **populaire**
+(`seeders` décroissant), moitié **ancienne** (`last_check`
+croissant) — UNION puis `rand::sample` de
+`torrent_selection_pool_size` (défaut 5 =
+`TORRENT_SELECTION_POOL_SIZE` ; les deux seuils sont des clés
+`CoreConfig`). La tâche périodique est renommée
+`check_local_torrents`. Les entrées `channel_node` des canaux
+suivis ont leur `torrent_state` créé à l'insertion
+(`health_rowid`) → elles entrent naturellement en rotation, sans
+file dédiée. Gardes conservées : `anon_hops > 0` jamais scrapé
+ni touché, repli sur les trackers propres de `downloads`,
+« touche » anti-famine des lignes sans tracker. `check_oldest`
+est conservé (chemin unitaire, tests existants). Test :
+`torrent_checker_selection_consomme_pool_borne` (pool borné,
+fraîche exclue, anonyme exclu).
+
 ## Étape 98 : émission du canal personnel signé (ADR-0025 §3) (2026-10-11)
 
 Correction de fidélité constatée sur `tribler/core/database/
