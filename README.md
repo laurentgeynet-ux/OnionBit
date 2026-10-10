@@ -57,7 +57,7 @@ this table is reproducible:
 | **9/9 fingerprinting oracles PASS** — two real stealth daemons measured through a UDP tap: probing silence, amplification 0, zero static marker | [docs/security/fingerprinting.md](docs/security/fingerprinting.md) |
 | Kill switch verified at the **OS packet level** — 4 injected-failure scenarios, zero forbidden traffic | [docs/P0-transport-manifest.md](docs/P0-transport-manifest.md) |
 | Fuzzing campaign journal — what broke, how it was fixed | [docs/security/fuzz_journal.md](docs/security/fuzz_journal.md) |
-| **24 Architecture Decision Records** — every non-obvious choice is written down, in the open | [docs/architecture/decisions](docs/architecture/decisions/) |
+| **25 Architecture Decision Records** — every non-obvious choice is written down, in the open | [docs/architecture/decisions](docs/architecture/decisions/) |
 | Threat model written *before* the features, kept honest | [docs/THREAT-MODEL.md](docs/THREAT-MODEL.md) |
 
 ## The fabric — one shared onion network
@@ -422,6 +422,28 @@ French (System / English / Français in Settings → Appearance).*
 >   unit. Per-user state lands in `~/.local/share/onionbit` — no root
 >   needed. Or use the `*-linux-x64.tar.gz` portable tarball.
 >
+> **Docker** — `ghcr.io/laurentgeynet-ux/onionbit:v1.1.2` (and `:latest`):
+>
+> ```bash
+> # headless daemon, one persistent volume, P2P on the host network
+> docker run -d --name onionbit --network host \
+>   -v ./data:/data --restart unless-stopped \
+>   ghcr.io/laurentgeynet-ux/onionbit:latest
+>
+> docker exec onionbit onionbit-cli status   # healthcheck + control
+> ```
+>
+> One image serves every role — pick the posture at first boot:
+> `docker run -e ONIONBIT_PROFILE=bridge …` starts a full-anonymous
+> stealth bridge (ADR-0022 §7), `-e ONIONBIT_PROFILE=full` a stealth
+> client, omitting it keeps the Tribler-compatible `legacy` default.
+> The image ships the daemon, the CLI and the **web UI** (served
+> same-origin); the control API stays loopback-locked inside the
+> container — expose it deliberately via `network_mode: host` or the
+> documented forwarder sidecar, never via a public port.
+> Full guide — profiles, ports, volumes, bridge recipe, security
+> notes: [docs/docker.md](docs/docker.md) · [ADR-0024](docs/architecture/decisions/0024-image-docker-daemon.md).
+>
 > Other platforms (macOS, Android, iOS): build from source
 > (see [docs/BUILDING.md](docs/BUILDING.md)).
 
@@ -433,6 +455,7 @@ French (System / English / Français in Settings → Appearance).*
 | Windows ARM64 | ✅ packaged zip — headless (daemon + CLI + web UI) |
 | Linux x64 | ✅ `.deb` with menu entries + systemd unit, and portable tarball |
 | Web | ✅ same UI served same-origin by the daemon on every platform |
+| Docker | ✅ image on ghcr.io (`:v1.1.2`, `:latest`) — daemon + CLI + web UI, all profiles via `ONIONBIT_PROFILE` |
 | macOS / iOS | 🔨 builds from source — runners ready, needs a signed Mac build host |
 | Android | 🔨 builds from source — QR pairing + touch UI ready |
 | Linux native UI | 📋 runner scaffolded — packaged path is the web UI today |
@@ -491,6 +514,8 @@ See [SECURITY.md](SECURITY.md) for reporting and the threat model.
 **Stealth & anti-censorship**
 
 - ✅ Stealth transport: morphed wire format, bridge links, anti-probing & anti-scraping ([ADR-0017](docs/architecture/decisions/0017-transport-furtif-anti-censure.md))
+- ✅ Privacy profiles — one-switch `legacy`/`full`/`custom` posture, server `bridge`/`gateway` variants ([ADR-0022](docs/architecture/decisions/0022-profils-anonymat.md))
+- ✅ OnionBit-only stealth network deployed — 3 full-anonymous bridge bootnodes in a live mesh (reference deployment, ADR-0024 §8)
 
 **Platform**
 
@@ -504,6 +529,7 @@ See [SECURITY.md](SECURITY.md) for reporting and the threat model.
 - ✅ Windows portable bundle — three root launchers (UI / web / daemon)
 - ✅ Linux `.deb` — menu entries, icons, `systemd --user` unit, XDG state dir (+ portable tar.gz)
 - ✅ Windows ARM64 package (headless)
+- ✅ Docker image — daemon + CLI + web UI on ghcr.io, `--profile`/`ONIONBIT_PROFILE` first-boot presets ([ADR-0024](docs/architecture/decisions/0024-image-docker-daemon.md))
 - 📋 Mobile execution model (Android/iOS)
 - 📋 macOS package, native Linux UI
 
