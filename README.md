@@ -13,6 +13,7 @@ identity — all over multi-hop onion circuits.**
 [![CI](https://github.com/laurentgeynet-ux/OnionBit/actions/workflows/ci.yml/badge.svg)](https://github.com/laurentgeynet-ux/OnionBit/actions/workflows/ci.yml)
 [![Interop: Tribler 8.x](https://img.shields.io/badge/Interop-Tribler%208.x-blueviolet.svg)](docs/interop/README.md)
 [![Version](https://img.shields.io/badge/Version-1.1.2-brightgreen.svg)](https://github.com/laurentgeynet-ux/OnionBit/releases)
+[![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED.svg?logo=docker&logoColor=white)](https://github.com/laurentgeynet-ux/OnionBit/pkgs/container/onionbit)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%C2%B7%20Linux%20%C2%B7%20macOS%20%C2%B7%20Android%20%C2%B7%20iOS%20%C2%B7%20Web-lightgrey.svg)]()
 
 [Features](#the-fabric--one-shared-onion-network) ·
