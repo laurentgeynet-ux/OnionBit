@@ -41,3 +41,23 @@ indique la valeur Python de référence, la valeur Rust et le motif.
 - **Coût** : un syscall positionné par bloc écrit au lieu d'un
   `memcpy` dans le mapping ; la relecture `check_piece` et le service
   d'upload passent par le cache NTFS au lieu de pages déjà mappées.
+
+## `HealthPayload` : un tracker mal formé empoisonne le lot (Tribler)
+
+- **Python** : `process_torrent_health` (`store.py`) construit un
+  `TrackerState` par `health.tracker` dans la même transaction que
+  l'upsert — `MalformedTrackerURLException` (canonicalisation,
+  `udp://t.local` par exemple) se propage et **abandonne toutes les
+  santes restantes du payload** (boucle interrompue, plus aucune
+  sante du datagramme n'est integree). Mesure au banc d'interop
+  (etape 95, `scripts/interop_select.ps1`) : `Task resulted in
+  error` cote pyipv8, perte silencieuse des santes suivantes.
+- **Rust** : `process_health` integre par entree — un tracker
+  invalide ne doit pas invalider les santes suivantes du meme
+  `HealthPayload`.
+- **Motif** : comportement de robustesse Python non souhaite (un
+  pair peut empoisonner la propagation de santes legitimes avec un
+  seul tracker mal forme — extension anti-poisoning OnionBit).
+- **Coût** : divergence d'etat observable — un lot mixte
+  (bon+mauvais tracker) est partiellement integre chez nous, nul
+  chez Tribler.

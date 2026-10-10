@@ -3289,7 +3289,9 @@ name = "onionbit-ipv8"
 version = "1.1.2"
 dependencies = [
  "hex 0.4.3",
+ "lz4_flex",
  "onionbit-crypto",
+ "onionbit-format",
  "rand 0.10.3",
  "serde_json",
  "tempfile",

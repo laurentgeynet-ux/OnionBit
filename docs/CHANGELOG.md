@@ -3,6 +3,26 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Étape 95 : banc d'interop remote-select vs Tribler réel (2026-10-11)
+
+`scripts/interop_select.ps1` + `scripts/interop/py_select_node.py` +
+`examples/select_interop_node.rs` : Rust ↔ **vraie**
+`ContentDiscoveryCommunity` Tribler (pony `MetadataStore` ensemencé,
+venv interop + `pony`/`lz4` installés). 11/11 marqueurs verts :
+
+- **Python → Rust** : `send_remote_select` réel → Rust décompresse
+  LZ4 et parse `.mdblob` (2 entrées `REGULAR_TORRENT`, signature
+  vérifiée).
+- **Rust → Python** : select décodé+servi par le vrai
+  `on_remote_select`/`get_entries_threaded` → nos 2 entrées signées
+  ingérées `NEW_OBJECT` par `process_compressed_mdblob`.
+- **Bidirectionnel** : `VersionRequest`/`VersionResponse`,
+  `HealthRequest`/`HealthPayload` dans les deux sens.
+- **Écart découvert** (`ecarts_fidelite.md`) : un tracker non
+  canonicalisable (`MalformedTrackerURLException`) dans un
+  `HealthPayload` tue **toutes** les santes restantes du lot chez
+  Tribler — Rust intègre par entrée, immunisé.
+
 ## Fix UI + ADR-0027 : lecture des fichiers privés (2026-10-10)
 
 « Ouvrir le dossier » sur un téléchargement privé passait le spec
