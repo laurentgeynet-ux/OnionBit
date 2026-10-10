@@ -1,9 +1,13 @@
 # ADR-0023 — Couche d'E/S disque inspirée de libtorrent : lecture non-créatrice, hash en vol, « fichiers manquants »
 
-Statut : Proposée (2026-10-10). Partiellement implantée —
-décisions 1, 2, 3 et 4 livrées (`9bf1c4f` + commit suivant),
-décisions 5-6 en option (`docs/plans/roadmap_adr0023.md` ; le statut
-global passera à Acceptée après la mesure de l'étape 84).
+Statut : **Acceptée** (2026-10-11). Décisions 1-4 livrées
+(`9bf1c4f` + commits suivants), étape 84 : mesure confirmée —
+0 `pread` en phase téléchargement, `pwrite_bytes == total_length`,
+`initial_check` relit tout (invariant 83 vérifié par métrique).
+Étape 86 (pool fd) évaluée puis non retenue ; étape 87 livrée
+(hints de lecture `Volatile`, unix — `FILE_FLAG_SEQUENTIAL_SCAN`
+retiré, ×60 plus lent sous Windows). Workspace vert
+(check/clippy/fmt, 39/39 tests librqbit).
 
 ## Contexte
 

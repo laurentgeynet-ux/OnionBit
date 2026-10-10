@@ -3,6 +3,20 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Étapes 86+88 : Phase 15 / ADR-0023 terminée (2026-10-11)
+
+Étape 86 (pool de descripteurs borné, optionnelle) **évaluée puis
+non retenue** : condition d'activation « pression fd mesurée » non
+remplie — un LRU partagé ajouterait close/reopen sur le chemin
+chaud pour un gain non démontré ; à rouvrir si un profil réel
+(> ~200 fichiers × N torrents) la démontre. Étape 88 : revue
+complète — `cargo check`/`clippy` workspace zéro warning, `fmt`
+propre, 39/39 tests librqbit (e2e TCP/uTP) ; la mesure de
+l'étape 84 confirme l'invariant de l'étape 83 (0 `pread` en
+téléchargement, `pwrite_bytes == total_length`). **ADR-0023 passée
+Acceptée** : décisions 1-4 livrées, `allow_mmap=false` tranché,
+hints de lecture en place.
+
 ## Étape 87 : hints de lecture au check — `ReadHint` (2026-10-11)
 
 ADR-0023, option retenue : le `pread` de vérification
