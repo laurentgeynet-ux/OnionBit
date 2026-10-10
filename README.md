@@ -87,8 +87,22 @@ you ──▶ relay ──▶ relay ──▶ exit ──▶ destination
   the swarm; peers only ever see the exit node's address
 - 🌱 **Hidden seeding** — serve content behind rendezvous circuits without
   exposing an address
-- 🔍 **Decentralized search** — content discovery through the overlay, no
-  central index
+- 🔍 **Decentralized search** — distributed `remote select` queries through
+  the IPv8 overlay (Tribler wire-compatible `RemoteSelect`/`SelectResponse`),
+  live results pushed over SSE, per-peer query budgets — no central index,
+  no public DHT crawler ([ADR-0025](docs/architecture/decisions/0025-decouverte-contenu-recherche-distribuee-canaux.md))
+- 📺 **Signed curated channels** — follow a curator's channel by its Ed25519
+  public key; every entry is signature-verified against that key before it
+  lands in your library (anti-poisoning). Publish your own channel: title,
+  commits and signed tombstones are served to subscribers over the same
+  protocol ([ADR-0025](docs/architecture/decisions/0025-decouverte-contenu-recherche-distribuee-canaux.md))
+- 🥷 **Discovery in stealth too** — in `full` mode, search and channel sync
+  ride inside generic signed `ENCAP` frames relayed by bridges/gateways:
+  queried peers only see the relay, and no cleartext datagram ever leaves
+  your node ([ADR-0025 §5](docs/architecture/decisions/0025-decouverte-contenu-recherche-distribuee-canaux.md))
+- 🩺 **Internal health** — a `torrents_to_check`-style scanner refreshes
+  seeder/leecher counts of local and channel torrents (anonymous swarms
+  excluded by design)
 - 🛡️ **Kill switch** — anonymous downloads never silently degrade to direct
   connections; tracker and DHT traffic stay inside the tunnel
 - 🤝 **Tribler-compatible wire** — downloads and seeds interoperate with
@@ -267,8 +281,10 @@ on three roles:
   one leaked link cannot enumerate the bridge network.
 - 📡 **Everything still works inside** — onion circuits, hidden seeding,
   e2e messaging and the whole [ADR-0015](docs/architecture/decisions/0015-extensions-onionbit-legacy-tribler.md) extension layer run unchanged over
-  the morphed transport. Only clearnet discovery, the public DHT and
-  direct BitTorrent are off (public exit exists only on `gateway`).
+  the morphed transport — and content discovery itself is relayed to bridges
+  inside generic `ENCAP` frames ([ADR-0025](docs/architecture/decisions/0025-decouverte-contenu-recherche-distribuee-canaux.md)).
+  Only clearnet discovery, the public DHT and direct BitTorrent are off
+  (public exit exists only on `gateway`).
 
 Validated by measurement, not decree: `bench_stealth_fingerprint.ps1` runs
 two real stealth daemons through a UDP tap proxy — **9/9 oracles PASS**
@@ -507,6 +523,12 @@ See [SECURITY.md](SECURITY.md) for reporting and the threat model.
 - ✅ BitTorrent engine (librqbit integration)
 - ✅ Onion circuits + hidden seeding
 - ✅ Live interop with Tribler 8.x nodes
+- ✅ Distributed content discovery — remote select, SSE live results, per-peer
+  budgets, internal health scan ([ADR-0025](docs/architecture/decisions/0025-decouverte-contenu-recherche-distribuee-canaux.md))
+- ✅ Signed curated channels — Ed25519 channel feeds, verified ingestion,
+  personal channel publishing ([ADR-0025](docs/architecture/decisions/0025-decouverte-contenu-recherche-distribuee-canaux.md))
+- ✅ Stealth-relayed discovery — generic `ENCAP` frames through bridges, no
+  cleartext discovery in `full` mode ([ADR-0025](docs/architecture/decisions/0025-decouverte-contenu-recherche-distribuee-canaux.md))
 
 **Messaging & identity**
 
