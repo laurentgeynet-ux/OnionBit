@@ -423,6 +423,11 @@ French (System / English / Français in Settings → Appearance).*
 >   unit. Per-user state lands in `~/.local/share/onionbit` — no root
 >   needed. Or use the `*-linux-x64.tar.gz` portable tarball.
 >
+> - **Android** — `OnionBit-*-android-<abi>.apk` (arm64-v8a, armeabi-v7a,
+>   x86_64): the app is a **remote client** — pair it to a running daemon
+>   by QR code, no engine embedded. Built and signed in CI (release
+>   keystore); APKs land in the release assets on the next `v*` tag.
+>
 > **Docker** — `ghcr.io/laurentgeynet-ux/onionbit:v1.1.2` (and `:latest`):
 >
 > ```bash
