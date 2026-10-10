@@ -3,6 +3,15 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Release : version 1.1.2 (2026-10-10)
+
+Re-taggée après échec CI de `v1.1.1` : les lignes `private`
+(`torrent_data` NULL par design) étaient routées dans le chemin de
+restauration différée des magnets — race perdue de façon
+déterministe sur les 4 OS (`f9a0946`). La release embarque aussi la
+Phase 16 Docker (ADR-0024, étapes 89-92 + 94) : image ghcr.io
+publiée par le nouveau job `docker` du pipeline.
+
 ## Phase 16 — Image Docker du daemon (ADR-0024, étapes 89-92 + 94) (2026-10-10)
 
 Intégration Docker du daemon headless (`docs/docker.md`,
