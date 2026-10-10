@@ -45,7 +45,7 @@ pub mod stats;
 
 use std::{
     borrow::Cow,
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     net::{IpAddr, SocketAddr},
     num::NonZeroU32,
     sync::{
@@ -214,6 +214,16 @@ pub struct TorrentStateLive {
         ChunkInfo,
     )>,
     ratelimits: Limits,
+
+    // Buffers d'assemblage des pieces en vol (ADR-0023, modele
+    // disk_cache de libtorrent) : chaque chunk recu est copie dans le
+    // buffer de sa piece ; quand la piece est complete, elle est
+    // hashee depuis la RAM puis ecrite en une seule passe — au lieu
+    // d'ecrire chaque chunk sur disque puis de relire la piece
+    // entiere pour la verifier (check_piece). Borne : une entree par
+    // piece in-flight, liberee au flush, au hash-fail ou au drop de
+    // l'etat live.
+    staged_pieces: Mutex<HashMap<u32, Vec<u8>>>,
 }
 
 impl TorrentStateLive {
@@ -295,6 +305,7 @@ impl TorrentStateLive {
                 .collect(),
             ratelimit_upload_tx,
             ratelimits,
+            staged_pieces: Mutex::new(HashMap::new()),
         });
 
         state.spawn(
@@ -676,6 +687,35 @@ impl TorrentStateLive {
         FileOps::new(&self.metadata.info, &*self.files, &self.metadata.file_infos)
     }
 
+    // OnionBit (ADR-0023) : stocke le chunk recu dans le buffer de sa
+    // piece (aucune ecriture disque). Appele sous le verrou de la piece
+    // dans write_to_disk, apres validation de `chunk_info`.
+    fn stage_chunk(&self, piece: &Piece<ByteBuf<'_>>, chunk_info: &ChunkInfo) {
+        let piece_len = self.lengths.piece_length(chunk_info.piece_index) as usize;
+        let begin = piece.begin as usize;
+        let (b0, b1) = piece.data();
+
+        let mut staged = self.staged_pieces.lock();
+        let buf = staged
+            .entry(chunk_info.piece_index.get())
+            .or_insert_with(|| vec![0u8; piece_len]);
+
+        if begin + piece.len() > buf.len() {
+            // chunk_info_from_received_data a deja valide le mapping ;
+            // un depassement ici indiquerait un bug en amont.
+            warn!(
+                piece = piece.index,
+                begin = piece.begin,
+                len = piece.len(),
+                piece_len,
+                "stage_chunk: chunk hors bornes, ignore"
+            );
+            return;
+        }
+        buf[begin..begin + b0.len()].copy_from_slice(b0);
+        buf[begin + b0.len()..begin + piece.len()].copy_from_slice(b1);
+    }
+
     pub(crate) fn lock_read(
         &self,
         reason: &'static str,
@@ -737,14 +777,12 @@ impl TorrentStateLive {
             None => {
                 let revived = self
                     .peers
-                    .with_peer_mut(addr, "requeue_dead_peer", |peer| {
-                        match peer.get_state() {
-                            PeerState::Dead => {
-                                peer.set_state(PeerState::Queued, &self.peers);
-                                true
-                            }
-                            _ => false,
+                    .with_peer_mut(addr, "requeue_dead_peer", |peer| match peer.get_state() {
+                        PeerState::Dead => {
+                            peer.set_state(PeerState::Queued, &self.peers);
+                            true
                         }
+                        _ => false,
                     })
                     .unwrap_or(false);
                 if !revived {
@@ -1311,11 +1349,20 @@ impl PeerHandler {
                 // Release all pieces owned by this peer (fixes the bug where pieces
                 // could be in both queue_pieces AND inflight_pieces after peer death)
                 let released = g.get_pieces_mut()?.release_pieces_owned_by(self.addr);
-                if released > 0 {
+                let released_count = released.len();
+                if !released.is_empty() {
                     trace!(
                         "peer dead, released {} in-flight pieces back to queue",
-                        released
+                        released_count
                     );
+                    // ADR-0023 : les pieces requeuees reverifient tous leurs
+                    // chunks au re-telechargement — les buffers de staging
+                    // (partiels, donc obsoletes) sont liberes ici pour borner
+                    // la memoire aux pieces reellement en vol.
+                    let mut staged = self.state.staged_pieces.lock();
+                    for piece in released {
+                        staged.remove(&piece.get());
+                    }
                 }
 
                 // Also handle any active chunk-level inflight requests.
@@ -1329,7 +1376,7 @@ impl PeerHandler {
                     );
                 }
 
-                if released > 0 || had_inflight {
+                if released_count > 0 || had_inflight {
                     self.state.new_pieces_notify.notify_waiters();
                 }
             }
@@ -1902,17 +1949,10 @@ impl PeerHandler {
             //
 
             if !cfg!(feature = "_disable_disk_write_net_benchmark") {
-                match state.file_ops().write_chunk(addr, piece, chunk_info) {
-                    Ok(()) => {}
-                    Err(e) => {
-                        error!(
-                            id = state.shared.id,
-                            info_hash = ?state.shared.info_hash,
-                            "FATAL: error writing chunk to disk: {e:#}"
-                        );
-                        return state.on_fatal_error(e);
-                    }
-                };
+                // ADR-0023 : le chunk est stage dans le buffer RAM de la
+                // piece — l'ecriture disque n'a lieu qu'une fois la piece
+                // complete et verifiee (flush_staged_piece).
+                state.stage_chunk(piece, chunk_info);
             }
 
             let full_piece_download_time = {
@@ -1929,6 +1969,9 @@ impl PeerHandler {
                     Some(ChunkMarkingResult::PreviouslyCompleted) => {
                         // TODO: we might need to send cancellations here.
                         debug!("piece={} was done by someone else, ignoring", piece.index);
+                        // Un chunk en double a pu re-stager un buffer
+                        // orphelin apres le flush de la piece.
+                        state.staged_pieces.lock().remove(&piece.index);
                         return Ok(());
                     }
                     Some(ChunkMarkingResult::NotCompleted) => None,
@@ -1950,11 +1993,43 @@ impl PeerHandler {
                 None => return Ok(()),
             };
 
-            match state
-                .file_ops()
-                .check_piece(chunk_info.piece_index)
-                .with_context(|| format!("error checking piece={index}"))?
+            // ADR-0023 : hash depuis la RAM (pieces stagees) — pas de
+            // relecture disque. Les erreurs de hash se propagent comme
+            // avant ; une erreur d'ECRITURE reste fatale au torrent
+            // (meme semantique que l'ancien write_chunk).
+            let staged = state
+                .staged_pieces
+                .lock()
+                .remove(&chunk_info.piece_index.get());
+
+            let hash_ok = match &staged {
+                Some(buf) => state
+                    .file_ops()
+                    .check_piece_data(chunk_info.piece_index, buf)
+                    .with_context(|| format!("error checking piece={index}"))?,
+                // Mode benchmark (pas de staging) ou buffer deja
+                // consomme : verification historique depuis le disque.
+                None => state
+                    .file_ops()
+                    .check_piece(chunk_info.piece_index)
+                    .with_context(|| format!("error checking piece={index}"))?,
+            };
+
+            if hash_ok
+                && let Some(buf) = &staged
+                && !cfg!(feature = "_disable_disk_write_net_benchmark")
             {
+                if let Err(e) = state.file_ops().write_piece(chunk_info.piece_index, buf) {
+                    error!(
+                        id = state.shared.id,
+                        info_hash = ?state.shared.info_hash,
+                        "FATAL: error writing piece to disk: {e:#}"
+                    );
+                    return state.on_fatal_error(e);
+                }
+            }
+
+            match hash_ok {
                 true => {
                     {
                         let mut g = state.lock_write("mark_piece_downloaded");

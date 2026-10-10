@@ -242,8 +242,9 @@ impl PieceTracker {
     /// Release all pieces owned by a peer (on peer death).
     ///
     /// Moves all pieces owned by the peer from IN_FLIGHT back to QUEUED.
-    /// Returns the number of pieces released.
-    pub fn release_pieces_owned_by(&mut self, peer: PeerHandle) -> usize {
+    /// Returns the released pieces so the caller can drop per-piece state
+    /// (e.g. staged download buffers).
+    pub fn release_pieces_owned_by(&mut self, peer: PeerHandle) -> Vec<ValidPieceIndex> {
         // Collect pieces to release (can't modify while iterating)
         let pieces_to_release: Vec<_> = self
             .inflight
@@ -252,12 +253,11 @@ impl PieceTracker {
             .map(|(p, _)| *p)
             .collect();
 
-        let count = pieces_to_release.len();
-        for piece in pieces_to_release {
-            self.inflight.remove(&piece);
-            self.chunks.mark_piece_broken_if_not_have(piece);
+        for piece in &pieces_to_release {
+            self.inflight.remove(piece);
+            self.chunks.mark_piece_broken_if_not_have(*piece);
         }
-        count
+        pieces_to_release
     }
 
     // === QUERIES ===
@@ -585,7 +585,7 @@ mod tests {
 
         // Peer A dies
         let released = tracker.release_pieces_owned_by(peer_a);
-        assert_eq!(released, 2);
+        assert_eq!(released.len(), 2);
         assert_eq!(tracker.inflight_count(), 1); // Only peer B's piece remains
 
         // Verify peer B's piece is still in-flight

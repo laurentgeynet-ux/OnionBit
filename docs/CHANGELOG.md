@@ -3,6 +3,42 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Phase 15 — staging RAM → hash → écriture unique (étapes 83, 85) (2026-10-10)
+
+Remplacement du chemin « `pwritev` par chunk puis relecture de la pièce »
+par le modèle libtorrent **staging → hash → flush** dans le `librqbit`
+vendored (`vendor/librqbit`, étape 83) :
+
+- `TorrentStateLive::staged_pieces` (`Mutex<HashMap<u32, Vec<u8>>>`)
+  accumule les chunks reçus par pièce — **aucun appel disque** avant la
+  complétion ; `FileOps::check_piece_data` hashe le buffer en RAM (fin du
+  read-back de vérification — ~100 % des `pread` du chemin de download
+  supprimés) ; `FileOps::write_piece` écrit la pièce d'un tenant — **un
+  `pwrite` par fichier touché** (pièce 1 Mio : ~64 `pwrite` + ~16 `pread`
+  remplacés par ~1 `pwrite`).
+- Erreurs préservées : hash KO → `mark_piece_hash_failed` + coupure du
+  pair (jamais écrit) ; écriture KO → `on_fatal_error` ; les compteurs
+  `downloaded_and_checked`/`have` ne bougent qu'après écriture réussie —
+  le fastresume ne peut plus déclarer complète une pièce seulement
+  reçue en RAM.
+- Borne mémoire : une pièce en vol par pair → ≈ `peers × piece_length` ;
+  buffers libérés à la complétion, sur chunk en double tardif
+  (`PreviouslyCompleted`), et à la mort d'un pair
+  (`release_pieces_owned_by` retourne désormais les pièces requeueées).
+- `check_piece` (relecture disque) conservé pour `initial_check`/
+  re-checks.
+- **Étape 85** : `allow_mmap=false` par défaut restauré aux trois sites
+  (`EngineConfig::default`/`offline`, `LibtorrentConfig::default`) — la
+  réversion locale de `cc9ce37` est résolue ; le writeback kernel
+  paresseux de mmap était le symptôme « téléchargé en mémoire ». Reste
+  sélectionnable via `libtorrent/allow_mmap` (bancs).
+
+Tests : nouveau `tests/staged_piece.rs` (round-trip hash RAM →
+`write_piece` → `check_piece` disque → `initial_check` ; corruption et
+taille incorrecte rejetées), 38/38 tests lib rqbit (e2e TCP/uTP inclus),
+workspace `check`/`clippy -D warnings`/`fmt` verts, `onionbit-core`
+complet vert (lifecycle 16/16, private_zone 8/8).
+
 ## ADR-0023 — E/S disque inspirées libtorrent : audit + plan (2026-10-10)
 
 Audit comparatif du chemin disque `librqbit` vendored face à libtorrent

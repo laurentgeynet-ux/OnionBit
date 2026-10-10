@@ -43,7 +43,10 @@ pub trait UtpConnector: Send + Sync + std::fmt::Debug + 'static {
         addr: SocketAddr,
     ) -> std::pin::Pin<
         Box<
-            dyn Future<Output = librqbit_utp::Result<librqbit_utp::UtpStream>> + Send + Sync + 'static,
+            dyn Future<Output = librqbit_utp::Result<librqbit_utp::UtpStream>>
+                + Send
+                + Sync
+                + 'static,
         >,
     >;
 }
@@ -54,7 +57,10 @@ impl<T: librqbit_utp::Transport, E: UtpEnvironment> UtpConnector for UtpSocket<T
         addr: SocketAddr,
     ) -> std::pin::Pin<
         Box<
-            dyn Future<Output = librqbit_utp::Result<librqbit_utp::UtpStream>> + Send + Sync + 'static,
+            dyn Future<Output = librqbit_utp::Result<librqbit_utp::UtpStream>>
+                + Send
+                + Sync
+                + 'static,
         >,
     > {
         Box::pin(async move { UtpSocket::connect(&self, addr).await })
@@ -72,7 +78,10 @@ pub trait UtpAcceptor: Send + Sync + std::fmt::Debug + 'static {
         self: Arc<Self>,
     ) -> std::pin::Pin<
         Box<
-            dyn Future<Output = librqbit_utp::Result<librqbit_utp::UtpStream>> + Send + Sync + 'static,
+            dyn Future<Output = librqbit_utp::Result<librqbit_utp::UtpStream>>
+                + Send
+                + Sync
+                + 'static,
         >,
     >;
 }
@@ -82,7 +91,10 @@ impl<T: librqbit_utp::Transport, E: UtpEnvironment> UtpAcceptor for UtpSocket<T,
         self: Arc<Self>,
     ) -> std::pin::Pin<
         Box<
-            dyn Future<Output = librqbit_utp::Result<librqbit_utp::UtpStream>> + Send + Sync + 'static,
+            dyn Future<Output = librqbit_utp::Result<librqbit_utp::UtpStream>>
+                + Send
+                + Sync
+                + 'static,
         >,
     > {
         Box::pin(async move { UtpSocket::accept(&self).await })

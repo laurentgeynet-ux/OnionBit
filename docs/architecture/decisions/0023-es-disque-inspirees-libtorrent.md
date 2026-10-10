@@ -1,8 +1,9 @@
 # ADR-0023 — Couche d'E/S disque inspirée de libtorrent : lecture non-créatrice, hash en vol, « fichiers manquants »
 
 Statut : Proposée (2026-10-10). Partiellement implantée —
-décisions 1 et 2 livrées (`9bf1c4f`), décisions 3-5 en plan
-(`docs/plans/roadmap_adr0023.md`).
+décisions 1, 2, 3 et 4 livrées (`9bf1c4f` + commit suivant),
+décisions 5-6 en option (`docs/plans/roadmap_adr0023.md` ; le statut
+global passera à Acceptée après la mesure de l'étape 84).
 
 ## Contexte
 
@@ -84,18 +85,38 @@ On adopte ce modèle, adapté à notre layout `temp/`/`downloads/`
   consomme pas la marque tant qu'il n'y a pas eu de vraie
   re-vérification.
 
-### 3. Vérification depuis la pièce en RAM — **planifié**
+### 3. Vérification depuis la pièce en RAM — **implanté**
 
-`write_to_disk` (`torrent_state/live/mod.rs`) reçoit
-`piece: &Piece<ByteBuf>` — la pièce complète **déjà en mémoire** —
-puis `check_piece` la relit du disque (`pread_exact` par chunks de
-64 Kio). On remplace la relecture par un hash du buffer en RAM
-(`Sha1` sur `data.0‖data.1`), comme libtorrent qui hashe les blocs
-du cache avant flush (`hasher_cursor` poursuit `flushed_cursor`).
-Effet : suppression de **100 % du read-back de vérification** en
-téléchargement (~2× moins de lectures disque). `check_piece`
-(puis relecture) reste le chemin du **re-check** (`initial_check`,
-`force_recheck`) où la donnée n'est pas en RAM.
+`Piece<ByteBuf>` est en réalité **un seul bloc** (~16 Kio), pas la
+pièce entière : le chemin historique faisait donc un `pwritev` par
+chunk **puis** relisait la pièce complète (`check_piece`,
+`pread_exact` 64 Kio) — pièce de 1 Mio ≈ 64 `pwrite` + 16 `pread`
+≈ 80 appels disque. L'implémentation retenue va plus loin que le
+hash seul, en reprenant le modèle libtorrent **staging → hash →
+flush** :
+
+- `TorrentStateLive::staged_pieces: Mutex<HashMap<u32, Vec<u8>>>`
+  accumule les octets de chaque chunk (`stage_chunk`) — **aucune
+  écriture disque** tant que la pièce n'est pas complète ;
+- à `ChunkMarkingResult::Completed`, `FileOps::check_piece_data`
+  hashe le buffer en RAM (comme `try_hash_piece` qui hashe depuis le
+  `disk_cache`) — **zéro relecture** ;
+- hash OK → `FileOps::write_piece` écrit la pièce d'un tenant (un
+  `pwrite` par fichier touché, segments `attrs.padding` exclus) ;
+- erreurs séparées : hash KO → `mark_piece_hash_failed` + coupure du
+  pair (rien n'est écrit) ; écriture KO → `on_fatal_error`
+  (sémantique inchangée) ; le compteur `downloaded_and_checked` et
+  le bitfield ne bougent qu'après écriture réussie ;
+- buffers libérés : pièce complétée, `PreviouslyCompleted` (chunk en
+  double tardif), ou pièce requeueée à la mort d'un pair
+  (`release_pieces_owned_by` retourne les pièces — signature
+  étendue) ; borne mémoire ≈ pièces en vol × `piece_length` (une
+  pièce par pair — le rôle du `disk_cache` 100 Mio de libtorrent).
+
+`check_piece` (relecture disque) reste le chemin du **re-check**
+(`initial_check`, `force_recheck`) où la donnée n'est pas en RAM.
+Test `tests/staged_piece.rs` : hash RAM → `write_piece` →
+`check_piece`/`initial_check` retrouvent tout, corruption refusée.
 
 Conséquence assumée — identique à libtorrent : le hash couvre la
 donnée transmise par le peer, pas ce qui a physiquement persisté ;
@@ -105,17 +126,19 @@ le buffer contient les octets envoyés par le peer (zéros de padding
 inclus), le spécial-cas n'existe que pour le path disque où les
 pad-files n'existent pas physiquement.
 
-### 4. `allow_mmap` désactivé par défaut — **planifié**
+### 4. `allow_mmap` désactivé par défaut — **implanté**
 
 Le backend mmap de libtorrent est cohérent **parce qu'il s'adosse**
 à son file_view_pool + store_buffer + ticks de flush ; le backend
 mmap vendored est minimaliste et repose sur le writeback paresseux
 du kernel — exactement le symptôme « téléchargé en mémoire »
-observé (pages dirty comptées comme cache, flush différé). Le défaut
-`allow_mmap` passe à `false` dans `EngineConfig`/`DaemonConfig`
-(le working tree contient une réversion locale non commitée de
-`cc9ce37` à `true` — à trancher). Le backend reste compilé et
-sélectionnable pour les bancs, avec ses lectures désormais
+observé (pages dirty comptées comme cache, flush différé).
+`allow_mmap: false` est restauré aux trois sites
+(`EngineConfig::default`, `EngineConfig::offline`,
+`LibtorrentConfig::default`) — la réversion locale non commitée de
+`cc9ce37` était le seul diff de ces fichiers. Le backend reste
+compilé et sélectionnable pour les bancs
+(`libtorrent/allow_mmap`), avec ses lectures désormais
 non-créatrices (décision 1).
 
 ### 5. Pool de descripteurs borné — **différé**

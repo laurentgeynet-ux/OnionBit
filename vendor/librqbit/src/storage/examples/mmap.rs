@@ -52,10 +52,7 @@ pub struct MmapFilesystemStorage {
 
 impl MmapFilesystemStorage {
     /// Guard sur le mmap du fichier, le creat si necessaire.
-    fn mmap(
-        &self,
-        file_id: usize,
-    ) -> anyhow::Result<impl std::ops::Deref<Target = MmapMut> + '_> {
+    fn mmap(&self, file_id: usize) -> anyhow::Result<impl std::ops::Deref<Target = MmapMut> + '_> {
         let cell = self.opened_mmaps.get(file_id).context("no such file")?;
         {
             let g = cell.read();
@@ -77,8 +74,7 @@ impl MmapFilesystemStorage {
                 .get(file_id)
                 .context("no such file")?
                 .ensure_open()?;
-            let mmap = unsafe { MmapOptions::new().map_mut(&*fg) }
-                .context("error mapping file")?;
+            let mmap = unsafe { MmapOptions::new().map_mut(&*fg) }.context("error mapping file")?;
             *g = Some(mmap);
         }
         let g = parking_lot::RwLockWriteGuard::downgrade(g);
@@ -109,7 +105,11 @@ impl TorrentStorage for MmapFilesystemStorage {
         // through unsafe pointer cast avoided — use a write lock
         // instead by taking the cell again.
         drop(g);
-        let mut g = self.opened_mmaps.get(file_id).context("no such file")?.write();
+        let mut g = self
+            .opened_mmaps
+            .get(file_id)
+            .context("no such file")?
+            .write();
         g.as_mut()
             .context("bug")?
             .get_mut(start..end)

@@ -866,9 +866,7 @@ impl Session {
             };
 
             let udp_tracker_client = match opts.udp_tracker_socket.as_ref() {
-                Some(sock) => {
-                    UdpTrackerClient::new_with_socket(token.clone(), sock.clone()).await
-                }
+                Some(sock) => UdpTrackerClient::new_with_socket(token.clone(), sock.clone()).await,
                 None => UdpTrackerClient::new(token.clone(), bind_device.as_ref()).await,
             }
             .context("error creating UDP tracker client")?;
@@ -1444,8 +1442,7 @@ impl Session {
             opts.list_only,
         )?;
 
-        let sub = self
-            .get_default_subfolder_for_torrent(&metadata.info, name.as_deref())?;
+        let sub = self.get_default_subfolder_for_torrent(&metadata.info, name.as_deref())?;
         let output_folder = match (opts.output_folder, opts.sub_folder) {
             (None, None) => self.output_folder.join(sub.unwrap_or_default()),
             // Tribler : `destination`/`saveas` choisi par l'utilisateur —
@@ -1529,10 +1526,7 @@ impl Session {
 
         let _permit = self.spawner.semaphore().acquire_owned().await?;
 
-        let already_managed = |g: &std::collections::HashMap<
-            TorrentId,
-            ManagedTorrentHandle,
-        >| {
+        let already_managed = |g: &std::collections::HashMap<TorrentId, ManagedTorrentHandle>| {
             g.iter().find_map(|(eid, t)| {
                 if t.info_hash() == info_hash || *eid == id {
                     Some((*eid, t.clone()))
@@ -1688,10 +1682,16 @@ impl Session {
         let Some(metadata) = removed.metadata.load_full() else {
             if let Some(p) = self.persistence.as_ref() {
                 if let Err(e) = p.delete(id).await {
-                    error!(?id, "error deleting torrent from persistence database: {e:#}");
+                    error!(
+                        ?id,
+                        "error deleting torrent from persistence database: {e:#}"
+                    );
                 }
             }
-            warn!(id, "deleted torrent without resolved metadata — files untouched");
+            warn!(
+                id,
+                "deleted torrent without resolved metadata — files untouched"
+            );
             return Ok(());
         };
 

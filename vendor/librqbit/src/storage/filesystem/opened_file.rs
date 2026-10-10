@@ -235,12 +235,12 @@ impl OpenedFile {
                 })
         }
         .map_err(|e| Error::Anyhow(anyhow::anyhow!("error opening {path:?}: {e:#}")))?;
-        if for_write {
-            if let Some(len) = g.pending_len.take() {
-                f.set_len(len).map_err(|e| {
-                    Error::Anyhow(anyhow::anyhow!("error setting len {len} on {path:?}: {e:#}"))
-                })?;
-            }
+        if for_write && let Some(len) = g.pending_len.take() {
+            f.set_len(len).map_err(|e| {
+                Error::Anyhow(anyhow::anyhow!(
+                    "error setting len {len} on {path:?}: {e:#}"
+                ))
+            })?;
         }
         g.writable = for_write;
         g.fd = Some(f);
@@ -337,8 +337,8 @@ mod tests {
     use peer_binary_protocol::DoubleBufHelper;
     use tempfile::TempDir;
 
-    use crate::storage::filesystem::opened_file::{OpenedFile, OurFileExt};
     use crate::Error;
+    use crate::storage::filesystem::opened_file::{OpenedFile, OurFileExt};
 
     /// Chemin dont le parent est un fichier ordinaire : `create_dir_all`
     /// et l'ouverture echoueront au premier acces.

@@ -48,21 +48,19 @@ impl JsonSessionPersistenceStore {
                 format!("couldn't create directory {output_folder:?} for session storage")
             })?;
 
-        let mut db: SerializedSessionDatabase =
-            match tokio::fs::File::open(&db_filename).await {
-                Ok(f) => {
-                    let mut buf = Vec::new();
-                    let mut rdr = tokio::io::BufReader::new(f);
-                    rdr.read_to_end(&mut buf).await?;
+        let mut db: SerializedSessionDatabase = match tokio::fs::File::open(&db_filename).await {
+            Ok(f) => {
+                let mut buf = Vec::new();
+                let mut rdr = tokio::io::BufReader::new(f);
+                rdr.read_to_end(&mut buf).await?;
 
-                    serde_json::from_reader(&buf[..])
-                        .context("error deserializing session database")?
-                }
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Default::default(),
-                Err(e) => {
-                    return Err(e).context(format!("error opening session file {db_filename:?}"));
-                }
-            };
+                serde_json::from_reader(&buf[..]).context("error deserializing session database")?
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Default::default(),
+            Err(e) => {
+                return Err(e).context(format!("error opening session file {db_filename:?}"));
+            }
+        };
 
         // Dedup par info_hash : des versions anterieures ont pu
         // persister plusieurs entrees pour le meme torrent (ex. apres
@@ -71,8 +69,8 @@ impl JsonSessionPersistenceStore {
         // dossiers imbriques legacy — et le doublon survit aux flushs.
         // On garde le plus petit id (le plus ancien).
         let mut kept: HashMap<Id20, TorrentId> = HashMap::new();
-        db.torrents.retain(|id, st| {
-            match kept.entry(*st.info_hash()) {
+        db.torrents
+            .retain(|id, st| match kept.entry(*st.info_hash()) {
                 std::collections::hash_map::Entry::Vacant(e) => {
                     e.insert(*id);
                     true
@@ -98,8 +96,7 @@ impl JsonSessionPersistenceStore {
                         false
                     }
                 }
-            }
-        });
+            });
 
         Ok(Self {
             db_filename,
@@ -341,7 +338,10 @@ impl SessionPersistenceStore for JsonSessionPersistenceStore {
             // OnionBit (ADR-0018) : idempotent — les torrents prives ne
             // sont jamais inscrits ici (skip dans `update_db`), leur
             // suppression ne doit pas echouer.
-            debug!(?id, "delete: absent de session.json (prive ou deja supprime)");
+            debug!(
+                ?id,
+                "delete: absent de session.json (prive ou deja supprime)"
+            );
         }
 
         Ok(())

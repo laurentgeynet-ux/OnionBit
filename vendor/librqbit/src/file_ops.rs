@@ -260,6 +260,99 @@ impl<'a> FileOps<'a> {
         }
     }
 
+    // OnionBit (ADR-0023) : hash une piece complete deja presente en
+    // RAM au lieu de la relire sur disque. Le buffer contient les
+    // octets tels que recus des pairs dans l'ordre de la piece (les
+    // octets de padding transmis sont inclus). Modele libtorrent :
+    // `try_hash_piece` hashe depuis le cache d'ecriture, jamais de
+    // relecture pour les pieces fraichement telechargees.
+    pub fn check_piece_data(
+        &self,
+        piece_index: ValidPieceIndex,
+        data: &[u8],
+    ) -> anyhow::Result<bool> {
+        if cfg!(feature = "_disable_disk_write_net_benchmark") {
+            return Ok(true);
+        }
+
+        let piece_length = self.torrent.lengths().piece_length(piece_index) as usize;
+        if data.len() != piece_length {
+            anyhow::bail!(
+                "staged piece {} has {} bytes, expected {}",
+                piece_index.get(),
+                data.len(),
+                piece_length
+            );
+        }
+
+        let mut h = Sha1::new();
+        h.update(data);
+        match self
+            .torrent
+            .info()
+            .compare_hash(piece_index.get(), h.finish())
+        {
+            Some(ok) => Ok(ok),
+            None => {
+                warn!("compare_hash() did not find the piece");
+                anyhow::bail!("compare_hash() did not find the piece");
+            }
+        }
+    }
+
+    // OnionBit (ADR-0023) : ecrit une piece complete d'un tenant.
+    // L'appelant garantit que `data` a la taille exacte de la piece et
+    // a ete verifiee (check_piece_data) — les segments mappes sur des
+    // pad-files ne sont pas ecrits, comme dans write_chunk.
+    pub fn write_piece(&self, piece_index: ValidPieceIndex, data: &[u8]) -> anyhow::Result<()> {
+        let mut absolute_offset = self.torrent.lengths().piece_offset(piece_index);
+        let mut cursor = 0usize;
+        let mut piece_remaining_bytes = data.len() as u64;
+
+        for (file_idx, fi) in self.file_infos.iter().enumerate() {
+            let file_len = fi.len;
+            if absolute_offset > file_len {
+                absolute_offset -= file_len;
+                continue;
+            }
+
+            let file_remaining_len = file_len - absolute_offset;
+            let to_write: usize =
+                std::cmp::min(file_remaining_len, piece_remaining_bytes).try_into()?;
+            trace!(
+                "piece={}, file_idx={}, writing {} bytes at {}",
+                piece_index, file_idx, to_write, absolute_offset
+            );
+
+            if to_write > 0 && !fi.attrs.padding {
+                self.files
+                    .pwrite_all(file_idx, absolute_offset, &data[cursor..cursor + to_write])
+                    .with_context(|| {
+                        format!(
+                            "error writing to file {file_idx} (\"{:?}\")",
+                            fi.relative_filename
+                        )
+                    })?;
+            }
+
+            cursor += to_write;
+            piece_remaining_bytes -= to_write as u64;
+            if piece_remaining_bytes == 0 {
+                break;
+            }
+            absolute_offset = 0;
+        }
+
+        if piece_remaining_bytes > 0 {
+            anyhow::bail!(
+                "write_piece(): data extends past last file: piece={}, {} bytes left",
+                piece_index,
+                piece_remaining_bytes
+            );
+        }
+        Ok(())
+    }
+
     pub fn read_chunk(
         &self,
         who_sent: PeerHandle,
@@ -307,6 +400,11 @@ impl<'a> FileOps<'a> {
         Ok(())
     }
 
+    // OnionBit (ADR-0023) : plus appele sur le chemin de download —
+    // les pieces sont ecrites en entier via `write_piece` apres
+    // verification en RAM. Conservee pour les tests et le cas ou un
+    // appelant voudrait ecrire un chunk isole.
+    #[allow(dead_code)]
     pub fn write_chunk(
         &self,
         who_sent: PeerHandle,
