@@ -3,6 +3,34 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## ADR-0023 — E/S disque inspirées libtorrent : audit + plan (2026-10-10)
+
+Audit comparatif du chemin disque `librqbit` vendored face à libtorrent
+(checkout local `D:\Projet\libtorrent\libtorrent`), consigné dans
+`docs/architecture/decisions/0023-es-disque-inspirees-libtorrent.md` +
+plan `docs/plans/roadmap_adr0023.md` (Phase 15, étapes 82-88).
+
+Constats clés de l'audit : libtorrent hashe les blocs **depuis son cache
+d'écriture** (`hasher_cursor`/`try_hash_piece`) là où rqbit **relit la
+pièce entière** du disque pour la vérifier (~2× lectures en trop) ; son
+`file_pool` LRU global borne les descripteurs ; `verify_resume_data`
+n'exige que existence+taille (pas de mtime) ; les fichiers absents au
+check sont re-téléchargés en place — l'état « manquant » est bien une
+couche qBittorrent, pas libtorrent ; le backend mmap n'a pas de vrai
+cache d'écriture — le writeback kernel paresseux est la cause directe du
+symptôme « téléchargé en mémoire, pas écrit au fur et à mesure ».
+
+Décisions : lecture non-créatrice + « fichiers manquants » **déjà
+livrées** (`9bf1c4f`) ; en plan : hash de la pièce depuis la RAM
+(suppression du read-back), `allow_mmap=false` par défaut, pool de
+descripteurs borné et hints de lecture au check en optionnelles. Non
+adoptés : fences job-level (`lifecycle_gate` couvre), `part_file`, cache
+d'écriture complet, `stat_cache`.
+
+**Point ouvert** : réversion locale non commitée de `cc9ce37`
+(`allow_mmap=true` dans `config.rs`/`daemon_config.rs`) — à trancher à
+l'étape 85 ; tant qu'elle tient, le daemon réel reste en mmap.
+
 ## État « fichiers manquants » + lecture paresseuse non créatrice (2026-10-09)
 
 Politique inspirée de qBittorrent (`TorrentState::MissingFiles`) au-dessus
