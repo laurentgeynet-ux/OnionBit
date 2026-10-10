@@ -95,6 +95,13 @@ pub struct ContentDiscoverySettings {
     /// (la cible `RandomWalk` est un plancher), borner a 20 ne
     /// touchait que ~10 % des pairs disponibles par requete.
     pub max_query_peers: usize,
+    /// Budget anti-DoS des selects entrants (extension OnionBit-only
+    /// ADR-0025 — aucun changement filaire : le depassement repond
+    /// une archive vide, convention Python du rate-limit). `0` =
+    /// illimite.
+    pub max_select_per_peer: usize,
+    /// Fenetre glissante du budget `max_select_per_peer`.
+    pub select_window: Duration,
 }
 
 impl Default for ContentDiscoverySettings {
@@ -108,6 +115,8 @@ impl Default for ContentDiscoverySettings {
             select_packets_limit: 25,
             walk_target_peers: 20,
             max_query_peers: 60,
+            max_select_per_peer: 20,
+            select_window: Duration::from_secs(60),
         }
     }
 }
@@ -294,12 +303,23 @@ pub trait ContentProvider: Send + Sync {
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Vec<serde_json::Value>> + Send + 'a>>;
     /// `(version, platform)` locales pour `VersionResponse`.
     fn version_info(&self) -> (String, String);
+    /// Archive de reponse vide (`LZ4_EMPTY_ARCHIVE` cote domaine) —
+    /// servie quand un pair depasse le budget de selects, pour
+    /// rester indiscernable d'une reponse sans resultat. `vec![]`
+    /// par defaut (providers de test).
+    fn empty_archive(&self) -> Vec<u8> {
+        Vec::new()
+    }
     /// Derniere sante gossip connue pour `infohash` (memoire du
     /// provider — `None` par defaut pour les providers de test).
     fn known_health(&self, _infohash: &[u8; 20]) -> Option<HealthInfo> {
         None
     }
 }
+
+/// Borne de la map `select_budget` (croissance sous flood
+/// d'adresses — memes conventions que `SEEN_NODES_CAP` cote domaine).
+const SELECT_BUDGET_PEERS_CAP: usize = 4096;
 
 /// Community de decouverte de contenu (gossip sante + select distant).
 pub struct ContentDiscoveryCommunity {
@@ -318,6 +338,11 @@ pub struct ContentDiscoveryCommunity {
     /// Requetes select emises en attente (`RequestCache` Python :
     /// id unique -> contexte `SelectRequest`).
     pending_selects: Mutex<std::collections::HashMap<u32, PendingSelect>>,
+    /// Budget anti-DoS des selects entrants : fenetre glissante des
+    /// instants de select par adresse source (extension OnionBit-only
+    /// ADR-0025 — le depassement repond une archive vide).
+    select_budget:
+        Mutex<std::collections::HashMap<UdpAddress, std::collections::VecDeque<Instant>>>,
     /// La `DiscoveryCommunity` de la meme stack — partagee pour les
     /// estimations `my_estimated_lan/wan` (un seul endpoint UDP, une
     /// seule paire d'estimations cote Python `IPv8`).
@@ -345,6 +370,7 @@ impl ContentDiscoveryCommunity {
             select_ids: AtomicU32::new(0),
             global_time: AtomicU64::new(0),
             pending_selects: Mutex::new(std::collections::HashMap::new()),
+            select_budget: Mutex::new(std::collections::HashMap::new()),
             discovery,
             settings,
         });
@@ -821,6 +847,40 @@ impl ContentDiscoveryCommunity {
         self.provider.known_health(infohash)
     }
 
+    /// Fenetre glissante par pair des selects entrants : `true` si le
+    /// pair reste sous `max_select_per_peer` par `select_window`
+    /// (extension anti-DoS ADR-0025 — `0` = illimite).
+    fn select_within_budget(&self, addr: &UdpAddress) -> bool {
+        let max = self.settings.max_select_per_peer;
+        if max == 0 {
+            return true;
+        }
+        let now = Instant::now();
+        let mut map = self.select_budget.lock().unwrap_or_else(|e| e.into_inner());
+        // La map est bornee : a saturation, on purge les pairs dont
+        // la fenetre est videe, puis on vide tout (fail-open
+        // memoire — un flood d'adresses ne gonfle pas la map).
+        if map.len() >= SELECT_BUDGET_PEERS_CAP {
+            let window = self.settings.select_window;
+            map.retain(|_, q| q.back().is_some_and(|t| now.duration_since(*t) < window));
+            if map.len() >= SELECT_BUDGET_PEERS_CAP {
+                map.clear();
+            }
+        }
+        let q = map.entry(addr.clone()).or_default();
+        while q
+            .front()
+            .is_some_and(|t| now.duration_since(*t) >= self.settings.select_window)
+        {
+            q.pop_front();
+        }
+        if q.len() >= max {
+            return false;
+        }
+        q.push_back(now);
+        true
+    }
+
     /// `send_search_request` Python : echantillonne
     /// `settings.max_query_peers` pairs de l'overlay et leur envoie
     /// le meme `remote_select`. Le `callback` recoit
@@ -1051,7 +1111,15 @@ impl ContentDiscoveryCommunity {
                 tokio::spawn(async move {
                     // La requete SQLite est deportee par le provider
                     // (`db.call` → `spawn_blocking`) — voir le trait.
-                    let chunks = c.provider.remote_select(&p.json).await;
+                    // Au-dela du budget par pair : archive vide —
+                    // indiscernable d'un resultat vide, la cause du
+                    // refus n'est jamais signalee.
+                    let chunks = if c.select_within_budget(&src_addr) {
+                        c.provider.remote_select(&p.json).await
+                    } else {
+                        tracing::debug!(?src_addr, "remote-select au-dela du budget par pair");
+                        vec![c.provider.empty_archive()]
+                    };
                     // `send_db_results` Python : un `SelectResponse`
                     // par chunk (<= `maximum_payload_size`), meme id.
                     for blob in chunks {

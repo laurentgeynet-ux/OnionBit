@@ -3,6 +3,40 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Étape 96 : budget anti-DoS des selects entrants (ADR-0025 §4) (2026-10-10)
+
+La surface DoS du select entrant existait déjà — ce chantier
+passe avant sync/émission : fenêtre glissante par adresse source
+(`max_select_per_peer=20`/`select_window=60 s` dans
+`ContentDiscoverySettings`, map bornée à 4096 pairs), dépassement
+→ archive vide indiscernable d'un résultat vide (`empty_archive`
+du provider — la cause du refus n'est jamais signalée, convention
+`Reject` stealth). Côté domaine : liste blanche
+`KNOWN_SELECT_PARAMS` (toute clé JSON inconnue → archive vide, à
+côté des `DEPRECATED_SELECT_PARAMS` Python) et `first` borné à
+10 000 (`last` l'était déjà à `first+max_response_size`,
+`packets_limit` existait). Tests verts : loopback budget par pair
+(provider non sollicité au-delà) + rejet des paramètres inconnus.
+
+## ADR-0025 proposée : découverte de contenu — Phase 17 (étapes 95-101) (2026-10-10)
+
+Recherche distribuée et canaux curés. L'audit préalable corrige
+l'hypothèse de départ : le protocole de requête existe déjà
+(`ContentDiscoveryCommunity` : `RemoteSelect`/`SelectResponse`
+requêteur **et** serveur, gossip `Health`, `VersionRequest`), la
+recherche locale FTS + augmentée, `channel_node` et
+`torrent_checker` aussi. Les vrais manques ciblés par le plan :
+interop pyipv8 jamais validée (étape 95), budget par pair sur
+les selects entrants (96), synchronisation des canaux abonnés —
+pull périodique `channel_pk`/`origin_id`, anti-poisoning,
+endpoints `/api/channels` (97), émission de mdblob signés par la
+clé primaire + `DELETED` (98), scan de santé interne (99),
+découverte encapsulée stealth via les ponts pour le réseau
+onionbit-only — aujourd'hui `content_discovery` est
+court-circuité dès que stealth est actif (100), UI Flutter
+(101).
+Plan : `docs/plans/roadmap_adr0025.md`. Aucun code engagé.
+
 ## Étape 93 : validation end-to-end Docker sur le VPS (ADR-0024 §10) (2026-10-10)
 
 Bilan complet exécuté sur le déploiement `onionbit-boot-*` :

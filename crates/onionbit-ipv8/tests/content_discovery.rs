@@ -85,6 +85,15 @@ impl ContentProvider for MockProvider {
 async fn node(
     provider: Arc<dyn ContentProvider>,
 ) -> (Arc<ContentDiscoveryCommunity>, Arc<Network>, UdpAddress) {
+    node_with(provider, ContentDiscoverySettings::default()).await
+}
+
+/// `node` avec reglages explicites (le gossip reste desactive —
+/// intervalle tres long, voir le commentaire dans le corps).
+async fn node_with(
+    provider: Arc<dyn ContentProvider>,
+    settings: ContentDiscoverySettings,
+) -> (Arc<ContentDiscoveryCommunity>, Arc<Network>, UdpAddress) {
     let ep = UdpEndpoint::bind("127.0.0.1:0").await.unwrap();
     let addr = UdpAddress::from(ep.local_addr().unwrap());
     let net = Arc::new(Network::default());
@@ -110,7 +119,7 @@ async fn node(
         provider,
         ContentDiscoverySettings {
             gossip_interval: Duration::from_secs(3600),
-            ..ContentDiscoverySettings::default()
+            ..settings
         },
         discovery,
     )
@@ -285,6 +294,52 @@ async fn walk_decouvre_les_pairs_de_l_overlay() {
     assert_eq!(peers.len(), 1);
     assert!(peers[0].address.as_ref() == Some(&addr_b));
     let _ = addr_a;
+}
+
+/// Budget anti-DoS par pair (ADR-0025, extension OnionBit-only) :
+/// au-dela de `max_select_per_peer` par `select_window`, le pair
+/// distant recoit une archive vide et le provider n'est PAS
+/// sollicite (le SQL parametre est la ressource protegee).
+#[tokio::test(flavor = "multi_thread")]
+async fn remote_select_budget_par_pair() {
+    let pa = Arc::new(MockProvider {
+        healths: vec![],
+        received: Mutex::new(vec![]),
+        selects: Mutex::new(vec![]),
+        responses: Mutex::new(vec![]),
+        select_blob: vec![],
+    });
+    let pb = Arc::new(MockProvider {
+        healths: vec![],
+        received: Mutex::new(vec![]),
+        selects: Mutex::new(vec![]),
+        responses: Mutex::new(vec![]),
+        select_blob: b"data".to_vec(),
+    });
+    let (ca, _na, _aa) = node(pa.clone() as Arc<dyn ContentProvider>).await;
+    let (_cb, _nb, addr_b) = node_with(
+        pb.clone() as Arc<dyn ContentProvider>,
+        ContentDiscoverySettings {
+            max_select_per_peer: 2,
+            ..ContentDiscoverySettings::default()
+        },
+    )
+    .await;
+
+    for _ in 0..3 {
+        ca.send_remote_select(&addr_b, b"{}".to_vec())
+            .await
+            .unwrap();
+    }
+    // Les trois reponses reviennent (la 3e = archive vide).
+    let ok = wait_for(|| pa.responses.lock().unwrap().len() == 3).await;
+    assert!(ok, "reponses incompletes");
+    // Le provider n'a execute que les deux premiers selects.
+    assert_eq!(pb.selects.lock().unwrap().len(), 2);
+    // Archive vide servie au-dela du budget (le mock ne surcharge
+    // pas `empty_archive` — defaut `vec![]`).
+    assert_eq!(pa.responses.lock().unwrap()[2], Vec::<u8>::new());
+    assert_eq!(pa.responses.lock().unwrap()[0], b"data");
 }
 
 /// Version request (101) -> response (102) : le pair distant repond

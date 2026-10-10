@@ -976,6 +976,33 @@ impl GossipMemory {
 /// rejetes (reponse archive vide).
 const DEPRECATED_SELECT_PARAMS: [&str; 3] = ["subscribed", "attribute_ranges", "complete_channel"];
 
+/// Liste blanche des cles JSON acceptees dans un select distant
+/// (ADR-0025 §4 — toute cle inconnue → archive vide ; borne la
+/// surface SQL aux parametres que `build_where` sait consommer).
+const KNOWN_SELECT_PARAMS: [&str; 16] = [
+    "first",
+    "last",
+    "txt_filter",
+    "metadata_type",
+    "channel_pk",
+    "origin_id",
+    "id",
+    "max_rowid",
+    "hide_xxx",
+    "sort_by",
+    "sort_desc",
+    "category",
+    "tags",
+    "infohash",
+    "infohash_set",
+    "uuid",
+];
+
+/// Borne defensive de `first` (anti-DoS : un `OFFSET` gigantesque
+/// ferait scanner la table — Python ne le borne pas, ecart
+/// documente).
+const MAX_SELECT_FIRST: u64 = 10_000;
+
 impl SessionContentProvider {
     /// Convertit une ligne `channel_node` en entree `.mdblob`
     /// pre-signee (signature conservee telle quelle).
@@ -1032,7 +1059,13 @@ impl SessionContentProvider {
     /// la requete SQL est deportee sur le pool bloquant (`db.call`).
     async fn remote_select_inner(&self, query: serde_json::Value) -> Vec<Vec<u8>> {
         // `sanitize_query` : `last` borne a `first + max_response_size`.
-        let first = query.get("first").and_then(|v| v.as_u64()).unwrap_or(0);
+        // `first` est borne defensivement (`MAX_SELECT_FIRST`) —
+        // un `OFFSET` gigantesque ferait scanner la table.
+        let first = query
+            .get("first")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0)
+            .min(MAX_SELECT_FIRST);
         let last = query
             .get("last")
             .and_then(|v| v.as_u64())
@@ -1222,6 +1255,16 @@ impl ContentProvider for SessionContentProvider {
                 tracing::warn!(%query, "remote select avec parametres deprecies");
                 return vec![lz4_frame(&[])];
             }
+            // Liste blanche ADR-0025 §4 : cle inconnue → archive
+            // vide (meme convention que le rejet `deprecated` —
+            // la cause n'est pas signalee au requeteur).
+            if query
+                .as_object()
+                .is_some_and(|o| o.keys().any(|k| !KNOWN_SELECT_PARAMS.contains(&k.as_str())))
+            {
+                tracing::warn!(%query, "remote select avec parametres inconnus");
+                return vec![lz4_frame(&[])];
+            }
             // `process_rpc_query_rate_limited` : une seule requete
             // `txt_filter` a la fois, les autres sont ignorees.
             let rate_limited = query.get("txt_filter").is_some();
@@ -1242,6 +1285,12 @@ impl ContentProvider for SessionContentProvider {
             }
             result
         })
+    }
+
+    /// Archive LZ4 vide (`LZ4_EMPTY_ARCHIVE` Python) — servie par la
+    /// community quand le budget par pair est depasse.
+    fn empty_archive(&self) -> Vec<u8> {
+        lz4_frame(&[])
     }
 
     /// `process_compressed_mdblob` : decompresse LZ4, parse les
@@ -3791,6 +3840,30 @@ mod tests {
             }
         }
         assert_eq!(shown_updates, 1);
+    }
+
+    /// Liste blanche ADR-0025 §4 : une cle JSON inconnue dans le
+    /// select distant → archive vide (aucun SQL execute), comme
+    /// pour les parametres `deprecated`.
+    #[tokio::test]
+    async fn select_parametres_inconnus_rejetes() {
+        let provider = test_provider(crate::notifier::Notifier::new());
+        // Cle legitime → le select s'execute (archive reelle, meme
+        // si la base est vide : `remote_select_inner` produit un
+        // chunk).
+        let ok = provider.remote_select(b"{\"first\":1}").await;
+        assert_eq!(ok.len(), 1);
+        // Cle inconnue → archive vide.
+        let rejected = provider
+            .remote_select(b"{\"evil_payload\":\"drop table\"}")
+            .await;
+        assert_eq!(rejected, vec![lz4_frame(&[])]);
+        // `deprecated` → idem (comportement existant conserve).
+        let dep = provider.remote_select(b"{\"subscribed\":1}").await;
+        assert_eq!(dep, vec![lz4_frame(&[])]);
+        // JSON invalide → archive vide.
+        let bad = provider.remote_select(b"not-json").await;
+        assert_eq!(bad, vec![lz4_frame(&[])]);
     }
 
     /// Les ensembles memoire restent bornes : au-dela de la borne,
