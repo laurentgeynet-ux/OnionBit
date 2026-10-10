@@ -213,6 +213,15 @@ fn api_router(state: AppState) -> Router<AppState> {
         .route("/search/remote", put(search::remote_search))
         // -- Canaux suivis (channels_endpoint.py — ADR-0025 etape 97) ---
         .route("/channels", get(channels::list_channels))
+        .route("/channels/personal", put(channels::personal_set_title))
+        .route(
+            "/channels/personal/{infohash}",
+            delete(channels::personal_remove),
+        )
+        .route(
+            "/channels/personal/{infohash}/commit",
+            put(channels::personal_commit),
+        )
         .route("/channels/{pk}/{id}", get(channels::channel_contents))
         .route(
             "/channels/{pk}/{id}/subscribe",

@@ -17,6 +17,7 @@
 pub mod asyncio;
 pub mod attestation_store;
 pub mod augmenter;
+pub mod channel_ops;
 pub mod config;
 pub mod daemon_config;
 pub mod error;

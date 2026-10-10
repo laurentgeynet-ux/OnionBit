@@ -41,11 +41,11 @@ Ce qui **manque** réellement :
    `seen_nodes`/`GossipMemory` remplacent la persistance pour la
    recherche éphémère.
 3. **Émission de canal** — `encode_entry`/`encode_entry_presigned`
-   signent déjà les mdblob (types 220/230/240/300/400/500,
-   Ed25519) ; le vrai trou est le type `CHANNEL_NODE` (200),
-   classé `MetadataEntry::Rejected` — ni sérialisable ni
-   parsable, donc impossible de publier la racine d'un canal
-   curé.
+   signent déjà les mdblob ; le vrai trou est l'absence de
+   logique de publication (racine de canal, commit, tombale) —
+   après vérification filaire, la racine s'émet en
+   `COLLECTION_NODE` (220), pas en `CHANNEL_NODE` (200 — aucune
+   classe de payload Python, cf. §3).
 4. **Mode `full`/stealth** — `enable_content_discovery && !stealth`
    (`ipv8_stack.rs`) : le réseau onionbit-only (ADR-0022 §7,
    ADR-0024 §8) n'a **aucune** découverte. C'est le seul maillon
@@ -109,14 +109,40 @@ le client interroge périodiquement un échantillon de pairs avec
 ### 3. Émission : canal personnel signé avec la clé primaire IPv8
 
 Le nœud possède déjà une identité Ed25519 (`LibNaCLSK`, étape 2).
-Le « canal personnel » Tribler = `CHANNEL_NODE` racine (type 200)
-signé par cette clé + entrées `CHANNEL_TORRENT` (400).
+Le « canal personnel » = racine `COLLECTION_NODE` (type 220)
+signée par cette clé + entrées `CHANNEL_TORRENT` (400).
 
-- `onionbit-format` **déréjette le type 200** : variante
-  `MetadataEntry::ChannelNode` (payload titre/description +
-  timestamp), parse + sérialisation, réutilisant
-  `encode_entry`/`encode_entry_presigned` **déjà implémentés et
-  testés** — pas de code crypto nouveau.
+> **Correction de fidélité (vérifiée sur `tribler/core/database/
+> serialization.py`, Tribler 8.x)** : le type 200 `CHANNEL_NODE`
+> n'a **aucune** classe de payload dans
+> `METADATA_TYPE_TO_PAYLOAD_CLASS` (`ChannelNodePayload` n'est que
+> la classe de base, jamais enregistrée) — un blob contenant du
+> 200 lève `UnknownBlobTypeException` et tue le blob entier chez
+> un pair Tribler. La racine de canal voyage donc en
+> `CollectionNode` (220), que `onionbit-format` sait déjà
+> sérialiser et signer ; le 200 reste `Rejected` en entrée et
+> n'existe chez nous que comme marqueur de placeholder interne
+> (jamais servi). Conséquence corollaire : `process_payload`
+> Python ne persiste que `REGULAR_TORRENT` — les 220/400/500 sont
+> parsés puis ignorés par Tribler ; les canaux curés sont une
+> fonctionnalité **OnionBit-à-OnionBit**, compatible filaire mais
+> sans réciprocité Tribler 8.x.
+
+- `onionbit-format` : aucun travail — `CollectionNode`,
+  `ChannelTorrent`, `Deleted` et `encode_entry`/
+  `encode_entry_presigned` sont **déjà implémentés et testés**.
+- `onionbit-core::channel_ops` : `commit` (copie l'info-hash en
+  `CHANNEL_TORRENT` signé, `origin_id` = racine), `remove`
+  (pierre tombale 500), `set_title` (racine 220 signée,
+  renommage re-signé). Convention : la racine a
+  `origin_id == id_` (cohérent avec l'abonnement `(pk, id)`).
+- **Service des pierres tombales** : la colonne `signature` d'une
+  ligne 500 porte la signature de l'entrée supprimée (=
+  `delete_signature` filaire `DeletedMetadataPayload`), pas une
+  signature de tombale — `remote_select` **re-signe à la volée**
+  les 500 dont `public_key` est le nôtre (le pair distant vérifie
+  `header.signature` ; une tombale non signée serait rejetée).
+  Les tombales étrangères ne sont pas servies (non re-signables).
 - **Réception `DELETED` (500)** : l'entrée passe `status`/
   `metadata_type` à `DELETED` (pierre tombale conservée —
   sinon une resync la réinsérerait) et `build_where` exclut
@@ -132,20 +158,14 @@ signé par cette clé + entrées `CHANNEL_TORRENT` (400).
   retirent à la sync suivante. Endpoint dédié
   (`DELETE /api/channels/personal/{infohash}` ou équivalent
   Tribler).
-- `onionbit-core::channel_publish` : `PUT` des entrées
-  `channel_node` locales `COMMITTED` sous le `public_key` du nœud,
-  `id_` séquentiel — servies ensuite par le remote-select entrant
-  sans chemin spécial.
-- REST fidèle à `channels_endpoint` Tribler : `GET /api/channels`
-  (tous canaux, `subscribed` inclus), `GET /api/channels/{pk}/{id}`
-  (contenu), `PUT /api/channels/{pk}/{id}/subscribe`,
-  `DELETE …/subscribe`, `PUT /api/channels/{pk}/{id}/copy`,
-  plus `POST /api/channels/personal` (création) et
-  `POST /api/channels/personal/commit` (ajout d'un infohash au
-  canal personnel) — endpoints mutants couverts par
-  `api_key_auth` comme tout `/api` (automatique, cf.
-  `router.rs`), rappelé ici parce qu'ils déclenchent de
-  l'activité réseau persistante et de l'écriture disque.
+- REST : `GET /api/channels`, `GET /api/channels/{pk}/{id}`,
+  `PUT|DELETE /api/channels/{pk}/{id}/subscribe`, plus le canal
+  personnel (extension — Tribler 8.x n'expose plus d'endpoint de
+  publication) : `PUT /api/channels/personal` (création/nom de la
+  racine), `PUT /api/channels/personal/{infohash}/commit`,
+  `DELETE /api/channels/personal/{infohash}` — endpoints mutants
+  couverts par `api_key_auth` comme tout `/api` (automatique,
+  cf. `router.rs`).
 
 ### 4. Robustesse serveur : budget par pair sur les selects entrants
 

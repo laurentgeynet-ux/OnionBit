@@ -7,15 +7,17 @@
 //!
 //! Un canal par fenetre `channel_sync_interval` (round-robin avec
 //! jitter — jamais tous les canaux en rafale) : le select
-//! `{channel_pk, origin_id, metadata_type:[400]}` est envoye a un
-//! pair aleatoire de l'overlay ; les reponses sont integrees par le
-//! chemin persistant de `process_select_response` (signature
-//! verifiee + `public_key == channel_pk` — anti-poisoning).
+//! `{channel_pk, origin_id, metadata_type:[400,220,500]}` est
+//! envoye a un pair aleatoire de l'overlay ; les reponses sont
+//! integrees par le chemin persistant de `process_select_response`
+//! (signature verifiee + `public_key == channel_pk` —
+//! anti-poisoning).
 //!
-//! `metadata_type` restreint a `CHANNEL_TORRENT` (400) : le type
-//! `CHANNEL_NODE` (200) reste `Rejected` du parseur jusqu'a
-//! l'etape 98 — un blob en contenant un echouerait entierement
-//! (`UnknownBlobTypeException` Python).
+//! `metadata_type` couvre `CHANNEL_TORRENT` (400 — contenu),
+//! `COLLECTION_NODE` (220 — racine, pour apprendre le titre) et
+//! `DELETED` (500 — pierres tombales). `CHANNEL_NODE` (200) reste
+//! `Rejected` : Python n'a aucune classe de payload pour lui
+//! (`UnknownBlobTypeException`).
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -71,7 +73,7 @@ pub async fn run_channel_sync(
                 let json = serde_json::json!({
                     "channel_pk": hex::encode(&pk),
                     "origin_id": origin_id,
-                    "metadata_type": [400],
+                    "metadata_type": [400, 220, 500],
                     "first": 1,
                     "last": 100,
                 })

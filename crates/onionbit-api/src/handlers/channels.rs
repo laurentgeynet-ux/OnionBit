@@ -123,3 +123,102 @@ pub async fn unsubscribe(
         .await?;
     Ok(Json(serde_json::json!({ "subscribed": false })))
 }
+
+/// Cle de signature du canal personnel — 503 quand la stack IPv8
+/// n'existe pas encore (identite non resolue, session invitee sans
+/// ipv8, stealth sans overlay).
+fn signing_key(
+    state: &AppState,
+) -> Result<onionbit_crypto::ipv8::keys::LibNaClSecretKey, ApiError> {
+    state
+        .session
+        .ipv8()
+        .map(|s| s.signing_key())
+        .ok_or_else(|| ApiError::internal("stack ipv8 absente — canal personnel indisponible"))
+}
+
+/// Decode un info-hash hex (20 octets).
+fn infohash_param(ih_hex: &str) -> Result<[u8; 20], ApiError> {
+    let raw =
+        hex::decode(ih_hex.trim()).map_err(|_| ApiError::bad_request("infohash hex attendu"))?;
+    raw.as_slice()
+        .try_into()
+        .map_err(|_| ApiError::bad_request("infohash hex attendu (20 octets)"))
+}
+
+/// Corps de `PUT /api/channels/personal`.
+#[derive(serde::Deserialize)]
+pub struct PersonalChannelBody {
+    /// Titre de la racine `COLLECTION_NODE` (renommage re-signe).
+    pub title: String,
+}
+
+/// `PUT /api/channels/personal` — cree ou renomme la racine
+/// `COLLECTION_NODE` (220) du canal personnel, signee par la cle de
+/// session. Extension OnionBit (Tribler 8.x n'expose plus d'endpoint
+/// de publication de canal).
+pub async fn personal_set_title(
+    State(state): State<AppState>,
+    Json(body): Json<PersonalChannelBody>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let key = signing_key(&state)?;
+    if body.title.trim().is_empty() {
+        return Err(ApiError::bad_request("title vide"));
+    }
+    let title = body.title.trim().to_string();
+    let id = state
+        .session
+        .db()
+        .call("channels.personal_title", move |c| {
+            onionbit_core::channel_ops::set_title(c, &key, &title)
+                .map_err(|e| onionbit_db::DbError::Corrupt(e.to_string()))
+        })
+        .await?;
+    Ok(Json(serde_json::json!({ "id": id })))
+}
+
+/// `PUT /api/channels/personal/{infohash}/commit` — ajoute le
+/// torrent au canal personnel (`CHANNEL_TORRENT` 400 signe,
+/// `origin_id` = racine ; racine creee au premier commit).
+pub async fn personal_commit(
+    State(state): State<AppState>,
+    Path(ih_hex): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let infohash = infohash_param(&ih_hex)?;
+    let key = signing_key(&state)?;
+    let added = state
+        .session
+        .db()
+        .call("channels.personal_commit", move |c| {
+            onionbit_core::channel_ops::commit(c, &key, &infohash)
+                .map_err(|e| onionbit_db::DbError::Corrupt(e.to_string()))
+        })
+        .await?;
+    match added {
+        Some(id) => Ok(Json(serde_json::json!({ "added": true, "id": id }))),
+        None => Err(ApiError::not_found("infohash inconnu de la base")),
+    }
+}
+
+/// `DELETE /api/channels/personal/{infohash}` — retire le torrent
+/// du canal personnel : la ligne devient pierre tombale `DELETED`
+/// (500) signee, servie aux abonnes a la prochaine sync.
+pub async fn personal_remove(
+    State(state): State<AppState>,
+    Path(ih_hex): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let infohash = infohash_param(&ih_hex)?;
+    let key = signing_key(&state)?;
+    let removed = state
+        .session
+        .db()
+        .call("channels.personal_remove", move |c| {
+            onionbit_core::channel_ops::remove(c, &key, &infohash)
+                .map_err(|e| onionbit_db::DbError::Corrupt(e.to_string()))
+        })
+        .await?;
+    if !removed {
+        return Err(ApiError::not_found("entree absente du canal personnel"));
+    }
+    Ok(Json(serde_json::json!({ "removed": true })))
+}

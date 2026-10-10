@@ -141,7 +141,7 @@ pub fn channel_entries(
 ) -> Result<Vec<ChannelNodeRow>> {
     let mut stmt = conn.prepare(&format!(
         "SELECT {COLS} FROM channel_node
-         WHERE public_key = ?1 AND metadata_type <> 500
+         WHERE public_key = ?1 AND metadata_type IN (300, 400)
          ORDER BY timestamp DESC LIMIT ?2"
     ))?;
     let rows = stmt.query_map(params![channel_public_key, limit], from_row)?;
@@ -428,12 +428,15 @@ pub fn mark_deleted_by_signature(
 /// tombales (500) sont conservees pour eviter la reinsertion a la
 /// resync ; la ligne racine placeholder aussi.
 pub fn prune_channel(conn: &Connection, public_key: &[u8], keep: i64) -> Result<usize> {
+    // `metadata_type NOT IN (500,200,220)` : pierres tombales (500,
+    // evitent la reinsertion a la resync) et racines (placeholder
+    // `CHANNEL_NODE` 200, vrai `COLLECTION_NODE` 220) preservees.
     Ok(conn.execute(
         "DELETE FROM channel_node
-         WHERE public_key = ?1 AND metadata_type <> 500 AND metadata_type <> 200
+         WHERE public_key = ?1 AND metadata_type NOT IN (500, 200, 220)
            AND rowid NOT IN (
                SELECT rowid FROM channel_node
-               WHERE public_key = ?1 AND metadata_type <> 500 AND metadata_type <> 200
+               WHERE public_key = ?1 AND metadata_type NOT IN (500, 200, 220)
                ORDER BY added_on DESC, rowid DESC LIMIT ?2
            )",
         params![public_key, keep],
@@ -441,14 +444,59 @@ pub fn prune_channel(conn: &Connection, public_key: &[u8], keep: i64) -> Result<
 }
 
 /// Nombre d'entrees de contenu d'un canal (hors pierres tombales
-/// et racine placeholder `CHANNEL_NODE`).
+/// et racines `CHANNEL_NODE`/`COLLECTION_NODE`).
 pub fn count_channel_entries(conn: &Connection, public_key: &[u8]) -> Result<i64> {
     Ok(conn.query_row(
         "SELECT COUNT(*) FROM channel_node
-         WHERE public_key = ?1 AND metadata_type <> 500 AND metadata_type <> 200",
+         WHERE public_key = ?1 AND metadata_type NOT IN (500, 200, 220)",
         params![public_key],
         |r| r.get(0),
     )?)
+}
+
+// --- Canal personnel (ADR-0025 etape 98) -------------------------------
+
+/// Racine du canal personnel : ligne `COLLECTION_NODE` (220 — type
+/// reel du filaire Python) ou placeholder `CHANNEL_NODE` (200) creee
+/// par un abonnement a soi-meme.
+pub fn personal_root(conn: &Connection, public_key: &[u8]) -> Result<Option<ChannelNodeRow>> {
+    Ok(conn
+        .query_row(
+            &format!(
+                "SELECT {COLS} FROM channel_node
+                 WHERE public_key = ?1 AND metadata_type IN (200, 220)
+                 ORDER BY rowid LIMIT 1"
+            ),
+            params![public_key],
+            from_row,
+        )
+        .optional()?)
+}
+
+/// Entree de contenu du canal personnel par info-hash (`commit` /
+/// `remove` idempotents).
+pub fn channel_entry_by_infohash(
+    conn: &Connection,
+    public_key: &[u8],
+    infohash: &[u8],
+) -> Result<Option<ChannelNodeRow>> {
+    Ok(conn
+        .query_row(
+            &format!(
+                "SELECT {COLS} FROM channel_node
+                 WHERE public_key = ?1 AND infohash = ?2
+                   AND metadata_type IN (300, 400) LIMIT 1"
+            ),
+            params![public_key, infohash],
+            from_row,
+        )
+        .optional()?)
+}
+
+/// Supprime une ligne par `rowid` (renommage de la racine
+/// personnelle — re-signee puis reinseree).
+pub fn delete_rowid(conn: &Connection, rowid: i64) -> Result<usize> {
+    Ok(conn.execute("DELETE FROM channel_node WHERE rowid = ?1", params![rowid])?)
 }
 
 fn unix_now() -> i64 {

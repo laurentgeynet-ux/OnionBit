@@ -937,6 +937,15 @@ struct SessionContentProvider {
     /// `channel_max_entries` : purge FIFO au-dela, hors pierres
     /// tombales et racine placeholder).
     channel_max_entries: usize,
+    /// Cle de signature de la session : les pierres tombales
+    /// `DELETED` de NOTRE canal personnel sont re-signees a la volee
+    /// quand elles sont servies (la colonne `signature` d'une ligne
+    /// 500 porte la signature de l'entree supprimee, pas celle de
+    /// la tombale — voir `row_to_entry`).
+    signer: LibNaClSecretKey,
+    /// Notre `public_key` 64 octets (`key_to_bin()[10..]`) — detecte
+    /// les lignes signables.
+    our_pk: [u8; 64],
 }
 
 /// Memoire gossip du provider (tout est volatil, jamais persistee).
@@ -1028,55 +1037,100 @@ const KNOWN_SELECT_PARAMS: [&str; 16] = [
 const MAX_SELECT_FIRST: u64 = 10_000;
 
 impl SessionContentProvider {
-    /// Convertit une ligne `channel_node` en entree `.mdblob`
-    /// pre-signee (signature conservee telle quelle).
+    /// Convertit une ligne `channel_node` en entree `.mdblob`.
+    ///
+    /// Retourne `(entree, a_signer)` : `a_signer` vaut vrai pour nos
+    /// propres pierres tombales `DELETED` — leur `signature` colonne
+    /// porte la signature de l'entree supprimee (la
+    /// `delete_signature` du filaire Python), pas une signature de
+    /// tombale ; l'en-tete est donc signe a la volee par notre cle
+    /// dans `remote_select_inner`. Les tombales d'autrui ne sont
+    /// pas servies (non re-signables, la verification echouerait).
+    ///
+    /// Types servis : `REGULAR_TORRENT` (300), `CHANNEL_TORRENT`
+    /// (400), `COLLECTION_NODE` (220 — racine de canal), `DELETED`
+    /// (500 — canal personnel). `CHANNEL_NODE` (200) et types
+    /// inconnus ne sont jamais servis : Python n'a aucune classe de
+    /// payload pour 200 (`UnknownBlobTypeException` tuerait le blob
+    /// chez un pair Tribler) — cf. `serialization.py`.
     fn row_to_entry(
+        &self,
         row: &onionbit_db::models::ChannelNodeRow,
-    ) -> Option<onionbit_format::mdblob::MetadataEntry> {
+    ) -> Option<(onionbit_format::mdblob::MetadataEntry, bool)> {
         use onionbit_format::mdblob::*;
         let mut public_key = [0u8; 64];
         if row.public_key.len() != 64 {
             return None;
         }
         public_key.copy_from_slice(&row.public_key);
-        let mut infohash = [0u8; 20];
-        if row.infohash.len() != 20 {
-            return None;
-        }
-        infohash.copy_from_slice(&row.infohash);
         let signature = row
             .signature
             .as_deref()
             .and_then(|s| <[u8; 64]>::try_from(s).ok())
             .unwrap_or([0u8; 64]);
+        let header = SignedPayloadHeader::new(
+            row.metadata_type as u16,
+            row.reserved_flags as u16,
+            public_key,
+        )
+        .with_signature(signature);
         let node = ChannelNodePayload {
-            header: SignedPayloadHeader::new(
-                row.metadata_type as u16,
-                row.reserved_flags as u16,
-                public_key,
-            )
-            .with_signature(signature),
+            header,
             id: row.id_ as u64,
             origin_id: row.origin_id as u64,
             timestamp: row.timestamp as u64,
         };
-        let torrent = TorrentMetadataPayload {
-            node,
-            infohash,
-            size: row.size.max(0) as u64,
-            torrent_date: row.torrent_date.max(0) as u32,
-            title: row.title.clone(),
-            tags: row.tags.clone(),
-            tracker_info: row.tracker_info.clone(),
-        };
-        Some(match row.metadata_type as u16 {
-            types::CHANNEL_TORRENT => MetadataEntry::ChannelTorrent(ChannelMetadataPayload {
-                torrent,
-                num_entries: 0,
-                start_timestamp: row.timestamp.max(0) as u64,
-            }),
-            _ => MetadataEntry::RegularTorrent(torrent),
-        })
+        match row.metadata_type as u16 {
+            types::REGULAR_TORRENT | types::CHANNEL_TORRENT => {
+                let mut infohash = [0u8; 20];
+                if row.infohash.len() != 20 {
+                    return None;
+                }
+                infohash.copy_from_slice(&row.infohash);
+                let torrent = TorrentMetadataPayload {
+                    node,
+                    infohash,
+                    size: row.size.max(0) as u64,
+                    torrent_date: row.torrent_date.max(0) as u32,
+                    title: row.title.clone(),
+                    tags: row.tags.clone(),
+                    tracker_info: row.tracker_info.clone(),
+                };
+                Some((
+                    if row.metadata_type as u16 == types::CHANNEL_TORRENT {
+                        MetadataEntry::ChannelTorrent(ChannelMetadataPayload {
+                            torrent,
+                            num_entries: 0,
+                            start_timestamp: row.timestamp.max(0) as u64,
+                        })
+                    } else {
+                        MetadataEntry::RegularTorrent(torrent)
+                    },
+                    false,
+                ))
+            }
+            types::COLLECTION_NODE => Some((
+                MetadataEntry::CollectionNode(CollectionNodePayload {
+                    node,
+                    title: row.title.clone(),
+                    tags: row.tags.clone(),
+                    num_entries: 0,
+                }),
+                false,
+            )),
+            types::DELETED if public_key == self.our_pk => Some((
+                MetadataEntry::Deleted(DeletedPayload {
+                    header: SignedPayloadHeader::new(
+                        row.metadata_type as u16,
+                        row.reserved_flags as u16,
+                        public_key,
+                    ),
+                    delete_signature: signature,
+                }),
+                true,
+            )),
+            _ => None,
+        }
     }
 
     /// Corps du select distant (cf. `ContentProvider::remote_select`) —
@@ -1110,10 +1164,15 @@ impl SessionContentProvider {
         let mut chunks: Vec<Vec<u8>> = Vec::new();
         let mut cur = Vec::new();
         for row in rows {
-            let Some(entry) = Self::row_to_entry(&row) else {
+            let Some((entry, a_signer)) = self.row_to_entry(&row) else {
                 continue;
             };
-            let Ok(bytes) = onionbit_format::mdblob::encode_entry_presigned(&entry) else {
+            let encoded = if a_signer {
+                onionbit_format::mdblob::encode_entry(&entry, &self.signer)
+            } else {
+                onionbit_format::mdblob::encode_entry_presigned(&entry)
+            };
+            let Ok(bytes) = encoded else {
                 continue;
             };
             if cur.len() + bytes.len() > self.max_payload_size && !cur.is_empty() {
@@ -1483,24 +1542,54 @@ impl ContentProvider for SessionContentProvider {
 }
 
 /// Convertit une entree `.mdblob` en ligne `channel_node` (insertion).
-fn entry_to_row(
+pub(crate) fn entry_to_row(
     entry: &onionbit_format::mdblob::MetadataEntry,
 ) -> Option<onionbit_db::models::ChannelNodeRow> {
     use onionbit_format::mdblob::*;
-    let (node, torrent) = match entry {
-        MetadataEntry::RegularTorrent(t) => (&t.node, Some(t)),
-        MetadataEntry::ChannelTorrent(c) => (&c.torrent.node, Some(&c.torrent)),
+    // `CollectionNodePayload` porte `title`/`tags` mais pas
+    // d'infohash — la racine de canal (220) est persistee pour que
+    // les abonnes apprennent le titre du canal suivi (`UNIQUE(
+    // public_key, id_)` deduplique avec le placeholder 200 quand
+    // `id_` coincide, sinon les deux cohabitent : le comptage et
+    // la liste de contenu excluent les deux types racines).
+    let (node, infohash, size, torrent_date, tracker_info, title, tags) = match entry {
+        MetadataEntry::RegularTorrent(t) => (
+            &t.node,
+            t.infohash.to_vec(),
+            t.size as i64,
+            t.torrent_date as i64,
+            t.tracker_info.clone(),
+            t.title.clone(),
+            t.tags.clone(),
+        ),
+        MetadataEntry::ChannelTorrent(c) => (
+            &c.torrent.node,
+            c.torrent.infohash.to_vec(),
+            c.torrent.size as i64,
+            c.torrent.torrent_date as i64,
+            c.torrent.tracker_info.clone(),
+            c.torrent.title.clone(),
+            c.torrent.tags.clone(),
+        ),
+        MetadataEntry::CollectionNode(c) => (
+            &c.node,
+            Vec::new(),
+            0,
+            0,
+            String::new(),
+            c.title.clone(),
+            c.tags.clone(),
+        ),
         _ => return None,
     };
-    let t = torrent?;
     Some(onionbit_db::models::ChannelNodeRow {
         rowid: 0,
-        infohash: t.infohash.to_vec(),
-        size: t.size as i64,
-        torrent_date: t.torrent_date as i64,
-        tracker_info: t.tracker_info.clone(),
-        title: t.title.clone(),
-        tags: t.tags.clone(),
+        infohash,
+        size,
+        torrent_date,
+        tracker_info,
+        title,
+        tags,
         metadata_type: node.header.metadata_type as i64,
         reserved_flags: node.header.reserved_flags as i64,
         origin_id: node.origin_id as i64,
@@ -1924,6 +2013,12 @@ impl Ipv8Stack {
                     seen_nodes: Mutex::new(std::collections::HashSet::new()),
                     gossip: Mutex::new(GossipMemory::default()),
                     channel_max_entries: config.channel_max_entries,
+                    signer: key.clone(),
+                    our_pk: {
+                        let mut pk = [0u8; 64];
+                        pk.copy_from_slice(&key.public_key().to_bin()[10..]);
+                        pk
+                    },
                 });
                 Some(
                     ContentDiscoveryCommunity::new(
@@ -2684,6 +2779,13 @@ impl Ipv8Stack {
 
     pub fn public_key_hex(&self) -> String {
         hex::encode(self.key.public_key().to_bin())
+    }
+
+    /// Cle secrete de session pour la signature `.mdblob` (canal
+    /// personnel, ADR-0025 etape 98) — usage interne uniquement,
+    /// jamais exposee en dehors du process.
+    pub fn signing_key(&self) -> LibNaClSecretKey {
+        self.key.clone()
     }
 
     /// Classe d'identite de la session (ADR-0016) — `Seeded` permet
@@ -3829,6 +3931,8 @@ mod tests {
             seen_nodes: Mutex::new(std::collections::HashSet::new()),
             gossip: Mutex::new(GossipMemory::default()),
             channel_max_entries: 5000,
+            signer: LibNaClSecretKey::generate(),
+            our_pk: [0u8; 64],
         }
     }
 
@@ -4212,5 +4316,134 @@ mod tests {
             .await
             .map(|n| assert_eq!(n, 0))
             .unwrap();
+    }
+
+    /// Service du canal personnel (ADR-0025 etape 98) : racine
+    /// `COLLECTION_NODE` (220), entree `CHANNEL_TORRENT` (400) et
+    /// pierre tombale `DELETED` (500) sont servies par le select
+    /// distant. La tombale est re-signee a la volee par notre cle —
+    /// la colonne `signature` d'une ligne 500 porte la signature de
+    /// l'entree supprimee (`delete_signature` filaire), pas celle
+    /// de la tombale.
+    #[tokio::test]
+    async fn serve_canal_personnel_racine_entree_tombale() {
+        let sk = LibNaClSecretKey::generate();
+        let pk_vec: Vec<u8> = sk.public_key().to_bin()[10..].to_vec();
+        let pk64: [u8; 64] = pk_vec.clone().try_into().unwrap();
+        let mut provider = test_provider(crate::notifier::Notifier::new());
+        provider.signer = sk.clone();
+        provider.our_pk = pk64;
+
+        // Source : un torrent deja connu (autre signataire).
+        let ih = [5u8; 20];
+        provider
+            .db
+            .call("t.src", move |c| {
+                onionbit_db::channel::insert(
+                    c,
+                    &onionbit_db::models::ChannelNodeRow {
+                        infohash: ih.to_vec(),
+                        title: "source".into(),
+                        metadata_type: 300,
+                        public_key: vec![9u8; 64],
+                        id_: 1,
+                        signature: Some(vec![1u8; 64]),
+                        ..Default::default()
+                    },
+                )?;
+                Ok(())
+            })
+            .await
+            .unwrap();
+
+        // Commit de deux entrees → racine 220 + deux 400 signees ;
+        // remove sur l'une → pierre tombale 500.
+        let ih_b = [6u8; 20];
+        provider
+            .db
+            .call("t.src2", move |c| {
+                onionbit_db::channel::insert(
+                    c,
+                    &onionbit_db::models::ChannelNodeRow {
+                        infohash: ih_b.to_vec(),
+                        title: "source2".into(),
+                        metadata_type: 300,
+                        public_key: vec![9u8; 64],
+                        id_: 2,
+                        signature: Some(vec![2u8; 64]),
+                        ..Default::default()
+                    },
+                )?;
+                Ok(())
+            })
+            .await
+            .unwrap();
+        let sk2 = sk.clone();
+        let root_id = provider
+            .db
+            .call("t.commit", move |c| {
+                let conv =
+                    |e: crate::error::CoreError| onionbit_db::DbError::Corrupt(e.to_string());
+                crate::channel_ops::commit(c, &sk2, &ih).map_err(conv)?;
+                crate::channel_ops::commit(c, &sk2, &ih_b).map_err(conv)?;
+                let root = onionbit_db::channel::personal_root(
+                    c,
+                    &crate::channel_ops::personal_channel_pk(&sk2),
+                )?
+                .unwrap();
+                crate::channel_ops::remove(c, &sk2, &ih).map_err(conv)?;
+                Ok(root.id_)
+            })
+            .await
+            .unwrap();
+
+        // Select distant sur le canal : les trois types sont servis.
+        let query = serde_json::json!({
+            "channel_pk": hex::encode(&pk_vec),
+            "origin_id": root_id,
+            "metadata_type": [220, 400, 500],
+        })
+        .to_string();
+        let chunks = onionbit_ipv8::content_discovery::ContentProvider::remote_select(
+            &provider,
+            query.as_bytes(),
+        )
+        .await;
+        assert!(!chunks.is_empty());
+        use std::io::Read;
+        // Chaque chunk est une frame LZ4 independante (`entries_to_chunk`).
+        let mut entries = Vec::new();
+        for chunk in &chunks {
+            let mut data = Vec::new();
+            lz4_flex::frame::FrameDecoder::new(chunk.as_slice())
+                .read_to_end(&mut data)
+                .unwrap();
+            entries.extend(parse_blob(&data).unwrap());
+        }
+        let mut saw_root = false;
+        let mut saw_torrent = false;
+        let mut saw_tomb = false;
+        for e in &entries {
+            match e {
+                MetadataEntry::CollectionNode(c) => {
+                    saw_root = true;
+                    assert!(c.node.header.verify_signature());
+                    assert_eq!(c.node.header.public_key, pk64);
+                }
+                MetadataEntry::ChannelTorrent(t) => {
+                    saw_torrent = true;
+                    assert!(t.torrent.node.header.verify_signature());
+                    assert_eq!(t.torrent.infohash, ih_b);
+                }
+                MetadataEntry::Deleted(d) => {
+                    saw_tomb = true;
+                    // Tombale re-signee a la volee : signature valide.
+                    assert!(d.header.verify_signature());
+                    assert_eq!(d.header.public_key, pk64);
+                }
+                _ => {}
+            }
+        }
+        assert!(saw_root && saw_torrent && saw_tomb);
     }
 }

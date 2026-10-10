@@ -3,6 +3,37 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Étape 98 : émission du canal personnel signé (ADR-0025 §3) (2026-10-11)
+
+Correction de fidélité constatée sur `tribler/core/database/
+serialization.py` (8.x) : le type 200 `CHANNEL_NODE` n'a aucune
+classe de payload — émettre du 200 ferait échouer le blob entier
+chez un pair Tribler (`UnknownBlobTypeException`). La racine de
+canal s'écrit donc en `COLLECTION_NODE` (220, déjà
+sérialisable/signable) ; le 200 reste `Rejected` et n'existe que
+comme placeholder interne jamais servi. Tribler parse mais ne
+persiste que `REGULAR_TORRENT` : les canaux curés sont
+OnionBit-à-OnionBit, filaire compatible.
+
+`onionbit-core::channel_ops` : `set_title` (racine 220 signée,
+`origin_id == id_`, renommage re-signé), `commit` (copie
+l'info-hash connu en `CHANNEL_TORRENT` 400 signé par la clé de
+session, `origin_id` = racine — servi par le select entrant
+standard), `remove` (ligne → `metadata_type = 500`, la colonne
+`signature` conserve la signature de l'entrée supprimée =
+`delete_signature` filaire). `remote_select` re-signe à la volée
+les pierres tombales de notre propre clé (leur signature de
+tombale n'est pas stockée) et sert désormais 300/400/220/500 —
+les types inconnus ne sont plus jamais maquillés en
+`REGULAR_TORRENT`. `channel_sync` tire `[400,220,500]` (racine +
+tombales). REST (`api_key_auth` global) :
+`PUT /api/channels/personal` `{title}`,
+`PUT /api/channels/personal/{infohash}/commit`,
+`DELETE /api/channels/personal/{infohash}`. Tests :
+`channel_ops::commit_puis_remove`,
+`serve_canal_personnel_racine_entree_tombale` (signatures
+valides, tombale re-signée).
+
 ## Package APK Android en CI (2026-10-11)
 
 Nouveau job `package (android : apk client distant)` : build
