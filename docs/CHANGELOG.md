@@ -3,6 +3,41 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Fix UI + ADR-0027 : lecture des fichiers privés (2026-10-10)
+
+« Ouvrir le dossier » sur un téléchargement privé passait le spec
+`@private/…` à l'explorateur natif → retombait sur `Documents`.
+L'action est désormais masquée quand `storage_area == "private"`
+ou que `destination` est un spec `@…` (menu contextuel de la page
+Téléchargements + bouton du panneau détail) — il n'y a rien de
+lisible à ouvrir, les `.obd` sont chiffrés par nature. La lecture
+reste possible via « Déplacer le dossier… » vers une zone
+publique ; un vrai explorateur privé + export en clair *sans
+changement de zone* est décrit dans ADR-0027 (catalogue
+`manifest.obm` — incluant les entrées hors liste de
+téléchargements — `GET /api/private/{key}/files`,
+`POST /api/private/{key}/export`, page « Zone privée » avec menu
+contextuel Lire/Extraire ; §5 : pas d'identité, pas de lecture —
+propriété cryptographique des clés `K_*`) — Proposée.
+
+## Fix : un download en cycle remove/re-add ne clignote plus du listing (2026-10-10)
+
+Constaté à l'usage : à la fin d'un téléchargement, l'entrée
+disparaît de `GET /api/downloads` puis revient — le
+`move_on_completion` (`temp` → `downloads`) retire l'objet moteur
+puis le re-ajoute, et `downloads()` ne listait que les objets
+moteur présents. La fenêtre peut durer un `validate_fastresume`
+complet (~30-86 s sur HDD), pas seulement le clignotement subi.
+Nouveau `in_lifecycle` sur `SessionInner` : `lifecycle_mark`
+(garde RAII) capture le dernier instantane connu (figé en
+`Checking` — le re-add re-vérifie les pièces) et `downloads()` le
+sert pour les infohashes absents de tous les moteurs. Marqueurs
+posés sur tous les cycles remove/re-add : `move_storage`,
+`move_private_on_completion`, `recheck`, `update_hops`,
+`resume_missing` (`move_across_zones` est couvert par son
+appelant `move_storage`). Test :
+`downloads_sert_instantane_cycle_vie` ; 15/15 lifecycle verts.
+
 ## ADR-0026 — pull / store-and-forward (2026-10-11, étapes 102-107)
 
 La trame `ENCAP` générique de l'étape 100 prend son usage prévu :

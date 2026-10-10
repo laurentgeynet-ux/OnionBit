@@ -897,7 +897,13 @@ class _DownloadsContextMenuState extends ConsumerState<_DownloadsContextMenu> {
           d.isPaused ? notifier.resume(d.infohash) : notifier.pause(d.infohash),
         ),
       ),
-      if (d.destination.isNotEmpty)
+      // Zone privée : `destination` est le spec `@private/…`, pas un
+      // chemin réel — les `.obd` sur disque sont illisibles par
+      // nature (ouvrir retombait sur Documents). La lecture se fait
+      // via « Déplacer le dossier… » vers une zone publique.
+      if (d.destination.isNotEmpty &&
+          !d.isPrivateStorage &&
+          !d.destination.startsWith('@'))
         item(Icons.folder_open, l10n.openFolder, () => openPath(d.destination)),
       const Divider(height: 1),
       SubmenuButton(

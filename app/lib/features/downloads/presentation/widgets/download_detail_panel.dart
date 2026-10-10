@@ -131,8 +131,13 @@ class _DetailsTabState extends ConsumerState<_DetailsTab> {
             runSpacing: AppSpace.xs,
             children: [
               // « Ouvrir le dossier » : explorateur natif — sans objet
-              // sur web (le chemin appartient à la machine du daemon).
-              if (!kIsWeb && d.destination.isNotEmpty)
+              // sur web (le chemin appartient à la machine du daemon),
+              // ni en zone privée (`@private/…` spec, `.obd` illisibles
+              // — la lecture passe par « Déplacer le dossier… »).
+              if (!kIsWeb &&
+                  d.destination.isNotEmpty &&
+                  !d.isPrivateStorage &&
+                  !d.destination.startsWith('@'))
                 OutlinedButton.icon(
                   icon: const Icon(Icons.folder_open, size: 16),
                   label: Text(l10n.openFolder),
