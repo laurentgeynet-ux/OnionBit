@@ -458,7 +458,7 @@ French (System / English / Français in Settings → Appearance).*
 | Web | ✅ same UI served same-origin by the daemon on every platform |
 | Docker | ✅ image on ghcr.io (`:v1.1.2`, `:latest`) — daemon + CLI + web UI, all profiles via `ONIONBIT_PROFILE` |
 | macOS / iOS | 🔨 builds from source — runners ready, needs a signed Mac build host |
-| Android | 🔨 builds from source — QR pairing + touch UI ready |
+| Android | ✅ APK packagé en CI — client distant, pairage QR vers un daemon (`OnionBit-*-android-*.apk`) |
 | Linux native UI | 📋 runner scaffolded — packaged path is the web UI today |
 
 **Prerequisites:** Rust stable, Flutter stable (UI only).
@@ -531,7 +531,8 @@ See [SECURITY.md](SECURITY.md) for reporting and the threat model.
 - ✅ Linux `.deb` — menu entries, icons, `systemd --user` unit, XDG state dir (+ portable tar.gz)
 - ✅ Windows ARM64 package (headless)
 - ✅ Docker image — daemon + CLI + web UI on ghcr.io, `--profile`/`ONIONBIT_PROFILE` first-boot presets ([ADR-0024](docs/architecture/decisions/0024-image-docker-daemon.md))
-- 📋 Mobile execution model (Android/iOS)
+- ✅ Android APK — remote client pairing to a daemon over QR
+- 📋 iOS package
 - 📋 macOS package, native Linux UI
 
 ## Contributing

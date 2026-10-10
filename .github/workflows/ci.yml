@@ -194,6 +194,69 @@ jobs:
           name: onionbit-windows-arm64
           path: dist/OnionBit-*-windows-arm64-headless.zip
 
+  # APK Android : l'app est un client distant (pairing QR vers un
+  # daemon) — pas de binaire embarque, c'est un build Flutter pur.
+  # Signature : si les secrets ANDROID_* sont provisionnes, un keystore
+  # + key.properties sont materialises et le build release est signe
+  # avec ; sinon le job signe avec la cle debug (build installeable en
+  # sideload, flaggable « debug » — a corriger en provisionnant les
+  # secrets plutot qu'en figeant).
+  package-android:
+    name: "package (android : apk client distant)"
+    runs-on: ubuntu-24.04
+    needs: [flutter]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: keystore release (si secrets provisionnes)
+        shell: bash
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEY_STORE_PASSWORD: ${{ secrets.ANDROID_KEY_STORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "${ANDROID_KEYSTORE_BASE64}" ]; then
+            echo "pas de keystore : signature debug (sideload uniquement)"
+            exit 0
+          fi
+          echo "${ANDROID_KEYSTORE_BASE64}" | base64 -d > "$RUNNER_TEMP/onionbit.jks"
+          {
+            echo "storeFile=${RUNNER_TEMP}/onionbit.jks"
+            echo "storePassword=${ANDROID_KEY_STORE_PASSWORD}"
+            echo "keyAlias=${ANDROID_KEY_ALIAS}"
+            echo "keyPassword=${ANDROID_KEY_PASSWORD}"
+          } > app/android/key.properties
+      - name: build apk
+        working-directory: app
+        shell: bash
+        run: >-
+          flutter pub get &&
+          flutter build apk --release --split-per-abi
+      - name: renommer les artefacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          ver=$(grep '^version:' app/pubspec.yaml | awk '{print $2}' | cut -d+ -f1)
+          mkdir -p dist/android
+          for f in app/build/app/outputs/flutter-apk/app-*-release.apk; do
+            abi=$(basename "$f" | sed 's/^app-//; s/-release\.apk$//')
+            cp "$f" "dist/android/OnionBit-${ver}-android-${abi}.apk"
+          done
+          ls -la dist/android
+      - uses: actions/upload-artifact@v7
+        with:
+          name: onionbit-android
+          path: dist/android/OnionBit-*-android-*.apk
+
   # Image Docker (ADR-0024, etape 94) : buildx + push ghcr.io sur tag
   # v* uniquement (les builds PR/master restent locaux — cf.
   # docs/docker.md). La variante final-webui embarque l'UI Flutter.
@@ -237,7 +300,7 @@ jobs:
       && needs.package-linux.result == 'success'
       && needs.package-windows-x64.result == 'success'
     runs-on: ubuntu-24.04
-    needs: [release-windows, package-linux, package-windows-x64, package-windows-arm64]
+    needs: [release-windows, package-linux, package-windows-x64, package-windows-arm64, package-android]
     permissions:
       contents: write
     steps:
@@ -255,7 +318,7 @@ jobs:
           set -euo pipefail
           shopt -s nullglob
           tag="${GITHUB_REF_NAME}"
-          files=(onionbit-*/OnionBit-*.zip onionbit-*/OnionBit-*.tar.gz onionbit-*/onionbit_*.deb)
+          files=(onionbit-*/OnionBit-*.zip onionbit-*/OnionBit-*.tar.gz onionbit-*/onionbit_*.deb onionbit-*/OnionBit-*.apk)
           if [ ${#files[@]} -eq 0 ]; then
             echo "aucun artefact a publier" >&2; exit 1
           fi

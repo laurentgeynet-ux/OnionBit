@@ -3,6 +3,20 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Package APK Android en CI (2026-10-11)
+
+Nouveau job `package (android : apk client distant)` : build
+`flutter build apk --release --split-per-abi` (arm64-v8a,
+armeabi-v7a, x86_64) sur ubuntu — l'app Android est un client
+distant qui se paire à un daemon par QR, aucun binaire embarqué.
+Signature : `build.gradle.kts` lit `key.properties` s'il existe
+(secrets CI `ANDROID_KEYSTORE_BASE64` + `ANDROID_KEY_*` → release
+signée propre) ; sans keystore la clé debug signe le build —
+installeable en sideload, à remplacer par une clé dédiée dont
+l'empreinte sera publiée. Artefact `onionbit-android`
+(`OnionBit-*-android-<abi>.apk`) publié dans la release GitHub au
+tag.
+
 ## Étape 97 : abonnement et synchronisation des canaux (ADR-0025 §2) (2026-10-10)
 
 Les canaux deviennent suivis et curés : migration v23
