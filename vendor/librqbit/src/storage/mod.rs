@@ -118,6 +118,20 @@ impl<U: StorageFactory + ?Sized> StorageFactory for Box<U> {
     }
 }
 
+/// Hint de lecture (ADR-0023 etape 87) — les lectures de
+/// verification (`initial_check`/`check_piece`) sont marquees
+/// `Volatile` pour que le stockage les signale au cache OS
+/// (`POSIX_FADV_DONTNEED` unix ; `FILE_FLAG_SEQUENTIAL_SCAN` a
+/// l'ouverture sous Windows) : un re-check de 40 Go n'evince pas
+/// le cache.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReadHint {
+    /// Lecture ordinaire (upload vers les pairs notamment).
+    Normal,
+    /// Lecture de verification — contenu probablement jamais relu.
+    Volatile,
+}
+
 pub trait TorrentStorage: Send + Sync {
     // Create/open files etc.
     fn init(
@@ -129,6 +143,18 @@ pub trait TorrentStorage: Send + Sync {
     /// Given a file_id (which you can get more info from in init_storage() through torrent info)
     /// read buf.len() bytes into buf at offset.
     fn pread_exact(&self, file_id: usize, offset: u64, buf: &mut [u8]) -> anyhow::Result<()>;
+
+    /// `pread_exact` avec hint de reutilisation — defaut : ignore
+    /// le hint (stockages sans notions de cache OS).
+    fn pread_exact_hint(
+        &self,
+        file_id: usize,
+        offset: u64,
+        buf: &mut [u8],
+        _hint: ReadHint,
+    ) -> anyhow::Result<()> {
+        self.pread_exact(file_id, offset, buf)
+    }
 
     /// Given a file_id (which you can get more info from in init_storage() through torrent info)
     /// write buf.len() bytes into the file at offset.
@@ -174,6 +200,16 @@ pub trait TorrentStorage: Send + Sync {
 impl<U: TorrentStorage + ?Sized> TorrentStorage for Box<U> {
     fn pread_exact(&self, file_id: usize, offset: u64, buf: &mut [u8]) -> anyhow::Result<()> {
         (**self).pread_exact(file_id, offset, buf)
+    }
+
+    fn pread_exact_hint(
+        &self,
+        file_id: usize,
+        offset: u64,
+        buf: &mut [u8],
+        hint: ReadHint,
+    ) -> anyhow::Result<()> {
+        (**self).pread_exact_hint(file_id, offset, buf, hint)
     }
 
     fn pwrite_all(&self, file_id: usize, offset: u64, buf: &[u8]) -> anyhow::Result<()> {

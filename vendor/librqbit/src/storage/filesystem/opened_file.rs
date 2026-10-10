@@ -210,6 +210,11 @@ impl OpenedFile {
             }
         }
         let f = if !for_write {
+            // ADR-0023 etape 87 : pas de hint a l'ouverture ici —
+            // FILE_FLAG_SEQUENTIAL_SCAN (essaye, 0x20000000) degradait
+            // initial_check de ~60x sous Windows (read-ahead desactive)
+            // ; les hints de cache sont portes par `pread_exact_hint`
+            // (`POSIX_FADV_*` unix).
             std::fs::OpenOptions::new().read(true).open(&path)
         } else if upgrading || g.allow_overwrite {
             // `allow_overwrite` protege la CREATION (`create_new`) ;
@@ -235,6 +240,19 @@ impl OpenedFile {
                 })
         }
         .map_err(|e| Error::Anyhow(anyhow::anyhow!("error opening {path:?}: {e:#}")))?;
+        // ADR-0023 etape 87 : acces sequentiel attendu sur les
+        // lectures (verification de pieces) — hint posix_fadvise,
+        // erreur ignoree (jamais une cause d'echec).
+        #[cfg(unix)]
+        if !for_write {
+            use std::os::unix::io::AsRawFd;
+            let _ = nix::fcntl::posix_fadvise(
+                f.as_raw_fd(),
+                0,
+                0,
+                nix::fcntl::PosixFadviseAdvice::POSIX_FADV_SEQUENTIAL,
+            );
+        }
         if for_write && let Some(len) = g.pending_len.take() {
             // Fichier paresseux : `ensure_len` n'a pu marquer sparse
             // (`is_open()` faux a l'enregistrement) — on le fait ici,

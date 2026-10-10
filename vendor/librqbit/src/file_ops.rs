@@ -15,7 +15,7 @@ use tracing::{debug, trace, warn};
 
 use crate::{
     file_info::FileInfo,
-    storage::TorrentStorage,
+    storage::{ReadHint, TorrentStorage},
     type_aliases::{BF, FileInfos, PeerHandle},
 };
 
@@ -34,8 +34,12 @@ pub fn update_hash_from_file<Sha1: ISha1>(
         if file_info.attrs.padding {
             buf[..chunk].fill(0);
         } else {
+            // Verification uniquement (initial_check/check_piece) —
+            // hint `Volatile` : le stockage signale au cache OS que
+            // ces octets ne seront vraisemblablement jamais relus
+            // (ADR-0023, 87 — un re-check n'evince pas le cache).
             files
-                .pread_exact(file_id, pos, &mut buf[..chunk])
+                .pread_exact_hint(file_id, pos, &mut buf[..chunk], ReadHint::Volatile)
                 .with_context(|| {
                     format!("failed reading chunk of size {chunk}, read so far {read}")
                 })?;

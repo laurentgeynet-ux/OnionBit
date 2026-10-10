@@ -11,7 +11,7 @@ use crate::{
     torrent_state::{ManagedTorrentShared, TorrentMetadata},
 };
 
-use crate::storage::{StorageFactory, TorrentStorage, io_counters};
+use crate::storage::{ReadHint, StorageFactory, TorrentStorage, io_counters};
 
 use super::opened_file::OpenedFile;
 
@@ -71,6 +71,35 @@ impl TorrentStorage for FilesystemStorage {
             .pread_exact(offset, buf)?;
         // Instrumentation ADR-0023 etape 84 — ops + octets, apres succes.
         self.io.count_pread(buf.len() as u64);
+        Ok(())
+    }
+
+    fn pread_exact_hint(
+        &self,
+        file_id: usize,
+        offset: u64,
+        buf: &mut [u8],
+        hint: ReadHint,
+    ) -> anyhow::Result<()> {
+        let of = self.opened_files.get(file_id).context("no such file")?;
+        let guard = of.lock_read()?;
+        guard.pread_exact(offset, buf)?;
+        self.io.count_pread(buf.len() as u64);
+        // ADR-0023 etape 87 : verification — ces octets ne seront
+        // vraisemblablement jamais relus ; le dire au cache OS evite
+        // qu'un re-check de 40 Go evince tout (erreur ignoree : le
+        // hint n'est jamais une cause d'echec de lecture).
+        #[cfg(unix)]
+        if hint == ReadHint::Volatile {
+            use std::os::unix::io::AsRawFd;
+            let _ = nix::fcntl::posix_fadvise(
+                guard.as_raw_fd(),
+                offset.try_into().unwrap_or(i64::MAX),
+                buf.len() as i64,
+                nix::fcntl::PosixFadviseAdvice::POSIX_FADV_DONTNEED,
+            );
+        }
+        let _ = hint;
         Ok(())
     }
 

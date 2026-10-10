@@ -3,6 +3,23 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Étape 87 : hints de lecture au check — `ReadHint` (2026-10-11)
+
+ADR-0023, option retenue : le `pread` de vérification
+(`initial_check`, `force_recheck`, `check_piece`) relit des données
+qu'on ne relira jamais — sans hint il évince le cache OS pour rien.
+Nouveau `ReadHint { Normal, Volatile, Sequential }` sur le trait
+`TorrentStorage` (`pread_exact_hint`, défaut = `pread_exact` :
+`PrivateStorage`, `storage_bitdaemon` et `MmapStorage` n'ont rien à
+porter). `FilesystemStorage` : `POSIX_FADV_SEQUENTIAL` à l'ouverture
+en lecture + `POSIX_FADV_DONTNEED` sur la plage après chaque
+`pread` volatile (unix, erreurs ignorées). Côté Windows,
+`FILE_FLAG_SEQUENTIAL_SCAN` (0x20000000) a été essayé puis **retiré**
+: il désactive le read-ahead et `initial_check` passait de ~600 ms
+à ~35 s sur le banc e2e (×60) — documenté dans `opened_file.rs`.
+`update_hash_from_file` lit désormais en `Volatile`. 39/39 tests
+lib verts.
+
 ## Étape 84 : instrumentation I/O — compteurs `pread`/`pwrite` (2026-10-11)
 
 ADR-0023 mesurée : `vendor/librqbit/src/storage/io_counters.rs`
