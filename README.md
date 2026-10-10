@@ -552,7 +552,7 @@ IPv8 protocol conformance, circuit crypto, Flutter UI, interop testing.
 
 ## License
 
-Copyright (C) 2026 Laurent Geynet ([@Loulach](https://github.com/laurentgeynet-ux))
+Copyright (C) 2026 Laurent Geynet ([laurent.geynet@gmail.com](mailto:laurent.geynet@gmail.com))
 
 [GPL-3.0-or-later](LICENSE) — inherited from Tribler. OnionBit is a derivative work
 of Tribler's GPL-3.0 codebase at the architecture/behavior level.
