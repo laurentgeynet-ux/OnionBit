@@ -173,6 +173,55 @@ clé API, healthcheck. Tags locaux `onionbit:<version>`/`onionbit:latest`
 - **GUI Flutter / `onionbit-launcher` dans l'image** : headless par
   définition ; la web UI couvre le besoin client.
 
+### 8. Déploiement de référence : bootnodes onionbit-only (2026-10-10)
+
+Premier déploiement réel de l'image : **deux nœuds `stealth.role =
+"bridge"`** sur le VPS `217.154.112.61`, en `network_mode: host` —
+leur fonction est le bootstrap du réseau **onionbit-only** (profil
+`full` d'ADR-0022 : `ipv8.enabled=false` + `stealth.enabled=true`),
+pas le mesh legacy Tribler.
+
+| Conteneur | Port UDP stealth | API (loopback hôte) |
+| :--- | :--- | :--- |
+| `onionbit-boot-a` | 8090 | `127.0.0.1:8085` |
+| `onionbit-boot-b` | 7760 | `127.0.0.1:8086` |
+
+Mécanique constatée en déploiement :
+
+- **Ports figés en config, pas en flags** : `libtorrent/port`
+  (45000/45001) et `ipv8/interfaces` (8090+8091 / 7760+7761) sont
+  écrits dans `configuration.json` — la sonde `port..=port+10`
+  résoudrait les collisions au premier boot mais rendrait le port
+  imprévisible au restart.
+- **Le preset `full` est matérialisé à la main** dans
+  `configuration.json` (merge des clés §3 d'ADR-0022) **plus**
+  `stealth.role = "bridge"` : `PUT /api/privacy/profile` exige
+  `stealth.bridges` non vide (prérequis *client*) et récrirait
+  `role = "client"` — le rôle pont est un choix d'exploitation hors
+  sélecteur (ADR-0022 §6). Le profil effectif dérive donc en
+  `custom` — attendu, `role` n'est pas une clé couverte.
+- **Amorçage croisé** : chaque pont reçoit le lien
+  `onionbit-bridge://` de l'autre via `POST /api/stealth/bridges`
+  → session furtive établie (`hs1` accepté des deux côtés,
+  `sessions=1`). Le pont écoute sur le socket UDP de l'interface —
+  pas de port stealth dédié.
+- **Liens d'invitation** (clés publiques X25519 dérivées de
+  `state/identity/stealth_bridge.key`, `bridge_public`) — à
+  distribuer aux clients `full` dans `stealth.bridges` :
+  `onionbit-bridge://217.154.112.61:8090#752e0b…` et
+  `onionbit-bridge://217.154.112.61:7760#29fed9…`.
+- **Limite assumée** : deux conteneurs sur le même hôte = aucune
+  diversité d'anonymat (même IP, même AS). Ce déploiement couvre
+  **découverte et propagation** uniquement ; un bootnode sur un
+  second hébergeur reste la cible de phase 2.
+
+Correctif de build découvert par ce déploiement : `COPY crates`
+conserve les mtimes du contexte BuildKit → les vraies sources
+étaient ignorées par cargo face aux stubs du stage `deps` (rlibs
+stubs liées, `unresolved imports`). `RUN find crates -type f -exec
+touch {} +` après le `COPY` — commit `e5a04fa`, tag `v1.1.2`
+re-pointé pour republier l'image ghcr.io saine.
+
 ## Conséquences
 
 - **Positif** : déploiement serveur reproductible (`docker run` /

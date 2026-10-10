@@ -3,6 +3,19 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Déploiement : bootnodes onionbit-only sur VPS (ADR-0024 §8) (2026-10-10)
+
+Premier déploiement réel de l'image `onionbit:dev` : deux conteneurs
+`stealth.role="bridge"` en profil `full` (ADR-0022) sur le VPS
+`217.154.112.61` — bootstrap du réseau onionbit-only (aucun trafic
+legacy émis : `ipv8.enabled=false`, session furtive croisée établie,
+`transport_active`). Ports figés en `configuration.json` (BT
+45000/45001, UDP stealth 8090/7761 → 8090/7760), identités
+persistées sous `/opt/onionbit-test/data{,-b}`. Liens
+`onionbit-bridge://` générés pour distribution aux clients `full`.
+Limite documentée : même hôte = diversité nulle, bootnode sur un
+second hébergeur en phase 2.
+
 ## Release : version 1.1.2 (2026-10-10)
 
 Re-taggée après échec CI de `v1.1.1` : les lignes `private`
