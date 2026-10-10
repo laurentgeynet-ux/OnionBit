@@ -8,6 +8,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../features/diagnostic/domain/diagnostic_models.dart';
 import '../../features/diagnostic/presentation/providers/diagnostic_providers.dart';
+import '../../features/privacy/presentation/widgets/privacy_profile_switch.dart';
 import '../design/design_tokens.dart';
 import '../l10n/l10n_ext.dart';
 import 'breakpoints.dart';
@@ -16,7 +17,9 @@ import 'breakpoints.dart';
 /// d'anonymat dans la barre du haut : bouclier coloré + profondeur
 /// réelle de la lane (circuits READY, `actualHops` du pire cas).
 /// Sondé via `anonLaneProvider` (10 s — partagé avec la barre d'état,
-/// aucun poll supplémentaire). Un tap ouvre l'écran Diagnostic.
+/// aucun poll supplémentaire). Un tap ouvre l'écran Diagnostic ;
+/// au palier `compact` (pas de sidebar), la feuille expose le
+/// sélecteur de profil ADR-0022 + l'entrée Diagnostic.
 ///
 /// États « honnêtes » hérités d'`AnonLaneStatus` : `disabled` = stack
 /// IPv8 inactive (pas « en panne »), `waiting` = circuits en
@@ -60,7 +63,9 @@ class PrivacyHud extends ConsumerWidget {
         message: context.l10n.hudAnonTooltip,
         child: InkWell(
           borderRadius: BorderRadius.circular(AppRadius.full),
-          onTap: () => context.go('/diagnostic'),
+          onTap: compact
+              ? () => _ProfileSheet.show(context)
+              : () => context.go('/diagnostic'),
           child: Padding(
             padding: const EdgeInsets.symmetric(
               horizontal: AppSpace.sm,
@@ -82,6 +87,58 @@ class PrivacyHud extends ConsumerWidget {
               ],
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Feuille « profil d'anonymat » du palier compact (ADR-0022 §5 —
+/// la sidebar est absente à ce palier, le HUD porte l'accès) :
+/// sélecteur trois positions + entrée Diagnostic.
+class _ProfileSheet extends StatelessWidget {
+  const _ProfileSheet();
+
+  static Future<void> show(BuildContext context) =>
+      showModalBottomSheet(
+        context: context,
+        showDragHandle: true,
+        builder: (_) => const _ProfileSheet(),
+      );
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = context.l10n;
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(
+          AppSpace.md,
+          0,
+          AppSpace.md,
+          AppSpace.md,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              l10n.privacyProfileTitle,
+              style: Theme.of(context).textTheme.titleSmall,
+            ),
+            const SizedBox(height: AppSpace.sm),
+            const PrivacyProfileSwitch(),
+            const Divider(height: AppSpace.lg),
+            ListTile(
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.monitor_heart_outlined, size: 20),
+              title: Text(l10n.privacyProfileDiagnose),
+              onTap: () {
+                Navigator.of(context).pop();
+                context.go('/diagnostic');
+              },
+            ),
+          ],
         ),
       ),
     );

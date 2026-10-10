@@ -19,6 +19,7 @@ pub mod logging;
 pub mod messaging;
 pub mod metadata;
 pub mod pairing;
+pub mod privacy;
 pub mod rss;
 pub mod search;
 pub mod settings;

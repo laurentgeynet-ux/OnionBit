@@ -248,6 +248,157 @@ mémoire ». Une anomalie réelle trouvée et corrigée :
   idempotent) ; `.bitv`/staging attach/`.torrent` bornés ; aucun autre
   buffer fichier-entier dans les chemins de données.
 
+## Validation + docs : banc `bench_profiles.ps1`, ADR implémentée (2026-10-09, worktree adr22, étape 81 ADR-0022)
+
+- **`scripts/bench_profiles.ps1`** (nouveau, UTF-8 BOM + prologue) :
+  banc inter-démons local à 4 phases — (a) deux démons `legacy`
+  (A API 8291 / IPv8 18801, L 8292/18802) s'interconnectent via
+  `ext` HELLO (peer_count 1/1, `effective=legacy` des deux côtés) ;
+  (b) `PUT full` sur L sans pont → `409 missing_prerequisites` +
+  corps `{missing:["stealth.bridges"]}`, ajout du pont via
+  `POST /stealth/bridges` (binaire `stealth_bench` en `--serve-key`),
+  `PUT full` accepté → `restart_required` + `restart_pending`,
+  redémarrage de L → session stealth établie (tap `UdpEndpoint`
+  du pont = vérité fil) ; (c) `PUT legacy` + restart → le mesh IPv8
+  se re-paire (`overlays` A=5, L=4) ; (d) `POST /settings` sur une
+  clé couverte → `effective=custom` + `diverged_keys`.
+- **Oracle PCAP « zéro legacy »** : capture du trafic du pont en
+  `full` — aucun marqueur `LibNaCLPK`, `community_id`, `onionbit`,
+  `bittorrent`, `dht` sur le fil ; tout le trafic de L transite
+  morphé par le pont. **13/13 oracles verts** (run
+  `target/bench-profiles-20261009-190117/`).
+- **Écart d'oracle documenté (non bloquant)** : l'oracle (c)
+  visait la re-convergence ext `peer_count` symétrique ; ramené au
+  re-pairage **mesh IPv8** — après un restart unilatéral, le pair
+  survivant garde l'entrée `ext_known` périmée et
+  `hello_cooldown` = 3 600 s fige les re-sondes. Reproduit à
+  l'identique par un restart `legacy` pur **sans** profil → trou
+  pré-existant de re-vérification IPv8, hors périmètre ADR-0022.
+- **`bench_stealth_fingerprint.ps1`** : chemins de clé de pont
+  corrigés (`identity/` depuis ADR-0018) — le banc était cassé.
+- **`rest_privacy_repository.dart`** : corps `POST /stealth/bridges`
+  corrigé (`{"bridge": <lien>}` — le handler attendait `bridge`,
+  pas `link`).
+- **`docs/security/fingerprinting.md`** : tableau « surface
+  identifiable par profil » (legacy / full / custom) + limite de
+  re-convergence ext consignée. **`bancs_tests.md`** : entrée
+  catalogue SE-8 + journal. **ADR-0022 → Implémentée.**
+
+## App : `PrivacyProfileSwitch` dans la sidebar (2026-10-09, worktree adr22, étape 80 ADR-0022)
+
+- **Feature `privacy/`** (nouveau dossier — une fonctionnalité = un
+  propriétaire) : `domain/privacy_profile.dart` (`PrivacyProfileKind`
+  `legacy`/`full`/`custom` + `PrivacyProfileState` désérialisant
+  `{stored, effective, diverged_keys, restart_pending, guest,
+  stealth.bridges_configured}`), `domain/privacy_repository.dart`
+  (contrat), `data/rest_privacy_repository.dart` (`GET`/`PUT
+  /privacy/profile`, `POST /stealth/bridges`, `PUT /shutdown`),
+  `presentation/providers/privacy_providers.dart`
+  (`privacyProfileProvider` invalidé par SSE `settings_changed` — une
+  bascule d'un autre client ou une édition manuelle bascule
+  l'affichage sur « Personnalisé »).
+- **`PrivacyProfileSwitch`** : trois lignes pilule (style
+  `_SidebarItem` : `lock_outline` / `enhanced_encryption_outlined` /
+  `tune` + labels du copy deck ADR §5) insérées sous le bloc vitesses
+  de `AppSidebar` avec label de groupe « Profil d'anonymat » ; rail
+  repliée → icône du profil effectif + `PopupMenuButton` des trois
+  positions (coche sur effectif, `Badge` sur `restart_pending`) ;
+  palier `compact` → feuille depuis `PrivacyHud` (sélecteur + entrée
+  Diagnostic — le tap non-compact conserve `/diagnostic`).
+- **Flux de bascule** : `custom` direct (aucune clé réécrite) ;
+  `full` → dialogue de conséquences (interop Tribler sacrifiée,
+  redémarrage requis) + champ `onionbit-bridge://` inline quand
+  `bridges_configured == 0` (`POST /stealth/bridges` puis `PUT` —
+  `409 missing_prerequisites` replié sur le champ) ; retour `full`→
+  `legacy` → dialogue allégé ; erreurs → snackbar (`guest_session`
+  dédié). Session invitée : lignes inertes + tooltip.
+- **Redémarrage** : `restart_required` → dialogue (daemon local
+  loopback non-web : « Redémarrer maintenant » → `PUT /shutdown`,
+  respawn par `ensureDaemonRunning` à la reconnexion ; distant/web :
+  indication manuelle) ; `restart_pending` → puce « en attente » qui
+  le rouvre.
+- **i18n** : 27 clés `privacyProfile*` EN/FR (copy deck figé ADR §5).
+- **Tests** (10) : 3 positions, bascule `custom` directe, `full` avec
+  et sans pont (validation lien, `addBridge` → `PUT`), dialogue retour
+  `legacy`, `restart_required` → `shutdown`, puce `restart_pending`,
+  invité inerte, snackbar erreur, rail + menu, FR. Goldens
+  `shell_downloads_{medium,expanded}` régénérés.
+
+
+## API : `GET`/`PUT /api/privacy/profile` + gardes settings (2026-10-09, worktree adr22, étape 79 ADR-0022)
+
+- **`handlers/privacy.rs`** (nouveau) : `GET` expose `{stored,
+  effective, diverged_keys, restart_pending, guest,
+  stealth.bridges_configured}` — lecture libre y compris en invité ;
+  `PUT {profile}` applique le preset via `PrivacyProfile::apply`
+  (tout-ou-rien), persiste, `apply_service_settings` + SSE
+  `settings_changed`, répond `{modified, profile, effective,
+  diverged_keys, restart_required, applied_keys}`. Erreurs : `400`
+  profil inconnu, `409 missing_prerequisites` + corps
+  `{missing:["stealth.bridges"]}` lisible machine (l'UI ouvre le
+  dialogue pont), `409 guest_session` en invité.
+- **`restart_pending`** : nouvelle fonction `privacy::restart_pending`
+  — diff des clés froides entre la config persistée et le nouveau
+  snapshot `AppState.startup_config` (config au bind ; le mapping
+  inverse `CoreConfig` aurait été bancal, `enable_messaging` y est
+  irréversible).
+- **`update_settings` — trois gardes ajoutées** : écriture directe de
+  `privacy.profile` refusée `400` (précédent `identity.at_rest`, les
+  clés `privacy` inconnues restent mergeables) ; combinaisons
+  invalides refusées via le validateur commun
+  `DaemonConfig::validate_combination` — ferme le trou pré-existant
+  `stealth.enabled × ipv8.enabled` persistable (config non-bootable)
+  et remplace le garde inline `at_rest × role`.
+- **Session invitée — zéro artefact (repli documenté ADR)** :
+  `POST /api/settings` applique le merge en mémoire + SSE mais n'écrit
+  jamais le `configuration.json` du propriétaire — réponse
+  `{persisted:false}` ; refus sec écarté pour ne pas casser les
+  réglages session légitimes (saveas, RSS). Même discipline sur
+  `POST /api/stealth/bridges` (trou identique — un pont invité était
+  persisté). `PUT /api/privacy/profile` reste un refus dur : un profil
+  non persisté serait mensonger (clés structurantes à redémarrage).
+- **Routes** : `/api/privacy/profile` GET+PUT derrière `api_key_auth` ;
+  hors whitelist du gate identitaire → `409` en `pending`/`locked`.
+- **Tests** (10) : GET défauts, PUT legacy no-op/custom, `full` sans
+  pont `409`+`missing`, cycle `full`↔`legacy` avec pont (`restart_
+  required`/`restart_pending`), divergence→`custom`, refus
+  `privacy.profile` direct + clé inconnue acceptée, hybride `stealth ×
+  ipv8` refusé + paire atomique acceptée, corps malformés, auth `401`,
+  gate `pending`, invité (GET libre, PUT `guest_session`, settings/
+  ponts mémoire seuls — fichier inchangé vérifié sur disque).
+
+## Core : `PrivacyProfile` — profils d'anonymat prédéfinis (2026-10-09, worktree adr22, étape 78 ADR-0022)
+
+- **`onionbit-core/src/privacy.rs`** (nouveau) : énum `PrivacyProfile
+  {legacy, full, custom}` + section `privacy { profile }` de
+  `DaemonConfig` (`#[serde(default)]`, sparse — `config_version`
+  inchangé). Un profil est un **preset matérialisé** :
+  `preset_patch()` est la source unique de la table de correspondance
+  ADR-0022 §3 (20 clés couvertes : `ipv8.enabled`, `stealth.*`,
+  `download_defaults.*`, `tunnel_community.*`, `ext.*`,
+  `storage.default_area` ; jamais `stealth.bridges`, `ext.curators`,
+  `identity.*`, `api.*`). `effective()` dérive le profil affiché —
+  une clé couverte divergeant du preset stocké retombe sur `custom`
+  avec `diverged_keys`.
+- **`apply()`** : tout-ou-rien sur copie (même discipline que
+  `POST /api/settings`) — `full` refuse ferme sans pont
+  (`MissingPrerequisites(["stealth.bridges"])` → `409` côté API) ;
+  le résultat passe le validateur de combinaison avant mutation.
+  `ApplyOutcome { applied_keys, restart_required }` — le restart est
+  dérivé du diff ∩ clés froides (`ipv8.enabled`, `stealth.*`,
+  `ext.enabled`, `ext.obf_enabled` immuable, `tunnel_community.*`).
+- **`DaemonConfig::validate_combination()`** (nouveau, commun) :
+  `stealth.enabled × ipv8.enabled` refusé (ADR-0017 — aujourd'hui le
+  refus n'existe qu'au démarrage dans `session.rs`, l'arbre générique
+  acceptait de persister une config non-bootable) +
+  `identity.at_rest × stealth.role ≠ client` (ADR-0016). Sert aux
+  profils maintenant, à `update_settings` à l'étape 79.
+- **Tests** (11) : mapping exact des deux presets, couverture
+  identique legacy/full (20 clés), divergence→`custom` + clé hors
+  preset ignorée, `custom` no-op, refus `full` sans pont,
+  `full→legacy` restaure `ipv8.enabled` et préserve les ponts,
+  combinaisons refusées.
+
 ## UI : mot de passe choisi en double saisie (confirmation) (2026-10-09, worktree adr21)
 
 - **`core/widgets/password_pair_field.dart`** (nouveau) : paire

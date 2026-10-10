@@ -1221,6 +1221,10 @@ pub struct DaemonConfig {
     /// Section `storage` — zones de telechargement ADR-0018
     /// (etapes 59-62).
     pub storage: StorageConfig,
+    /// Section `privacy` — profil d'anonymat ADR-0022
+    /// (`legacy`/`full`/`custom` ; intention persistée, l'effectif
+    /// est dérivé par `privacy::PrivacyProfile::effective`).
+    pub privacy: crate::privacy::PrivacyFileConfig,
     /// Section `database`.
     pub database: EnabledSection,
     /// Section `dht_discovery`.
@@ -1277,6 +1281,7 @@ impl Default for DaemonConfig {
             stealth: StealthFileConfig::default(),
             identity: IdentityFileConfig::default(),
             storage: StorageConfig::default(),
+            privacy: crate::privacy::PrivacyFileConfig::default(),
             database: EnabledSection::enabled(),
             dht_discovery: EnabledSection::enabled(),
             content_discovery_community: EnabledSection::enabled(),
@@ -1520,6 +1525,28 @@ impl DaemonConfig {
         }
         let next: Self = serde_json::from_value(merged)?;
         *self = next;
+        Ok(())
+    }
+
+    /// Règles de combinaison inter-sections — validateur **commun**
+    /// (ADR-0022) appelé au démarrage (`Session::start` sur le
+    /// `CoreConfig` dérivé), par `POST /api/settings` et par les
+    /// profils d'anonymat : une config qui refuse de démarrer ne doit
+    /// plus être persistante par aucun chemin.
+    pub fn validate_combination(&self) -> Result<(), &'static str> {
+        // ADR-0017 : furtivité et mesh legacy s'excluent — hybride
+        // refusé ferme (le même refus existe au démarrage sur le
+        // `CoreConfig` dérivé, `session.rs`).
+        if self.stealth.enabled && self.ipv8.enabled {
+            return Err("stealth.enabled exclut ipv8.enabled — combinaison hybride refusee");
+        }
+        // ADR-0016 : `at_rest` exige un redémarrage surveillé —
+        // incompatible avec un pont/passerelle sans surveillance.
+        if self.identity.at_rest && self.stealth.enabled && self.stealth.role != "client" {
+            return Err(
+                "identity.at_rest est incompatible avec stealth.role != \"client\" (un pont doit redemarrer sans surveillance)",
+            );
+        }
         Ok(())
     }
 
