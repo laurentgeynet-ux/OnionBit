@@ -1,0 +1,25 @@
+# This file is part of OnionBit.
+# Copyright (C) 2026 Laurent Geynet <laurent.geynet@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Contexte de build epure : seuls crates/ + vendor/ + manifests sont
+# requis pour le stage Rust, app/ (sources) pour le stage web UI.
+
+.git/
+.github/
+target/
+dist/
+app/build/
+.onionbit/
+state/
+data/
+docs/
+scripts/
+fuzz/
+assets/
+*.key
+*.pem
+*.log
+Dockerfile
+.dockerignore
+docker-compose.yml
