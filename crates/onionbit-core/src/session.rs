@@ -292,6 +292,14 @@ struct Inner {
     /// re-telecharge en douce — la reprise explicite rebascule en
     /// `temp`. Etat derive (recalcule a chaque boot), non persiste.
     missing: std::sync::Mutex<std::collections::HashSet<String>>,
+    /// Dernier instantane connu des telechargements en cycle
+    /// `remove_engine_only` + `readd_row` (cle : infohash hex) —
+    /// `downloads()` le sert pendant la fenetre ou l'objet moteur est
+    /// absent, sinon l'entree clignotait hors de `GET /api/downloads`
+    /// (rangement a completion, `recheck`, `update_hops`, changement
+    /// de zone — cycle qui peut durer un `validate_fastresume`
+    /// complet, ~30-86 s observes sur HDD).
+    in_lifecycle: std::sync::Mutex<std::collections::HashMap<String, DownloadStats>>,
     /// `AugmentedSearch` Python : vocabulaire de sous-mots appris des
     /// titres de torrents, utilise par `local_search` (`augmenter`
     /// du `DatabaseEndpoint`).
@@ -333,6 +341,24 @@ impl Inner {
             .read()
             .unwrap_or_else(|e| e.into_inner())
             .clone()
+    }
+}
+
+/// Garde RAII d'un cycle remove/re-add : tant qu'elle vit,
+/// `downloads()` sert l'instantane capture par
+/// [`CoreSession::lifecycle_mark`] pour cet infohash.
+struct LifecycleMark<'a> {
+    inner: &'a Inner,
+    ih_hex: String,
+}
+
+impl Drop for LifecycleMark<'_> {
+    fn drop(&mut self) {
+        self.inner
+            .in_lifecycle
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&self.ih_hex);
     }
 }
 
@@ -747,6 +773,7 @@ impl CoreSession {
                 restore_done: tokio::sync::watch::channel(false).0,
                 lifecycle_gate: tokio::sync::Mutex::new(()),
                 missing: std::sync::Mutex::new(std::collections::HashSet::new()),
+                in_lifecycle: std::sync::Mutex::new(std::collections::HashMap::new()),
                 augmenter,
                 bandwidth: Arc::new(crate::services::bandwidth::CongestionController::new()),
                 started_at: std::time::Instant::now(),
@@ -3526,6 +3553,7 @@ impl CoreSession {
         let Some(dl) = self.find_download(id_or_hash) else {
             return self.update_pending_hops(id_or_hash, new_hops);
         };
+        let _mark = self.lifecycle_mark(&dl);
         let ih = dl.info_hash();
         let mut row = self
             .row_of(&ih)?
@@ -3636,14 +3664,30 @@ impl CoreSession {
 
     /// Liste les telechargements (moteur principal + lanes anonymes).
     pub fn downloads(&self) -> Vec<DownloadStats> {
-        self.all_engines()
+        let mut out: Vec<DownloadStats> = self
+            .all_engines()
             .iter()
             .flat_map(|e| e.list())
             .map(|mut s| {
                 self.apply_missing(&mut s);
                 s
             })
-            .collect()
+            .collect();
+        // Cycle remove/re-add en vol : l'objet moteur est
+        // temporairement absent de tous les moteurs — on sert le
+        // dernier instantane connu (`in_lifecycle`) pour que
+        // l'entree ne clignote pas hors du listing.
+        let in_lifecycle = self
+            .inner
+            .in_lifecycle
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        for (ih, s) in in_lifecycle.iter() {
+            if !out.iter().any(|x| x.info_hash == *ih) {
+                out.push(s.clone());
+            }
+        }
+        out
     }
 
     /// Stats par pair d'un telechargement (tous moteurs — principal
@@ -3835,6 +3879,7 @@ impl CoreSession {
     async fn resume_missing(&self, id_or_hash: &str) -> Result<()> {
         let _lifecycle = self.inner.lifecycle_gate.lock().await;
         let (dl, mut row) = self.download_and_row(id_or_hash)?;
+        let _mark = self.lifecycle_mark(&dl);
         let ih_hex = dl.info_hash_hex();
         if self.row_files_missing(&row) {
             // Toujours absent : bascule vers le tampon quand la paire
@@ -4113,6 +4158,39 @@ impl CoreSession {
         }
     }
 
+    /// Marque `dl` comme en cycle remove/re-add : le dernier
+    /// instantane connu est conserve dans `in_lifecycle` tant que la
+    /// garde retournee vit — l'entree ne disparait plus de
+    /// `GET /api/downloads` pendant la fenetre sans objet moteur
+    /// (`move_on_completion`, `recheck`, `update_hops`, zones).
+    /// L'instantane est fige en `Checking` : le re-add repasse par
+    /// une verification de pieces, c'est l'etat honnete a afficher.
+    fn lifecycle_mark(&self, dl: &Download) -> LifecycleMark<'_> {
+        let ih_hex = dl.info_hash_hex();
+        let mut s = dl.stats();
+        self.apply_missing(&mut s);
+        s.live = false;
+        s.download_speed = 0;
+        s.upload_speed = 0;
+        s.peers_live = 0;
+        s.peers_connecting = 0;
+        s.peers_queued = 0;
+        s.peers_seen = 0;
+        s.peers_dead = 0;
+        s.eta_human = None;
+        s.error = None;
+        s.state = DownloadState::Checking;
+        self.inner
+            .in_lifecycle
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(ih_hex.clone(), s);
+        LifecycleMark {
+            inner: &self.inner,
+            ih_hex,
+        }
+    }
+
     /// Ligne persistante + download actif d'un `id_or_hash`
     /// (couple requis par les operations de reglages du PATCH).
     fn download_and_row(&self, id_or_hash: &str) -> Result<(Download, DownloadRow)> {
@@ -4132,6 +4210,7 @@ impl CoreSession {
     pub async fn recheck(&self, id_or_hash: &str) -> Result<()> {
         let _lifecycle = self.inner.lifecycle_gate.lock().await;
         let (dl, mut row) = self.download_and_row(id_or_hash)?;
+        let _mark = self.lifecycle_mark(&dl);
         let ih = dl.info_hash();
         if row.torrent_data.is_none() {
             row.torrent_data = dl.torrent_bytes().map(|b| b.to_vec());
@@ -4190,6 +4269,7 @@ impl CoreSession {
             .transpose()?
             .unwrap_or_else(|| dest_dir.clone());
         let (dl, mut row) = self.download_and_row(id_or_hash)?;
+        let _mark = self.lifecycle_mark(&dl);
         // ADR-0018 etape 62 : franchissement de zone — destination
         // sous `@private/…` (ou ligne deja privee) → chemin dedie de
         // re-encapsulation `OBD` / decryptage, pas un `fs` brut.
@@ -4353,6 +4433,7 @@ impl CoreSession {
         row: &DownloadRow,
     ) -> Result<()> {
         let _lifecycle = self.inner.lifecycle_gate.lock().await;
+        let _mark = self.lifecycle_mark(dl);
         use crate::private_zone::PrivateSubdir;
         let Some(zone) = self.private_zone() else {
             return Ok(());
@@ -5467,4 +5548,58 @@ async fn start_ipv8_with_identity(
     )
     .await?;
     Ok(Some(stack))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Un download en cycle remove/re-add (`in_lifecycle`) reste
+    /// visible dans `downloads()` — instantane fige en `Checking`
+    /// au lieu de disparaitre du listing pendant la fenetre sans
+    /// objet moteur.
+    #[tokio::test]
+    async fn downloads_sert_instantane_cycle_vie() {
+        let dir = tempfile::tempdir().unwrap();
+        let session = CoreSession::start_offline(
+            CoreConfig::offline(dir.path().to_path_buf()),
+            Notifier::new(),
+        )
+        .await
+        .unwrap();
+        assert!(session.downloads().is_empty());
+        let ih = "ab".repeat(20);
+        session.inner.in_lifecycle.lock().unwrap().insert(
+            ih.clone(),
+            DownloadStats {
+                id: 7,
+                info_hash: ih.clone(),
+                name: Some("cycle.bin".into()),
+                state: DownloadState::Checking,
+                progress_bytes: 9,
+                fetched_bytes: 0,
+                total_bytes: 10,
+                uploaded_bytes: 0,
+                file_progress: vec![9],
+                finished: false,
+                live: false,
+                download_speed: 0,
+                upload_speed: 0,
+                peers_live: 0,
+                peers_connecting: 0,
+                peers_queued: 0,
+                peers_seen: 0,
+                peers_dead: 0,
+                eta_human: None,
+                error: None,
+            },
+        );
+        let list = session.downloads();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].info_hash, ih);
+        assert_eq!(list[0].state, DownloadState::Checking);
+        assert_eq!(list[0].name.as_deref(), Some("cycle.bin"));
+        assert_eq!(list[0].progress_bytes, 9);
+        session.stop().await;
+    }
 }
