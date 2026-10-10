@@ -3095,7 +3095,7 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
 name = "onionbit-api"
-version = "1.1.0"
+version = "1.1.1"
 dependencies = [
  "axum",
  "base64 0.23.1",
@@ -3128,7 +3128,7 @@ dependencies = [
 
 [[package]]
 name = "onionbit-bittorrent"
-version = "1.1.0"
+version = "1.1.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3161,7 +3161,7 @@ dependencies = [
 
 [[package]]
 name = "onionbit-cli"
-version = "1.1.0"
+version = "1.1.1"
 dependencies = [
  "axum",
  "clap",
@@ -3177,7 +3177,7 @@ dependencies = [
 
 [[package]]
 name = "onionbit-core"
-version = "1.1.0"
+version = "1.1.1"
 dependencies = [
  "bytes",
  "fs2",
@@ -3213,7 +3213,7 @@ dependencies = [
 
 [[package]]
 name = "onionbit-crypto"
-version = "1.1.0"
+version = "1.1.1"
 dependencies = [
  "argon2",
  "chacha20poly1305",
@@ -3236,7 +3236,7 @@ dependencies = [
 
 [[package]]
 name = "onionbit-daemon"
-version = "1.1.0"
+version = "1.1.1"
 dependencies = [
  "axum",
  "axum-server",
@@ -3264,7 +3264,7 @@ dependencies = [
 
 [[package]]
 name = "onionbit-db"
-version = "1.1.0"
+version = "1.1.1"
 dependencies = [
  "rusqlite",
  "tempfile",
@@ -3275,7 +3275,7 @@ dependencies = [
 
 [[package]]
 name = "onionbit-format"
-version = "1.1.0"
+version = "1.1.1"
 dependencies = [
  "hex 0.4.3",
  "onionbit-crypto",
@@ -3286,7 +3286,7 @@ dependencies = [
 
 [[package]]
 name = "onionbit-ipv8"
-version = "1.1.0"
+version = "1.1.1"
 dependencies = [
  "hex 0.4.3",
  "onionbit-crypto",
@@ -3301,7 +3301,7 @@ dependencies = [
 
 [[package]]
 name = "onionbit-launcher"
-version = "1.1.0"
+version = "1.1.1"
 dependencies = [
  "embed-resource",
  "windows-sys 0.61.2",
@@ -3309,7 +3309,7 @@ dependencies = [
 
 [[package]]
 name = "onionbit-messaging"
-version = "1.1.0"
+version = "1.1.1"
 dependencies = [
  "chacha20poly1305",
  "hkdf",
@@ -3323,7 +3323,7 @@ dependencies = [
 
 [[package]]
 name = "onionbit-network-policy"
-version = "1.1.0"
+version = "1.1.1"
 dependencies = [
  "thiserror 2.0.21",
  "tracing",
@@ -3331,7 +3331,7 @@ dependencies = [
 
 [[package]]
 name = "onionbit-test-support"
-version = "1.1.0"
+version = "1.1.1"
 dependencies = [
  "onionbit-format",
  "tokio",
@@ -3339,7 +3339,7 @@ dependencies = [
 
 [[package]]
 name = "onionbit-tunnel"
-version = "1.1.0"
+version = "1.1.1"
 dependencies = [
  "futures-util",
  "hex 0.4.3",

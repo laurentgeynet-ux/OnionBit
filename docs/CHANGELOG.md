@@ -3,6 +3,14 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Release : version 1.1.1 (2026-10-10)
+
+Re-taggée après échec CI de `v1.1.0` : la toolchain stable des runners
+(rust 1.99) ajoute les lints `op_ref`/`repeat_once` — absents de la
+toolchain locale — qui faisaient échouer `clippy -D warnings` sur deux
+tests de `onionbit-core::privacy`. Bump patch + fix des deux sites ;
+le tag `v1.1.1` relance la chaîne complète jusqu'à `publish`.
+
 ## Release : version 1.1.0 (2026-10-10)
 
 - **Version workspace `1.0.0` → `1.1.0`** (`Cargo.toml`, `app/pubspec.yaml`
