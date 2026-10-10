@@ -1,0 +1,55 @@
+# This file is part of OnionBit.
+# Copyright (C) 2026 Laurent Geynet <laurent.geynet@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Exemple de deploiement du daemon OnionBit (ADR-0024, Phase 16).
+# Doc complete : docs/docker.md.
+#
+# Mode recommande (hote Linux) : `network_mode: host` — l'API reste
+# loopback (joignable depuis l'hote sur http://127.0.0.1:8085), les
+# ports P2P sont directs, UPnP fonctionnel :
+#
+#   docker compose up -d --build
+#
+# Variante bridge : commenter `network_mode: host`, decommenter
+# `ports:` et le service `forwarder` plus bas.
+
+services:
+  onionbit:
+    build:
+      context: .
+      # `final` = daemon seul ; `final-webui` = web UI embarquee.
+      target: final-webui
+    image: onionbit:local
+    container_name: onionbit
+    network_mode: host
+    # --- variante bridge : retirer network_mode ci-dessus, puis ---
+    # ports:
+    #   - "45000:45000/tcp"   # libtorrent/port — pairs BitTorrent
+    #   - "45000:45000/udp"   # uTP + DHT BEP5
+    #   - "7759:7759/udp"     # ipv8/interfaces[UDPIPv4].port (a fixer
+    #                          via --ipv8-port ou configuration.json)
+    #   - "8085:8085/tcp"     # port publie par le forwarder (API)
+    volumes:
+      - ./data:/data          # bind mount : chown -R 10001:10001 ./data
+    tmpfs:
+      - /tmp                  # tempfile reste en RAM (read_only)
+    read_only: true           # toutes les ecritures vivent sous /data
+    security_opt:
+      - no-new-privileges:true
+    init: true                # PID 1 correct : signaux relayes, zombies reapes
+    restart: unless-stopped
+
+  # Forwarder — variante bridge UNIQUEMENT. Le loopback est propre a
+  # chaque conteneur : le sidecar doit partager le namespace reseau du
+  # daemon (network_mode: service:), jamais un reseau bridge a part.
+  # AVANT DE L'ACTIVER : api/web_ui_inject_key = false dans
+  # configuration.json — sinon la <meta> d'index.html livre la cle API
+  # a quiconque joint le port. Ajouter "8085:8085/tcp" aux ports du
+  # service onionbit ci-dessus.
+  # forwarder:
+  #   image: alpine/socat
+  #   network_mode: "service:onionbit"
+  #   command: "tcp-listen:8085,fork,reuseaddr tcp:127.0.0.1:8085"
+  #   # Alternative nginx : penser `proxy_buffering off;` sur
+  #   # /api/events, sinon le flux SSE est tamponne et l'UI fige.

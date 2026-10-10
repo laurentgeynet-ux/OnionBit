@@ -31,6 +31,8 @@ chaque étape (cf. `AGENTS.md`, "Workflow par étape").
 | `vendor/` | `librqbit*` vendored+patchés (`[patch.crates-io]`) : `DatagramSocket` injectable, uTP/DHT/tracker-UDP sur tunnel (ADR-0007) |
 | `app/` | Interface Flutter desktop (Riverpod + go_router, consomme `onionbit-api` REST/SSE) |
 | `assets/` | Logo, screenshots et social-preview référencés par le README public |
+| `Dockerfile` | Image headless du daemon (ADR-0024) : multi-stage rust→debian-slim, cibles `final`/`final-webui` |
+| `docker-compose.yml` | Exemple de déploiement (host-network + variante bridge/forwarder) ; doc : `docs/docker.md` |
 | `.github/workflows/ci.yml` | CI GitHub Actions ; `CODEOWNERS`, `dependabot.yml`, `ISSUE_TEMPLATE/` |
 | `docs/plans/plan_faisabilite.md` *(local)* | Analyse de faisabilité, risques, décisions |
 | `docs/plans/roadmap.md` *(local)* | Plan d'implémentation détaillé (source de vérité de l'avancement) |
