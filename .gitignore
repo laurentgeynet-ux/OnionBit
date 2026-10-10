@@ -25,3 +25,9 @@ scripts/__pycache__/
 # journaux de campagne). Seul docs/plans/README.md reste tracké.
 docs/plans/*
 !docs/plans/README.md
+
+# Keystores et secrets de signature — ne jamais commiter
+*.jks
+*.keystore
+keystore.b64
+key.properties
