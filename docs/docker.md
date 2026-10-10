@@ -118,6 +118,77 @@ d'exit** doit être **joignable en entrée** : publier le port IPv8 UDP
 en bridge (`-p <port>:<port>/udp` avec `--ipv8-port` fixé), ou
 préférer le host-network qui rend le nœud directement adressable.
 
+## Pont furtif / bootnode onionbit-only (mode `full` serveur)
+
+> ⚠️ **L'image démarre en profil `legacy`/`client` par défaut** —
+> compatible Tribler, mesh IPv8 clair. Un pont du réseau
+> onionbit-only (ADR-0022 §7) exige une configuration **manuelle** :
+> ce n'est ni un preset du sélecteur ni un flag de lancement.
+
+Recette (déploiement de référence : ADR-0024 §8) :
+
+1. Premier run pour générer l'état (identité + `stealth_bridge.key`,
+   qui détermine la clé publique du lien d'invitation) :
+
+   ```bash
+   mkdir -p data && chown -R 10001:10001 data
+   docker run -d --name onionbit-bridge --network host \
+     -v ./data:/data onionbit:dev --ipv8-port 8090 --listen 127.0.0.1:8085
+   ```
+
+2. Éditer `data/state/configuration.json` — preset `full` serveur
+   (ADR-0022 §7 : table §3 + `stealth.role="bridge"`, `bridges` non
+   requis, `at_rest` **interdit**) et ports figés :
+
+   ```jsonc
+   {
+     "privacy": { "profile": "full" },
+     "ipv8": {
+       "enabled": false,
+       "interfaces": [
+         { "interface": "UDPIPv4", "ip": "0.0.0.0", "port": 8090 },
+         { "interface": "UDPIPv6", "ip": "::", "port": 8091 }
+       ]
+     },
+     "stealth": { "enabled": true, "role": "bridge",
+                  "cover_traffic": true, "bridges": [] },
+     "libtorrent": { "port": 45000, "download_defaults":
+       { "anonymity_enabled": true, "number_hops": 3,
+         "safeseeding_enabled": true } },
+     "tunnel_community": { "enabled": true, "exitnode_enabled": false,
+       "guards_enabled": true, "messaging_enabled": true,
+       "messaging_hops": 3, "messaging_groups_enabled": true,
+       "ledger_enabled": true, "ledger_enforce": true,
+       "messaging_consent_ledger": true },
+     "ext": { "enabled": true, "ledger_enabled": true,
+              "obf_enabled": true },
+     "storage": { "default_area": "private" }
+   }
+   ```
+
+3. `docker restart onionbit-bridge` — le log doit afficher
+   `stealth_mode=on role=bridge legacy_ipv8=disabled
+   public_dht=disabled direct_bittorrent=disabled`.
+
+4. Ouvrir le port UDP stealth au pare-feu (le pont écoute sur le port
+   de l'interface — 8090 ici) ; en host-network c'est le pare-feu de
+   l'**hôte** qui décide (ufw/panel cloud fournisseur).
+
+5. Lien d'invitation à distribuer aux clients `full` : clé publique
+   X25519 dérivée de `data/state/identity/stealth_bridge.key`
+   (`bridge_public`, 32 o bruts) au format
+   `onionbit-bridge://<ip_publique>:<port>#<pk_hex>`.
+
+Notes :
+
+- `PUT /api/privacy/profile` n'est **pas** utilisable ici : le
+  prérequis `stealth.bridges` (client-only) refuserait `full` et le
+  preset récrirait `role="client"`. Bascule par édition du fichier.
+- `GET /api/privacy/profile` dérivera `effective="custom"` — normal
+  (le rôle `bridge` est hors sélecteur, ADR-0022 §7).
+- Un pont entre dans un mesh en recevant les liens `onionbit-bridge://`
+  des autres ponts via `POST /api/stealth/bridges`.
+
 ## Clé API et pilotage
 
 ```bash
