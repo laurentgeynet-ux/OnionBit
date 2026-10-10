@@ -175,7 +175,7 @@ clé API, healthcheck. Tags locaux `onionbit:<version>`/`onionbit:latest`
 
 ### 8. Déploiement de référence : bootnodes onionbit-only (2026-10-10)
 
-Premier déploiement réel de l'image : **deux nœuds `stealth.role =
+Premier déploiement réel de l'image : **trois nœuds `stealth.role =
 "bridge"`** sur le VPS `217.154.112.61`, en `network_mode: host` —
 leur fonction est le bootstrap du réseau **onionbit-only** (profil
 `full` d'ADR-0022 : `ipv8.enabled=false` + `stealth.enabled=true`),
@@ -185,6 +185,14 @@ pas le mesh legacy Tribler.
 | :--- | :--- | :--- |
 | `onionbit-boot-a` | 8090 | `127.0.0.1:8085` |
 | `onionbit-boot-b` | 7760 | `127.0.0.1:8086` |
+| `onionbit-boot-c` | 7770 | `127.0.0.1:8087` |
+
+Mesh furtif complet entre les trois ponts (chaque nœud détient les
+liens des deux autres dans `stealth.bridges`, sessions croisées
+établies) — résilience intra-VPS : le réseau survit à la perte d'un
+conteneur. Le port BT est épinglé à 45000/45001/45002 respectivement
+et les règles `ufw` correspondantes sont ouvertes (UDP stealth +
+BT).
 
 Mécanique constatée en déploiement :
 
@@ -208,12 +216,14 @@ Mécanique constatée en déploiement :
 - **Liens d'invitation** (clés publiques X25519 dérivées de
   `state/identity/stealth_bridge.key`, `bridge_public`) — à
   distribuer aux clients `full` dans `stealth.bridges` :
-  `onionbit-bridge://217.154.112.61:8090#752e0b…` et
-  `onionbit-bridge://217.154.112.61:7760#29fed9…`.
-- **Limite assumée** : deux conteneurs sur le même hôte = aucune
-  diversité d'anonymat (même IP, même AS). Ce déploiement couvre
-  **découverte et propagation** uniquement ; un bootnode sur un
-  second hébergeur reste la cible de phase 2.
+  `onionbit-bridge://217.154.112.61:8090#752e0b…`,
+  `onionbit-bridge://217.154.112.61:7760#29fed9…` et
+  `onionbit-bridge://217.154.112.61:7770#1f310c…`.
+- **Limite assumée** : trois conteneurs sur le même hôte = aucune
+  diversité d'anonymat (même IP, même AS, même point de panne). Ce
+  déploiement couvre **découverte, propagation et résilience
+  applicative** uniquement ; un bootnode sur un second hébergeur
+  reste la cible de phase 2.
 
 Correctif de build découvert par ce déploiement : `COPY crates`
 conserve les mtimes du contexte BuildKit → les vraies sources
