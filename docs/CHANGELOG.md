@@ -3,6 +3,15 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Spec : variante serveur du profil `full` (ADR-0022 §7) (2026-10-10)
+
+Addendum à ADR-0022 : la posture des nœuds d'infrastructure
+(`stealth.role="bridge"`/`gateway`) est désormais normée — table §3
+identique sauf `role`, `bridges` non requis (le nœud *est* le pont),
+`at_rest` interdit, bascule manuelle (le `PUT` profile reste un flux
+client), `effective="custom"` attendu. Cohérent avec le déploiement
+VPS d'ADR-0024 §8.
+
 ## Déploiement : bootnodes onionbit-only sur VPS (ADR-0024 §8) (2026-10-10)
 
 Premier déploiement réel de l'image `onionbit:dev` : **trois** conteneurs

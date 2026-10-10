@@ -378,6 +378,44 @@ dialogue (aucune clé n'est modifiée).
   (ADR-0016) ; un preset qui l'écrirait dans l'arbre contournerait
   le refus ferme de `settings.rs`. Recommandé en UI, jamais forcé.
 
+### 7. Variante serveur : `full` + rôle `bridge`/`gateway`
+
+Addendum (2026-10-10, suite au déploiement ADR-0024 §8) — le
+preset `full` du §3 est une posture **cliente**. Un nœud d'exploitation
+qui *sert* le réseau furtif (bootnode, pont d'infrastructure) applique
+la **même table §3 à une exception près** :
+
+| Clé | Preset `full` client | Variante serveur |
+| :--- | :--- | :--- |
+| `stealth.role` | `client` | `bridge` (ou `gateway`) |
+| `stealth.bridges` | requis (prérequis `409`) | non requis — le nœud *est* le pont ; les liens d'autres ponts y sont facultatifs (mesh entre ponts) |
+| `stealth.client_allowlist` | — (hors preset) | optionnel : restreint les `client_id` admis |
+| `identity.at_rest` | recommandé | **interdit** — un pont doit redémarrer sans surveillance (garde `at_rest × role` existante) |
+
+Conséquences :
+
+- La bascule se fait **manuellement** dans `configuration.json`
+  (merge du patch §3 + `role`), jamais via `PUT
+  /api/privacy/profile` : le prérequis `stealth.bridges` bloquerait
+  la bascule et le preset récrirait `role = "client"`. Les deux
+  comportements sont *corrects pour un client* — la variante
+  serveur n'a pas vocation à passer par le sélecteur.
+- `GET /api/privacy/profile` dérive `effective = "custom"` sur ces
+  nœuds (`stealth.role` est une clé couverte divergeant du preset
+  stocké) — **attendu et sans correction prévue** : le label
+  « personnalisé » reflète fidèlement une posture hors sélecteur.
+  Si l'affichage devait un jour distinguer « full serveur » de
+  « custom utilisateur », ce serait un quatrième profil dédié, pas
+  un réglage de la dérivation.
+- `ipv8.enabled=false` reste inconditionnel : un pont émet
+  **uniquement** du trafic morphé — y compris vers les clients qui
+  le contactent (sinon il déclassifierait le régime de tout le
+  monde, ADR-0017 §Limites).
+- Les ports UDP stealth et BitTorrent doivent être **figés en
+  config** (la sonde `port..=port+10` rend le port imprévisible au
+  restart) et publiés au pare-feu — voir ADR-0024 §8 pour le
+  déploiement de référence.
+
 ## Limites assumées
 
 - **La bascule `full` exige un pont que le logiciel ne peut pas
