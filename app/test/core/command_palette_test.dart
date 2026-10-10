@@ -128,7 +128,13 @@ void main() {
     // bas sont sous le fold de la liste paresseuse : défilement d'abord.
     expect(find.text('NAVIGATION'), findsOneWidget);
     expect(find.text('CONVERSATIONS'), findsOneWidget);
-    // La conversation du provider apparaît dans le catalogue.
+    // La conversation du provider apparaît dans le catalogue —
+    // sous le fold depuis l'entrée « Canaux » : défilement d'abord.
+    await tester.scrollUntilVisible(
+      find.text('Alice'),
+      200,
+      scrollable: find.byType(Scrollable).last,
+    );
     expect(find.text('Alice'), findsOneWidget);
     // SETTINGS d'abord (le scroll jusqu'à ACTIONS le ressortirait par
     // le haut), puis le dernier groupe.
@@ -186,9 +192,9 @@ void main() {
     expect(router.state.uri.path, '/messages');
     final ctx = tester.element(find.text('page /messages'));
     expect(
-      ProviderScope.containerOf(
-        ctx,
-      ).read(openConversationsProvider).map((t) => t.convId),
+      ProviderScope.containerOf(ctx)
+          .read(openConversationsProvider)
+          .map((t) => t.convId),
       contains('aabbccdd00112233'),
     );
   });

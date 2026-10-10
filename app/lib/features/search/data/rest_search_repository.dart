@@ -75,6 +75,12 @@ class RestSearchRepository implements SearchRepository {
     for (final j in _results(event)) _parse(j, TorrentSource.remote),
   ];
 
+  /// Parse une réponse `{"results": [...]}` générique — réutilisée
+  /// par le contenu des canaux (même format torrent que
+  /// `/api/metadata`).
+  static List<TorrentResult> parseResults(dynamic resp, TorrentSource source) =>
+      [for (final j in _results(resp)) _parse(j, source)];
+
   @override
   Future<List<TorrentResult>> searchLocal(
     String query, {
@@ -134,5 +140,4 @@ class RestSearchRepository implements SearchRepository {
       leechers: (h['leechers'] as num?)?.toInt() ?? 0,
     );
   }
-
 }

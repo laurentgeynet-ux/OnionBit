@@ -25,6 +25,15 @@ const List<NavDestinationSpec> kNavCatalog = [
     selectedIcon: Icons.search,
   ),
   NavDestinationSpec(
+    path: '/channels',
+    id: NavId.channels,
+    icon: Icons.collections_bookmark_outlined,
+    selectedIcon: Icons.collections_bookmark,
+    // Secondaire comme `/about` : la nav compacte est bornee a 5
+    // (downloads, search, messages, diagnostic, settings).
+    primary: false,
+  ),
+  NavDestinationSpec(
     path: '/messages',
     id: NavId.messages,
     icon: Icons.forum_outlined,

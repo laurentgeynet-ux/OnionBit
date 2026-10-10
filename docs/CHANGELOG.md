@@ -3,6 +3,23 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Étape 101 : UI Flutter — page « Canaux » (2026-10-11)
+
+ADR-0025 bouclée côté client : nouvelle feature
+`app/lib/features/channels/` (domain `Channel`,
+`RestChannelsRepository` sur `/api/channels*`, providers Riverpod)
+et page listant les canaux suivis — abonnement par dialogue
+(`public_key` hex validée + `origin_id`), contenu synchronisé
+dépliable chargé à l'expansion (`FutureProvider.family` par
+canal), badge « curé » (chaque entrée vérifiée par la signature
+du curateur), santé jointe `num_seeders`/`num_leechers`, bouton
+Ajouter vers le dialogue de téléchargement, désabonnement
+confirmé. Destination `/channels` dans le catalogue (sidebar —
+la nav compacte reste bornée à 5) ; i18n fr/en ; tests : palette
+de commandes ajustée (conversation sous le fold), goldens de
+coquille régénérés. La recherche distante en direct via SSE
+`remote_query_results` était déjà câblée depuis l'étape 96.
+
 ## Étape 100 : découverte encapsulée stealth — trame `ENCAP` (2026-10-11)
 
 Le réseau onionbit-only (`full`/stealth) gagne la découverte de
