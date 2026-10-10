@@ -194,6 +194,36 @@ jobs:
           name: onionbit-windows-arm64
           path: dist/OnionBit-*-windows-arm64-headless.zip
 
+  # Image Docker (ADR-0024, etape 94) : buildx + push ghcr.io sur tag
+  # v* uniquement (les builds PR/master restent locaux — cf.
+  # docs/docker.md). La variante final-webui embarque l'UI Flutter.
+  docker:
+    name: "docker image (ghcr.io)"
+    runs-on: ubuntu-24.04
+    needs: [rust]
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: final-webui
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/onionbit:${{ github.ref_name }}
+            ghcr.io/${{ github.repository_owner }}/onionbit:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
   # Publication : uniquement sur tag v*. Telecharge tous les artefacts
   # de package et cree la release GitHub marquee « Latest » (les tags
   # alpha/beta sont les releases publiques du projet). Le job ARM64
