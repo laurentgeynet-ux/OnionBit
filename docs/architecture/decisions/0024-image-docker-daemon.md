@@ -233,8 +233,8 @@ Mécanique constatée en déploiement :
 Pour éviter à chaque opérateur de recomposer la variante serveur à
 la main (le piège constaté en §8 : `PUT /api/privacy/profile`
 inutilisable pour un pont), le daemon accepte `--profile
-<legacy|full|bridge>` — et `ONIONBIT_PROFILE` via clap `env`, le
-moyen naturel de le passer en conteneur
+<legacy|full|bridge|gateway>` — et `ONIONBIT_PROFILE` via clap
+`env`, le moyen naturel de le passer en conteneur
 (`docker run -e ONIONBIT_PROFILE=bridge`).
 
 Sémantique **premier boot uniquement** : le flag n'est lu que quand

@@ -3,6 +3,20 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Fix : SIGTERM reçu pendant le démarrage n'est plus fatal (étape 89) (2026-10-10)
+
+`daemon_offline_sigterm_arret_propre` échouait de façon déterministe
+en CI (linux+macos) depuis l'étape 89 : le handler SIGTERM n'était
+enregistré que dans `wait_shutdown_sources`, après le démarrage de
+la session — un `docker stop` (ou le `kill -TERM` du test) arrivé
+pendant migrations/identité tuait le process (exit 15) au lieu
+d'armer l'arrêt propre. Les handlers Ctrl-C/SIGTERM sont désormais
+posés en tête d'`async_main` : le signal arme `ShutdownSignal` (qui
+propage déjà via watch+Notify), avalé dès le premier
+`wait_shutdown_sources` atteint. Couvre aussi le cas réel
+`docker stop` pendant le boot. Point revue : `--profile` accepte
+aussi `gateway` (cohérent avec `apply_first_boot` et ADR-0022 §7).
+
 ## Feat : `--profile` matérialise le preset au premier boot (ADR-0024 §9) (2026-10-10)
 
 `onionbit-daemon --profile <legacy|full|bridge>` (et

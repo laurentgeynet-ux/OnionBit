@@ -203,11 +203,12 @@ struct Args {
     /// Profil d'anonymat materialise au **premier boot** seulement
     /// (configuration.json absent — ADR-0024, deploiement Docker) :
     /// `legacy`/`full` sont les presets du selecteur (ADR-0022,
-    /// `full` exige `stealth.bridges` deja present), `bridge` est la
-    /// variante serveur (ADR-0022 §7 : table `full` + `stealth.role`,
-    /// sans prerequis). Ignore silencieusement sur un state_dir deja
-    /// initialise — la configuration existante fait toujours foi.
-    #[arg(long, value_parser = ["legacy", "full", "bridge"], env = "ONIONBIT_PROFILE")]
+    /// `full` exige `stealth.bridges` deja present), `bridge` et
+    /// `gateway` sont les variantes serveur (ADR-0022 §7 : table
+    /// `full` + `stealth.role`, sans prerequis). Ignore
+    /// silencieusement sur un state_dir deja initialise — la
+    /// configuration existante fait toujours foi.
+    #[arg(long, value_parser = ["legacy", "full", "bridge", "gateway"], env = "ONIONBIT_PROFILE")]
     profile: Option<String>,
 }
 
@@ -506,6 +507,25 @@ async fn async_main() -> ExitCode {
     if args.console {
         console::attach();
     }
+
+    // Source unique d'arret : Ctrl-C, tray « Quitter », /api/shutdown,
+    // SIGTERM (unix). Les handlers Ctrl-C/SIGTERM sont poses TOUT DE
+    // SUITE : leur enregistrement retire la disposition par defaut,
+    // donc un SIGTERM recu PENDANT le demarrage (`docker stop` sur un
+    // conteneur encore en boot, migrations/identite longues) arme le
+    // signal au lieu de tuer le process — les `wait_shutdown_sources`
+    // en aval avalent le drapeau des que la session existe.
+    let shutdown_signal = ShutdownSignal::new();
+    {
+        let s = shutdown_signal.clone();
+        tokio::spawn(async move {
+            tokio::select! {
+                _ = ctrl_c_or_never() => {}
+                _ = sigterm_or_never() => {}
+            }
+            s.trigger();
+        });
+    }
     let state_dir = resolve_state_dir(&args);
     let _ = std::fs::create_dir_all(&state_dir);
 
@@ -632,11 +652,6 @@ async fn async_main() -> ExitCode {
             .extend(args.bootstrap_peers.clone());
         cfg
     };
-
-    // Source unique d'arret : Ctrl-C, tray « Quitter », /api/shutdown.
-    // Cree avant la session pour que le tray « Quitter » existe meme
-    // pendant le demarrage.
-    let shutdown_signal = ShutdownSignal::new();
 
     // Repertoire du build web servi par l'API (`api/web_ui_*`) —
     // resolu avant le tray pour activer « Ouvrir dans le navigateur ».

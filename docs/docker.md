@@ -139,9 +139,9 @@ Recette (déploiement de référence : ADR-0024 §8) :
      -v ./data:/data onionbit:dev --ipv8-port 8090 --listen 127.0.0.1:8085
    ```
 
-   `legacy` et `full` sont aussi acceptés (`full` = posture cliente,
-   exige `stealth.bridges` déjà présent → réservé aux state_dirs
-   pré-initialisés ; refus ferme sinon).
+   `legacy`, `full` et `gateway` sont aussi acceptés (`full` =
+   posture cliente, exige `stealth.bridges` déjà présent → réservé
+   aux state_dirs pré-initialisés ; refus ferme sinon).
 
 2. Le log doit afficher `stealth_mode=on role=bridge
    legacy_ipv8=disabled public_dht=disabled

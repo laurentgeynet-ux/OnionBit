@@ -43,7 +43,6 @@ impl ShutdownSignal {
     }
 
     /// Déclenche l'arrêt (idempotent).
-    #[cfg(any(windows, test))]
     pub fn trigger(&self) {
         let _ = self.flag.send(true);
         self.inner.notify_one();
