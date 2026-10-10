@@ -25,7 +25,11 @@ COPY --parents crates/*/Cargo.toml ./
 # Stubs lib/bin : compiler les deps tierces (dont bitdaemon-* en git
 # epingle — git est present dans rust:bookworm) sans les sources
 # metier. Un main.rs ET un lib.rs par crate couvrent les cibles
-# explicites ([[bin]]) et autodetectees.
+# explicites ([[bin]] -> src/main.rs) et autodetectees. Les build.rs
+# des crates (daemon, launcher — cfg(windows)) ne sont PAS copies :
+# non declares par `build =`, leur absence est ignoree. Attention si
+# un futur manifest ajoute `build = "x.rs"` ou `[[bin]] path =
+# "src/bin/…"` : copier le fichier ou le stuber ici.
 RUN set -eu; \
     for d in crates/*/; do \
         mkdir -p "${d}src"; \
