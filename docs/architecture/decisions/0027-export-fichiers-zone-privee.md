@@ -1,13 +1,14 @@
 # ADR-0027 — Explorateur privé et export en clair de la zone privée
 
-Statut : Proposée (2026-10-10).
+Statut : Acceptée (2026-10-10).
 
 ## Contexte
 
 La zone privée (ADR-0018) stocke le contenu téléchargé sous forme
-chiffrée : fichiers `.obd` (AES-CTR + `K_file` par fichier), noms
-HMAC, catalogue dans `manifest.obm` — tout est lié à l'identité et
-illisible sans elle. C'est le comportement voulu.
+chiffrée : fichiers `.obd` (chunks ChaCha20-Poly1305 à nonce
+aléatoire + `K_file` par fichier), noms HMAC, catalogue dans
+`manifest.obm` — tout est lié à l'identité et illisible sans elle.
+C'est le comportement voulu.
 
 Trois trous fonctionnels liés :
 
@@ -50,10 +51,19 @@ téléchargements. Endpoints d'extension (même protection
   (le `.torrent` est persisté — les noms sont connus même hors
   ligne et sans objet moteur). `404` si l'entrée est absente du
   manifeste.
-- Orphelins `.obd` (sur disque, hors manifeste) : listés comme
-  groupes opaques — contenu déchiffrable (`K_file` = fonction de
-  l'identité) mais **noms irrécupérables** sans `torrent_data` ;
-  exportables par clé de groupe, noms de sortie génériques.
+- Entrées manifeste **sans `torrent_data`** (reconstruites par le
+  scan de montage) : les noms sont récupérés par balayage du
+  groupe — chaque `.obd` porte son `(infohash, relpath)` en clair
+  dans le sceau `scan_ct` (`K_scan`, dérivé de l'identité) ; la
+  taille vient du `plain_len` de l'en-tête `OBD`. Un sceau absent
+  (`relpath_len = 0`, chemin > 3300 o) rend le `.obd`
+  indéchiffrable — `K_file` exige le couple — : fichier omis.
+- **Orphelins `OrphanReport`** (groupes dont le `scan_ct` a
+  *échoué* au montage) : contenu **indéchiffrable** — sans
+  `(infohash, relpath)`, `K_file` n'est pas dérivable ; ces
+  groupes sont hors portée de l'explorateur (ils relèvent de
+  `DELETE /api/private/orphans`, déjà existant — l'API ne les
+  expose d'ailleurs que par compteurs).
 
 UI : page « Zone privée » (accessible uniquement quand
 `state == "mounted"`) — arborescence par entrée manifeste, taille
@@ -75,7 +85,9 @@ reste exportable tant que le manifeste le connaît.
   partage de handles Windows ni de topologie opaque dans le code
   appelant.
 - Noms de sortie = métadonnées du `torrent_data` (manifeste),
-  jamais les noms HMAC ; groupe orphelin = noms génériques.
+  sinon `relpath` retrouvé par `scan_ct` (entrée sans
+  `torrent_data`), jamais les noms HMAC ; sceau absent →
+  fichier non exportable (clé non dérivable), omis.
 - `files: Option<Vec<usize>>` — export partiel ; `None` = tout.
 - `dest_dir` résolu par `paths.resolve_input` (`@private/…`
   refusé — exporter dans la zone n'a pas de sens).
@@ -98,7 +110,8 @@ reste exportable tant que le manifeste le connaît.
 
 Page « Zone privée » (visible seulement `state == "mounted"`) —
 arborescence par entrée manifeste, tailles et dates, orphelins
-distingués. **Clic droit** sur un fichier ou une entrée :
+distingués (non exportables — purge seule). **Clic droit** sur un
+fichier ou une entrée :
 
 - **« Lire »** — quand le type est affichable/lisible en
   local : export vers le cache temporaire de l'app
@@ -130,15 +143,22 @@ cryptographique (ADR-0018) : `K_store = HKDF(racine identité)`
   bruit irrécupérable, *même avec l'accès disque complet*. Un
   attaquant qui « change l'identité » n'obtient rien — changer
   l'identité ne débloque pas les fichiers, ça les condamne.
-- **Zone `locked`/`guest`** → `GET /api/private*` répond
-  `409 identity_locked` : aucune lecture, aucune exportation.
+- **Zone `locked`/`guest`** → les *nouveaux* endpoints
+  (`files`, `export`) répondent `409 identity_locked` : aucune
+  lecture de contenu, aucune exportation. `GET /api/private`
+  conserve son comportement existant : `200` avec
+  `state:"locked"` et tableaux vides (le manifeste ne peut pas
+  être ouvert sans les clés — il n'y a rien à fuiter).
 - La seule surface d'exposition est l'**identité déverrouillée en
   session + `api_key_auth`** — même frontière de confiance que
   tout le reste du daemon (l'explorateur n'aggrave pas le
   modèle : quiconque détient déjà l'API authentifiée peut lire
-  `GET /api/private`). La mitigation reste le verrouillage
-  d'identité (`PUT /api/identity/lock`), qui jette `K_store` de
-  la mémoire.
+  `GET /api/private`). La mitigation serait un verrouillage
+  d'identité en cours de session — **aucun endpoint de relock
+  n'existe encore** (seuls `unlock`/`create`/`guest`/`at_rest`
+  sont routés) ; le seul moyen de jeter `K_store` aujourd'hui est
+  le redémarrage du daemon. Un `POST /api/identity/lock` est une
+  évolution candidate indépendante de cette décision.
 - `K_scan` (secours `OBM` perdu) dérive aussi de `K_store` —
   pas de porte dérobée : impossible sans l'identité non plus.
 
@@ -154,9 +174,12 @@ cryptographique (ADR-0018) : `K_store = HKDF(racine identité)`
   source de vérité du contenu privé.
 - **Endpoint de lecture en continu** (`GET
   /api/private/{key}/files/{i}/content`, déchiffrement à la volée
-  + `Range`) : supérieur pour l'aperçu/streaming — `.obd` AES-CTR
-  permet l'accès positionnel ; plumbing Range non trivial,
-  **reporté** comme évolution possible sans changement de modèle.
+  + `Range`) : supérieur pour l'aperçu/streaming — le `.obd` est
+  chiffré par **chunks indépendants** (nonce aléatoire par chunk),
+  donc un accès positionnel existe déjà (`ObdFile::read_range` —
+  chaque chunk lisible isolément, un Range déchiffre les chunks
+  recouverts en entier) ; plumbing Range non trivial, **reporté**
+  comme évolution possible sans changement de modèle.
   Sans lui, « Lire » (§4) passe par l'export vers le cache
   temporaire — même coût disque, zéro API de plus.
 - **Ouvrir le dossier opaque réel** : rejetée — montre des blobs
@@ -173,6 +196,9 @@ cryptographique (ADR-0018) : `K_store = HKDF(racine identité)`
 - **Vigilance** : l'export produit une **copie en clair** — hors
   périmètre de la zone, responsabilité de l'utilisateur ;
   affiché dans l'UI (« copie non chiffrée »).
-- **Limites assumées** : orphelins `.obd` sans manifeste exportés
-  sous noms génériques (contenu OK, noms perdus) ; v1 synchrone,
-  copie intégrale par fichier, pas de suivi de progression.
+- **Limites assumées** : entrées sans `torrent_data` exportées
+  sous les `relpath` retrouvés par `scan_ct` (noms réels
+  récupérés — sceau absent → fichier omis, indéchiffrable ;
+  groupes `OrphanReport` hors portée, indéchiffrables) ; v1
+  synchrone, copie intégrale par fichier, pas de suivi de
+  progression.

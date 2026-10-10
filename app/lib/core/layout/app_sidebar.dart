@@ -101,6 +101,11 @@ class AppSidebar extends ConsumerWidget {
     final downloads = ref.watch(downloadsProvider).value;
     final errors = downloads?.where((d) => d.isError).length ?? 0;
     final filtersExpanded = ref.watch(sidebarFiltersExpandedProvider);
+    // ADR-0027 : l'entrée « Zone privée » n'existe que si la zone
+    // est montée (identité déverrouillée) — masquée sinon. Le
+    // provider des réglages sert la réponse brute `GET /api/private`.
+    final privateMounted =
+        ref.watch(privateZoneProvider).value?['state'] == 'mounted';
     final persistedCollapsed = ref.watch(sidebarCollapsedProvider);
     final collapsed = collapsedOverride ?? persistedCollapsed;
     final l10n = context.l10n;
@@ -246,11 +251,12 @@ class AppSidebar extends ConsumerWidget {
                   // Data-driven : `selected` suit `d.path` — un index
                   // croisé ne peut plus allumer le mauvais onglet.
                   for (final d in kNavCatalog.skip(2))
-                    _NavItem(
-                      d: d,
-                      collapsed: collapsed,
-                      selected: currentPath == d.path,
-                    ),
+                    if (d.id != NavId.privateZone || privateMounted)
+                      _NavItem(
+                        d: d,
+                        collapsed: collapsed,
+                        selected: currentPath == d.path,
+                      ),
                 ],
               ),
             ),

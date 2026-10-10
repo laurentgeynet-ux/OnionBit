@@ -1144,6 +1144,88 @@ pub async fn purge_private_orphans(
     Ok(Json(serde_json::json!({ "purged": true })))
 }
 
+/// `GET /api/private/{key}/files` — fichiers d'une entree du
+/// manifeste prive (ADR-0027, etape 109) : `key` = `row_key`
+/// opaque ou infohash reel, indifferent (`resolve_entry`).
+/// `409 identity_locked` zone `locked`/`guest`, `404` cle
+/// absente du manifeste.
+pub async fn get_private_files(
+    State(state): State<AppState>,
+    Path(key): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    if state.session.private_area_state() != "mounted" {
+        return Err(ApiError::conflict("identity_locked"));
+    }
+    let files = state
+        .session
+        .private_files(&key)?
+        .ok_or_else(|| ApiError::not_found("entree privee inconnue"))?;
+    let files: Vec<_> = files
+        .iter()
+        .map(|f| {
+            serde_json::json!({
+                "index": f.index,
+                "path": f.relpath,
+                "length": f.length,
+            })
+        })
+        .collect();
+    Ok(Json(serde_json::json!({ "files": files })))
+}
+
+/// Corps de `POST /api/private/{key}/export`.
+#[derive(Debug, Deserialize)]
+pub struct PrivateExportBody {
+    /// Dossier de destination clair (spec `@root/…` admis,
+    /// `@private/…` refuse — exporter dans la zone n'a pas de
+    /// sens).
+    pub dest_dir: String,
+    /// Sous-ensemble d'`index` (`None`/absent = tous les fichiers).
+    pub files: Option<Vec<usize>>,
+}
+
+/// `POST /api/private/{key}/export` — copie dechiffree d'une
+/// entree privee vers `dest_dir`, **sans mutation** de la zone
+/// (ADR-0027 §2-3). Erreurs : `409 identity_locked`, `404` cle
+/// absente du manifeste, `400` `dest_dir`/index invalide.
+pub async fn post_private_export(
+    State(state): State<AppState>,
+    Path(key): Path<String>,
+    Json(body): Json<PrivateExportBody>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    if state.session.private_area_state() != "mounted" {
+        return Err(ApiError::conflict("identity_locked"));
+    }
+    let dest = state
+        .session
+        .paths()
+        .resolve_input(std::path::Path::new(&body.dest_dir))
+        .map_err(|e| ApiError::bad_request(e.to_string()))?;
+    // `resolve_input` accepte `@private/…` — refus explicite :
+    // produire du clair dans la zone chiffree n'a pas de sens.
+    if state
+        .session
+        .paths()
+        .to_portable(&dest)
+        .is_some_and(|s| s == "@private" || s.starts_with("@private/"))
+    {
+        return Err(ApiError::bad_request(
+            "dest_dir ne peut pas etre dans la zone privee",
+        ));
+    }
+    let out = state
+        .session
+        .export_private(&key, dest.clone(), body.files)
+        .await
+        .map_err(invalid_state_as_bad_request)?
+        .ok_or_else(|| ApiError::not_found("entree privee inconnue"))?;
+    Ok(Json(serde_json::json!({
+        "exported": out.exported,
+        "bytes": out.bytes,
+        "dest_dir": dest.display().to_string(),
+    })))
+}
+
 /// Les erreurs metier `InvalidState` des chemins anonymes (stack ipv8
 /// inactive, lane indisponible) sont des erreurs de requete, pas des
 /// 404 : les ressources introuvables sont testees explicitement avant.

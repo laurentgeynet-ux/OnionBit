@@ -3,6 +3,55 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## ADR-0027 étape 110 : page Flutter « Zone privée » (2026-10-10)
+
+Explorateur de la zone privée côté app, visible uniquement quand
+`GET /api/private` rapporte `state == "mounted"` (destination nav +
+sidebar conditionnées, garde de route).
+
+- Feature `app/lib/features/private_zone/` : domaine, repository
+  REST (`GET …/files`, `POST …/export`), providers Riverpod, page
+  avec arborescence par entrée manifeste (noms, tailles, dates,
+  distinction des entrées reconstruites via `scan_ct` et des
+  orphelins non exportables — compteurs seuls, purge existante).
+- « Lire » : export vers un cache local (`core/platform/
+  private_cache*`, stub hors desktop) puis `openPath` — badge
+  « copie non chiffrée ». « Extraire vers un dossier… » : dialogue
+  de destination côté daemon → `POST export` → toast compte+octets.
+  Sélection unitaire, multi-fichiers et entrée entière.
+- i18n fr/en (ARB + régénéré) ; `check_i18n.ps1` propre,
+  `flutter analyze` propre, `flutter test` 100/100. Correctif de
+  test : la palette Ctrl+K défile désormais jusqu'à l'en-tête
+  `CONVERSATIONS` (groupe NAVIGATION rallongé d'une entrée).
+
+## ADR-0027 étapes 108-109 : explorateur privé + export REST (2026-10-10)
+
+Backend de l'explorateur de zone privée (ADR-0027 — corrigée à la
+revue : `.obd` = ChaCha20-Poly1305 par chunks, pas AES-CTR ;
+`PUT /api/identity/lock` n'existe pas ; les groupes orphelins dont
+le `scan_ct` a échoué sont **indéchiffrables**, non exportables).
+
+- `PrivateZone::{resolve_entry, list_files, export}` : clé
+  `row_key` opaque ou infohash réel ; liste `{index, relpath,
+  length}` depuis `torrent_data` (`TorrentMeta::parse`, convention
+  `relpath_bytes` de la factory) ; repli `scan_path` du groupe
+  quand `torrent_data` est absent — les vrais noms sont
+  récupérés du sceau `scan_ct`. `export` = copie déchiffrée
+  streamée (1 Mio) vers `dest_dir/<relpath assaini>` — **aucune
+  mutation** de la zone (ni moteur, ni DB, ni manifeste).
+- `Session::{private_files, export_private}` (`spawn_blocking`).
+- REST : `GET /api/private/{key}/files`,
+  `POST /api/private/{key}/export` `{dest_dir, files?}` →
+  `{exported, bytes, dest_dir}` ; `409 identity_locked`
+  (`locked`/`guest`), `404` clé absente, `400` `dest_dir`
+  invalide ou `@private/…`. Journalisation sans noms.
+- Tests : 3 core (`export` round-trip + sélection + refus index,
+  repli `scan_ct` après double perte manifeste, zone verrouillée)
+  + 1 API (clés acceptées, 404, 400 `@private/`, export réel).
+
+Reste : UI Flutter (étape 110 — page « Zone privée », menu
+contextuel Lire/Extraire) puis revue (111).
+
 ## Étape 95 : banc d'interop remote-select vs Tribler réel (2026-10-11)
 
 `scripts/interop_select.ps1` + `scripts/interop/py_select_node.py` +

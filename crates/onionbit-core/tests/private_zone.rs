@@ -373,6 +373,171 @@ async fn private_manifeste_double_perte_reconstruit() {
     session.stop().await;
 }
 
+/// Explorateur + export ADR-0027 : `private_files` liste depuis le
+/// `torrent_data` du manifeste (cle infohash ou row_key opaque),
+/// `export_private` copie une version dechiffree **sans muter** la
+/// zone (entree manifeste et ligne intactes), index hors bornes
+/// refuse.
+#[tokio::test]
+async fn private_export_copie_sans_mutation() {
+    let dir = tempfile::tempdir().unwrap();
+    let cfg = CoreConfig::offline(dir.path().to_path_buf());
+    let bytes = onionbit_test_support::test_torrent_bytes("export.bin", 42);
+    let meta = onionbit_format::torrent::TorrentMeta::parse(&bytes).unwrap();
+    let ih = meta.info_hash_hex();
+
+    let session = CoreSession::start(cfg, Notifier::new())
+        .await
+        .expect("start");
+    session
+        .add_torrent_bytes_anon_area(bytes, true, 0, false, None, StorageArea::Private)
+        .await
+        .expect("add prive");
+
+    // Listing par infohash reel ET par cle opaque de ligne.
+    let files = session
+        .private_files(&ih)
+        .expect("list")
+        .expect("entree manifeste");
+    assert_eq!(files.len(), 1);
+    assert_eq!(files[0].relpath, "export.bin");
+    assert_eq!(files[0].length, 42);
+    let row_key = hex::encode(session.stored_row_key(&ih_bytes(&ih)));
+    let files2 = session
+        .private_files(&row_key)
+        .expect("list row_key")
+        .expect("entree par row_key");
+    assert_eq!(files2[0].relpath, "export.bin");
+    assert!(session
+        .private_files(&"00".repeat(20))
+        .expect("list")
+        .is_none());
+
+    // Contenu connu ecrit dans le `.obd` via les cles de la zone
+    // (l'init a deja materialise le premier fichier).
+    let zone = session.private_zone().unwrap();
+    let group = std::fs::read_dir(session.paths().private_temp())
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let obd_path = std::fs::read_dir(&group)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .find(|p| p.extension().is_some_and(|e| e == "obd"))
+        .expect(".obd materialise");
+    let mut ih_arr = [0u8; 20];
+    ih_arr.copy_from_slice(&ih_bytes(&ih));
+    let obd = onionbit_crypto::obdfile::ObdFile::open(
+        &obd_path,
+        &zone.keys().file_cipher(&ih_arr, b"export.bin"),
+    )
+    .expect("open obd");
+    let content: Vec<u8> = (0..42u8).map(|i| i.wrapping_mul(7)).collect();
+    obd.write_range(0, &content).expect("write");
+    drop(obd);
+
+    // Export : copie dechiffree identique a la source, zone intacte.
+    let dest = dir.path().join("clair");
+    std::fs::create_dir_all(&dest).unwrap();
+    let out = session
+        .export_private(&ih, dest.clone(), None)
+        .await
+        .expect("export")
+        .expect("entree");
+    assert_eq!(out.exported, 1);
+    assert_eq!(out.bytes, 42);
+    assert_eq!(
+        std::fs::read(dest.join("export.bin")).unwrap(),
+        content,
+        "copie dechiffree differente de la source"
+    );
+    // Selection partielle : index hors bornes refuse, zone inchangee.
+    assert!(session
+        .export_private(&ih, dest.clone(), Some(vec![9]))
+        .await
+        .is_err());
+    assert_eq!(session.private_manifest_entries().len(), 1);
+    assert!(obd_path.exists(), ".obd source disparu apres export");
+    session.stop().await;
+}
+
+/// Entree manifeste sans `torrent_data` (reconstruite au montage) :
+/// `private_files` retrouve le vrai nom via le sceau `scan_ct` du
+/// `.obd` et l'export fonctionne — jamais de noms generiques.
+#[tokio::test]
+async fn private_list_files_repli_scan_ct() {
+    let dir = tempfile::tempdir().unwrap();
+    let cfg = CoreConfig::offline(dir.path().to_path_buf());
+    let bytes = onionbit_test_support::test_torrent_bytes("rescue-name.bin", 42);
+    let meta = onionbit_format::torrent::TorrentMeta::parse(&bytes).unwrap();
+    let ih = meta.info_hash_hex();
+
+    let session = CoreSession::start(cfg.clone(), Notifier::new())
+        .await
+        .expect("start #1");
+    session
+        .add_torrent_bytes_anon_area(bytes, true, 0, false, None, StorageArea::Private)
+        .await
+        .expect("add prive");
+    let roots = session.paths().clone();
+    session.stop().await;
+
+    // Double perte : l'entree reconstruite n'a pas de torrent_data.
+    std::fs::remove_file(roots.private_manifest()).expect("rm manifest.obm");
+    let bak = {
+        let mut p = roots.private_manifest().into_os_string();
+        p.push(".bak");
+        std::path::PathBuf::from(p)
+    };
+    let _ = std::fs::remove_file(&bak);
+
+    let session = CoreSession::start(cfg, Notifier::new())
+        .await
+        .expect("start #2");
+    session.wait_restored().await;
+    let entry = session.private_manifest_entries()[0].clone();
+    assert!(entry.torrent_data.is_none(), "torrent_data inattendu");
+
+    // Le repli scan_ct rend le vrai relpath — export fonctionnel.
+    let files = session.private_files(&ih).expect("list").expect("entree");
+    assert_eq!(files.len(), 1);
+    assert_eq!(files[0].relpath, "rescue-name.bin");
+    let dest = dir.path().join("clair2");
+    std::fs::create_dir_all(&dest).unwrap();
+    let out = session
+        .export_private(&ih, dest.clone(), None)
+        .await
+        .expect("export")
+        .expect("entree");
+    assert_eq!(out.exported, 1);
+    assert!(dest.join("rescue-name.bin").exists());
+    session.stop().await;
+}
+
+/// Zone verrouillee : `private_files`/`export_private` rendent
+/// `None` (l'API traduit en `409 identity_locked`).
+#[tokio::test]
+async fn private_export_refuse_zone_verrouillee() {
+    let dir = tempfile::tempdir().unwrap();
+    let cfg = CoreConfig::offline(dir.path().to_path_buf());
+    let session = CoreSession::start_gated(cfg, Notifier::new(), true)
+        .await
+        .expect("start gated");
+    assert_eq!(session.private_area_state(), "locked");
+    assert!(session
+        .private_files(&"00".repeat(20))
+        .expect("list")
+        .is_none());
+    assert!(session
+        .export_private(&"00".repeat(20), dir.path().join("x"), None)
+        .await
+        .expect("export")
+        .is_none());
+    session.stop().await;
+}
+
 /// Suppression privee : ligne opaque, entree manifeste, fichiers
 /// `.obd` et fastresume opaque tous retires.
 #[tokio::test]

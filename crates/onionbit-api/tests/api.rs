@@ -5102,3 +5102,86 @@ async fn privacy_profile_guest_lecture_seule_zero_persistance() {
 
     srv.session.stop().await;
 }
+
+/// ADR-0027 etape 109 : explorateur prive — `GET
+/// /api/private/{key}/files` (cle infohash ou row_key opaque) et
+/// `POST /api/private/{key}/export` (copie dechiffree sans
+/// mutation) ; `404` cle inconnue, `400` `@private/` refuse.
+#[tokio::test]
+async fn private_files_et_export_rest() {
+    let srv = spawn_server().await;
+    let bytes = onionbit_test_support::test_torrent_bytes("api-priv.bin", 42);
+    let meta = onionbit_format::torrent::TorrentMeta::parse(&bytes).unwrap();
+    let ih = meta.info_hash_hex();
+    srv.session
+        .add_torrent_bytes_anon_area(
+            bytes,
+            true,
+            0,
+            false,
+            None,
+            onionbit_core::config::StorageArea::Private,
+        )
+        .await
+        .expect("add prive");
+
+    // Listing par l'infohash reel.
+    let resp = srv
+        .client
+        .get(srv.url(&format!("/api/private/{ih}/files")))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["files"][0]["path"], "api-priv.bin");
+    assert_eq!(body["files"][0]["length"], 42);
+
+    // Meme listing par la cle opaque de ligne.
+    let row_key = hex::encode(srv.session.stored_row_key(&hex::decode(&ih).unwrap()));
+    let resp = srv
+        .client
+        .get(srv.url(&format!("/api/private/{row_key}/files")))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    // Cle absente du manifeste → 404.
+    let resp = srv
+        .client
+        .get(srv.url(&format!("/api/private/{}/files", "00".repeat(20))))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 404);
+
+    // `dest_dir` dans la zone → 400.
+    let resp = srv
+        .client
+        .post(srv.url(&format!("/api/private/{ih}/export")))
+        .json(&serde_json::json!({"dest_dir": "@private/temp"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 400);
+
+    // Export effectif : 42 octets dechiffres sous le nom reel.
+    let dest = srv._dir.path().join("clair-api");
+    std::fs::create_dir_all(&dest).unwrap();
+    let resp = srv
+        .client
+        .post(srv.url(&format!("/api/private/{ih}/export")))
+        .json(&serde_json::json!({"dest_dir": dest.display().to_string()}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["exported"], 1);
+    assert_eq!(body["bytes"], 42);
+    assert_eq!(std::fs::read(dest.join("api-priv.bin")).unwrap().len(), 42);
+    // La zone est intacte : l'entree manifeste survit a l'export.
+    assert_eq!(srv.session.private_manifest_entries().len(), 1);
+    srv.session.stop().await;
+}

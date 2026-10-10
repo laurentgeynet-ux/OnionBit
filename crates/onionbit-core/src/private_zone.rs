@@ -530,4 +530,196 @@ impl PrivateZone {
             }
         }
     }
+
+    // -- Explorateur prive et export en clair (ADR-0027, etape 108) --
+
+    /// `(Id20, ManifestEntry)` resolu depuis `key` — `row_key`
+    /// opaque (colonne `infohash` des lignes publiques) **ou**
+    /// infohash reel hex, indifferent pour l'appelant (meme
+    /// convention que les DELETE/PATCH prives).
+    pub fn resolve_entry(&self, key: &str) -> Option<(Id20, ManifestEntry)> {
+        if let Some(e) = self.entry_by_row_key(key) {
+            return parse_ih(&e.infohash).map(|ih| (ih, e));
+        }
+        let id = parse_ih(key)?;
+        self.entry(&id).map(|e| (id, e))
+    }
+
+    /// Dossier de groupe de l'entree (sous-zone persistee dans
+    /// `entry.output_dir`).
+    fn group_dir_for_entry(&self, infohash: &Id20, entry: &ManifestEntry) -> PathBuf {
+        self.group_dir(infohash, Self::subdir_of_spec(&entry.output_dir))
+    }
+
+    /// Fichiers d'une entree manifeste — `{index, relpath, length}`.
+    ///
+    /// `relpath` suit la convention `relpath_bytes` de la factory
+    /// (`/` portable) : mono-fichier → `info.name`, multi-fichiers
+    /// → `info.files[].path` joint (le sous-dossier `<nom>` vit dans
+    /// `output_folder` chez rqbit, pas dans `relative_filename`).
+    ///
+    /// `torrent_data` absent (entree reconstruite au montage) →
+    /// repli : balayage `scan_path` du groupe — chaque `.obd` porte
+    /// `(infohash, relpath)` sous `K_scan`. Les `.obd` dont le sceau
+    /// est absent (`relpath_len = 0`) sont indechiffrables (`K_file`
+    /// exige le couple) et omis de la liste.
+    pub fn list_files(
+        &self,
+        infohash: &Id20,
+        entry: &ManifestEntry,
+    ) -> Result<Vec<PrivateFileEntry>> {
+        if let Some(td) = &entry.torrent_data {
+            let raw = hex::decode(td)
+                .map_err(|e| CoreError::State(format!("torrent_data manifeste: {e}")))?;
+            let meta = onionbit_format::torrent::TorrentMeta::parse(&raw)?;
+            return Ok(meta
+                .files
+                .iter()
+                .enumerate()
+                .map(|(index, f)| PrivateFileEntry {
+                    index,
+                    relpath: f.path.join("/"),
+                    length: f.length,
+                })
+                .collect());
+        }
+        let group = self.group_dir_for_entry(infohash, entry);
+        let mut out = Vec::new();
+        if let Ok(files) = std::fs::read_dir(&group) {
+            for f in files.flatten() {
+                let p = f.path();
+                if p.extension().is_none_or(|e| e != "obd") {
+                    continue;
+                }
+                let Ok(Some((ih, rel))) = ObdFile::scan_path(&p, &self.keys) else {
+                    continue;
+                };
+                if ih != infohash.0 {
+                    continue;
+                }
+                let Ok(obd) = ObdFile::open(&p, &self.keys.file_cipher(&ih, &rel)) else {
+                    continue;
+                };
+                out.push(PrivateFileEntry {
+                    index: out.len(),
+                    relpath: String::from_utf8_lossy(&rel).into_owned(),
+                    length: obd.plain_len(),
+                });
+            }
+        }
+        // Ordre stable (le `read_dir` est arbitraire) ; l'index
+        // sert de cle de selection a `export`.
+        out.sort_by(|a, b| a.relpath.cmp(&b.relpath));
+        for (i, f) in out.iter_mut().enumerate() {
+            f.index = i;
+        }
+        Ok(out)
+    }
+
+    /// Copie dechiffree de fichiers de l'entree vers `dest_dir`
+    /// (**aucune** mutation : ni retrait moteur, ni ligne DB, ni
+    /// entree manifeste — l'inverse de `move_across_zones`,
+    /// ADR-0027 §2). `only` = sous-ensemble d'`index` (`None` =
+    /// tout) ; un index inconnu est une erreur d'appelant. Un
+    /// `.obd` absent ou illisible (telechargement incomplet,
+    /// padding) est ignore et compte dans `skipped`.
+    ///
+    /// Journalisation : compte de fichiers et d'octets seulement
+    /// — les noms sont des metadonnees sensibles.
+    pub fn export(
+        &self,
+        infohash: &Id20,
+        entry: &ManifestEntry,
+        dest_dir: &std::path::Path,
+        only: Option<&[usize]>,
+    ) -> Result<PrivateExport> {
+        let files = self.list_files(infohash, entry)?;
+        if only.is_some_and(|sel| sel.iter().any(|&i| i >= files.len())) {
+            return Err(CoreError::InvalidState("index de fichier inconnu"));
+        }
+        let group = self.group_dir_for_entry(infohash, entry);
+        let mut out = PrivateExport::default();
+        let mut buf = vec![0u8; 1024 * 1024];
+        for f in &files {
+            if only.is_some_and(|sel| !sel.contains(&f.index)) {
+                continue;
+            }
+            let rel = f.relpath.as_bytes();
+            let obd_path = group.join(self.keys.file_name(&infohash.0, rel));
+            let cipher = self.keys.file_cipher(&infohash.0, rel);
+            let Ok(obd) = ObdFile::open(&obd_path, &cipher) else {
+                // Jamais materialise / contenu absent — rien a
+                // copier, le telechargement est incomplet.
+                out.skipped += 1;
+                continue;
+            };
+            let Some(dest) = sanitized_dest(dest_dir, &f.relpath) else {
+                out.skipped += 1;
+                continue;
+            };
+            if let Some(parent) = dest.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            let mut out_file = std::fs::File::create(&dest)?;
+            let mut off = 0u64;
+            while off < obd.plain_len() {
+                let want = buf.len().min((obd.plain_len() - off) as usize);
+                obd.read_range(off, &mut buf[..want])
+                    .map_err(|e| CoreError::State(format!("lecture OBD export: {e}")))?;
+                std::io::Write::write_all(&mut out_file, &buf[..want])?;
+                off += want as u64;
+            }
+            out.exported += 1;
+            out.bytes += obd.plain_len();
+        }
+        tracing::info!(
+            exported = out.exported,
+            skipped = out.skipped,
+            bytes = out.bytes,
+            "export prive termine"
+        );
+        Ok(out)
+    }
+}
+
+/// Fichier d'une entree manifeste privee (ADR-0027) — `index` est
+/// la cle de selection de `export`, `relpath` le chemin reel
+/// (`/` portable, jamais le nom HMAC).
+#[derive(Debug, Clone)]
+pub struct PrivateFileEntry {
+    /// Position dans la liste (cle `files` de `export`).
+    pub index: usize,
+    /// Chemin relatif en clair (`a/b/c.bin`).
+    pub relpath: String,
+    /// Taille logique en clair.
+    pub length: u64,
+}
+
+/// Bilan d'un `export` prive — pas de noms : les chemins restent
+/// dans la reponse API seule (jamais dans les logs).
+#[derive(Debug, Default, Clone)]
+pub struct PrivateExport {
+    /// Fichiers copies.
+    pub exported: usize,
+    /// Octets clairs ecrits.
+    pub bytes: u64,
+    /// Fichiers ignores (`.obd` absent/illisible, relpath hostile).
+    pub skipped: usize,
+}
+
+/// `relpath` (`a/b`, convention zone) → `dest_dir/a/b` — chaque
+/// segment hostile (`..`, `.`, vide, separateur ou prefixe
+/// Windows embarque) est ecarte du chemin de sortie ; `None` si
+/// plus rien de sain ne reste.
+fn sanitized_dest(dest_dir: &std::path::Path, relpath: &str) -> Option<PathBuf> {
+    let mut out = dest_dir.to_path_buf();
+    let mut any = false;
+    for seg in relpath.split('/') {
+        if seg.is_empty() || seg == "." || seg == ".." || seg.contains(['\\', ':']) {
+            continue;
+        }
+        out.push(seg);
+        any = true;
+    }
+    any.then_some(out)
 }

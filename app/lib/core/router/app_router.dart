@@ -12,6 +12,7 @@ import '../../features/diagnostic/presentation/pages/diagnostic_page.dart';
 import '../../features/downloads/domain/download_filter.dart';
 import '../../features/downloads/presentation/pages/downloads_page.dart';
 import '../../features/messaging/presentation/pages/messaging_page.dart';
+import '../../features/private_zone/presentation/pages/private_zone_page.dart';
 import '../../features/search/presentation/pages/search_page.dart';
 import '../../features/settings/presentation/pages/settings_page.dart';
 import '../design/style_guide/style_guide_page.dart';
@@ -57,6 +58,10 @@ final appRouterProvider = Provider<GoRouter>((ref) {
             path: '/settings',
             builder: (context, state) =>
                 SettingsPage(sectionId: state.uri.queryParameters['s']),
+          ),
+          GoRoute(
+            path: '/private-zone',
+            builder: (context, state) => const PrivateZonePage(),
           ),
           GoRoute(
             path: '/about',

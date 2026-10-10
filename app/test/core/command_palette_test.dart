@@ -127,6 +127,13 @@ void main() {
     // Groupes rendus dans l'ordre de `CommandGroup.values` — ceux du
     // bas sont sous le fold de la liste paresseuse : défilement d'abord.
     expect(find.text('NAVIGATION'), findsOneWidget);
+    // L'entrée « Zone privée » (ADR-0027) a rallongé le groupe
+    // NAVIGATION : l'en-tête CONVERSATIONS est passé sous le fold.
+    await tester.scrollUntilVisible(
+      find.text('CONVERSATIONS'),
+      200,
+      scrollable: find.byType(Scrollable).last,
+    );
     expect(find.text('CONVERSATIONS'), findsOneWidget);
     // La conversation du provider apparaît dans le catalogue —
     // sous le fold depuis l'entrée « Canaux » : défilement d'abord.

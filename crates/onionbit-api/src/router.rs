@@ -161,6 +161,13 @@ fn api_router(state: AppState) -> Router<AppState> {
             "/private/orphans",
             axum::routing::delete(downloads::purge_private_orphans),
         )
+        // Explorateur prive + export en clair (ADR-0027, etape
+        // 109) : `key` = row_key opaque ou infohash reel.
+        .route("/private/{key}/files", get(downloads::get_private_files))
+        .route(
+            "/private/{key}/export",
+            post(downloads::post_private_export),
+        )
         // -- Evenements SSE (events_endpoint.py) ------------------------
         .route("/events", get(events::get_events))
         .route("/events/info", get(events::get_events_info))

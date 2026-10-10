@@ -742,6 +742,48 @@ impl CoreSession {
             .unwrap_or_else(|e| e.into_inner()) = Default::default();
     }
 
+    /// Fichiers d'une entree privee pour `GET
+    /// /api/private/{key}/files` (ADR-0027, etape 108) — `None` =
+    /// zone verrouillee ou cle inconnue du manifeste.
+    pub fn private_files(
+        &self,
+        key: &str,
+    ) -> Result<Option<Vec<crate::private_zone::PrivateFileEntry>>> {
+        let Some(z) = self.private_zone() else {
+            return Ok(None);
+        };
+        let Some((ih, entry)) = z.resolve_entry(key) else {
+            return Ok(None);
+        };
+        z.list_files(&ih, &entry).map(Some)
+    }
+
+    /// `export` ADR-0027 : copie dechiffree d'une entree vers
+    /// `dest_dir`, **sans aucune mutation** de la zone (inverse de
+    /// `move_across_zones`). `None` = zone verrouillee ou cle
+    /// inconnue du manifeste. `spawn_blocking` : la copie peut etre
+    /// longue — memes raisons que le `move`.
+    pub async fn export_private(
+        &self,
+        key: &str,
+        dest_dir: PathBuf,
+        files: Option<Vec<usize>>,
+    ) -> Result<Option<crate::private_zone::PrivateExport>> {
+        let Some(z) = self.private_zone() else {
+            return Ok(None);
+        };
+        let Some((ih, entry)) = z.resolve_entry(key) else {
+            return Ok(None);
+        };
+        let out =
+            tokio::task::spawn_blocking(move || z.export(&ih, &entry, &dest_dir, files.as_deref()))
+                .await
+                .unwrap_or_else(|e| {
+                    Err(CoreError::State(format!("export prive interrompu: {e}")))
+                })?;
+        Ok(Some(out))
+    }
+
     /// Construit le shell commun aux deux chemins de demarrage :
     /// `Inner` cree avec une base memoire placeholder et aucun
     /// composant identitaire.

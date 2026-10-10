@@ -51,7 +51,16 @@ const List<NavDestinationSpec> kNavCatalog = [
     icon: Icons.settings_outlined,
     selectedIcon: Icons.settings,
   ),
-  // Secondaire : sidebar uniquement (hors barre de nav compacte).
+  // Secondaires : sidebar uniquement (hors barre de nav compacte).
+  // `/private-zone` (ADR-0027) : la sidebar ne le montre que si la
+  // zone est montee (cf. `app_sidebar.dart`).
+  NavDestinationSpec(
+    path: '/private-zone',
+    id: NavId.privateZone,
+    icon: Icons.enhanced_encryption_outlined,
+    selectedIcon: Icons.enhanced_encryption,
+    primary: false,
+  ),
   NavDestinationSpec(
     path: '/about',
     id: NavId.about,

@@ -1290,5 +1290,29 @@
   "privacyProfileRestartPending": "Restart pending",
   "privacyProfileRestarting": "Restarting daemon…",
   "privacyProfileLoadError": "Unable to load the anonymity profile — tap to retry",
-  "privacyProfileDiagnose": "Network diagnostics"
+  "privacyProfileDiagnose": "Network diagnostics",
+  "navPrivateZone": "Private zone",
+  "@navPrivateZone": { "description": "Sidebar label — private zone explorer (ADR-0027), shown only when mounted" },
+  "privateZoneTitle": "Private zone",
+  "privateZoneInfo": "Encrypted vault content — decrypted copies produced here (read or extract) leave the protected zone: they are your responsibility.",
+  "privateZoneLockedTitle": "Private zone locked",
+  "privateZoneLockedMessage": "Unlock your identity to browse the encrypted zone — without it the content is unreadable by design.",
+  "privateZoneEmptyTitle": "Nothing in the vault",
+  "privateZoneEmptyMessage": "Private downloads land here — encrypted, tied to your identity.",
+  "privateZoneReconstructed": "recovered entry",
+  "privateZoneOrphans": "{groups} orphan group(s), {bitv} orphan resume file(s) — undecryptable leftovers (purge via API)",
+  "@privateZoneOrphans": {
+    "placeholders": {"groups": {"type": "int"}, "bitv": {"type": "int"}}
+  },
+  "privateZoneActions": "Actions",
+  "privateZoneRead": "Read",
+  "privateZoneExtract": "Extract to a folder…",
+  "privateZoneExported": "{count, plural, =1{1 file exported} other{{count} files exported}} — {bytes} bytes",
+  "@privateZoneExported": {
+    "placeholders": {"count": {"type": "int"}, "bytes": {"type": "int"}}
+  },
+  "privateZoneError": "Private zone: {error}",
+  "@privateZoneError": {
+    "placeholders": {"error": {"type": "String"}}
+  }
 }

@@ -945,5 +945,19 @@
   "privacyProfileRestartPending": "Redémarrage en attente",
   "privacyProfileRestarting": "Redémarrage du daemon…",
   "privacyProfileLoadError": "Profil d'anonymat indisponible — toucher pour réessayer",
-  "privacyProfileDiagnose": "Diagnostic réseau"
+  "privacyProfileDiagnose": "Diagnostic réseau",
+  "navPrivateZone": "Zone privée",
+  "privateZoneTitle": "Zone privée",
+  "privateZoneInfo": "Contenu du coffre chiffré — les copies déchiffrées produites ici (lecture ou extraction) sortent de la zone protégée : elles relèvent de votre responsabilité.",
+  "privateZoneLockedTitle": "Zone privée verrouillée",
+  "privateZoneLockedMessage": "Déverrouillez votre identité pour parcourir la zone chiffrée — sans elle, le contenu est illisible par conception.",
+  "privateZoneEmptyTitle": "Coffre vide",
+  "privateZoneEmptyMessage": "Les téléchargements privés atterrissent ici — chiffrés, liés à votre identité.",
+  "privateZoneReconstructed": "entrée récupérée",
+  "privateZoneOrphans": "{groups} groupe(s) orphelin(s), {bitv} fastresume orphelin(s) — reliquats indéchiffrables (purge via l'API)",
+  "privateZoneActions": "Actions",
+  "privateZoneRead": "Lire",
+  "privateZoneExtract": "Extraire vers un dossier…",
+  "privateZoneExported": "{count, plural, =1{1 fichier exporté} other{{count} fichiers exportés}} — {bytes} octets",
+  "privateZoneError": "Zone privée : {error}"
 }
