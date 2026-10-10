@@ -395,11 +395,14 @@ la **même table §3 à une exception près** :
 Conséquences :
 
 - La bascule se fait **manuellement** dans `configuration.json`
-  (merge du patch §3 + `role`), jamais via `PUT
-  /api/privacy/profile` : le prérequis `stealth.bridges` bloquerait
-  la bascule et le preset récrirait `role = "client"`. Les deux
-  comportements sont *corrects pour un client* — la variante
-  serveur n'a pas vocation à passer par le sélecteur.
+  (merge du patch §3 + `role`), ou via `--profile bridge` /
+  `ONIONBIT_PROFILE=bridge` au **premier boot** (ADR-0024 —
+  matérialisation du preset quand `configuration.json` est absent,
+  flag ignoré ensuite) ; jamais via `PUT /api/privacy/profile` : le
+  prérequis `stealth.bridges` bloquerait la bascule et le preset
+  récrirait `role = "client"`. Les deux comportements sont
+  *corrects pour un client* — la variante serveur n'a pas vocation
+  à passer par le sélecteur.
 - `GET /api/privacy/profile` dérive `effective = "custom"` sur ces
   nœuds (`stealth.role` est une clé couverte divergeant du preset
   stocké) — **attendu et sans correction prévue** : le label

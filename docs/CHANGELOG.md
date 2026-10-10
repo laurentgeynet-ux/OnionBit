@@ -3,6 +3,20 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Feat : `--profile` matérialise le preset au premier boot (ADR-0024 §9) (2026-10-10)
+
+`onionbit-daemon --profile <legacy|full|bridge>` (et
+`ONIONBIT_PROFILE` pour Docker : `docker run -e
+ONIONBIT_PROFILE=bridge`) applique le preset quand
+`configuration.json` est absent — flag ignoré ensuite, jamais
+d'override. `bridge` = variante serveur d'ADR-0022 §7 (table `full`
++ `stealth.role`, sans prérequis ponts), `full` garde le prérequis
+client. Implémenté dans `onionbit-core`
+(`PrivacyProfile::apply_first_boot`, propriétaire unique de la
+table) + 2 tests ; `docs/docker.md` refait la recette pont autour
+du flag. Vérifié : daemon debug booté `stealth_mode=on
+role=bridge` sur state_dir vierge.
+
 ## Spec : variante serveur du profil `full` (ADR-0022 §7) (2026-10-10)
 
 Addendum à ADR-0022 : la posture des nœuds d'infrastructure

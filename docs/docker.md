@@ -122,53 +122,35 @@ préférer le host-network qui rend le nœud directement adressable.
 
 > ⚠️ **L'image démarre en profil `legacy`/`client` par défaut** —
 > compatible Tribler, mesh IPv8 clair. Un pont du réseau
-> onionbit-only (ADR-0022 §7) exige une configuration **manuelle** :
-> ce n'est ni un preset du sélecteur ni un flag de lancement.
+> onionbit-only se déclare via `--profile bridge` (ou
+> `ONIONBIT_PROFILE=bridge`) **au premier boot** (ADR-0022 §7).
 
 Recette (déploiement de référence : ADR-0024 §8) :
 
-1. Premier run pour générer l'état (identité + `stealth_bridge.key`,
-   qui détermine la clé publique du lien d'invitation) :
+1. Premier run avec le profil serveur — le preset `full` variante
+   `bridge` est matérialisé dans `configuration.json` (table §3 +
+   `stealth.role="bridge"`, `bridges` non requis, `at_rest`
+   **interdit**) ; le flag est ignoré ensuite, la config fait foi :
 
    ```bash
    mkdir -p data && chown -R 10001:10001 data
    docker run -d --name onionbit-bridge --network host \
+     -e ONIONBIT_PROFILE=bridge \
      -v ./data:/data onionbit:dev --ipv8-port 8090 --listen 127.0.0.1:8085
    ```
 
-2. Éditer `data/state/configuration.json` — preset `full` serveur
-   (ADR-0022 §7 : table §3 + `stealth.role="bridge"`, `bridges` non
-   requis, `at_rest` **interdit**) et ports figés :
+   `legacy` et `full` sont aussi acceptés (`full` = posture cliente,
+   exige `stealth.bridges` déjà présent → réservé aux state_dirs
+   pré-initialisés ; refus ferme sinon).
 
-   ```jsonc
-   {
-     "privacy": { "profile": "full" },
-     "ipv8": {
-       "enabled": false,
-       "interfaces": [
-         { "interface": "UDPIPv4", "ip": "0.0.0.0", "port": 8090 },
-         { "interface": "UDPIPv6", "ip": "::", "port": 8091 }
-       ]
-     },
-     "stealth": { "enabled": true, "role": "bridge",
-                  "cover_traffic": true, "bridges": [] },
-     "libtorrent": { "port": 45000, "download_defaults":
-       { "anonymity_enabled": true, "number_hops": 3,
-         "safeseeding_enabled": true } },
-     "tunnel_community": { "enabled": true, "exitnode_enabled": false,
-       "guards_enabled": true, "messaging_enabled": true,
-       "messaging_hops": 3, "messaging_groups_enabled": true,
-       "ledger_enabled": true, "ledger_enforce": true,
-       "messaging_consent_ledger": true },
-     "ext": { "enabled": true, "ledger_enabled": true,
-              "obf_enabled": true },
-     "storage": { "default_area": "private" }
-   }
-   ```
+2. Le log doit afficher `stealth_mode=on role=bridge
+   legacy_ipv8=disabled public_dht=disabled
+   direct_bittorrent=disabled`.
 
-3. `docker restart onionbit-bridge` — le log doit afficher
-   `stealth_mode=on role=bridge legacy_ipv8=disabled
-   public_dht=disabled direct_bittorrent=disabled`.
+3. Figer les ports dans `data/state/configuration.json`
+   (`libtorrent/port`, `ipv8/interfaces`) si des valeurs non
+   par défaut sont voulues — la sonde `port..=port+10` rend le port
+   imprévisible au restart.
 
 4. Ouvrir le port UDP stealth au pare-feu (le pont écoute sur le port
    de l'interface — 8090 ici) ; en host-network c'est le pare-feu de
@@ -181,9 +163,10 @@ Recette (déploiement de référence : ADR-0024 §8) :
 
 Notes :
 
-- `PUT /api/privacy/profile` n'est **pas** utilisable ici : le
-  prérequis `stealth.bridges` (client-only) refuserait `full` et le
-  preset récrirait `role="client"`. Bascule par édition du fichier.
+- `PUT /api/privacy/profile` n'est **pas** utilisable pour le rôle
+  serveur : le prérequis `stealth.bridges` (client-only) refuserait
+  `full` et le preset récrirait `role="client"`. La bascule passe
+  par `--profile bridge` (premier boot) ou l'édition du fichier.
 - `GET /api/privacy/profile` dérivera `effective="custom"` — normal
   (le rôle `bridge` est hors sélecteur, ADR-0022 §7).
 - Un pont entre dans un mesh en recevant les liens `onionbit-bridge://`

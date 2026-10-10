@@ -199,6 +199,16 @@ struct Args {
     /// ponts), une identite absente est auto-generee comme avant.
     #[arg(long)]
     first_run_gate: bool,
+
+    /// Profil d'anonymat materialise au **premier boot** seulement
+    /// (configuration.json absent — ADR-0024, deploiement Docker) :
+    /// `legacy`/`full` sont les presets du selecteur (ADR-0022,
+    /// `full` exige `stealth.bridges` deja present), `bridge` est la
+    /// variante serveur (ADR-0022 §7 : table `full` + `stealth.role`,
+    /// sans prerequis). Ignore silencieusement sur un state_dir deja
+    /// initialise — la configuration existante fait toujours foi.
+    #[arg(long, value_parser = ["legacy", "full", "bridge"], env = "ONIONBIT_PROFILE")]
+    profile: Option<String>,
 }
 
 use tracing_subscriber::layer::SubscriberExt;
@@ -547,6 +557,22 @@ async fn async_main() -> ExitCode {
         );
     }
     if !config_path.exists() {
+        // Premier boot : `--profile` materialise le preset choisi
+        // (ADR-0024) — la config existante fait toujours foi ensuite,
+        // jamais de couche d'override (ADR-0022 §1).
+        if let Some(variant) = &args.profile {
+            match onionbit_core::privacy::PrivacyProfile::apply_first_boot(&daemon_config, variant)
+            {
+                Ok(cfg) => {
+                    daemon_config = cfg;
+                    tracing::info!(profile = %variant, "profil materielise au premier boot");
+                }
+                Err(e) => {
+                    tracing::error!(error = %e, profile = %variant, "--profile refuse");
+                    return ExitCode::FAILURE;
+                }
+            }
+        }
         if let Err(e) = daemon_config.write(&config_path) {
             tracing::warn!(error = %e, "ecriture initiale de configuration.json impossible");
         }

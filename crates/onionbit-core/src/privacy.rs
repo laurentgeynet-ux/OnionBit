@@ -271,6 +271,39 @@ impl PrivacyProfile {
             },
         ))
     }
+
+    /// Variante de premier boot (`--profile` du daemon, ADR-0024) :
+    /// `legacy` et `full` passent par [`Self::apply`] (le prérequis
+    /// `stealth.bridges` s'applique à `full` — posture cliente) ;
+    /// `bridge`/`gateway` matérialisent la variante **serveur**
+    /// d'ADR-0022 §7 : table §3 du preset `full` avec `stealth.role`
+    /// substitué, sans prérequis `bridges` (le nœud *est* le pont).
+    /// La combinaison résultante passe le même validateur — et le
+    /// profil stocké reste `full` (l'intention d'anonymat maximale
+    /// est identique ; `effective` dérivera en `custom` du fait de
+    /// `role`, attendu pour une posture hors sélecteur).
+    pub fn apply_first_boot(
+        cfg: &DaemonConfig,
+        variant: &str,
+    ) -> Result<DaemonConfig, PrivacyError> {
+        match variant {
+            "legacy" => Self::apply(cfg, Self::Legacy).map(|(c, _)| c),
+            "full" => Self::apply(cfg, Self::Full).map(|(c, _)| c),
+            "bridge" | "gateway" => {
+                let mut patch = Self::Full.preset_patch().expect("preset full");
+                patch["stealth"]["role"] = Value::String(variant.into());
+                let mut next = cfg.clone();
+                next.merge(&patch)?;
+                next.privacy.profile = PrivacyProfile::Full;
+                next.validate_combination()
+                    .map_err(PrivacyError::InvalidCombination)?;
+                Ok(next)
+            }
+            _ => Err(PrivacyError::InvalidCombination(
+                "profil inconnu (attendu : legacy | full | bridge)",
+            )),
+        }
+    }
 }
 
 /// `true` si une clé couverte **à redémarrage** de `persisted`
@@ -443,6 +476,41 @@ mod tests {
         let (eff, diverged) = PrivacyProfile::effective(&cfg);
         assert_eq!(eff, PrivacyProfile::Legacy);
         assert!(diverged.is_empty());
+    }
+
+    /// Variante serveur de premier boot (ADR-0022 §7, ADR-0024) :
+    /// `bridge` applique le preset `full` sans prérequis
+    /// `stealth.bridges`, avec `role` substitué — `effective` dérive
+    /// en `custom` (posture hors sélecteur, attendue).
+    #[test]
+    fn premier_boot_bridge_sans_prerequis() {
+        let cfg = DaemonConfig::default();
+        let next = PrivacyProfile::apply_first_boot(&cfg, "bridge").expect("bridge");
+        assert!(!next.ipv8.enabled);
+        assert!(next.stealth.enabled);
+        assert_eq!(next.stealth.role, "bridge");
+        assert!(next.stealth.cover_traffic);
+        assert_eq!(next.libtorrent.download_defaults.number_hops, 3);
+        assert!(next.tunnel_community.ledger_enforce);
+        assert_eq!(next.storage.default_area, "private");
+        assert_eq!(next.privacy.profile, PrivacyProfile::Full);
+        let (eff, diverged) = PrivacyProfile::effective(&next);
+        assert_eq!(eff, PrivacyProfile::Custom);
+        assert_eq!(diverged, vec!["stealth.role".to_string()]);
+    }
+
+    /// `full` par `--profile` garde le prérequis pont (posture
+    /// cliente) ; `legacy` passe sans condition.
+    #[test]
+    fn premier_boot_full_exige_un_pont() {
+        let cfg = DaemonConfig::default();
+        assert!(matches!(
+            PrivacyProfile::apply_first_boot(&cfg, "full"),
+            Err(PrivacyError::MissingPrerequisites(_))
+        ));
+        let next = PrivacyProfile::apply_first_boot(&cfg, "legacy").expect("legacy");
+        assert!(next.ipv8.enabled);
+        assert!(!next.stealth.enabled);
     }
 
     /// `custom` n'écrit aucune clé couverte.

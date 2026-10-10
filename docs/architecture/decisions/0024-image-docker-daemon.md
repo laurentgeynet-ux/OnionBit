@@ -208,6 +208,9 @@ Mécanique constatée en déploiement :
   `role = "client"` — le rôle pont est un choix d'exploitation hors
   sélecteur (ADR-0022 §6). Le profil effectif dérive donc en
   `custom` — attendu, `role` n'est pas une clé couverte.
+  Depuis ce déploiement, `--profile bridge` /
+  `ONIONBIT_PROFILE=bridge` matérialise la même variante au premier
+  boot (voir §9).
 - **Amorçage croisé** : chaque pont reçoit le lien
   `onionbit-bridge://` de l'autre via `POST /api/stealth/bridges`
   → session furtive établie (`hs1` accepté des deux côtés,
@@ -224,6 +227,32 @@ Mécanique constatée en déploiement :
   déploiement couvre **découverte, propagation et résilience
   applicative** uniquement ; un bootnode sur un second hébergeur
   reste la cible de phase 2.
+
+### 9. `--profile` / `ONIONBIT_PROFILE` : preset matérialisé au premier boot
+
+Pour éviter à chaque opérateur de recomposer la variante serveur à
+la main (le piège constaté en §8 : `PUT /api/privacy/profile`
+inutilisable pour un pont), le daemon accepte `--profile
+<legacy|full|bridge>` — et `ONIONBIT_PROFILE` via clap `env`, le
+moyen naturel de le passer en conteneur
+(`docker run -e ONIONBIT_PROFILE=bridge`).
+
+Sémantique **premier boot uniquement** : le flag n'est lu que quand
+`configuration.json` est absent ; le preset est alors matérialisé
+par `PrivacyProfile::apply_first_boot` dans `onionbit-core`
+(propriétaire unique de la table §3 d'ADR-0022 — pas de template
+JSON dupliqué dans le Dockerfile). Sur un `state_dir` déjà
+initialisé le flag est **ignoré** : la configuration existante fait
+foi — aucune couche d'override, exactement la règle §1 d'ADR-0022
+qu'un `--profile` systématique violerait.
+
+- `legacy`/`full` = les presets du sélecteur (`full` garde le
+  prérequis `stealth.bridges` — posture cliente ; refus ferme au
+  boot plutôt qu'une enclave vide) ;
+- `bridge` (et `gateway`) = la variante serveur d'ADR-0022 §7 :
+  table §3 du preset `full` avec `stealth.role` substitué, sans
+  prérequis — la combinaison passe le même validateur
+  `validate_combination`.
 
 Correctif de build découvert par ce déploiement : `COPY crates`
 conserve les mtimes du contexte BuildKit → les vraies sources
