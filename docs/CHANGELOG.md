@@ -3,6 +3,41 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Phase 16 — Image Docker du daemon (ADR-0024, étapes 89-92 + 94) (2026-10-10)
+
+Intégration Docker du daemon headless (`docs/docker.md`,
+`docs/architecture/decisions/0024-image-docker-daemon.md`) — la garde
+loopback de l'API reste absolue, l'exposition est un choix de
+déploiement (host-network / forwarder / `docker exec`).
+
+- **Étape 89 — code** : `sigterm_or_never` (cfg unix,
+  `SignalKind::terminate`) ajouté aux sources d'arrêt du daemon —
+  `docker stop` déclenche l'arrêt propre complet au lieu du SIGKILL
+  après timeout ; `ONIONBIT_STATE_DIR` sur `--state-dir` d'
+  `onionbit-cli` (clap `env` au workspace) pour `docker exec` et le
+  healthcheck sans argument. Test `cli_state_dir_via_env` vert ;
+  `daemon_offline_sigterm_arret_propre` écrit (cfg unix, exécuté en
+  CI linux/macos).
+- **Étape 90 — `Dockerfile` + `.dockerignore`** : multi-stage
+  `rust:bookworm` → `debian:bookworm-slim`, cibles `final` /
+  `final-webui` (web UI Flutter embarquée), deps cachées
+  (manifests + `vendor/` + stubs — `[patch.crates-io]` par path),
+  user `onionbit` UID 10001, `VOLUME /data`, `STOPSIGNAL SIGTERM`,
+  `ENV ONIONBIT_STATE_DIR`.
+- **Étapes 91-92 — compose + durcissement** : `docker-compose.yml`
+  (host-network actif, bridge + forwarder socat en
+  `network_mode: "service:onionbit"` commenté, note
+  `proxy_buffering off` pour nginx/SSE), `docs/docker.md` complet
+  (modes d'exposition, ports, `chown 10001`, avertissement
+  `inject_key`, relais/exit), `HEALTHCHECK onionbit-cli status`,
+  `read_only` + `tmpfs /tmp` + `no-new-privileges` + `init: true`.
+- **Étape 94 — CI** : job `docker` dans `ci.yml` (buildx → ghcr.io,
+  cible `final-webui`, tags `:<version>` + `:latest`, gated `v*`).
+- **Étape 93 reste ouverte** : validation e2e manuelle requise
+  (docker absent de la machine de dev) — build clone propre, run
+  offline/host-network/bridge+forwarder, cf.
+  `docs/plans/roadmap_adr0024.md`.
+
 ## Release : version 1.1.1 (2026-10-10)
 
 Re-taggée après échec CI de `v1.1.0` : la toolchain stable des runners

@@ -1,7 +1,10 @@
 # ADR-0024 — Image Docker du daemon (déploiement headless conteneurisé)
 
-Statut : Proposée (2026-10-10). Plan d'implantation :
-`docs/plans/roadmap_adr0024.md` (Phase 16, étapes 89-94).
+Statut : Proposée (2026-10-10). Partiellement implantée — étapes
+89-92 et 94 livrées, l'étape 93 (validation e2e sous docker) reste
+ouverte ; le statut passera à Acceptée après elle. Plan
+d'implantation : `docs/plans/roadmap_adr0024.md` (Phase 16,
+étapes 89-94).
 
 ## Contexte
 
