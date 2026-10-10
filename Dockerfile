@@ -42,6 +42,11 @@ RUN set -eu; \
 FROM deps AS build
 RUN rm -rf crates
 COPY crates ./crates
+# COPY preserve les mtimes du contexte (BuildKit) : les sources
+# reelles sont "plus vieilles" que les stubs crees dans `deps` —
+# cargo les considererait inchangees et reutiliserait les rlibs
+# stubs (erreurs `unresolved imports`). Touch force le re-build.
+RUN find crates -type f -exec touch {} +
 RUN cargo build --release --locked -p onionbit-daemon -p onionbit-cli
 
 # ---------- web UI Flutter (variante final-webui) --------------------

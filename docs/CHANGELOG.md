@@ -12,6 +12,15 @@ déterministe sur les 4 OS (`f9a0946`). La release embarque aussi la
 Phase 16 Docker (ADR-0024, étapes 89-92 + 94) : image ghcr.io
 publiée par le nouveau job `docker` du pipeline.
 
+Correctif `Dockerfile` post-tag : `COPY crates` conserve les
+mtimes du contexte BuildKit — les sources réelles, plus vieilles
+que les stubs du stage `deps`, étaient considérées inchangées par
+cargo et le daemon liait les rlibs stubs (`unresolved imports`,
+`method not found in !`). `find crates -type f -exec touch`
+après le `COPY` force le re-build. Validé sur VPS : image
+`onionbit:dev` (206 MB) buildée, conteneur `healthy`, API +
+IPv8 + DHT opérationnels.
+
 ## Phase 16 — Image Docker du daemon (ADR-0024, étapes 89-92 + 94) (2026-10-10)
 
 Intégration Docker du daemon headless (`docs/docker.md`,
