@@ -53,6 +53,19 @@ class ChannelsPage extends ConsumerWidget {
             ],
           ),
         ),
+        Padding(
+          padding: const EdgeInsets.only(
+            left: AppSpace.md,
+            right: AppSpace.md,
+            bottom: AppSpace.sm,
+          ),
+          child: Text(
+            l10n.channelsInfo,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ),
         Expanded(
           child: channels.when(
             loading: () => const Center(child: CircularProgressIndicator()),

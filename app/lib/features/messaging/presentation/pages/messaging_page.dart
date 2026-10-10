@@ -157,6 +157,21 @@ class _ContactsPane extends ConsumerWidget {
         Expanded(
           child: ListView(
             children: [
+              // Explication de la fonctionnalite (e2e, OnionBit-only).
+              Padding(
+                padding: const EdgeInsets.fromLTRB(
+                  AppSpace.md,
+                  AppSpace.sm,
+                  AppSpace.md,
+                  0,
+                ),
+                child: Text(
+                  l10n.msgInfo,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ),
               // ADR-0019 : conversations (directes + groupes) en
               // tete — clic = onglet dans le panneau de droite.
               Padding(
