@@ -50,7 +50,21 @@ RUN find crates -type f -exec touch {} +
 RUN cargo build --release --locked -p onionbit-daemon -p onionbit-cli
 
 # ---------- web UI Flutter (variante final-webui) --------------------
-FROM ghcr.io/cirruslabs/flutter:stable AS webui
+# ghcr.io/cirruslabs/flutter:stable est en retard sur le SDK Dart
+# exige par pubspec.yaml (^3.13.2 — `flutter pub get` echouait en
+# CI docker) : clone du depot officiel epingle a la version
+# utilisee en dev. Garder FLUTTER_VERSION en phase avec
+# `flutter --version` local.
+FROM debian:bookworm-slim AS webui
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git curl ca-certificates xz-utils unzip \
+    && rm -rf /var/lib/apt/lists/*
+ARG FLUTTER_VERSION=3.47.6
+RUN git clone --depth 1 --branch "$FLUTTER_VERSION" \
+        https://github.com/flutter/flutter /opt/flutter \
+    && git config --global --add safe.directory /opt/flutter
+ENV PATH="/opt/flutter/bin:${PATH}"
+RUN flutter precache --web
 WORKDIR /app
 COPY app/pubspec.yaml app/pubspec.lock ./
 RUN flutter pub get
