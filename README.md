@@ -57,7 +57,7 @@ this table is reproducible:
 | **9/9 fingerprinting oracles PASS** — two real stealth daemons measured through a UDP tap: probing silence, amplification 0, zero static marker | [docs/security/fingerprinting.md](docs/security/fingerprinting.md) |
 | Kill switch verified at the **OS packet level** — 4 injected-failure scenarios, zero forbidden traffic | [docs/P0-transport-manifest.md](docs/P0-transport-manifest.md) |
 | Fuzzing campaign journal — what broke, how it was fixed | [docs/security/fuzz_journal.md](docs/security/fuzz_journal.md) |
-| **23 Architecture Decision Records** — every non-obvious choice is written down, in the open | [docs/architecture/decisions](docs/architecture/decisions/) |
+| **24 Architecture Decision Records** — every non-obvious choice is written down, in the open | [docs/architecture/decisions](docs/architecture/decisions/) |
 | Threat model written *before* the features, kept honest | [docs/THREAT-MODEL.md](docs/THREAT-MODEL.md) |
 
 ## The fabric — one shared onion network
