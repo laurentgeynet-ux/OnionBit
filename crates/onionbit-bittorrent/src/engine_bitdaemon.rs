@@ -73,6 +73,9 @@ pub struct BdBackend {
     driver: std::sync::Mutex<Option<JoinHandle<()>>>,
     /// Adresse d'ecoute effective (TCP + UDP/DHT partagent le port).
     listen_addr: Option<SocketAddr>,
+    /// Registre `infohash → spec privee` — la factory de session y
+    /// puise pour dispatcher `BdPrivateStorage`/`PreadStorage`.
+    private_registry: crate::storage_private_bd::PrivateRegistry,
 }
 
 impl std::fmt::Debug for BdBackend {
@@ -96,7 +99,12 @@ impl BdBackend {
                 "backend bitdaemon : socks5_proxy non supporte (lanes anonymes non cablees)".into(),
             ));
         }
-        let disk = PreadDiskIo::new(DISK_THREADS, Arc::new(|| {}));
+        let private_registry = crate::storage_private_bd::PrivateRegistry::default();
+        let disk = PreadDiskIo::with_factory(
+            DISK_THREADS,
+            Arc::new(|| {}),
+            crate::storage_private_bd::dispatch_factory(private_registry.clone()),
+        );
 
         let connector: Arc<TokioTcpConnector> = Arc::new(TokioTcpConnector);
         let port = config.listen_port.unwrap_or(0);
@@ -197,6 +205,7 @@ impl BdBackend {
             stop_tx,
             driver: std::sync::Mutex::new(Some(driver)),
             listen_addr,
+            private_registry,
         })
     }
 
@@ -221,6 +230,29 @@ impl BdBackend {
         if !out.is_empty() {
             let _ = self.cmd_tx.send(BdCmd::Out(out));
         }
+    }
+
+    /// Inscrit un torrent dans le registre prive — a appeler AVANT
+    /// `add_torrent_params` (le storage est cree la-dedans via la
+    /// factory de session). Jamais de repli : sans inscription un
+    /// torrent « prive » ecrirait en clair.
+    pub(crate) fn register_private(
+        &self,
+        ih: [u8; 20],
+        spec: crate::storage_private_bd::BdPrivateSpec,
+    ) {
+        self.private_registry
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(ih, spec);
+    }
+
+    /// Retire l'entree privee (remove/delete du torrent).
+    pub fn unregister_private(&self, ih: &Sha1Hash) {
+        self.private_registry
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(ih.as_bytes());
     }
 
     /// `add_torrent_params` : enregistre le storage (comme le CLI —
@@ -301,6 +333,7 @@ impl BdBackend {
             s.remove_torrent(ih, &mut out);
         }
         drop(s);
+        self.unregister_private(ih);
         self.dispatch(out);
         Ok(())
     }

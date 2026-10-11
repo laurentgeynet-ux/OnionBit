@@ -30,6 +30,7 @@ pub mod error;
 pub mod natpmp;
 pub mod storage_bitdaemon;
 pub mod storage_private;
+pub(crate) mod storage_private_bd;
 pub mod upnp;
 
 pub use add_options::AddDownloadOptions;

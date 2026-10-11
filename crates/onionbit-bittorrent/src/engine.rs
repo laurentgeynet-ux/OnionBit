@@ -369,8 +369,12 @@ impl BtEngine {
         uri: &str,
         opts: &crate::add_options::AddDownloadOptions,
     ) -> Result<Download> {
-        self.add(AddTorrent::from_url(uri), Some(rqbit_opts(opts)))
-            .await
+        self.add_priv(
+            AddTorrent::from_url(uri),
+            Some(rqbit_opts(opts)),
+            opts.storage_factory.clone(),
+        )
+        .await
     }
 
     /// Ajoute des octets `.torrent` avec des reglages par
@@ -380,16 +384,32 @@ impl BtEngine {
         bytes: impl Into<bytes::Bytes>,
         opts: &crate::add_options::AddDownloadOptions,
     ) -> Result<Download> {
-        self.add(AddTorrent::from_bytes(bytes), Some(rqbit_opts(opts)))
-            .await
+        self.add_priv(
+            AddTorrent::from_bytes(bytes),
+            Some(rqbit_opts(opts)),
+            opts.storage_factory.clone(),
+        )
+        .await
     }
 
     async fn add(&self, add: AddTorrent<'_>, opts: Option<AddTorrentOptions>) -> Result<Download> {
+        self.add_priv(add, opts, None).await
+    }
+
+    /// `add` + spec privee concrete : le backend rqbit la consomme
+    /// deja via `opts.storage_factory` (boxee) ; bitdaemon en tire
+    /// les cles pour son registre `StorageFactory` de session.
+    async fn add_priv(
+        &self,
+        add: AddTorrent<'_>,
+        opts: Option<AddTorrentOptions>,
+        private: Option<crate::storage_private::PrivateStorageFactory>,
+    ) -> Result<Download> {
         if let Some(ks) = &self.kill_switch {
             ks.guard_add()?;
         }
         let SessionBackend::Rqbit(session) = &self.session else {
-            return self.add_bd(add, opts).await;
+            return self.add_bd(add, opts, private).await;
         };
         let response = session
             .add_torrent(add, opts)
@@ -410,18 +430,12 @@ impl BtEngine {
         &self,
         add: AddTorrent<'_>,
         opts: Option<AddTorrentOptions>,
+        private: Option<crate::storage_private::PrivateStorageFactory>,
     ) -> Result<Download> {
         use bitdaemon::core::torrent_info::load_torrent;
         let SessionBackend::Bd(bd) = &self.session else {
             return Err(BtError::Engine("backend attendu bitdaemon".into()));
         };
-        // Zone privee : un `storage_factory` demande sans portage =
-        // refus ferme (jamais d'ecriture en clair par repli silencieux).
-        if opts.as_ref().is_some_and(|o| o.storage_factory.is_some()) {
-            return Err(BtError::Engine(
-                "backend bitdaemon : storage_factory (zone privee) non portee".into(),
-            ));
-        }
         let (mut atp, torrent_bytes) = match add {
             AddTorrent::Url(u) => {
                 let u = u.into_owned();
@@ -447,6 +461,21 @@ impl BtEngine {
                 Some(b),
             ),
         };
+        // Zone privee : inscrit la spec dans le registre AVANT
+        // `add_torrent_params` (le storage est cree la-dedans via la
+        // factory de session) — sans inscription la factory aurait
+        // replie sur `PreadStorage` en clair.
+        if let Some(f) = &private {
+            let (keys, root, chunk_log2) = f.bd_spec();
+            bd.register_private(
+                *atp.info_hashes.v1.as_bytes(),
+                crate::storage_private_bd::BdPrivateSpec {
+                    keys,
+                    root,
+                    chunk_log2,
+                },
+            );
+        }
         let Some(o) = opts else {
             let h = bd.add_torrent_params(&atp)?;
             return Ok(self.wrap_bd(h, &bd.handle, torrent_bytes));

@@ -87,6 +87,13 @@ impl PrivateStorageFactory {
         self.private_hashes = Some(set);
         self
     }
+
+    /// Accesseurs pour le backend bitdaemon — la spec privee (cles,
+    /// racine de zone, granularite) est injectee dans le registre du
+    /// `StorageFactory` de session (dispatch par infohash).
+    pub(crate) fn bd_spec(&self) -> (Arc<PrivateStoreKeys>, PathBuf, u8) {
+        (self.keys.clone(), self.root.clone(), self.chunk_log2)
+    }
 }
 
 /// Normalise un chemin relatif de torrent en octets `a/b/c` — le
@@ -135,9 +142,9 @@ impl StorageFactory for PrivateStorageFactory {
 }
 
 /// Un fichier du torrent prive : padding (factice) ou `.obd` reel.
-struct PrivateFile {
+pub(crate) struct PrivateFile {
     /// Padding BitTorrent : jamais materialise.
-    padding: bool,
+    pub(crate) padding: bool,
     /// `<root>/<groupe>/<hmac>.obd`.
     path: PathBuf,
     /// `relpath` normalise `/` — domaine de `K_file`.
@@ -156,7 +163,7 @@ struct PrivateFile {
 }
 
 impl PrivateFile {
-    fn new(path: PathBuf, relpath: Vec<u8>, len: u64) -> Self {
+    pub(crate) fn new(path: PathBuf, relpath: Vec<u8>, len: u64) -> Self {
         Self {
             padding: false,
             path,
@@ -168,7 +175,7 @@ impl PrivateFile {
         }
     }
 
-    fn padding() -> Self {
+    pub(crate) fn padding() -> Self {
         Self {
             padding: true,
             path: PathBuf::new(),
@@ -272,10 +279,27 @@ impl PrivateFile {
         Ok(())
     }
 
+    /// `release_files` bd : referme le `.obd` materialise (re-ouvert
+    /// paresseusement au prochain acces).
+    pub(crate) fn close(&self) {
+        let mut g = self.cell.write().unwrap_or_else(|e| e.into_inner());
+        *g = None;
+    }
+
+    /// `delete_files` bd : marque `removed`, referme puis supprime le
+    /// `.obd` — un acces ulterieur echoue au lieu de recreer.
+    pub(crate) fn remove(&self) {
+        self.removed.store(true, Ordering::Release);
+        self.close();
+        match std::fs::remove_file(&self.path) {
+            Ok(()) | Err(_) => {}
+        }
+    }
+
     /// Execute `f` sur le `.obd` materialise (verrou `cell` partage).
     /// `for_write` propage la semantique creation/lecture a
     /// `materialize`.
-    fn with_obd<R>(
+    pub(crate) fn with_obd<R>(
         &self,
         st: &PrivateStorage,
         for_write: bool,
@@ -293,7 +317,7 @@ pub struct PrivateStorage {
     infohash: [u8; 20],
     chunk_log2: u8,
     group_dir: PathBuf,
-    files: Vec<Arc<PrivateFile>>,
+    pub(crate) files: Vec<Arc<PrivateFile>>,
     /// `take()` transfere la propriete au clone (parite
     /// `FilesystemStorage::take` qui *deplace* les handles) : sans
     /// cette marque l'ancien objet resterait pleinement fonctionnel
@@ -304,6 +328,36 @@ pub struct PrivateStorage {
 }
 
 impl PrivateStorage {
+    /// Constructeur direct pour le backend bitdaemon : le layout
+    /// (chemins, longueurs, padding) vient du `FileStorage` bd, pas
+    /// des `TorrentMetadata` rqbit — la materialisation reste
+    /// paresseuse comme dans `init`.
+    pub(crate) fn new_raw(
+        keys: Arc<PrivateStoreKeys>,
+        infohash: [u8; 20],
+        chunk_log2: u8,
+        group_dir: PathBuf,
+        files: Vec<Arc<PrivateFile>>,
+    ) -> Self {
+        Self {
+            keys,
+            infohash,
+            chunk_log2,
+            group_dir,
+            files,
+            retired: AtomicBool::new(false),
+        }
+    }
+
+    /// `release_files` bd : referme les `.obd` materialises (le pool
+    /// disque peut re-ouvrir paresseusement au prochain acces).
+    pub(crate) fn release(&self) {
+        for f in &self.files {
+            let mut g = f.cell.write().unwrap_or_else(|e| e.into_inner());
+            *g = None;
+        }
+    }
+
     fn file(&self, file_id: usize) -> anyhow::Result<&Arc<PrivateFile>> {
         self.files.get(file_id).context("no such file")
     }

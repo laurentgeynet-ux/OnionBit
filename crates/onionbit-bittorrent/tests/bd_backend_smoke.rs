@@ -17,8 +17,8 @@ async fn bd_backend_telecharge_un_torrent_reel() {
         .try_init()
         .ok();
     let dl_dir = std::env::var("BD_TEST_DL").unwrap_or_else(|_| "C:/ob-bench/dl-test".into());
-    let torrent = std::env::var("BD_TEST_TORRENT")
-        .unwrap_or_else(|_| "C:/ob-bench/debian.torrent".into());
+    let torrent =
+        std::env::var("BD_TEST_TORRENT").unwrap_or_else(|_| "C:/ob-bench/debian.torrent".into());
     std::fs::create_dir_all(&dl_dir).unwrap();
 
     // Config miroir de `engine_from_config` (daemon, mode direct).
