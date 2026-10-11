@@ -395,7 +395,7 @@ checksum = "5e764a1d40d510daf35e07be9eb06e75770908c27d411ee6c92109c9840eaaf7"
 [[package]]
 name = "bitdaemon"
 version = "0.1.0"
-source = "git+https://github.com/laurentgeynet-ux/BitDeamonRust.git?rev=2b9df07733bb7a1ac1b3c9e2b9a3846588b7cc3f#2b9df07733bb7a1ac1b3c9e2b9a3846588b7cc3f"
+source = "git+https://github.com/laurentgeynet-ux/BitDeamonRust.git?rev=648583a24ac3feee863e3556f5897ec6045a490a#648583a24ac3feee863e3556f5897ec6045a490a"
 dependencies = [
  "bitdaemon-bencode",
  "bitdaemon-common",
@@ -404,7 +404,10 @@ dependencies = [
  "bitdaemon-disk",
  "bitdaemon-net",
  "bitdaemon-session",
+ "bytes",
  "rand 0.9.5",
+ "rustls",
+ "rustls-native-certs",
  "tokio",
  "tracing",
 ]
@@ -412,7 +415,7 @@ dependencies = [
 [[package]]
 name = "bitdaemon-bencode"
 version = "0.1.0"
-source = "git+https://github.com/laurentgeynet-ux/BitDeamonRust.git?rev=2b9df07733bb7a1ac1b3c9e2b9a3846588b7cc3f#2b9df07733bb7a1ac1b3c9e2b9a3846588b7cc3f"
+source = "git+https://github.com/laurentgeynet-ux/BitDeamonRust.git?rev=648583a24ac3feee863e3556f5897ec6045a490a#648583a24ac3feee863e3556f5897ec6045a490a"
 dependencies = [
  "bytes",
  "thiserror 2.0.21",
@@ -421,7 +424,7 @@ dependencies = [
 [[package]]
 name = "bitdaemon-common"
 version = "0.1.0"
-source = "git+https://github.com/laurentgeynet-ux/BitDeamonRust.git?rev=2b9df07733bb7a1ac1b3c9e2b9a3846588b7cc3f#2b9df07733bb7a1ac1b3c9e2b9a3846588b7cc3f"
+source = "git+https://github.com/laurentgeynet-ux/BitDeamonRust.git?rev=648583a24ac3feee863e3556f5897ec6045a490a#648583a24ac3feee863e3556f5897ec6045a490a"
 dependencies = [
  "bitvec",
  "bytes",
@@ -436,7 +439,7 @@ dependencies = [
 [[package]]
 name = "bitdaemon-core"
 version = "0.1.0"
-source = "git+https://github.com/laurentgeynet-ux/BitDeamonRust.git?rev=2b9df07733bb7a1ac1b3c9e2b9a3846588b7cc3f#2b9df07733bb7a1ac1b3c9e2b9a3846588b7cc3f"
+source = "git+https://github.com/laurentgeynet-ux/BitDeamonRust.git?rev=648583a24ac3feee863e3556f5897ec6045a490a#648583a24ac3feee863e3556f5897ec6045a490a"
 dependencies = [
  "bitdaemon-bencode",
  "bitdaemon-common",
@@ -451,7 +454,7 @@ dependencies = [
 [[package]]
 name = "bitdaemon-dht"
 version = "0.1.0"
-source = "git+https://github.com/laurentgeynet-ux/BitDeamonRust.git?rev=2b9df07733bb7a1ac1b3c9e2b9a3846588b7cc3f#2b9df07733bb7a1ac1b3c9e2b9a3846588b7cc3f"
+source = "git+https://github.com/laurentgeynet-ux/BitDeamonRust.git?rev=648583a24ac3feee863e3556f5897ec6045a490a#648583a24ac3feee863e3556f5897ec6045a490a"
 dependencies = [
  "bitdaemon-bencode",
  "bitdaemon-common",
@@ -469,7 +472,7 @@ dependencies = [
 [[package]]
 name = "bitdaemon-disk"
 version = "0.1.0"
-source = "git+https://github.com/laurentgeynet-ux/BitDeamonRust.git?rev=2b9df07733bb7a1ac1b3c9e2b9a3846588b7cc3f#2b9df07733bb7a1ac1b3c9e2b9a3846588b7cc3f"
+source = "git+https://github.com/laurentgeynet-ux/BitDeamonRust.git?rev=648583a24ac3feee863e3556f5897ec6045a490a#648583a24ac3feee863e3556f5897ec6045a490a"
 dependencies = [
  "bitdaemon-bencode",
  "bitdaemon-common",
@@ -486,7 +489,7 @@ dependencies = [
 [[package]]
 name = "bitdaemon-net"
 version = "0.1.0"
-source = "git+https://github.com/laurentgeynet-ux/BitDeamonRust.git?rev=2b9df07733bb7a1ac1b3c9e2b9a3846588b7cc3f#2b9df07733bb7a1ac1b3c9e2b9a3846588b7cc3f"
+source = "git+https://github.com/laurentgeynet-ux/BitDeamonRust.git?rev=648583a24ac3feee863e3556f5897ec6045a490a#648583a24ac3feee863e3556f5897ec6045a490a"
 dependencies = [
  "bitdaemon-bencode",
  "bitdaemon-common",
@@ -494,13 +497,16 @@ dependencies = [
  "bytes",
  "flate2",
  "futures",
+ "if-addrs",
  "num-bigint",
  "num-traits",
  "rand 0.9.5",
+ "rustls",
  "serde_json",
  "sha1 0.10.7",
  "thiserror 2.0.21",
  "tokio",
+ "tokio-rustls",
  "tokio-util",
  "tracing",
  "url",
@@ -509,7 +515,7 @@ dependencies = [
 [[package]]
 name = "bitdaemon-session"
 version = "0.1.0"
-source = "git+https://github.com/laurentgeynet-ux/BitDeamonRust.git?rev=2b9df07733bb7a1ac1b3c9e2b9a3846588b7cc3f#2b9df07733bb7a1ac1b3c9e2b9a3846588b7cc3f"
+source = "git+https://github.com/laurentgeynet-ux/BitDeamonRust.git?rev=648583a24ac3feee863e3556f5897ec6045a490a#648583a24ac3feee863e3556f5897ec6045a490a"
 dependencies = [
  "bitdaemon-bencode",
  "bitdaemon-common",
@@ -521,6 +527,7 @@ dependencies = [
  "futures",
  "rand 0.9.5",
  "sha1 0.10.7",
+ "sha2 0.10.9",
  "thiserror 2.0.21",
  "tokio",
  "tracing",
@@ -2255,6 +2262,16 @@ checksum = "cb68373c0d6620ef8105e855e7745e18b0d00d3bdb07fb532e434244cdb9a714"
 dependencies = [
  "icu_normalizer",
  "icu_properties",
+]
+
+[[package]]
+name = "if-addrs"
+version = "0.13.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "69b2eeee38fef3aa9b4cc5f1beea8a2444fc00e7377cafae396de3f5c2065e24"
+dependencies = [
+ "libc",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -4217,6 +4234,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0d41d731c7d2f962d1ccc364cec258de3c0e93b38c2fb3ba97ac74513048d634"
 dependencies = [
  "aws-lc-rs",
+ "log",
  "once_cell",
  "rustls-pki-types",
  "rustls-webpki",
