@@ -74,6 +74,19 @@ pub(crate) fn dispatch_factory(registry: PrivateRegistry) -> StorageFactory {
     })
 }
 
+/// Retire le composant racine `<name>/` quand le layout du torrent
+/// l'inclut (multi-fichiers avec racine) — parite du domaine cle
+/// `K_file` avec le chemin rqbit.
+fn strip_root(rel: Vec<u8>, name: &[u8]) -> Vec<u8> {
+    if !name.is_empty() && rel.len() > name.len() {
+        let sep = rel[name.len()];
+        if rel.starts_with(name) && (sep == b'/' || sep == b'\\') {
+            return rel[name.len() + 1..].to_vec();
+        }
+    }
+    rel
+}
+
 fn io_err(e: anyhow::Error) -> io::Error {
     io::Error::other(e.to_string())
 }
@@ -112,7 +125,11 @@ impl BdPrivateStorage {
                 if params.files.pad_file_at(idx) {
                     Arc::new(PrivateFile::padding())
                 } else {
-                    let rel = params.files.file_path(idx, b"");
+                    // `file_path` inclut le dossier racine du torrent
+                    // (`<name>/f`) ; la convention cle `K_file` d'OBD
+                    // (parite rqbit `full_path`) stocke le chemin
+                    // relatif **sans** ce composant.
+                    let rel = strip_root(params.files.file_path(idx, b""), params.files.name());
                     Arc::new(PrivateFile::new(
                         group_dir.join(spec.keys.file_name(&ih, &rel)),
                         rel,
@@ -305,7 +322,10 @@ impl DiskStorage for BdPrivateStorage {
             if f.padding {
                 continue;
             }
-            let rel = self.files.file_path(FileIndex(i as i32), b"");
+            let rel = strip_root(
+                self.files.file_path(FileIndex(i as i32), b""),
+                self.files.name(),
+            );
             let rel_str = String::from_utf8_lossy(&rel).into_owned();
             let _ = self.inner.remove_file(i, std::path::Path::new(&rel_str));
         }
@@ -520,7 +540,7 @@ mod tests {
         let (st, root) = storage_privee(&dir);
         st.write(&[1u8; 64], PieceIndex(0), 0, OpenMode::WRITE)
             .unwrap();
-        assert!(disk_bytes(&root).len() > 0);
+        assert!(!disk_bytes(&root).is_empty());
         st.delete_files(0).unwrap();
         assert!(disk_bytes(&root).is_empty(), "le groupe doit etre vide");
     }

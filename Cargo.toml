@@ -130,12 +130,12 @@ network-interface = "2"
 # les runners). L'adaptateur `storage_bitdaemon` consomme
 # `file_pool`/`pread_storage`/`part_file`. Pour iterer en local sans
 # cycle push/pin, utiliser `[patch]` ou un checkout a cote.
-bitdaemon-common = { git = "https://github.com/laurentgeynet-ux/BitDeamonRust.git", rev = "ae527a68b840f468e70fae8e3461b0863d15455f" }
-bitdaemon-core = { git = "https://github.com/laurentgeynet-ux/BitDeamonRust.git", rev = "ae527a68b840f468e70fae8e3461b0863d15455f" }
-bitdaemon-disk = { git = "https://github.com/laurentgeynet-ux/BitDeamonRust.git", rev = "ae527a68b840f468e70fae8e3461b0863d15455f" }
-bitdaemon-net = { git = "https://github.com/laurentgeynet-ux/BitDeamonRust.git", rev = "ae527a68b840f468e70fae8e3461b0863d15455f" }
-bitdaemon-session = { git = "https://github.com/laurentgeynet-ux/BitDeamonRust.git", rev = "ae527a68b840f468e70fae8e3461b0863d15455f" }
-bitdaemon = { git = "https://github.com/laurentgeynet-ux/BitDeamonRust.git", rev = "ae527a68b840f468e70fae8e3461b0863d15455f" }
+bitdaemon-common = { git = "https://github.com/laurentgeynet-ux/BitDeamonRust.git", rev = "1b16a230d02de7cbad62d685f21fa61ff52496c7" }
+bitdaemon-core = { git = "https://github.com/laurentgeynet-ux/BitDeamonRust.git", rev = "1b16a230d02de7cbad62d685f21fa61ff52496c7" }
+bitdaemon-disk = { git = "https://github.com/laurentgeynet-ux/BitDeamonRust.git", rev = "1b16a230d02de7cbad62d685f21fa61ff52496c7" }
+bitdaemon-net = { git = "https://github.com/laurentgeynet-ux/BitDeamonRust.git", rev = "1b16a230d02de7cbad62d685f21fa61ff52496c7" }
+bitdaemon-session = { git = "https://github.com/laurentgeynet-ux/BitDeamonRust.git", rev = "1b16a230d02de7cbad62d685f21fa61ff52496c7" }
+bitdaemon = { git = "https://github.com/laurentgeynet-ux/BitDeamonRust.git", rev = "1b16a230d02de7cbad62d685f21fa61ff52496c7" }
 
 # Copie vendored + patchee de librqbit 9.0.1 : les tunnels anonymes
 # Tribler n'ont pas de relais TCP generique — le trafic pair anonyme doit
