@@ -395,7 +395,7 @@ checksum = "5e764a1d40d510daf35e07be9eb06e75770908c27d411ee6c92109c9840eaaf7"
 [[package]]
 name = "bitdaemon"
 version = "0.1.0"
-source = "git+https://github.com/laurentgeynet-ux/BitDeamonRust.git?rev=648583a24ac3feee863e3556f5897ec6045a490a#648583a24ac3feee863e3556f5897ec6045a490a"
+source = "git+https://github.com/laurentgeynet-ux/BitDeamonRust.git?rev=530f560040106f802eb747787b75aa3f9abe5679#530f560040106f802eb747787b75aa3f9abe5679"
 dependencies = [
  "bitdaemon-bencode",
  "bitdaemon-common",
@@ -415,7 +415,7 @@ dependencies = [
 [[package]]
 name = "bitdaemon-bencode"
 version = "0.1.0"
-source = "git+https://github.com/laurentgeynet-ux/BitDeamonRust.git?rev=648583a24ac3feee863e3556f5897ec6045a490a#648583a24ac3feee863e3556f5897ec6045a490a"
+source = "git+https://github.com/laurentgeynet-ux/BitDeamonRust.git?rev=530f560040106f802eb747787b75aa3f9abe5679#530f560040106f802eb747787b75aa3f9abe5679"
 dependencies = [
  "bytes",
  "thiserror 2.0.21",
@@ -424,7 +424,7 @@ dependencies = [
 [[package]]
 name = "bitdaemon-common"
 version = "0.1.0"
-source = "git+https://github.com/laurentgeynet-ux/BitDeamonRust.git?rev=648583a24ac3feee863e3556f5897ec6045a490a#648583a24ac3feee863e3556f5897ec6045a490a"
+source = "git+https://github.com/laurentgeynet-ux/BitDeamonRust.git?rev=530f560040106f802eb747787b75aa3f9abe5679#530f560040106f802eb747787b75aa3f9abe5679"
 dependencies = [
  "bitvec",
  "bytes",
@@ -439,7 +439,7 @@ dependencies = [
 [[package]]
 name = "bitdaemon-core"
 version = "0.1.0"
-source = "git+https://github.com/laurentgeynet-ux/BitDeamonRust.git?rev=648583a24ac3feee863e3556f5897ec6045a490a#648583a24ac3feee863e3556f5897ec6045a490a"
+source = "git+https://github.com/laurentgeynet-ux/BitDeamonRust.git?rev=530f560040106f802eb747787b75aa3f9abe5679#530f560040106f802eb747787b75aa3f9abe5679"
 dependencies = [
  "bitdaemon-bencode",
  "bitdaemon-common",
@@ -454,7 +454,7 @@ dependencies = [
 [[package]]
 name = "bitdaemon-dht"
 version = "0.1.0"
-source = "git+https://github.com/laurentgeynet-ux/BitDeamonRust.git?rev=648583a24ac3feee863e3556f5897ec6045a490a#648583a24ac3feee863e3556f5897ec6045a490a"
+source = "git+https://github.com/laurentgeynet-ux/BitDeamonRust.git?rev=530f560040106f802eb747787b75aa3f9abe5679#530f560040106f802eb747787b75aa3f9abe5679"
 dependencies = [
  "bitdaemon-bencode",
  "bitdaemon-common",
@@ -472,7 +472,7 @@ dependencies = [
 [[package]]
 name = "bitdaemon-disk"
 version = "0.1.0"
-source = "git+https://github.com/laurentgeynet-ux/BitDeamonRust.git?rev=648583a24ac3feee863e3556f5897ec6045a490a#648583a24ac3feee863e3556f5897ec6045a490a"
+source = "git+https://github.com/laurentgeynet-ux/BitDeamonRust.git?rev=530f560040106f802eb747787b75aa3f9abe5679#530f560040106f802eb747787b75aa3f9abe5679"
 dependencies = [
  "bitdaemon-bencode",
  "bitdaemon-common",
@@ -489,7 +489,7 @@ dependencies = [
 [[package]]
 name = "bitdaemon-net"
 version = "0.1.0"
-source = "git+https://github.com/laurentgeynet-ux/BitDeamonRust.git?rev=648583a24ac3feee863e3556f5897ec6045a490a#648583a24ac3feee863e3556f5897ec6045a490a"
+source = "git+https://github.com/laurentgeynet-ux/BitDeamonRust.git?rev=530f560040106f802eb747787b75aa3f9abe5679#530f560040106f802eb747787b75aa3f9abe5679"
 dependencies = [
  "bitdaemon-bencode",
  "bitdaemon-common",
@@ -515,7 +515,7 @@ dependencies = [
 [[package]]
 name = "bitdaemon-session"
 version = "0.1.0"
-source = "git+https://github.com/laurentgeynet-ux/BitDeamonRust.git?rev=648583a24ac3feee863e3556f5897ec6045a490a#648583a24ac3feee863e3556f5897ec6045a490a"
+source = "git+https://github.com/laurentgeynet-ux/BitDeamonRust.git?rev=530f560040106f802eb747787b75aa3f9abe5679#530f560040106f802eb747787b75aa3f9abe5679"
 dependencies = [
  "bitdaemon-bencode",
  "bitdaemon-common",
