@@ -174,8 +174,24 @@ cibles `TorTargetPolicy`, et plus tard tout parsing de liens
     `remote_query_results` **existante** (même cycle de vie :
     uuid, progression, uuid-based stop) — l'app reçoit une source
     de plus sans nouvelle plomberie.
-- `GET /api/tor/status` → `{enabled, mode, state, progress}` —
-  alimente la page diagnostic et le chip de source.
+- `GET /api/search/external?source=tpb&q=…` *(implémenté, étape
+  115)* → `200 {uuid, source, results}` (même forme JSON que
+  `to_simple_dict` + `source`/`magnet`). Paramètres fautifs → `400`
+  (`empty_query`, `unknown_source`) ; indisponibilité Tor → `503`
+  (`tor_disabled`, `tor_bootstrapping`, `bootstrap_failed`,
+  `tor_not_ready`) ; échecs backend → `502` (`mirror_unreachable`,
+  `captcha_detected`, `structure_changed`, `no_results`). Le code
+  machine est porté par le champ `error.code` de l'enveloppe
+  d'erreur — le message reste libre. La recherche **déclenche** le
+  bootstrap quand le runtime est `Off` mais n'attend jamais sa fin
+  (`bootstrapping` → 503 immédiat, l'UI repose la question) ; la
+  notification SSE `remote_query_results` porte `peer =
+  "tor:<source>"` et l'uuid partagé.
+- `GET /api/tor/status` *(implémenté, étape 115)* → `{enabled,
+  mode, external_socks5, state, progress, error, sources}` —
+  toujours joignable même bootstrap échoué (prouve que le runtime
+  ne bloque pas le daemon) ; alimente la page diagnostic et le
+  chip de source.
 - **Journalisation** : aucun terme de recherche dans `tracing`
   (niveau info ou plus) — données sensibles ; les événements SSE
   restent derrière `api_key_auth`.

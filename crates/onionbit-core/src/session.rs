@@ -108,6 +108,11 @@ struct ServiceOverrides {
     ipv8: Option<crate::ipv8_stack::Ipv8Config>,
     /// Idem pour la section moteur (`dht`/`utp`/`proxy_*`/ports…).
     engine: Option<onionbit_bittorrent::EngineConfig>,
+    /// Section `tor` effective — restart-only comme `ipv8` : le
+    /// runtime Tor est construit au demarrage de la session, les
+    /// changements de `mode`/`external_socks5` attendent le prochain
+    /// boot mais `GET /api/settings` reflete la valeur en attente.
+    tor: Option<onionbit_tor::TorSettings>,
     /// Idem pour `torrent_checker/enabled`.
     enable_torrent_checker: Option<bool>,
     /// Section `storage` effective (`Some` = remplace
@@ -317,6 +322,19 @@ struct Inner {
     /// regle `max_relayed_rate` en mode auto (AIMD sur le retard de
     /// file) ; consultable via `/api/statistics/ipv8` (`bandwidth`).
     bandwidth: Arc<crate::services::bandwidth::CongestionController>,
+    /// Runtime Tor (ADR-0028) — present dans tous les cas ; sans la
+    /// feature `tor` `bootstrap`/`fetch` rendent `NotBuilt`. Le
+    /// bootstrap reste explicite (premiere recherche externe),
+    /// jamais au demarrage du daemon. `RwLock` : un runtime de
+    /// remplacement peut etre injecte (tests, futur rechargement).
+    tor: std::sync::RwLock<onionbit_tor::TorRuntime>,
+    /// Registre des backends de recherche externe (`source` →
+    /// backend — `tor.search.backends.<source>`, ADR-0028 §5).
+    /// Mutable : injection de doubles en test et futur
+    /// rechargement a chaud.
+    search_backends: std::sync::Mutex<
+        std::collections::BTreeMap<String, Arc<dyn onionbit_tor::OnionSearchBackend>>,
+    >,
     /// Horodatage de demarrage — expose via `uptime_secs`
     /// (`GET /api/statistics/tribler`).
     started_at: std::time::Instant,
@@ -792,6 +810,13 @@ impl CoreSession {
         let asyncio = crate::asyncio::AsyncioMonitor::new(config.ipv8.walker_interval);
         let augmenter = Arc::new(crate::augmenter::Augmenter::new(&config.state_dir));
         let paths = crate::paths::PathRoots::for_state_dir(&config.state_dir);
+        // ADR-0028 : runtime Tor construit a l'etat `Off` (bootstrap
+        // explicite a la premiere recherche externe) ; les backends
+        // partagent le transport via `OnionFetch` — leurs clones
+        // restent lies au runtime initial, un `swap_tor_runtime`
+        // ulterieur ne les rebranche pas.
+        let tor = onionbit_tor::TorRuntime::new(config.tor.clone());
+        let search_backends = onionbit_tor::build_backends(&config.tor, Arc::new(tor.clone()));
         Ok(Self {
             inner: Arc::new(Inner {
                 config,
@@ -818,6 +843,8 @@ impl CoreSession {
                 in_lifecycle: std::sync::Mutex::new(std::collections::HashMap::new()),
                 augmenter,
                 bandwidth: Arc::new(crate::services::bandwidth::CongestionController::new()),
+                tor: std::sync::RwLock::new(tor),
+                search_backends: std::sync::Mutex::new(search_backends),
                 started_at: std::time::Instant::now(),
             }),
         })
@@ -2111,6 +2138,66 @@ impl CoreSession {
     /// Acces au bus d'evenements.
     pub fn notifier(&self) -> &Notifier {
         &self.inner.notifier
+    }
+
+    /// Runtime Tor (ADR-0028) — clone partageant l'etat interne :
+    /// `state()`/`bootstrap()`/`fetch_onion` operent tous sur le
+    /// meme client. Toujours present ; sans la feature `tor`,
+    /// `bootstrap` rend `TorError::NotBuilt`.
+    pub fn tor(&self) -> onionbit_tor::TorRuntime {
+        self.inner
+            .tor
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
+    /// Remplace le runtime Tor (tests, futur rechargement a chaud).
+    /// Les backends construits au demarrage gardent leur fetcher
+    /// initial — injecter aussi les backends si le test attend un
+    /// transport coherent.
+    pub fn swap_tor_runtime(&self, runtime: onionbit_tor::TorRuntime) {
+        *self.inner.tor.write().unwrap_or_else(|e| e.into_inner()) = runtime;
+    }
+
+    /// Backend de recherche externe enregistre sous `source`
+    /// (`tor.search.backends.<source>` — ADR-0028 §5).
+    pub fn search_backend(
+        &self,
+        source: &str,
+    ) -> Option<Arc<dyn onionbit_tor::OnionSearchBackend>> {
+        self.inner
+            .search_backends
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(source)
+            .cloned()
+    }
+
+    /// Identifiants des backends de recherche externes enregistres
+    /// (`/api/tor/status` → `sources`).
+    pub fn search_backend_sources(&self) -> Vec<String> {
+        self.inner
+            .search_backends
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .keys()
+            .cloned()
+            .collect()
+    }
+
+    /// Enregistre/remplace un backend de recherche externe (tests,
+    /// futur rechargement de la section `tor.search.backends`).
+    pub fn register_search_backend(
+        &self,
+        source: impl Into<String>,
+        backend: Arc<dyn onionbit_tor::OnionSearchBackend>,
+    ) {
+        self.inner
+            .search_backends
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(source.into(), backend);
     }
 
     /// Acces direct au moteur (services internes : watch folder,
@@ -5022,6 +5109,9 @@ impl CoreSession {
         if let Some(engine) = &ov.engine {
             cfg.engine = engine.clone();
         }
+        if let Some(tor) = &ov.tor {
+            cfg.tor = tor.clone();
+        }
         if let Some(enabled) = ov.enable_torrent_checker {
             cfg.enable_torrent_checker = enabled;
         }
@@ -5087,6 +5177,7 @@ impl CoreSession {
             storage: Some(config.storage.clone()),
             ipv8: Some(config.ipv8.clone()),
             engine: Some(config.engine.clone()),
+            tor: Some(config.tor.clone()),
             enable_torrent_checker: Some(config.enable_torrent_checker),
         };
         // `min_circuits`/`max_circuits` : Python les lit dans

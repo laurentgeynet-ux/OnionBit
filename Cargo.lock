@@ -4229,6 +4229,7 @@ dependencies = [
 name = "onionbit-api"
 version = "1.1.2"
 dependencies = [
+ "async-trait",
  "axum",
  "base64 0.23.1",
  "fs2",
@@ -4242,6 +4243,7 @@ dependencies = [
  "onionbit-format",
  "onionbit-ipv8",
  "onionbit-test-support",
+ "onionbit-tor",
  "onionbit-tunnel",
  "reqwest",
  "rusqlite",
@@ -4255,6 +4257,7 @@ dependencies = [
  "tokio-tungstenite",
  "tower-http",
  "tracing",
+ "tracing-subscriber",
  "uuid",
 ]
 

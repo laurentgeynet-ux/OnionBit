@@ -94,6 +94,22 @@ impl TorRuntime {
         }
     }
 
+    /// Runtime factice a l'etat impose — reserve aux tests des
+    /// couches superieures (API) qui injectent leurs propres
+    /// backends : l'etat affiche `state` mais `fetch_onion` reste
+    /// impossible (transport absent) — aucun octet ne sort jamais
+    /// par un stub.
+    pub fn stub_state(settings: TorSettings, state: TorState) -> Self {
+        let rt = Self::new(settings);
+        set_state(&rt.inner, state);
+        rt
+    }
+
+    /// [`Self::stub_state`] a l'etat `Ready`.
+    pub fn stub_ready(settings: TorSettings) -> Self {
+        Self::stub_state(settings, TorState::Ready)
+    }
+
     /// Reglages actifs.
     pub fn settings(&self) -> &TorSettings {
         &self.inner.settings

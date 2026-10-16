@@ -3,6 +3,42 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## ADR-0028 étape 115 : REST + SSE — `/api/search/external` + `/api/tor/status` (2026-10-17)
+
+La recherche `.onion` est exposee au plan de controle
+(`onionbit-api::handlers::tor`, ADR-0028 §5) — extension Rust sans
+equivalent Python.
+
+- `GET /api/search/external?source=tpb&q=…` (derriere
+  `api_key_auth`) : `400` (`empty_query`, `unknown_source`),
+  `503` (`tor_disabled`, `tor_bootstrapping`, `bootstrap_failed`,
+  `tor_not_ready` — jamais de repli clearnet), `200`
+  `{uuid, source, results}` en forme `to_simple_dict` + `source`/
+  `magnet` ; echecs backend → `502` + `error.code`
+  (`mirror_unreachable`, `captcha_detected`, `structure_changed`,
+  `no_results`). Resultats aussi notifies via
+  `remote_query_results` (uuid partage, `peer = "tor:<source>"`).
+- `GET /api/tor/status` → `{enabled, mode, external_socks5, state,
+  progress, error, sources}` — toujours joignable, meme bootstrap
+  echoue.
+- `error.code` : nouveau champ optionnel de l'enveloppe
+  `{error: {handled, message, code?}}` — code machine stable sans
+  casser le format Tribler.
+- `CoreSession` possede le `TorRuntime` (`tor()`,
+  `swap_tor_runtime`) et le registre de backends externes
+  (`search_backend`, `register_search_backend`,
+  `search_backend_sources`) ; `POST /api/settings` accepte `tor.*`
+  (restart-only via `ServiceOverrides.tor`).
+- Bootstrap **explicite a la premiere recherche** : le handler ne
+  bloque jamais (503 `tor_bootstrapping` immediat) ; feature `tor`
+  propagee `onionbit-core` → `onionbit-daemon`
+  (`cargo build --features tor` pour le transport reel).
+- `TorRuntime::stub_state`/`stub_ready` : stubs d'etat pour les
+  tests des couches superieures (aucun transport reel).
+- 11 tests API verts — auth, 400/503/502 types, succes + SSE,
+  non-blocage pendant bootstrap, capture `tracing` : aucun terme
+  de recherche dans les journaux.
+
 ## ADR-0028 étape 114 : backend de recherche `tpb` — scraping `.onion` borne (2026-10-17)
 
 La recherche externe produit des resultats normalises
