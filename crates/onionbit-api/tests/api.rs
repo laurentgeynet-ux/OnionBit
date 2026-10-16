@@ -5185,3 +5185,433 @@ async fn private_files_et_export_rest() {
     assert_eq!(srv.session.private_manifest_entries().len(), 1);
     srv.session.stop().await;
 }
+
+// ============================================================================
+// ADR-0028 etape 115 — `/api/tor/status` + `/api/search/external`
+// ============================================================================
+
+/// Backend de recherche externe factice — resultats figes ou erreur
+/// typee, sans transport (le vrai fetch est hors champ des tests API).
+struct StubSearchBackend {
+    outcome: StubOutcome,
+}
+
+enum StubOutcome {
+    Results(Vec<onionbit_tor::ExternalResult>),
+    Fail(fn() -> onionbit_tor::ExternalSearchError),
+}
+
+#[async_trait::async_trait]
+impl onionbit_tor::OnionSearchBackend for StubSearchBackend {
+    async fn search(
+        &self,
+        query: &str,
+    ) -> Result<Vec<onionbit_tor::ExternalResult>, onionbit_tor::ExternalSearchError> {
+        assert!(!query.trim().is_empty(), "requete vide non filtree");
+        match &self.outcome {
+            StubOutcome::Results(r) => Ok(r.clone()),
+            StubOutcome::Fail(f) => Err(f()),
+        }
+    }
+}
+
+/// Resultat externe factice minimal.
+fn stub_result(name: &str, infohash: &str) -> onionbit_tor::ExternalResult {
+    onionbit_tor::ExternalResult {
+        name: name.into(),
+        infohash: infohash.into(),
+        magnet: format!("magnet:?xt=urn:btih:{infohash}&dn=x"),
+        size_bytes: 42,
+        seeds: 7,
+        leechers: 3,
+        category: "Test".into(),
+        source: "tpb".into(),
+    }
+}
+
+const IH_STUB: &str = "0123456789abcdef0123456789abcdef01234567";
+
+/// Serveur de test dont le runtime Tor est remplace par un stub a
+/// l'etat voulu et le registre de backends injecte — aucun transport
+/// reel n'est implique.
+async fn spawn_tor_server(
+    tor_state: onionbit_tor::TorState,
+    backends: Vec<(&'static str, StubSearchBackend)>,
+) -> TestServer {
+    let dir = tempfile::tempdir().unwrap();
+    let mut cfg = CoreConfig::offline(dir.path().into());
+    cfg.tor.enabled = true;
+    let session = CoreSession::start_offline(cfg, Notifier::new())
+        .await
+        .unwrap();
+    session.swap_tor_runtime(onionbit_tor::TorRuntime::stub_state(
+        onionbit_tor::TorSettings {
+            enabled: true,
+            // Sonde loopback refusee instantanement si un bootstrap
+            // reel est declenche — aucun trafic Tor en test.
+            mode: onionbit_tor::TorMode::External("127.0.0.1:1".parse().unwrap()),
+            ..Default::default()
+        },
+        tor_state,
+    ));
+    for (name, backend) in backends {
+        session.register_search_backend(name, std::sync::Arc::new(backend));
+    }
+    let state = AppState::new(session.clone());
+    let app = build(state.clone());
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    TestServer {
+        addr,
+        session,
+        state,
+        client: reqwest::Client::new(),
+        _dir: dir,
+    }
+}
+
+#[tokio::test]
+async fn tor_status_desactive() {
+    let srv = spawn_server().await;
+    let resp = srv
+        .client
+        .get(srv.url("/api/tor/status"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["enabled"], false);
+    assert_eq!(body["mode"], "embedded");
+    assert_eq!(body["state"], "off");
+    assert_eq!(body["progress"], 0);
+    srv.session.stop().await;
+}
+
+#[tokio::test]
+async fn tor_status_reflete_runtime() {
+    let srv = spawn_tor_server(
+        onionbit_tor::TorState::Bootstrapping { progress: 42 },
+        vec![(
+            "tpb",
+            StubSearchBackend {
+                outcome: StubOutcome::Results(vec![]),
+            },
+        )],
+    )
+    .await;
+    let resp = srv
+        .client
+        .get(srv.url("/api/tor/status"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["enabled"], true);
+    assert_eq!(body["mode"], "external");
+    assert_eq!(body["state"], "bootstrapping");
+    assert_eq!(body["progress"], 42);
+    assert_eq!(body["sources"], serde_json::json!(["tpb"]));
+    srv.session.stop().await;
+}
+
+#[tokio::test]
+async fn search_external_requiert_auth() {
+    let srv = spawn_server_with(|s| AppState::new(s).with_api_key("cle-de-test")).await;
+    let resp = srv
+        .client
+        .get(srv.url("/api/search/external?source=tpb&q=x"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 401);
+    srv.session.stop().await;
+}
+
+#[tokio::test]
+async fn search_external_parametres_invalides_400() {
+    let srv = spawn_tor_server(
+        onionbit_tor::TorState::Ready,
+        vec![(
+            "tpb",
+            StubSearchBackend {
+                outcome: StubOutcome::Results(vec![]),
+            },
+        )],
+    )
+    .await;
+    for url in [
+        "/api/search/external?source=tpb",       // q absent
+        "/api/search/external?source=tpb&q=",    // q vide
+        "/api/search/external?source=tpb&q=%20", // q whitespace
+        "/api/search/external?q=x",              // source absent
+        "/api/search/external?source=&q=x",      // source vide
+        "/api/search/external?source=nope&q=x",  // source inconnue
+    ] {
+        let resp = srv.client.get(srv.url(url)).send().await.unwrap();
+        assert_eq!(resp.status(), 400, "{url}");
+    }
+    srv.session.stop().await;
+}
+
+#[tokio::test]
+async fn search_external_tor_desactive_503() {
+    // Session par defaut : `tor.enabled = false` — le backend est
+    // enregistre mais la porte Tor rend 503 avant tout fetch.
+    let srv = spawn_server().await;
+    srv.session.register_search_backend(
+        "tpb",
+        std::sync::Arc::new(StubSearchBackend {
+            outcome: StubOutcome::Results(vec![]),
+        }),
+    );
+    let resp = srv
+        .client
+        .get(srv.url("/api/search/external?source=tpb&q=x"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 503);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["error"]["code"], "tor_disabled");
+    srv.session.stop().await;
+}
+
+#[tokio::test]
+async fn search_external_bootstrap_en_cours_daemon_non_bloque() {
+    let srv = spawn_tor_server(
+        onionbit_tor::TorState::Bootstrapping { progress: 17 },
+        vec![(
+            "tpb",
+            StubSearchBackend {
+                outcome: StubOutcome::Results(vec![]),
+            },
+        )],
+    )
+    .await;
+    // Le bootstrap « bloque » ne gele ni la recherche (503 explicite)
+    // ni les autres endpoints.
+    let resp = srv
+        .client
+        .get(srv.url("/api/search/external?source=tpb&q=x"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 503);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["error"]["code"], "tor_bootstrapping");
+    let resp = srv
+        .client
+        .get(srv.url("/api/downloads"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    srv.session.stop().await;
+}
+
+#[tokio::test]
+async fn search_external_bootstrap_echoue_503() {
+    let srv = spawn_tor_server(
+        onionbit_tor::TorState::Error("gardes injoignables".into()),
+        vec![(
+            "tpb",
+            StubSearchBackend {
+                outcome: StubOutcome::Results(vec![]),
+            },
+        )],
+    )
+    .await;
+    let resp = srv
+        .client
+        .get(srv.url("/api/search/external?source=tpb&q=x"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 503);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["error"]["code"], "bootstrap_failed");
+    srv.session.stop().await;
+}
+
+#[tokio::test]
+async fn search_external_succes_et_sse() {
+    let srv = spawn_tor_server(
+        onionbit_tor::TorState::Ready,
+        vec![(
+            "tpb",
+            StubSearchBackend {
+                outcome: StubOutcome::Results(vec![
+                    stub_result("Torrent Un", IH_STUB),
+                    stub_result("Torrent Deux", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+                ]),
+            },
+        )],
+    )
+    .await;
+    // Souscription SSE avant la recherche : `remote_query_results`
+    // doit porter les resultats avec l'uuid partage.
+    let mut events = srv.client.get(srv.url("/api/events")).send().await.unwrap();
+    let mut buf = String::new();
+    read_until(&mut buf, &mut events, "events_start").await;
+
+    let resp = srv
+        .client
+        .get(srv.url("/api/search/external?source=tpb&q=linux"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let uuid = body["uuid"].as_str().unwrap().to_string();
+    assert!(!uuid.is_empty());
+    assert_eq!(body["source"], "tpb");
+    let results = body["results"].as_array().unwrap();
+    assert_eq!(results.len(), 2);
+    assert_eq!(results[0]["infohash"], IH_STUB);
+    assert_eq!(results[0]["num_seeders"], 7);
+    assert_eq!(results[0]["num_leechers"], 3);
+    assert_eq!(results[0]["size"], 42);
+    assert_eq!(results[0]["source"], "tpb");
+    assert_eq!(
+        results[0]["magnet"],
+        format!("magnet:?xt=urn:btih:{IH_STUB}&dn=x")
+    );
+
+    // SSE : meme uuid, `peer` prefixe `tor:`.
+    read_until(&mut buf, &mut events, &uuid).await;
+    assert!(buf.contains("remote_query_results"));
+    assert!(buf.contains("\"peer\":\"tor:tpb\""));
+    srv.session.stop().await;
+}
+
+#[tokio::test]
+async fn search_external_erreurs_backend_502() {
+    let srv = spawn_tor_server(onionbit_tor::TorState::Ready, vec![]).await;
+    for (name, code) in [
+        ("m_unreach", "mirror_unreachable"),
+        ("captcha", "captcha_detected"),
+        ("struct", "structure_changed"),
+        ("nores", "no_results"),
+    ] {
+        let make: fn() -> onionbit_tor::ExternalSearchError = match code {
+            "mirror_unreachable" => {
+                || onionbit_tor::ExternalSearchError::MirrorUnreachable { tried: 2 }
+            }
+            "captcha_detected" => || onionbit_tor::ExternalSearchError::CaptchaDetected,
+            "structure_changed" => || onionbit_tor::ExternalSearchError::StructureChanged,
+            _ => || onionbit_tor::ExternalSearchError::NoResults,
+        };
+        srv.session.register_search_backend(
+            name,
+            std::sync::Arc::new(StubSearchBackend {
+                outcome: StubOutcome::Fail(make),
+            }),
+        );
+        let resp = srv
+            .client
+            .get(srv.url(&format!("/api/search/external?source={name}&q=x")))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 502, "{code}");
+        let body: serde_json::Value = resp.json().await.unwrap();
+        assert_eq!(body["error"]["code"], code, "{code}");
+    }
+    srv.session.stop().await;
+}
+
+/// Buffer de logs partage pour la capture `tracing` — verifie que
+/// le terme de recherche ne finit jamais dans les journaux.
+#[derive(Clone, Default)]
+struct LogBuf(std::sync::Arc<std::sync::Mutex<String>>);
+
+impl std::io::Write for LogBuf {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push_str(&String::from_utf8_lossy(buf));
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn settings_post_tor_section_restart_only() {
+    let srv = spawn_server().await;
+    // La section `tor` est acceptee par le merge generique ; elle est
+    // restart-only (runtime construit au demarrage) mais
+    // `GET /api/settings` doit refleter la valeur en attente.
+    let resp = srv
+        .client
+        .post(srv.url("/api/settings"))
+        .json(&serde_json::json!({
+            "tor": { "enabled": true, "mode": "external", "external_socks5": "socks5h://127.0.0.1:9050" }
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let resp = srv
+        .client
+        .get(srv.url("/api/settings"))
+        .send()
+        .await
+        .unwrap();
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["settings"]["tor"]["enabled"], true);
+    srv.session.stop().await;
+}
+
+#[tokio::test]
+async fn search_external_ne_journalise_pas_la_requete() {
+    let srv = spawn_tor_server(
+        onionbit_tor::TorState::Ready,
+        vec![(
+            "tpb",
+            StubSearchBackend {
+                outcome: StubOutcome::Results(vec![stub_result("T", IH_STUB)]),
+            },
+        )],
+    )
+    .await;
+    // Subscriber thread-local pendant l'appel direct du handler
+    // (runtime monothread : tout evenement emis ici est capture).
+    let logs = LogBuf::default();
+    let subscriber = tracing_subscriber::fmt()
+        .with_writer({
+            let logs = logs.clone();
+            move || logs.clone()
+        })
+        .with_ansi(false)
+        .finish();
+    let sentinel = "XyZtRqSentinelleNoLog";
+    {
+        let _guard = tracing::subscriber::set_default(subscriber);
+        let outcome = onionbit_api::handlers::tor::external_search(
+            axum::extract::State(srv.state.clone()),
+            axum::extract::Query(onionbit_api::handlers::tor::ExternalSearchQuery {
+                source: Some("tpb".into()),
+                q: Some(sentinel.into()),
+            }),
+        )
+        .await;
+        assert!(outcome.is_ok());
+    }
+    let captured = logs.0.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    // Preuve que la capture fonctionne : le log « servie » existe.
+    assert!(captured.contains("recherche onion externe"), "{captured}");
+    assert!(
+        !captured.contains(sentinel),
+        "le terme de recherche a ete journalise : {captured}"
+    );
+    srv.session.stop().await;
+}

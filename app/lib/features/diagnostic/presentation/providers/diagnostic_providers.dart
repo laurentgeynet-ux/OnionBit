@@ -194,3 +194,19 @@ final anonLaneProvider = FutureProvider.autoDispose<AnonLaneStatus>((
     return AnonLaneStatus.disabled;
   }
 });
+
+/// État du runtime Tor (`GET /api/tor/status`, ADR-0028 §5) — sondé
+/// toutes les 10 s, partagé entre le Privacy HUD, le chip Tor de la
+/// recherche et la tuile Diagnostic. Un échec API rend « off »
+/// (honest state) : le runtime non compilé ou désactivé n'est pas
+/// une panne.
+final torStatusProvider = FutureProvider.autoDispose<TorRuntimeStatus>((
+  ref,
+) async {
+  ref.watch(tickProvider(const Duration(seconds: 10)));
+  try {
+    return await ref.watch(diagnosticRepositoryProvider).torStatus();
+  } catch (_) {
+    return TorRuntimeStatus.disabled;
+  }
+});

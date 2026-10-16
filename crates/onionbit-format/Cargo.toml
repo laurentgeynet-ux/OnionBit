@@ -9,6 +9,8 @@ authors.workspace = true
 [dependencies]
 thiserror.workspace = true
 sha2.workspace = true
+# SHA3-256 du checksum d'adresse onion v3 (module `onion`, ADR-0028).
+sha3.workspace = true
 unicode-normalization.workspace = true
 onionbit-crypto = { path = "../onionbit-crypto" }
 

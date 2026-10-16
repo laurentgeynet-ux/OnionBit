@@ -10,6 +10,7 @@ members = [
     "crates/onionbit-core",
     "crates/onionbit-db",
     "crates/onionbit-network-policy",
+    "crates/onionbit-tor",
     "crates/onionbit-api",
     "crates/onionbit-cli",
     "crates/onionbit-daemon",
@@ -57,6 +58,42 @@ rusqlite = { version = "0.40", features = ["bundled", "functions"] }
 rand = "0.10"
 sha1 = "0.11"
 sha2 = "0.11"
+# SHA3-256 — checksum des adresses de services caches Tor v3
+# (`onionbit-format::onion`, ADR-0028). MIT/Apache-2.0.
+sha3 = "0.10"
+# Connectivite Tor embarquee (`onionbit-tor`, feature `tor`,
+# ADR-0028 §1) : client Tor officiel en Rust. `rustls` evite
+# OpenSSL, `tokio` est le runtime du workspace, `compression`
+# (feature par defaut d'arti) permet au dirmgr d'echanger les
+# documents compresses (zstd/lzma/xz), comme le client de
+# reference. `onion-service-client` (tor-hsclient) est
+# REQUIS pour joindre des cibles `.onion`. MIT/Apache-2.0. Tres
+# lourd en build — toujours optionnel derriere le feature flag.
+arti-client = { version = "0.47", default-features = false, features = ["rustls", "tokio", "compression", "onion-service-client", "static-sqlite"] }
+tor-rtcompat = "0.47"
+# SOCKS5 loopback (mode `external`, URL validee par
+# `proxy_guard::validate_local_socks5_url`) — deja dans l'arbre
+# via le librqbit vendored, promu dependance directe.
+tokio-socks = "0.5"
+# Decodeur HTTP/1.1 zero-allocation pour les reponses onion
+# (statut, en-tetes, chunked, CRLF/LF) — jamais de parseur maison
+# (ADR-0028 §1). MIT/Apache-2.0.
+httparse = "1"
+# Parsing borne des pages `.onion` (onionbit-tor, ADR-0028 §5) :
+# html5ever/selectors — jamais de regex ni de parseur maison sur du
+# HTML tiers. ISC. Hors feature `tor` : le scraping est testable
+# sans transport (fetch injecte via `OnionFetch`).
+scraper = "0.26"
+# Traits async object-safe (`OnionFetch`, `OnionSearchBackend`).
+async-trait = "0.1"
+# TLS sur un flux Tor (`onionbit-tor`, ADR-0028 §5 `api_via_exit`) :
+# les hotes clearnet de sortie parlent https — et un exit ne doit
+# pas pouvoir reecrire des metadonnees de recherche en clair.
+# `webpki-roots` embarque le bundle Mozilla (deterministe, portable
+# — meme choix qu'arti). MIT/Apache-2.0, optionnels via `tor`.
+rustls = "0.23"
+tokio-rustls = "0.26"
+webpki-roots = "0.26"
 ed25519-dalek = "3"
 x25519-dalek = { version = "2", features = ["static_secrets", "getrandom"] }
 # Elligator2 (ADR-0017) : encode les points Curve25519 du handshake
@@ -149,6 +186,13 @@ librqbit-dht = { path = "vendor/librqbit-dht" }
 librqbit-tracker-comms = { path = "vendor/librqbit-tracker-comms" }
 librqbit-dualstack-sockets = { path = "vendor/librqbit-dualstack-sockets" }
 librqbit-utp = { path = "vendor/librqbit-utp" }
+# Correctif bug Windows : `find_limit` boucle infiniment car
+# `SystemTime::checked_sub` sature (borne FILETIME) au lieu de rendre
+# None — la recherche binaire des min/max ne converge jamais.
+# Cf. doc/architecture/decisions/0028 et roadmap_adr0028 (bootstrap arti
+# fige a 15 %, un coeur CPU a 100 %). A retirer des qu'un correctif
+# upstream est publie (arti, gitlab.torproject.org).
+saturating-time = { path = "vendor/saturating-time" }
 
 [profile.release]
 opt-level = 3

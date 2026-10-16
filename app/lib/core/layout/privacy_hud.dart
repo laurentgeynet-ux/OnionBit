@@ -30,6 +30,11 @@ class PrivacyHud extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final lane = ref.watch(anonLaneProvider).value;
+    // Runtime Tor (ADR-0028 §8) : pastille jointe au bouclier,
+    // uniquement quand `tor.enabled` — un indicateur mort ou caché
+    // quand la fonction est inactive serait trompeur (états honnêtes
+    // comme `AnonLaneStatus` : `off` ≠ panne).
+    final tor = ref.watch(torStatusProvider).value;
     final scheme = Theme.of(context).colorScheme;
     final semantic = context.semanticColors;
     final compact =
@@ -54,11 +59,40 @@ class PrivacyHud extends ConsumerWidget {
       ),
     };
 
+    final (torIcon, torColor, torLabel) =
+        (tor?.enabled ?? false)
+            ? switch (tor!.state) {
+                TorRuntimeState.ready => (
+                  Icons.vpn_lock,
+                  semantic.success,
+                  'Tor · ${context.l10n.torStateReady}',
+                ),
+                TorRuntimeState.bootstrapping => (
+                  Icons.vpn_lock_outlined,
+                  semantic.warning,
+                  context.l10n.torChipBootstrapping(tor.progress),
+                ),
+                TorRuntimeState.error => (
+                  Icons.vpn_lock_outlined,
+                  scheme.error,
+                  'Tor · ${context.l10n.torStateError}',
+                ),
+                _ => (
+                  Icons.vpn_lock_outlined,
+                  scheme.outline,
+                  'Tor · ${context.l10n.torStateDormant}',
+                ),
+              }
+            : (null, null, null);
+
     // `Semantics` explicite : en `compact` l'indicateur est une icône
     // seule — sans label, un lecteur d'écran n'annoncerait rien.
     return Semantics(
       button: true,
-      label: '$label — ${context.l10n.hudAnonTooltip}',
+      label: [
+        '$label — ${context.l10n.hudAnonTooltip}',
+        if (torLabel != null) '$torLabel — ${context.l10n.hudTorTooltip}',
+      ].join(' · '),
       child: Tooltip(
         message: context.l10n.hudAnonTooltip,
         child: InkWell(
@@ -82,6 +116,13 @@ class PrivacyHud extends ConsumerWidget {
                     style: Theme.of(
                       context,
                     ).textTheme.labelMedium?.copyWith(color: color),
+                  ),
+                ],
+                if (torIcon != null) ...[
+                  const SizedBox(width: AppSpace.xs),
+                  Tooltip(
+                    message: context.l10n.hudTorTooltip,
+                    child: Icon(torIcon, size: 14, color: torColor),
                   ),
                 ],
               ],

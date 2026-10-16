@@ -1291,6 +1291,9 @@ class _OverviewTab extends ConsumerWidget {
     final stats = ref.watch(onionbitStatsProvider).value;
     final speeds = ref.watch(totalSpeedsProvider);
     final tunnel = ref.watch(ipv8TrafficProvider).value;
+    // Runtime Tor (ADR-0028 §8) — état honnête : « inactif » est un
+    // état diagnostic légitime (opt-in), pas une tuile masquée.
+    final tor = ref.watch(torStatusProvider).value;
 
     final ready = circuits?.where((c) => c.ready).length ?? 0;
     final exitsOn = exits?.where((e) => e.enabled).length ?? 0;
@@ -1405,6 +1408,26 @@ class _OverviewTab extends ConsumerWidget {
                 label: context.l10n.cardDatabase,
                 value: stats != null ? context.fmtBytes(stats.dbSize) : '—',
               ),
+              _StatCard(
+                icon: Icons.vpn_lock_outlined,
+                label: context.l10n.cardTor,
+                value: tor == null
+                    ? '—'
+                    : tor.state == TorRuntimeState.bootstrapping
+                    ? '${_torStateLabel(context.l10n, tor.state)} ${tor.progress}%'
+                    : _torStateLabel(context.l10n, tor.state),
+                caption: tor == null
+                    ? null
+                    : switch (tor.state) {
+                        TorRuntimeState.error => tor.error,
+                        _ when tor.enabled =>
+                          tor.mode == 'external' &&
+                                  (tor.externalSocks5?.isNotEmpty ?? false)
+                              ? tor.externalSocks5
+                              : 'Arti',
+                        _ => null,
+                      },
+              ),
             ],
           ),
         ),
@@ -1412,6 +1435,17 @@ class _OverviewTab extends ConsumerWidget {
     );
   }
 }
+
+/// Libellé localisé d'un `TorRuntimeState` (`/api/tor/status`).
+String _torStateLabel(AppLocalizations l10n, TorRuntimeState s) =>
+    switch (s) {
+      TorRuntimeState.off => l10n.torStateOff,
+      TorRuntimeState.bootstrapping => l10n.torStateBootstrapping,
+      TorRuntimeState.ready => l10n.torStateReady,
+      TorRuntimeState.dormant => l10n.torStateDormant,
+      TorRuntimeState.error => l10n.torStateError,
+      TorRuntimeState.unknown => l10n.torStateUnknown,
+    };
 
 /// Carte compteur du tableau de bord « Vue d'ensemble » — `caption`
 /// optionnelle en seconde ligne (cumuls, détails).

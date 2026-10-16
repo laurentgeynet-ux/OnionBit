@@ -74,6 +74,10 @@ abstract interface class DiagnosticRepository {
   /// cellules (create/extend/created/destroy, e2e, sorties).
   Future<bool> debugEnabled();
 
+  /// État du runtime Tor (`GET /api/tor/status`, ADR-0028 §5) —
+  /// toujours joignable, même bootstrap échoué.
+  Future<TorRuntimeStatus> torStatus();
+
   /// Bascule le mode debug (`PUT /api/ipv8/asyncio/debug`).
   Future<void> setDebug(bool enable);
 }

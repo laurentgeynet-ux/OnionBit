@@ -14,6 +14,10 @@ onionbit-db = { path = "../onionbit-db" }
 onionbit-format = { path = "../onionbit-format" }
 onionbit-ipv8 = { path = "../onionbit-ipv8" }
 onionbit-tunnel = { path = "../onionbit-tunnel" }
+# Types Tor (ADR-0028) — la feature `tor` reste portee par
+# onionbit-core/daemon ; l'API manipule le runtime en stub ou reel
+# de la meme facon.
+onionbit-tor = { path = "../onionbit-tor" }
 tokio.workspace = true
 axum.workspace = true
 serde.workspace = true
@@ -33,6 +37,10 @@ base64.workspace = true
 
 [dev-dependencies]
 onionbit-test-support = { path = "../onionbit-test-support" }
+# Doubles `OnionSearchBackend` des tests `/api/search/external` +
+# capture tracing (« aucune requete dans les logs », ADR-0028 §6).
+async-trait.workspace = true
+tracing-subscriber.workspace = true
 
 tempfile.workspace = true
 reqwest = { version = "0.13", features = ["json"] }

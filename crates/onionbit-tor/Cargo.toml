@@ -1,0 +1,61 @@
+[package]
+name = "onionbit-tor"
+description = "Connectivite Tor (ADR-0028) : runtime et fetch .onion borne. Le transport reel (arti-client embarque, SOCKS5 externe) est derriere le feature flag `tor` — sans lui, le crate reste leger et TorRuntime est un stub."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[features]
+default = []
+# `tor` : transports reels — arti-client embarque (mode `embedded`,
+# `onion-service-client` requis pour les cibles .onion) et SOCKS5
+# loopback (mode `external`, tokio-socks + proxy_guard).
+tor = [
+    "dep:arti-client",
+    "dep:tor-rtcompat",
+    "dep:tokio-socks",
+    "dep:futures-util",
+    "dep:rustls",
+    "dep:tokio-rustls",
+    "dep:webpki-roots",
+]
+
+[dependencies]
+onionbit-format = { path = "../onionbit-format" }
+onionbit-network-policy = { path = "../onionbit-network-policy" }
+thiserror.workspace = true
+tracing.workspace = true
+tokio.workspace = true
+# Decodeur HTTP/1.1 borne (`http.rs`) — necessaire meme sans la
+# feature `tor` pour garder les tests d'echange hors transport.
+httparse.workspace = true
+url.workspace = true
+# Scraping borne des backends `.onion` (`search/`, ADR-0028 §5) —
+# hors feature `tor` : testable sans transport via `OnionFetch`.
+scraper.workspace = true
+async-trait.workspace = true
+# Decodeur des reponses JSON `apibay` (`search/apibay.rs`,
+# ADR-0028 §5) — extraction tolerante par champs, borne par
+# `max_response_bytes`.
+serde_json.workspace = true
+# Info-hash → hex pour les resultats normalises.
+hex.workspace = true
+arti-client = { workspace = true, optional = true }
+tor-rtcompat = { workspace = true, optional = true }
+tokio-socks = { workspace = true, optional = true }
+futures-util = { workspace = true, optional = true }
+# TLS sur le flux Tor — hotes clearnet de sortie `api_via_exit`
+# (https via exit ; integrite contre un exit malveillant).
+rustls = { workspace = true, optional = true }
+tokio-rustls = { workspace = true, optional = true }
+webpki-roots = { workspace = true, optional = true }
+
+[dev-dependencies]
+# Sonde `bootstrap_probe` — diagnostic hors daemon. `rustls` :
+# arti n'embarque aucun CryptoProvider (`rustls-dont-use`), c'est au
+# process d'en installer un — le daemon l'obtient via axum-server.
+tracing-subscriber.workspace = true
+futures-util = { workspace = true }
+rustls = "0.23"

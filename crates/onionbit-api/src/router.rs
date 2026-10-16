@@ -218,6 +218,9 @@ fn api_router(state: AppState) -> Router<AppState> {
         .route("/metadata/search/vocabulary", get(metadata::vocabulary))
         // -- Recherche distante (search_endpoint.py) --------------------
         .route("/search/remote", put(search::remote_search))
+        // -- Tor (ADR-0028 §5 — extension Rust sans equivalent Python) --
+        .route("/search/external", get(tor::external_search))
+        .route("/tor/status", get(tor::tor_status))
         // -- Canaux suivis (channels_endpoint.py — ADR-0025 etape 97) ---
         .route("/channels", get(channels::list_channels))
         .route("/channels/personal", put(channels::personal_set_title))

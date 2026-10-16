@@ -9,5 +9,8 @@ authors.workspace = true
 [dependencies]
 thiserror.workspace = true
 tracing.workspace = true
+# Validateur d'adresses onion v3 (`tor_policy`, ADR-0028) — crate
+# feuille de formats, aucune dependance reseau.
+onionbit-format = { path = "../onionbit-format" }
 
 [dev-dependencies]

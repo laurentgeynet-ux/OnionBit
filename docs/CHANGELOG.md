@@ -3,6 +3,273 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## ADR-0028 : backend `apibay` + `api_via_exit` + TLS sur flux Tor — recherche externe fonctionnelle (2026-10-16)
+
+Le scraping du `.onion` TPB est une impasse constatee sur le
+terrain : le site ne sert plus qu'une coquille JS (« Enable JS »,
+sur clearnet comme sur onion) et l'adresse onion est
+intermittente (descripteur HSDir introuvable par periodes).
+`apibay.org` — l'API JSON officielle que le frontend TPB
+interroge lui-meme — devient la source de resultats fiable,
+comme prevu par l'ADR (`tor.api_via_exit`, desactive par defaut).
+
+- **Politique** (`network-policy`) : `TorTargetPolicy` etendu
+  avec une allowlist de sortie `exit_hosts` — noms DNS publics
+  uniquement (jamais d'`.onion`, d'IP litterale ou de nom non
+  qualifie), ports 80/443. Seuls des miroirs de backends peuvent
+  s'y inscrire ; `allowed_hosts` reste strictement `.onion`. Un
+  miroir clearnet sans `api_via_exit=true` → warn explicite et
+  miroir ignore (jamais de fuite silencieuse). Le backend dont
+  tous les miroirs sont injoignables n'est pas enregistre —
+  `sources` ne liste que du fonctionnel.
+- **TLS sur le flux Tor** (`tokio-rustls` + `webpki-roots`) :
+  constate en e2e — `http://apibay.org` redirige vers `https`
+  pour les exits Tor (Cloudflare) ; le redirect est suivi et la
+  connexion bascule en TLS au-dessus du `DataStream` (SNI +
+  bundle Mozilla embarque). Egalement requis en integrite : un
+  exit malveillant ne peut plus reecrire le JSON (injection de
+  magnets/infohash contree). `https` accepte dans `parse_target`
+  et `resolve_redirect` — y compris pour les `.onion` dument
+  certifies. `Accept-Encoding: identity` ajoute a la requete
+  (codec minimal, pas de decompression).
+- **Backend `apibay`** (`search/apibay.rs`) : decode JSON borne
+  de `q.php` (champs tolerants chaine/nombre), meme taxonomie
+  d'erreurs que `tpb` (`no_results` via sentinelle `id:"0"`/hash
+  nul ou tableau vide, `captcha_detected`, `structure_changed`,
+  `mirror_unreachable`). `info_hash` valide par
+  `MagnetLink::parse` (meme filiere de confiance), magnet
+  synthetise `btih`+`dn`, entites HTML des titres desechappees,
+  categories numeriques → familles TPB (1xx Audio, 2xx Video…).
+- **Validation** : 34 tests `onionbit-tor` + 15
+  `network-policy` + 103 `onionbit-api` verts ; e2e reel —
+  `sources:["apibay","tpb"]`, `GET /api/search/external?
+  source=apibay` → **100 resultats normalises** via arti
+  embarque + exit + TLS.
+- Limite assumee : le transport `DataStream` lu via les impls
+  `futures` retourne EOF immediat (sonde brute) — le chemin
+  productif utilise les impls tokio (`OnionIo`) ; documente.
+
+## ADR-0028 : correctif Windows `saturating-time` — bootstrap arti débloqué, jalon `[i]` validé (2026-10-16)
+
+Diagnostic et résolution du blocage du bootstrap arti a 15 %
+(Windows uniquement) — la panne rendait la fonctionnalite Tor
+inutilisable : consensus recu en entier puis spin CPU infini
+synchrone dans `MdConsensus::parse`, sans erreur ni log.
+
+- **Cause racine** : `saturating-time 0.5.0` (dep transitive
+  d'`arti-client`) — `find_limit` fait une recherche binaire des
+  bornes `SystemTime` qui suppose que `checked_sub`/`checked_add`
+  rendent `None` hors-limites ; sous Windows, l'arithmetique
+  FILETIME (granularite 100 ns) sature et la sonde ne progresse
+  plus — boucle infinie. `saturating_sub` evaluant `min_value()`
+  en eager (`unwrap_or`), le premier appel suffit : celui de
+  `Preamble::validity_time_range` juste apres le telechargement
+  du consensus. Bug deja rapporte upstream (arti #2678, #2726 ;
+  crate en cours d'import dans le monorepo, #2728).
+- **Correctif** : `vendor/saturating-time` (copie du crate +
+  `find_limit` traite une sonde saturee `st == res` comme un
+  echec -> `step /= 2`, plafond 10 000 iterations) +
+  `[patch.crates-io]`. A retirer a la prochaine release
+  upstream corrigee.
+- **Validation reseau reelle** : sonde `bootstrap_probe` ->
+  READY complet (consensus 3,2 Mo, 9 certs, 9127
+  microdescriptors) ; daemon e2e : `/api/tor/status` -> `ready`,
+  `/api/search/external?source=tpb` -> fetch `.onion` reel
+  effectue (HTTP 200 ; `structure_changed` ensuite = gabarit
+  HTML TPB evolue — chantier scraper distinct, hors transport).
+  Jalon manuel `[i]` de la roadmap ADR-0028 **valide**.
+- Sonde enrichie : statut `BootstrapStatus` complet + `blocked()`
+  (diagnostic des blocages, pas seulement `as_frac`).
+
+## ADR-0028 étape 116 : UI Flutter — recherche `.onion`, HUD, réglages, diagnostic (2026-10-17)
+
+La couche de presentation consomme les endpoints de l'etape 115
+(`app/`, ADR-0028 §8) — zero acces au core, REST + SSE uniquement.
+
+- `TorrentSource.onion` ajoute a l'enum ; `TorrentResult` gagne
+  `sourceTag` (badge backend `tpb`) et `magnetUri` (magnet reel publie
+  par la source — prioritaire sur le magnet synthetise). Merge
+  existant conserve : local d'abord, dedup par infohash, aucun
+  demarrage auto (`AddDownloadDialog` inchange).
+- `RestSearchRepository.searchExternal` (`GET /api/search/external`)
+  + `parseRemoteResults` etendu : `peer` prefixe `tor:` → source
+  `onion`, jamais confondu avec les pairs IPv8.
+- `RemoteResultsNotifier` multi-uuid : le meme topic SSE
+  `remote_query_results` porte les reponses IPv8 ET les rediffusions
+  de recherche `.onion` (uuid propre par appel, dedup par infohash) ;
+  reponse directe fusionnee via `beginExternal` avec garde
+  anti-requete-perimee.
+- `ApiException.code` : le code machine de `error.code` est expose —
+  la banniere d'erreur distingue sante Tor (`tor_bootstrapping` +
+  %, `bootstrap_failed` → lien Diagnostic, `tor_not_ready`) des
+  fautes cote source (`captcha_detected`, `structure_changed`,
+  `mirror_unreachable`, `no_results`). `tor_disabled` est silencieux
+  (opt-in).
+- Page Recherche : chip d'etat Tor dans la barre (spinner + %,
+  « Activer Tor » → `/settings?s=anonymity`, erreur → Diagnostic) ;
+  chip de filtre « TPB (Tor) » dans la rangee `ChoiceChip` — visible
+  seulement quand `tor.enabled`.
+- Privacy HUD : pastille `vpn_lock` jointe au bouclier, affichee
+  uniquement si `tor.enabled` — pas d'indicateur mort ; etats
+  honnetes alignes sur `AnonLaneStatus`, tooltip + label Semantics.
+- Settings → Network : sous-section « Connectivite Tor » — toggle
+  `tor.enabled` a sauvegarde immediate, mode embarque/externe et
+  endpoint `socks5h` dans le lot differe (effet au redemarrage) ;
+  allowlist `tor.allowed_hosts` + backends affiches en lecture seule.
+- Diagnostic Overview : tuile « Tor » (etat + % bootstrap ; caption
+  mode `Arti`/endpoint SOCKS5 ou erreur) — pas d'onglet dedie.
+- `torStatusProvider` : `FutureProvider` sonde 10 s partage entre
+  recherche, HUD et diagnostic ; echec API → etat « off » honnete.
+- i18n : ~30 cles en/fr (`torChip*`, `onionErr*`, `torState*`,
+  `torSettings*`…). Messagerie volontairement sans affichage `.onion`
+  (phase 3, etape 119).
+- Test `network_section_tor_test` : toggle → patch `tor.enabled`
+  immediat, champ SOCKS5 conditionnel, allowlist non editable.
+  `flutter analyze` propre, `flutter test` 101/101, `check_i18n.ps1`
+  vert.
+
+## ADR-0028 étape 115 : REST + SSE — `/api/search/external` + `/api/tor/status` (2026-10-17)
+
+La recherche `.onion` est exposee au plan de controle
+(`onionbit-api::handlers::tor`, ADR-0028 §5) — extension Rust sans
+equivalent Python.
+
+- `GET /api/search/external?source=tpb&q=…` (derriere
+  `api_key_auth`) : `400` (`empty_query`, `unknown_source`),
+  `503` (`tor_disabled`, `tor_bootstrapping`, `bootstrap_failed`,
+  `tor_not_ready` — jamais de repli clearnet), `200`
+  `{uuid, source, results}` en forme `to_simple_dict` + `source`/
+  `magnet` ; echecs backend → `502` + `error.code`
+  (`mirror_unreachable`, `captcha_detected`, `structure_changed`,
+  `no_results`). Resultats aussi notifies via
+  `remote_query_results` (uuid partage, `peer = "tor:<source>"`).
+- `GET /api/tor/status` → `{enabled, mode, external_socks5, state,
+  progress, error, sources}` — toujours joignable, meme bootstrap
+  echoue.
+- `error.code` : nouveau champ optionnel de l'enveloppe
+  `{error: {handled, message, code?}}` — code machine stable sans
+  casser le format Tribler.
+- `CoreSession` possede le `TorRuntime` (`tor()`,
+  `swap_tor_runtime`) et le registre de backends externes
+  (`search_backend`, `register_search_backend`,
+  `search_backend_sources`) ; `POST /api/settings` accepte `tor.*`
+  (restart-only via `ServiceOverrides.tor`).
+- Bootstrap **explicite a la premiere recherche** : le handler ne
+  bloque jamais (503 `tor_bootstrapping` immediat) ; feature `tor`
+  propagee `onionbit-core` → `onionbit-daemon`
+  (`cargo build --features tor` pour le transport reel).
+- `TorRuntime::stub_state`/`stub_ready` : stubs d'etat pour les
+  tests des couches superieures (aucun transport reel).
+- 11 tests API verts — auth, 400/503/502 types, succes + SSE,
+  non-blocage pendant bootstrap, capture `tracing` : aucun terme
+  de recherche dans les journaux.
+
+## ADR-0028 étape 114 : backend de recherche `tpb` — scraping `.onion` borne (2026-10-17)
+
+La recherche externe produit des resultats normalises
+(`onionbit-tor::search`, ADR-0028 §5). Le scraping est isole
+derriere un trait et le transport est injecte — tout est teste
+sans feature `tor` ni reseau.
+
+- `search.rs` : `ExternalResult` (`name, infohash, magnet,
+  size_bytes, seeds, leechers, category, source`), trait
+  `OnionSearchBackend` (async, object-safe via `async-trait`),
+  trait `OnionFetch` implemente par `TorRuntime`, registre
+  `build_backends` indexe par `source` (ids inconnus : warn +
+  ignore).
+- `search/tpb.rs` : backend TPB — failover sur `mirrors` (erreurs
+  fatales `Disabled`/`NotReady`/`NotBuilt` propagees sans
+  bascule), classification par miroir puis erreur finale
+  priorisee (`NoResults` > `CaptchaDetected` > `StructureChanged`
+  > `MirrorUnreachable{tried}`) ; scraping `scraper` sur le
+  markup `#searchResult` classique ; infohash **valide** via
+  `MagnetLink::parse` (btih hex40/base32) ; `safe_text` ignore
+  les sous-arbres `script`/`style`/`noscript` ; champs texte
+  assainis et bornes.
+- Detecteur de defi anti-DDoS par marqueurs + statut 403/503 →
+  `CaptchaDetected` ; table absente ou zero ligne extractible →
+  `StructureChanged` ; marqueurs « no results » → `NoResults`.
+- Config : `tor.search.backends.<id>.max_results` (defaut 100) ;
+  le template doit contenir `{host}` **et** `{q}` sinon le
+  backend est ignore au chargement.
+- Tests : 11 nouveaux (25 total sous feature `tor`) — fixtures
+  `tests/fixtures/tpb_*.html` : parsing nominal (4 lignes dont
+  btih base32 et titre a `<script>` assaini), lignes pourries
+  skippees (hash tronque, magnet sans `xt`, ligne incomplete,
+  sans magnet), page de defi 200 et 403, refonte, « no
+  results », bascule miroir, tous miroirs down, fatales sans
+  bascule, borne, requete vide, encodage percent.
+
+## ADR-0028 étape 113 : transport Tor — `TorRuntime` arti + fetch `.onion` borne (2026-10-17)
+
+Le fetch onion est reel derriere la feature `tor`
+(`onionbit-tor`). Invariants : bootstrap explicite jamais
+bloquant, politique `TorTargetPolicy` verifiee **avant** chaque
+connexion (y compris chaque hop de redirection), aucun repli
+clearnet.
+
+- `arti-client 0.47` optionnel, features `rustls,tokio,
+  onion-service-client` (`tor-hsclient` — **requise** pour les
+  cibles `.onion`) + `static-sqlite` (`tor-dirmgr/static` →
+  `rusqlite/bundled`, sinon `sqlite3.lib` manquante sous
+  Windows) ; `tor-rtcompat 0.47` pour `PreferredRuntime`.
+- `TorRuntime` devient clonable (`Arc` interne, mutex
+  poison-tolerants) : `bootstrap()` lance une tache de fond —
+  `BootstrapBehavior::Manual` + `create_unbootstrapped_async`,
+  progression 0-100 via `bootstrap_events`, timeout borne,
+  `state` `off|bootstrapping|ready|error` pour
+  `/api/tor/status` (`dormant` reserve, gere par arti).
+  Mode `external` : sonde TCP du SOCKS5 loopback.
+- `fetch_onion(url)` : parse `http://…onion` (https/auth
+  refuses — pas de TLS v1), `check` allowlist, flux arti
+  `DataStream` ou `Socks5Stream`, requete `GET` minimale
+  (`Connection: close`, zero cookie), redirections 30x bornees
+  par `max_redirects` et re-verifiees par la politique.
+- `http.rs` : decodeur borne `httparse` — statut, en-tetes,
+  `chunked`, `Content-Length`, corps par EOF ; plafonds
+  en-tetes/brut ; erreurs `TooLarge`/`Timeout`/
+  `MalformedResponse`/`RedirectDenied`.
+- `TorSettings.state_dir` → arti sous `<state_dir>/tor` ;
+  `tor_settings(state_dir)` dans `daemon_config`.
+- Tests : 13 verts — fake SOCKS5 complet (handshake + HTTP),
+  refus politique avant connexion (clearnet, onion non
+  declare, port ≠80/443), redirection allowlistee suivie puis
+  bornee, `NotReady` embedded, decodeurs chunked/CL/EOF,
+  timeout flux muet. Jalon manuel `[i]` (fetch onion reel via
+  arti bootstrappe) reste a faire hors CI.
+
+## ADR-0028 étape 112 : fondation Tor — validateur onion v3, `tor.*`, politique de cibles (2026-10-16)
+
+Socle de la connectivite Tor embarquee (ADR-0028, extension hors
+fidelite Tribler). Aucun transport encore — la crate compile sans
+arti (feature `tor` reservee a l'etape 113).
+
+- `onionbit-format::onion` : `OnionAddr::parse` — adresse v3
+  `base32(pubkey ed25519 ‖ checksum ‖ 0x03)` (56 chars + suffixe
+  `.onion`, casse tolerante), checksum `SHA3-256(b".onion checksum"
+  ‖ pubkey ‖ 0x03)[0..2]` verifie (nouvelle dep `sha3`,
+  MIT/Apache-2.0) ; `onion_host()` extrait l'hote d'une entree
+  d'allowlist ou d'une URL (rejette auth et port explicites).
+  Tests : les 30 adresses reelles de l'annuaire curate
+  `lists.d` valident toutes ; mutations (checksum, version, v2
+  16-chars, clearnet, alphabet) rejetees.
+- `onionbit-network-policy::tor_policy::TorTargetPolicy` : allowlist
+  d'hotes `.onion` + ports 80/443 — frontiere dure avant tout
+  `connect`, aucun clearnet ni onion non declare.
+- Nouvelle crate `onionbit-tor` : `TorSettings` (mode
+  `Embedded`/`External`, `TorTargetPolicy`, timeouts/bornes,
+  backends `OnionBackendSettings{mirrors,url_template}`,
+  `TorGatewaySettings`), `TorRuntime` stub (etat `Off|Bootstrapping|
+  Ready|Dormant|Error` pour `/api/tor/status`), `TorError` — fetch
+  et bootstrap rendent `NotBuilt` sans la feature `tor`.
+- `daemon_config` : section `tor` sparse (`enabled=false` defaut —
+  pas de bootstrap silencieux) ; `tor_settings()` →
+  `CoreConfig.tor` : politique = `allowed_hosts` ∪ miroirs des
+  backends (une seule frontiere), entrees invalides warn+ignorees,
+  `mode` inconnu ou `external_socks5` non-loopback → connectivite
+  desactivee ; reflet dans `apply_runtime_view`. Tests :
+  sparse par defaut, round-trip + validation, modes invalides.
+
 ## ADR-0027 étape 110 : page Flutter « Zone privée » (2026-10-10)
 
 Explorateur de la zone privée côté app, visible uniquement quand

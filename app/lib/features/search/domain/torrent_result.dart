@@ -10,6 +10,11 @@ enum TorrentSource {
   /// Réponses des pairs de `ContentDiscoveryCommunity`, poussées via
   /// SSE (`remote_query_results`).
   remote,
+
+  /// Backend externe `.onion` via Tor (`GET /api/search/external`,
+  /// ADR-0028 §5) — résultats scrapés (TPB & co), `sourceTag`
+  /// précise le backend (`tpb`).
+  onion,
 }
 
 /// Torrent découvert — forme commune des résultats `metadata` et des
@@ -24,6 +29,8 @@ class TorrentResult {
     this.leechers,
     this.date,
     this.trackers = const [],
+    this.sourceTag,
+    this.magnetUri,
   });
 
   final String infohash;
@@ -40,8 +47,20 @@ class TorrentResult {
   /// Trackers connus associés à ce torrent.
   final List<String> trackers;
 
+  /// Identifiant du backend d'origine pour les résultats `onion`
+  /// (`"tpb"` — champ `source` du JSON externe ; `null` sinon).
+  /// Affiché en badge Source à la place du libellé générique.
+  final String? sourceTag;
+
+  /// Magnet tel que publié par la source externe (`onion`) — prioritaire
+  /// sur le magnet synthétisé : elle peut y inclure trackers et
+  /// paramètres propres au site.
+  final String? magnetUri;
+
   /// Magnet complet pour l'ajout direct avec trackers de la source.
   String get magnet {
+    final uri = magnetUri;
+    if (uri != null && uri.startsWith('magnet:')) return uri;
     final base =
         'magnet:?xt=urn:btih:$infohash&dn=${Uri.encodeComponent(name)}';
     if (trackers.isEmpty) return base;
@@ -61,5 +80,7 @@ class TorrentResult {
     leechers: leechers,
     date: date,
     trackers: trackers,
+    sourceTag: sourceTag,
+    magnetUri: magnetUri,
   );
 }

@@ -42,9 +42,11 @@ class _NetworkSectionState extends ConsumerState<NetworkSection> {
       };
 
   int _proxyType = 0;
+  String _torMode = 'embedded';
   final _port = TextEditingController();
   final _proxyServer = TextEditingController();
   final _proxyAuth = TextEditingController();
+  final _torSocks = TextEditingController();
   bool _initialized = false;
   bool _saving = false;
 
@@ -60,6 +62,7 @@ class _NetworkSectionState extends ConsumerState<NetworkSection> {
     _port.dispose();
     _proxyServer.dispose();
     _proxyAuth.dispose();
+    _torSocks.dispose();
     super.dispose();
   }
 
@@ -76,6 +79,12 @@ class _NetworkSectionState extends ConsumerState<NetworkSection> {
       'libtorrent',
       'proxy_auth',
     ]);
+    const tor = ['tor'];
+    _torMode = settingsString(settings, [...tor, 'mode']);
+    if (_torMode != 'embedded' && _torMode != 'external') {
+      _torMode = 'embedded';
+    }
+    _torSocks.text = settingsString(settings, [...tor, 'external_socks5']);
     _initialized = true;
   }
 
@@ -92,6 +101,10 @@ class _NetworkSectionState extends ConsumerState<NetworkSection> {
         'proxy_type': _proxyType,
         'proxy_server': _proxyServer.text.trim(),
         'proxy_auth': _proxyAuth.text,
+      },
+      'tor': {
+        'mode': _torMode,
+        'external_socks5': _torSocks.text.trim(),
       },
     }, successMessage: context.l10n.netSaved);
     _deferred.markClean();
@@ -210,6 +223,70 @@ class _NetworkSectionState extends ConsumerState<NetworkSection> {
                 ),
               ],
             ],
+            const Divider(height: AppSpace.lg),
+            // Connectivité Tor (ADR-0028 §8) — opt-in, métadonnées de
+            // recherche uniquement ; le toggle est immédiat comme les
+            // autres commutateurs, mode/endpoint partent avec le lot
+            // différé (effet au redémarrage, `ServiceOverrides.tor`).
+            Text(l10n.torSettingsTitle, style: theme.textTheme.labelMedium),
+            const SizedBox(height: AppSpace.xs),
+            SettingsSwitch(
+              path: const ['tor', 'enabled'],
+              value: settingsBool(settings, const ['tor', 'enabled']),
+              title: l10n.torEnabled,
+              subtitle: l10n.torEnabledHint,
+            ),
+            const SizedBox(height: AppSpace.xs),
+            SizedBox(
+              width: 320,
+              child: DropdownButtonFormField<String>(
+                initialValue: _torMode,
+                isExpanded: true,
+                decoration: InputDecoration(
+                  labelText: l10n.torMode,
+                  suffixIcon: const KeyInfoIcon(['tor', 'mode']),
+                ),
+                items: [
+                  DropdownMenuItem(
+                    value: 'embedded',
+                    child: Text(l10n.torModeEmbedded),
+                  ),
+                  DropdownMenuItem(
+                    value: 'external',
+                    child: Text(l10n.torModeExternal),
+                  ),
+                ],
+                onChanged: (v) => setState(() {
+                  _torMode = v ?? 'embedded';
+                  _deferred.markDirty();
+                }),
+              ),
+            ),
+            if (_torMode == 'external') ...[
+              const SizedBox(height: AppSpace.sm),
+              SizedBox(
+                width: 320,
+                child: TextField(
+                  controller: _torSocks,
+                  onChanged: (_) => _deferred.markDirty(),
+                  decoration: InputDecoration(
+                    labelText: l10n.torSocks5,
+                    helperText: l10n.torSocks5Hint,
+                    suffixIcon: const KeyInfoIcon(
+                      ['tor', 'external_socks5'],
+                    ),
+                    hintText: 'socks5h://127.0.0.1:9050',
+                  ),
+                ),
+              ),
+            ],
+            const SizedBox(height: AppSpace.xs),
+            Text(
+              l10n.torRestartHint,
+              style: theme.textTheme.bodySmall
+                  ?.copyWith(color: theme.colorScheme.outline),
+            ),
+            _TorAllowlist(settings: settings),
             const SizedBox(height: AppSpace.md),
             Align(
               alignment: Alignment.centerRight,
@@ -323,6 +400,87 @@ class _EffectiveState extends ConsumerWidget {
               ),
           ],
         ),
+      ],
+    );
+  }
+}
+
+/// Allowlist Tor en lecture seule (ADR-0028 §5) : politique
+/// **effective** de `TorTargetPolicy` = `tor.allowed_hosts` ∪
+/// `tor.search.backends.<id>.mirrors` (le miroir TPB est allowlisté
+/// implicitement — le montrer évite une frontière invisible).
+/// Non éditable ici — la liste est une frontière de sécurité définie
+/// dans `configuration.json`.
+class _TorAllowlist extends StatelessWidget {
+  const _TorAllowlist({required this.settings});
+
+  final Map<String, dynamic> settings;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final l10n = context.l10n;
+    final tor = settings['tor'];
+    final search = tor is Map ? tor['search'] : null;
+    final backendsMap =
+        search is Map && search['backends'] is Map
+            ? search['backends'] as Map
+            : const {};
+    // Union des hôtes : allowed_hosts + miroirs de chaque backend
+    // (ordre stable, dédupliqué).
+    final hosts = <String>{
+      if (tor is Map)
+        for (final h in (tor['allowed_hosts'] as List?) ?? const []) '$h',
+      for (final b in backendsMap.values)
+        if (b is Map)
+          for (final m in (b['mirrors'] as List?) ?? const []) '$m',
+    }.toList()..sort();
+    final backends = backendsMap.keys.map((k) => '$k').toList()..sort();
+    if (hosts.isEmpty && backends.isEmpty) return const SizedBox.shrink();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SizedBox(height: AppSpace.sm),
+        if (hosts.isNotEmpty) ...[
+          Text(
+            l10n.torAllowedHosts,
+            style: theme.textTheme.bodySmall,
+          ),
+          const SizedBox(height: AppSpace.xs),
+          Wrap(
+            spacing: AppSpace.xs,
+            runSpacing: AppSpace.xs,
+            children: [
+              for (final h in hosts)
+                Chip(
+                  // Adresse intégrale + sélectionnable : les 56 chars
+                  // portent la clé publique et le checksum — les
+                  // tronquer empêcherait de vérifier la destination.
+                  label: SelectableText(
+                    h,
+                    style: AppTypography.mono(fontSize: 11),
+                  ),
+                  visualDensity: VisualDensity.compact,
+                ),
+            ],
+          ),
+        ],
+        if (backends.isNotEmpty) ...[
+          const SizedBox(height: AppSpace.xs),
+          Text(l10n.torBackends, style: theme.textTheme.bodySmall),
+          const SizedBox(height: AppSpace.xs),
+          Wrap(
+            spacing: AppSpace.xs,
+            runSpacing: AppSpace.xs,
+            children: [
+              for (final b in backends)
+                Chip(
+                  label: Text(b),
+                  visualDensity: VisualDensity.compact,
+                ),
+            ],
+          ),
+        ],
       ],
     );
   }

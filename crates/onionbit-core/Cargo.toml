@@ -7,12 +7,19 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 
+[features]
+# ADR-0028 : transport Tor reel (arti/SOCKS5) — propage la feature
+# `tor` d'onionbit-tor ; sans elle `TorRuntime` reste un stub
+# (`bootstrap`/`fetch` rendent `NotBuilt`).
+tor = ["onionbit-tor/tor"]
+
 [dependencies]
 onionbit-bittorrent = { path = "../onionbit-bittorrent" }
 onionbit-db = { path = "../onionbit-db" }
 onionbit-format = { path = "../onionbit-format" }
 onionbit-crypto = { path = "../onionbit-crypto" }
 onionbit-network-policy = { path = "../onionbit-network-policy" }
+onionbit-tor = { path = "../onionbit-tor" }
 onionbit-ipv8 = { path = "../onionbit-ipv8" }
 onionbit-tunnel = { path = "../onionbit-tunnel" }
 onionbit-messaging = { path = "../onionbit-messaging" }

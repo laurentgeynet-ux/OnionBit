@@ -18,7 +18,9 @@
 //!   l'anonymat quand il ne peut plus etre garanti —
 //!   [`kill_switch::KillSwitch`] ;
 //! - validation du proxy SOCKS5 expose par les tunnels —
-//!   [`proxy_guard::validate_local_socks5_url`].
+//!   [`proxy_guard::validate_local_socks5_url`] ;
+//! - politique des cibles `.onion` du fetcher Tor (allowlist v3,
+//!   ports 80/443 — ADR-0028) — [`tor_policy::TorTargetPolicy`].
 //!
 //! Ce crate est volontairement sans dependance vers `onionbit-ipv8` ou
 //! `onionbit-bittorrent` : il expose des politiques pures, appliquees
@@ -31,10 +33,12 @@ pub mod error;
 pub mod exit_policy;
 pub mod kill_switch;
 pub mod proxy_guard;
+pub mod tor_policy;
 
 pub use address_policy::IpPolicy;
 pub use error::{PolicyError, Result};
 pub use kill_switch::KillSwitch;
+pub use tor_policy::TorTargetPolicy;
 
 /// Decision d'une politique reseau : autoriser ou refuser une action.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

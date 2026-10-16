@@ -390,4 +390,10 @@ class RestDiagnosticRepository implements DiagnosticRepository {
   @override
   Future<void> setDebug(bool enable) =>
       _api.put('/ipv8/asyncio/debug', body: {'enable': enable});
+
+  @override
+  Future<TorRuntimeStatus> torStatus() async {
+    final resp = await _api.get('/tor/status') as Map<String, dynamic>;
+    return TorRuntimeStatus.fromJson(resp);
+  }
 }

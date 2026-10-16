@@ -16,6 +16,11 @@ pub struct ApiErrorBody {
     pub handled: bool,
     /// Message lisible.
     pub message: String,
+    /// Code machine stable (`tor_bootstrapping`, `captcha_detected`,
+    /// … — ADR-0028 §5) : l'UI distingue les causes sans parser le
+    /// message. Absent du JSON quand non renseigne.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
 }
 
 /// Erreur d'endpoint : statut HTTP + corps `{error: {...}}`.
@@ -35,6 +40,7 @@ impl ApiError {
             body: ApiErrorBody {
                 handled: true,
                 message: message.into(),
+                code: None,
             },
         }
     }
@@ -46,6 +52,7 @@ impl ApiError {
             body: ApiErrorBody {
                 handled: true,
                 message: message.into(),
+                code: None,
             },
         }
     }
@@ -58,6 +65,7 @@ impl ApiError {
             body: ApiErrorBody {
                 handled: true,
                 message: "Unauthorized access".into(),
+                code: None,
             },
         }
     }
@@ -70,6 +78,7 @@ impl ApiError {
             body: ApiErrorBody {
                 handled: true,
                 message: message.into(),
+                code: None,
             },
         }
     }
@@ -82,6 +91,7 @@ impl ApiError {
             body: ApiErrorBody {
                 handled: true,
                 message: message.into(),
+                code: None,
             },
         }
     }
@@ -94,6 +104,7 @@ impl ApiError {
             body: ApiErrorBody {
                 handled: true,
                 message: message.into(),
+                code: None,
             },
         }
     }
@@ -105,6 +116,7 @@ impl ApiError {
             body: ApiErrorBody {
                 handled: false,
                 message: message.into(),
+                code: None,
             },
         }
     }
@@ -118,6 +130,22 @@ impl ApiError {
             body: ApiErrorBody {
                 handled: true,
                 message: message.into(),
+                code: None,
+            },
+        }
+    }
+
+    /// Erreur avec **code machine** dans le corps (`error.code` —
+    /// ADR-0028 §5) : 502 pour les echecs de backend externe,
+    /// 503 pour l'indisponibilite Tor. Le code reste stable pour
+    /// l'UI ; le message reste lisible.
+    pub fn with_code(status: StatusCode, code: &'static str, message: impl Into<String>) -> Self {
+        Self {
+            status,
+            body: ApiErrorBody {
+                handled: true,
+                message: message.into(),
+                code: Some(code.to_string()),
             },
         }
     }

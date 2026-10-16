@@ -11,11 +11,16 @@ import 'http_transport.dart';
 
 /// Erreur API au format Tribler : `{"error": {"handled": b, "message": m}}`.
 class ApiException implements Exception {
-  ApiException(this.statusCode, this.message, {this.handled = true});
+  ApiException(this.statusCode, this.message, {this.handled = true, this.code});
 
   final int statusCode;
   final String message;
   final bool handled;
+
+  /// Code machine stable (`error.code` — ADR-0028 §5 :
+  /// `tor_bootstrapping`, `captcha_detected`…) — l'UI distingue les
+  /// causes sans parser le message. `null` sur les erreurs classiques.
+  final String? code;
 
   @override
   String toString() => 'ApiException($statusCode): $message';
@@ -199,6 +204,7 @@ class ApiClient {
           resp.statusCode,
           '${err['message']}',
           handled: err['handled'] == true,
+          code: err['code'] is String ? err['code'] as String : null,
         );
       }
     } catch (_) {

@@ -27,5 +27,6 @@ pub mod settings;
 pub mod shutdown;
 pub mod statistics;
 pub mod stealth;
+pub mod tor;
 pub mod torrentinfo;
 pub mod versioning;
