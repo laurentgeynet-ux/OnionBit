@@ -19,6 +19,7 @@
 //! le daemon n'écrit jamais hors de son répertoire d'état sans
 //! configuration explicite.
 
+use std::collections::BTreeMap;
 use std::net::SocketAddr;
 use std::path::Path;
 
@@ -1240,6 +1241,149 @@ impl Default for LoggingConfig {
     }
 }
 
+/// Adresse onion v3 officielle de The Pirate Bay — backend `tpb` par
+/// défaut (annuaire curaté `greyhat-academy/lists.d` ; la politique
+/// est opt-in et Tor est désactivé par défaut, l'adresse sert de
+/// point de départ remplaçable).
+const DEFAULT_TPB_ONION: &str = "piratebayo3klnzokct3wt5yyxb2vpebbuyjl7m623iaxmqhsd52coid.onion";
+
+/// Backend de recherche externe (section `tor/search/backends/<id>`,
+/// ADR-0028 §5).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TorBackendFileConfig {
+    /// Miroirs `.onion` interchangeables (ordre = préférence).
+    pub mirrors: Vec<String>,
+    /// Template de recherche (`{host}` et `{q}` substitués).
+    pub url_template: String,
+    /// Clés inconnues — préservées.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, Value>,
+}
+
+impl Default for TorBackendFileConfig {
+    fn default() -> Self {
+        Self {
+            mirrors: Vec::new(),
+            url_template: String::new(),
+            extra: serde_json::Map::new(),
+        }
+    }
+}
+
+/// Section `tor/search` — registre des backends externes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TorSearchFileConfig {
+    /// Backends par identifiant (`tpb`, `ahmia`, …).
+    pub backends: BTreeMap<String, TorBackendFileConfig>,
+    /// Clés inconnues — préservées.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, Value>,
+}
+
+impl Default for TorSearchFileConfig {
+    fn default() -> Self {
+        let mut backends = BTreeMap::new();
+        backends.insert(
+            "tpb".to_string(),
+            TorBackendFileConfig {
+                mirrors: vec![DEFAULT_TPB_ONION.to_string()],
+                url_template: "http://{host}/search.php?q={q}".to_string(),
+                extra: serde_json::Map::new(),
+            },
+        );
+        Self {
+            backends,
+            extra: serde_json::Map::new(),
+        }
+    }
+}
+
+/// Section `tor/gateway` — passerelle de sortie pour les pairs sans
+/// Tor (`PEER_FLAG_EXIT_TOR`, ADR-0028 §7, phase 2).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TorGatewayFileConfig {
+    /// Sert les requêtes `.onion` reçues via `http-request` — la
+    /// passerelle les voit en clair (comme tout exit) : opt-in.
+    pub enabled: bool,
+    /// Requêtes simultanées max par circuit entrant.
+    pub rate_limit_per_circuit: u32,
+    /// Clés inconnues — préservées.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, Value>,
+}
+
+impl Default for TorGatewayFileConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            rate_limit_per_circuit: 10,
+            extra: serde_json::Map::new(),
+        }
+    }
+}
+
+/// Section `tor` — connectivité Tor embarquée (ADR-0028, extension
+/// sans équivalent Tribler). **`enabled=false` par défaut** : le
+/// bootstrap Tor télécharge un consensus (activité visible du FAI,
+/// bloqué dans certains pays) — jamais de démarrage silencieux.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TorFileConfig {
+    /// Connectivité Tor active (recherche externe onion).
+    pub enabled: bool,
+    /// Transport : `"embedded"` (arti embarqué — autonome) ou
+    /// `"external"` (Tor système).
+    pub mode: String,
+    /// SOCKS5 du Tor système en mode `"external"` — URL
+    /// `socks5h://` **loopback** exigée (`proxy_guard`).
+    pub external_socks5: String,
+    /// Hôtes `.onion` allowlistés au-delà des miroirs de backends
+    /// (la politique effective est l'union des deux — une seule
+    /// frontière, pas de divergence).
+    pub allowed_hosts: Vec<String>,
+    /// Borne d'une réponse onion (octets).
+    pub max_response_bytes: u64,
+    /// Timeout d'une requête onion (ms).
+    pub request_timeout_ms: u64,
+    /// Timeout du bootstrap Tor (ms).
+    pub bootstrap_timeout_ms: u64,
+    /// Bornes de redirections 30x suivies (hôte allowlisté exigé).
+    pub max_redirects: u32,
+    /// Backend `apibay.org` via un exit Tor — `false` par défaut :
+    /// l'appel sort du réseau Tor chez l'exit (anonymat dégradé,
+    /// ADR-0028 §5).
+    pub api_via_exit: bool,
+    /// Backends de recherche (`tor/search`).
+    pub search: TorSearchFileConfig,
+    /// Passerelle de sortie (`tor/gateway`, phase 2).
+    pub gateway: TorGatewayFileConfig,
+    /// Clés inconnues — préservées.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, Value>,
+}
+
+impl Default for TorFileConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            mode: "embedded".to_string(),
+            external_socks5: "socks5h://127.0.0.1:9050".to_string(),
+            allowed_hosts: Vec::new(),
+            max_response_bytes: 512 * 1024,
+            request_timeout_ms: 30_000,
+            bootstrap_timeout_ms: 120_000,
+            max_redirects: 3,
+            api_via_exit: false,
+            search: TorSearchFileConfig::default(),
+            gateway: TorGatewayFileConfig::default(),
+            extra: serde_json::Map::new(),
+        }
+    }
+}
+
 /// Arbre complet de `configuration.json` (équivalent `TriblerConfig`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -1277,6 +1421,9 @@ pub struct DaemonConfig {
     /// (`legacy`/`full`/`custom` ; intention persistée, l'effectif
     /// est dérivé par `privacy::PrivacyProfile::effective`).
     pub privacy: crate::privacy::PrivacyFileConfig,
+    /// Section `tor` — connectivité Tor embarquée ADR-0028
+    /// (extension, désactivée par défaut).
+    pub tor: TorFileConfig,
     /// Section `database`.
     pub database: EnabledSection,
     /// Section `dht_discovery`.
@@ -1335,6 +1482,7 @@ impl Default for DaemonConfig {
             identity: IdentityFileConfig::default(),
             storage: StorageConfig::default(),
             privacy: crate::privacy::PrivacyFileConfig::default(),
+            tor: TorFileConfig::default(),
             database: EnabledSection::enabled(),
             dht_discovery: EnabledSection::enabled(),
             content_discovery_community: EnabledSection::enabled(),
@@ -2015,6 +2163,7 @@ impl DaemonConfig {
             },
             identity_at_rest: self.identity.at_rest,
             identity_seed_acknowledged: self.identity.seed_acknowledged,
+            tor: self.tor_settings(),
             download_defaults: crate::config::DownloadDefaults {
                 anonymity_enabled: dd.anonymity_enabled,
                 number_hops: dd.number_hops,
@@ -2032,6 +2181,93 @@ impl DaemonConfig {
             },
             ..Default::default()
         }
+    }
+
+    /// Traduit la section `tor` en reglages runtime (`onionbit_tor::
+    /// TorSettings`). Valide les entrees au chargement : hote onion
+    /// invalide → warn + ignore ; `external_socks5` non loopback ou
+    /// `mode` inconnu → warn + connectivite desactivee (jamais de
+    /// transport Tor mal branche). La `target_policy` est l'union
+    /// de `allowed_hosts` et des miroirs des backends — une seule
+    /// frontiere, pas de divergence (ADR-0028 §3).
+    fn tor_settings(&self) -> onionbit_tor::TorSettings {
+        use onionbit_tor::{OnionBackendSettings, TorMode};
+
+        let t = &self.tor;
+        let mut settings = onionbit_tor::TorSettings {
+            enabled: t.enabled,
+            max_response_bytes: t.max_response_bytes as usize,
+            request_timeout: std::time::Duration::from_millis(t.request_timeout_ms),
+            bootstrap_timeout: std::time::Duration::from_millis(t.bootstrap_timeout_ms),
+            max_redirects: t.max_redirects,
+            api_via_exit: t.api_via_exit,
+            gateway: onionbit_tor::TorGatewaySettings {
+                enabled: t.gateway.enabled,
+                rate_limit_per_circuit: t.gateway.rate_limit_per_circuit,
+            },
+            ..onionbit_tor::TorSettings::default()
+        };
+        match t.mode.as_str() {
+            "embedded" => settings.mode = TorMode::Embedded,
+            "external" => {
+                match onionbit_network_policy::proxy_guard::validate_local_socks5_url(
+                    &t.external_socks5,
+                ) {
+                    Ok(addr) => settings.mode = TorMode::External(addr),
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %e,
+                            value = %t.external_socks5,
+                            "tor/external_socks5 invalide — connectivite Tor desactivee"
+                        );
+                        settings.enabled = false;
+                    }
+                }
+            }
+            other => {
+                tracing::warn!(
+                    value = %other,
+                    "tor/mode inconnu (embedded|external attendu) — connectivite Tor desactivee"
+                );
+                settings.enabled = false;
+            }
+        }
+        // Allowlist : `allowed_hosts` ∪ miroirs des backends — le
+        // backend est inutilisable si son miroir n'est pas joignable,
+        // l'union evite de devoir declarer deux fois le meme hote.
+        for entry in t
+            .allowed_hosts
+            .iter()
+            .chain(t.search.backends.values().flat_map(|b| b.mirrors.iter()))
+        {
+            if let Err(e) = settings.target_policy.insert(entry) {
+                tracing::warn!(
+                    error = %e,
+                    host = %entry,
+                    "tor : hote onion invalide — ignore"
+                );
+            }
+        }
+        for (id, b) in &t.search.backends {
+            if b.mirrors.is_empty() || !b.url_template.contains("{host}") {
+                tracing::warn!(
+                    backend = %id,
+                    "tor : backend sans miroir ou template invalide — ignore"
+                );
+                continue;
+            }
+            settings.backends.insert(
+                id.clone(),
+                OnionBackendSettings {
+                    mirrors: b.mirrors.clone(),
+                    url_template: b.url_template.clone(),
+                },
+            );
+        }
+        if settings.enabled && settings.target_policy.is_empty() {
+            tracing::warn!("tor.enabled sans aucune cible allowlistee — tout fetch sera refuse");
+        }
+        settings
     }
 
     /// Migration ADR-0018 (etape 57) : reecrit en specs `@root/…`
@@ -2143,6 +2379,14 @@ impl DaemonConfig {
         self.storage.default_area = core.storage.default_area.as_str().to_string();
         self.storage.private_chunk_kib = (core.storage.private_chunk_bytes / 1024) as i64;
         self.storage.move_on_completion = core.storage.move_on_completion;
+        self.tor.enabled = core.tor.enabled;
+        match core.tor.mode {
+            onionbit_tor::TorMode::Embedded => self.tor.mode = "embedded".to_string(),
+            onionbit_tor::TorMode::External(addr) => {
+                self.tor.mode = "external".to_string();
+                self.tor.external_socks5 = format!("socks5h://{addr}");
+            }
+        }
     }
 }
 
@@ -2433,5 +2677,92 @@ mod tests {
         );
         drop(occupee_tcp);
         drop(occupee_udp);
+    }
+
+    // -- Section `tor` (ADR-0028) ---------------------------------------
+
+    const TPB: &str = "piratebayo3klnzokct3wt5yyxb2vpebbuyjl7m623iaxmqhsd52coid.onion";
+
+    /// Defaut : Tor desactive, mode embedded, backend tpb declare.
+    /// `sparse_value` ne doit rien persister pour `tor` tant que tout
+    /// vaut le defaut.
+    #[test]
+    fn tor_defaut_desactive_et_sparse() {
+        let cfg = DaemonConfig::default();
+        assert!(!cfg.tor.enabled);
+        assert_eq!(cfg.tor.mode, "embedded");
+        assert!(cfg.tor.search.backends.contains_key("tpb"));
+        let sparse = cfg.sparse_value();
+        assert!(
+            sparse.get("tor").is_none(),
+            "section tor ne devrait pas etre persistee par defaut : {sparse}"
+        );
+        let core = cfg.to_core_config(Path::new("."));
+        assert!(!core.tor.enabled);
+        assert_eq!(core.tor.mode, onionbit_tor::TorMode::Embedded);
+        // Le miroir tpb est implicitement allowliste.
+        assert!(core.tor.target_policy.is_allowed(TPB));
+    }
+
+    /// Round-trip : section `tor` personnalisee → CoreConfig, puis
+    /// re-persistee. Hotes invalides rejetes au chargement.
+    #[test]
+    fn tor_round_trip_et_validation() {
+        let json = serde_json::json!({
+            "tor": {
+                "enabled": true,
+                "mode": "external",
+                "external_socks5": "socks5h://127.0.0.1:9150",
+                "allowed_hosts": [TPB, "pas-un-onion", "clearnet.example"],
+                "request_timeout_ms": 15000,
+                "search": { "backends": { "tpb": {
+                    "mirrors": [TPB],
+                    "url_template": "http://{host}/search.php?q={q}"
+                }, "casse": { "mirrors": [] } } },
+            }
+        });
+        let mut cfg = DaemonConfig::default();
+        cfg.merge(&json).unwrap();
+        let core = cfg.to_core_config(Path::new("."));
+        assert!(core.tor.enabled);
+        assert_eq!(
+            core.tor.mode,
+            onionbit_tor::TorMode::External("127.0.0.1:9150".parse().unwrap())
+        );
+        assert_eq!(core.tor.request_timeout.as_millis(), 15000);
+        // Seul l'hote valide entre dans la politique.
+        assert_eq!(core.tor.target_policy.len(), 1);
+        assert!(core.tor.target_policy.check(TPB, 80).is_ok());
+        assert!(core.tor.target_policy.check(TPB, 8080).is_err());
+        // Backend sans miroir rejete.
+        assert!(core.tor.backends.contains_key("tpb"));
+        assert!(!core.tor.backends.contains_key("casse"));
+
+        // apply_runtime_view : le reflet GET /api/settings.
+        let mut view = DaemonConfig::default();
+        view.apply_runtime_view(&core);
+        assert!(view.tor.enabled);
+        assert_eq!(view.tor.mode, "external");
+        assert_eq!(view.tor.external_socks5, "socks5h://127.0.0.1:9150");
+    }
+
+    /// `external_socks5` non-loopback ou mode inconnu → connectivite
+    /// desactivee (jamais de transport Tor mal branche).
+    #[test]
+    fn tor_mode_invalide_desactive() {
+        for (mode, socks) in [
+            ("external", "socks5h://8.8.8.8:9050"),  // non loopback
+            ("external", "http://127.0.0.1:9050"),   // mauvais schema
+            ("tordown", "socks5h://127.0.0.1:9050"), // mode inconnu
+        ] {
+            let mut cfg = DaemonConfig::default();
+            cfg.tor.enabled = true;
+            cfg.tor.mode = mode.to_string();
+            cfg.tor.external_socks5 = socks.to_string();
+            assert!(
+                !cfg.to_core_config(Path::new(".")).tor.enabled,
+                "{mode}/{socks} devrait desactiver tor"
+            );
+        }
     }
 }

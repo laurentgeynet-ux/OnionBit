@@ -3,6 +3,38 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## ADR-0028 étape 112 : fondation Tor — validateur onion v3, `tor.*`, politique de cibles (2026-10-16)
+
+Socle de la connectivite Tor embarquee (ADR-0028, extension hors
+fidelite Tribler). Aucun transport encore — la crate compile sans
+arti (feature `tor` reservee a l'etape 113).
+
+- `onionbit-format::onion` : `OnionAddr::parse` — adresse v3
+  `base32(pubkey ed25519 ‖ checksum ‖ 0x03)` (56 chars + suffixe
+  `.onion`, casse tolerante), checksum `SHA3-256(b".onion checksum"
+  ‖ pubkey ‖ 0x03)[0..2]` verifie (nouvelle dep `sha3`,
+  MIT/Apache-2.0) ; `onion_host()` extrait l'hote d'une entree
+  d'allowlist ou d'une URL (rejette auth et port explicites).
+  Tests : les 30 adresses reelles de l'annuaire curate
+  `lists.d` valident toutes ; mutations (checksum, version, v2
+  16-chars, clearnet, alphabet) rejetees.
+- `onionbit-network-policy::tor_policy::TorTargetPolicy` : allowlist
+  d'hotes `.onion` + ports 80/443 — frontiere dure avant tout
+  `connect`, aucun clearnet ni onion non declare.
+- Nouvelle crate `onionbit-tor` : `TorSettings` (mode
+  `Embedded`/`External`, `TorTargetPolicy`, timeouts/bornes,
+  backends `OnionBackendSettings{mirrors,url_template}`,
+  `TorGatewaySettings`), `TorRuntime` stub (etat `Off|Bootstrapping|
+  Ready|Dormant|Error` pour `/api/tor/status`), `TorError` — fetch
+  et bootstrap rendent `NotBuilt` sans la feature `tor`.
+- `daemon_config` : section `tor` sparse (`enabled=false` defaut —
+  pas de bootstrap silencieux) ; `tor_settings()` →
+  `CoreConfig.tor` : politique = `allowed_hosts` ∪ miroirs des
+  backends (une seule frontiere), entrees invalides warn+ignorees,
+  `mode` inconnu ou `external_socks5` non-loopback → connectivite
+  desactivee ; reflet dans `apply_runtime_view`. Tests :
+  sparse par defaut, round-trip + validation, modes invalides.
+
 ## ADR-0027 étape 110 : page Flutter « Zone privée » (2026-10-10)
 
 Explorateur de la zone privée côté app, visible uniquement quand

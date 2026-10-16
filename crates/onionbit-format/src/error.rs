@@ -27,6 +27,9 @@ pub enum FormatError {
     /// Lien magnet invalide.
     #[error("lien magnet invalide: {0}")]
     BadMagnet(String),
+    /// Adresse de service cache Tor v3 invalide (ADR-0028).
+    #[error("adresse onion invalide: {0}")]
+    BadOnionAddr(String),
 }
 
 /// Alias de `Result` pour ce crate.

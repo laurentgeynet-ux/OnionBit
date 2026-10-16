@@ -10,6 +10,7 @@ members = [
     "crates/onionbit-core",
     "crates/onionbit-db",
     "crates/onionbit-network-policy",
+    "crates/onionbit-tor",
     "crates/onionbit-api",
     "crates/onionbit-cli",
     "crates/onionbit-daemon",
@@ -57,6 +58,9 @@ rusqlite = { version = "0.40", features = ["bundled", "functions"] }
 rand = "0.10"
 sha1 = "0.11"
 sha2 = "0.11"
+# SHA3-256 — checksum des adresses de services caches Tor v3
+# (`onionbit-format::onion`, ADR-0028). MIT/Apache-2.0.
+sha3 = "0.10"
 ed25519-dalek = "3"
 x25519-dalek = { version = "2", features = ["static_secrets", "getrandom"] }
 # Elligator2 (ADR-0017) : encode les points Curve25519 du handshake

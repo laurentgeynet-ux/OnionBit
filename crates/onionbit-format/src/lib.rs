@@ -19,9 +19,11 @@ pub mod error;
 pub mod limits;
 pub mod magnet;
 pub mod mdblob;
+pub mod onion;
 pub mod torrent;
 
 pub use bencode::BValue;
 pub use error::{FormatError, Result};
 pub use magnet::MagnetLink;
+pub use onion::OnionAddr;
 pub use torrent::TorrentMeta;

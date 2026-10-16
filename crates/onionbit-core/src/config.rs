@@ -255,6 +255,10 @@ pub struct CoreConfig {
     /// Section `storage` (ADR-0018) : zones public/privee et
     /// deplacement `temp` → `downloads` a la completion (etape 59).
     pub storage: StorageSettings,
+    /// Section `tor` (ADR-0028) : connectivite Tor — desactivee par
+    /// defaut (`TorSettings::default()` = enabled false, politique
+    /// vide).
+    pub tor: onionbit_tor::TorSettings,
 }
 
 impl Default for CoreConfig {
@@ -281,6 +285,7 @@ impl Default for CoreConfig {
             identity_at_rest: false,
             identity_seed_acknowledged: false,
             storage: StorageSettings::default(),
+            tor: onionbit_tor::TorSettings::default(),
         }
     }
 }
@@ -331,6 +336,8 @@ impl CoreConfig {
                 move_on_completion: false,
                 ..StorageSettings::default()
             },
+            // Pas de trafic Tor en test : politique vide, desactive.
+            tor: onionbit_tor::TorSettings::default(),
         }
     }
 }

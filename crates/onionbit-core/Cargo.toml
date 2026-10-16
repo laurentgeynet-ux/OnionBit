@@ -13,6 +13,7 @@ onionbit-db = { path = "../onionbit-db" }
 onionbit-format = { path = "../onionbit-format" }
 onionbit-crypto = { path = "../onionbit-crypto" }
 onionbit-network-policy = { path = "../onionbit-network-policy" }
+onionbit-tor = { path = "../onionbit-tor" }
 onionbit-ipv8 = { path = "../onionbit-ipv8" }
 onionbit-tunnel = { path = "../onionbit-tunnel" }
 onionbit-messaging = { path = "../onionbit-messaging" }

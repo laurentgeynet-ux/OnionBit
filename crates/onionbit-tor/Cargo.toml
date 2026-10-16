@@ -1,0 +1,21 @@
+[package]
+name = "onionbit-tor"
+description = "Connectivite Tor (ADR-0028) : runtime et fetch .onion borne. Le transport arti-client est derriere le feature flag `tor` (etape 113) — sans lui, le crate reste leger et TorRuntime est un stub."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[features]
+default = []
+# `tor` : transport reel via arti-client (dep optionnelle ajoutee a
+# l'etape 113 — `onion-service-client` requis pour les cibles .onion).
+tor = []
+
+[dependencies]
+onionbit-format = { path = "../onionbit-format" }
+onionbit-network-policy = { path = "../onionbit-network-policy" }
+thiserror.workspace = true
+tracing.workspace = true
+tokio.workspace = true
