@@ -1,12 +1,14 @@
 # ADR-0028 — Connectivité Tor embarquée (arti) : recherche onion et sortie passerelle
 
-Statut : Proposée (2026-10-16), amendée après revue externe
+Statut : Proposée (2026-10-16), amendée après revues externes
 (2026-10-16) — §1 parseur `httparse`, §5 trait
 `OnionSearchBackend` + erreurs explicites, §7 passerelle
 requalifiée phase 2 ; sauts passerelle couplés à `number_hops`
-(un seul réglage — décision utilisateur), §Sécurité étoffée.
+(un seul réglage — décision utilisateur), §Sécurité étoffée ;
+§Trajectoire phase 3 ajoutée (identité/messagerie/canaux/
+coffre-fort côté service, avec corrections au modèle proposé).
 Plan d'implantation : `docs/plans/roadmap_adr0028.md`
-(étapes 112-118 ; 117 = phase 2).
+(étapes 112-119 ; 117 = phase 2, 119 = phase 3 exploration).
 
 ## Contexte
 
@@ -267,9 +269,77 @@ pairs non-OnionBit).
   TCP, l'overlay est UDP.
 - **Hébergement `.onion`** (exposer l'API, la messagerie ou des
   partages en service caché) : arti `onion-service` est
-  expérimental — phase ultérieure, ADR séparé.
+  expérimental — trajectoire phase 3 ci-dessous, ADR dédié.
 - **Bridges/obfs4** via `tor-ptmgr`, **distribution GetTor**,
   backend `tpb-api` via exit : jalons roadmap, pas la v1.
+- **Plan « côté service »** (hébergement `.onion`, bootstrap via
+  Tor, pont Tor-over-OnionBit) : trajectoire documentée ci-dessous
+  — exploration phase 3, ADR dédié requis avant engagement.
+
+## Trajectoire — phase 3 « côté service » (exploration, non engagée)
+
+> Direction documentée à la demande d'une revue externe
+> (2026-10-16) : porter/relayer des sous-systèmes OnionBit *côté
+> `.onion`*. Aucun code v1 n'en dépend ; condition première :
+> maturité du côté serveur d'arti (`onion-service` /
+> `tor-hsservice`, API expérimentale à ce jour) — alternative :
+> `mode:"external"` + ControlPort d'un tor C pour héberger.
+
+Doctrine **bimodale** confirmée : Tor porte le signalement, la
+métadonnée et la messagerie légère ; l'overlay OnionBit porte le
+transport massif (uTP). Tor ne fera jamais d'UDP — cette
+répartition n'est pas un compromis, c'est aussi une hygiène pour
+le réseau Tor (le trafic P2P asphyxie ses relais bénévoles).
+
+- **Identité (ADR-0016) — la bonne primitive existe déjà** :
+  l'affirmation « 1 clé = 2 réseaux » est mathématiquement vraie
+  (`ipv8-sign` est ed25519 ; une adresse v3 = `base32(pubkey ‖
+  checksum ‖ 0x03)`) mais **refusée telle quelle** : réutiliser la
+  clé d'identité comme clé de service rendrait le `.onion`
+  *strictement équivalent* à la clé publique IPv8 — pont de
+  corrélation inter-plans gratuit. Correctif : dérivation HKDF à
+  domaine séparé, ajouter `onionbit/identity/tor-hs/v1` → seed
+  ed25519 du service caché. Même phrase BIP39, deux plans non
+  liables ; pour les canaux/personas publics, liaison *explicite*
+  (le canal signe son adresse `.onion` → adresse
+  auto-certifiante) — opt-in, jamais implicite.
+- **Messagerie (ADR-0011/0019/0026)** : modèle Briar — chaque
+  contact joignable via son service caché, e2e sans serveur ;
+  traversée NAT/CGNAT universelle ; anonymat symétrique (3+3
+  sauts au point de rendez-vous). Contraintes : un `.onion` n'est
+  joignable que **pendant que le pair est en ligne** (les
+  circuits d'introduction meurent avec le service — aucune
+  persistance façon DHT) → l'asynchronisme reste aux boîtes aux
+  lettres store-and-forward (ADR-0026), elles-mêmes exposables
+  en `.onion` ; latence d'établissement : secondes — texte OK,
+  temps réel exclu ; maintien des intro points = coût
+  batterie/données (mobile).
+- **Canaux (ADR-0025)** : le catalogue `mdblob` d'un canal peut
+  être servi par le créateur en HTTP sur son `.onion` —
+  complément au `RemoteSelect` UDP, chemin de survie si
+  l'overlay est filtré. Disponibilité : le créateur doit être en
+  ligne, sauf miroirs d'abonnés volontaires (opt-in).
+- **Coffre-fort (ADR-0018/0027)** : cas d'usage le plus propre —
+  accès nomade à son propre explorateur privé via `.onion` +
+  *client authorization* v3 (x25519) ; réplication aveugle
+  coffre→coffre (le pair héberge du chiffré). **Condition de
+  faisabilité à vérifier** : le support de l'autorisation client
+  côté arti n'est pas garanti à ce jour.
+- **Bootstrap et repli** : un endpoint `.onion` de bootstrap
+  IPv8 donne un chemin d'amorçage sous censure FAI ; un canal Tor
+  peut porter la signalisation entre pairs (négociation de
+  rendez-vous). Nuance à la proposition originale : la
+  signalisation ne **crée** pas d'accessibilité UDP là où UDP
+  est bloqué — elle n'aide que face au NAT, pas au filtrage.
+- **Pont furtif vers Tor (Tor-over-OnionBit)** : porter le
+  *protocole* Tor (liaison TLS client→garde) dans un tunnel
+  OnionBit a un modèle de confiance **meilleur** que `EXIT_TOR` :
+  la passerelle ne voit que du chiffré vers une IP de garde —
+  pas les recherches en clair. Mais `http_tunnel` est
+  requête/réponse, pas un flux bidirectionnel : il faudrait un
+  transport de flux sur cellules (chantier dédié), et la
+  passerelle devient de facto un bridge Tor (elles restent
+  bénévoles — même posture de confiance documentée qu'§7).
 
 ## Sécurité / vie privée
 
@@ -303,6 +373,13 @@ pairs non-OnionBit).
 - `state_dir/tor` : consensus + clés de garde — sensibilité
   faible ; cohérent avec le modèle `state_dir` existant (pas de
   secret d'identité OnionBit dedans).
+- **Phase 3 anticipée** : la dérivation `tor-hs` (domaine HKDF
+  séparé) est la condition anti-corrélation — jamais la clé
+  `ipv8-sign` en service caché direct ; la disponibilité d'un
+  `.onion` auto-hébergé = être en ligne (pas de persistance) ;
+  le pont Tor-over-OnionBit change le modèle de confiance de la
+  passerelle (chiffré, pas clair) sans supprimer le statut de
+  bénévole.
 
 ## Alternatives considérées
 
@@ -336,4 +413,7 @@ pairs non-OnionBit).
   posture d'outil, opt-in explicite, sources affichées.
 - **Limites assumées** : pas de relais Tor, pas d'UDP, scraping
   fragile (mitigé par fixtures), `apibay` non-oignon, pas
-  d'onion-service en v1.
+  d'onion-service en v1 (phase 3 exploratoire documentée :
+  identité dérivée HKDF, messagerie/canaux/coffre-fort
+  `.onion`, bootstrap, pont Tor-over-OnionBit — chacun sous ADR
+  dédié et maturité arti serveur).
