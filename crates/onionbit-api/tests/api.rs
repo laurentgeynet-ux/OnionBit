@@ -631,6 +631,43 @@ async fn files_browse_list_create() {
     srv.session.stop().await;
 }
 
+#[tokio::test]
+async fn files_browse_spec_public_et_private_refuse() {
+    let srv = spawn_server().await;
+    // Le spec portable `@public` est resolu cote daemon (page
+    // « Zone publique ») ; `@private` reste refuse.
+    let public = srv
+        .session
+        .paths()
+        .resolve_input(std::path::Path::new("@public"))
+        .unwrap();
+    std::fs::create_dir_all(&public).unwrap();
+    std::fs::write(public.join("pub.txt"), b"x").unwrap();
+
+    let resp = srv
+        .client
+        .get(srv.url("/api/files/browse?path=%40public&files=1"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert!(body["paths"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|p| p["name"] == "pub.txt"));
+
+    let resp = srv
+        .client
+        .get(srv.url("/api/files/browse?path=%40private&files=1"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 403);
+    srv.session.stop().await;
+}
+
 /// Encodage query minimal (les chemins Windows contiennent `\` et `:`).
 fn urlencoding(s: &str) -> String {
     s.chars()

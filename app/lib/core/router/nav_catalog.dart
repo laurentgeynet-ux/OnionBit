@@ -24,6 +24,23 @@ const List<NavDestinationSpec> kNavCatalog = [
     icon: Icons.search_outlined,
     selectedIcon: Icons.search,
   ),
+  // Zones de stockage ADR-0018/0027 juste sous Téléchargements :
+  // « Zone publique » = explorateur `data/public` ; « Zone privée »
+  // n'est rendue par la sidebar que si la zone est montée.
+  NavDestinationSpec(
+    path: '/public-zone',
+    id: NavId.publicZone,
+    icon: Icons.folder_outlined,
+    selectedIcon: Icons.folder_open,
+    primary: false,
+  ),
+  NavDestinationSpec(
+    path: '/private-zone',
+    id: NavId.privateZone,
+    icon: Icons.enhanced_encryption_outlined,
+    selectedIcon: Icons.enhanced_encryption,
+    primary: false,
+  ),
   NavDestinationSpec(
     path: '/messages',
     id: NavId.messages,
@@ -52,15 +69,6 @@ const List<NavDestinationSpec> kNavCatalog = [
     selectedIcon: Icons.settings,
   ),
   // Secondaires : sidebar uniquement (hors barre de nav compacte).
-  // `/private-zone` (ADR-0027) : la sidebar ne le montre que si la
-  // zone est montee (cf. `app_sidebar.dart`).
-  NavDestinationSpec(
-    path: '/private-zone',
-    id: NavId.privateZone,
-    icon: Icons.enhanced_encryption_outlined,
-    selectedIcon: Icons.enhanced_encryption,
-    primary: false,
-  ),
   NavDestinationSpec(
     path: '/about',
     id: NavId.about,

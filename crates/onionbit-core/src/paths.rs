@@ -717,7 +717,26 @@ fn normalize(path: &Path) -> Option<Vec<String>> {
     let mut out: Vec<String> = Vec::new();
     for c in path.components() {
         match c {
-            Component::Prefix(p) => out.push(p.as_os_str().to_string_lossy().into_owned()),
+            // `canonicalize()` produit des chemins verbatim `\\?\…` :
+            // sans cet aplatissement, un chemin canonique ne matche
+            // jamais sa racine non-verbatim (`\\?\C:` ≠ `C:`) —
+            // `to_portable` retournait `None` et `refuse_private`
+            // laissait passer `data/private` sur Windows.
+            Component::Prefix(p) => {
+                let s = p.as_os_str().to_string_lossy();
+                let flat = match p.kind() {
+                    std::path::Prefix::VerbatimDisk(d) => {
+                        format!("{}:", d as char)
+                    }
+                    std::path::Prefix::VerbatimUNC(_, _) => s.replacen("\\\\?\\UNC\\", "\\\\", 1),
+                    std::path::Prefix::Verbatim(_) => s
+                        .strip_prefix("\\\\?\\")
+                        .map(str::to_string)
+                        .unwrap_or_else(|| s.into_owned()),
+                    _ => s.into_owned(),
+                };
+                out.push(flat);
+            }
             Component::RootDir => {
                 if out.is_empty() {
                     out.push(String::new());

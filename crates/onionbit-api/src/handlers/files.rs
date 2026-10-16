@@ -83,8 +83,19 @@ pub async fn browse(
         })));
     }
 
-    // Remonter jusqu'a un repertoire existant (comportement Python).
-    let mut dir = std::path::PathBuf::from(if path.is_empty() { "." } else { &path });
+    // Spec portable `@public/…` / `@state/…` : resolu via le layout
+    // (`@private/…` est refuse par `refuse_private` — la zone
+    // chiffree n'est pas navigable). Sert la page « Zone publique »
+    // qui navigue `path=@public`.
+    let mut dir = if path.starts_with('@') {
+        state
+            .session
+            .paths()
+            .resolve_input(std::path::Path::new(&path))
+            .map_err(|e| ApiError::bad_request(format!("invalid path spec {path}: {e}")))?
+    } else {
+        std::path::PathBuf::from(if path.is_empty() { "." } else { &path })
+    };
     refuse_private(&state, &dir)?;
     dir = dir.canonicalize().unwrap_or(dir);
     while !dir.is_dir() {

@@ -3,6 +3,30 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Zone publique : explorateur `data/public` + réordonnancement sidebar (2026-10-16)
+
+Nouvelle entrée sidebar **« Zone publique »** (`/public-zone`) :
+explorateur des fichiers en clair du device, naviguant
+`GET /api/files/browse` depuis le spec portable `@public` — dossiers
+et fichiers, descente dans les sous-dossiers, `..` borné à la racine
+publique, ouverture via le shell natif (`openPath`).
+
+Ordre sidebar : Téléchargements (+ filtres) → Zone publique → Zone
+privée → Messages → Channels → Diagnostics → Settings → About.
+
+- **API** : `browse` résout les specs portables `@public/…`/`@state/…`
+  (`resolve_input`) ; `@private/…` reste refusé — la zone chiffrée
+  n'est pas navigable.
+- **Correctif sécurité** (`paths.rs::normalize`) : `canonicalize()`
+  produit des chemins verbatim `\\?\C:\…` sous Windows ; le préfixe
+  verbatim ne matchait jamais les racines dans `to_portable` →
+  `refuse_private` était contourné (`browse?path=<abs data/private>`
+  listait le dossier chiffré). Le préfixe `\\?\`/`\\?\UNC\` est
+  désormais aplati avant comparaison — refus effectif.
+- Tests : `files_browse_spec_public_et_private_refuse` (API :
+  `@public` 200 + listing, `@private` 403) et
+  `public_zone_page_test.dart` (navigation, `..` borné à la racine).
+
 ## Sidebar : entrée Recherche retirée, sous-filtres « Tous » + « Pas en téléchargement » (2026-10-16)
 
 La sidebar s'aligne sur le modèle Tribler : le libellé de groupe

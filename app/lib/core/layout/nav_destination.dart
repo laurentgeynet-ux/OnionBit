@@ -15,6 +15,7 @@ enum NavId {
   messages,
   diagnostic,
   settings,
+  publicZone,
   privateZone,
   about,
 }
@@ -55,6 +56,7 @@ extension NavDestinationSpecX on NavDestinationSpec {
     NavId.messages => l10n.navMessages,
     NavId.diagnostic => l10n.navDiagnostic,
     NavId.settings => l10n.navSettings,
+    NavId.publicZone => l10n.navPublicZone,
     NavId.privateZone => l10n.navPrivateZone,
     NavId.about => l10n.navAbout,
   };
