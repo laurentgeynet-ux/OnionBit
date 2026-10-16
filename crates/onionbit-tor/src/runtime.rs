@@ -50,7 +50,10 @@ pub enum TorState {
 
 /// Flux TCP anonymise (DataStream arti ou SOCKS5 externe).
 #[cfg(feature = "tor")]
-trait OnionIo: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send {}
+pub(crate) trait OnionIo:
+    tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send
+{
+}
 #[cfg(feature = "tor")]
 impl<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send> OnionIo for T {}
 
@@ -197,6 +200,15 @@ impl TorRuntime {
             let target = http::parse_target(&current)?;
             settings.target_policy.check(&target.host, target.port)?;
             let stream = self.open_stream(&target.host, target.port).await?;
+            // `https` : TLS au-dessus du flux Tor — obligatoire pour
+            // les sorties clearnet `api_via_exit` (integrite des
+            // metadonnees face a un exit malveillant) et licite pour
+            // les services onion dument certifies.
+            let stream = if target.tls {
+                http::wrap_tls(stream, &target.host).await?
+            } else {
+                stream
+            };
             let request = http::build_request(&target);
             let resp = http::exchange(
                 stream,

@@ -47,7 +47,11 @@ fn main() {
         let mut events = client.bootstrap_events();
         tokio::spawn(async move {
             while let Some(s) = events.next().await {
-                eprintln!("==> {:.0}% | {s} | blocked={:?}", s.as_frac() * 100.0, s.blocked());
+                eprintln!(
+                    "==> {:.0}% | {s} | blocked={:?}",
+                    s.as_frac() * 100.0,
+                    s.blocked()
+                );
             }
         });
         match tokio::time::timeout(

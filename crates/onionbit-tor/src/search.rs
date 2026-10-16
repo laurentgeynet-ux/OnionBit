@@ -28,7 +28,62 @@ use crate::http::OnionResponse;
 use crate::runtime::TorRuntime;
 use crate::settings::TorSettings;
 
+pub mod apibay;
 pub mod tpb;
+
+/// Borne interne du titre extrait — defensive, pas un reglage : la
+/// reponse est un contenu tiers non fiable.
+pub(crate) const MAX_NAME_CHARS: usize = 300;
+
+/// Borne interne de la requete utilisateur avant encodage.
+pub(crate) const MAX_QUERY_CHARS: usize = 300;
+
+/// Marqueurs heuristiques d'une page de defi anti-DDoS (Cloudflare,
+/// DDoS-Guard, PoW natif…). Consultes en minuscules sur le corps —
+/// un backend JSON peut aussi recevoir une page HTML de defi.
+pub(crate) const CHALLENGE_MARKERS: &[&str] = &[
+    "ddos-guard",
+    "just a moment",
+    "checking your browser",
+    "verify you are human",
+    "captcha",
+    "challenge-platform",
+    "pow challenge",
+    "security check",
+];
+
+/// `true` si le corps (minuscules) contient un marqueur de defi.
+pub(crate) fn has_marker(body: &str, markers: &[&str]) -> bool {
+    let lower = body.to_lowercase();
+    markers.iter().any(|m| lower.contains(m))
+}
+
+/// Requete utilisateur nettoyee et bornee — `None` si vide. Chaque
+/// backend applique la meme hygiene avant encodage dans son URL.
+pub(crate) fn clean_query(query: &str) -> Option<String> {
+    let clean: String = query
+        .chars()
+        .filter(|c| !c.is_control())
+        .take(MAX_QUERY_CHARS)
+        .collect::<String>()
+        .trim()
+        .to_string();
+    (!clean.is_empty()).then_some(clean)
+}
+
+/// Nettoie un champ texte tiers : controle retires, whitespace
+/// pliee, borne appliquee.
+pub(crate) fn clean_text(raw: &str) -> String {
+    raw.chars()
+        .filter(|c| !c.is_control())
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .take(MAX_NAME_CHARS)
+        .collect()
+}
 
 /// Resultat de recherche externe normalise (ADR-0028 §5).
 ///
@@ -99,6 +154,13 @@ pub fn build_backends(
                 out.insert(
                     id.clone(),
                     Arc::new(tpb::TpbBackend::new(id, cfg, fetcher.clone()))
+                        as Arc<dyn OnionSearchBackend>,
+                );
+            }
+            "apibay" => {
+                out.insert(
+                    id.clone(),
+                    Arc::new(apibay::ApibayBackend::new(id, cfg, fetcher.clone()))
                         as Arc<dyn OnionSearchBackend>,
                 );
             }

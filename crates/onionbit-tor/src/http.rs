@@ -40,10 +40,13 @@ const MAX_HEADERS: usize = 64;
 pub(crate) struct OnionTarget {
     /// Hote `.onion` en minuscules (tel que parse par `url`).
     pub host: String,
-    /// Port effectif (defaut scheme : 80).
+    /// Port effectif (defaut scheme : 80/443).
     pub port: u16,
     /// Chemin + query, jamais vide (`/` au minimum).
     pub path: String,
+    /// `https` — TLS par-dessus le flux Tor (`api_via_exit` :
+    /// integrite des metadonnees face a un exit malveillant).
+    pub tls: bool,
 }
 
 /// Reponse HTTP decodee et bornee.
@@ -81,12 +84,15 @@ impl OnionResponse {
 /// [`TorTargetPolicy::check`]: onionbit_network_policy::TorTargetPolicy::check
 pub(crate) fn parse_target(raw: &str) -> Result<OnionTarget> {
     let u = url::Url::parse(raw).map_err(|e| TorError::InvalidUrl(e.to_string()))?;
-    if u.scheme() != "http" {
-        return Err(TorError::InvalidUrl(format!(
-            "scheme `{}` non supporte (http:// seulement)",
-            u.scheme()
-        )));
-    }
+    let tls = match u.scheme() {
+        "http" => false,
+        "https" => true,
+        other => {
+            return Err(TorError::InvalidUrl(format!(
+                "scheme `{other}` non supporte (http(s):// seulement)"
+            )))
+        }
+    };
     if !u.username().is_empty() || u.password().is_some() {
         return Err(TorError::InvalidUrl(
             "identifiants dans l'URL refuses".into(),
@@ -107,7 +113,12 @@ pub(crate) fn parse_target(raw: &str) -> Result<OnionTarget> {
         path.push('?');
         path.push_str(q);
     }
-    Ok(OnionTarget { host, port, path })
+    Ok(OnionTarget {
+        host,
+        port,
+        path,
+        tls,
+    })
 }
 
 /// Resout une redirection `Location` (relative ou absolue) par
@@ -121,7 +132,7 @@ pub(crate) fn resolve_redirect(current: &str, resp: &OnionResponse) -> Result<St
     let next = base
         .join(loc)
         .map_err(|e| TorError::RedirectDenied(format!("Location injoignable : {e}")))?;
-    if next.scheme() != "http" {
+    if !matches!(next.scheme(), "http" | "https") {
         return Err(TorError::RedirectDenied(format!(
             "scheme `{}` non supporte",
             next.scheme()
@@ -134,10 +145,47 @@ pub(crate) fn resolve_redirect(current: &str, resp: &OnionResponse) -> Result<St
 /// client de fetch borne, pas un navigateur (ADR-0028 §Securite).
 pub(crate) fn build_request(target: &OnionTarget) -> Vec<u8> {
     format!(
-        "GET {} HTTP/1.1\r\nHost: {}\r\nAccept: */*\r\nConnection: close\r\n\r\n",
+        "GET {} HTTP/1.1\r\nHost: {}\r\nAccept: */*\r\nAccept-Encoding: identity\r\nConnection: close\r\n\r\n",
         target.path, target.host
     )
     .into_bytes()
+}
+
+/// Enrobe un flux Tor dans une session TLS cliente — hotes
+/// clearnet de sortie `api_via_exit` (https) et services onion
+/// dument certifies. `webpki-roots` (bundle Mozilla) fige le trust
+/// store : deterministe, independant de l'OS. Pas d'ALPN annonce :
+/// le serveur reste en HTTP/1.1, seul profil supporte par
+/// [`exchange`].
+#[cfg(feature = "tor")]
+pub(crate) async fn wrap_tls(
+    stream: Box<dyn crate::runtime::OnionIo>,
+    host: &str,
+) -> Result<Box<dyn crate::runtime::OnionIo>> {
+    use std::sync::OnceLock;
+    use tokio_rustls::TlsConnector;
+
+    static CONNECTOR: OnceLock<TlsConnector> = OnceLock::new();
+    let connector = CONNECTOR.get_or_init(|| {
+        let roots = rustls::RootCertStore {
+            roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
+        };
+        let cfg = rustls::ClientConfig::builder_with_provider(std::sync::Arc::new(
+            rustls::crypto::aws_lc_rs::default_provider(),
+        ))
+        .with_safe_default_protocol_versions()
+        .expect("versions TLS par defaut")
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+        TlsConnector::from(std::sync::Arc::new(cfg))
+    });
+    let name = rustls::pki_types::ServerName::try_from(host.to_string())
+        .map_err(|e| TorError::InvalidUrl(format!("SNI invalide : {e}")))?;
+    let tls = connector
+        .connect(name, stream)
+        .await
+        .map_err(|e| TorError::Request(format!("handshake TLS : {e}")))?;
+    Ok(Box::new(tls))
 }
 
 /// Envoie `request` et lit une reponse bornee — [`OnionResponse`]
@@ -428,9 +476,21 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn redirection_hors_http_refusee() {
+    async fn redirection_https_suivie_schemes_exotiques_refuses() {
+        // `https` est suivi (TLS au-dessus du flux Tor — `api_via_exit`).
         let r = roundtrip(
             b"HTTP/1.1 301\r\nLocation: https://x.onion/\r\nContent-Length: 0\r\n\r\n",
+            1024,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            resolve_redirect("http://a.onion/", &r).unwrap(),
+            "https://x.onion/"
+        );
+        // Tout autre scheme reste refuse.
+        let r = roundtrip(
+            b"HTTP/1.1 301\r\nLocation: ftp://x.onion/\r\nContent-Length: 0\r\n\r\n",
             1024,
         )
         .await
@@ -442,9 +502,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cible_rejette_https_auth_et_sans_hote() {
-        assert!(parse_target("https://x.onion/").is_err());
+    async fn cible_https_tls_et_rejets() {
+        // `https` est parse avec `tls` — la politique borne ensuite
+        // l'hote et le port, comme pour `http`.
+        let t = parse_target("https://x.onion/a?b=1").unwrap();
+        assert!(t.tls);
+        assert_eq!(t.port, 443);
+        assert!(!parse_target("http://x.onion/").unwrap().tls);
         assert!(parse_target("http://user:pw@x.onion/").is_err());
+        assert!(parse_target("ftp://x.onion/").is_err());
         assert!(parse_target("pas une url").is_err());
         let t = parse_target("http://X.ONION:8080/p?q=1#frag").unwrap();
         assert_eq!(t.host, "x.onion");

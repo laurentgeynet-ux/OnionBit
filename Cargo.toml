@@ -86,6 +86,14 @@ httparse = "1"
 scraper = "0.26"
 # Traits async object-safe (`OnionFetch`, `OnionSearchBackend`).
 async-trait = "0.1"
+# TLS sur un flux Tor (`onionbit-tor`, ADR-0028 §5 `api_via_exit`) :
+# les hotes clearnet de sortie parlent https — et un exit ne doit
+# pas pouvoir reecrire des metadonnees de recherche en clair.
+# `webpki-roots` embarque le bundle Mozilla (deterministe, portable
+# — meme choix qu'arti). MIT/Apache-2.0, optionnels via `tor`.
+rustls = "0.23"
+tokio-rustls = "0.26"
+webpki-roots = "0.26"
 ed25519-dalek = "3"
 x25519-dalek = { version = "2", features = ["static_secrets", "getrandom"] }
 # Elligator2 (ADR-0017) : encode les points Curve25519 du handshake

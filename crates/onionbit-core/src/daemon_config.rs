@@ -1296,6 +1296,17 @@ impl Default for TorSearchFileConfig {
                 ..TorBackendFileConfig::default()
             },
         );
+        // API JSON officielle de TPB — clearnet via un exit Tor,
+        // active seulement si `tor.api_via_exit=true` (opt-in :
+        // anonymat degrade, le noeud de sortie voit la requete).
+        backends.insert(
+            "apibay".to_string(),
+            TorBackendFileConfig {
+                mirrors: vec!["apibay.org".to_string()],
+                url_template: "http://{host}/q.php?q={q}".to_string(),
+                ..TorBackendFileConfig::default()
+            },
+        );
         Self {
             backends,
             extra: serde_json::Map::new(),
@@ -2240,11 +2251,7 @@ impl DaemonConfig {
         // Allowlist : `allowed_hosts` ∪ miroirs des backends — le
         // backend est inutilisable si son miroir n'est pas joignable,
         // l'union evite de devoir declarer deux fois le meme hote.
-        for entry in t
-            .allowed_hosts
-            .iter()
-            .chain(t.search.backends.values().flat_map(|b| b.mirrors.iter()))
-        {
+        for entry in &t.allowed_hosts {
             if let Err(e) = settings.target_policy.insert(entry) {
                 tracing::warn!(
                     error = %e,
@@ -2253,21 +2260,56 @@ impl DaemonConfig {
                 );
             }
         }
+        // Miroirs des backends : `.onion` → allowlist ; hote clearnet
+        // → sortie `api_via_exit` **opt-in** (anonymat degrade : le
+        // noeud de sortie voit la requete — refuse et signale sans
+        // le flag, jamais de fuite silencieuse).
+        let mut usable: BTreeMap<String, Vec<String>> = BTreeMap::new();
         for (id, b) in &t.search.backends {
-            if b.mirrors.is_empty()
+            for mirror in &b.mirrors {
+                if settings.target_policy.insert(mirror).is_ok() {
+                    usable.entry(id.clone()).or_default().push(mirror.clone());
+                } else if mirror.contains(".onion") {
+                    tracing::warn!(
+                        backend = %id,
+                        host = %mirror,
+                        "tor : hote onion invalide — miroir ignore"
+                    );
+                } else if !t.api_via_exit {
+                    tracing::warn!(
+                        backend = %id,
+                        host = %mirror,
+                        "tor : miroir clearnet ignore — tor.api_via_exit=false \
+                         (sortie via exit Tor : opt-in explicite requis)"
+                    );
+                } else if let Err(e) = settings.target_policy.insert_exit_host(mirror) {
+                    tracing::warn!(
+                        backend = %id,
+                        error = %e,
+                        host = %mirror,
+                        "tor : hote de sortie invalide — miroir ignore"
+                    );
+                } else {
+                    usable.entry(id.clone()).or_default().push(mirror.clone());
+                }
+            }
+        }
+        for (id, b) in &t.search.backends {
+            let mirrors = usable.get(id).cloned().unwrap_or_default();
+            if mirrors.is_empty()
                 || !b.url_template.contains("{host}")
                 || !b.url_template.contains("{q}")
             {
                 tracing::warn!(
                     backend = %id,
-                    "tor : backend sans miroir ou template invalide — ignore"
+                    "tor : backend sans miroir joignable ou template invalide — ignore"
                 );
                 continue;
             }
             settings.backends.insert(
                 id.clone(),
                 OnionBackendSettings {
-                    mirrors: b.mirrors.clone(),
+                    mirrors,
                     url_template: b.url_template.clone(),
                     max_results: b.max_results.max(1) as usize,
                 },

@@ -97,9 +97,14 @@ La crate dépend de `onionbit-network-policy` (frontière §3) et
   "request_timeout_ms": 30000,
   "bootstrap_timeout_ms": 120000,
   "max_redirects": 3,
-  "search": { "backends": { "tpb": { "mirrors": ["<a>.onion", "…"],
-      "url_template": "http://{host}/search.php?q={q}",
-      "max_results": 100 } } },
+  "api_via_exit": false,
+  "search": { "backends": {
+      "tpb":    { "mirrors": ["<a>.onion", "…"],
+        "url_template": "http://{host}/search.php?q={q}",
+        "max_results": 100 },
+      "apibay": { "mirrors": ["apibay.org"],
+        "url_template": "http://{host}/q.php?q={q}",
+        "max_results": 100 } } },
   "gateway": { "enabled": false, "rate_limit_per_circuit": 10 }
 }
 ```
@@ -127,16 +132,27 @@ La seule cible joignable par le fetcher est la **allowlist** :
 
 - hôte suffixe `.onion` de forme v3 valide **et** présent dans
   `allowed_hosts` ; port ∈ {80, 443} ; méthodes `GET`/`HEAD` ;
-  réponse ≤ `max_response_bytes`.
+  réponse ≤ `max_response_bytes` ;
+- hôte **clearnet de sortie** (`exit_hosts`) — opt-in
+  `tor.api_via_exit` : noms DNS publics seulement (jamais
+  d'`.onion`, jamais d'IP littérale, jamais de nom non qualifié) ;
+  port ∈ {80, 443} ; seuls des miroirs de backends peuvent s'y
+  inscrire (`allowed_hosts` reste strictement `.onion`). La
+  requête traverse un noeud de sortie qui la voit — anonymat
+  dégradé assumé et signalé à l'activation ; **TLS est appliqué
+  par-dessus le flux Tor pour `https`**, un exit ne peut donc ni
+  lire ni réécrire la réponse (injection de magnets/infohash
+  contrée ; trust store `webpki-roots` Mozilla embarqué).
 - **Jamais** de repli clearnet : Tor injoignable → erreur explicite
   remontée à l'appelant (sémantique kill switch, même discipline
   que `proxy_guard` — pas de fetch hors Tor « pour dépanner »).
-- Pas de cible clearnet non plus : le fetcher n'est pas un proxy
-  générique — `connect()` n'est exposé qu'à travers
+- Pas de cible non déclarée non plus : le fetcher n'est pas un
+  proxy générique — `connect()` n'est exposé qu'à travers
   `TorTargetPolicy::check`.
 
 `onionbit-network-policy` n'est pas affaibli : la politique s'y
-ajoute (anti-SSRF étendu aux cibles onion).
+ajoute (anti-SSRF étendu aux cibles onion) — les hôtes de sortie
+sont une seconde allowlist explicite, pas une ouverture.
 
 ### 4. Validateur d'adresses onion v3 — `onionbit-format::onion`
 
@@ -151,7 +167,7 @@ cibles `TorTargetPolicy`, et plus tard tout parsing de liens
 ### 5. Source de recherche externe
 
 - `GET /api/search/external?source=tpb&q=…` — sous `api_key_auth` :
-  - `source` ∈ backends déclarés en config (v1 : `tpb`) — chaque
+  - `source` ∈ backends déclarés en config (`tpb`, `apibay`) — chaque
     backend implémente un **trait `OnionSearchBackend`**
     (`search(query) -> Vec<ExternalResult>`) pour isoler la
     fragilité du scraping et permettre d'autres sources (ahmia…) ;
@@ -195,12 +211,23 @@ cibles `TorTargetPolicy`, et plus tard tout parsing de liens
 - **Journalisation** : aucun terme de recherche dans `tracing`
   (niveau info ou plus) — données sensibles ; les événements SSE
   restent derrière `api_key_auth`.
-- `apibay.org` (API JSON officielle TPB, utilisée par le plugin
-  qBittorrent) est **clearnet-only** : joignable uniquement via un
-  noeud de sortie Tor — anonymat dégradé et blocage fréquent des
-  exits. Backend optionnel `tpb-api` prévu derrière
-  `tor.api_via_exit`, **désactivé** (scraping onion = trafic 100 %
-  onion, zéro exit — meilleur anonymat).
+- `apibay` *(implémenté)* — l'API JSON officielle de TPB
+  (`q.php?q=…`, celle que son propre frontend interroge) jointe en
+  clearnet **via un exit Tor** derrière `tor.api_via_exit`,
+  **désactivé par défaut** (le scraping onion reste le trafic au
+  meilleur anonymat : 100 % onion, zéro exit). Constat de terrain :
+  le site TPB ne sert plus de markup statique (coquille JS,
+  `Enable JS`), l'adresse onion sert le même frontend et est
+  souvent hors ligne — `apibay` est la source de résultats la plus
+  fiable, le scraping `tpb` reste en place comme backend 100 %
+  onion quand le service publie du markup classique. Réalité
+  constatée côté exit : `http://apibay.org` redirige vers `https`
+  (Cloudflare force TLS pour les exits) — le redirect est suivi et
+  la connexion bascule en TLS sur le flux Tor. Normalisation :
+  `info_hash` validé par `MagnetLink::parse`, magnet synthétisé
+  (`btih` + `dn`, l'API ne publie pas d'URI magnet), entités HTML
+  des titres déséchappées, catégories numériques → familles TPB,
+  sentinelle `id:"0"`/hash nul → `no_results`.
 
 ### 6. Interaction avec les profils d'anonymat (ADR-0022)
 
@@ -445,9 +472,11 @@ le réseau Tor (le trafic P2P asphyxie ses relais bénévoles).
   TPB clearnet exposerait l'opérateur de sortie (bénévole).
 - **Daemon `tor` C embarqué** : rejeté — binaire non-Rust lourd,
   surface C, distribution multi-plateforme compliquée.
-- **`hyper`/`reqwest` complet sur `DataStream`** : rejeté en v1 —
-  HTTP/1.1 minimal suffit (GET, réponse bornée) ; à réévaluer si
-  HTTPS-on-onion devient nécessaire.
+- **`hyper`/`reqwest` complet sur `DataStream`** : rejeté —
+  HTTP/1.1 minimal suffit (GET, réponse bornée) ; le besoin TLS
+  apparu avec `api_via_exit` est couvert par `tokio-rustls`
+  au-dessus du même codec minimal, pas par une pile HTTP
+  complète.
 - **DHT/annuaire de résultats interne** : la recherche réseau
   native (ADR-0025) existe déjà — la source onion est un
   complément, pas un remplacement.
@@ -464,11 +493,13 @@ le réseau Tor (le trafic P2P asphyxie ses relais bénévoles).
   périssables (en config, pas en dur) ; contenu indexé par TPB =
   posture d'outil, opt-in explicite, sources affichées.
 - **Limites assumées** : pas de relais Tor, pas d'UDP, scraping
-  fragile (mitigé par fixtures), `apibay` non-oignon, pas
-  d'onion-service en v1 (phase 3 exploratoire documentée :
-  identité dérivée HKDF, messagerie/canaux/coffre-fort
-  `.onion`, bootstrap, pont Tor-over-OnionBit — chacun sous ADR
-  dédié et maturité arti serveur).
+  fragile (mitigé par fixtures), `apibay` clearnet-only
+  (`api_via_exit` opt-in, TLS obligatoire sur le flux — anonymat
+  dégradé assumé), pas d'onion-service en v1 (phase 3
+  exploratoire documentée : identité dérivée HKDF,
+  messagerie/canaux/coffre-fort `.onion`, bootstrap, pont
+  Tor-over-OnionBit — chacun sous ADR dédié et maturité arti
+  serveur).
 
 ## Notes de mise en œuvre
 

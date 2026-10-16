@@ -17,6 +17,9 @@ tor = [
     "dep:tor-rtcompat",
     "dep:tokio-socks",
     "dep:futures-util",
+    "dep:rustls",
+    "dep:tokio-rustls",
+    "dep:webpki-roots",
 ]
 
 [dependencies]
@@ -33,12 +36,21 @@ url.workspace = true
 # hors feature `tor` : testable sans transport via `OnionFetch`.
 scraper.workspace = true
 async-trait.workspace = true
+# Decodeur des reponses JSON `apibay` (`search/apibay.rs`,
+# ADR-0028 §5) — extraction tolerante par champs, borne par
+# `max_response_bytes`.
+serde_json.workspace = true
 # Info-hash → hex pour les resultats normalises.
 hex.workspace = true
 arti-client = { workspace = true, optional = true }
 tor-rtcompat = { workspace = true, optional = true }
 tokio-socks = { workspace = true, optional = true }
 futures-util = { workspace = true, optional = true }
+# TLS sur le flux Tor — hotes clearnet de sortie `api_via_exit`
+# (https via exit ; integrite contre un exit malveillant).
+rustls = { workspace = true, optional = true }
+tokio-rustls = { workspace = true, optional = true }
+webpki-roots = { workspace = true, optional = true }
 
 [dev-dependencies]
 # Sonde `bootstrap_probe` — diagnostic hors daemon. `rustls` :

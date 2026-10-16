@@ -25,7 +25,10 @@ use crate::error::{ExternalSearchError, TorError};
 use crate::http::OnionResponse;
 use crate::settings::OnionBackendSettings;
 
-use super::{ExternalResult, OnionFetch, OnionSearchBackend};
+use super::{
+    clean_query, clean_text, has_marker, ExternalResult, OnionFetch, OnionSearchBackend,
+    CHALLENGE_MARKERS,
+};
 
 /// Selecteurs statiques — compiles une fois (`Selector::parse` est
 /// faillible en signature ; ces chaines constantes ne peuvent pas
@@ -64,27 +67,6 @@ fn sel_seedleech() -> &'static Selector {
     static S: OnceLock<Selector> = OnceLock::new();
     S.get_or_init(|| sel!("td[align='right']"))
 }
-
-/// Borne interne du titre extrait — defensive, pas un reglage : la
-/// page est un contenu tiers non fiable.
-const MAX_NAME_CHARS: usize = 300;
-
-/// Borne interne de la requete utilisateur avant encodage.
-const MAX_QUERY_CHARS: usize = 300;
-
-/// Marqueurs heuristiques d'une page de defi anti-DDoS (Cloudflare,
-/// DDoS-Guard, PoW natif TPB…). Consultes en minuscules sur le
-/// corps.
-const CHALLENGE_MARKERS: &[&str] = &[
-    "ddos-guard",
-    "just a moment",
-    "checking your browser",
-    "verify you are human",
-    "captcha",
-    "challenge-platform",
-    "pow challenge",
-    "security check",
-];
 
 /// Marqueurs d'une page de resultats vide legitime — distingue
 /// `NoResults` d'une refonte (`StructureChanged`).
@@ -171,16 +153,9 @@ impl OnionSearchBackend for TpbBackend {
         query: &str,
     ) -> std::result::Result<Vec<ExternalResult>, ExternalSearchError> {
         // Nettoyage : trim + caracteres de controle retires, borne.
-        let clean: String = query
-            .chars()
-            .filter(|c| !c.is_control())
-            .take(MAX_QUERY_CHARS)
-            .collect::<String>()
-            .trim()
-            .to_string();
-        if clean.is_empty() {
+        let Some(clean) = clean_query(query) else {
             return Err(ExternalSearchError::EmptyQuery);
-        }
+        };
 
         let mut tried = 0usize;
         let mut saw_captcha = false;
@@ -221,12 +196,6 @@ impl OnionSearchBackend for TpbBackend {
             ExternalSearchError::MirrorUnreachable { tried }
         })
     }
-}
-
-/// `true` si le corps (minuscules) contient un marqueur de defi.
-fn has_marker(body: &str, markers: &[&str]) -> bool {
-    let lower = body.to_lowercase();
-    markers.iter().any(|m| lower.contains(m))
 }
 
 /// Extrait les lignes de resultats. `None` si le markup attendu est
@@ -322,20 +291,6 @@ fn safe_text(el: scraper::ElementRef) -> String {
         }
     }
     out
-}
-
-/// Nettoie un champ texte tiers : controle retires, whitespace
-/// pliee, borne appliquee.
-fn clean_text(raw: &str) -> String {
-    raw.chars()
-        .filter(|c| !c.is_control())
-        .collect::<String>()
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .chars()
-        .take(MAX_NAME_CHARS)
-        .collect()
 }
 
 /// « Size 1.37 GiB » → octets. Unites reconnues : B, KiB, MiB, GiB,

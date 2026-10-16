@@ -3,6 +3,52 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## ADR-0028 : backend `apibay` + `api_via_exit` + TLS sur flux Tor — recherche externe fonctionnelle (2026-10-16)
+
+Le scraping du `.onion` TPB est une impasse constatee sur le
+terrain : le site ne sert plus qu'une coquille JS (« Enable JS »,
+sur clearnet comme sur onion) et l'adresse onion est
+intermittente (descripteur HSDir introuvable par periodes).
+`apibay.org` — l'API JSON officielle que le frontend TPB
+interroge lui-meme — devient la source de resultats fiable,
+comme prevu par l'ADR (`tor.api_via_exit`, desactive par defaut).
+
+- **Politique** (`network-policy`) : `TorTargetPolicy` etendu
+  avec une allowlist de sortie `exit_hosts` — noms DNS publics
+  uniquement (jamais d'`.onion`, d'IP litterale ou de nom non
+  qualifie), ports 80/443. Seuls des miroirs de backends peuvent
+  s'y inscrire ; `allowed_hosts` reste strictement `.onion`. Un
+  miroir clearnet sans `api_via_exit=true` → warn explicite et
+  miroir ignore (jamais de fuite silencieuse). Le backend dont
+  tous les miroirs sont injoignables n'est pas enregistre —
+  `sources` ne liste que du fonctionnel.
+- **TLS sur le flux Tor** (`tokio-rustls` + `webpki-roots`) :
+  constate en e2e — `http://apibay.org` redirige vers `https`
+  pour les exits Tor (Cloudflare) ; le redirect est suivi et la
+  connexion bascule en TLS au-dessus du `DataStream` (SNI +
+  bundle Mozilla embarque). Egalement requis en integrite : un
+  exit malveillant ne peut plus reecrire le JSON (injection de
+  magnets/infohash contree). `https` accepte dans `parse_target`
+  et `resolve_redirect` — y compris pour les `.onion` dument
+  certifies. `Accept-Encoding: identity` ajoute a la requete
+  (codec minimal, pas de decompression).
+- **Backend `apibay`** (`search/apibay.rs`) : decode JSON borne
+  de `q.php` (champs tolerants chaine/nombre), meme taxonomie
+  d'erreurs que `tpb` (`no_results` via sentinelle `id:"0"`/hash
+  nul ou tableau vide, `captcha_detected`, `structure_changed`,
+  `mirror_unreachable`). `info_hash` valide par
+  `MagnetLink::parse` (meme filiere de confiance), magnet
+  synthetise `btih`+`dn`, entites HTML des titres desechappees,
+  categories numeriques → familles TPB (1xx Audio, 2xx Video…).
+- **Validation** : 34 tests `onionbit-tor` + 15
+  `network-policy` + 103 `onionbit-api` verts ; e2e reel —
+  `sources:["apibay","tpb"]`, `GET /api/search/external?
+  source=apibay` → **100 resultats normalises** via arti
+  embarque + exit + TLS.
+- Limite assumee : le transport `DataStream` lu via les impls
+  `futures` retourne EOF immediat (sonde brute) — le chemin
+  productif utilise les impls tokio (`OnionIo`) ; documente.
+
 ## ADR-0028 : correctif Windows `saturating-time` — bootstrap arti débloqué, jalon `[i]` validé (2026-10-16)
 
 Diagnostic et résolution du blocage du bootstrap arti a 15 %

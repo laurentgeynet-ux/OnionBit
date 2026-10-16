@@ -5345,12 +5345,12 @@ async fn search_external_parametres_invalides_400() {
     )
     .await;
     for url in [
-        "/api/search/external?source=tpb",        // q absent
-        "/api/search/external?source=tpb&q=",     // q vide
-        "/api/search/external?source=tpb&q=%20",  // q whitespace
-        "/api/search/external?q=x",               // source absent
-        "/api/search/external?source=&q=x",       // source vide
-        "/api/search/external?source=nope&q=x",   // source inconnue
+        "/api/search/external?source=tpb",       // q absent
+        "/api/search/external?source=tpb&q=",    // q vide
+        "/api/search/external?source=tpb&q=%20", // q whitespace
+        "/api/search/external?q=x",              // source absent
+        "/api/search/external?source=&q=x",      // source vide
+        "/api/search/external?source=nope&q=x",  // source inconnue
     ] {
         let resp = srv.client.get(srv.url(url)).send().await.unwrap();
         assert_eq!(resp.status(), 400, "{url}");
@@ -5499,9 +5499,9 @@ async fn search_external_erreurs_backend_502() {
         ("nores", "no_results"),
     ] {
         let make: fn() -> onionbit_tor::ExternalSearchError = match code {
-            "mirror_unreachable" => || {
-                onionbit_tor::ExternalSearchError::MirrorUnreachable { tried: 2 }
-            },
+            "mirror_unreachable" => {
+                || onionbit_tor::ExternalSearchError::MirrorUnreachable { tried: 2 }
+            }
             "captcha_detected" => || onionbit_tor::ExternalSearchError::CaptchaDetected,
             "structure_changed" => || onionbit_tor::ExternalSearchError::StructureChanged,
             _ => || onionbit_tor::ExternalSearchError::NoResults,
@@ -5615,4 +5615,3 @@ async fn search_external_ne_journalise_pas_la_requete() {
     );
     srv.session.stop().await;
 }
-
