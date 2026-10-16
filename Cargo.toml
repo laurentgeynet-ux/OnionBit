@@ -77,6 +77,13 @@ tokio-socks = "0.5"
 # (statut, en-tetes, chunked, CRLF/LF) — jamais de parseur maison
 # (ADR-0028 §1). MIT/Apache-2.0.
 httparse = "1"
+# Parsing borne des pages `.onion` (onionbit-tor, ADR-0028 §5) :
+# html5ever/selectors — jamais de regex ni de parseur maison sur du
+# HTML tiers. ISC. Hors feature `tor` : le scraping est testable
+# sans transport (fetch injecte via `OnionFetch`).
+scraper = "0.26"
+# Traits async object-safe (`OnionFetch`, `OnionSearchBackend`).
+async-trait = "0.1"
 ed25519-dalek = "3"
 x25519-dalek = { version = "2", features = ["static_secrets", "getrandom"] }
 # Elligator2 (ADR-0017) : encode les points Curve25519 du handshake

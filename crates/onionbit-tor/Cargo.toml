@@ -29,6 +29,12 @@ tokio.workspace = true
 # feature `tor` pour garder les tests d'echange hors transport.
 httparse.workspace = true
 url.workspace = true
+# Scraping borne des backends `.onion` (`search/`, ADR-0028 §5) —
+# hors feature `tor` : testable sans transport via `OnionFetch`.
+scraper.workspace = true
+async-trait.workspace = true
+# Info-hash → hex pour les resultats normalises.
+hex.workspace = true
 arti-client = { workspace = true, optional = true }
 tor-rtcompat = { workspace = true, optional = true }
 tokio-socks = { workspace = true, optional = true }

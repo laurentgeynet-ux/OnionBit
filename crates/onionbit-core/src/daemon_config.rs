@@ -1256,6 +1256,8 @@ pub struct TorBackendFileConfig {
     pub mirrors: Vec<String>,
     /// Template de recherche (`{host}` et `{q}` substitués).
     pub url_template: String,
+    /// Borne de résultats remontés par recherche (ADR-0028 §5).
+    pub max_results: u32,
     /// Clés inconnues — préservées.
     #[serde(flatten)]
     pub extra: serde_json::Map<String, Value>,
@@ -1266,6 +1268,7 @@ impl Default for TorBackendFileConfig {
         Self {
             mirrors: Vec::new(),
             url_template: String::new(),
+            max_results: 100,
             extra: serde_json::Map::new(),
         }
     }
@@ -1290,7 +1293,7 @@ impl Default for TorSearchFileConfig {
             TorBackendFileConfig {
                 mirrors: vec![DEFAULT_TPB_ONION.to_string()],
                 url_template: "http://{host}/search.php?q={q}".to_string(),
-                extra: serde_json::Map::new(),
+                ..TorBackendFileConfig::default()
             },
         );
         Self {
@@ -2251,7 +2254,10 @@ impl DaemonConfig {
             }
         }
         for (id, b) in &t.search.backends {
-            if b.mirrors.is_empty() || !b.url_template.contains("{host}") {
+            if b.mirrors.is_empty()
+                || !b.url_template.contains("{host}")
+                || !b.url_template.contains("{q}")
+            {
                 tracing::warn!(
                     backend = %id,
                     "tor : backend sans miroir ou template invalide — ignore"
@@ -2263,6 +2269,7 @@ impl DaemonConfig {
                 OnionBackendSettings {
                     mirrors: b.mirrors.clone(),
                     url_template: b.url_template.clone(),
+                    max_results: b.max_results.max(1) as usize,
                 },
             );
         }

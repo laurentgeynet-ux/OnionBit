@@ -63,5 +63,46 @@ pub enum TorError {
     Request(String),
 }
 
+/// Erreur typee d'une recherche externe `.onion` (ADR-0028 §5) —
+/// chaque variante est surfaceable a l'UI : jamais un echec muet.
+#[derive(Debug, thiserror::Error)]
+pub enum ExternalSearchError {
+    /// `tor.enabled = false` — la connectivite n'est pas voulue.
+    #[error("connectivite Tor desactivee")]
+    TorDisabled,
+
+    /// Client Tor en cours de bootstrap ou transport non compile —
+    /// retenter plus tard, ce n'est pas une faute de requete.
+    #[error("client Tor non pret")]
+    TorNotReady,
+
+    /// Tous les miroirs ont echoue cote transport (down, timeout,
+    /// reponse corrompue, statut inattendu sans defi).
+    #[error("tous les miroirs injoignables ({tried} tentes)")]
+    MirrorUnreachable { tried: usize },
+
+    /// Page de verification anti-DDoS / captcha / PoW detectee —
+    /// frequente sur les onion a fort trafic.
+    #[error("protection anti-DDoS detectee (captcha/PoW)")]
+    CaptchaDetected,
+
+    /// Page servie mais les selecteurs n'extraient rien — refonte
+    /// probable du site.
+    #[error("structure de page inattendue — refonte probable")]
+    StructureChanged,
+
+    /// Reponse valide, le site annonce explicitement zero resultat.
+    #[error("aucun resultat")]
+    NoResults,
+
+    /// Requete vide apres nettoyage.
+    #[error("requete de recherche vide")]
+    EmptyQuery,
+
+    /// `source` absente du registre de backends.
+    #[error("backend de recherche inconnu : {0}")]
+    UnknownSource(String),
+}
+
 /// Alias de `Result` pour ce crate.
 pub type Result<T> = std::result::Result<T, TorError>;

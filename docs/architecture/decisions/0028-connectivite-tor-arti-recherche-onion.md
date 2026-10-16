@@ -98,7 +98,8 @@ La crate dépend de `onionbit-network-policy` (frontière §3) et
   "bootstrap_timeout_ms": 120000,
   "max_redirects": 3,
   "search": { "backends": { "tpb": { "mirrors": ["<a>.onion", "…"],
-      "url_template": "http://{host}/search.php?q={q}" } } },
+      "url_template": "http://{host}/search.php?q={q}",
+      "max_results": 100 } } },
   "gateway": { "enabled": false, "rate_limit_per_circuit": 10 }
 }
 ```

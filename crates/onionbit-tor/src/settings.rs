@@ -36,6 +36,9 @@ pub struct OnionBackendSettings {
     /// Template d'URL de recherche (`{host}` et `{q}` substitues —
     /// ex. `"http://{host}/search.php?q={q}"`).
     pub url_template: String,
+    /// Borne de resultats remontes par recherche — une page hostile
+    /// ne doit pas gonfler l'UI (`tor.search.backends.<id>.max_results`).
+    pub max_results: usize,
 }
 
 /// Passerelle de sortie onion pour les pairs sans Tor

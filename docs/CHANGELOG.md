@@ -3,6 +3,42 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## ADR-0028 étape 114 : backend de recherche `tpb` — scraping `.onion` borne (2026-10-17)
+
+La recherche externe produit des resultats normalises
+(`onionbit-tor::search`, ADR-0028 §5). Le scraping est isole
+derriere un trait et le transport est injecte — tout est teste
+sans feature `tor` ni reseau.
+
+- `search.rs` : `ExternalResult` (`name, infohash, magnet,
+  size_bytes, seeds, leechers, category, source`), trait
+  `OnionSearchBackend` (async, object-safe via `async-trait`),
+  trait `OnionFetch` implemente par `TorRuntime`, registre
+  `build_backends` indexe par `source` (ids inconnus : warn +
+  ignore).
+- `search/tpb.rs` : backend TPB — failover sur `mirrors` (erreurs
+  fatales `Disabled`/`NotReady`/`NotBuilt` propagees sans
+  bascule), classification par miroir puis erreur finale
+  priorisee (`NoResults` > `CaptchaDetected` > `StructureChanged`
+  > `MirrorUnreachable{tried}`) ; scraping `scraper` sur le
+  markup `#searchResult` classique ; infohash **valide** via
+  `MagnetLink::parse` (btih hex40/base32) ; `safe_text` ignore
+  les sous-arbres `script`/`style`/`noscript` ; champs texte
+  assainis et bornes.
+- Detecteur de defi anti-DDoS par marqueurs + statut 403/503 →
+  `CaptchaDetected` ; table absente ou zero ligne extractible →
+  `StructureChanged` ; marqueurs « no results » → `NoResults`.
+- Config : `tor.search.backends.<id>.max_results` (defaut 100) ;
+  le template doit contenir `{host}` **et** `{q}` sinon le
+  backend est ignore au chargement.
+- Tests : 11 nouveaux (25 total sous feature `tor`) — fixtures
+  `tests/fixtures/tpb_*.html` : parsing nominal (4 lignes dont
+  btih base32 et titre a `<script>` assaini), lignes pourries
+  skippees (hash tronque, magnet sans `xt`, ligne incomplete,
+  sans magnet), page de defi 200 et 403, refonte, « no
+  results », bascule miroir, tous miroirs down, fatales sans
+  bascule, borne, requete vide, encodage percent.
+
 ## ADR-0028 étape 113 : transport Tor — `TorRuntime` arti + fetch `.onion` borne (2026-10-17)
 
 Le fetch onion est reel derriere la feature `tor`

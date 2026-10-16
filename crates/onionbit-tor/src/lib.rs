@@ -34,9 +34,11 @@ pub mod error;
 #[cfg_attr(not(any(feature = "tor", test)), allow(dead_code))]
 pub(crate) mod http;
 pub mod runtime;
+pub mod search;
 pub mod settings;
 
-pub use error::{Result, TorError};
+pub use error::{ExternalSearchError, Result, TorError};
 pub use http::OnionResponse;
 pub use runtime::{TorRuntime, TorState};
+pub use search::{build_backends, ExternalResult, OnionFetch, OnionSearchBackend};
 pub use settings::{OnionBackendSettings, TorGatewaySettings, TorMode, TorSettings};
