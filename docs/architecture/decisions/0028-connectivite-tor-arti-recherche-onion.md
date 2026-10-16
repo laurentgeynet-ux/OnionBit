@@ -469,3 +469,13 @@ le réseau Tor (le trafic P2P asphyxie ses relais bénévoles).
   identité dérivée HKDF, messagerie/canaux/coffre-fort
   `.onion`, bootstrap, pont Tor-over-OnionBit — chacun sous ADR
   dédié et maturité arti serveur).
+
+## Notes de mise en œuvre
+
+- **`saturating-time` vendored (correctif Windows)** : sans lui,
+  tout bootstrap arti boucle indéfiniment sous Windows (parse du
+  consensus à 100 % CPU, statut figé à 15 %) — bug upstream
+  confirmé (arti #2678, #2726) en cours de correction (#2728).
+  `vendor/saturating-time` + `[patch.crates-io]`, détail et
+  condition de retrait dans `docs/plans/roadmap_adr0028.md`
+  (section « Correctif plateforme »).

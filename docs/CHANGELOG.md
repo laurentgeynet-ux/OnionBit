@@ -3,6 +3,38 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## ADR-0028 : correctif Windows `saturating-time` — bootstrap arti débloqué, jalon `[i]` validé (2026-10-16)
+
+Diagnostic et résolution du blocage du bootstrap arti a 15 %
+(Windows uniquement) — la panne rendait la fonctionnalite Tor
+inutilisable : consensus recu en entier puis spin CPU infini
+synchrone dans `MdConsensus::parse`, sans erreur ni log.
+
+- **Cause racine** : `saturating-time 0.5.0` (dep transitive
+  d'`arti-client`) — `find_limit` fait une recherche binaire des
+  bornes `SystemTime` qui suppose que `checked_sub`/`checked_add`
+  rendent `None` hors-limites ; sous Windows, l'arithmetique
+  FILETIME (granularite 100 ns) sature et la sonde ne progresse
+  plus — boucle infinie. `saturating_sub` evaluant `min_value()`
+  en eager (`unwrap_or`), le premier appel suffit : celui de
+  `Preamble::validity_time_range` juste apres le telechargement
+  du consensus. Bug deja rapporte upstream (arti #2678, #2726 ;
+  crate en cours d'import dans le monorepo, #2728).
+- **Correctif** : `vendor/saturating-time` (copie du crate +
+  `find_limit` traite une sonde saturee `st == res` comme un
+  echec -> `step /= 2`, plafond 10 000 iterations) +
+  `[patch.crates-io]`. A retirer a la prochaine release
+  upstream corrigee.
+- **Validation reseau reelle** : sonde `bootstrap_probe` ->
+  READY complet (consensus 3,2 Mo, 9 certs, 9127
+  microdescriptors) ; daemon e2e : `/api/tor/status` -> `ready`,
+  `/api/search/external?source=tpb` -> fetch `.onion` reel
+  effectue (HTTP 200 ; `structure_changed` ensuite = gabarit
+  HTML TPB evolue — chantier scraper distinct, hors transport).
+  Jalon manuel `[i]` de la roadmap ADR-0028 **valide**.
+- Sonde enrichie : statut `BootstrapStatus` complet + `blocked()`
+  (diagnostic des blocages, pas seulement `as_frac`).
+
 ## ADR-0028 étape 116 : UI Flutter — recherche `.onion`, HUD, réglages, diagnostic (2026-10-17)
 
 La couche de presentation consomme les endpoints de l'etape 115

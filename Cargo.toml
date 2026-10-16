@@ -63,11 +63,13 @@ sha2 = "0.11"
 sha3 = "0.10"
 # Connectivite Tor embarquee (`onionbit-tor`, feature `tor`,
 # ADR-0028 §1) : client Tor officiel en Rust. `rustls` evite
-# OpenSSL, `tokio` est le runtime du workspace, et
-# `onion-service-client` (tor-hsclient) est REQUIS pour joindre
-# des cibles `.onion`. MIT/Apache-2.0. Tres lourd en build —
-# toujours optionnel derriere le feature flag.
-arti-client = { version = "0.47", default-features = false, features = ["rustls", "tokio", "onion-service-client", "static-sqlite"] }
+# OpenSSL, `tokio` est le runtime du workspace, `compression`
+# (feature par defaut d'arti) permet au dirmgr d'echanger les
+# documents compresses (zstd/lzma/xz), comme le client de
+# reference. `onion-service-client` (tor-hsclient) est
+# REQUIS pour joindre des cibles `.onion`. MIT/Apache-2.0. Tres
+# lourd en build — toujours optionnel derriere le feature flag.
+arti-client = { version = "0.47", default-features = false, features = ["rustls", "tokio", "compression", "onion-service-client", "static-sqlite"] }
 tor-rtcompat = "0.47"
 # SOCKS5 loopback (mode `external`, URL validee par
 # `proxy_guard::validate_local_socks5_url`) — deja dans l'arbre
@@ -173,6 +175,13 @@ librqbit-dht = { path = "vendor/librqbit-dht" }
 librqbit-tracker-comms = { path = "vendor/librqbit-tracker-comms" }
 librqbit-dualstack-sockets = { path = "vendor/librqbit-dualstack-sockets" }
 librqbit-utp = { path = "vendor/librqbit-utp" }
+# Correctif bug Windows : `find_limit` boucle infiniment car
+# `SystemTime::checked_sub` sature (borne FILETIME) au lieu de rendre
+# None — la recherche binaire des min/max ne converge jamais.
+# Cf. doc/architecture/decisions/0028 et roadmap_adr0028 (bootstrap arti
+# fige a 15 %, un coeur CPU a 100 %). A retirer des qu'un correctif
+# upstream est publie (arti, gitlab.torproject.org).
+saturating-time = { path = "vendor/saturating-time" }
 
 [profile.release]
 opt-level = 3

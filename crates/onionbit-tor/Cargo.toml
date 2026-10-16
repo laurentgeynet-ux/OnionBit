@@ -39,3 +39,11 @@ arti-client = { workspace = true, optional = true }
 tor-rtcompat = { workspace = true, optional = true }
 tokio-socks = { workspace = true, optional = true }
 futures-util = { workspace = true, optional = true }
+
+[dev-dependencies]
+# Sonde `bootstrap_probe` — diagnostic hors daemon. `rustls` :
+# arti n'embarque aucun CryptoProvider (`rustls-dont-use`), c'est au
+# process d'en installer un — le daemon l'obtient via axum-server.
+tracing-subscriber.workspace = true
+futures-util = { workspace = true }
+rustls = "0.23"
