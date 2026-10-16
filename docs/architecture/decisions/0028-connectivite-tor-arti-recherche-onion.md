@@ -6,7 +6,9 @@ Statut : Proposée (2026-10-16), amendée après revues externes
 requalifiée phase 2 ; sauts passerelle couplés à `number_hops`
 (un seul réglage — décision utilisateur), §Sécurité étoffée ;
 §Trajectoire phase 3 ajoutée (identité/messagerie/canaux/
-coffre-fort côté service, avec corrections au modèle proposé).
+coffre-fort côté service, avec corrections au modèle proposé) ;
+§8 UI v1 (HUD, diagnostic, réglages — messagerie différée à la
+phase 3 : aucun service caché hébergé avant).
 Plan d'implantation : `docs/plans/roadmap_adr0028.md`
 (étapes 112-119 ; 117 = phase 2, 119 = phase 3 exploration).
 
@@ -260,7 +262,40 @@ pairs non-OnionBit).
   poste contraint) garde l'accès aux sources onion via les
   volontaires.
 
-### 8. Hors scope explicite
+### 8. Interface utilisateur (v1)
+
+L'app Flutter possède déjà chaque emplacement — l'intégration
+habille des zones existantes, aucune refonte :
+
+- **Recherche** : nouveau membre `TorrentSource.onion` et chip
+  « TPB (Tor) » dans la rangée de filtres existante (`All /
+  Local / Network / ≥ 10 seeds` — liste de `ChoiceChip`
+  extensible). Table de résultats inchangée, badge `tpb` dans la
+  colonne Source ; « Ajouter » réutilise le flux magnet existant
+  (aucun démarrage automatique).
+- **État Tor dans la recherche** : chip dans la barre —
+  `bootstrapping` → spinner + %, `off` → CTA vers les réglages.
+- **Privacy HUD** (`privacy_hud.dart`, `anonLaneProvider`, sondage
+  10 s partagé) : l'état Tor y apparaît **uniquement si
+  `tor.enabled`** — pas d'indicateur mort pour une fonctionnalité
+  opt-in ; mêmes états « honnêtes » (`off` ≠ `error`).
+- **Diagnostic** : tuile « Tor » dans l'Overview + détail (mode,
+  état, progression bootstrap) alimentés par `/api/tor/status`.
+  **Pas d'onglet Tor en navigation principale** — disproportionné
+  pour une fonctionnalité opt-in.
+- **Réglages** : sous-section « Tor » sous Network & Anonymity —
+  toggle (opt-in, défaut off), segmented Embedded/External +
+  champ `socks5h://` (loopback validé), allowlist en lecture
+  seule. Changements `mode`/`external_socks5` → restart_required.
+- **Messagerie : rien en v1.** Afficher `votre_clé.onion` sous
+  « Your address » prétendrait une joignabilité inexistante —
+  aucun service caché n'est hébergé. Phase 3 : adresse **dérivée
+  `tor-hs`** (jamais `ipv8-sign`) + pastille de présence
+  overlay/Tor par contact.
+- i18n fr/en pour chaque chaîne ; `check_i18n.ps1`,
+  `flutter analyze`, `flutter test`.
+
+### 9. Hors scope explicite
 
 - **Relais Tor** (guard/middle/exit du réseau Tor) : arti est
   client-only — aucun support relais ; un exit Tor suppose le
@@ -355,7 +390,7 @@ le réseau Tor (le trafic P2P asphyxie ses relais bénévoles).
 - **Bootstrap Tor bloqué** (FAI/censure — autorités d'annuaire et
   gardes publics filtrés) : le runtime reste non-bloquant,
   `state:"error"` remonte à l'UI avec diagnostic clair ; bridges
-  = jalon ultérieur (§8).
+  = jalon ultérieur (§9).
 - **Fragilité opérationnelle du scraping** : protections
   anti-DDoS (PoW, pages de vérification), refontes HTML, miroirs
   mouvants — traitées par les erreurs explicites + bascule de
