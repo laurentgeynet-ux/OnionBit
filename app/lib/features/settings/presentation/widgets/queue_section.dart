@@ -158,6 +158,7 @@ class _QueueSectionState extends ConsumerState<QueueSection> {
               ]),
               title: l10n.queueAutoManaged,
               subtitle: l10n.queueAutoManagedSub,
+              defaultValue: false,
             ),
             Align(
               alignment: Alignment.centerRight,

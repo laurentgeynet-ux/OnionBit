@@ -147,6 +147,8 @@ class SettingsSwitch extends ConsumerWidget {
     required this.value,
     required this.title,
     this.subtitle,
+    this.restartOnly = false,
+    this.defaultValue,
     this.onChangedOverride,
   });
 
@@ -158,6 +160,17 @@ class SettingsSwitch extends ConsumerWidget {
   final String title;
   final String? subtitle;
 
+  /// `true` → badge « Redémarrage requis » : la valeur postée est
+  /// mémorisée mais n'agit qu'au prochain démarrage du daemon (les
+  /// runtimes sont construits au boot). Marqueur **visuel** — un
+  /// réglage de sécurité qui semble actif alors qu'il attend un
+  /// redémarrage est un risque silencieux.
+  final bool restartOnly;
+
+  /// Valeur d'usine documentée sous forme de badge (« Défaut :
+  /// activé/désactivé »). `null` = pas de badge.
+  final bool? defaultValue;
+
   /// Quand fourni, le commutateur n'enregistre pas immédiatement :
   /// la section appelante gère l'état local et sauvegarde en lot
   /// (bouton « Enregistrer »).
@@ -165,6 +178,12 @@ class SettingsSwitch extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final sub = settingSubtitle(
+      context,
+      text: subtitle,
+      restartOnly: restartOnly,
+      defaultValue: defaultValue,
+    );
     return SwitchListTile(
       value: value,
       onChanged: (v) {
@@ -184,9 +203,117 @@ class SettingsSwitch extends ConsumerWidget {
           KeyInfoIcon(path),
         ],
       ),
-      subtitle: subtitle != null ? Text(subtitle!) : null,
+      subtitle: sub,
       contentPadding: EdgeInsets.zero,
       dense: true,
+    );
+  }
+}
+
+/// Sous-titre structuré d'un réglage : texte descriptif suivi des
+/// badges méta ([SettingBadges]). Réutilisable hors `SettingsSwitch`
+/// (tuiles `SwitchListTile` construites à la main).
+Widget? settingSubtitle(
+  BuildContext context, {
+  String? text,
+  bool restartOnly = false,
+  bool? defaultValue,
+}) {
+  if (text == null && !restartOnly && defaultValue == null) return null;
+  return Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      if (text != null) Text(text),
+      if (restartOnly || defaultValue != null)
+        Padding(
+          padding: const EdgeInsets.only(top: 4),
+          child: SettingBadges(
+            restartOnly: restartOnly,
+            defaultValue: defaultValue,
+          ),
+        ),
+    ],
+  );
+}
+
+/// Badges méta d'un réglage — rendent **visibles** les informations
+/// autrefois noyées en fin de sous-titre (« Applied on restart »,
+/// « Default: on ») :
+/// - `restartOnly` : badge d'avertissement — le changement n'agit
+///   qu'au prochain démarrage du daemon ;
+/// - `defaultValue` : badge neutre de la valeur d'usine — repère pour
+///   repérer d'un coup d'œil un réglage de sécurité écarté de son
+///   défaut.
+class SettingBadges extends StatelessWidget {
+  const SettingBadges({super.key, this.restartOnly = false, this.defaultValue});
+
+  final bool restartOnly;
+  final bool? defaultValue;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = context.l10n;
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
+    return Wrap(
+      spacing: AppSpace.xs,
+      runSpacing: AppSpace.xs / 2,
+      children: [
+        if (restartOnly)
+          _SettingBadge(
+            icon: Icons.restart_alt,
+            label: l10n.settingsRestartRequired,
+            background: cs.errorContainer,
+            foreground: cs.onErrorContainer,
+          ),
+        if (defaultValue != null)
+          _SettingBadge(
+            icon: Icons.factory_outlined,
+            label: defaultValue!
+                ? l10n.settingsDefaultOn
+                : l10n.settingsDefaultOff,
+            background: cs.surfaceContainerHighest,
+            foreground: cs.onSurfaceVariant,
+          ),
+      ],
+    );
+  }
+}
+
+/// Pastille compacte (icône + libellé) utilisée par [SettingBadges].
+class _SettingBadge extends StatelessWidget {
+  const _SettingBadge({
+    required this.icon,
+    required this.label,
+    required this.background,
+    required this.foreground,
+  });
+
+  final IconData icon;
+  final String label;
+  final Color background;
+  final Color foreground;
+
+  @override
+  Widget build(BuildContext context) {
+    final style = Theme.of(context)
+        .textTheme
+        .labelSmall
+        ?.copyWith(color: foreground, fontWeight: FontWeight.w600);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: background,
+        borderRadius: BorderRadius.circular(AppSpace.xs),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 12, color: foreground),
+          const SizedBox(width: 3),
+          Text(label, style: style),
+        ],
+      ),
     );
   }
 }

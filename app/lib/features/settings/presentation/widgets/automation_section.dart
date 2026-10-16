@@ -142,7 +142,11 @@ class _AutomationSectionState extends ConsumerState<AutomationSection> {
                 _deferred.markDirty();
               }),
               title: Text(l10n.watchSwitch),
-              subtitle: Text(l10n.watchSwitchSub),
+              subtitle: settingSubtitle(
+                context,
+                text: l10n.watchSwitchSub,
+                defaultValue: false,
+              ),
               contentPadding: EdgeInsets.zero,
               dense: true,
             ),
@@ -200,7 +204,11 @@ class _AutomationSectionState extends ConsumerState<AutomationSection> {
                 _deferred.markDirty();
               }),
               title: Text(l10n.rssSwitch),
-              subtitle: Text(l10n.rssSwitchSub),
+              subtitle: settingSubtitle(
+                context,
+                text: l10n.rssSwitchSub,
+                defaultValue: true,
+              ),
               contentPadding: EdgeInsets.zero,
               dense: true,
             ),

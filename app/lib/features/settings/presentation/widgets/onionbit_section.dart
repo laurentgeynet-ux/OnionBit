@@ -94,6 +94,8 @@ class _OnionBitSectionState extends ConsumerState<OnionBitSection> {
               value: settingsBool(settings, [..._e, 'enabled'], def: true),
               title: l10n.onionbitExtEnabled,
               subtitle: l10n.onionbitExtEnabledSub,
+              restartOnly: true,
+              defaultValue: true,
             ),
             SettingsSwitch(
               path: [..._e, 'ledger_enabled'],
@@ -104,12 +106,16 @@ class _OnionBitSectionState extends ConsumerState<OnionBitSection> {
               ),
               title: l10n.onionbitExtLedger,
               subtitle: l10n.onionbitExtLedgerSub,
+              restartOnly: true,
+              defaultValue: true,
             ),
             SettingsSwitch(
               path: [..._e, 'obf_enabled'],
               value: settingsBool(settings, [..._e, 'obf_enabled']),
               title: l10n.onionbitObf,
               subtitle: l10n.onionbitObfSub,
+              restartOnly: true,
+              defaultValue: false,
             ),
             const Divider(height: AppSpace.lg),
             // Comptabilité tunnel (ADR-0015 §3) — rechargée à chaud.
@@ -122,12 +128,14 @@ class _OnionBitSectionState extends ConsumerState<OnionBitSection> {
               ),
               title: l10n.onionbitLedgerCollect,
               subtitle: l10n.onionbitLedgerCollectSub,
+              defaultValue: true,
             ),
             SettingsSwitch(
               path: [..._t, 'ledger_enforce'],
               value: settingsBool(settings, [..._t, 'ledger_enforce']),
               title: l10n.onionbitLedgerEnforce,
               subtitle: l10n.onionbitLedgerEnforceSub,
+              defaultValue: false,
             ),
             const Divider(height: AppSpace.lg),
             // Consentement messagerie assisté par la confiance
@@ -141,6 +149,8 @@ class _OnionBitSectionState extends ConsumerState<OnionBitSection> {
               ),
               title: l10n.onionbitConsentEndorsed,
               subtitle: l10n.onionbitConsentEndorsedSub,
+              restartOnly: true,
+              defaultValue: false,
             ),
             SettingsSwitch(
               path: [..._t, 'messaging_consent_flagged'],
@@ -150,6 +160,8 @@ class _OnionBitSectionState extends ConsumerState<OnionBitSection> {
               ),
               title: l10n.onionbitConsentFlagged,
               subtitle: l10n.onionbitConsentFlaggedSub,
+              restartOnly: true,
+              defaultValue: false,
             ),
             SettingsSwitch(
               path: [..._t, 'messaging_consent_ledger'],
@@ -159,6 +171,8 @@ class _OnionBitSectionState extends ConsumerState<OnionBitSection> {
               ),
               title: l10n.onionbitConsentLedger,
               subtitle: l10n.onionbitConsentLedgerSub,
+              restartOnly: true,
+              defaultValue: false,
             ),
             const Divider(height: AppSpace.lg),
             TextField(

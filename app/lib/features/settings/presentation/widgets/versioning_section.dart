@@ -85,12 +85,13 @@ class VersioningSection extends ConsumerWidget {
               ], def: true),
               title: l10n.versionCheckSwitch,
               subtitle: l10n.versionCheckSub,
+              defaultValue: true,
             ),
             SettingsSwitch(
               path: const ['versioning', 'allow_pre'],
               value: settingsBool(settings, const ['versioning', 'allow_pre']),
               title: l10n.allowPre,
-              subtitle: l10n.defaultOff,
+              defaultValue: false,
             ),
           ],
         );

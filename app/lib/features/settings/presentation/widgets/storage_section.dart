@@ -100,6 +100,7 @@ class StorageSection extends ConsumerWidget {
           value: privateEnabled,
           title: l10n.storagePrivateEnabled,
           subtitle: l10n.storagePrivateEnabledSub,
+          restartOnly: true,
         ),
         if (nonPortable) ...[
           const SizedBox(height: AppSpace.sm),

@@ -173,6 +173,7 @@ class _SeedingSectionState extends ConsumerState<SeedingSection> {
               value: _anonymity,
               title: l10n.seedAnonSwitch,
               subtitle: l10n.seedAnonSub,
+              defaultValue: true,
               onChangedOverride: (v) => setState(() {
                 _deferred.markDirty();
                 _anonymity = v;
@@ -205,7 +206,11 @@ class _SeedingSectionState extends ConsumerState<SeedingSection> {
                         _deferred.markDirty();
                       }),
                 title: const Text('Safe seeding'),
-                subtitle: Text(l10n.safeSeedingSub),
+                subtitle: settingSubtitle(
+                  context,
+                  text: l10n.safeSeedingSub,
+                  defaultValue: true,
+                ),
                 contentPadding: EdgeInsets.zero,
                 dense: true,
               ),

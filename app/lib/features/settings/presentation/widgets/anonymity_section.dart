@@ -111,12 +111,16 @@ class _AnonymitySectionState extends ConsumerState<AnonymitySection> {
               value: enabled,
               title: l10n.anonEnabled,
               subtitle: l10n.anonEnabledSub,
+              restartOnly: true,
+              defaultValue: true,
             ),
             SettingsSwitch(
               path: [..._t, 'exitnode_enabled'],
               value: settingsBool(settings, [..._t, 'exitnode_enabled']),
               title: l10n.anonExit,
               subtitle: l10n.anonExitSub,
+              restartOnly: true,
+              defaultValue: false,
             ),
             SettingsSwitch(
               path: [..._t, 'messaging_enabled'],
@@ -126,6 +130,8 @@ class _AnonymitySectionState extends ConsumerState<AnonymitySection> {
               ], def: true),
               title: l10n.anonMessaging,
               subtitle: l10n.anonMessagingSub,
+              restartOnly: true,
+              defaultValue: true,
             ),
             SettingsSwitch(
               path: [..._t, 'guards_enabled'],
@@ -135,6 +141,7 @@ class _AnonymitySectionState extends ConsumerState<AnonymitySection> {
               ], def: true),
               title: l10n.anonGuards,
               subtitle: l10n.anonGuardsSub,
+              defaultValue: true,
             ),
             const SizedBox(height: AppSpace.sm),
             Row(

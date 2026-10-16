@@ -132,6 +132,7 @@ class _StealthSectionState extends ConsumerState<StealthSection> {
               value: settingsBool(settings, [..._s, 'enabled']),
               title: l10n.stealthEnabled,
               subtitle: l10n.stealthEnabledSub,
+              restartOnly: true,
             ),
             const SizedBox(height: AppSpace.sm),
             DropdownButtonFormField<String>(
@@ -178,6 +179,8 @@ class _StealthSectionState extends ConsumerState<StealthSection> {
               value: settingsBool(settings, [..._s, 'cover_traffic']),
               title: l10n.stealthCover,
               subtitle: l10n.stealthCoverSub,
+              restartOnly: true,
+              defaultValue: false,
             ),
             if (status != null) ...[
               const Divider(height: AppSpace.lg),
