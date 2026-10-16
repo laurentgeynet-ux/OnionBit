@@ -251,7 +251,15 @@ class SearchResultsNotifier extends AsyncNotifier<List<TorrentResult>> {
     final sort = ref.watch(searchSortProvider);
     final repo = ref.watch(searchRepositoryProvider);
     if (query.isEmpty) return const [];
-    ref.read(searchHistoryProvider.notifier).record(query);
+    // Riverpod interdit de modifier un autre provider pendant le
+    // build : l'enregistrement en historique est différé à la
+    // microtâche suivante (le provider reste monté : il est watché
+    // par la page).
+    Future.microtask(() {
+      if (ref.mounted) {
+        ref.read(searchHistoryProvider.notifier).record(query);
+      }
+    });
     unawaited(_launchRemote(query));
     return repo.searchLocal(query, sortBy: sort.param);
   }
