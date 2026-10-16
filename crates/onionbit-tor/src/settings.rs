@@ -8,6 +8,7 @@
 
 use std::collections::BTreeMap;
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::time::Duration;
 
 use onionbit_network_policy::TorTargetPolicy;
@@ -58,6 +59,12 @@ pub struct TorSettings {
     pub enabled: bool,
     /// Transport choisi.
     pub mode: TorMode,
+    /// Repertoire d'etat arti (consensus, gardes, cache) — resolu
+    /// `<state_dir>/tor` par `tor_settings()` (ADR-0028 §1, meme
+    /// discipline d'arborescence portable qu'ADR-0018). Vide =
+    /// bootstrap `embedded` impossible (jamais de fuite hors
+    /// `state_dir` — un runtime mal configure refuse de demarrer).
+    pub state_dir: PathBuf,
     /// Frontieres des cibles joignables (allowlist `.onion` —
     /// union de `allowed_hosts` et des miroirs des backends).
     pub target_policy: TorTargetPolicy,
@@ -87,6 +94,7 @@ impl Default for TorSettings {
         Self {
             enabled: false,
             mode: TorMode::Embedded,
+            state_dir: PathBuf::new(),
             target_policy: TorTargetPolicy::new(),
             max_response_bytes: 512 * 1024,
             request_timeout: Duration::from_secs(30),

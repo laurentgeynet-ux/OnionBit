@@ -3,6 +3,44 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## ADR-0028 étape 113 : transport Tor — `TorRuntime` arti + fetch `.onion` borne (2026-10-17)
+
+Le fetch onion est reel derriere la feature `tor`
+(`onionbit-tor`). Invariants : bootstrap explicite jamais
+bloquant, politique `TorTargetPolicy` verifiee **avant** chaque
+connexion (y compris chaque hop de redirection), aucun repli
+clearnet.
+
+- `arti-client 0.47` optionnel, features `rustls,tokio,
+  onion-service-client` (`tor-hsclient` — **requise** pour les
+  cibles `.onion`) + `static-sqlite` (`tor-dirmgr/static` →
+  `rusqlite/bundled`, sinon `sqlite3.lib` manquante sous
+  Windows) ; `tor-rtcompat 0.47` pour `PreferredRuntime`.
+- `TorRuntime` devient clonable (`Arc` interne, mutex
+  poison-tolerants) : `bootstrap()` lance une tache de fond —
+  `BootstrapBehavior::Manual` + `create_unbootstrapped_async`,
+  progression 0-100 via `bootstrap_events`, timeout borne,
+  `state` `off|bootstrapping|ready|error` pour
+  `/api/tor/status` (`dormant` reserve, gere par arti).
+  Mode `external` : sonde TCP du SOCKS5 loopback.
+- `fetch_onion(url)` : parse `http://…onion` (https/auth
+  refuses — pas de TLS v1), `check` allowlist, flux arti
+  `DataStream` ou `Socks5Stream`, requete `GET` minimale
+  (`Connection: close`, zero cookie), redirections 30x bornees
+  par `max_redirects` et re-verifiees par la politique.
+- `http.rs` : decodeur borne `httparse` — statut, en-tetes,
+  `chunked`, `Content-Length`, corps par EOF ; plafonds
+  en-tetes/brut ; erreurs `TooLarge`/`Timeout`/
+  `MalformedResponse`/`RedirectDenied`.
+- `TorSettings.state_dir` → arti sous `<state_dir>/tor` ;
+  `tor_settings(state_dir)` dans `daemon_config`.
+- Tests : 13 verts — fake SOCKS5 complet (handshake + HTTP),
+  refus politique avant connexion (clearnet, onion non
+  declare, port ≠80/443), redirection allowlistee suivie puis
+  bornee, `NotReady` embedded, decodeurs chunked/CL/EOF,
+  timeout flux muet. Jalon manuel `[i]` (fetch onion reel via
+  arti bootstrappe) reste a faire hors CI.
+
 ## ADR-0028 étape 112 : fondation Tor — validateur onion v3, `tor.*`, politique de cibles (2026-10-16)
 
 Socle de la connectivite Tor embarquee (ADR-0028, extension hors

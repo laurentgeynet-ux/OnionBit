@@ -61,6 +61,22 @@ sha2 = "0.11"
 # SHA3-256 — checksum des adresses de services caches Tor v3
 # (`onionbit-format::onion`, ADR-0028). MIT/Apache-2.0.
 sha3 = "0.10"
+# Connectivite Tor embarquee (`onionbit-tor`, feature `tor`,
+# ADR-0028 §1) : client Tor officiel en Rust. `rustls` evite
+# OpenSSL, `tokio` est le runtime du workspace, et
+# `onion-service-client` (tor-hsclient) est REQUIS pour joindre
+# des cibles `.onion`. MIT/Apache-2.0. Tres lourd en build —
+# toujours optionnel derriere le feature flag.
+arti-client = { version = "0.47", default-features = false, features = ["rustls", "tokio", "onion-service-client", "static-sqlite"] }
+tor-rtcompat = "0.47"
+# SOCKS5 loopback (mode `external`, URL validee par
+# `proxy_guard::validate_local_socks5_url`) — deja dans l'arbre
+# via le librqbit vendored, promu dependance directe.
+tokio-socks = "0.5"
+# Decodeur HTTP/1.1 zero-allocation pour les reponses onion
+# (statut, en-tetes, chunked, CRLF/LF) — jamais de parseur maison
+# (ADR-0028 §1). MIT/Apache-2.0.
+httparse = "1"
 ed25519-dalek = "3"
 x25519-dalek = { version = "2", features = ["static_secrets", "getrandom"] }
 # Elligator2 (ADR-0017) : encode les points Curve25519 du handshake

@@ -1,6 +1,6 @@
 [package]
 name = "onionbit-tor"
-description = "Connectivite Tor (ADR-0028) : runtime et fetch .onion borne. Le transport arti-client est derriere le feature flag `tor` (etape 113) — sans lui, le crate reste leger et TorRuntime est un stub."
+description = "Connectivite Tor (ADR-0028) : runtime et fetch .onion borne. Le transport reel (arti-client embarque, SOCKS5 externe) est derriere le feature flag `tor` — sans lui, le crate reste leger et TorRuntime est un stub."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -9,9 +9,15 @@ repository.workspace = true
 
 [features]
 default = []
-# `tor` : transport reel via arti-client (dep optionnelle ajoutee a
-# l'etape 113 — `onion-service-client` requis pour les cibles .onion).
-tor = []
+# `tor` : transports reels — arti-client embarque (mode `embedded`,
+# `onion-service-client` requis pour les cibles .onion) et SOCKS5
+# loopback (mode `external`, tokio-socks + proxy_guard).
+tor = [
+    "dep:arti-client",
+    "dep:tor-rtcompat",
+    "dep:tokio-socks",
+    "dep:futures-util",
+]
 
 [dependencies]
 onionbit-format = { path = "../onionbit-format" }
@@ -19,3 +25,11 @@ onionbit-network-policy = { path = "../onionbit-network-policy" }
 thiserror.workspace = true
 tracing.workspace = true
 tokio.workspace = true
+# Decodeur HTTP/1.1 borne (`http.rs`) — necessaire meme sans la
+# feature `tor` pour garder les tests d'echange hors transport.
+httparse.workspace = true
+url.workspace = true
+arti-client = { workspace = true, optional = true }
+tor-rtcompat = { workspace = true, optional = true }
+tokio-socks = { workspace = true, optional = true }
+futures-util = { workspace = true, optional = true }

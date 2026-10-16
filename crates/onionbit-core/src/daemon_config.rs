@@ -2163,7 +2163,7 @@ impl DaemonConfig {
             },
             identity_at_rest: self.identity.at_rest,
             identity_seed_acknowledged: self.identity.seed_acknowledged,
-            tor: self.tor_settings(),
+            tor: self.tor_settings(state_dir),
             download_defaults: crate::config::DownloadDefaults {
                 anonymity_enabled: dd.anonymity_enabled,
                 number_hops: dd.number_hops,
@@ -2189,13 +2189,15 @@ impl DaemonConfig {
     /// `mode` inconnu → warn + connectivite desactivee (jamais de
     /// transport Tor mal branche). La `target_policy` est l'union
     /// de `allowed_hosts` et des miroirs des backends — une seule
-    /// frontiere, pas de divergence (ADR-0028 §3).
-    fn tor_settings(&self) -> onionbit_tor::TorSettings {
+    /// frontiere, pas de divergence (ADR-0028 §3). `state_dir` :
+    /// arti ecrit consensus/gardes sous `<state_dir>/tor` (ADR-0018).
+    fn tor_settings(&self, state_dir: &Path) -> onionbit_tor::TorSettings {
         use onionbit_tor::{OnionBackendSettings, TorMode};
 
         let t = &self.tor;
         let mut settings = onionbit_tor::TorSettings {
             enabled: t.enabled,
+            state_dir: state_dir.join("tor"),
             max_response_bytes: t.max_response_bytes as usize,
             request_timeout: std::time::Duration::from_millis(t.request_timeout_ms),
             bootstrap_timeout: std::time::Duration::from_millis(t.bootstrap_timeout_ms),

@@ -19,15 +19,24 @@
 //! allowlistes, ports 80/443) et il n'existe **aucun** repli
 //! clearnet — Tor indisponible rend une erreur, pas une fuite.
 //!
-//! Le transport reel (`arti-client`) est derriere le feature flag
-//! `tor` : sans lui, le crate compile leger et `fetch_onion` rend
-//! [`TorError::NotBuilt`] (ADR-0028 §1 — le poids de build d'arti
-//! est inacceptable en dependance obligatoire).
+//! Le transport reel (`arti-client` embarque et `tokio-socks` en
+//! mode externe) est derriere le feature flag `tor` : sans lui, le
+//! crate compile leger et `fetch_onion` rend [`TorError::NotBuilt`]
+//! (ADR-0028 §1 — le poids de build d'arti est inacceptable en
+//! dependance obligatoire). Le decodeur HTTP/1.1 borne ([`http`],
+//! `httparse`) compile dans tous les cas — ses tests n'ont besoin
+//! d'aucun transport.
 
 pub mod error;
+// Le decodeur HTTP borne compile dans tous les cas (ses tests
+// tournent sans transport) — sans feature `tor` ni test, ses
+// fonctions n'ont pas encore d'appelant : c'est attendu.
+#[cfg_attr(not(any(feature = "tor", test)), allow(dead_code))]
+pub(crate) mod http;
 pub mod runtime;
 pub mod settings;
 
 pub use error::{Result, TorError};
+pub use http::OnionResponse;
 pub use runtime::{TorRuntime, TorState};
 pub use settings::{OnionBackendSettings, TorGatewaySettings, TorMode, TorSettings};
