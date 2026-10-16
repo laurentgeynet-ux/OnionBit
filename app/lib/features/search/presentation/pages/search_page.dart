@@ -18,9 +18,12 @@ import '../../../diagnostic/domain/diagnostic_models.dart';
 import '../../../diagnostic/presentation/providers/diagnostic_providers.dart';
 import '../../../diagnostic/presentation/widgets/attest_dialog.dart';
 import '../../../diagnostic/presentation/widgets/trust_badge.dart';
+import '../../../../core/platform/desktop_shell.dart';
 import '../../../downloads/domain/download.dart';
 import '../../../downloads/presentation/providers/downloads_providers.dart';
 import '../../../downloads/presentation/widgets/add_download_dialog.dart';
+import '../../../downloads/presentation/widgets/download_actions.dart';
+import '../../../downloads/presentation/widgets/download_status.dart';
 import '../../domain/torrent_result.dart';
 import '../providers/search_providers.dart';
 
@@ -45,11 +48,13 @@ class SearchPage extends ConsumerWidget {
     // la progression affichée dans la bannière d'erreur.
     final tor = ref.watch(torStatusProvider).value;
     final onionErr = ref.watch(onionSearchErrorProvider);
-    // Info-hashes déjà gérés par le daemon — badge « En cours » et
-    // bouton Ajouter désactivé (anti-doublon).
+    // Info-hashes déjà gérés par le daemon — le résultat montre alors
+    // le statut réel du téléchargement (même libellé que l'onglet
+    // Téléchargements) et son badge de zone privée ; bouton Ajouter
+    // désactivé (anti-doublon).
     final known = {
       for (final d in ref.watch(downloadsProvider).value ?? const <Download>[])
-        d.infohash,
+        d.infohash: d,
     };
     final compact =
         AppBreakpoints.of(MediaQuery.sizeOf(context).width) ==
@@ -393,14 +398,15 @@ class _ResultTile extends StatelessWidget {
   final TorrentResult result;
   final String query;
 
-  /// Info-hashes déjà gérés par le daemon.
-  final Set<String> known;
+  /// Info-hashes déjà gérés par le daemon → `Download` (statut réel).
+  final Map<String, Download> known;
   final Set<String> selection;
 
   @override
   Widget build(BuildContext context) {
     final r = result;
     final theme = Theme.of(context);
+    final dl = known[r.infohash];
     return GestureDetector(
       onSecondaryTapUp: (details) =>
           _SearchContextMenu.show(context, details.globalPosition, r),
@@ -422,11 +428,36 @@ class _ResultTile extends StatelessWidget {
             Icon(_sourceIcon(r.source), size: 20),
           ],
         ),
-        title: Text(
-          r.name.isEmpty ? r.infohash : r.name,
-          overflow: TextOverflow.ellipsis,
-          // Infohash affiché en police mono dédiée (distingue 0/O, 1/l).
-          style: r.name.isEmpty ? AppTypography.mono() : null,
+        title: Row(
+          children: [
+            Flexible(
+              child: Text(
+                r.name.isEmpty ? r.infohash : r.name,
+                overflow: TextOverflow.ellipsis,
+                // Infohash affiché en police mono dédiée (distingue
+                // 0/O, 1/l).
+                style: r.name.isEmpty ? AppTypography.mono() : null,
+              ),
+            ),
+            if (dl != null && dl.isPrivateStorage)
+              Padding(
+                padding: const EdgeInsets.only(left: 4),
+                child: Tooltip(
+                  message: dl.lockedArea
+                      ? context.l10n.zonePrivateLockedTip
+                      : context.l10n.zonePrivateTip,
+                  child: Icon(
+                    dl.lockedArea
+                        ? Icons.lock_clock_outlined
+                        : Icons.enhanced_encryption_outlined,
+                    size: 14,
+                    color: dl.lockedArea
+                        ? theme.colorScheme.error
+                        : theme.colorScheme.primary,
+                  ),
+                ),
+              ),
+          ],
         ),
         subtitle: Text(
           [
@@ -440,13 +471,20 @@ class _ResultTile extends StatelessWidget {
           ].join(' · '),
           style: theme.textTheme.bodySmall,
         ),
-        trailing: FilledButton.tonalIcon(
-          onPressed: r.infohash.isEmpty
-              ? null
-              : () => AddDownloadDialog.show(context, initialUri: r.magnet),
-          icon: const Icon(Icons.download, size: 18),
-          label: Text(context.l10n.add),
-        ),
+        // Déjà téléchargé : le statut réel (Partage/Arrêté/…) remplace
+        // le bouton Ajouter — même libellé que l'onglet Téléchargements.
+        trailing: dl != null
+            ? SizedBox(width: 110, child: DownloadProgressBar(download: dl))
+            : FilledButton.tonalIcon(
+                onPressed: r.infohash.isEmpty
+                    ? null
+                    : () => AddDownloadDialog.show(
+                        context,
+                        initialUri: r.magnet,
+                      ),
+                icon: const Icon(Icons.download, size: 18),
+                label: Text(context.l10n.add),
+              ),
         onTap: r.infohash.isEmpty
             ? null
             : () => AddDownloadDialog.show(context, initialUri: r.magnet),
@@ -466,7 +504,7 @@ class _ResultsTable extends ConsumerWidget {
   });
 
   final List<TorrentResult> results;
-  final Set<String> known;
+  final Map<String, Download> known;
   final Set<String> selection;
   final String query;
 
@@ -579,13 +617,14 @@ class _ResultRow extends StatelessWidget {
   });
 
   final TorrentResult result;
-  final Set<String> known;
+  final Map<String, Download> known;
   final Set<String> selection;
   final String query;
 
   @override
   Widget build(BuildContext context) {
     final r = result;
+    final dl = known[r.infohash];
     final small = Theme.of(context).textTheme.bodySmall;
     return Material(
       child: InkWell(
@@ -628,6 +667,27 @@ class _ResultRow extends StatelessWidget {
                       ),
                     ),
                     TrustBadge(kind: 'infohash', subject: r.infohash),
+                    // Zone privée : même picto que l'onglet
+                    // Téléchargements (clé barrée = zone verrouillée,
+                    // clé = chiffrée mais accessible).
+                    if (dl != null && dl.isPrivateStorage)
+                      Padding(
+                        padding: const EdgeInsets.only(left: 4),
+                        child: Tooltip(
+                          message: dl.lockedArea
+                              ? context.l10n.zonePrivateLockedTip
+                              : context.l10n.zonePrivateTip,
+                          child: Icon(
+                            dl.lockedArea
+                                ? Icons.lock_clock_outlined
+                                : Icons.enhanced_encryption_outlined,
+                            size: 14,
+                            color: dl.lockedArea
+                                ? Theme.of(context).colorScheme.error
+                                : Theme.of(context).colorScheme.primary,
+                          ),
+                        ),
+                      ),
                   ],
                 ),
               ),
@@ -664,13 +724,13 @@ class _ResultRow extends StatelessWidget {
                 width: 90,
                 child: Align(
                   alignment: Alignment.centerRight,
-                  child: known.contains(r.infohash)
+                  // Déjà téléchargé : `DownloadProgressBar` affiche le
+                  // statut réel (Partage/Arrêté/Erreur…) — fini le
+                  // badge « En cours » trompeur et tronqué.
+                  child: dl != null
                       ? Tooltip(
                           message: context.l10n.alreadyDownloaded,
-                          child: Chip(
-                            label: Text(context.l10n.inProgress),
-                            visualDensity: VisualDensity.compact,
-                          ),
+                          child: DownloadProgressBar(download: dl),
                         )
                       : IconButton(
                           tooltip: context.l10n.add,
@@ -943,6 +1003,13 @@ class _SearchContextMenuState extends ConsumerState<_SearchContextMenu> {
 
   List<Widget> _items(TorrentResult r) {
     final l10n = context.l10n;
+    // Résultat déjà géré par le daemon : le menu gagne les actions
+    // locales (ouvrir le dossier public, basculer de zone de stockage).
+    final dl = ref
+        .watch(downloadsProvider)
+        .value
+        ?.where((d) => d.infohash == r.infohash)
+        .firstOrNull;
     MenuItemButton item(IconData icon, String label, void Function() onTap) =>
         MenuItemButton(
           leadingIcon: Icon(icon, size: 18),
@@ -951,6 +1018,22 @@ class _SearchContextMenuState extends ConsumerState<_SearchContextMenu> {
         );
 
     return [
+      // Fichier local : « Ouvrir » n'a de sens qu'en zone publique —
+      // les cibles `@private/…` sont des specs chiffrées, pas des
+      // chemins ouvrables ; l'extraction passe par « Déplacer ».
+      if (dl != null && !dl.isPrivateStorage && dl.destination.isNotEmpty)
+        item(Icons.folder_open, l10n.openFolder, () => openPath(dl.destination)),
+      // Bascule zone publique ↔ privée : `showMoveStorageDialog`
+      // réutilise `PATCH …/move_storage` (chiffrement/déchiffrement
+      // géré par le daemon, ADR-0018) — c'est aussi le seul moyen
+      // d'extraire un fichier privé en clair.
+      if (dl != null)
+        item(
+          Icons.drive_file_move_outlined,
+          l10n.moveFolder,
+          () => showMoveStorageDialog(context, dl),
+        ),
+      if (dl != null) const Divider(height: 1),
       item(
         Icons.download,
         l10n.ctxAdd,

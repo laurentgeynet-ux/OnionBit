@@ -3,6 +3,32 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Recherche locale : statut réel des téléchargements + actions de zone (2026-10-16)
+
+Les résultats déjà gérés par le daemon n'affichent plus un badge
+« En cours » figé : la recherche indexe désormais les `Download`
+par infohash (et non un simple ensemble d'identifiants) et rend
+`DownloadProgressBar` — le même widget que l'onglet Téléchargements,
+donc le même libellé (« Partage 100 % », « Arrêté », « Erreur »…)
+et la même barre de progression. Le glitch visuel du chip (texte
+rogné) disparaît avec lui.
+
+- **Badge zone privée** : un résultat dont le téléchargement vit
+  sous `data/private/` porte le picto de l'onglet Téléchargements
+  (clé = chiffré accessible, clé barrée = zone verrouillée, tooltips
+  identiques).
+- **Menu contextuel local** : clic droit sur un résultat connu —
+  « Ouvrir le dossier » quand la destination est publique (les
+  specs `@private/…` sont des conteneurs chiffrés, pas des chemins),
+  et « Déplacer le stockage… » dans les deux sens publique ↔ privée
+  (réutilise `PATCH /api/downloads/{ih}` `state=move_storage`,
+  chiffrement/déchiffrement côté daemon — ADR-0018). L'extraction
+  d'un fichier privé passe par ce déplacement vers la zone publique.
+
+Tests : `test/search_known_results_test.dart` (statut réel affiché,
+badge privé, menu Ouvrir/Déplacer selon la zone) ; suite Flutter
+complète verte.
+
 ## ADR-0028 : backend `apibay` + `api_via_exit` + TLS sur flux Tor — recherche externe fonctionnelle (2026-10-16)
 
 Le scraping du `.onion` TPB est une impasse constatee sur le
