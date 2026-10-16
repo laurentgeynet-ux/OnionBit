@@ -452,15 +452,15 @@ class _TorAllowlist extends StatelessWidget {
             runSpacing: AppSpace.xs,
             children: [
               for (final h in hosts)
-                Tooltip(
-                  message: h,
-                  child: Chip(
-                    label: Text(
-                      h.length > 24 ? '${h.substring(0, 24)}…' : h,
-                      style: AppTypography.mono(fontSize: 11),
-                    ),
-                    visualDensity: VisualDensity.compact,
+                Chip(
+                  // Adresse intégrale + sélectionnable : les 56 chars
+                  // portent la clé publique et le checksum — les
+                  // tronquer empêcherait de vérifier la destination.
+                  label: SelectableText(
+                    h,
+                    style: AppTypography.mono(fontSize: 11),
                   ),
+                  visualDensity: VisualDensity.compact,
                 ),
             ],
           ),

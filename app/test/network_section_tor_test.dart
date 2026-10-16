@@ -81,7 +81,15 @@ void main() {
     expect(find.text('Enable Tor'), findsOneWidget);
     expect(find.text('Embedded (Arti)'), findsOneWidget);
     expect(find.text('tpb'), findsOneWidget);
-    expect(find.textContaining('piratebayo3klnzok'), findsOneWidget);
+    // Adresse onion v3 intégrale et sélectionnable (SelectableText =
+    // RichText interne — `findRichText` requis pour la retrouver).
+    expect(
+      find.textContaining(
+        'piratebayo3klnzokct3wt5yyxb2vpebbuyjl7m623iaxmqhsd52coid.onion',
+        findRichText: true,
+      ),
+      findsOneWidget,
+    );
 
     // Le toggle sauvegarde immédiatement `tor.enabled`.
     await tester.tap(find.text('Enable Tor'));
