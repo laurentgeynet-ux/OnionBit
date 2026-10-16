@@ -29,12 +29,17 @@ class _Fake implements SettingsRepository {
       'enabled': false,
       'mode': 'embedded',
       'external_socks5': 'socks5h://127.0.0.1:9050',
-      'allowed_hosts': const [
-        'piratebayo3klnzokct3wt5yyxb2vpebbuyjl7m623iaxmqhsd52coid.onion',
-      ],
+      // `allowed_hosts` vide volontairement : l'hôte affiché provient
+      // du miroir du backend (union effective de TorTargetPolicy).
+      'allowed_hosts': const <String>[],
       'search': {
         'backends': {
-          'tpb': {'max_results': 100},
+          'tpb': {
+            'max_results': 100,
+            'mirrors': const [
+              'piratebayo3klnzokct3wt5yyxb2vpebbuyjl7m623iaxmqhsd52coid.onion',
+            ],
+          },
         },
       },
     },

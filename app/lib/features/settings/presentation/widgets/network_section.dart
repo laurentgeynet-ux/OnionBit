@@ -405,10 +405,12 @@ class _EffectiveState extends ConsumerWidget {
   }
 }
 
-/// Allowlist Tor en lecture seule (ADR-0028 §5) : hôtes `.onion`
-/// autorisés par `TorTargetPolicy` + backends de recherche configurés
-/// (`tor.search.backends.<id>`). Non éditable ici — la liste est une
-/// frontière de sécurité définie dans `configuration.json`.
+/// Allowlist Tor en lecture seule (ADR-0028 §5) : politique
+/// **effective** de `TorTargetPolicy` = `tor.allowed_hosts` ∪
+/// `tor.search.backends.<id>.mirrors` (le miroir TPB est allowlisté
+/// implicitement — le montrer évite une frontière invisible).
+/// Non éditable ici — la liste est une frontière de sécurité définie
+/// dans `configuration.json`.
 class _TorAllowlist extends StatelessWidget {
   const _TorAllowlist({required this.settings});
 
@@ -419,14 +421,21 @@ class _TorAllowlist extends StatelessWidget {
     final theme = Theme.of(context);
     final l10n = context.l10n;
     final tor = settings['tor'];
-    final hosts = tor is Map
-        ? [for (final h in (tor['allowed_hosts'] as List?) ?? const []) '$h']
-        : const <String>[];
     final search = tor is Map ? tor['search'] : null;
-    final backends = search is Map && search['backends'] is Map
-        ? ((search['backends'] as Map).keys.map((k) => '$k').toList()
-          ..sort())
-        : const <String>[];
+    final backendsMap =
+        search is Map && search['backends'] is Map
+            ? search['backends'] as Map
+            : const {};
+    // Union des hôtes : allowed_hosts + miroirs de chaque backend
+    // (ordre stable, dédupliqué).
+    final hosts = <String>{
+      if (tor is Map)
+        for (final h in (tor['allowed_hosts'] as List?) ?? const []) '$h',
+      for (final b in backendsMap.values)
+        if (b is Map)
+          for (final m in (b['mirrors'] as List?) ?? const []) '$m',
+    }.toList()..sort();
+    final backends = backendsMap.keys.map((k) => '$k').toList()..sort();
     if (hosts.isEmpty && backends.isEmpty) return const SizedBox.shrink();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
