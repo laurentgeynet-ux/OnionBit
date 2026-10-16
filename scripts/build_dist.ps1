@@ -8,6 +8,10 @@
 #   pwsh -NoProfile -ExecutionPolicy RemoteSigned -File scripts\build_dist.ps1
 #   pwsh ... -SkipCheck                        (sans le cargo check prealable)
 #   pwsh ... -Profile debug                    (binaires debug)
+#   pwsh ... -Tor                              (daemon compile avec
+#                                                     --features tor :
+#                                                     arti embarque,
+#                                                     ADR-0028)
 #   pwsh ... -ZipRelease                       (+ bundle+zip GitHub :
 #                                                     dist\OnionBit-<ver>-windows-x64.zip)
 #
@@ -47,6 +51,11 @@ param(
     [Alias("Profile")]
     [ValidateSet("release", "debug")]
     [string]$BuildProfile = "release",
+    # Compile `onionbit-daemon` avec `--features tor` (ADR-0028 :
+    # runtime arti embarque, recherche .onion). Sans ce switch le
+    # daemon embarque le stub `NotBuilt` — endpoints Tor joignables
+    # mais recherche externe indisponible.
+    [switch]$Tor,
     [switch]$ZipRelease
 )
 
@@ -90,7 +99,16 @@ try {
     # onionbit-launcher : les trois lanceurs portables de la racine
     # (copies renommees du meme mini-exe, resolution relative a sa
     # position — aucun chemin de build n'est fige).
-    cargo build --profile $cargoProfile -p onionbit-daemon -p onionbit-cli -p onionbit-launcher
+    # `-Tor` : la feature `tor` n'existe que sur onionbit-daemon —
+    # build dedie (`--features` sur un build multi-`-p` exigerait la
+    # syntaxe `paquet/feature` sur chaque membre).
+    if ($Tor) {
+        cargo build --profile $cargoProfile -p onionbit-daemon --features tor
+        if ($LASTEXITCODE -ne 0) { throw "cargo build a echoue ($LASTEXITCODE)" }
+        cargo build --profile $cargoProfile -p onionbit-cli -p onionbit-launcher
+    } else {
+        cargo build --profile $cargoProfile -p onionbit-daemon -p onionbit-cli -p onionbit-launcher
+    }
     if ($LASTEXITCODE -ne 0) { throw "cargo build a echoue ($LASTEXITCODE)" }
 
     # -- 2) Interface Flutter Windows -----------------------------------
