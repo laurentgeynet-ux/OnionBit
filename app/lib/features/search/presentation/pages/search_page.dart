@@ -5,6 +5,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../../../l10n/app_localizations.dart' show AppLocalizations;
 import '../../../../core/di/providers.dart';
@@ -13,6 +14,7 @@ import '../../../../core/layout/breakpoints.dart';
 import '../../../../core/design/design_tokens.dart';
 import '../../../../core/widgets/empty_state.dart';
 import '../../../../core/widgets/error_state.dart';
+import '../../../diagnostic/domain/diagnostic_models.dart';
 import '../../../diagnostic/presentation/providers/diagnostic_providers.dart';
 import '../../../diagnostic/presentation/widgets/attest_dialog.dart';
 import '../../../diagnostic/presentation/widgets/trust_badge.dart';
@@ -38,6 +40,11 @@ class SearchPage extends ConsumerWidget {
     final history = ref.watch(searchHistoryProvider);
     final local = ref.watch(searchResultsProvider);
     final remote = ref.watch(remoteResultsProvider);
+    // Runtime Tor (ADR-0028) : pilote le chip d'état, le chip de filtre
+    // « TPB (Tor) » (visible seulement si la fonction est activée) et
+    // la progression affichée dans la bannière d'erreur.
+    final tor = ref.watch(torStatusProvider).value;
+    final onionErr = ref.watch(onionSearchErrorProvider);
     // Info-hashes déjà gérés par le daemon — badge « En cours » et
     // bouton Ajouter désactivé (anti-doublon).
     final known = {
@@ -158,6 +165,7 @@ class SearchPage extends ConsumerWidget {
                         style: Theme.of(context).textTheme.bodySmall,
                       ),
                     ),
+                  _TorChip(status: tor),
                   PopupMenuButton<SearchSort>(
                     tooltip: l10n.sortResults,
                     icon: const Icon(Icons.sort, size: 20),
@@ -216,6 +224,10 @@ class SearchPage extends ConsumerWidget {
                       (l10n.filterAll, null),
                       (l10n.sourceLocal, TorrentSource.local),
                       (l10n.searchSourceNetwork, TorrentSource.remote),
+                      // Source `.onion` — chip présent uniquement quand
+                      // Tor est activé (opt-in, ADR-0028).
+                      if (tor?.enabled ?? false)
+                        (l10n.searchSourceOnion, TorrentSource.onion),
                     ])
                       Padding(
                         padding: const EdgeInsets.only(right: AppSpace.xs),
@@ -237,6 +249,11 @@ class SearchPage extends ConsumerWidget {
                   ],
                 ),
               ),
+              // Erreur de la recherche `.onion` — codes typés de
+              // l'API (étape 115) : la santé Tor est distinguée des
+              // fautes côté source (captcha, refonte HTML, miroirs).
+              if (onionErr != null)
+                _OnionErrorBanner(code: onionErr, tor: tor),
             ],
           ),
         ),
@@ -402,12 +419,7 @@ class _ResultTile extends StatelessWidget {
                             .read(searchSelectionProvider.notifier)
                             .toggle(r.infohash),
             ),
-            Icon(
-              r.source == TorrentSource.remote
-                  ? Icons.cloud_outlined
-                  : Icons.storage_outlined,
-              size: 20,
-            ),
+            Icon(_sourceIcon(r.source), size: 20),
           ],
         ),
         title: Text(
@@ -424,9 +436,7 @@ class _ResultTile extends StatelessWidget {
                 r.seeders!,
                 r.leechers ?? 0,
               ),
-            r.source == TorrentSource.remote
-                ? context.l10n.sourceNetwork
-                : context.l10n.sourceLocal,
+            _sourceLabel(context.l10n, r),
           ].join(' · '),
           style: theme.textTheme.bodySmall,
         ),
@@ -648,12 +658,7 @@ class _ResultRow extends StatelessWidget {
               ),
               SizedBox(
                 width: 80,
-                child: Text(
-                  r.source == TorrentSource.remote
-                      ? context.l10n.sourceNetwork
-                      : context.l10n.sourceLocal,
-                  style: small,
-                ),
+                child: Text(_sourceLabel(context.l10n, r), style: small),
               ),
               SizedBox(
                 width: 90,
@@ -708,6 +713,149 @@ class _ResultHealthDot extends StatelessWidget {
         width: 8,
         height: 8,
         decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+      ),
+    );
+  }
+}
+
+/// Libellé de la colonne/sous-titre « Source » : `local` / `network` /
+/// identifiant du backend `.onion` (`tpb`, …) en capitales.
+String _sourceLabel(AppLocalizations l10n, TorrentResult r) =>
+    switch (r.source) {
+      TorrentSource.local => l10n.sourceLocal,
+      TorrentSource.remote => l10n.sourceNetwork,
+      TorrentSource.onion => (r.sourceTag ?? 'tor').toUpperCase(),
+    };
+
+IconData _sourceIcon(TorrentSource s) => switch (s) {
+  TorrentSource.local => Icons.storage_outlined,
+  TorrentSource.remote => Icons.cloud_outlined,
+  TorrentSource.onion => Icons.vpn_lock_outlined,
+};
+
+/// Chip d'état Tor dans la barre de recherche (ADR-0028 §8) :
+/// désactivé → CTA vers les réglages ; `bootstrapping` → spinner +
+/// progression ; `error` → renvoi vers le diagnostic. Invisible tant
+/// que `/api/tor/status` n'a pas répondu.
+class _TorChip extends StatelessWidget {
+  const _TorChip({required this.status});
+
+  final TorRuntimeStatus? status;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = context.l10n;
+    final s = status;
+    if (s == null) return const SizedBox.shrink();
+    final scheme = Theme.of(context).colorScheme;
+    return switch (s.state) {
+      TorRuntimeState.bootstrapping => Tooltip(
+          message: l10n.torChipBootstrapping(s.progress),
+          child: Chip(
+            visualDensity: VisualDensity.compact,
+            avatar: const SizedBox(
+              width: 14,
+              height: 14,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+            label: Text(l10n.torChipBootstrapping(s.progress)),
+          ),
+        ),
+      TorRuntimeState.ready => Tooltip(
+          message: l10n.hudTorTooltip,
+          child: Chip(
+            visualDensity: VisualDensity.compact,
+            avatar: Icon(Icons.vpn_lock, size: 16, color: scheme.primary),
+            label: const Text('Tor'),
+          ),
+        ),
+      TorRuntimeState.dormant => Chip(
+          visualDensity: VisualDensity.compact,
+          avatar: Icon(Icons.vpn_lock_outlined, size: 16, color: scheme.outline),
+          label: Text(l10n.torChipDormant),
+        ),
+      TorRuntimeState.error => Tooltip(
+          message: s.error ?? l10n.torChipError,
+          child: ActionChip(
+            visualDensity: VisualDensity.compact,
+            avatar: Icon(Icons.error_outline, size: 16, color: scheme.error),
+            label: Text(l10n.torChipError),
+            onPressed: () => context.go('/diagnostic'),
+          ),
+        ),
+      // `off`/`unknown` — Tor activable (ou status incertain) : CTA
+      // vers la sous-section Tor des réglages réseau.
+      _ => ActionChip(
+          visualDensity: VisualDensity.compact,
+          avatar: const Icon(Icons.vpn_lock_outlined, size: 16),
+          label: Text(l10n.torChipEnable),
+          onPressed: () => context.go('/settings?s=anonymity'),
+        ),
+    };
+  }
+}
+
+/// Bannière d'erreur de la recherche `.onion` — le code machine de
+/// l'API distingue la santé Tor (`tor_bootstrapping`,
+/// `bootstrap_failed`, `tor_not_ready`) des fautes côté source
+/// (`captcha_detected`, `structure_changed`, `mirror_unreachable`).
+class _OnionErrorBanner extends ConsumerWidget {
+  const _OnionErrorBanner({required this.code, required this.tor});
+
+  final String code;
+  final TorRuntimeStatus? tor;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final l10n = context.l10n;
+    final scheme = Theme.of(context).colorScheme;
+    final (message, torHealth) = switch (code) {
+      'tor_bootstrapping' => (
+          l10n.onionErrBootstrapping(tor?.progress ?? 0),
+          true,
+        ),
+      'bootstrap_failed' => (l10n.onionErrBootstrapFailed, true),
+      'tor_not_ready' => (l10n.onionErrNotReady, true),
+      'mirror_unreachable' => (l10n.onionErrMirrorUnreachable, false),
+      'captcha_detected' => (l10n.onionErrCaptcha, false),
+      'structure_changed' => (l10n.onionErrStructure, false),
+      'no_results' => (l10n.onionErrNoResults, false),
+      _ => (l10n.onionErrGeneric, false),
+    };
+    return Padding(
+      padding: const EdgeInsets.only(top: AppSpace.xs),
+      child: Material(
+        color: torHealth
+            ? scheme.surfaceContainerHighest
+            : scheme.errorContainer,
+        borderRadius: BorderRadius.circular(AppRadius.small),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppSpace.sm,
+            vertical: AppSpace.xs,
+          ),
+          child: Row(
+            children: [
+              Icon(
+                torHealth ? Icons.vpn_lock_outlined : Icons.warning_amber,
+                size: 18,
+                color: torHealth ? scheme.onSurfaceVariant : scheme.error,
+              ),
+              const SizedBox(width: AppSpace.sm),
+              Expanded(child: Text(message)),
+              if (code == 'bootstrap_failed' || code == 'tor_not_ready')
+                TextButton(
+                  onPressed: () => context.go('/diagnostic'),
+                  child: Text(l10n.onionErrGoDiagnostics),
+                ),
+              IconButton(
+                tooltip: l10n.cancel,
+                icon: const Icon(Icons.close, size: 16),
+                onPressed: ref.read(onionSearchErrorProvider.notifier).clear,
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

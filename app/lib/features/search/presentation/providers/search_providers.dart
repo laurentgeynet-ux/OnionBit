@@ -6,9 +6,11 @@ import 'dart:async';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../core/api/api_client.dart';
 import '../../../../core/api/events.dart';
 import '../../../../core/config/ui_prefs.dart';
 import '../../../../core/di/providers.dart';
+import '../../../diagnostic/presentation/providers/diagnostic_providers.dart';
 import '../../data/rest_search_repository.dart';
 import '../../domain/search_repository.dart';
 import '../../domain/torrent_result.dart';
@@ -264,6 +266,43 @@ class SearchResultsNotifier extends AsyncNotifier<List<TorrentResult>> {
       // la recherche distante est silencieusement indisponible.
       ref.read(remoteResultsProvider.notifier).idle();
     }
+    // Recherche `.onion` via Tor en parallèle (ADR-0028 §5) —
+    // synchrone : la reponse contient les resultats, la SSE
+    // `remote_query_results` du meme uuid est dedupliquee a
+    // l'arrivee. `tor_disabled` est silencieux (fonctionnalite
+    // opt-in) ; les autres codes remontent dans
+    // [onionSearchErrorProvider].
+    unawaited(_launchExternal(query));
+  }
+
+  Future<void> _launchExternal(String query) async {
+    ref.read(onionSearchErrorProvider.notifier).clear();
+    final sources =
+        ref.read(torStatusProvider).value?.sources ?? const ['tpb'];
+    for (final source in sources) {
+      try {
+        final req = await ref
+            .read(searchRepositoryProvider)
+            .searchExternal(query, source);
+        // Reponse tardive : l'utilisateur a relance une autre
+        // recherche entre-temps — on ignore ces resultats perimes.
+        if (ref.read(searchQueryProvider) != query) return;
+        ref.read(remoteResultsProvider.notifier).beginExternal(req);
+      } on ApiException catch (e) {
+        if (ref.read(searchQueryProvider) != query) return;
+        if (e.code == 'tor_disabled') return; // opt-in non active
+        ref.read(onionSearchErrorProvider.notifier).setCode(
+          e.code ?? 'external_error',
+        );
+        if (e.code != 'tor_bootstrapping') return;
+        // `tor_bootstrapping` : le bootstrap a ete declenche par cet
+        // appel — l'UI affiche la progression et l'utilisateur
+        // relance. Le code est conserve pour la banniere.
+      } catch (_) {
+        ref.read(onionSearchErrorProvider.notifier).setCode('external_error');
+        return;
+      }
+    }
   }
 
   /// Les `SelectResponse` arrivent en push via `remote_query_results`
@@ -280,6 +319,25 @@ class SearchResultsNotifier extends AsyncNotifier<List<TorrentResult>> {
     }
     ref.read(remoteResultsProvider.notifier).finish();
   }
+}
+
+/// Dernier code d'erreur de la recherche externe `.onion`
+/// (`ApiException.code` — `tor_bootstrapping`, `captcha_detected`,
+/// `mirror_unreachable`, `structure_changed`, `no_results`,
+/// `external_error` ; `null` = pas d'erreur). `tor_disabled` est
+/// filtré en amont (fonctionnalité opt-in, pas une faute).
+final onionSearchErrorProvider =
+    NotifierProvider<OnionSearchErrorNotifier, String?>(
+      OnionSearchErrorNotifier.new,
+    );
+
+class OnionSearchErrorNotifier extends Notifier<String?> {
+  @override
+  String? build() => null;
+
+  void setCode(String code) => state = code;
+
+  void clear() => state = null;
 }
 
 /// État de la recherche distante en cours.
@@ -315,7 +373,10 @@ class RemoteResults {
 }
 
 class RemoteResultsNotifier extends Notifier<RemoteResults> {
-  String? _uuid;
+  /// UUIDs actifs : recherche réseau (`send_search_request`) **et**
+  /// backends `.onion` (`/api/search/external` rediffuse sur le même
+  /// topic, uuid propre par appel — étape 115).
+  final Set<String> _uuids = {};
 
   @override
   RemoteResults build() {
@@ -324,7 +385,7 @@ class RemoteResultsNotifier extends Notifier<RemoteResults> {
       if (event == null || event.topic != EventTopics.remoteQueryResults) {
         return;
       }
-      if (_uuid == null || event.data['uuid'] != _uuid) return;
+      if (!_uuids.contains(event.data['uuid'])) return;
       final incoming = RestSearchRepository.parseRemoteResults(event.data);
       final known = state.results.map((r) => r.infohash).toSet();
       final fresh = [
@@ -346,7 +407,9 @@ class RemoteResultsNotifier extends Notifier<RemoteResults> {
 
   /// Démarre une nouvelle collecte pour la requête distante `req`.
   void begin(RemoteQuery req) {
-    _uuid = req.requestUuid;
+    _uuids
+      ..clear()
+      ..add(req.requestUuid);
     state = RemoteResults(
       state: RemoteSearchState(
         uuid: req.requestUuid,
@@ -356,9 +419,30 @@ class RemoteResultsNotifier extends Notifier<RemoteResults> {
     );
   }
 
+  /// Recherche externe `.onion` terminee : la réponse porte déjà les
+  /// résultats ; l'uuid est enregistré pour accepter (et dédupliquer)
+  /// la notification SSE `remote_query_results` du même uuid.
+  void beginExternal(ExternalQuery req) {
+    _uuids.add(req.uuid);
+    final known = state.results.map((r) => r.infohash).toSet();
+    state = RemoteResults(
+      // Compte le backend comme un pair supplémentaire.
+      state: RemoteSearchState(
+        uuid: state.state.uuid ?? req.uuid,
+        peerCount: state.state.peerCount + 1,
+      ),
+      results: [
+        ...state.results,
+        for (final r in req.results)
+          if (r.infohash.isNotEmpty && !known.contains(r.infohash)) r,
+      ],
+    );
+  }
+
   /// Fin de la fenêtre de collecte (les résultats restent affichés).
   void finish() {
     if (state.state.uuid == null) return;
+    _uuids.clear();
     state = RemoteResults(
       state: RemoteSearchState(
         uuid: null,
@@ -375,7 +459,7 @@ class RemoteResultsNotifier extends Notifier<RemoteResults> {
 
   /// Aucune recherche distante en vol (échec du PUT, stack inactive).
   void idle() {
-    _uuid = null;
+    _uuids.clear();
     state = RemoteResults(
       state: const RemoteSearchState(uuid: null, peerCount: 0),
       results: state.results,

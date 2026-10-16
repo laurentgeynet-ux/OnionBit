@@ -68,12 +68,24 @@ class RestSearchRepository implements SearchRepository {
         // pair émetteur, unité ms chez Python).
         date: _parseDate(j['created'] ?? j['updated'] ?? j['torrent_date']),
         trackers: _parseTrackers(j['trackers'], j['tracker_info']),
+        // Résultats `.onion` : `source` = identifiant du backend
+        // (`tpb`) et `magnet` complet publié par le site (ADR-0028).
+        sourceTag: source == TorrentSource.onion && j['source'] is String
+            ? j['source'] as String
+            : null,
+        magnetUri: j['magnet'] is String ? j['magnet'] as String : null,
       );
 
   /// Parse une entrée `remote_query_results` (même forme `results`).
-  static List<TorrentResult> parseRemoteResults(Map<String, dynamic> event) => [
-    for (final j in _results(event)) _parse(j, TorrentSource.remote),
-  ];
+  /// `peer` préfixé `tor:` = résultats d'un backend `.onion` (étape
+  /// 115) — source `onion`, pas `remote`.
+  static List<TorrentResult> parseRemoteResults(Map<String, dynamic> event) {
+    final torPeer = '${event['peer'] ?? ''}'.startsWith('tor:');
+    return [
+      for (final j in _results(event))
+        _parse(j, torPeer ? TorrentSource.onion : TorrentSource.remote),
+    ];
+  }
 
   /// Parse une réponse `{"results": [...]}` générique — réutilisée
   /// par le contenu des canaux (même format torrent que
@@ -125,6 +137,20 @@ class RestSearchRepository implements SearchRepository {
       uiLog('recherche distante "$query" en echec : $e');
       rethrow;
     }
+  }
+
+  @override
+  Future<ExternalQuery> searchExternal(String query, String source) async {
+    final resp =
+        await _api.get(
+              '/search/external',
+              query: {'source': source, 'q': query},
+            )
+            as Map<String, dynamic>;
+    return ExternalQuery(
+      uuid: '${resp['uuid'] ?? ''}',
+      results: parseResults(resp, TorrentSource.onion),
+    );
   }
 
   @override

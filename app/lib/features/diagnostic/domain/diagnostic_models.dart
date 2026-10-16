@@ -536,3 +536,73 @@ class AnonLaneStatus {
     totalCircuits: 0,
   );
 }
+
+/// État du runtime Tor (`GET /api/tor/status`, ADR-0028 §5) —
+/// « honnête » comme `AnonLaneStatus` : `off`/`disabled` ≠ panne.
+enum TorRuntimeState { off, bootstrapping, ready, dormant, error, unknown }
+
+class TorRuntimeStatus {
+  const TorRuntimeStatus({
+    required this.enabled,
+    required this.mode,
+    required this.state,
+    required this.progress,
+    this.externalSocks5,
+    this.error,
+    this.sources = const [],
+  });
+
+  /// `tor.enabled` — la fonctionnalité est opt-in, désactivée par
+  /// défaut (bootstrap visible par le FAI, ADR-0028 §1).
+  final bool enabled;
+
+  /// `"embedded"` (arti embarqué) ou `"external"` (SOCKS5 système).
+  final String mode;
+
+  /// État observable du runtime.
+  final TorRuntimeState state;
+
+  /// Progression du bootstrap 0-100 (`bootstrapping` seulement).
+  final int progress;
+
+  /// Endpoint SOCKS5 configuré en mode `external` (`null` sinon).
+  final String? externalSocks5;
+
+  /// Message d'erreur du dernier bootstrap (`state == error`).
+  final String? error;
+
+  /// Identifiants des backends de recherche enregistrés
+  /// (`tor.search.backends.<source>`).
+  final List<String> sources;
+
+  /// Runtime absent ou non compilé (`tor` feature off) — l'endpoint
+  /// répond toujours : état « off » honnête.
+  static const disabled = TorRuntimeStatus(
+    enabled: false,
+    mode: 'embedded',
+    state: TorRuntimeState.off,
+    progress: 0,
+  );
+
+  static TorRuntimeStatus fromJson(Map<String, dynamic> j) =>
+      TorRuntimeStatus(
+        enabled: j['enabled'] == true,
+        mode: '${j['mode'] ?? 'embedded'}',
+        state: switch ('${j['state'] ?? ''}') {
+          'off' => TorRuntimeState.off,
+          'bootstrapping' => TorRuntimeState.bootstrapping,
+          'ready' => TorRuntimeState.ready,
+          'dormant' => TorRuntimeState.dormant,
+          'error' => TorRuntimeState.error,
+          _ => TorRuntimeState.unknown,
+        },
+        progress: (j['progress'] as num?)?.toInt() ?? 0,
+        externalSocks5: j['external_socks5'] is String
+            ? j['external_socks5'] as String
+            : null,
+        error: j['error'] is String ? j['error'] as String : null,
+        sources: [
+          for (final s in (j['sources'] as List?) ?? const []) '$s',
+        ],
+      );
+}

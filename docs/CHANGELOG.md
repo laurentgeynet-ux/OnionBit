@@ -3,6 +3,53 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## ADR-0028 étape 116 : UI Flutter — recherche `.onion`, HUD, réglages, diagnostic (2026-10-17)
+
+La couche de presentation consomme les endpoints de l'etape 115
+(`app/`, ADR-0028 §8) — zero acces au core, REST + SSE uniquement.
+
+- `TorrentSource.onion` ajoute a l'enum ; `TorrentResult` gagne
+  `sourceTag` (badge backend `tpb`) et `magnetUri` (magnet reel publie
+  par la source — prioritaire sur le magnet synthetise). Merge
+  existant conserve : local d'abord, dedup par infohash, aucun
+  demarrage auto (`AddDownloadDialog` inchange).
+- `RestSearchRepository.searchExternal` (`GET /api/search/external`)
+  + `parseRemoteResults` etendu : `peer` prefixe `tor:` → source
+  `onion`, jamais confondu avec les pairs IPv8.
+- `RemoteResultsNotifier` multi-uuid : le meme topic SSE
+  `remote_query_results` porte les reponses IPv8 ET les rediffusions
+  de recherche `.onion` (uuid propre par appel, dedup par infohash) ;
+  reponse directe fusionnee via `beginExternal` avec garde
+  anti-requete-perimee.
+- `ApiException.code` : le code machine de `error.code` est expose —
+  la banniere d'erreur distingue sante Tor (`tor_bootstrapping` +
+  %, `bootstrap_failed` → lien Diagnostic, `tor_not_ready`) des
+  fautes cote source (`captcha_detected`, `structure_changed`,
+  `mirror_unreachable`, `no_results`). `tor_disabled` est silencieux
+  (opt-in).
+- Page Recherche : chip d'etat Tor dans la barre (spinner + %,
+  « Activer Tor » → `/settings?s=anonymity`, erreur → Diagnostic) ;
+  chip de filtre « TPB (Tor) » dans la rangee `ChoiceChip` — visible
+  seulement quand `tor.enabled`.
+- Privacy HUD : pastille `vpn_lock` jointe au bouclier, affichee
+  uniquement si `tor.enabled` — pas d'indicateur mort ; etats
+  honnetes alignes sur `AnonLaneStatus`, tooltip + label Semantics.
+- Settings → Network : sous-section « Connectivite Tor » — toggle
+  `tor.enabled` a sauvegarde immediate, mode embarque/externe et
+  endpoint `socks5h` dans le lot differe (effet au redemarrage) ;
+  allowlist `tor.allowed_hosts` + backends affiches en lecture seule.
+- Diagnostic Overview : tuile « Tor » (etat + % bootstrap ; caption
+  mode `Arti`/endpoint SOCKS5 ou erreur) — pas d'onglet dedie.
+- `torStatusProvider` : `FutureProvider` sonde 10 s partage entre
+  recherche, HUD et diagnostic ; echec API → etat « off » honnete.
+- i18n : ~30 cles en/fr (`torChip*`, `onionErr*`, `torState*`,
+  `torSettings*`…). Messagerie volontairement sans affichage `.onion`
+  (phase 3, etape 119).
+- Test `network_section_tor_test` : toggle → patch `tor.enabled`
+  immediat, champ SOCKS5 conditionnel, allowlist non editable.
+  `flutter analyze` propre, `flutter test` 101/101, `check_i18n.ps1`
+  vert.
+
 ## ADR-0028 étape 115 : REST + SSE — `/api/search/external` + `/api/tor/status` (2026-10-17)
 
 La recherche `.onion` est exposee au plan de controle
