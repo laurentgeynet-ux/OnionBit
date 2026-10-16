@@ -8,10 +8,10 @@
 #   pwsh -NoProfile -ExecutionPolicy RemoteSigned -File scripts\build_dist.ps1
 #   pwsh ... -SkipCheck                        (sans le cargo check prealable)
 #   pwsh ... -Profile debug                    (binaires debug)
-#   pwsh ... -Tor                              (daemon compile avec
-#                                                     --features tor :
-#                                                     arti embarque,
-#                                                     ADR-0028)
+#   pwsh ... -NoTor                            (daemon SANS arti :
+#                                                     stub NotBuilt —
+#                                                     Tor est inclus
+#                                                     par defaut, ADR-0028)
 #   pwsh ... -ZipRelease                       (+ bundle+zip GitHub :
 #                                                     dist\OnionBit-<ver>-windows-x64.zip)
 #
@@ -51,11 +51,14 @@ param(
     [Alias("Profile")]
     [ValidateSet("release", "debug")]
     [string]$BuildProfile = "release",
-    # Compile `onionbit-daemon` avec `--features tor` (ADR-0028 :
-    # runtime arti embarque, recherche .onion). Sans ce switch le
-    # daemon embarque le stub `NotBuilt` — endpoints Tor joignables
-    # mais recherche externe indisponible.
+    # Tor (ADR-0028 : runtime arti embarque, recherche .onion) est
+    # compile dans le daemon par DEFAUT — l'UI expose la fonctionnalite
+    # dans tous les cas, un daemon sans arti la rendrait muette.
+    # `-NoTor` produit le stub `NotBuilt` (endpoints joignables mais
+    # recherche externe indisponible) ; `-Tor` reste accepte pour
+    # compatibilite avec les commandes anterieures (implicite).
     [switch]$Tor,
+    [switch]$NoTor,
     [switch]$ZipRelease
 )
 
@@ -99,10 +102,10 @@ try {
     # onionbit-launcher : les trois lanceurs portables de la racine
     # (copies renommees du meme mini-exe, resolution relative a sa
     # position — aucun chemin de build n'est fige).
-    # `-Tor` : la feature `tor` n'existe que sur onionbit-daemon —
-    # build dedie (`--features` sur un build multi-`-p` exigerait la
-    # syntaxe `paquet/feature` sur chaque membre).
-    if ($Tor) {
+    # Tor embarque sauf `-NoTor` explicite : la feature `tor` n'existe
+    # que sur onionbit-daemon — build dedie (`--features` sur un build
+    # multi-`-p` exigerait la syntaxe `paquet/feature` sur chaque membre).
+    if (-not $NoTor) {
         cargo build --profile $cargoProfile -p onionbit-daemon --features tor
         if ($LASTEXITCODE -ne 0) { throw "cargo build a echoue ($LASTEXITCODE)" }
         cargo build --profile $cargoProfile -p onionbit-cli -p onionbit-launcher
@@ -261,7 +264,7 @@ try {
     $manifest = @{
         profile   = $BuildProfile
         daemon    = (cargo pkgid -p onionbit-daemon).Split("#")[-1]
-        tor       = [bool]$Tor
+        tor       = (-not $NoTor)
         ui        = "OnionBit.exe (Flutter windows $BuildProfile) + web/"
         layout    = "portable ADR-0018 (OnionBit.portable + <os>/)"
         api       = $listen
