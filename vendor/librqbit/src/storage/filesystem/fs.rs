@@ -89,11 +89,19 @@ impl TorrentStorage for FilesystemStorage {
         // vraisemblablement jamais relus ; le dire au cache OS evite
         // qu'un re-check de 40 Go evince tout (erreur ignoree : le
         // hint n'est jamais une cause d'echec de lecture).
-        #[cfg(unix)]
+        // nix ne publie posix_fadvise que sur ces cibles (pas macOS).
+        #[cfg(any(
+            target_os = "linux",
+            target_os = "android",
+            target_os = "emscripten",
+            target_os = "fuchsia",
+            target_os = "wasi",
+            target_env = "uclibc",
+            target_os = "freebsd"
+        ))]
         if hint == ReadHint::Volatile {
-            use std::os::unix::io::AsRawFd;
             let _ = nix::fcntl::posix_fadvise(
-                guard.as_raw_fd(),
+                &*guard,
                 offset.try_into().unwrap_or(i64::MAX),
                 buf.len() as i64,
                 nix::fcntl::PosixFadviseAdvice::POSIX_FADV_DONTNEED,

@@ -243,11 +243,19 @@ impl OpenedFile {
         // ADR-0023 etape 87 : acces sequentiel attendu sur les
         // lectures (verification de pieces) — hint posix_fadvise,
         // erreur ignoree (jamais une cause d'echec).
-        #[cfg(unix)]
+        // nix ne publie posix_fadvise que sur ces cibles (pas macOS).
+        #[cfg(any(
+            target_os = "linux",
+            target_os = "android",
+            target_os = "emscripten",
+            target_os = "fuchsia",
+            target_os = "wasi",
+            target_env = "uclibc",
+            target_os = "freebsd"
+        ))]
         if !for_write {
-            use std::os::unix::io::AsRawFd;
             let _ = nix::fcntl::posix_fadvise(
-                f.as_raw_fd(),
+                &f,
                 0,
                 0,
                 nix::fcntl::PosixFadviseAdvice::POSIX_FADV_SEQUENTIAL,

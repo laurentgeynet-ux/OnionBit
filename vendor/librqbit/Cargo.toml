@@ -221,7 +221,7 @@ default-features = false
 
 [dependencies.nix]
 version = "0.30"
-features = ["uio"]
+features = ["uio", "fs"]
 
 [dependencies.notify]
 version = "8"
