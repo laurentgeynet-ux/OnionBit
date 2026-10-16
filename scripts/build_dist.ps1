@@ -261,6 +261,7 @@ try {
     $manifest = @{
         profile   = $BuildProfile
         daemon    = (cargo pkgid -p onionbit-daemon).Split("#")[-1]
+        tor       = [bool]$Tor
         ui        = "OnionBit.exe (Flutter windows $BuildProfile) + web/"
         layout    = "portable ADR-0018 (OnionBit.portable + <os>/)"
         api       = $listen
