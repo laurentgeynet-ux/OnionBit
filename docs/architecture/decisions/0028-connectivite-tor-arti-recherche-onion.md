@@ -353,10 +353,17 @@ habille des zones existantes, aucune refonte :
   backend `tpb-api` via exit : jalons roadmap, pas la v1.
 - **Plan « côté service »** (hébergement `.onion`, bootstrap via
   Tor, pont Tor-over-OnionBit) : trajectoire documentée ci-dessous
-  — exploration phase 3, ADR dédié requis avant engagement.
+  — phase 3 engagée par l'ADR-0029 (Proposée) ; le pont
+  Tor-over-OnionBit reste rejeté par son exigence de séparation.
 
 ## Trajectoire — phase 3 « côté service » (exploration, non engagée)
 
+> **Engagée par l'ADR-0029 (Proposée, 2026-10-17)** — cette
+> trajectoire devient le projet « adresses `.onion` dans
+> Messagerie/Canaux/Coffre », borné par l'exigence « fusion UI,
+> transports séparés ». Le texte ci-dessous reste l'analyse de
+> fond ; les jalons vivent dans `roadmap_adr0029.md`.
+>
 > Direction documentée à la demande d'une revue externe
 > (2026-10-16) : porter/relayer des sous-systèmes OnionBit *côté
 > `.onion`*. Aucun code v1 n'en dépend ; condition première :

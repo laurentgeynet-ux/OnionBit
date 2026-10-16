@@ -3,6 +3,27 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## ADR-0029 (Proposée) : `.onion` dans Messagerie/Canaux/Coffre — fusion UI, transports séparés (2026-10-17)
+
+Cadrage de la « trajectoire phase 3 » de l'ADR-0028 en projet dédié :
+intégrer les adresses `.onion` dans la Messagerie, les Canaux et le
+Coffre **au niveau de l'interface uniquement** — Tor n'envoie pas dans
+OnionBit, OnionBit n'envoie pas dans Tor ; les deux plans restent
+complètement séparés et chaque flux emprunte le plan de son adresse.
+
+- **ADR-0029** (`docs/architecture/decisions/0029-…`) : deux plans /
+  une interface, identité `.onion` dérivée HKDF
+  `onionbit/identity/tor-hs/v1` (jamais `ipv8-sign`), badging UI par
+  plan (couleurs distinctes), chat UI modernisée, 6 questions
+  ouvertes à arbitrer avant code.
+- **Roadmap** : Phase 20 dans `roadmap.md` + `roadmap_adr0029.md`
+  (étapes 120-128 ; 120-121 = jalons de décision — spike
+  `onion-service` arti + arbitrage — les étapes code sont
+  conditionnelles à leur issue).
+- ADR-0028 : la trajectoire phase 3 est renvoyée vers l'ADR-0029 ;
+  le pont Tor-over-OnionBit reste rejeté par l'exigence de
+  séparation.
+
 ## Zone publique : explorateur `data/public` + réordonnancement sidebar (2026-10-16)
 
 Nouvelle entrée sidebar **« Zone publique »** (`/public-zone`) :
