@@ -15,6 +15,10 @@ enum DownloadFilter {
   /// En cours de téléchargement (`DOWNLOADING`, métadonnées, check).
   downloading('downloading'),
 
+  /// Pas en téléchargement : ni dans les statuts « downloading » ni
+  /// terminé — typiquement arrêté/en erreur avant complétion.
+  notDownloading('not_downloading'),
+
   /// Terminés (progression 100 % ou `SEEDING`).
   completed('completed'),
 
@@ -40,6 +44,7 @@ enum DownloadFilter {
       'HASHCHECKING',
       'WAITING_FOR_HASHCHECK',
     }.contains(d.status),
+    notDownloading => !downloading.matches(d) && !completed.matches(d),
     completed => d.progress >= 1.0 || d.status == 'SEEDING',
     active => d.speedDown > 0 || d.speedUp > 0,
     inactive =>
@@ -54,6 +59,7 @@ extension DownloadFilterX on DownloadFilter {
   String label(AppLocalizations l10n) => switch (this) {
     DownloadFilter.all => l10n.filterAll,
     DownloadFilter.downloading => l10n.filterDownloading,
+    DownloadFilter.notDownloading => l10n.filterNotDownloading,
     DownloadFilter.completed => l10n.filterCompleted,
     DownloadFilter.active => l10n.filterActive,
     DownloadFilter.inactive => l10n.filterInactive,

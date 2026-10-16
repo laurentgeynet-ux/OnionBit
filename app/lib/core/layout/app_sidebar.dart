@@ -58,10 +58,12 @@ class _CollapsedNotifier extends Notifier<bool> {
 }
 
 /// Sidebar fixe type Tribler (~216 px) : bouton « Ajouter » en tête,
-/// groupe « Bibliothèque » (Téléchargements + sous-filtres avec
-/// compteurs, Rechercher) puis groupe « Système » (Réglages,
-/// Diagnostic). Items en pilule arrondie, badge d'erreurs sur
-/// l'entrée Téléchargements.
+/// entrée « Téléchargements » (sous-filtres avec compteurs : Tous, En
+/// cours, Pas en téléchargement, Terminés, Actifs, Inactifs) puis
+/// groupe « Système ». La page Recherche n'a plus d'entrée ici — le
+/// champ de recherche global de la `TopBar` y mène depuis tout onglet.
+/// Items en pilule arrondie, badge d'erreurs sur l'entrée
+/// Téléchargements.
 class AppSidebar extends ConsumerWidget {
   const AppSidebar({
     super.key,
@@ -89,7 +91,9 @@ class AppSidebar extends ConsumerWidget {
   static const double collapsedWidth = 72;
 
   static const _filterIcons = {
+    DownloadFilter.all: Icons.select_all,
     DownloadFilter.downloading: Icons.downloading,
+    DownloadFilter.notDownloading: Icons.not_started_outlined,
     DownloadFilter.completed: Icons.check_circle_outline,
     DownloadFilter.active: Icons.bolt,
     DownloadFilter.inactive: Icons.pause_circle_outline,
@@ -204,7 +208,6 @@ class AppSidebar extends ConsumerWidget {
               child: ListView(
                 padding: const EdgeInsets.symmetric(horizontal: AppSpace.sm),
                 children: [
-                  if (!collapsed) _GroupLabel(l10n.sidebarGroupLibrary),
                   _NavItem(
                     d: kNavCatalog[0],
                     collapsed: collapsed,
@@ -226,24 +229,23 @@ class AppSidebar extends ConsumerWidget {
                           .toggle(),
                     ),
                   ),
-                  // Sous-filtres Téléchargements (sauf « Tous » =
-                  // entrée parente) — repliables via le chevron.
+                  // Sous-filtres Téléchargements (« Tous » inclus,
+                  // compteur = total) — repliables via le chevron.
                   if (filtersExpanded)
-                    for (final f in DownloadFilter.values.skip(1))
+                    for (final f in DownloadFilter.values)
                       _FilterItem(
                         filter: f,
                         collapsed: collapsed,
                         icon: _filterIcons[f],
+                        // `?f` absent = `queryKey` vide = filtre
+                        // « Tous » (même règle que `fromQuery`).
                         selected:
                             currentPath == '/downloads' &&
-                            currentQuery['f'] == f.queryKey,
+                            (currentQuery['f'] ?? '') == f.queryKey,
                         count: downloads?.where(f.matches).length,
                       ),
-                  _NavItem(
-                    d: kNavCatalog[1],
-                    collapsed: collapsed,
-                    selected: currentPath == '/search',
-                  ),
+                  // Pas d'entrée « Recherche » : le champ global de la
+                  // TopBar navigue vers `/search` depuis tout onglet.
                   if (!collapsed)
                     const Divider(height: AppSpace.lg)
                   else
@@ -378,7 +380,11 @@ class _FilterItem extends StatelessWidget {
         collapsed: collapsed,
         selected: selected,
         trailing: count == null ? null : _CountBadge(count: count!),
-        onTap: () => context.go('/downloads?f=${filter.queryKey}'),
+        onTap: () => context.go(
+          filter.queryKey.isEmpty
+              ? '/downloads'
+              : '/downloads?f=${filter.queryKey}',
+        ),
       ),
     );
   }

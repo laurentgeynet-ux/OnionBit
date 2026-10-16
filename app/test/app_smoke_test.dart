@@ -79,7 +79,9 @@ void main() {
 
     expect(find.text('Add'), findsWidgets);
     expect(find.text('Downloads'), findsWidgets);
-    expect(find.text('Search'), findsOneWidget);
+    // « Search » n'a plus d'entrée sidebar — le champ de recherche
+    // global de la TopBar y mène depuis tout onglet.
+    expect(find.text('Search'), findsNothing);
     expect(find.text('Diagnostics'), findsOneWidget);
     expect(find.text('No downloads'), findsOneWidget);
 
@@ -155,11 +157,12 @@ void main() {
     // Pas de barre basse (on n'est pas en compact) ...
     expect(find.byType(NavigationBar), findsNothing);
     expect(find.byType(AppSidebar), findsOneWidget);
-    // ... mais le rail est replié : le libellé « Search » de la
-    // sidebar disparaît (icône + tooltip seulement, ADR-0021 §5 —
-    // `collapsedOverride: true`). `Downloads` reste trouvable
-    // ailleurs dans l'écran (contenu de la page), donc non testé ici.
-    expect(find.text('Search'), findsNothing);
-    expect(find.byTooltip('Search'), findsOneWidget);
+    // ... mais le rail est replié : les libellés de la sidebar
+    // disparaissent (icône + tooltip seulement, ADR-0021 §5 —
+    // `collapsedOverride: true`). « Search » n'a plus d'entrée
+    // sidebar du tout (champ global de la TopBar) ; on vérifie
+    // donc le rail avec « Messages ».
+    expect(find.text('Messages'), findsNothing);
+    expect(find.byTooltip('Messages'), findsOneWidget);
   });
 }

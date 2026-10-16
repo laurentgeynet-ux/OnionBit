@@ -152,13 +152,13 @@
 
   "filterAll": "All",
   "filterDownloading": "Downloading",
+  "filterNotDownloading": "Not downloading",
   "filterCompleted": "Completed",
   "filterActive": "Active",
   "filterInactive": "Inactive",
 
   "sidebarAddDownloadTooltip": "Add a download",
   "add": "Add",
-  "sidebarGroupLibrary": "Library",
   "sidebarGroupSystem": "System",
   "sidebarFiltersCollapse": "Collapse filters",
   "sidebarFiltersExpand": "Expand filters",

@@ -3,6 +3,22 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Sidebar : entrée Recherche retirée, sous-filtres « Tous » + « Pas en téléchargement » (2026-10-16)
+
+La sidebar s'aligne sur le modèle Tribler : le libellé de groupe
+« Bibliothèque » et l'entrée « Recherche » disparaissent — le champ
+de recherche global de la `TopBar` navigue vers `/search` depuis tout
+onglet, l'entrée était redondante (la barre de navigation compacte
+conserve « Recherche », seule nav sur ce palier).
+
+Sous-filtres Téléchargements complets, chacun avec son compteur :
+**Tous** (total), **En cours**, **Pas en téléchargement** (nouveau
+`DownloadFilter.notDownloading` — arrêté/en erreur sans être terminé :
+ni `downloading` ni `completed`), **Terminés**, **Actifs**,
+**Inactifs**. Routage inchangé (`?f=not_downloading`, deep-linkable) ;
+le filtre apparaît aussi dans les chips de la vue compacte, qui
+itère `DownloadFilter.values`.
+
 ## Recherche locale : statut réel des téléchargements + actions de zone (2026-10-16)
 
 Les résultats déjà gérés par le daemon n'affichent plus un badge

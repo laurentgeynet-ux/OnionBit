@@ -145,13 +145,13 @@
 
   "filterAll": "Tous",
   "filterDownloading": "En cours",
+  "filterNotDownloading": "Pas en téléchargement",
   "filterCompleted": "Terminés",
   "filterActive": "Actifs",
   "filterInactive": "Inactifs",
 
   "sidebarAddDownloadTooltip": "Ajouter un téléchargement",
   "add": "Ajouter",
-  "sidebarGroupLibrary": "Bibliothèque",
   "sidebarGroupSystem": "Système",
   "sidebarFiltersCollapse": "Replier les filtres",
   "sidebarFiltersExpand": "Déplier les filtres",
