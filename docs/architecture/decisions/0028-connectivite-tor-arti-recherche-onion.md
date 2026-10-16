@@ -1,7 +1,11 @@
 # ADR-0028 — Connectivité Tor embarquée (arti) : recherche onion et sortie passerelle
 
-Statut : Proposée (2026-10-16). Plan d'implantation :
-`docs/plans/roadmap_adr0028.md` (étapes 112-118).
+Statut : Proposée (2026-10-16), amendée après revue externe
+(2026-10-16) — §1 parseur `httparse`, §5 trait
+`OnionSearchBackend` + erreurs explicites, §7 passerelle
+requalifiée phase 2 avec contrainte de sauts, §Sécurité étoffée.
+Plan d'implantation : `docs/plans/roadmap_adr0028.md`
+(étapes 112-118 ; 117 = phase 2).
 
 ## Contexte
 
@@ -48,10 +52,19 @@ inacceptables en dépendance obligatoire).
   (`off`/`bootstrapping`/`ready`/`dormant`/`error` + progression %).
 - `fetch_onion(url) -> Result<Response, TorError>` : ouvre un
   `DataStream` arti (`connect` supporte nativement les hôtes
-  `.onion`), écrit une requête **HTTP/1.1 brute** (`GET`/`HEAD`
-  seulement), lit une réponse bornée. **Pas de TLS** : le transport
-  onion est chiffré de bout en bout et authentifié — la clé ed25519
-  du service *est* l'adresse. TLS-par-dessus (rares cibles
+  `.onion` — **feature `onion-service-client` requise**, elle tire
+  `tor-hsclient`/`tor-hscrypto` ; features recommandées
+  `rustls,tokio,onion-service-client` — rustls évite OpenSSL),
+  écrit une requête **HTTP/1.1** (`GET`/`HEAD` seulement), lit une
+  réponse bornée. Le décodage de la réponse (statut, en-têtes,
+  `Transfer-Encoding: chunked`, fins CRLF/LF) passe par
+  **`httparse`** (MIT/Apache-2.0, zéro allocation, éprouvé) — un
+  parseur maison serait un piège classique. Les redirections
+  301/302 sont suivies uniquement si `Location` reste un hôte
+  `.onion` de l'allowlist, bornées par `max_redirects` (sites
+  miroirs fréquents). **Pas de TLS** : le transport onion est
+  chiffré de bout en bout et authentifié — la clé ed25519 du
+  service *est* l'adresse. TLS-par-dessus (rares cibles
   HTTPS-on-onion) est hors scope v1.
 - Deux modes de transport, une seule façade :
   - `Embedded` : arti embarqué — chemin nominal (autonomie).
@@ -78,7 +91,11 @@ La crate dépend de `onionbit-network-policy` (frontière §3) et
   "max_response_bytes": 524288,
   "request_timeout_ms": 30000,
   "bootstrap_timeout_ms": 120000,
-  "gateway": { "enabled": false, "rate_limit_per_circuit": 10 }
+  "max_redirects": 3,
+  "search": { "backends": { "tpb": { "mirrors": ["<a>.onion", "…"],
+      "url_template": "https://{host}/search.php?q={q}" } } },
+  "gateway": { "enabled": false, "rate_limit_per_circuit": 10,
+               "min_requester_hops": 3 }
 }
 ```
 
@@ -88,7 +105,9 @@ La crate dépend de `onionbit-network-policy` (frontière §3) et
   remplacement sans rebuild.
 - `enabled` **défaut `false`**, opt-in explicite : le bootstrap Tor
   télécharge un consensus (activité réseau visible du FAI) et Tor est
-  bloqué dans certains pays — jamais de démarrage silencieux.
+  bloqué dans certains pays — jamais de démarrage silencieux, et le
+  bootstrap ne doit **jamais bloquer le daemon** (runtime en tâche
+  de fond ; échec → `state:"error"` diagnostic, daemon opérationnel).
 - Les entrées `allowed_hosts` sont validées au chargement :
   suffixe `.onion` + format v3 vérifié par checksum (§4) — une
   entrée invalide est rejetée avec un warn explicite.
@@ -123,14 +142,25 @@ cibles `TorTargetPolicy`, et plus tard tout parsing de liens
 ### 5. Source de recherche externe
 
 - `GET /api/search/external?source=tpb&q=…` — sous `api_key_auth` :
-  - `source` ∈ backends déclarés en config (v1 : `tpb` →
-    `https://<tpb>.onion/search.php?q=…`) ;
+  - `source` ∈ backends déclarés en config (v1 : `tpb`) — chaque
+    backend implémente un **trait `OnionSearchBackend`**
+    (`search(query) -> Vec<ExternalResult>`) pour isoler la
+    fragilité du scraping et permettre d'autres sources (ahmia…) ;
+  - chaque backend déclare une **liste de miroirs** dans
+    `tor.search.backends.<id>.mirrors` (adresses onion
+    interchangeables) — les `.onion` changent ou tombent : le
+    backend bascule sur le miroir suivant avant de rendre erreur ;
   - scraping HTML → résultats normalisés
     `{name, infohash, size_bytes, seeds, leechers, category,
     source}` ;
   - validation stricte des résultats : infohash 40-hex ou btih
     base32, borne du nombre de résultats, champs texte traités
     comme non fiables (jamais ré-interprétés côté UI) ;
+  - **erreurs explicites** remontées à l'UI —
+    `mirror_unreachable`, `captcha_detected` (page PoW/vérif
+    anti-DDoS fréquente sur les onion à fort trafic),
+    `structure_changed` (selecteurs HTML en échec → probable
+    refonte du site), `bootstrap_failed` — jamais un échec muet ;
   - résultats diffusés via la notification SSE
     `remote_query_results` **existante** (même cycle de vie :
     uuid, progression, uuid-based stop) — l'app reçoit une source
@@ -164,7 +194,12 @@ cibles `TorTargetPolicy`, et plus tard tout parsing de liens
 - L'UI distingue la source (« TPB (Tor) ») de « Réseau »
   (overlay IPv8) — l'utilisateur voit quel canal porte sa requête.
 
-### 7. Sortie passerelle `PEER_FLAG_EXIT_TOR` (extension)
+### 7. Sortie passerelle `PEER_FLAG_EXIT_TOR` (extension) — **phase 2**
+
+> Livraison **différée** (roadmap : étape 117 après retour
+> d'expérience de la v1, étapes 112-116). La valeur autonome v1
+> (arti embarqué) ne dépend pas de cette passerelle ; elle pose
+> des risques propres documentés ici avant tout engagement.
 
 Un noeud avec `tor.enabled && tor.gateway.enabled` annonce
 `PEER_FLAG_EXIT_TOR = 1<<16` (bits 0-3 = pyipv8, 14 = `EXIT_BACKUP`,
@@ -180,13 +215,30 @@ pairs non-OnionBit).
 - Garde-fous passerelle : `rate_limit_per_circuit`,
   `max_response_bytes` identique, jamais de cible clearnet, refus
   silencieux (comme `EXIT_HTTP` — pas d'oracle).
+- **Contrainte de sauts (demandeur)** : tout circuit destiné à
+  porter une requête `EXIT_TOR` doit être construit avec **≥ 3
+  sauts** (`tor.gateway.min_requester_hops`, défaut 3), quel que
+  soit le profil actif — sur 1 saut, la passerelle associerait
+  l'IP réelle du demandeur *et* le terme de recherche. Limite
+  honnête : une passerelle ne **peut pas vérifier** le nombre de
+  sauts (elle ne voit que son hop entrant — propriété de
+  l'onion routing elle-même) ; la contrainte est donc une politique
+  **côté demandeur**, documentée comme telle — le client refuse
+  d'émettre une requête `EXIT_TOR` sur un circuit < 3 sauts.
+- **Risque honeypot** : n'importe quel attaquant peut annoncer
+  `EXIT_TOR` pour collecter les recherches des pairs sans Tor.
+  Non éliminable (propriété de tout exit volontaire) — assumée,
+  affichée dans l'UI (« la passerelle voit vos recherches »), et
+  l'usage passerelle reste un repli explicite quand Tor local
+  est indisponible, jamais le chemin par défaut.
 - **Modèle de confiance, honnêtement** : la passerelle *voit la
   requête en clair* — comme tout noeud de sortie. Le demandeur
-  reste protégé côté origine (son IP n'atteint pas la passerelle,
-  qui ne voit qu'un circuit), et le tronçon passerelle→service est
-  protégé par Tor. C'est du **« Tor-over-OnionBit »** : un pair
-  sans Tor installé (mobile, poste contraint) garde l'accès aux
-  sources onion via les volontaires — affiché comme tel dans l'UI.
+  reste protégé côté origine (sous la contrainte ≥3 sauts, son
+  IP n'atteint pas la passerelle), et le tronçon
+  passerelle→service est protégé par Tor. C'est du
+  **« Tor-over-OnionBit »** : un pair sans Tor installé (mobile,
+  poste contraint) garde l'accès aux sources onion via les
+  volontaires.
 
 ### 8. Hors scope explicite
 
@@ -209,6 +261,17 @@ pairs non-OnionBit).
   pas de démarrage de téléchargement automatique depuis un
   résultat externe, jitter appliqué aux requêtes passerelle.
   Limite assumée et documentée (THREAT-MODEL à amender).
+- **Honeypot `EXIT_TOR`** : cf. §7 — collecte des recherches par
+  passerelles malveillantes ; atténuée par la contrainte de sauts
+  demandeur et l'affichage UI, non éliminable.
+- **Bootstrap Tor bloqué** (FAI/censure — autorités d'annuaire et
+  gardes publics filtrés) : le runtime reste non-bloquant,
+  `state:"error"` remonte à l'UI avec diagnostic clair ; bridges
+  = jalon ultérieur (§8).
+- **Fragilité opérationnelle du scraping** : protections
+  anti-DDoS (PoW, pages de vérification), refontes HTML, miroirs
+  mouvants — traitées par les erreurs explicites + bascule de
+  miroirs (§5), pas par du code défensif opaque.
 - **Requêtes jamais loguées** ; pas de réponse brute dans les
   logs ; SSE derrière la clé API (règle secrets étendue aux
   métadonnées sensibles).
