@@ -3,7 +3,8 @@
 Statut : Proposée (2026-10-16), amendée après revue externe
 (2026-10-16) — §1 parseur `httparse`, §5 trait
 `OnionSearchBackend` + erreurs explicites, §7 passerelle
-requalifiée phase 2 avec contrainte de sauts, §Sécurité étoffée.
+requalifiée phase 2 ; sauts passerelle couplés à `number_hops`
+(un seul réglage — décision utilisateur), §Sécurité étoffée.
 Plan d'implantation : `docs/plans/roadmap_adr0028.md`
 (étapes 112-118 ; 117 = phase 2).
 
@@ -94,10 +95,13 @@ La crate dépend de `onionbit-network-policy` (frontière §3) et
   "max_redirects": 3,
   "search": { "backends": { "tpb": { "mirrors": ["<a>.onion", "…"],
       "url_template": "https://{host}/search.php?q={q}" } } },
-  "gateway": { "enabled": false, "rate_limit_per_circuit": 10,
-               "min_requester_hops": 3 }
+  "gateway": { "enabled": false, "rate_limit_per_circuit": 10 }
 }
 ```
+
+> Pas de `min_requester_hops` séparé : le nombre de sauts des
+> circuits passerelle **est** `download_defaults.number_hops` —
+> un seul réglage d'anonymat pour tout le logiciel (§7).
 
 - **Aucune valeur en dur** : seuils, timeouts et adresses vivent dans
   la config (règle AGENTS). L'adresse d'un backend (ex. TPB) est en
@@ -191,6 +195,11 @@ cibles `TorTargetPolicy`, et plus tard tout parsing de liens
   Argument de cohérence : en posture claire (hops 0), une recherche
   externe non-Tor fuiterait l'IP et le terme — Tor y est au
   contraire le plus utile.
+- Conséquence du couplage des sauts (§7) : la passerelle n'est
+  accessible qu'aux profils dont `number_hops ≥ 3` — en profil
+  `legacy` (1 saut) elle est indisponible ; la recherche **locale**
+  via arti reste, elle, utilisable dans tous les profils (le
+  tronçon Tor a ses 3 relais garantis par le protocole).
 - L'UI distingue la source (« TPB (Tor) ») de « Réseau »
   (overlay IPv8) — l'utilisateur voit quel canal porte sa requête.
 
@@ -215,16 +224,25 @@ pairs non-OnionBit).
 - Garde-fous passerelle : `rate_limit_per_circuit`,
   `max_response_bytes` identique, jamais de cible clearnet, refus
   silencieux (comme `EXIT_HTTP` — pas d'oracle).
-- **Contrainte de sauts (demandeur)** : tout circuit destiné à
-  porter une requête `EXIT_TOR` doit être construit avec **≥ 3
-  sauts** (`tor.gateway.min_requester_hops`, défaut 3), quel que
-  soit le profil actif — sur 1 saut, la passerelle associerait
-  l'IP réelle du demandeur *et* le terme de recherche. Limite
-  honnête : une passerelle ne **peut pas vérifier** le nombre de
-  sauts (elle ne voit que son hop entrant — propriété de
-  l'onion routing elle-même) ; la contrainte est donc une politique
-  **côté demandeur**, documentée comme telle — le client refuse
-  d'émettre une requête `EXIT_TOR` sur un circuit < 3 sauts.
+- **Sauts — un seul réglage, aucun découplage** : le circuit
+  passerelle est construit avec **`number_hops` du profil actif**
+  (le même réglage que les téléchargements — pas de paramètre
+  séparé qui pourrait diverger). La passerelle n'existe que si
+  `number_hops ≥ 3` : en dessous, `via_gateway` est **indisponible**
+  (UI grisée + explication, jamais d'élévation silencieuse ni de
+  repli sur un circuit plus court). En dessous de 3 sauts, la
+  passerelle associerait l'IP réelle du demandeur *et* le terme
+  de recherche. Limite honnête : une passerelle ne **peut pas
+  vérifier** le nombre de sauts (elle ne voit que son hop
+  entrant — propriété de l'onion routing elle-même) ; la
+  contrainte est donc une politique **côté demandeur**,
+  documentée comme telle.
+- **Côté Tor, rien à régler** : le chemin passerelle→service est
+  un circuit Tor classique — 3 relais **imposés par le protocole**
+  (plus 3 sauts côté service jusqu'au point de rendez-vous pour
+  un `.onion`). arti n'expose pas de nombre de sauts : l'anonymat
+  du tronçon Tor est invariant, seul le tronçon OnionBit suit le
+  réglage utilisateur.
 - **Risque honeypot** : n'importe quel attaquant peut annoncer
   `EXIT_TOR` pour collecter les recherches des pairs sans Tor.
   Non éliminable (propriété de tout exit volontaire) — assumée,
