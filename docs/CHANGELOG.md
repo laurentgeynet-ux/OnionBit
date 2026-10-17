@@ -3,6 +3,30 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## ADR-0030 Proposée — navigateur `.onion` DilloRust via proxy Tor loopback (2026-10-17)
+
+Phase 21 cadrée : intégrer le port Rust de Dillo (dépôt externe
+`dillorust`) comme navigateur `.onion` de l'écosystème.
+
+- **Décision d'architecture** : proxy HTTP forward loopback servi par
+  `onionbit-tor` (`CONNECT` + URI absolue → `TorClient::connect`) —
+  le `http_proxy` porté de `dillo-net` suffit, aucun code de transport
+  côté navigateur ; un seul `TorClient`/bootstrap pour recherche +
+  services + navigation, circuits isolés par origine
+  (`StreamPrefs::set_isolation`).
+- **Rejetés** : dial in-process (second client arti, guards
+  divergents, fusion des dépôts), SOCKS5 (non parlé par dillo),
+  vendoring, WebView/Tor Browser embarqué.
+- **Positionnement honnête** : « lecteur `.onion` » à surface
+  d'exploit minimale — pas un remplaçant du Tor Browser ; fingerprinting
+  passif résiduel documenté, limites CSS/JS assumées.
+- **Politique** : `.onion` v3 par défaut, littéraux IP/loopback
+  refusés, `allow_clearnet_exit` opt-in (défaut `false`).
+- **Vérification d'état** : moteur dillorust largement porté mais
+  binaire navigable inexistant (phase 6 incomplète) — chantier
+  conditionné ; étapes 129-130 = arbitrage §8 + spike proxy +
+  vérification du `http_proxy` porté avant tout code de produit.
+
 ## ADR-0029 étape 122 : identité `.onion` dérivée (2026-10-17)
 
 Première brique de la phase 3 — adresse `.onion` stable, dérivée de
