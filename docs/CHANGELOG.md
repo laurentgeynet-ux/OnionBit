@@ -3,6 +3,26 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## ADR-0029 Acceptée — arbitrage des questions ouvertes (2026-10-17)
+
+Étape 121 : les 6 questions du §8 sont tranchées —
+
+- **Protocole messagerie `.onion`** : trame TCP fine (préfixe-longueur)
+  portant `OBV1`/`obmsg` inchangé sur `DataStream` arti — pas
+  d'endpoint REST.
+- **Présence** : tentative à l'envoi uniquement (modèle Briar) — pas
+  de ping périodique ; repli boîtes aux lettres ADR-0026.
+- **Conversation** : fil unifié avec badge plan par message ; liaison
+  des adresses OnionBit↔Tor toujours explicite.
+- **Priorité** : messagerie d'abord (API `launch_onion_service`
+  stable) ; coffre en 127 (`restricted-discovery` expérimental).
+- **Séquencement** : indépendant de l'étape 117 (`EXIT_TOR`
+  différée).
+- **Redesign chat** : incrémental borné (étape 125) + refonte de la
+  zone Contacts.
+
+Étapes 124-125 précisées dans `roadmap_adr0029.md` en conséquence.
+
 ## Harnais interop pyipv8 automatisé (2026-10-17)
 
 `scripts/run_interop_suite.ps1` devient un vrai harnais : sans

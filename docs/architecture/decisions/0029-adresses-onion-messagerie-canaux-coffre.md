@@ -1,8 +1,7 @@
 # ADR-0029 — Adresses `.onion` dans la Messagerie, les Canaux et le Coffre : fusion UI, transports séparés
 
-Statut : **Proposée** (2026-10-17) — document de cadrage ouvert à
-discussion ; aucune implantation n'est engagée tant que les questions
-du §8 ne sont pas arbitrées.
+Statut : **Acceptée** (2026-10-17) — questions du §8 arbitrées à
+l'étape 121 ; les jalons 122+ sont précisés en conséquence.
 Plan d'implantation : `docs/plans/roadmap_adr0029.md` (étapes 120+ —
 jalons de décision avant jalons de code).
 Succède à la « trajectoire phase 3 » de l'ADR-0028, qu'elle engage.
@@ -168,22 +167,39 @@ Héberger un service caché exige le côté **serveur** d'arti
   s'enregistrent via `TorTargetPolicy` — l'allowlist s'étend aux
   pairs approuvés, jamais de fetch libre.
 
-## 8. Questions ouvertes (à arbitrer avant code)
+## 8. Questions ouvertes — arbitrées (étape 121, 2026-10-17)
 
-1. **Protocole messagerie sur `.onion`** : même format de messages
-   e2e porté sur un transport TCP/Tor dédié, ou endpoint REST/Tor
-   minimal ? Réutilisation de `obmsg`/`obv1` ou nouveau type de
-   trame ?
-2. **Présence `.onion`** : ping périodique (coût/empreinte) ou
-   tentative à l'envoi seulement ?
-3. **Multi-plan d'une conversation** : fil unifié avec badge par
-   message, ou conversations séparées par plan ?
-4. **Coffre nomade** : priorité vs messagerie — le cas d'usage
-   (accéder à son propre coffre) ne dépend d'aucun pair.
-5. **Séquencement** : avant/après l'étape 117 (passerelle
-   `EXIT_TOR`) et les 5 questions UX Tor en suspens ?
-6. **Étendue du redesign chat** : refonte complète ou pastilles
-   plan incrémentales ?
+1. **Protocole messagerie sur `.onion`** → **trame TCP fine portant
+   `OBV1`/`obmsg` inchangé**. La charge utile e2e (sérialisation,
+   ChaCha20-Poly1305, validation, stockage) est identique sur les
+   deux plans ; seul le transport change (`DataStream` arti vs
+   datagramme overlay). Rejeté : endpoint REST/Tor minimal — surface
+   HTTP superflue et second format à auditer.
+2. **Présence `.onion`** → **tentative à l'envoi uniquement**
+   (modèle Briar). Pas de ping périodique : circuits tenus =
+   empreinte d'analyse de trafic + coût gardes/CPU. Rendez-vous à
+   l'envoi ; échec → repli boîte aux lettres (ADR-0026). Cache
+   « dernier contact vu » + bouton manuel « tester la joignabilité »
+   autorisé, jamais automatique.
+3. **Multi-plan d'une conversation** → **fil unifié, badge plan par
+   message**. Un contact agrège ses adresses ; chaque bulle porte
+   la pastille du plan réellement emprunté (vert OnionBit / violet
+   Tor). La liaison des deux adresses d'un même contact reste
+   **explicite** — jamais inférée.
+4. **Priorité** → **messagerie d'abord** (étapes 122-125), coffre
+   en 127. La messagerie n'exige que l'API stable
+   `launch_onion_service` et construit la machinerie mutualisable
+   (dérivation HKDF, persistance, mapping service) ; le coffre
+   repose sur `restricted-discovery` = `__is_experimental` — risque
+   semver remis à plus tard.
+5. **Séquencement vs étape 117 (`EXIT_TOR`)** → **indépendant** ;
+   117 reste différée par design. La passerelle sert des pairs sans
+   Tor (sortie exit, threat-model honeypot) — aucune dépendance avec
+   l'hébergement de services.
+6. **Étendue du redesign chat** → **incrémental borné**, étape 125 :
+   bulles/regroupement/états d'envoi, pastilles plan, **refonte de
+   la zone Contacts** (liste actuelle ambiguë — entrées et icônes
+   confuses). Pas de refonte complète de l'architecture Flutter.
 
 ## Alternatives considérées
 
