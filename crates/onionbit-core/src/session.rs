@@ -334,6 +334,11 @@ struct Inner {
     /// y compris apres un `swap_tor_stack` (le service republie sur
     /// le nouveau runtime).
     tor_hs_seed: std::sync::RwLock<Option<[u8; 32]>>,
+    /// Seeds du service `.onion` **coffre** (ADR-0029 etape 127) :
+    /// `(hs_seed tor-hs-vault/v1, client_seed tor-hs-client/v1)`
+    /// derives de `store_root` — meme cycle de vie que
+    /// `tor_hs_seed` (meme re-publication apres swap).
+    tor_vault_seeds: std::sync::RwLock<Option<([u8; 32], [u8; 32])>>,
     /// Registre des backends de recherche externe (`source` →
     /// backend — `tor.search.backends.<source>`, ADR-0028 §5).
     /// Mutable : injection de doubles en test et futur
@@ -591,6 +596,12 @@ impl CoreSession {
         // ADR-0029 etape 122 : seed du service `.onion` d'identite —
         // capture avant que `material` soit consomme par la stack.
         let tor_hs_seed = material.as_ref().map(|m| m.tor_hs_seed);
+        let tor_vault_seeds = material.as_ref().map(|m| {
+            (
+                onionbit_crypto::identity::derive_tor_vault_hs_seed(&m.store_root),
+                onionbit_crypto::identity::derive_tor_vault_client_seed(&m.store_root),
+            )
+        });
         let ipv8 = start_ipv8_with_identity(
             config,
             db.clone(),
@@ -643,6 +654,11 @@ impl CoreSession {
                 .tor_hs_seed
                 .write()
                 .unwrap_or_else(|e| e.into_inner()) = Some(seed);
+            *self
+                .inner
+                .tor_vault_seeds
+                .write()
+                .unwrap_or_else(|e| e.into_inner()) = tor_vault_seeds;
             self.spawn_onion_service();
         }
         // ADR-0029 etape 123 : les `.onion` associes aux pairs
@@ -678,9 +694,11 @@ impl CoreSession {
         // Le runtime courant porte les reglages effectifs — apres
         // un hot-swap `inner.config.tor` est perime.
         let rt = self.tor();
-        if !rt.settings().onion_service.enabled {
+        let svc_cfg = rt.settings().onion_service.clone();
+        if !svc_cfg.enabled && !svc_cfg.vault_enabled {
             return;
         }
+        let session = self.clone();
         tokio::spawn(async move {
             let deadline = tokio::time::Instant::now()
                 + rt.settings().bootstrap_timeout
@@ -688,18 +706,21 @@ impl CoreSession {
             loop {
                 match rt.state() {
                     onionbit_tor::TorState::Ready => {
-                        match rt.launch_onion_identity(seed) {
-                            Ok(()) => {
-                                let info = rt.onion_service();
-                                tracing::info!(
-                                    state = %info.state,
-                                    "service .onion d'identite publie"
-                                );
-                            }
-                            Err(e) => {
-                                tracing::warn!(error = %e, "service .onion : lancement echoue")
+                        if svc_cfg.enabled {
+                            match rt.launch_onion_identity(seed) {
+                                Ok(()) => {
+                                    let info = rt.onion_service();
+                                    tracing::info!(
+                                        state = %info.state,
+                                        "service .onion d'identite publie"
+                                    );
+                                }
+                                Err(e) => {
+                                    tracing::warn!(error = %e, "service .onion : lancement echoue")
+                                }
                             }
                         }
+                        session.spawn_onion_vault(&rt);
                         break;
                     }
                     // `Off` transitoire (le swap declenche
@@ -723,6 +744,88 @@ impl CoreSession {
                 }
             }
         });
+    }
+
+    /// ADR-0029 etape 127 : heberge le service `.onion` **coffre**
+    /// (restricted-discovery, adresse `tor-hs-vault/v1` dediee) une
+    /// fois la lane `Ready` — appele par le watcher apres le
+    /// lancement de l'identite. Les blobs servis (`OBV1`,
+    /// `manifest.obm`) sont deja chiffres : le handler ne fait que
+    /// lire l'etat courant.
+    #[cfg(feature = "hs")]
+    fn spawn_onion_vault(&self, rt: &onionbit_tor::TorRuntime) {
+        if !rt.settings().onion_service.vault_enabled {
+            return;
+        }
+        let Some((hs_seed, client_seed)) = *self
+            .inner
+            .tor_vault_seeds
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+        else {
+            return;
+        };
+        let (s_vault, s_manifest) = (self.clone(), self.clone());
+        let handler = Arc::new(crate::services::onion_vault::VaultOnionHandler::new(
+            Arc::new(move || s_vault.messaging().map(|m| m.export_vault())),
+            Arc::new(move || s_manifest.private_zone().and_then(|z| z.manifest_bytes())),
+        ));
+        match rt.launch_onion_vault(
+            hs_seed,
+            client_seed,
+            crate::services::onion_vault::ONION_VAULT_PORT,
+            handler,
+        ) {
+            Ok(()) => {
+                let info = rt.onion_vault_service();
+                tracing::info!(state = %info.state, "coffre .onion publie (restricted-discovery)");
+            }
+            Err(e) => tracing::warn!(error = %e, "coffre .onion : lancement echoue"),
+        }
+    }
+
+    #[cfg(not(feature = "hs"))]
+    fn spawn_onion_vault(&self, _rt: &onionbit_tor::TorRuntime) {}
+
+    /// Tire un blob de notre propre coffre `.onion` (etape 127) —
+    /// l'adresse et la cle d'autorisation client derivent de la
+    /// meme identite : un appareil nomade retrouve son coffre sans
+    /// configuration. `None` = clefs absentes, feature inactive,
+    /// service hors ligne ou ressource inexistante — l'appelant
+    /// replie sur les ponts `pull_store` (jamais de point dur).
+    async fn vault_fetch_onion(&self, path: &str) -> Option<Vec<u8>> {
+        let (hs_seed, client_seed) = (*self
+            .inner
+            .tor_vault_seeds
+            .read()
+            .unwrap_or_else(|e| e.into_inner()))?;
+        let rt = self.tor();
+        let addr = onionbit_tor::TorRuntime::vault_onion_address(hs_seed)?;
+        // La cle `KS_hsc_desc_enc` doit etre au keystore avant le
+        // fetch (le connecteur la lit a la connexion) — idempotent.
+        rt.install_vault_client_key(&addr, client_seed).ok()?;
+        let _ = rt.allow_peer_onion(&addr);
+        let resp = rt.fetch_onion(&format!("http://{addr}{path}")).await.ok()?;
+        if resp.status != 200 {
+            return None;
+        }
+        Some(resp.body)
+    }
+
+    /// `OBV1` du coffre `.onion` (etape 127) — `None` si
+    /// injoignable (repli `pull_store` cote appelant).
+    pub async fn vault_pull_onion(&self) -> Option<Vec<u8>> {
+        self.vault_fetch_onion("/vault").await
+    }
+
+    /// `manifest.obm` du coffre `.onion` (etape 127) : recupere puis
+    /// restaure le catalogue de la zone privee montee (fusion —
+    /// `.bak` conserve). `Some(n)` = entrees connues apres fusion ;
+    /// `None` = zone absente, coffre injoignable ou blob refuse.
+    pub async fn manifest_pull_onion(&self) -> Option<usize> {
+        let blob = self.vault_fetch_onion("/manifest").await?;
+        let zone = self.private_zone()?;
+        zone.restore_manifest(&blob).ok()
     }
 
     /// Phase identitaire courante (`GET /api/identity`).
@@ -1018,6 +1121,7 @@ impl CoreSession {
                 bandwidth: Arc::new(crate::services::bandwidth::CongestionController::new()),
                 tor: std::sync::RwLock::new(tor),
                 tor_hs_seed: std::sync::RwLock::new(None),
+                tor_vault_seeds: std::sync::RwLock::new(None),
                 search_backends: std::sync::Mutex::new(search_backends),
                 started_at: std::time::Instant::now(),
             }),

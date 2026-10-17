@@ -88,6 +88,12 @@ pub(crate) struct Inner {
     /// que le slot existe ; remplace ou droppe = depublie.
     #[cfg(feature = "hs")]
     pub(crate) onion: Mutex<Option<crate::service::OnionServiceSlot>>,
+    /// Service `.onion` **coffre** (etape 127) — adresse distincte
+    /// (`tor-hs-vault/v1`), descripteur verrouille par l'autorisation
+    /// client x25519. Slot separe : arreter l'identite ne depublie
+    /// pas le coffre (et inversement).
+    #[cfg(feature = "hs")]
+    pub(crate) onion_vault: Mutex<Option<crate::service::OnionServiceSlot>>,
     /// Handlers par port virtuel `BEGIN` — consultes a chaque
     /// `StreamRequest` : une injection tardive (messagerie prete
     /// apres le lancement du service) sert sans republication.
@@ -137,6 +143,8 @@ impl TorRuntime {
                 client: Mutex::new(None),
                 #[cfg(feature = "hs")]
                 onion: Mutex::new(None),
+                #[cfg(feature = "hs")]
+                onion_vault: Mutex::new(None),
                 #[cfg(feature = "hs")]
                 link_handlers: Mutex::new(std::collections::HashMap::new()),
             }),
@@ -322,6 +330,124 @@ impl TorRuntime {
             Err(TorError::OnionService(
                 "service .onion non compile (feature `hs` desactivee)".into(),
             ))
+        }
+    }
+
+    /// Secret x25519 d'autorisation client depuis le seed HKDF
+    /// `tor-hs-client/v1` (etape 127) — type isole ici : la couche
+    /// core ne voit que `[u8; 32]`.
+    #[cfg(feature = "hs")]
+    fn client_secret(client_seed: [u8; 32]) -> tor_hscrypto::pk::HsClientDescEncSecretKey {
+        tor_hscrypto::pk::HsClientDescEncSecretKey::from(
+            tor_llcrypto::pk::curve25519::StaticSecret::from(client_seed),
+        )
+    }
+
+    /// Lance le service `.onion` **coffre** (ADR-0029 etape 127) —
+    /// service dedie (adresse `tor-hs-vault/v1` distincte de
+    /// l'identite) en **restricted discovery** : le descripteur est
+    /// chiffre pour la cle client `client_seed` — seuls les
+    /// appareils de la meme identite peuvent decouvrir le service.
+    /// `handler` recoit les flux entrants du port `vault_port`.
+    /// Memes erreurs explicites que `launch_onion_identity`.
+    #[cfg(feature = "hs")]
+    pub fn launch_onion_vault(
+        &self,
+        hs_seed: [u8; 32],
+        client_seed: [u8; 32],
+        vault_port: u16,
+        handler: Arc<dyn OnionLinkHandler>,
+    ) -> Result<()> {
+        if !self.inner.settings.enabled {
+            return Err(TorError::Disabled);
+        }
+        if !self.inner.settings.onion_service.vault_enabled {
+            return Err(TorError::OnionService(
+                "coffre .onion desactive (tor.onion_service.vault=false)".into(),
+            ));
+        }
+        let secret = Self::client_secret(client_seed);
+        crate::service::launch_vault(
+            &self.inner,
+            hs_seed,
+            tor_hscrypto::pk::HsClientDescEncKey::from(&secret),
+            vault_port,
+            handler,
+        )
+    }
+
+    /// Adresse `.onion` du coffre pour `hs_seed` — calculable **sans
+    /// lancer** le service (l'adresse est la cle publique).
+    /// `None` sans feature `hs`.
+    pub fn vault_onion_address(hs_seed: [u8; 32]) -> Option<String> {
+        #[cfg(feature = "hs")]
+        {
+            use safelog::DisplayRedacted;
+            let keypair = tor_llcrypto::pk::ed25519::Keypair::from(&hs_seed);
+            let hsid = tor_hscrypto::pk::HsIdKeypair::from(
+                tor_llcrypto::pk::ed25519::ExpandedKeypair::from(&keypair),
+            );
+            Some(
+                tor_hscrypto::pk::HsId::from(tor_hscrypto::pk::HsIdKey::from(&hsid))
+                    .display_unredacted()
+                    .to_string(),
+            )
+        }
+        #[cfg(not(feature = "hs"))]
+        {
+            let _ = hs_seed;
+            None
+        }
+    }
+
+    /// Installe la cle d'autorisation client du coffre dans le
+    /// keystore (`KS_hsc_desc_enc` pour `vault_addr.onion`) — le
+    /// connecteur la lit a la prochaine connexion (etape 127 :
+    /// l'appareil nomade dechiffre le descripteur du coffre).
+    /// `Err` si l'adresse n'est pas un `.onion` v3 valide.
+    pub fn install_vault_client_key(&self, vault_addr: &str, client_seed: [u8; 32]) -> Result<()> {
+        #[cfg(feature = "hs")]
+        {
+            use std::str::FromStr;
+            let hs_id = tor_hscrypto::pk::HsId::from_str(vault_addr)
+                .map_err(|e| TorError::OnionService(format!("adresse coffre invalide : {e}")))?;
+            crate::service::install_client_desc_key(
+                &self.inner,
+                hs_id,
+                Self::client_secret(client_seed),
+            )
+        }
+        #[cfg(not(feature = "hs"))]
+        {
+            let _ = (vault_addr, client_seed);
+            Err(TorError::OnionService(
+                "autorisation client non compilee (feature `hs` desactivee)".into(),
+            ))
+        }
+    }
+
+    /// Etat du service `.onion` coffre — `address` renseignee
+    /// seulement quand il tourne (meme regle que l'identite).
+    pub fn onion_vault_service(&self) -> OnionServiceInfo {
+        #[cfg(feature = "hs")]
+        {
+            let guard = self
+                .inner
+                .onion_vault
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            if let Some(slot) = guard.as_ref() {
+                return OnionServiceInfo {
+                    enabled: true,
+                    state: (*slot.state.lock().unwrap_or_else(|e| e.into_inner())).to_string(),
+                    address: slot.address.clone(),
+                };
+            }
+        }
+        OnionServiceInfo {
+            enabled: self.inner.settings.onion_service.vault_enabled,
+            state: "off".into(),
+            address: None,
         }
     }
 

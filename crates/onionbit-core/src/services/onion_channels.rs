@@ -131,6 +131,37 @@ pub fn http_response(status: u16, reason: &str, body: &[u8]) -> Vec<u8> {
     out
 }
 
+/// Lit la zone en-tete d'une requete HTTP/1.x (jusqu'a
+/// `\r\n\r\n`, ≤ `MAX_HEAD_BYTES`) — partagee entre l'endpoint
+/// catalogue (etape 126) et le coffre (etape 127). `None` = flux
+/// clos ou plafond atteint : la connexion est abandonnee sans
+/// reponse (le pair a raccroche ou debord).
+#[cfg(feature = "hs")]
+pub(crate) async fn read_request_head<S>(stream: &mut S) -> Option<Vec<u8>>
+where
+    S: tokio::io::AsyncRead + Unpin + Send,
+{
+    use tokio::io::AsyncReadExt;
+
+    let mut head = Vec::with_capacity(1024);
+    let mut buf = [0u8; 1024];
+    loop {
+        match stream.read(&mut buf).await {
+            Ok(0) => return None,
+            Ok(n) => {
+                head.extend_from_slice(&buf[..n]);
+                if head.windows(4).any(|w| w == b"\r\n\r\n") {
+                    return Some(head);
+                }
+                if head.len() > MAX_HEAD_BYTES {
+                    return None;
+                }
+            }
+            Err(_) => return None,
+        }
+    }
+}
+
 /// Sert une connexion du port virtuel catalogue : lit la zone
 /// en-tete (≤ `MAX_HEAD_BYTES`), produit la frame LZ4 du select
 /// et repond. Les erreurs de flux sont silencieuses (le pair a
@@ -140,30 +171,11 @@ pub async fn serve_catalog_stream<S>(mut stream: S, catalog: CatalogFn)
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send,
 {
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::io::AsyncWriteExt;
 
-    // Lecture jusqu'a la fin d'en-tete `\r\n\r\n` ou le plafond —
-    // la ligne de requete suffit, les en-tetes sont ignores.
-    let mut head = Vec::with_capacity(1024);
-    let mut buf = [0u8; 1024];
-    let done = loop {
-        match stream.read(&mut buf).await {
-            Ok(0) => break false,
-            Ok(n) => {
-                head.extend_from_slice(&buf[..n]);
-                if head.windows(4).any(|w| w == b"\r\n\r\n") {
-                    break true;
-                }
-                if head.len() > MAX_HEAD_BYTES {
-                    break false;
-                }
-            }
-            Err(_) => return,
-        }
-    };
-    if !done {
+    let Some(head) = read_request_head(&mut stream).await else {
         return;
-    }
+    };
     let head_str = String::from_utf8_lossy(&head);
     let body = match parse_channel_request(&head_str) {
         Ok(query) => catalog(query).await,

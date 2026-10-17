@@ -3,6 +3,58 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## ADR-0029 étape 127 : coffre via `.onion` — restricted-discovery (2026-10-17)
+
+Le coffre (manifeste privé `OBM`, export `OBV1`) devient joignable
+**par Tor** depuis un appareil nomade portant la même identité —
+sans pont ni pair connu :
+
+- **Service `.onion` dédié** : adresse propre dérivée HKDF
+  `onionbit/identity/tor-hs-vault/v1` (distincte de l'identité,
+  étape 122), cycle de vie séparé (`tor.onion_service.vault`,
+  `false` par défaut, jamais en session invitée). Un troisième
+  domaine `onionbit/identity/tor-hs-client/v1` dérive le secret
+  **x25519** d'autorisation client — redeployer l'identité sur un
+  autre appareil retrouve automatiquement adresse du coffre ET
+  clef de déchiffrement, zéro configuration.
+- **Restricted-discovery** : le descripteur du service coffre est
+  chiffré pour la clef client (`RestrictedDiscoveryConfig.
+  static_keys`) — un tiers ne peut même pas *découvrir* que le
+  service existe (résistance DoS/censure ; le contenu servi reste
+  de toute façon AEAD pour la clef maîtresse). Côté client,
+  `install_vault_client_key` insère `KS_hsc_desc_enc` dans le
+  keystore primaire (`HsClientDescEncKeypairSpecifier`) — lu par
+  le connecteur `hsclient` à chaque connexion, sans activer
+  `experimental-api`. **Caveat** : `arti-client/restricted-
+  discovery` est `__is_experimental` — activé en connaissance de
+  cause (API non garantie semver, à revoir à chaque bump arti).
+- **Endpoint** `services/onion_vault.rs` : `GET /vault` (blob
+  `OBV1` du coffre d'amis — contacts + liaisons `.onion`) et
+  `GET /manifest` (`manifest.obm` brut) sur le port virtuel 80 du
+  service coffre ; réponses bornées `200`/`204`/`400`/`404`/`405`,
+  en-tête ≤ 8 Kio (`read_request_head` mutualisé avec le
+  catalogue). Aucun secret en clair : le serveur relit les
+  fichiers déjà chiffrés.
+- **Pull côté client** : `session.vault_pull_onion` installe la
+  clef client, allowliste le `.onion` du coffre (`peer_policy`)
+  puis `fetch_onion` — chaque hop de redirection re-vérifié
+  (anti-SSRF inchangé). `manifest_pull_onion` restaure via
+  `PrivateZone::restore_manifest` : `obm::open_manifest` vérifie
+  l'AEAD **avant** d'écrire (un manifeste d'une autre identité est
+  refusé sans toucher le disque), JSON validé puis écriture
+  atomique `.bak` + fusion des entrées.
+- **API** : `POST /api/messaging/vault/restore` tente `.onion`
+  d'abord puis replie sur `VAULT_GET` aux ponts `CAP_PULL_STORE`
+  (IPv8) — jamais de point dur unique. `POST
+  /api/private/manifest/restore` = l'explorateur privé nomade.
+  `/api/tor/status` expose `onion_vault {enabled, state,
+  address}` — adresse seulement si le service est publié.
+- **Tests** : séparation des domaines HKDF + déterminisme
+  (crypto), parsing/rejets du filaire vault, round-trips HTTP sur
+  duplex, round-trip `manifest_bytes`→`restore_manifest` et rejet
+  AEAD d'un manifeste étranger (private_zone), round-trip config
+  `tor.onion_service.vault`.
+
 ## ADR-0029 étape 126 : canaux servis en `.onion` (2026-10-17)
 
 Les catalogues de canaux deviennent joignables **par Tor** quand le

@@ -71,6 +71,11 @@ pub struct OnionServiceSettings {
     /// sans geste explicite (regle ADR-0028 §8 : aucune adresse
     /// affichee tant que rien n'est heberge).
     pub enabled: bool,
+    /// Publie le service `.onion` **coffre** (etape 127) — adresse
+    /// `tor-hs-vault/v1` dediee, descripteur verrouille par
+    /// l'autorisation client x25519 derivee de la meme identite.
+    /// **`false` par defaut** (le coffre n'est servi que sur geste).
+    pub vault_enabled: bool,
 }
 
 /// Reglages complets de la connectivite Tor.

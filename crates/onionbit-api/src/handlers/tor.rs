@@ -51,6 +51,7 @@ pub async fn tor_status(State(state): State<AppState>) -> Json<serde_json::Value
         onionbit_tor::TorMode::External(addr) => ("external", Some(addr.to_string())),
     };
     let svc = runtime.onion_service();
+    let vault = runtime.onion_vault_service();
     Json(serde_json::json!({
         "enabled": settings.enabled,
         "mode": mode,
@@ -65,6 +66,13 @@ pub async fn tor_status(State(state): State<AppState>) -> Json<serde_json::Value
             "enabled": svc.enabled,
             "state": svc.state,
             "address": svc.address,
+        },
+        // Etape 127 : service coffre dedie (restricted-discovery) —
+        // meme regle : adresse seulement quand publiee.
+        "onion_vault": {
+            "enabled": vault.enabled,
+            "state": vault.state,
+            "address": vault.address,
         },
     }))
 }

@@ -10,6 +10,7 @@
 use onionbit_core::config::StorageArea;
 use onionbit_core::identity::{self, IdentityMaterial};
 use onionbit_core::{CoreConfig, CoreError, CoreSession, Notifier};
+use onionbit_crypto::obdfile::PrivateStoreKeys;
 
 fn ih_bytes(ih: &str) -> Vec<u8> {
     hex::decode(ih).expect("infohash hex")
@@ -682,5 +683,44 @@ async fn private_suppression_complete() {
         .expect("start #2");
     session.wait_restored().await;
     assert!(session.downloads().is_empty(), "prive supprime restaure");
+    session.stop().await;
+}
+
+/// Etape 127 : `manifest.obm` sert le coffre `.onion` —
+/// `manifest_bytes`/`restore_manifest` portent l'aller-retour.
+/// Le manifeste d'une **autre** identite est refuse par l'AEAD
+/// (la cle `K_manifest` derive de la graine) sans toucher le
+/// disque.
+#[tokio::test]
+async fn manifest_round_trip_onion_et_rejet_etranger() {
+    let dir = tempfile::tempdir().unwrap();
+    let cfg = CoreConfig::offline(dir.path().to_path_buf());
+    let bytes = onionbit_test_support::test_torrent_bytes("film-priv.bin", 42);
+
+    let session = CoreSession::start(cfg, Notifier::new())
+        .await
+        .expect("start");
+    session
+        .add_torrent_bytes_anon_area(bytes, true, 0, false, None, StorageArea::Private)
+        .await
+        .expect("add prive");
+    let zone = session.private_zone().expect("zone montee");
+    let blob = zone.manifest_bytes().expect("manifeste present");
+    assert!(!blob.is_empty());
+
+    // Suppression de l'entree → manifeste vide ; restore fusionne.
+    let entries = zone.entries();
+    let ih_str = entries[0].infohash.clone();
+    session.remove(&ih_str, true).await.expect("remove prive");
+    assert!(zone.entries().is_empty());
+    let n = zone.restore_manifest(&blob).expect("restore");
+    assert_eq!(n, 1, "entree restauree par le blob .onion");
+    assert_eq!(zone.entries()[0].infohash, ih_str);
+
+    // Manifeste d'une autre identite → AEAD refuse, rien ecrit.
+    let other = PrivateStoreKeys::from_root(&[9u8; 32]);
+    let foreign = onionbit_crypto::obm::seal_manifest(&other, br#"{"version":1,"entries":{}}"#);
+    assert!(zone.restore_manifest(&foreign).is_err());
+    assert_eq!(zone.entries().len(), 1, "manifeste local preserve");
     session.stop().await;
 }

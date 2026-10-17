@@ -34,6 +34,11 @@ use crate::settings::TorMode;
 /// keymgr (`hss/<nickname>/`) et du state `tor-persist`.
 pub(crate) const HS_NICKNAME: &str = "onionbit-identity";
 
+/// Nickname du service `.onion` **coffre** (etape 127) — service
+/// separe de l'identite : sa propre cle derivee
+/// (`tor-hs-vault/v1`), sa propre adresse, son autorisation client.
+pub(crate) const HS_VAULT_NICKNAME: &str = "onionbit-vault";
+
 /// Etat haut niveau du service, remonte par `status_events` —
 /// chaine stable exposee via `GET /api/tor/status`.
 pub(crate) type ServiceState = Arc<Mutex<&'static str>>;
@@ -63,9 +68,120 @@ fn map_state(state: tor_hsservice::status::State) -> &'static str {
     }
 }
 
+/// Keystore primaire arti (`state/keystore`) reconstruit — le
+/// `keymgr()` du client n'est public que derriere
+/// `onion-service-cli-extra` (`__is_experimental`) ; le keystore
+/// est une collection de fichiers, services et clients les
+/// relisent a la demande.
+fn own_keymgr(inner: &Arc<Inner>) -> Result<tor_keymgr::KeyMgr> {
+    let keystore_dir = inner.settings.state_dir.join("state").join("keystore");
+    let store = tor_keymgr::ArtiNativeKeystore::from_path_and_mistrust(
+        &keystore_dir,
+        &fs_mistrust::Mistrust::new(),
+    )
+    .map_err(|e| TorError::OnionService(format!("keystore : {e}")))?;
+    tor_keymgr::KeyMgrBuilder::default()
+        .primary_store(Box::new(store))
+        .build()
+        .map_err(|e| TorError::OnionService(format!("keymgr : {e}")))
+}
+
+/// Insere la cle d'autorisation client `KS_hsc_desc_enc` (etape
+/// 127) pour `hs_id` dans le keystore primaire — lue par le
+/// connecteur `hsclient` a chaque connexion (le client dechiffre
+/// alors le descripteur du service en restricted-discovery).
+pub(crate) fn install_client_desc_key(
+    inner: &Arc<Inner>,
+    hs_id: tor_hscrypto::pk::HsId,
+    secret: tor_hscrypto::pk::HsClientDescEncSecretKey,
+) -> Result<()> {
+    let keypair = tor_hscrypto::pk::HsClientDescEncKeypair::new(
+        tor_hscrypto::pk::HsClientDescEncKey::from(&secret),
+        secret,
+    );
+    let spec = tor_hsclient::HsClientDescEncKeypairSpecifier::new(hs_id);
+    own_keymgr(inner)?
+        .insert::<tor_hscrypto::pk::HsClientDescEncKeypair>(
+            keypair,
+            &spec,
+            tor_keymgr::KeystoreSelector::Primary,
+            true,
+        )
+        .map_err(|e| TorError::OnionService(format!("insertion cle client : {e}")))?;
+    Ok(())
+}
+
+/// Dispatch generique d'un flux entrant : port `BEGIN` → handler
+/// (la table `lookup` vient du plan — `inner.link_handlers` pour
+/// l'identite, table figee pour le coffre). Port non souscrit =
+/// `DONE` standard.
+type HandlerLookup = Arc<dyn Fn(u16) -> Option<Arc<dyn crate::OnionLinkHandler>> + Send + Sync>;
+
 /// Lance le service `.onion` d'identite sur le client embedded de
 /// `inner` — erreur explicite en mode externe ou client non pret.
 pub(crate) fn launch(inner: &Arc<Inner>, hs_seed: [u8; 32]) -> Result<()> {
+    let inner2 = inner.clone();
+    let slot = launch_service(
+        inner,
+        hs_seed,
+        HS_NICKNAME,
+        None,
+        Arc::new(move |port| {
+            inner2
+                .link_handlers
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .get(&port)
+                .cloned()
+        }),
+    )?;
+    *inner.onion.lock().unwrap_or_else(|e| e.into_inner()) = Some(slot);
+    Ok(())
+}
+
+/// Lance le service `.onion` **coffre** (etape 127) — descripteur
+/// chiffre par `restricted_discovery` (seul le detenteur de la cle
+/// client x25519 derivee de l'identite peut le decouvrir ; tout
+/// autre visiteur ne voit qu'un service injoignable). `handler` sert
+/// les streams entrants — le coffre n'expose qu'un port.
+pub(crate) fn launch_vault(
+    inner: &Arc<Inner>,
+    hs_seed: [u8; 32],
+    client_key: tor_hscrypto::pk::HsClientDescEncKey,
+    vault_port: u16,
+    handler: Arc<dyn crate::OnionLinkHandler>,
+) -> Result<()> {
+    use std::str::FromStr;
+    let mut builder = OnionServiceConfigBuilder::default();
+    builder.restricted_discovery().enabled(true);
+    builder.restricted_discovery().static_keys().access().push((
+        tor_hsservice::config::restricted_discovery::HsClientNickname::from_str("owner")
+            .map_err(|e| TorError::OnionService(format!("nickname client : {e}")))?,
+        client_key,
+    ));
+    let slot = launch_service(
+        inner,
+        hs_seed,
+        HS_VAULT_NICKNAME,
+        Some(builder),
+        Arc::new(move |port| (port == vault_port).then(|| handler.clone())),
+    )?;
+    *inner.onion_vault.lock().unwrap_or_else(|e| e.into_inner()) = Some(slot);
+    Ok(())
+}
+
+/// Corps commun du lancement : insertion de la `HsIdKeypair`
+/// derivee (autoritaire — l'adresse est stable entre runs),
+/// config service, rendez-vous entrants routes par port vers
+/// `lookup`. `rd_builder` surcharge la config par defaut
+/// (restricted-discovery du coffre).
+fn launch_service(
+    inner: &Arc<Inner>,
+    hs_seed: [u8; 32],
+    nick: &str,
+    rd_builder: Option<OnionServiceConfigBuilder>,
+    lookup: HandlerLookup,
+) -> Result<OnionServiceSlot> {
     if let TorMode::External(_) = inner.settings.mode {
         return Err(TorError::OnionService(
             "service .onion : mode `external` non supporte (le tor systeme heberge ses propres services via torrc)".into(),
@@ -81,28 +197,17 @@ pub(crate) fn launch(inner: &Arc<Inner>, hs_seed: [u8; 32]) -> Result<()> {
     // Cle de service derivee de la graine — inseree dans le keystore
     // primaire (`state/keystore`) avant le lancement : l'identite
     // derivee est autoritaire, une cle anterieure auto-generee serait
-    // une divergence. `TorClient::keymgr()` n'est public que derriere
-    // `onion-service-cli-extra` (__is_experimental) — on construit un
-    // `KeyMgr` propre sur le meme repertoire : le keystore est une
-    // collection de fichiers, le service les relira a son demarrage.
+    // une divergence. Le keystore est reconstruit sur le meme
+    // repertoire (`own_keymgr`) : les fichiers sont relus par le
+    // service a son demarrage.
     let keypair = tor_llcrypto::pk::ed25519::Keypair::from(&hs_seed);
     let hsid = tor_hscrypto::pk::HsIdKeypair::from(
         tor_llcrypto::pk::ed25519::ExpandedKeypair::from(&keypair),
     );
-    let nickname = HsNickname::new(HS_NICKNAME.to_string())
+    let nickname = HsNickname::new(nick.to_string())
         .map_err(|e| TorError::OnionService(format!("nickname invalide : {e}")))?;
     let spec = HsIdKeypairSpecifier::new(nickname.clone());
-    let keystore_dir = inner.settings.state_dir.join("state").join("keystore");
-    let store = tor_keymgr::ArtiNativeKeystore::from_path_and_mistrust(
-        &keystore_dir,
-        &fs_mistrust::Mistrust::new(),
-    )
-    .map_err(|e| TorError::OnionService(format!("keystore : {e}")))?;
-    let keymgr = tor_keymgr::KeyMgrBuilder::default()
-        .primary_store(Box::new(store))
-        .build()
-        .map_err(|e| TorError::OnionService(format!("keymgr : {e}")))?;
-    keymgr
+    own_keymgr(inner)?
         .insert::<tor_hscrypto::pk::HsIdKeypair>(
             hsid,
             &spec,
@@ -111,7 +216,8 @@ pub(crate) fn launch(inner: &Arc<Inner>, hs_seed: [u8; 32]) -> Result<()> {
         )
         .map_err(|e| TorError::OnionService(format!("insertion cle hsid : {e}")))?;
 
-    let config = OnionServiceConfigBuilder::default()
+    let config = rd_builder
+        .unwrap_or_default()
         .nickname(nickname)
         .build()
         .map_err(|e| TorError::OnionService(format!("config service : {e}")))?;
@@ -130,11 +236,11 @@ pub(crate) fn launch(inner: &Arc<Inner>, hs_seed: [u8; 32]) -> Result<()> {
     // souscrit (ADR-0029 etape 124). Port non souscrit = `DONE` —
     // le rejet standard d'un service Tor ne distingue pas OnionBit
     // d'un service ordinaire (empreinte, req.rs §accept).
-    let drain_inner = inner.clone();
+    let drain_lookup = lookup.clone();
     let drain = tokio::spawn(async move {
         use futures_util::StreamExt;
         while let Some(rend) = rend.next().await {
-            let inner = drain_inner.clone();
+            let lookup = drain_lookup.clone();
             tokio::spawn(async move {
                 let Ok(mut reqs) = rend.accept().await else {
                     return;
@@ -151,12 +257,7 @@ pub(crate) fn launch(inner: &Arc<Inner>, hs_seed: [u8; 32]) -> Result<()> {
                             continue;
                         }
                     };
-                    let handler = inner
-                        .link_handlers
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner())
-                        .get(&port)
-                        .cloned();
+                    let handler = lookup(port);
                     match handler {
                         Some(h) => match sreq
                             .accept(tor_cell::relaycell::msg::Connected::new_empty())
@@ -192,12 +293,11 @@ pub(crate) fn launch(inner: &Arc<Inner>, hs_seed: [u8; 32]) -> Result<()> {
         *watch_state.lock().unwrap_or_else(|e| e.into_inner()) = "shutdown";
     });
 
-    *inner.onion.lock().unwrap_or_else(|e| e.into_inner()) = Some(OnionServiceSlot {
+    Ok(OnionServiceSlot {
         address,
         state,
         _service: service,
         _drain: drain,
         _watch: watch,
-    });
-    Ok(())
+    })
 }

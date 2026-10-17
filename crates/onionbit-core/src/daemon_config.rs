@@ -1405,6 +1405,12 @@ pub struct TorOnionServiceFileConfig {
     /// (`onionbit/identity/tor-hs/v1`) — l'adresse est stable et
     /// portable avec la phrase BIP39.
     pub enabled: bool,
+    /// Heberge le service `.onion` **coffre** (ADR-0029 etape 127) —
+    /// adresse dediee (`onionbit/identity/tor-hs-vault/v1`) en
+    /// restricted-discovery : le descripteur n'est dechiffrable que
+    /// par la cle client x25519 derivee de la meme identite
+    /// (`onionbit/identity/tor-hs-client/v1`). **false par defaut.**
+    pub vault: bool,
     /// Clés inconnues — préservées.
     #[serde(flatten)]
     pub extra: serde_json::Map<String, Value>,
@@ -1414,6 +1420,7 @@ impl Default for TorOnionServiceFileConfig {
     fn default() -> Self {
         Self {
             enabled: false,
+            vault: false,
             extra: serde_json::Map::new(),
         }
     }
@@ -2320,6 +2327,7 @@ impl DaemonConfig {
             },
             onion_service: onionbit_tor::OnionServiceSettings {
                 enabled: t.onion_service.enabled,
+                vault_enabled: t.onion_service.vault,
             },
             ..onionbit_tor::TorSettings::default()
         };
@@ -2539,6 +2547,7 @@ impl DaemonConfig {
             }
         }
         self.tor.onion_service.enabled = core.tor.onion_service.enabled;
+        self.tor.onion_service.vault = core.tor.onion_service.vault_enabled;
     }
 }
 
@@ -2932,6 +2941,30 @@ mod tests {
                 .tor
                 .onion_service
                 .enabled
+        );
+    }
+
+    /// `tor.onion_service.vault` — round-trip sparse + propagation
+    /// vers `vault_enabled` (ADR-0029 etape 127).
+    #[test]
+    fn tor_onion_vault_round_trip() {
+        let json =
+            serde_json::json!({ "tor": { "onion_service": { "enabled": true, "vault": true } } });
+        let mut cfg = DaemonConfig::default();
+        cfg.merge(&json).unwrap();
+        assert!(cfg.tor.onion_service.vault);
+        let sparse = cfg.sparse_value();
+        assert_eq!(
+            sparse["tor"]["onion_service"]["vault"],
+            serde_json::json!(true)
+        );
+        let mut cfg2 = DaemonConfig::default();
+        cfg2.merge(&sparse).unwrap();
+        assert!(
+            cfg2.to_core_config(Path::new("."))
+                .tor
+                .onion_service
+                .vault_enabled
         );
     }
 

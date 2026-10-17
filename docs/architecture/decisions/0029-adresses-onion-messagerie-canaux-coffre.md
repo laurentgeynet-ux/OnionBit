@@ -105,6 +105,27 @@ statique) — mais derrière la feature `restricted-discovery`
 marquée `__is_experimental` chez arti-client : à activer en
 connaissance de cause (API non garantie semver).
 
+**Mise en œuvre (étape 127)** : service `.onion` **dédié** — le
+coffre a sa propre adresse (HKDF `onionbit/identity/tor-hs-vault/
+v1`, distincte de l'identité) et sa propre politique
+(`tor.onion_service.vault`, `false` défaut, jamais en invité). Le
+descripteur est verrouillé par restricted-discovery : la clef
+client x25519 `KS_hsc_desc_enc` dérive de `onionbit/identity/
+tor-hs-client/v1` — la *possession de l'identité* est la preuve
+d'accès (un appareil nomade redeployant la phrase BIP39 retrouve
+adresse du coffre et clef de déchiffrement sans configuration ;
+la revocation n'a pas de sens hors identité). Fil : `GET /vault`
+(export `OBV1` courant) et `GET /manifest` (`manifest.obm` brut)
+sur le port virtuel 80 ; bornes identiques au catalogue.
+Contenu servi *déjà chiffré* — l'autorisation client protège la
+**découvrabilité** (DoS/empreinte), pas la confidentialité : un
+blob volé reste illisible sans la clef maîtresse. Côté client, la
+clef est insérée dans le keystore primaire via
+`HsClientDescEncKeypairSpecifier` (relue par le connecteur à
+chaque connexion) — `experimental-api` non requis. Repli :
+`VAULT_GET` pull_store IPv8 quand le coffre maison est hors
+ligne.
+
 ### 6. Interface (ADR-0021)
 
 - Pastille de plan distincte partout où une adresse apparaît :

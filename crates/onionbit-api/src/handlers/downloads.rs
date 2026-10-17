@@ -1144,6 +1144,26 @@ pub async fn purge_private_orphans(
     Ok(Json(serde_json::json!({ "purged": true })))
 }
 
+/// `POST /api/private/manifest/restore` — restaure `manifest.obm`
+/// depuis notre propre coffre `.onion` (ADR-0029 etape 127 :
+/// explorateur prive nomade — le catalogue chiffre est tire via
+/// Tor avec l'autorisation client derivee de l'identite).
+/// `409 identity_locked` sans zone montee, `404` coffre
+/// injoignable ou manifeste absent/refuse.
+pub async fn post_private_manifest_restore(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    if state.session.private_area_state() != "mounted" {
+        return Err(ApiError::conflict("identity_locked"));
+    }
+    let restored = state
+        .session
+        .manifest_pull_onion()
+        .await
+        .ok_or_else(|| ApiError::not_found("coffre .onion injoignable ou manifeste absent"))?;
+    Ok(Json(serde_json::json!({ "restored": restored })))
+}
+
 /// `GET /api/private/{key}/files` — fichiers d'une entree du
 /// manifeste prive (ADR-0027, etape 109) : `key` = `row_key`
 /// opaque ou infohash reel, indifferent (`resolve_entry`).

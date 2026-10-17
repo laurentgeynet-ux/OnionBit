@@ -4643,6 +4643,7 @@ dependencies = [
  "tokio-rustls",
  "tokio-socks",
  "tor-cell",
+ "tor-hsclient",
  "tor-hscrypto",
  "tor-hsservice",
  "tor-keymgr",

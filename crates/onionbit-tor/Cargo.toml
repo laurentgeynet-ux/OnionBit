@@ -23,17 +23,22 @@ tor = [
 ]
 # `hs` : service `.onion` heberge (ADR-0029 — spike 120 puis
 # identite derivee etape 122) via tor-hsservice + keymgr.
+# `restricted-discovery` (autorisation client x25519, coffre etape
+# 127) est `__is_experimental` chez arti — active en connaissance
+# de cause (API non garantie semver, ADR-0029 §5).
 hs = [
     "tor",
     "dep:tor-hsservice",
     "dep:tor-keymgr",
     "dep:tor-hscrypto",
+    "dep:tor-hsclient",
     "dep:tor-llcrypto",
     "dep:fs-mistrust",
     "dep:safelog",
     "dep:tor-proto",
     "dep:tor-cell",
     "arti-client/onion-service-service",
+    "arti-client/restricted-discovery",
 ]
 
 [dependencies]
@@ -63,6 +68,10 @@ tor-rtcompat = { workspace = true, optional = true }
 tor-hsservice = { version = "0.47", optional = true }
 tor-keymgr = { version = "0.47", optional = true }
 tor-hscrypto = { version = "0.47", optional = true }
+# Specifier `HsClientDescEncKeypairSpecifier` — insertion de la cle
+# d'autorisation client (coffre `.onion`, etape 127) dans le
+# keystore primaire sans l'API `experimental-api`.
+tor-hsclient = { version = "0.47", optional = true }
 tor-llcrypto = { version = "0.47", optional = true }
 # Politique de permissions du keystore natif (meme discipline que
 # la config arti — verifie le state_dir avant insertion de cle).

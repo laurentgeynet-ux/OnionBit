@@ -474,18 +474,26 @@ pub async fn post_vault_replicate(
     Ok(Json(serde_json::json!({ "replicated": sent })))
 }
 
-/// `POST /api/messaging/vault/restore` — `VAULT_GET` sur un pont
-/// `CAP_PULL_STORE` puis [`import_vault`] du blob rendu. Renvoie
-/// `{restored: n}` ; 404 si aucun pont ou coffre absent (`not_found`
-/// du store).
+/// `POST /api/messaging/vault/restore` — tente d'abord le coffre
+/// `.onion` propre (etape 127 : restricted-discovery, cle client
+/// derivee de l'identite — l'appareil nomade y arrive sans pont),
+/// puis replie sur `VAULT_GET` aupres d'un pont `CAP_PULL_STORE`
+/// puis [`import_vault`] du blob rendu. Renvoie `{restored: n}` ;
+/// 404 si aucune source n'a le coffre.
 pub async fn post_vault_restore(
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let Some(blob) = ipv8(&state)?
-        .vault_pull(std::time::Duration::from_secs(VAULT_PULL_TIMEOUT_SECS))
-        .await
-    else {
-        return Err(ApiError::not_found("aucun coffre chez les ponts"));
+    // Plan `.onion` (etape 127) : propre coffre servi par le service
+    // dedie — fonctionne sans pont ni pair connu. Echec → repli
+    // `VAULT_GET` sur les ponts pull_store (IPv8).
+    let blob = match state.session.vault_pull_onion().await {
+        Some(b) => b,
+        None => ipv8(&state)?
+            .vault_pull(std::time::Duration::from_secs(VAULT_PULL_TIMEOUT_SECS))
+            .await
+            .ok_or_else(|| {
+                ApiError::not_found("aucun coffre ni sur le service .onion ni chez les ponts")
+            })?,
     };
     let restored = svc(&state)?.import_vault(&blob)?;
     // Cf. `post_vault_import` : liaisons `.onion` restaurees →

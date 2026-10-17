@@ -199,6 +199,40 @@ impl PrivateZone {
         self.roots.private_manifest()
     }
 
+    /// Octets bruts du manifeste courant — deja chiffres par le
+    /// codec `obm` (magic/version/AEAD), servis tels quels par le
+    /// coffre `.onion` (etape 127). `None` = absent ou invite.
+    pub fn manifest_bytes(&self) -> Option<Vec<u8>> {
+        if self.guest {
+            return None;
+        }
+        std::fs::read(self.manifest_path()).ok()
+    }
+
+    /// Restaure un manifeste recu du coffre `.onion` (etape 127) :
+    /// `obm::open_manifest` verifie l'AEAD **avant** d'ecrire (un
+    /// blob etranger a nos cles est refuse sans toucher le disque),
+    /// puis reecriture atomique avec rotation `.bak` et rechargement
+    /// en memoire — **fusion** : les entrees locales que le manifeste
+    /// recu ne couvre pas survivent. Retourne le nombre d'entrees
+    /// connues apres fusion.
+    pub fn restore_manifest(&self, blob: &[u8]) -> Result<usize> {
+        if self.guest {
+            return Err(CoreError::InvalidState(
+                "pas de manifeste en session invitee",
+            ));
+        }
+        let plain = obm::open_manifest(&self.keys, blob)
+            .map_err(|e| CoreError::State(format!("manifest.obm recu illisible : {e}")))?;
+        // Validation du document avant de l'ecrire.
+        let _doc: ManifestDoc = serde_json::from_slice(&plain)
+            .map_err(|e| CoreError::State(format!("manifest.obm JSON invalide : {e}")))?;
+        obm::store_manifest(&self.manifest_path(), &self.keys, &plain)
+            .map_err(|e| CoreError::State(format!("ecriture manifest.obm: {e}")))?;
+        self.load_manifest();
+        Ok(self.entries.lock().unwrap_or_else(|e| e.into_inner()).len())
+    }
+
     /// Racine physique d'une sous-zone.
     pub fn subdir_root(&self, sub: PrivateSubdir) -> PathBuf {
         if self.guest {

@@ -35,6 +35,8 @@ const INFO_IPV8_CRYPT: &[u8] = b"onionbit/identity/ipv8-crypt/v1";
 const INFO_IPV8_SIGN: &[u8] = b"onionbit/identity/ipv8-sign/v1";
 const INFO_BRIDGE: &[u8] = b"onionbit/identity/bridge/v1";
 const INFO_TOR_HS: &[u8] = b"onionbit/identity/tor-hs/v1";
+const INFO_TOR_VAULT_HS: &[u8] = b"onionbit/identity/tor-hs-vault/v1";
+const INFO_TOR_VAULT_CLIENT: &[u8] = b"onionbit/identity/tor-hs-client/v1";
 
 /// Domaine de la signature liant une adresse `.onion` a une identite
 /// IPv8 — personas/canaux *publics* uniquement, opt-in explicite
@@ -118,6 +120,24 @@ impl IdentitySeed {
     pub fn derive_tor_hs(&self) -> [u8; 32] {
         derive_tor_hs_seed(self.as_bytes())
     }
+
+    /// Seed Ed25519 du service `.onion` **coffre** (ADR-0029 etape
+    /// 127) — domaine propre `tor-hs-vault` : le coffre a sa propre
+    /// adresse `.onion`, distincte de l'identite (chaque service sa
+    /// cle et sa politique — l'autorisation client y verrouille le
+    /// descripteur).
+    pub fn derive_tor_vault_hs(&self) -> [u8; 32] {
+        derive_tor_vault_hs_seed(self.as_bytes())
+    }
+
+    /// Secret X25519 d'autorisation client du coffre `.onion`
+    /// (`KS_hsc_desc_enc`, etape 127) — meme racine que le service :
+    /// un appareil nomade redeployant la meme identite retrouve
+    /// automatiquement l'adresse du coffre ET la cle qui la
+    /// dechiffre. Jamais exporte — le secret reste en memoire.
+    pub fn derive_tor_vault_client(&self) -> [u8; 32] {
+        derive_tor_vault_client_seed(self.as_bytes())
+    }
 }
 
 /// Derivation `tor-hs/v1` sur une racine arbitraire — en `Seeded` la
@@ -130,6 +150,32 @@ pub fn derive_tor_hs_seed(root: &[u8; 32]) -> [u8; 32] {
     Hkdf::<sha2::Sha256>::from_prk(root)
         .expect("32 octets > HKDF min")
         .expand(INFO_TOR_HS, &mut out)
+        .expect("32 octets < limite HKDF");
+    out
+}
+
+/// Variantes `tor-hs-vault` / `tor-hs-client` sur racine arbitraire —
+/// memes conventions que [`derive_tor_hs_seed`] (graine en `Seeded`,
+/// `SHA-256(keypair)` en `Legacy`). Le coffre `.onion` et la cle
+/// d'autorisation client restent stables pour les installations
+/// anterieures a ADR-0016.
+pub fn derive_tor_vault_hs_seed(root: &[u8; 32]) -> [u8; 32] {
+    let mut out = [0u8; 32];
+    Hkdf::<sha2::Sha256>::from_prk(root)
+        .expect("32 octets > HKDF min")
+        .expand(INFO_TOR_VAULT_HS, &mut out)
+        .expect("32 octets < limite HKDF");
+    out
+}
+
+/// Secret X25519 de l'autorisation client du coffre (etape 127) —
+/// domaine separe du seed de service : le secret client n'est pas
+/// la cle du service.
+pub fn derive_tor_vault_client_seed(root: &[u8; 32]) -> [u8; 32] {
+    let mut out = [0u8; 32];
+    Hkdf::<sha2::Sha256>::from_prk(root)
+        .expect("32 octets > HKDF min")
+        .expand(INFO_TOR_VAULT_CLIENT, &mut out)
         .expect("32 octets < limite HKDF");
     out
 }
@@ -183,12 +229,55 @@ mod tests {
         let s = seed.derive_ipv8_sign();
         let b = seed.derive_bridge_key();
         let t = seed.derive_tor_hs();
+        let vh = seed.derive_tor_vault_hs();
+        let vc = seed.derive_tor_vault_client();
         assert_ne!(c, s);
         assert_ne!(c, b);
         assert_ne!(s, b);
         assert_ne!(t, s);
         assert_ne!(t, c);
         assert_ne!(t, b);
+        // Etape 127 : le coffre a sa propre adresse et sa propre
+        // cle client — aucune n'egale l'identite ni l'autre.
+        assert_ne!(vh, t);
+        assert_ne!(vc, t);
+        assert_ne!(vc, vh);
+        assert_ne!(vh, c);
+        assert_ne!(vc, s);
+    }
+
+    /// Etape 127 : seeds coffre deterministes et racines libres
+    /// coherents (legacy = `SHA-256(keypair)` en `store_root`).
+    #[test]
+    fn tor_vault_deterministe_et_racine_libre() {
+        let seed = IdentitySeed::generate();
+        assert_eq!(
+            seed.derive_tor_vault_hs(),
+            IdentitySeed::from_bytes(seed.as_bytes())
+                .unwrap()
+                .derive_tor_vault_hs()
+        );
+        assert_eq!(
+            seed.derive_tor_vault_client(),
+            IdentitySeed::from_bytes(seed.as_bytes())
+                .unwrap()
+                .derive_tor_vault_client()
+        );
+        let root = [7u8; 32];
+        assert_eq!(
+            derive_tor_vault_hs_seed(&root),
+            derive_tor_vault_hs_seed(&root)
+        );
+        assert_eq!(
+            derive_tor_vault_client_seed(&root),
+            derive_tor_vault_client_seed(&root)
+        );
+        assert_ne!(derive_tor_vault_hs_seed(&root), root);
+        assert_ne!(derive_tor_vault_hs_seed(&root), derive_tor_hs_seed(&root));
+        assert_ne!(
+            derive_tor_vault_client_seed(&root),
+            derive_tor_vault_hs_seed(&root)
+        );
     }
 
     #[test]

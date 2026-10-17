@@ -172,6 +172,13 @@ fn api_router(state: AppState) -> Router<AppState> {
         // fichiers locaux (`.torrent` ad-hoc chiffre en `.obd`).
         .route("/private/{key}", delete(downloads::delete_private_entry))
         .route("/private/import", post(downloads::post_private_import))
+        // Explorateur prive **nomade** (ADR-0029 etape 127) :
+        // restaure `manifest.obm` depuis notre propre coffre
+        // `.onion` (restricted-discovery).
+        .route(
+            "/private/manifest/restore",
+            post(downloads::post_private_manifest_restore),
+        )
         // -- Evenements SSE (events_endpoint.py) ------------------------
         .route("/events", get(events::get_events))
         .route("/events/info", get(events::get_events_info))
