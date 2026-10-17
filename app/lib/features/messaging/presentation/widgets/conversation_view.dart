@@ -14,6 +14,7 @@ import '../../domain/messaging_attachment.dart';
 import '../../domain/messaging_conversation.dart';
 import '../../domain/messaging_message.dart';
 import '../providers/messaging_providers.dart';
+import 'plane_badge.dart';
 
 /// Panneau droit ADR-0019 : rangée d'onglets de conversations
 /// ouvertes + vue de la conversation sélectionnée.
@@ -108,6 +109,10 @@ class _TabChip extends ConsumerWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(label),
+            if (conv?.planes.contains('onion') == true) ...[
+              const SizedBox(width: AppSpace.xs / 2),
+              const PlaneDot(plane: 'onion', size: 7),
+            ],
             if (unread > 0) ...[
               const SizedBox(width: AppSpace.xs),
               _UnreadBadge(count: unread),
@@ -547,8 +552,9 @@ class _InviteBanner extends ConsumerWidget {
   }
 }
 
-/// Bulle de message — alignement + auteur en groupe + pastille de
-/// statut (outgoing), suppression au clic long.
+/// Bulle de message — alignement + auteur en groupe + pied de
+/// bulle (heure, pastille du plan de transport emprunté, état de
+/// livraison), suppression au clic long.
 class _Bubble extends ConsumerWidget {
   const _Bubble({
     required this.message,
@@ -581,6 +587,18 @@ class _Bubble extends ConsumerWidget {
     final author = group && !message.isOutgoing
         ? _authorLabel(ref, message.authorPk)
         : null;
+    // Arrondis asymétriques façon messagerie moderne : le coin du
+    // côté de l'envoyeur reste presque droit.
+    final radius = BorderRadius.only(
+      topLeft: const Radius.circular(AppRadius.medium),
+      topRight: const Radius.circular(AppRadius.medium),
+      bottomLeft: Radius.circular(
+        message.isOutgoing ? AppRadius.medium : AppRadius.small,
+      ),
+      bottomRight: Radius.circular(
+        message.isOutgoing ? AppRadius.small : AppRadius.medium,
+      ),
+    );
     return Align(
       alignment: message.isOutgoing
           ? Alignment.centerRight
@@ -598,7 +616,7 @@ class _Bubble extends ConsumerWidget {
             color: message.isOutgoing
                 ? theme.colorScheme.primaryContainer
                 : theme.colorScheme.surfaceContainerHighest,
-            borderRadius: BorderRadius.circular(AppRadius.medium),
+            borderRadius: radius,
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.end,
@@ -615,12 +633,24 @@ class _Bubble extends ConsumerWidget {
                   ),
                 ),
               Text(message.body, style: theme.textTheme.bodyMedium),
-              if (statusIcon != null)
-                Padding(
-                  padding: const EdgeInsets.only(top: AppSpace.xs / 2),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
+              Padding(
+                padding: const EdgeInsets.only(top: AppSpace.xs / 2),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Pastille du plan réellement emprunté
+                    // (vert OnionBit / violet Tor / ambre boîte
+                    // aux lettres — ADR-0029 §8 Q3).
+                    PlaneDot(plane: message.plane, size: 8),
+                    const SizedBox(width: AppSpace.xs),
+                    Text(
+                      _timeLabel(message.createdAt),
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                    if (statusIcon != null) ...[
+                      const SizedBox(width: AppSpace.xs),
                       Icon(
                         statusIcon,
                         size: 12,
@@ -628,7 +658,7 @@ class _Bubble extends ConsumerWidget {
                             ? theme.colorScheme.error
                             : theme.colorScheme.onSurfaceVariant,
                       ),
-                      const SizedBox(width: AppSpace.xs),
+                      const SizedBox(width: AppSpace.xs / 2),
                       Text(
                         statusLabel,
                         style: theme.textTheme.labelSmall?.copyWith(
@@ -638,13 +668,22 @@ class _Bubble extends ConsumerWidget {
                         ),
                       ),
                     ],
-                  ),
+                  ],
                 ),
+              ),
             ],
           ),
         ),
       ),
     );
+  }
+
+  /// `HH:mm` de la date d'insertion locale (pastille de pied de
+  /// bulle — `created_at` en secondes epoch).
+  static String _timeLabel(int secs) {
+    final t = DateTime.fromMillisecondsSinceEpoch(secs * 1000).toLocal();
+    return '${t.hour.toString().padLeft(2, '0')}:'
+        '${t.minute.toString().padLeft(2, '0')}';
   }
 
   String? _authorLabel(WidgetRef ref, String? pk) {

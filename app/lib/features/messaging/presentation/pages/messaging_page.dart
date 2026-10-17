@@ -17,6 +17,7 @@ import '../../domain/messaging_contact.dart';
 import '../../domain/messaging_conversation.dart';
 import '../providers/messaging_providers.dart';
 import '../widgets/conversation_view.dart';
+import '../widgets/plane_badge.dart';
 
 /// Page messagerie e2e (ADR-0011) — liste des contacts (états de
 /// consentement, demandes `pending` actionnables) + conversation
@@ -130,7 +131,8 @@ class _ContactsPane extends ConsumerWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        // Bandeau adresse locale — copie au clic.
+        // Bandeau adresse locale — copie au clic ; l'explication
+        // e2e vit dans un dialogue pour garder la liste lisible.
         if (stats != null)
           ListTile(
             dense: true,
@@ -146,55 +148,57 @@ class _ContactsPane extends ConsumerWidget {
               style: Theme.of(context).textTheme.bodySmall
                   ?.copyWith(fontFamily: AppFontFamilies.mono),
             ),
-            trailing: IconButton(
-              icon: const Icon(Icons.copy, size: 18),
-              tooltip: l10n.msgYourAddress,
-              onPressed: () =>
-                  Clipboard.setData(ClipboardData(text: stats.publicKey)),
+            trailing: Wrap(
+              spacing: 0,
+              children: [
+                IconButton(
+                  icon: const Icon(Icons.copy, size: 18),
+                  tooltip: l10n.msgYourAddress,
+                  onPressed: () => Clipboard.setData(
+                    ClipboardData(text: stats.publicKey),
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.info_outline, size: 18),
+                  tooltip: l10n.msgInfoTitle,
+                  onPressed: () => showDialog<void>(
+                    context: context,
+                    builder: (ctx) => AlertDialog(
+                      title: Text(l10n.msgInfoTitle),
+                      content: Text(l10n.msgInfo),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.pop(ctx),
+                          child: Text(l10n.cancel),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
         const Divider(height: 1),
         Expanded(
           child: ListView(
             children: [
-              // Explication de la fonctionnalite (e2e, OnionBit-only).
-              Padding(
-                padding: const EdgeInsets.fromLTRB(
-                  AppSpace.md,
-                  AppSpace.sm,
-                  AppSpace.md,
-                  0,
+              // Demandes de consentement en tête — ce sont les seules
+              // entrées qui attendent une décision de l'utilisateur.
+              if (pending.isNotEmpty) ...[
+                _SectionHeader(
+                  title: l10n.msgPendingTitle,
+                  count: pending.length,
                 ),
-                child: Text(
-                  l10n.msgInfo,
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
-                  ),
-                ),
-              ),
-              // ADR-0019 : conversations (directes + groupes) en
-              // tete — clic = onglet dans le panneau de droite.
-              Padding(
-                padding: const EdgeInsets.fromLTRB(
-                  AppSpace.md,
-                  AppSpace.md,
-                  AppSpace.xs,
-                  AppSpace.xs,
-                ),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        l10n.msgConversations,
-                        style: Theme.of(context).textTheme.labelLarge,
-                      ),
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.group_add_outlined, size: 18),
-                      tooltip: l10n.msgNewGroup,
-                      onPressed: () => _newGroup(context, ref, contacts),
-                    ),
-                  ],
+                for (final c in pending) _PendingTile(contact: c),
+              ],
+              // Conversations (directes + groupes) — clic = onglet
+              // dans le panneau de droite (ADR-0019).
+              _SectionHeader(
+                title: l10n.msgConversations,
+                trailing: IconButton(
+                  icon: const Icon(Icons.group_add_outlined, size: 18),
+                  tooltip: l10n.msgNewGroup,
+                  onPressed: () => _newGroup(context, ref, contacts),
                 ),
               ),
               if (convs.isEmpty)
@@ -210,40 +214,19 @@ class _ContactsPane extends ConsumerWidget {
                 ),
               for (final c in convs)
                 _ConvTile(conv: c, selected: c.convId == selectedConv),
-              const Divider(height: AppSpace.lg),
-              // Demandes de consentement en attente — actions
-              // accepter / refuser / bloquer.
-              if (pending.isNotEmpty) ...[
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(
-                    AppSpace.md,
-                    AppSpace.md,
-                    AppSpace.md,
-                    AppSpace.xs,
-                  ),
-                  child: Text(
-                    l10n.msgPendingTitle,
-                    style: Theme.of(context).textTheme.labelLarge,
-                  ),
-                ),
-                for (final c in pending) _PendingTile(contact: c),
-                const Divider(height: AppSpace.lg),
-              ],
-              _FriendsVaultSection(
-                selfPk: stats?.publicKey ?? '',
-                contacts: contacts,
-              ),
-              _ExtPeersSection(
-                contacts: contacts,
-                pending: pending,
-              ),
+              // Carnet de contacts — état de liaison, plans
+              // d'adressage (pastilles vert OnionBit / violet Tor)
+              // et menu de gestion.
+              _SectionHeader(title: l10n.msgContacts),
               if (contacts.isEmpty && pending.isEmpty)
                 Padding(
-                  padding: const EdgeInsets.all(AppSpace.lg),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: AppSpace.lg,
+                    vertical: AppSpace.xs,
+                  ),
                   child: Text(
                     l10n.msgNoContacts,
-                    style: Theme.of(context).textTheme.bodyMedium,
-                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.bodySmall,
                   ),
                 ),
               for (final c in contacts)
@@ -252,6 +235,17 @@ class _ContactsPane extends ConsumerWidget {
                   selected: false,
                   onTap: () => _openDirect(ref, c.publicKey),
                 ),
+              const Divider(height: AppSpace.lg),
+              // Découverte : coffre d'amis ext + pairs `msg_v1`
+              // suggérés (sections repliables).
+              _FriendsVaultSection(
+                selfPk: stats?.publicKey ?? '',
+                contacts: contacts,
+              ),
+              _ExtPeersSection(
+                contacts: contacts,
+                pending: pending,
+              ),
             ],
           ),
         ),
@@ -506,8 +500,46 @@ class _ContactsPane extends ConsumerWidget {
   }
 }
 
+/// En-tête de section du panneau de gauche (Demandes /
+/// Conversations / Contacts) — titre discret + compteur
+/// optionnel + action de section éventuelle.
+class _SectionHeader extends StatelessWidget {
+  const _SectionHeader({required this.title, this.count, this.trailing});
+
+  final String title;
+  final int? count;
+  final Widget? trailing;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        AppSpace.md,
+        AppSpace.md,
+        AppSpace.xs,
+        AppSpace.xs,
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              count != null ? '$title · $count' : title,
+              style: theme.textTheme.labelLarge?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ),
+          ?trailing,
+        ],
+      ),
+    );
+  }
+}
+
 /// Tuile de conversation (ADR-0019) : icone direct/groupe, libelle,
-/// badge de non-lus, indicateur d'invitation, menu suppression.
+/// pastille plan (`.onion` associé — ADR-0029), badge de non-lus,
+/// indicateur d'invitation, menu suppression.
 class _ConvTile extends ConsumerWidget {
   const _ConvTile({required this.conv, required this.selected});
 
@@ -538,6 +570,13 @@ class _ConvTile extends ConsumerWidget {
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
+          // Plan `.onion` disponible sur le correspondant (direct
+          // seul — les groupes restent sur les circuits OnionBit).
+          if (conv.planes.contains('onion'))
+            const Padding(
+              padding: EdgeInsets.only(right: AppSpace.xs),
+              child: PlaneDot(plane: 'onion', size: 8),
+            ),
           if (conv.unread > 0)
             Container(
               padding: const EdgeInsets.symmetric(
@@ -662,9 +701,10 @@ class _PendingTile extends ConsumerWidget {
   }
 }
 
-/// Tuile contact — état, indicateur de liaison e2e (vert lié /
-/// orange en cours / rouge échec / gris jamais tenté), menu
-/// reconnexion/blocage/rétention/suppression.
+/// Tuile contact — avatar avec pastille de liaison e2e (vert lié /
+/// orange en cours / rouge échec / gris jamais tenté), pastilles
+/// de plans d'adressage (vert OnionBit / violet Tor — ADR-0029),
+/// menu reconnexion/blocage/.onion/rétention/suppression.
 class _ContactTile extends ConsumerWidget {
   const _ContactTile({
     required this.contact,
@@ -678,27 +718,17 @@ class _ContactTile extends ConsumerWidget {
 
   /// Pastille de liaison : couleur + libellé de l'état `link`
   /// remonté par le daemon (jamais déduit du seul `circuit_id`).
-  (IconData, Color, String) _linkVisual(BuildContext context) {
+  (Color, String) _linkVisual(BuildContext context) {
     final l10n = context.l10n;
     final theme = Theme.of(context);
     return switch (contact.link) {
-      MessagingLinkState.bound => (
-        Icons.circle,
-        Colors.green,
-        l10n.msgLinkBound,
-      ),
+      MessagingLinkState.bound => (Colors.green, l10n.msgLinkBound),
       MessagingLinkState.connecting => (
-        Icons.circle,
         Colors.orange,
         l10n.msgLinkConnecting,
       ),
-      MessagingLinkState.failed => (
-        Icons.circle,
-        Colors.red,
-        l10n.msgLinkFailed,
-      ),
+      MessagingLinkState.failed => (Colors.red, l10n.msgLinkFailed),
       MessagingLinkState.none => (
-        Icons.circle_outlined,
         theme.colorScheme.outline,
         l10n.msgLinkOffline,
       ),
@@ -714,13 +744,28 @@ class _ContactTile extends ConsumerWidget {
       MessagingContactState.blocked => l10n.msgStateBlocked,
       _ => null,
     };
-    final (linkIcon, linkColor, linkLabel) = _linkVisual(context);
+    final (linkColor, linkLabel) = _linkVisual(context);
     return ListTile(
       dense: true,
       selected: selected,
+      // Avatar + pastille de liaison e2e en coin (vert lié /
+      // orange en cours / rouge échec / gris jamais tenté).
       leading: Tooltip(
         message: linkLabel,
-        child: Icon(linkIcon, size: 10, color: linkColor),
+        child: Badge(
+          alignment: Alignment.bottomRight,
+          smallSize: 9,
+          backgroundColor: linkColor,
+          child: CircleAvatar(
+            radius: 14,
+            child: Text(
+              contact.displayName.isEmpty
+                  ? '?'
+                  : contact.displayName[0].toUpperCase(),
+              style: const TextStyle(fontSize: 12),
+            ),
+          ),
+        ),
       ),
       title: Row(
         children: [
@@ -735,6 +780,22 @@ class _ContactTile extends ConsumerWidget {
             ),
           ),
           TrustBadge(kind: 'identity', subject: contact.publicKey),
+          // Plans d'adressage : vert OnionBit toujours, violet Tor
+          // quand une adresse `.onion` est associée (tooltip
+          // vérifiée/manuelle — pair en ligne requis).
+          PlaneDot(
+            plane: 'onionbit',
+            size: 8,
+            tooltip: context.l10n.msgPlaneOnionbit,
+          ),
+          if (contact.hasOnion)
+            PlaneDot(
+              plane: 'onion',
+              size: 8,
+              tooltip: contact.onionVerified
+                  ? l10n.msgOnionVerifiedTip
+                  : l10n.msgOnionManualTip,
+            ),
         ],
       ),
       subtitle: stateLabel != null
@@ -759,6 +820,12 @@ class _ContactTile extends ConsumerWidget {
           if (contact.state == MessagingContactState.active &&
               contact.link != MessagingLinkState.bound)
             PopupMenuItem(value: 'reconnect', child: Text(l10n.msgReconnect)),
+          // Association `.onion` explicite (ADR-0029 Q3 — jamais
+          // inférée) : adresse saisie à la main ou liaison signée.
+          PopupMenuItem(
+            value: 'onion',
+            child: Text(l10n.msgOnionAssociate),
+          ),
           if (contact.state == MessagingContactState.blocked)
             PopupMenuItem(value: 'unblock', child: Text(l10n.msgUnblock))
           else
@@ -786,6 +853,7 @@ class _ContactTile extends ConsumerWidget {
             () => repo.unblock(contact.publicKey),
           ),
           'retention' => _retentionDialog(context, ref),
+          'onion' => _onionDialog(context, ref),
           _ => _act(context, ref, () => repo.remove(contact.publicKey)),
         },
       ),
@@ -869,6 +937,97 @@ class _ContactTile extends ConsumerWidget {
     try {
       await repo.setAlias(contact.publicKey, alias);
       ref.invalidate(messagingContactsProvider);
+    } catch (e) {
+      if (context.mounted) _showError(context, e);
+    }
+  }
+
+  /// Dialogue d'association `.onion` (ADR-0029 §8 Q3) : adresse
+  /// saisie à la main + signature de liaison optionnelle —
+  /// explicite, jamais inférée. Une association existante peut
+  /// être retirée (le pair quitte l'allowlist Tor du daemon).
+  Future<void> _onionDialog(BuildContext context, WidgetRef ref) async {
+    final l10n = context.l10n;
+    final repo = ref.read(messagingRepositoryProvider);
+    final addrCtl = TextEditingController(text: contact.onion ?? '');
+    final sigCtl = TextEditingController();
+    final result = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(l10n.msgOnionDialogTitle),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: addrCtl,
+              decoration: InputDecoration(
+                labelText: l10n.msgOnionAddressLabel,
+                border: const OutlineInputBorder(),
+              ),
+              style: const TextStyle(
+                fontFamily: AppFontFamilies.mono,
+                fontSize: 12,
+              ),
+              autofocus: contact.onion == null,
+            ),
+            const SizedBox(height: AppSpace.sm),
+            TextField(
+              controller: sigCtl,
+              decoration: InputDecoration(
+                labelText: l10n.msgOnionSignatureLabel,
+                border: const OutlineInputBorder(),
+              ),
+              style: const TextStyle(
+                fontFamily: AppFontFamilies.mono,
+                fontSize: 12,
+              ),
+            ),
+            if (contact.hasOnion)
+              Padding(
+                padding: const EdgeInsets.only(top: AppSpace.sm),
+                child: Text(
+                  contact.onionVerified
+                      ? l10n.msgOnionVerifiedTip
+                      : l10n.msgOnionManualTip,
+                  style: Theme.of(ctx).textTheme.labelSmall,
+                ),
+              ),
+          ],
+        ),
+        actions: [
+          if (contact.hasOnion)
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, 'remove'),
+              child: Text(l10n.msgOnionRemove),
+            ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text(l10n.cancel),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, 'set'),
+            child: Text(l10n.msgSend),
+          ),
+        ],
+      ),
+    );
+    final address = addrCtl.text.trim();
+    final signature = sigCtl.text.trim();
+    addrCtl.dispose();
+    sigCtl.dispose();
+    if (result == null || !context.mounted) return;
+    try {
+      if (result == 'remove') {
+        await repo.removePeerOnion(contact.publicKey);
+      } else if (address.isNotEmpty) {
+        await repo.setPeerOnion(
+          contact.publicKey,
+          address,
+          signature: signature.isEmpty ? null : signature,
+        );
+      }
+      ref.invalidate(messagingContactsProvider);
+      ref.invalidate(messagingConversationsProvider);
     } catch (e) {
       if (context.mounted) _showError(context, e);
     }

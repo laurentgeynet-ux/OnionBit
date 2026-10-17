@@ -52,6 +52,21 @@ abstract class MessagingRepository {
   /// `DELETE /messaging/messages/{id}` — suppression réelle.
   Future<void> deleteMessage(String id);
 
+  /// `PUT /messaging/contacts/{pk}/onion` — associe une adresse
+  /// `.onion` au contact (explicite, ADR-0029 : jamais inférée).
+  /// `signature` = liaison auto-portante `onionbit/onion-bind/v1`
+  /// optionnelle — quand fournie, elle doit vérifier sous la clé
+  /// du pair (`ApiException(400)` sinon).
+  Future<void> setPeerOnion(
+    String publicKey,
+    String address, {
+    String? signature,
+  });
+
+  /// `DELETE /messaging/contacts/{pk}/onion` — retire
+  /// l'association `.onion` (le pair quitte l'allowlist Tor).
+  Future<void> removePeerOnion(String publicKey);
+
   /// `POST …/retention` — rétention des messages du contact.
   Future<void> setRetention(
     String publicKey, {

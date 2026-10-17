@@ -19,6 +19,8 @@ class MessagingConversation {
     required this.lastTs,
     this.peer,
     this.alias = '',
+    this.onion,
+    this.planes = const [],
   });
 
   /// `conv_id` hex (16 octets) — adresse toutes les routes
@@ -49,6 +51,14 @@ class MessagingConversation {
 
   /// Pseudonyme du correspondant (direct) — vide sinon.
   final String alias;
+
+  /// Hôte `.onion` associé au correspondant (direct seul) —
+  /// `null` en groupe ou sans association.
+  final String? onion;
+
+  /// Plans d'adressage du correspondant (`"onionbit"` / `"onion"`)
+  /// — vide en groupe ou quand le pair n'est pas un contact.
+  final List<String> planes;
 
   bool get isGroup => kind == 'group';
   bool get isInvited => state == 'invited';

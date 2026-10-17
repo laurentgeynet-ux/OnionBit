@@ -16,6 +16,24 @@ abstract final class AppBrandColors {
   static const Color tertiary = Color(0xFF4FD8E0);
 }
 
+/// Couleurs des plans de transport messagerie (ADR-0029 §8 Q3) —
+/// teintes intermédiaires fixes : les pastilles sont de petits
+/// indicateurs qui doivent rester identifiables dans les deux
+/// thèmes, et jamais confondues entre plans :
+/// OnionBit = vert (overlay/circuits), Tor = violet (`.onion`),
+/// boîte aux lettres = ambre (remise différée).
+abstract final class AppPlaneColors {
+  /// Plan OnionBit — circuits anonymes IPv8 (`"onionbit"`/`"ipv8"`).
+  static const Color onionbit = Color(0xFF43A047);
+
+  /// Plan Tor — lien direct vers un service `.onion` (`"onion"`).
+  static const Color tor = Color(0xFF7E57C2);
+
+  /// Plan boîte aux lettres — dépôt store-and-forward
+  /// (`"mailbox"`, ADR-0026).
+  static const Color mailbox = Color(0xFFF9A825);
+}
+
 /// Tokens de couleur sémantiques (ADR-0021 §7) qui complètent
 /// `ColorScheme` — Material 3 fournit déjà `error`, mais aucun
 /// équivalent standard pour succès/avertissement/info.

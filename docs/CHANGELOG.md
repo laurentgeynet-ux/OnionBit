@@ -3,6 +3,44 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## ADR-0029 étape 125 : chat UI modernisée + badges de plan (2026-10-17)
+
+La page Messagerie consomme les métadonnées multi-plan de l'étape
+124 et les rend visibles sans mélanger les deux mondes (Q3/Q6 de
+l'arbitrage) :
+
+- **Données** : `MessagingMessage.plane` (`ipv8`/`onion`/`mailbox` —
+  repli `ipv8` pour les lignes antérieures à la migration v26),
+  `MessagingContact`/`MessagingConversation` `.onion`,
+  `onionVerified` et `planes` parsés depuis les DTO.
+- **Pastilles** : `AppPlaneColors` (vert OnionBit / violet Tor /
+  ambre boîte aux lettres) et widgets `PlaneDot`/`PlaneBadges`
+  mutualisés — les plans restent visuellement distincts, tooltips
+  localisés (`Semantics` aussi).
+- **Bulles modernisées** : arrondis asymétriques (coin envoyeur
+  presque droit), pied de bulle = heure `HH:mm` + pastille du plan
+  réellement emprunté + état de livraison (envoyé / livré / non
+  livré — icônes coche, double coche, erreur).
+- **Zone Contacts refaite** : demandes `pending` promues en tête
+  (elles attendent une décision), sections titrées
+  `Conversations` / `Contacts` / `Découverte` (coffre d'amis et
+  suggestions `msg_v1` restent repliables en bas), l'explication
+  e2e longue est repliée dans un dialogue « À propos ». Tuiles
+  contact : avatar avec pastille de liaison e2e en coin, pastilles
+  de plans, état/alias inchangés ; tuiles de conversation et
+  onglets portent la pastille `.onion` quand le correspondant en a
+  une (les groupes restent sur les circuits OnionBit — rien ne
+  change pour eux).
+- **Association `.onion` depuis l'UI** : entrée de menu « Adresse
+  .onion… » sur chaque contact — adresse saisie à la main ou
+  signature de liaison optionnelle (`PUT`/`DELETE
+  /messaging/contacts/{pk}/onion`), tooltip « association
+  vérifiée/manuelle — pair en ligne requis ». Toujours explicite :
+  jamais d'inférence ni de traduction entre plans.
+- i18n fr/en (15 clés), tests `messaging_plane_test.dart`
+  (parsing multi-plan, couleurs distinctes, tooltips), goldens
+  régénérés ; `flutter analyze`/`test` et `check_i18n.ps1` verts.
+
 ## ADR-0029 étape 124 : messagerie `.onion` (2026-10-17)
 
 Les contacts munis d'une association `.onion` explicite (étape 123)

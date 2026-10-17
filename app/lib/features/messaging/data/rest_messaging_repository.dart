@@ -124,6 +124,20 @@ class RestMessagingRepository implements MessagingRepository {
       _api.delete('/messaging/messages/$id');
 
   @override
+  Future<void> setPeerOnion(
+    String publicKey,
+    String address, {
+    String? signature,
+  }) => _api.put(
+    '/messaging/contacts/$publicKey/onion',
+    body: {'address': address, 'signature': ?signature},
+  );
+
+  @override
+  Future<void> removePeerOnion(String publicKey) =>
+      _api.delete('/messaging/contacts/$publicKey/onion');
+
+  @override
   Future<void> setRetention(
     String publicKey, {
     required int retentionSecs,

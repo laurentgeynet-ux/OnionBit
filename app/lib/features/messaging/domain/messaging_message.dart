@@ -18,6 +18,7 @@ class MessagingMessage {
     required this.createdAt,
     this.authorPk,
     this.mid,
+    this.plane = 'ipv8',
   });
 
   /// `id` de trame en hex (16 octets — cible des ACKs et de la
@@ -50,6 +51,14 @@ class MessagingMessage {
   /// geste) — `null` en v1.
   final String? mid;
 
+  /// Plan de transport réellement emprunté (ADR-0029 §8 Q3) :
+  /// `ipv8` (circuits OnionBit), `onion` (lien `.onion` via Tor
+  /// embarqué) ou `mailbox` (dépôt store-and-forward). Les lignes
+  /// antérieures à la migration v26 remontent `ipv8`.
+  final String plane;
+
   bool get isOutgoing => direction == 'out';
   bool get isFailed => status == 'failed';
+  bool get isOnion => plane == 'onion';
+  bool get isMailbox => plane == 'mailbox';
 }

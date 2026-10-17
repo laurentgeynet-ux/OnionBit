@@ -26,7 +26,23 @@ extension MessagingContactJson on Map<String, dynamic> {
       'failed' => MessagingLinkState.failed,
       _ => MessagingLinkState.none,
     },
+    onion: this['onion'] as String?,
+    onionVerified: this['onion_verified'] as bool? ?? false,
+    planes: _planes(this['planes'], contact: true),
   );
+}
+
+/// Plans d'adressage (`planes` du DTO — ADR-0029). `"onionbit"`
+/// est la valeur de repli d'un contact (sa clé IPv8 est son
+/// identité de base) ; les conversations sans pair connu restent
+/// à liste vide.
+List<String> _planes(Object? raw, {bool contact = false}) {
+  final planes = [
+    for (final p in (raw as List<dynamic>?) ?? const [])
+      if (p is String && p.isNotEmpty) p,
+  ];
+  if (planes.isEmpty && contact) return const ['onionbit'];
+  return planes;
 }
 
 extension MessagingMessageJson on Map<String, dynamic> {
@@ -40,6 +56,7 @@ extension MessagingMessageJson on Map<String, dynamic> {
     createdAt: (this['created_at'] as num?)?.toInt() ?? 0,
     authorPk: this['author_pk'] as String?,
     mid: this['mid'] as String?,
+    plane: (this['plane'] as String?) ?? 'ipv8',
   );
 }
 
@@ -56,6 +73,8 @@ extension MessagingConversationJson on Map<String, dynamic> {
     lastTs: (this['last_ts'] as num?)?.toInt() ?? 0,
     peer: this['peer'] as String?,
     alias: (this['alias'] as String?) ?? '',
+    onion: this['onion'] as String?,
+    planes: _planes(this['planes']),
   );
 
   MessagingMember toMessagingMember() => MessagingMember(

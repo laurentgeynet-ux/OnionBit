@@ -46,6 +46,9 @@ class MessagingContact {
     this.pendingSinceSecs,
     this.alias = '',
     this.link = MessagingLinkState.none,
+    this.onion,
+    this.onionVerified = false,
+    this.planes = const ['onionbit'],
   });
 
   /// Clé publique du contact en hex (`pk_bin` de l'identité daemon).
@@ -65,6 +68,22 @@ class MessagingContact {
 
   /// État de liaison e2e courant (indicateur du point de statut).
   final MessagingLinkState link;
+
+  /// Hôte `.onion` associé explicitement (ADR-0029 — jamais inféré
+  /// ni traduit depuis l'adresse OnionBit) ; `null` sinon.
+  final String? onion;
+
+  /// La liaison `.onion` est signée par le pair
+  /// (`onionbit/onion-bind/v1`) et vérifiée côté daemon.
+  final bool onionVerified;
+
+  /// Plans d'adressage du contact : `"onionbit"` toujours présent,
+  /// `"onion"` quand une adresse `.onion` est associée.
+  final List<String> planes;
+
+  /// Une adresse `.onion` est associée — joignable via Tor quand
+  /// le pair est en ligne (pas de sonde périodique, ADR-0029 Q2).
+  bool get hasOnion => onion != null;
 
   /// Raccourci lisible de la clé (8 premiers caractères hex).
   String get shortKey =>
