@@ -20,10 +20,12 @@ pub mod limits;
 pub mod magnet;
 pub mod mdblob;
 pub mod onion;
+pub mod peer_addr;
 pub mod torrent;
 
 pub use bencode::BValue;
 pub use error::{FormatError, Result};
 pub use magnet::MagnetLink;
 pub use onion::OnionAddr;
+pub use peer_addr::{PeerAddress, Plane};
 pub use torrent::TorrentMeta;

@@ -28,6 +28,7 @@ use onionbit_crypto::ipv8::dh::{pair_open_in, pair_seal_in};
 use onionbit_crypto::ipv8::keys::{LibNaClPublicKey, LibNaClSecretKey};
 use onionbit_db::conversations as dbc;
 use onionbit_db::messaging as dbm;
+use onionbit_db::peer_onion as dbpo;
 use onionbit_db::Database;
 use onionbit_ipv8::UdpAddress;
 use onionbit_messaging::{
@@ -73,6 +74,15 @@ struct VaultEntry {
     pk: String,
     alias: String,
     state: String,
+    /// Adresse `.onion` associee au contact (ADR-0029) — la liaison
+    /// explicite voyage dans le coffre comme le pseudonyme.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    onion: Option<String>,
+    /// Signature de liaison `onionbit/onion-bind/v1` (hex) — la
+    /// destination peut re-verifier la preuve (sinon la liaison
+    /// reste « manuelle »).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    onion_sig: Option<String>,
 }
 
 /// Document coffre v1 — chiffre en entier dans le blob AEAD.
@@ -92,12 +102,14 @@ struct VaultDocIn {
     contacts: Vec<VaultEntryIn>,
 }
 
-/// Entree lue a l'import (`alias`/`state` optionnels).
+/// Entree lue a l'import (`alias`/`state`/`onion*` optionnels).
 #[derive(serde::Deserialize)]
 struct VaultEntryIn {
     pk: String,
     alias: Option<String>,
     state: Option<String>,
+    onion: Option<String>,
+    onion_sig: Option<String>,
 }
 
 /// Libelle stable d'un etat de consentement (DB + coffre).
@@ -242,6 +254,15 @@ pub enum MessagingEvent {
         name: String,
         /// Taille annoncee en octets.
         size: u64,
+    },
+    /// Adresse `.onion` d'un contact posee ou retiree (ADR-0029
+    /// etape 123) — l'UI rafraichit la pastille de plan sans
+    /// re-interroger la liste. `onion: None` = association retiree.
+    PeerOnion {
+        /// `pk_bin` du contact.
+        contact: Vec<u8>,
+        /// Hote `.onion` associe (`None` = retire).
+        onion: Option<String>,
     },
 }
 
@@ -1244,6 +1265,70 @@ impl MessagingService {
             .filter(|a| !a.is_empty())
     }
 
+    /// Adresse `.onion` associee a un contact (ADR-0029 etape 123 —
+    /// table `peer_onions`, liaison explicite jamais inferee).
+    /// `None` = aucune association ou pas de persistance.
+    pub fn peer_onion(&self, contact_pk: &[u8]) -> Option<dbpo::PeerOnionRow> {
+        self.db
+            .as_ref()?
+            .with(|c| dbpo::get_peer_onion(c, contact_pk))
+            .ok()
+            .flatten()
+    }
+
+    /// Notifie l'UI qu'une association `.onion` a change (event
+    /// `messaging_peer_onion` SSE) — appelee par `CoreSession`
+    /// apres `set_peer_onion`/`remove_peer_onion`.
+    pub fn notify_peer_onion(&self, contact_pk: &[u8], onion: Option<String>) {
+        let _ = self.events_tx.send(MessagingEvent::PeerOnion {
+            contact: contact_pk.to_vec(),
+            onion,
+        });
+    }
+
+    /// Importe la liaison `.onion` d'une entree de coffre : hote v3
+    /// valide exige ; si `onion_sig` est fournie elle doit verifier
+    /// sous la cle du pair (sinon la liaison est ignoree — un blob
+    /// ne forge pas une preuve). Sans signature, la liaison est
+    /// « manuelle » (`sig_checked = false`).
+    fn import_peer_onion(&self, pk_bin: &[u8], e: &VaultEntryIn) {
+        let (Some(host), Some(db)) = (&e.onion, &self.db) else {
+            return;
+        };
+        let Ok(addr) = onionbit_format::OnionAddr::parse(host) else {
+            return;
+        };
+        let (bind_sig, sig_checked) = match e.onion_sig.as_deref().and_then(|s| hex::decode(s).ok())
+        {
+            Some(sig) => {
+                let ok = LibNaClPublicKey::from_bin(pk_bin)
+                    .map(|pk| {
+                        onionbit_crypto::identity::verify_onion_address(&pk, addr.host(), &sig)
+                    })
+                    .unwrap_or(false);
+                if !ok {
+                    return; // signature presente mais invalide : on n'importe pas
+                }
+                (Some(sig), true)
+            }
+            None => (None, false),
+        };
+        let now = now_secs();
+        let _ = db.with(|c| {
+            dbpo::set_peer_onion(
+                c,
+                &dbpo::PeerOnionRow {
+                    public_key: pk_bin.to_vec(),
+                    onion_host: addr.host().to_string(),
+                    bind_sig,
+                    sig_checked,
+                    created_at: now as i64,
+                    updated_at: now as i64,
+                },
+            )
+        });
+    }
+
     /// Exporte le coffre de contacts — `{v, contacts: [{pk, alias,
     /// state}]}` chiffre `pair_seal_in` **pour soi-meme** (AEAD
     /// `XChaCha20-Poly1305` sous `onionbit/vault/v1`, cle derivee du
@@ -1257,10 +1342,20 @@ impl MessagingService {
             let contacts = self.contacts.lock().unwrap_or_else(|e| e.into_inner());
             contacts
                 .iter()
-                .map(|(pk_bin, c)| VaultEntry {
-                    pk: hex::encode(pk_bin),
-                    alias: self.contact_alias(pk_bin).unwrap_or_default(),
-                    state: contact_state_str(c.state).to_owned(),
+                .map(|(pk_bin, c)| {
+                    // La liaison `.onion` voyage avec le contact —
+                    // signature incluse : la destination re-verifie.
+                    let onion = self.peer_onion(pk_bin);
+                    VaultEntry {
+                        pk: hex::encode(pk_bin),
+                        alias: self.contact_alias(pk_bin).unwrap_or_default(),
+                        state: contact_state_str(c.state).to_owned(),
+                        onion: onion.as_ref().map(|o| o.onion_host.clone()),
+                        onion_sig: onion
+                            .as_ref()
+                            .and_then(|o| o.bind_sig.as_ref())
+                            .map(hex::encode),
+                    }
                 })
                 .collect()
         };
@@ -1316,6 +1411,11 @@ impl MessagingService {
             let Ok(pk_bin) = hex::decode(&e.pk) else {
                 continue;
             };
+            // Liaison `.onion` du coffre : validee (v3 + signature
+            // si fournie) puis persiste — l'allowlist etendue est
+            // re-alimentee par `CoreSession::reseed_peer_onions`
+            // cote appelant.
+            self.import_peer_onion(&pk_bin, e);
             if self
                 .contacts
                 .lock()
@@ -4494,7 +4594,7 @@ mod tests {
             key.clone(),
             MessagingConfig::default(),
             0,
-            Some(db_a),
+            Some(db_a.clone()),
         );
         let friend = LibNaClSecretKey::generate();
         let pk_bin = bind(
@@ -4507,6 +4607,25 @@ mod tests {
             },
         );
         svc_a.set_alias(&pk_bin, "alice").unwrap();
+
+        // Liaison `.onion` signee par le pair (ADR-0029) : elle
+        // doit voyager dans le coffre et re-verifier a l'import.
+        const ONION: &str = "duckduckgogg42xjoc72x3sjasowoarfbgcmvfimaftt6twagswzczad.onion";
+        let bind_sig = onionbit_crypto::identity::sign_onion_address(&friend, ONION);
+        db_a.with(|c| {
+            dbpo::set_peer_onion(
+                c,
+                &dbpo::PeerOnionRow {
+                    public_key: pk_bin.clone(),
+                    onion_host: ONION.into(),
+                    bind_sig: Some(bind_sig.to_vec()),
+                    sig_checked: true,
+                    created_at: 1,
+                    updated_at: 1,
+                },
+            )
+        })
+        .unwrap();
 
         let blob = svc_a.export_vault();
         assert!(blob.starts_with(b"OBV1"));
@@ -4538,6 +4657,11 @@ mod tests {
         assert_eq!(restored, 1);
         assert_eq!(svc_b.contact_state(&pk_bin), Some(ContactState::Active));
         assert_eq!(svc_b.contact_alias(&pk_bin).as_deref(), Some("alice"));
+
+        // La liaison `.onion` est restauree, signature re-verifiee.
+        let onion = svc_b.peer_onion(&pk_bin).unwrap();
+        assert_eq!(onion.onion_host, ONION);
+        assert!(onion.sig_checked);
 
         // Un tiers (autre cle) ne peut pas lire le coffre.
         let svc_c = make_service(0).await.0;

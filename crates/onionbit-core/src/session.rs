@@ -645,6 +645,9 @@ impl CoreSession {
                 .unwrap_or_else(|e| e.into_inner()) = Some(seed);
             self.spawn_onion_service();
         }
+        // ADR-0029 etape 123 : les `.onion` associes aux pairs
+        // re-alimentent l'allowlist etendue du runtime courant.
+        self.reseed_peer_onions();
         Ok(())
     }
 
@@ -2333,9 +2336,11 @@ impl CoreSession {
     /// Remplace le runtime Tor (tests, futur rechargement a chaud).
     /// Les backends construits au demarrage gardent leur fetcher
     /// initial — injecter aussi les backends si le test attend un
-    /// transport coherent.
+    /// transport coherent. Les `.onion` des pairs sont re-seedes
+    /// sur le nouveau runtime (allowlist etendue repartie a vide).
     pub fn swap_tor_runtime(&self, runtime: onionbit_tor::TorRuntime) {
         *self.inner.tor.write().unwrap_or_else(|e| e.into_inner()) = runtime;
+        self.reseed_peer_onions();
     }
 
     /// Permute runtime Tor **et** backends de recherche en un coup —
@@ -2354,6 +2359,8 @@ impl CoreSession {
             .search_backends
             .lock()
             .unwrap_or_else(|e| e.into_inner()) = backends;
+        // Les `.onion` des pairs migrent vers le nouveau runtime.
+        self.reseed_peer_onions();
         // Le nouveau runtime bootstrappe de zero : le service
         // `.onion` d'identite republie dessus des que `Ready`
         // (meme cle derivee → meme adresse). `Handle::try_current`
@@ -2402,6 +2409,144 @@ impl CoreSession {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .insert(source.into(), backend);
+    }
+
+    // ── ADR-0029 etape 123 : adresses `.onion` des pairs ─────────
+    //
+    // Table `peer_onions` (partagee contacts/canaux — meme espace
+    // de cles LibNaCl) + allowlist etendue du runtime Tor courant.
+    // La liaison est **explicite** : posee par l'utilisateur ou
+    // signee par le pair (`onionbit/onion-bind/v1`) — jamais
+    // inferee, jamais de traduction inter-plans.
+
+    /// Associe l'adresse `.onion` `host` a la cle de pair `pk`.
+    /// `signature` optionnelle : liaison auto-portante signee par
+    /// le pair lui-meme — fournie mais invalide = refus net (un
+    /// tiers ne forge pas la preuve d'un autre). Persiste puis
+    /// enregistre l'hote dans l'allowlist etendue du runtime Tor
+    /// courant ; notifie le service messagerie (event SSE).
+    pub fn set_peer_onion(
+        &self,
+        pk: &[u8],
+        host: &str,
+        signature: Option<&[u8]>,
+    ) -> Result<onionbit_db::peer_onion::PeerOnionRow> {
+        // `.onion` v3 valide exige — une adresse alteree est
+        // refusee avant persistance comme avant enregistrement.
+        let addr = onionbit_format::OnionAddr::parse(host)?;
+        // Forme canonique `pk64` — partagee par le contact
+        // (`pk_bin` prefixe) et le canal de son createur (64 o nus).
+        let pk64 = onionbit_db::peer_onion::key64(pk)
+            .ok_or(CoreError::InvalidState("cle de pair invalide"))?;
+        let (bind_sig, sig_checked) = match signature {
+            Some(sig) => {
+                // `verify_onion_address` attend la forme filaire
+                // complete (`LibNaCLPK:` + pk64).
+                let mut pk_bin = onionbit_crypto::ipv8::keys::LIBNACL_PK_PREFIX.to_vec();
+                pk_bin.extend_from_slice(&pk64);
+                let peer_key = onionbit_crypto::ipv8::keys::LibNaClPublicKey::from_bin(&pk_bin)
+                    .map_err(|_| CoreError::InvalidState("cle de pair invalide"))?;
+                if !onionbit_crypto::identity::verify_onion_address(&peer_key, addr.host(), sig) {
+                    return Err(CoreError::InvalidState(
+                        "liaison .onion : signature invalide",
+                    ));
+                }
+                (Some(sig.to_vec()), true)
+            }
+            None => (None, false),
+        };
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+        let row = onionbit_db::peer_onion::PeerOnionRow {
+            public_key: pk64,
+            onion_host: addr.host().to_string(),
+            bind_sig,
+            sig_checked,
+            created_at: now,
+            updated_at: now,
+        };
+        self.db()
+            .with(|c| {
+                // `created_at` conserve la premiere association.
+                let mut row = row.clone();
+                if let Ok(Some(old)) = onionbit_db::peer_onion::get_peer_onion(c, pk) {
+                    row.created_at = old.created_at;
+                }
+                onionbit_db::peer_onion::set_peer_onion(c, &row)
+            })
+            .map_err(CoreError::Db)?;
+        self.tor()
+            .allow_peer_onion(addr.host())
+            .map_err(|e| CoreError::State(format!("allowlist pair .onion : {e}")))?;
+        if let Some(m) = self
+            .inner
+            .ipv8
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+            .and_then(|s| s.messaging.clone())
+        {
+            m.notify_peer_onion(pk, Some(addr.host().to_string()));
+        }
+        Ok(row)
+    }
+
+    /// Retire l'association `.onion` d'un pair (`true` si une ligne
+    /// existait) + revocation de l'allowlist etendue courante.
+    pub fn remove_peer_onion(&self, pk: &[u8]) -> Result<bool> {
+        let row = self
+            .db()
+            .with(|c| {
+                let old = onionbit_db::peer_onion::get_peer_onion(c, pk)?;
+                onionbit_db::peer_onion::remove_peer_onion(c, pk)?;
+                Ok(old)
+            })
+            .map_err(CoreError::Db)?;
+        let Some(row) = row else {
+            return Ok(false);
+        };
+        self.tor().revoke_peer_onion(&row.onion_host);
+        if let Some(m) = self
+            .inner
+            .ipv8
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+            .and_then(|s| s.messaging.clone())
+        {
+            m.notify_peer_onion(pk, None);
+        }
+        Ok(true)
+    }
+
+    /// Association `.onion` d'un pair (`None` = aucune).
+    pub fn peer_onion(&self, pk: &[u8]) -> Option<onionbit_db::peer_onion::PeerOnionRow> {
+        self.db()
+            .with(|c| onionbit_db::peer_onion::get_peer_onion(c, pk))
+            .ok()
+            .flatten()
+    }
+
+    /// Toutes les associations `.onion` connues.
+    pub fn peer_onions(&self) -> Vec<onionbit_db::peer_onion::PeerOnionRow> {
+        self.db()
+            .with(onionbit_db::peer_onion::list_peer_onions)
+            .unwrap_or_default()
+    }
+
+    /// Re-alimente l'allowlist etendue du runtime Tor **courant**
+    /// depuis `peer_onions` — au demarrage et apres un hot-swap
+    /// (le nouveau runtime repart d'une allowlist vide).
+    /// Idempotent ; les hotes invalides stockes sont ignores.
+    pub fn reseed_peer_onions(&self) {
+        let rt = self.tor();
+        for row in self.peer_onions() {
+            if let Err(e) = rt.allow_peer_onion(&row.onion_host) {
+                tracing::warn!(error = %e, "association .onion ignoree (hote invalide)");
+            }
+        }
     }
 
     /// Acces direct au moteur (services internes : watch folder,
@@ -6022,6 +6167,58 @@ mod tests {
         // eventuels fetchers de l'ancienne ne fuient pas.
         assert_eq!(session.search_backend_sources(), vec!["tpb".to_string()]);
         assert!(session.search_backend("tpb").is_some());
+        session.stop().await;
+    }
+
+    /// ADR-0029 etape 123 : association `.onion` d'un pair —
+    /// persistance, enregistrement dans l'allowlist etendue du
+    /// runtime courant, re-seed apres hot-swap, revocation.
+    #[tokio::test]
+    async fn peer_onion_cycle_complet_avec_allowlist() {
+        const ONION: &str = "duckduckgogg42xjoc72x3sjasowoarfbgcmvfimaftt6twagswzczad.onion";
+        let dir = tempfile::tempdir().unwrap();
+        let session = CoreSession::start_offline(
+            CoreConfig::offline(dir.path().to_path_buf()),
+            Notifier::new(),
+        )
+        .await
+        .unwrap();
+        let pair = onionbit_crypto::identity::IdentitySeed::generate();
+        let kp = pair.derive_keypair();
+        let pk_bin = kp.public_key().to_bin();
+
+        // Refus nets : adresse alteree, signature invalide.
+        assert!(session
+            .set_peer_onion(&pk_bin, "pas-une-adresse.onion", None)
+            .is_err());
+        let sig = onionbit_crypto::identity::sign_onion_address(&kp, ONION);
+        assert!(
+            session
+                .set_peer_onion(&pk_bin, ONION, Some(&[0u8; 64]))
+                .is_err(),
+            "une signature invalide refuse l'association"
+        );
+
+        // Association signee : `sig_checked` et allowlist etendue.
+        let row = session.set_peer_onion(&pk_bin, ONION, Some(&sig)).unwrap();
+        assert_eq!(row.onion_host, ONION);
+        assert!(row.sig_checked);
+        assert!(session.tor().peer_onion_allowed(ONION));
+        assert_eq!(session.peer_onion(&pk_bin).unwrap().onion_host, ONION);
+
+        // Hot-swap : l'allowlist du nouveau runtime est re-seedee.
+        let nouveau = onionbit_tor::TorRuntime::stub_ready(Default::default());
+        session.swap_tor_runtime(nouveau);
+        assert!(
+            session.tor().peer_onion_allowed(ONION),
+            "reseed attendu apres swap_tor_runtime"
+        );
+
+        // Retrait : ligne + revocation dans le runtime courant.
+        assert!(session.remove_peer_onion(&pk_bin).unwrap());
+        assert!(!session.tor().peer_onion_allowed(ONION));
+        assert!(session.peer_onion(&pk_bin).is_none());
+        assert!(!session.remove_peer_onion(&pk_bin).unwrap());
         session.stop().await;
     }
 }

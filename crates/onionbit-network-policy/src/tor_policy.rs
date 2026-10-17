@@ -58,6 +58,16 @@ impl TorTargetPolicy {
         }
     }
 
+    /// Retire une entree de l'allowlist (`true` si elle existait —
+    /// formes acceptees comme [`insert`]). Utilisee pour revoquer un
+    /// pair dont l'adresse `.onion` associee est oubliee (ADR-0029).
+    pub fn remove(&mut self, entry: &str) -> bool {
+        let Ok(addr) = onion_host(entry) else {
+            return false;
+        };
+        self.allowed_hosts.remove(addr.host())
+    }
+
     /// Frontiere dure appliquee avant tout `connect` : `.onion` v3
     /// valide ET allowliste (ports 80/443) — rien d'autre.
     pub fn check(&self, host: &str, port: u16) -> Result<()> {

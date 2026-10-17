@@ -37,6 +37,8 @@ base64.workspace = true
 
 [dev-dependencies]
 onionbit-test-support = { path = "../onionbit-test-support" }
+# Signatures de liaison `.onion` des tests `peer_onions` (ADR-0029).
+onionbit-crypto = { path = "../onionbit-crypto" }
 # Doubles `OnionSearchBackend` des tests `/api/search/external` +
 # capture tracing (« aucune requete dans les logs », ADR-0028 §6).
 async-trait.workspace = true

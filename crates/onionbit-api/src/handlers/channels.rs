@@ -41,12 +41,22 @@ pub async fn list_channels(
                 // `CHANNEL_NODE` (id_ == origin_id).
                 let root =
                     onionbit_db::channel::get_by_pk_id(c, &pk, origin_id)?.unwrap_or_default();
+                // ADR-0029 : adresse `.onion` du createur si
+                // associee (liaison explicite — `peer_onions`).
+                let onion = onionbit_db::peer_onion::get_peer_onion(c, &pk)?;
+                let mut planes = vec!["onionbit"];
+                if onion.is_some() {
+                    planes.push("onion");
+                }
                 out.push(serde_json::json!({
                     "public_key": hex::encode(&pk),
                     "id": origin_id,
                     "name": root.title,
                     "subscribed": true,
                     "num_entries": onionbit_db::channel::count_channel_entries(c, &pk)?,
+                    "onion": onion.as_ref().map(|o| o.onion_host.clone()),
+                    "onion_verified": onion.map(|o| o.sig_checked).unwrap_or(false),
+                    "planes": planes,
                 }));
             }
             Ok(out)
@@ -122,6 +132,64 @@ pub async fn unsubscribe(
         })
         .await?;
     Ok(Json(serde_json::json!({ "subscribed": false })))
+}
+
+/// Corps `{address, signature?}` de la liaison `.onion` d'un canal
+/// (ADR-0029 etape 123) — la cle du canal est la cle d'identite de
+/// son createur : la table `peer_onions` est partagee avec les
+/// contacts messagerie, liaison **explicite** jamais inferee.
+#[derive(serde::Deserialize)]
+pub struct ChannelOnionBody {
+    /// Adresse `.onion` du createur (`onion:<hote>` ou hote v3 nu).
+    pub address: String,
+    /// Signature `onionbit/onion-bind/v1` hex optionnelle — quand
+    /// fournie, elle DOIT verifier sous la cle du canal.
+    pub signature: Option<String>,
+}
+
+/// `PUT /api/channels/{pk}/onion` — associe l'adresse `.onion` du
+/// createur au canal (servira le catalogue mdblob en HTTP sur ce
+/// service, etape 126) ; l'hote rejoint l'allowlist etendue Tor.
+/// `400` si l'adresse est invalide ou la signature ne verifie pas.
+pub async fn put_channel_onion(
+    State(state): State<AppState>,
+    Path(pk_hex): Path<String>,
+    Json(body): Json<ChannelOnionBody>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let pk = channel_pk(&pk_hex)?;
+    let host = body
+        .address
+        .trim()
+        .strip_prefix("onion:")
+        .unwrap_or(body.address.trim());
+    let sig = match &body.signature {
+        Some(s) => Some(
+            hex::decode(s.trim())
+                .map_err(|_| ApiError::bad_request("signature attendue en hex"))?,
+        ),
+        None => None,
+    };
+    let row = state
+        .session
+        .set_peer_onion(&pk, host, sig.as_deref())
+        .map_err(|e| ApiError::bad_request(e.to_string()))?;
+    Ok(Json(serde_json::json!({
+        "onion": row.onion_host,
+        "sig_checked": row.sig_checked,
+    })))
+}
+
+/// `DELETE /api/channels/{pk}/onion` — retire l'association (le
+/// canal redevient joignable au seul plan OnionBit cote UI).
+pub async fn delete_channel_onion(
+    State(state): State<AppState>,
+    Path(pk_hex): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let removed = state
+        .session
+        .remove_peer_onion(&channel_pk(&pk_hex)?)
+        .map_err(|e| ApiError::bad_request(e.to_string()))?;
+    Ok(Json(serde_json::json!({ "removed": removed })))
 }
 
 /// Cle de signature du canal personnel — 503 quand la stack IPv8

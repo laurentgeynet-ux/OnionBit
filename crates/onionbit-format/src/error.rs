@@ -30,6 +30,9 @@ pub enum FormatError {
     /// Adresse de service cache Tor v3 invalide (ADR-0028).
     #[error("adresse onion invalide: {0}")]
     BadOnionAddr(String),
+    /// Adresse multi-plan d'un pair invalide (ADR-0029).
+    #[error("adresse de pair invalide: {0}")]
+    BadPeerAddr(String),
 }
 
 /// Alias de `Result` pour ce crate.

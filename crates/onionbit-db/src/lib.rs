@@ -30,6 +30,7 @@ pub mod messaging;
 pub mod migrations;
 pub mod misc;
 pub mod models;
+pub mod peer_onion;
 pub mod peer_stats;
 pub mod peers;
 pub mod pex;

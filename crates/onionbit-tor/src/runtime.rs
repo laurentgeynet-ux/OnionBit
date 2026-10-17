@@ -61,6 +61,11 @@ impl<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send> OnionIo for
 /// handle pour l'API pendant que la tache de bootstrap mute l'etat.
 pub(crate) struct Inner {
     pub(crate) settings: TorSettings,
+    /// Allowlist etendue aux pairs approuves (ADR-0029) — mutable a
+    /// chaud : les `.onion` associes explicitement aux
+    /// contacts/canaux s'y enregistrent ; la politique de config
+    /// (`settings.target_policy`, recherche) reste immuable.
+    pub(crate) peer_policy: Mutex<onionbit_network_policy::TorTargetPolicy>,
     state: Mutex<TorState>,
     /// Tache de bootstrap en cours — idempotence + re-essai.
     #[cfg(feature = "tor")]
@@ -106,6 +111,7 @@ impl TorRuntime {
         Self {
             inner: Arc::new(Inner {
                 settings,
+                peer_policy: Mutex::new(onionbit_network_policy::TorTargetPolicy::new()),
                 state: Mutex::new(TorState::Off),
                 #[cfg(feature = "tor")]
                 boot: Mutex::new(None),
@@ -226,7 +232,20 @@ impl TorRuntime {
         let mut current = url.to_string();
         for _ in 0..=settings.max_redirects {
             let target = http::parse_target(&current)?;
-            settings.target_policy.check(&target.host, target.port)?;
+            // Politique effective = cibles de config ∪ pairs
+            // approuves (catalogues `.onion` des contacts/canaux,
+            // ADR-0029 etape 126).
+            if settings
+                .target_policy
+                .check(&target.host, target.port)
+                .is_err()
+            {
+                self.inner
+                    .peer_policy
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .check(&target.host, target.port)?;
+            }
             let stream = self.open_stream(&target.host, target.port).await?;
             // `https` : TLS au-dessus du flux Tor — licite pour
             // les services onion dument certifies (le transport
@@ -284,6 +303,40 @@ impl TorRuntime {
                 "service .onion non compile (feature `hs` desactivee)".into(),
             ))
         }
+    }
+
+    /// ADR-0029 — enregistre le `.onion` d'un pair approuve dans
+    /// l'allowlist etendue (association explicite contact/canal).
+    /// La politique effective d'un fetch devient
+    /// `target_policy ∪ peer_policy` — jamais l'inverse : les pairs
+    /// n'elargissent pas la recherche, la recherche n'autorise pas
+    /// de pair arbitraire. `Err` si l'entree n'est pas un v3 valide.
+    pub fn allow_peer_onion(&self, host: &str) -> Result<()> {
+        self.inner
+            .peer_policy
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(host)?;
+        Ok(())
+    }
+
+    /// Revoque le `.onion` d'un pair (association oubliee).
+    /// `true` si l'entree existait.
+    pub fn revoke_peer_onion(&self, host: &str) -> bool {
+        self.inner
+            .peer_policy
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(host)
+    }
+
+    /// `true` si `host` est un `.onion` de pair approuve.
+    pub fn peer_onion_allowed(&self, host: &str) -> bool {
+        self.inner
+            .peer_policy
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_allowed(host)
     }
 
     /// Etat du service `.onion` d'identite pour

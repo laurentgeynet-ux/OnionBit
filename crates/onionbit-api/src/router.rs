@@ -242,6 +242,12 @@ fn api_router(state: AppState) -> Router<AppState> {
             "/channels/{pk}/{id}/subscribe",
             put(channels::subscribe).delete(channels::unsubscribe),
         )
+        // ADR-0029 etape 123 : `.onion` du createur de canal
+        // (table `peer_onions` partagee avec les contacts).
+        .route(
+            "/channels/{pk}/onion",
+            put(channels::put_channel_onion).delete(channels::delete_channel_onion),
+        )
         // -- Info torrent / creation ------------------------------------
         .route("/torrentinfo/uri", post(torrentinfo::get_torrent_info))
         .route(
@@ -341,6 +347,13 @@ fn api_router(state: AppState) -> Router<AppState> {
         .route(
             "/messaging/contacts/{pk}/retention",
             post(messaging::post_retention),
+        )
+        // ADR-0029 etape 123 : association explicite `.onion` du
+        // contact (liaison signee `onionbit/onion-bind/v1` en
+        // option ; l'hote rejoint l'allowlist etendue Tor).
+        .route(
+            "/messaging/contacts/{pk}/onion",
+            put(messaging::put_contact_onion).delete(messaging::delete_contact_onion),
         )
         .route(
             "/messaging/messages/{id}",

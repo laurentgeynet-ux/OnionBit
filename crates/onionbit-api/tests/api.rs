@@ -5881,3 +5881,75 @@ async fn tor_probe_rapporte_etat_par_miroir() {
     srv.session.stop().await;
     srv2.session.stop().await;
 }
+
+/// ADR-0029 etape 123 — endpoints d'association `.onion` d'un
+/// pair : adresse v3 exigee, signature verifiee sous la cle du
+/// pair, retrait idempotent. La table est partagee contacts/canaux.
+#[tokio::test]
+async fn pair_onion_endpoints_cycle() {
+    const ONION: &str = "duckduckgogg42xjoc72x3sjasowoarfbgcmvfimaftt6twagswzczad.onion";
+    let srv = spawn_server().await;
+    // Contact : cle filaire complete `pk_bin` (74 o).
+    let kp = onionbit_crypto::identity::IdentitySeed::generate().derive_keypair();
+    let pk_bin = hex::encode(kp.public_key().to_bin());
+    // Canal : cle canonique 64 o (`channel_node.public_key`).
+    let pk64 = hex::encode(&kp.public_key().to_bin()[10..]);
+
+    // Adresse alteree → 400 (jamais de persistance d'une cible
+    // invalide).
+    let resp = srv
+        .client
+        .put(srv.url(&format!("/api/messaging/contacts/{pk_bin}/onion")))
+        .json(&serde_json::json!({"address": "pas-une-adresse.onion"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 400);
+
+    // Signature invalide → 400.
+    let resp = srv
+        .client
+        .put(srv.url(&format!("/api/messaging/contacts/{pk_bin}/onion")))
+        .json(&serde_json::json!({"address": ONION, "signature": hex::encode([0u8; 64])}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 400);
+
+    // Liaison signee par le pair lui-meme → `sig_checked`.
+    let sig = onionbit_crypto::identity::sign_onion_address(&kp, ONION);
+    let resp = srv
+        .client
+        .put(srv.url(&format!("/api/messaging/contacts/{pk_bin}/onion")))
+        .json(&serde_json::json!({"address": ONION, "signature": hex::encode(sig)}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["onion"], ONION);
+    assert_eq!(body["sig_checked"], true);
+    // Allowlist etendue du runtime Tor courant.
+    assert!(srv.session.tor().peer_onion_allowed(ONION));
+
+    // Le canal du createur (pk64) voit la MEME association.
+    let row = srv
+        .session
+        .peer_onion(&hex::decode(&pk64).unwrap())
+        .unwrap();
+    assert_eq!(row.onion_host, ONION);
+    assert!(row.sig_checked);
+
+    // Retrait cote canal : la ligne et l'allowlist disparaissent.
+    let resp = srv
+        .client
+        .delete(srv.url(&format!("/api/channels/{pk64}/onion")))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["removed"], true);
+    assert!(!srv.session.tor().peer_onion_allowed(ONION));
+    srv.session.stop().await;
+}

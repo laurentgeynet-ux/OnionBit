@@ -27,6 +27,34 @@ Phase 21 cadrée : intégrer le port Rust de Dillo (dépôt externe
   conditionné ; étapes 129-130 = arbitrage §8 + spike proxy +
   vérification du `http_proxy` porté avant tout code de produit.
 
+## ADR-0029 étape 123 : modèle d'adresses multi-plan (2026-10-17)
+
+Un pair = `{ onionbit:<clé> | onion:<hôte> | les deux }` — liaison
+**explicite**, jamais inférée, jamais de traduction inter-plans :
+
+- **Type** : `PeerAddress`/`Plane` dans `onionbit-format::peer_addr`
+  — forme canonique `onionbit:<hex128>,onion:<hôte>`, parsing
+  tolérant des formes nues.
+- **Persistance** : table `peer_onions` (migration v25) indexée sur
+  `pk64` (`key_to_bin()[10..]`) — le contact (pk_bin 74 o) et le
+  canal de son créateur (64 o) partagent la même ligne.
+  `bind_sig`/`sig_checked` portent la liaison signée
+  `onionbit/onion-bind/v1` quand le pair la prouve lui-même ;
+  signature fournie mais invalide = refus net.
+- **Politique** : `peer_policy` mutable dans `TorRuntime`
+  (`allow_peer_onion`/`revoke_peer_onion`) — l'allowlist
+  `TorTargetPolicy` s'étend aux pairs approuvés (union au fetch) ;
+  re-seed au démarrage et après hot-swap ; `delete_contact` purge
+  la liaison.
+- **Session** : `set_peer_onion`/`remove_peer_onion`/`peer_onion` ;
+  le coffre `OBV1` transporte `onion` + `onion_sig` par contact
+  (re-vérifiés à l'import).
+- **API/UI** : `PUT`/`DELETE /api/messaging/contacts/{pk}/onion` et
+  `/api/channels/{pk}/onion` ; `onion`, `onion_verified`, `planes`
+  (`["onionbit", "onion"]`) sur contacts, conversations et canaux ;
+  SSE `messaging_peer_onion` — les pastilles vert/violet de
+  l'étape 125 ont leurs données.
+
 ## ADR-0029 étape 122 : identité `.onion` dérivée (2026-10-17)
 
 Première brique de la phase 3 — adresse `.onion` stable, dérivée de

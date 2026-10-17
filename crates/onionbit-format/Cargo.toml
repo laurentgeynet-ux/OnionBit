@@ -13,6 +13,4 @@ sha2.workspace = true
 sha3.workspace = true
 unicode-normalization.workspace = true
 onionbit-crypto = { path = "../onionbit-crypto" }
-
-[dev-dependencies]
 hex.workspace = true

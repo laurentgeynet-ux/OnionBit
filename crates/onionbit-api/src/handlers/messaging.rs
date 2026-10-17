@@ -99,8 +99,33 @@ pub async fn get_stats(State(state): State<AppState>) -> Result<Json<serde_json:
     })))
 }
 
+/// Champs multi-plan d'une cle de pair (ADR-0029 etape 123) :
+/// `onion` = hote `.onion` associe explicitement (`null` sinon),
+/// `onion_verified` = liaison signee par le pair et verifiee,
+/// `planes` = pastilles a afficher (`"onionbit"` toujours present
+/// pour un contact — la cle IPv8 est son identite de base).
+fn planes_json(
+    session: &onionbit_core::session::CoreSession,
+    pk: &[u8],
+) -> (serde_json::Value, bool, Vec<&'static str>) {
+    let onion = session.peer_onion(pk);
+    let mut planes = vec!["onionbit"];
+    if onion.is_some() {
+        planes.push("onion");
+    }
+    (
+        onion
+            .as_ref()
+            .map(|o| serde_json::json!(o.onion_host))
+            .unwrap_or(serde_json::Value::Null),
+        onion.map(|o| o.sig_checked).unwrap_or(false),
+        planes,
+    )
+}
+
 /// `GET /api/messaging/contacts` — tous les contacts connus du
-/// service avec leur etat de consentement et leur circuit lie.
+/// service avec leur etat de consentement, leur circuit lie et
+/// leurs plans d'adressage (`planes` — ADR-0029).
 pub async fn get_contacts(
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
@@ -109,12 +134,16 @@ pub async fn get_contacts(
         .bound_contacts()
         .into_iter()
         .map(|(pk, cid)| {
+            let (onion, onion_verified, planes) = planes_json(&state.session, &pk);
             serde_json::json!({
                 "public_key": hexs(&pk),
                 "state": svc.contact_state(&pk).map(state_str).unwrap_or("unknown"),
                 "circuit_id": cid,
                 "link": link_str(svc.link_state(&pk)),
                 "alias": svc.contact_alias(&pk).unwrap_or_default(),
+                "onion": onion,
+                "onion_verified": onion_verified,
+                "planes": planes,
             })
         })
         .collect();
@@ -131,15 +160,77 @@ pub async fn get_pending(
         .pending_contacts()
         .into_iter()
         .map(|(pk, since)| {
+            let (onion, onion_verified, planes) = planes_json(&state.session, &pk);
             serde_json::json!({
                 "public_key": hexs(&pk),
                 "pending_since_secs": since,
                 "link": link_str(svc.link_state(&pk)),
                 "alias": svc.contact_alias(&pk).unwrap_or_default(),
+                "onion": onion,
+                "onion_verified": onion_verified,
+                "planes": planes,
             })
         })
         .collect();
     Ok(Json(serde_json::json!({ "contacts": contacts })))
+}
+
+/// Corps `{address, signature?}` de la liaison `.onion` d'un pair.
+/// `address` accepte `onion:<hote>` ou l'hote nu (ADR-0029 §8 Q3 :
+/// la liaison est **explicite** — jamais inferee).
+#[derive(serde::Deserialize)]
+pub struct PeerOnionBody {
+    /// Adresse `.onion` du pair (`onion:<hote>` ou hote v3 nu).
+    pub address: String,
+    /// Signature `onionbit/onion-bind/v1` hex optionnelle — quand
+    /// fournie, elle DOIT verifier sous la cle du pair.
+    pub signature: Option<String>,
+}
+
+/// `PUT /api/messaging/contacts/{pk}/onion` — associe une adresse
+/// `.onion` au contact (explicite) ; l'hote rejoint l'allowlist
+/// etendue du runtime Tor. `400` si l'adresse est invalide ou la
+/// signature fournie ne verifie pas sous la cle du contact.
+pub async fn put_contact_onion(
+    State(state): State<AppState>,
+    Path(pk): Path<String>,
+    Json(body): Json<PeerOnionBody>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let pk = pk_hex(&pk)?;
+    let host = body
+        .address
+        .trim()
+        .strip_prefix("onion:")
+        .unwrap_or(body.address.trim());
+    let sig = match &body.signature {
+        Some(s) => Some(
+            hex::decode(s.trim())
+                .map_err(|_| ApiError::bad_request("signature attendue en hex"))?,
+        ),
+        None => None,
+    };
+    let row = state
+        .session
+        .set_peer_onion(&pk, host, sig.as_deref())
+        .map_err(|e| ApiError::bad_request(e.to_string()))?;
+    Ok(Json(serde_json::json!({
+        "onion": row.onion_host,
+        "sig_checked": row.sig_checked,
+    })))
+}
+
+/// `DELETE /api/messaging/contacts/{pk}/onion` — retire
+/// l'association (le contact perd sa pastille « onion » et l'hote
+/// sort de l'allowlist etendue du runtime courant).
+pub async fn delete_contact_onion(
+    State(state): State<AppState>,
+    Path(pk): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let removed = state
+        .session
+        .remove_peer_onion(&pk_hex(&pk)?)
+        .map_err(|e| ApiError::bad_request(e.to_string()))?;
+    Ok(Json(serde_json::json!({ "removed": removed })))
 }
 
 /// Corps `{public_key: "<hex>"}` des transitions de contact.
@@ -348,6 +439,9 @@ pub async fn post_vault_import(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let blob = hex::decode(&body.vault).map_err(|_| ApiError::bad_request("vault hex attendu"))?;
     let restored = svc(&state)?.import_vault(&blob)?;
+    // Les liaisons `.onion` restaurees par le coffre rejoignent
+    // l'allowlist etendue du runtime Tor courant (ADR-0029).
+    state.session.reseed_peer_onions();
     Ok(Json(serde_json::json!({ "restored": restored })))
 }
 
@@ -393,6 +487,9 @@ pub async fn post_vault_restore(
         return Err(ApiError::not_found("aucun coffre chez les ponts"));
     };
     let restored = svc(&state)?.import_vault(&blob)?;
+    // Cf. `post_vault_import` : liaisons `.onion` restaurees →
+    // allowlist etendue du runtime courant.
+    state.session.reseed_peer_onions();
     Ok(Json(serde_json::json!({ "restored": restored })))
 }
 
@@ -442,6 +539,10 @@ fn event_to_sse(ev: &MessagingEvent) -> Option<(String, serde_json::Value)> {
         MessagingEvent::Link { contact, link } => (
             "messaging_link",
             serde_json::json!({"contact": hexs(contact), "link": link_str(*link)}),
+        ),
+        MessagingEvent::PeerOnion { contact, onion } => (
+            "messaging_peer_onion",
+            serde_json::json!({"contact": hexs(contact), "onion": onion}),
         ),
         MessagingEvent::Conv {
             conv,
@@ -507,6 +608,11 @@ pub async fn get_conversations(
         .into_iter()
         .map(|c| {
             let peer = svc.conv_peer(&c.row.conv_id.clone().try_into().unwrap_or_default());
+            let (onion, onion_verified, planes) = match &peer {
+                Some(p) => planes_json(&state.session, p),
+                // Groupe : pas de plan de pair unique.
+                None => (serde_json::Value::Null, false, Vec::new()),
+            };
             serde_json::json!({
                 "conv_id": hexs(&c.row.conv_id),
                 "kind": c.row.kind,
@@ -517,6 +623,9 @@ pub async fn get_conversations(
                 "last_ts": c.last_ts,
                 "peer": peer.as_ref().map(|p| hexs(p)),
                 "alias": peer.and_then(|p| svc.contact_alias(&p)).unwrap_or_default(),
+                "onion": onion,
+                "onion_verified": onion_verified,
+                "planes": planes,
             })
         })
         .collect();

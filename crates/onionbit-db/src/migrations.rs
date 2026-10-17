@@ -493,6 +493,23 @@ CREATE TABLE pull_store (
 CREATE INDEX idx_pull_store_slot ON pull_store(slot, kind);
 CREATE INDEX idx_pull_store_expiry ON pull_store(expires_at);
 ",
+    // v25 : adresses `.onion` associees aux pairs (ADR-0029) —
+    // liaison explicite (jamais inferee) entre la cle d'identite
+    // LibNaCl et son service cache Tor ; `bind_sig`/`sig_checked`
+    // portent la liaison signee `onionbit/onion-bind/v1` quand le
+    // pair la prouve lui-meme. Partagee par contacts et canaux
+    // (meme espace de cles).
+    "
+CREATE TABLE peer_onions (
+    public_key  BLOB PRIMARY KEY,
+    onion_host  TEXT NOT NULL,
+    bind_sig    BLOB,
+    sig_checked INTEGER NOT NULL DEFAULT 0,
+    created_at  INTEGER NOT NULL,
+    updated_at  INTEGER NOT NULL
+);
+CREATE INDEX idx_peer_onions_host ON peer_onions(onion_host);
+",
 ];
 
 /// Applique les migrations en attente sur une connexion ouverte.

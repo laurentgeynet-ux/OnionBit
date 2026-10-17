@@ -224,8 +224,12 @@ pub fn set_alias(conn: &Connection, pk: &[u8], alias: &str, now: i64) -> Result<
 
 /// Suppression reelle du contact et de ses messages (`ON DELETE
 /// CASCADE` + `PRAGMA foreign_keys` actif sur la connexion).
+/// Oublier un pair oublie aussi son adresse `.onion` associee
+/// (ADR-0029 — une identite oubliee ne garde aucune liaison ;
+/// `peer_onions` est indexee sur la forme canonique `pk64`).
 pub fn delete_contact(conn: &Connection, pk: &[u8]) -> Result<()> {
     conn.execute("DELETE FROM msg_messages WHERE contact_pk=?1", params![pk])?;
+    crate::peer_onion::remove_peer_onion(conn, pk)?;
     conn.execute("DELETE FROM msg_contacts WHERE public_key=?1", params![pk])?;
     Ok(())
 }
