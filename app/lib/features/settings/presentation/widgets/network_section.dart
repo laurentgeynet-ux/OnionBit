@@ -229,10 +229,11 @@ class _NetworkSectionState extends ConsumerState<NetworkSection> {
               ],
             ],
             const Divider(height: AppSpace.lg),
-            // Connectivité Tor (ADR-0028 §8) — opt-in, métadonnées de
-            // recherche uniquement ; le toggle est immédiat comme les
-            // autres commutateurs, mode/endpoint partent avec le lot
-            // différé (effet au redémarrage, `ServiceOverrides.tor`).
+            // Connectivité Tor (ADR-0028 §8) — lane permanente activée
+            // par défaut ; le toggle est immédiat comme les autres
+            // commutateurs (hot-swap du runtime, sans redémarrage),
+            // mode/endpoint partent avec le lot différé et s'appliquent
+            // à l'enregistrement.
             Text(l10n.torSettingsTitle, style: theme.textTheme.labelMedium),
             const SizedBox(height: AppSpace.xs),
             SettingsSwitch(
@@ -240,7 +241,7 @@ class _NetworkSectionState extends ConsumerState<NetworkSection> {
               value: settingsBool(settings, const ['tor', 'enabled']),
               title: l10n.torEnabled,
               subtitle: l10n.torEnabledHint,
-              restartOnly: true,
+              defaultValue: true,
             ),
             const SizedBox(height: AppSpace.xs),
             SizedBox(
@@ -287,11 +288,6 @@ class _NetworkSectionState extends ConsumerState<NetworkSection> {
               ),
             ],
             const SizedBox(height: AppSpace.xs),
-            Text(
-              l10n.torRestartHint,
-              style: theme.textTheme.bodySmall
-                  ?.copyWith(color: theme.colorScheme.outline),
-            ),
             _TorAllowlist(settings: settings),
             const SizedBox(height: AppSpace.md),
             Align(

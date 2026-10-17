@@ -1339,13 +1339,18 @@ impl Default for TorGatewayFileConfig {
 }
 
 /// Section `tor` — connectivité Tor embarquée (ADR-0028, extension
-/// sans équivalent Tribler). **`enabled=false` par défaut** : le
-/// bootstrap Tor télécharge un consensus (activité visible du FAI,
-/// bloqué dans certains pays) — jamais de démarrage silencieux.
+/// sans équivalent Tribler). **`enabled=true` par défaut** : la lane
+/// permanente est un service de fond de l'application (recherche
+/// `.onion` aujourd'hui, messagerie/canaux/coffre demain — ADR-0029) ;
+/// le bootstrap télécharge un consensus (activité visible du FAI,
+/// bloqué dans certains pays) — la désactivation reste un réglage
+/// explicite, appliqué à chaud.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct TorFileConfig {
-    /// Connectivité Tor active (recherche externe onion).
+    /// Connectivité Tor active — **activée par défaut** : lane
+    /// permanente bootstrappée au démarrage (recherche `.onion`,
+    /// puis messagerie/canaux/coffre — ADR-0029).
     pub enabled: bool,
     /// Transport : `"embedded"` (arti embarqué — autonome) ou
     /// `"external"` (Tor système).
@@ -1377,7 +1382,7 @@ pub struct TorFileConfig {
 impl Default for TorFileConfig {
     fn default() -> Self {
         Self {
-            enabled: false,
+            enabled: true,
             mode: "embedded".to_string(),
             external_socks5: "socks5h://127.0.0.1:9050".to_string(),
             allowed_hosts: Vec::new(),
@@ -2726,13 +2731,13 @@ mod tests {
 
     const TPB: &str = "piratebayo3klnzokct3wt5yyxb2vpebbuyjl7m623iaxmqhsd52coid.onion";
 
-    /// Defaut : Tor desactive, mode embedded, backend tpb declare.
-    /// `sparse_value` ne doit rien persister pour `tor` tant que tout
-    /// vaut le defaut.
+    /// Defaut : Tor active (lane permanente, ADR-0028), mode embedded,
+    /// backend tpb declare. `sparse_value` ne doit rien persister pour
+    /// `tor` tant que tout vaut le defaut.
     #[test]
-    fn tor_defaut_desactive_et_sparse() {
+    fn tor_defaut_active_et_sparse() {
         let cfg = DaemonConfig::default();
-        assert!(!cfg.tor.enabled);
+        assert!(cfg.tor.enabled);
         assert_eq!(cfg.tor.mode, "embedded");
         assert!(cfg.tor.search.backends.contains_key("tpb"));
         let sparse = cfg.sparse_value();
@@ -2741,7 +2746,7 @@ mod tests {
             "section tor ne devrait pas etre persistee par defaut : {sparse}"
         );
         let core = cfg.to_core_config(Path::new("."));
-        assert!(!core.tor.enabled);
+        assert!(core.tor.enabled);
         assert_eq!(core.tor.mode, onionbit_tor::TorMode::Embedded);
         // Le miroir tpb est implicitement allowliste.
         assert!(core.tor.target_policy.is_allowed(TPB));

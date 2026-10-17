@@ -89,7 +89,7 @@ La crate dépend de `onionbit-network-policy` (frontière §3) et
 
 ```json
 "tor": {
-  "enabled": false,
+  "enabled": true,
   "mode": "embedded",                    // "embedded" | "external"
   "external_socks5": "socks5h://127.0.0.1:9050",
   "allowed_hosts": [ "<adresse>.onion", "…" ],
@@ -113,11 +113,15 @@ La crate dépend de `onionbit-network-policy` (frontière §3) et
   la config (règle AGENTS). L'adresse d'un backend (ex. TPB) est en
   config — les adresses onion changent, la config doit permettre le
   remplacement sans rebuild.
-- `enabled` **défaut `false`**, opt-in explicite : le bootstrap Tor
-  télécharge un consensus (activité réseau visible du FAI) et Tor est
-  bloqué dans certains pays — jamais de démarrage silencieux, et le
-  bootstrap ne doit **jamais bloquer le daemon** (runtime en tâche
-  de fond ; échec → `state:"error"` diagnostic, daemon opérationnel).
+- `enabled` **défaut `true`** *(décision 2026-10, amendée)* : la lane
+  permanente est un service de fond du produit — la recherche `.onion`
+  aujourd'hui, la messagerie/canaux/coffre demain (ADR-0029) — et une
+  lane opt-in resterait froide au premier usage. La désactivation
+  reste un réglage explicite appliqué à chaud. Rappel affiché en
+  réglages : le bootstrap télécharge un consensus (activité réseau
+  visible du FAI) et Tor est bloqué dans certains pays ; le bootstrap
+  ne doit **jamais bloquer le daemon** (runtime en tâche de fond ;
+  échec → `state:"error"` diagnostic, daemon opérationnel).
 - **`enabled` = lane permanente** *(décision 2026-10, amendée — voir
   §6 bis roadmap)* : quand `enabled=true`, le bootstrap part **au
   démarrage du daemon** (`Session::new_shell`) — l'activation est le
@@ -348,19 +352,19 @@ habille des zones existantes, aucune refonte :
 - **État Tor dans la recherche** : chip dans la barre —
   `bootstrapping` → spinner + %, `off` → CTA vers les réglages.
 - **Privacy HUD** (`privacy_hud.dart`, `anonLaneProvider`, sondage
-  10 s partagé) : l'état Tor y apparaît **uniquement si
-  `tor.enabled`** — pas d'indicateur mort pour une fonctionnalité
-  opt-in ; mêmes états « honnêtes » (`off` ≠ `error`).
+  10 s partagé) : segment Tor = état de la lane uniquement —
+  `enabled=false` → grisé honnête (`off` ≠ `error`), jamais de
+  donnée de source `.onion` (la santé TPB reste au chip recherche).
 - **Diagnostic** : tuile « Tor » dans l'Overview + détail (mode,
   état, progression bootstrap) alimentés par `/api/tor/status`.
-  **Pas d'onglet Tor en navigation principale** — disproportionné
-  pour une fonctionnalité opt-in.
+  **Pas d'onglet Tor en navigation principale** — la tuile
+  suffit.
 - **Réglages** : sous-section « Tor » sous Network & Anonymity —
-  toggle (opt-in, défaut off), segmented Embedded/External +
-  champ `socks5h://` (loopback validé), allowlist en lecture
-  seule. Section `tor` appliquée **à chaud** (hot-swap — voir §2) :
-  ni `enabled` ni `mode`/`external_socks5` n'exigent de
-  redémarrage.
+  toggle (défaut **on**, lane permanente), segmented
+  Embedded/External + champ `socks5h://` (loopback validé),
+  allowlist en lecture seule. Section `tor` appliquée **à chaud**
+  (hot-swap — voir §2) : ni `enabled` ni `mode`/`external_socks5`
+  n'exigent de redémarrage.
 - **Messagerie : rien en v1.** Afficher `votre_clé.onion` sous
   « Your address » prétendrait une joignabilité inexistante —
   aucun service caché n'est hébergé. Phase 3 : adresse **dérivée

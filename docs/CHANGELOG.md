@@ -3,6 +3,23 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Tor activé par défaut — lane permanente dès la 1ʳᵉ installation (2026-10-17)
+
+`tor.enabled` passe à **`true` par défaut** (`TorFileConfig`) : la lane
+permanente est un service de fond du produit — recherche `.onion`
+aujourd'hui, messagerie/canaux/coffre demain (ADR-0029) — et une lane
+opt-in resterait froide au premier usage. Les installations existantes
+conservent leur valeur persistée (`enabled:false` déjà écrit reste
+respecté). Le badge « Défaut : activé » documente le défaut en
+réglages.
+
+Réglages — texte et badge corrigés : le sous-titre décrit désormais la
+lane permanente (recherche `.onion` + services Tor à venir,
+téléchargements toujours sur les tunnels OnionBit) ; le badge
+« Redémarrage requis » et la note « appliqué au redémarrage » sont
+retirés — obsolètes depuis le hot-swap du runtime (`356c509`), le
+toggle et les réglages `tor.*` s'appliquent immédiatement.
+
 ## Bandeau « état du réseau » — HUD en 4 segments (2026-10-17)
 
 L'ancien affichage « N circuits · M sauts » + pastille Tor exigeait de
