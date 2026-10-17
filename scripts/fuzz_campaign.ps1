@@ -89,13 +89,24 @@ if ($IsWindows -or $env:OS -eq "Windows_NT") {
 }
 
 if ($Smoke) {
+    # Validation : toutes les cibles, 60 s chacune.
     $plan = @(
         @{name="raw_datagram";     sec=60},
         @{name="tunnel_cell";      sec=60},
         @{name="tunnel_payloads";  sec=60},
         @{name="ipv8_packet";      sec=60},
         @{name="unsigned_dispatch";sec=60},
-        @{name="utp_datagram";     sec=60}
+        @{name="utp_datagram";     sec=60},
+        @{name="ext_packet";       sec=60},
+        @{name="stealth_frame";    sec=60},
+        @{name="messaging_frame";  sec=60},
+        @{name="messaging_window"; sec=60},
+        @{name="obd_file";         sec=60},
+        @{name="bencode";          sec=60},
+        @{name="mdblob";           sec=60},
+        @{name="onion_link";       sec=60},
+        @{name="onion_http";       sec=60},
+        @{name="crypto_blobs";     sec=60}
     )
 } elseif ($Target -ne "") {
     $sec = if ($Minutes -gt 0) { $Minutes * 60 } else { 3600 }
@@ -108,7 +119,17 @@ if ($Smoke) {
         @{name="unsigned_dispatch"; sec=3600},
         @{name="tunnel_payloads";   sec=3600},
         @{name="ipv8_packet";       sec=1800},
-        @{name="utp_datagram";      sec=1800}
+        @{name="utp_datagram";      sec=1800},
+        @{name="ext_packet";        sec=1800},
+        @{name="stealth_frame";     sec=1800},
+        @{name="messaging_frame";   sec=1800},
+        @{name="messaging_window";  sec=1800},
+        @{name="obd_file";          sec=1800},
+        @{name="bencode";           sec=1800},
+        @{name="mdblob";            sec=1800},
+        @{name="onion_link";        sec=1800},
+        @{name="onion_http";        sec=1800},
+        @{name="crypto_blobs";      sec=1800}
     )
 }
 

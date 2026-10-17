@@ -3,6 +3,38 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Fuzzing : extension aux surfaces `.onion` et parseurs hostiles (2026-10-18)
+
+Cinq nouvelles cibles `cargo-fuzz` couvrent les surfaces créées par
+ADR-0029 et les parseurs historiques non encore fuzzés (backlog P1
+« Fuzzing » coché) :
+
+- **`bencode`** — `decode`/`decode_at`/accesseurs + re-encodage borné :
+  première surface commune à toutes les trames, `.torrent`, `mdblob`
+  et réponses de tracker.
+- **`mdblob`** — `parse_blob`/`read_entry` sur corps brut et via
+  LZ4-frame (le chemin servi par le catalogue `.onion`, étape 126) +
+  `verify_signature` sur chaque entrée parsée ; borne de décompression
+  4 Mio anti-zip-bomb.
+- **`onion_link`** — préambule `OBMS` (`decode_preamble`) puis trames
+  `u32` BE en série (`read_frame`, borne avant allocation) sur
+  runtime Tokio dédié.
+- **`onion_http`** — `parse_channel_request` et `parse_vault_request`
+  sur en-têtes arbitraires (zone ≤ 8 Kio de `read_request_head`).
+- **`crypto_blobs`** — `obm::open_manifest`, `pair_open_in`
+  (OBV1/obox), `PeerAddress::parse`/`onion_host` : rejets propres,
+  borne avant AEAD.
+
+Infrastructure : `fuzz/Cargo.toml` gagne `onionbit-core` + `lz4_flex` ;
+`fuzz_campaign.ps1` `-Smoke` couvre désormais les 16 cibles et la
+campagne de référence passe à ~10 h. Note Windows : `sccache` échoue
+sur le `librqbit` vendored (ligne de commande trop longue) — lancer
+avec `RUSTC_WRAPPER=` vide.
+
+**Validation** : smoke 60 s × 5 cibles sous MSVC `-s none` —
+23,6 M exécutions, **0 crash** (journal `docs/security/fuzz_journal.md`
++ `fuzz_journal.csv`). Campagne longue à rejouer avant release.
+
 ## ADR-0029 étape 128 : durcissement + docs — clôture de l'ADR (2026-10-18)
 
 Dernière étape du chantier `.onion` — documentation des limites et

@@ -25,7 +25,11 @@ onionbit-ipv8 = { path = "../crates/onionbit-ipv8" }
 onionbit-crypto = { path = "../crates/onionbit-crypto" }
 onionbit-tunnel = { path = "../crates/onionbit-tunnel" }
 onionbit-messaging = { path = "../crates/onionbit-messaging" }
+onionbit-format = { path = "../crates/onionbit-format" }
+onionbit-core = { path = "../crates/onionbit-core" }
 librqbit-utp = { path = "../vendor/librqbit-utp" }
+lz4_flex = "0.11"
+x25519-dalek = { version = "2", features = ["static_secrets", "getrandom"] }
 tokio = { version = "1", features = ["full"] }
 
 [build-dependencies]
@@ -107,5 +111,38 @@ doc = false
 [[bin]]
 name = "obd_file"
 path = "fuzz_targets/obd_file.rs"
+test = false
+doc = false
+
+# Cibles etape « fuzz P1 » (backlog) : bencode et les surfaces
+# ajoutees par ADR-0029 (lien `.onion`, requetes HTTP des services,
+# blobs coffre/manifeste, adresses multi-plan).
+[[bin]]
+name = "bencode"
+path = "fuzz_targets/bencode.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "mdblob"
+path = "fuzz_targets/mdblob.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "onion_link"
+path = "fuzz_targets/onion_link.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "onion_http"
+path = "fuzz_targets/onion_http.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "crypto_blobs"
+path = "fuzz_targets/crypto_blobs.rs"
 test = false
 doc = false
