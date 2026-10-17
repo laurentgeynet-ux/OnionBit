@@ -3,6 +3,19 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Roadmap : Phase 21 — navigateur `.onion` embarqué (DilloRust + arti), futur (2026-10-17)
+
+Entrée de cadrage dans `docs/plans/roadmap.md` : navigateur simple
+propulsé par le runtime arti (ADR-0028) pour ouvrir les adresses
+`.onion`, **conditionné à l'achèvement du portage DilloRust**
+(navigateur Dillo porté en Rust natif, dépôt externe). Points
+d'intégration identifiés : dial unique `dillo-net` ←
+`TorRuntime::open_stream` (hostname brut vers arti, DNS système
+court-circuité), politique inversée vs `TorTargetPolicy`, isolation
+de circuits par origine (`IsolationToken`), TLS rustls sur flux Tor
+pour `https://`. La checklist d'étanchéité complète est renvoyée à
+un ADR dédié à l'ouverture du chantier. Aucun code engagé.
+
 ## Recherche `.onion` TPB — bascule sur l'API `q.php` (2026-10-17)
 
 Toute recherche `tpb` rendait *« Source indisponible — structure du site
