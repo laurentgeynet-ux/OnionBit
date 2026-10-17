@@ -3,6 +3,40 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Étape 136 — Spike sqlite3mc : link + cipher = GO (2026-10-18)
+
+Le jalon de décision d'ADR-0031 est franchi : SQLite3 Multiple
+Ciphers remplace le SQLite vanilla derrière `rusqlite`, codec
+ChaCha20-Poly1305 actif.
+
+- **Nouveau crate shim `onionbit-sqlite3mc`** : `build.rs` compile
+  l'amalgamation `sqlite3mc-src =205.1.0` (sqlite3mc 2.5.1 /
+  SQLite 3.53.4, MIT, bytes Sigstore) via `cc` en `sqlite3.lib`
+  statique. Flags `bundled` de `libsqlite3-sys` répliqués +
+  `SQLITE_TEMP_STORE=3` à la compilation (aucun fichier temp,
+  jamais) + surface réduite : seul `chacha20` est compilé
+  (`HAVE_CIPHER_*=0` pour AES/RC4/sqlcipher/ascon/aegis).
+- **`rusqlite` sans `bundled`** dans le workspace :
+  `libsqlite3-sys` (mode non-bundled) émet `dylib=sqlite3`, résolu
+  sur notre archive — un seul SQLite dans le binaire.
+- **Banc `onionbit-db/tests/sqlite3mc_spike.rs`** (7 tests) :
+  codec lié (fail-closed `PRAGMA cipher` → `chacha20`), cycle
+  chiffré complet (magic absent, plaintext absent, WAL actif,
+  `cipher_salt` 16 o), sans clef / mauvaise clef = erreur propre,
+  FTS5 + `mmap_size` sur base chiffrée, tri débordant 30 000 lignes
+  sans **aucun** fichier temporaire en clair, migration
+  `ATTACH ... KEY "x'hex'"` clair→chiffré (voie retenue —
+  `sqlite3mc_export` absent de 2.5.1), `rekey` rotation en place.
+- **Suites** : `onionbit-db` 32 + `onionbit-api` 107 verts ;
+  `cargo check --workspace --all-targets` + build daemon/cli.
+- **Bémol consigné** : `pkg-config` trouvant un sqlite3 système
+  (Linux) lierait la mauvaise bibliothèque — détectable
+  fail-closed (`PRAGMA cipher` vide), correction =
+  `SQLITE3_LIB_DIR` ou vendoring `libsqlite3-sys`.
+- ADR-0031 passée **Acceptée** (verdict complet en fin
+  d'ADR). Reste : 137 clef `DbKey`/HKDF + `db.encrypted`,
+  138 migration legacy + swap, 139 durcissement, 140 docs.
+
 ## ADR-0031 Proposée — chiffrement de la base locale via codec sqlite3mc (2026-10-18)
 
 Aucun code : décision d'architecture pour le backlog P1

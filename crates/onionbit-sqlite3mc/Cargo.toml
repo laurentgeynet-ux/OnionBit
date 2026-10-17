@@ -1,0 +1,14 @@
+[package]
+name = "onionbit-sqlite3mc"
+description = "Shim de liaison SQLite : compile l'amalgamation SQLite3 Multiple Ciphers (codec ChaCha20) en bibliotheque statique `sqlite3` pour libsqlite3-sys/rusqlite (ADR-0031)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+sqlite3mc-src.workspace = true
+
+[build-dependencies]
+cc.workspace = true
+sqlite3mc-src.workspace = true

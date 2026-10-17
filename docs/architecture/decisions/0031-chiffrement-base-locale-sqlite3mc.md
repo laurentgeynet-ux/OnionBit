@@ -1,7 +1,7 @@
 # ADR-0031 — Chiffrement de la base locale : codec sqlite3mc (ChaCha20-Poly1305 par page)
 
-Statut : **Proposée** (2026-10-18) — jalon de décision = étape 136
-(spike link + cipher) avant tout code de produit.
+Statut : **Acceptée** (2026-10-18) — spike 136 = **GO** (voir
+« Verdict du spike » en fin de document).
 Plan d'implantation : `docs/plans/roadmap_adr0031.md`.
 Backlog P1 « Chiffrement DB locale » (`docs/plans/backlog_priorites.md`).
 
@@ -95,14 +95,16 @@ de pages — métadonnée non sensible admise.
 
 Intégration :
 
-- L'amalgamation est compilée par un petit crate `-sys` maison via
-  `cc` (build MSVC natif). Source : crate `sqlite3mc-src`
-  (`205.1.0+sqlite3mc-2.5.1-sqlite-3.53.4` — bytes vérifiés par
-  checksum Sigstore) **pinné en version exacte**, *ou* vendoring
-  direct de la release GitHub sous `vendor/` (précédent
-  `vendor/librqbit`). Arbitré au spike 136 : le vendoring supprime
-  un intermédiaire fin mais ajoute ~10 Mio de source — le crate
-  pinné suffit si la chaîne de supply est satisfaisante.
+- L'amalgamation est compilée par le crate shim
+  `crates/onionbit-sqlite3mc` via `cc` (build MSVC natif). Source :
+  crate `sqlite3mc-src =205.1.0` (amalgamation
+  sqlite3mc-2.5.1/sqlite-3.53.4 — bytes vérifiés par checksum
+  Sigstore) **pinné en version exacte**. Arbitrage du spike 136 :
+  le crate pinné suffit — pas de vendoring `vendor/` (~10 Mio)
+  tant que la supply crates.io/Sigstore tient ; MIT confirmé.
+  Réduction de surface au build : seul `chacha20` est compilé
+  (`HAVE_CIPHER_AES_*`/`SQLCIPHER`/`RC4`/`ASCON128`/`AEGIS=0`) —
+  test `ciphers_non_chacha20_refuses`.
 - `rusqlite` perd le feature `bundled` ; `libsqlite3-sys` linke
   notre `sqlite3.lib` via `rustc-link-search` émis par le build.rs
   du shim (bindings pré-générés : sqlite3mc est un superset de
@@ -126,9 +128,10 @@ Ordre des pragmas : `cipher` n'agit qu'à la **création** et au
 `rekey` — la réouverture d'une base `chacha20` existante n'exige
 que `key` (le cipher est lu dans le fichier). Poser `cipher`
 explicitement reste inoffensif sur une base créée avec le cipher
-par défaut (chacha20 en sqlite3mc 2.5+, à confirmer au spike) —
-la convention « toujours poser les deux » est conservée pour les
-bases issues d'un ancien default.
+par défaut (**chacha20 confirmé au spike** — `PRAGMA cipher` en
+lecture retourne `chacha20`, fail-closed si un SQLite vanilla se
+retrouvait lié) — la convention « toujours poser les deux » est
+conservée pour les bases issues d'un ancien default.
 
 Pas de passphrase/PBKDF2 embarqué à traverser : notre HKDF est déjà
 le bon niveau de dérivation, la clef n'existe qu'en mémoire
@@ -151,14 +154,16 @@ Détection au premier `open` :
 - sinon → base chiffrée → ouverture avec clef (échec typé
   `DbEncrypted` si la clef ne correspond pas — jamais « corrupt »).
 
-Migration : `ATTACH` d'un fichier neuf chiffré + copie
-(`sqlite3mc_export`/`VACUUM INTO` selon ce que valide le spike —
-sqlite3mc accepte les paramètres URI `?cipher=&key=`), checkpoint
-WAL avant, fichier produit à côté puis **swap atomique**
-(`.plain.bak` conservé jusqu'à réouverture vérifiée, puis supprimé
-— effacement best-effort documenté : pas de secure-delete garanti
-sur FS grand public). Toute interruption laisse l'ancienne base
-intacte (reprise idempotente).
+Migration : `ATTACH 'cible.db' AS enc KEY "x'<hex>'"` (clause
+`KEY` sqlite3mc — validée au spike ; `sqlite3mc_export` n'existe
+pas dans 2.5.1 et les paramètres URI `?hexkey=` exigeraient le
+flag `SQLITE_OPEN_URI` que `rusqlite::Connection::open` ne pose
+pas — la clause `KEY` est la voie) + copie `CREATE TABLE enc.*`,
+checkpoint WAL avant, fichier produit à côté puis **swap
+atomique** (`.plain.bak` conservé jusqu'à réouverture vérifiée,
+puis supprimé — effacement best-effort documenté : pas de
+secure-delete garanti sur FS grand public). Toute interruption
+laisse l'ancienne base intacte (reprise idempotente).
 
 Comportement bonus exploité : sqlite3mc **sans** `PRAGMA key` lit
 une base claire comme un SQLite normal — la détection est donc un
@@ -206,7 +211,47 @@ documenter :
 ## Jalons
 
 Voir `docs/plans/roadmap_adr0031.md` — étape 136 = spike link +
-cipher (GO/NO-GO avant code de produit), 137 = plomberie clef +
+cipher (**GO**, verdict ci-dessous), 137 = plomberie clef +
 `db.encrypted`, 138 = migration legacy + swap, 139 = durcissement
 (suite db complète chiffrée, crash/rollback, erreurs typées),
 140 = docs + revue + clôture.
+
+## Verdict du spike (étape 136, 2026-10-18) — GO
+
+Crate shim `onionbit-sqlite3mc` créé : `build.rs` compile
+l'amalgamation pinée en `sqlite3.lib` statique (flags `bundled`
+répliqués à l'identique + `SQLITE_TEMP_STORE=3` compile-time +
+ciphers réduits à ChaCha20), `cc::compile` émet le
+`rustc-link-search`/`rustc-link-lib`. `rusqlite` sans `bundled` :
+`libsqlite3-sys` émet `dylib=sqlite3` → résolu sur notre archive.
+
+Banc `crates/onionbit-db/tests/sqlite3mc_spike.rs` — 7 tests :
+
+- codec lié : `PRAGMA cipher` → `chacha20` (fail-closed sur SQLite
+  vanilla) ; `sqlcipher`/`aes256cbc`/`rc4`/`ascon128` → erreur ;
+- cycle chiffré complet : create/write/WAL/reopen — magic
+  `SQLite format 3` absent du fichier, marqueur plaintext absent,
+  `cipher_salt` = 16 octets hex, données intactes à la relecture ;
+- sans clef / mauvaise clef → erreur propre à la première requête
+  (jamais confondu avec une base claire ou corrompue) ;
+- FTS5 (`CREATE VIRTUAL TABLE ... USING fts5` + `MATCH`) et
+  `mmap_size` acceptés sans erreur sur base chiffrée ;
+- tri débordant (30 000 lignes ~5,4 Mio, `cache_size=256`,
+  `temp_store=MEMORY`) : **aucun** fichier temporaire nouveau ni
+  à côté de la base ni dans `%TEMP%` ;
+- migration : `ATTACH ... KEY "x'hex'"` clair→chiffré, données
+  préservées, cible sans magic — `sqlite3mc_export` absent de
+  2.5.1, la clause `KEY` est la voie retenue ;
+- `PRAGMA rekey="x'hex'"` : rotation en place — ancienne clef
+  refusée, nouvelle acceptée (base du futur `DbKey`).
+
+Suites : `onionbit-db` 32 tests verts contre sqlite3mc (WAL,
+migrations, FTS/ranks inclus) ; `onionbit-api` 107 verts (link
+transitif via `onionbit-db`) ; `cargo check --workspace
+--all-targets` + build `onionbit-daemon`/`onionbit-cli` propres.
+
+Bémol connu consigné : sur hôte avec un `pkg-config` sqlite3
+système (Linux), `libsqlite3-sys` pourrait lier l'autre bibliotheque
+— détectable au runtime (`PRAGMA cipher` vide → fail-closed) ; si
+le cas se présente, `SQLITE3_LIB_DIR`/`SQLITE3_INCLUDE_DIR` ou le
+vendoring `libsqlite3-sys` sont les corrections.

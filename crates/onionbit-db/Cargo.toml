@@ -7,6 +7,10 @@ license.workspace = true
 authors.workspace = true
 
 [dependencies]
+# Shim ADR-0031 : force la compilation de l'amalgamation sqlite3mc
+# et son link-search avant rusqlite/libsqlite3-sys (transitif pour
+# api/core via cette dep).
+onionbit-sqlite3mc = { path = "../onionbit-sqlite3mc" }
 rusqlite.workspace = true
 thiserror.workspace = true
 tokio.workspace = true

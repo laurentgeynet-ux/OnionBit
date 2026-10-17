@@ -9,6 +9,7 @@ members = [
     "crates/onionbit-messaging",
     "crates/onionbit-core",
     "crates/onionbit-db",
+    "crates/onionbit-sqlite3mc",
     "crates/onionbit-network-policy",
     "crates/onionbit-tor",
     "crates/onionbit-api",
@@ -54,7 +55,14 @@ tracing-appender = "0.2"
 # active au niveau workspace, tous les consommateurs de clap la
 # tirent (inoffensif).
 clap = { version = "4", features = ["derive", "env"] }
-rusqlite = { version = "0.40", features = ["bundled", "functions"] }
+# `bundled` retire (ADR-0031) : la bibliotheque `sqlite3` liee est
+# fournie par `onionbit-sqlite3mc` (SQLite3 Multiple Ciphers, codec
+# ChaCha20) a la place du SQLite vanilla.
+rusqlite = { version = "0.40", features = ["functions"] }
+# Amalgamation SQLite3 Multiple Ciphers pinnee (MIT) — compilee par
+# le build.rs d'`onionbit-sqlite3mc` via `cc` (MSVC).
+sqlite3mc-src = "=205.1.0"
+cc = "1"
 rand = "0.10"
 sha1 = "0.11"
 sha2 = "0.11"
