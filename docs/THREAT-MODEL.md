@@ -78,6 +78,47 @@ construction.
 - **Query terms are never logged**; source identifiers appear in logs
   and SSE (`remote_query_results`, `tor:<source>`) behind the API key.
 
+## Hosted `.onion` services (ADR-0029)
+
+Phase 3 lets an identity *host* `.onion` services — messaging, channel
+catalogs and the private vault — next to the OnionBit overlay. The two
+planes remain disjoint: a `.onion` contact address is used over Tor,
+an `ipv8` key over tunnel circuits, never translated.
+
+- **Presence is observable**: a `.onion` that answers proves the peer is
+  online right now — an activity signal a censor or probing party can
+  collect. OnionBit makes no continuous presence pings (Briar model:
+  rendezvous at send time only), but hosting itself is publishable
+  activity. Assumed limit.
+- **Inter-plane correlation**: serving the *same* content on both planes
+  (a channel catalog over IPv8 **and** `.onion`, a reachable contact on
+  both) lets an observer of both networks link the identities by timing
+  and content. The opt-in `.onion` binding signature
+  (`onionbit/onion-bind/v1`) makes that link explicit *by choice* — it is
+  the only authorized correlation; absent it, addresses stay unlinkable.
+- **Vault authorization is discovery-level, not secrecy**: the vault
+  service (`tor-hs-vault/v1` address) is locked by Arti
+  restricted-discovery — its descriptor is decryptable only by the
+  x25519 client key derived from the same identity (`tor-hs-client/v1`).
+  This blocks discovery/probing by third parties; the served blobs
+  (`OBV1`, `manifest.obm`) remain AEAD-encrypted for the master key
+  anyway — a stolen blob is unreadable. Caveat: Arti's
+  `restricted-discovery` is `__is_experimental` (non-semver API) and
+  revoking a client does not tear down already-reached introduction
+  points — OnionBit's revocation story is therefore "rotate the
+  identity", documented rather than patched.
+- **Service fingerprinting**: the vault service serves plain bounded
+  HTTP on its virtual port — indistinguishable from an ordinary onion
+  site at the descriptor level; its *address* is never published in
+  channels or the public overlay (derived-only, known to the owner's
+  devices). Messaging/channel services ride the identity `.onion`,
+  multiplexed by virtual `BEGIN` port; unsubscribed ports get the
+  standard Tor `DONE`.
+- **No new trust for content**: channel catalog entries served over
+  `.onion` are still `mdblob` signatures verified against the channel
+  key — the transport never grants credibility; a poisoned entry is
+  rejected exactly as on IPv8.
+
 ## Private download area (ADR-0018)
 
 The portable bundle splits downloads into a **public** area

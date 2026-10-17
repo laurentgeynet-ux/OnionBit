@@ -1,9 +1,10 @@
 # ADR-0029 — Adresses `.onion` dans la Messagerie, les Canaux et le Coffre : fusion UI, transports séparés
 
-Statut : **Acceptée** (2026-10-17) — questions du §8 arbitrées à
-l'étape 121 ; les jalons 122+ sont précisés en conséquence.
-Implantation : identité dérivée (122), adresses multi-plan (123) et
-messagerie `.onion` (124) livrées — cf. roadmap.
+Statut : **Implantée** (2026-10-18) — questions du §8 arbitrées à
+l'étape 121 ; tous les jalons livrés : identité dérivée (122),
+adresses multi-plan (123), messagerie `.onion` (124), chat UI (125),
+canaux (126), coffre restricted-discovery (127), durcissement + docs
+(128). Jalons E2E manuels `[i]` : `docs/adresses_onion.md` §7.
 Plan d'implantation : `docs/plans/roadmap_adr0029.md` (étapes 120+ —
 jalons de décision avant jalons de code).
 Succède à la « trajectoire phase 3 » de l'ADR-0028, qu'elle engage.

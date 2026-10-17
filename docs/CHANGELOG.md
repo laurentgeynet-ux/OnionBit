@@ -3,6 +3,33 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## ADR-0029 étape 128 : durcissement + docs — clôture de l'ADR (2026-10-18)
+
+Dernière étape du chantier `.onion` — documentation des limites et
+clôture :
+
+- **THREAT-MODEL amendé** : nouvelle section « Hosted `.onion`
+  services » dans `docs/THREAT-MODEL.md` (EN, public) et section
+  ADR-0029 détaillée dans `docs/security/threat_model.md` (FR) —
+  présence = activité (un `.onion` qui répond prouve que le pair est
+  en ligne), corrélation inter-plans (servir le même contenu sur les
+  deux plans rend la liaison possible — la signature opt-in
+  `onionbit/onion-bind/v1` est la seule corrélation autorisée),
+  autorisation coffre = barrière de **découvrabilité** et non de
+  secret (les blobs restent AEAD), caveat `restricted-discovery`
+  expérimental + revocation = rotation d'identité.
+- **Guide utilisateur** `docs/adresses_onion.md` : les deux plans et
+  leurs pastilles, hébergement (`tor.onion_service`), association
+  `.onion` par contact (signature optionnelle), messagerie et
+  catalogues de canaux par Tor, coffre nomade restricted-discovery,
+  limites vie privée.
+- **Checklist E2E `[i]`** (guide §7, E1-E7) : bootstrap + adresse
+  stable, message `.onion` + repli mailbox, canal via Tor, coffre
+  indécouvrable sans clef client, restauration nomade, kill Tor,
+  anti-fuite — à rejouer Windows + Linux.
+- **ADR-0029 → Implantée** : jalons 120-128 tous livrés. Aucune
+  modification de code — étape documentaire.
+
 ## ADR-0029 étape 127 : coffre via `.onion` — restricted-discovery (2026-10-17)
 
 Le coffre (manifeste privé `OBM`, export `OBV1`) devient joignable

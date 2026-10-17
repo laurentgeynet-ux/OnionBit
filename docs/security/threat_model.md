@@ -247,6 +247,55 @@ jitter documentee, limite assumee ADR-0028 §7), confiance passerelle
 `EXIT_TOR` (phase 2 reportee — honeypot possible, contrainte
 `number_hops >= 3` cote demandeur).
 
+## Services `.onion` heberges (ADR-0029, etapes 122-127)
+
+Proprietes **demontrees** par les tests loopback daemon↔daemon
+(duplex) et les bancs unitaires — a completer par les jalons E2E
+manuels `[i]` de `docs/adresses_onion.md` :
+
+- **Identite `.onion` stable** : HKDF `onionbit/identity/tor-hs/v1`
+  sur la graine (legacy : `SHA-256(keypair)` memes domaines) → meme
+  adresse entre runs ; jamais la cle `ipv8-sign` (correlation
+  inter-plans gratuite rejetee).
+- **Fil messagerie** : trames `Frame::seal` identiques aux deux plans
+  ; l'usurpation d'identite au handshake de lien (`pk_bin` hint ≠
+  signataire des trames) est rejetee (`lien_onion_usurpation_
+  rejetee`) ; repli boite aux lettres, pas d'echec silencieux.
+- **Canaux en `.onion`** : les entrees `mdblob` servies par le
+  catalogue restent verifiees par signature contre la cle du canal —
+  une entree empoisonnee dans le corps HTTP est rejetee a
+  l'ingestion (`catalogue_onion_round_trip_anti_poisoning`) ; le
+  transport ne confere aucune credibilite.
+- **Coffre en restricted-discovery** : descripteur chiffre pour la
+  clef client x25519 `tor-hs-client/v1` — indecouvrable pour un
+  tiers ; blobs servis deja AEAD (`OBV1`, `manifest.obm`) — un vol
+  cote serveur n'expose rien. Restauration : AEAD verifiee **avant**
+  ecriture (manifeste d'une autre identite refuse sans toucher le
+  disque).
+- **Anti-SSRF conserve** : le fetch `.onion` applique
+  `target_policy ∪ peer_policy` a **chaque** hop de redirection —
+  seuls les `.onion` explicitement associes (contact/canal) ou
+  allowlistes sont joignables.
+
+**Non demontre / limites assumees** :
+
+- **Presence = activite** : un `.onion` qui repond prouve que le
+  pair est en ligne ; l'hebergement lui-meme est une activite
+  publiable (3 points d'introduction, descripteur). Modele Briar
+  assume — rendez-vous a l'envoi seulement, pas de ping continu.
+- **Correlation inter-plans** : servir le meme contenu sur les deux
+  plans (canal en IPv8 **et** `.onion`) permet a un observateur des
+  deux reseaux de relier les identites par timing/contenu. Seule la
+  liaison signee opt-in `onionbit/onion-bind/v1` autorise cette
+  correlation — par choix explicite.
+- **`restricted-discovery` experimental** : API `__is_experimental`
+  non semver (a revoir a chaque bump arti) ; la revocation d'une
+  clef client ne coupe pas les points d'introduction deja rejoints
+  — la revocation OnionBit = rotation d'identite, documente.
+- **Dilution observable** : les circuits Tor de garde tenus pour
+  l'hebergement sont un cout permanent ; aucune analyse formelle de
+  l'empreinte ajoutee n'est faite.
+
 ## Ce qui n'est PAS demontre
 
 Les points suivants sont hors perimetre de preuve des bancs actuels.

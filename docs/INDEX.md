@@ -51,6 +51,7 @@ chaque étape (cf. `AGENTS.md`, "Workflow par étape").
 | `docs/interop/README.md` | Preuves d'interop publiques (EN) — scénarios vérifiés Tribler 8.4.3, ce qui est exercé sur le fil ; importée de l'ancienne ligne de publication |
 | `docs/interop/public_dht_runs.md` | Registre des runs du banc DHT publique (paramètres, route observée, octets vérifiés, échecs) |
 | `docs/THREAT-MODEL.md` | Modèle de menace public (EN, court) — version détaillée FR : `docs/security/threat_model.md` |
+| `docs/adresses_onion.md` | Guide utilisateur « adresses `.onion` » (ADR-0029) : hébergement, associations contact/canal, coffre nomade, checklist E2E manuelle `[i]` |
 | `docs/BUILDING.md` | Build & packaging publics (EN) : daemon/CLI/UI Flutter, zip Windows x64 |
 | `docs/diagnostics/memoire_charge_reelle.md` | Diagnostic empreinte mémoire d'un daemon public en charge (postes, caps, réfs code) + garde-fou `scripts/mem_watchdog.ps1` |
 | `docs/plans/mobile_execution_model.md` *(local)* | Étape 18 — modèle d'exécution Android/iOS (façade FFI, foreground service, contraintes) |
