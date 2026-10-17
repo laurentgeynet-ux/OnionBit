@@ -77,7 +77,7 @@ void main() {
     await container.read(searchResultsProvider.future);
     await Future<void>.delayed(const Duration(milliseconds: 50));
     expect(repo.externalCalls, 1);
-    expect(container.read(onionSearchErrorProvider), 'tor_bootstrapping');
+    expect(container.read(onionSearchErrorProvider)?.code, 'tor_bootstrapping');
 
     // La lane devient ready : la même requête repart sans geste.
     torStatus = _status(TorRuntimeState.ready);
@@ -91,7 +91,7 @@ void main() {
     );
     // La relance retombe sur le même code (runtime factice) — la
     // bannière reste honnête.
-    expect(container.read(onionSearchErrorProvider), 'tor_bootstrapping');
+    expect(container.read(onionSearchErrorProvider)?.code, 'tor_bootstrapping');
   });
 
   /// Pas de relance si l'erreur n'était pas `tor_bootstrapping` —

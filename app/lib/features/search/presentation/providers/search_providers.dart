@@ -239,7 +239,7 @@ class SearchResultsNotifier extends AsyncNotifier<List<TorrentResult>> {
     // est exprimee (Entree pressee) : pas de geste supplementaire.
     ref.listen(torStatusProvider, (_, next) {
       if (next.value?.state != TorRuntimeState.ready) return;
-      if (ref.read(onionSearchErrorProvider) != 'tor_bootstrapping') {
+      if (ref.read(onionSearchErrorProvider)?.code != 'tor_bootstrapping') {
         return;
       }
       final q = ref.read(searchQueryProvider);
@@ -293,13 +293,15 @@ class SearchResultsNotifier extends AsyncNotifier<List<TorrentResult>> {
         if (e.code == 'tor_disabled') return; // opt-in non active
         ref
             .read(onionSearchErrorProvider.notifier)
-            .setCode(e.code ?? 'external_error');
+            .setCode(e.code ?? 'external_error', source: source);
         if (e.code != 'tor_bootstrapping') return;
         // `tor_bootstrapping` : le bootstrap a ete declenche par cet
         // appel — l'UI affiche la progression et l'utilisateur
         // relance. Le code est conserve pour la banniere.
       } catch (_) {
-        ref.read(onionSearchErrorProvider.notifier).setCode('external_error');
+        ref
+            .read(onionSearchErrorProvider.notifier)
+            .setCode('external_error', source: source);
         return;
       }
     }
@@ -327,15 +329,22 @@ class SearchResultsNotifier extends AsyncNotifier<List<TorrentResult>> {
 /// `external_error` ; `null` = pas d'erreur). `tor_disabled` est
 /// filtré en amont (fonctionnalité opt-in, pas une faute).
 final onionSearchErrorProvider =
-    NotifierProvider<OnionSearchErrorNotifier, String?>(
+    NotifierProvider<OnionSearchErrorNotifier, OnionSearchError?>(
       OnionSearchErrorNotifier.new,
     );
 
-class OnionSearchErrorNotifier extends Notifier<String?> {
-  @override
-  String? build() => null;
+/// Erreur de la recherche `.onion` : code machine + source fautive
+/// (`tpb`, …) — la bannière cible le message sur la source (« TPB —
+/// tous les miroirs .onion sont injoignables ») plutôt qu'un
+/// générique.
+typedef OnionSearchError = ({String code, String? source});
 
-  void setCode(String code) => state = code;
+class OnionSearchErrorNotifier extends Notifier<OnionSearchError?> {
+  @override
+  OnionSearchError? build() => null;
+
+  void setCode(String code, {String? source}) =>
+      state = (code: code, source: source);
 
   void clear() => state = null;
 }

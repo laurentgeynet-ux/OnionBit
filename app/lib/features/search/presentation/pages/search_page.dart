@@ -232,7 +232,12 @@ class SearchPage extends ConsumerWidget {
               // Erreur de la recherche `.onion` — codes typés de
               // l'API (étape 115) : la santé Tor est distinguée des
               // fautes côté source (captcha, refonte HTML, miroirs).
-              if (onionErr != null) _OnionErrorBanner(code: onionErr, tor: tor),
+              if (onionErr != null)
+                _OnionErrorBanner(
+                  code: onionErr.code,
+                  source: onionErr.source,
+                  tor: tor,
+                ),
             ],
           ),
         ),
@@ -798,7 +803,10 @@ class _OnionSourceChip extends ConsumerWidget {
         tip = l10n.torProbeFailed;
       } else if (probe.value!.reachable > 0) {
         dotColor = const Color(0xFF4CAF50);
-        tip = l10n.torProbeOk(probe.value!.reachable, probe.value!.mirrors.length);
+        tip = l10n.torProbeOk(
+          probe.value!.reachable,
+          probe.value!.mirrors.length,
+        );
       } else {
         dotColor = scheme.error;
         tip = l10n.torProbeKo;
@@ -807,8 +815,9 @@ class _OnionSourceChip extends ConsumerWidget {
 
     return ChoiceChip(
       selected: selected,
-      onSelected: (_) =>
-          ref.read(searchFilterProvider.notifier).setSource(TorrentSource.onion),
+      onSelected: (_) => ref
+          .read(searchFilterProvider.notifier)
+          .setSource(TorrentSource.onion),
       label: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -903,15 +912,21 @@ class _TorChip extends StatelessWidget {
 /// `bootstrap_failed`, `tor_not_ready`) des fautes côté source
 /// (`captcha_detected`, `structure_changed`, `mirror_unreachable`).
 class _OnionErrorBanner extends ConsumerWidget {
-  const _OnionErrorBanner({required this.code, required this.tor});
+  const _OnionErrorBanner({required this.code, required this.tor, this.source});
 
   final String code;
   final TorRuntimeStatus? tor;
+
+  /// Identifiant du backend fautif (`tpb`, …) — permet de cibler le
+  /// message sur la source (« TPB — tous les miroirs .onion sont
+  /// injoignables ») plutôt qu'un générique.
+  final String? source;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final l10n = context.l10n;
     final scheme = Theme.of(context).colorScheme;
+    final src = source?.toUpperCase();
     final (message, torHealth) = switch (code) {
       'tor_bootstrapping' => (
         l10n.onionErrBootstrapping(tor?.progress ?? 0),
@@ -919,7 +934,12 @@ class _OnionErrorBanner extends ConsumerWidget {
       ),
       'bootstrap_failed' => (l10n.onionErrBootstrapFailed, true),
       'tor_not_ready' => (l10n.onionErrNotReady, true),
-      'mirror_unreachable' => (l10n.onionErrMirrorUnreachable, false),
+      'mirror_unreachable' => (
+        src != null
+            ? l10n.onionErrMirrorUnreachableSource(src)
+            : l10n.onionErrMirrorUnreachable,
+        false,
+      ),
       'captcha_detected' => (l10n.onionErrCaptcha, false),
       'structure_changed' => (l10n.onionErrStructure, false),
       'no_results' => (l10n.onionErrNoResults, false),

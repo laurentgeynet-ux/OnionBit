@@ -388,6 +388,14 @@
   "onionErrBootstrapFailed": "Tor bootstrap failed — see Diagnostics",
   "onionErrNotReady": "Tor client not ready — retry shortly",
   "onionErrMirrorUnreachable": "All .onion mirrors unreachable",
+  "onionErrMirrorUnreachableSource": "{source} — all .onion mirrors unreachable (source down/deprecated)",
+  "@onionErrMirrorUnreachableSource": {
+    "placeholders": {
+      "source": {
+        "type": "String"
+      }
+    }
+  },
   "onionErrCaptcha": "Site under anti-DDoS check — retry later",
   "onionErrStructure": "Source unavailable — site layout changed",
   "onionErrNoResults": "No results on the .onion source",

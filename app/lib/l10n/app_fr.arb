@@ -245,6 +245,14 @@
   "onionErrBootstrapFailed": "Bootstrap Tor en échec — voir Diagnostics",
   "onionErrNotReady": "Client Tor pas encore prêt — réessayez",
   "onionErrMirrorUnreachable": "Tous les miroirs .onion sont injoignables",
+  "onionErrMirrorUnreachableSource": "{source} — tous les miroirs .onion sont injoignables (source tombée/dépréciée)",
+  "@onionErrMirrorUnreachableSource": {
+    "placeholders": {
+      "source": {
+        "type": "String"
+      }
+    }
+  },
   "onionErrCaptcha": "Site en vérification anti-DDoS — réessayez plus tard",
   "onionErrStructure": "Source indisponible — structure du site modifiée",
   "onionErrNoResults": "Aucun résultat sur la source .onion",

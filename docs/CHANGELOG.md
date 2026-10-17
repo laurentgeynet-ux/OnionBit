@@ -3,6 +3,14 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Bannière d'erreur ciblée par source `.onion` (2026-10-17)
+
+`onionSearchErrorProvider` porte désormais `(code, source)` — la
+bannière « tous les miroirs .onion sont injoignables » cite la
+source fautive : « **TPB** — tous les miroirs .onion sont
+injoignables (source tombée/dépréciée) ». Générique conservé en
+repli si la source est inconnue.
+
 ## Indicateur de santé des sources `.onion` — sonde `/api/tor/probe` (2026-10-17)
 
 L'onion TPB s'est révélé tombé puis déprécié sur les annuaires —
