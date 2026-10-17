@@ -122,6 +122,14 @@ PRAGMA cipher = 'chacha20';
 PRAGMA key = "x'<hex(db_key)>'";
 ```
 
+Ordre des pragmas : `cipher` n'agit qu'à la **création** et au
+`rekey` — la réouverture d'une base `chacha20` existante n'exige
+que `key` (le cipher est lu dans le fichier). Poser `cipher`
+explicitement reste inoffensif sur une base créée avec le cipher
+par défaut (chacha20 en sqlite3mc 2.5+, à confirmer au spike) —
+la convention « toujours poser les deux » est conservée pour les
+bases issues d'un ancien default.
+
 Pas de passphrase/PBKDF2 embarqué à traverser : notre HKDF est déjà
 le bon niveau de dérivation, la clef n'existe qu'en mémoire
 (`zeroize` déjà dans l'arbre — `DbKey` droppée à la fermeture de
@@ -173,6 +181,10 @@ documenter :
 - les fichiers `-wal`/`-shm` voisins ne contiennent que des pages
   chiffrées et du wal-index — acceptable ;
 - taille du fichier et cadence de croissance restent observables ;
+- les **fichiers temporaires** SQLite (débordement de tris, tables
+  temp) ne sont pas chiffrés par le codec — la garde est
+  `temp_store=MEMORY` déjà posée dans `configure()` ; vérifiée
+  explicitement au spike par un tri débordant ;
 - `mmap_size` est bypassé sur pages chiffrées (pragma conservé,
   no-op documenté) ;
 - la clef vit en RAM pendant la session — l'hibernation/core-dump
