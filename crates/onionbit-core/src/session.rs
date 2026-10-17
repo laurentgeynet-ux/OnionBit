@@ -888,14 +888,15 @@ impl CoreSession {
         let asyncio = crate::asyncio::AsyncioMonitor::new(config.ipv8.walker_interval);
         let augmenter = Arc::new(crate::augmenter::Augmenter::new(&config.state_dir));
         let paths = crate::paths::PathRoots::for_state_dir(&config.state_dir);
-        // ADR-0028 : runtime Tor construit a l'etat `Off` (bootstrap
-        // explicite a la premiere recherche externe) ; les backends
-        // partagent le transport via `OnionFetch` — leurs clones
-        // restent lies au runtime initial, un `swap_tor_runtime`
-        // ulterieur ne les rebranche pas.
+        // ADR-0028 : `tor.enabled` = **lane permanente** — le runtime
+        // est construit `Off` puis le bootstrap part au demarrage
+        // (l'activation est le geste d'intention, jamais silencieux
+        // mais jamais en attente d'une recherche). Les backends
+        // partagent le transport via `OnionFetch` — un
+        // `swap_tor_stack` ulterieur permute runtime ET backends.
         let tor = onionbit_tor::TorRuntime::new(config.tor.clone());
         let search_backends = onionbit_tor::build_backends(&config.tor, Arc::new(tor.clone()));
-        Ok(Self {
+        let session = Self {
             inner: Arc::new(Inner {
                 config,
                 paths,
@@ -925,7 +926,17 @@ impl CoreSession {
                 search_backends: std::sync::Mutex::new(search_backends),
                 started_at: std::time::Instant::now(),
             }),
-        })
+        };
+        // Lane permanente : bootstrap en tache de fond des le
+        // demarrage (non-bloquant, erreurs visibles via `state()` et
+        // `/api/tor/status`). Sans feature `tor` ou activation
+        // impossible, la tentative est enregistree en `state`.
+        if session.config().tor.enabled {
+            if let Err(e) = session.tor().bootstrap() {
+                tracing::warn!(error = %e, "tor : bootstrap au demarrage refuse");
+            }
+        }
+        Ok(session)
     }
 
     /// Session de test entierement en memoire (base volatile, moteur
@@ -2236,6 +2247,24 @@ impl CoreSession {
     /// transport coherent.
     pub fn swap_tor_runtime(&self, runtime: onionbit_tor::TorRuntime) {
         *self.inner.tor.write().unwrap_or_else(|e| e.into_inner()) = runtime;
+    }
+
+    /// Permute runtime Tor **et** backends de recherche en un coup —
+    /// bascule a chaud des reglages `tor.*` (activation/desactivation
+    /// sans redemarrage). Les fetchers des anciens backends resteraient
+    /// branches sur l'ancien runtime : les permuter separement
+    /// laisserait une pile incoherente.
+    pub fn swap_tor_stack(
+        &self,
+        runtime: onionbit_tor::TorRuntime,
+        backends: std::collections::BTreeMap<String, Arc<dyn onionbit_tor::OnionSearchBackend>>,
+    ) {
+        *self.inner.tor.write().unwrap_or_else(|e| e.into_inner()) = runtime;
+        *self
+            .inner
+            .search_backends
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = backends;
     }
 
     /// Backend de recherche externe enregistre sous `source`
@@ -5811,6 +5840,91 @@ mod tests {
         assert_eq!(list[0].state, DownloadState::Checking);
         assert_eq!(list[0].name.as_deref(), Some("cycle.bin"));
         assert_eq!(list[0].progress_bytes, 9);
+        session.stop().await;
+    }
+
+    /// Lane permanente (ADR-0028) : `tor.enabled = true` declenche
+    /// le bootstrap des `new_shell` — l'etat sort de `Off` sans
+    /// attendre une recherche (progression ou erreur enregistree).
+    #[tokio::test]
+    async fn lane_permanente_bootstrap_si_enabled_au_demarrage() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut cfg = CoreConfig::offline(dir.path().to_path_buf());
+        cfg.tor.enabled = true;
+        let session = CoreSession::start_offline(cfg, Notifier::new())
+            .await
+            .unwrap();
+        assert_ne!(
+            session.tor().state(),
+            onionbit_tor::TorState::Off,
+            "tor.enabled doit lancer le bootstrap des le demarrage"
+        );
+        session.stop().await;
+    }
+
+    /// `tor.enabled = false` : le runtime reste `Off` — aucune
+    /// tentative de bootstrap au demarrage.
+    #[tokio::test]
+    async fn tor_desactive_reste_off_au_demarrage() {
+        let dir = tempfile::tempdir().unwrap();
+        let session = CoreSession::start_offline(
+            CoreConfig::offline(dir.path().to_path_buf()),
+            Notifier::new(),
+        )
+        .await
+        .unwrap();
+        assert!(!session.tor().settings().enabled);
+        assert_eq!(session.tor().state(), onionbit_tor::TorState::Off);
+        session.stop().await;
+    }
+
+    /// `swap_tor_stack` permute runtime ET backends d'un coup —
+    /// la pile ne peut pas rester branchee sur l'ancien runtime.
+    #[tokio::test]
+    async fn swap_tor_stack_permule_runtime_et_backends() {
+        let dir = tempfile::tempdir().unwrap();
+        let session = CoreSession::start_offline(
+            CoreConfig::offline(dir.path().to_path_buf()),
+            Notifier::new(),
+        )
+        .await
+        .unwrap();
+        let avant = session.tor();
+        assert!(
+            session.search_backend_sources().is_empty(),
+            "la config offline n'enregistre aucun backend"
+        );
+
+        // Nouvelle pile : runtime `Ready` + backend `tpb` construit
+        // dessus — comme le hot-swap de `update_settings`.
+        let mut tor_cfg = onionbit_tor::TorSettings {
+            enabled: true,
+            ..Default::default()
+        };
+        tor_cfg.backends.insert(
+            "tpb".to_string(),
+            onionbit_tor::OnionBackendSettings {
+                mirrors: vec!["miroir-test.onion".to_string()],
+                url_template: "http://{host}/q.php?q={q}".to_string(),
+                max_results: 10,
+                retries: 0,
+                retry_delay: std::time::Duration::ZERO,
+            },
+        );
+        let nouveau = onionbit_tor::TorRuntime::stub_ready(tor_cfg.clone());
+        let backends = onionbit_tor::build_backends(&tor_cfg, Arc::new(nouveau.clone()));
+        session.swap_tor_stack(nouveau.clone(), backends);
+
+        assert!(
+            !avant.ptr_eq(&session.tor()),
+            "le runtime doit avoir ete permute"
+        );
+        assert!(nouveau.ptr_eq(&session.tor()));
+        assert_eq!(session.tor().state(), onionbit_tor::TorState::Ready);
+        // Les backends exposes sont ceux de la nouvelle pile — les
+        // eventuels fetchers de l'ancienne ne fuient pas.
+        assert_eq!(session.search_backend_sources(), vec!["tpb".to_string()]);
+        assert!(session.search_backend("tpb").is_some());
         session.stop().await;
     }
 }

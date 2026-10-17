@@ -28,6 +28,16 @@ y passer. Aucun pont, aucune translation, aucun fallback
 inter-plans : un message adressé à un `.onion` part sur un circuit
 Tor ; un message adressé à une clé OnionBit part sur l'overlay IPv8.
 
+**Hypothèse runtime acquise (ADR-0028, décision 2026-10)** :
+`tor.enabled` désigne une **lane permanente** — bootstrap au
+démarrage du daemon et à l'activation à chaud, client vivant en
+continu. C'est exactement le prérequis de cette ADR : un service
+`.onion` joignable (messagerie, coffre nomade) suppose un client
+arti toujours chaud, pas monté à la demande par une recherche. Le
+hot-swap `swap_tor_stack` garantit en outre que les futurs
+consommateurs Tor obtiennent le runtime courant, pas un clone
+figé au boot.
+
 ## Décision proposée
 
 ### 1. Deux plans, une interface

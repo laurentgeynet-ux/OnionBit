@@ -10,6 +10,7 @@ import '../../../../core/api/api_client.dart';
 import '../../../../core/api/events.dart';
 import '../../../../core/config/ui_prefs.dart';
 import '../../../../core/di/providers.dart';
+import '../../../diagnostic/domain/diagnostic_models.dart';
 import '../../../diagnostic/presentation/providers/diagnostic_providers.dart';
 import '../../data/rest_search_repository.dart';
 import '../../domain/search_repository.dart';
@@ -232,11 +233,34 @@ class SearchResultsNotifier extends AsyncNotifier<List<TorrentResult>> {
 
   @override
   Future<List<TorrentResult>> build() async {
+    // Lane Tor permanente (ADR-0028) : quand le bootstrap — parti au
+    // demarrage ou a l'activation — atteint `ready`, relancer une
+    // recherche externe tombee sur `tor_bootstrapping`. L'intention
+    // est exprimee (Entree pressee) : pas de geste supplementaire.
+    ref.listen(torStatusProvider, (_, next) {
+      if (next.value?.state != TorRuntimeState.ready) return;
+      if (ref.read(onionSearchErrorProvider) != 'tor_bootstrapping') {
+        return;
+      }
+      final q = ref.read(searchQueryProvider);
+      if (q.isNotEmpty) unawaited(_launchExternal(q));
+    });
     final query = ref.watch(searchQueryProvider);
     final sort = ref.watch(searchSortProvider);
     final repo = ref.watch(searchRepositoryProvider);
     if (query.isEmpty) return const [];
     unawaited(_launchRemote(query));
+    // Recherche `.onion` via Tor en parallèle (ADR-0028 §5) —
+    // synchrone : la reponse contient les resultats, la SSE
+    // `remote_query_results` du meme uuid est dedupliquee a
+    // l'arrivee. `tor_disabled` est silencieux (fonctionnalite
+    // opt-in) ; les autres codes remontent dans
+    // [onionSearchErrorProvider]. Lane permanente : la requete part
+    // immediatement — attendre la fenetre de collecte distante
+    // retarderait la lane deja chaude de plusieurs secondes. Le
+    // depart est differe d'une microtache : `_launchExternal` ecrit
+    // dans [onionSearchErrorProvider], interdit pendant le build.
+    unawaited(Future(() => _launchExternal(query)));
     return repo.searchLocal(query, sortBy: sort.param);
   }
 
@@ -250,13 +274,6 @@ class SearchResultsNotifier extends AsyncNotifier<List<TorrentResult>> {
       // la recherche distante est silencieusement indisponible.
       ref.read(remoteResultsProvider.notifier).idle();
     }
-    // Recherche `.onion` via Tor en parallèle (ADR-0028 §5) —
-    // synchrone : la reponse contient les resultats, la SSE
-    // `remote_query_results` du meme uuid est dedupliquee a
-    // l'arrivee. `tor_disabled` est silencieux (fonctionnalite
-    // opt-in) ; les autres codes remontent dans
-    // [onionSearchErrorProvider].
-    unawaited(_launchExternal(query));
   }
 
   Future<void> _launchExternal(String query) async {

@@ -3,6 +3,45 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Lane Tor permanente — bootstrap au démarrage + hot-swap (2026-10-17)
+
+Décision d'architecture actée (les cinq questions UX Tor de
+`roadmap_adr0028.md` sont tranchées, définitives) : `tor.enabled`
+ne désigne plus une connectivité paresseuse armée par la première
+recherche, mais une **lane Tor vivante** — prérequis des services
+`.onion` entrants de l'ADR-0029 (messagerie, canaux, coffre), qui
+supposent un client arti chaud en continu.
+
+- **Bootstrap au démarrage** : `Session::new_shell` lance
+  `tor.bootstrap()` en tâche de fond quand `enabled` — l'activation
+  est le geste d'intention (jamais silencieux, jamais bloquant).
+- **Hot-swap `tor.*` sans redémarrage** : `POST /api/settings`
+  permute **runtime + backends** atomiquement
+  (`Session::swap_tor_stack`) quand la section `tor` change —
+  activation → bootstrap immédiat ; désactivation → l'ancien
+  runtime meurt avec le swap (circuits arti coupés par le drop).
+  Un PUT sans section `tor` ne permute rien (pas de rebootstrap
+  parasite à chaque réglage).
+- **Recherche héritée, filet d'auto-réparation** :
+  `/api/search/external` retente `bootstrap()` sur état `Off`
+  **ou `Error`** (idempotent — chaque recherche peut réparer la
+  lane, jamais la ré-armer deux fois) ; côté UI, une requête
+  tombée sur `tor_bootstrapping` est **relancée automatiquement**
+  quand `torStatusProvider` passe `ready` — « Entrée » a déjà
+  exprimé l'intention.
+- **Recherche externe vraiment parallèle** : `searchExternal` ne
+  attend plus la fin de la fenêtre de collecte distante (12 s)
+  avant de partir — bug corrigé au passage.
+- Decisions connexes actées : chips de source = filtres
+  d'affichage ; posture arti client-only assumée ; services
+  entrants `.onion` = ADR-0029.
+- Tests : `lane_permanente_bootstrap_si_enabled_au_demarrage`,
+  `tor_desactive_reste_off_au_demarrage`,
+  `swap_tor_stack_permule_runtime_et_backends` (core),
+  `settings_tor_hot_swap_sans_redemarrage` (API), deux tests
+  provider de relance `ready` (Flutter) ; ADR-0028/0029 +
+  `roadmap_adr0028.md` amendés.
+
 ## Retrait du chemin clearnet-via-exit — 100 % onion (2026-10-17)
 
 Même logique que la sonde de version : un appel qui traverse un

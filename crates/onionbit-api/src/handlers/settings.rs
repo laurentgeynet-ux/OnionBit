@@ -53,6 +53,11 @@ pub async fn update_settings(
         .daemon_config
         .lock()
         .unwrap_or_else(|e| e.into_inner());
+    // Section `tor` avant merge : sa variation pilote le hot-swap
+    // du runtime (ADR-0028 — lane permanente : activation =
+    // bootstrap immediat, desactivation = runtime mort, sans
+    // redemarrage).
+    let tor_before = serde_json::to_value(&cfg.tor).unwrap_or_default();
     // Merge sur une copie : une validation refusee ne doit pas
     // laisser l'arbre persiste a moitie mute.
     let mut candidate = cfg.clone();
@@ -85,6 +90,7 @@ pub async fn update_settings(
     if let Err(msg) = candidate.validate_combination() {
         return Err(ApiError::bad_request(msg));
     }
+    let tor_changed = serde_json::to_value(&candidate.tor).unwrap_or_default() != tor_before;
     *cfg = candidate;
     // ADR-0022 : session invitee = zero artefact — le merge s'applique
     // en memoire (services a chaud + SSE) mais ne persiste JAMAIS dans
@@ -102,6 +108,23 @@ pub async fn update_settings(
     let core_cfg = cfg.to_core_config(&state.session.config().state_dir);
     drop(cfg);
     state.session.apply_service_settings(&core_cfg);
+    // ADR-0028 : la section `tor` est appliquee **a chaud** — lane
+    // permanente sans redemarrage : le nouveau runtime + ses
+    // backends remplacent l'ancienne pile (`swap_tor_stack`), puis
+    // le bootstrap part si `enabled` (tache de fond). A la
+    // desactivation l'ancien runtime meurt avec le swap — les
+    // circuits arti en vol sont coupes proprement par le drop.
+    if tor_changed {
+        let runtime = onionbit_tor::TorRuntime::new(core_cfg.tor.clone());
+        let backends =
+            onionbit_tor::build_backends(&core_cfg.tor, std::sync::Arc::new(runtime.clone()));
+        state.session.swap_tor_stack(runtime.clone(), backends);
+        if core_cfg.tor.enabled {
+            if let Err(e) = runtime.bootstrap() {
+                tracing::warn!(error = %e, "tor : bootstrap au hot-swap refuse");
+            }
+        }
+    }
     // Resynchronise les autres clients SSE (editeur avance d'un
     // client → sections dediees des autres rafraichies).
     state

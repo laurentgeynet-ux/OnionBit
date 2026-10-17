@@ -118,6 +118,21 @@ La crate dépend de `onionbit-network-policy` (frontière §3) et
   bloqué dans certains pays — jamais de démarrage silencieux, et le
   bootstrap ne doit **jamais bloquer le daemon** (runtime en tâche
   de fond ; échec → `state:"error"` diagnostic, daemon opérationnel).
+- **`enabled` = lane permanente** *(décision 2026-10, amendée — voir
+  §6 bis roadmap)* : quand `enabled=true`, le bootstrap part **au
+  démarrage du daemon** (`Session::new_shell`) — l'activation est le
+  geste d'intention. La recherche externe hérite d'une lane déjà
+  chaude ; son appel `bootstrap()` n'est plus qu'un filet
+  d'auto-réparation sur état `Off`/`Error` (idempotent). La lane
+  permanente est requise par la phase 3 (messagerie/canaux/coffre
+  `.onion`, ADR-0029) : un service joignable suppose un client
+  vivant en continu, pas monté à la demande.
+- **Hot-swap sans redémarrage** *(décision 2026-10)* :
+  `POST /api/settings` qui modifie la section `tor` permute
+  **runtime + backends** atomiquement (`Session::swap_tor_stack`) —
+  activation → bootstrap immédiat ; désactivation → l'ancien
+  runtime meurt avec le swap (circuits coupés par le drop). Un PUT
+  sans section `tor` ne permute rien (pas de rebootstrap parasite).
 - Les entrées `allowed_hosts` sont validées au chargement :
   suffixe `.onion` + format v3 vérifié par checksum (§4) — une
   entrée invalide est rejetée avec un warn explicite.
@@ -191,9 +206,12 @@ cibles `TorTargetPolicy`, et plus tard tout parsing de liens
   `tor_not_ready`) ; échecs backend → `502` (`mirror_unreachable`,
   `captcha_detected`, `structure_changed`, `no_results`). Le code
   machine est porté par le champ `error.code` de l'enveloppe
-  d'erreur — le message reste libre. La recherche **déclenche** le
-  bootstrap quand le runtime est `Off` mais n'attend jamais sa fin
-  (`bootstrapping` → 503 immédiat, l'UI repose la question) ; la
+  d'erreur — le message reste libre. La recherche **retente** le
+  bootstrap quand le runtime est `Off` ou en `Error` (filet
+  d'auto-réparation de la lane permanente — le bootstrap nominal
+  part au démarrage/activation) mais n'attend jamais sa fin
+  (`bootstrapping` → 503 immédiat ; côté UI la requête est
+  **relancée automatiquement** quand la lane passe `ready`) ; la
   notification SSE `remote_query_results` porte `peer =
   "tor:<source>"` et l'uuid partagé.
 - `GET /api/tor/status` *(implémenté, étape 115)* → `{enabled,
@@ -331,7 +349,9 @@ habille des zones existantes, aucune refonte :
 - **Réglages** : sous-section « Tor » sous Network & Anonymity —
   toggle (opt-in, défaut off), segmented Embedded/External +
   champ `socks5h://` (loopback validé), allowlist en lecture
-  seule. Changements `mode`/`external_socks5` → restart_required.
+  seule. Section `tor` appliquée **à chaud** (hot-swap — voir §2) :
+  ni `enabled` ni `mode`/`external_socks5` n'exigent de
+  redémarrage.
 - **Messagerie : rien en v1.** Afficher `votre_clé.onion` sous
   « Your address » prétendrait une joignabilité inexistante —
   aucun service caché n'est hébergé. Phase 3 : adresse **dérivée

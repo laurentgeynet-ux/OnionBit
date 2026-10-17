@@ -5527,6 +5527,9 @@ async fn search_external_bootstrap_en_cours_daemon_non_bloque() {
     srv.session.stop().await;
 }
 
+/// Lane permanente : un bootstrap anterieur en echec est retente a
+/// la recherche suivante (auto-reparation) — la reponse reflete la
+/// nouvelle tentative `tor_bootstrapping`, jamais un echec fige.
 #[tokio::test]
 async fn search_external_bootstrap_echoue_503() {
     let srv = spawn_tor_server(
@@ -5547,7 +5550,14 @@ async fn search_external_bootstrap_echoue_503() {
         .unwrap();
     assert_eq!(resp.status(), 503);
     let body: serde_json::Value = resp.json().await.unwrap();
-    assert_eq!(body["error"]["code"], "bootstrap_failed");
+    // `tor` feature on : nouvelle tentative (`tor_bootstrapping`) ;
+    // stub sans transport : `NotBuilt` → `bootstrap_failed`. Dans
+    // les deux cas la lane n'est jamais figee sur l'echec.
+    assert!(
+        ["tor_bootstrapping", "bootstrap_failed"]
+            .contains(&body["error"]["code"].as_str().unwrap_or("")),
+        "code inattendu : {body}"
+    );
     srv.session.stop().await;
 }
 
@@ -5658,11 +5668,12 @@ impl std::io::Write for LogBuf {
 }
 
 #[tokio::test]
-async fn settings_post_tor_section_restart_only() {
+async fn settings_post_tor_section_refletee() {
     let srv = spawn_server().await;
-    // La section `tor` est acceptee par le merge generique ; elle est
-    // restart-only (runtime construit au demarrage) mais
-    // `GET /api/settings` doit refleter la valeur en attente.
+    // La section `tor` est acceptee par le merge generique et
+    // appliquee a chaud (lane permanente — hot-swap) ; le test
+    // `settings_tor_hot_swap_sans_redemarrage` couvre la permutation.
+    // Ici : `GET /api/settings` reflete la valeur persistee.
     let resp = srv
         .client
         .post(srv.url("/api/settings"))
@@ -5726,5 +5737,62 @@ async fn search_external_ne_journalise_pas_la_requete() {
         !captured.contains(sentinel),
         "le terme de recherche a ete journalise : {captured}"
     );
+    srv.session.stop().await;
+}
+
+/// Lane Tor permanente (ADR-0028) : activer/desactiver `tor.enabled`
+/// via `POST /api/settings` permute le runtime **a chaud** — pas de
+/// redemarrage. L'activation declenche le bootstrap immediatement
+/// (etat != `Off`) ; la desactivation tue la lane (etat `Off`).
+#[tokio::test]
+async fn settings_tor_hot_swap_sans_redemarrage() {
+    let srv = spawn_server().await;
+    assert_eq!(srv.session.tor().state(), onionbit_tor::TorState::Off);
+    assert!(!srv.session.tor().settings().enabled);
+
+    // Activation : la pile est permutee et le bootstrap part dans
+    // la foulee (etat `Bootstrapping`/`Error` jamais `Off`).
+    let resp = srv
+        .client
+        .post(srv.url("/api/settings"))
+        .json(&serde_json::json!({ "settings": { "tor": { "enabled": true } } }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    assert!(srv.session.tor().settings().enabled);
+    assert_ne!(
+        srv.session.tor().state(),
+        onionbit_tor::TorState::Off,
+        "le bootstrap doit partir des l'activation (lane permanente)"
+    );
+
+    // Reglage sans section `tor` : aucun swap — meme runtime
+    // conserve (pas de rebootstrap parasite a chaque PUT).
+    let runtime_avant = srv.session.tor();
+    let resp = srv
+        .client
+        .post(srv.url("/api/settings"))
+        .json(&serde_json::json!({ "settings": { "rss": { "urls": [] } } }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    assert!(
+        runtime_avant.ptr_eq(&srv.session.tor()),
+        "un PUT sans section tor ne doit pas permuter le runtime"
+    );
+
+    // Desactivation : runtime `Off`, lane coupee.
+    let resp = srv
+        .client
+        .post(srv.url("/api/settings"))
+        .json(&serde_json::json!({ "settings": { "tor": { "enabled": false } } }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    assert!(!srv.session.tor().settings().enabled);
+    assert_eq!(srv.session.tor().state(), onionbit_tor::TorState::Off);
     srv.session.stop().await;
 }

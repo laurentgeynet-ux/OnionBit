@@ -113,6 +113,14 @@ impl TorRuntime {
         Self::stub_state(settings, TorState::Ready)
     }
 
+    /// Deux handles partagent-ils le meme runtime ? (Clone =
+    /// `Arc` partage.) Reserve aux tests verifiant qu'un hot-swap a
+    /// — ou n'a pas — permute l'instance.
+    #[doc(hidden)]
+    pub fn ptr_eq(&self, other: &Self) -> bool {
+        std::sync::Arc::ptr_eq(&self.inner, &other.inner)
+    }
+
     /// Reglages actifs.
     pub fn settings(&self) -> &TorSettings {
         &self.inner.settings

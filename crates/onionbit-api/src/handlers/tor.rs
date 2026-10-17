@@ -169,10 +169,17 @@ pub async fn external_search(
     }
     match runtime.state() {
         TorState::Ready => {}
-        TorState::Off => {
-            // Bootstrap explicite a la premiere recherche (ADR-0028
-            // §1) : `bootstrap` ne bloque pas — la tache demarre et
-            // l'etat devient observable via `/api/tor/status`.
+        // Filet de la lane permanente (ADR-0028) : `tor.enabled`
+        // bootstrappe normalement au demarrage ou a l'activation —
+        // on retente ici quand la lane est restee `Off` ou qu'un
+        // bootstrap anterieur a echoue. `bootstrap` est non
+        // bloquant et idempotent pendant une tentative en cours :
+        // chaque recherche peut reparer la lane, jamais la re-armer
+        // deux fois.
+        TorState::Off | TorState::Error(_) => {
+            if let TorState::Error(e) = runtime.state() {
+                tracing::info!(error = %e, "tor : relance du bootstrap apres echec");
+            }
             runtime.bootstrap().map_err(|e: TorError| {
                 tor_unavailable("bootstrap_failed", format!("bootstrap Tor : {e}"))
             })?;
@@ -197,12 +204,6 @@ pub async fn external_search(
         }
         TorState::Dormant => {
             return Err(tor_unavailable("tor_not_ready", "client Tor dormant"));
-        }
-        TorState::Error(e) => {
-            return Err(tor_unavailable(
-                "bootstrap_failed",
-                format!("bootstrap Tor en echec : {e}"),
-            ));
         }
     }
 
