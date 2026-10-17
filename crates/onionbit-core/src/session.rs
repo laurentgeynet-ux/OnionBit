@@ -2537,20 +2537,45 @@ impl CoreSession {
     /// potent : un service absent ou une lane coupee ne font que
     /// laisser `send()` replier sur boite aux lettres/`failed`.
     fn wire_onion_links(&self) {
-        #[cfg(any(feature = "tor", feature = "hs"))]
-        {
-            let Some(svc) = self.messaging() else {
-                return;
-            };
-            #[cfg(feature = "tor")]
+        #[cfg(feature = "tor")]
+        if let Some(svc) = self.messaging() {
             svc.set_onion_dialer(Arc::new(SessionTorDialer {
                 inner: self.inner.clone(),
             }));
-            #[cfg(feature = "hs")]
-            self.tor().set_onion_link_handler(
-                onionbit_messaging::ONION_MSG_PORT,
-                Arc::new(MessagingOnionLink { svc }),
-            );
+        }
+        #[cfg(feature = "hs")]
+        {
+            let rt = self.tor();
+            if let Some(svc) = self.messaging() {
+                rt.set_onion_link_handler(
+                    onionbit_messaging::ONION_MSG_PORT,
+                    Arc::new(MessagingOnionLink { svc }),
+                );
+            }
+            // Catalogue de canaux sur le port HTTP standard (etape
+            // 126) — servi des qu'une stack IPv8 existe (le provider
+            // de contenu fait le select+encodage mdblob signe).
+            if let Some(stack) = self.ipv8() {
+                let catalog_stack = stack.clone();
+                rt.set_onion_link_handler(
+                    crate::services::onion_channels::ONION_CHANNEL_PORT,
+                    Arc::new(crate::services::onion_channels::ChannelCatalogHandler::new(
+                        Arc::new(move |q| {
+                            let stack = catalog_stack.clone();
+                            Box::pin(async move {
+                                stack
+                                    .channel_catalog_frame(
+                                        &q.channel_pk,
+                                        q.origin_id,
+                                        q.first,
+                                        q.last,
+                                    )
+                                    .await
+                            })
+                        }),
+                    )),
+                );
+            }
         }
     }
 
@@ -5362,8 +5387,10 @@ impl CoreSession {
                 );
                 let (stop_tx, mut stop_rx) = tokio::sync::watch::channel(false);
                 let db = self.inner.db_arc();
+                let this = self.clone();
                 tokio::spawn(async move {
                     crate::services::channel_sync::run_channel_sync(
+                        this,
                         stack,
                         db,
                         interval,

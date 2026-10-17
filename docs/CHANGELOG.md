@@ -3,6 +3,40 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## ADR-0029 étape 126 : canaux servis en `.onion` (2026-10-17)
+
+Les catalogues de canaux deviennent joignables **par Tor** quand le
+créateur a une association `.onion` explicite (étape 123) — même
+format `mdblob` signé, autre transport, jamais de traduction entre
+plans :
+
+- **Endpoint** : `services/onion_channels.rs` sert
+  `GET /channels/<pk64 hex>[?origin_id&first&last]` sur le port
+  virtuel 80 du service `.onion` d'identité (étape 122) — le
+  service ressemble à un site Tor ordinaire en empreinte. Réponse
+  `200` = UNE frame LZ4 d'entrées `mdblob` signées, le blob exact
+  d'un `SelectResponse` IPv8 ; `400`/`404`/`405` bornés, zone
+  d'en-tête ≤ 8 Kio, un flux par requête.
+- **Production** : `Ipv8Stack::channel_catalog_frame` réutilise le
+  `remote_select` existant (`SessionContentProvider::select_frame`)
+  — mêmes `metadata_type` `[400,220,500]` et bornes `first`/`last`.
+- **Ingestion** : `channel_sync` tente le fetch `.onion` quand le
+  créateur du canal suivi a une association `peer_onions` —
+  `fetch_onion` applique `target_policy ∪ peer_policy` à chaque
+  hop de redirection (anti-SSRF inchangé). Corps intégré par
+  `ingest_channel_blob` → `process_select_response` : signature
+  vérifiée, `public_key == channel_pk`, persistance réservée aux
+  canaux suivis — un catalogue Tor n'est pas plus crédible qu'un
+  catalogue IPv8. Échec Tor (désactivé, refus politique, timeout)
+  → repli `RemoteSelect` : jamais de point dur unique.
+- **Cycle de vie** : `wire_onion_links` installe le handler
+  catalogue au démarrage et après chaque swap de runtime Tor ;
+  sans stack IPv8 ou sans service, le port reçoit `DONE` standard.
+- **Tests** : parsing de requête (rejets 400/404/405), round-trip
+  flux HTTP sur duplex, round-trip catalogue
+  producteur→consommateur avec injection d'une entrée signée par
+  un imposteur — rejetée (anti-poisoning identique au plan IPv8).
+
 ## ADR-0029 étape 125 : chat UI modernisée + badges de plan (2026-10-17)
 
 La page Messagerie consomme les métadonnées multi-plan de l'étape

@@ -1157,6 +1157,29 @@ impl SessionContentProvider {
     /// Corps du select distant (cf. `ContentProvider::remote_select`) —
     /// la requete SQL est deportee sur le pool bloquant (`db.call`).
     async fn remote_select_inner(&self, query: serde_json::Value) -> Vec<Vec<u8>> {
+        // `entries_to_chunk` Python : entrees serialisees groupees
+        // par budget de `maximum_payload_size`, compressees LZ4 par
+        // chunk — chaque chunk part dans un `SelectResponse` separe.
+        let mut chunks: Vec<Vec<u8>> = Vec::new();
+        let mut cur = Vec::new();
+        for bytes in self.select_encoded_entries(query).await {
+            if cur.len() + bytes.len() > self.max_payload_size && !cur.is_empty() {
+                chunks.push(lz4_frame(&cur));
+                cur.clear();
+            }
+            cur.extend_from_slice(&bytes);
+        }
+        if !cur.is_empty() || chunks.is_empty() {
+            chunks.push(lz4_frame(&cur));
+        }
+        chunks
+    }
+
+    /// Entrees `mdblob` serialisees (une par ligne) d'un select —
+    /// bornees `first`/`last` comme `remote_select_inner`. Sert le
+    /// catalogue `.onion` de l'etape 126 : meme filaire, autre
+    /// transport (HTTP sur Tor au lieu de `SelectResponse`).
+    async fn select_encoded_entries(&self, query: serde_json::Value) -> Vec<Vec<u8>> {
         // `sanitize_query` : `last` borne a `first + max_response_size`.
         // `first` est borne defensivement (`MAX_SELECT_FIRST`) —
         // un `OFFSET` gigantesque ferait scanner la table.
@@ -1179,11 +1202,7 @@ impl SessionContentProvider {
             .await
             .unwrap_or_default();
 
-        // `entries_to_chunk` Python : entrees serialisees groupees
-        // par budget de `maximum_payload_size`, compressees LZ4 par
-        // chunk — chaque chunk part dans un `SelectResponse` separe.
-        let mut chunks: Vec<Vec<u8>> = Vec::new();
-        let mut cur = Vec::new();
+        let mut out: Vec<Vec<u8>> = Vec::new();
         for row in rows {
             let Some((entry, a_signer)) = self.row_to_entry(&row) else {
                 continue;
@@ -1196,16 +1215,18 @@ impl SessionContentProvider {
             let Ok(bytes) = encoded else {
                 continue;
             };
-            if cur.len() + bytes.len() > self.max_payload_size && !cur.is_empty() {
-                chunks.push(lz4_frame(&cur));
-                cur.clear();
-            }
-            cur.extend_from_slice(&bytes);
+            out.push(bytes);
         }
-        if !cur.is_empty() || chunks.is_empty() {
-            chunks.push(lz4_frame(&cur));
-        }
-        chunks
+        out
+    }
+
+    /// Frame LZ4 unique des entrees d'un select — format servi par
+    /// l'endpoint `.onion` des canaux (etape 126) : le client
+    /// l'integre par `process_select_response`, la verification de
+    /// signature est indépendante du transport.
+    async fn select_frame(&self, query: serde_json::Value) -> Vec<u8> {
+        let entries = self.select_encoded_entries(query).await;
+        lz4_frame(&entries.concat())
     }
 }
 
@@ -1848,6 +1869,10 @@ pub struct Ipv8Stack {
     /// Community de decouverte de contenu (`None` si
     /// `content_discovery_community/enabled = false`).
     pub content_discovery: Option<Arc<ContentDiscoveryCommunity>>,
+    /// Provider de contenu (`enable_content_discovery`) — sert et
+    /// ingere les entrees `mdblob` signees ; utilise aussi hors
+    /// community par l'endpoint `.onion` des canaux (etape 126).
+    content_provider: Option<Arc<SessionContentProvider>>,
     /// `TunnelCommunity` (presente si `enable_anonymity`).
     pub tunnel: Option<Arc<TunnelCommunity>>,
     /// `DHTDiscoveryCommunity` (presente si `enable_dht` —
@@ -2966,6 +2991,7 @@ impl Ipv8Stack {
             network,
             discovery,
             content_discovery,
+            content_provider: provider,
             tunnel,
             dht,
             ext,
@@ -3172,6 +3198,45 @@ impl Ipv8Stack {
                     .remove(&req_id);
                 false
             }
+        }
+    }
+
+    /// Catalogue `mdblob` d'un canal servi en `.onion` (etape 126) :
+    /// meme select que `remote_select` (`channel_pk`/`origin_id`/
+    /// `metadata_type` + `first`/`last` bornes), retourne UNE frame
+    /// LZ4 d'entrees signees — le format que `process_select_response`
+    /// sait reintegrer. Frame vide (LZ4 d'un contenu nul) sans
+    /// provider : le repondeur reste coherent.
+    pub async fn channel_catalog_frame(
+        &self,
+        channel_pk: &[u8],
+        origin_id: i64,
+        first: u64,
+        last: u64,
+    ) -> Vec<u8> {
+        let Some(provider) = &self.content_provider else {
+            return lz4_frame(&[]);
+        };
+        provider
+            .select_frame(serde_json::json!({
+                "channel_pk": hex::encode(channel_pk),
+                "origin_id": origin_id,
+                "metadata_type": [400, 220, 500],
+                "first": first,
+                "last": last,
+            }))
+            .await
+    }
+
+    /// Ingere un blob de catalogue recupere en `.onion` (etape 126)
+    /// — meme chemin persistant que les `SelectResponse` du plan
+    /// OnionBit : signature verifiee, `public_key == channel_pk`,
+    /// persistance reservee aux canaux suivis. Nombre d'entrees
+    /// nouvelles. `0` sans provider (fonction desactivee).
+    pub async fn ingest_channel_blob(&self, blob: &[u8]) -> usize {
+        match &self.content_provider {
+            Some(provider) => provider.process_select_response(blob).await.len(),
+            None => 0,
         }
     }
 
@@ -4888,5 +4953,134 @@ mod tests {
             }
         }
         assert!(saw_root && saw_torrent && saw_tomb);
+    }
+
+    /// Round-trip `.onion` (etape 126) : le producteur encode son
+    /// canal en une frame LZ4 unique (`select_frame`, format servi
+    /// par l'endpoint HTTP du service `.onion`) ; le consommateur
+    /// l'integre par `process_select_response` — meme verification
+    /// de signature et meme persistance « canaux suivis » que le
+    /// plan OnionBit. Une entree signee par une autre cle est
+    /// rejetee (anti-poisoning identique).
+    #[tokio::test]
+    async fn catalogue_onion_round_trip_anti_poisoning() {
+        // Producteur : canal personnel avec une entree commise.
+        let sk_channel = LibNaClSecretKey::generate();
+        let pk_vec: Vec<u8> = sk_channel.public_key().to_bin()[10..].to_vec();
+        let pk64: [u8; 64] = pk_vec.clone().try_into().unwrap();
+        let mut producer = test_provider(crate::notifier::Notifier::new());
+        producer.signer = sk_channel.clone();
+        producer.our_pk = pk64;
+        let ih = [7u8; 20];
+        let sk_c = sk_channel.clone();
+        let root_id = producer
+            .db
+            .call("t.src", move |c| {
+                // Le commit d'un canal personnel part d'une ligne
+                // `channel_node` deja connue pour l'info-hash.
+                onionbit_db::channel::insert(
+                    c,
+                    &onionbit_db::models::ChannelNodeRow {
+                        infohash: ih.to_vec(),
+                        title: "source".into(),
+                        metadata_type: 300,
+                        public_key: vec![9u8; 64],
+                        id_: 1,
+                        signature: Some(vec![1u8; 64]),
+                        ..Default::default()
+                    },
+                )?;
+                let conv =
+                    |e: crate::error::CoreError| onionbit_db::DbError::Corrupt(e.to_string());
+                crate::channel_ops::commit(c, &sk_c, &ih).map_err(conv)?;
+                Ok(onionbit_db::channel::personal_root(
+                    c,
+                    &crate::channel_ops::personal_channel_pk(&sk_c),
+                )?
+                .unwrap()
+                .id_)
+            })
+            .await
+            .unwrap();
+
+        // `GET /channels/<pk>` servi : frame LZ4 des entrees.
+        let frame = producer
+            .select_frame(serde_json::json!({
+                "channel_pk": hex::encode(&pk_vec),
+                "origin_id": root_id,
+                "metadata_type": [400, 220, 500],
+                "first": 1,
+                "last": 100,
+            }))
+            .await;
+        use std::io::Read;
+        let mut data = Vec::new();
+        lz4_flex::frame::FrameDecoder::new(frame.as_slice())
+            .read_to_end(&mut data)
+            .unwrap();
+        assert!(!parse_blob(&data).unwrap().is_empty());
+
+        // Consommateur : canal suivi → les entrees se persistent ;
+        // une entree d'un imposteur injectee dans le meme corps est
+        // rejetee par la verification de signature.
+        let consumer = test_provider(crate::notifier::Notifier::new());
+        let pk_sub = pk_vec.clone();
+        consumer
+            .db
+            .call("t.subscribe", move |c| {
+                onionbit_db::channel::set_subscribed(c, &pk_sub, root_id, true)
+            })
+            .await
+            .unwrap();
+        let sk_evil = LibNaClSecretKey::generate();
+        let pk_evil: Vec<u8> = sk_evil.public_key().to_bin()[10..].to_vec();
+        let evil = encode_entry(
+            &MetadataEntry::ChannelTorrent(ChannelMetadataPayload {
+                torrent: TorrentMetadataPayload {
+                    node: ChannelNodePayload {
+                        header: SignedPayloadHeader::new(
+                            types::CHANNEL_TORRENT,
+                            0,
+                            pk_evil.clone().try_into().unwrap(),
+                        ),
+                        id: 99,
+                        origin_id: root_id as u64,
+                        timestamp: 1_700_000_000,
+                    },
+                    infohash: [9u8; 20],
+                    size: 1,
+                    torrent_date: 1_700_000_000,
+                    title: "empoisonneur".into(),
+                    tags: String::new(),
+                    tracker_info: String::new(),
+                },
+                num_entries: 0,
+                start_timestamp: 1_700_000_000,
+            }),
+            &sk_evil,
+        )
+        .unwrap();
+        let mut forged = data.clone();
+        forged.extend_from_slice(&evil);
+        consumer.process_select_response(&lz4_frame(&forged)).await;
+
+        consumer
+            .db
+            .call("t.check", move |c| {
+                let rows = onionbit_db::channel::select_entries(
+                    c,
+                    &onionbit_db::channel::SelectParams {
+                        channel_pk: Some(pk_vec.clone()),
+                        ..Default::default()
+                    },
+                )?;
+                // Racine placeholder + entree commise — l'entree 99
+                // de l'imposteur n'a pas ete ingeree.
+                assert_eq!(rows.len(), 2);
+                assert!(!rows.iter().any(|r| r.id_ == 99));
+                Ok(())
+            })
+            .await
+            .unwrap();
     }
 }

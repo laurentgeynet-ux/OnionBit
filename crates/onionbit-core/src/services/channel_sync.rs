@@ -20,6 +20,14 @@
 //! `DELETED` (500 — pierres tombales). `CHANNEL_NODE` (200) reste
 //! `Rejected` : Python n'a aucune classe de payload pour lui
 //! (`UnknownBlobTypeException`).
+//!
+//! ADR-0029 etape 126 : quand le createur du canal a une adresse
+//! `.onion` associee (`peer_onions`), le catalogue est tire en
+//! HTTP via le runtime Tor — memes entrees `mdblob` signees, meme
+//! ingestion (`ingest_channel_blob` → `process_select_response`),
+//! autre transport. Un echec de fetch retombe sur le
+//! `RemoteSelect` IPv8 : le plan `.onion` est un chemin
+//! supplementaire, jamais un point dur unique.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -27,9 +35,11 @@ use std::time::Duration;
 use onionbit_db::Database;
 
 use crate::ipv8_stack::Ipv8Stack;
+use crate::session::CoreSession;
 
 /// Boucle de synchronisation des canaux suivis.
 pub async fn run_channel_sync(
+    session: CoreSession,
     stack: Arc<Ipv8Stack>,
     db: Arc<Database>,
     interval: Duration,
@@ -66,6 +76,36 @@ pub async fn run_channel_sync(
                 })
                 .to_string()
                 .into_bytes();
+                // Plan `.onion` (etape 126) : le createur a une
+                // adresse Tor associee → fetch HTTP du catalogue
+                // `mdblob` ; integre par le meme chemin de
+                // verification que les SelectResponse. Echec →
+                // repli RemoteSelect ci-dessous.
+                if let Some(assoc) = session.peer_onion(&pk) {
+                    let url = format!(
+                        "http://{}:{}/channels/{}?origin_id={}&first=1&last=100",
+                        assoc.onion_host,
+                        super::onion_channels::ONION_CHANNEL_PORT,
+                        hex::encode(&pk),
+                        origin_id,
+                    );
+                    match session.tor().fetch_onion(&url).await {
+                        Ok(resp) if resp.status == 200 => {
+                            let n = stack.ingest_channel_blob(&resp.body).await;
+                            tracing::debug!(
+                                canal = %hex::encode(&pk[..8.min(pk.len())]),
+                                entrees = n,
+                                "catalogue canal recupere via .onion"
+                            );
+                            continue;
+                        }
+                        _ => {
+                            tracing::debug!(
+                                "fetch .onion du canal en echec — repli RemoteSelect"
+                            );
+                        }
+                    }
+                }
                 // Graine deterministe par canal (repliage des octets
                 // de la cle) — repartition inter-ponts ADR-0025 §5 :
                 // un canal donne revient toujours au meme relais.

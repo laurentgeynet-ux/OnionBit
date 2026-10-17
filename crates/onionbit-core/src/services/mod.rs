@@ -10,6 +10,7 @@
 pub mod bandwidth;
 pub mod channel_sync;
 pub mod messaging;
+pub mod onion_channels;
 pub mod rss;
 pub mod torrent_checker;
 pub mod watch_folder;
