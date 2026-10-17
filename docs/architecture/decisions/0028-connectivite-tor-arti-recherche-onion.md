@@ -474,8 +474,17 @@ le réseau Tor (le trafic P2P asphyxie ses relais bénévoles).
   demandeur et l'affichage UI, non éliminable.
 - **Bootstrap Tor bloqué** (FAI/censure — autorités d'annuaire et
   gardes publics filtrés) : le runtime reste non-bloquant,
-  `state:"error"` remonte à l'UI avec diagnostic clair ; bridges
-  = jalon ultérieur (§9).
+  `state:"error"` remonte à l'UI avec diagnostic clair.
+  **Ponts vanilla implémentés** (`tor.bridges` — lignes « bridge »
+  persistées, parsées par `BridgeConfigBuilder` d'arti, feature
+  `bridge-client`) : une liste non vide impose le bootstrap **ponts
+  uniquement** (`enabled: Explicit(true)`, aucun repli silencieux
+  sur les gardes publics — si aucune ligne n'est valide, erreur
+  nette plutôt que contournement de l'intention). Limite assumée :
+  un pont vanilla cache l'IP des gardes publics mais pas le
+  protocole Tor au DPI — les transports obfusqués (`obfs4`,
+  `snowflake` via `pt-client` + binaires externes packagés) restent
+  un chantier dédié (§9).
 - **Fragilité opérationnelle du scraping** : protections
   anti-DDoS (PoW, pages de vérification), refontes HTML, miroirs
   mouvants — traitées par les erreurs explicites + bascule de

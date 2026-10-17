@@ -925,6 +925,8 @@
   "torSocks5Hint": "Loopback uniquement — socks5h://127.0.0.1:9050",
   "torAllowedHosts": "Hôtes .onion autorisés",
   "torBackends": "Sources configurées",
+  "torBridges": "Ponts Tor",
+  "torBridgesHint": "Une ligne de pont par ligne (adresse:port empreinte) — à utiliser quand les gardes publics de Tor sont bloqués par IP. Liste non vide = ponts uniquement. Les transports obfs4/Snowflake ne sont pas compilés.",
   "pairTitle": "Appairer un mobile",
   "pairBody": "Scannez ce QR depuis l'appareil mobile — il porte un jeton à usage unique qui expire vite. La clé API n'y figure jamais.",
   "pairHostLabel": "Adresse du daemon",

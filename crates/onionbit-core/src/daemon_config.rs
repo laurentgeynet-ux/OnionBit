@@ -1395,6 +1395,12 @@ pub struct TorFileConfig {
     pub bootstrap_timeout_ms: u64,
     /// Bornes de redirections 30x suivies (hôte allowlisté exigé).
     pub max_redirects: u32,
+    /// Lignes de ponts Tor (`tor/bridges`, anti-censure IP) — un
+    /// pont par ligne, format « bridge line » (`addr:port
+    /// fingerprint` ; les transports `obfs4`/`snowflake` exigent
+    /// `pt-client`, non compilé → ligne ignorée au bootstrap).
+    /// Liste non vide = bootstrap **ponts uniquement**.
+    pub bridges: Vec<String>,
     /// Backends de recherche (`tor/search`).
     pub search: TorSearchFileConfig,
     /// Passerelle de sortie (`tor/gateway`, phase 2).
@@ -1415,6 +1421,7 @@ impl Default for TorFileConfig {
             request_timeout_ms: 30_000,
             bootstrap_timeout_ms: 120_000,
             max_redirects: 3,
+            bridges: Vec::new(),
             search: TorSearchFileConfig::default(),
             gateway: TorGatewayFileConfig::default(),
             extra: serde_json::Map::new(),
@@ -2234,6 +2241,15 @@ impl DaemonConfig {
         let t = &self.tor;
         let mut settings = onionbit_tor::TorSettings {
             enabled: t.enabled,
+            // Ponts : lignes trimmees/non vides ; la validation
+            // semantique (format « bridge line ») est faite par arti
+            // au bootstrap — warn + skip par ligne invalide.
+            bridges: t
+                .bridges
+                .iter()
+                .map(|l| l.trim().to_string())
+                .filter(|l| !l.is_empty())
+                .collect(),
             state_dir: state_dir.join("tor"),
             max_response_bytes: t.max_response_bytes as usize,
             request_timeout: std::time::Duration::from_millis(t.request_timeout_ms),
@@ -2788,6 +2804,7 @@ mod tests {
                 "external_socks5": "socks5h://127.0.0.1:9150",
                 "allowed_hosts": [TPB, "pas-un-onion", "clearnet.example"],
                 "request_timeout_ms": 15000,
+                "bridges": ["  192.0.2.55:9001 AABBCCDD  ", "", "   "],
                 "search": { "backends": { "tpb": {
                     "mirrors": [TPB],
                     "url_template": "http://{host}/search.php?q={q}"
@@ -2803,6 +2820,8 @@ mod tests {
             onionbit_tor::TorMode::External("127.0.0.1:9150".parse().unwrap())
         );
         assert_eq!(core.tor.request_timeout.as_millis(), 15000);
+        // Ponts : trimmes, vides exclus.
+        assert_eq!(core.tor.bridges, vec!["192.0.2.55:9001 AABBCCDD"]);
         // Seul l'hote valide entre dans la politique.
         assert_eq!(core.tor.target_policy.len(), 1);
         assert!(core.tor.target_policy.check(TPB, 80).is_ok());

@@ -47,6 +47,7 @@ class _NetworkSectionState extends ConsumerState<NetworkSection> {
   final _proxyServer = TextEditingController();
   final _proxyAuth = TextEditingController();
   final _torSocks = TextEditingController();
+  final _torBridges = TextEditingController();
   bool _initialized = false;
   bool _saving = false;
 
@@ -63,6 +64,7 @@ class _NetworkSectionState extends ConsumerState<NetworkSection> {
     _proxyServer.dispose();
     _proxyAuth.dispose();
     _torSocks.dispose();
+    _torBridges.dispose();
     super.dispose();
   }
 
@@ -85,6 +87,10 @@ class _NetworkSectionState extends ConsumerState<NetworkSection> {
       _torMode = 'embedded';
     }
     _torSocks.text = settingsString(settings, [...tor, 'external_socks5']);
+    final bridges = settings['tor'] is Map
+        ? (settings['tor'] as Map)['bridges']
+        : null;
+    _torBridges.text = bridges is List ? bridges.join('\n') : '';
     _initialized = true;
   }
 
@@ -105,6 +111,11 @@ class _NetworkSectionState extends ConsumerState<NetworkSection> {
       'tor': {
         'mode': _torMode,
         'external_socks5': _torSocks.text.trim(),
+        'bridges': _torBridges.text
+            .split('\n')
+            .map((l) => l.trim())
+            .where((l) => l.isNotEmpty)
+            .toList(),
       },
     }, successMessage: context.l10n.netSaved);
     _deferred.markClean();
@@ -287,6 +298,27 @@ class _NetworkSectionState extends ConsumerState<NetworkSection> {
                 ),
               ),
             ],
+            const SizedBox(height: AppSpace.xs),
+            // Ponts Tor (anti-censure IP — ADR-0028) : une ligne
+            // « bridge » par ligne ; non vide = bootstrap ponts
+            // uniquement. Appliqué à l'enregistrement (hot-swap).
+            SizedBox(
+              width: 480,
+              child: TextField(
+                controller: _torBridges,
+                onChanged: (_) => _deferred.markDirty(),
+                minLines: 2,
+                maxLines: 5,
+                style: theme.textTheme.bodySmall,
+                decoration: InputDecoration(
+                  labelText: l10n.torBridges,
+                  helperText: l10n.torBridgesHint,
+                  helperMaxLines: 3,
+                  suffixIcon: const KeyInfoIcon(['tor', 'bridges']),
+                  alignLabelWithHint: true,
+                ),
+              ),
+            ),
             const SizedBox(height: AppSpace.xs),
             _TorAllowlist(settings: settings),
             const SizedBox(height: AppSpace.md),

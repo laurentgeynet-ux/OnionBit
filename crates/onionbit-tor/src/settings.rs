@@ -89,6 +89,14 @@ pub struct TorSettings {
     pub max_redirects: u32,
     /// Backends de recherche externes (`tpb`, …).
     pub backends: BTreeMap<String, OnionBackendSettings>,
+    /// Lignes de ponts Tor (relays non listés — contourne le blocage
+    /// par IP des gardes publics ; `tor/bridges`, anti-censure). Des
+    /// lignes avec transport PT (`obfs4`, `snowflake`…) exigent la
+    /// feature `pt-client` — non compilée : elles sont refusées au
+    /// chargement. Liste non vide = bootstrap **ponts uniquement**
+    /// (jamais de repli silencieux sur les gardes publics — ça
+    /// contournerait l'intention de l'utilisateur).
+    pub bridges: Vec<String>,
     /// Passerelle de sortie pour les pairs sans Tor.
     pub gateway: TorGatewaySettings,
 }
@@ -107,6 +115,7 @@ impl Default for TorSettings {
             bootstrap_timeout: Duration::from_secs(120),
             max_redirects: 3,
             backends: BTreeMap::new(),
+            bridges: Vec::new(),
             gateway: TorGatewaySettings {
                 enabled: false,
                 rate_limit_per_circuit: 10,

@@ -1642,6 +1642,8 @@
   "torSocks5Hint": "Loopback only — socks5h://127.0.0.1:9050",
   "torAllowedHosts": "Allowed .onion hosts",
   "torBackends": "Configured sources",
+  "torBridges": "Tor bridges",
+  "torBridgesHint": "One bridge line per line (address:port fingerprint) — use when Tor's public guards are IP-blocked. Non-empty list = bridges only. obfs4/Snowflake transports are not compiled in.",
   "pairTitle": "Pair a mobile device",
   "pairBody": "Scan this QR from the mobile device — it carries a single-use, short-lived token. The API key is never in it.",
   "pairHostLabel": "Daemon address",

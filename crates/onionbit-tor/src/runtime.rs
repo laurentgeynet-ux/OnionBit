@@ -269,6 +269,14 @@ impl TorRuntime {
 /// chaque fetch.
 #[cfg(feature = "tor")]
 async fn bootstrap_external(inner: &Arc<Inner>, addr: std::net::SocketAddr) {
+    if !inner.settings.bridges.is_empty() {
+        // Les ponts sont une config du client embarque : en mode
+        // externe ils relevent du tor systeme (torrc) — jamais
+        // ignores silencieusement.
+        tracing::warn!(
+            "tor.bridges configure mais mode=external — les ponts sont geres par le tor systeme (torrc)"
+        );
+    }
     let probe = tokio::net::TcpStream::connect(addr);
     match tokio::time::timeout(inner.settings.bootstrap_timeout, probe).await {
         Ok(Ok(_)) => set_state(inner, TorState::Ready),
@@ -278,6 +286,29 @@ async fn bootstrap_external(inner: &Arc<Inner>, addr: std::net::SocketAddr) {
         ),
         Err(_) => set_state(inner, TorState::Error("sonde SOCKS5 expiree".into())),
     }
+}
+
+/// Parse les lignes de pont Tor : chaque ligne valide rend un
+/// builder pret a pousser ; chaque ligne invalide (ou transport PT
+/// non compile — `pt-client` absent) est loggee et ignoree.
+#[cfg(feature = "tor")]
+fn ponts_valides(lignes: &[String]) -> Vec<arti_client::config::BridgeConfigBuilder> {
+    use arti_client::config::BridgeConfigBuilder;
+    lignes
+        .iter()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty())
+        .filter_map(|l| match l.parse::<BridgeConfigBuilder>() {
+            Ok(b) => Some(b),
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "ligne de pont Tor invalide ou transport PT non compile — ignoree"
+                );
+                None
+            }
+        })
+        .collect()
 }
 
 /// Bootstrap arti : `BootstrapBehavior::Manual` (aucune connexion
@@ -303,10 +334,34 @@ async fn bootstrap_embedded(inner: &Arc<Inner>) {
             .map_err(|e| TorError::BootstrapFailed(format!("state_dir : {e}")))?;
         // Etat/consensus/gardes sous `state_dir/tor/{state,cache}` —
         // `from_directories` derive aussi le keystore du state dir.
-        let config =
-            TorClientConfigBuilder::from_directories(tor_dir.join("state"), tor_dir.join("cache"))
-                .build()
-                .map_err(|e| TorError::BootstrapFailed(e.to_string()))?;
+        let mut builder =
+            TorClientConfigBuilder::from_directories(tor_dir.join("state"), tor_dir.join("cache"));
+        // Ponts Tor (anti-censure IP — `tor/bridges`) : relays non
+        // listés à la place des gardes publics. Sans `pt-client`, les
+        // lignes a transport (`obfs4`…) echouent au parse — warn +
+        // skip. Si AUCUN pont configure n'est valide → erreur nette :
+        // bootstrapper quand meme sur les gardes publics
+        // contournerait silencieusement l'intention « ponts
+        // uniquement » (l'utilisateur croirait le pont actif alors
+        // que la lane passe a decouvert).
+        if !settings.bridges.is_empty() {
+            use arti_client::config::BoolOrAuto;
+            let parsed = ponts_valides(&settings.bridges);
+            if parsed.is_empty() {
+                Err(TorError::BootstrapFailed(
+                    "aucune ligne de pont Tor valide".into(),
+                ))?;
+            }
+            let count = parsed.len();
+            for b in parsed {
+                builder.bridges().bridges().push(b);
+            }
+            builder.bridges().enabled(BoolOrAuto::Explicit(true));
+            tracing::info!(count, "ponts Tor configures — gardes publics exclus");
+        }
+        let config = builder
+            .build()
+            .map_err(|e| TorError::BootstrapFailed(e.to_string()))?;
         let client = TorClient::builder()
             .config(config)
             .bootstrap_behavior(BootstrapBehavior::Manual)
@@ -558,6 +613,43 @@ mod tests {
                 | Err(TorError::RedirectDenied(_))
                 | Err(TorError::InvalidUrl(_))
         ));
+    }
+
+    /// `ponts_valides` : lignes correctes conservees, vides ignorees,
+    /// invalides sautees sans panique.
+    #[cfg(feature = "tor")]
+    #[test]
+    fn ponts_valides_filtre_et_survit() {
+        // Ligne canonique arti : `Bridge <addr>:<port> <empreinte>`.
+        let ok = "Bridge 192.0.2.55:9001 AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+        let lignes = vec![
+            String::new(),
+            "   ".to_string(),
+            ok.to_string(),
+            "pas-une-ligne-de-pont".to_string(),
+            "garbage garbage garbage".to_string(),
+        ];
+        let parsed = ponts_valides(&lignes);
+        assert_eq!(parsed.len(), 1);
+        // Liste vide → rien, jamais de panique.
+        assert!(ponts_valides(&[]).is_empty());
+    }
+
+    /// Un transport PT (`obfs4`…) n'est pas compilable sans
+    /// `pt-client` : la ligne doit etre rejetee au parse ou a la
+    /// construction — jamais acceptee silencieusement.
+    #[cfg(feature = "tor")]
+    #[test]
+    fn pont_pt_non_compile_rejete() {
+        let lignes = vec![
+            "obfs4 192.0.2.55:9001 AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA cert=x iat-mode=0"
+                .to_string(),
+        ];
+        for b in ponts_valides(&lignes) {
+            // Si le parse a passe (transport reference accepte), le
+            // build doit refuser faute de PT configure.
+            assert!(b.build().is_err());
+        }
     }
 
     #[cfg(feature = "tor")]

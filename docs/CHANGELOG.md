@@ -3,6 +3,29 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Ponts Tor — anti-censure par IP des gardes publics (2026-10-17)
+
+Quand le FAI bloque les IP publiques des autorités d'annuaire et des
+gardes, le bootstrap Tor échoue — remède : des **ponts** (relais non
+listés). Implémenté en mode vanilla via la feature arti
+`bridge-client`.
+
+- **`tor.bridges`** (`configuration.json`) : liste de lignes
+  « bridge » (`addr:port empreinte`), propagée à
+  `TorSettings.bridges` (trim + exclusion des lignes vides au
+  chargement) puis injectée dans le builder arti au bootstrap.
+- **Sémantique ferme** : liste non vide = bootstrap **ponts
+  uniquement** — si aucune ligne ne parse, erreur explicite plutôt
+  qu'un repli silencieux sur les gardes publics (l'utilisateur
+  croirait le pont actif alors que la lane passerait à découvert).
+  Ligne invalide ou transport PT (`obfs4`…) : warn + skip —
+  `pt-client` n'est pas compilé (chantier dédié : binaires externes,
+  packaging, chaîne d'approvisionnement).
+- **UI** : champ multi-lignes « Ponts Tor » dans Réglages → Réseau
+  (en+fr, appliqué à chaud via le hot-swap existant).
+- `onionbit-network-policy` inchangé — un pont n'est pas une sortie
+  clearnet : tout reste end-to-end dans le protocole Tor.
+
 ## Systray : menu clarifié, i18n fr/en, double-clic configurable (2026-10-17)
 
 Le menu contextuel de l'icône de notification nomme désormais les deux
