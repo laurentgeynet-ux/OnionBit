@@ -727,7 +727,7 @@
   "sectionAnonymity": "Anonymous tunnels",
   "sectionNetwork": "Network",
   "sectionAutomation": "Automation",
-  "sectionVersioning": "Updates",
+  "sectionVersioning": "Version",
   "sectionConnection": "Connection",
   "sectionDaemon": "Daemon",
   "settingsDirtyBanner": "{count, plural, =1{{count} modified section not saved} other{{count} modified sections not saved}}",
@@ -899,23 +899,12 @@
   "shutdownConfirm": "Stop",
   "shutdownSent": "Daemon shutdown requested.",
 
-  "newVersionAvail": "New version available: {version}",
-  "@newVersionAvail": {
-    "placeholders": { "version": { "type": "String" } }
-  },
-  "upToDate": "The daemon is up to date.",
-  "checkError": "Check: {error}",
-  "@checkError": {
-    "placeholders": { "error": { "type": "String" } }
-  },
   "daemonVersionLine": "Daemon version: {version}",
   "@daemonVersionLine": {
     "placeholders": { "version": { "type": "String" } }
   },
-  "checkVersion": "Check",
-  "versionCheckSwitch": "Version check",
-  "versionCheckSub": "Disabled section = missing endpoints (404).",
-  "allowPre": "Accept pre-releases",
+  "versionEndpointsSwitch": "Versioning endpoints",
+  "versionEndpointsSub": "Disabled section = missing endpoints (404). No update check is performed — it would leak the installation's existence.",
 
   "noDownloads": "No downloads",
   "noDownloadsHint": "Add a magnet or a .torrent file.",

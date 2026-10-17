@@ -12,7 +12,6 @@ pub mod channel_sync;
 pub mod messaging;
 pub mod rss;
 pub mod torrent_checker;
-pub mod versioning;
 pub mod watch_folder;
 
 use crate::error::{CoreError, Result};

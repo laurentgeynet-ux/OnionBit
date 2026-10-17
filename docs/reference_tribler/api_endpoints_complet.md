@@ -311,7 +311,7 @@ Défauts par download (`DownloadConfig`, `download_config.py`) : `hops=0`, `safe
 | `tunnel_community/enabled` | `true` | |
 | `tunnel_community/min_circuits` | `3` | injecté dans `TunnelSettings.min_circuits` |
 | `tunnel_community/max_circuits` | `8` | → `TunnelSettings.max_circuits` |
-| `versioning/enabled` | `true` ; `allow_pre` `false` | |
+| `versioning/enabled` | `true` | seule clé conservée — les clés de sonde (`allow_pre`, `check_urls`, `github_repo`, `check_timeout_secs`) sont supprimées |
 | `watch_folder/enabled` | `false` ; `directory` `""` ; `check_interval` `10.0` s | |
 
 #### `TunnelSettings` pyipv8 (exposé via `/api/ipv8/tunnel/settings`)
@@ -382,7 +382,7 @@ Python : `restapi/statistics_endpoint.py` · Rust : `handlers/statistics.rs`
 | :--- | :--- | :--- | :--- |
 | GET | `/api/versioning/versions` | Sous-versions présentes dans `state_dir` + `current` | ✅ |
 | GET | `/api/versioning/versions/current` | Version courante (`"git"` si source) | ✅ |
-| GET | `/api/versioning/versions/check` | Sonde tribler.org/GitHub → `{new_version, has_version}` | ✅ (`versioning/check_urls` + `versioning/github_repo` — releases GitHub du dépôt ; ordre `allow_pre` comme Python ; **divergence** : le tableau `releases?per_page=1` est accepté alors que `dict["name"]` Python lève `TypeError` dessus — la sonde `allow_pre` Tribler échoue toujours côté GitHub) |
+| GET | `/api/versioning/versions/check` | Sonde tribler.org/GitHub → `{new_version, has_version}` | ❌ **Supprimé volontairement (2026-10, vie privée)** : la sonde constitue une télémétrie — elle fuit en clair vers le serveur de releases « une instance OnionBit tourne à cette IP ». Route absente (404) ; clés `versioning/check_urls`/`github_repo`/`allow_pre`/`check_timeout_secs` retirées de la config |
 | DELETE | `/api/versioning/versions/{version}` | Supprime l'état d'une ancienne version | ✅ |
 | POST | `/api/versioning/upgrade` | Lance la migration des données anciennes | ⚠️ stub `{success}` |
 | GET | `/api/versioning/upgrade/available` | `{can_upgrade}` — anciennes données détectées | ✅ (toujours false) |

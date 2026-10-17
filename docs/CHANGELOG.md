@@ -3,6 +3,34 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Suppression de la sonde de mise à jour — télémétrie sortante (2026-10-17)
+
+**Divergence assumée avec Tribler** : la vérification de version
+(`GET /api/versioning/versions/check`) interrogeait un serveur de
+releases (GitHub `api.github.com/repos/<repo>/releases` + sondes
+`check_urls`) en clair et en direct — chaque appel révélait au
+serveur et à tout observateur réseau « une instance OnionBit tourne
+à cette IP ». Télémétrie incompatible avec le projet : la fonction
+est **supprimée**, pas seulement désactivée.
+
+- **API** : route `versions/check` retirée (le chemin retombe sur
+  `versions/{version}` DELETE-only → 405 ; aucun trafic sortant
+  possible). `handlers/versioning.rs` ne conserve que les endpoints
+  locaux : `versions`, `versions/current`, `versions/{v}` DELETE,
+  stubs `upgrade/*`.
+- **Core** : module `services/versioning.rs` supprimé en entier
+  (sondes, parse releases, comparaison PEP 440). Config
+  `VersioningConfig` réduite à `enabled` (gate des endpoints) —
+  `check_urls`, `github_repo`, `allow_pre`, `check_timeout_secs`
+  retirés ; les clés d'une config existante atterrissent inertes
+  dans `extra`.
+- **UI** : section Réglages retitrée « Version » — bouton
+  « Vérifier », switch `allow_pre` et snackbars de résultat
+  supprimés ; il reste la ligne « Version du daemon » et le gate
+  `versioning/enabled` relibellé « Endpoints de versioning ».
+- **Docs** : `api_endpoints_complet.md` + `api_rest_mapping.md`
+  marquent la divergence (❌ supprimé volontairement).
+
 ## Explorateur complet `@public` + import/suppression de la zone privée (2026-10-17)
 
 La page **Zone publique** devient un vrai explorateur de fichiers

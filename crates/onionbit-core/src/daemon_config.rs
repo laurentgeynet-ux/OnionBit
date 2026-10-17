@@ -936,26 +936,23 @@ impl Default for RssConfig {
 }
 
 /// Section `versioning`.
+///
+/// **Pas de sonde de mise à jour** (décision vie privée, 2026-10) :
+/// interroger un serveur de releases depuis chaque installation
+/// constitue une télémétrie — le serveur (ou l'observateur réseau)
+/// apprendrait « une instance OnionBit tourne à cette IP ». La
+/// section ne conserve que `enabled` (gate des endpoints REST
+/// `/api/versioning/*`, compat Tribler) ; `check_urls`,
+/// `github_repo`, `allow_pre`, `check_timeout_secs` sont retirés —
+/// les clés d'une ancienne configuration atterrissent dans `extra`
+/// et restent inertes.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct VersioningConfig {
-    /// Vérification de version.
+    /// Endpoints `/api/versioning/*` enregistrés.
     pub enabled: bool,
-    /// Accepte les pré-versions.
-    pub allow_pre: bool,
-    /// Dépôt GitHub `owner/repo` sondé pour les releases (vide = pas
-    /// de sonde GitHub).
-    pub github_repo: String,
-    /// Sondes additionnelles interrogées avant/après GitHub, dans
-    /// l'ordre — équivalent de `release.tribler.org` côté Python ;
-    /// `{current}` est substitué par la version courante et chaque
-    /// sonde doit répondre un JSON `{"name": "x.y.z"}` (ou un tableau
-    /// dont le premier élément porte `name`).
-    pub check_urls: Vec<String>,
-    /// Timeout d'une sonde de version en secondes
-    /// (`ClientTimeout(total=5)` Python).
-    pub check_timeout_secs: u64,
-    /// Clés additionnelles.
+    /// Clés additionnelles (et reliquats inertes des anciennes clés
+    /// de sonde, cf. doc de section).
     #[serde(flatten)]
     pub extra: serde_json::Map<String, Value>,
 }
@@ -964,22 +961,9 @@ impl Default for VersioningConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            allow_pre: false,
-            github_repo: default_github_repo(),
-            check_urls: Vec::new(),
-            check_timeout_secs: 5,
             extra: serde_json::Map::new(),
         }
     }
-}
-
-/// `owner/repo` du projet, dérivé du champ `repository` du paquet
-/// (`https://github.com/<owner>/<repo>`) — vide hors GitHub.
-fn default_github_repo() -> String {
-    option_env!("CARGO_PKG_REPOSITORY")
-        .and_then(|u| u.trim_end_matches('/').strip_prefix("https://github.com/"))
-        .unwrap_or_default()
-        .to_owned()
 }
 
 /// Section `watch_folder`.
@@ -1950,16 +1934,6 @@ impl DaemonConfig {
                 tracing::debug!("composant {name} : cle morte dans Tribler 8.x, fonction absorbee");
             }
         }
-        // `versioning/allow_pre` filtre les pre-versions rapportees
-        // par la verification distante — inexistante pour l'instant
-        // (`/api/versioning/versions/check` repond toujours sans mise
-        // a jour ; `enabled` est gate dans les handlers REST).
-        if self.versioning.allow_pre {
-            tracing::debug!(
-                "versioning/allow_pre : sans effet tant qu'aucune verification distante n'existe"
-            );
-        }
-
         let listen = self
             .ipv8
             .interfaces

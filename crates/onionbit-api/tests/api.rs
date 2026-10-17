@@ -1512,25 +1512,18 @@ async fn versioning_et_logging() {
     assert_eq!(resp.status(), 200);
     assert!(resp.json::<serde_json::Value>().await.unwrap()["version"].is_string());
 
-    // Sonde neutralisee : `github_repo` vide + `check_urls` vide =
-    // aucune requete sortante (regle projet : pas de trafic externe).
-    srv.state
-        .daemon_config
-        .lock()
-        .unwrap()
-        .versioning
-        .github_repo
-        .clear();
+    // Pas de sonde de mise a jour (decision vie privee : la requete
+    // version vers un serveur de releases est de la telemetrie) —
+    // le handler n'existe plus. Le chemin tombe sur
+    // `versions/{version}` (DELETE only) → 405, en tout cas aucun
+    // trafic sortant possible.
     let resp = srv
         .client
         .get(srv.url("/api/versioning/versions/check"))
         .send()
         .await
         .unwrap();
-    assert_eq!(
-        resp.json::<serde_json::Value>().await.unwrap()["has_version"],
-        false
-    );
+    assert!(resp.status().is_client_error());
 
     let resp = srv
         .client
@@ -1539,41 +1532,6 @@ async fn versioning_et_logging() {
         .await
         .unwrap();
     assert_eq!(resp.status(), 200);
-    srv.session.stop().await;
-}
-
-/// `versions/check` reel : une sonde loopback annoncant `v99.0.0`
-/// doit donner `has_version: true` (politique `permissive` de
-/// `CoreConfig::offline`).
-#[tokio::test]
-async fn versioning_check_sonde_locale() {
-    // Serveur "releases" factice : `{"name": "v99.0.0"}`.
-    let sonde_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let sonde_addr = sonde_listener.local_addr().unwrap();
-    let sonde = axum::Router::new().route(
-        "/releases",
-        axum::routing::get(|| async { axum::Json(serde_json::json!({"name": "v99.0.0"})) }),
-    );
-    tokio::spawn(async move {
-        axum::serve(sonde_listener, sonde).await.unwrap();
-    });
-
-    let srv = spawn_server().await;
-    {
-        let mut cfg = srv.state.daemon_config.lock().unwrap();
-        cfg.versioning.github_repo.clear();
-        cfg.versioning.check_urls = vec![format!("http://{sonde_addr}/releases")];
-    }
-    let resp = srv
-        .client
-        .get(srv.url("/api/versioning/versions/check"))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 200);
-    let body: serde_json::Value = resp.json().await.unwrap();
-    assert_eq!(body["has_version"], true);
-    assert_eq!(body["new_version"], "99.0.0");
     srv.session.stop().await;
 }
 

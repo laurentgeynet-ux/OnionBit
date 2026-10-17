@@ -484,7 +484,8 @@ fn api_router(state: AppState) -> Router<AppState> {
             "/versioning/versions/current",
             get(versioning::get_current_version),
         )
-        .route("/versioning/versions/check", get(versioning::check_version))
+        // `versions/check` volontairement absent : pas de sonde de
+        // mise à jour (télémétrie — cf. handlers/versioning.rs).
         .route(
             "/versioning/versions/{version}",
             delete(versioning::remove_version),

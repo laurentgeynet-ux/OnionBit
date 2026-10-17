@@ -30,10 +30,6 @@ abstract interface class SettingsRepository {
   /// `{versions, current}`).
   Future<Map<String, dynamic>> versions();
 
-  /// Sonde de mise à jour (`GET /api/versioning/versions/check` →
-  /// `{new_version, has_version}`).
-  Future<Map<String, dynamic>> checkVersion();
-
   /// `GET /api/identity` — clé publique IPv8 de l'identité courante.
   /// `null` si IPv8 désactivé.
   Future<String?> identityPublicKey();

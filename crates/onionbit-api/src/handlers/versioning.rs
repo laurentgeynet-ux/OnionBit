@@ -6,18 +6,15 @@
 //! `tribler.core.versioning.restapi.versioning_endpoint`.
 //!
 //! Pas de gestionnaire de versions : le daemon rapporte sa version
-//! courante. La sonde `versions/check` est reelle (declenchee par le
-//! client) : sondes `versioning/check_urls` + releases GitHub du
-//! depot `versioning/github_repo`, via
-//! `onionbit_core::services::versioning` — anti-SSRF `ip_policy`,
-//! timeout `versioning/check_timeout_secs`, trafic direct (jamais
-//! par les circuits onion).
-
-use std::time::Duration;
+//! courante. **`versions/check` est volontairement absent**
+//! (divergence assumée, décision vie privée 2026-10) : une sonde de
+//! mise à jour fuit en clair vers le serveur de releases
+//! « une instance OnionBit tourne à cette IP » — de la télémétrie
+//! incompatible avec le projet. Aucun trafic sortant de versioning
+//! n'existe donc ; la route répond 404 comme une section absente.
 
 use axum::extract::{Path, State};
 use axum::Json;
-use onionbit_core::services::versioning;
 
 use crate::error::ApiError;
 use crate::state::AppState;
@@ -67,38 +64,6 @@ pub async fn get_current_version(
     Ok(Json(
         serde_json::json!({ "version": env!("CARGO_PKG_VERSION") }),
     ))
-}
-
-/// `GET /api/versioning/versions/check` — sonde de mise a jour
-/// (`check_version` Python : tribler.org + GitHub → `{new_version,
-/// has_version}` ; chaque sonde en echec laisse la place a la
-/// suivante, reponse <= courante = deja a jour).
-///
-/// `versioning/github_repo` vide et `versioning/check_urls` vide =
-/// pas de trafic sortant (`has_version: false`), comme auparavant.
-pub async fn check_version(
-    State(state): State<AppState>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    gate(&state)?;
-    let current = env!("CARGO_PKG_VERSION");
-    let (urls, timeout) = state
-        .daemon_config
-        .lock()
-        .map(|c| {
-            (
-                versioning::probe_urls(&c.versioning, current),
-                Duration::from_secs(c.versioning.check_timeout_secs.max(1)),
-            )
-        })
-        .unwrap_or_default();
-    let new_version =
-        versioning::check_new_version(current, &urls, timeout, &state.session.config().ip_policy)
-            .await;
-    let has_version = new_version.is_some();
-    Ok(Json(serde_json::json!({
-        "new_version": new_version.unwrap_or_default(),
-        "has_version": has_version,
-    })))
 }
 
 /// `DELETE /api/versioning/versions/{version}` — suppression d'un

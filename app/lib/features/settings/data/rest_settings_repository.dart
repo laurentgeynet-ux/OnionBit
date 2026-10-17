@@ -57,11 +57,6 @@ class RestSettingsRepository implements SettingsRepository {
       const {};
 
   @override
-  Future<Map<String, dynamic>> checkVersion() async =>
-      await _api.get('/versioning/versions/check') as Map<String, dynamic>? ??
-      const {};
-
-  @override
   Future<String?> identityPublicKey() async {
     try {
       final resp = await identityStatus();

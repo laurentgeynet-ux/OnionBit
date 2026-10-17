@@ -11,34 +11,16 @@ import '../../../../core/widgets/error_state.dart';
 import '../providers/settings_providers.dart';
 import 'settings_section.dart';
 
-/// Section « Mises à jour » — version du daemon
-/// (`GET /api/versioning/versions`), sonde de mise à jour
-/// (`/versions/check`) et activation de la section `versioning/*`.
+/// Section « Version » — version du daemon
+/// (`GET /api/versioning/versions`) et activation de la section
+/// `versioning/*`.
+///
+/// Pas de sonde de mise à jour (décision vie privée) : interroger un
+/// serveur de releases depuis le poste de l'utilisateur fuiterait
+/// l'existence de l'installation — le bouton « Vérifier » et les
+/// clés `check_urls`/`github_repo`/`allow_pre` ont été retirés.
 class VersioningSection extends ConsumerWidget {
   const VersioningSection({super.key});
-
-  Future<void> _check(BuildContext context, WidgetRef ref) async {
-    try {
-      final r = await ref.read(settingsRepositoryProvider).checkVersion();
-      if (!context.mounted) return;
-      final has = r['has_version'] == true;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            has
-                ? context.l10n.newVersionAvail('${r['new_version']}')
-                : context.l10n.upToDate,
-          ),
-        ),
-      );
-    } catch (e) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(context.l10n.checkError('$e'))),
-        );
-      }
-    }
-  }
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -60,20 +42,9 @@ class VersioningSection extends ConsumerWidget {
               ),
               data: (v) => Padding(
                 padding: const EdgeInsets.only(bottom: AppSpace.sm),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        l10n.daemonVersionLine('${v['current'] ?? '—'}'),
-                        style: theme.textTheme.bodyMedium,
-                      ),
-                    ),
-                    TextButton.icon(
-                      icon: const Icon(Icons.refresh, size: 16),
-                      label: Text(l10n.checkVersion),
-                      onPressed: () => _check(context, ref),
-                    ),
-                  ],
+                child: Text(
+                  l10n.daemonVersionLine('${v['current'] ?? '—'}'),
+                  style: theme.textTheme.bodyMedium,
                 ),
               ),
             ),
@@ -83,15 +54,9 @@ class VersioningSection extends ConsumerWidget {
                 'versioning',
                 'enabled',
               ], def: true),
-              title: l10n.versionCheckSwitch,
-              subtitle: l10n.versionCheckSub,
+              title: l10n.versionEndpointsSwitch,
+              subtitle: l10n.versionEndpointsSub,
               defaultValue: true,
-            ),
-            SettingsSwitch(
-              path: const ['versioning', 'allow_pre'],
-              value: settingsBool(settings, const ['versioning', 'allow_pre']),
-              title: l10n.allowPre,
-              defaultValue: false,
             ),
           ],
         );
