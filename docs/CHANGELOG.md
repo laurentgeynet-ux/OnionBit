@@ -3,6 +3,25 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Spike ADR-0029 : hébergement `.onion` par arti — GO embedded (2026-10-17)
+
+L'étape 120 (jalon de décision de l'ADR-0029) est tranchée : arti
+0.47 **peut héberger un service onion v3** sous Windows via
+`tor-hsservice`, sans Tor externe.
+
+- Nouvelle feature opt-in `hs` sur `onionbit-tor` (+5 crates seulement
+  — `tor-hsservice`, `tor-persist`, `serde_bytes`, `k12`,
+  `growable-bloom-filter`, `xxhash-rust`) + sonde
+  `examples/hs_probe.rs` : bootstrap, `launch_onion_service`,
+  statuts (`Bootstrapping → Running`), adresse imprimée.
+- **Persistance prouvée** : relance sur le même `state_dir` → même
+  adresse `.onion` (keystore + `hss/` sous `state_dir/state`).
+- **Autorisation client x25519** (requis par le coffre nomade, §5) :
+  `RestrictedDiscoveryConfig` existe mais est gatée
+  `restricted-discovery`/`__is_experimental` — à activer en
+  connaissance de cause.
+- Verdict et limites consignés dans l'ADR-0029 (§5 + §Prérequis).
+
 ## ADR-0028 acceptée — banc Tor réel + correctif de persistence sparse (2026-10-17)
 
 L'ADR-0028 (connectivité Tor embarquée) passe en **Acceptée** : la v1

@@ -97,9 +97,12 @@ Cas le plus propre : accès nomade à son **propre** explorateur
 privé via `.onion` + *client authorization* v3 (x25519) — la clé
 client reste chez le propriétaire, le service ne sert que le
 manifeste chiffré ; réplication aveugle coffre→coffre possible (le
-pair héberge du chiffré sans le lire). **Condition de faisabilité
-ouverte** : le support de l'autorisation client côté arti n'est
-pas garanti à ce jour — le spike de l'étape 120 tranche.
+pair héberge du chiffré sans le lire). **Autorisation client** :
+`tor-hsservice` 0.47 expose `restricted_discovery` (clés
+`descriptor:x25519:<base32>` par nickname, fichiers `.auth` ou map
+statique) — mais derrière la feature `restricted-discovery`
+marquée `__is_experimental` chez arti-client : à activer en
+connaissance de cause (API non garantie semver).
 
 ### 6. Interface (ADR-0021)
 
@@ -119,18 +122,36 @@ pas garanti à ce jour — le spike de l'étape 120 tranche.
 ## Prérequis technique
 
 Héberger un service caché exige le côté **serveur** d'arti
-(`onion-service` / `tor-hsservice`) — API **expérimentale** à ce
-jour. Deux voies :
+(`onion-service` / `tor-hsservice`). Deux voies :
 
 1. **Embedded** : `arti` avec le feature flag onion-service —
-   autonomie totale, maturité à éprouver (étape 120 = spike).
+   autonomie totale. **Verdict du spike 120 (2026-10-17, arti
+   0.47 sous Windows) : GO** — voir ci-dessous.
 2. **External** : `mode:"external"` + ControlPort d'un tor C —
    éprouvé, mais dépend d'un Tor installé (contraire à l'autonomie,
    repli documenté uniquement).
 
-Le spike statue aussi sur : stabilité des intro points sur
-Windows, coût batterie/données (mobile), autorisation client v3,
-persistance des clés de service dans `state_dir/tor`.
+**Résultat du spike** (`onionbit-tor --features hs`,
+`examples/hs_probe.rs`, réseau Tor réel) :
+
+- Service v3 lancé via `TorClient::launch_onion_service`
+  (`OnionServiceConfig` + nickname) : bootstrap ~40 s puis
+  `Bootstrapping → Running`, descripteur publié, adresse
+  `wzftlyph…svyd.onion` servie — **fonctionnel sous Windows**.
+- **Persistance des clés** : relance sur le même `state_dir` →
+  **même adresse** (keystore `state_dir/state/keystore` +
+  `hss/`) — condition d'une identité `.onion` stable validée.
+- **Autorisation client x25519** (requis coffre, §5) : existe via
+  `RestrictedDiscoveryConfig` mais feature
+  `restricted-discovery` = `__is_experimental` — activable, API
+  non semver.
+- Intro points : 3 par défaut (configurable ≤ 20), publication et
+  tenue gérées par `tor-hsservice` — aucun code de maintien à
+  écrire ; le coût est celui des circuits de garde (mutualisés
+  avec la lane client déjà permanente).
+- Empreinte build : +5 crates (`tor-hsservice`, `tor-persist`,
+  `serde_bytes`, `k12`, `growable-bloom-filter`, `xxhash-rust`)
+  derrière la feature `hs` — opt-in, sans coût pour la v1.
 
 ## Sécurité / vie privée
 
