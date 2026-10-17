@@ -3,6 +3,31 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## ADR-0031 Proposée — chiffrement de la base locale via codec sqlite3mc (2026-10-18)
+
+Aucun code : décision d'architecture pour le backlog P1
+« Chiffrement DB locale ». La base SQLite est le dernier artefact
+en clair du bundle — corps de messages (`msg_messages.body`),
+graphe social (`msg_contacts.alias`, `peer_onions` relie identité
+↔ `.onion`), historique downloads, canaux suivis, empreinte
+topologique.
+
+- **Choix** : codec **sqlite3mc** cipher `chacha20`
+  (ChaCha20-Poly1305 AEAD par page, crypto embarquée dans
+  l'amalgamation, MIT) compilé via `cc` par un crate shim ;
+  `rusqlite` perd `bundled`, link manuel `sqlite3.lib`.
+- **Clef** : HKDF-SHA256(`store_root`, `"onionbit/db-key/v1"`),
+  brute via `PRAGMA key="x'…'"`, `zeroize`, zéro persistance.
+- **Rejetés** : VFS chiffrant custom (réécriture de la couche de
+  verrouillage = risque de corruption silencieuse), colonnes AEAD
+  (schéma + métadonnées exposés), SQLCipher `vendored-openssl`
+  (NASM/perl absents) — repli documenté : SQLCipher +
+  `SQLCIPHER_CRYPTO_CUSTOM`.
+- **Migration** : détection magic `SQLite format 3`, `ATTACH` +
+  export, swap atomique `.plain.bak`. Invité = `:memory:`.
+- Jalon de décision : étape 136 = spike link+cipher GO/NO-GO.
+  Plan : `docs/plans/roadmap_adr0031.md` (étapes 136-140).
+
 ## Fuzzing : extension aux surfaces `.onion` et parseurs hostiles (2026-10-18)
 
 Cinq nouvelles cibles `cargo-fuzz` couvrent les surfaces créées par
