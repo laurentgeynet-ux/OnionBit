@@ -1048,5 +1048,25 @@
         "type": "int"
       }
     }
+  },
+  "netDaemonOk": "Daemon connecté — flux SSE vivant",
+  "netDaemonKo": "Daemon injoignable",
+  "netOverlayOk": "{peers} pairs · {communities} communautés",
+  "netOverlayWaiting": "Overlay OnionBit — aucun pair découvert pour l’instant",
+  "netOverlayOff": "Overlay désactivé (stack IPv8 off)",
+  "netTorReady": "Tor — lane prête",
+  "netTorDormant": "Tor — dormant (lane vivante, inactive)",
+  "netTorError": "Tor — erreur (voir Diagnostic)",
+  "netTorOff": "Tor désactivé — activer dans Réglages",
+  "netTorUnknown": "Tor — état inconnu",
+  "@netOverlayOk": {
+    "placeholders": {
+      "peers": {
+        "type": "int"
+      },
+      "communities": {
+        "type": "int"
+      }
+    }
   }
 }

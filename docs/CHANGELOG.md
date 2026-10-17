@@ -3,6 +3,30 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Bandeau « état du réseau » — HUD en 4 segments (2026-10-17)
+
+L'ancien affichage « N circuits · M sauts » + pastille Tor exigeait de
+connaître le modèle interne pour être lu. Remplacé par une rangée de
+**4 segments icône + couleur + tooltip**, chacun tap → `/diagnostic` :
+
+- **Daemon** (`dns`) : vert = SSE vivant, rouge = daemon injoignable.
+- **Overlay OnionBit** (`hub`) : vert = pairs découverts (tooltip avec
+  le total par communauté), orange = démarrage sans pair, gris = IPv8
+  coupé.
+- **Tunnels OnionBit** (`shield`) : vert = ≥1 circuit `READY` (tooltip
+  : nombre de circuits + pire cas de sauts), orange = construction,
+  gris = lane désactivée.
+- **Tor** (`vpn_lock`) : état de la **lane permanente uniquement** —
+  vert = prête, orange = bootstrap (progression dans le tooltip),
+  rouge = erreur runtime, gris = désactivée. La santé des sources
+  `.onion` (TPB) **ne remonte pas ici** : c'est un signal du moteur de
+  recherche (pastille du chip), pas de la connectivité globale.
+
+Règle conservée : « désactivé » s'affiche en gris, jamais comme une
+panne. Comportement compact : icônes seules, accessibilité préservée
+(labels + tooltips). Aucun endpoint ajouté — les providers existants
+(`sseConnected`, `overlays`, `anonLane`, `torStatus`) suffisent.
+
 ## Bannière d'erreur ciblée par source `.onion` (2026-10-17)
 
 `onionSearchErrorProvider` porte désormais `(code, source)` — la

@@ -10,123 +10,149 @@ import '../../features/diagnostic/domain/diagnostic_models.dart';
 import '../../features/diagnostic/presentation/providers/diagnostic_providers.dart';
 import '../../features/privacy/presentation/widgets/privacy_profile_switch.dart';
 import '../design/design_tokens.dart';
+import '../di/providers.dart';
 import '../l10n/l10n_ext.dart';
 import 'breakpoints.dart';
 
-/// Privacy HUD (ADR-0021 §8) — indicateur ambiant de la posture
-/// d'anonymat dans la barre du haut : bouclier coloré + profondeur
-/// réelle de la lane (circuits READY, `actualHops` du pire cas).
-/// Sondé via `anonLaneProvider` (10 s — partagé avec la barre d'état,
-/// aucun poll supplémentaire). Un tap ouvre l'écran Diagnostic ;
-/// au palier `compact` (pas de sidebar), la feuille expose le
-/// sélecteur de profil ADR-0022 + l'entrée Diagnostic.
+/// Privacy HUD (ADR-0021 §8) — bandeau « état du réseau » dans la
+/// barre du haut : une rangée de segments, un par plan — daemon
+/// (SSE), overlay OnionBit (pairs découverts), tunnels anonymes
+/// (circuits READY + pire cas de sauts) et lane Tor (état de
+/// connexion uniquement — la santé des sources `.onion` reste au
+/// chip de recherche). Chaque segment : icône colorée + tooltip
+/// détaillé ; le tap ouvre l'écran Diagnostic (feuille profil
+/// ADR-0022 au palier `compact`).
 ///
-/// États « honnêtes » hérités d'`AnonLaneStatus` : `disabled` = stack
-/// IPv8 inactive (pas « en panne »), `waiting` = circuits en
-/// construction, `ready` = au moins un circuit vérifié.
+/// États « honnêtes » : désactivé ≠ panne — `off`/`disabled`
+/// s'affichent en gris, jamais en rouge.
 class PrivacyHud extends ConsumerWidget {
   const PrivacyHud({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final lane = ref.watch(anonLaneProvider).value;
-    // Runtime Tor (ADR-0028 §8) : pastille jointe au bouclier,
-    // uniquement quand `tor.enabled` — un indicateur mort ou caché
-    // quand la fonction est inactive serait trompeur (états honnêtes
-    // comme `AnonLaneStatus` : `off` ≠ panne).
-    final tor = ref.watch(torStatusProvider).value;
+    final l10n = context.l10n;
     final scheme = Theme.of(context).colorScheme;
     final semantic = context.semanticColors;
     final compact =
         AppBreakpoints.of(MediaQuery.sizeOf(context).width) ==
         AppBreakpoint.compact;
 
-    final (icon, color, label) = switch (lane?.state) {
-      AnonLaneState.ready => (
-        Icons.shield,
-        semantic.success,
-        context.l10n.hudAnonReady(lane!.readyCircuits, lane.minReadyHops),
-      ),
-      AnonLaneState.waiting => (
-        Icons.shield_outlined,
-        semantic.warning,
-        context.l10n.hudAnonWaiting,
-      ),
-      _ => (
-        Icons.shield_outlined,
-        scheme.outline,
-        context.l10n.hudAnonDisabled,
-      ),
-    };
+    // — Signaux (providers déjà sondés, aucun poll supplémentaire) —
+    final connected = ref.watch(sseConnectedProvider).value ?? false;
+    final lane = ref.watch(anonLaneProvider).value;
+    final overlays = ref.watch(overlaysProvider).value;
+    final tor = ref.watch(torStatusProvider).value;
 
-    final (torIcon, torColor, torLabel) =
-        (tor?.enabled ?? false)
-            ? switch (tor!.state) {
-                TorRuntimeState.ready => (
-                  Icons.vpn_lock,
-                  semantic.success,
-                  'Tor · ${context.l10n.torStateReady}',
-                ),
-                TorRuntimeState.bootstrapping => (
-                  Icons.vpn_lock_outlined,
-                  semantic.warning,
-                  context.l10n.torChipBootstrapping(tor.progress),
-                ),
-                TorRuntimeState.error => (
-                  Icons.vpn_lock_outlined,
-                  scheme.error,
-                  'Tor · ${context.l10n.torStateError}',
-                ),
-                _ => (
-                  Icons.vpn_lock_outlined,
-                  scheme.outline,
-                  'Tor · ${context.l10n.torStateDormant}',
-                ),
-              }
-            : (null, null, null);
+    final peers = overlays?.fold<int>(0, (a, o) => a + o.peers) ?? 0;
+    final communities = overlays?.length ?? 0;
 
-    // `Semantics` explicite : en `compact` l'indicateur est une icône
-    // seule — sans label, un lecteur d'écran n'annoncerait rien.
+    final segments = <(IconData, Color, String)>[
+      // Daemon : flux SSE vivant = daemon joignable.
+      (
+        Icons.dns_outlined,
+        connected ? semantic.success : scheme.error,
+        connected ? l10n.netDaemonOk : l10n.netDaemonKo,
+      ),
+      // Overlay OnionBit : pairs découverts. Gris si la stack est
+      // désactivée (lane `disabled` = IPv8/tunnel off).
+      (
+        Icons.hub_outlined,
+        switch (lane?.state) {
+          AnonLaneState.ready ||
+          AnonLaneState.waiting => peers > 0
+              ? semantic.success
+              : semantic.warning,
+          _ => scheme.outline,
+        },
+        switch (lane?.state) {
+          AnonLaneState.ready ||
+          AnonLaneState.waiting => peers > 0
+              ? l10n.netOverlayOk(peers, communities)
+              : l10n.netOverlayWaiting,
+          _ => l10n.netOverlayOff,
+        },
+      ),
+      // Tunnels anonymes : profondeur réelle (pire cas) — le
+      // chiffre qui importe pour l'anonymat du téléchargement.
+      (
+        lane?.state == AnonLaneState.ready
+            ? Icons.shield
+            : Icons.shield_outlined,
+        switch (lane?.state) {
+          AnonLaneState.ready => semantic.success,
+          AnonLaneState.waiting => semantic.warning,
+          _ => scheme.outline,
+        },
+        switch (lane?.state) {
+          AnonLaneState.ready => l10n.hudAnonReady(
+            lane!.readyCircuits,
+            lane.minReadyHops,
+          ),
+          AnonLaneState.waiting => l10n.hudAnonWaiting,
+          _ => l10n.hudAnonDisabled,
+        },
+      ),
+      // Lane Tor : état de connexion seul (ADR-0028) — vivante en
+      // permanence quand `enabled` (messagerie/canaux/coffre
+      // `.onion`, ADR-0029). Jamais de détail TPB ici.
+      if (tor?.enabled ?? false)
+        switch (tor!.state) {
+          TorRuntimeState.ready => (
+            Icons.vpn_lock,
+            semantic.success,
+            l10n.netTorReady,
+          ),
+          TorRuntimeState.bootstrapping => (
+            Icons.vpn_lock_outlined,
+            semantic.warning,
+            l10n.torChipBootstrapping(tor.progress),
+          ),
+          TorRuntimeState.dormant => (
+            Icons.vpn_lock_outlined,
+            semantic.success,
+            l10n.netTorDormant,
+          ),
+          TorRuntimeState.error => (
+            Icons.vpn_lock_outlined,
+            scheme.error,
+            l10n.netTorError,
+          ),
+          _ => (Icons.vpn_lock_outlined, scheme.outline, l10n.netTorUnknown),
+        }
+      else
+        (Icons.vpn_lock_outlined, scheme.outline, l10n.netTorOff),
+    ];
+
+    // `Semantics` explicite : icônes seules — sans label agrégé, un
+    // lecteur d'écran n'annoncerait rien.
     return Semantics(
       button: true,
-      label: [
-        '$label — ${context.l10n.hudAnonTooltip}',
-        if (torLabel != null) '$torLabel — ${context.l10n.hudTorTooltip}',
-      ].join(' · '),
-      child: Tooltip(
-        message: context.l10n.hudAnonTooltip,
-        child: InkWell(
-          borderRadius: BorderRadius.circular(AppRadius.full),
-          onTap: compact
-              ? () => _ProfileSheet.show(context)
-              : () => context.go('/diagnostic'),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(
-              horizontal: AppSpace.sm,
-              vertical: AppSpace.xs,
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(icon, size: 18, color: color),
-                if (!compact) ...[
-                  const SizedBox(width: AppSpace.xs),
-                  Text(
-                    label,
-                    style: Theme.of(
-                      context,
-                    ).textTheme.labelMedium?.copyWith(color: color),
+      label:
+          '${segments.map((s) => s.$3).join(' · ')} — ${l10n.hudAnonTooltip}',
+      child: InkWell(
+        borderRadius: BorderRadius.circular(AppRadius.full),
+        onTap: compact
+            ? () => _ProfileSheet.show(context)
+            : () => context.go('/diagnostic'),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppSpace.sm,
+            vertical: AppSpace.xs,
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (final (icon, color, tip) in segments)
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: AppSpace.xs,
                   ),
-                ],
-                if (torIcon != null) ...[
-                  const SizedBox(width: AppSpace.xs),
-                  Tooltip(
-                    message: context.l10n.hudTorTooltip,
-                    child: Icon(torIcon, size: 14, color: torColor),
+                  child: Tooltip(
+                    message: tip,
+                    child: Icon(icon, size: 18, color: color),
                   ),
-                ],
-              ],
-            ),
+                ),
+            ],
           ),
         ),
       ),
