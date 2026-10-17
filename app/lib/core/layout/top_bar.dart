@@ -2,8 +2,6 @@
 // Copyright (C) 2026 Laurent Geynet <laurent.geynet@gmail.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -15,8 +13,11 @@ import '../design/design_tokens.dart';
 import 'privacy_hud.dart';
 
 /// Barre du haut : champ de recherche global (locale + distante).
-/// Taper (debounce 300 ms) met à jour `searchQueryProvider` et
-/// navigue vers `/search` — vider le champ ramène aux populaires.
+/// Recherche explicite uniquement : la requête n'est lancée qu'à
+/// « Entrée » (ou au clic sur le suffixe effacer pour remettre à
+/// zéro) — aucune requête par frappe : chaque saisie partielle
+/// partirait sinon sur le réseau (local, pairs IPv8, Tor) avec le
+/// coût et l'exposition de termes inachevés que ça implique.
 class TopBar extends ConsumerStatefulWidget {
   const TopBar({super.key});
 
@@ -28,11 +29,9 @@ class TopBar extends ConsumerStatefulWidget {
 
 class _TopBarState extends ConsumerState<TopBar> {
   final _controller = TextEditingController();
-  Timer? _debounce;
 
   @override
   void dispose() {
-    _debounce?.cancel();
     _controller.dispose();
     super.dispose();
   }
@@ -42,14 +41,6 @@ class _TopBarState extends ConsumerState<TopBar> {
     if (value.trim().isNotEmpty && mounted) {
       context.go('/search');
     }
-  }
-
-  void _onChanged(String value) {
-    setState(() {}); // Rafraîchit le suffixe « effacer ».
-    _debounce?.cancel();
-    _debounce = Timer(const Duration(milliseconds: 300), () {
-      _submit(value);
-    });
   }
 
   @override
@@ -89,7 +80,8 @@ class _TopBarState extends ConsumerState<TopBar> {
                         },
                       ),
               ),
-              onChanged: _onChanged,
+              onChanged: (_) =>
+                  setState(() {}), // Rafraîchit le suffixe « effacer ».
               onSubmitted: _submit,
             ),
           ),

@@ -40,7 +40,6 @@ class SearchPage extends ConsumerWidget {
     final colSort = ref.watch(searchColSortProvider);
     final selection = ref.watch(searchSelectionProvider);
     final filter = ref.watch(searchFilterProvider);
-    final history = ref.watch(searchHistoryProvider);
     final local = ref.watch(searchResultsProvider);
     final remote = ref.watch(remoteResultsProvider);
     // Runtime Tor (ADR-0028) : pilote le chip d'état, le chip de filtre
@@ -115,9 +114,7 @@ class SearchPage extends ConsumerWidget {
                   if (selection.isNotEmpty) ...[
                     FilledButton.tonalIcon(
                       icon: const Icon(Icons.download, size: 18),
-                      label: Text(
-                        l10n.searchAddSelected(selection.length),
-                      ),
+                      label: Text(l10n.searchAddSelected(selection.length)),
                       onPressed: () =>
                           _addSelected(context, ref, merged, selection),
                     ),
@@ -165,7 +162,7 @@ class SearchPage extends ConsumerWidget {
                         l10n.searchRemoteFinished(
                           remote.results.length,
                           '${remote.state.finishedAt!.hour.toString().padLeft(2, '0')}'
-                              ':${remote.state.finishedAt!.minute.toString().padLeft(2, '0')}',
+                          ':${remote.state.finishedAt!.minute.toString().padLeft(2, '0')}',
                         ),
                         style: Theme.of(context).textTheme.bodySmall,
                       ),
@@ -188,37 +185,6 @@ class SearchPage extends ConsumerWidget {
                   ),
                 ],
               ),
-              if (query.isEmpty && history.isNotEmpty) ...[
-                const SizedBox(height: AppSpace.xs),
-                SizedBox(
-                  height: 32,
-                  child: ListView(
-                    scrollDirection: Axis.horizontal,
-                    children: [
-                      Padding(
-                        padding: const EdgeInsets.only(
-                          right: AppSpace.xs,
-                          top: 6,
-                        ),
-                        child: Text(
-                          l10n.searchRecent,
-                          style: Theme.of(context).textTheme.bodySmall,
-                        ),
-                      ),
-                      for (final h in history)
-                        Padding(
-                          padding: const EdgeInsets.only(right: AppSpace.xs),
-                          child: ActionChip(
-                            label: Text(h),
-                            avatar: const Icon(Icons.history, size: 16),
-                            onPressed: () =>
-                                ref.read(searchQueryProvider.notifier).set(h),
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-              ],
               const SizedBox(height: AppSpace.xs),
               SizedBox(
                 height: 32,
@@ -257,8 +223,7 @@ class SearchPage extends ConsumerWidget {
               // Erreur de la recherche `.onion` — codes typés de
               // l'API (étape 115) : la santé Tor est distinguée des
               // fautes côté source (captcha, refonte HTML, miroirs).
-              if (onionErr != null)
-                _OnionErrorBanner(code: onionErr, tor: tor),
+              if (onionErr != null) _OnionErrorBanner(code: onionErr, tor: tor),
             ],
           ),
         ),
@@ -463,10 +428,7 @@ class _ResultTile extends StatelessWidget {
           [
             context.fmtBytes(r.size),
             if (r.seeders != null)
-              context.l10n.resultSeedsLeechers(
-                r.seeders!,
-                r.leechers ?? 0,
-              ),
+              context.l10n.resultSeedsLeechers(r.seeders!, r.leechers ?? 0),
             _sourceLabel(context.l10n, r),
           ].join(' · '),
           style: theme.textTheme.bodySmall,
@@ -478,10 +440,8 @@ class _ResultTile extends StatelessWidget {
             : FilledButton.tonalIcon(
                 onPressed: r.infohash.isEmpty
                     ? null
-                    : () => AddDownloadDialog.show(
-                        context,
-                        initialUri: r.magnet,
-                      ),
+                    : () =>
+                          AddDownloadDialog.show(context, initialUri: r.magnet),
                 icon: const Icon(Icons.download, size: 18),
                 label: Text(context.l10n.add),
               ),
@@ -810,47 +770,47 @@ class _TorChip extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     return switch (s.state) {
       TorRuntimeState.bootstrapping => Tooltip(
-          message: l10n.torChipBootstrapping(s.progress),
-          child: Chip(
-            visualDensity: VisualDensity.compact,
-            avatar: const SizedBox(
-              width: 14,
-              height: 14,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            ),
-            label: Text(l10n.torChipBootstrapping(s.progress)),
-          ),
-        ),
-      TorRuntimeState.ready => Tooltip(
-          message: l10n.hudTorTooltip,
-          child: Chip(
-            visualDensity: VisualDensity.compact,
-            avatar: Icon(Icons.vpn_lock, size: 16, color: scheme.primary),
-            label: const Text('Tor'),
-          ),
-        ),
-      TorRuntimeState.dormant => Chip(
+        message: l10n.torChipBootstrapping(s.progress),
+        child: Chip(
           visualDensity: VisualDensity.compact,
-          avatar: Icon(Icons.vpn_lock_outlined, size: 16, color: scheme.outline),
-          label: Text(l10n.torChipDormant),
-        ),
-      TorRuntimeState.error => Tooltip(
-          message: s.error ?? l10n.torChipError,
-          child: ActionChip(
-            visualDensity: VisualDensity.compact,
-            avatar: Icon(Icons.error_outline, size: 16, color: scheme.error),
-            label: Text(l10n.torChipError),
-            onPressed: () => context.go('/diagnostic'),
+          avatar: const SizedBox(
+            width: 14,
+            height: 14,
+            child: CircularProgressIndicator(strokeWidth: 2),
           ),
+          label: Text(l10n.torChipBootstrapping(s.progress)),
         ),
+      ),
+      TorRuntimeState.ready => Tooltip(
+        message: l10n.hudTorTooltip,
+        child: Chip(
+          visualDensity: VisualDensity.compact,
+          avatar: Icon(Icons.vpn_lock, size: 16, color: scheme.primary),
+          label: const Text('Tor'),
+        ),
+      ),
+      TorRuntimeState.dormant => Chip(
+        visualDensity: VisualDensity.compact,
+        avatar: Icon(Icons.vpn_lock_outlined, size: 16, color: scheme.outline),
+        label: Text(l10n.torChipDormant),
+      ),
+      TorRuntimeState.error => Tooltip(
+        message: s.error ?? l10n.torChipError,
+        child: ActionChip(
+          visualDensity: VisualDensity.compact,
+          avatar: Icon(Icons.error_outline, size: 16, color: scheme.error),
+          label: Text(l10n.torChipError),
+          onPressed: () => context.go('/diagnostic'),
+        ),
+      ),
       // `off`/`unknown` — Tor activable (ou status incertain) : CTA
       // vers la sous-section Tor des réglages réseau.
       _ => ActionChip(
-          visualDensity: VisualDensity.compact,
-          avatar: const Icon(Icons.vpn_lock_outlined, size: 16),
-          label: Text(l10n.torChipEnable),
-          onPressed: () => context.go('/settings?s=anonymity'),
-        ),
+        visualDensity: VisualDensity.compact,
+        avatar: const Icon(Icons.vpn_lock_outlined, size: 16),
+        label: Text(l10n.torChipEnable),
+        onPressed: () => context.go('/settings?s=anonymity'),
+      ),
     };
   }
 }
@@ -871,9 +831,9 @@ class _OnionErrorBanner extends ConsumerWidget {
     final scheme = Theme.of(context).colorScheme;
     final (message, torHealth) = switch (code) {
       'tor_bootstrapping' => (
-          l10n.onionErrBootstrapping(tor?.progress ?? 0),
-          true,
-        ),
+        l10n.onionErrBootstrapping(tor?.progress ?? 0),
+        true,
+      ),
       'bootstrap_failed' => (l10n.onionErrBootstrapFailed, true),
       'tor_not_ready' => (l10n.onionErrNotReady, true),
       'mirror_unreachable' => (l10n.onionErrMirrorUnreachable, false),
@@ -1022,7 +982,11 @@ class _SearchContextMenuState extends ConsumerState<_SearchContextMenu> {
       // les cibles `@private/…` sont des specs chiffrées, pas des
       // chemins ouvrables ; l'extraction passe par « Déplacer ».
       if (dl != null && !dl.isPrivateStorage && dl.destination.isNotEmpty)
-        item(Icons.folder_open, l10n.openFolder, () => openPath(dl.destination)),
+        item(
+          Icons.folder_open,
+          l10n.openFolder,
+          () => openPath(dl.destination),
+        ),
       // Bascule zone publique ↔ privée : `showMoveStorageDialog`
       // réutilise `PATCH …/move_storage` (chiffrement/déchiffrement
       // géré par le daemon, ADR-0018) — c'est aussi le seul moyen
@@ -1049,9 +1013,7 @@ class _SearchContextMenuState extends ConsumerState<_SearchContextMenu> {
                 size: 18,
               ),
               onPressed: () => _add(r, h),
-              child: Text(
-                h == 0 ? l10n.ctxDirectHop : l10n.ctxHops(h),
-              ),
+              child: Text(h == 0 ? l10n.ctxDirectHop : l10n.ctxHops(h)),
             ),
         ],
         child: Text(l10n.ctxQuickAdd),
@@ -1062,16 +1024,18 @@ class _SearchContextMenuState extends ConsumerState<_SearchContextMenu> {
               .read(healthOverridesProvider.notifier)
               .probe(r.infohash);
           if (!context.mounted) return;
-          _toast(
-            res == 'ok' ? l10n.toastHealthOk : l10n.toastHealthPending,
-          );
+          _toast(res == 'ok' ? l10n.toastHealthOk : l10n.toastHealthPending);
         } catch (e) {
           if (!context.mounted) return;
           _toast(l10n.toastHealthError('$e'));
         }
       }),
       const Divider(height: 1),
-      item(Icons.thumb_up_outlined, l10n.ctxEndorse, () => _attest(r, 'endorse')),
+      item(
+        Icons.thumb_up_outlined,
+        l10n.ctxEndorse,
+        () => _attest(r, 'endorse'),
+      ),
       item(Icons.flag_outlined, l10n.ctxFlag, () => _attest(r, 'flag')),
       const Divider(height: 1),
       item(Icons.link, l10n.ctxCopyMagnet, () {

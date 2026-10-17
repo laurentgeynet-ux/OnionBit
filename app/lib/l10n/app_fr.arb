@@ -218,7 +218,6 @@
   "colLeechers": "Leechers",
   "colDate": "Date",
   "colSource": "Source",
-  "searchRecent": "Récents :",
   "searchSourceNetwork": "Réseau",
   "searchMinSeeds": "≥ 10 seeds",
   "emptyNoTorrents": "Aucun torrent connu",

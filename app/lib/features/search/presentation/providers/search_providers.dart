@@ -185,25 +185,10 @@ class HealthOverridesNotifier
   }
 }
 
-/// Historique des recherches de la session (LRU, 10 max) — chips
-/// « Récents » affichées quand la requête est vide.
-final searchHistoryProvider =
-    NotifierProvider<SearchHistoryNotifier, List<String>>(
-      SearchHistoryNotifier.new,
-    );
-
-class SearchHistoryNotifier extends Notifier<List<String>> {
-  static const _max = 10;
-
-  @override
-  List<String> build() => const [];
-
-  /// Pousse `q` en tête (dédupliqué) — ignoré si déjà en tête.
-  void record(String q) {
-    if (q.isEmpty || (state.isNotEmpty && state.first == q)) return;
-    state = [q, ...state.where((e) => e != q)].take(_max).toList();
-  }
-}
+/// Pas d'historique de recherche : dans un logiciel d'anonymat,
+/// retenir les termes cherchés (même en mémoire de session) est une
+/// faute — ils révèlent l'intention de l'utilisateur. Fonction
+/// retirée, aucune persistence.
 
 /// Sélection courante de résultats (infohashes) — ajout en lot.
 final searchSelectionProvider =
@@ -251,15 +236,6 @@ class SearchResultsNotifier extends AsyncNotifier<List<TorrentResult>> {
     final sort = ref.watch(searchSortProvider);
     final repo = ref.watch(searchRepositoryProvider);
     if (query.isEmpty) return const [];
-    // Riverpod interdit de modifier un autre provider pendant le
-    // build : l'enregistrement en historique est différé à la
-    // microtâche suivante (le provider reste monté : il est watché
-    // par la page).
-    Future.microtask(() {
-      if (ref.mounted) {
-        ref.read(searchHistoryProvider.notifier).record(query);
-      }
-    });
     unawaited(_launchRemote(query));
     return repo.searchLocal(query, sortBy: sort.param);
   }
@@ -285,8 +261,7 @@ class SearchResultsNotifier extends AsyncNotifier<List<TorrentResult>> {
 
   Future<void> _launchExternal(String query) async {
     ref.read(onionSearchErrorProvider.notifier).clear();
-    final sources =
-        ref.read(torStatusProvider).value?.sources ?? const ['tpb'];
+    final sources = ref.read(torStatusProvider).value?.sources ?? const ['tpb'];
     for (final source in sources) {
       try {
         final req = await ref
@@ -299,9 +274,9 @@ class SearchResultsNotifier extends AsyncNotifier<List<TorrentResult>> {
       } on ApiException catch (e) {
         if (ref.read(searchQueryProvider) != query) return;
         if (e.code == 'tor_disabled') return; // opt-in non active
-        ref.read(onionSearchErrorProvider.notifier).setCode(
-          e.code ?? 'external_error',
-        );
+        ref
+            .read(onionSearchErrorProvider.notifier)
+            .setCode(e.code ?? 'external_error');
         if (e.code != 'tor_bootstrapping') return;
         // `tor_bootstrapping` : le bootstrap a ete declenche par cet
         // appel — l'UI affiche la progression et l'utilisateur

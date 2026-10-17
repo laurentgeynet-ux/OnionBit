@@ -3,6 +3,20 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Recherche explicite + suppression de l'historique (2026-10-17)
+
+- **Recherche à « Entrée » uniquement** : le champ global de la
+  TopBar avait un debounce 300 ms qui lançait une recherche à
+  chaque frappe — un mot de 20 lettres = ~20 requêtes parties sur
+  le réseau local, les pairs IPv8 et les backends `.onion`, chacune
+  exposant des termes inachevés. La soumission est désormais
+  explicite (`onSubmitted` seul ; la frappe ne rafraîchit que le
+  suffixe effacer).
+- **Historique de recherche supprimé** : retenir les termes
+  cherchés dans un logiciel d'anonymat est une faute, même en
+  mémoire de session — provider `searchHistoryProvider`, chips
+  « Récents » et clé `searchRecent` retirés.
+
 ## Roadmap : Phase 21 — navigateur `.onion` embarqué (DilloRust + arti), futur (2026-10-17)
 
 Entrée de cadrage dans `docs/plans/roadmap.md` : navigateur simple
