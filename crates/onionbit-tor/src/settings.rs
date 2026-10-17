@@ -87,10 +87,6 @@ pub struct TorSettings {
     /// Bornes de redirections 30x suivies (vers un hote
     /// allowliste seulement).
     pub max_redirects: u32,
-    /// Backend `apibay` clearnet via un exit Tor (`tor.api_via_exit`)
-    /// — desactive par defaut : anonymat degrade par rapport au
-    /// fetch 100 % onion.
-    pub api_via_exit: bool,
     /// Backends de recherche externes (`tpb`, …).
     pub backends: BTreeMap<String, OnionBackendSettings>,
     /// Passerelle de sortie pour les pairs sans Tor.
@@ -110,7 +106,6 @@ impl Default for TorSettings {
             request_timeout: Duration::from_secs(30),
             bootstrap_timeout: Duration::from_secs(120),
             max_redirects: 3,
-            api_via_exit: false,
             backends: BTreeMap::new(),
             gateway: TorGatewaySettings {
                 enabled: false,

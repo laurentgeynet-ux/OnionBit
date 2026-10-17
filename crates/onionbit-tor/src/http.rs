@@ -44,8 +44,8 @@ pub(crate) struct OnionTarget {
     pub port: u16,
     /// Chemin + query, jamais vide (`/` au minimum).
     pub path: String,
-    /// `https` — TLS par-dessus le flux Tor (`api_via_exit` :
-    /// integrite des metadonnees face a un exit malveillant).
+    /// `https` — TLS par-dessus le flux Tor (service onion dument
+    /// certifie : le canal reste bout-en-bout via le rendez-vous).
     pub tls: bool,
 }
 
@@ -151,9 +151,9 @@ pub(crate) fn build_request(target: &OnionTarget) -> Vec<u8> {
     .into_bytes()
 }
 
-/// Enrobe un flux Tor dans une session TLS cliente — hotes
-/// clearnet de sortie `api_via_exit` (https) et services onion
-/// dument certifies. `webpki-roots` (bundle Mozilla) fige le trust
+/// Enrobe un flux Tor dans une session TLS cliente — services
+/// onion dument certifies (le flux reste bout-en-bout via le
+/// rendez-vous ; pas d'hote clearnet). `webpki-roots` (bundle Mozilla) fige le trust
 /// store : deterministe, independant de l'OS. Pas d'ALPN annonce :
 /// le serveur reste en HTTP/1.1, seul profil supporte par
 /// [`exchange`].
@@ -477,7 +477,7 @@ mod tests {
 
     #[tokio::test]
     async fn redirection_https_suivie_schemes_exotiques_refuses() {
-        // `https` est suivi (TLS au-dessus du flux Tor — `api_via_exit`).
+        // `https` est suivi (TLS au-dessus du flux Tor).
         let r = roundtrip(
             b"HTTP/1.1 301\r\nLocation: https://x.onion/\r\nContent-Length: 0\r\n\r\n",
             1024,

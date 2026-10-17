@@ -1295,22 +1295,13 @@ impl Default for TorSearchFileConfig {
         // page sans table de resultats. L'API JSON `q.php` est
         // proxifiee par l'hote onion lui-meme (son frontend
         // l'appelle via `Get(server + '/q.php…')`, verifie
-        // 2026-10) : le backend `tpb` la consomme comme `apibay`.
+        // 2026-10) : le backend `tpb` la consomme en 100 % onion —
+        // pas de backend clearnet : un appel via un exit Tor verrait
+        // la requete sortir du reseau (anonymat degrade, refuse).
         backends.insert(
             "tpb".to_string(),
             TorBackendFileConfig {
                 mirrors: vec![DEFAULT_TPB_ONION.to_string()],
-                url_template: "http://{host}/q.php?q={q}".to_string(),
-                ..TorBackendFileConfig::default()
-            },
-        );
-        // API JSON officielle de TPB — clearnet via un exit Tor,
-        // active seulement si `tor.api_via_exit=true` (opt-in :
-        // anonymat degrade, le noeud de sortie voit la requete).
-        backends.insert(
-            "apibay".to_string(),
-            TorBackendFileConfig {
-                mirrors: vec!["apibay.org".to_string()],
                 url_template: "http://{host}/q.php?q={q}".to_string(),
                 ..TorBackendFileConfig::default()
             },
@@ -1374,10 +1365,6 @@ pub struct TorFileConfig {
     pub bootstrap_timeout_ms: u64,
     /// Bornes de redirections 30x suivies (hôte allowlisté exigé).
     pub max_redirects: u32,
-    /// Backend `apibay.org` via un exit Tor — `false` par défaut :
-    /// l'appel sort du réseau Tor chez l'exit (anonymat dégradé,
-    /// ADR-0028 §5).
-    pub api_via_exit: bool,
     /// Backends de recherche (`tor/search`).
     pub search: TorSearchFileConfig,
     /// Passerelle de sortie (`tor/gateway`, phase 2).
@@ -1398,7 +1385,6 @@ impl Default for TorFileConfig {
             request_timeout_ms: 30_000,
             bootstrap_timeout_ms: 120_000,
             max_redirects: 3,
-            api_via_exit: false,
             search: TorSearchFileConfig::default(),
             gateway: TorGatewayFileConfig::default(),
             extra: serde_json::Map::new(),
@@ -2223,7 +2209,6 @@ impl DaemonConfig {
             request_timeout: std::time::Duration::from_millis(t.request_timeout_ms),
             bootstrap_timeout: std::time::Duration::from_millis(t.bootstrap_timeout_ms),
             max_redirects: t.max_redirects,
-            api_via_exit: t.api_via_exit,
             gateway: onionbit_tor::TorGatewaySettings {
                 enabled: t.gateway.enabled,
                 rate_limit_per_circuit: t.gateway.rate_limit_per_circuit,
@@ -2267,37 +2252,22 @@ impl DaemonConfig {
                 );
             }
         }
-        // Miroirs des backends : `.onion` → allowlist ; hote clearnet
-        // → sortie `api_via_exit` **opt-in** (anonymat degrade : le
-        // noeud de sortie voit la requete — refuse et signale sans
-        // le flag, jamais de fuite silencieuse).
+        // Miroirs des backends : `.onion` → allowlist ; tout hote
+        // non-onion est refuse — **jamais de sortie clearnet via un
+        // exit Tor** (anonymat degrade par construction : le noeud
+        // de sortie verrait la requete en clair).
         let mut usable: BTreeMap<String, Vec<String>> = BTreeMap::new();
         for (id, b) in &t.search.backends {
             for mirror in &b.mirrors {
                 if settings.target_policy.insert(mirror).is_ok() {
                     usable.entry(id.clone()).or_default().push(mirror.clone());
-                } else if mirror.contains(".onion") {
-                    tracing::warn!(
-                        backend = %id,
-                        host = %mirror,
-                        "tor : hote onion invalide — miroir ignore"
-                    );
-                } else if !t.api_via_exit {
-                    tracing::warn!(
-                        backend = %id,
-                        host = %mirror,
-                        "tor : miroir clearnet ignore — tor.api_via_exit=false \
-                         (sortie via exit Tor : opt-in explicite requis)"
-                    );
-                } else if let Err(e) = settings.target_policy.insert_exit_host(mirror) {
-                    tracing::warn!(
-                        backend = %id,
-                        error = %e,
-                        host = %mirror,
-                        "tor : hote de sortie invalide — miroir ignore"
-                    );
                 } else {
-                    usable.entry(id.clone()).or_default().push(mirror.clone());
+                    tracing::warn!(
+                        backend = %id,
+                        host = %mirror,
+                        "tor : miroir non-onion ou adresse invalide — ignore \
+                         (seules les cibles .onion sont joignables)"
+                    );
                 }
             }
         }

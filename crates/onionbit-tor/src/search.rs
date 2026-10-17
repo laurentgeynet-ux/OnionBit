@@ -29,7 +29,7 @@ use crate::http::OnionResponse;
 use crate::runtime::TorRuntime;
 use crate::settings::TorSettings;
 
-pub mod apibay;
+pub mod qphp;
 
 /// Borne interne du titre extrait — defensive, pas un reglage : la
 /// reponse est un contenu tiers non fiable.
@@ -152,13 +152,13 @@ pub fn build_backends(
         match id.as_str() {
             // `tpb` = l'API JSON `q.php` proxifiee par l'hote onion
             // — le site ne sert plus de HTML de resultats (coquille
-            // JS, verifie 2026-10) ; le scraping `tpb.rs` est mort
-            // avec elle. Meme decodeur que `apibay`, transport
-            // 100 % onion (pas de sortie clearnet).
-            "tpb" | "apibay" => {
+            // JS, verifie 2026-10). Transport 100 % onion : aucun
+            // backend clearnet n'est accepte (anonymat degrade par
+            // construction — un exit verrait la requete).
+            "tpb" => {
                 out.insert(
                     id.clone(),
-                    Arc::new(apibay::ApibayBackend::new(id, cfg, fetcher.clone()))
+                    Arc::new(qphp::QphpBackend::new(id, cfg, fetcher.clone()))
                         as Arc<dyn OnionSearchBackend>,
                 );
             }
@@ -205,30 +205,30 @@ mod tests {
         s
     }
 
-    /// `tpb` et `apibay` partagent le decodeur `q.php` : le scraping
-    /// HTML TPB n'existe plus (coquille JS, refonte verifiee 2026-10).
-    /// La source remontee reste l'id de config — l'UI badge `TPB`.
+    /// `tpb` decode le JSON `q.php` — la source remontee reste
+    /// l'id de config (l'UI badge `TPB`).
     #[tokio::test]
     async fn tpb_decode_json_qphp() {
-        for id in ["tpb", "apibay"] {
-            let backends = build_backends(
-                &settings_with(id),
-                Arc::new(StubFetch(
-                    r#"[{"id":"1","name":"T","info_hash":"2c6b6858d61da9543d4231a71db4b1c9264b0685","seeders":"5","leechers":"1","size":"42","category":"207"}]"#,
-                )),
-            );
-            let out = backends[id].search("x").await.unwrap();
-            assert_eq!(out.len(), 1);
-            assert_eq!(out[0].source, id);
-            assert_eq!(out[0].infohash, "2c6b6858d61da9543d4231a71db4b1c9264b0685");
-        }
+        let backends = build_backends(
+            &settings_with("tpb"),
+            Arc::new(StubFetch(
+                r#"[{"id":"1","name":"T","info_hash":"2c6b6858d61da9543d4231a71db4b1c9264b0685","seeders":"5","leechers":"1","size":"42","category":"207"}]"#,
+            )),
+        );
+        let out = backends["tpb"].search("x").await.unwrap();
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].source, "tpb");
+        assert_eq!(out[0].infohash, "2c6b6858d61da9543d4231a71db4b1c9264b0685");
     }
 
-    /// Un id inconnu est ignore (warn) — la config file peut
-    /// decrire un backend disparu.
+    /// Un id inconnu — dont `apibay` (backend clearnet via exit
+    /// Tor, retire : anonymat degrade) — est ignore avec un warn ;
+    /// une config persistee d'avant la suppression reste inerte.
     #[test]
-    fn id_inconnu_ignore() {
-        let backends = build_backends(&settings_with("zombie"), Arc::new(StubFetch("[]")));
-        assert!(backends.is_empty());
+    fn id_inconnu_ou_clearnet_ignore() {
+        for id in ["zombie", "apibay"] {
+            let backends = build_backends(&settings_with(id), Arc::new(StubFetch("[]")));
+            assert!(backends.is_empty(), "{id} devrait etre ignore");
+        }
     }
 }

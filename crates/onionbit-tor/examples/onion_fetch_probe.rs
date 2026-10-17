@@ -37,8 +37,10 @@ fn main() {
         if host.ends_with(".onion") {
             policy.insert(&host).expect("politique cible");
         } else {
-            // Hote clearnet — famille `api_via_exit` (sortie Tor).
-            policy.insert_exit_host(&host).expect("politique sortie");
+            // Clearnet jamais joignable — pas de sortie via un
+            // exit Tor (anonymat degrade par construction).
+            eprintln!("hote non-onion refuse : {host}");
+            std::process::exit(2);
         }
         let settings = TorSettings {
             enabled: true,

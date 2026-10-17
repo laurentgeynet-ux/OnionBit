@@ -200,10 +200,10 @@ impl TorRuntime {
             let target = http::parse_target(&current)?;
             settings.target_policy.check(&target.host, target.port)?;
             let stream = self.open_stream(&target.host, target.port).await?;
-            // `https` : TLS au-dessus du flux Tor — obligatoire pour
-            // les sorties clearnet `api_via_exit` (integrite des
-            // metadonnees face a un exit malveillant) et licite pour
-            // les services onion dument certifies.
+            // `https` : TLS au-dessus du flux Tor — licite pour
+            // les services onion dument certifies (le transport
+            // reste end-to-end chiffre et authentifie par le
+            // rendez-vous onion).
             let stream = if target.tls {
                 http::wrap_tls(stream, &target.host).await?
             } else {

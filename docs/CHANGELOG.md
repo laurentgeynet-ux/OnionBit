@@ -3,6 +3,29 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Retrait du chemin clearnet-via-exit — 100 % onion (2026-10-17)
+
+Même logique que la sonde de version : un appel qui traverse un
+nœud de sortie Tor est vu en clair par lui — **anonymat dégradé
+par construction**, pas un compromis acceptable. La fonction est
+supprimée, pas seulement désactivée.
+
+- **Backend `apibay` retiré** : `build_backends` n'accepte plus que
+  `tpb` (l'id `apibay` d'une config persistée est ignoré avec un
+  warn). Le décodeur `q.php` est renommé `apibay.rs → qphp.rs`
+  (`QphpBackend`) — son identité est l'API sur l'onion, pas le
+  service clearnet.
+- **`tor.api_via_exit` retiré** : la clé d'une ancienne config
+  atterrit inerte dans `extra`. Un miroir de backend non-`.onion`
+  est rejeté au chargement (« miroir non-onion ignoré »).
+- **`TorTargetPolicy` durcie** : `exit_hosts`, `insert_exit_host`,
+  `is_exit_allowed`, `ALLOWED_EXIT_PORTS` et la branche clearnet
+  de `check()` supprimés — le fetcher ne joint *que* des `.onion`
+  v3 allowlistés. TLS sur flux Tor conservé (services onion
+  certifiés).
+- Tests : `clearnet_toujours_refuse` (policy), `id_inconnu_ou_
+  clearnet_ignore` (registre) ; ADR-0028 amendée.
+
 ## Recherche `.onion` — retry transitoire par miroir (2026-10-17)
 
 L'onion TPB est instable par nature : un échec de circuit de
