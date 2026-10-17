@@ -3,6 +3,19 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Harnais interop pyipv8 automatisé (2026-10-17)
+
+`scripts/run_interop_suite.ps1` devient un vrai harnais : sans
+`-Scripts` il découvre et enchaîne **tous** les bancs `interop_*.ps1`
+(16), détecte les prérequis de chacun en lisant les variables
+`TRIBLER_*` qu'il consulte (`TRIBLER_INTEROP_PY`, `TRIBLER_PYIPV8`,
+`TRIBLER_SRC`, `TRIBLER_EXE`) et marque **SKIP** — pas FAIL — un banc
+dont le prérequis manque. Récap final PASS/FAIL/SKIP.
+
+Vérifié en réel : `interop_ipv8` (39 s) et `interop_select` (20 s,
+étape 95) verts contre pyipv8 ; les bancs Tribler complets SKIP tant
+que `TRIBLER_EXE` n'est pas installé.
+
 ## Spike ADR-0029 : hébergement `.onion` par arti — GO embedded (2026-10-17)
 
 L'étape 120 (jalon de décision de l'ADR-0029) est tranchée : arti
