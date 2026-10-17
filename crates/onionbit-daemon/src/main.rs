@@ -412,6 +412,7 @@ fn resolve_web_ui_dir(
         .find(|d| d.join("index.html").is_file())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn spawn_tray(
     args: &Args,
     daemon_config: &DaemonConfig,
@@ -420,6 +421,7 @@ fn spawn_tray(
     signal: &ShutdownSignal,
     api_port: std::sync::Arc<std::sync::atomic::AtomicU16>,
     web_ui_served: bool,
+    session_holder: std::sync::Arc<std::sync::Mutex<Option<CoreSession>>>,
 ) -> Option<tray::TrayHandle> {
     // `headless` Python force l'absence de tray comme `--no-tray`.
     if args.no_tray || daemon_config.headless || !daemon_config.tray.enabled {
@@ -455,6 +457,9 @@ fn spawn_tray(
         ui_exe,
         api_port,
         web_ui_served,
+        default_ui: tray::TrayUi::from_config(&daemon_config.tray.default_ui),
+        config_path: Some(state_dir.join(CONFIG_FILENAME)),
+        session: session_holder,
         autostart_cmd,
         icon_color: parse_tray_icon_color(&daemon_config.tray_icon_color),
         shutdown: signal.clone(),
@@ -665,6 +670,11 @@ async fn async_main() -> ExitCode {
     // core soit pret) — la restauration des telechargements et le
     // peuplement DHT peuvent prendre ~1 min sur de gros fichiers ; le
     // tooltip est maj avec le port reel une fois l'API bindée.
+    // Sonde de session partagée avec le tray (zéro artefact, ADR-0022 :
+    // le choix radio du menu ne persiste jamais en session invitée) —
+    // remplie une fois la session démarrée, `is_guest` lu en live.
+    let tray_session: std::sync::Arc<std::sync::Mutex<Option<CoreSession>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(None));
     let tray = spawn_tray(
         &args,
         &daemon_config,
@@ -673,6 +683,7 @@ async fn async_main() -> ExitCode {
         &shutdown_signal,
         api_port.clone(),
         web_ui_dir.is_some(),
+        tray_session.clone(),
     );
 
     // ADR-0016 : refus ferme `at_rest` × role serveur stealth avant
@@ -702,6 +713,7 @@ async fn async_main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    *tray_session.lock().unwrap_or_else(|e| e.into_inner()) = Some(session.clone());
 
     // `report_config_error` Python : une config corrompue est signalee
     // au GUI (les clients SSE connectes apres le demarrage ne la

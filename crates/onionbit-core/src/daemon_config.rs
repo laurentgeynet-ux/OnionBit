@@ -916,6 +916,31 @@ impl Default for EnabledSection {
     }
 }
 
+/// Section `tray` — icône de zone de notification du daemon.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TrayFileConfig {
+    /// Icône active (`enabled=false` = `--no-tray` persistant).
+    pub enabled: bool,
+    /// UI ouverte au double-clic sur l'icône : `"app"` (application
+    /// de bureau) ou `"browser"` (interface web servie par le
+    /// daemon) — choix radio du menu systray, persistant.
+    pub default_ui: String,
+    /// Clés inconnues — préservées.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, Value>,
+}
+
+impl Default for TrayFileConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            default_ui: "app".to_string(),
+            extra: serde_json::Map::new(),
+        }
+    }
+}
+
 /// Section `rss`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -1458,7 +1483,7 @@ pub struct DaemonConfig {
     /// Section `tray` — icône de zone de notification du daemon
     /// (extension propre au portage, absente de `TriblerConfig` Python ;
     /// `enabled=false` = `--no-tray`).
-    pub tray: EnabledSection,
+    pub tray: TrayFileConfig,
     /// Section `logging` — rétention des fichiers de log.
     pub logging: LoggingConfig,
     /// Mode sans GUI.
@@ -1505,7 +1530,7 @@ impl Default for DaemonConfig {
             torrent_checker: EnabledSection::enabled(),
             versioning: VersioningConfig::default(),
             watch_folder: WatchFolderConfig::default(),
-            tray: EnabledSection::enabled(),
+            tray: TrayFileConfig::default(),
             logging: LoggingConfig::default(),
             headless: false,
             start_minimized: false,
@@ -2798,6 +2823,31 @@ mod tests {
         assert!(view.tor.enabled);
         assert_eq!(view.tor.mode, "external");
         assert_eq!(view.tor.external_socks5, "socks5h://127.0.0.1:9150");
+    }
+
+    /// `tray.default_ui` : defaut `"app"`, choix `"browser"` persiste,
+    /// compat ascendante avec les anciens fichiers sans la cle.
+    #[test]
+    fn tray_default_ui_round_trip() {
+        let cfg = DaemonConfig::default();
+        assert!(cfg.tray.enabled);
+        assert_eq!(cfg.tray.default_ui, "app");
+        assert!(cfg.sparse_value().get("tray").is_none());
+
+        let mut cfg = DaemonConfig::default();
+        cfg.merge(&serde_json::json!({ "tray": { "enabled": false } }))
+            .unwrap();
+        assert!(!cfg.tray.enabled);
+        assert_eq!(cfg.tray.default_ui, "app");
+
+        let mut cfg = DaemonConfig::default();
+        cfg.merge(&serde_json::json!({ "tray": { "default_ui": "browser" } }))
+            .unwrap();
+        assert_eq!(cfg.tray.default_ui, "browser");
+        assert_eq!(
+            cfg.sparse_value().pointer("/tray/default_ui"),
+            Some(&serde_json::json!("browser"))
+        );
     }
 
     /// `external_socks5` non-loopback ou mode inconnu → connectivite

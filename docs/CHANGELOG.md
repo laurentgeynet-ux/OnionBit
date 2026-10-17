@@ -3,6 +3,29 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Systray : menu clarifié, i18n fr/en, double-clic configurable (2026-10-17)
+
+Le menu contextuel de l'icône de notification nomme désormais les deux
+interfaces sans ambiguïté (« application de bureau » / « interface web
+(navigateur) ») au lieu des deux « Ouvrir OnionBit »
+indifférenciées.
+
+- **Double-clic gauche** sur l'icône → ouvre l'UI préférée, avec
+  repli sur l'autre si elle est indisponible (exe absent / web UI non
+  servie) — jamais d'ouverture d'une UI absente.
+- **Sous-menu « Au double-clic, ouvrir »** : choix radio
+  Application/Navigateur, appliqué en live et persisté dans
+  `configuration.json` (`tray.default_ui` = `app`|`browser`, défaut
+  `app`). Jamais persisté en session invitée (zéro artefact,
+  ADR-0022 — `is_guest` lu en live, la transition peut survenir
+  après le boot).
+- **i18n fr/en** des libellés via `GetUserDefaultUILanguage` — le
+  tray vit dans le daemon (pas d'ARB Flutter) ; français si la locale
+  Windows est FR, anglais sinon.
+- `tray` devient une section typée (`TrayFileConfig`) — compat
+  ascendante (`{"enabled": false}` des anciens fichiers relu tel
+  quel).
+
 ## Tor activé par défaut — lane permanente dès la 1ʳᵉ installation (2026-10-17)
 
 `tor.enabled` passe à **`true` par défaut** (`TorFileConfig`) : la lane
