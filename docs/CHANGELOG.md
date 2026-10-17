@@ -3,6 +3,30 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## ADR-0029 étape 122 : identité `.onion` dérivée (2026-10-17)
+
+Première brique de la phase 3 — adresse `.onion` stable, dérivée de
+l'identité, jamais liée à la clé IPv8 :
+
+- **Dérivation** : HKDF-SHA256 domaine `onionbit/identity/tor-hs/v1`
+  sur `store_root` (`IdentitySeed` en seeded/guest,
+  `SHA-256(ipv8_keypair)` en legacy) → seed ed25519 du service.
+- **Lancement** : `TorRuntime::launch_onion_identity` insère le
+  `HsIdKeypair` dérivé dans le keystore arti (`state/keystore`,
+  overwrite — la dérivation est autoritaire) puis publie via
+  `launch_onion_service`. Feature `hs` opt-in sur
+  `onionbit-tor`/`core`/`daemon`.
+- **Cycle de vie** : `tor.onion_service.enabled` (défaut `false`) ;
+  watcher qui attend `Ready`, relance après `swap_tor_stack` ;
+  jamais en session invitée. Rendez-vous entrants consommés sans
+  être acceptés (servis à l'étape 124).
+- **API** : `GET /api/tor/status` expose `onion_service {enabled,
+  state, address}` — adresse présente uniquement si le service
+  est réellement publié.
+- **Liaison opt-in** : `sign_onion_address`/`verify_onion_address`
+  (domaine `onionbit/onion-bind/v1`) pour les personas/canaux
+  publics qui afficheront leur `.onion` auto-certifié.
+
 ## ADR-0029 Acceptée — arbitrage des questions ouvertes (2026-10-17)
 
 Étape 121 : les 6 questions du §8 sont tranchées —

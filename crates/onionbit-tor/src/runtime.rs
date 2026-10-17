@@ -59,15 +59,19 @@ impl<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send> OnionIo for
 
 /// Etat partage du runtime — clonable (Arc) : le daemon garde un
 /// handle pour l'API pendant que la tache de bootstrap mute l'etat.
-struct Inner {
-    settings: TorSettings,
+pub(crate) struct Inner {
+    pub(crate) settings: TorSettings,
     state: Mutex<TorState>,
     /// Tache de bootstrap en cours — idempotence + re-essai.
     #[cfg(feature = "tor")]
     boot: Mutex<Option<tokio::task::JoinHandle<()>>>,
     /// Client arti bootstrappe (mode `embedded`).
     #[cfg(feature = "tor")]
-    client: Mutex<Option<Arc<arti_client::TorClient<tor_rtcompat::PreferredRuntime>>>>,
+    pub(crate) client: Mutex<Option<Arc<arti_client::TorClient<tor_rtcompat::PreferredRuntime>>>>,
+    /// Service `.onion` d'identite heberge (ADR-0029) — vivant tant
+    /// que le slot existe ; remplace ou droppe = depublie.
+    #[cfg(feature = "hs")]
+    pub(crate) onion: Mutex<Option<crate::service::OnionServiceSlot>>,
 }
 
 /// Runtime Tor — proprietaire unique de tout trafic Tor du daemon.
@@ -78,6 +82,20 @@ pub struct TorRuntime {
 
 fn set_state(inner: &Inner, state: TorState) {
     *inner.state.lock().unwrap_or_else(|e| e.into_inner()) = state;
+}
+
+/// Vue publique du service `.onion` d'identite — remonte a
+/// `GET /api/tor/status`.
+#[derive(Debug, Clone)]
+pub struct OnionServiceInfo {
+    /// `tor.onion_service.enabled` (ou service reellement lance).
+    pub enabled: bool,
+    /// `off` | `bootstrapping` | `running` | `degraded` |
+    /// `shutdown` — etat haut niveau remonte par arti.
+    pub state: String,
+    /// Adresse `.onion` hebergee — `Some` uniquement quand le
+    /// service tourne.
+    pub address: Option<String>,
 }
 
 impl TorRuntime {
@@ -93,6 +111,8 @@ impl TorRuntime {
                 boot: Mutex::new(None),
                 #[cfg(feature = "tor")]
                 client: Mutex::new(None),
+                #[cfg(feature = "hs")]
+                onion: Mutex::new(None),
             }),
         }
     }
@@ -232,6 +252,61 @@ impl TorRuntime {
             return Ok(resp);
         }
         Err(TorError::RedirectDenied("max_redirects depasse".into()))
+    }
+
+    /// Lance le service `.onion` d'identite (ADR-0029 etape 122)
+    /// sur la lane embedded — `hs_seed` est le materiel ed25519
+    /// derive HKDF `onionbit/identity/tor-hs/v1`, jamais `ipv8-sign`.
+    /// Idempotent : un relancement remplace le slot (depublie
+    /// l'ancien) — l'adresse rederivee est identique.
+    ///
+    /// Erreurs explicites : `Disabled` (`tor.enabled=false`),
+    /// `NotReady` (client pas encore bootstrappe), `OnionService`
+    /// (mode externe, keystore ou lancement en echec, feature `hs`
+    /// non compilee).
+    pub fn launch_onion_identity(&self, hs_seed: [u8; 32]) -> Result<()> {
+        if !self.inner.settings.enabled {
+            return Err(TorError::Disabled);
+        }
+        if !self.inner.settings.onion_service.enabled {
+            return Err(TorError::OnionService(
+                "service .onion desactive (tor.onion_service.enabled=false)".into(),
+            ));
+        }
+        #[cfg(feature = "hs")]
+        {
+            crate::service::launch(&self.inner, hs_seed)
+        }
+        #[cfg(not(feature = "hs"))]
+        {
+            let _ = hs_seed;
+            Err(TorError::OnionService(
+                "service .onion non compile (feature `hs` desactivee)".into(),
+            ))
+        }
+    }
+
+    /// Etat du service `.onion` d'identite pour
+    /// `GET /api/tor/status` — `address` n'est renseignee que si le
+    /// service est reellement lance : jamais de joignabilite fictive
+    /// (ADR-0028 §8).
+    pub fn onion_service(&self) -> OnionServiceInfo {
+        #[cfg(feature = "hs")]
+        {
+            let guard = self.inner.onion.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(slot) = guard.as_ref() {
+                return OnionServiceInfo {
+                    enabled: true,
+                    state: (*slot.state.lock().unwrap_or_else(|e| e.into_inner())).to_string(),
+                    address: slot.address.clone(),
+                };
+            }
+        }
+        OnionServiceInfo {
+            enabled: self.inner.settings.onion_service.enabled,
+            state: "off".into(),
+            address: None,
+        }
     }
 
     /// Ouvre un flux TCP anonymise vers `(host, port)` deja valide
@@ -430,6 +505,30 @@ mod tests {
         ));
         assert!(matches!(rt.bootstrap(), Err(TorError::Disabled)));
         assert_eq!(rt.state(), TorState::Off);
+    }
+
+    /// Service `.onion` : sans activation le lancement est refuse ;
+    /// sans la feature `hs` l'erreur est explicite et l'etat expose
+    /// reste `off` — aucune adresse fictive.
+    #[tokio::test]
+    async fn service_onion_refuse_sans_activation() {
+        let rt = TorRuntime::new(TorSettings {
+            enabled: true,
+            ..TorSettings::default()
+        });
+        let err = rt.launch_onion_identity([7u8; 32]).unwrap_err();
+        assert!(matches!(err, TorError::OnionService(_)));
+        let info = rt.onion_service();
+        assert!(!info.enabled);
+        assert_eq!(info.state, "off");
+        assert!(info.address.is_none());
+
+        // Desactive globalement → Disabled prime.
+        let rt2 = TorRuntime::new(TorSettings::default());
+        assert!(matches!(
+            rt2.launch_onion_identity([7u8; 32]),
+            Err(TorError::Disabled)
+        ));
     }
 
     /// Sans la feature `tor`, le bootstrap rend une erreur explicite

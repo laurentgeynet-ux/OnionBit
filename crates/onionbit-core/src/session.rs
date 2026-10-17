@@ -328,6 +328,12 @@ struct Inner {
     /// jamais au demarrage du daemon. `RwLock` : un runtime de
     /// remplacement peut etre injecte (tests, futur rechargement).
     tor: std::sync::RwLock<onionbit_tor::TorRuntime>,
+    /// Seed ed25519 du service `.onion` d'identite (ADR-0029 —
+    /// HKDF `tor-hs/v1` sur `store_root`) : pose quand le materiel
+    /// identitaire est resolu, consomme par `spawn_onion_service` —
+    /// y compris apres un `swap_tor_stack` (le service republie sur
+    /// le nouveau runtime).
+    tor_hs_seed: std::sync::RwLock<Option<[u8; 32]>>,
     /// Registre des backends de recherche externe (`source` →
     /// backend — `tor.search.backends.<source>`, ADR-0028 §5).
     /// Mutable : injection de doubles en test et futur
@@ -582,6 +588,9 @@ impl CoreSession {
         // via `OpaqueBitV::for_dir`).
         let mut lane_engine_cfg = config.engine.clone();
         lane_engine_cfg.opaque_bitv = zone.as_ref().map(|z| z.opaque_bitv());
+        // ADR-0029 etape 122 : seed du service `.onion` d'identite —
+        // capture avant que `material` soit consomme par la stack.
+        let tor_hs_seed = material.as_ref().map(|m| m.tor_hs_seed);
         let ipv8 = start_ipv8_with_identity(
             config,
             db.clone(),
@@ -628,7 +637,86 @@ impl CoreSession {
             .identity_phase
             .write()
             .unwrap_or_else(|e| e.into_inner()) = IdentityPhase::Ready;
+        if let Some(seed) = tor_hs_seed {
+            *self
+                .inner
+                .tor_hs_seed
+                .write()
+                .unwrap_or_else(|e| e.into_inner()) = Some(seed);
+            self.spawn_onion_service();
+        }
         Ok(())
+    }
+
+    /// ADR-0029 etape 122 : heberge le service `.onion` d'identite
+    /// quand `tor.onion_service.enabled` — la tache attend la lane
+    /// `Ready` (le bootstrap au boot peut prendre ~40 s) puis appelle
+    /// `TorRuntime::launch_onion_identity`. Jamais en session invitee
+    /// (un service publie est une identite durable — incompatible
+    /// avec zero artefact, ADR-0022). `Off` = lane coupee, rien a
+    /// attendre ; `Error`/`Bootstrapping` = on attend jusqu'a la
+    /// deadline (`bootstrap_timeout` + marge) car la lane peut
+    /// s'auto-reparer (retry de recherche externe).
+    fn spawn_onion_service(&self) {
+        if self.is_guest() {
+            return;
+        }
+        let Some(seed) = *self
+            .inner
+            .tor_hs_seed
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+        else {
+            return;
+        };
+        // Le runtime courant porte les reglages effectifs — apres
+        // un hot-swap `inner.config.tor` est perime.
+        let rt = self.tor();
+        if !rt.settings().onion_service.enabled {
+            return;
+        }
+        tokio::spawn(async move {
+            let deadline = tokio::time::Instant::now()
+                + rt.settings().bootstrap_timeout
+                + std::time::Duration::from_secs(30);
+            loop {
+                match rt.state() {
+                    onionbit_tor::TorState::Ready => {
+                        match rt.launch_onion_identity(seed) {
+                            Ok(()) => {
+                                let info = rt.onion_service();
+                                tracing::info!(
+                                    state = %info.state,
+                                    "service .onion d'identite publie"
+                                );
+                            }
+                            Err(e) => {
+                                tracing::warn!(error = %e, "service .onion : lancement echoue")
+                            }
+                        }
+                        break;
+                    }
+                    // `Off` transitoire (le swap declenche
+                    // `bootstrap()` juste apres nous) — si la lane
+                    // est voulue, on l'amorce nous-memes :
+                    // `bootstrap` est idempotent et non bloquant.
+                    onionbit_tor::TorState::Off => {
+                        if !rt.settings().enabled {
+                            break;
+                        }
+                        let _ = rt.bootstrap();
+                        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                    }
+                    _ => {
+                        if tokio::time::Instant::now() >= deadline {
+                            tracing::warn!("service .onion : lane Tor non prete sous le delai");
+                            break;
+                        }
+                        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                    }
+                }
+            }
+        });
     }
 
     /// Phase identitaire courante (`GET /api/identity`).
@@ -923,6 +1011,7 @@ impl CoreSession {
                 augmenter,
                 bandwidth: Arc::new(crate::services::bandwidth::CongestionController::new()),
                 tor: std::sync::RwLock::new(tor),
+                tor_hs_seed: std::sync::RwLock::new(None),
                 search_backends: std::sync::Mutex::new(search_backends),
                 started_at: std::time::Instant::now(),
             }),
@@ -2265,6 +2354,14 @@ impl CoreSession {
             .search_backends
             .lock()
             .unwrap_or_else(|e| e.into_inner()) = backends;
+        // Le nouveau runtime bootstrappe de zero : le service
+        // `.onion` d'identite republie dessus des que `Ready`
+        // (meme cle derivee → meme adresse). `Handle::try_current`
+        // car `swap_tor_stack` est `fn` — appelable hors contexte
+        // tokio (tests non-async).
+        if tokio::runtime::Handle::try_current().is_ok() {
+            self.spawn_onion_service();
+        }
     }
 
     /// Backend de recherche externe enregistre sous `source`

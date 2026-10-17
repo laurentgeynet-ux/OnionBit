@@ -1394,6 +1394,31 @@ impl Default for TorGatewayFileConfig {
     }
 }
 
+/// Section `tor/onion_service` — service `.onion` d'identite
+/// (ADR-0029 etape 122).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TorOnionServiceFileConfig {
+    /// Heberge le service `.onion` d'identite quand la lane est
+    /// `Ready` — **false par defaut** : aucune publication sans
+    /// activation explicite. La cle est derivee de la graine
+    /// (`onionbit/identity/tor-hs/v1`) — l'adresse est stable et
+    /// portable avec la phrase BIP39.
+    pub enabled: bool,
+    /// Clés inconnues — préservées.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, Value>,
+}
+
+impl Default for TorOnionServiceFileConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            extra: serde_json::Map::new(),
+        }
+    }
+}
+
 /// Section `tor` — connectivité Tor embarquée (ADR-0028, extension
 /// sans équivalent Tribler). **`enabled=true` par défaut** : la lane
 /// permanente est un service de fond de l'application (recherche
@@ -1436,6 +1461,8 @@ pub struct TorFileConfig {
     pub search: TorSearchFileConfig,
     /// Passerelle de sortie (`tor/gateway`, phase 2).
     pub gateway: TorGatewayFileConfig,
+    /// Service `.onion` d'identite (`tor/onion_service`, ADR-0029).
+    pub onion_service: TorOnionServiceFileConfig,
     /// Clés inconnues — préservées.
     #[serde(flatten)]
     pub extra: serde_json::Map<String, Value>,
@@ -1455,6 +1482,7 @@ impl Default for TorFileConfig {
             bridges: Vec::new(),
             search: TorSearchFileConfig::default(),
             gateway: TorGatewayFileConfig::default(),
+            onion_service: TorOnionServiceFileConfig::default(),
             extra: serde_json::Map::new(),
         }
     }
@@ -2290,6 +2318,9 @@ impl DaemonConfig {
                 enabled: t.gateway.enabled,
                 rate_limit_per_circuit: t.gateway.rate_limit_per_circuit,
             },
+            onion_service: onionbit_tor::OnionServiceSettings {
+                enabled: t.onion_service.enabled,
+            },
             ..onionbit_tor::TorSettings::default()
         };
         match t.mode.as_str() {
@@ -2507,6 +2538,7 @@ impl DaemonConfig {
                 self.tor.external_socks5 = format!("socks5h://{addr}");
             }
         }
+        self.tor.onion_service.enabled = core.tor.onion_service.enabled;
     }
 }
 
@@ -2844,6 +2876,8 @@ mod tests {
         });
         let mut cfg = DaemonConfig::default();
         cfg.merge(&json).unwrap();
+        // Service .onion d'identite : absent du fichier → off.
+        assert!(!cfg.tor.onion_service.enabled);
         let core = cfg.to_core_config(Path::new("."));
         assert!(core.tor.enabled);
         assert_eq!(
@@ -2857,6 +2891,7 @@ mod tests {
         assert_eq!(core.tor.target_policy.len(), 1);
         assert!(core.tor.target_policy.check(TPB, 80).is_ok());
         assert!(core.tor.target_policy.check(TPB, 8080).is_err());
+        assert!(!core.tor.onion_service.enabled);
         // Backend sans miroir rejete.
         assert!(core.tor.backends.contains_key("tpb"));
         assert!(!core.tor.backends.contains_key("casse"));
@@ -2873,6 +2908,31 @@ mod tests {
         assert!(view.tor.enabled);
         assert_eq!(view.tor.mode, "external");
         assert_eq!(view.tor.external_socks5, "socks5h://127.0.0.1:9150");
+    }
+
+    /// `tor.onion_service.enabled` — round-trip sparse + propagation
+    /// vers `TorSettings` (ADR-0029 etape 122).
+    #[test]
+    fn tor_onion_service_round_trip() {
+        let json = serde_json::json!({ "tor": { "onion_service": { "enabled": true } } });
+        let mut cfg = DaemonConfig::default();
+        cfg.merge(&json).unwrap();
+        assert!(cfg.tor.onion_service.enabled);
+        // Sparse : la valeur non-defaut est persistee.
+        let sparse = cfg.sparse_value();
+        assert_eq!(
+            sparse["tor"]["onion_service"]["enabled"],
+            serde_json::json!(true)
+        );
+        // Relecture → meme etat, propage au core.
+        let mut cfg2 = DaemonConfig::default();
+        cfg2.merge(&sparse).unwrap();
+        assert!(
+            cfg2.to_core_config(Path::new("."))
+                .tor
+                .onion_service
+                .enabled
+        );
     }
 
     /// Régression : l'écriture sparse omet `mirrors`/`url_template`

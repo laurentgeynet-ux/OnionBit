@@ -50,6 +50,7 @@ pub async fn tor_status(State(state): State<AppState>) -> Json<serde_json::Value
         onionbit_tor::TorMode::Embedded => ("embedded", None),
         onionbit_tor::TorMode::External(addr) => ("external", Some(addr.to_string())),
     };
+    let svc = runtime.onion_service();
     Json(serde_json::json!({
         "enabled": settings.enabled,
         "mode": mode,
@@ -58,6 +59,13 @@ pub async fn tor_status(State(state): State<AppState>) -> Json<serde_json::Value
         "progress": progress,
         "error": error,
         "sources": state.session.search_backend_sources(),
+        // ADR-0029 etape 122 : `address` n'est renseignee que si le
+        // service est reellement publie — jamais d'adresse fictive.
+        "onion_service": {
+            "enabled": svc.enabled,
+            "state": svc.state,
+            "address": svc.address,
+        },
     }))
 }
 

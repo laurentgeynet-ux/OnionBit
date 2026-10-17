@@ -12,6 +12,9 @@ repository.workspace = true
 # `tor` d'onionbit-tor ; sans elle `TorRuntime` reste un stub
 # (`bootstrap`/`fetch` rendent `NotBuilt`).
 tor = ["onionbit-tor/tor"]
+# ADR-0029 : service `.onion` d'identite heberge (propage `hs`
+# d'onionbit-tor — implique `tor`).
+hs = ["tor", "onionbit-tor/hs"]
 
 [dependencies]
 onionbit-bittorrent = { path = "../onionbit-bittorrent" }

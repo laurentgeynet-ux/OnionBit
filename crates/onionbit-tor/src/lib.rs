@@ -35,10 +35,15 @@ pub mod error;
 pub(crate) mod http;
 pub mod runtime;
 pub mod search;
+// Service `.onion` heberge (ADR-0029 etape 122) — feature `hs`.
+#[cfg(feature = "hs")]
+pub(crate) mod service;
 pub mod settings;
 
 pub use error::{ExternalSearchError, Result, TorError};
 pub use http::OnionResponse;
-pub use runtime::{TorRuntime, TorState};
+pub use runtime::{OnionServiceInfo, TorRuntime, TorState};
 pub use search::{build_backends, ExternalResult, OnionFetch, OnionSearchBackend};
-pub use settings::{OnionBackendSettings, TorGatewaySettings, TorMode, TorSettings};
+pub use settings::{
+    OnionBackendSettings, OnionServiceSettings, TorGatewaySettings, TorMode, TorSettings,
+};

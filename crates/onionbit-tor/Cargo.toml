@@ -21,9 +21,18 @@ tor = [
     "dep:tokio-rustls",
     "dep:webpki-roots",
 ]
-# `hs` : spike ADR-0029 etape 120 — hebergement d'un service onion
-# via tor-hsservice. Opt-in : evalue avant engagement de la phase 3.
-hs = ["tor", "dep:tor-hsservice", "arti-client/onion-service-service"]
+# `hs` : service `.onion` heberge (ADR-0029 — spike 120 puis
+# identite derivee etape 122) via tor-hsservice + keymgr.
+hs = [
+    "tor",
+    "dep:tor-hsservice",
+    "dep:tor-keymgr",
+    "dep:tor-hscrypto",
+    "dep:tor-llcrypto",
+    "dep:fs-mistrust",
+    "dep:safelog",
+    "arti-client/onion-service-service",
+]
 
 [dependencies]
 onionbit-format = { path = "../onionbit-format" }
@@ -47,9 +56,18 @@ serde_json.workspace = true
 hex.workspace = true
 arti-client = { workspace = true, optional = true }
 tor-rtcompat = { workspace = true, optional = true }
-# Service cache v3 (spike ADR-0029) — cle persistante sous
+# Service cache v3 (ADR-0029) — cle persistante sous
 # state_dir/tor via keymgr + tor-persist.
 tor-hsservice = { version = "0.47", optional = true }
+tor-keymgr = { version = "0.47", optional = true }
+tor-hscrypto = { version = "0.47", optional = true }
+tor-llcrypto = { version = "0.47", optional = true }
+# Politique de permissions du keystore natif (meme discipline que
+# la config arti — verifie le state_dir avant insertion de cle).
+fs-mistrust = { version = "0.16", optional = true }
+# Affichage non-redacte de l'adresse `.onion` (`HsId` n'implemente
+# que `DisplayRedacted`) — l'adresse est publique par nature.
+safelog = { version = "0.10", optional = true }
 tokio-socks = { workspace = true, optional = true }
 futures-util = { workspace = true, optional = true }
 # TLS sur le flux Tor — hotes clearnet de sortie `api_via_exit`
@@ -65,6 +83,3 @@ webpki-roots = { workspace = true, optional = true }
 tracing-subscriber.workspace = true
 futures-util = { workspace = true }
 rustls = "0.23"
-# Sonde `hs_probe` : affichage non-redacte de l'adresse .onion
-# (`HsId` n'implemente que `DisplayRedacted`).
-safelog = "0.10"

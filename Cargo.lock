@@ -4627,6 +4627,7 @@ version = "1.1.2"
 dependencies = [
  "arti-client",
  "async-trait",
+ "fs-mistrust",
  "futures-util",
  "hex 0.4.3",
  "httparse",
@@ -4640,7 +4641,10 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tokio-socks",
+ "tor-hscrypto",
  "tor-hsservice",
+ "tor-keymgr",
+ "tor-llcrypto",
  "tor-rtcompat",
  "tracing",
  "tracing-subscriber",

@@ -90,6 +90,11 @@ pub struct IdentityMaterial {
     /// `SHA-256(keypair)` en `Legacy` — liee a l'identite, jamais
     /// persistee ni derivee d'un fichier mutable comme `bridge_sk`.
     pub store_root: [u8; 32],
+    /// Seed Ed25519 du service `.onion` d'identite (ADR-0029, domaine
+    /// `onionbit/identity/tor-hs/v1` derive de `store_root`) — en
+    /// memoire uniquement : l'adresse est stable entre runs et
+    /// l'at-rest `OBSK` protege la racine comme le reste.
+    pub tor_hs_seed: [u8; 32],
 }
 
 impl IdentityMaterial {
@@ -108,6 +113,7 @@ impl IdentityMaterial {
             kind: IdentityKind::Seeded,
             guest,
             store_root: *seed.as_bytes(),
+            tor_hs_seed: seed.derive_tor_hs(),
         }
     }
 }
@@ -183,18 +189,24 @@ pub fn load_or_generate(state_dir: &Path) -> Result<IdentityMaterial> {
                 kind: IdentityKind::Seeded,
                 guest: false,
                 store_root: *seed.as_bytes(),
+                tor_hs_seed: seed.derive_tor_hs(),
             })
         }
-        IdentityState::Legacy { keypair } => Ok(IdentityMaterial {
-            bridge_sk: load_or_create_bridge_sk(state_dir, IdentityKind::Legacy)?,
-            // Zone privee ancree sur la cle maitresse legacy (aucune
-            // graine n'existe) — deterministe tant que le fichier
-            // `ipv8_keypair.bin` survit, lie a l'identite.
-            store_root: onionbit_crypto::hash::sha256(&keypair.to_bin()),
-            keypair: *keypair,
-            kind: IdentityKind::Legacy,
-            guest: false,
-        }),
+        IdentityState::Legacy { keypair } => {
+            let store_root = onionbit_crypto::hash::sha256(&keypair.to_bin());
+            Ok(IdentityMaterial {
+                bridge_sk: load_or_create_bridge_sk(state_dir, IdentityKind::Legacy)?,
+                // Zone privee ancree sur la cle maitresse legacy
+                // (aucune graine n'existe) — deterministe tant que le
+                // fichier `ipv8_keypair.bin` survit ; le service
+                // `.onion` herite de la meme racine de derivation.
+                tor_hs_seed: onionbit_crypto::identity::derive_tor_hs_seed(&store_root),
+                store_root,
+                keypair: *keypair,
+                kind: IdentityKind::Legacy,
+                guest: false,
+            })
+        }
         IdentityState::Absent => {
             let seed = IdentitySeed::generate();
             let dir = identity_dir(state_dir);
@@ -209,6 +221,7 @@ pub fn load_or_generate(state_dir: &Path) -> Result<IdentityMaterial> {
                 kind: IdentityKind::Seeded,
                 guest: false,
                 store_root: *seed.as_bytes(),
+                tor_hs_seed: seed.derive_tor_hs(),
             })
         }
         IdentityState::Sealed { .. } => Err(CoreError::InvalidState(
@@ -320,6 +333,7 @@ pub fn create_seed(state_dir: &Path, password: Option<&str>) -> Result<IdentityM
                 kind: IdentityKind::Seeded,
                 guest: false,
                 store_root: *seed.as_bytes(),
+                tor_hs_seed: seed.derive_tor_hs(),
             })
         }
     }

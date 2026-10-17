@@ -32,6 +32,11 @@ pub enum TorError {
     #[error("client Tor non pret")]
     NotReady,
 
+    /// Lancement ou gestion du service `.onion` impossible (feature
+    /// `hs` absente, mode externe, keystore, lancement arti).
+    #[error("service .onion : {0}")]
+    OnionService(String),
+
     /// URL onion malformee ou scheme non supporte (v1 : `http://`
     /// seulement — pas de TLS sur un transport deja chiffre).
     #[error("URL onion invalide : {0}")]

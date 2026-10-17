@@ -61,6 +61,18 @@ pub struct TorGatewaySettings {
     pub rate_limit_per_circuit: u32,
 }
 
+/// Service `.onion` d'identite (ADR-0029 etape 122) — hebergement
+/// opt-in du service cache dont la cle est derivee de la graine
+/// (`onionbit/identity/tor-hs/v1`).
+#[derive(Debug, Clone, Default)]
+pub struct OnionServiceSettings {
+    /// Publie le service `.onion` d'identite quand la lane est
+    /// `Ready` — **`false` par defaut** : jamais de publication
+    /// sans geste explicite (regle ADR-0028 §8 : aucune adresse
+    /// affichee tant que rien n'est heberge).
+    pub enabled: bool,
+}
+
 /// Reglages complets de la connectivite Tor.
 #[derive(Debug, Clone)]
 pub struct TorSettings {
@@ -99,6 +111,8 @@ pub struct TorSettings {
     pub bridges: Vec<String>,
     /// Passerelle de sortie pour les pairs sans Tor.
     pub gateway: TorGatewaySettings,
+    /// Service `.onion` d'identite a heberger (ADR-0029).
+    pub onion_service: OnionServiceSettings,
 }
 
 impl Default for TorSettings {
@@ -120,6 +134,7 @@ impl Default for TorSettings {
                 enabled: false,
                 rate_limit_per_circuit: 10,
             },
+            onion_service: OnionServiceSettings::default(),
         }
     }
 }
