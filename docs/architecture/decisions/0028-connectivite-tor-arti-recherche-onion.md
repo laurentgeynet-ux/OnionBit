@@ -1,6 +1,11 @@
 # ADR-0028 — Connectivité Tor embarquée (arti) : recherche onion et sortie passerelle
 
-Statut : Proposée (2026-10-16), amendée après revues externes
+Statut : **Acceptée** (2026-10-17) — v1 livrée et validée sur
+réseau réel (`scripts/tor_search_bench.ps1` : bootstrap consensus,
+recherche 200, refus politique, passerelle absente) ; la
+passerelle `EXIT_TOR` (étape 117) reste **phase 2 reportée** et la
+phase 3 « côté service » (étape 119) relève de l'ADR-0029 —
+chacune sous son propre cycle. Amendée après revues externes
 (2026-10-16) — §1 parseur `httparse`, §5 trait
 `OnionSearchBackend` + erreurs explicites, §7 passerelle
 requalifiée phase 2 ; sauts passerelle couplés à `number_hops`
@@ -8,7 +13,8 @@ requalifiée phase 2 ; sauts passerelle couplés à `number_hops`
 §Trajectoire phase 3 ajoutée (identité/messagerie/canaux/
 coffre-fort côté service, avec corrections au modèle proposé) ;
 §8 UI v1 (HUD, diagnostic, réglages — messagerie différée à la
-phase 3 : aucun service caché hébergé avant).
+phase 3 : aucun service caché hébergé avant) ; ponts vanilla
+`tor.bridges` (§Sécurité, étape 116c).
 Plan d'implantation : `docs/plans/roadmap_adr0028.md`
 (étapes 112-119 ; 117 = phase 2, 119 = phase 3 exploration).
 

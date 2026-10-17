@@ -41,6 +41,43 @@ explicitly does not.
 - **Bridge link distribution** — a first `onionbit-bridge://` link must reach
   the censored user out-of-band; a leaked link can get that bridge blocked.
 
+## Embedded Tor lane (ADR-0028)
+
+OnionBit embeds an Arti/Tor client (`tor.enabled`, default on) used
+**only** for approved `.onion` metadata — search sources — and the
+reserved phase-3 services. It never carries OnionBit torrent traffic,
+and OnionBit tunnels never carry Tor: the two planes are disjoint by
+construction.
+
+- **ISP sees Tor usage**: the bootstrap downloads a consensus from
+  publicly listed directory authorities/guards — the *fact* of Tor use
+  is observable even though content is not. `tor.bridges` (unlisted
+  relays) defeats IP-blocklists of public guards but **not** DPI
+  fingerprinting of the Tor handshake — pluggable transports
+  (obfs4/Snowflake) are a separate, not-yet-built work item.
+- **Bridge-only intent is honored strictly**: with a non-empty
+  `tor.bridges`, bootstrap is bridges-only (`enabled: Explicit(true)`)
+  and fails hard rather than silently falling back to public guards.
+- **Search↔swarm correlation**: an observer watching both the onion
+  service and the OnionBit overlay could link a query to a swarm join by
+  timing/content. Mitigations: no auto-download from external results,
+  per-request bounded circuits, jitter on gateway paths. Assumed limit.
+- **Gateway trust (`EXIT_TOR`, phase 2 — not built)**: a peer without
+  Tor could exit through an OnionBit gateway's local Arti; that gateway
+  would see queries in the clear (honeypot risk), mitigated by the
+  requester-side `number_hops ≥ 3` constraint and explicit UI warning —
+  not eliminable.
+- **No clearnet egress**: every target — including every redirect hop —
+  must satisfy `TorTargetPolicy` (strict `.onion` allowlist) **before**
+  any connection; a dead onion means a typed error, never a direct
+  fallback. The fetcher is a minimal bounded GET client (no cookies, ≤
+  `max_response_bytes`, ≤ `max_redirects`).
+- **`state_dir/tor` sensitivity is low**: consensus, guard state,
+  keystore — no OnionBit identity material. Consistent with the
+  `state_dir` model.
+- **Query terms are never logged**; source identifiers appear in logs
+  and SSE (`remote_query_results`, `tor:<source>`) behind the API key.
+
 ## Private download area (ADR-0018)
 
 The portable bundle splits downloads into a **public** area

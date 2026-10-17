@@ -3,6 +3,31 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## ADR-0028 acceptée — banc Tor réel + correctif de persistence sparse (2026-10-17)
+
+L'ADR-0028 (connectivité Tor embarquée) passe en **Acceptée** : la v1
+est validée de bout en bout par `scripts/tor_search_bench.ps1` —
+daemon réel `--features tor`, consensus téléchargé (~40 s à froid),
+recherche `/api/search/external` 200 (50 résultats), refus politique
+`unknown_source` 400, passerelle `EXIT_TOR` confirmée absente (phase 2
+reportée).
+
+**Bug trouvé par le banc** : l'écriture *sparse* de
+`configuration.json` omet `mirrors`/`url_template` quand ils valent le
+défaut — au rechargement `serde(default)` les remplissait **vides** et
+le backend `tpb` était ignoré au premier redémarrage. Corrigé :
+`deserialize_backends` fusionne chaque entrée `backends.<id>` sur le
+défaut du backend du même id ; test `tor_backend_sparse_fusionne_sur_
+defaut` couvre les deux sens (champ absent → défaut, champ vide
+explicite → vide).
+
+Docs : `docs/THREAT-MODEL.md` gagne la section « Embedded Tor lane »
+(visibilité FAI, ponts vs DPI, corrélation recherche↔swarm, confiance
+passerelle, absence de sortie clearnet) et `docs/security/
+threat_model.md` la section « Lane Tor » ; `ecarts_fidelite.md`
+consigne les extensions hors fidélité (`EXIT_TOR`, `/api/search/
+external`, `/api/tor/*`, `tor.*`).
+
 ## Ponts Tor — anti-censure par IP des gardes publics (2026-10-17)
 
 Quand le FAI bloque les IP publiques des autorités d'annuaire et des

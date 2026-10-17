@@ -1301,11 +1301,42 @@ impl Default for TorBackendFileConfig {
     }
 }
 
+/// Désérialise `backends` en fusionnant chaque entrée sur le défaut
+/// du backend du même id : l'écriture sparse omet les champs égaux au
+/// défaut (`mirrors`, `url_template`, …) — sans cette fusion, un
+/// fichier `{"tpb": {"max_results": 50}}` rechargerait des miroirs
+/// vides et le backend serait ignoré au redémarrage. Un champ
+/// explicitement vide (`"mirrors": []`) reste vide.
+fn deserialize_backends<'de, D>(
+    d: D,
+) -> std::result::Result<BTreeMap<String, TorBackendFileConfig>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw = BTreeMap::<String, Value>::deserialize(d)?;
+    let defaults = TorSearchFileConfig::default().backends;
+    let mut out = BTreeMap::new();
+    for (id, patch) in raw {
+        let mut base = defaults
+            .get(&id)
+            .map(|b| serde_json::to_value(b).unwrap_or_default())
+            .unwrap_or_else(|| Value::Object(serde_json::Map::new()));
+        deep_merge(&mut base, &patch);
+        out.insert(
+            id,
+            TorBackendFileConfig::deserialize(base).map_err(serde::de::Error::custom)?,
+        );
+    }
+    Ok(out)
+}
+
 /// Section `tor/search` — registre des backends externes.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct TorSearchFileConfig {
-    /// Backends par identifiant (`tpb`, `ahmia`, …).
+    /// Backends par identifiant (`tpb`, `ahmia`, …). Chaque entrée
+    /// fusionne sur le défaut du même id — cf. `deserialize_backends`.
+    #[serde(deserialize_with = "deserialize_backends")]
     pub backends: BTreeMap<String, TorBackendFileConfig>,
     /// Clés inconnues — préservées.
     #[serde(flatten)]
@@ -2842,6 +2873,40 @@ mod tests {
         assert!(view.tor.enabled);
         assert_eq!(view.tor.mode, "external");
         assert_eq!(view.tor.external_socks5, "socks5h://127.0.0.1:9150");
+    }
+
+    /// Régression : l'écriture sparse omet `mirrors`/`url_template`
+    /// quand ils valent le défaut — le fichier persisté ne garde que
+    /// les écarts (`{"tpb": {"max_results": 50}}`). Au rechargement,
+    /// chaque entrée fusionne sur le défaut du même id : un backend
+    /// `tpb` sparse garde son miroir et son template intégrés.
+    #[test]
+    fn tor_backend_sparse_fusionne_sur_defaut() {
+        let mut cfg = DaemonConfig::default();
+        cfg.merge(&serde_json::json!({
+            "tor": { "search": { "backends": { "tpb": { "max_results": 50 } } } }
+        }))
+        .unwrap();
+        let core = cfg.to_core_config(Path::new("."));
+        let tpb = &core.tor.backends["tpb"];
+        assert_eq!(tpb.mirrors, vec![TPB.to_string()]);
+        assert_eq!(tpb.url_template, "http://{host}/q.php?q={q}");
+        assert_eq!(tpb.max_results, 50);
+        // Un champ explicitement vide reste vide (choix explicite) :
+        // `casse` sans miroir exploitable est rejeté.
+        let mut cfg2 = DaemonConfig::default();
+        cfg2.merge(&serde_json::json!({
+            "tor": { "search": { "backends": { "tpb": { "mirrors": [] } } } }
+        }))
+        .unwrap();
+        assert!(
+            !cfg2
+                .to_core_config(Path::new("."))
+                .tor
+                .backends
+                .contains_key("tpb"),
+            "miroirs explicitement vides = backend inutilisable"
+        );
     }
 
     /// `tray.default_ui` : defaut `"app"`, choix `"browser"` persiste,

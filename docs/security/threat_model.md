@@ -213,6 +213,40 @@ client en loopback via relais consignant PCAP, `stealth_bench`) :
 - **`at_rest` refuse aux ponts/passerelles** : un serveur doit
   redemarrer sans surveillance (fail-closed).
 
+## Lane Tor (ADR-0028, etapes 112-116c)
+
+Proprietes **demontrees** par `scripts/tor_search_bench.ps1` (daemon
+reel `--features tor`, consensus reel telecharge) et les tests unitaires
+`onionbit-tor` :
+
+- **Bootstrap reel** : `off -> bootstrapping -> ready` sur le consensus
+  public (~40 s a froid, immediat a chaud) ; `/api/tor/status` repond
+  pendant tout le bootstrap — jamais bloquant pour le daemon.
+- **Recherche 100 % onion** : `/api/search/external` sert les resultats
+  du backend TPB uniquement via des circuits de rendez-vous ; aucune
+  socket n'est ouverte hors `TorTargetPolicy` (epingle
+  `cible_hors_allowlist_refusee_avant_connexion` — la politique coupe
+  **avant** la moindre connexion, y compris sur chaque hop de
+  redirection).
+- **Pas de repli clearnet** : lane indisponible → 503 typee
+  (`tor_bootstrapping`/`bootstrap_failed`), jamais de fetch direct ;
+  miroir hors allowlist → `DeniedTarget`.
+- **Ponts stricts** : `tor.bridges` non vide → bootstrap ponts
+  uniquement ; aucune ligne valide → erreur nette, pas de repli
+  silencieux sur les gardes publics (`ponts_valides`,
+  `pont_pt_non_compile_rejete` — les transports `obfs4`/`snowflake`
+  exigent `pt-client`, non compile : lignes rejetees).
+- **Round-trip config** : l'ecriture sparse + fusion sur defaut par
+  backend preserve miroirs/templates (`tor_backend_sparse_fusionne_sur_
+  defaut`) — regression corrigee au banc.
+
+**Non demontre** : protection contre le DPI (les ponts vanilla ne
+masquent pas le handshake Tor), correlation recherche↔swarm
+(timing/contenu entre le service onion et l'overlay — mitigation
+jitter documentee, limite assumee ADR-0028 §7), confiance passerelle
+`EXIT_TOR` (phase 2 reportee — honeypot possible, contrainte
+`number_hops >= 3` cote demandeur).
+
 ## Ce qui n'est PAS demontre
 
 Les points suivants sont hors perimetre de preuve des bancs actuels.

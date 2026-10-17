@@ -61,3 +61,21 @@ indique la valeur Python de référence, la valeur Rust et le motif.
 - **Coût** : divergence d'etat observable — un lot mixte
   (bon+mauvais tracker) est partiellement integre chez nous, nul
   chez Tribler.
+
+## Extensions ADR-0028 — hors fidelite (surface propre a OnionBit)
+
+Les points suivants n'ont **pas d'equivalent Tribler** — ils sont
+documentes ici par transparence, pas comme ecarts :
+
+- **`PEER_FLAG_EXIT_TOR` (`1 << 16`, phase 2 reportee)** : marque un
+  noeud capable de servir de passerelle vers `.onion`. Tribler n'a
+  aucun flag equivalent ; un pair Tribler l'ignore silencieusement
+  (bits de flags inconnus toleres par le protocole).
+- **`GET /api/search/external` + `/api/tor/{status,probe}`** :
+  endpoints de la lane Tor embarquee (arti) — aucune contrepartie
+  REST dans Tribler ; ils n'apparaissent pas dans
+  `api_rest_mapping.md` par construction.
+- **`tor.*` dans `configuration.json`** (`enabled`, `mode`,
+  `allowed_hosts`, `bridges`, `search.backends`, `gateway`) :
+  section entierement nouvelle — Tribler n'a pas de connectivite
+  Tor integree.
