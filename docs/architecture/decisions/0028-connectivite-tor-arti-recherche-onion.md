@@ -100,7 +100,7 @@ La crate dépend de `onionbit-network-policy` (frontière §3) et
   "api_via_exit": false,
   "search": { "backends": {
       "tpb":    { "mirrors": ["<a>.onion", "…"],
-        "url_template": "http://{host}/search.php?q={q}",
+        "url_template": "http://{host}/q.php?q={q}",
         "max_results": 100 },
       "apibay": { "mirrors": ["apibay.org"],
         "url_template": "http://{host}/q.php?q={q}",
@@ -175,7 +175,8 @@ cibles `TorTargetPolicy`, et plus tard tout parsing de liens
     `tor.search.backends.<id>.mirrors` (adresses onion
     interchangeables) — les `.onion` changent ou tombent : le
     backend bascule sur le miroir suivant avant de rendre erreur ;
-  - scraping HTML → résultats normalisés
+  - extraction (JSON `q.php` — l'extraction HTML a vécu et est
+    morte avec la refonte TPB) → résultats normalisés
     `{name, infohash, size_bytes, seeds, leechers, category,
     source}` ;
   - validation stricte des résultats : infohash 40-hex ou btih
@@ -228,6 +229,16 @@ cibles `TorTargetPolicy`, et plus tard tout parsing de liens
   (`btih` + `dn`, l'API ne publie pas d'URI magnet), entités HTML
   des titres déséchappées, catégories numériques → familles TPB,
   sentinelle `id:"0"`/hash nul → `no_results`.
+- **Amendement 2026-10 — `tpb` = `q.php` sur l'onion** : le scraping
+  `search.php` est mort pour de bon — `search.php` ne sert plus que
+  la coquille JS (`print_search()`), mais l'hôte onion **proxifie
+  lui-même `q.php`** (son frontend appelle
+  `Get(server + '/q.php?…')`, vérifié en direct : 100 résultats
+  JSON). Le backend `tpb` réutilise donc le décodeur `apibay` sur
+  ses miroirs `.onion` — transport 100 % onion *et* fiabilité de
+  l'API, sans sortie clearnet ; `tpb.rs` (scraper HTML) est
+  supprimé. Un `url_template` persisté contenant `search.php` est
+  migré vers `q.php` au chargement de la config.
 
 ### 6. Interaction avec les profils d'anonymat (ADR-0022)
 

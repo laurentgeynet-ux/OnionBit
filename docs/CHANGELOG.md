@@ -3,6 +3,28 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Recherche `.onion` TPB — bascule sur l'API `q.php` (2026-10-17)
+
+Toute recherche `tpb` rendait *« Source indisponible — structure du site
+modifiée »* : le scraper lisait la table `#searchResult` de
+`search.php`, or le site ne sert plus que la coquille JS
+(`print_search()`). Diagnostic en direct via `onion_fetch_probe` :
+l'hôte onion **proxifie lui-même `q.php`** — l'API JSON que son
+frontend interroge (`Get(server + '/q.php?…')`, 100 résultats
+vérifiés).
+
+- **Backend `tpb`** : template par défaut `http://{host}/q.php?q={q}` ;
+  `build_backends` route `tpb` vers le décodeur JSON `apibay`
+  (transport 100 % onion, zéro exit clearnet — meilleur anonymat *et*
+  fiabilité). Le scraper HTML `tpb.rs` et ses fixtures sont supprimés.
+- **Migration config** : un `url_template` persisté contenant
+  `search.php` est réécrit en `q.php` au chargement (warn) — les
+  installs d'avant la refonte guérissent seules.
+- **Tests** : fixture réelle capturée sur l'onion
+  (`qphp_tpb_onion.json`), `tpb`/`apibay` partagent le decodeur
+  (`source` = id de config), round-trip de la migration.
+- ADR-0028 amendée (§5 — « `tpb` = `q.php` sur l'onion »).
+
 ## Suppression de la sonde de mise à jour — télémétrie sortante (2026-10-17)
 
 **Divergence assumée avec Tribler** : la vérification de version

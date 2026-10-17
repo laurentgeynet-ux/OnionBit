@@ -6,7 +6,8 @@
 //! [`OnionSearchBackend`], resultats normalises et registre par
 //! `source`.
 //!
-//! Le scraping est isole derriere le trait : chaque backend declare
+//! L'extraction (JSON `q.php` aujourd'hui) est isolee derriere le
+//! trait : chaque backend declare
 //! ses miroirs en config et bascule avant de rendre erreur. Le
 //! transport est injecte via [`OnionFetch`] — [`TorRuntime`] en
 //! production, un double en test : tout le module est testable sans
@@ -29,7 +30,6 @@ use crate::runtime::TorRuntime;
 use crate::settings::TorSettings;
 
 pub mod apibay;
-pub mod tpb;
 
 /// Borne interne du titre extrait — defensive, pas un reglage : la
 /// reponse est un contenu tiers non fiable.
@@ -150,14 +150,12 @@ pub fn build_backends(
     let mut out = BTreeMap::new();
     for (id, cfg) in &settings.backends {
         match id.as_str() {
-            "tpb" => {
-                out.insert(
-                    id.clone(),
-                    Arc::new(tpb::TpbBackend::new(id, cfg, fetcher.clone()))
-                        as Arc<dyn OnionSearchBackend>,
-                );
-            }
-            "apibay" => {
+            // `tpb` = l'API JSON `q.php` proxifiee par l'hote onion
+            // — le site ne sert plus de HTML de resultats (coquille
+            // JS, verifie 2026-10) ; le scraping `tpb.rs` est mort
+            // avec elle. Meme decodeur que `apibay`, transport
+            // 100 % onion (pas de sortie clearnet).
+            "tpb" | "apibay" => {
                 out.insert(
                     id.clone(),
                     Arc::new(apibay::ApibayBackend::new(id, cfg, fetcher.clone()))
@@ -171,4 +169,64 @@ pub fn build_backends(
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::settings::OnionBackendSettings;
+
+    /// Fetcher minimal : repond toujours le meme corps 200.
+    struct StubFetch(&'static str);
+
+    #[async_trait::async_trait]
+    impl OnionFetch for StubFetch {
+        async fn fetch(&self, _url: &str) -> Result<OnionResponse> {
+            Ok(OnionResponse {
+                status: 200,
+                headers: Vec::new(),
+                body: self.0.as_bytes().to_vec(),
+            })
+        }
+    }
+
+    fn settings_with(id: &str) -> TorSettings {
+        let mut s = TorSettings::default();
+        s.backends.insert(
+            id.to_string(),
+            OnionBackendSettings {
+                mirrors: vec!["m.onion".to_string()],
+                url_template: "http://{host}/q.php?q={q}".to_string(),
+                max_results: 10,
+            },
+        );
+        s
+    }
+
+    /// `tpb` et `apibay` partagent le decodeur `q.php` : le scraping
+    /// HTML TPB n'existe plus (coquille JS, refonte verifiee 2026-10).
+    /// La source remontee reste l'id de config — l'UI badge `TPB`.
+    #[tokio::test]
+    async fn tpb_decode_json_qphp() {
+        for id in ["tpb", "apibay"] {
+            let backends = build_backends(
+                &settings_with(id),
+                Arc::new(StubFetch(
+                    r#"[{"id":"1","name":"T","info_hash":"2c6b6858d61da9543d4231a71db4b1c9264b0685","seeders":"5","leechers":"1","size":"42","category":"207"}]"#,
+                )),
+            );
+            let out = backends[id].search("x").await.unwrap();
+            assert_eq!(out.len(), 1);
+            assert_eq!(out[0].source, id);
+            assert_eq!(out[0].infohash, "2c6b6858d61da9543d4231a71db4b1c9264b0685");
+        }
+    }
+
+    /// Un id inconnu est ignore (warn) — la config file peut
+    /// decrire un backend disparu.
+    #[test]
+    fn id_inconnu_ignore() {
+        let backends = build_backends(&settings_with("zombie"), Arc::new(StubFetch("[]")));
+        assert!(backends.is_empty());
+    }
 }

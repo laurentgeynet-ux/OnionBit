@@ -34,7 +34,7 @@ pub struct OnionBackendSettings {
     /// implicitement allowlistes (inclus dans `target_policy`).
     pub mirrors: Vec<String>,
     /// Template d'URL de recherche (`{host}` et `{q}` substitues —
-    /// ex. `"http://{host}/search.php?q={q}"`).
+    /// ex. `"http://{host}/q.php?q={q}"`).
     pub url_template: String,
     /// Borne de resultats remontes par recherche — une page hostile
     /// ne doit pas gonfler l'UI (`tor.search.backends.<id>.max_results`).

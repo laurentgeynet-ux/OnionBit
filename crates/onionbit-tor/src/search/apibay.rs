@@ -3,13 +3,18 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! Backend `apibay` — l'API JSON officielle de The Pirate Bay
-//! (`q.php?q=…`), joignable en clearnet **via un exit Tor**
-//! (`tor.api_via_exit`, ADR-0028 §5 — opt-in : le noeud de sortie
-//! voit la requete, anonymat degrade par rapport au fetch 100 %
-//! onion).
+//! (`q.php?q=…`). Elle sert deux sources :
+//!
+//! - `apibay` : `apibay.org` en clearnet **via un exit Tor**
+//!   (`tor.api_via_exit`, ADR-0028 §5 — opt-in : le noeud de sortie
+//!   voit la requete, anonymat degrade par rapport au fetch 100 %
+//!   onion) ;
+//! - `tpb` : la meme API proxifiee par l'hote `.onion` TPB
+//!   (son propre frontend appelle `Get(server + '/q.php…')`,
+//!   verifie 2026-10) — transport 100 % onion, aucune sortie.
 //!
 //! Le site TPB ne sert plus de markup statique (coquille JS) :
-//! `apibay.org` est le service que son propre frontend interroge —
+//! `q.php` est le service que son propre frontend interroge —
 //! source plus stable et non ambigue (pas de scraping). Format de
 //! chaque ligne : `{"id","name","info_hash","seeders","leechers",
 //! "size","category",…}` — chaines ou nombres toleres par champ.
@@ -546,6 +551,34 @@ mod tests {
             }
             assert_eq!(urls.lock().unwrap_or_else(|e| e.into_inner()).len(), 1);
         }
+    }
+
+    /// Fixture reellement servie par l'onion TPB
+    /// (`q.php?q=french`, capturee 2026-10 via `onion_fetch_probe`)
+    /// — le meme decodeur sert le backend `tpb` (100 % onion).
+    #[tokio::test]
+    async fn reponse_onion_tpb_reelle_decodee() {
+        const BODY: &str = include_str!("../../tests/fixtures/qphp_tpb_onion.json");
+        let stub = StubFetch::new(vec![Ok(page(200, BODY))]);
+        let b = ApibayBackend::new(
+            "tpb",
+            &OnionBackendSettings {
+                mirrors: vec!["un-onion-v3.onion".into()],
+                url_template: "http://{host}/q.php?q={q}".into(),
+                max_results: 100,
+            },
+            stub,
+        );
+        let out = b.search("french").await.unwrap();
+        assert_eq!(out.len(), 10);
+        assert!(out
+            .iter()
+            .all(|r| r.infohash.len() == 40 && r.source == "tpb" && !r.name.is_empty()));
+        assert_eq!(
+            out[0].name,
+            "Anatomy Of A Fall (2023) FRENCH.ENSUB 720p WEBRip-WORLD"
+        );
+        assert_eq!(out[0].category, "Video");
     }
 
     #[tokio::test]

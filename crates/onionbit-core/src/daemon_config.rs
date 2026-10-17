@@ -1279,11 +1279,17 @@ pub struct TorSearchFileConfig {
 impl Default for TorSearchFileConfig {
     fn default() -> Self {
         let mut backends = BTreeMap::new();
+        // TPB ne sert plus de HTML de resultats (le site est une
+        // coquille JS depuis sa refonte) — `search.php` rend une
+        // page sans table de resultats. L'API JSON `q.php` est
+        // proxifiee par l'hote onion lui-meme (son frontend
+        // l'appelle via `Get(server + '/q.php…')`, verifie
+        // 2026-10) : le backend `tpb` la consomme comme `apibay`.
         backends.insert(
             "tpb".to_string(),
             TorBackendFileConfig {
                 mirrors: vec![DEFAULT_TPB_ONION.to_string()],
-                url_template: "http://{host}/search.php?q={q}".to_string(),
+                url_template: "http://{host}/q.php?q={q}".to_string(),
                 ..TorBackendFileConfig::default()
             },
         );
@@ -2285,10 +2291,23 @@ impl DaemonConfig {
             }
         }
         for (id, b) in &t.search.backends {
+            // Migration (refonte TPB 2026) : `search.php` ne sert
+            // plus que la coquille JS — les resultats viennent de
+            // l'API `q.php` proxifiee par l'hote onion. Un template
+            // persiste d'avant le bascule est migre en place.
+            let url_template = if b.url_template.contains("search.php") {
+                tracing::warn!(
+                    backend = %id,
+                    "tor : template search.php obsolete — migre vers q.php"
+                );
+                b.url_template.replace("search.php", "q.php")
+            } else {
+                b.url_template.clone()
+            };
             let mirrors = usable.get(id).cloned().unwrap_or_default();
             if mirrors.is_empty()
-                || !b.url_template.contains("{host}")
-                || !b.url_template.contains("{q}")
+                || !url_template.contains("{host}")
+                || !url_template.contains("{q}")
             {
                 tracing::warn!(
                     backend = %id,
@@ -2300,7 +2319,7 @@ impl DaemonConfig {
                 id.clone(),
                 OnionBackendSettings {
                     mirrors,
-                    url_template: b.url_template.clone(),
+                    url_template,
                     max_results: b.max_results.max(1) as usize,
                 },
             );
@@ -2778,6 +2797,12 @@ mod tests {
         // Backend sans miroir rejete.
         assert!(core.tor.backends.contains_key("tpb"));
         assert!(!core.tor.backends.contains_key("casse"));
+        // `search.php` (coquille JS, HTML de resultats mort) est
+        // migre vers l'API `q.php` au chargement.
+        assert_eq!(
+            core.tor.backends["tpb"].url_template,
+            "http://{host}/q.php?q={q}"
+        );
 
         // apply_runtime_view : le reflet GET /api/settings.
         let mut view = DaemonConfig::default();

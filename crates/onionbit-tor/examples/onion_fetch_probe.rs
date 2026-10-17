@@ -10,7 +10,7 @@
 //!
 //! Usage : `cargo run -p onionbit-tor --features tor --example
 //! onion_fetch_probe -- <state_dir> <host.onion> <path> <out.html>`
-//! Ex. : `… onionbit-tor-e2e piratebay….onion /search.php?q=test tpb.html`
+//! Ex. : `… onionbit-tor-e2e piratebay….onion /q.php?q=test tpb.json`
 
 #[cfg(feature = "tor")]
 fn main() {
