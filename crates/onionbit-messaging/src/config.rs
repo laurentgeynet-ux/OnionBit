@@ -107,6 +107,12 @@ pub struct MessagingConfig {
     /// Cadence du `MAILBOX_PULL` sur nos boites (avec jitter
     /// implicite — la tache applique un dephasage aleatoire).
     pub offline_poll_interval: Duration,
+    /// Borne temporelle des echanges de lien `.onion` (ADR-0029
+    /// etape 124) : ecriture du preambule cote appelant, lecture
+    /// du preambule cote service — un pair muet ne doit pas
+    /// immobiliser une tache indefiniment. Les trames elles-memes
+    /// restent sans deadline (lien longue duree).
+    pub onion_io_timeout: Duration,
 }
 
 impl Default for MessagingConfig {
@@ -142,6 +148,7 @@ impl Default for MessagingConfig {
             upload_ttl: Duration::from_secs(86400),
             deliver_offline: true,
             offline_poll_interval: Duration::from_secs(120),
+            onion_io_timeout: Duration::from_secs(30),
         }
     }
 }

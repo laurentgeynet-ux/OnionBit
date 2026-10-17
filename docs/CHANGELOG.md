@@ -3,6 +3,47 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## ADR-0029 étape 124 : messagerie `.onion` (2026-10-17)
+
+Les contacts munis d'une association `.onion` explicite (étape 123)
+sont joignables **par Tor** pour la messagerie — même protocole
+applicatif que les circuits e2e, autre câble, jamais de traduction
+entre plans :
+
+- **Filaire** : `onionbit-messaging::onion_link` — préambule
+  `OBMS ‖ version ‖ pk_bin` (l'identité y est *suggérée* pour la
+  dérivation de clés ; la signature Ed25519 des trames reste la
+  preuve) puis trames `Frame::seal` inchangées préfixées `u32` BE,
+  bornées `max_frame_len` (allocation après borne — jamais sur la
+  longueur déclarée). Port virtuel `ONION_MSG_PORT = 17713`.
+- **Service** : `onionbit-tor::service` accepte les `RendRequest`
+  et route chaque `StreamRequest` par port `BEGIN` vers le
+  `OnionLinkHandler` souscrit — port inconnu ou requête non-`BEGIN`
+  → `DONE` (rejet standard, indiscernable d'un service ordinaire).
+  `TorRuntime::connect_onion`/`OnionIo` publics, `peer_policy`
+  appliquée à la composition.
+- **Core** : `LinkTransport::Circuit|Onion` dans les liaisons ;
+  clés applicatives `derive_messaging_keys` sur le DH statique
+  `crypt_pk × crypt_sk` (même base que `obox` — pas de clé de
+  transport circuit sur Tor). `send()` : circuit lié → `.onion`
+  associé → boîte aux lettres → `failed` ; le composeur
+  `OnionDialer` est injecté par la session (runtime **courant**
+  relu à chaque appel — hot-swap sain) et le handler installé sur
+  le service d'identité au lancement et aux swaps.
+- **Plans consignés** : colonne `msg_messages.plane`
+  (`ipv8`/`onion`/`mailbox`, migration v26) exposée sur les DTO
+  d'historique et les événements SSE `Bound`/`Frame` — les badges
+  de l'étape 125 ont leurs données temps réel.
+- **Cycle de vie** : teardown par transport — délier un lien
+  `.onion` ferme son flux sans toucher les circuits tunnel (et
+  réciproquement) ; le repli boîte aux lettres, le consentement
+  (`hello` → `pending`), l'anti-replay et la dédup restent
+  identiques sur les deux plans.
+- **Tests** : 4 scénarios loopback daemon↔daemon (duplex) —
+  livraison+ACK, repli mailbox, usurpation de `pk_bin` rejetée par
+  la signature, teardown isolé — + 4 tests codec (préambule,
+  bornes, troncation).
+
 ## ADR-0030 Proposée — navigateur `.onion` DilloRust via proxy Tor loopback (2026-10-17)
 
 Phase 21 cadrée : intégrer le port Rust de Dillo (dépôt externe

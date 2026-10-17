@@ -334,6 +334,7 @@ pub async fn get_messages(
                 "body": String::from_utf8_lossy(&m.body),
                 "status": m.status,
                 "created_at": m.created_at,
+                "plane": m.plane,
             })
         })
         .collect();
@@ -501,6 +502,7 @@ fn event_to_sse(ev: &MessagingEvent) -> Option<(String, serde_json::Value)> {
             kind,
             id,
             body,
+            plane,
         } => (
             "messaging_frame",
             serde_json::json!({
@@ -508,14 +510,16 @@ fn event_to_sse(ev: &MessagingEvent) -> Option<(String, serde_json::Value)> {
                 "kind": format!("{kind:?}").to_lowercase(),
                 "id": hexs(id),
                 "body": String::from_utf8_lossy(body),
+                "plane": plane,
             }),
         ),
         MessagingEvent::Bound {
             contact,
             circuit_id,
+            plane,
         } => (
             "messaging_bound",
-            serde_json::json!({"contact": hexs(contact), "circuit_id": circuit_id}),
+            serde_json::json!({"contact": hexs(contact), "circuit_id": circuit_id, "plane": plane}),
         ),
         MessagingEvent::Pending { circuit_id } => (
             "messaging_pending",
@@ -654,6 +658,7 @@ fn conv_json_conv(conv: &[u8; 16], m: &onionbit_db::messaging::MsgMessageRow) ->
         "body": String::from_utf8_lossy(&m.body),
         "status": m.status,
         "created_at": m.created_at,
+        "plane": m.plane,
         "author_pk": m.author_pk.as_ref().map(|p| hexs(p)),
         "mid": m.mid.as_ref().map(|p| hexs(p)),
     })

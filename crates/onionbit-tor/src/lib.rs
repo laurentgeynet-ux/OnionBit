@@ -42,6 +42,10 @@ pub mod settings;
 
 pub use error::{ExternalSearchError, Result, TorError};
 pub use http::OnionResponse;
+#[cfg(feature = "tor")]
+pub use runtime::OnionIo;
+#[cfg(feature = "hs")]
+pub use runtime::OnionLinkHandler;
 pub use runtime::{OnionServiceInfo, TorRuntime, TorState};
 pub use search::{build_backends, ExternalResult, OnionFetch, OnionSearchBackend};
 pub use settings::{

@@ -510,6 +510,16 @@ CREATE TABLE peer_onions (
 );
 CREATE INDEX idx_peer_onions_host ON peer_onions(onion_host);
 ",
+    // v26 : plan de transport de chaque message (ADR-0029 etape
+    // 124 — « etats d'envoi par plan » + pastille par message,
+    // arbitrage Q3) : `ipv8` circuit e2e, `onion` lien `.onion`,
+    // `mailbox` depot boite aux lettres ADR-0026. Defaut `ipv8`
+    // pour les lignes anterieures (toutes emises/reçues par
+    // circuit avant cette migration).
+    "
+ALTER TABLE msg_messages ADD COLUMN plane TEXT NOT NULL DEFAULT 'ipv8'
+    CHECK (plane IN ('ipv8','onion','mailbox'));
+",
 ];
 
 /// Applique les migrations en attente sur une connexion ouverte.

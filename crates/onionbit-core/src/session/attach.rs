@@ -101,8 +101,10 @@ pub struct AttachAccept {
 
 impl CoreSession {
     /// Service messagerie courant (`None` si desactive ou stack non
-    /// prete — aucune piece jointe possible alors).
-    fn messaging(&self) -> Option<Arc<MessagingService>> {
+    /// prete — aucune piece jointe possible alors). `pub(crate)` :
+    /// le module `session` parent le reutilise pour le branchement
+    /// des liens `.onion` (etape 124).
+    pub(crate) fn messaging(&self) -> Option<Arc<MessagingService>> {
         self.inner.ipv8_stack().and_then(|s| s.messaging.clone())
     }
 

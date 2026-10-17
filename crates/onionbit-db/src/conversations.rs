@@ -603,6 +603,7 @@ mod tests {
                     conv_id: conv.clone(),
                     author_pk: Some(pk.clone()),
                     mid: Some(vec![3u8; 16]),
+                    plane: "ipv8".into(),
                 },
             )?;
             let list = list_conversations(c)?;

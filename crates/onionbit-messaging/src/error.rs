@@ -43,4 +43,8 @@ pub enum MessagingError {
     /// `id` de trame deja vu (dedup).
     #[error("identifiant de trame duplique")]
     DuplicateId,
+    /// Erreur I/O du lien `.onion` (ADR-0029 — le flux TCP/Tor a
+    /// ferme ou refuse une ecriture).
+    #[error("lien .onion : {0}")]
+    LinkIo(String),
 }

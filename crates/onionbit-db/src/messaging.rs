@@ -76,6 +76,10 @@ pub struct MsgMessageRow {
     /// `mid` applicatif (16 o) — dedup des messages de groupe
     /// `(conv, author, mid)` ; `None` pour le 1:1.
     pub mid: Option<Vec<u8>>,
+    /// Plan de transport (ADR-0029 etape 124) : `"ipv8"` circuit
+    /// e2e, `"onion"` lien `.onion`, `"mailbox"` depot boite aux
+    /// lettres — expose pour la pastille de plan des DTO/UI.
+    pub plane: String,
 }
 
 /// Insere ou met a jour l'etat d'un contact (creation conservee).
@@ -239,8 +243,8 @@ pub fn insert_message(conn: &Connection, row: &MsgMessageRow) -> Result<bool> {
     let n = conn.execute(
         "INSERT OR IGNORE INTO msg_messages
              (id, contact_pk, direction, seq, ts, body, status,
-              created_at, conv_id, author_pk, mid)
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
+              created_at, conv_id, author_pk, mid, plane)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
         params![
             row.id,
             row.contact_pk,
@@ -253,6 +257,7 @@ pub fn insert_message(conn: &Connection, row: &MsgMessageRow) -> Result<bool> {
             row.conv_id,
             row.author_pk,
             row.mid,
+            row.plane,
         ],
     )?;
     Ok(n > 0)
@@ -272,7 +277,7 @@ pub fn has_group_mid(conn: &Connection, conv_id: &[u8], author: &[u8], mid: &[u8
 }
 
 const MSG_COLS: &str = "id, contact_pk, direction, seq, ts, body, status,
-                        created_at, conv_id, author_pk, mid";
+                        created_at, conv_id, author_pk, mid, plane";
 
 /// Messages d'un contact, du plus recent au plus ancien (`limit`
 /// borne la lecture — l'historique n'est jamais charge en entier).
@@ -384,6 +389,7 @@ fn row_to_message(r: &rusqlite::Row) -> rusqlite::Result<MsgMessageRow> {
         conv_id: r.get::<_, Option<Vec<u8>>>(8)?.unwrap_or_default(),
         author_pk: r.get(9)?,
         mid: r.get(10)?,
+        plane: r.get(11)?,
     })
 }
 
@@ -419,6 +425,7 @@ mod tests {
             conv_id: Vec::new(),
             author_pk: None,
             mid: None,
+            plane: "ipv8".into(),
         }
     }
 

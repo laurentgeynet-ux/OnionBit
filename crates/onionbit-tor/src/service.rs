@@ -12,10 +12,13 @@
 //!   l'adresse `.onion` est stable entre redemarrages.
 //! - Le slot garde `RunningOnionService` + taches vivants ; son
 //!   drop arrete la publication.
-//! - Les rendez-vous entrants (`RendRequest`) sont consommes sans
-//!   etre acceptes pour l'instant — la messagerie les servira a
-//!   l'etape 124. Le service publie son descripteur et remonte son
-//!   etat sans servir aucune connexion.
+//! - Les rendez-vous entrants (`RendRequest`) sont acceptes circuit
+//!   par circuit ; chaque `StreamRequest` est routee par son port
+//!   virtuel `BEGIN` vers le handler souscrit
+//!   (`Inner.link_handlers` — messagerie etape 124, catalogue 126,
+//!   coffre 127). Port non souscrit = rejet `DONE` conforme au
+//!   comportement d'un service Tor standard ; aucun listener TCP
+//!   local n'est ouvert (zero surface loopback).
 
 use std::sync::{Arc, Mutex};
 
@@ -122,11 +125,59 @@ pub(crate) fn launch(inner: &Arc<Inner>, hs_seed: [u8; 32]) -> Result<()> {
         .map(|a| a.display_unredacted().to_string());
     let state: ServiceState = Arc::new(Mutex::new("bootstrapping"));
 
-    // Consomme les rendez-vous sans les accepter (etape 122 — la
-    // messagerie servira les connexions a l'etape 124).
+    // Rendez-vous entrants : accepte chaque circuit puis route
+    // chaque stream par port virtuel `BEGIN` vers le handler
+    // souscrit (ADR-0029 etape 124). Port non souscrit = `DONE` —
+    // le rejet standard d'un service Tor ne distingue pas OnionBit
+    // d'un service ordinaire (empreinte, req.rs §accept).
+    let drain_inner = inner.clone();
     let drain = tokio::spawn(async move {
         use futures_util::StreamExt;
-        while rend.next().await.is_some() {}
+        while let Some(rend) = rend.next().await {
+            let inner = drain_inner.clone();
+            tokio::spawn(async move {
+                let Ok(mut reqs) = rend.accept().await else {
+                    return;
+                };
+                while let Some(sreq) = reqs.next().await {
+                    let port = match sreq.request() {
+                        tor_proto::stream::IncomingStreamRequest::Begin(b) => b.port(),
+                        _ => {
+                            let _ = sreq
+                                .reject(tor_cell::relaycell::msg::End::new_with_reason(
+                                    tor_cell::relaycell::msg::EndReason::DONE,
+                                ))
+                                .await;
+                            continue;
+                        }
+                    };
+                    let handler = inner
+                        .link_handlers
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .get(&port)
+                        .cloned();
+                    match handler {
+                        Some(h) => match sreq
+                            .accept(tor_cell::relaycell::msg::Connected::new_empty())
+                            .await
+                        {
+                            Ok(ds) => h.on_stream(Box::new(ds)),
+                            Err(e) => {
+                                tracing::debug!(error = %e, "stream .onion : accept impossible")
+                            }
+                        },
+                        None => {
+                            let _ = sreq
+                                .reject(tor_cell::relaycell::msg::End::new_with_reason(
+                                    tor_cell::relaycell::msg::EndReason::DONE,
+                                ))
+                                .await;
+                        }
+                    }
+                }
+            });
+        }
     });
 
     // Suivi d'etat → expose a l'API.

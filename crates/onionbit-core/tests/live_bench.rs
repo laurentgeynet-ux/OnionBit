@@ -2896,6 +2896,7 @@ async fn messaging_attach_zone_privee_bornee() {
                     conv_id: conv.clone(),
                     author_pk: None,
                     mid: None,
+                    plane: "ipv8".into(),
                 },
             )?;
             onionbit_db::conversations::insert_attachment(

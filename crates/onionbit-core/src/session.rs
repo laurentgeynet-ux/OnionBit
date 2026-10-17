@@ -648,6 +648,9 @@ impl CoreSession {
         // ADR-0029 etape 123 : les `.onion` associes aux pairs
         // re-alimentent l'allowlist etendue du runtime courant.
         self.reseed_peer_onions();
+        // ADR-0029 etape 124 : plan Tor de la messagerie —
+        // composeur sortant + handler entrant sur le service.
+        self.wire_onion_links();
         Ok(())
     }
 
@@ -2341,6 +2344,8 @@ impl CoreSession {
     pub fn swap_tor_runtime(&self, runtime: onionbit_tor::TorRuntime) {
         *self.inner.tor.write().unwrap_or_else(|e| e.into_inner()) = runtime;
         self.reseed_peer_onions();
+        // Le handler des liens messagerie vit par runtime.
+        self.wire_onion_links();
     }
 
     /// Permute runtime Tor **et** backends de recherche en un coup —
@@ -2361,6 +2366,8 @@ impl CoreSession {
             .unwrap_or_else(|e| e.into_inner()) = backends;
         // Les `.onion` des pairs migrent vers le nouveau runtime.
         self.reseed_peer_onions();
+        // Le handler des liens messagerie vit par runtime.
+        self.wire_onion_links();
         // Le nouveau runtime bootstrappe de zero : le service
         // `.onion` d'identite republie dessus des que `Ready`
         // (meme cle derivee → meme adresse). `Handle::try_current`
@@ -2480,14 +2487,7 @@ impl CoreSession {
         self.tor()
             .allow_peer_onion(addr.host())
             .map_err(|e| CoreError::State(format!("allowlist pair .onion : {e}")))?;
-        if let Some(m) = self
-            .inner
-            .ipv8
-            .read()
-            .unwrap_or_else(|e| e.into_inner())
-            .as_ref()
-            .and_then(|s| s.messaging.clone())
-        {
+        if let Some(m) = self.messaging() {
             m.notify_peer_onion(pk, Some(addr.host().to_string()));
         }
         Ok(row)
@@ -2508,14 +2508,7 @@ impl CoreSession {
             return Ok(false);
         };
         self.tor().revoke_peer_onion(&row.onion_host);
-        if let Some(m) = self
-            .inner
-            .ipv8
-            .read()
-            .unwrap_or_else(|e| e.into_inner())
-            .as_ref()
-            .and_then(|s| s.messaging.clone())
-        {
+        if let Some(m) = self.messaging() {
             m.notify_peer_onion(pk, None);
         }
         Ok(true)
@@ -2534,6 +2527,31 @@ impl CoreSession {
         self.db()
             .with(onionbit_db::peer_onion::list_peer_onions)
             .unwrap_or_default()
+    }
+
+    /// ADR-0029 etape 124 : branche le plan Tor de la messagerie —
+    /// composeur de liens sortants (allowlist `peer_policy` au
+    /// `connect_onion`, resolu sur le runtime **courant** a chaque
+    /// appel — survit au hot-swap) et handler des streams entrants
+    /// sur le port virtuel messagerie du service `.onion`. Idem-
+    /// potent : un service absent ou une lane coupee ne font que
+    /// laisser `send()` replier sur boite aux lettres/`failed`.
+    fn wire_onion_links(&self) {
+        #[cfg(any(feature = "tor", feature = "hs"))]
+        {
+            let Some(svc) = self.messaging() else {
+                return;
+            };
+            #[cfg(feature = "tor")]
+            svc.set_onion_dialer(Arc::new(SessionTorDialer {
+                inner: self.inner.clone(),
+            }));
+            #[cfg(feature = "hs")]
+            self.tor().set_onion_link_handler(
+                onionbit_messaging::ONION_MSG_PORT,
+                Arc::new(MessagingOnionLink { svc }),
+            );
+        }
     }
 
     /// Re-alimente l'allowlist etendue du runtime Tor **courant**
@@ -5974,6 +5992,54 @@ fn engine_config_effective(config: &CoreConfig) -> EngineConfig {
         }
     }
     e
+}
+
+/// Composeur de liens `.onion` sortants injecte dans la messagerie
+/// (ADR-0029 etape 124) — resout le `TorRuntime` **courant** a
+/// chaque appel (`inner.tor` relu — le hot-swap ne laisse pas un
+/// handle perime) ; `peer_policy` est appliquee dans
+/// `TorRuntime::connect_onion`.
+#[cfg(feature = "tor")]
+struct SessionTorDialer {
+    inner: Arc<Inner>,
+}
+
+#[cfg(feature = "tor")]
+impl crate::services::messaging::OnionDialer for SessionTorDialer {
+    fn dial_onion<'a>(
+        &'a self,
+        host: &'a str,
+        port: u16,
+    ) -> crate::services::messaging::OnionDialFuture<'a> {
+        Box::pin(async move {
+            let rt = self
+                .inner
+                .tor
+                .read()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone();
+            let stream = rt
+                .connect_onion(host, port)
+                .await
+                .map_err(|e| CoreError::State(format!("connexion .onion : {e}")))?;
+            Ok(Box::new(stream) as Box<dyn crate::services::messaging::OnionLinkIo>)
+        })
+    }
+}
+
+/// Handler des streams entrants sur le port virtuel messagerie du
+/// service `.onion` d'identite (ADR-0029 etape 124) — delegue au
+/// `MessagingService` (preambule → cles DH → tache de lien).
+#[cfg(feature = "hs")]
+struct MessagingOnionLink {
+    svc: Arc<crate::services::messaging::MessagingService>,
+}
+
+#[cfg(feature = "hs")]
+impl onionbit_tor::OnionLinkHandler for MessagingOnionLink {
+    fn on_stream(&self, stream: Box<dyn onionbit_tor::OnionIo>) {
+        self.svc.on_onion_stream(Box::new(stream));
+    }
 }
 
 /// `true` si la session tourne en stealth sans droit de sortie

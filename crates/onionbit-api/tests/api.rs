@@ -5761,7 +5761,16 @@ async fn search_external_ne_journalise_pas_la_requete() {
 /// (etat != `Off`) ; la desactivation tue la lane (etat `Off`).
 #[tokio::test]
 async fn settings_tor_hot_swap_sans_redemarrage() {
-    let srv = spawn_server().await;
+    // `daemon_config` coherent avec la session offline (Tor coupe) :
+    // depuis que `tor.enabled` vaut `true` par defaut, un merge
+    // `enabled:true` sur la config usine serait un no-op — aucun
+    // swap ne partirait.
+    let srv = spawn_server_with(|s| {
+        let mut cfg = onionbit_core::DaemonConfig::default();
+        cfg.tor.enabled = false;
+        AppState::new(s).with_daemon_config(cfg, None)
+    })
+    .await;
     assert_eq!(srv.session.tor().state(), onionbit_tor::TorState::Off);
     assert!(!srv.session.tor().settings().enabled);
 

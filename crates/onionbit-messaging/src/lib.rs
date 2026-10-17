@@ -39,6 +39,7 @@ pub mod hash;
 pub mod hello;
 pub mod keys;
 pub mod obox;
+pub mod onion_link;
 pub mod replay;
 
 pub use attach::{AttachDesc, IH_LEN, MID_LEN};
@@ -50,4 +51,5 @@ pub use gctl::{Gctl, RosterEntry, PK_LEN};
 pub use hash::messaging_hash;
 pub use hello::{decode_hello, encode_hello_v1, encode_hello_v2, HELLO_CAP_GROUPS};
 pub use keys::{derive_messaging_keys, MessagingKeys, HKDF_INFO_MESSAGING};
+pub use onion_link::{ONION_MSG_PORT, PK_BIN_LEN, PREAMBLE_LEN};
 pub use replay::RecvWindow;

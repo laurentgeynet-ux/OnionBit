@@ -20,11 +20,11 @@
 
 use std::collections::{HashMap, HashSet};
 use std::net::{Ipv4Addr, SocketAddrV4};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use onionbit_crypto::ipv8::dh::{pair_open_in, pair_seal_in};
+use onionbit_crypto::ipv8::dh::{crypto_box_beforenm, pair_open_in, pair_seal_in};
 use onionbit_crypto::ipv8::keys::{LibNaClPublicKey, LibNaClSecretKey};
 use onionbit_db::conversations as dbc;
 use onionbit_db::messaging as dbm;
@@ -35,8 +35,8 @@ use onionbit_messaging::{
     attach::AttachDesc,
     conv, derive_messaging_keys,
     gctl::{Gctl, RosterEntry},
-    gmsg, hello, messaging_hash, preflight, Frame, MessagingConfig, MessagingError, MessagingKeys,
-    MsgKind, RawFrame, RecvWindow,
+    gmsg, hello, messaging_hash, onion_link, preflight, Frame, MessagingConfig, MessagingError,
+    MessagingKeys, MsgKind, RawFrame, RecvWindow, ONION_MSG_PORT,
 };
 use onionbit_tunnel::community::TunnelCommunity;
 use onionbit_tunnel::routing::IntroductionPoint;
@@ -162,6 +162,9 @@ pub enum MessagingEvent {
         id: [u8; 16],
         /// Corps applicatif en clair.
         body: Vec<u8>,
+        /// Plan de transport de la livraison (`"ipv8"`, `"onion"`
+        /// ou `"mailbox"` — ADR-0029) — pastille temps reel.
+        plane: String,
     },
     /// Circuit e2e lie a un contact connu (initiateur, ou repondant
     /// resolu par une premiere trame verifiee).
@@ -170,6 +173,9 @@ pub enum MessagingEvent {
         contact: Vec<u8>,
         /// `circuit_id` lie.
         circuit_id: u32,
+        /// Plan de transport lie : `"ipv8"` (circuit e2e) ou
+        /// `"onion"` (lien `.onion`, ADR-0029) — pastille de plan.
+        plane: String,
     },
     /// Circuit repondant lie (`RP_SEEDER`) — l'expediteur n'est pas
     /// encore identifie ; il le sera a la premiere trame verifiee.
@@ -447,6 +453,31 @@ impl Contact {
     }
 }
 
+/// Transport d'une liaison vers un contact (ADR-0029 etape 124) —
+/// le fil de conversation unifie agrege les deux plans sans jamais
+/// traduire l'un vers l'autre : le transport est choisi a la
+/// liaison, consigne par message (`plane`) et revoque avec elle.
+#[derive(Clone)]
+enum LinkTransport {
+    /// Circuit e2e IPv8/tunnel multi-sauts (plan OnionBit).
+    Circuit,
+    /// Lien `.onion` : la file alimente la tache d'ecriture du
+    /// flux rendez-vous — drop de l'emetteur = fin de lien (la
+    /// tache proprietaire du flux s'arrete, le stream se ferme).
+    Onion(tokio::sync::mpsc::UnboundedSender<Vec<u8>>),
+}
+
+impl LinkTransport {
+    /// Libelle `plane` consigne sur les messages du lien
+    /// (colonne `msg_messages.plane`, badge UI de l'arbitrage Q3).
+    fn plane(&self) -> &'static str {
+        match self {
+            LinkTransport::Circuit => "ipv8",
+            LinkTransport::Onion(_) => "onion",
+        }
+    }
+}
+
 /// Liaison d'un circuit e2e a la messagerie.
 struct CircuitBinding {
     /// Cles applicatives HKDF de cette liaison (`send`/`recv` selon
@@ -456,7 +487,33 @@ struct CircuitBinding {
     /// liaison (le swarm cible porte `messaging_hash(pk)`), le
     /// repondant l'apprend a la premiere trame verifiee.
     contact: Option<Vec<u8>>,
+    /// Cable sous-jacent de la liaison.
+    transport: LinkTransport,
 }
+
+/// Flux byte d'un lien `.onion` (DataStream arti, SOCKS5 externe,
+/// ou duplex de test) — le service ne connait que l'interface.
+pub trait OnionLinkIo: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send {}
+impl<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send> OnionLinkIo for T {}
+
+/// Future retourne par [`OnionDialer::dial_onion`].
+pub type OnionDialFuture<'a> =
+    std::pin::Pin<Box<dyn std::future::Future<Output = Result<Box<dyn OnionLinkIo>>> + Send + 'a>>;
+
+/// Composeur de liaisons `.onion` sortantes (ADR-0029 etape 124) —
+/// injecte par `CoreSession` : resout le `TorRuntime` **courant**
+/// a chaque appel (survit au hot-swap) et applique l'allowlist
+/// pairs (association explicite, jamais inferée). Sans lui,
+/// `send` ignore le plan Tor et retombe sur la boite aux lettres.
+pub trait OnionDialer: Send + Sync {
+    /// Etablit le flux vers `(host, port)` du `.onion` du pair —
+    /// `Err` = indisponible (Tor off, pair hors ligne, politique).
+    fn dial_onion<'a>(&'a self, host: &'a str, port: u16) -> OnionDialFuture<'a>;
+}
+
+/// Base des identifiants de liens `.onion` — espace disjoint des
+/// `circuit_id` du tunnel (bit de poids fort, rotation sur 31 bits).
+const ONION_LINK_BASE: u32 = 1 << 31;
 
 /// Transport du store-and-forward (ADR-0026) — adapte par
 /// `ipv8_stack` sur la communaute ext (`MAILBOX_PUT`/`PULL`
@@ -513,6 +570,14 @@ pub struct MessagingService {
     /// les reponses `MAILBOX_RESP` reviennent par
     /// [`Self::ingest_offline`].
     offline: Mutex<Option<Arc<dyn OfflineTransport>>>,
+    /// Composeur de liens `.onion` sortants (ADR-0029 etape 124) —
+    /// injecte par `CoreSession` quand la lane Tor existe ; `None`
+    /// = plan Tor indisponible (send retombe sur mailbox/failed).
+    onion_dialer: Mutex<Option<Arc<dyn OnionDialer>>>,
+    /// Compteur des identifiants de liens `.onion` (rotation 31
+    /// bits sous [`ONION_LINK_BASE`] — disjoint des `circuit_id`
+    /// du tunnel).
+    onion_link_next: AtomicU32,
     /// Arrets des taches du service.
     stops: Mutex<Vec<watch::Sender<bool>>>,
 }
@@ -557,6 +622,8 @@ impl MessagingService {
             events_tx,
             trust_lookup: Mutex::new(None),
             offline: Mutex::new(None),
+            onion_dialer: Mutex::new(None),
+            onion_link_next: AtomicU32::new(0),
             stops: Mutex::new(Vec::new()),
         });
         svc.load_state();
@@ -571,6 +638,14 @@ impl MessagingService {
     /// historique).
     pub fn set_offline_transport(&self, t: Arc<dyn OfflineTransport>) {
         *self.offline.lock().unwrap_or_else(|e| e.into_inner()) = Some(t);
+    }
+
+    /// Injecte le composeur de liaisons `.onion` (ADR-0029 etape
+    /// 124) — appele par `CoreSession` quand la lane Tor est
+    /// disponible : `send` tente alors le plan Tor a l'envoi pour
+    /// les contacts dotes d'une association `.onion` explicite.
+    pub fn set_onion_dialer(&self, d: Arc<dyn OnionDialer>) {
+        *self.onion_dialer.lock().unwrap_or_else(|e| e.into_inner()) = Some(d);
     }
 
     /// Depot boite aux lettres d'un `send` sans circuit (ADR-0026) :
@@ -600,7 +675,7 @@ impl MessagingService {
         let blob = onionbit_messaging::obox::seal(&frame, &self.key, &pk, &self.cfg)
             .map_err(|e| CoreError::State(format!("obox : {e}")))?;
         t.put(contact_pk, &blob);
-        self.persist_message(Self::msg_row(
+        let mut row = Self::msg_row(
             contact_pk,
             "out",
             frame.seq,
@@ -608,7 +683,9 @@ impl MessagingService {
             &frame.body,
             "sent",
             &frame.id,
-        ));
+        );
+        row.plane = "mailbox".into();
+        self.persist_message(row);
         self.persist_seqs(contact_pk);
         Ok(Some(frame.id))
     }
@@ -654,7 +731,7 @@ impl MessagingService {
             self.stats.replay.fetch_add(1, Ordering::Relaxed);
             return;
         }
-        let row = Self::msg_row(
+        let mut row = Self::msg_row(
             &pk_bin,
             "in",
             frame.seq,
@@ -663,12 +740,14 @@ impl MessagingService {
             "received",
             &frame.id,
         );
+        row.plane = "mailbox".into();
         self.persist_message(row);
         let _ = self.events_tx.send(MessagingEvent::Frame {
             contact: pk_bin,
             kind: frame.kind,
             id: frame.id,
             body: frame.body,
+            plane: "mailbox".into(),
         });
     }
 
@@ -1060,14 +1139,32 @@ impl MessagingService {
     /// Exige un contact `Active` — sur un contact `pending`, il
     /// faut d'abord [`Self::accept_contact`] (le refus et le blocage
     /// sont `refuse_contact`/`block_contact`).
-    pub async fn send(&self, contact_pk: &[u8], body: Vec<u8>) -> Result<[u8; 16]> {
+    ///
+    /// Plan de transport (ADR-0029 etape 124, Q2) : circuit e2e lie
+    /// s'il existe ; sinon le `.onion` associe explicitement au
+    /// contact est tente **a l'envoi** (jamais de polling de
+    /// presence — un pair hors ligne coute un rendez-vous, rien de
+    /// plus) ; echec → repli boite aux lettres (ADR-0026) puis
+    /// `failed`. Jamais de relais entre plans.
+    pub async fn send(self: &Arc<Self>, contact_pk: &[u8], body: Vec<u8>) -> Result<[u8; 16]> {
         self.require_state(contact_pk, ContactState::Active)?;
         if self.peer_scope(contact_pk) == ContactScope::Group {
             return Err(CoreError::InvalidState(
                 "messagerie : pair confine a un groupe",
             ));
         }
-        let Some(cid) = self.contact_circuit(contact_pk) else {
+        let mut cid = self.contact_circuit(contact_pk);
+        if cid.is_none() {
+            if let Some(host) = self.peer_onion(contact_pk).map(|r| r.onion_host) {
+                match self.connect_onion_link(contact_pk, &host).await {
+                    Ok(vid) => cid = Some(vid),
+                    Err(e) => {
+                        tracing::debug!(error = %e, "lien .onion : rendez-vous impossible — repli")
+                    }
+                }
+            }
+        }
+        let Some(cid) = cid else {
             // ADR-0026 : store-and-forward — la trame offline e2e
             // (`obox`) part sur les ponts `CAP_PULL_STORE` quand un
             // transport est injecte ; statut `sent` (la livraison
@@ -1140,6 +1237,7 @@ impl MessagingService {
         let _ = self.events_tx.send(MessagingEvent::Bound {
             contact: contact_pk.to_vec(),
             circuit_id: cid.unwrap_or_default(),
+            plane: self.link_plane(cid.unwrap_or_default()).into(),
         });
         Ok(())
     }
@@ -1179,8 +1277,7 @@ impl MessagingService {
             .unwrap_or_else(|e| e.into_inner())
             .remove(&mh);
         if let Some(cid) = self.contact_circuit(contact_pk) {
-            self.unbind_circuit(cid);
-            self.tunnel.remove_circuit(cid, "contact bloque").await;
+            self.teardown_link(cid, "contact bloque").await;
         }
         Ok(())
     }
@@ -1609,6 +1706,9 @@ impl MessagingService {
             conv_id: Vec::new(),
             author_pk: None,
             mid: None,
+            // Surcharge par l'appelant selon le lien (`mailbox`,
+            // `onion`) — defaut : le plan historique.
+            plane: "ipv8".into(),
         }
     }
 
@@ -1663,15 +1763,14 @@ impl MessagingService {
                 .unwrap_or_else(|e| e.into_inner())
                 .remove(&mh);
             if let Some(cid) = c.circuit {
-                self.unbind_circuit(cid);
-                self.tunnel.remove_circuit(cid, "contact supprime").await;
+                self.teardown_link(cid, "contact supprime").await;
             }
         }
     }
 
     /// Purge les `pending` expires (`pending_ttl`) — appele au tick
     /// du moniteur et avant chaque admission.
-    fn purge_expired_pending(&self) {
+    fn purge_expired_pending(self: &Arc<Self>) {
         let now = now_secs();
         let ttl = self.cfg.pending_ttl.as_secs();
         let expired: Vec<(Vec<u8>, Option<u32>)> = {
@@ -1697,10 +1796,9 @@ impl MessagingService {
         }
         for (_, cid) in expired {
             if let Some(cid) = cid {
-                self.unbind_circuit(cid);
-                let t = self.tunnel.clone();
+                let svc = self.clone();
                 tokio::spawn(async move {
-                    t.remove_circuit(cid, "pending expire").await;
+                    svc.teardown_link(cid, "pending expire").await;
                 });
             }
         }
@@ -1776,6 +1874,30 @@ impl MessagingService {
     }
 
     /// Scelle et emet une trame sur le circuit du contact.
+    /// Emet une trame filaire sur la liaison `cid` selon son
+    /// transport : circuit e2e → `tunnel.send_data`, lien `.onion`
+    /// → file vers la tache proprietaire du flux. `Err` si la
+    /// liaison a disparu ou le cable est mort — l'appelant delie.
+    async fn wire_send(&self, cid: u32, wire: &[u8]) -> Result<()> {
+        let transport = self
+            .circuits
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&cid)
+            .map(|b| b.transport.clone());
+        match transport {
+            Some(LinkTransport::Circuit) => self
+                .tunnel
+                .send_data(cid, &unspecified(), &unspecified(), wire)
+                .await
+                .map_err(|e| CoreError::State(format!("send_data messagerie: {e}"))),
+            Some(LinkTransport::Onion(tx)) => tx
+                .send(wire.to_vec())
+                .map_err(|_| CoreError::State("lien .onion : flux clos".into())),
+            None => Err(CoreError::InvalidState("messagerie : liaison disparue")),
+        }
+    }
+
     async fn send_frame(
         &self,
         contact_pk: &[u8],
@@ -1783,7 +1905,7 @@ impl MessagingService {
         kind: MsgKind,
         body: Vec<u8>,
     ) -> Result<[u8; 16]> {
-        let (send_key, seq) = {
+        let (send_key, seq, plane) = {
             let circuits = self.circuits.lock().unwrap_or_else(|e| e.into_inner());
             let mut contacts = self.contacts.lock().unwrap_or_else(|e| e.into_inner());
             let (Some(binding), Some(contact)) = (circuits.get(&cid), contacts.get_mut(contact_pk))
@@ -1792,14 +1914,14 @@ impl MessagingService {
             };
             let seq = contact.send_seq;
             contact.send_seq += 1;
-            (binding.keys.send, seq)
+            (binding.keys.send, seq, binding.transport.plane())
         };
         let frame = Frame::new(kind, seq, now_secs(), body);
         let wire = frame
             .seal(&self.key, &send_key, &self.cfg)
             .map_err(|e| CoreError::State(format!("seal trame: {e}")))?;
         if kind == MsgKind::Msg {
-            self.persist_message(Self::msg_row(
+            let mut row = Self::msg_row(
                 contact_pk,
                 "out",
                 seq,
@@ -1807,14 +1929,12 @@ impl MessagingService {
                 &frame.body,
                 "sent",
                 &frame.id,
-            ));
+            );
+            row.plane = plane.into();
+            self.persist_message(row);
         }
         self.persist_seqs(contact_pk);
-        if let Err(e) = self
-            .tunnel
-            .send_data(cid, &unspecified(), &unspecified(), &wire)
-            .await
-        {
+        if let Err(e) = self.wire_send(cid, &wire).await {
             // Le circuit est mort entre-temps : delier pour que le
             // prochain envoi retente une liaison ; le message passe
             // `failed` (visible — pas de file).
@@ -1826,7 +1946,7 @@ impl MessagingService {
                 });
             }
             self.unbind_circuit(cid);
-            return Err(CoreError::State(format!("send_data messagerie: {e}")));
+            return Err(e);
         }
         if kind == MsgKind::Hello {
             if let Some(c) = self
@@ -1873,18 +1993,14 @@ impl MessagingService {
             .seal(&self.key, &send_key, &self.cfg)
             .map_err(|e| CoreError::State(format!("seal trame: {e}")))?;
         self.persist_seqs(contact_pk);
-        if let Err(e) = self
-            .tunnel
-            .send_data(cid, &unspecified(), &unspecified(), &wire)
-            .await
-        {
+        if let Err(e) = self.wire_send(cid, &wire).await {
             self.set_msg_status(&frame.id, "failed");
             let _ = self.events_tx.send(MessagingEvent::Undeliverable {
                 contact: contact_pk.to_vec(),
                 id: frame.id,
             });
             self.unbind_circuit(cid);
-            return Err(CoreError::State(format!("send_data messagerie: {e}")));
+            return Err(e);
         }
         Ok(())
     }
@@ -2015,6 +2131,7 @@ impl MessagingService {
                 CircuitBinding {
                     keys: keys.clone(),
                     contact: contact.clone(),
+                    transport: LinkTransport::Circuit,
                 },
             );
         match contact {
@@ -2031,6 +2148,7 @@ impl MessagingService {
                 let _ = self.events_tx.send(MessagingEvent::Bound {
                     contact: pk_bin,
                     circuit_id: cid,
+                    plane: "ipv8".into(),
                 });
             }
             None => {
@@ -2093,6 +2211,214 @@ impl MessagingService {
         if let Some(pk_bin) = detached {
             self.emit_link(&pk_bin);
         }
+    }
+
+    /// Libelle `plane` du lien `cid` (`"ipv8"` si absent ou
+    /// circuit — defaut conservateur pour les evenements).
+    fn link_plane(&self, cid: u32) -> &'static str {
+        self.circuits
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&cid)
+            .map(|b| b.transport.plane())
+            .unwrap_or("ipv8")
+    }
+
+    /// `true` si la liaison `cid` est un circuit du tunnel (vs un
+    /// lien `.onion` — espace d'identifiants disjoint mais meme
+    /// table `circuits`).
+    fn link_is_circuit(&self, cid: u32) -> bool {
+        matches!(
+            self.circuits
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .get(&cid),
+            Some(b) if matches!(b.transport, LinkTransport::Circuit)
+        )
+    }
+
+    /// Delie **et** detruit le lien `cid` : circuit tunnel →
+    /// `remove_circuit` ; lien `.onion` → la deliaison seule tue la
+    /// tache proprietaire du flux (emetteur drope → `select` sort
+    /// → stream rendez-vous ferme, FIN des deux cotes).
+    async fn teardown_link(&self, cid: u32, reason: &'static str) {
+        let was_circuit = self.link_is_circuit(cid);
+        self.unbind_circuit(cid);
+        if was_circuit {
+            self.tunnel.remove_circuit(cid, reason).await;
+        }
+    }
+
+    // ── ADR-0029 etape 124 : liens messagerie sur `.onion` ─────
+    //
+    // Meme protocole applicatif que les circuits e2e (memes trames
+    // signees+chiffrees, meme consentement, meme anti-replay) —
+    // seuls le cable et la derivation de cle changent : le secret
+    // partage est le DH **statique** `crypt_pk x crypt_sk` des deux
+    // identites (comme `obox`), puisque le lien rendez-vous ne
+    // passe pas par le handshake `link-e2e`. Le preambule en clair
+    // declare `pk_bin` pour cette derivation ; l'identite reste
+    // prouvee par les signatures de trames, pas par le preambule.
+
+    /// Identifiant de lien `.onion` neuf — espace disjoint des
+    /// `circuit_id` tunnel (bit 31 pose, rotation sur 31 bits).
+    fn alloc_onion_link(&self) -> u32 {
+        ONION_LINK_BASE | (self.onion_link_next.fetch_add(1, Ordering::Relaxed) & !ONION_LINK_BASE)
+    }
+
+    /// Liaison `.onion` sortante vers `host` (composeur injecte par
+    /// la session — `peer_policy` appliquee a l'interieur). Ecrit
+    /// le preambule puis lie le contact : nos trames partent
+    /// signees+chiffrees sous `send` (`initiator`). `Err` = Tor
+    /// indisponible, pair non approuve ou hors ligne — l'appelant
+    /// replie sur boite aux lettres/`failed`.
+    async fn connect_onion_link(self: &Arc<Self>, contact_pk: &[u8], host: &str) -> Result<u32> {
+        let Some(dialer) = self
+            .onion_dialer
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+        else {
+            return Err(CoreError::InvalidState(
+                "lien .onion : pas de transport Tor",
+            ));
+        };
+        let peer = LibNaClPublicKey::from_bin(contact_pk)
+            .map_err(|_| CoreError::InvalidState("cle de contact invalide"))?;
+        let mut stream = dialer
+            .dial_onion(host, ONION_MSG_PORT)
+            .await
+            .map_err(|e| CoreError::State(format!("lien .onion : {e}")))?;
+        tokio::time::timeout(
+            self.cfg.onion_io_timeout,
+            onion_link::write_preamble(&mut stream, &self.key.public_key().to_bin()),
+        )
+        .await
+        .map_err(|_| CoreError::State("lien .onion : preambule expire".into()))?
+        .map_err(|e| CoreError::State(format!("lien .onion : preambule : {e}")))?;
+        let shared = crypto_box_beforenm(&peer.crypt_pk, &self.key.crypt_x25519().to_bytes())
+            .map_err(|e| CoreError::State(format!("lien .onion : DH : {e}")))?;
+        let keys = derive_messaging_keys(&shared, true)
+            .map_err(|e| CoreError::State(format!("lien .onion : cles : {e}")))?;
+        Ok(self.bind_onion_link(stream, Some(contact_pk.to_vec()), keys))
+    }
+
+    /// Flux accepte sur le service `.onion` d'identite (appele par
+    /// le handler du runtime Tor — un flux par `StreamRequest` du
+    /// port messagerie). Lit le preambule, derive les cles
+    /// `responder`, puis laisse la tache de lien aux trames : le
+    /// consentement (`hello` → `pending`) est celui des circuits.
+    pub fn on_onion_stream(self: &Arc<Self>, stream: Box<dyn OnionLinkIo>) {
+        let svc = self.clone();
+        tokio::spawn(async move {
+            let mut stream = stream;
+            let Ok(pk_bin) = onion_link::read_preamble(&mut stream, svc.cfg.onion_io_timeout).await
+            else {
+                return;
+            };
+            let Ok(peer) = LibNaClPublicKey::from_bin(&pk_bin) else {
+                return;
+            };
+            let Ok(shared) =
+                crypto_box_beforenm(&peer.crypt_pk, &svc.key.crypt_x25519().to_bytes())
+            else {
+                return;
+            };
+            let Ok(keys) = derive_messaging_keys(&shared, false) else {
+                return;
+            };
+            svc.bind_onion_link(stream, None, keys);
+        });
+    }
+
+    /// Pose la liaison `.onion` (binding + evenement) puis lance la
+    /// tache proprietaire du flux. `contact` = `Some` en sortie (on
+    /// sait a qui l'on parle), `None` en entree — l'emetteur sera
+    /// identifie par la premiere trame verifiee (`identify`,
+    /// signature-gated comme sur circuit).
+    fn bind_onion_link(
+        self: &Arc<Self>,
+        stream: Box<dyn OnionLinkIo>,
+        contact: Option<Vec<u8>>,
+        keys: MessagingKeys,
+    ) -> u32 {
+        let cid = self.alloc_onion_link();
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        self.circuits
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(
+                cid,
+                CircuitBinding {
+                    keys: keys.clone(),
+                    contact: contact.clone(),
+                    transport: LinkTransport::Onion(tx),
+                },
+            );
+        match &contact {
+            Some(pk_bin) => {
+                if let Some(c) = self
+                    .contacts
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .get_mut(pk_bin)
+                {
+                    c.circuit = Some(cid);
+                    c.link_failed = false;
+                    c.greeted = false;
+                }
+                let _ = self.events_tx.send(MessagingEvent::Bound {
+                    contact: pk_bin.clone(),
+                    circuit_id: cid,
+                    plane: "onion".into(),
+                });
+            }
+            None => {
+                let _ = self
+                    .events_tx
+                    .send(MessagingEvent::Pending { circuit_id: cid });
+            }
+        }
+        let svc = self.clone();
+        tokio::spawn(async move {
+            svc.onion_link_task(cid, keys, stream, rx).await;
+        });
+        cid
+    }
+
+    /// Tache proprietaire d'un lien `.onion` : un `select` — sortie
+    /// = file des trames a ecrire (prefixe-longueur), entree =
+    /// trames lues vers `handle_incoming` (le chemin de verification
+    /// des circuits, inchange). Sortie sur flux ferme, canal droppe
+    /// (unbind) ou trame inextractible — `unbind_circuit` fait le
+    /// menage de liaison.
+    async fn onion_link_task(
+        self: &Arc<Self>,
+        cid: u32,
+        keys: MessagingKeys,
+        mut stream: Box<dyn OnionLinkIo>,
+        mut rx: tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>,
+    ) {
+        loop {
+            tokio::select! {
+                biased;
+                out = rx.recv() => match out {
+                    Some(wire) => {
+                        if onion_link::write_frame(&mut stream, &wire).await.is_err() {
+                            break;
+                        }
+                    }
+                    None => break,
+                },
+                incoming = onion_link::read_frame(&mut stream, self.cfg.max_frame_len) => {
+                    match incoming {
+                        Ok(Some(data)) => self.handle_incoming(cid, &keys, &data),
+                        _ => break,
+                    }
+                },
+            }
+        }
+        self.unbind_circuit(cid);
     }
 
     /// Codec + identification + verification + consentement +
@@ -2314,6 +2640,7 @@ impl MessagingService {
                     let mut row = Self::msg_row(
                         &pk_bin, "in", raw.seq, raw.ts, &raw.body, "received", &raw.id,
                     );
+                    row.plane = self.link_plane(cid).into();
                     if let Some(c) = raw.conv {
                         row.conv_id = c.to_vec();
                     }
@@ -2362,6 +2689,7 @@ impl MessagingService {
                 kind: raw.kind,
                 id: raw.id,
                 body: raw.body,
+                plane: self.link_plane(cid).into(),
             });
         }
     }
@@ -2371,15 +2699,21 @@ impl MessagingService {
     /// `blocked` detruit le circuit, inconnu entre en `pending`
     /// borne (sinon drop), `Active`/`Pending` se lient. Retourne
     /// `true` si la trame peut poursuivre vers la livraison.
-    fn admit_inbound(&self, cid: u32, pk_bin: &[u8], keys: &MessagingKeys) -> bool {
+    fn admit_inbound(self: &Arc<Self>, cid: u32, pk_bin: &[u8], keys: &MessagingKeys) -> bool {
         match self.contact_state(pk_bin) {
             Some(ContactState::Blocked) => {
                 self.stats.blocked.fetch_add(1, Ordering::Relaxed);
+                // Circuit tunnel → destruction explicite ; lien
+                // `.onion` → l'unbind seul tue la tache du flux
+                // (emetteur drope → select sort → stream ferme).
+                let was_circuit = self.link_is_circuit(cid);
                 self.unbind_circuit(cid);
-                let t = self.tunnel.clone();
-                tokio::spawn(async move {
-                    t.remove_circuit(cid, "contact bloque").await;
-                });
+                if was_circuit {
+                    let t = self.tunnel.clone();
+                    tokio::spawn(async move {
+                        t.remove_circuit(cid, "contact bloque").await;
+                    });
+                }
                 false
             }
             Some(ContactState::Pending) | Some(ContactState::Active) => {
@@ -2532,6 +2866,11 @@ impl MessagingService {
 
     /// Pose/met a jour la liaison du circuit (creee si absente —
     /// `unbind_circuit` a pu la retirer apres une erreur d'emission).
+    /// Le `or_insert` conserve le transport circuit : sur un lien
+    /// `.onion` la liaison est toujours posee a l'acceptation
+    /// (`bind_onion_link`) avant toute trame — `and_modify` couvre
+    /// le cas reel ; un lien disparu entre-temps retombe sur le
+    /// defaut `Circuit`, dont l'emission echoue et delie aussitot.
     fn bind_circuit(&self, cid: u32, pk_bin: &[u8], keys: &MessagingKeys) {
         self.circuits
             .lock()
@@ -2541,6 +2880,7 @@ impl MessagingService {
             .or_insert_with(|| CircuitBinding {
                 keys: keys.clone(),
                 contact: Some(pk_bin.to_vec()),
+                transport: LinkTransport::Circuit,
             });
     }
 
@@ -2632,6 +2972,7 @@ impl MessagingService {
                 row.conv_id = conv.to_vec();
                 row.author_pk = Some(sender.to_vec());
                 row.mid = Some(mid.to_vec());
+                row.plane = self.link_plane(cid).into();
                 self.persist_message(row);
                 ack(self.clone(), sender.to_vec());
                 let _ = self.events_tx.send(MessagingEvent::Conv {
@@ -3174,13 +3515,9 @@ impl MessagingService {
             .seal(&self.key, &send_key, &self.cfg)
             .map_err(|e| CoreError::State(format!("seal trame v2: {e}")))?;
         self.persist_seqs(pk_bin);
-        if let Err(e) = self
-            .tunnel
-            .send_data(cid, &unspecified(), &unspecified(), &wire)
-            .await
-        {
+        if let Err(e) = self.wire_send(cid, &wire).await {
             self.unbind_circuit(cid);
-            return Err(CoreError::State(format!("send_data messagerie: {e}")));
+            return Err(e);
         }
         if kind == MsgKind::Hello {
             if let Some(c) = self
@@ -3724,6 +4061,7 @@ mod tests {
                 CircuitBinding {
                     keys: keys.clone(),
                     contact: None,
+                    transport: LinkTransport::Circuit,
                 },
             );
     }
@@ -3751,6 +4089,7 @@ mod tests {
                 CircuitBinding {
                     keys: keys.clone(),
                     contact: Some(pk_bin.clone()),
+                    transport: LinkTransport::Circuit,
                 },
             );
         let mut c = Contact::active(peer.public_key(), &svc.cfg);
@@ -3801,6 +4140,7 @@ mod tests {
                 CircuitBinding {
                     keys: keys.clone(),
                     contact: Some(pk_bin.clone()),
+                    transport: LinkTransport::Circuit,
                 },
             );
         svc.contacts
@@ -3910,6 +4250,7 @@ mod tests {
                 CircuitBinding {
                     keys: keys.clone(),
                     contact: None,
+                    transport: LinkTransport::Circuit,
                 },
             );
         let hello = Frame::new(MsgKind::Hello, 0, 1, peer.public_key().to_bin())
@@ -3935,6 +4276,7 @@ mod tests {
                 CircuitBinding {
                     keys: keys.clone(),
                     contact: None,
+                    transport: LinkTransport::Circuit,
                 },
             );
         let forged = Frame::new(MsgKind::Hello, 0, 1, peer.public_key().to_bin())
@@ -4901,6 +5243,7 @@ mod tests {
                 CircuitBinding {
                     keys: keys.clone(),
                     contact: Some(pk_bin.clone()),
+                    transport: LinkTransport::Circuit,
                 },
             );
         let mut c = Contact::group_scoped(peer.public_key(), &svc.cfg);
@@ -5400,5 +5743,311 @@ mod tests {
             .unwrap_or_else(|e| e.into_inner())
             .insert(pk.clone(), Contact::active(peer.public_key(), &svc.cfg));
         assert!(svc.send(&pk, b"perdu".to_vec()).await.is_err());
+    }
+
+    // -- ADR-0029 etape 124 : liens messagerie sur `.onion` ---------
+    //
+    // Banc « daemon ↔ daemon » sans Tor : un duplex tokio tient lieu
+    // de `DataStream` arti — le service ne connait que `OnionLinkIo`,
+    // le chemin filaire (preambule → cles DH → trames prefixees) est
+    // donc exerce a l'identique. Le rejet de port virtuel invalide
+    // est couvert par construction dans `onionbit-tor::service`
+    // (`DONE` systematique hors ports souscrits).
+
+    /// Composeur de banc : chaque `dial_onion` ouvre un duplex et
+    /// offre l'autre extremite au service `peer` (`on_onion_stream`)
+    /// — simulation fidele d'un rendez-vous `.onion` sortant.
+    struct LoopbackDialer {
+        peer: Arc<MessagingService>,
+    }
+
+    impl OnionDialer for LoopbackDialer {
+        fn dial_onion<'a>(&'a self, _host: &'a str, port: u16) -> OnionDialFuture<'a> {
+            Box::pin(async move {
+                assert_eq!(port, ONION_MSG_PORT);
+                let (ours, theirs) = tokio::io::duplex(64 * 1024);
+                self.peer.on_onion_stream(Box::new(theirs));
+                Ok(Box::new(ours) as Box<dyn OnionLinkIo>)
+            })
+        }
+    }
+
+    /// Composeur qui echoue toujours — pair `.onion` injoignable ;
+    /// le repli boite aux lettres/`failed` doit prendre le relais.
+    struct FailingDialer;
+
+    impl OnionDialer for FailingDialer {
+        fn dial_onion<'a>(&'a self, _host: &'a str, _port: u16) -> OnionDialFuture<'a> {
+            Box::pin(async { Err(CoreError::State("pair .onion injoignable".into())) })
+        }
+    }
+
+    /// Contact `Active` insere **et persiste** (la FK
+    /// `msg_messages.contact_pk` exige la ligne).
+    fn active_contact(svc: &MessagingService, peer: &LibNaClSecretKey) -> Vec<u8> {
+        let pk_bin = peer.public_key().to_bin();
+        svc.contacts
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(pk_bin.clone(), Contact::active(peer.public_key(), &svc.cfg));
+        svc.persist_contact(&pk_bin, ContactState::Active);
+        pk_bin
+    }
+
+    /// Association `.onion` explicite du pair dans la base du banc
+    /// (forme canonique — jamais inferree).
+    fn associe_onion(db: &Database, pk_bin: &[u8], host: &str) {
+        db.with(|c| {
+            dbpo::set_peer_onion(
+                c,
+                &dbpo::PeerOnionRow {
+                    public_key: pk_bin.to_vec(),
+                    onion_host: host.into(),
+                    bind_sig: None,
+                    sig_checked: false,
+                    created_at: 1,
+                    updated_at: 1,
+                },
+            )
+        })
+        .unwrap();
+    }
+
+    /// Rendez-vous `.onion` entre deux daemons (duplex loopback) :
+    /// `send` compose le lien sur l'association explicite, `hello`
+    /// puis `msg` traversent, le repondant lie par la signature —
+    /// pastille `"onion"` des deux cotes, ACK sur le meme lien et
+    /// statut `acked` en historique. Le teardown par `block_contact`
+    /// ne touche que le lien `.onion` (le circuit d'un autre
+    /// contact survit — plans independants).
+    #[tokio::test]
+    async fn lien_onion_loopback_livre_acquitte_et_teardown_isole() {
+        let db_a = Arc::new(Database::memory().unwrap());
+        let svc_a = make_service_db(db_a.clone()).await;
+        let svc_b = make_service_db(Arc::new(Database::memory().unwrap())).await;
+        let pk_a = svc_a.key.public_key().to_bin();
+        let pk_b = svc_b.key.public_key().to_bin();
+        active_contact(&svc_a, &svc_b.key);
+        active_contact(&svc_b, &svc_a.key);
+        associe_onion(
+            &db_a,
+            &pk_b,
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.onion",
+        );
+        svc_a.set_onion_dialer(Arc::new(LoopbackDialer {
+            peer: svc_b.clone(),
+        }));
+        let mut ev_a = svc_a.subscribe();
+        let mut ev_b = svc_b.subscribe();
+
+        let id = svc_a
+            .send(&pk_b, b"via le rendez-vous".to_vec())
+            .await
+            .unwrap();
+
+        // A : `Bound` sur le plan onion — B : la liaison se pose
+        // silencieusement a la signature du `hello` (le repondant
+        // n'a jamais eu d'evenement `Bound`, sur circuit non plus)
+        // puis `Frame` est livree avec la pastille onion.
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        let mut bound_a = false;
+        let mut frame_b = None;
+        while !(bound_a && frame_b.is_some()) {
+            let rest = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if rest.is_zero() {
+                break;
+            }
+            tokio::select! {
+                ev = ev_a.recv() => if let Ok(MessagingEvent::Bound { plane, .. }) = ev {
+                    bound_a |= plane == "onion";
+                },
+                ev = ev_b.recv() => if let Ok(MessagingEvent::Frame { contact, body, plane, .. }) = ev {
+                    assert_eq!(plane, "onion");
+                    frame_b = Some((contact, body));
+                },
+                _ = tokio::time::sleep(rest) => break,
+            }
+        }
+        assert!(bound_a, "liaison onion de l'initiateur signalee");
+        let (contact, body) = frame_b.expect("la trame traverse le lien onion");
+        assert_eq!(contact, pk_a);
+        assert_eq!(body, b"via le rendez-vous");
+        // Le lien lie cote B vit dans l'espace d'identifiants
+        // `.onion` (bit 31 — disjoint des `circuit_id` tunnel).
+        let cid_b = svc_b.contact_circuit(&pk_a).expect("lien lie cote B");
+        assert_ne!(
+            cid_b & ONION_LINK_BASE,
+            0,
+            "identifiant de lien .onion attendu cote repondant"
+        );
+
+        // Plan consigne des deux cotes ; l'ACK revient par le meme
+        // lien (`acked` en historique, sous delai).
+        assert_eq!(
+            svc_b
+                .history(&pk_a, 10)
+                .unwrap()
+                .iter()
+                .find(|m| m.id == id)
+                .map(|m| (m.plane.as_str(), m.status.as_str())),
+            Some(("onion", "received"))
+        );
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            let row = svc_a
+                .history(&pk_b, 10)
+                .unwrap()
+                .into_iter()
+                .find(|m| m.id == id)
+                .expect("message sortant persiste");
+            assert_eq!(row.plane, "onion");
+            if row.status == "acked" {
+                break;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "l'ack n'est pas revenu par le lien onion"
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+
+        // Plans independants : un circuit tunnel lie pour un autre
+        // contact survit au teardown du lien `.onion` (et
+        // reciproquement — `block_contact` n'appelle
+        // `remove_circuit` que sur les liaisons `Circuit`).
+        let autre = LibNaClSecretKey::generate();
+        let pk_c = bind(
+            &svc_a,
+            4242,
+            &autre,
+            &MessagingKeys {
+                send: [7; 32],
+                recv: [8; 32],
+            },
+        );
+        svc_a.block_contact(&pk_b).await.unwrap();
+        assert_eq!(svc_a.contact_state(&pk_b), Some(ContactState::Blocked));
+        assert!(
+            svc_a.contact_circuit(&pk_c).is_some(),
+            "le circuit tunnel d'un autre contact survit"
+        );
+        // Cote B : la fermeture du flux tue la tache du lien —
+        // le binding est delie sans effet de bord.
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        while svc_b.contact_circuit(&pk_a).is_some() {
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "la fin du lien onion delie le repondant"
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+
+    /// Pair `.onion` injoignable : le dial echoue → repli boite
+    /// aux lettres (`obox` depose, `plane = "mailbox"`) — jamais de
+    /// traduction d'un plan vers l'autre.
+    #[tokio::test]
+    async fn lien_onion_en_echec_replie_mailbox() {
+        let db = Arc::new(Database::memory().unwrap());
+        let svc = make_service_db(db.clone()).await;
+        let peer = LibNaClSecretKey::generate();
+        let pk = active_contact(&svc, &peer);
+        associe_onion(
+            &db,
+            &pk,
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.onion",
+        );
+        svc.set_onion_dialer(Arc::new(FailingDialer));
+        let transport = Arc::new(StubTransport::default());
+        svc.set_offline_transport(transport.clone());
+
+        let id = svc.send(&pk, b"repli sur la boite".to_vec()).await.unwrap();
+        assert_eq!(
+            transport.puts.lock().unwrap().len(),
+            1,
+            "depot mailbox apres echec du rendez-vous"
+        );
+        let row = svc
+            .history(&pk, 10)
+            .unwrap()
+            .into_iter()
+            .find(|m| m.id == id)
+            .expect("le message depose est persiste");
+        assert_eq!(row.plane, "mailbox");
+        assert_eq!(row.status, "sent");
+    }
+
+    /// Sans composeur injecte (lane Tor absente) l'association
+    /// `.onion` ne se traduit en rien : `failed` + `Undeliverable`
+    /// quand la boite aux lettres est aussi indisponible.
+    #[tokio::test]
+    async fn lien_onion_sans_dialer_ni_mailbox_failed() {
+        let db = Arc::new(Database::memory().unwrap());
+        let svc = make_service_db_cfg(
+            db.clone(),
+            MessagingConfig {
+                deliver_offline: false,
+                ..MessagingConfig::default()
+            },
+        )
+        .await;
+        let peer = LibNaClSecretKey::generate();
+        let pk = active_contact(&svc, &peer);
+        associe_onion(
+            &db,
+            &pk,
+            "cccccccccccccccccccccccccccccccccccccccccccccccccccccccc.onion",
+        );
+        let mut ev = svc.subscribe();
+
+        assert!(svc.send(&pk, b"perdu".to_vec()).await.is_err());
+        assert!(matches!(
+            ev.try_recv(),
+            Ok(MessagingEvent::Undeliverable { .. })
+        ));
+    }
+
+    /// Usurpation par le preambule : `liar` ouvre un lien en
+    /// declarant sa propre cle puis signe un `hello` usurpant
+    /// `victim` — la signature est verifiee contre la cle declaree
+    /// dans la trame, pas celle du preambule : rien n'est livre,
+    /// aucun lien n'est pose sur `victim`.
+    #[tokio::test]
+    async fn lien_onion_usurpation_rejetee() {
+        let svc_b = make_service_db(Arc::new(Database::memory().unwrap())).await;
+        let victim = LibNaClSecretKey::generate();
+        let pk_victim = active_contact(&svc_b, &victim);
+        let liar = LibNaClSecretKey::generate();
+        let mut ev = svc_b.subscribe();
+
+        let (mut cli, srv) = tokio::io::duplex(64 * 1024);
+        svc_b.on_onion_stream(Box::new(srv));
+        onion_link::write_preamble(&mut cli, &liar.public_key().to_bin())
+            .await
+            .unwrap();
+        // Cles telles que le repondant les derive : DH statique
+        // (pk liar × sk service) — l'imposteur est l'initiateur.
+        let shared = crypto_box_beforenm(
+            &svc_b.key.public_key().crypt_pk,
+            &liar.crypt_x25519().to_bytes(),
+        )
+        .unwrap();
+        let keys = derive_messaging_keys(&shared, true).unwrap();
+        let forged = Frame::new(MsgKind::Hello, 0, 1, victim.public_key().to_bin())
+            .seal(&liar, &keys.send, &MessagingConfig::default())
+            .unwrap();
+        onion_link::write_frame(&mut cli, &forged).await.unwrap();
+
+        // Tout evenement autre que `Pending` (liaison encore
+        // anonyme) est une fuite d'usurpation.
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+        loop {
+            match tokio::time::timeout_at(deadline, ev.recv()).await {
+                Ok(Ok(MessagingEvent::Pending { .. })) | Ok(Err(_)) => continue,
+                Ok(Ok(autre)) => panic!("usurpation livree : {autre:?}"),
+                _ => break,
+            }
+        }
+        assert!(svc_b.contact_circuit(&pk_victim).is_none());
     }
 }

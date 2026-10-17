@@ -50,12 +50,23 @@ pub enum TorState {
 
 /// Flux TCP anonymise (DataStream arti ou SOCKS5 externe).
 #[cfg(feature = "tor")]
-pub(crate) trait OnionIo:
-    tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send
-{
-}
+pub trait OnionIo: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send {}
 #[cfg(feature = "tor")]
 impl<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send> OnionIo for T {}
+
+/// Consommateur d'un flux accepte sur le service `.onion` d'identite
+/// (ADR-0029 etape 124) — un handler par port virtuel `BEGIN`. Le
+/// proprietaire du protocole (messagerie, catalogue, coffre)
+/// enregistre le sien ; `tor` ne fait que router, jamais traduire.
+/// Le flux passe sous `Box<dyn OnionIo>` : aucun type arti ne fuit
+/// vers les crates consommatrices.
+#[cfg(feature = "hs")]
+pub trait OnionLinkHandler: Send + Sync {
+    /// Appelle pour chaque `StreamRequest` acceptee sur le port
+    /// souscrit — l'implementeur traite le flux dans sa propre
+    /// tache (cette methode doit rendre la main vite).
+    fn on_stream(&self, stream: Box<dyn OnionIo>);
+}
 
 /// Etat partage du runtime — clonable (Arc) : le daemon garde un
 /// handle pour l'API pendant que la tache de bootstrap mute l'etat.
@@ -77,6 +88,13 @@ pub(crate) struct Inner {
     /// que le slot existe ; remplace ou droppe = depublie.
     #[cfg(feature = "hs")]
     pub(crate) onion: Mutex<Option<crate::service::OnionServiceSlot>>,
+    /// Handlers par port virtuel `BEGIN` — consultes a chaque
+    /// `StreamRequest` : une injection tardive (messagerie prete
+    /// apres le lancement du service) sert sans republication.
+    /// `None`/port absent = rejet `DONE` (le descripteur ne
+    /// promet aucun service non routable).
+    #[cfg(feature = "hs")]
+    pub(crate) link_handlers: Mutex<std::collections::HashMap<u16, Arc<dyn OnionLinkHandler>>>,
 }
 
 /// Runtime Tor — proprietaire unique de tout trafic Tor du daemon.
@@ -119,6 +137,8 @@ impl TorRuntime {
                 client: Mutex::new(None),
                 #[cfg(feature = "hs")]
                 onion: Mutex::new(None),
+                #[cfg(feature = "hs")]
+                link_handlers: Mutex::new(std::collections::HashMap::new()),
             }),
         }
     }
@@ -337,6 +357,60 @@ impl TorRuntime {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .is_allowed(host)
+    }
+
+    /// Ouvre un flux TCP anonymise vers le `.onion` d'un **pair
+    /// approuve** (ADR-0029 etape 124) — le lien messagerie, et plus
+    /// tard le catalogue/coffre, passent par ce seul point.
+    ///
+    /// Frontieres : host `.onion` v3 valide ET dans l'allowlist
+    /// **pairs** (`peer_policy` seule — les cibles de recherche
+    /// n'autorisent jamais une connexion applicative, et le port
+    /// virtuel n'est pas borne a 80/443 : il sert les services
+    /// OnionBit). `DeniedTarget` sinon ; `NotReady` sans client.
+    /// `request_timeout` borne l'etablissement.
+    #[cfg(feature = "tor")]
+    pub async fn connect_onion(&self, host: &str, port: u16) -> Result<Box<dyn OnionIo>> {
+        let addr = onionbit_format::OnionAddr::parse(host).map_err(|_| {
+            TorError::DeniedTarget(onionbit_network_policy::PolicyError::DeniedDestination(
+                "adresse .onion de pair invalide",
+            ))
+        })?;
+        if !self
+            .inner
+            .peer_policy
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_allowed(addr.host())
+        {
+            return Err(TorError::DeniedTarget(
+                onionbit_network_policy::PolicyError::DeniedDestination("pair .onion non approuve"),
+            ));
+        }
+        tokio::time::timeout(
+            self.inner.settings.request_timeout,
+            self.open_stream(addr.host(), port),
+        )
+        .await
+        .map_err(|_| {
+            TorError::Request(format!(
+                "connexion .onion expiree ({}s)",
+                self.inner.settings.request_timeout.as_secs()
+            ))
+        })?
+    }
+
+    /// Souscrit `handler` au port virtuel `port` du service
+    /// `.onion` d'identite — mutable a chaud : appelable avant ou
+    /// apres le lancement (les `StreamRequest` sont routes a la
+    /// reception, jamais memorisees). Remplace le precedent.
+    #[cfg(feature = "hs")]
+    pub fn set_onion_link_handler(&self, port: u16, handler: Arc<dyn OnionLinkHandler>) {
+        self.inner
+            .link_handlers
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(port, handler);
     }
 
     /// Etat du service `.onion` d'identite pour

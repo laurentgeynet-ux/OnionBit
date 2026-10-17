@@ -31,6 +31,8 @@ hs = [
     "dep:tor-llcrypto",
     "dep:fs-mistrust",
     "dep:safelog",
+    "dep:tor-proto",
+    "dep:tor-cell",
     "arti-client/onion-service-service",
 ]
 
@@ -68,6 +70,11 @@ fs-mistrust = { version = "0.16", optional = true }
 # Affichage non-redacte de l'adresse `.onion` (`HsId` n'implemente
 # que `DisplayRedacted`) — l'adresse est publique par nature.
 safelog = { version = "0.10", optional = true }
+# Routage des `StreamRequest` par port virtuel `BEGIN`
+# (`IncomingStreamRequest`) + messages `Connected`/`End` des
+# accept/reject — service `.onion` (etape 124).
+tor-proto = { version = "0.47", optional = true }
+tor-cell = { version = "0.47", optional = true }
 tokio-socks = { workspace = true, optional = true }
 futures-util = { workspace = true, optional = true }
 # TLS sur le flux Tor — hotes clearnet de sortie `api_via_exit`
