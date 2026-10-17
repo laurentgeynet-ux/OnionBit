@@ -74,4 +74,43 @@ class RestPrivateZoneRepository {
       bytes: (resp['bytes'] as num?)?.toInt() ?? 0,
     );
   }
+
+  /// Suppression d'une entrée (`DELETE /api/private/{key}`) :
+  /// manifeste + `.obd` purgés ; un download associé est retiré
+  /// avec ses données. Pas de corbeille — la page confirme avant.
+  Future<void> delete(String key) async {
+    uiLog('suppression entree privee');
+    await _api.delete('/private/$key');
+  }
+
+  /// Import de fichiers/dossiers locaux (`POST /api/private/import`)
+  /// — chaque source devient un torrent privé ad-hoc chiffré en
+  /// `.obd`. `deleteSource` = déplacement (la source claire n'est
+  /// supprimée qu'après vérification de la copie chiffrée).
+  Future<List<PrivateImportResult>> import(
+    List<String> paths, {
+    String? name,
+    bool deleteSource = false,
+  }) async {
+    uiLog('import prive (${paths.length} sources)');
+    final resp =
+        await _api.post('/private/import', body: {
+              'paths': paths,
+              'name': ?name,
+              'delete_source': deleteSource,
+            })
+            as Map<String, dynamic>;
+    return [
+      for (final j
+          in (resp['results'] as List?)?.whereType<
+                Map<String, dynamic>
+              >() ??
+              const <Map<String, dynamic>>[])
+        PrivateImportResult(
+          infohash: '${j['infohash'] ?? ''}',
+          files: (j['files'] as num?)?.toInt() ?? 0,
+          bytes: (j['bytes'] as num?)?.toInt() ?? 0,
+        ),
+    ];
+  }
 }

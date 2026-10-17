@@ -994,5 +994,37 @@
   "privateZoneRead": "Lire",
   "privateZoneExtract": "Extraire vers un dossier…",
   "privateZoneExported": "{count, plural, =1{1 fichier exporté} other{{count} fichiers exportés}} — {bytes} octets",
-  "privateZoneError": "Zone privée : {error}"
+  "privateZoneError": "Zone privée : {error}",
+
+  "ok": "OK",
+  "explorerNewFolder": "Nouveau dossier",
+  "explorerNameHint": "Nom",
+  "explorerImportFiles": "Importer des fichiers…",
+  "explorerImportDir": "Importer un dossier…",
+  "explorerCut": "Couper",
+  "explorerCopy": "Copier",
+  "explorerPaste": "Coller",
+  "explorerRename": "Renommer",
+  "explorerDelete": "Supprimer",
+  "explorerDeleteTitle": "Supprimer définitivement ?",
+  "explorerDeleteMessage": "{count, plural, =1{Cet élément} other{{count} éléments}} sera définitivement supprimé — il n'y a pas de corbeille.",
+  "@explorerDeleteMessage": {
+    "placeholders": {"count": {"type": "int"}}
+  },
+  "privateImportTooltip": "Importer dans la zone privée",
+  "privateImportTitle": "{count, plural, =1{Importer cet élément} other{Importer {count} éléments}} dans la zone privée ?",
+  "@privateImportTitle": {
+    "placeholders": {"count": {"type": "int"}}
+  },
+  "privateImportMoveSource": "Déplacer : supprimer la source après vérification",
+  "privateImportAction": "Importer",
+  "privateImported": "{count, plural, =1{1 élément importé} other{{count} éléments importés}} — {files} fichier(s) chiffrés",
+  "@privateImported": {
+    "placeholders": {
+      "count": {"type": "int"},
+      "files": {"type": "int"}
+    }
+  },
+  "privateDeleteTitle": "Supprimer cette entrée ?",
+  "privateDeleteMessage": "L'entrée, ses données chiffrées et le téléchargement associé seront définitivement supprimés — il n'y a pas de corbeille."
 }

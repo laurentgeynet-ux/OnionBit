@@ -26,7 +26,7 @@
 //! double perte → reconstruction par balayage `scan_ct` des `.obd`.
 
 use std::collections::{BTreeMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
@@ -680,6 +680,224 @@ impl PrivateZone {
         );
         Ok(out)
     }
+
+    // -- Import local et suppression d'entree (explorateur prive) --
+
+    /// Artefacts disque d'une entree : dossiers groupe `.obd` sous
+    /// `temp/` **et** `downloads/` (le manifeste ne retient que la
+    /// sous-racine courante — des fragments d'un download abandonne
+    /// peuvent vivre dans l'autre), plus le fastresume `<hmac>.bitv`.
+    /// Ne jamais appeler tant qu'un download detient l'infohash :
+    /// la suppression d'un download actif passe par
+    /// `Session::remove` (le moteur gere son stockage).
+    pub fn purge_entry_files(&self, infohash: &Id20) -> usize {
+        let mut removed = 0usize;
+        for sub in [PrivateSubdir::Temp, PrivateSubdir::Downloads] {
+            let g = self.group_dir(infohash, sub);
+            if !g.exists() {
+                continue;
+            }
+            match std::fs::remove_dir_all(&g) {
+                Ok(()) => removed += 1,
+                Err(e) => {
+                    tracing::warn!(error = %e, "groupe .obd non supprime");
+                }
+            }
+        }
+        let bitv = self.roots.private_rqbit().join(format!(
+            "{}.bitv",
+            hex::encode(self.keys.bitv_name(&infohash.0))
+        ));
+        if bitv.exists() {
+            if let Err(e) = std::fs::remove_file(&bitv) {
+                tracing::warn!(error = %e, "fastresume .bitv non supprime");
+            }
+        }
+        removed
+    }
+
+    /// Importe `src` (fichier ou dossier local du device) decrit par
+    /// `created` (`librqbit::create_torrent`) dans la zone : chaque
+    /// fichier devient un `.obd` du groupe `downloads/<hmac>` — meme
+    /// format et meme domaine de cle (`K_file` sur le relpath sans
+    /// racine) que le pipeline de telechargement — puis l'entree
+    /// manifeste est inseree (`torrent_data` conserve le `.torrent`
+    /// produit : listing fidele + re-add possible ; `source_uri` =
+    /// `import://`, origine non re-resolvable).
+    ///
+    /// `delete_source` : la source claire n'est supprimee qu'apres
+    /// une **relecture dechiffree identique** de chaque `.obd` —
+    /// l'option « deplacer » est irreversible, la comparaison est le
+    /// prix de la securite.
+    ///
+    /// Journalisation : compte de fichiers et d'octets seulement.
+    pub fn import_created(
+        &self,
+        src: &Path,
+        created: &librqbit::CreateTorrentResult,
+        delete_source: bool,
+    ) -> Result<PrivateImport> {
+        let info = &created.meta.info.data;
+        let name = info
+            .name
+            .as_ref()
+            .map(|n| String::from_utf8_lossy(n.as_ref()).into_owned())
+            .unwrap_or_else(|| "import".to_string());
+        let ih = created.info_hash();
+        if self.entry(&ih).is_some() {
+            return Err(CoreError::InvalidState(
+                "ce contenu est deja dans la zone privee",
+            ));
+        }
+
+        // (fichier source, relpath `/` sans racine, longueur claire).
+        let mut files: Vec<(PathBuf, String, u64)> = Vec::new();
+        if let Some(list) = &info.files {
+            for f in list {
+                let rel = f
+                    .path
+                    .iter()
+                    .map(|c| String::from_utf8_lossy(c.as_ref()).into_owned())
+                    .collect::<Vec<_>>()
+                    .join("/");
+                let mut abs = src.to_path_buf();
+                for c in &f.path {
+                    abs.push(String::from_utf8_lossy(c.as_ref()).as_ref());
+                }
+                files.push((abs, rel, f.length));
+            }
+        } else {
+            let len = info
+                .length
+                .unwrap_or_else(|| src.metadata().map(|m| m.len()).unwrap_or(0));
+            files.push((src.to_path_buf(), name.clone(), len));
+        }
+        if files.is_empty() {
+            return Err(CoreError::InvalidState("rien a importer"));
+        }
+
+        let group = self.group_dir(&ih, PrivateSubdir::Downloads);
+        std::fs::create_dir_all(&group)?;
+
+        // Ecriture des `.obd` ; en echec, les fichiers deja crees
+        // sont retires (jamais d'orphelin a demi-ecrit).
+        let mut written: Vec<PathBuf> = Vec::with_capacity(files.len());
+        let mut write_all = |zone: &Self| -> Result<()> {
+            let mut buf = vec![0u8; 1024 * 1024];
+            for (abs, rel, len) in &files {
+                let rel_b = rel.as_bytes();
+                let obd_path = group.join(zone.keys.file_name(&ih.0, rel_b));
+                let obd =
+                    ObdFile::create(&obd_path, &zone.keys, &ih.0, rel_b, zone.chunk_log2, *len)
+                        .map_err(|e| CoreError::State(format!("creation OBD import: {e}")))?;
+                written.push(obd_path);
+                let mut rd = std::io::BufReader::new(std::fs::File::open(abs)?);
+                let mut off = 0u64;
+                while off < *len {
+                    let want = buf.len().min((*len - off) as usize);
+                    let n = std::io::Read::read(&mut rd, &mut buf[..want])?;
+                    if n == 0 {
+                        return Err(CoreError::State("import: source tronquee".into()));
+                    }
+                    obd.write_range(off, &buf[..n])
+                        .map_err(|e| CoreError::State(format!("ecriture OBD import: {e}")))?;
+                    off += n as u64;
+                }
+                obd.into_file().sync_data()?;
+            }
+            Ok(())
+        };
+        if let Err(e) = write_all(self) {
+            for p in &written {
+                let _ = std::fs::remove_file(p);
+            }
+            return Err(e);
+        }
+
+        // Option « deplacer » : verification octet a octet avant de
+        // toucher a la source claire.
+        if delete_source {
+            let mut ok = true;
+            for (abs, rel, len) in &files {
+                let rel_b = rel.as_bytes();
+                let obd_path = group.join(self.keys.file_name(&ih.0, rel_b));
+                let cipher = self.keys.file_cipher(&ih.0, rel_b);
+                ok = ObdFile::open(&obd_path, &cipher)
+                    .map(|obd| verify_same_bytes(abs, &obd, *len))
+                    .unwrap_or(false);
+                if !ok {
+                    break;
+                }
+            }
+            if !ok {
+                return Err(CoreError::InvalidState(
+                    "verification de l'import echouee — source conservee",
+                ));
+            }
+        }
+
+        let entry = ManifestEntry {
+            infohash: format!("{ih:?}"),
+            name: Some(name),
+            source_uri: format!("import://{ih:?}"),
+            torrent_data: Some(hex::encode(
+                created
+                    .as_bytes()
+                    .map_err(|e| CoreError::State(e.to_string()))?,
+            )),
+            output_dir: PrivateSubdir::Downloads.spec().to_string(),
+            paused: true,
+            added_on: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs() as i64)
+                .unwrap_or_default(),
+        };
+        self.upsert(&ih, entry)?;
+
+        if delete_source {
+            if src.is_dir() {
+                std::fs::remove_dir_all(src)?;
+            } else {
+                std::fs::remove_file(src)?;
+            }
+        }
+        let bytes = files.iter().map(|(_, _, l)| l).sum();
+        tracing::info!(files = files.len(), bytes, "import prive termine");
+        Ok(PrivateImport {
+            infohash: format!("{ih:?}"),
+            files: files.len(),
+            bytes,
+        })
+    }
+}
+
+/// Relecture d'un `.obd` comparee octet a octet a la source claire —
+/// garde-fou de `delete_source` (pas de noms, pas de contenu dans
+/// les logs : un simple booleen suffit).
+fn verify_same_bytes(src: &Path, obd: &ObdFile, len: u64) -> bool {
+    if obd.plain_len() != len {
+        return false;
+    }
+    let mut rd = std::io::BufReader::new(match std::fs::File::open(src) {
+        Ok(f) => f,
+        Err(_) => return false,
+    });
+    let mut buf = vec![0u8; 1024 * 1024];
+    let mut dec = vec![0u8; 1024 * 1024];
+    let mut off = 0u64;
+    while off < len {
+        let want = buf.len().min((len - off) as usize);
+        let n = match std::io::Read::read(&mut rd, &mut buf[..want]) {
+            Ok(0) | Err(_) => return false,
+            Ok(n) => n,
+        };
+        if obd.read_range(off, &mut dec[..n]).is_err() || dec[..n] != buf[..n] {
+            return false;
+        }
+        off += n as u64;
+    }
+    // La source ne doit pas etre plus longue que l'import.
+    matches!(std::io::Read::read(&mut rd, &mut [0u8; 1]), Ok(0))
 }
 
 /// Fichier d'une entree manifeste privee (ADR-0027) — `index` est
@@ -705,6 +923,17 @@ pub struct PrivateExport {
     pub bytes: u64,
     /// Fichiers ignores (`.obd` absent/illisible, relpath hostile).
     pub skipped: usize,
+}
+
+/// Bilan d'un `import` prive — meme discipline de log qu'`export`.
+#[derive(Debug, Clone)]
+pub struct PrivateImport {
+    /// Infohash de l'entree creee (hex).
+    pub infohash: String,
+    /// Fichiers ecrits en `.obd`.
+    pub files: usize,
+    /// Octets clairs importes.
+    pub bytes: u64,
 }
 
 /// `relpath` (`a/b`, convention zone) → `dest_dir/a/b` — chaque

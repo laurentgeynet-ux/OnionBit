@@ -18,10 +18,18 @@ import '../design/design_tokens.dart';
 /// fichiers du daemon — et réutilisable partout où un chemin distant
 /// est attendu (destination, watch folder, `move_storage`).
 class DaemonDirectoryPicker extends ConsumerStatefulWidget {
-  const DaemonDirectoryPicker({super.key, this.initialPath});
+  const DaemonDirectoryPicker({
+    super.key,
+    this.initialPath,
+    this.pickFiles = false,
+  });
 
   /// Dossier de départ (`null`/`''` = `browse` sans path → cwd/racine).
   final String? initialPath;
+
+  /// Mode fichier : les fichiers sont listés en plus des dossiers
+  /// (`files=1`) et un tap sur un fichier le choisit directement.
+  final bool pickFiles;
 
   /// Ouvre le dialogue ; renvoie le chemin choisi ou `null`.
   static Future<String?> show(BuildContext context, {String? initialPath}) =>
@@ -30,15 +38,30 @@ class DaemonDirectoryPicker extends ConsumerStatefulWidget {
         builder: (_) => DaemonDirectoryPicker(initialPath: initialPath),
       );
 
+  /// Variante fichier — un tap sur un fichier renvoie son chemin.
+  static Future<String?> showFile(
+    BuildContext context, {
+    String? initialPath,
+  }) => showDialog<String>(
+    context: context,
+    builder: (_) =>
+        DaemonDirectoryPicker(initialPath: initialPath, pickFiles: true),
+  );
+
   @override
   ConsumerState<DaemonDirectoryPicker> createState() =>
       _DaemonDirectoryPickerState();
 }
 
 class _BrowseEntry {
-  const _BrowseEntry({required this.name, required this.path});
+  const _BrowseEntry({
+    required this.name,
+    required this.path,
+    this.isDir = true,
+  });
   final String name;
   final String path;
+  final bool isDir;
 }
 
 class _DaemonDirectoryPickerState
@@ -60,17 +83,22 @@ class _DaemonDirectoryPickerState
       _error = null;
     });
     try {
-      final json = await ref
-          .read(apiClientProvider)
-          .get('/files/browse', query: {'path': path});
+      final json = await ref.read(apiClientProvider).get(
+        '/files/browse',
+        query: {
+          'path': path,
+          if (widget.pickFiles) 'files': '1',
+        },
+      );
       if (!mounted) return;
       final paths = (json['paths'] as List? ?? [])
           .whereType<Map>()
-          .where((e) => e['dir'] == true)
+          .where((e) => widget.pickFiles || e['dir'] == true)
           .map(
             (e) => _BrowseEntry(
               name: '${e['name']}',
               path: '${e['path']}',
+              isDir: e['dir'] == true,
             ),
           )
           .toList();
@@ -147,14 +175,20 @@ class _DaemonDirectoryPickerState
                           leading: Icon(
                             e.name == '..'
                                 ? Icons.drive_folder_upload_outlined
-                                : Icons.folder_outlined,
+                                : e.isDir
+                                ? Icons.folder_outlined
+                                : Icons.insert_drive_file_outlined,
                             size: 18,
                           ),
                           title: Text(
                             e.name,
                             overflow: TextOverflow.ellipsis,
                           ),
-                          onTap: () => _browse(e.path),
+                          // Fichier en mode `pickFiles` : tap = choix
+                          // direct ; dossier = navigation.
+                          onTap: () => e.isDir
+                              ? _browse(e.path)
+                              : Navigator.of(context).pop(e.path),
                         );
                       },
                     ),
@@ -168,7 +202,9 @@ class _DaemonDirectoryPickerState
           child: Text(l10n.cancel),
         ),
         FilledButton(
-          onPressed: _loading || _current.isEmpty
+          // Mode fichier : la sélection se fait au tap sur un
+          // fichier — le bouton dossier reste en mode répertoire.
+          onPressed: widget.pickFiles || _loading || _current.isEmpty
               ? null
               : () => Navigator.of(context).pop(_current),
           child: Text(l10n.dirPickerSelect),

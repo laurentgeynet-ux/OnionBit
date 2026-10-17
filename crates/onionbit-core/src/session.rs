@@ -802,6 +802,84 @@ impl CoreSession {
         Ok(Some(out))
     }
 
+    /// `import` : cree un `.torrent` ad-hoc de `src` (fichier ou
+    /// dossier local du device) puis ecrit son contenu chiffre dans
+    /// la zone — l'entree resultante est un torrent prive ordinaire
+    /// (listing/export/suppression identiques, partageable via
+    /// re-add). `name` = nom du torrent (defaut : basename).
+    /// `delete_source` = l'import est un **deplacement** : la source
+    /// claire n'est supprimee qu'apres relecture dechiffree
+    /// identique (`PrivateZone::import_created`). `None` = zone
+    /// verrouillee.
+    pub async fn import_private(
+        &self,
+        src: PathBuf,
+        name: Option<String>,
+        delete_source: bool,
+    ) -> Result<Option<crate::private_zone::PrivateImport>> {
+        let Some(z) = self.private_zone() else {
+            return Ok(None);
+        };
+        if z.is_guest() {
+            return Err(CoreError::InvalidState("zone invitee sans manifeste"));
+        }
+        if !src.exists() {
+            return Err(CoreError::InvalidState("source introuvable"));
+        }
+        let spawner = librqbit::spawn_utils::BlockingSpawner::new(1);
+        let created = librqbit::create_torrent(
+            &src,
+            librqbit::CreateTorrentOptions {
+                name: name.as_deref(),
+                ..Default::default()
+            },
+            &spawner,
+        )
+        .await
+        .map_err(|e| CoreError::State(format!("creation .torrent: {e}")))?;
+        let out =
+            tokio::task::spawn_blocking(move || z.import_created(&src, &created, delete_source))
+                .await
+                .unwrap_or_else(|e| {
+                    Err(CoreError::State(format!("import prive interrompu: {e}")))
+                })?;
+        Ok(Some(out))
+    }
+
+    /// `DELETE /api/private/{key}` : supprime une entree du
+    /// manifeste **et** ses artefacts disque. Un download vivant ou
+    /// une ligne `downloads` persistee detient l'infohash →
+    /// `Session::remove` (le moteur purge lui-meme les `.obd`) ;
+    /// une entree catalogue seule (import, restauration differee)
+    /// → retrait manifeste + purge directe des groupes et du
+    /// fastresume. `Ok(false)` = zone verrouillee ou cle inconnue.
+    pub async fn delete_private_entry(&self, key: &str) -> Result<bool> {
+        let Some(z) = self.private_zone() else {
+            return Ok(false);
+        };
+        let Some((ih, _entry)) = z.resolve_entry(key) else {
+            return Ok(false);
+        };
+        let ih_hex = hex::encode(ih.0);
+        // Cle de ligne calculee AVANT `z.remove` : `is_private`
+        // retombe a faux une fois l'entree retiree du manifeste.
+        let row_key = self.db_key(&ih.0);
+        let has_row = self
+            .inner
+            .db_arc()
+            .with(|c| onionbit_db::downloads::get(c, &row_key))?
+            .is_some();
+        if has_row || self.find_download(&ih_hex).is_some() {
+            // `remove` gere moteur (purge `.obd` via `delete_files`),
+            // ligne DB et entree manifeste.
+            self.remove(&ih_hex, true).await?;
+            return Ok(true);
+        }
+        z.remove(&ih)?;
+        let _ = z.purge_entry_files(&ih);
+        Ok(true)
+    }
+
     /// Construit le shell commun aux deux chemins de demarrage :
     /// `Inner` cree avec une base memoire placeholder et aucun
     /// composant identitaire.

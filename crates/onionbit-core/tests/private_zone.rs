@@ -516,6 +516,118 @@ async fn private_list_files_repli_scan_ct() {
     session.stop().await;
 }
 
+/// Import explorateur : `import_private` cree un `.torrent` ad-hoc
+/// du dossier local, chiffre chaque fichier en `.obd` (meme domaine
+/// de cle que le pipeline de telechargement) et insere une entree
+/// manifeste ordinaire — listing/export/suppression identiques.
+/// `delete_private_entry` purge manifeste + groupe + `.bitv`.
+#[tokio::test]
+async fn private_import_puis_suppression() {
+    let dir = tempfile::tempdir().unwrap();
+    let cfg = CoreConfig::offline(dir.path().to_path_buf());
+    let session = CoreSession::start(cfg, Notifier::new())
+        .await
+        .expect("start");
+
+    // Source hors zone : un dossier a deux fichiers (dont sous-arbre).
+    let src = dir.path().join("mes-docs");
+    std::fs::create_dir_all(src.join("sous")).unwrap();
+    let a = b"bonjour le monde".to_vec();
+    let b: Vec<u8> = (0..=255u8).collect();
+    std::fs::write(src.join("a.txt"), &a).unwrap();
+    std::fs::write(src.join("sous").join("b.bin"), &b).unwrap();
+
+    let out = session
+        .import_private(src.clone(), None, false)
+        .await
+        .expect("import")
+        .expect("zone montee");
+    assert_eq!(out.files, 2);
+    assert_eq!(out.bytes, (a.len() + b.len()) as u64);
+    let ih = out.infohash.clone();
+
+    // Entree manifeste ordinaire : nom reel, source `import://`,
+    // fichiers listes/exportables comme un download prive.
+    let entries = session.private_manifest_entries();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].name.as_deref(), Some("mes-docs"));
+    assert!(entries[0].source_uri.starts_with("import://"));
+    let files = session.private_files(&ih).expect("list").expect("entree");
+    assert_eq!(files.len(), 2);
+    assert!(files.iter().any(|f| f.relpath == "a.txt"));
+    assert!(files.iter().any(|f| f.relpath == "sous/b.bin"));
+
+    let dest = dir.path().join("clair");
+    std::fs::create_dir_all(&dest).unwrap();
+    let ex = session
+        .export_private(&ih, dest.clone(), None)
+        .await
+        .expect("export")
+        .expect("entree");
+    assert_eq!(ex.exported, 2);
+    assert_eq!(std::fs::read(dest.join("a.txt")).unwrap(), a);
+    assert_eq!(
+        std::fs::read(dest.join("sous").join("b.bin")).unwrap(),
+        b,
+        "export dechiffre ≠ source"
+    );
+
+    // Reimport du meme contenu refuse : l'infohash est deja connu.
+    assert!(
+        session
+            .import_private(src.clone(), None, false)
+            .await
+            .is_err(),
+        "doublon d'import accepte"
+    );
+
+    // Suppression : manifeste + groupe `.obd` purges ; cle inconnue
+    // ensuite → `false`.
+    assert!(session.delete_private_entry(&ih).await.expect("delete"));
+    assert!(session.private_manifest_entries().is_empty());
+    let groups: Vec<_> = std::fs::read_dir(session.paths().private_downloads())
+        .unwrap()
+        .filter(|e| e.as_ref().unwrap().file_type().is_ok_and(|t| t.is_dir()))
+        .collect();
+    assert!(groups.is_empty(), "groupes residuels : {groups:?}");
+    assert!(!session.delete_private_entry(&ih).await.expect("delete"));
+    session.stop().await;
+}
+
+/// Import « deplacement » (`delete_source`) : la source claire
+/// n'est supprimee qu'apres relecture dechiffree identique — le
+/// contenu reste exportable a l'identique ensuite.
+#[tokio::test]
+async fn private_import_deplacement_verifie_et_purge() {
+    let dir = tempfile::tempdir().unwrap();
+    let cfg = CoreConfig::offline(dir.path().to_path_buf());
+    let session = CoreSession::start(cfg, Notifier::new())
+        .await
+        .expect("start");
+
+    let src = dir.path().join("doc.pdf");
+    let data: Vec<u8> = (0..5000u32).map(|i| (i % 251) as u8).collect();
+    std::fs::write(&src, &data).unwrap();
+
+    let out = session
+        .import_private(src.clone(), None, true)
+        .await
+        .expect("import")
+        .expect("zone montee");
+    assert!(!src.exists(), "source claire non supprimee");
+
+    let dest = dir.path().join("clair");
+    std::fs::create_dir_all(&dest).unwrap();
+    let ex = session
+        .export_private(&out.infohash, dest.clone(), None)
+        .await
+        .expect("export")
+        .expect("entree");
+    assert_eq!(ex.exported, 1);
+    assert_eq!(std::fs::read(dest.join("doc.pdf")).unwrap(), data);
+    session.stop().await;
+}
+
 /// Zone verrouillee : `private_files`/`export_private` rendent
 /// `None` (l'API traduit en `409 identity_locked`).
 #[tokio::test]

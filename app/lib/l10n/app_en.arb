@@ -1356,5 +1356,37 @@
   "privateZoneError": "Private zone: {error}",
   "@privateZoneError": {
     "placeholders": {"error": {"type": "String"}}
-  }
+  },
+
+  "ok": "OK",
+  "explorerNewFolder": "New folder",
+  "explorerNameHint": "Name",
+  "explorerImportFiles": "Import files…",
+  "explorerImportDir": "Import folder…",
+  "explorerCut": "Cut",
+  "explorerCopy": "Copy",
+  "explorerPaste": "Paste",
+  "explorerRename": "Rename",
+  "explorerDelete": "Delete",
+  "explorerDeleteTitle": "Delete permanently?",
+  "explorerDeleteMessage": "{count, plural, =1{This item} other{{count} items}} will be permanently deleted — there is no recycle bin.",
+  "@explorerDeleteMessage": {
+    "placeholders": {"count": {"type": "int"}}
+  },
+  "privateImportTooltip": "Import into the private zone",
+  "privateImportTitle": "{count, plural, =1{Import this item} other{Import {count} items}} into the private zone?",
+  "@privateImportTitle": {
+    "placeholders": {"count": {"type": "int"}}
+  },
+  "privateImportMoveSource": "Move: delete source after verification",
+  "privateImportAction": "Import",
+  "privateImported": "{count, plural, =1{1 item imported} other{{count} items imported}} — {files} file(s) encrypted",
+  "@privateImported": {
+    "placeholders": {
+      "count": {"type": "int"},
+      "files": {"type": "int"}
+    }
+  },
+  "privateDeleteTitle": "Delete this entry?",
+  "privateDeleteMessage": "The entry, its encrypted data and the associated download will be permanently deleted — there is no recycle bin."
 }

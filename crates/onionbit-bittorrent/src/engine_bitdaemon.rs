@@ -54,7 +54,8 @@ enum BdCmd {
     Out(Vec<SessionOut>),
     /// Re-glues `apply_settings` : propage les limites de debit aux
     /// `RateLimiter` de l'engine (le handle ne touche que la session).
-    ApplySettings(bitdaemon_session::settings::SessionSettings),
+    /// Boxe : `SessionSettings` (272 o) desequilibrait l'enum.
+    ApplySettings(Box<bitdaemon_session::settings::SessionSettings>),
 }
 
 /// Backend moteur bitdaemon d'une [`crate::BtEngine`].
@@ -176,7 +177,7 @@ impl BdBackend {
                                     eng.dispatch_out(o);
                                 }
                             }
-                            Some(BdCmd::ApplySettings(s)) => eng.apply_settings(s),
+                            Some(BdCmd::ApplySettings(s)) => eng.apply_settings(*s),
                             None => break,
                         }
                         continue;
@@ -301,7 +302,7 @@ impl BdBackend {
         let mut st = slock(&sess).settings.clone();
         st.upload_rate_limit = upload_bps.unwrap_or(0).min(i64::MAX as u64) as i64;
         st.download_rate_limit = download_bps.unwrap_or(0).min(i64::MAX as u64) as i64;
-        let _ = self.cmd_tx.send(BdCmd::ApplySettings(st));
+        let _ = self.cmd_tx.send(BdCmd::ApplySettings(Box::new(st)));
     }
 
     /// Limites session courantes.

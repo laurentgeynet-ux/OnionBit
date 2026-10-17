@@ -668,6 +668,124 @@ async fn files_browse_spec_public_et_private_refuse() {
     srv.session.stop().await;
 }
 
+#[tokio::test]
+async fn files_explorer_mutations_confinees_public() {
+    let srv = spawn_server().await;
+    let public = srv
+        .session
+        .paths()
+        .resolve_input(std::path::Path::new("@public"))
+        .unwrap();
+    std::fs::create_dir_all(&public).unwrap();
+    async fn post(srv: &TestServer, path: &str, body: serde_json::Value) -> reqwest::Response {
+        srv.client
+            .post(srv.url(path))
+            .json(&body)
+            .send()
+            .await
+            .unwrap()
+    }
+
+    // mkdir sous @public → 200 ; sous @state ou hors zone → 403.
+    let resp = post(
+        &srv,
+        "/api/files/mkdir",
+        serde_json::json!({"path": "@public/docs"}),
+    )
+    .await;
+    assert_eq!(resp.status(), 200);
+    assert!(public.join("docs").is_dir());
+    let resp = post(
+        &srv,
+        "/api/files/mkdir",
+        serde_json::json!({"path": "@state/x"}),
+    )
+    .await;
+    assert_eq!(resp.status(), 403);
+
+    // copy device → @public (import d'un fichier local hors zone).
+    let src = srv._dir.path().join("source.txt");
+    std::fs::write(&src, b"contenu device").unwrap();
+    let resp = post(
+        &srv,
+        "/api/files/copy",
+        serde_json::json!({"src": src.display().to_string(), "dst": "@public/docs/source.txt"}),
+    )
+    .await;
+    assert_eq!(resp.status(), 200);
+    assert_eq!(
+        std::fs::read(public.join("docs/source.txt")).unwrap(),
+        b"contenu device"
+    );
+
+    // copy intra-zone + move (renommage).
+    let resp = post(
+        &srv,
+        "/api/files/copy",
+        serde_json::json!({"src": "@public/docs/source.txt", "dst": "@public/docs/copie.txt"}),
+    )
+    .await;
+    assert_eq!(resp.status(), 200);
+    let resp = post(
+        &srv,
+        "/api/files/move",
+        serde_json::json!({"src": "@public/docs/copie.txt", "dst": "@public/docs/renomme.txt"}),
+    )
+    .await;
+    assert_eq!(resp.status(), 200);
+    assert!(public.join("docs/renomme.txt").is_file());
+    assert!(!public.join("docs/copie.txt").exists());
+
+    // Gardes : 409 cible existante, 400 dst dans src, 403 racine et
+    // hors zone sur les mutations destructives.
+    let resp = post(
+        &srv,
+        "/api/files/copy",
+        serde_json::json!({"src": src.display().to_string(), "dst": "@public/docs/source.txt"}),
+    )
+    .await;
+    assert_eq!(resp.status(), 409);
+    let resp = post(
+        &srv,
+        "/api/files/move",
+        serde_json::json!({"src": "@public/docs", "dst": "@public/docs/inner/x"}),
+    )
+    .await;
+    assert_eq!(resp.status(), 400);
+    let resp = post(
+        &srv,
+        "/api/files/delete",
+        serde_json::json!({"paths": ["@public"]}),
+    )
+    .await;
+    assert_eq!(resp.status(), 403);
+    let resp = post(
+        &srv,
+        "/api/files/delete",
+        serde_json::json!({"paths": ["@state"]}),
+    )
+    .await;
+    assert_eq!(resp.status(), 403);
+    let resp = post(
+        &srv,
+        "/api/files/delete",
+        serde_json::json!({"paths": Vec::<String>::new()}),
+    )
+    .await;
+    assert_eq!(resp.status(), 400);
+
+    // delete recursif → 200, dossier disparu.
+    let resp = post(
+        &srv,
+        "/api/files/delete",
+        serde_json::json!({"paths": ["@public/docs"]}),
+    )
+    .await;
+    assert_eq!(resp.status(), 200);
+    assert!(!public.join("docs").exists());
+    srv.session.stop().await;
+}
+
 /// Encodage query minimal (les chemins Windows contiennent `\` et `:`).
 fn urlencoding(s: &str) -> String {
     s.chars()

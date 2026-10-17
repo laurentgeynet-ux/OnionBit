@@ -1226,6 +1226,99 @@ pub async fn post_private_export(
     })))
 }
 
+/// `DELETE /api/private/{key}` — supprime une entree privee du
+/// manifeste **et** ses donnees chiffrees sur disque (`.obd`,
+/// fastresume) ; un download encore present est retire avec ses
+/// fichiers. Pas de corbeille : la confirmation est du ressort de
+/// l'UI. `409 identity_locked`, `404` cle inconnue.
+pub async fn delete_private_entry(
+    State(state): State<AppState>,
+    Path(key): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    if state.session.private_area_state() != "mounted" {
+        return Err(ApiError::conflict("identity_locked"));
+    }
+    if !state
+        .session
+        .delete_private_entry(&key)
+        .await
+        .map_err(invalid_state_as_bad_request)?
+    {
+        return Err(ApiError::not_found("entree privee inconnue"));
+    }
+    invalidate_downloads_rows(&state);
+    Ok(Json(serde_json::json!({ "deleted": true })))
+}
+
+/// Corps de `POST /api/private/import`.
+#[derive(Debug, Deserialize)]
+pub struct PrivateImportBody {
+    /// Chemins locaux du device (fichiers ou dossiers) — chaque
+    /// source produit une entree privee (un `.torrent` ad-hoc par
+    /// chemin racine, meme convention que `POST /createtorrent`).
+    pub paths: Vec<String>,
+    /// Nom du torrent — admis seulement pour une seule source.
+    pub name: Option<String>,
+    /// `true` = l'import est un deplacement : la source claire est
+    /// supprimee apres relecture dechiffree identique.
+    pub delete_source: Option<bool>,
+}
+
+/// `POST /api/private/import` — chiffre des fichiers locaux dans la
+/// zone privee (`Session::import_private`) : l'entree resultante est
+/// un torrent prive ordinaire — listing, export et suppression
+/// identiques, partageable par re-add. `409 identity_locked`,
+/// `400` corps invalide / nom multi-sources.
+pub async fn post_private_import(
+    State(state): State<AppState>,
+    Json(body): Json<PrivateImportBody>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    if state.session.private_area_state() != "mounted" {
+        return Err(ApiError::conflict("identity_locked"));
+    }
+    if body.paths.is_empty() {
+        return Err(ApiError::bad_request("paths parameter is empty"));
+    }
+    if body.name.is_some() && body.paths.len() > 1 {
+        return Err(ApiError::bad_request(
+            "name is only allowed for a single source",
+        ));
+    }
+    let delete_source = body.delete_source.unwrap_or(false);
+    let mut results = Vec::new();
+    for raw in &body.paths {
+        // `resolve_input` laisse passer les specs `@…` — importer la
+        // zone chiffree dans elle-meme est refuse explicitement.
+        let src = state
+            .session
+            .paths()
+            .resolve_input(std::path::Path::new(raw))
+            .map_err(|e| ApiError::bad_request(e.to_string()))?;
+        if state
+            .session
+            .paths()
+            .to_portable(&src)
+            .is_some_and(|s| s == "@private" || s.starts_with("@private/"))
+        {
+            return Err(ApiError::bad_request(
+                "impossible d'importer depuis la zone privee",
+            ));
+        }
+        let out = state
+            .session
+            .import_private(src, body.name.clone(), delete_source)
+            .await
+            .map_err(invalid_state_as_bad_request)?
+            .ok_or_else(|| ApiError::conflict("identity_locked"))?;
+        results.push(serde_json::json!({
+            "infohash": out.infohash,
+            "files": out.files,
+            "bytes": out.bytes,
+        }));
+    }
+    Ok(Json(serde_json::json!({ "results": results })))
+}
+
 /// Les erreurs metier `InvalidState` des chemins anonymes (stack ipv8
 /// inactive, lane indisponible) sont des erreurs de requete, pas des
 /// 404 : les ressources introuvables sont testees explicitement avant.

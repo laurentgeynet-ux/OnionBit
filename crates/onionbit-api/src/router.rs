@@ -168,6 +168,10 @@ fn api_router(state: AppState) -> Router<AppState> {
             "/private/{key}/export",
             post(downloads::post_private_export),
         )
+        // Explorateur prive : suppression d'une entree + import de
+        // fichiers locaux (`.torrent` ad-hoc chiffre en `.obd`).
+        .route("/private/{key}", delete(downloads::delete_private_entry))
+        .route("/private/import", post(downloads::post_private_import))
         // -- Evenements SSE (events_endpoint.py) ------------------------
         .route("/events", get(events::get_events))
         .route("/events/info", get(events::get_events_info))
@@ -456,6 +460,10 @@ fn api_router(state: AppState) -> Router<AppState> {
         .route("/files/browse", get(files::browse))
         .route("/files/list", get(files::list))
         .route("/files/create", get(files::create))
+        .route("/files/mkdir", post(files::mkdir))
+        .route("/files/delete", post(files::delete_entries))
+        .route("/files/move", post(files::move_entry))
+        .route("/files/copy", post(files::copy_entry))
         // -- Asyncio (asyncio_endpoint.py, pyipv8) ----------------------
         .route(
             "/ipv8/asyncio/drift",

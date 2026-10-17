@@ -3,6 +3,54 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Explorateur complet `@public` + import/suppression de la zone privée (2026-10-17)
+
+La page **Zone publique** devient un vrai explorateur de fichiers
+(sélection multiple, copier/couper/coller, supprimer, renommer,
+nouveau dossier, import depuis le device) — confinée à `data/public`
+— et la **Zone privée** gagne « Importer » (fichiers/dossiers locaux
+chiffrés en `.obd` via un `.torrent` ad-hoc) et la suppression
+d'entrées.
+
+- **API `/api/files`** (mutations confinées `@public`,
+  `resolve_public` = comparaison lexicale `to_portable`, valable
+  pour une cible inexistante ; racine `@public` protégée ; cible
+  dans le sous-arbre source refusée) : `POST /mkdir`, `/delete`
+  (récursif, sans corbeille), `/move`, `/copy` — `copy` accepte
+  aussi une source locale hors `@private` (= import device → zone).
+- **Zone privée** (`Session::import_private` /
+  `PrivateZone::import_created`) : `create_torrent` librqbit +
+  écriture `.obd` par fichier (même domaine de clé `K_file` que le
+  pipeline download, relpath sans racine), entrée manifeste
+  ordinaire (`torrent_data` = le `.torrent` produit, `source_uri` =
+  `import://`, en pause) — listing/export/suppression identiques à
+  un téléchargement privé, partageable par re-add. Option
+  **déplacement** : la source claire n'est supprimée qu'après
+  relecture déchiffrée identique de chaque `.obd` ; échec partiel =
+  `.obd` écrits purgés, source intacte.
+- **`DELETE /api/private/{key}`** (`Session::delete_private_entry`) :
+  download vivant ou ligne persistée → `Session::remove` (moteur +
+  DB + manifeste) ; entrée catalogue seule → retrait manifeste +
+  purge groupes `.obd` (temp/downloads) et fastresume `.bitv`.
+- **UI** : explorateur public réécrit (barre d'actions, dialogs
+  renommer/nouveau dossier/confirmer suppression, presse-papiers
+  copier/couper, import fichiers+dossier) ; page privée : bouton
+  « Importer » (fichiers ou dossier, option déplacement cochable)
+  et « Supprimer » par entrée avec confirmation.
+- **Ordre des contrôles** : `refuse_self_descent` est évalué
+  **avant** `check_fresh_target` — un `dst` dans le sous-arbre de
+  `src` renvoie 400 même quand son parent n'existe pas (au lieu de
+  404 trompeur).
+- **Clippy** : `BdCmd::ApplySettings` boxé (`SessionSettings` 272 o
+  déséquilibrait l'enum — warning préexistant devenu bloquant sous
+  `-D warnings`).
+- Tests : `files_explorer_mutations_confinees_public` (API : mkdir/
+  copy/move/delete + confinement `@state`/`@public` racine/traversal,
+  409 cible existante, 400 sous-arbre), core `private_import_puis_
+  suppression` + `private_import_deplacement_verifie_et_purge` +
+  `private_suppression_complete` ; `private_zone_page_test.dart`
+  (catalogue, menu Importer, DELETE après confirmation).
+
 ## ADR-0029 (Proposée) : `.onion` dans Messagerie/Canaux/Coffre — fusion UI, transports séparés (2026-10-17)
 
 Cadrage de la « trajectoire phase 3 » de l'ADR-0028 en projet dédié :

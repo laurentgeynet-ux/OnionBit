@@ -9,6 +9,7 @@ import '../../../../core/design/design_tokens.dart';
 import '../../../../core/l10n/l10n_ext.dart';
 import '../../../../core/platform/desktop_shell.dart';
 import '../../../../core/platform/pick_directory.dart';
+import '../../../../core/platform/pick_files.dart';
 import '../../../../core/platform/private_cache.dart';
 import '../../../../core/widgets/empty_state.dart';
 import '../../../../core/widgets/error_state.dart';
@@ -45,6 +46,7 @@ class PrivateZonePage extends ConsumerWidget {
                   style: Theme.of(context).textTheme.titleSmall,
                 ),
               ),
+              const _ImportButton(),
               IconButton(
                 tooltip: l10n.refresh,
                 onPressed: ref.read(privateZoneCatalogProvider.notifier).refresh,
@@ -140,6 +142,117 @@ class _ZoneView extends StatelessWidget {
   }
 }
 
+/// Bouton « Importer » de l'en-tête — chiffre des fichiers/dossiers
+/// locaux dans la zone (`POST /api/private/import`) : chaque source
+/// devient un torrent privé ad-hoc. L'option « déplacer » efface la
+/// source claire après vérification de la copie chiffrée.
+class _ImportButton extends ConsumerStatefulWidget {
+  const _ImportButton();
+
+  @override
+  ConsumerState<_ImportButton> createState() => _ImportButtonState();
+}
+
+class _ImportButtonState extends ConsumerState<_ImportButton> {
+  bool _busy = false;
+
+  Future<void> _import({required bool directory}) async {
+    final l10n = context.l10n;
+    final paths = directory
+        ? [await pickDaemonDirectory(context)].whereType<String>().toList()
+        : await pickDaemonFiles(context);
+    if (paths.isEmpty || !mounted) return;
+    // Option déplacement : suppression de la source claire après
+    // relecture dechifree identique (irréversible — confirmé).
+    var move = false;
+    final go = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSt) => AlertDialog(
+          title: Text(l10n.privateImportTitle(paths.length)),
+          content: CheckboxListTile(
+            dense: true,
+            contentPadding: EdgeInsets.zero,
+            controlAffinity: ListTileControlAffinity.leading,
+            title: Text(l10n.privateImportMoveSource),
+            value: move,
+            onChanged: (v) => setSt(() => move = v == true),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: Text(l10n.cancel),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: Text(l10n.privateImportAction),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (go != true || !mounted) return;
+    setState(() => _busy = true);
+    try {
+      final repo = ref.read(privateZoneRepositoryProvider);
+      final out = await repo.import(paths, deleteSource: move);
+      ref.invalidate(privateZoneCatalogProvider);
+      if (!mounted) return;
+      final total = out.fold<int>(0, (s, r) => s + r.files);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(l10n.privateImported(out.length, total))),
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(l10n.privateZoneError('$e'))),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _busy = false);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = context.l10n;
+    return PopupMenuButton<bool>(
+      tooltip: l10n.privateImportTooltip,
+      enabled: !_busy,
+      icon: _busy
+          ? const SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          : const Icon(Icons.input_outlined, size: 20),
+      itemBuilder: (context) => [
+        PopupMenuItem(
+          value: false,
+          child: ListTile(
+            dense: true,
+            contentPadding: EdgeInsets.zero,
+            leading: const Icon(Icons.insert_drive_file_outlined, size: 18),
+            title: Text(l10n.explorerImportFiles),
+          ),
+        ),
+        PopupMenuItem(
+          value: true,
+          child: ListTile(
+            dense: true,
+            contentPadding: EdgeInsets.zero,
+            leading: const Icon(Icons.drive_folder_upload_outlined, size: 18),
+            title: Text(l10n.explorerImportDir),
+          ),
+        ),
+      ],
+      onSelected: (dir) => _import(directory: dir),
+    );
+  }
+}
+
 /// Entrée manifeste : titre (nom réel ou infohash tronqué quand
 /// reconstruite), sous-zone et date, menu « Extraire vers… »,
 /// fichiers chargés à l'expansion.
@@ -189,7 +302,8 @@ class _PrivateEntryCard extends ConsumerWidget {
 }
 
 /// Menu contextuel d'une entrée entière — « Extraire vers un
-/// dossier… » exporte tous ses fichiers.
+/// dossier… » exporte tous ses fichiers, « Supprimer » purge
+/// l'entrée et ses `.obd` (confirmation, pas de corbeille).
 class _EntryActions extends ConsumerWidget {
   const _EntryActions({required this.entry});
 
@@ -198,6 +312,7 @@ class _EntryActions extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final l10n = context.l10n;
+    final theme = Theme.of(context);
     return PopupMenuButton<String>(
       tooltip: l10n.privateZoneActions,
       icon: const Icon(Icons.more_vert, size: 20),
@@ -211,9 +326,63 @@ class _EntryActions extends ConsumerWidget {
             title: Text(l10n.privateZoneExtract),
           ),
         ),
+        PopupMenuItem(
+          value: 'delete',
+          child: ListTile(
+            dense: true,
+            contentPadding: EdgeInsets.zero,
+            leading: Icon(
+              Icons.delete_outline,
+              size: 18,
+              color: theme.colorScheme.error,
+            ),
+            title: Text(
+              l10n.explorerDelete,
+              style: TextStyle(color: theme.colorScheme.error),
+            ),
+          ),
+        ),
       ],
-      onSelected: (_) => _exportAll(context, ref),
+      onSelected: (v) => switch (v) {
+        'delete' => _delete(context, ref),
+        _ => _exportAll(context, ref),
+      },
     );
+  }
+
+  /// Suppression définitive de l'entrée (manifeste + `.obd` +
+  /// download associé) — confirmée explicitement, sans corbeille.
+  Future<void> _delete(BuildContext context, WidgetRef ref) async {
+    final l10n = context.l10n;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        icon: const Icon(Icons.delete_forever_outlined),
+        title: Text(l10n.privateDeleteTitle),
+        content: Text(l10n.privateDeleteMessage),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text(l10n.cancel),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: Text(l10n.explorerDelete),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !context.mounted) return;
+    try {
+      await ref.read(privateZoneRepositoryProvider).delete(entry.infohash);
+      ref.invalidate(privateZoneCatalogProvider);
+      ref.invalidate(privateFilesProvider(entry.infohash));
+    } catch (e) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(l10n.privateZoneError('$e'))));
+    }
   }
 
   Future<void> _exportAll(BuildContext context, WidgetRef ref) async {

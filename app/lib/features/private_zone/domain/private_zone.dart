@@ -82,3 +82,16 @@ class PrivateExportResult {
   final int exported;
   final int bytes;
 }
+
+/// Bilan d'un `POST /api/private/import` — une entrée par source.
+class PrivateImportResult {
+  const PrivateImportResult({
+    required this.infohash,
+    required this.files,
+    required this.bytes,
+  });
+
+  final String infohash;
+  final int files;
+  final int bytes;
+}
