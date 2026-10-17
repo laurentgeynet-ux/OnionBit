@@ -3,6 +3,24 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Recherche `.onion` — retry transitoire par miroir (2026-10-17)
+
+L'onion TPB est instable par nature : un échec de circuit de
+rendez-vous (intro/garde occupée, descripteur expiré) est souvent
+transitoire mais classait la source `mirror_unreachable` au premier
+essai — vérifié en direct : le service tombé répondait une heure
+plus tôt puis rendait « Onion Service not found » au rendez-vous.
+
+- **`retries` + `retry_delay_ms`** par backend
+  (`tor.search.backends.<id>.*`, défauts 1 tentative supplémentaire
+  / 1,5 s) : les échecs de transport et les statuts injoignables
+  retentent sur le **même** miroir avant la bascule ; les réponses
+  classées (défi anti-DDoS, refonte, no-results) restent
+  définitives — jamais de retry aveugle.
+- Tests : `retry_transitoire_puis_succes` (échec transport →
+  retentive même miroir → résultats), `retry_statut_injoignable_pas_defi`
+  (404 transitoire retenté, page de défi non retentée).
+
 ## Recherche explicite + suppression de l'historique (2026-10-17)
 
 - **Recherche à « Entrée » uniquement** : le champ global de la

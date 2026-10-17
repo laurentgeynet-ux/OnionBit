@@ -39,6 +39,13 @@ pub struct OnionBackendSettings {
     /// Borne de resultats remontes par recherche — une page hostile
     /// ne doit pas gonfler l'UI (`tor.search.backends.<id>.max_results`).
     pub max_results: usize,
+    /// Tentatives supplementaires par miroir sur echec de transport
+    /// ou statut injoignable (`tor.search.backends.<id>.retries`) —
+    /// un rendez-vous onion rate souvent de facon transitoire.
+    pub retries: usize,
+    /// Delai entre deux tentatives (`…retry_delay_ms`) — laisse
+    /// arti construire un nouveau circuit de rendez-vous.
+    pub retry_delay: Duration,
 }
 
 /// Passerelle de sortie onion pour les pairs sans Tor

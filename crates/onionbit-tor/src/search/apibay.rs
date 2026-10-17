@@ -134,24 +134,46 @@ impl OnionSearchBackend for ApibayBackend {
         let mut saw_captcha = false;
         let mut saw_structure = false;
         let mut saw_noresults = false;
+        // `1 + retries` tentatives par miroir : un rendez-vous onion
+        // rate souvent de facon transitoire (intro/garde occupee,
+        // descripteur expire) — un service stable parait injoignable
+        // sur un seul essai. Seuls les echecs de transport et les
+        // statuts injoignables retentent ; les reponses classees
+        // (defi, refonte, vide) sont definitives pour ce miroir.
+        let attempts = 1 + self.cfg.retries;
         for mirror in &self.cfg.mirrors {
             let url = self.search_url(mirror, &clean);
-            match self.fetcher.fetch(&url).await {
-                // Fatal pour tous les miroirs : pas la peine de
-                // retenter (meme cause, meme effet).
-                Err(TorError::Disabled) => return Err(ExternalSearchError::TorDisabled),
-                Err(TorError::NotBuilt | TorError::NotReady) => {
-                    return Err(ExternalSearchError::TorNotReady)
+            for attempt in 0..attempts {
+                if attempt > 0 && !self.cfg.retry_delay.is_zero() {
+                    tokio::time::sleep(self.cfg.retry_delay).await;
                 }
-                Err(_) => tried += 1,
-                Ok(resp) => {
-                    tried += 1;
-                    match self.classify(&resp) {
-                        Outcome::Results(rows) => return Ok(rows),
-                        Outcome::Captcha => saw_captcha = true,
-                        Outcome::StructureChanged => saw_structure = true,
-                        Outcome::NoResults => saw_noresults = true,
-                        Outcome::Unreachable => {}
+                match self.fetcher.fetch(&url).await {
+                    // Fatal pour tous les miroirs : pas la peine de
+                    // retenter (meme cause, meme effet).
+                    Err(TorError::Disabled) => return Err(ExternalSearchError::TorDisabled),
+                    Err(TorError::NotBuilt | TorError::NotReady) => {
+                        return Err(ExternalSearchError::TorNotReady)
+                    }
+                    Err(_) => tried += 1,
+                    Ok(resp) => {
+                        tried += 1;
+                        match self.classify(&resp) {
+                            Outcome::Results(rows) => return Ok(rows),
+                            Outcome::Captcha => {
+                                saw_captcha = true;
+                                break;
+                            }
+                            Outcome::StructureChanged => {
+                                saw_structure = true;
+                                break;
+                            }
+                            Outcome::NoResults => {
+                                saw_noresults = true;
+                                break;
+                            }
+                            // Statut injoignable : prochaine tentative.
+                            Outcome::Unreachable => {}
+                        }
                     }
                 }
             }
@@ -374,6 +396,8 @@ mod tests {
                 mirrors: mirrors.iter().map(|m| m.to_string()).collect(),
                 url_template: "http://{host}/q.php?q={q}".into(),
                 max_results,
+                retries: 0,
+                retry_delay: std::time::Duration::ZERO,
             },
             stub,
         )
@@ -516,6 +540,75 @@ mod tests {
         assert_eq!(out.len(), 2);
     }
 
+    /// Retry transitoire : premier essai en erreur transport, la
+    /// retentive (meme miroir) sert la reponse — `retries: 1`.
+    #[tokio::test]
+    async fn retry_transitoire_puis_succes() {
+        let stub = StubFetch::new(vec![
+            Err(TorError::Request("circuit rompu".into())),
+            Ok(page(200, &format!("[{ROW_A}]"))),
+        ]);
+        let b = ApibayBackend::new(
+            "apibay",
+            &OnionBackendSettings {
+                mirrors: vec!["m1.org".into()],
+                url_template: "http://{host}/q.php?q={q}".into(),
+                max_results: 10,
+                retries: 1,
+                retry_delay: std::time::Duration::ZERO,
+            },
+            stub.clone(),
+        );
+        let out = b.search("x").await.unwrap();
+        assert_eq!(out.len(), 1);
+        let urls = stub.urls.lock().unwrap_or_else(|e| e.into_inner());
+        assert_eq!(urls.len(), 2);
+        assert!(urls.iter().all(|u| u.starts_with("http://m1.org/")));
+    }
+
+    /// Les reponses classees ne retentent pas : un 404 est
+    /// injoignable → retry ; une page de defi est definitive.
+    #[tokio::test]
+    async fn retry_statut_injoignable_pas_defi() {
+        // 404 transitoire → retentive → succes.
+        let stub = StubFetch::new(vec![Ok(page(404, "nope")), Ok(page(200, "[]"))]);
+        let b = ApibayBackend::new(
+            "apibay",
+            &OnionBackendSettings {
+                mirrors: vec!["m1.org".into()],
+                url_template: "http://{host}/q.php?q={q}".into(),
+                max_results: 10,
+                retries: 1,
+                retry_delay: std::time::Duration::ZERO,
+            },
+            stub.clone(),
+        );
+        assert!(matches!(
+            b.search("x").await,
+            Err(ExternalSearchError::NoResults)
+        ));
+        assert_eq!(stub.urls.lock().unwrap_or_else(|e| e.into_inner()).len(), 2);
+        // Defi → classifie, pas de retentive (queue a une entree
+        // de rab qui ne doit pas etre consommee).
+        let stub = StubFetch::new(vec![Ok(page(503, "cf")), Ok(page(200, "[]"))]);
+        let b = ApibayBackend::new(
+            "apibay",
+            &OnionBackendSettings {
+                mirrors: vec!["m1.org".into()],
+                url_template: "http://{host}/q.php?q={q}".into(),
+                max_results: 10,
+                retries: 1,
+                retry_delay: std::time::Duration::ZERO,
+            },
+            stub.clone(),
+        );
+        assert!(matches!(
+            b.search("x").await,
+            Err(ExternalSearchError::CaptchaDetected)
+        ));
+        assert_eq!(stub.urls.lock().unwrap_or_else(|e| e.into_inner()).len(), 1);
+    }
+
     /// Bascule : premier miroir en erreur transport, le second sert
     /// la reponse JSON.
     #[tokio::test]
@@ -566,6 +659,8 @@ mod tests {
                 mirrors: vec!["un-onion-v3.onion".into()],
                 url_template: "http://{host}/q.php?q={q}".into(),
                 max_results: 100,
+                retries: 0,
+                retry_delay: std::time::Duration::ZERO,
             },
             stub,
         );

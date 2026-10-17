@@ -198,6 +198,8 @@ mod tests {
                 mirrors: vec!["m.onion".to_string()],
                 url_template: "http://{host}/q.php?q={q}".to_string(),
                 max_results: 10,
+                retries: 0,
+                retry_delay: std::time::Duration::ZERO,
             },
         );
         s

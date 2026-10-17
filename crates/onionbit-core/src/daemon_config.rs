@@ -1249,6 +1249,15 @@ pub struct TorBackendFileConfig {
     pub url_template: String,
     /// Borne de résultats remontés par recherche (ADR-0028 §5).
     pub max_results: u32,
+    /// Tentatives supplémentaires par miroir sur échec de transport
+    /// ou statut injoignable — un circuit de rendez-vous onion rate
+    /// souvent de façon transitoire (intro/garde occupée) : une
+    /// seule tentative rend un service stable « injoignable » à
+    /// tort. `0` = un essai par miroir.
+    pub retries: u32,
+    /// Délai entre deux tentatives (ms) — laisse arti établir un
+    /// nouveau circuit plutôt que retaper le même chemin raté.
+    pub retry_delay_ms: u64,
     /// Clés inconnues — préservées.
     #[serde(flatten)]
     pub extra: serde_json::Map<String, Value>,
@@ -1260,6 +1269,8 @@ impl Default for TorBackendFileConfig {
             mirrors: Vec::new(),
             url_template: String::new(),
             max_results: 100,
+            retries: 1,
+            retry_delay_ms: 1500,
             extra: serde_json::Map::new(),
         }
     }
@@ -2321,6 +2332,8 @@ impl DaemonConfig {
                     mirrors,
                     url_template,
                     max_results: b.max_results.max(1) as usize,
+                    retries: b.retries as usize,
+                    retry_delay: std::time::Duration::from_millis(b.retry_delay_ms),
                 },
             );
         }

@@ -238,7 +238,11 @@ cibles `TorTargetPolicy`, et plus tard tout parsing de liens
   ses miroirs `.onion` — transport 100 % onion *et* fiabilité de
   l'API, sans sortie clearnet ; `tpb.rs` (scraper HTML) est
   supprimé. Un `url_template` persisté contenant `search.php` est
-  migré vers `q.php` au chargement de la config.
+  migré vers `q.php` au chargement de la config. Robustesse
+  constatée nécessaire : l'onion TPB tombe souvent — les échecs
+  de transport/statut injoignable retentent `retries` fois sur le
+  même miroir (délai `retry_delay_ms`) avant la bascule ; les
+  réponses classées ne retentent pas.
 
 ### 6. Interaction avec les profils d'anonymat (ADR-0022)
 
