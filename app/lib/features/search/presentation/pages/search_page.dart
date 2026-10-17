@@ -195,10 +195,6 @@ class SearchPage extends ConsumerWidget {
                       (l10n.filterAll, null),
                       (l10n.sourceLocal, TorrentSource.local),
                       (l10n.searchSourceNetwork, TorrentSource.remote),
-                      // Source `.onion` — chip présent uniquement quand
-                      // Tor est activé (opt-in, ADR-0028).
-                      if (tor?.enabled ?? false)
-                        (l10n.searchSourceOnion, TorrentSource.onion),
                     ])
                       Padding(
                         padding: const EdgeInsets.only(right: AppSpace.xs),
@@ -208,6 +204,19 @@ class SearchPage extends ConsumerWidget {
                           onSelected: (_) => ref
                               .read(searchFilterProvider.notifier)
                               .setSource(source),
+                        ),
+                      ),
+                    // Source `.onion` — chip présent uniquement quand
+                    // Tor est activé (opt-in, ADR-0028) + pastille de
+                    // santé des miroirs : un onion tombé/déprécié est
+                    // visible sans lancer de recherche.
+                    if (tor?.enabled ?? false)
+                      Padding(
+                        padding: const EdgeInsets.only(right: AppSpace.xs),
+                        child: _OnionSourceChip(
+                          label: l10n.searchSourceOnion,
+                          selected: filter.source == TorrentSource.onion,
+                          status: tor,
                         ),
                       ),
                     FilterChip(
@@ -752,6 +761,80 @@ IconData _sourceIcon(TorrentSource s) => switch (s) {
   TorrentSource.remote => Icons.cloud_outlined,
   TorrentSource.onion => Icons.vpn_lock_outlined,
 };
+
+/// Chip de la source `.onion` (`TPB (Tor)`) — filtre d'affichage
+/// **et** pastille de santé des miroirs (`GET /api/tor/probe`,
+/// ADR-0028) : un onion tombé/déprécié est visible sans lancer de
+/// recherche. La sonde ne part que si la lane est `ready` ; tap sur
+/// la pastille = re-sonde explicite.
+class _OnionSourceChip extends ConsumerWidget {
+  const _OnionSourceChip({
+    required this.label,
+    required this.selected,
+    required this.status,
+  });
+
+  final String label;
+  final bool selected;
+  final TorRuntimeStatus? status;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final l10n = context.l10n;
+    final scheme = Theme.of(context).colorScheme;
+    final ready = status?.state == TorRuntimeState.ready;
+    final sources = (status?.sources ?? const []).isNotEmpty
+        ? status!.sources
+        : const ['tpb'];
+    final key = sources.join(',');
+
+    var dotColor = scheme.outline;
+    var tip = ready ? l10n.torProbePending : l10n.torProbeLaneNotReady;
+    if (ready) {
+      final probe = ref.watch(torSourceProbeProvider(key));
+      if (probe.isLoading) {
+        dotColor = const Color(0xFFFFA726);
+      } else if (probe.hasError || probe.value == null) {
+        tip = l10n.torProbeFailed;
+      } else if (probe.value!.reachable > 0) {
+        dotColor = const Color(0xFF4CAF50);
+        tip = l10n.torProbeOk(probe.value!.reachable, probe.value!.mirrors.length);
+      } else {
+        dotColor = scheme.error;
+        tip = l10n.torProbeKo;
+      }
+    }
+
+    return ChoiceChip(
+      selected: selected,
+      onSelected: (_) =>
+          ref.read(searchFilterProvider.notifier).setSource(TorrentSource.onion),
+      label: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Tooltip(
+            message: tip,
+            child: GestureDetector(
+              onTap: ready
+                  ? () => ref.invalidate(torSourceProbeProvider(key))
+                  : null,
+              child: Container(
+                width: 8,
+                height: 8,
+                decoration: BoxDecoration(
+                  color: dotColor,
+                  shape: BoxShape.circle,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 6),
+          Text(label),
+        ],
+      ),
+    );
+  }
+}
 
 /// Chip d'état Tor dans la barre de recherche (ADR-0028 §8) :
 /// désactivé → CTA vers les réglages ; `bootstrapping` → spinner +

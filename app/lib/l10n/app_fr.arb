@@ -1,6 +1,5 @@
 {
   "@@locale": "fr",
-
   "navDownloads": "Téléchargements",
   "navSearch": "Rechercher",
   "navDiagnostic": "Diagnostic",
@@ -38,7 +37,11 @@
   "msgVaultExported": "Coffre copié dans le presse-papiers — conservez-le en lieu sûr",
   "msgVaultRestored": "{count} contact(s) restauré(s) depuis le coffre",
   "@msgVaultRestored": {
-    "placeholders": {"count": {"type": "int"}}
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
   },
   "msgVaultPasteHint": "Collez le blob du coffre (hex OBV1…)",
   "msgPublicKeyLabel": "Clé publique (hex)",
@@ -79,13 +82,19 @@
   "msgGroupPickMembers": "Membres (contacts actifs)",
   "msgGroupMembers": "{count} membre(s)",
   "@msgGroupMembers": {
-    "placeholders": {"count": {"type": "int"}}
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
   },
   "msgGroupRoster": "Membres du groupe",
   "msgGroupInvite": "Inviter un contact",
   "msgGroupInvitedBy": "invité par {pk}",
   "@msgGroupInvitedBy": {
-    "placeholders": {"pk": {}}
+    "placeholders": {
+      "pk": {}
+    }
   },
   "msgGroupLeave": "Quitter le groupe",
   "msgDecline": "Décliner",
@@ -100,7 +109,11 @@
   "msgAttachPrivate": "Privé chiffré (@private)",
   "msgAttachSentTo": "envoyée à {count} membre(s)",
   "@msgAttachSentTo": {
-    "placeholders": {"count": {"type": "int"}}
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
   },
   "msgAttachStateOffered": "offerte",
   "msgAttachStateSeeding": "partagée (seed anonyme)",
@@ -123,11 +136,15 @@
   "ctSourceRequired": "Chemin source requis",
   "ctSuccess": "Torrent créé : {path}",
   "@ctSuccess": {
-    "placeholders": {"path": {}}
+    "placeholders": {
+      "path": {}
+    }
   },
   "ctSeededSuccess": "Torrent créé et ajouté au partage : {path}",
   "@ctSeededSuccess": {
-    "placeholders": {"path": {}}
+    "placeholders": {
+      "path": {}
+    }
   },
   "aboutVersions": "Versions",
   "aboutApp": "Application",
@@ -142,14 +159,12 @@
   "aboutCommunitySub": "Questions et annonces — GitHub Discussions",
   "aboutLicenses": "Licences tierces",
   "aboutLicensesSub": "Dépendances Flutter utilisées par l'application.",
-
   "filterAll": "Tous",
   "filterDownloading": "En cours",
   "filterNotDownloading": "Pas en téléchargement",
   "filterCompleted": "Terminés",
   "filterActive": "Actifs",
   "filterInactive": "Inactifs",
-
   "sidebarAddDownloadTooltip": "Ajouter un téléchargement",
   "add": "Ajouter",
   "sidebarGroupSystem": "Système",
@@ -157,13 +172,11 @@
   "sidebarFiltersExpand": "Déplier les filtres",
   "sidebarExpand": "Déplier la sidebar",
   "sidebarCollapse": "Replier en rail",
-
   "daemonConnected": "Daemon connecté",
   "daemonUnreachable": "Daemon injoignable",
   "daemonConnectedVersion": "Daemon connecté · {version}",
   "daemonFooterVersion": "Daemon {version}",
   "daemonFooterNoVersion": "Daemon",
-
   "daemonUnreachableBanner": "Daemon injoignable{url}",
   "retry": "Réessayer",
   "daemonUnreachableTitle": "Le daemon ne répond pas",
@@ -177,19 +190,15 @@
   "cancel": "Annuler",
   "connecting": "Connexion…",
   "save": "Enregistrer",
-
   "statusAnonReady": "Anonyme : {count, plural, =1{{count} circuit prêt} other{{count} circuits prêts}}",
   "statusAnonWaiting": "Anonyme : en attente de circuit",
   "statusAnonDisabled": "Anonyme : désactivé",
   "statusAnonLoading": "Anonyme : …",
-
   "searchHint": "Rechercher du contenu…",
-
   "notifications": "Notifications",
   "markAllRead": "Tout lu",
   "clearAll": "Vider",
   "noNotifications": "Aucune notification",
-
   "notifDownloadFinished": "Téléchargement terminé",
   "notifDaemonError": "Erreur daemon",
   "notifLowSpace": "Espace disque faible",
@@ -199,9 +208,7 @@
   "notifDownloadError": "Téléchargement en erreur",
   "notifPrivateTorrent": "Torrent privé détecté",
   "notifPrivateTorrentMsg": "« {name} » est privé : l'anonymat est impossible — basculez-le en Clair (menu ⋯ → sauts).",
-
   "snackFinished": "Téléchargement terminé",
-
   "searchPopular": "Recherche sur le réseau",
   "searchResultsFor": "Résultats pour « {query} »",
   "searchAddSelected": "Ajouter ({count})",
@@ -267,7 +274,6 @@
   "toastHealthError": "Sonde santé : {error}",
   "toastMagnetCopied": "Lien magnet copié",
   "toastInfohashCopied": "Info-hash copié",
-
   "tabOverview": "Vue d'ensemble",
   "tabStats": "Statistiques",
   "tabOverlays": "Overlays",
@@ -281,7 +287,6 @@
   "tabPexPeers": "Pairs PEX",
   "tabLogs": "Journaux",
   "refresh": "Rafraîchir",
-
   "emptyOverlays": "Aucun overlay",
   "emptyOverlaysMsg": "La stack IPv8 est-elle active ?",
   "peersCount": "{count, plural, =1{{count} pair} other{{count} pairs}}",
@@ -425,14 +430,24 @@
   "trustTooltipScored": "Confiance locale : {endorsers} approbation(s), {flaggers} signalement(s) de curateurs suivis · {count} attestation(s) vue(s)",
   "@trustTooltipScored": {
     "placeholders": {
-      "endorsers": { "type": "int" },
-      "flaggers": { "type": "int" },
-      "count": { "type": "int" }
+      "endorsers": {
+        "type": "int"
+      },
+      "flaggers": {
+        "type": "int"
+      },
+      "count": {
+        "type": "int"
+      }
     }
   },
   "trustTooltipUnscored": "{count} attestation(s) vue(s), aucune d'un curateur suivi — le score reste 0",
   "@trustTooltipUnscored": {
-    "placeholders": { "count": { "type": "int" } }
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
   },
   "emptyConnections": "Aucune connexion connue",
   "emptyConnectionsMsg": "Pairs IPv8, nœuds DHT, cibles de sortie et pairs BitTorrent apparaissent ici.",
@@ -441,7 +456,6 @@
   "listenerSocks5": "SOCKS5 · {hops} saut(s)",
   "connExitTarget": "sortie #{id}",
   "connMid": "mid {mid}",
-
   "statDaemonVersion": "Version du daemon",
   "statDbSize": "Taille de la base",
   "statTorrentsKnown": "Torrents connus",
@@ -468,25 +482,25 @@
   "bwUnlimited": "illimité",
   "statusSessionTraffic": "session ↓ {down} · ↑ {up}",
   "@statusSessionTraffic": {
-    "placeholders": {"down": {}, "up": {}}
+    "placeholders": {
+      "down": {},
+      "up": {}
+    }
   },
   "statusSessionTrafficTip": "Volume fichiers cumulé depuis le démarrage du daemon — relai tunnel exclu.",
   "statusRelayCap": "relais ≤ {rate}",
   "statusRelayCapRtt": "relais ≤ {rate} · {rtt} ms",
   "statusRelayCapTip": "Débit estimé pour les données IPv8 relayées, mesuré en continu sur votre connexion : il monte tant que la ligne reste fluide et replie dès que les délais gonflent (congestion de l'upload). « ms » = RTT minimum mesuré sur les pairs sondés.",
   "statNone": "aucun",
-
   "logsDebugTooltip": "Journalise les événements tunnel détaillés (create/extend/destroy, e2e…)",
   "uiLogTitle": "Journal UI",
   "uiLogSubtitle": "logs/ui.log — connexion daemon, SSE, ajouts, recherches",
   "emptyLogs": "Journal vide",
   "emptyLogsMsg": "Le daemon n'a encore rien écrit.",
-
   "overviewTunnelInactive": "TunnelCommunity inactive",
   "overviewTunnelsOk": "Tunnels opérationnels ({count, plural, =1{{count} circuit prêt} other{{count} circuits prêts}})",
   "overviewTunnelNoCircuit": "TunnelCommunity active, aucun circuit prêt",
   "autoRefresh5s": "auto-refresh 5 s",
-
   "cardIpv8Overlays": "Overlays IPv8",
   "cardCircuitsReady": "Circuits prêts",
   "cardRelays": "Relais",
@@ -507,21 +521,18 @@
   "torStateDormant": "dormant",
   "torStateError": "en échec",
   "torStateUnknown": "inconnu",
-
   "speedTestCircuitTitle": "Test du circuit #{id}",
   "speedTestNewTitle": "{hops, plural, =1{Test d'un circuit à 1 saut} other{Test d'un circuit à {hops} sauts}}",
   "speedMeasuring": "Mesure en cours…",
   "speedTestFailed": "Échec du test",
   "speedTestDone": "Test terminé",
   "close": "Fermer",
-
   "errorMessage": "Erreur : {error}",
   "defaultHint": "défaut : {value}",
   "browse": "Parcourir…",
   "dirPickerTitle": "Parcourir les dossiers du daemon",
   "dirPickerSelect": "Choisir ce dossier",
   "apply": "Appliquer",
-
   "sectionDownloadsDefaults": "Téléchargements par défaut",
   "sectionBandwidth": "Bande passante",
   "sectionQueue": "File d'attente",
@@ -540,7 +551,6 @@
   "resetSectionDefaults": "Rétablir les défauts de la section",
   "defaultsRestored": "Défauts restaurés",
   "unsavedChanges": "Modifications non enregistrées",
-
   "dlSettingsSaved": "Réglages de téléchargement enregistrés",
   "saveError": "Erreur lors de l'enregistrement : {error}",
   "dlDestFolder": "Dossier de destination par défaut",
@@ -549,7 +559,6 @@
   "diskSpaceLoading": "Espace disque : …",
   "diskSpaceUnavailable": "Espace disque : indisponible",
   "diskSpaceFree": "Espace libre : {free} sur {total}",
-
   "bwSaved": "Limites de bande passante enregistrées",
   "bwDownloadLabel": "Téléchargement",
   "bwUploadLabel": "Envoi",
@@ -558,7 +567,6 @@
   "rateUnlimitedHint": "défaut : 0 = illimité",
   "rateDesc": "Débit global ; 0 = illimité",
   "ratePresetMb": "{mb} Mo/s",
-
   "queueSaved": "File d'attente enregistrée",
   "queueHelp": "Les téléchargements « gérés automatiquement » au-delà de ces bornes sont mis en pause puis repris quand un slot se libère.",
   "queueActiveDownloads": "Téléchargements actifs",
@@ -570,7 +578,6 @@
   "queueFastresumeSub": "Relit un échantillon de pièces après la restauration pour détecter les fichiers modifiés entre deux sessions. Désactivé : aucune relecture, une corruption passera inaperçue.",
   "queueAutoManaged": "Gestion automatique par défaut",
   "queueAutoManagedSub": "Les nouveaux téléchargements sont placés sous la file d'attente.",
-
   "seedSaved": "Politique de seed enregistrée",
   "seedMode": "Mode de seed",
   "seedModeForever": "Pour toujours",
@@ -584,7 +591,6 @@
   "seedAnonSwitch": "Téléchargements anonymes par défaut",
   "seedAnonSub": "1 saut par défaut.",
   "safeSeedingSub": "Obligatoire quand des sauts anonymes sont demandés.",
-
   "anonSaved": "Réglages des tunnels enregistrés",
   "anonMinMaxError": "min_circuits doit être ≤ max_circuits",
   "anonEnabled": "TunnelCommunity activée",
@@ -601,7 +607,6 @@
   "relaysMaxNote": "Jambes de relais + sorties servies simultanément pour les autres pairs. Au-delà, les demandes de circuit entrantes sont refusées. Pris en compte au redémarrage.",
   "relayRateAutoNote": "Le débit servi se régule automatiquement : il monte tant que le RTT des pairs reste stable et recule dès que votre file d'attente montante se remplit — sans jamais brider vos propres téléchargements anonymes. Valeur fixe via tunnel_community/max_relayed_rate dans configuration.json (0 = illimité, -1 = auto).",
   "anonCircuitsNote": "Circuits maintenus en permanence par lane anonyme ; le détail en direct est visible dans Diagnostic → Circuits.",
-
   "netSaved": "Réglages réseau enregistrés",
   "proxyNone": "Aucun",
   "proxySocks5Auth": "SOCKS5 + authentification",
@@ -624,7 +629,6 @@
   "proxyChipNone": "Proxy : aucun",
   "proxyChipType": "Proxy : type {type}{server}",
   "overlayPeersChip": "{name} : {count, plural, =1{{count} pair} other{{count} pairs}}",
-
   "autoSaved": "Automatisation enregistrée",
   "watchFolderTitle": "Dossier surveillé",
   "watchSwitch": "Surveiller un dossier",
@@ -638,11 +642,9 @@
   "rssUrlLabel": "URL du flux",
   "rssAddTooltip": "Ajouter le flux",
   "rssLastItems": "Derniers items découverts",
-
   "apiUrlLabel": "URL de l'API",
   "apiKeyLabelShort": "Clé API",
   "apiKeyHint": "auto : configuration.json du daemon",
-
   "daemonState": "État du daemon",
   "stateDir": "Dossier d'état",
   "downloadsTo": "Téléchargements vers",
@@ -655,11 +657,9 @@
   "shutdownBody": "Les téléchargements seront suspendus jusqu'au prochain démarrage.",
   "shutdownConfirm": "Arrêter",
   "shutdownSent": "Arrêt du daemon demandé.",
-
   "daemonVersionLine": "Version du daemon : {version}",
   "versionEndpointsSwitch": "Endpoints de versioning",
   "versionEndpointsSub": "Section désactivée = endpoints absents (404). Aucune vérification de mise à jour n'est faite — elle fuiterait l'existence de l'installation.",
-
   "noDownloads": "Aucun téléchargement",
   "noDownloadsHint": "Ajoutez un magnet ou un fichier .torrent.",
   "filterEmpty": "Aucun élément dans le filtre « {filter} ».",
@@ -705,7 +705,6 @@
   "colRatio": "Ratio",
   "colUlTotal": "Uploadé",
   "colAdded": "Ajouté",
-
   "statusError": "Erreur",
   "statusDownloading": "Téléchargement {pct} %",
   "statusSeeding": "Partage {pct} %",
@@ -717,7 +716,6 @@
   "trafficDirect": "Trafic direct (non anonyme)",
   "anonTip": "Anonyme : {count, plural, =1{{count} saut} other{{count} sauts}}{suffix}",
   "waitingCircuit": " — en attente de circuit",
-
   "tabDetails": "Détails",
   "tabFiles": "Fichiers",
   "copyMagnetToast": "Lien magnet copié dans le presse-papier",
@@ -794,7 +792,6 @@
   "peerDirOut": "Sortant",
   "noPeers": "Aucun pair connecté",
   "noPeersHint": "Le client recherche des pairs via trackers et DHT.",
-
   "addDownload": "Ajouter un téléchargement",
   "magnetOrUrl": "Magnet",
   "magnetHint": "magnet:?xt=…",
@@ -803,7 +800,6 @@
   "removeFile": "Retirer le fichier",
   "anonDirectWarn": "Votre IP est visible par les pairs.",
   "anonRelaysInfo": "{count, plural, =1{IP masquée par {count} relais} other{IP masquée par {count} relais}} — le trafic passe par le tunnel ou nulle part (seeding inclus).",
-
   "twinBadgeTip": "Même contenu qu'une autre entrée de la liste (jumeau — ex. version publique d'un torrent privé).",
   "privateTorrentTitle": "Torrent privé — anonymat impossible",
   "privateTorrentWarn": "Son tracker exige une connexion directe (passkey liée à votre IP) et le flag « private » interdit DHT/PEX : aucun chemin anonyme n'existe. Ce téléchargement se fera en clair — votre IP sera visible du tracker et de l'essaim.",
@@ -837,7 +833,6 @@
   "actAnnounce": "annonce forcée",
   "actRemoveTracker": "retrait du tracker",
   "actDefaultTrackers": "ajout des trackers par défaut",
-
   "settingsAppearanceTitle": "Apparence",
   "settingsThemeMode": "Mode",
   "themeModeAuto": "Auto",
@@ -869,7 +864,6 @@
   "stealthSaved": "Réglages furtifs enregistrés",
   "stealthStatus": "Rôle : {role} — sessions : {sessions} — ponts configurés : {bridges}",
   "stealthClockWarning": "Les handshakes vers les ponts échouent sans établir de session. Sur un réseau censuré, vérifiez votre horloge : le NTP peut être filtré ou usurpé et la fenêtre d'horodatage du handshake est de ±90 s.",
-
   "storageAreaLabel": "Zone de stockage",
   "storageAreaPublic": "Public",
   "storageAreaPrivate": "Privée",
@@ -989,7 +983,6 @@
   "privateZoneExtract": "Extraire vers un dossier…",
   "privateZoneExported": "{count, plural, =1{1 fichier exporté} other{{count} fichiers exportés}} — {bytes} octets",
   "privateZoneError": "Zone privée : {error}",
-
   "ok": "OK",
   "explorerNewFolder": "Nouveau dossier",
   "explorerNameHint": "Nom",
@@ -1003,22 +996,49 @@
   "explorerDeleteTitle": "Supprimer définitivement ?",
   "explorerDeleteMessage": "{count, plural, =1{Cet élément} other{{count} éléments}} sera définitivement supprimé — il n'y a pas de corbeille.",
   "@explorerDeleteMessage": {
-    "placeholders": {"count": {"type": "int"}}
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
   },
   "privateImportTooltip": "Importer dans la zone privée",
   "privateImportTitle": "{count, plural, =1{Importer cet élément} other{Importer {count} éléments}} dans la zone privée ?",
   "@privateImportTitle": {
-    "placeholders": {"count": {"type": "int"}}
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
   },
   "privateImportMoveSource": "Déplacer : supprimer la source après vérification",
   "privateImportAction": "Importer",
   "privateImported": "{count, plural, =1{1 élément importé} other{{count} éléments importés}} — {files} fichier(s) chiffrés",
   "@privateImported": {
     "placeholders": {
-      "count": {"type": "int"},
-      "files": {"type": "int"}
+      "count": {
+        "type": "int"
+      },
+      "files": {
+        "type": "int"
+      }
     }
   },
   "privateDeleteTitle": "Supprimer cette entrée ?",
-  "privateDeleteMessage": "L'entrée, ses données chiffrées et le téléchargement associé seront définitivement supprimés — il n'y a pas de corbeille."
+  "privateDeleteMessage": "L'entrée, ses données chiffrées et le téléchargement associé seront définitivement supprimés — il n'y a pas de corbeille.",
+  "torProbeOk": "{reachable}/{total} miroir(s) onion joignable(s) — toucher pour re-sonder",
+  "torProbeKo": "Aucun miroir onion joignable (source tombée/dépréciée) — toucher pour re-sonder",
+  "torProbePending": "Sonde onion en cours…",
+  "torProbeFailed": "État des miroirs inconnu — toucher pour re-sonder",
+  "torProbeLaneNotReady": "Lane Tor non prête",
+  "@torProbeOk": {
+    "placeholders": {
+      "reachable": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  }
 }

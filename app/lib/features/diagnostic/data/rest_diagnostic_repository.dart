@@ -396,4 +396,13 @@ class RestDiagnosticRepository implements DiagnosticRepository {
     final resp = await _api.get('/tor/status') as Map<String, dynamic>;
     return TorRuntimeStatus.fromJson(resp);
   }
+
+  @override
+  Future<TorSourceProbe> torProbe(String source) async {
+    final resp = await _api.get(
+      '/tor/probe',
+      query: {'source': source},
+    ) as Map<String, dynamic>;
+    return TorSourceProbe.fromJson(resp);
+  }
 }

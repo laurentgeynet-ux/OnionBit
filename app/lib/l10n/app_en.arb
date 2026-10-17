@@ -1,20 +1,31 @@
 {
   "@@locale": "en",
   "@@author": "Laurent Geynet",
-
   "navDownloads": "Downloads",
-  "@navDownloads": { "description": "Sidebar/nav label — Downloads page" },
+  "@navDownloads": {
+    "description": "Sidebar/nav label — Downloads page"
+  },
   "navSearch": "Search",
-  "@navSearch": { "description": "Sidebar/nav label — Search page" },
+  "@navSearch": {
+    "description": "Sidebar/nav label — Search page"
+  },
   "navDiagnostic": "Diagnostics",
-  "@navDiagnostic": { "description": "Sidebar/nav label — Diagnostic page" },
+  "@navDiagnostic": {
+    "description": "Sidebar/nav label — Diagnostic page"
+  },
   "navSettings": "Settings",
-  "@navSettings": { "description": "Sidebar/nav label — Settings page" },
+  "@navSettings": {
+    "description": "Sidebar/nav label — Settings page"
+  },
   "navAbout": "About",
   "navMessages": "Messages",
-  "@navMessages": { "description": "Sidebar/nav label — Messaging page (ADR-0011)" },
+  "@navMessages": {
+    "description": "Sidebar/nav label — Messaging page (ADR-0011)"
+  },
   "navChannels": "Channels",
-  "@navChannels": { "description": "Sidebar/nav label — Channels page (ADR-0025)" },
+  "@navChannels": {
+    "description": "Sidebar/nav label — Channels page (ADR-0025)"
+  },
   "channelsSubscribed": "Followed channels",
   "channelsFollow": "Follow",
   "channelsFollowTitle": "Follow a channel",
@@ -45,7 +56,11 @@
   "msgVaultExported": "Vault copied to clipboard — keep it safe",
   "msgVaultRestored": "{count} contact(s) restored from vault",
   "@msgVaultRestored": {
-    "placeholders": {"count": {"type": "int"}}
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
   },
   "msgVaultPasteHint": "Paste the vault blob (OBV1… hex)",
   "msgPublicKeyLabel": "Public key (hex)",
@@ -86,13 +101,19 @@
   "msgGroupPickMembers": "Members (active contacts)",
   "msgGroupMembers": "{count} member(s)",
   "@msgGroupMembers": {
-    "placeholders": {"count": {"type": "int"}}
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
   },
   "msgGroupRoster": "Group members",
   "msgGroupInvite": "Invite a contact",
   "msgGroupInvitedBy": "invited by {pk}",
   "@msgGroupInvitedBy": {
-    "placeholders": {"pk": {}}
+    "placeholders": {
+      "pk": {}
+    }
   },
   "msgGroupLeave": "Leave group",
   "msgDecline": "Decline",
@@ -107,7 +128,11 @@
   "msgAttachPrivate": "Encrypted private (@private)",
   "msgAttachSentTo": "sent to {count} member(s)",
   "@msgAttachSentTo": {
-    "placeholders": {"count": {"type": "int"}}
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
   },
   "msgAttachStateOffered": "offered",
   "msgAttachStateSeeding": "shared (anonymous seeding)",
@@ -130,11 +155,15 @@
   "ctSourceRequired": "Source path required",
   "ctSuccess": "Torrent created: {path}",
   "@ctSuccess": {
-    "placeholders": {"path": {}}
+    "placeholders": {
+      "path": {}
+    }
   },
   "ctSeededSuccess": "Torrent created and added to seeding: {path}",
   "@ctSeededSuccess": {
-    "placeholders": {"path": {}}
+    "placeholders": {
+      "path": {}
+    }
   },
   "aboutVersions": "Versions",
   "aboutApp": "App",
@@ -149,14 +178,12 @@
   "aboutCommunitySub": "Questions and announcements — GitHub Discussions",
   "aboutLicenses": "Third-party licenses",
   "aboutLicensesSub": "Flutter dependencies used by the app.",
-
   "filterAll": "All",
   "filterDownloading": "Downloading",
   "filterNotDownloading": "Not downloading",
   "filterCompleted": "Completed",
   "filterActive": "Active",
   "filterInactive": "Inactive",
-
   "sidebarAddDownloadTooltip": "Add a download",
   "add": "Add",
   "sidebarGroupSystem": "System",
@@ -164,25 +191,35 @@
   "sidebarFiltersExpand": "Expand filters",
   "sidebarExpand": "Expand sidebar",
   "sidebarCollapse": "Collapse to rail",
-
   "daemonConnected": "Daemon connected",
   "daemonUnreachable": "Daemon unreachable",
   "daemonConnectedVersion": "Daemon connected · {version}",
   "@daemonConnectedVersion": {
     "description": "Sidebar footer tooltip when connected, with daemon version",
-    "placeholders": { "version": { "type": "String" } }
+    "placeholders": {
+      "version": {
+        "type": "String"
+      }
+    }
   },
   "daemonFooterVersion": "Daemon {version}",
   "@daemonFooterVersion": {
     "description": "Sidebar footer label: daemon name + version",
-    "placeholders": { "version": { "type": "String" } }
+    "placeholders": {
+      "version": {
+        "type": "String"
+      }
+    }
   },
   "daemonFooterNoVersion": "Daemon",
-
   "daemonUnreachableBanner": "Daemon unreachable{url}",
   "@daemonUnreachableBanner": {
     "description": "Banner when the daemon SSE is down; {url} is ' — <baseUrl>' or empty",
-    "placeholders": { "url": { "type": "String" } }
+    "placeholders": {
+      "url": {
+        "type": "String"
+      }
+    }
   },
   "retry": "Retry",
   "daemonUnreachableTitle": "Daemon unreachable",
@@ -199,23 +236,23 @@
   "cancel": "Cancel",
   "connecting": "Connecting…",
   "save": "Save",
-
   "statusAnonReady": "Anonymous: {count, plural, =1{{count} circuit ready} other{{count} circuits ready}}",
   "@statusAnonReady": {
     "description": "Status bar — anonymous lane ready circuits",
-    "placeholders": { "count": { "type": "int" } }
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
   },
   "statusAnonWaiting": "Anonymous: waiting for circuit",
   "statusAnonDisabled": "Anonymous: disabled",
   "statusAnonLoading": "Anonymous: …",
-
   "searchHint": "Search content…",
-
   "notifications": "Notifications",
   "markAllRead": "Mark all read",
   "clearAll": "Clear",
   "noNotifications": "No notifications",
-
   "notifDownloadFinished": "Download finished",
   "notifDaemonError": "Daemon error",
   "notifLowSpace": "Low disk space",
@@ -223,40 +260,62 @@
   "notifNewVersion": "Update available",
   "notifNewVersionMsg": "Version {version} available.",
   "@notifNewVersionMsg": {
-    "placeholders": { "version": { "type": "String" } }
+    "placeholders": {
+      "version": {
+        "type": "String"
+      }
+    }
   },
   "notifDownloadError": "Download error",
   "notifPrivateTorrent": "Private torrent detected",
   "notifPrivateTorrentMsg": "«{name}» is private: anonymity is impossible — switch it to Direct (menu ⋯ → hops).",
   "@notifPrivateTorrentMsg": {
-    "placeholders": { "name": { "type": "String" } }
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
   },
-
   "snackFinished": "Download finished",
-
   "searchPopular": "Search the network",
   "searchResultsFor": "Results for \"{query}\"",
   "@searchResultsFor": {
-    "placeholders": { "query": { "type": "String" } }
+    "placeholders": {
+      "query": {
+        "type": "String"
+      }
+    }
   },
   "searchAddSelected": "Add ({count})",
   "@searchAddSelected": {
-    "placeholders": { "count": { "type": "int" } }
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
   },
   "searchDeselect": "Clear selection",
   "searchRemoteProgress": "remote search · {results, plural, =1{{results} result} other{{results} results}} · {peers, plural, =1{{peers} peer} other{{peers} peers}}",
   "@searchRemoteProgress": {
     "placeholders": {
-      "results": { "type": "int" },
-      "peers": { "type": "int" }
+      "results": {
+        "type": "int"
+      },
+      "peers": {
+        "type": "int"
+      }
     }
   },
   "searchRemoteStop": "Stop remote search",
   "searchRemoteFinished": "{count, plural, =1{{count} remote result} other{{count} remote results}} · finished at {time}",
   "@searchRemoteFinished": {
     "placeholders": {
-      "count": { "type": "int" },
-      "time": { "type": "String" }
+      "count": {
+        "type": "int"
+      },
+      "time": {
+        "type": "String"
+      }
     }
   },
   "sortResults": "Sort results",
@@ -276,20 +335,32 @@
   "emptyTryOther": "Try other terms, or wait for network replies.",
   "batchAdded": "{added, plural, =1{{added} download added} other{{added} downloads added}}",
   "@batchAdded": {
-    "placeholders": { "added": { "type": "int" } }
+    "placeholders": {
+      "added": {
+        "type": "int"
+      }
+    }
   },
   "batchAddedFailed": "{added, plural, =1{{added} added} other{{added} added}}, {failed, plural, =1{{failed} failed} other{{failed} failed}}",
   "@batchAddedFailed": {
     "placeholders": {
-      "added": { "type": "int" },
-      "failed": { "type": "int" }
+      "added": {
+        "type": "int"
+      },
+      "failed": {
+        "type": "int"
+      }
     }
   },
   "resultSeedsLeechers": "{seeders} seeds / {leechers} leechers",
   "@resultSeedsLeechers": {
     "placeholders": {
-      "seeders": { "type": "int" },
-      "leechers": { "type": "int" }
+      "seeders": {
+        "type": "int"
+      },
+      "leechers": {
+        "type": "int"
+      }
     }
   },
   "sourceNetwork": "network",
@@ -298,13 +369,21 @@
   "torChipEnable": "Enable Tor",
   "torChipBootstrapping": "Tor {progress}%",
   "@torChipBootstrapping": {
-    "placeholders": { "progress": { "type": "int" } }
+    "placeholders": {
+      "progress": {
+        "type": "int"
+      }
+    }
   },
   "torChipDormant": "Tor dormant",
   "torChipError": "Tor error",
   "onionErrBootstrapping": "Tor is bootstrapping ({progress}%) — retry in a moment",
   "@onionErrBootstrapping": {
-    "placeholders": { "progress": { "type": "int" } }
+    "placeholders": {
+      "progress": {
+        "type": "int"
+      }
+    }
   },
   "onionErrBootstrapFailed": "Tor bootstrap failed — see Diagnostics",
   "onionErrNotReady": "Tor client not ready — retry shortly",
@@ -318,7 +397,11 @@
   "inProgress": "In progress",
   "healthSeeders": "{count, plural, =1{{count} seeder} other{{count} seeders}}",
   "@healthSeeders": {
-    "placeholders": { "count": { "type": "int" } }
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
   },
   "healthLeechersOnly": "Leechers only — fragile health",
   "healthUnknown": "Unknown health",
@@ -327,7 +410,11 @@
   "ctxDirectHop": "Direct (0 hops)",
   "ctxHops": "{count, plural, =1{{count} hop} other{{count} hops}}",
   "@ctxHops": {
-    "placeholders": { "count": { "type": "int" } }
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
   },
   "ctxRefreshHealth": "Refresh health",
   "ctxEndorse": "Endorse this torrent",
@@ -338,28 +425,43 @@
   "ctxCopyInfohash": "Copy info-hash",
   "toastAdded": "\"{name}\" added",
   "@toastAdded": {
-    "placeholders": { "name": { "type": "String" } }
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
   },
   "toastAddedAnon": "\"{name}\" added anonymously ({hops, plural, =1{{hops} hop} other{{hops} hops}})",
   "@toastAddedAnon": {
     "placeholders": {
-      "name": { "type": "String" },
-      "hops": { "type": "int" }
+      "name": {
+        "type": "String"
+      },
+      "hops": {
+        "type": "int"
+      }
     }
   },
   "toastAddError": "Add: {error}",
   "@toastAddError": {
-    "placeholders": { "error": { "type": "String" } }
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
   },
   "toastHealthOk": "Health refreshed",
   "toastHealthPending": "Health check in progress on the daemon",
   "toastHealthError": "Health probe: {error}",
   "@toastHealthError": {
-    "placeholders": { "error": { "type": "String" } }
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
   },
   "toastMagnetCopied": "Magnet link copied",
   "toastInfohashCopied": "Info-hash copied",
-
   "tabOverview": "Overview",
   "tabStats": "Statistics",
   "tabOverlays": "Overlays",
@@ -373,30 +475,45 @@
   "tabPexPeers": "PEX peers",
   "tabLogs": "Logs",
   "refresh": "Refresh",
-
   "emptyOverlays": "No overlay",
   "emptyOverlaysMsg": "Is the IPv8 stack active?",
   "peersCount": "{count, plural, =1{{count} peer} other{{count} peers}}",
   "@peersCount": {
-    "placeholders": { "count": { "type": "int" } }
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
   },
   "emptyCircuits": "No circuit",
   "emptyCircuitsMsg": "Anonymous circuits are built when a download requests one.",
   "testNewCircuit": "Test a new circuit",
   "testCircuitHops": "{hops, plural, =1{Test a 1-hop circuit} other{Test a {hops}-hop circuit}}",
   "@testCircuitHops": {
-    "placeholders": { "hops": { "type": "int" } }
+    "placeholders": {
+      "hops": {
+        "type": "int"
+      }
+    }
   },
   "circuitHopCount": "{goal, plural, =1{{actual}/1 hop} other{{actual}/{goal} hops}}",
   "@circuitHopCount": {
     "placeholders": {
-      "actual": { "type": "int" },
-      "goal": { "type": "int" }
+      "actual": {
+        "type": "int"
+      },
+      "goal": {
+        "type": "int"
+      }
     }
   },
   "circuitRoute": "route: {route}",
   "@circuitRoute": {
-    "placeholders": { "route": { "type": "String" } }
+    "placeholders": {
+      "route": {
+        "type": "String"
+      }
+    }
   },
   "speedTest": "Speed test",
   "emptyRelays": "No relay",
@@ -407,13 +524,21 @@
   "exitInactive": "inactive",
   "exitCircuit": "circuit #{id}",
   "@exitCircuit": {
-    "placeholders": { "id": { "type": "int" } }
+    "placeholders": {
+      "id": {
+        "type": "int"
+      }
+    }
   },
   "emptySwarms": "No hidden swarm",
   "emptySwarmsMsg": "Appears when an anonymous download starts.",
   "connectionsCount": "{count, plural, =1{{count} connection} other{{count} connections}}",
   "@connectionsCount": {
-    "placeholders": { "count": { "type": "int" } }
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
   },
   "flagRelay": "relay",
   "flagBtExit": "bt-exit",
@@ -426,11 +551,19 @@
   "emptyIntroPointsMsg": "Appears when hidden-swarm introduction points are known.",
   "introPointsCount": "{count, plural, =1{{count} introduction point} other{{count} introduction points}}",
   "@introPointsCount": {
-    "placeholders": { "count": { "type": "int" } }
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
   },
   "seederPrefix": "seeder {pk}",
   "@seederPrefix": {
-    "placeholders": { "pk": { "type": "String" } }
+    "placeholders": {
+      "pk": {
+        "type": "String"
+      }
+    }
   },
   "emptyDhtIntro": "No DHT introduction point",
   "emptyPexIntro": "No PEX introduction point",
@@ -439,11 +572,19 @@
   "extDisabled": "OnionBit extension disabled",
   "extPeerCount": "{count, plural, =1{{count} peer} other{{count} peers}}",
   "@extPeerCount": {
-    "placeholders": { "count": { "type": "int" } }
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
   },
   "extHelloAge": "hello {secs} s ago",
   "@extHelloAge": {
-    "placeholders": { "secs": { "type": "int" } }
+    "placeholders": {
+      "secs": {
+        "type": "int"
+      }
+    }
   },
   "emptyExtPeers": "No OnionBit peer recognized",
   "emptyExtPeersMsg": "Peers appear here once the signed extension hello is exchanged.",
@@ -532,9 +673,15 @@
   "extLedgerStats": "{links} links · {pending} pending · {forks} forks",
   "@extLedgerStats": {
     "placeholders": {
-      "links": { "type": "int" },
-      "pending": { "type": "int" },
-      "forks": { "type": "int" }
+      "links": {
+        "type": "int"
+      },
+      "pending": {
+        "type": "int"
+      },
+      "forks": {
+        "type": "int"
+      }
     }
   },
   "extLedgerDisabled": "disabled",
@@ -557,35 +704,60 @@
   "trustTooltipScored": "Local trust: {endorsers} endorsement(s), {flaggers} flag(s) from followed curators · {count} attestation(s) seen",
   "@trustTooltipScored": {
     "placeholders": {
-      "endorsers": { "type": "int" },
-      "flaggers": { "type": "int" },
-      "count": { "type": "int" }
+      "endorsers": {
+        "type": "int"
+      },
+      "flaggers": {
+        "type": "int"
+      },
+      "count": {
+        "type": "int"
+      }
     }
   },
   "trustTooltipUnscored": "{count} attestation(s) seen, none from a followed curator — score stays 0",
   "@trustTooltipUnscored": {
-    "placeholders": { "count": { "type": "int" } }
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
   },
   "emptyConnections": "No known connection",
   "emptyConnectionsMsg": "IPv8 peers, DHT nodes, exit targets and BitTorrent peers appear here.",
   "listenersSection": "Local listeners",
   "listenerExitUdp": "Exit UDP · circuit #{id}",
   "@listenerExitUdp": {
-    "placeholders": { "id": { "type": "int" } }
+    "placeholders": {
+      "id": {
+        "type": "int"
+      }
+    }
   },
   "listenerSocks5": "SOCKS5 · {hops} hop(s)",
   "@listenerSocks5": {
-    "placeholders": { "hops": { "type": "int" } }
+    "placeholders": {
+      "hops": {
+        "type": "int"
+      }
+    }
   },
   "connExitTarget": "exit #{id}",
   "@connExitTarget": {
-    "placeholders": { "id": { "type": "int" } }
+    "placeholders": {
+      "id": {
+        "type": "int"
+      }
+    }
   },
   "connMid": "mid {mid}",
   "@connMid": {
-    "placeholders": { "mid": { "type": "String" } }
+    "placeholders": {
+      "mid": {
+        "type": "String"
+      }
+    }
   },
-
   "statDaemonVersion": "Daemon version",
   "statDbSize": "Database size",
   "statTorrentsKnown": "Known torrents",
@@ -599,9 +771,15 @@
   "statDownloadsValue": "{active} active · {paused} paused · {error} failed",
   "@statDownloadsValue": {
     "placeholders": {
-      "active": { "type": "int" },
-      "paused": { "type": "int" },
-      "error": { "type": "int" }
+      "active": {
+        "type": "int"
+      },
+      "paused": {
+        "type": "int"
+      },
+      "error": {
+        "type": "int"
+      }
     }
   },
   "statIpv8Traffic": "Overlay traffic (session)",
@@ -609,8 +787,12 @@
   "statTrafficValue": "↓ {down} · ↑ {up}",
   "@statTrafficValue": {
     "placeholders": {
-      "up": { "type": "String" },
-      "down": { "type": "String" }
+      "up": {
+        "type": "String"
+      },
+      "down": {
+        "type": "String"
+      }
     }
   },
   "statLanes": "Anonymous lanes",
@@ -620,9 +802,15 @@
   "statBwRttValue": "{rtt} ms · base {base} ms · {count} pongs",
   "@statBwRttValue": {
     "placeholders": {
-      "rtt": { "type": "String" },
-      "base": { "type": "String" },
-      "count": { "type": "int" }
+      "rtt": {
+        "type": "String"
+      },
+      "base": {
+        "type": "String"
+      },
+      "count": {
+        "type": "int"
+      }
     }
   },
   "statBwServed": "Served peer traffic cap",
@@ -632,39 +820,49 @@
   "bwUnlimited": "unlimited",
   "statusSessionTraffic": "session ↓ {down} · ↑ {up}",
   "@statusSessionTraffic": {
-    "placeholders": {"down": {}, "up": {}}
+    "placeholders": {
+      "down": {},
+      "up": {}
+    }
   },
   "statusSessionTrafficTip": "File traffic accumulated since daemon startup — tunnel relay excluded.",
   "statusRelayCap": "relay ≤ {rate}",
   "@statusRelayCap": {
     "placeholders": {
-      "rate": { "type": "String" }
+      "rate": {
+        "type": "String"
+      }
     }
   },
   "statusRelayCapRtt": "relay ≤ {rate} · {rtt} ms",
   "@statusRelayCapRtt": {
     "placeholders": {
-      "rate": { "type": "String" },
-      "rtt": { "type": "String" }
+      "rate": {
+        "type": "String"
+      },
+      "rtt": {
+        "type": "String"
+      }
     }
   },
   "statusRelayCapTip": "Estimated rate for relayed IPv8 data, continuously probed on your connection: rises while the line stays smooth, backs off when delays grow (uplink congestion). ms = lowest RTT measured on probed peers.",
   "statNone": "none",
-
   "logsDebugTooltip": "Logs detailed tunnel events (create/extend/destroy, e2e…)",
   "uiLogTitle": "UI log",
   "uiLogSubtitle": "logs/ui.log — daemon connection, SSE, adds, searches",
   "emptyLogs": "Empty log",
   "emptyLogsMsg": "The daemon has not written anything yet.",
-
   "overviewTunnelInactive": "TunnelCommunity inactive",
   "overviewTunnelsOk": "Tunnels operational ({count, plural, =1{{count} circuit ready} other{{count} circuits ready}})",
   "@overviewTunnelsOk": {
-    "placeholders": { "count": { "type": "int" } }
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
   },
   "overviewTunnelNoCircuit": "TunnelCommunity active, no circuit ready",
   "autoRefresh5s": "auto-refresh 5 s",
-
   "cardIpv8Overlays": "IPv8 overlays",
   "cardCircuitsReady": "Ready circuits",
   "cardRelays": "Relays",
@@ -685,28 +883,42 @@
   "torStateDormant": "dormant",
   "torStateError": "error",
   "torStateUnknown": "unknown",
-
   "speedTestCircuitTitle": "Circuit #{id} test",
   "@speedTestCircuitTitle": {
-    "placeholders": { "id": { "type": "int" } }
+    "placeholders": {
+      "id": {
+        "type": "int"
+      }
+    }
   },
   "speedTestNewTitle": "{hops, plural, =1{Test of a 1-hop circuit} other{Test of a {hops}-hop circuit}}",
   "@speedTestNewTitle": {
-    "placeholders": { "hops": { "type": "int" } }
+    "placeholders": {
+      "hops": {
+        "type": "int"
+      }
+    }
   },
   "speedMeasuring": "Measuring…",
   "speedTestFailed": "Test failed",
   "speedTestDone": "Test finished",
   "close": "Close",
-
   "errorMessage": "Error: {error}",
   "@errorMessage": {
-    "placeholders": { "error": { "type": "String" } }
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
   },
   "defaultHint": "default: {value}",
   "@defaultHint": {
     "description": "Input hint showing a default value",
-    "placeholders": { "value": { "type": "String" } }
+    "placeholders": {
+      "value": {
+        "type": "String"
+      }
+    }
   },
   "browse": "Browse…",
   "dirPickerTitle": "Browse the daemon's folders",
@@ -718,7 +930,6 @@
     "description": "Confirm button of the daemon-side directory picker"
   },
   "apply": "Apply",
-
   "sectionDownloadsDefaults": "Default downloads",
   "sectionBandwidth": "Bandwidth",
   "sectionQueue": "Queue",
@@ -731,23 +942,34 @@
   "sectionDaemon": "Daemon",
   "settingsDirtyBanner": "{count, plural, =1{{count} modified section not saved} other{{count} modified sections not saved}}",
   "@settingsDirtyBanner": {
-    "placeholders": { "count": { "type": "int" } }
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
   },
   "discardAll": "Discard all",
   "saveAll": "Save all",
   "filterSettings": "Filter settings",
   "noMatchingSection": "No section matches \"{filter}\".",
   "@noMatchingSection": {
-    "placeholders": { "filter": { "type": "String" } }
+    "placeholders": {
+      "filter": {
+        "type": "String"
+      }
+    }
   },
   "resetSectionDefaults": "Restore section defaults",
   "defaultsRestored": "Defaults restored",
   "unsavedChanges": "Unsaved changes",
-
   "dlSettingsSaved": "Download settings saved",
   "saveError": "Save error: {error}",
   "@saveError": {
-    "placeholders": { "error": { "type": "String" } }
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
   },
   "dlDestFolder": "Default destination folder",
   "dlDestHint": "default: <daemon state>/downloads",
@@ -757,26 +979,36 @@
   "diskSpaceFree": "Free space: {free} of {total}",
   "@diskSpaceFree": {
     "placeholders": {
-      "free": { "type": "String" },
-      "total": { "type": "String" }
+      "free": {
+        "type": "String"
+      },
+      "total": {
+        "type": "String"
+      }
     }
   },
-
   "bwSaved": "Bandwidth limits saved",
   "bwDownloadLabel": "Download",
   "bwUploadLabel": "Upload",
   "rateFieldLabel": "{label} (KB/s)",
   "@rateFieldLabel": {
-    "placeholders": { "label": { "type": "String" } }
+    "placeholders": {
+      "label": {
+        "type": "String"
+      }
+    }
   },
   "rateUnlimited": "Unlimited",
   "rateUnlimitedHint": "default: 0 = unlimited",
   "rateDesc": "Global rate; 0 = unlimited",
   "ratePresetMb": "{mb} MB/s",
   "@ratePresetMb": {
-    "placeholders": { "mb": { "type": "int" } }
+    "placeholders": {
+      "mb": {
+        "type": "int"
+      }
+    }
   },
-
   "queueSaved": "Queue saved",
   "queueHelp": "Downloads marked auto-managed beyond these limits are paused, then resumed when a slot frees up.",
   "queueActiveDownloads": "Active downloads",
@@ -785,13 +1017,16 @@
   "queueActiveLimit": "Global limit",
   "queueDefHint": "default: {def} · -1 = unlimited",
   "@queueDefHint": {
-    "placeholders": { "def": { "type": "int" } }
+    "placeholders": {
+      "def": {
+        "type": "int"
+      }
+    }
   },
   "queueFastresume": "Check on startup",
   "queueFastresumeSub": "Re-reads a sample of pieces after restore to detect files changed between sessions. Disabled: no re-read, corruption may go unnoticed.",
   "queueAutoManaged": "Auto-managed by default",
   "queueAutoManagedSub": "New downloads are placed under the queue.",
-
   "seedSaved": "Seeding policy saved",
   "seedMode": "Seeding mode",
   "seedModeForever": "Forever",
@@ -805,7 +1040,6 @@
   "seedAnonSwitch": "Anonymous downloads by default",
   "seedAnonSub": "1 hop by default.",
   "safeSeedingSub": "Required when anonymous hops are requested.",
-
   "anonSaved": "Tunnel settings saved",
   "anonMinMaxError": "min_circuits must be ≤ max_circuits",
   "anonEnabled": "TunnelCommunity enabled",
@@ -822,7 +1056,6 @@
   "relaysMaxNote": "Relay legs + exit sockets served simultaneously for other peers. Beyond this, incoming circuit requests are refused. Applied on restart.",
   "relayRateAutoNote": "Served bandwidth self-regulates: it grows while peer RTT stays flat and backs off as soon as your uplink queue fills — never throttling your own anonymous downloads. Force a fixed value via tunnel_community/max_relayed_rate in configuration.json (0 = unlimited, -1 = auto).",
   "anonCircuitsNote": "Circuits maintained permanently per anonymous lane; live detail in Diagnostics → Circuits.",
-
   "netSaved": "Network settings saved",
   "proxyNone": "None",
   "proxySocks5Auth": "SOCKS5 + authentication",
@@ -840,11 +1073,19 @@
   "effectiveStateTip": "Values actually applied by the daemon (read-only). The settings below may differ until the daemon restarts.",
   "listenPortChip": "Listen port: {port}",
   "@listenPortChip": {
-    "placeholders": { "port": { "type": "String" } }
+    "placeholders": {
+      "port": {
+        "type": "String"
+      }
+    }
   },
   "interfacesChip": "Interfaces: {list}",
   "@interfacesChip": {
-    "placeholders": { "list": { "type": "String" } }
+    "placeholders": {
+      "list": {
+        "type": "String"
+      }
+    }
   },
   "stateOn": "on",
   "stateOff": "off",
@@ -852,18 +1093,25 @@
   "proxyChipType": "Proxy: type {type}{server}",
   "@proxyChipType": {
     "placeholders": {
-      "type": { "type": "int" },
-      "server": { "type": "String" }
+      "type": {
+        "type": "int"
+      },
+      "server": {
+        "type": "String"
+      }
     }
   },
   "overlayPeersChip": "{name}: {count, plural, =1{{count} peer} other{{count} peers}}",
   "@overlayPeersChip": {
     "placeholders": {
-      "name": { "type": "String" },
-      "count": { "type": "int" }
+      "name": {
+        "type": "String"
+      },
+      "count": {
+        "type": "int"
+      }
     }
   },
-
   "autoSaved": "Automation saved",
   "watchFolderTitle": "Watched folder",
   "watchSwitch": "Watch a folder",
@@ -877,17 +1125,19 @@
   "rssUrlLabel": "Feed URL",
   "rssAddTooltip": "Add feed",
   "rssLastItems": "Latest discovered items",
-
   "apiUrlLabel": "API URL",
   "apiKeyLabelShort": "API key",
   "apiKeyHint": "auto: daemon's configuration.json",
-
   "daemonState": "Daemon state",
   "stateDir": "State folder",
   "downloadsTo": "Downloads to",
   "ipv8Active": "active ({address})",
   "@ipv8Active": {
-    "placeholders": { "address": { "type": "String" } }
+    "placeholders": {
+      "address": {
+        "type": "String"
+      }
+    }
   },
   "ipv8Inactive": "inactive",
   "tunnelsOn": "enabled",
@@ -897,30 +1147,44 @@
   "shutdownBody": "Downloads will be suspended until the next startup.",
   "shutdownConfirm": "Stop",
   "shutdownSent": "Daemon shutdown requested.",
-
   "daemonVersionLine": "Daemon version: {version}",
   "@daemonVersionLine": {
-    "placeholders": { "version": { "type": "String" } }
+    "placeholders": {
+      "version": {
+        "type": "String"
+      }
+    }
   },
   "versionEndpointsSwitch": "Versioning endpoints",
   "versionEndpointsSub": "Disabled section = missing endpoints (404). No update check is performed — it would leak the installation's existence.",
-
   "noDownloads": "No downloads",
   "noDownloadsHint": "Add a magnet or a .torrent file.",
   "filterEmpty": "No items in filter \"{filter}\".",
   "@filterEmpty": {
-    "placeholders": { "filter": { "type": "String" } }
+    "placeholders": {
+      "filter": {
+        "type": "String"
+      }
+    }
   },
   "deleteTitle": "Delete",
   "deleteConfirmBody": "{count, plural, =1{{count} download will be removed from the daemon.} other{{count} downloads will be removed from the daemon.}}",
   "@deleteConfirmBody": {
-    "placeholders": { "count": { "type": "int" } }
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
   },
   "deleteAlsoFiles": "Also delete files on disk",
   "delete": "Delete",
   "selectedCount": "{count, plural, =1{{count} selected} other{{count} selected}}",
   "@selectedCount": {
-    "placeholders": { "count": { "type": "int" } }
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
   },
   "filterByName": "Filter by name",
   "resume": "Resume",
@@ -935,11 +1199,19 @@
   "queueMenu": "Queue",
   "queueMenuWithPos": "Queue — position {pos}",
   "@queueMenuWithPos": {
-    "placeholders": { "pos": { "type": "int" } }
+    "placeholders": {
+      "pos": {
+        "type": "int"
+      }
+    }
   },
   "anonMenuTitle": "Anonymity: {mode}",
   "@anonMenuTitle": {
-    "placeholders": { "mode": { "type": "String" } }
+    "placeholders": {
+      "mode": {
+        "type": "String"
+      }
+    }
   },
   "anonDirect": "Direct",
   "rateLimits": "Rate limits",
@@ -952,7 +1224,11 @@
   "republishAnon": "Republish anonymously",
   "twinCreated": "Public twin created, seeding anonymously ({hash})",
   "@twinCreated": {
-    "placeholders": { "hash": { "type": "String" } }
+    "placeholders": {
+      "hash": {
+        "type": "String"
+      }
+    }
   },
   "viewTable": "Table view",
   "viewGrid": "Grid view",
@@ -960,29 +1236,44 @@
   "noSeeders": "No known seeders",
   "seedersReachable": "{count, plural, =1{{count} seeder, swarm reachable} other{{count} seeders, swarm reachable}}",
   "@seedersReachable": {
-    "placeholders": { "count": { "type": "int" } }
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
   },
   "seedersNoPeers": "Known seeders but no connected peer",
   "stoppedOnError": "Stopped on error",
   "privateTorrent": "Private torrent (DHT/PEX disabled)",
   "queuePosTip": "Position {pos} in queue",
   "@queuePosTip": {
-    "placeholders": { "pos": { "type": "int" } }
+    "placeholders": {
+      "pos": {
+        "type": "int"
+      }
+    }
   },
   "colProgress": "Progress",
   "colPeers": "Peers",
   "colRatio": "Ratio",
   "colUlTotal": "Uploaded",
   "colAdded": "Added",
-
   "statusError": "Error",
   "statusDownloading": "Downloading {pct} %",
   "@statusDownloading": {
-    "placeholders": { "pct": { "type": "String" } }
+    "placeholders": {
+      "pct": {
+        "type": "String"
+      }
+    }
   },
   "statusSeeding": "Seeding {pct} %",
   "@statusSeeding": {
-    "placeholders": { "pct": { "type": "String" } }
+    "placeholders": {
+      "pct": {
+        "type": "String"
+      }
+    }
   },
   "statusMetadata": "Metadata",
   "statusChecking": "Checking",
@@ -990,18 +1281,25 @@
   "badgeClear": "Clear",
   "badgeAnon": "Anon ×{hops}",
   "@badgeAnon": {
-    "placeholders": { "hops": { "type": "int" } }
+    "placeholders": {
+      "hops": {
+        "type": "int"
+      }
+    }
   },
   "trafficDirect": "Direct traffic (not anonymous)",
   "anonTip": "Anonymous: {count, plural, =1{{count} hop} other{{count} hops}}{suffix}",
   "@anonTip": {
     "placeholders": {
-      "count": { "type": "int" },
-      "suffix": { "type": "String" }
+      "count": {
+        "type": "int"
+      },
+      "suffix": {
+        "type": "String"
+      }
     }
   },
   "waitingCircuit": " — waiting for circuit",
-
   "tabDetails": "Details",
   "tabFiles": "Files",
   "copyMagnetToast": "Magnet link copied to clipboard",
@@ -1017,16 +1315,24 @@
   "healthValue": "{seeds} seeders, {leeches} leechers",
   "@healthValue": {
     "placeholders": {
-      "seeds": { "type": "int" },
-      "leeches": { "type": "int" }
+      "seeds": {
+        "type": "int"
+      },
+      "leeches": {
+        "type": "int"
+      }
     }
   },
   "rowAnon": "Anonymity",
   "hopsValue": "{count, plural, =1{{count} hop} other{{count} hops}}{suffix}",
   "@hopsValue": {
     "placeholders": {
-      "count": { "type": "int" },
-      "suffix": { "type": "String" }
+      "count": {
+        "type": "int"
+      },
+      "suffix": {
+        "type": "String"
+      }
     }
   },
   "safeSeedingSuffix": " + safe seeding",
@@ -1038,7 +1344,11 @@
   "queueManual": "manual",
   "queuePosSuffix": " · position {pos}",
   "@queuePosSuffix": {
-    "placeholders": { "pos": { "type": "int" } }
+    "placeholders": {
+      "pos": {
+        "type": "int"
+      }
+    }
   },
   "rowLimits": "Limits",
   "rowTotalTraffic": "All-time traffic",
@@ -1049,7 +1359,11 @@
   "rowError": "Error",
   "peakLabel": "peak {rate}",
   "@peakLabel": {
-    "placeholders": { "rate": { "type": "String" } }
+    "placeholders": {
+      "rate": {
+        "type": "String"
+      }
+    }
   },
   "noFiles": "No files listed",
   "noFilesMeta": "Metadata not yet available.",
@@ -1057,7 +1371,11 @@
   "filePriority": "File priority",
   "priorityApplied": "Priority {p} applied",
   "@priorityApplied": {
-    "placeholders": { "p": { "type": "int" } }
+    "placeholders": {
+      "p": {
+        "type": "int"
+      }
+    }
   },
   "prioNoDownload": "Do not download",
   "prioLow": "Low priority",
@@ -1072,28 +1390,48 @@
   "trackerUrl": "Tracker URL",
   "trackerAdded": "Tracker added: {url}",
   "@trackerAdded": {
-    "placeholders": { "url": { "type": "String" } }
+    "placeholders": {
+      "url": {
+        "type": "String"
+      }
+    }
   },
   "trackerAddError": "Tracker add error: {error}",
   "@trackerAddError": {
-    "placeholders": { "error": { "type": "String" } }
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
   },
   "trackerCount": "{count, plural, =1{{count} tracker} other{{count} trackers}}",
   "@trackerCount": {
-    "placeholders": { "count": { "type": "int" } }
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
   },
   "defaultTrackers": "Default trackers",
   "noTrackers": "No active trackers",
   "noTrackersHint": "You can add trackers to improve sources.",
   "trackerStatus": "Status: {status}",
   "@trackerStatus": {
-    "placeholders": { "status": { "type": "String" } }
+    "placeholders": {
+      "status": {
+        "type": "String"
+      }
+    }
   },
   "forceAnnounce": "Force announce",
   "removeTracker": "Remove this tracker",
   "actionDone": "{label} done",
   "@actionDone": {
-    "placeholders": { "label": { "type": "String" } }
+    "placeholders": {
+      "label": {
+        "type": "String"
+      }
+    }
   },
   "swarmStats": "Swarm statistics",
   "seedersConn": "Connected seeders",
@@ -1104,12 +1442,20 @@
   "netMode": "Network mode",
   "netModeAnon": "IPv8 anonymous tunnel ({count, plural, =1{{count} hop} other{{count} hops}})",
   "@netModeAnon": {
-    "placeholders": { "count": { "type": "int" } }
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
   },
   "netModeDirect": "Direct BitTorrent connection",
   "peersConnCount": "{count, plural, =1{{count} connected peer} other{{count} connected peers}}",
   "@peersConnCount": {
-    "placeholders": { "count": { "type": "int" } }
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
   },
   "colAddress": "Address",
   "colClient": "Client",
@@ -1123,7 +1469,6 @@
   "peerDirOut": "Outgoing",
   "noPeers": "No connected peers",
   "noPeersHint": "The client is searching for peers via trackers and DHT.",
-
   "addDownload": "Add download",
   "magnetOrUrl": "Magnet",
   "magnetHint": "magnet:?xt=…",
@@ -1133,9 +1478,12 @@
   "anonDirectWarn": "Your IP is visible to peers.",
   "anonRelaysInfo": "{count, plural, =1{IP hidden behind {count} relay} other{IP hidden behind {count} relays}} — traffic goes through the tunnel or nowhere (seeding included).",
   "@anonRelaysInfo": {
-    "placeholders": { "count": { "type": "int" } }
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
   },
-
   "twinBadgeTip": "Same content as another entry in the list (twin — e.g. public copy of a private torrent).",
   "privateTorrentTitle": "Private torrent — anonymity unavailable",
   "privateTorrentWarn": "Its tracker requires a direct connection (passkey bound to your IP) and the 'private' flag forbids DHT/PEX: no anonymous path exists. It will be downloaded in the clear — your IP will be visible to the tracker and the swarm.",
@@ -1169,16 +1517,21 @@
   "actAnnounce": "forced announce",
   "actRemoveTracker": "tracker removal",
   "actDefaultTrackers": "default trackers add",
-
   "settingsAppearanceTitle": "Appearance",
-  "@settingsAppearanceTitle": { "description": "Settings — Appearance section title" },
+  "@settingsAppearanceTitle": {
+    "description": "Settings — Appearance section title"
+  },
   "settingsThemeMode": "Mode",
-  "@settingsThemeMode": { "description": "Theme mode label" },
+  "@settingsThemeMode": {
+    "description": "Theme mode label"
+  },
   "themeModeAuto": "Auto",
   "themeModeLight": "Light",
   "themeModeDark": "Dark",
   "settingsAccent": "Accent",
-  "@settingsAccent": { "description": "Seed color label" },
+  "@settingsAccent": {
+    "description": "Seed color label"
+  },
   "accentBlue": "Blue",
   "accentIndigo": "Indigo",
   "accentGreen": "Green",
@@ -1186,7 +1539,9 @@
   "accentPink": "Pink",
   "accentSlate": "Slate",
   "settingsLanguage": "Language",
-  "@settingsLanguage": { "description": "Language selector label" },
+  "@settingsLanguage": {
+    "description": "Language selector label"
+  },
   "languageSystem": "System",
   "sectionStealth": "Stealth mode",
   "stealthEnabled": "Stealth transport (ADR-0017)",
@@ -1205,7 +1560,6 @@
   "stealthSaved": "Stealth settings saved",
   "stealthStatus": "Role: {role} — sessions: {sessions} — configured bridges: {bridges}",
   "stealthClockWarning": "Handshakes to bridges keep failing without any established session. On a censored network, check your clock: NTP may be filtered or spoofed and the handshake timestamp window is ±90 s.",
-
   "storageAreaLabel": "Storage area",
   "storageAreaPublic": "Public",
   "storageAreaPrivate": "Private",
@@ -1221,7 +1575,11 @@
   "storagePrivateEnabledSub": "Identity-bound area under data/private/.",
   "storagePrivateState": "Private area: {state}",
   "@storagePrivateState": {
-    "placeholders": { "state": { "type": "String" } }
+    "placeholders": {
+      "state": {
+        "type": "String"
+      }
+    }
   },
   "storagePrivateStateMounted": "mounted",
   "storagePrivateStateLocked": "locked",
@@ -1229,12 +1587,20 @@
   "storageNonPortableTitle": "Non-portable path",
   "storageNonPortableBody": "The download folder \"{path}\" is a machine-specific absolute path. On a portable bundle (USB key), use an @public/… spec so the path survives a drive-letter or mount-point change.",
   "@storageNonPortableBody": {
-    "placeholders": { "path": { "type": "String" } }
+    "placeholders": {
+      "path": {
+        "type": "String"
+      }
+    }
   },
   "storageOrphansTitle": "Private orphans",
   "storageOrphansBody": "{count} encrypted file group(s) not referenced by the manifest — likely leftovers from a crash or a removed download.",
   "@storageOrphansBody": {
-    "placeholders": { "count": { "type": "int" } }
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
   },
   "storageOrphansPurge": "Purge",
   "storageOrphansPurgeConfirm": "Delete orphan .obd/.bitv files? They are not referenced by the private manifest. This cannot be undone.",
@@ -1317,12 +1683,16 @@
   "privacyProfileLoadError": "Unable to load the anonymity profile — tap to retry",
   "privacyProfileDiagnose": "Network diagnostics",
   "navPublicZone": "Public zone",
-  "@navPublicZone": { "description": "Sidebar label — public storage explorer (ADR-0018), cleartext files under data/public" },
+  "@navPublicZone": {
+    "description": "Sidebar label — public storage explorer (ADR-0018), cleartext files under data/public"
+  },
   "publicZoneTitle": "Public zone",
   "publicZoneEmptyTitle": "Nothing here yet",
   "publicZoneEmptyMessage": "Files downloaded into the public storage area appear here — cleartext, readable by anyone who can open this device.",
   "navPrivateZone": "Private zone",
-  "@navPrivateZone": { "description": "Sidebar label — private zone explorer (ADR-0027), shown only when mounted" },
+  "@navPrivateZone": {
+    "description": "Sidebar label — private zone explorer (ADR-0027), shown only when mounted"
+  },
   "privateZoneTitle": "Private zone",
   "privateZoneInfo": "Encrypted vault content — decrypted copies produced here (read or extract) leave the protected zone: they are your responsibility.",
   "privateZoneLockedTitle": "Private zone locked",
@@ -1332,20 +1702,37 @@
   "privateZoneReconstructed": "recovered entry",
   "privateZoneOrphans": "{groups} orphan group(s), {bitv} orphan resume file(s) — undecryptable leftovers (purge via API)",
   "@privateZoneOrphans": {
-    "placeholders": {"groups": {"type": "int"}, "bitv": {"type": "int"}}
+    "placeholders": {
+      "groups": {
+        "type": "int"
+      },
+      "bitv": {
+        "type": "int"
+      }
+    }
   },
   "privateZoneActions": "Actions",
   "privateZoneRead": "Read",
   "privateZoneExtract": "Extract to a folder…",
   "privateZoneExported": "{count, plural, =1{1 file exported} other{{count} files exported}} — {bytes} bytes",
   "@privateZoneExported": {
-    "placeholders": {"count": {"type": "int"}, "bytes": {"type": "int"}}
+    "placeholders": {
+      "count": {
+        "type": "int"
+      },
+      "bytes": {
+        "type": "int"
+      }
+    }
   },
   "privateZoneError": "Private zone: {error}",
   "@privateZoneError": {
-    "placeholders": {"error": {"type": "String"}}
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
   },
-
   "ok": "OK",
   "explorerNewFolder": "New folder",
   "explorerNameHint": "Name",
@@ -1359,22 +1746,49 @@
   "explorerDeleteTitle": "Delete permanently?",
   "explorerDeleteMessage": "{count, plural, =1{This item} other{{count} items}} will be permanently deleted — there is no recycle bin.",
   "@explorerDeleteMessage": {
-    "placeholders": {"count": {"type": "int"}}
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
   },
   "privateImportTooltip": "Import into the private zone",
   "privateImportTitle": "{count, plural, =1{Import this item} other{Import {count} items}} into the private zone?",
   "@privateImportTitle": {
-    "placeholders": {"count": {"type": "int"}}
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
   },
   "privateImportMoveSource": "Move: delete source after verification",
   "privateImportAction": "Import",
   "privateImported": "{count, plural, =1{1 item imported} other{{count} items imported}} — {files} file(s) encrypted",
   "@privateImported": {
     "placeholders": {
-      "count": {"type": "int"},
-      "files": {"type": "int"}
+      "count": {
+        "type": "int"
+      },
+      "files": {
+        "type": "int"
+      }
     }
   },
   "privateDeleteTitle": "Delete this entry?",
-  "privateDeleteMessage": "The entry, its encrypted data and the associated download will be permanently deleted — there is no recycle bin."
+  "privateDeleteMessage": "The entry, its encrypted data and the associated download will be permanently deleted — there is no recycle bin.",
+  "torProbeOk": "{reachable}/{total} onion mirror(s) reachable — tap to re-probe",
+  "torProbeKo": "No onion mirror reachable (source down/deprecated) — tap to re-probe",
+  "torProbePending": "Probing onion mirror…",
+  "torProbeFailed": "Mirror status unknown — tap to re-probe",
+  "torProbeLaneNotReady": "Tor lane not ready",
+  "@torProbeOk": {
+    "placeholders": {
+      "reachable": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  }
 }

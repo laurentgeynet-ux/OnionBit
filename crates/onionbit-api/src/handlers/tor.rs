@@ -61,6 +61,111 @@ pub async fn tor_status(State(state): State<AppState>) -> Json<serde_json::Value
     }))
 }
 
+/// Parametres de `GET /api/tor/probe`.
+#[derive(Debug, Deserialize)]
+pub struct TorProbeQuery {
+    /// Identifiant du backend (`tor.search.backends.<source>`).
+    pub source: Option<String>,
+}
+
+/// `GET /api/tor/probe?source=tpb` — sonde de joignabilite des
+/// miroirs `.onion` du backend : un `GET /` borne par miroir, en
+/// sequence, sur la lane permanente. Indicateur de sante de la
+/// source pour l'UI (un onion deprecie/mort est visible sans avoir
+/// a lancer une recherche) — jamais de sondage en tache de fond :
+/// la sonde ne part qu'a la demande explicite de l'UI.
+///
+/// - `400` : `source` absent ou inconnu ;
+/// - `503` : `tor.enabled=false`, bootstrap en cours ou echoue
+///   (filet d'auto-reparation comme `external_search`) ;
+/// - `200` : `{source, reachable, mirrors:[{host, ok, status,
+///   latency_ms, error}]}` — `ok` = reponse HTTP recuee (n'importe
+///   quel statut : le transport onion fonctionne).
+pub async fn tor_probe(
+    State(state): State<AppState>,
+    Query(params): Query<TorProbeQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let source = params
+        .source
+        .filter(|s| !s.trim().is_empty())
+        .ok_or_else(|| ApiError::bad_request("source parameter missing or empty"))?;
+    let backend = state.session.search_backend(&source).ok_or_else(|| {
+        ApiError::with_code(
+            StatusCode::BAD_REQUEST,
+            "unknown_source",
+            format!("backend de recherche inconnu : {source}"),
+        )
+    })?;
+    let runtime = state.session.tor();
+    if !runtime.settings().enabled {
+        return Err(tor_unavailable(
+            "tor_disabled",
+            "connectivite Tor desactivee (tor.enabled=false)",
+        ));
+    }
+    match runtime.state() {
+        TorState::Ready => {}
+        TorState::Off | TorState::Error(_) => {
+            // Filet d'auto-reparation — meme regle que
+            // `external_search` : retente le bootstrap plutot que
+            // de figer la lane sur un echec.
+            runtime.bootstrap().map_err(|e: TorError| {
+                tor_unavailable("bootstrap_failed", format!("bootstrap Tor : {e}"))
+            })?;
+            return Err(tor_unavailable(
+                "tor_bootstrapping",
+                "bootstrap Tor en cours".to_string(),
+            ));
+        }
+        TorState::Bootstrapping { progress } => {
+            return Err(tor_unavailable(
+                "tor_bootstrapping",
+                format!("bootstrap Tor en cours ({progress}%)"),
+            ));
+        }
+        TorState::Dormant => {
+            return Err(tor_unavailable("tor_not_ready", "client Tor dormant"));
+        }
+    }
+
+    let mut mirrors = Vec::new();
+    let mut reachable = 0usize;
+    for host in backend.mirrors() {
+        let started = std::time::Instant::now();
+        match runtime.fetch_onion(&format!("http://{host}/")).await {
+            Ok(resp) => {
+                reachable += 1;
+                mirrors.push(serde_json::json!({
+                    "host": host,
+                    "ok": true,
+                    "status": resp.status,
+                    "latency_ms": started.elapsed().as_millis() as u64,
+                }));
+            }
+            Err(e) => {
+                mirrors.push(serde_json::json!({
+                    "host": host,
+                    "ok": false,
+                    "status": serde_json::Value::Null,
+                    "latency_ms": started.elapsed().as_millis() as u64,
+                    "error": e.to_string(),
+                }));
+            }
+        }
+    }
+    tracing::info!(
+        backend = %source,
+        reachable,
+        total = mirrors.len(),
+        "tor : sonde de joignabilite des miroirs"
+    );
+    Ok(Json(serde_json::json!({
+        "source": source,
+        "reachable": reachable,
+        "mirrors": mirrors,
+    })))
+}
+
 /// Parametres de `GET /api/search/external`.
 #[derive(Debug, Deserialize)]
 pub struct ExternalSearchQuery {

@@ -117,6 +117,10 @@ impl QphpBackend {
 
 #[async_trait::async_trait]
 impl OnionSearchBackend for QphpBackend {
+    fn mirrors(&self) -> &[String] {
+        &self.cfg.mirrors
+    }
+
     async fn search(
         &self,
         query: &str,

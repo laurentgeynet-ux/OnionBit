@@ -3,6 +3,33 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Indicateur de santé des sources `.onion` — sonde `/api/tor/probe` (2026-10-17)
+
+L'onion TPB s'est révélé tombé puis déprécié sur les annuaires —
+jusqu'ici l'UI ne le savait qu'en échouant (`mirror_unreachable`
+après une recherche). Ajout d'un indicateur de statut visible dans
+le moteur de recherche.
+
+- **`GET /api/tor/probe?source=…`** : `GET /` borné par miroir, en
+  séquence sur la lane permanente → `{reachable, mirrors:[{host,
+  ok, status, latency_ms, error}]}`. `ok` = réponse HTTP reçue (le
+  circuit de rendez-vous fonctionne, quel que soit le statut).
+  Mêmes gates qu'`external_search` (`tor_disabled`,
+  `tor_bootstrapping`, filet d'auto-réparation `Off`/`Error`).
+- **Pastille de santé sur le chip « TPB (Tor) »** : verte =
+  miroir(s) joignable(s), rouge = source tombée/dépréciée, orange =
+  sonde en cours, grise = lane non prête/indéterminé ; tooltip
+  avec le détail (« 1/2 miroirs joignables ») ; **tap = re-sonde**
+  explicite. La sonde ne part qu'à l'affichage du chip — aucun
+  sondage périodique de fond (chaque appel = un circuit de
+  rendez-vous par miroir).
+- `OnionSearchBackend.mirrors()` expose les miroirs du backend
+  (la config de boot est périmée après hot-swap).
+- Tests : `tor_probe_rapporte_etat_par_miroir` (API : 2 miroirs
+  `ok:false` sur stub sans transport, 400 source inconnue, 503
+  bootstrap), 2 tests widget de la pastille (verte/rouge) ;
+  ADR-0028 amendée.
+
 ## Lane Tor permanente — bootstrap au démarrage + hot-swap (2026-10-17)
 
 Décision d'architecture actée (les cinq questions UX Tor de

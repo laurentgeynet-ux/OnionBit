@@ -5307,6 +5307,9 @@ async fn private_files_et_export_rest() {
 /// typee, sans transport (le vrai fetch est hors champ des tests API).
 struct StubSearchBackend {
     outcome: StubOutcome,
+    /// Miroirs exposes a `mirrors()` — vide par defaut (la plupart
+    /// des tests n'ont pas besoin de la sonde).
+    mirrors: Vec<String>,
 }
 
 enum StubOutcome {
@@ -5325,6 +5328,10 @@ impl onionbit_tor::OnionSearchBackend for StubSearchBackend {
             StubOutcome::Results(r) => Ok(r.clone()),
             StubOutcome::Fail(f) => Err(f()),
         }
+    }
+
+    fn mirrors(&self) -> &[String] {
+        &self.mirrors
     }
 }
 
@@ -5412,6 +5419,7 @@ async fn tor_status_reflete_runtime() {
             "tpb",
             StubSearchBackend {
                 outcome: StubOutcome::Results(vec![]),
+                mirrors: Vec::new(),
             },
         )],
     )
@@ -5453,6 +5461,7 @@ async fn search_external_parametres_invalides_400() {
             "tpb",
             StubSearchBackend {
                 outcome: StubOutcome::Results(vec![]),
+                mirrors: Vec::new(),
             },
         )],
     )
@@ -5480,6 +5489,7 @@ async fn search_external_tor_desactive_503() {
         "tpb",
         std::sync::Arc::new(StubSearchBackend {
             outcome: StubOutcome::Results(vec![]),
+            mirrors: Vec::new(),
         }),
     );
     let resp = srv
@@ -5502,6 +5512,7 @@ async fn search_external_bootstrap_en_cours_daemon_non_bloque() {
             "tpb",
             StubSearchBackend {
                 outcome: StubOutcome::Results(vec![]),
+                mirrors: Vec::new(),
             },
         )],
     )
@@ -5538,6 +5549,7 @@ async fn search_external_bootstrap_echoue_503() {
             "tpb",
             StubSearchBackend {
                 outcome: StubOutcome::Results(vec![]),
+                mirrors: Vec::new(),
             },
         )],
     )
@@ -5572,6 +5584,7 @@ async fn search_external_succes_et_sse() {
                     stub_result("Torrent Un", IH_STUB),
                     stub_result("Torrent Deux", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
                 ]),
+                mirrors: Vec::new(),
             },
         )],
     )
@@ -5633,6 +5646,7 @@ async fn search_external_erreurs_backend_502() {
             name,
             std::sync::Arc::new(StubSearchBackend {
                 outcome: StubOutcome::Fail(make),
+                mirrors: Vec::new(),
             }),
         );
         let resp = srv
@@ -5703,6 +5717,7 @@ async fn search_external_ne_journalise_pas_la_requete() {
             "tpb",
             StubSearchBackend {
                 outcome: StubOutcome::Results(vec![stub_result("T", IH_STUB)]),
+                mirrors: Vec::new(),
             },
         )],
     )
@@ -5795,4 +5810,74 @@ async fn settings_tor_hot_swap_sans_redemarrage() {
     assert!(!srv.session.tor().settings().enabled);
     assert_eq!(srv.session.tor().state(), onionbit_tor::TorState::Off);
     srv.session.stop().await;
+}
+
+/// `GET /api/tor/probe` — sonde de joignabilite des miroirs `.onion`
+/// d'un backend : chaque miroir est tente via `fetch_onion` et
+/// rapporte `ok`/`error` + latence. Ici le stub `Ready` n'a pas de
+/// transport : la sonde doit retomber `ok:false` par miroir, avec
+/// le compteur `reachable` a 0 — preuve que l'UI peut afficher
+/// « source injoignable » sans qu'une recherche ait ete lancee.
+#[tokio::test]
+async fn tor_probe_rapporte_etat_par_miroir() {
+    let srv = spawn_tor_server(
+        onionbit_tor::TorState::Ready,
+        vec![(
+            "tpb",
+            StubSearchBackend {
+                outcome: StubOutcome::Results(vec![]),
+                mirrors: vec!["miroir-un.onion".into(), "miroir-deux.onion".into()],
+            },
+        )],
+    )
+    .await;
+    let resp = srv
+        .client
+        .get(srv.url("/api/tor/probe?source=tpb"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["source"], "tpb");
+    assert_eq!(body["reachable"], 0);
+    let mirrors = body["mirrors"].as_array().unwrap();
+    assert_eq!(mirrors.len(), 2);
+    assert_eq!(mirrors[0]["host"], "miroir-un.onion");
+    assert_eq!(mirrors[0]["ok"], false);
+    assert!(mirrors[0]["error"].is_string());
+    assert!(mirrors[0]["latency_ms"].is_number());
+
+    // Source inconnue → 400.
+    let resp = srv
+        .client
+        .get(srv.url("/api/tor/probe?source=nope"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 400);
+
+    // Lane non prete → 503 tor_bootstrapping.
+    let srv2 = spawn_tor_server(
+        onionbit_tor::TorState::Bootstrapping { progress: 30 },
+        vec![(
+            "tpb",
+            StubSearchBackend {
+                outcome: StubOutcome::Results(vec![]),
+                mirrors: vec!["m.onion".into()],
+            },
+        )],
+    )
+    .await;
+    let resp = srv2
+        .client
+        .get(srv2.url("/api/tor/probe?source=tpb"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 503);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["error"]["code"], "tor_bootstrapping");
+    srv.session.stop().await;
+    srv2.session.stop().await;
 }

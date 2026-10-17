@@ -606,3 +606,55 @@ class TorRuntimeStatus {
         ],
       );
 }
+
+/// Résultat de la sonde de joignabilité d'un miroir `.onion`
+/// (`GET /api/tor/probe`, ADR-0028) — un `ok:true` signifie qu'une
+/// réponse HTTP a été reçue (le circuit de rendez-vous fonctionne,
+/// quel que soit le statut).
+class TorMirrorProbe {
+  const TorMirrorProbe({
+    required this.host,
+    required this.ok,
+    this.status,
+    this.latencyMs,
+    this.error,
+  });
+
+  final String host;
+  final bool ok;
+  final int? status;
+  final int? latencyMs;
+  final String? error;
+
+  static TorMirrorProbe fromJson(Map<String, dynamic> j) => TorMirrorProbe(
+    host: '${j['host'] ?? ''}',
+    ok: j['ok'] == true,
+    status: (j['status'] as num?)?.toInt(),
+    latencyMs: (j['latency_ms'] as num?)?.toInt(),
+    error: j['error'] is String ? j['error'] as String : null,
+  );
+}
+
+/// Santé d'une source `.onion` — nombre de miroirs joignables +
+/// détail par miroir (`reachable == 0` = source tombée/dépréciée,
+/// visible sans avoir lancé une recherche).
+class TorSourceProbe {
+  const TorSourceProbe({
+    required this.source,
+    required this.reachable,
+    required this.mirrors,
+  });
+
+  final String source;
+  final int reachable;
+  final List<TorMirrorProbe> mirrors;
+
+  static TorSourceProbe fromJson(Map<String, dynamic> j) => TorSourceProbe(
+    source: '${j['source'] ?? ''}',
+    reachable: (j['reachable'] as num?)?.toInt() ?? 0,
+    mirrors: [
+      for (final m in (j['mirrors'] as List?) ?? const [])
+        TorMirrorProbe.fromJson(m as Map<String, dynamic>),
+    ],
+  );
+}

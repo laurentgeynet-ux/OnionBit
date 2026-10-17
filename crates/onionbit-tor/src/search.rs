@@ -137,6 +137,14 @@ pub trait OnionSearchBackend: Send + Sync {
         &self,
         query: &str,
     ) -> std::result::Result<Vec<ExternalResult>, ExternalSearchError>;
+
+    /// Miroirs `.onion` configures — exposes pour la sonde de
+    /// joignabilite `GET /api/tor/probe` (l'UI affiche la sante
+    /// reelle de la source : un onion deprecie/mort est visible
+    /// sans avoir a lancer une recherche).
+    fn mirrors(&self) -> &[String] {
+        &[]
+    }
 }
 
 /// Construit les backends declares dans `tor.search.backends` —

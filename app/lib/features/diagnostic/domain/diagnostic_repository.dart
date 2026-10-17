@@ -78,6 +78,12 @@ abstract interface class DiagnosticRepository {
   /// toujours joignable, même bootstrap échoué.
   Future<TorRuntimeStatus> torStatus();
 
+  /// Sonde de joignabilité des miroirs `.onion` d'une source de
+  /// recherche (`GET /api/tor/probe?source=…`, ADR-0028) — à la
+  /// demande uniquement : aucun sondage de fond, chaque appel
+  /// emprunte un circuit de rendez-vous par miroir.
+  Future<TorSourceProbe> torProbe(String source);
+
   /// Bascule le mode debug (`PUT /api/ipv8/asyncio/debug`).
   Future<void> setDebug(bool enable);
 }

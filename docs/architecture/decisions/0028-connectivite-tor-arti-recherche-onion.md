@@ -219,6 +219,15 @@ cibles `TorTargetPolicy`, et plus tard tout parsing de liens
   toujours joignable même bootstrap échoué (prouve que le runtime
   ne bloque pas le daemon) ; alimente la page diagnostic et le
   chip de source.
+- `GET /api/tor/probe?source=…` *(implémenté)* → `{source,
+  reachable, mirrors:[{host, ok, status, latency_ms, error}]}` —
+  sonde de joignabilité : un `GET /` borné par miroir, en
+  séquence, sur la lane permanente. L'UI en déduit une pastille de
+  santé sur le chip de la source — un onion tombé ou déprécié
+  (cas observé : l'onion TPB reclassé « Deprecated » sur les
+  annuaires) est signalé **sans qu'une recherche ait été lancée**.
+  Sondage strictement à la demande (affichage du chip ou tap
+  explicite) — jamais de sondage périodique de fond.
 - **Journalisation** : aucun terme de recherche dans `tracing`
   (niveau info ou plus) — données sensibles ; les événements SSE
   restent derrière `api_key_auth`.

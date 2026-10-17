@@ -210,3 +210,21 @@ final torStatusProvider = FutureProvider.autoDispose<TorRuntimeStatus>((
     return TorRuntimeStatus.disabled;
   }
 });
+
+/// Santé des miroirs `.onion` d'une ou plusieurs sources de
+/// recherche (`GET /api/tor/probe`, ADR-0028) — clé = ids joints par
+/// `,`. Sondage **à la demande** : déclenché par l'affichage du
+/// chip santé ou un tap (re-sonde via `ref.invalidate`), jamais en
+/// tâche de fond — chaque appel emprunte un circuit de rendez-vous
+/// par miroir.
+final torSourceProbeProvider = FutureProvider.autoDispose
+    .family<TorSourceProbe, String>((ref, sourcesCsv) async {
+      final repo = ref.watch(diagnosticRepositoryProvider);
+      final ids = sourcesCsv.split(',').where((s) => s.isNotEmpty);
+      final probes = [for (final id in ids) await repo.torProbe(id)];
+      return TorSourceProbe(
+        source: sourcesCsv,
+        reachable: probes.fold(0, (a, p) => a + p.reachable),
+        mirrors: [for (final p in probes) ...p.mirrors],
+      );
+    });
