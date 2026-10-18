@@ -3,6 +3,46 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Release : version 1.2.0 (2026-10-18)
+
+Première release avec le **canal de mise à jour signé `OBUP`**
+(ADR-0032) : `RELEASE_PUBKEY` embarquée (key_id
+`0x47d97cf3617d584b`), plus jamais le placeholder fail-closed — les
+installations 1.2.0 pourront importer les releases suivantes sans
+réinstallation (procédure : `docs/release.md`).
+
+Contenu principal depuis 1.1.2 (86 commits) :
+
+- **Connectivité Tor embarquée (ADR-0028)** : lane permanente arti
+  (bootstrap au démarrage, hot-swap), recherche `.onion` (API JSON
+  q.php, retry par miroir, santé des sources via `/api/tor/probe`),
+  ponts Tor vanilla anti-censure, HUD réseau 4 segments, retrait du
+  chemin clearnet-via-exit (recherche 100 % onion) et de la sonde de
+  version (télémétrie).
+- **Adresses `.onion` Messagerie/Canaux/Coffre (ADR-0029)** :
+  identité `.onion` dérivée HKDF `tor-hs/v1`, adresses multi-plan
+  (onionbit + onion), messagerie `.onion` (trame TCP fine), catalogues
+  de canaux servis en `.onion`, coffre via `.onion` en
+  restricted-discovery, threat-model + 5 cibles fuzz.
+- **Navigateur `.onion` embarqué (ADR-0030)** : `TorProxyServer`
+  (sous-domaines, isolation, auth, métriques) + DilloRust
+  (`onionbit-browser`), confinement `no_dpi` + profil éphémère wipé,
+  navigateur reparenté dans l'onglet UI (Win32), `POST
+  /api/browser/launch` allowlist.
+- **Chiffrement de la base locale (ADR-0031)** : sqlite3mc avec
+  probe codec fail-closed (`SELECT sqlite3mc_version()` exigée à
+  l'open avec clef).
+- **Releases signées `OBUP` (ADR-0032)** : format blob signé
+  Ed25519 (domaine `onionbit/update-manifest/v1`), `onionbit-cli
+  gen-release-key`/`sign-release`, import daemon
+  `POST /api/versioning/import` (staging + re-vérif launcher au
+  swap), anti-downgrade/`min_supported`/rotation `next_key`.
+- **Produit** : services `.onion` + coffre activés par défaut, file
+  d'attente 5/10/3/500 (valeurs Tribler), unités Mo/s, explorateur
+  de zones (`@public`, import/suppression zone privée), backend
+  bitdaemon opt-in, systray clarifié i18n fr/en, harnais d'interop
+  pyipv8 automatisé, fuzz ASan/UBSan nightly.
+
 ## Étape — défauts produit alignés (services .onion + file d'attente) — fait (2026-10-21)
 
 Tor étant activé par défaut, les fonctions qui en dépendent le sont

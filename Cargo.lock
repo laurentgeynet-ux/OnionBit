@@ -4367,7 +4367,7 @@ dependencies = [
 
 [[package]]
 name = "onionbit-api"
-version = "1.1.2"
+version = "1.2.0"
 dependencies = [
  "async-trait",
  "axum",
@@ -4405,7 +4405,7 @@ dependencies = [
 
 [[package]]
 name = "onionbit-bittorrent"
-version = "1.1.2"
+version = "1.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4441,7 +4441,7 @@ dependencies = [
 
 [[package]]
 name = "onionbit-cli"
-version = "1.1.2"
+version = "1.2.0"
 dependencies = [
  "axum",
  "clap",
@@ -4463,7 +4463,7 @@ dependencies = [
 
 [[package]]
 name = "onionbit-core"
-version = "1.1.2"
+version = "1.2.0"
 dependencies = [
  "bytes",
  "fs2",
@@ -4500,7 +4500,7 @@ dependencies = [
 
 [[package]]
 name = "onionbit-crypto"
-version = "1.1.2"
+version = "1.2.0"
 dependencies = [
  "argon2",
  "chacha20poly1305",
@@ -4523,7 +4523,7 @@ dependencies = [
 
 [[package]]
 name = "onionbit-daemon"
-version = "1.1.2"
+version = "1.2.0"
 dependencies = [
  "axum",
  "axum-server",
@@ -4551,7 +4551,7 @@ dependencies = [
 
 [[package]]
 name = "onionbit-db"
-version = "1.1.2"
+version = "1.2.0"
 dependencies = [
  "onionbit-crypto",
  "onionbit-sqlite3mc",
@@ -4565,7 +4565,7 @@ dependencies = [
 
 [[package]]
 name = "onionbit-format"
-version = "1.1.2"
+version = "1.2.0"
 dependencies = [
  "ed25519-dalek 3.0.0",
  "hex 0.4.3",
@@ -4578,7 +4578,7 @@ dependencies = [
 
 [[package]]
 name = "onionbit-ipv8"
-version = "1.1.2"
+version = "1.2.0"
 dependencies = [
  "hex 0.4.3",
  "lz4_flex",
@@ -4595,7 +4595,7 @@ dependencies = [
 
 [[package]]
 name = "onionbit-launcher"
-version = "1.1.2"
+version = "1.2.0"
 dependencies = [
  "ed25519-dalek 3.0.0",
  "embed-resource",
@@ -4608,7 +4608,7 @@ dependencies = [
 
 [[package]]
 name = "onionbit-messaging"
-version = "1.1.2"
+version = "1.2.0"
 dependencies = [
  "chacha20poly1305",
  "hkdf 0.13.0",
@@ -4623,7 +4623,7 @@ dependencies = [
 
 [[package]]
 name = "onionbit-network-policy"
-version = "1.1.2"
+version = "1.2.0"
 dependencies = [
  "onionbit-format",
  "thiserror 2.0.21",
@@ -4632,7 +4632,7 @@ dependencies = [
 
 [[package]]
 name = "onionbit-sqlite3mc"
-version = "1.1.2"
+version = "1.2.0"
 dependencies = [
  "cc",
  "sqlite3mc-src",
@@ -4640,7 +4640,7 @@ dependencies = [
 
 [[package]]
 name = "onionbit-test-support"
-version = "1.1.2"
+version = "1.2.0"
 dependencies = [
  "onionbit-format",
  "tokio",
@@ -4648,7 +4648,7 @@ dependencies = [
 
 [[package]]
 name = "onionbit-tor"
-version = "1.1.2"
+version = "1.2.0"
 dependencies = [
  "arti-client",
  "async-trait",
@@ -4685,7 +4685,7 @@ dependencies = [
 
 [[package]]
 name = "onionbit-tunnel"
-version = "1.1.2"
+version = "1.2.0"
 dependencies = [
  "futures-util",
  "hex 0.4.3",

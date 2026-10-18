@@ -19,14 +19,18 @@ pub const UPDATE_DOMAIN: &[u8] = b"onionbit/update-manifest/v1";
 
 /// Clef publique de release embarquee.
 ///
-/// **PLACEHOLDER** : `[0;32]` tant qu'aucune release n'est signee —
-/// une clef nulle ne verifie jamais de signature, donc tout `OBUP`
-/// est refuse par un binaire non appareille (fail-closed). A la
-/// premiere release : generer le keypair hors-ligne
-/// (`onionbit-cli gen-release-key`), coller la clef publique ici,
-/// garder la privee hors du repo. `key_id` = 8 premiers octets de
-/// `SHA-256(pubkey)`.
-pub const RELEASE_PUBKEY: [u8; 32] = [0; 32];
+/// Generee hors-ligne via `onionbit-cli gen-release-key` (procedure :
+/// `docs/release.md`) — la clef privee vit hors du repo.
+/// `key_id` = 8 premiers octets de `SHA-256(pubkey)`
+/// (= 0x47d97cf3617d584b pour cette clef).
+///
+/// Ne jamais remettre `[0;32]` dans une release publiee : la clef
+/// nulle rendrait tout `OBUP` invalide (fail-closed) et
+/// `build_dist.ps1 -ZipRelease` le refuse de toute facon.
+pub const RELEASE_PUBKEY: [u8; 32] = [
+    0x78, 0xcb, 0xfd, 0xae, 0xd8, 0x0b, 0x1c, 0x5c, 0x47, 0x8d, 0x72, 0xbe, 0x65, 0xde, 0x4d, 0x51,
+    0x3e, 0x3e, 0xb4, 0x5b, 0x9c, 0x6a, 0x1a, 0xf9, 0xcc, 0x5e, 0x52, 0x0b, 0xb8, 0x98, 0xf1, 0xda,
+];
 
 /// `key_id` d'une clef de release : `SHA-256(pk)[..8]` en u64 LE —
 /// identifiant compact pour la rotation `next_key` (plusieurs clefs
