@@ -3,6 +3,27 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Étape 130 — Vérification proxy côté dillorust (ADR-0030) — conforme (2026-10-18)
+
+Trois tests filaires `dillo-net::http` (stub TCP loopback, octets
+réels — commit dillorust `03e850f`) : le `HttpEngine` porté honore
+`http_proxy` de bout en bout. `http://` → forme absolue `GET
+http://h/…` émise vers le proxy sans DNS de la cible
+(`inexistant.invalid` irrésolvable — le nom voyage dans l'URI) ;
+`https://` → `CONNECT h:443` puis, sur réponse `200`, `ClientHello`
+TLS **sur la même socket** (TLS en-process `TlsEngine` — aucun
+`https.dpi` ne peut ouvrir de socket et contourner le proxy) ;
+`no_proxy` → bypass en forme origine directe (proxy `127.0.0.1:1`
+injoignable). `Proxy-Authorization: Basic` relayé quand
+`proxy_user`/`set_proxy_passwd` sont posés ; le userinfo
+`http_proxy=user:pass@…` n'est **pas** propagé (init amont commentée
+« security problem » — non-bug D1/A01) → l'auth de session de
+l'étape 131 passera par `http_proxyuser` dans le dillorc éphémère
+(verdict ADR §8.1 mis à jour). Fidélité harnais : armement du lecteur
+= topologie capi amont (deux liens + relais `FD` `bfcb`), sinon la
+réponse au CONNECT n'est jamais lue. 170/170 tests dillo-net verts,
+clippy/fmt propres.
+
 ## Étape 129 — Spike proxy Tor loopback (ADR-0030) — GO (2026-10-18)
 
 `onionbit-tor::proxy` (feature `tor`) : forward proxy HTTP minimal —

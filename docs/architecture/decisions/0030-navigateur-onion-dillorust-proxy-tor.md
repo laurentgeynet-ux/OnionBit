@@ -446,3 +446,43 @@ canonique — à trancher à la productisation, documenté ici).
    seul guard set ; un arti dans dillorust doublerait le signal de
    corrélation et la dépendance croisée). « Autonomie » couvre
    l'app, pas le navigateur seul.
+
+## Verdict de la vérification dillorust (étape 130, 2026-10-18) — conforme
+
+Trois tests filaires ajoutés à `dillo-net::http::tests` (stub TCP
+loopback capturant les octets réels — commit dillorust `03e850f`) ;
+
+le `HttpEngine` porté honore le contrat proxy de bout en bout :
+
+- **`http://`** : forme absolue `GET http://hôte/chemin` émise vers le
+  proxy (`use_proxy && !use_tls` dans `make_query_str`) — prouvé par
+  une cible `inexistant.invalid` **irrésolvable** dont la requête
+  arrive entière au stub ;
+- **`https://`** : `CONNECT hôte:443` émis sur la socket proxy ; la
+  réponse `200` (accumulée `https_proxy_reply`, branche 2F) déclenche
+  `tls_wrap` sur **la même socket** — `ClientHello` observé après le
+  CONNECT. Pas de `https.dpi` : TLS en-process (`TlsEngine`) — aucun
+  plugin ne peut ouvrir sa propre socket et contourner le proxy
+  (exigence §6 « profil onion » satisfaite par construction) ;
+- **DNS** : en mode proxy seul l'hôte *proxy* est résolu — la cible
+  voyage dans l'URI/le CONNECT, jamais dans `to_socket_addrs` ;
+- **`no_proxy`** : bypass intact — requête en forme origine directe
+  malgré un proxy `127.0.0.1:1` injoignable ;
+- **`Proxy-Authorization`** : l'en-tête `Basic` émis **est** relayé
+  quand `proxy_user`/`set_proxy_passwd` sont posés (dillorc
+  `http_proxyuser`) — en revanche le userinfo de
+  `http_proxy=user:pass@…` **n'est pas** propagé : l'init amont est
+  commentée (*security problem, disabled* — non-bug adjudicé D1,
+  audit A01).
+
+**Conséquence pour §8.1 (auth)** : le token de session `require_auth`
+peut être délivré via `http_proxyuser`/`set_proxy_passwd` dans le
+dillorc éphémère — le canal existe et est prouvé ; l'userinfo d'URL
+n'étant pas un canal disponible, il n'y a rien à supporter de ce
+côté. Loopback-seul reste le défaut ; `require_auth` optionnel en 131.
+
+**Détail de harnais** (fidélité) : l'armement du lecteur exige la
+topologie capi amont — deux liens (`OpStart` branche 2 puis 1) et le
+relais du `FD` remonté par `bfcb` (`capi.c` OpStart ×2 + relais
+`OpSend "FD"` 1F→2B). Sans ce relais la réponse au CONNECT n'est pas
+lue et `tls_wrap` ne démarre pas — le test le reproduit verbatim.
