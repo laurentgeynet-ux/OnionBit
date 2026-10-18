@@ -6304,6 +6304,9 @@ async fn tor_status_expose_browser_proxy() {
 
 #[tokio::test]
 async fn tor_status_browser_proxy_absent() {
+    // Le proxy navigateur est *active* par defaut (reglage), mais
+    // sans runtime Tor aucun listener n'existe : `listen` reste
+    // null. `enabled` reflete le reglage, pas l'ecoute effective.
     let srv = spawn_server().await;
     let resp = srv
         .client
@@ -6312,7 +6315,7 @@ async fn tor_status_browser_proxy_absent() {
         .await
         .unwrap();
     let body: serde_json::Value = resp.json().await.unwrap();
-    assert_eq!(body["browser_proxy"]["enabled"], false);
+    assert_eq!(body["browser_proxy"]["enabled"], true);
     assert!(body["browser_proxy"]["listen"].is_null());
     assert_eq!(body["browser_proxy"]["conns_active"], 0);
     srv.session.stop().await;
@@ -6431,6 +6434,13 @@ async fn browser_launch_ok_spawn_et_dillorc() {
     );
     assert!(content.contains("http_proxyuser=\"onionbit\""), "{content}");
     assert!(content.contains("no_dpi=yes"), "{content}");
+    // Page d'accueil locale : `about:onionbit` est injecte dans le
+    // cache du navigateur — ouvrir sans URL ne cree aucune connexion.
+    assert!(
+        content.contains("start_page=\"about:onionbit\""),
+        "{content}"
+    );
+    assert!(content.contains("home=\"about:onionbit\""), "{content}");
     assert!(!content.contains("http_proxypass"), "{content}");
     // dpidrc de defense en profondeur : aucun service dpi.
     let dpidrc = std::fs::read_to_string(
@@ -6442,6 +6452,49 @@ async fn browser_launch_ok_spawn_et_dillorc() {
     )
     .unwrap();
     assert!(!dpidrc.contains("service="), "{dpidrc}");
+    srv.session.stop().await;
+}
+
+#[tokio::test]
+async fn browser_launch_embed_replie_sans_handle() {
+    // `embed:true` → le daemon pose `--host-shell` et pipe stdout ;
+    // le binaire factice (le test lui-meme) ne publie pas de
+    // `DILLO_HOST_HANDLE` → `hwnd:null` et l'app retombe en fenetre
+    // externe. Le lancement reste accepte (embed degrade, jamais
+    // bloquant).
+    let srv = spawn_browser_server(|c| c.tor.browser.keep_profile = true).await;
+    let resp = srv
+        .client
+        .post(srv.url("/api/browser/launch"))
+        .json(&serde_json::json!({
+            "url": format!("http://{TPB_ONION}/"),
+            "embed": true,
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["launched"], true);
+    assert!(body["hwnd"].is_null(), "{body}");
+    srv.session.stop().await;
+}
+
+#[tokio::test]
+async fn browser_launch_sans_url_page_accueil() {
+    // `url=""` : aucune destination a valider — le navigateur
+    // s'ouvre sur `about:onionbit` (page locale, zero connexion).
+    let srv = spawn_browser_server(|c| c.tor.browser.keep_profile = true).await;
+    let resp = srv
+        .client
+        .post(srv.url("/api/browser/launch"))
+        .json(&serde_json::json!({"url": ""}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["launched"], true);
     srv.session.stop().await;
 }
 

@@ -84,6 +84,16 @@ abstract class MessagingRepository {
   /// contacts restaurés.
   Future<int> vaultImport(String vaultHex);
 
+  /// `POST /messaging/vault/replicate` — pousse le coffre `OBV1`
+  /// vers les ponts `CAP_PULL_STORE` (store-and-forward ADR-0026).
+  /// Renvoie le nombre de ponts atteints ; 404 sans pont.
+  Future<int> vaultReplicate();
+
+  /// `POST /messaging/vault/restore` — tire le coffre depuis le
+  /// service `.onion` propre (étape 127) puis les ponts pull-store.
+  /// Renvoie le nombre de contacts restaurés ; 404 si aucune source.
+  Future<int> vaultRestore();
+
   // ── ADR-0019 : conversations, groupes, pièces jointes ──────
 
   /// `GET /messaging/conversations` — conversations directes et

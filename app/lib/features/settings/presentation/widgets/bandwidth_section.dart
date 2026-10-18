@@ -14,7 +14,7 @@ import 'settings_defaults.dart';
 
 /// Section « Bande passante » — limites globales de débit de la
 /// session (`libtorrent/max_download_rate`, `max_upload_rate`,
-/// octets/s — 0 = illimité). Saisie en Ko/s.
+/// octets/s — 0 = illimité). Saisie en Mo/s (décimales admises).
 class BandwidthSection extends ConsumerStatefulWidget {
   const BandwidthSection({super.key});
 
@@ -50,20 +50,21 @@ class _BandwidthSectionState extends ConsumerState<BandwidthSection> {
 
   void _sync(Map<String, dynamic> settings) {
     if (_initialized) return;
-    int kb(List<String> path) => settingsInt(settings, path) ~/ 1024;
-    _down.text = '${kb(['libtorrent', 'max_download_rate'])}';
-    _up.text = '${kb(['libtorrent', 'max_upload_rate'])}';
+    _down.text = _fmtMb(
+      settingsInt(settings, const ['libtorrent', 'max_download_rate']),
+    );
+    _up.text = _fmtMb(
+      settingsInt(settings, const ['libtorrent', 'max_upload_rate']),
+    );
     _initialized = true;
   }
 
   Future<void> _save() async {
     setState(() => _saving = true);
-    int parseKb(String s) =>
-        (int.tryParse(s.trim()) ?? 0).clamp(0, 1 << 40) * 1024;
     await applySettingsPatch(context, ref, {
       'libtorrent': {
-        'max_download_rate': parseKb(_down.text),
-        'max_upload_rate': parseKb(_up.text),
+        'max_download_rate': _parseMb(_down.text),
+        'max_upload_rate': _parseMb(_up.text),
       },
     }, successMessage: context.l10n.bwSaved);
     _deferred.markClean();
@@ -114,8 +115,27 @@ class _BandwidthSectionState extends ConsumerState<BandwidthSection> {
   }
 }
 
-/// Ligne de limite de débit : champ numérique (Ko/s) + slider
-/// exponentiel (0 = illimité ↔ 10 Mo/s) + chips de presets, tous
+/// Octets/s → texte de saisie en Mo/s : entiers sans décimale,
+/// sinon 2 chiffres max (`0.5`, `1.25`).
+String _fmtMb(int bytesPerSec) {
+  final mb = bytesPerSec / 1048576;
+  return mb == mb.truncateToDouble()
+      ? '${mb.truncate()}'
+      : mb.toStringAsFixed(2).replaceFirst(RegExp(r'\.?0+$'), '');
+}
+
+/// Saisie Mo/s → octets/s (`0` ou invalide → 0 = illimité ; la
+/// virgule décimale est acceptée).
+int _parseMb(String s) =>
+    (((double.tryParse(s.trim().replaceAll(',', '.')) ?? 0).clamp(
+              0.0,
+              1 << 40,
+            )) *
+            1048576)
+        .round();
+
+/// Ligne de limite de débit : champ numérique (Mo/s) + slider
+/// exponentiel (0 = illimité ↔ 10 Mo/s) + chip « Illimité », tous
 /// synchronisés. `0` = illimité, convention backend `0 → None`.
 class _RateControl extends StatelessWidget {
   const _RateControl({
@@ -146,22 +166,17 @@ class _RateControl extends StatelessWidget {
   static int _toKb(double pos) =>
       pos <= 0 ? 0 : exp((pos - 1) / (_positions - 1) * log(_maxKb)).round();
 
-  int _kb() => (int.tryParse(controller.text.trim()) ?? 0).clamp(0, 1 << 40);
+  /// Champ saisi en Mo/s → valeur interne en Ko/s pour le slider.
+  int _kb() => (_parseMb(controller.text) / 1024).round();
 
   void _setKb(int kb) {
-    controller.text = '$kb';
+    controller.text = _fmtMb(kb * 1024);
     onChanged();
   }
 
   @override
   Widget build(BuildContext context) {
     final l10n = context.l10n;
-    final presets = <(String, int)>[
-      (l10n.rateUnlimited, 0),
-      (l10n.ratePresetMb(1), 1024),
-      (l10n.ratePresetMb(5), 5 * 1024),
-      (l10n.ratePresetMb(10), _maxKb),
-    ];
     final kb = _kb();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -172,7 +187,9 @@ class _RateControl extends StatelessWidget {
               child: TextField(
                 controller: controller,
                 onChanged: (_) => onChanged(),
-                keyboardType: TextInputType.number,
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
                 decoration: InputDecoration(
                   labelText: l10n.rateFieldLabel(label),
                   hintText: l10n.rateUnlimitedHint,
@@ -195,16 +212,15 @@ class _RateControl extends StatelessWidget {
                 onChanged: (pos) => _setKb(_toKb(pos)),
               ),
             ),
-            for (final (label, v) in presets)
-              Padding(
-                padding: const EdgeInsets.only(left: AppSpace.xs),
-                child: ChoiceChip(
-                  label: Text(label),
-                  selected: kb == v,
-                  visualDensity: VisualDensity.compact,
-                  onSelected: (_) => _setKb(v),
-                ),
+            Padding(
+              padding: const EdgeInsets.only(left: AppSpace.xs),
+              child: ChoiceChip(
+                label: Text(l10n.rateUnlimited),
+                selected: kb == 0,
+                visualDensity: VisualDensity.compact,
+                onSelected: (_) => _setKb(0),
               ),
+            ),
           ],
         ),
       ],

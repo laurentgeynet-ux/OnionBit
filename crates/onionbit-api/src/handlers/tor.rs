@@ -58,6 +58,11 @@ pub async fn tor_status(State(state): State<AppState>) -> Json<serde_json::Value
     let (bp_enabled, bp_listen, bp_conns, bp_isolation) = state.session.browser_proxy_status();
     Json(serde_json::json!({
         "enabled": settings.enabled,
+        // Capacite compilee : `enabled` est le reglage, `built` dit
+        // si le transport reel existe dans le binaire — une lane
+        // noTor (`--no-default-features`) peut afficher
+        // `enabled=true` sans qu'aucun stream ne soit possible.
+        "built": runtime.built(),
         "mode": mode,
         "external_socks5": socks5,
         "state": state_str,

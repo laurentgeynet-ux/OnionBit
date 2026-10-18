@@ -9,7 +9,9 @@ import '../../../../core/design/design_tokens.dart';
 import '../../../../core/l10n/l10n_ext.dart';
 import '../../../../core/widgets/empty_state.dart';
 import '../../../../core/widgets/error_state.dart';
+import '../../../browser/browser_launch.dart';
 import '../../../downloads/presentation/widgets/add_download_dialog.dart';
+import '../../../messaging/presentation/widgets/plane_badge.dart';
 import '../../../search/domain/torrent_result.dart';
 import '../../domain/channel.dart';
 import '../providers/channels_providers.dart';
@@ -130,6 +132,20 @@ class _ChannelCard extends ConsumerWidget {
                 ),
               ),
             ),
+            // Pastille plan `.onion` (ADR-0029) : le curateur publie
+            // aussi via Tor — liaison explicite, tooltip verifiee/
+            // manuelle ; ouvre le navigateur au clic.
+            if (channel.hasOnion)
+              Padding(
+                padding: const EdgeInsets.only(right: AppSpace.xs),
+                child: PlaneDot(
+                  plane: 'onion',
+                  size: 9,
+                  tooltip: channel.onionVerified
+                      ? l10n.msgOnionVerifiedTip
+                      : l10n.msgOnionManualTip,
+                ),
+              ),
           ],
         ),
         subtitle: Text(
@@ -142,6 +158,13 @@ class _ChannelCard extends ConsumerWidget {
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
+            if (channel.hasOnion)
+              IconButton(
+                tooltip: l10n.msgOpenOnionBrowser,
+                icon: const Icon(Icons.open_in_new, size: 18),
+                onPressed: () =>
+                    launchOnionHost(context, ref, channel.onion!),
+              ),
             IconButton(
               tooltip: l10n.channelsUnsubscribe,
               icon: const Icon(Icons.bookmark_remove_outlined, size: 20),

@@ -549,13 +549,24 @@ class TorRuntimeStatus {
     required this.progress,
     this.externalSocks5,
     this.error,
+    this.built = true,
     this.sources = const [],
     this.browserProxy = BrowserProxyStatus.off,
+    this.onionService = OnionServiceStatus.off,
+    this.onionVault = OnionServiceStatus.off,
   });
 
   /// `tor.enabled` — la fonctionnalité est opt-in, désactivée par
   /// défaut (bootstrap visible par le FAI, ADR-0028 §1).
   final bool enabled;
+
+  /// `tor.built` — le transport Tor est **compilé** dans le daemon
+  /// (`feature tor`, standard depuis l'unification). `enabled` est le
+  /// réglage ; `built` est la capacité — une lane `--no-default-
+  /// features` afficherait sinon des fonctions qui échouent toutes.
+  /// `true` par défaut : les anciens daemons sans le champ sont
+  /// traités comme compilés (les stubs y répondaient déjà `error`).
+  final bool built;
 
   /// `"embedded"` (arti embarqué) ou `"external"` (SOCKS5 système).
   final String mode;
@@ -579,10 +590,18 @@ class TorRuntimeStatus {
   /// État du proxy navigateur loopback (`browser_proxy`, ADR-0030 §7).
   final BrowserProxyStatus browserProxy;
 
+  /// Service `.onion` d'identité publié (ADR-0029 étape 122) —
+  /// l'adresse à donner aux contacts pour être joint via Tor.
+  final OnionServiceStatus onionService;
+
+  /// Service `.onion` du coffre (étape 127, restricted-discovery).
+  final OnionServiceStatus onionVault;
+
   /// Runtime absent ou non compilé (`tor` feature off) — l'endpoint
   /// répond toujours : état « off » honnête.
   static const disabled = TorRuntimeStatus(
     enabled: false,
+    built: false,
     mode: 'embedded',
     state: TorRuntimeState.off,
     progress: 0,
@@ -590,6 +609,7 @@ class TorRuntimeStatus {
 
   static TorRuntimeStatus fromJson(Map<String, dynamic> j) => TorRuntimeStatus(
     enabled: j['enabled'] == true,
+    built: j['built'] is bool ? j['built'] as bool : true,
     mode: '${j['mode'] ?? 'embedded'}',
     state: switch ('${j['state'] ?? ''}') {
       'off' => TorRuntimeState.off,
@@ -610,7 +630,46 @@ class TorRuntimeStatus {
             j['browser_proxy'] as Map<String, dynamic>,
           )
         : BrowserProxyStatus.off,
+    onionService: j['onion_service'] is Map<String, dynamic>
+        ? OnionServiceStatus.fromJson(
+            j['onion_service'] as Map<String, dynamic>,
+          )
+        : OnionServiceStatus.off,
+    onionVault: j['onion_vault'] is Map<String, dynamic>
+        ? OnionServiceStatus.fromJson(
+            j['onion_vault'] as Map<String, dynamic>,
+          )
+        : OnionServiceStatus.off,
   );
+}
+
+/// Service `.onion` hebergé par le daemon (`tor/status →
+/// onion_service` / `onion_vault`, ADR-0029) — `address` n'est
+/// renseignée que quand le service est réellement publié.
+class OnionServiceStatus {
+  const OnionServiceStatus({
+    required this.enabled,
+    required this.state,
+    this.address,
+  });
+
+  /// `tor.onion_service.enabled` (ou `vault`) — publication opt-in.
+  final bool enabled;
+
+  /// `off` | `bootstrapping` | `running` | `degraded` | `shutdown`.
+  final String state;
+
+  /// Adresse `.onion` publiée — `null` tant que rien n'est servi.
+  final String? address;
+
+  static const off = OnionServiceStatus(enabled: false, state: 'off');
+
+  static OnionServiceStatus fromJson(Map<String, dynamic> j) =>
+      OnionServiceStatus(
+        enabled: j['enabled'] == true,
+        state: '${j['state'] ?? 'off'}',
+        address: j['address'] is String ? j['address'] as String : null,
+      );
 }
 
 /// État du proxy navigateur loopback (`tor/status → browser_proxy`,

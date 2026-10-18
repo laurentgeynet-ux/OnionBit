@@ -11,6 +11,9 @@ class Channel {
     required this.name,
     required this.subscribed,
     required this.numEntries,
+    this.onion,
+    this.onionVerified = false,
+    this.planes = const ['onionbit'],
   });
 
   /// Clé Ed25519 du curateur (hex, 64 octets).
@@ -29,4 +32,18 @@ class Channel {
 
   /// Entrées `CHANNEL_TORRENT` actives persistées localement.
   final int numEntries;
+
+  /// Adresse `.onion` du curateur (ADR-0029) — liaison explicite
+  /// (`peer_onions`), jamais inférée ; `null` sans association.
+  final String? onion;
+
+  /// `true` quand la liaison `.onion` est signée par le pair.
+  final bool onionVerified;
+
+  /// Plans d'adressage du canal : `["onionbit"]` ou
+  /// `["onionbit","onion"]` quand le curateur publie un `.onion`.
+  final List<String> planes;
+
+  /// `.onion` associé au curateur — raccourci de lecture.
+  bool get hasOnion => onion != null && onion!.isNotEmpty;
 }

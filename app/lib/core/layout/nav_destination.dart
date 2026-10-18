@@ -11,6 +11,7 @@ import '../../l10n/app_localizations.dart' show AppLocalizations;
 enum NavId {
   downloads,
   search,
+  browser,
   channels,
   messages,
   diagnostic,
@@ -52,6 +53,7 @@ extension NavDestinationSpecX on NavDestinationSpec {
   String label(AppLocalizations l10n) => switch (id) {
     NavId.downloads => l10n.navDownloads,
     NavId.search => l10n.navSearch,
+    NavId.browser => l10n.navBrowser,
     NavId.channels => l10n.navChannels,
     NavId.messages => l10n.navMessages,
     NavId.diagnostic => l10n.navDiagnostic,

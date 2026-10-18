@@ -115,12 +115,12 @@ class _QueueSectionState extends ConsumerState<QueueSection> {
             const SizedBox(height: AppSpace.sm),
             Row(
               children: [
-                _field(_downloads, l10n.queueActiveDownloads, 3, const [
+                _field(_downloads, l10n.queueActiveDownloads, 5, const [
                   'libtorrent',
                   'active_downloads',
                 ]),
                 const SizedBox(width: AppSpace.sm),
-                _field(_seeds, l10n.queueActiveSeeds, 5, const [
+                _field(_seeds, l10n.queueActiveSeeds, 10, const [
                   'libtorrent',
                   'active_seeds',
                 ]),
@@ -129,7 +129,7 @@ class _QueueSectionState extends ConsumerState<QueueSection> {
             const SizedBox(height: AppSpace.sm),
             Row(
               children: [
-                _field(_checking, l10n.queueActiveChecking, 1, const [
+                _field(_checking, l10n.queueActiveChecking, 3, const [
                   'libtorrent',
                   'active_checking',
                 ]),

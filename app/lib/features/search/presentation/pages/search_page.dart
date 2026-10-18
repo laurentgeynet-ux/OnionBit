@@ -207,10 +207,11 @@ class SearchPage extends ConsumerWidget {
                         ),
                       ),
                     // Source `.onion` — chip présent uniquement quand
-                    // Tor est activé (opt-in, ADR-0028) + pastille de
-                    // santé des miroirs : un onion tombé/déprécié est
-                    // visible sans lancer de recherche.
-                    if (tor?.enabled ?? false)
+                    // Tor est activé (opt-in, ADR-0028) **et compilé**
+                    // (`built` : un daemon `--no-default-features`
+                    // rendrait une puce qui échoue à chaque requête)
+                    // + pastille de santé des miroirs.
+                    if ((tor?.enabled ?? false) && (tor?.built ?? true))
                       Padding(
                         padding: const EdgeInsets.only(right: AppSpace.xs),
                         child: _OnionSourceChip(

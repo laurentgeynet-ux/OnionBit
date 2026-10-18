@@ -47,6 +47,15 @@ const List<NavDestinationSpec> kNavCatalog = [
     icon: Icons.forum_outlined,
     selectedIcon: Icons.forum,
   ),
+  // Navigateur .onion (ADR-0030) : secondaire comme `/channels` —
+  // la nav compacte reste bornee a 5.
+  NavDestinationSpec(
+    path: '/browser',
+    id: NavId.browser,
+    icon: Icons.language_outlined,
+    selectedIcon: Icons.language,
+    primary: false,
+  ),
   NavDestinationSpec(
     path: '/channels',
     id: NavId.channels,

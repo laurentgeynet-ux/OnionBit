@@ -397,12 +397,18 @@ class RestDiagnosticRepository implements DiagnosticRepository {
   }
 
   @override
-  Future<int> launchBrowser(String url) async {
+  Future<BrowserLaunchResult> launchBrowser(
+    String url, {
+    bool embed = false,
+  }) async {
     final resp = await _api.post(
       '/browser/launch',
-      body: {'url': url},
+      body: {'url': url, if (embed) 'embed': true},
     ) as Map<String, dynamic>;
-    return (resp['pid'] as num?)?.toInt() ?? 0;
+    return (
+      pid: (resp['pid'] as num?)?.toInt() ?? 0,
+      hwnd: (resp['hwnd'] as num?)?.toInt(),
+    );
   }
 
   @override

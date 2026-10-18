@@ -175,6 +175,16 @@ impl TorRuntime {
         std::sync::Arc::ptr_eq(&self.inner, &other.inner)
     }
 
+    /// `true` quand le transport Tor reel est compile dans le
+    /// binaire (`feature tor`) — `false` sur un build
+    /// `--no-default-features` (stub `NotBuilt`). `enabled` est le
+    /// *reglage* utilisateur ; `built` est la *capacite* du binaire —
+    /// les UI doivent distinguer les deux sinon une lane noTor
+    /// affiche des fonctions qui echouent toutes.
+    pub fn built(&self) -> bool {
+        cfg!(feature = "tor")
+    }
+
     /// Reglages actifs.
     pub fn settings(&self) -> &TorSettings {
         &self.inner.settings
@@ -229,8 +239,55 @@ impl TorRuntime {
                 TorMode::External(addr) => bootstrap_external(&inner, addr).await,
                 TorMode::Embedded => bootstrap_embedded(&inner).await,
             }
+            // Prechauffage des circuits onion des backends
+            // (`tor.search.warmup`) : `Ready` signifie « client
+            // bootstrappe », pas « rendez-vous etabli » — le premier
+            // fetch vers un .onion paie descripteur + circuits
+            // intro/RDV (dizaines de secondes). Un `GET /` par miroir
+            // en tache de fond fait exister ces circuits avant la
+            // premiere recherche utilisateur. Best-effort, jamais
+            // bloquant pour l'etat du runtime.
+            if inner.settings.search_warmup
+                && matches!(
+                    *inner.state.lock().unwrap_or_else(|e| e.into_inner()),
+                    TorState::Ready
+                )
+            {
+                let rt = Self {
+                    inner: inner.clone(),
+                };
+                tokio::spawn(async move { rt.warmup_backends().await });
+            }
         }));
         Ok(())
+    }
+
+    /// Fetch `GET /` de chaque miroir de chaque backend — dedupe les
+    /// hotes (plusieurs backends peuvent partager un miroir), en
+    /// sequence : le warmup n'a pas a presser Tor, il doit juste
+    /// faire exister les circuits. Les echecs restent en `debug`
+    /// (un miroir mort est un fait normal, la recherche retentera).
+    #[cfg(feature = "tor")]
+    async fn warmup_backends(&self) {
+        let mut hosts: Vec<&str> = Vec::new();
+        for b in self.inner.settings.backends.values() {
+            for m in &b.mirrors {
+                if !hosts.contains(&m.as_str()) {
+                    hosts.push(m.as_str());
+                }
+            }
+        }
+        for host in hosts {
+            match self.fetch_onion(&format!("http://{host}/")).await {
+                Ok(resp) => {
+                    tracing::debug!(%host, status = resp.status, "tor : circuit prechauffe");
+                }
+                Err(e) => {
+                    tracing::debug!(%host, error = %e, "tor : warmup ignore (miroir injoignable)");
+                }
+            }
+        }
+        tracing::info!("tor : prechauffage des backends termine");
     }
 
     /// Fetch borne d'une ressource `.onion` (`GET`, reponse ≤

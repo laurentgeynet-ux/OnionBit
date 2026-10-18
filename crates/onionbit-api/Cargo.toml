@@ -7,7 +7,11 @@ license.workspace = true
 authors.workspace = true
 
 [dependencies]
-onionbit-core = { path = "../onionbit-core" }
+# `default-features = false` : sinon le defaut `tor` de core
+# s'imposerait meme en build daemon `--no-default-features` (lane
+# -NoTor). Le `tor` de core arrive par la feature du daemon quand il
+# est demande — comportement pre-defaut preserve ici.
+onionbit-core = { path = "../onionbit-core", default-features = false }
 onionbit-bittorrent = { path = "../onionbit-bittorrent" }
 onionbit-crypto = { path = "../onionbit-crypto" }
 onionbit-db = { path = "../onionbit-db" }

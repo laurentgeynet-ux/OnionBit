@@ -42,6 +42,10 @@ class _FakeRepo implements SettingsRepository {
   @override
   Future<Map<String, dynamic>> versions() async => {};
   @override
+  Future<Map<String, dynamic>> updateStatus() async => {};
+  @override
+  Future<Map<String, dynamic>> importUpdate() async => {};
+  @override
   Future<String?> identityPublicKey() async => null;
   @override
   Future<Map<String, dynamic>> identityStatus() async => {};

@@ -4,6 +4,11 @@
 
 import 'diagnostic_models.dart';
 
+/// Résultat d'un `POST /api/browser/launch` accepté — `hwnd` n'est
+/// présent que si `embed:true` était demandé et que le navigateur a
+/// publié `DILLO_HOST_HANDLE=` sous `browser.embed_timeout`.
+typedef BrowserLaunchResult = ({int pid, int? hwnd});
+
 /// Contrat du dépôt diagnostic (`/api/ipv8/*`, `/api/logging`).
 abstract interface class DiagnosticRepository {
   Future<List<OverlayInfo>> overlays();
@@ -85,12 +90,15 @@ abstract interface class DiagnosticRepository {
   Future<TorSourceProbe> torProbe(String source);
 
   /// Lance le navigateur `.onion` sur `url`
-  /// (`POST /api/browser/launch`, ADR-0030 §6) — retourne le `pid`
-  /// du processus fils. L'URL est re-validée côté daemon (politique
-  /// anti-SSRF, `tor.browser_proxy.allow_clearnet_exit`) ; les
-  /// échecs portent `error.code` (`browser_not_configured`,
-  /// `tor_not_ready`, `denied_target`…).
-  Future<int> launchBrowser(String url);
+  /// (`POST /api/browser/launch`, ADR-0030 §6) — retourne `pid` du
+  /// processus fils et, quand `embed` est demandé, `hwnd` le handle
+  /// natif de sa première fenêtre (HWND Win32 / XID X11 — `null` si
+  /// non publié ou non supporté : repli fenêtre externe). L'URL est
+  /// re-validée côté daemon (politique anti-SSRF,
+  /// `tor.browser_proxy.allow_clearnet_exit`) ; les échecs portent
+  /// `error.code` (`browser_not_configured`, `tor_not_ready`,
+  /// `denied_target`…).
+  Future<BrowserLaunchResult> launchBrowser(String url, {bool embed = false});
 
   /// Bascule le mode debug (`PUT /api/ipv8/asyncio/debug`).
   Future<void> setDebug(bool enable);

@@ -353,6 +353,13 @@ struct Inner {
     /// `tor.browser_proxy.enabled=false` ou hors contexte tokio.
     #[cfg(feature = "tor")]
     browser_proxy: std::sync::Mutex<Option<BrowserProxySlot>>,
+    /// Processus navigateurs lances par `launch_browser` — le
+    /// daemon possede leur cycle de vie : `stop()` les tue (un
+    /// navigateur confine sans son proxy ni son daemon ne sert a
+    /// rien, et son profil ephemere doit etre wipe par son thread
+    /// de reaper plutot qu'abandonne).
+    #[cfg(feature = "tor")]
+    browser_children: std::sync::Mutex<Vec<Arc<std::sync::Mutex<std::process::Child>>>>,
     /// Horodatage de demarrage — expose via `uptime_secs`
     /// (`GET /api/statistics/tribler`).
     started_at: std::time::Instant,
@@ -366,6 +373,19 @@ struct Inner {
 struct BrowserProxySlot {
     server: onionbit_tor::proxy::TorProxyServer,
     auth_token: Option<Arc<str>>,
+}
+
+/// Resultat d'un lancement navigateur reussi.
+#[derive(Debug)]
+pub struct BrowserLaunch {
+    /// PID du processus navigateur.
+    pub pid: u32,
+    /// Handle de fenetre natif publie par `--host-shell`
+    /// (`DILLO_HOST_HANDLE=<n>` sur stdout — HWND Win32 ou XID X11)
+    /// quand `embed` etait demande et publie sous
+    /// `browser.embed_timeout`. `None` → l'app reste en mode
+    /// fenetre externe (degrade, jamais bloquant).
+    pub hwnd: Option<u64>,
 }
 
 /// Erreurs typees de `launch_browser` — mappees par le handler
@@ -385,6 +405,74 @@ pub enum BrowserLaunchError {
     /// Echec d'E/S (profil ephemere) ou de `spawn`.
     #[error("lancement navigateur : {0}")]
     Io(#[from] std::io::Error),
+}
+
+/// Navigateur du bundle portable : `<exe_dir>/bin/onionbit-browser`
+/// (+`.exe` sous Windows) — layout produit par `build_dist.ps1`
+/// (`windows\bin\onionbit-browser.exe`). `None` = bundle sans
+/// navigateur (dev hors bundle) — l'appelant peut encore poser
+/// `tor.browser.binary_path`.
+#[cfg(feature = "tor")]
+fn bundled_browser_binary() -> Option<std::path::PathBuf> {
+    const NAME: &str = if cfg!(windows) {
+        "onionbit-browser.exe"
+    } else {
+        "onionbit-browser"
+    };
+    let candidate = std::env::current_exe()
+        .ok()?
+        .parent()?
+        .join("bin")
+        .join(NAME);
+    candidate.is_file().then_some(candidate)
+}
+
+/// Lit `DILLO_HOST_HANDLE=<n>` sur le stdout d'un enfant pipe
+/// (protocole `--host-shell` de DilloRust) puis **continue de
+/// drainer** — un pipe jamais lu finit par bloquer l'ecrivain.
+/// stderr est draine a part et jete (la sortie navigateur peut
+/// contenir des URL — regle « jamais d'URL dans les logs »).
+/// `None` si le handle n'arrive pas sous `timeout` (l'appelant
+/// retombe en mode fenetre externe).
+#[cfg(feature = "tor")]
+fn read_host_handle(
+    stdout: Option<std::process::ChildStdout>,
+    stderr: Option<std::process::ChildStderr>,
+    timeout: std::time::Duration,
+) -> Option<u64> {
+    use std::io::BufRead;
+    if let Some(err) = stderr {
+        let _ = std::thread::Builder::new()
+            .name("browser-stderr-drain".into())
+            .spawn(move || {
+                for line in std::io::BufReader::new(err).lines() {
+                    if line.is_err() {
+                        break;
+                    }
+                }
+            });
+    }
+    let (tx, rx) = std::sync::mpsc::channel();
+    let out = stdout?;
+    std::thread::Builder::new()
+        .name("browser-host-handle".into())
+        .spawn(move || {
+            let mut sent = false;
+            for line in std::io::BufReader::new(out).lines() {
+                let Ok(line) = line else { break };
+                if !sent {
+                    if let Some(v) = line
+                        .strip_prefix("DILLO_HOST_HANDLE=")
+                        .and_then(|s| s.trim().parse::<u64>().ok())
+                    {
+                        let _ = tx.send(v);
+                        sent = true;
+                    }
+                }
+            }
+        })
+        .ok()?;
+    rx.recv_timeout(timeout).ok()
 }
 
 impl Inner {
@@ -1177,6 +1265,7 @@ impl CoreSession {
                 search_backends: std::sync::Mutex::new(search_backends),
                 #[cfg(feature = "tor")]
                 browser_proxy: std::sync::Mutex::new(None),
+                browser_children: std::sync::Mutex::new(Vec::new()),
                 started_at: std::time::Instant::now(),
             }),
         };
@@ -2677,10 +2766,14 @@ impl CoreSession {
     /// Erreurs typees consommees par le handler : `NotConfigured`
     /// (proxy/binary absents — aussi rendu sans la feature `tor`),
     /// `DeniedTarget`, `InvalidUrl`, `Io`.
-    pub fn launch_browser(&self, url_str: &str) -> std::result::Result<u32, BrowserLaunchError> {
+    pub fn launch_browser(
+        &self,
+        url_str: &str,
+        embed: bool,
+    ) -> std::result::Result<BrowserLaunch, BrowserLaunchError> {
         #[cfg(not(feature = "tor"))]
         {
-            let _ = url_str;
+            let _ = (url_str, embed);
             return Err(BrowserLaunchError::NotConfigured);
         }
         #[cfg(feature = "tor")]
@@ -2689,31 +2782,44 @@ impl CoreSession {
             if !settings.browser_proxy.enabled {
                 return Err(BrowserLaunchError::NotConfigured);
             }
-            let url =
-                url::Url::parse(url_str.trim()).map_err(|_| BrowserLaunchError::InvalidUrl)?;
-            let is_connect = match url.scheme() {
-                "https" => true,
-                "http" => false,
-                _ => return Err(BrowserLaunchError::InvalidUrl),
+            // URL vide = page d'accueil locale `about:onionbit`
+            // (injectee dans le cache du navigateur — zero connexion,
+            // zero cible a valider). Sinon la destination est validee
+            // par la politique navigateur avant tout lancement.
+            let url = if url_str.trim().is_empty() {
+                None
+            } else {
+                let url =
+                    url::Url::parse(url_str.trim()).map_err(|_| BrowserLaunchError::InvalidUrl)?;
+                let is_connect = match url.scheme() {
+                    "https" => true,
+                    "http" => false,
+                    _ => return Err(BrowserLaunchError::InvalidUrl),
+                };
+                let host = url.host_str().ok_or(BrowserLaunchError::InvalidUrl)?;
+                let port = url
+                    .port_or_known_default()
+                    .ok_or(BrowserLaunchError::InvalidUrl)?;
+                onionbit_network_policy::check_browser_target(
+                    host,
+                    port,
+                    settings.browser_proxy.clearnet_exit,
+                    is_connect,
+                )
+                .map_err(|_| BrowserLaunchError::DeniedTarget)?;
+                Some(url)
             };
-            let host = url.host_str().ok_or(BrowserLaunchError::InvalidUrl)?;
-            let port = url
-                .port_or_known_default()
-                .ok_or(BrowserLaunchError::InvalidUrl)?;
-            onionbit_network_policy::check_browser_target(
-                host,
-                port,
-                settings.browser_proxy.clearnet_exit,
-                is_connect,
-            )
-            .map_err(|_| BrowserLaunchError::DeniedTarget)?;
             let (listen, token) = self
                 .browser_proxy_credentials()
                 .ok_or(BrowserLaunchError::NotConfigured)?;
-            if settings.browser.binary_path.as_os_str().is_empty() {
-                return Err(BrowserLaunchError::NotConfigured);
-            }
-            let binary = if settings.browser.binary_path.is_absolute() {
+            // `binary_path` vide = auto-detection du bundle : le
+            // navigateur stage par `build_dist.ps1` vit a
+            // `<exe_dir>/bin/onionbit-browser[.exe]` — la release
+            // portable est prete a l'emploi sans configuration. Le
+            // champ reste utile pour les dispositions non standard.
+            let binary = if settings.browser.binary_path.as_os_str().is_empty() {
+                bundled_browser_binary().ok_or(BrowserLaunchError::NotConfigured)?
+            } else if settings.browser.binary_path.is_absolute() {
                 settings.browser.binary_path.clone()
             } else {
                 // Relatif : arborescence portable — resolu vs le
@@ -2742,10 +2848,18 @@ impl CoreSession {
             };
             let dillo_dir = profile.join(".dillo");
             std::fs::create_dir_all(&dillo_dir).map_err(BrowserLaunchError::Io)?;
+            // `start_page`/`home` = `about:onionbit` — page locale
+            // injectee dans le cache du navigateur (extension
+            // OnionBit de DilloRust) : ouvrir sans URL ne cree
+            // **aucune** connexion ; le bouton Home y ramene. `file:`
+            // est volontairement evite : il releve du dpi `proto.file`
+            // que `no_dpi` bloque.
             let mut dillorc = format!(
                 "# Profil OnionBit — regenere a chaque lancement.\n\
              http_proxy=\"http://{listen}/\"\n\
              http_proxyuser=\"onionbit\"\n\
+             start_page=\"about:onionbit\"\n\
+             home=\"about:onionbit\"\n\
              no_dpi=yes\n"
             );
             if let Some(t) = token.as_deref() {
@@ -2764,14 +2878,63 @@ impl CoreSession {
             )
             .map_err(BrowserLaunchError::Io)?;
             let proxy_url = format!("http://{listen}");
-            let mut child = std::process::Command::new(&binary)
-                .args(&settings.browser.extra_args)
-                .arg(url.as_str())
+            let mut cmd = std::process::Command::new(&binary);
+            cmd.args(&settings.browser.extra_args);
+            if embed {
+                // `--host-shell` (extension DilloRust) : premiere
+                // fenetre non decoree + `DILLO_HOST_HANDLE=<n>` sur
+                // stdout — l'app reparente le HWND/XID dans sa zone
+                // embed. stdout/stderr pipes : le handle transite
+                // par stdout et les deux flux sont draines (un pipe
+                // plein bloquerait le navigateur).
+                cmd.arg("--host-shell");
+                cmd.stdout(std::process::Stdio::piped())
+                    .stderr(std::process::Stdio::piped());
+            }
+            // Sans URL : aucun argument de destination — le navigateur
+            // ouvre `start_page` (about:onionbit, local, zero reseau).
+            if let Some(u) = &url {
+                cmd.arg(u.as_str());
+            }
+            // Windows : le binaire navigateur est en sous-systeme
+            // console — sans ce flag, Windows alloue une fenetre cmd
+            // parasite a cote de la fenetre graphique. Le binaire
+            // reste debuggable en console quand lance a la main.
+            #[cfg(windows)]
+            {
+                use std::os::windows::process::CommandExt;
+                cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+            }
+            let child = cmd
                 .env("HOME", &profile)
                 .env("http_proxy", &proxy_url)
                 .spawn()
                 .map_err(BrowserLaunchError::Io)?;
             let pid = child.id();
+            // Registre des enfants — `Session::stop` les tue : un
+            // navigateur confine sans proxy/daemon ne sert a rien.
+            // `Arc<Mutex<Child>>` partage entre le reaper (wait) et
+            // le kill de `stop` ; le reaper doit utiliser `try_wait`
+            // en boucle — un `wait()` bloquant tiendrait le mutex
+            // et bloquerait le kill de `stop()` (deadlock).
+            let child = Arc::new(std::sync::Mutex::new(child));
+            self.inner
+                .browser_children
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push(Arc::clone(&child));
+            // `embed` : capture du handle publie sur stdout sous
+            // `embed_timeout`. Apres `take()`, `child.wait()` reste
+            // valide pour le thread de wipe ci-dessous.
+            let hwnd = if embed {
+                let (stdout, stderr) = {
+                    let mut c = child.lock().unwrap_or_else(|e| e.into_inner());
+                    (c.stdout.take(), c.stderr.take())
+                };
+                read_host_handle(stdout, stderr, settings.browser.embed_timeout)
+            } else {
+                None
+            };
             if !settings.browser.keep_profile {
                 // Wipe du profil ephemere a la fermeture — thread
                 // dedie (launch_browser est appele depuis un handler
@@ -2779,12 +2942,21 @@ impl CoreSession {
                 std::thread::Builder::new()
                     .name("browser-profile-wipe".into())
                     .spawn(move || {
-                        let _ = child.wait();
+                        loop {
+                            {
+                                let mut c = child.lock().unwrap_or_else(|e| e.into_inner());
+                                match c.try_wait() {
+                                    Ok(Some(_)) | Err(_) => break,
+                                    Ok(None) => {}
+                                }
+                            }
+                            std::thread::sleep(std::time::Duration::from_millis(200));
+                        }
                         let _ = std::fs::remove_dir_all(&profile);
                     })
                     .map_err(BrowserLaunchError::Io)?;
             }
-            Ok(pid)
+            Ok(BrowserLaunch { pid, hwnd })
         }
     }
 
@@ -6179,6 +6351,24 @@ impl CoreSession {
             z.purge_guest();
         }
         self.shutdown_state("Shutting down local SOCKS5 interface.");
+        // Navigateurs confines lances par le daemon — tues avant
+        // l'arret du proxy (un navigateur sans son proxy Tor ne sert
+        // a rien) ; le thread reaper wipe le profil ephemere.
+        #[cfg(feature = "tor")]
+        {
+            let children = std::mem::take(
+                &mut *self
+                    .inner
+                    .browser_children
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner()),
+            );
+            for child in children {
+                if let Ok(mut c) = child.lock() {
+                    let _ = c.kill();
+                }
+            }
+        }
         self.shutdown_state("Shutting down metadata database.");
         // `on_shutdown` de `AugmentedSearch` : persiste la fenetre de
         // titres en attente pour le prochain demarrage.
@@ -6723,5 +6913,43 @@ mod tests {
         assert!(session.peer_onion(&pk_bin).is_none());
         assert!(!session.remove_peer_onion(&pk_bin).unwrap());
         session.stop().await;
+    }
+
+    /// `read_host_handle` capture la ligne `DILLO_HOST_HANDLE=<n>`
+    /// du protocole `--host-shell` (processus factice : un echo) —
+    /// et rend `None` quand l'enfant ne publie rien (repli externe).
+    #[cfg(feature = "tor")]
+    #[test]
+    fn read_host_handle_capture_et_timeout() {
+        let mut avec = std::process::Command::new(if cfg!(windows) { "cmd" } else { "sh" });
+        let avec = if cfg!(windows) {
+            avec.args(["/c", "echo DILLO_HOST_HANDLE=4242"])
+        } else {
+            avec.args(["-c", "echo DILLO_HOST_HANDLE=4242"])
+        };
+        let mut child = avec
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let hwnd = read_host_handle(
+            child.stdout.take(),
+            child.stderr.take(),
+            std::time::Duration::from_secs(5),
+        );
+        let _ = child.wait();
+        assert_eq!(hwnd, Some(4242));
+
+        // Aucune ligne publiee → `None` au timeout court.
+        let mut sans = std::process::Command::new(if cfg!(windows) { "cmd" } else { "sh" });
+        let sans = if cfg!(windows) {
+            sans.args(["/c", "echo rien"])
+        } else {
+            sans.args(["-c", "echo rien"])
+        };
+        let mut child = sans.stdout(std::process::Stdio::piped()).spawn().unwrap();
+        let hwnd = read_host_handle(child.stdout.take(), None, std::time::Duration::from_secs(5));
+        let _ = child.wait();
+        assert_eq!(hwnd, None);
     }
 }

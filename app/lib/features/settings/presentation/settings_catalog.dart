@@ -134,8 +134,8 @@ const Map<SettingsSectionId, String> settingsSectionKeywords = {
       'move_on_completion default_area private_enabled espace '
       'portable orphelins orphans obd',
   SettingsSectionId.bandwidth:
-      'limite débit vitesse ko/s max_download_rate max_upload_rate '
-      'limit rate speed kb/s',
+      'limite débit vitesse mo/s max_download_rate max_upload_rate '
+      'limit rate speed mb/s',
   SettingsSectionId.queue:
       'queue active_downloads active_seeds active_checking '
       'active_limit auto_managed fastresume vérification démarrage '

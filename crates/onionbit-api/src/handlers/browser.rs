@@ -36,13 +36,23 @@ use crate::state::AppState;
 
 use super::tor::tor_unavailable;
 
-/// Corps de `POST /api/browser/launch` — la destination seulement.
+/// Corps de `POST /api/browser/launch` — la destination seulement
+/// (`embed` est un mode de rendu, pas un drapeau argv : il se
+/// traduit par `--host-shell` pose par le daemon, jamais par
+/// l'appelant).
 #[derive(Debug, Deserialize)]
 pub struct LaunchBody {
     /// URL `http(s)://hote[:port]/chemin` ouverte dans le
     /// navigateur — validee par la politique navigateur avant
-    /// tout lancement.
+    /// tout lancement. **Vide = page d'accueil locale**
+    /// (`about:onionbit`, aucune connexion, aucune cible a valider).
     pub url: String,
+    /// `true` → le navigateur est lance en mode `--host-shell` et
+    /// le handle de sa premiere fenetre (`hwnd`) est renvoye pour
+    /// reparenting dans la fenetre de l'app. `false` (defaut) =
+    /// fenetre externe classique.
+    #[serde(default)]
+    pub embed: bool,
 }
 
 /// `POST /api/browser/launch` — validation schema + politique +
@@ -82,9 +92,9 @@ pub async fn browser_launch(
             return Err(tor_unavailable("tor_not_ready", "client Tor dormant"));
         }
     }
-    let pid = state
+    let launch = state
         .session
-        .launch_browser(&body.url)
+        .launch_browser(&body.url, body.embed)
         .map_err(|e| match e {
             BrowserLaunchError::NotConfigured => tor_unavailable(
                 "browser_not_configured",
@@ -101,6 +111,10 @@ pub async fn browser_launch(
         })?;
     Ok(Json(serde_json::json!({
         "launched": true,
-        "pid": pid,
+        "pid": launch.pid,
+        // Handle natif (HWND Win32 / XID X11) pour reparenting —
+        // `null` si `embed` non demande, non supporte par le
+        // navigateur ou timeout : l'app retombe en fenetre externe.
+        "hwnd": launch.hwnd,
     })))
 }

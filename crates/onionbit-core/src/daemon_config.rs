@@ -469,9 +469,9 @@ impl Default for LibtorrentConfig {
             max_concurrent_http_announces: 50,
             check_after_complete: false,
             fastresume_check: true,
-            active_downloads: 3,
-            active_seeds: 5,
-            active_checking: 1,
+            active_downloads: 5,
+            active_seeds: 10,
+            active_checking: 3,
             active_dht_limit: 88,
             active_tracker_limit: 1600,
             active_lsd_limit: 60,
@@ -1365,6 +1365,13 @@ where
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct TorSearchFileConfig {
+    /// Préchauffage des circuits onion (`tor.search.warmup`, défaut
+    /// `true`) : après chaque bootstrap `Ready`, un `GET /` par
+    /// miroir en tâche de fond fait exister les rendez-vous avant la
+    /// première recherche — sinon le premier search paie le
+    /// descripteur et les circuits intro/RDV (dizaines de secondes)
+    /// et arrive « trop tard » dans l'UI.
+    pub warmup: bool,
     /// Backends par identifiant (`tpb`, `ahmia`, …). Chaque entrée
     /// fusionne sur le défaut du même id — cf. `deserialize_backends`.
     #[serde(deserialize_with = "deserialize_backends")]
@@ -1394,6 +1401,7 @@ impl Default for TorSearchFileConfig {
             },
         );
         Self {
+            warmup: true,
             backends,
             extra: serde_json::Map::new(),
         }
@@ -1431,16 +1439,19 @@ impl Default for TorGatewayFileConfig {
 #[serde(default)]
 pub struct TorOnionServiceFileConfig {
     /// Heberge le service `.onion` d'identite quand la lane est
-    /// `Ready` — **false par defaut** : aucune publication sans
-    /// activation explicite. La cle est derivee de la graine
-    /// (`onionbit/identity/tor-hs/v1`) — l'adresse est stable et
-    /// portable avec la phrase BIP39.
+    /// `Ready` — **true par defaut** : `tor.enabled` l'est deja, les
+    /// fonctions liees suivent la lane ; la publication n'a lieu que
+    /// sur lane `Ready` (jamais sans Tor actif). La cle est derivee
+    /// de la graine (`onionbit/identity/tor-hs/v1`) — l'adresse est
+    /// stable et portable avec la phrase BIP39.
     pub enabled: bool,
     /// Heberge le service `.onion` **coffre** (ADR-0029 etape 127) —
     /// adresse dediee (`onionbit/identity/tor-hs-vault/v1`) en
     /// restricted-discovery : le descripteur n'est dechiffrable que
     /// par la cle client x25519 derivee de la meme identite
-    /// (`onionbit/identity/tor-hs-client/v1`). **false par defaut.**
+    /// (`onionbit/identity/tor-hs-client/v1`). **true par defaut** —
+    /// meme regle que `enabled` : le service ne tourne que sur lane
+    /// `Ready`, la restauration du coffre marche sans geste.
     pub vault: bool,
     /// Clés inconnues — préservées.
     #[serde(flatten)]
@@ -1450,16 +1461,19 @@ pub struct TorOnionServiceFileConfig {
 impl Default for TorOnionServiceFileConfig {
     fn default() -> Self {
         Self {
-            enabled: false,
-            vault: false,
+            enabled: true,
+            vault: true,
             extra: serde_json::Map::new(),
         }
     }
 }
 
 /// Section `tor/browser_proxy` — proxy HTTP forward loopback pour
-/// le navigateur (ADR-0030, etape 132). **`enabled=false` par
-/// defaut** : le listener ne s'ouvre que sur geste explicite.
+/// le navigateur (ADR-0030, etape 132). **`enabled=true` par
+/// defaut** : le listener est etanche (loopback exige par le proxy
+/// lui-meme, `.onion`-only tant que `allow_clearnet_exit="off"`)
+/// et ne cree aucune connexion tant qu'aucun navigateur ne s'y
+/// attache — il vit et meurt avec le runtime Tor.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct TorBrowserProxyFileConfig {
@@ -1501,7 +1515,7 @@ pub struct TorBrowserProxyFileConfig {
 impl Default for TorBrowserProxyFileConfig {
     fn default() -> Self {
         Self {
-            enabled: false,
+            enabled: true,
             listen: "127.0.0.1:0".to_string(),
             require_auth: false,
             allow_clearnet_exit: "off".to_string(),
@@ -2512,6 +2526,7 @@ impl DaemonConfig {
                 binary_path: std::path::PathBuf::from(t.browser.binary_path.trim()),
                 extra_args: t.browser.extra_args.clone(),
                 keep_profile: t.browser.keep_profile,
+                ..onionbit_tor::BrowserSettings::default()
             };
         }
         match t.mode.as_str() {
@@ -2606,6 +2621,7 @@ impl DaemonConfig {
                 },
             );
         }
+        settings.search_warmup = t.search.warmup;
         if settings.enabled && settings.target_policy.is_empty() {
             tracing::warn!("tor.enabled sans aucune cible allowlistee — tout fetch sera refuse");
         }
@@ -3046,6 +3062,21 @@ mod tests {
         assert_eq!(core.tor.mode, onionbit_tor::TorMode::Embedded);
         // Le miroir tpb est implicitement allowliste.
         assert!(core.tor.target_policy.is_allowed(TPB));
+        // Prechauffage des circuits : actif par defaut.
+        assert!(core.tor.search_warmup);
+    }
+
+    /// `tor.search.warmup=false` desactive le prechauffage des
+    /// circuits backend apres bootstrap.
+    #[test]
+    fn tor_search_warmup_desactivable() {
+        let json = serde_json::json!({
+            "tor": { "search": { "warmup": false } }
+        });
+        let cfg: DaemonConfig = serde_json::from_value(json).unwrap();
+        assert!(!cfg.tor.search.warmup);
+        let core = cfg.to_core_config(Path::new("."));
+        assert!(!core.tor.search_warmup);
     }
 
     /// Round-trip : section `tor` personnalisee → CoreConfig, puis
@@ -3068,8 +3099,10 @@ mod tests {
         });
         let mut cfg = DaemonConfig::default();
         cfg.merge(&json).unwrap();
-        // Service .onion d'identite : absent du fichier → off.
-        assert!(!cfg.tor.onion_service.enabled);
+        // Service .onion d'identite : absent du fichier → defaut
+        // actif (suit `tor.enabled = true` — la publication n'a
+        // lieu que sur lane `Ready`).
+        assert!(cfg.tor.onion_service.enabled);
         let core = cfg.to_core_config(Path::new("."));
         assert!(core.tor.enabled);
         assert_eq!(
@@ -3083,7 +3116,7 @@ mod tests {
         assert_eq!(core.tor.target_policy.len(), 1);
         assert!(core.tor.target_policy.check(TPB, 80).is_ok());
         assert!(core.tor.target_policy.check(TPB, 8080).is_err());
-        assert!(!core.tor.onion_service.enabled);
+        assert!(core.tor.onion_service.enabled);
         // Backend sans miroir rejete.
         assert!(core.tor.backends.contains_key("tpb"));
         assert!(!core.tor.backends.contains_key("casse"));
@@ -3102,20 +3135,19 @@ mod tests {
         assert_eq!(view.tor.external_socks5, "socks5h://127.0.0.1:9150");
     }
 
-    /// `tor.onion_service.enabled` — round-trip sparse + propagation
-    /// vers `TorSettings` (ADR-0029 etape 122).
+    /// `tor.onion_service.enabled` — defaut `true` : `true` explicite
+    /// est absorbe (non persistee), l'opt-out `false` est l'ecart
+    /// persisté — propagation vers `TorSettings` dans les deux sens
+    /// (ADR-0029 etape 122).
     #[test]
     fn tor_onion_service_round_trip() {
-        let json = serde_json::json!({ "tor": { "onion_service": { "enabled": true } } });
         let mut cfg = DaemonConfig::default();
-        cfg.merge(&json).unwrap();
+        cfg.merge(&serde_json::json!({ "tor": { "onion_service": { "enabled": true } } }))
+            .unwrap();
         assert!(cfg.tor.onion_service.enabled);
-        // Sparse : la valeur non-defaut est persistee.
+        // Sparse : la valeur egale au defaut n'est pas persistee.
         let sparse = cfg.sparse_value();
-        assert_eq!(
-            sparse["tor"]["onion_service"]["enabled"],
-            serde_json::json!(true)
-        );
+        assert!(sparse["tor"]["onion_service"].get("enabled").is_none());
         // Relecture → meme etat, propage au core.
         let mut cfg2 = DaemonConfig::default();
         cfg2.merge(&sparse).unwrap();
@@ -3125,26 +3157,59 @@ mod tests {
                 .onion_service
                 .enabled
         );
+        // Opt-out explicite : `false` est l'ecart conserve.
+        let mut off = DaemonConfig::default();
+        off.merge(&serde_json::json!({ "tor": { "onion_service": { "enabled": false } } }))
+            .unwrap();
+        let sparse = off.sparse_value();
+        assert_eq!(
+            sparse["tor"]["onion_service"]["enabled"],
+            serde_json::json!(false)
+        );
+        let mut off2 = DaemonConfig::default();
+        off2.merge(&sparse).unwrap();
+        assert!(
+            !off2
+                .to_core_config(Path::new("."))
+                .tor
+                .onion_service
+                .enabled
+        );
     }
 
-    /// `tor.onion_service.vault` — round-trip sparse + propagation
-    /// vers `vault_enabled` (ADR-0029 etape 127).
+    /// `tor.onion_service.vault` — meme regle que `enabled` : defaut
+    /// `true`, `false` est l'ecart persiste ; propagation vers
+    /// `vault_enabled` (ADR-0029 etape 127).
     #[test]
     fn tor_onion_vault_round_trip() {
-        let json =
-            serde_json::json!({ "tor": { "onion_service": { "enabled": true, "vault": true } } });
         let mut cfg = DaemonConfig::default();
-        cfg.merge(&json).unwrap();
+        cfg.merge(&serde_json::json!({ "tor": { "onion_service": { "vault": true } } }))
+            .unwrap();
         assert!(cfg.tor.onion_service.vault);
         let sparse = cfg.sparse_value();
-        assert_eq!(
-            sparse["tor"]["onion_service"]["vault"],
-            serde_json::json!(true)
-        );
+        assert!(sparse["tor"]["onion_service"].get("vault").is_none());
         let mut cfg2 = DaemonConfig::default();
         cfg2.merge(&sparse).unwrap();
         assert!(
             cfg2.to_core_config(Path::new("."))
+                .tor
+                .onion_service
+                .vault_enabled
+        );
+        // Opt-out explicite.
+        let mut off = DaemonConfig::default();
+        off.merge(&serde_json::json!({ "tor": { "onion_service": { "vault": false } } }))
+            .unwrap();
+        let sparse = off.sparse_value();
+        assert_eq!(
+            sparse["tor"]["onion_service"]["vault"],
+            serde_json::json!(false)
+        );
+        let mut off2 = DaemonConfig::default();
+        off2.merge(&sparse).unwrap();
+        assert!(
+            !off2
+                .to_core_config(Path::new("."))
                 .tor
                 .onion_service
                 .vault_enabled

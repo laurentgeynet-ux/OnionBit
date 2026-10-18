@@ -123,6 +123,14 @@ jobs:
     needs: [rust]
     steps:
       - uses: actions/checkout@v7
+      # Navigateur .onion : meme mecanisme que le job Windows —
+      # checkout DilloRust dans le workspace, pin SHA des que
+      # `about:onionbit` est pousse.
+      - uses: actions/checkout@v7
+        with:
+          repository: laurentgeynet-ux/onionbit-browser
+          ref: main
+          path: dillorust
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - uses: subosito/flutter-action@v2
@@ -134,7 +142,7 @@ jobs:
         run: flutter pub get && flutter build web --release
       - name: package
         shell: bash
-        run: ./scripts/package_posix.sh
+        run: ./scripts/package_posix.sh --dillo-source dillorust
       - name: smoke daemon
         shell: bash
         run: dist/x86_64-unknown-linux-gnu/onionbit-daemon --help
@@ -151,6 +159,16 @@ jobs:
     needs: [rust, flutter]
     steps:
       - uses: actions/checkout@v7
+      # Navigateur .onion : checkout DilloRust dans le workspace et
+      # -DilloSource explicite. `main` temporairement : `about:onionbit`
+      # n'est pas encore dans un commit pousse — des qu'il l'est,
+      # epingler le SHA ici (reproductibilite release) et bumper ce
+      # pin deliberement a chaque maj du navigateur.
+      - uses: actions/checkout@v7
+        with:
+          repository: laurentgeynet-ux/onionbit-browser
+          ref: main
+          path: dillorust
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - uses: subosito/flutter-action@v2
@@ -158,7 +176,7 @@ jobs:
           channel: stable
           cache: true
       - name: build dist + zip release
-        run: ./scripts/build_dist.ps1 -SkipCheck -ZipRelease
+        run: ./scripts/build_dist.ps1 -SkipCheck -ZipRelease -DilloSource dillorust
       - name: smoke daemon
         run: ./dist/OnionBit/windows/onionbit-daemon.exe --help
       - uses: actions/upload-artifact@v7

@@ -64,9 +64,12 @@ class _FakeDiag implements DiagnosticRepository {
   final List<String> launched = [];
 
   @override
-  Future<int> launchBrowser(String url) async {
+  Future<BrowserLaunchResult> launchBrowser(
+    String url, {
+    bool embed = false,
+  }) async {
     launched.add(url);
-    return 4242;
+    return (pid: 4242, hwnd: null);
   }
 
   @override

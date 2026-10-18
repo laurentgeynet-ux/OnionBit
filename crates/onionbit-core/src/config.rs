@@ -186,11 +186,11 @@ impl QueueLimits {
 }
 
 impl Default for QueueLimits {
-    /// Memes defauts que `TriblerConfig.libtorrent` (3/5/500).
+    /// Memes defauts que `LibtorrentConfig` (5/10/500).
     fn default() -> Self {
         Self {
-            active_downloads: 3,
-            active_seeds: 5,
+            active_downloads: 5,
+            active_seeds: 10,
             active_limit: 500,
         }
     }

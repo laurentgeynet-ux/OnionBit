@@ -16,6 +16,15 @@
 #   ./scripts/package_posix.sh --target aarch64-unknown-linux-gnu
 #   ./scripts/package_posix.sh --web-dir /chemin/app/build/web
 #   ./scripts/package_posix.sh --skip-build    # binaires deja compiles
+#   ./scripts/package_posix.sh --dillo-source ../dillorust
+#   ./scripts/package_posix.sh --dillo-bin /chemin/onionbit-browser
+#   ./scripts/package_posix.sh --no-dillo      # forcer l'absence
+#
+# Navigateur .onion (ADR-0030) : comme build_dist.ps1, un checkout
+# DilloRust en ../dillorust est detecte et build (`cargo build
+# -p dillo`) ; le binaire est stage en <bundle>/bin/onionbit-browser —
+# chemin resolu par l'auto-detection `<exe>/bin/` du daemon. Absence =
+# `browser_not_configured` cote UI, jamais un echec du packaging.
 #
 # Layout du .deb : /opt/onionbit/{daemon,cli,web/} + liens /usr/bin —
 # l'auto-detection `<exe>/web` du daemon fonctionne car current_exe
@@ -31,12 +40,18 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TARGET=""
 WEB_DIR=""
 SKIP_BUILD=0
+DILLO_SOURCE=""
+DILLO_BIN=""
+NO_DILLO=0
 
 while [ $# -gt 0 ]; do
     case "$1" in
         --target)    TARGET="$2"; shift 2 ;;
         --web-dir)   WEB_DIR="$2"; shift 2 ;;
         --skip-build) SKIP_BUILD=1; shift ;;
+        --dillo-source) DILLO_SOURCE="$2"; shift 2 ;;
+        --dillo-bin)   DILLO_BIN="$2"; shift 2 ;;
+        --no-dillo)    NO_DILLO=1; shift ;;
         *) echo "argument inconnu : $1" >&2; exit 2 ;;
     esac
 done
@@ -78,6 +93,34 @@ mkdir -p "$OUT"
 for bin in onionbit-daemon onionbit-cli; do
     cp -f "$SRC_DIR/$bin$SUFFIX" "$OUT/"
 done
+
+# -- 1b) Navigateur .onion (DilloRust) -------------------------------------
+# Miroir de build_dist.ps1 : checkout explicite (--dillo-source),
+# binaire pret (--dillo-bin), defaut ../dillorust, --no-dillo force
+# l'absence. Stage en <bundle>/bin/onionbit-browser — auto-detection
+# `<exe>/bin/` du daemon (cf. bundled_browser_binary).
+DILLO_SRC=""
+if [ "$NO_DILLO" -eq 0 ]; then
+    if [ -n "$DILLO_BIN" ]; then
+        DILLO_SRC="$DILLO_BIN"
+    else
+        [ -z "$DILLO_SOURCE" ] && DILLO_SOURCE="$(cd "$ROOT/.." && pwd)/dillorust"
+        if [ -f "$DILLO_SOURCE/Cargo.toml" ]; then
+            echo "== cargo build dillo ($TARGET, $DILLO_SOURCE) =="
+            cargo build --release -p dillo \
+                --manifest-path "$DILLO_SOURCE/Cargo.toml" --target "$TARGET"
+            DILLO_SRC="$DILLO_SOURCE/target/$TARGET/release/onionbit-browser$SUFFIX"
+        else
+            echo "  note : dillorust absent ($DILLO_SOURCE) — bundle sans navigateur"
+        fi
+    fi
+fi
+if [ -n "$DILLO_SRC" ]; then
+    [ -f "$DILLO_SRC" ] || { echo "onionbit-browser introuvable : $DILLO_SRC" >&2; exit 1; }
+    mkdir -p "$OUT/bin"
+    cp -f "$DILLO_SRC" "$OUT/bin/onionbit-browser$SUFFIX"
+    echo "  navigateur embarque : bin/onionbit-browser$SUFFIX"
+fi
 
 # -- 2) Interface web (optionnelle mais incluse si presente) -------------
 if [ -f "$WEB_DIR/index.html" ]; then
@@ -121,6 +164,12 @@ if [ "$OS" = linux ] && [ -n "$DEB_ARCH" ] && command -v dpkg-deb >/dev/null; th
 
     cp "$SRC_DIR/onionbit-daemon" "$SRC_DIR/onionbit-cli" "$PKG/opt/onionbit/"
     [ -d "$OUT/web" ] && cp -r "$OUT/web" "$PKG/opt/onionbit/web"
+    # Navigateur .onion : /opt/onionbit/bin/ — le lien /usr/bin est
+    # resolu vers /opt/onionbit/ -> <exe>/bin/onionbit-browser trouve.
+    if [ -f "$OUT/bin/onionbit-browser$SUFFIX" ]; then
+        mkdir -p "$PKG/opt/onionbit/bin"
+        cp "$OUT/bin/onionbit-browser$SUFFIX" "$PKG/opt/onionbit/bin/onionbit-browser"
+    fi
     cp "$ROOT/LICENSE" "$PKG/usr/share/doc/onionbit/copyright"
 
     # Icone hicolor : le PNG brande du build web Flutter.

@@ -63,12 +63,16 @@ class MessagingConversation {
   bool get isGroup => kind == 'group';
   bool get isInvited => state == 'invited';
 
-  /// Libellé affiché : alias > nom de groupe > clé abrégée.
+  /// Libellé affiché : alias > nom de groupe > clé abrégée —
+  /// `premiers4…derniers4` : les derniers caractères distinguent
+  /// deux clés, les préfixes se ressemblent presque tous.
   String get displayName {
     if (alias.isNotEmpty) return alias;
     if (name.isNotEmpty) return name;
     final ref = peer ?? convId;
-    return ref.length > 12 ? '${ref.substring(0, 12)}…' : ref;
+    return ref.length > 10
+        ? '${ref.substring(0, 4)}…${ref.substring(ref.length - 4)}'
+        : ref;
   }
 }
 
@@ -105,6 +109,7 @@ class MessagingMember {
   String get displayName =>
       alias.isNotEmpty ? alias : _short(memberPk);
 
-  static String _short(String pk) =>
-      pk.length > 12 ? '${pk.substring(0, 12)}…' : pk;
+  static String _short(String pk) => pk.length > 10
+      ? '${pk.substring(0, 4)}…${pk.substring(pk.length - 4)}'
+      : pk;
 }

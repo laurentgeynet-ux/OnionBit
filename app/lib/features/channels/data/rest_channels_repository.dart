@@ -28,6 +28,12 @@ class RestChannelsRepository implements ChannelsRepository {
           name: '${j['name'] ?? ''}',
           subscribed: j['subscribed'] == true,
           numEntries: (j['num_entries'] as num?)?.toInt() ?? 0,
+          onion: j['onion'] is String ? j['onion'] as String : null,
+          onionVerified: j['onion_verified'] == true,
+          planes: [
+            for (final p in (j['planes'] as List?) ?? const ['onionbit'])
+              '$p',
+          ],
         ),
     ];
   }

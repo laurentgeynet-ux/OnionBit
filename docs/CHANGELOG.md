@@ -3,6 +3,168 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Étape — défauts produit alignés (services .onion + file d'attente) — fait (2026-10-21)
+
+Tor étant activé par défaut, les fonctions qui en dépendent le sont
+aussi ; les bornes de file reflètent l'usage réel.
+
+- **`tor/onion_service/enabled` + `vault` → `true` par défaut**
+  (`TorOnionServiceFileConfig`) : l'adresse `.onion` d'identité et le
+  coffre se publient dès que la lane Tor est `Ready`, sans geste.
+  L'opt-out reste possible par réglage ; `sparse_value` n'écrit que
+  `false` (écart). Le `Default` nu d'`OnionServiceSettings` reste le
+  socle conservateur hors config (cohérent avec
+  `TorSettings::default().enabled = false`). La passerelle
+  (`gateway`) reste opt-in — rôle serveur qui voit les requêtes en
+  clair.
+- **File d'attente → `active_downloads=5`, `active_seeds=10`,
+  `active_checking=3`** (`active_limit=500` inchangé) : défauts
+  relevés sur les valeurs Tribler (3/5/1) — `LibtorrentConfig`,
+  `QueueLimits`, `kQueueDefaults`, hints du panneau.
+- UI Réglages : toggles « Vos services .onion » affichent
+  « Défaut : activé » ; hints « Défaut : 5/10/3/500 ».
+- Tests : round-trips sparse réécrits (`true` absorbé par le défaut,
+  `false` persisté), fixture `settings_page_test` alignée —
+  `cargo test -p onionbit-core` 23/23 daemon_config.
+
+## Étape — navigateur embarqué dans l'onglet (reparenting Win32) — fait (2026-10-20)
+
+L'onglet Navigateur accueille la fenêtre du navigateur **dans** la
+fenêtre Flutter — même processus confiné, même étanchéité, juste une
+fenêtre adoptée.
+
+- **DilloRust `--host-shell`** (repo `onionbit-browser`) : première
+  fenêtre non décorée + `DILLO_HOST_HANDLE=<n>` sur stdout (HWND
+  Win32 / XID X11 ; rien sur Wayland — le superviseur détecte
+  l'absence).
+- **`POST /api/browser/launch` `embed:true`** : le daemon pose
+  `--host-shell` (jamais via argv de l'appelant), pipe stdout/stderr,
+  capture le handle sous `browser.embed_timeout` (défaut 3 s,
+  `BrowserSettings`) et rend `{launched, pid, hwnd}`. `hwnd:null` =
+  repli fenêtre externe — l'embed dégrade, ne bloque jamais.
+  Confinement inchangé : profil éphémère, dillorc proxy+`no_dpi`,
+  wipe à la sortie, `CREATE_NO_WINDOW`.
+- **App** : `BrowserEmbedHost` (package `win32`) — `SetParent` +
+  strip `WS_POPUP`/`WS_CAPTION`/`WS_THICKFRAME`/`WS_SYSMENU` +
+  `WS_CHILD`, sync `SetWindowPos` sur le rect de la zone (dédoublé,
+  `SetWindowPos → WM_SIZE` suffit au repaint), retries post-adoption
+  (150/600/1200 ms), poll `IsWindow` (mort → retour tableau de bord),
+  `dispose`/détacher → `SetParent(null)` + style d'origine (fenêtre
+  externe), bouton fermer → `WM_CLOSE`. Non-Windows : parcours
+  externe inchangé.
+- **Fix navigateur** (dillorust `ui.rs`) : `queueDrawTotal` après
+  `viewportSizeChanged` — l'artefact noir post-reparenting venait du
+  `cancelQueueDraw` de `queue_resize` avalant la totale.
+- Tests : `read_host_handle_capture_et_timeout` (core),
+  `browser_launch_embed_replie_sans_handle` (API — `hwnd:null` sur
+  binaire factice), `flutter analyze` clean, 118/118.
+
+## Étape — navigateur par défaut + page d'accueil locale `about:onionbit` — fait (2026-10-19)
+
+Le navigateur confiné est maintenant activé d'office et s'ouvre sans
+créer la moindre connexion : étanchéité par construction, pas par
+réglage.
+
+- `tor.browser_proxy.enabled` : **défaut `true`** (réglages runtime +
+  fichier) — le proxy reste loopback-only (`127.0.0.1:0`) et le
+  listener n'existe que quand le runtime Tor tourne ; `enabled` dans
+  `/api/tor/status` reflète le réglage, `listen` l'écoute effective.
+- **`about:onionbit`** : page d'accueil interne à DilloRust — HTML
+  compilé dans le binaire, injectée dans le cache au `cache_init()`
+  avec les flags `INTERNAL_URL`, servie sans HTTP, dpi ni proxy.
+  Contenu local expliquant le confinement ; lien DuckDuckGo `.onion`
+  cliquable uniquement (rien de suivi automatiquement).
+- `POST /api/browser/launch` accepte `url: ""` — aucune destination
+  à valider, le navigateur démarre sans argument URL et son
+  `start_page`/`home` du `dillorc` éphémère pointent `about:onionbit`.
+- UI : champ d'adresse vide = page d'accueil (hint mis à jour) ;
+  toggle `browser_proxy` reflète le nouveau défaut (`def: true`).
+- Tests : `browser_launch_sans_url_page_accueil` (200 sans URL),
+  assertions `start_page`/`home` dans le dillorc,
+  `tor_status_browser_proxy_absent` recalibré sur les nouvelles
+  sémantiques, `onionbit_page_is_self_contained` côté `dillo-net`.
+- Packaging : `package_posix.sh` stage le navigateur comme
+  `build_dist.ps1` (`--dillo-source`/`--dillo-bin`/`--no-dillo`,
+  défaut `../dillorust`) dans le tarball **et** le `.deb`
+  (`/opt/onionbit/bin/` — auto-détection `<exe>/bin/`). CI : les jobs
+  `package-windows-x64` et `package-linux` checkout
+  `onionbit-browser` dans le workspace — les zips/tarballs embarquent
+  le navigateur. `ref: main` temporaire, à épingler en SHA dès que
+  `about:onionbit` est poussé (reproductibilité release).
+
+## Étape — surfacing UI complet (plan `ui_surfacing.md` B→E) — fait (2026-10-19)
+
+Les capacités des ADR-0028→0032 étaient livrées côté backend mais
+invisibles : tout est maintenant actionnable depuis l'UI.
+
+**Identité multi-plans (B)** : en haut de Messages, tuile `.onion`
+sous l'adresse OnionBit quand `onion_service.enabled` — état
+`publishing…` honnête tant que le descripteur n'est pas servi,
+copie de l'adresse réelle ; légende des trois plans dans le
+dialogue ⓘ (OnionBit / Tor / mailbox).
+
+**Navigateur lançable (C)** : nouvelle entrée nav « Navigateur »
+(`/browser`) — état Tor/proxy en direct, champ d'adresse (hôte nu →
+`http://<hôte>/`), raccourcis des hôtes allowlistés ; même champ
+dans Réglages→Réseau. « Ouvrir dans le navigateur » sur les
+contacts `.onion` (menu ⋮) et canaux `.onion`. Helper unique
+`features/browser/browser_launch.dart` — codes `error.code`
+traduits.
+
+**Services `.onion` locaux (D)** : carte « Vos services `.onion` »
+(Réglages→Réseau) — toggles identité (`tor.onion_service.enabled`)
+et coffre (`tor.onion_service.vault`) + adresses réellement
+publiées lues de `/api/tor/status`. Coffre réseau : icônes
+replicate/restore dans Messages (`/messaging/vault/*`,
+store-and-forward ADR-0026/0029).
+
+**Compléments (E)** : `Channel` expose `onion`/`onion_verified`/
+`planes` — pastille `.onion` + « ouvrir » dans la tuile canal ;
+bloc « mise à jour signée (OBUP) » dans Réglages→Version (statut
+`/versioning/update` + `POST /versioning/import`, codes `obup_*`
+traduits) ; puce « base locale chiffrée » (`database.encrypted`,
+ADR-0031).
+
+**Tests** : `command_palette_test` corrigé — le scroll ciblait le
+`Scrollable` interne du `TextField` (no-op) ; le `Scrollable`
+vertical de la liste est ciblé explicitement + `continuous: true`
+(pas de fling qui traverse la fenêtre de build paresseux).
+Goldens régénérés (entrée nav + bandeau identité + boutons
+coffre). `flutter analyze` ✓ · 118 tests ✓ · `check_i18n` ✓.
+
+## Amélioration — navigateur auto-détecté + plan surfacing UI — fait (2026-10-19)
+
+**Binaire navigateur** : `tor.browser.binary_path` vide =
+auto-détection `<exe_dir>/bin/onionbit-browser[.exe]` (layout
+`build_dist.ps1`) — le bundle release fonctionne sans
+configuration ; `is_file()` rend toujours `browser_not_configured`
+hors bundle. Textes corrigés : les hints citaient `bin/dillo.exe`
+(ancien nom) — arb/localizations/`hintText` pointent
+`onionbit-browser.exe`.
+
+**Plan `docs/plans/ui_surfacing.md`** : inventaire des capacités
+backend (ADR-0028→0032) sans surface UI — adresse `.onion`
+d'identité non affichée, coffre `.onion` et store-and-forward sans
+UI, canaux `.onion`, import OBUP — ordonnés en étapes B→E.
+
+## Amélioration — préchauffage des circuits onion des backends (`tor.search.warmup`) — fait (2026-10-19)
+
+**Problème** : `tor/status` passait `Ready` à la fin du bootstrap,
+mais le premier `GET` vers un `.onion` de backend payait encore le
+rendez-vous complet (descripteur + circuits intro/RDV) — la première
+recherche arrivait avant que le lien soit chaud (« vert » trop tard).
+
+**Fix** : après tout bootstrap qui passe `Ready` (embedded comme
+external, démarrage ou auto-réparation), une tâche de fond fetch
+`GET /` sur chaque miroir déclaré (dédupé par hôte, en séquence,
+best-effort — échecs en `debug`, jamais bloquants). Les rendez-vous
+existent donc **avant** la première recherche utilisateur.
+
+Réglage `tor.search.warmup` (défaut `true`, désactivable) →
+`TorSettings::search_warmup` ; hook dans la tâche de bootstrap de
+`TorRuntime` (`warmup_backends`). Tests : plomberie config +
+désactivation (`tor_search_warmup_desactivable`).
+
 ## Étape 135 — clôture ADR-0030 : nommage, résiduel honnête, E2E multi-origines — fait (2026-10-18)
 
 **Nommage tranché** (§8.2) : `bin\onionbit-browser.exe` partout —

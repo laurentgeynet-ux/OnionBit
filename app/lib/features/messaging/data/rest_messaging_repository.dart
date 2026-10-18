@@ -162,6 +162,20 @@ class RestMessagingRepository implements MessagingRepository {
     return (resp['restored'] as num?)?.toInt() ?? 0;
   }
 
+  @override
+  Future<int> vaultReplicate() async {
+    final resp = await _api.post('/messaging/vault/replicate')
+        as Map<String, dynamic>;
+    return (resp['replicated'] as num?)?.toInt() ?? 0;
+  }
+
+  @override
+  Future<int> vaultRestore() async {
+    final resp = await _api.post('/messaging/vault/restore')
+        as Map<String, dynamic>;
+    return (resp['restored'] as num?)?.toInt() ?? 0;
+  }
+
   // ── ADR-0019 : conversations, groupes, pieces jointes ──────
 
   @override

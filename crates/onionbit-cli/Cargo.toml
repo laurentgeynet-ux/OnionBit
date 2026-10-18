@@ -29,7 +29,10 @@ onionbit-crypto = { path = "../onionbit-crypto" }
 [dev-dependencies]
 axum.workspace = true
 onionbit-api = { path = "../onionbit-api" }
-onionbit-core = { path = "../onionbit-core" }
+# `default-features = false` : le client REST n'a pas besoin du
+# transport Tor de core — et sans lui la lane -NoTor resterait
+# tor-free partout (unification par invocation cargo).
+onionbit-core = { path = "../onionbit-core", default-features = false }
 onionbit-test-support = { path = "../onionbit-test-support" }
 
 tempfile.workspace = true

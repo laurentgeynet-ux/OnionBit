@@ -62,19 +62,28 @@ pub struct TorGatewaySettings {
 }
 
 /// Service `.onion` d'identite (ADR-0029 etape 122) — hebergement
-/// opt-in du service cache dont la cle est derivee de la graine
+/// du service cache dont la cle est derivee de la graine
 /// (`onionbit/identity/tor-hs/v1`).
+///
+/// Defaut produit **`true`** au niveau fichier
+/// (`TorOnionServiceFileConfig` — `tor.enabled` l'etant deja, les
+/// fonctions liees suivent la lane). Ce `Default` nu reste le socle
+/// conservateur des runtimes construits sans configuration
+/// (`TorSettings::default()` a `enabled: false` — un runtime nu ne
+/// publie rien de toute facon, la publication n'a lieu que sur lane
+/// `Ready`).
 #[derive(Debug, Clone, Default)]
 pub struct OnionServiceSettings {
     /// Publie le service `.onion` d'identite quand la lane est
-    /// `Ready` — **`false` par defaut** : jamais de publication
-    /// sans geste explicite (regle ADR-0028 §8 : aucune adresse
-    /// affichee tant que rien n'est heberge).
+    /// `Ready`. Actif par defaut cote configuration — la regle
+    /// ADR-0028 §8 reste : aucune adresse exposee tant que rien
+    /// n'est reellement publie.
     pub enabled: bool,
     /// Publie le service `.onion` **coffre** (etape 127) — adresse
     /// `tor-hs-vault/v1` dediee, descripteur verrouille par
     /// l'autorisation client x25519 derivee de la meme identite.
-    /// **`false` par defaut** (le coffre n'est servi que sur geste).
+    /// Actif par defaut cote configuration (la restauration du
+    /// coffre marche sans geste).
     pub vault_enabled: bool,
 }
 
@@ -82,7 +91,11 @@ pub struct OnionServiceSettings {
 /// le `TorProxyServer` vit et meurt avec le runtime (`swap_tor_stack`).
 #[derive(Debug, Clone)]
 pub struct BrowserProxySettings {
-    /// Proxy HTTP forward loopback actif — **`false` par defaut**.
+    /// Proxy HTTP forward loopback actif — **`true` par defaut** :
+    /// le listener est etanche (loopback exige, `.onion`-only tant
+    /// que `clearnet_exit=Off`) et ne pointe sur rien — aucune
+    /// connexion n'est creee tant qu'aucun navigateur ne s'y
+    /// connecte ; il vit et meurt avec le runtime Tor.
     pub enabled: bool,
     /// Adresse d'ecoute — loopback exige par le proxy lui-meme ;
     /// `:0` = port ephemere choisi par l'OS, publie par
@@ -111,7 +124,7 @@ pub struct BrowserProxySettings {
 impl Default for BrowserProxySettings {
     fn default() -> Self {
         Self {
-            enabled: false,
+            enabled: true,
             listen: SocketAddr::from(([127, 0, 0, 1], 0)),
             require_auth: false,
             clearnet_exit: onionbit_network_policy::ClearnetExit::Off,
@@ -127,10 +140,12 @@ impl Default for BrowserProxySettings {
 /// (ADR-0030, `tor/browser`) — chemin et args viennent
 /// **uniquement** de la config : l'API ne fait que declencher,
 /// jamais d'argv pilote par l'appelant.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct BrowserSettings {
-    /// Chemin du binaire (`bin/onionbit-browser.exe` dans le bundle). Vide =
-    /// navigateur non configure → `browser_not_configured`.
+    /// Chemin du binaire (`bin/onionbit-browser.exe` dans le bundle).
+    /// Vide = **auto-detection** `<exe_dir>/bin/onionbit-browser[.exe]`
+    /// (layout `build_dist.ps1`) — la release marche sans config ;
+    /// absent aussi la → `browser_not_configured`.
     /// Relatif : resolu par rapport au repertoire de l'executable
     /// du daemon (arborescence portable ADR-0018).
     pub binary_path: PathBuf,
@@ -143,6 +158,22 @@ pub struct BrowserSettings {
     /// de la session. `true` : profil stable `browser/` conserve —
     /// persistance assumee en clair (ADR-0030 §134).
     pub keep_profile: bool,
+    /// Delai max d'attente de `DILLO_HOST_HANDLE=` sur le stdout du
+    /// navigateur quand `embed` est demande (protocole `--host-shell`
+    /// de DilloRust). Expire → `hwnd=null` dans la reponse : l'UI
+    /// reste en mode fenetre externe (degrade, jamais bloquant).
+    pub embed_timeout: Duration,
+}
+
+impl Default for BrowserSettings {
+    fn default() -> Self {
+        Self {
+            binary_path: PathBuf::new(),
+            extra_args: Vec::new(),
+            keep_profile: false,
+            embed_timeout: Duration::from_secs(3),
+        }
+    }
 }
 
 /// Reglages complets de la connectivite Tor.
@@ -173,6 +204,13 @@ pub struct TorSettings {
     pub max_redirects: u32,
     /// Backends de recherche externes (`tpb`, …).
     pub backends: BTreeMap<String, OnionBackendSettings>,
+    /// Prechauffage des circuits onion des backends (`tor.search.
+    /// warmup`, defaut `true`) : des qu'un bootstrap passe `Ready`,
+    /// une tache de fond fetch `GET /` sur chaque miroir — le
+    /// rendez-vous onion (lent : descripteur + circuits intro/RDV)
+    /// existe deja quand l'utilisateur lance sa premiere recherche.
+    /// Best-effort : un miroir mort ne degrade que lui-meme.
+    pub search_warmup: bool,
     /// Lignes de ponts Tor (relays non listés — contourne le blocage
     /// par IP des gardes publics ; `tor/bridges`, anti-censure). Des
     /// lignes avec transport PT (`obfs4`, `snowflake`…) exigent la
@@ -205,6 +243,7 @@ impl Default for TorSettings {
             bootstrap_timeout: Duration::from_secs(120),
             max_redirects: 3,
             backends: BTreeMap::new(),
+            search_warmup: true,
             bridges: Vec::new(),
             gateway: TorGatewaySettings {
                 enabled: false,

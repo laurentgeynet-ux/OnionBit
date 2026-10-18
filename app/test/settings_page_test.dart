@@ -26,9 +26,9 @@ class _FakeSettings implements SettingsRepository {
     'libtorrent': {
       'max_download_rate': 0,
       'max_upload_rate': 0,
-      'active_downloads': 3,
-      'active_seeds': 5,
-      'active_checking': 1,
+      'active_downloads': 5,
+      'active_seeds': 10,
+      'active_checking': 3,
       'active_limit': 500,
       'download_defaults': {'saveas': '/tmp', 'auto_managed': false},
       'dht': true,
@@ -70,6 +70,10 @@ class _FakeSettings implements SettingsRepository {
   Future<void> setRssFeeds(List<String> urls) async {}
   @override
   Future<Map<String, dynamic>> versions() async => {'current': '0.3.0'};
+  @override
+  Future<Map<String, dynamic>> updateStatus() async => {};
+  @override
+  Future<Map<String, dynamic>> importUpdate() async => {};
   @override
   Future<String?> identityPublicKey() async => 'aabbcc';
   @override

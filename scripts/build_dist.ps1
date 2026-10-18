@@ -146,15 +146,17 @@ try {
     # onionbit-launcher : les trois lanceurs portables de la racine
     # (copies renommees du meme mini-exe, resolution relative a sa
     # position — aucun chemin de build n'est fige).
-    # Tor embarque sauf `-NoTor` explicite : la feature `tor` n'existe
-    # que sur onionbit-daemon — build dedie (`--features` sur un build
-    # multi-`-p` exigerait la syntaxe `paquet/feature` sur chaque membre).
+    # Tor embarque par defaut (feature `tor` = default sur
+    # onionbit-daemon/core — un seul standard de compilation).
+    # `-NoTor` = `--no-default-features` sur le daemon seul ; les
+    # aretes api/cli -> core sont `default-features = false`, le
+    # reste du bundle n'emporte pas arti.
     if (-not $NoTor) {
-        cargo build --profile $cargoProfile -p onionbit-daemon --features tor
+        cargo build --profile $cargoProfile -p onionbit-daemon -p onionbit-cli -p onionbit-launcher
+    } else {
+        cargo build --profile $cargoProfile -p onionbit-daemon --no-default-features
         if ($LASTEXITCODE -ne 0) { throw "cargo build a echoue ($LASTEXITCODE)" }
         cargo build --profile $cargoProfile -p onionbit-cli -p onionbit-launcher
-    } else {
-        cargo build --profile $cargoProfile -p onionbit-daemon -p onionbit-cli -p onionbit-launcher
     }
     if ($LASTEXITCODE -ne 0) { throw "cargo build a echoue ($LASTEXITCODE)" }
 

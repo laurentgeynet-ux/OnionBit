@@ -50,6 +50,8 @@ dependencies:
   web: ^1.1.1
   qr_flutter: ^4.1.0
   mobile_scanner: ^7.4.2
+  win32: ^6.4.0
+  ffi: ^2.2.0
 
 dev_dependencies:
   flutter_test:

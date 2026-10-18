@@ -3,13 +3,16 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../../../core/api/api_client.dart' show ApiException;
 import '../../../../core/l10n/l10n_ext.dart';
 import '../../../../core/design/design_tokens.dart';
 import '../../../../l10n/app_localizations.dart' show AppLocalizations;
+import '../../../browser/browser_launch.dart';
 import '../../../diagnostic/presentation/providers/diagnostic_providers.dart';
+import '../../../diagnostic/domain/diagnostic_models.dart'
+    show OnionServiceStatus;
 import '../providers/settings_providers.dart';
 import 'settings_section.dart';
 import 'settings_defaults.dart';
@@ -52,6 +55,7 @@ class _NetworkSectionState extends ConsumerState<NetworkSection> {
   final _torSocks = TextEditingController();
   final _torBridges = TextEditingController();
   final _browserPath = TextEditingController();
+  final _browserAddr = TextEditingController();
   bool _initialized = false;
   bool _saving = false;
 
@@ -70,6 +74,7 @@ class _NetworkSectionState extends ConsumerState<NetworkSection> {
     _torSocks.dispose();
     _torBridges.dispose();
     _browserPath.dispose();
+    _browserAddr.dispose();
     super.dispose();
   }
 
@@ -140,6 +145,19 @@ class _NetworkSectionState extends ConsumerState<NetworkSection> {
     }, successMessage: context.l10n.netSaved);
     _deferred.markClean();
     if (mounted) setState(() => _saving = false);
+  }
+
+  /// Ouvre le champ adresse tel quel : vide = page d'accueil locale
+  /// `about:onionbit` (aucune connexion), hôte nu → `http://<hôte>/`,
+  /// sinon l'URL saisie — la route re-valide schéma/cible.
+  void _openBrowser() {
+    final raw = _browserAddr.text.trim();
+    final url = raw.isEmpty
+        ? ''
+        : raw.startsWith('http')
+        ? raw
+        : 'http://$raw/';
+    launchOnionBrowser(context, ref, url);
   }
 
   @override
@@ -356,7 +374,7 @@ class _NetworkSectionState extends ConsumerState<NetworkSection> {
               ]),
               title: l10n.torBrowserProxy,
               subtitle: l10n.torBrowserProxyHint,
-              defaultValue: false,
+              defaultValue: true,
             ),
             const _BrowserProxyStatus(),
             const SizedBox(height: AppSpace.xs),
@@ -415,10 +433,40 @@ class _NetworkSectionState extends ConsumerState<NetworkSection> {
                     'browser',
                     'binary_path',
                   ]),
-                  hintText: 'bin/dillo.exe',
+                  hintText: 'bin/onionbit-browser.exe',
                 ),
               ),
             ),
+            const SizedBox(height: AppSpace.sm),
+            // Lancement direct : adresse `.onion` ou URL complete —
+            // le daemon re-valide la cible (politique de sortie,
+            // etat Tor), jamais de confiance au champ.
+            Row(
+              children: [
+                SizedBox(
+                  width: 380,
+                  child: TextField(
+                    controller: _browserAddr,
+                    onSubmitted: (_) => _openBrowser(),
+                    decoration: InputDecoration(
+                      labelText: l10n.navBrowser,
+                      hintText: l10n.browserAddressHint,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: AppSpace.sm),
+                FilledButton.tonalIcon(
+                  onPressed: _openBrowser,
+                  icon: const Icon(Icons.open_in_new, size: 18),
+                  label: Text(l10n.browserOpen),
+                ),
+              ],
+            ),
+            const SizedBox(height: AppSpace.md),
+            // Services `.onion` heberges (ADR-0029) : identite +
+            // coffre — l'adresse publiee est lue en direct de
+            // `/api/tor/status`.
+            const _OnionServices(),
             const SizedBox(height: AppSpace.md),
             Align(
               alignment: Alignment.centerRight,
@@ -669,43 +717,108 @@ class _BrowserProxyStatus extends ConsumerWidget {
   }
 }
 
-/// Lance le navigateur `.onion` sur `http://<hôte>/` —
-/// `POST /api/browser/launch` (le daemon re-valide la cible, la
-/// politique de sortie et l'état Tor). Snackbar honnête : le code
-/// machine `error.code` est traduit, jamais le message brut.
+/// Lance le navigateur `.onion` sur `http://<hôte>/` — délègue au
+/// helper partagé `features/browser/browser_launch.dart` (le daemon
+/// re-valide cible, politique de sortie et état Tor).
 Future<void> _launchOnion(
   BuildContext context,
   WidgetRef ref,
   String host,
-) async {
-  final l10n = context.l10n;
-  final messenger = ScaffoldMessenger.of(context);
-  try {
-    final pid = await ref
-        .read(diagnosticRepositoryProvider)
-        .launchBrowser('http://$host/');
-    messenger.showSnackBar(SnackBar(content: Text(l10n.browserLaunched(pid))));
-  } on ApiException catch (e) {
-    messenger.showSnackBar(
-      SnackBar(content: Text(_browserErrorLabel(l10n, e))),
+) =>
+    launchOnionHost(context, ref, host);
+
+/// Carte « Vos services .onion » (ADR-0029) : toggles de
+/// publication (identite + coffre) et adresses reellement
+/// publiees, lues en direct de `GET /api/tor/status` — jamais
+/// d'adresse fictive : `address` n'existe que quand le
+/// descripteur est publie.
+class _OnionServices extends ConsumerWidget {
+  const _OnionServices();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final theme = Theme.of(context);
+    final l10n = context.l10n;
+    final settings = ref.watch(daemonSettingsProvider).value ?? const {};
+    final status = ref.watch(torStatusProvider).value;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(l10n.torOnionServicesTitle, style: theme.textTheme.labelMedium),
+        const SizedBox(height: AppSpace.xs),
+        _serviceTile(
+          context,
+          ref,
+          settings: settings,
+          path: const ['tor', 'onion_service', 'enabled'],
+          svc: status?.onionService,
+          title: l10n.torOnionServiceIdentity,
+          subtitle: l10n.torOnionServiceIdentityHint,
+        ),
+        _serviceTile(
+          context,
+          ref,
+          settings: settings,
+          path: const ['tor', 'onion_service', 'vault'],
+          svc: status?.onionVault,
+          title: l10n.torOnionServiceVault,
+          subtitle: l10n.torOnionServiceVaultHint,
+        ),
+      ],
     );
-  } catch (e) {
-    messenger.showSnackBar(
-      SnackBar(content: Text(l10n.browserErrGeneric('$e'))),
+  }
+
+  Widget _serviceTile(
+    BuildContext context,
+    WidgetRef ref, {
+    required Map<String, dynamic> settings,
+    required List<String> path,
+    required OnionServiceStatus? svc,
+    required String title,
+    required String subtitle,
+  }) {
+    final theme = Theme.of(context);
+    final l10n = context.l10n;
+    final addr = svc?.address;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SettingsSwitch(
+          path: path,
+          value: settingsBool(settings, path, def: true),
+          title: title,
+          subtitle: subtitle,
+          defaultValue: true,
+        ),
+        if (svc != null && svc.enabled)
+          Padding(
+            padding: const EdgeInsets.only(left: AppSpace.md, bottom: 4),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    addr ?? l10n.msgOnionPending(svc.state),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      fontFamily: AppFontFamilies.mono,
+                      color: theme.colorScheme.outline,
+                    ),
+                  ),
+                ),
+                if (addr != null)
+                  IconButton(
+                    icon: const Icon(Icons.copy, size: 16),
+                    tooltip: l10n.msgYourOnionAddress,
+                    visualDensity: VisualDensity.compact,
+                    onPressed: () => Clipboard.setData(
+                      ClipboardData(text: addr),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+      ],
     );
   }
 }
-
-/// Libellé localisé d'un échec `POST /api/browser/launch` — le code
-/// machine (`error.code`, ADR-0030 §6) prime sur le message libre.
-String _browserErrorLabel(AppLocalizations l10n, ApiException e) =>
-    switch (e.code) {
-      'invalid_url' => l10n.browserErrInvalidUrl,
-      'denied_target' => l10n.browserErrDenied,
-      'browser_not_configured' => l10n.browserErrNotConfigured,
-      'tor_disabled' => l10n.browserErrTorDisabled,
-      'tor_bootstrapping' => l10n.browserErrTorBootstrapping,
-      'tor_not_ready' => l10n.browserErrTorNotReady,
-      'bootstrap_failed' => l10n.browserErrBootstrapFailed,
-      _ => l10n.browserErrGeneric(e.message),
-    };

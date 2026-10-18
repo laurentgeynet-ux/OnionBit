@@ -85,9 +85,13 @@ class MessagingContact {
   /// le pair est en ligne (pas de sonde périodique, ADR-0029 Q2).
   bool get hasOnion => onion != null;
 
-  /// Raccourci lisible de la clé (8 premiers caractères hex).
-  String get shortKey =>
-      publicKey.length > 8 ? publicKey.substring(0, 8) : publicKey;
+  /// Raccourci lisible de la clé — `premiers4…derniers4` : les
+  /// préfixes se ressemblent presque tous (même entête de clé),
+  /// ce sont les **derniers** caractères qui distinguent deux
+  /// contacts à l'œil.
+  String get shortKey => publicKey.length > 10
+      ? '${publicKey.substring(0, 4)}…${publicKey.substring(publicKey.length - 4)}'
+      : publicKey;
 
   /// Nom affiché : pseudonyme s'il existe, sinon clé abrégée.
   String get displayName => alias.isNotEmpty ? alias : shortKey;

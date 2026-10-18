@@ -10,6 +10,7 @@ import '../../../../core/api/api_client.dart';
 import '../../../../core/design/design_tokens.dart';
 import '../../../../core/l10n/l10n_ext.dart';
 import '../../../../core/layout/breakpoints.dart';
+import '../../../browser/browser_launch.dart';
 import '../../../diagnostic/presentation/providers/diagnostic_providers.dart';
 import '../../../diagnostic/presentation/widgets/attest_dialog.dart';
 import '../../../diagnostic/presentation/widgets/trust_badge.dart';
@@ -165,7 +166,9 @@ class _ContactsPane extends ConsumerWidget {
                     context: context,
                     builder: (ctx) => AlertDialog(
                       title: Text(l10n.msgInfoTitle),
-                      content: Text(l10n.msgInfo),
+                      content: Text(
+                        '${l10n.msgInfo}\n\n${l10n.msgPlanesLegend}',
+                      ),
                       actions: [
                         TextButton(
                           onPressed: () => Navigator.pop(ctx),
@@ -178,6 +181,53 @@ class _ContactsPane extends ConsumerWidget {
               ],
             ),
           ),
+        // Adresse `.onion` (plan Tor — ADR-0029) : la seconde
+        // identite joignable, en regard de la clé OnionBit. Tuile
+        // toujours visible — désactivée, elle guide vers
+        // Réglages → Réseau au lieu de disparaître silencieusement.
+        Builder(
+          builder: (context) {
+            final onion =
+                ref.watch(torStatusProvider).value?.onionService;
+            final enabled = onion?.enabled ?? false;
+            final addr = onion?.address;
+            return ListTile(
+              dense: true,
+              leading: Padding(
+                padding: const EdgeInsets.only(left: 6, top: 4),
+                child: Opacity(
+                  opacity: enabled ? 1 : 0.35,
+                  child: const PlaneDot(plane: 'onion', size: 9),
+                ),
+              ),
+              title: Text(
+                l10n.msgYourOnionAddress,
+                style: Theme.of(context).textTheme.labelSmall,
+              ),
+              subtitle: Text(
+                !enabled
+                    ? l10n.msgOnionDisabled
+                    : addr ?? l10n.msgOnionPending(onion!.state),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  fontFamily: enabled && addr != null
+                      ? AppFontFamilies.mono
+                      : null,
+                ),
+              ),
+              trailing: !enabled || addr == null
+                  ? null
+                  : IconButton(
+                      icon: const Icon(Icons.copy, size: 18),
+                      tooltip: l10n.msgYourOnionAddress,
+                      onPressed: () => Clipboard.setData(
+                        ClipboardData(text: addr),
+                      ),
+                    ),
+            );
+          },
+        ),
         const Divider(height: 1),
         Expanded(
           child: ListView(
@@ -250,8 +300,11 @@ class _ContactsPane extends ConsumerWidget {
           ),
         ),
         const Divider(height: 1),
-        // « Ajouter un contact » + coffre export/import (chiffre
-        // pour soi — portable entre devices de meme identite).
+        // « Ajouter un contact » + coffre de contacts : menu unique
+        // explicite (4 icônes nues étaient illisibles) — export/
+        // import = blob à copier-coller, répliquer/restaurer =
+        // sauvegarde réseau (ponts pull-store + `.onion` propre,
+        // ADR-0026/0029) ; l'entrée d'aide explique les deux.
         Padding(
           padding: const EdgeInsets.all(AppSpace.sm),
           child: Row(
@@ -263,15 +316,40 @@ class _ContactsPane extends ConsumerWidget {
                   onPressed: () => _addContact(context, ref),
                 ),
               ),
-              IconButton(
-                icon: const Icon(Icons.lock_open, size: 18),
-                tooltip: l10n.msgVaultExport,
-                onPressed: () => _vaultExport(context, ref),
-              ),
-              IconButton(
-                icon: const Icon(Icons.file_upload_outlined, size: 18),
-                tooltip: l10n.msgVaultImport,
-                onPressed: () => _vaultImport(context, ref),
+              PopupMenuButton<String>(
+                icon: const Icon(Icons.lock_outline, size: 18),
+                tooltip: l10n.msgVaultMenu,
+                itemBuilder: (ctx) => [
+                  PopupMenuItem(
+                    value: 'export',
+                    child: Text(l10n.msgVaultExport),
+                  ),
+                  PopupMenuItem(
+                    value: 'import',
+                    child: Text(l10n.msgVaultImport),
+                  ),
+                  const PopupMenuDivider(),
+                  PopupMenuItem(
+                    value: 'replicate',
+                    child: Text(l10n.msgVaultReplicate),
+                  ),
+                  PopupMenuItem(
+                    value: 'restore',
+                    child: Text(l10n.msgVaultRestore),
+                  ),
+                  const PopupMenuDivider(),
+                  PopupMenuItem(
+                    value: 'help',
+                    child: Text(l10n.msgVaultHelp),
+                  ),
+                ],
+                onSelected: (v) => switch (v) {
+                  'export' => _vaultExport(context, ref),
+                  'import' => _vaultImport(context, ref),
+                  'replicate' => _vaultReplicate(context, ref),
+                  'restore' => _vaultRestore(context, ref),
+                  _ => _vaultHelp(context),
+                },
               ),
             ],
           ),
@@ -280,23 +358,48 @@ class _ContactsPane extends ConsumerWidget {
     );
   }
 
-  /// Dialogue « ajouter un contact » : clé publique hex →
-  /// `connect` (résolution DHT/PEX + `create-e2e`).
+  /// Dialogue « ajouter un contact » : clé OnionBit (obligatoire)
+  /// + adresse `.onion` optionnelle — le contact est toujours
+  /// identifié par sa clé ; l'`.onion` ajoute le plan Tor
+  /// (`setPeerOnion`, ADR-0029 — explicite, jamais inféré).
   Future<void> _addContact(BuildContext context, WidgetRef ref) async {
     final l10n = context.l10n;
     final controller = TextEditingController();
+    final onionCtl = TextEditingController();
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: Text(l10n.msgAddContact),
-        content: TextField(
-          controller: controller,
-          decoration: InputDecoration(
-            labelText: l10n.msgPublicKeyLabel,
-            border: const OutlineInputBorder(),
-          ),
-          style: const TextStyle(fontFamily: AppFontFamilies.mono),
-          autofocus: true,
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              l10n.msgAddContactHint,
+              style: Theme.of(ctx).textTheme.bodySmall,
+            ),
+            const SizedBox(height: AppSpace.sm),
+            TextField(
+              controller: controller,
+              decoration: InputDecoration(
+                labelText: l10n.msgPublicKeyLabel,
+                border: const OutlineInputBorder(),
+              ),
+              style: const TextStyle(fontFamily: AppFontFamilies.mono),
+              autofocus: true,
+            ),
+            const SizedBox(height: AppSpace.sm),
+            TextField(
+              controller: onionCtl,
+              decoration: InputDecoration(
+                labelText: l10n.msgOnionOptional,
+                border: const OutlineInputBorder(),
+              ),
+              style: const TextStyle(
+                fontFamily: AppFontFamilies.mono,
+                fontSize: 12,
+              ),
+            ),
+          ],
         ),
         actions: [
           TextButton(
@@ -311,10 +414,18 @@ class _ContactsPane extends ConsumerWidget {
       ),
     );
     final pk = controller.text.trim();
+    final onion = onionCtl.text.trim();
     controller.dispose();
+    onionCtl.dispose();
     if (ok != true || !context.mounted || pk.isEmpty) return;
     try {
       await ref.read(messagingRepositoryProvider).connect(pk);
+      // `.onion` saisi → association explicite juste après la
+      // création du contact (le contact existe côté daemon dès le
+      // `connect`, même si la liaison e2e échoue hors ligne).
+      if (onion.isNotEmpty) {
+        await ref.read(messagingRepositoryProvider).setPeerOnion(pk, onion);
+      }
       await _openDirect(ref, pk);
     } catch (e) {
       if (context.mounted) _showError(context, e);
@@ -497,6 +608,60 @@ class _ContactsPane extends ConsumerWidget {
     } catch (e) {
       if (context.mounted) _showError(context, e);
     }
+  }
+
+  /// Replique le coffre chiffre vers les ponts pull-store
+  /// (`POST /messaging/vault/replicate` — ADR-0026). 404 honnete
+  /// quand aucun pont n'est joignable.
+  Future<void> _vaultReplicate(BuildContext context, WidgetRef ref) async {
+    final l10n = context.l10n;
+    try {
+      final n = await ref.read(messagingRepositoryProvider).vaultReplicate();
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(l10n.msgVaultReplicated(n))),
+        );
+      }
+    } catch (e) {
+      if (context.mounted) _showError(context, e);
+    }
+  }
+
+  /// Restaure le coffre depuis le service `.onion` propre puis les
+  /// ponts (`POST /messaging/vault/restore` — ADR-0026/0029).
+  Future<void> _vaultRestore(BuildContext context, WidgetRef ref) async {
+    final l10n = context.l10n;
+    try {
+      final n = await ref.read(messagingRepositoryProvider).vaultRestore();
+      ref.invalidate(messagingContactsProvider);
+      ref.invalidate(messagingConversationsProvider);
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(l10n.msgVaultRestored(n))),
+        );
+      }
+    } catch (e) {
+      if (context.mounted) _showError(context, e);
+    }
+  }
+
+  /// Explication des deux mécanismes du coffre — blob manuel
+  /// (copier-coller) vs sauvegarde réseau (relais pull-store).
+  void _vaultHelp(BuildContext context) {
+    final l10n = context.l10n;
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(l10n.msgVaultMenu),
+        content: Text(l10n.msgVaultExplain),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text(l10n.cancel),
+          ),
+        ],
+      ),
+    );
   }
 }
 
@@ -826,6 +991,14 @@ class _ContactTile extends ConsumerWidget {
             value: 'onion',
             child: Text(l10n.msgOnionAssociate),
           ),
+          // « Ouvrir » dans le navigateur `.onion` (ADR-0030) —
+          // seulement quand une adresse est associée ; le daemon
+          // re-valide la cible à l'envoi.
+          if (contact.hasOnion)
+            PopupMenuItem(
+              value: 'open_onion',
+              child: Text(l10n.msgOpenOnionBrowser),
+            ),
           if (contact.state == MessagingContactState.blocked)
             PopupMenuItem(value: 'unblock', child: Text(l10n.msgUnblock))
           else
@@ -854,6 +1027,8 @@ class _ContactTile extends ConsumerWidget {
           ),
           'retention' => _retentionDialog(context, ref),
           'onion' => _onionDialog(context, ref),
+          'open_onion' =>
+            launchOnionHost(context, ref, contact.onion ?? ''),
           _ => _act(context, ref, () => repo.remove(contact.publicKey)),
         },
       ),
@@ -1163,7 +1338,9 @@ class _FriendsVaultSection extends ConsumerWidget {
             dense: true,
             leading: const Icon(Icons.key, size: 16),
             title: Text(
-              pk.length > 16 ? '${pk.substring(0, 16)}…' : pk,
+              pk.length > 10
+                  ? '${pk.substring(0, 4)}…${pk.substring(pk.length - 4)}'
+                  : pk,
               style: const TextStyle(fontFamily: AppFontFamilies.mono, fontSize: 12),
             ),
             trailing: IconButton(

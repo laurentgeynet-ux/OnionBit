@@ -263,9 +263,9 @@ Source : `src/tribler/tribler_config.py` `DEFAULT_CONFIG` + `pyipv8/ipv8/configu
 | `announce_to_all_tiers` / `announce_to_all_trackers` | `false` | |
 | `max_concurrent_http_announces` | `50` | |
 | `check_after_complete` | `false` | re-hash après complétion |
-| `active_downloads` | `3` | file d'attente libtorrent |
-| `active_seeds` | `5` | |
-| `active_checking` | `1` | |
+| `active_downloads` | `5` | file d'attente libtorrent (Tribler : `3/5/1` — relevés) |
+| `active_seeds` | `10` | |
+| `active_checking` | `3` | |
 | `active_dht_limit` | `88` | |
 | `active_tracker_limit` | `1600` | |
 | `active_lsd_limit` | `60` | |

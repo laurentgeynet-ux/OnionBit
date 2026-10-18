@@ -8,6 +8,11 @@ authors.workspace = true
 repository.workspace = true
 
 [features]
+# Un seul standard de compilation : `tor` est feature **par defaut**
+# (ADR-0028 — arti embarque + SOCKS5 externe). `--no-default-features`
+# redonne le runtime stub (`NotBuilt`) pour les lanes sans transport
+# (headless noTor). `hs` reste opt-in (surface propre — ADR-0029).
+default = ["tor"]
 # ADR-0028 : transport Tor reel (arti/SOCKS5) — propage la feature
 # `tor` d'onionbit-tor ; sans elle `TorRuntime` reste un stub
 # (`bootstrap`/`fetch` rendent `NotBuilt`).

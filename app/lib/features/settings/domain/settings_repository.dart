@@ -30,6 +30,18 @@ abstract interface class SettingsRepository {
   /// `{versions, current}`).
   Future<Map<String, dynamic>> versions();
 
+  /// Statut de staging OBUP (`GET /api/versioning/update`) :
+  /// `{staged, verified?, version?, target?, files?, key_id?}` ou
+  /// `{staged:false, invalid?}` — l'affichage ne fait pas foi au
+  /// swap, le launcher re-vérifie (ADR-0032).
+  Future<Map<String, dynamic>> updateStatus();
+
+  /// `POST /api/versioning/import` — vérifie et stage le bundle
+  /// déposé dans `state/update/incoming/`. Renvoie
+  /// `{staged, version, target, files, key_id}` ; erreurs codées
+  /// `obup_*` / 404 sans artefact.
+  Future<Map<String, dynamic>> importUpdate();
+
   /// `GET /api/identity` — clé publique IPv8 de l'identité courante.
   /// `null` si IPv8 désactivé.
   Future<String?> identityPublicKey();

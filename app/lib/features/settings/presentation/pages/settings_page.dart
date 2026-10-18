@@ -30,14 +30,10 @@ import '../widgets/versioning_section.dart';
 /// de recherche vivent dans `settings_catalog.dart`
 /// (`settingsSectionKeywords`), partagés avec la palette (ADR-0021 §6).
 class _SectionEntry {
-  _SectionEntry({required this.id, required this.child, this.sectionId});
+  _SectionEntry({required this.id, required this.child});
 
   final SettingsSectionId id;
   final Widget child;
-
-  /// Identifiant `settingsDirtyProvider` quand la section supporte la
-  /// sauvegarde différée (null = enregistrement immédiat uniquement).
-  final String? sectionId;
   // Pas de GlobalKey ici : la liste est partagée entre instances —
   // une clé embarquée garderait un contexte périmé d'une page à
   // l'autre (et collisionnerait si deux pages coexistaient). Les clés
@@ -51,56 +47,31 @@ final _kSections = <_SectionEntry>[
   ),
   _SectionEntry(
     id: SettingsSectionId.downloads,
-    sectionId: 'downloads',
     child: const DownloadsSection(),
   ),
-  _SectionEntry(
-    id: SettingsSectionId.storage,
-    child: const StorageSection(),
-  ),
+  _SectionEntry(id: SettingsSectionId.storage, child: const StorageSection()),
   _SectionEntry(
     id: SettingsSectionId.bandwidth,
-    sectionId: 'bandwidth',
     child: const BandwidthSection(),
   ),
-  _SectionEntry(
-    id: SettingsSectionId.queue,
-    sectionId: 'queue',
-    child: const QueueSection(),
-  ),
-  _SectionEntry(
-    id: SettingsSectionId.seeding,
-    sectionId: 'seeding',
-    child: const SeedingSection(),
-  ),
+  _SectionEntry(id: SettingsSectionId.queue, child: const QueueSection()),
+  _SectionEntry(id: SettingsSectionId.seeding, child: const SeedingSection()),
   _SectionEntry(
     id: SettingsSectionId.anonymity,
-    sectionId: 'anonymity',
     child: const AnonymitySection(),
   ),
   _SectionEntry(
     id: SettingsSectionId.onionbit,
-    sectionId: 'onionbit',
     child: const OnionBitSection(),
   ),
-  _SectionEntry(
-    id: SettingsSectionId.stealth,
-    sectionId: 'stealth',
-    child: const StealthSection(),
-  ),
+  _SectionEntry(id: SettingsSectionId.stealth, child: const StealthSection()),
   _SectionEntry(
     id: SettingsSectionId.identity,
-    sectionId: 'identity',
     child: const IdentitySection(),
   ),
-  _SectionEntry(
-    id: SettingsSectionId.network,
-    sectionId: 'network',
-    child: const NetworkSection(),
-  ),
+  _SectionEntry(id: SettingsSectionId.network, child: const NetworkSection()),
   _SectionEntry(
     id: SettingsSectionId.automation,
-    sectionId: 'automation',
     child: const AutomationSection(),
   ),
   _SectionEntry(
@@ -111,13 +82,10 @@ final _kSections = <_SectionEntry>[
     id: SettingsSectionId.connection,
     child: const ConnectionSection(),
   ),
-  _SectionEntry(
-    id: SettingsSectionId.daemon,
-    child: const DaemonSection(),
-  ),
+  _SectionEntry(id: SettingsSectionId.daemon, child: const DaemonSection()),
 ];
 
-/// Page « Réglages » — rail d'ancres + filtre + sections du catalogue.
+/// Page « Réglages » — filtre + sections du catalogue.
 /// `?s=<id>` (deep-link palette de commandes, ADR-0021 §6) défile
 /// jusqu'à la section demandée après la première frame.
 class SettingsPage extends ConsumerStatefulWidget {
@@ -148,9 +116,6 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   /// par défaut : la découverte prime ; le repli sert à réduire le
   /// bruit visuel une fois la section connue.
   final _expanded = {for (final c in SettingsCategory.values) c: true};
-  final _catKeys = {
-    for (final c in SettingsCategory.values) c: GlobalKey(),
-  };
 
   /// Défile jusqu'à la section `?s=` demandée — post-frame (les
   /// `GlobalKey` des entrées n'existent qu'après le premier layout) et
@@ -367,71 +332,17 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
             horizontal: AppSpace.md,
             vertical: AppSpace.xs,
           ),
-          child: Row(
-            children: [
-              Expanded(
-                // Rail d'ancres — une chip par catégorie (étape 75 ;
-                // les sections restent joignables via la palette
-                // Ctrl/Cmd+K et le deep-link `?s=`).
-                child: SizedBox(
-                  height: 34,
-                  child: ListView(
-                    scrollDirection: Axis.horizontal,
-                    children: [
-                      for (final cat in SettingsCategory.values)
-                        if (visible.any((e) => e.id.category == cat))
-                          Padding(
-                            padding: const EdgeInsets.only(
-                              right: AppSpace.xs,
-                            ),
-                            child: ActionChip(
-                              avatar:
-                                  visible.any(
-                                    (e) =>
-                                        e.id.category == cat &&
-                                        e.sectionId != null &&
-                                        dirty.contains(e.sectionId),
-                                  )
-                                  ? Icon(
-                                      Icons.circle,
-                                      size: 8,
-                                      color: scheme.tertiary,
-                                    )
-                                  : null,
-                              label: Text(cat.title(l10n)),
-                              visualDensity: VisualDensity.compact,
-                              onPressed: () {
-                                setState(() => _expanded[cat] = true);
-                                final ctx = _catKeys[cat]?.currentContext;
-                                if (ctx != null) {
-                                  Scrollable.ensureVisible(
-                                    ctx,
-                                    duration: const Duration(
-                                      milliseconds: 250,
-                                    ),
-                                  );
-                                }
-                              },
-                            ),
-                          ),
-                    ],
-                  ),
-                ),
+          child: SizedBox(
+            width: 220,
+            child: TextField(
+              decoration: InputDecoration(
+                hintText: l10n.filterSettings,
+                isDense: true,
+                prefixIcon: const Icon(Icons.filter_list, size: 18),
+                border: const OutlineInputBorder(),
               ),
-              const SizedBox(width: AppSpace.sm),
-              SizedBox(
-                width: 220,
-                child: TextField(
-                  decoration: InputDecoration(
-                    hintText: l10n.filterSettings,
-                    isDense: true,
-                    prefixIcon: const Icon(Icons.filter_list, size: 18),
-                    border: const OutlineInputBorder(),
-                  ),
-                  onChanged: (v) => setState(() => _filter = v),
-                ),
-              ),
-            ],
+              onChanged: (v) => setState(() => _filter = v),
+            ),
           ),
         ),
         Expanded(
@@ -440,14 +351,11 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
             children: [
               for (final cat in SettingsCategory.values) ...[
                 if (visible.any((e) => e.id.category == cat))
-                  KeyedSubtree(
-                    key: _catKeys[cat],
-                    child: _CategoryHeader(
-                      category: cat,
-                      expanded: _expanded[cat]!,
-                      onToggle: () => setState(
-                        () => _expanded[cat] = !_expanded[cat]!,
-                      ),
+                  _CategoryHeader(
+                    category: cat,
+                    expanded: _expanded[cat]!,
+                    onToggle: () => setState(
+                      () => _expanded[cat] = !_expanded[cat]!,
                     ),
                   ),
                 // Pendant un filtre, les sections correspondantes

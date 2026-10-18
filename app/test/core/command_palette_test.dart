@@ -126,13 +126,19 @@ void main() {
     expect(find.byType(TextField), findsOneWidget);
     // Groupes rendus dans l'ordre de `CommandGroup.values` — ceux du
     // bas sont sous le fold de la liste paresseuse : défilement d'abord.
+    // Le Scrollable à faire défiler est celui de la `ListView`
+    // (vertical) — le `TextField` de recherche en a un interne
+    // horizontal qui absorberait les drags.
+    final listScrollable = find.byWidgetPredicate(
+      (w) => w is Scrollable && w.axisDirection == AxisDirection.down,
+    );
     expect(find.text('NAVIGATION'), findsOneWidget);
-    // L'entrée « Zone privée » (ADR-0027) a rallongé le groupe
+    // L'entrée « Navigateur » (ADR-0030) a rallongé le groupe
     // NAVIGATION : l'en-tête CONVERSATIONS est passé sous le fold.
     await tester.scrollUntilVisible(
       find.text('CONVERSATIONS'),
       200,
-      scrollable: find.byType(Scrollable).last,
+      scrollable: listScrollable,
     );
     expect(find.text('CONVERSATIONS'), findsOneWidget);
     // La conversation du provider apparaît dans le catalogue —
@@ -140,21 +146,26 @@ void main() {
     await tester.scrollUntilVisible(
       find.text('Alice'),
       200,
-      scrollable: find.byType(Scrollable).last,
+      scrollable: listScrollable,
     );
     expect(find.text('Alice'), findsOneWidget);
-    // SETTINGS d'abord (le scroll jusqu'à ACTIONS le ressortirait par
-    // le haut), puis le dernier groupe.
+    // SETTINGS d'abord — `continuous` maintient le geste (pas de
+    // fling momentum) : un drag relâché traverse la fenêtre de build
+    // paresseux sans laisser l'en-tête se construire ; au fond de
+    // liste il est au-dessus du viewport.
     await tester.scrollUntilVisible(
       find.text('SETTINGS'),
       200,
-      scrollable: find.byType(Scrollable).last,
+      scrollable: listScrollable,
+      continuous: true,
     );
-    await tester.scrollUntilVisible(
-      find.text('ACTIONS'),
-      200,
-      scrollable: find.byType(Scrollable).last,
-    );
+    expect(find.text('SETTINGS'), findsOneWidget);
+    // ACTIONS est le dernier groupe : `jumpTo` au fond est
+    // déterministe — un drag momentum peut traverser la fenêtre de
+    // build paresseux sans laisser le groupe se construire.
+    final scrollState = tester.state<ScrollableState>(listScrollable);
+    scrollState.position.jumpTo(scrollState.position.maxScrollExtent);
+    await tester.pumpAndSettle();
     expect(find.text('ACTIONS'), findsOneWidget);
 
     await tester.sendKeyEvent(LogicalKeyboardKey.escape);

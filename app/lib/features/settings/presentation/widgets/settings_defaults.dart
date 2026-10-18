@@ -17,9 +17,9 @@ const kBandwidthDefaults = <String, dynamic>{
 /// File d'attente — défauts Tribler (3/5/1/500, `-1` = illimité).
 const kQueueDefaults = <String, dynamic>{
   'libtorrent': {
-    'active_downloads': 3,
-    'active_seeds': 5,
-    'active_checking': 1,
+    'active_downloads': 5,
+    'active_seeds': 10,
+    'active_checking': 3,
     'active_limit': 500,
   },
 };

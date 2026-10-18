@@ -62,6 +62,13 @@ final versionsProvider = FutureProvider.autoDispose<Map<String, dynamic>>(
   (ref) => ref.watch(settingsRepositoryProvider).versions(),
 );
 
+/// Statut du staging OBUP (`GET /api/versioning/update`) — revalidé
+/// côté daemon à chaque lecture ; rafraîchi après un import via
+/// `ref.invalidate`.
+final updateStatusProvider = FutureProvider.autoDispose<Map<String, dynamic>>(
+  (ref) => ref.watch(settingsRepositoryProvider).updateStatus(),
+);
+
 /// Bus d'enregistrement des sections à sauvegarde différée : chaque
 /// section y pose `save`/`discard` ; la bannière « Enregistrer tout »
 /// les invoque. Map mutable partagée (non réactive par nature).
