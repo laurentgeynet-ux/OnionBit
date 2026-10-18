@@ -392,6 +392,12 @@ fn configure(conn: &Connection) -> Result<()> {
     // Tables temporaires/tri en memoire (ORDER BY des recherches,
     // CTE de l'augmenteur).
     let _ = conn.pragma_update(None, "temp_store", "MEMORY");
+    // `secure_delete` : zeroise le contenu des pages liberees par
+    // DELETE — sinon elles restent lisibles (chiffrees, certes)
+    // jusqu'a reutilisation. Le flag applicatif `secure_delete`
+    // des contacts zeroise le corps avant DELETE ; ce pragma rend
+    // l'effacement reel au niveau fichier (ADR-0031 etape 139).
+    let _ = conn.pragma_update(None, "secure_delete", true);
     // Cache de pages (~20 Mio) : les recherches FTS + jointures
     // `channel_node`/`torrent_state` restent en memoire.
     let _ = conn.pragma_update(None, "cache_size", -20_000i64);

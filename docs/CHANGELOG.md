@@ -3,6 +3,20 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Étape 139 — Durcissement DB chiffrée (ADR-0031) (2026-10-18)
+
+`PRAGMA secure_delete=ON` dans `configure()` : les pages liberees
+par DELETE sont zeroisees — rend honnete le flag applicatif
+`secure_delete` des contacts (qui ne zeroisait que le corps avant
+un DELETE laissant la page lisible dans le fichier). Banc
+`tests/hardened.rs` (8 cas) : secure_delete prouve sur fichier
+clair, crash WAL simule (commit non checkpointe rejoue, txn non
+commitee abandonnee, integrity_check ok), `-wal` sans aucun octet
+en clair pendant l'ecriture, suite fonctionnelle sur base chiffree
+fichier (misc/peers/peer_onion/contacts), tri debordant sans
+fichier temporaire (`SQLITE_TEMP_STORE=3`), rollback transactionnel,
+base invisible pour un SQLite sans codec, smoke perf borne.
+
 ## Étape 138 — Migration legacy clair → chiffré (ADR-0031) (2026-10-18)
 
 Les bases SQLite claires existantes migrent transparentement a la
