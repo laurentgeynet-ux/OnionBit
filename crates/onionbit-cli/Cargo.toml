@@ -16,11 +16,20 @@ reqwest.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 
+# Signature `OBUP` des releases (ADR-0032 etape 142) — hors-ligne,
+# aucune dependance daemon ; la clef privee n'est jamais logguee.
+ed25519-dalek.workspace = true
+sha2.workspace = true
+zeroize.workspace = true
+hex.workspace = true
+rand.workspace = true
+onionbit-format = { path = "../onionbit-format" }
+onionbit-crypto = { path = "../onionbit-crypto" }
+
 [dev-dependencies]
 axum.workspace = true
 onionbit-api = { path = "../onionbit-api" }
 onionbit-core = { path = "../onionbit-core" }
-onionbit-format = { path = "../onionbit-format" }
 onionbit-test-support = { path = "../onionbit-test-support" }
 
 tempfile.workspace = true

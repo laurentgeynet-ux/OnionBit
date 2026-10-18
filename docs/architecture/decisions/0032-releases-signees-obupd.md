@@ -168,3 +168,26 @@ release + clôture.
   parse + troncation, chaîne `next_key` (A→k1 declare k2 acceptée,
   C→k3 non chaînée refusée), cross-domaine rejeté, manifest altéré
   post-signature rejeté.
+
+## Étape 142 (2026-10-18) — outillage de signature
+
+`onionbit-cli` gagne deux commandes hors-ligne (aucun appel daemon) :
+
+- `gen-release-key --out <fichier>` : seed Ed25519 32 octets (0600
+  sous Unix), affiche la clef publique hex + `key_id`. **La clef
+  publique affichée remplace le placeholder `RELEASE_PUBKEY`** dans
+  `crates/onionbit-crypto/src/release.rs` — procédure complète à
+  l'étape 146 (`docs/release.md`) : sans ce pas, `verify_strict`
+  refuse tout (fail-closed, heureusement) ;
+- `sign-release --dir <bundle> --key <fichier|-> --version <semver>
+  [--target] [--min-supported] [--rollback] [--next-key <fichier>]
+  [--out]` : énumère le payload (récursif, **exclut** `state/`,
+  `windows.old/`, `*.obup`), normalise les séparateurs en `/` et
+  trie canoniquement — même bundle → même manifest quelle que soit
+  la machine ; `sha256`+`size` par fichier ; écrit
+  `<dir>/update.obup` par défaut et affiche clef publique + `key_id`
+  (double-check visuel contre `RELEASE_PUBKEY`).
+
+Discipline clef : `ReleaseSecret` (32o zeroize au drop, pas de
+`Debug`/`Clone`) ; `--key -` lit stdin ; jamais d'hex privé dans
+argv ni de secret dans les logs.

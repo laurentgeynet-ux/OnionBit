@@ -99,6 +99,47 @@ enum Command {
         #[arg(long, default_value = "circuits")]
         show: String,
     },
+    /// Genere une clef de release Ed25519 hors-ligne (ADR-0032) —
+    /// ecrit `<out>` (32 octets, droits 0600) et affiche la clef
+    /// publique hex + `key_id` a coller dans `RELEASE_PUBKEY`.
+    GenReleaseKey {
+        /// Fichier de sortie de la clef privee (JAMAIS dans le
+        /// repo — garder hors-ligne).
+        #[arg(long)]
+        out: PathBuf,
+    },
+    /// Signe un bundle en artefact `OBUP` (ADR-0032) : enumere les
+    /// fichiers du payload, calcule sha256/size, produit
+    /// `<bundle>/update.obup`. Hors-ligne — aucun appel daemon.
+    SignRelease {
+        /// Racine du bundle (contient `windows/`).
+        #[arg(long)]
+        dir: PathBuf,
+        /// Clef privee de release (fichier 32 octets, ou `-` pour
+        /// stdin — jamais en argument en clair : pas d'hex dans
+        /// argv/l'historique shell).
+        #[arg(long)]
+        key: PathBuf,
+        /// Version semver de la release (ex. "1.2.0").
+        #[arg(long)]
+        version: String,
+        /// Cible (defaut "windows-x64").
+        #[arg(long, default_value = "windows-x64")]
+        target: String,
+        /// Version minimale exigee pour appliquer la mise a jour.
+        #[arg(long)]
+        min_supported: Option<String>,
+        /// Autorise le downgrade (signe — a utiliser avec parcimonie).
+        #[arg(long)]
+        rollback: bool,
+        /// Fichier clef publique du successeur — hex ou 32 octets
+        /// bruts (rotation `next_key`, ADR-0032).
+        #[arg(long)]
+        next_key: Option<PathBuf>,
+        /// Chemin de sortie du blob (defaut `<dir>/update.obup`).
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
 }
 
 /// Cible resolue : URL de base + cle API.
@@ -420,6 +461,28 @@ async fn main() -> ExitCode {
         Command::Pause { infohash } => cmd_patch(&client, api, &infohash, "stop").await,
         Command::Resume { infohash } => cmd_patch(&client, api, &infohash, "resume").await,
         Command::Tunnel { show } => cmd_tunnel(&client, api, &show).await,
+        // Hors-ligne : ces deux commandes ne touchent jamais le
+        // daemon ni le reseau (signature de release, ADR-0032).
+        Command::GenReleaseKey { out } => cmd_gen_release_key(&out),
+        Command::SignRelease {
+            dir,
+            key,
+            version,
+            target,
+            min_supported,
+            rollback,
+            next_key,
+            out,
+        } => cmd_sign_release(
+            &dir,
+            &key,
+            &version,
+            &target,
+            min_supported,
+            rollback,
+            next_key,
+            out,
+        ),
     };
     match res {
         Ok(()) => ExitCode::SUCCESS,
@@ -430,8 +493,281 @@ async fn main() -> ExitCode {
     }
 }
 
+// ------------------------------------------------------------------
+// Signature de release `OBUP` (ADR-0032, etape 142) — hors-ligne :
+// la clef privee de release vit sur la machine de build, jamais
+// dans le repo ni dans les logs ; ces commandes n'appellent pas le
+// daemon.
+// ------------------------------------------------------------------
+
+/// Graine de clef privee lue depuis un fichier — zeroizee au drop
+/// (meme discipline que `DbKey` ADR-0031 : le seul secret du
+/// chantier ne doit pas trainer dans la memoire du processus).
+struct ReleaseSecret([u8; 32]);
+
+impl ReleaseSecret {
+    /// Charge `<path>` (32 octets bruts de seed Ed25519) ; `-` lit
+    /// stdin — la clef peut arriver par pipe sans toucher le disque
+    /// ni figurer dans l'argv/l'historique shell.
+    fn load(path: &std::path::Path) -> Result<Self, String> {
+        let raw = if path == std::path::Path::new("-") {
+            use std::io::Read;
+            let mut buf = Vec::new();
+            std::io::stdin()
+                .read_to_end(&mut buf)
+                .map_err(|e| format!("lecture stdin : {e}"))?;
+            buf
+        } else {
+            std::fs::read(path).map_err(|e| format!("clef illisible {} : {e}", path.display()))?
+        };
+        let bytes: [u8; 32] = raw
+            .try_into()
+            .map_err(|_| format!("clef {} : 32 octets attendus", path.display()))?;
+        Ok(Self(bytes))
+    }
+
+    fn signing_key(&self) -> ed25519_dalek::SigningKey {
+        ed25519_dalek::SigningKey::from_bytes(&self.0)
+    }
+}
+
+impl Drop for ReleaseSecret {
+    fn drop(&mut self) {
+        use zeroize::Zeroize;
+        self.0.zeroize();
+    }
+}
+
+/// `gen-release-key` : produit `<out>` (32 octets, 0600 sous Unix)
+/// et affiche la clef publique hex + `key_id` — la publique ira
+/// remplacer `RELEASE_PUBKEY` dans `onionbit-crypto/src/release.rs`
+/// (etape 146 documente le pas ; le placeholder `[0;32]` est
+/// fail-closed).
+fn cmd_gen_release_key(out: &std::path::Path) -> Result<(), String> {
+    use rand::Rng;
+    let mut seed = [0u8; 32];
+    rand::rng().fill_bytes(&mut seed);
+    let sk = ed25519_dalek::SigningKey::from_bytes(&seed);
+    let pk = sk.verifying_key().to_bytes();
+    std::fs::write(out, seed).map_err(|e| format!("ecriture {} : {e}", out.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(out, std::fs::Permissions::from_mode(0o600));
+    }
+    use zeroize::Zeroize;
+    seed.zeroize();
+    println!("clef privee  : {}", out.display());
+    println!("clef publique: {}", hex::encode(pk));
+    println!(
+        "key_id       : {:#018x}",
+        onionbit_crypto::release::release_key_id(&pk)
+    );
+    println!(
+        "→ coller la clef publique dans RELEASE_PUBKEY \
+         (crates/onionbit-crypto/src/release.rs)"
+    );
+    Ok(())
+}
+
+/// Enumere les fichiers du payload : tout le bundle sauf `state/`,
+/// `windows.old/` et les artefacts `*.obup` eux-memes — chemins
+/// relatifs en `/` tries (meme arborescence → meme manifest, quelle
+/// que soit la machine de build).
+fn enumerate_payload(dir: &std::path::Path) -> Result<Vec<(PathBuf, String)>, String> {
+    let mut out = Vec::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        for e in std::fs::read_dir(&d)
+            .map_err(|e| format!("lecture {} : {e}", d.display()))?
+            .flatten()
+        {
+            let p = e.path();
+            let rel = p
+                .strip_prefix(dir)
+                .map_err(|_| "prefixe".to_string())?
+                .to_string_lossy()
+                .replace('\\', "/");
+            if p.is_dir() {
+                if rel == "state" || rel == "windows.old" {
+                    continue;
+                }
+                stack.push(p);
+            } else if p.is_file() && !rel.ends_with(".obup") {
+                out.push((p, rel));
+            }
+        }
+    }
+    // Tri canonique : independant de l'ordre de read_dir (FS-
+    // dependant sous Windows) — la reproductibilite du manifest en
+    // depend.
+    out.sort_by(|a, b| a.1.cmp(&b.1));
+    Ok(out)
+}
+
+/// `sign-release` : hash chaque fichier du payload, construit le
+/// manifest, signe avec la clef chargee, ecrit `<out>` et affiche
+/// la clef publique (pour la double-check contre `RELEASE_PUBKEY`).
+#[allow(clippy::too_many_arguments)]
+fn cmd_sign_release(
+    dir: &std::path::Path,
+    key: &std::path::Path,
+    version: &str,
+    target: &str,
+    min_supported: Option<String>,
+    rollback: bool,
+    next_key: Option<PathBuf>,
+    out: Option<PathBuf>,
+) -> Result<(), String> {
+    use sha2::Digest;
+
+    let secret = ReleaseSecret::load(key)?;
+    let sk = secret.signing_key();
+    let pk = sk.verifying_key().to_bytes();
+    let key_id = onionbit_crypto::release::release_key_id(&pk);
+
+    // `next_key` accepte hex (sortie de `gen-release-key`) ou 32
+    // octets bruts — la clef publique n'est pas un secret, pas de
+    // contrainte de transport.
+    let next_key_bytes = match next_key {
+        Some(p) => {
+            let raw = std::fs::read(&p)
+                .map_err(|e| format!("next_key illisible {} : {e}", p.display()))?;
+            let bytes = if let Ok(v) = hex::decode(String::from_utf8_lossy(&raw).trim()) {
+                v
+            } else {
+                raw
+            };
+            Some(
+                <[u8; 32]>::try_from(bytes.as_slice())
+                    .map_err(|_| "next_key : 32 octets attendus".to_string())?,
+            )
+        }
+        None => None,
+    };
+
+    let payload = enumerate_payload(dir)?;
+    if payload.is_empty() {
+        return Err(format!("aucun fichier de payload sous {}", dir.display()));
+    }
+    let mut files = Vec::with_capacity(payload.len());
+    for (abs, rel) in payload {
+        let data = std::fs::read(&abs).map_err(|e| format!("lecture {} : {e}", abs.display()))?;
+        let sha: [u8; 32] = sha2::Sha256::digest(&data).into();
+        files.push(onionbit_format::obupd::ObupFile {
+            path: rel,
+            sha256: sha,
+            size: data.len() as u64,
+        });
+    }
+
+    let manifest = onionbit_format::obupd::UpdateManifest {
+        version: version.to_string(),
+        target: target.to_string(),
+        ts: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|e| format!("horloge : {e}"))?
+            .as_secs() as i64,
+        files,
+        min_supported,
+        rollback,
+        next_key: next_key_bytes,
+        notes: None,
+        key_id,
+    };
+    let enc = onionbit_format::obupd::encode_manifest(&manifest);
+    let sig = onionbit_crypto::release::sign_update_manifest(&sk, &enc);
+    let blob = onionbit_format::obupd::build(&manifest, key_id, &sig);
+
+    let out = out.unwrap_or_else(|| dir.join("update.obup"));
+    std::fs::write(&out, &blob).map_err(|e| format!("ecriture {} : {e}", out.display()))?;
+
+    // La clef publique s'affiche : c'est elle qui remplace
+    // RELEASE_PUBKEY — double-check visuel avant la release.
+    println!("clef publique : {}", hex::encode(pk));
+    println!("key_id        : {key_id:#018x}");
+    println!(
+        "version       : {version}  target={target}  fichiers={}",
+        manifest.files.len()
+    );
+    println!("blob          : {} ({} octets)", out.display(), blob.len());
+    // Le seed de `secret` est zeroize au drop.
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    #[test]
+    fn sign_release_round_trip_verifiable() {
+        // Bundle factice + clef ephemere : le blob produit doit
+        // verifier via `obupd::verify` avec la clef correspondante.
+        let dir = tempfile::tempdir().expect("tmp");
+        let bundle = dir.path().join("bundle");
+        std::fs::create_dir_all(bundle.join("windows")).expect("w");
+        std::fs::write(bundle.join("windows").join("OnionBit.exe"), b"EXE1").expect("f1");
+        std::fs::write(bundle.join("windows").join("daemon.exe"), b"EXE2").expect("f2");
+        std::fs::create_dir_all(bundle.join("state")).expect("s");
+        std::fs::write(
+            bundle.join("state").join("secret.db"),
+            b"state-ne-signe-pas",
+        )
+        .expect("st");
+        let key_path = dir.path().join("rel.key");
+        let seed = [0x42u8; 32];
+        std::fs::write(&key_path, seed).expect("key");
+
+        cmd_sign_release(
+            &bundle,
+            &key_path,
+            "9.9.9",
+            "windows-x64",
+            None,
+            false,
+            None,
+            None,
+        )
+        .expect("sign");
+
+        let blob = std::fs::read(bundle.join("update.obup")).expect("blob");
+        let sk = ed25519_dalek::SigningKey::from_bytes(&seed);
+        let pk = sk.verifying_key().to_bytes();
+        let m = onionbit_format::obupd::verify(&blob, &[pk]).expect("verify");
+        assert_eq!(m.version, "9.9.9");
+        // state/ et le .obup lui-meme exclus ; 2 fichiers payload.
+        assert_eq!(m.files.len(), 2);
+        assert!(m
+            .files
+            .iter()
+            .all(|f| !f.path.starts_with("state/") && !f.path.ends_with(".obup")));
+        assert!(m.files.iter().any(|f| f.path == "windows/OnionBit.exe"));
+    }
+
+    #[test]
+    fn enumeration_deterministe_et_normalisee() {
+        let dir = tempfile::tempdir().expect("tmp");
+        std::fs::create_dir_all(dir.path().join("b").join("c")).expect("mk");
+        std::fs::write(dir.path().join("a.txt"), b"1").expect("w");
+        std::fs::write(dir.path().join("b").join("c").join("z"), b"2").expect("w");
+        std::fs::write(dir.path().join("b").join("y"), b"3").expect("w");
+        let files = enumerate_payload(dir.path()).expect("enum");
+        let rels: Vec<_> = files.iter().map(|(_, r)| r.as_str()).collect();
+        assert_eq!(rels, vec!["a.txt", "b/c/z", "b/y"], "trie et '/'");
+    }
+
+    #[test]
+    fn clef_privee_zeroizee() {
+        // Le wrapper zeroize la graine au drop — verifie par
+        // construction (Drop implemente Zeroize), smoke seulement.
+        let dir = tempfile::tempdir().expect("tmp");
+        let kp = dir.path().join("k");
+        std::fs::write(&kp, [9u8; 32]).expect("w");
+        let s = ReleaseSecret::load(&kp).expect("load");
+        drop(s);
+        // Pas d'acces aux octets post-drop — le test est la forme.
+    }
+
     #[test]
     fn le_squelette_compile() {
         // Les tests d'integration bout en bout (CLI -> API -> session)

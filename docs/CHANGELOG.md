@@ -3,6 +3,20 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Étape 142 — `cli sign-release` : création d'OBUP côté release (ADR-0032) (2026-10-18)
+
+`onionbit-cli` hors-ligne : `gen-release-key --out <f>` (seed 32o,
+0600 Unix, affiche pubkey hex + key_id — la pubkey remplace
+`RELEASE_PUBKEY`, procedure etape 146) et `sign-release --dir
+<bundle> --key <f|-> --version <v> [--target] [--min-supported]
+[--rollback] [--next-key <f-pub>] [--out]` : enumeration recursive
+du payload hors `state/`/`windows.old/`/`*.obup`, separateurs `/` +
+tri canonique (manifest reproductible entre machines), sha256+size,
+ecrit `<dir>/update.obup`. Clef : `ReleaseSecret` zeroize au drop
+(discipline `DbKey`), stdin via `--key -`, jamais d'hex prive en
+argv ni de secret en log. 7 tests verts : round-trip signe→verifie
+avec exclusions, enumeration deterministe, chargement clef.
+
 ## Étape 141 — Spike OBUP format+signature (ADR-0032, GO) (2026-10-18)
 
 Format `OBUP` implantable : `onionbit-format::obupd` (blob magic+
