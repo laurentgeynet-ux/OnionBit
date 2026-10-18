@@ -41,6 +41,7 @@ impl TrayUi {
     }
 
     /// Valeur persistée (`tray/default_ui`).
+    #[cfg_attr(not(windows), allow(dead_code))]
     pub fn as_str(self) -> &'static str {
         match self {
             Self::App => "app",
@@ -52,6 +53,7 @@ impl TrayUi {
 /// Cible effective du double-clic : l'UI préférée si disponible,
 /// sinon l'autre ; `None` si aucune ne l'est (double-clic inerte —
 /// jamais d'ouverture aveugle d'une UI absente).
+#[cfg_attr(not(windows), allow(dead_code))]
 pub fn resolve_ui(preferred: TrayUi, app_available: bool, web_served: bool) -> Option<TrayUi> {
     let available = |ui: TrayUi| match ui {
         TrayUi::App => app_available,

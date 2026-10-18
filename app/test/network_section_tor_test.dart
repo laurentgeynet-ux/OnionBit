@@ -161,7 +161,7 @@ void main() {
     // Sous-section ADR-0030 : titre, toggle proxy, politique de
     // sortie tri-state honnête, champ binaire, pastille conns_active.
     expect(find.text('Browser (.onion)'), findsOneWidget);
-    expect(find.text('Local browser proxy'), findsOneWidget);
+    expect(find.text('Browser connection'), findsOneWidget);
     expect(find.text('Clearnet exit via Tor'), findsOneWidget);
     expect(find.text('Browser binary'), findsOneWidget);
     expect(find.text('proxy 127.0.0.1:54321'), findsOneWidget);
@@ -169,7 +169,7 @@ void main() {
 
     // Le toggle proxy sauvegarde immédiatement
     // `tor.browser_proxy.enabled` (hot-swap de la pile Tor).
-    await tester.tap(find.text('Local browser proxy'));
+    await tester.tap(find.text('Browser connection'));
     await tester.pumpAndSettle();
     expect(repo.patches, [
       {
