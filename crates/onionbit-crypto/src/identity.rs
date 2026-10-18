@@ -37,6 +37,7 @@ const INFO_BRIDGE: &[u8] = b"onionbit/identity/bridge/v1";
 const INFO_TOR_HS: &[u8] = b"onionbit/identity/tor-hs/v1";
 const INFO_TOR_VAULT_HS: &[u8] = b"onionbit/identity/tor-hs-vault/v1";
 const INFO_TOR_VAULT_CLIENT: &[u8] = b"onionbit/identity/tor-hs-client/v1";
+const INFO_DB_KEY: &[u8] = b"onionbit/db-key/v1";
 
 /// Domaine de la signature liant une adresse `.onion` a une identite
 /// IPv8 — personas/canaux *publics* uniquement, opt-in explicite
@@ -176,6 +177,20 @@ pub fn derive_tor_vault_client_seed(root: &[u8; 32]) -> [u8; 32] {
     Hkdf::<sha2::Sha256>::from_prk(root)
         .expect("32 octets > HKDF min")
         .expand(INFO_TOR_VAULT_CLIENT, &mut out)
+        .expect("32 octets < limite HKDF");
+    out
+}
+
+/// Cle brute de la base locale sqlite3mc (ADR-0031, etape 137) —
+/// domaine dedie `db-key/v1`, jamais la cle de signature ni un blob
+/// portable. Meme racine que `tor-hs` : `store_root` = graine en
+/// `Seeded`, `SHA-256(keypair)` en `Legacy` — le dechiffrement suit
+/// l'identite quelle que soit l'installation.
+pub fn derive_db_key_seed(root: &[u8; 32]) -> [u8; 32] {
+    let mut out = [0u8; 32];
+    Hkdf::<sha2::Sha256>::from_prk(root)
+        .expect("32 octets > HKDF min")
+        .expand(INFO_DB_KEY, &mut out)
         .expect("32 octets < limite HKDF");
     out
 }

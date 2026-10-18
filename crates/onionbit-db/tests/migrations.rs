@@ -37,7 +37,7 @@ fn migration_v1_vers_courant_conserve_les_donnees() {
     }
 
     // Ouverture via l'API du crate : migre vers SCHEMA_VERSION.
-    let db = Database::open(&path).unwrap();
+    let db = Database::open(&path, None).unwrap();
     db.with(|c| {
         let v: i64 = c.pragma_query_value(None, "user_version", |r| r.get(0))?;
         assert_eq!(v, SCHEMA_VERSION);
@@ -57,7 +57,7 @@ fn migration_v1_vers_courant_conserve_les_donnees() {
 fn ouverture_idempotente_ne_rejoue_pas_les_migrations() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("onionbit.db");
-    let db = Database::open(&path).unwrap();
+    let db = Database::open(&path, None).unwrap();
     db.with(|c| {
         c.execute("INSERT INTO misc (name, value) VALUES ('k', 'v')", [])?;
         Ok(())
@@ -66,7 +66,7 @@ fn ouverture_idempotente_ne_rejoue_pas_les_migrations() {
     drop(db);
     // Reouverture : pas de re-migration (les CREATE TABLE
     // echoueraient sur un schema deja present).
-    let db = Database::open(&path).unwrap();
+    let db = Database::open(&path, None).unwrap();
     db.with(|c| {
         let v: String = c.query_row("SELECT value FROM misc WHERE name='k'", [], |r| r.get(0))?;
         assert_eq!(v, "v");
@@ -85,7 +85,7 @@ fn base_plus_recente_que_le_crate_refusee() {
         conn.pragma_update(None, "user_version", SCHEMA_VERSION + 1)
             .unwrap();
     }
-    let res = Database::open(&path);
+    let res = Database::open(&path, None);
     assert!(res.is_err(), "base v{} acceptee", SCHEMA_VERSION + 1);
 }
 
@@ -108,7 +108,7 @@ fn migration_v3_reglages_par_download_roundtrip() {
         .unwrap();
     }
 
-    let db = Database::open(&path).unwrap();
+    let db = Database::open(&path, None).unwrap();
     db.with(|c| {
         // Colonnes v3 presentes avec leurs defauts.
         let row = onionbit_db::downloads::get(c, &[0x22u8; 20])?.unwrap();

@@ -29,7 +29,12 @@ fn is_opaque_name(name: &str) -> bool {
 #[tokio::test]
 async fn private_add_ligne_opaque_et_manifeste() {
     let dir = tempfile::tempdir().unwrap();
-    let cfg = CoreConfig::offline(dir.path().to_path_buf());
+    let mut cfg = CoreConfig::offline(dir.path().to_path_buf());
+    // ADR-0031 : l'oracle `rusqlite::Connection` direct lit le
+    // fichier — incompatible avec la base chiffree. Ce qui est
+    // verifie ici est l'opacite de la LIGNE (cle HMAC, pas de
+    // nom/infohash en clair), invariant independant du codec.
+    cfg.db_encrypted = false;
     let bytes = onionbit_test_support::test_torrent_bytes("secret.bin", 42);
     let meta = onionbit_format::torrent::TorrentMeta::parse(&bytes).unwrap();
     let ih = meta.info_hash_hex();

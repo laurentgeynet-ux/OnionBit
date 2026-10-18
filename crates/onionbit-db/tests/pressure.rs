@@ -208,7 +208,7 @@ fn disk_hammer(dir: &std::path::Path, stop: &AtomicBool) {
 
 fn scenario(nom: &str, batched: bool, hammer: bool) {
     let dir = tempfile::tempdir().expect("tempdir");
-    let db = Arc::new(Database::open(&dir.path().join("bench.db")).expect("open"));
+    let db = Arc::new(Database::open(&dir.path().join("bench.db"), None).expect("open"));
     let ihs = seed(&db);
     let stop = AtomicBool::new(false);
     let tick_s = Samples::default();

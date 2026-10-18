@@ -23,4 +23,9 @@ pub enum DbError {
     /// Champ obligatoire absent ou de type inattendu.
     #[error("donnee corrompue : {0}")]
     Corrupt(String),
+    /// Base chiffree sqlite3mc illisible a l'ouverture : clef
+    /// absente ou ne correspond pas (jamais confondu avec
+    /// `Corrupt` — l'UI peut dire « mauvaise identite »).
+    #[error("base chiffree illisible (clef absente ou invalide)")]
+    Encrypted,
 }

@@ -519,7 +519,23 @@ impl CoreSession {
         // du shell est definitive.
         let guest = material.as_ref().is_some_and(|m| m.guest);
         if !guest && config.db_filename != ":memory:" {
-            let db = Database::open(&config.db_path())?;
+            // ADR-0031 etape 137 : la cle codec derive de
+            // `store_root` (HKDF `db-key/v1`) — disponible ici parce
+            // que `try_start_identity` resout l'identite avant
+            // l'ouverture. Sans materiel (`material=None`, stack
+            // off) ou `db_encrypted=false` → cle absente : une base
+            // claire s'ouvre normalement, une base chiffree existe
+            // deja → `DbError::Encrypted` fail-closed.
+            let key = if config.db_encrypted {
+                material.as_ref().map(|m| {
+                    onionbit_db::DbKey::new(onionbit_crypto::identity::derive_db_key_seed(
+                        &m.store_root,
+                    ))
+                })
+            } else {
+                None
+            };
+            let db = Database::open(&config.db_path(), key.as_ref())?;
             *self.inner.db.write().unwrap_or_else(|e| e.into_inner()) = Arc::new(db);
         }
         let db = self.inner.db_arc();

@@ -3,6 +3,54 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## ADR-0030 amendée — services de profil délégués au daemon (2026-10-18)
+
+Ajout §6 « Services de profil » (v2, requiert DPI phase 8 dillorust) :
+en mode suite, le plugin bookmarks parle l'API REST loopback du daemon
+au lieu d'écrire `bm.txt` — table `browser_bookmarks` dans
+`onionbit-db`, chiffrée gratuitement par le codec ADR-0031 et portable
+via le coffre `OBV1` (même identité → mêmes bookmarks partout). Le
+daemon reste l'unique propriétaire de la DB — jamais d'ouverture
+directe du fichier par le navigateur. §5 clarifiée : historique
+toujours éphémère (empreinte subie), seuls les bookmarks sont une
+trace *voulue* — chiffrée et liée à l'identité.
+
+## Étape 137 — Clef DB + cycle de vie (ADR-0031) (2026-10-18)
+
+La base locale est desormais chiffree par defaut : la clef du
+codec sqlite3mc `chacha20` derive de la racine d'identite —
+aucune persistance, aucune passphrase supplementaire.
+
+- **`DbKey`** (`onionbit-db::key`) : `[u8;32]` `ZeroizeOnDrop`,
+  ni `Copy`/`Clone`/`Debug` — une seule copie, jamais loggee.
+- **Derivation** : `derive_db_key_seed` (`onionbit-crypto`) —
+  HKDF-SHA256(`store_root`, `"onionbit/db-key/v1"`), meme racine
+  que `tor-hs/v1` : graine en `Seeded`, `SHA-256(keypair)` en
+  `Legacy` → le dechiffrement suit l'identite, installations
+  anciennes comprises.
+- **`Database::open(path, Option<&DbKey>)`** : sonde magic a
+  froid (`sniff_plaintext`) — `SQLite format 3\0` = legacy clair
+  (ouverture sans clef + warn « migration differee etape 138 »),
+  fichier neuf = creation chiffree, sinon = chiffree. Ordre
+  `cipher`→`key`→probe→`configure()` : la clef precede **tout**
+  acces page. Le `PRAGMA key="x'<hex>'"` est construit dans un
+  buffer fixe `KeyPragma` zeroize — pas de `String` heap.
+- **`DbError::Encrypted`** : erreur typee sur base chiffree
+  illisible (clef absente ou mauvaise) — jamais `Corrupt` ;
+  l'UI pourra dire « mauvaise identite » plutot que « base
+  corrompue ».
+- **Config** : `database.encrypted` (`true` par defaut) —
+  `DatabaseFileConfig` remplace `EnabledSection`, propage a
+  `CoreConfig.db_encrypted`, applique dans `try_start_identity`
+  depuis `store_root`. Invitee + `Database::memory()` : hors
+  scope, inchanges.
+- **Tests** : `tests/encrypted.rs` (5) — cycle chiffre via la
+  vraie API, `Encrypted` sans clef / mauvaise clef, legacy clair
+  ouvert malgre clef, opt-out, memoire hors scope. Suites : db
+  44, core 153 + ~70 integration, api 107. Deux oracles de tests
+  (`queue`, `private_zone`) opt-out — ils sondent le fichier
+  brut, independant de ce qu'ils verifient.
+
 ## Étape 136 — Spike sqlite3mc : link + cipher = GO (2026-10-18)
 
 Le jalon de décision d'ADR-0031 est franchi : SQLite3 Multiple

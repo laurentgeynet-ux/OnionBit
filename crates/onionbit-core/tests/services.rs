@@ -143,7 +143,7 @@ async fn torrent_checker_udp_scrape() {
     });
 
     let dir = tempfile::tempdir().unwrap();
-    let db = Arc::new(Database::open(&dir.path().join("t.db")).unwrap());
+    let db = Arc::new(Database::open(&dir.path().join("t.db"), None).unwrap());
     let notifier = Notifier::new();
     let checker = TorrentChecker::new(
         db,
@@ -202,7 +202,7 @@ async fn torrent_checker_udp_scrape_decoupe_en_lots() {
     }
 
     let dir = tempfile::tempdir().unwrap();
-    let db = Arc::new(Database::open(&dir.path().join("t.db")).unwrap());
+    let db = Arc::new(Database::open(&dir.path().join("t.db"), None).unwrap());
     let checker = TorrentChecker::new(
         db,
         Notifier::new(),
@@ -243,7 +243,7 @@ async fn torrent_checker_never_scrapes_anonymous_infohash() {
     }
 
     let dir = tempfile::tempdir().unwrap();
-    let db = Arc::new(Database::open(&dir.path().join("t.db")).unwrap());
+    let db = Arc::new(Database::open(&dir.path().join("t.db"), None).unwrap());
     let mut ih = [0u8; 20];
     ih[0] = 0x42;
     let tracker_url = format!("udp://{tracker_addr}");
@@ -328,7 +328,7 @@ async fn torrent_checker_replie_sur_trackers_propres() {
     }
 
     let dir = tempfile::tempdir().unwrap();
-    let db = Arc::new(Database::open(&dir.path().join("t.db")).unwrap());
+    let db = Arc::new(Database::open(&dir.path().join("t.db"), None).unwrap());
     let mut ih = [0u8; 20];
     ih[0] = 0x43;
     // Download en clair dont le magnet porte son propre tracker ;
@@ -386,7 +386,7 @@ async fn torrent_checker_replie_sur_trackers_propres() {
 #[tokio::test(flavor = "multi_thread")]
 async fn torrent_checker_consomme_ligne_sans_tracker() {
     let dir = tempfile::tempdir().unwrap();
-    let db = Arc::new(Database::open(&dir.path().join("t.db")).unwrap());
+    let db = Arc::new(Database::open(&dir.path().join("t.db"), None).unwrap());
     let mut ih = [0u8; 20];
     ih[0] = 0x44;
     db.with(|c| onionbit_db::health::upsert_torrent_state(c, &ih))
@@ -422,7 +422,7 @@ async fn torrent_checker_consomme_ligne_sans_tracker() {
 #[tokio::test(flavor = "multi_thread")]
 async fn torrent_checker_selection_consomme_pool_borne() {
     let dir = tempfile::tempdir().unwrap();
-    let db = Arc::new(Database::open(&dir.path().join("t.db")).unwrap());
+    let db = Arc::new(Database::open(&dir.path().join("t.db"), None).unwrap());
     // 6 lignes perimees (last_check = 0), 1 fraiche, 1 perimee mais
     // anonyme (`anon_hops > 0` — jamais scrapee, jamais touchee).
     let mut stale_ihs = Vec::new();

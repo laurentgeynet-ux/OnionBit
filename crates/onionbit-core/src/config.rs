@@ -205,6 +205,11 @@ pub struct CoreConfig {
     pub downloads_dir: PathBuf,
     /// Nom du fichier de base (relatif a `state_dir`).
     pub db_filename: String,
+    /// `database.encrypted` (ADR-0031) : la base est chiffree par le
+    /// codec sqlite3mc `chacha20` avec une cle HKDF `db-key/v1` de
+    /// `store_root`. `false` = opt-out documente (interop/diagnostic)
+    /// — une base deja chiffree n'est jamais retrogradee en clair.
+    pub db_encrypted: bool,
     /// Intervalle de publication des stats de progression.
     pub progress_interval_ms: u64,
     /// Politique anti-SSRF appliquee aux URI distantes (`http(s)`)
@@ -267,6 +272,7 @@ impl Default for CoreConfig {
             state_dir: PathBuf::from(".onionbit"),
             downloads_dir: PathBuf::from("downloads"),
             db_filename: "onionbit.db".into(),
+            db_encrypted: true,
             progress_interval_ms: DEFAULT_PROGRESS_INTERVAL_MS,
             ip_policy: onionbit_network_policy::IpPolicy::strict(),
             watch_folder_dir: None,
@@ -308,6 +314,7 @@ impl CoreConfig {
             downloads_dir: downloads,
             state_dir,
             db_filename: "onionbit.db".into(),
+            db_encrypted: true,
             progress_interval_ms: DEFAULT_PROGRESS_INTERVAL_MS,
             ip_policy: onionbit_network_policy::IpPolicy::permissive(),
             watch_folder_dir: None,

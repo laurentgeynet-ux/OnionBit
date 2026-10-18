@@ -35,6 +35,11 @@ async fn queue_manager_pause_et_reprend_les_auto_managed() {
     cfg.queue.active_downloads = 1;
     cfg.queue.active_seeds = -1;
     cfg.queue.active_limit = -1;
+    // ADR-0031 : la session chiffre `onionbit.db` avec la cle de
+    // son identite — le test sonde le fichier directement (pas
+    // via `db_arc`, pub(crate)) → opt-out explicite, la
+    // persistance du flag `paused` est ce qui est verifie ici.
+    cfg.db_encrypted = false;
     let session = CoreSession::start(cfg, Notifier::new())
         .await
         .expect("start");
@@ -81,7 +86,7 @@ async fn queue_manager_pause_et_reprend_les_auto_managed() {
     // La pause de file n'est pas une pause utilisateur : `paused`
     // persiste a false en base.
     let ih_b = onionbit_crypto::hash::from_hex(&hb).unwrap();
-    let db = onionbit_db::Database::open(&dir.path().join("onionbit.db")).unwrap();
+    let db = onionbit_db::Database::open(&dir.path().join("onionbit.db"), None).unwrap();
     let paused_flag = db
         .with(|c| onionbit_db::downloads::get(c, &ih_b))
         .unwrap()

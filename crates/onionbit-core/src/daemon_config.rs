@@ -916,6 +916,32 @@ impl Default for EnabledSection {
     }
 }
 
+/// Section `database` — `enabled` Python (composant DB) + `encrypted`
+/// (ADR-0031 : codec sqlite3mc `chacha20`, cle HKDF `db-key/v1` de
+/// `store_root`; `true` par defaut, opt-out interop/diagnostic).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DatabaseFileConfig {
+    /// Composant actif (`false` = fonctionnement sans persistance,
+    /// base `:memory:` — meme repli que `--memory-db`).
+    pub enabled: bool,
+    /// Chiffrement local de la base (`true` par defaut).
+    pub encrypted: bool,
+    /// Clés additionnelles — préservées.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, Value>,
+}
+
+impl Default for DatabaseFileConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            encrypted: true,
+            extra: serde_json::Map::new(),
+        }
+    }
+}
+
 /// Section `tray` — icône de zone de notification du daemon.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -1535,8 +1561,8 @@ pub struct DaemonConfig {
     /// Section `tor` — connectivité Tor embarquée ADR-0028
     /// (extension, désactivée par défaut).
     pub tor: TorFileConfig,
-    /// Section `database`.
-    pub database: EnabledSection,
+    /// Section `database` (`enabled` Python + `encrypted` ADR-0031).
+    pub database: DatabaseFileConfig,
     /// Section `dht_discovery`.
     pub dht_discovery: EnabledSection,
     /// Section `content_discovery_community`.
@@ -1594,7 +1620,7 @@ impl Default for DaemonConfig {
             storage: StorageConfig::default(),
             privacy: crate::privacy::PrivacyFileConfig::default(),
             tor: TorFileConfig::default(),
-            database: EnabledSection::enabled(),
+            database: DatabaseFileConfig::default(),
             dht_discovery: EnabledSection::enabled(),
             content_discovery_community: EnabledSection::enabled(),
             recommender: EnabledSection::enabled(),
@@ -2240,6 +2266,7 @@ impl DaemonConfig {
             } else {
                 "onionbit.db".into()
             },
+            db_encrypted: self.database.encrypted,
             ip_policy: onionbit_network_policy::IpPolicy::strict(),
             watch_folder_dir: (self.watch_folder.enabled
                 && !self.watch_folder.directory.is_empty())

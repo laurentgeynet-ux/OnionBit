@@ -15,7 +15,7 @@ use std::sync::Mutex;
 
 use rusqlite::Connection;
 
-use crate::{migrations, Result};
+use crate::{migrations, DbError, DbKey, Result};
 
 /// Duree au-dela de laquelle une operation SQLite est loggee en
 /// `warn!` — diagnostic perf. 1 s : en dessous, la contention usuelle
@@ -48,11 +48,41 @@ impl std::fmt::Debug for Database {
 
 impl Database {
     /// Ouvre (ou cree) la base a `path` et applique les migrations.
-    pub fn open(path: &Path) -> Result<Self> {
+    ///
+    /// `key` (ADR-0031) : `Some` = codec sqlite3mc `chacha20` —
+    /// `PRAGMA cipher` puis `PRAGMA key` sont poses **avant tout
+    /// acces page** (`configure()` pose `journal_mode` qui lit deja
+    /// des pages). La detection a froid distingue trois cas :
+    ///
+    /// - fichier absent/vide → creation chiffree directe ;
+    /// - magic `SQLite format 3\0` present → base legacy en clair :
+    ///   ouverture sans clef (migration differee, etape 138) ;
+    /// - sinon → base chiffree : clef exigee, une premiere lecture
+    ///   qui echoue est rapportee [`DbError::Encrypted`] — mauvaise
+    ///   clef ou corruption de la premiere page, jamais `Corrupt`.
+    pub fn open(path: &Path, key: Option<&DbKey>) -> Result<Self> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
+        let plaintext = sniff_plaintext(path)?;
         let mut conn = Connection::open(path)?;
+        if let Some(k) = key.filter(|_| plaintext != Some(true)) {
+            // Ordre ADR-0031 §2 : `cipher` n'agit qu'a la creation/
+            // rekey ; le poser aussi a la reouverture est inoffensif
+            // et couvre les bases d'un ancien default.
+            conn.execute_batch("PRAGMA cipher='chacha20'")?;
+            let pragma = k.pragma();
+            conn.execute_batch(pragma.as_str())?;
+        }
+        // Premiere lecture reelle : sur base chiffree un echec ici
+        // = clef absente/invalide → erreur typee, pas `Corrupt`.
+        if plaintext == Some(false) {
+            probe_schema(&conn)?;
+        }
+        if plaintext == Some(true) && key.is_some() {
+            tracing::warn!(path = %path.display(),
+                "base legacy en clair — migration chiffree differee (ADR-0031 etape 138)");
+        }
         configure(&conn)?;
         migrations::migrate(&mut conn)?;
         optimize(&conn);
@@ -187,6 +217,42 @@ impl Database {
 
 /// Reglages de connexion communs (journal WAL, foreign keys,
 /// pragmas de performance).
+/// Detection du format a froid (ADR-0031 §3) : `Some(true)` = magic
+/// `SQLite format 3\0` present → base legacy en clair ; `Some(false)`
+/// = magic absent → base chiffree sqlite3mc (la page 1 entiere est
+/// chiffree, en-tete compris) ; `None` = fichier absent ou vide →
+/// creation. La lecture est volontairement hors `Connection` : poser
+/// `key` sur une base claire la rendrait illisible.
+fn sniff_plaintext(path: &Path) -> Result<Option<bool>> {
+    let mut f = match std::fs::File::open(path) {
+        Ok(f) => f,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e.into()),
+    };
+    let mut head = [0u8; 16];
+    let n = {
+        use std::io::Read;
+        f.read(&mut head)?
+    };
+    Ok(match n {
+        // Fichier vide = creation ; <16 octets = ni clair ni
+        // chiffre valide → traite comme chiffre (probe_decide).
+        0 => None,
+        _ => Some(n == 16 && &head == b"SQLite format 3\0"),
+    })
+}
+
+/// Premiere lecture reelle du schema — sur base chiffree, echec =
+/// clef absente ou invalide (la page 1 ne s'authentifie pas) →
+/// [`DbError::Encrypted`], distinct d'une corruption en clair.
+fn probe_schema(conn: &Connection) -> Result<()> {
+    conn.query_one("SELECT count(*) FROM sqlite_master", [], |r| {
+        r.get::<_, i64>(0)
+    })
+    .map(|_| ())
+    .map_err(|_| DbError::Encrypted)
+}
+
 fn configure(conn: &Connection) -> Result<()> {
     conn.pragma_update(None, "foreign_keys", true)?;
     // WAL n'a de sens que pour une base fichier ; en memoire c'est un
