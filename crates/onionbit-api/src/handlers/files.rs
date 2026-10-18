@@ -22,17 +22,25 @@ const SEPARATOR: &str = if cfg!(windows) { "\\" } else { "/" };
 /// listing brut exposerait la topologie chiffree. `path` sous
 /// `data/private` (ou le spec `@private/…`) → `403`.
 fn refuse_private(state: &AppState, path: &std::path::Path) -> Result<(), ApiError> {
-    let resolved = state
-        .session
-        .paths()
+    let paths = state.session.paths();
+    let resolved = paths
         .resolve_input(path)
         .unwrap_or_else(|_| path.to_path_buf());
     let resolved = resolved.canonicalize().unwrap_or(resolved);
-    if state
-        .session
-        .paths()
-        .to_portable(&resolved)
-        .is_some_and(|s| s == "@private" || s.starts_with("@private/"))
+    // La forme canonique peut diverger de la racine stockee a cause
+    // d'un lien symbolique (`/var` → `/private/var` sous macOS, ou un
+    // symlink de l'utilisateur) : `to_portable` etant lexicale, la
+    // racine privee est canonisee de la meme facon pour le
+    // `starts_with` (comparaison par composants — `/data/privateX`
+    // ne matche pas `/data/private`).
+    let private = paths.private();
+    let private_canon = private
+        .canonicalize()
+        .unwrap_or_else(|_| private.to_path_buf());
+    if resolved.starts_with(&private_canon)
+        || paths
+            .to_portable(&resolved)
+            .is_some_and(|s| s == "@private" || s.starts_with("@private/"))
     {
         return Err(ApiError::forbidden(
             "the private storage area is not browsable",
