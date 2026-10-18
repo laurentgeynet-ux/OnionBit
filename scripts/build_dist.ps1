@@ -250,14 +250,14 @@ try {
                 Write-Host "== cargo build dillo ($BuildProfile, $DilloSource) ==" -ForegroundColor Cyan
                 cargo build --profile $cargoProfile -p dillo --manifest-path (Join-Path $DilloSource 'Cargo.toml')
                 if ($LASTEXITCODE -ne 0) { throw "cargo build dillo a echoue ($LASTEXITCODE)" }
-                $dilloSrc = Join-Path $DilloSource "target\$BuildProfile\dillo.exe"
+                $dilloSrc = Join-Path $DilloSource "target\$BuildProfile\onionbit-browser.exe"
             } else {
                 Write-Host "   dillorust absent ($DilloSource) — bundle sans navigateur" -ForegroundColor Yellow
             }
         }
     }
     if ($dilloSrc -ne "") {
-        if (-not (Test-Path $dilloSrc)) { throw "dillo.exe introuvable : $dilloSrc" }
+        if (-not (Test-Path $dilloSrc)) { throw "onionbit-browser.exe introuvable : $dilloSrc" }
         $binDir = Join-Path $osDir "bin"
         New-Item -ItemType Directory -Force -Path $binDir | Out-Null
         Copy-Item $dilloSrc (Join-Path $binDir "onionbit-browser.exe") -Force

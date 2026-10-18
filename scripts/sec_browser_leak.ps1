@@ -93,9 +93,9 @@ try {
         Log "build dillo.exe ($DilloSource)"
         & cmd /c "cargo build -p dillo --manifest-path `"$DilloSource\Cargo.toml`" 1> `"$OutDir\build_dillo.log`" 2>&1"
         if ($LASTEXITCODE -ne 0) { throw "build dillo echoue (voir build_dillo.log)" }
-        $DilloBin = Join-Path $DilloSource 'target\debug\dillo.exe'
+        $DilloBin = Join-Path $DilloSource 'target\debug\onionbit-browser.exe'
     }
-    if (-not (Test-Path $DilloBin)) { throw "dillo.exe introuvable : $DilloBin" }
+    if (-not (Test-Path $DilloBin)) { throw "onionbit-browser.exe introuvable : $DilloBin" }
 
     if (-not $SkipDaemonBuild) {
         Log "build onionbit-daemon --features tor"
