@@ -3,6 +3,21 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## ADR-0032 — Releases signées `OBUPD` (Proposée, 2026-10-18)
+
+Format d'artefact de mise a jour signe `OBUP` : magic + Ed25519
+sur manifest bencode (domaine `onionbit/update-manifest/v1`) —
+`v` semver, `sha256`+`size` par fichier du payload, `min_supported`,
+`next_key` de rotation. Importe par l'utilisateur, jamais fetche
+(la sonde `versions/check` reste absente par decision vie privee).
+Deux verifications : le daemon a l'import (`/api/versioning/import`,
+staging `state/update/`), le launcher au swap (re-verification
+signature + hashes avant de remplacer `windows/` — defense en
+profondeur contre un state dir modifie entre les deux). Clef de
+release hors-ligne embarquee en const partagee. Anti-downgrade par
+defaut, rollback signe explicite. Plan : `roadmap_adr0032.md`,
+spike GO/NO-GO en etape 141.
+
 ## Étape 140 — Clôture ADR-0031 (2026-10-18)
 
 Chiffrement de la base locale livre de bout en bout (codec
