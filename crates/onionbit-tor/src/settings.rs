@@ -129,7 +129,7 @@ impl Default for BrowserProxySettings {
 /// jamais d'argv pilote par l'appelant.
 #[derive(Debug, Clone, Default)]
 pub struct BrowserSettings {
-    /// Chemin du binaire (`bin/dillo.exe` dans le bundle). Vide =
+    /// Chemin du binaire (`bin/onionbit-browser.exe` dans le bundle). Vide =
     /// navigateur non configure → `browser_not_configured`.
     /// Relatif : resolu par rapport au repertoire de l'executable
     /// du daemon (arborescence portable ADR-0018).

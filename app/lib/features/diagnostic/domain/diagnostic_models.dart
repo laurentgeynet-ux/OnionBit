@@ -621,6 +621,7 @@ class BrowserProxyStatus {
     required this.enabled,
     required this.listen,
     required this.connsActive,
+    this.isolationEntries = 0,
   });
 
   /// Listener ouvert (`tor.browser_proxy.enabled` appliqué).
@@ -633,6 +634,10 @@ class BrowserProxyStatus {
   /// Connexions navigateur actives (compteur RAII du proxy).
   final int connsActive;
 
+  /// Origines d'isolation vivantes (un token arti par service
+  /// `.onion` — circuits distincts par origine, étape 135).
+  final int isolationEntries;
+
   static const off = BrowserProxyStatus(
     enabled: false,
     listen: null,
@@ -644,6 +649,7 @@ class BrowserProxyStatus {
         enabled: j['enabled'] == true,
         listen: j['listen'] is String ? j['listen'] as String : null,
         connsActive: (j['conns_active'] as num?)?.toInt() ?? 0,
+        isolationEntries: (j['isolation_entries'] as num?)?.toInt() ?? 0,
       );
 }
 

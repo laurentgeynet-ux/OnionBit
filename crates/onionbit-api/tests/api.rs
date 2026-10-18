@@ -6296,6 +6296,9 @@ async fn tor_status_expose_browser_proxy() {
     let listen = body["browser_proxy"]["listen"].as_str().unwrap();
     assert!(listen.starts_with("127.0.0.1:"), "{listen}");
     assert_eq!(body["browser_proxy"]["conns_active"], 0);
+    // Etape 135 : la table d'isolation (un token par origine) est
+    // exposee — 0 origine tant que rien n'a transite par le proxy.
+    assert_eq!(body["browser_proxy"]["isolation_entries"], 0);
     srv.session.stop().await;
 }
 

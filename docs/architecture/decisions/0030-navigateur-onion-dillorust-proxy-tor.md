@@ -1,7 +1,9 @@
 # ADR-0030 — Navigateur `.onion` embarqué (DilloRust) : proxy Tor loopback, navigateur jetable
 
-Statut : **Proposée** (2026-10-17) — jalons de décision 129-130
-(arbitrage §8 + spike proxy) avant tout code.
+Statut : **Implantée** (129-135 livrées, 2026-10-18) — réserves
+consignées : fingerprinting passif Dillo assumé, `keep_profile`
+opt-in, E2E multi-origines exercés par le banc
+`sec_browser_leak.ps1 -SecondOnionHost` (verdict §135).
 Plan d'implantation : `docs/plans/roadmap_adr0030.md` (étapes 129-135).
 Dépend de l'ADR-0028 v1 (runtime Tor sortant livré) ; complète la
 trajectoire amorcée par l'ADR-0029 (adresses `.onion` devenues
@@ -85,7 +87,7 @@ aucune résolution DNS, aucune connaissance arti.
 app Flutter ──POST /api/browser/launch {url}──▶ daemon
                                                  │ spawn
                                                  ▼
-   dillo.exe  ──http_proxy=127.0.0.1:P──▶ TorProxyServer (onionbit-tor)
+   onionbit-browser.exe ──http_proxy=127.0.0.1:P──▶ TorProxyServer (onionbit-tor)
    (dillorust)      GET http://x.onion/  │   ├─ politique cibles (§4)
                     CONNECT h:443        │   ├─ auth token (§3)
                      │  │                │   ├─ isolation par origine (§3)
@@ -233,7 +235,7 @@ contrat minimal — chaque point est vérifiable par les tests §roadmap :
   `POST /api/browser/launch`. Le bouton est grisé honnête quand le
   navigateur n'est pas configuré (règle ADR-0028 §8 — jamais de
   joignabilité inexistante affichée).
-- **Distribution** : `dillo.exe` (nom de bundle à figer — jalon 129)
+- **Distribution** : `onionbit-browser.exe` (nom figé — §8.2, étape 135)
   embarqué dans le bundle Windows du lanceur ADR-0018 ; chemins
   relatifs à l'arborescence portable. Linux : même binaire, même
   contrat.
@@ -273,7 +275,7 @@ contrat minimal — chaque point est vérifiable par les tests §roadmap :
     "idle_timeout_ms": 120000
   },
   "browser": {
-    "binary_path": "bin/dillo.exe",
+    "binary_path": "bin/onionbit-browser.exe",
     "extra_args": []
   }
 }
@@ -321,10 +323,10 @@ en dur : tout seuil vit ici (règle AGENTS).
    `dillorc` du profil jetable, ou `require_auth=false` + loopback
    seul. Arbitrage au spike.
 2. **Nom et forme du binaire** : `dillo.exe` amont ou
-   `onionbit-browser` rebrandé ? Le pilote actuel est `minidoc` +
-   `file://` — le premier vrai shell (phase 6 dillorust) fixera le
-   point d'entrée CLI (`<binary> <url>`) auquel `browser.binary_path`
-   + `extra_args` se conforment.
+   `onionbit-browser` rebrandé ? **Tranché en 135** :
+   `bin\onionbit-browser.exe` — le binaire source reste `dillo.exe`
+   (crate `dillo` du port, fidélité de nommage interne), la copie de
+   bundle porte le nom produit. Point d'entrée `<binary> <url>` conforme.
 3. **`allow_clearnet_exit`** : défaut `false` proposé — confirmer ou
    passer à un tri-state (`off` / `https-only` / `on`) : refuser
    l'HTTP clair en sortie mais autoriser l'HTTPS vía exit est un
@@ -431,10 +433,10 @@ canonique — à trancher à la productisation, documenté ici).
    (étape 130) ; sinon `http_proxyuser`/`set_proxy_passwd` du
    dillorc éphémère. Jamais d'auth en clair hors loopback — le
    listener n'écoute de toute façon pas hors loopback.
-2. **Nom du binaire** : pas de décision au spike — le contrat est le
-   proxy, pas le CLI ; `onionbit-browser` (rebrandé) reste le nom
-   retenu, la forme `<binary> <url>` se fixera avec la phase 6
-   dillorust (`browser.binary_path` + `extra_args` en config).
+2. **Nom du binaire** : **tranché en 135 — `onionbit-browser.exe`**
+   (nom produit du bundle ; le binaire source du port reste
+   `dillo.exe`, renommé à la copie par `build_dist.ps1`). Forme
+   `<binary> <url>` conforme — `binary_path` + `extra_args` en config.
 3. **`allow_clearnet_exit`** : confirmé **tri-state** `off` /
    `https-only` / `on`, défaut **`off`** — le spike n'autorise que
    `.onion` ; un mode `https-only` (CONNECT :443 clearnet vía exit,
@@ -673,10 +675,10 @@ la session) ; `true` : profil stable `browser/` — persistance
 assumée en clair, choix utilisateur explicite. Balayage des
 `run-*` orphelins (daemon tué) à chaque `respawn_browser_proxy`.
 
-**Bundle** : `build_dist.ps1` stage `windows\bin\dillo.exe`
+**Bundle** : `build_dist.ps1` stage `windows\bin\onionbit-browser.exe`
 (`-DilloSource`/`~\dillorust` par défaut, `-DilloBin` binaire prêt,
-`-NoDillo` forcer l'absence) — `binary_path="bin\dillo.exe"` résolu
-relativement au dossier du daemon, portable à 100 %.
+`-NoDillo` forcer l'absence) — `binary_path="bin\onionbit-browser.exe"`
+résolu relativement au dossier du daemon, portable à 100 %.
 
 **Mesure** (`scripts/sec_browser_leak.ps1` — sans élévation,
 `Get-NetTCPConnection`/`Get-NetUDPEndpoint` filtrés par
@@ -698,3 +700,38 @@ consensus caché) — verdict **NO_LEAK** :
 Faux positifs du banc documentés : `conhost.exe` (enfant OS),
 `Bound`/`Listen` (pas de remote). Le banc est rejouable :
 `pwsh -File scripts/sec_browser_leak.ps1 -OnionHost <hote>.onion`.
+
+### Verdict étape 135 (2026-10) — clôture : nommage, résiduel honnête, E2E multi-origines
+
+**Nommage** : §8.2 tranché — `bin\onionbit-browser.exe` (nom produit
+du bundle ; le binaire source du port reste `dillo.exe`, renommé à
+la copie par `build_dist.ps1` et par le banc de fuite). Références
+mises à jour : `browser.binary_path`, layout `build_dist.ps1`,
+`sec_browser_leak.ps1`.
+
+**Isolation multi-origines mesurée** : `TorProxyServer` expose
+`isolation_entries()` (taille de la table origine→token) ; publié
+dans `GET /api/tor/status → browser_proxy.isolation_entries`.
+Run live `-SecondOnionHost` (TPB + DuckDuckGo `.onion`, même
+session proxy) : **`isolation_entries=2`**, 29 connexions toutes
+loopback→proxy, zéro UDP, zéro enfant, deux profils `run-*` wipés —
+verdict **NO_LEAK**. Les deux origines ont donc roulé sur des
+groupes de circuits arti distincts, preuve live en plus des tests
+unitaires de 131.
+
+**Résiduel honnête consigné** dans `docs/THREAT-MODEL.md` (section
+ADR-0030) : fingerprinting passif Dillo (UA/Accept identifiants
+« navigateur Dillo » — assumé, pas d'uniformisation), proxy
+loopback observable par les processus locaux (`require_auth`),
+`allow_clearnet_exit` exposant la destination à l'exit,
+sous-domaines `.onion` transmis au service, isolation par origine
+(pas par onglet), `keep_profile=true` = trace en clair opt-in,
+partage de la lane Tor avec la recherche.
+
+**Guide utilisateur** : `docs/navigateur_onion.md` (procédure
+non-dev : chemin, proxy, lancement allowlist, `allow_clearnet_exit`,
+garanties/limites, dépannage par `error.code`).
+
+ADR **Implantée** — les réserves sont documentées, pas résolues :
+elles dessinent le périmètre honnête d'un « lecteur `.onion`
+minimal », pas d'un Tor Browser.

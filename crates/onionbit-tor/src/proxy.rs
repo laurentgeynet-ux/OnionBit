@@ -113,6 +113,7 @@ pub struct ProxyMetrics {
 pub struct TorProxyServer {
     addr: SocketAddr,
     metrics: Arc<ProxyMetrics>,
+    isolation: Arc<Mutex<IsolationMap>>,
     accept_loop: tokio::task::JoinHandle<()>,
 }
 
@@ -132,6 +133,18 @@ impl TorProxyServer {
     /// Compteurs vivants du proxy.
     pub fn metrics(&self) -> &Arc<ProxyMetrics> {
         &self.metrics
+    }
+
+    /// Origines d'isolation vivantes dans la table (un token = un
+    /// groupe de circuits arti par service `.onion`) — rend la
+    /// separation multi-origines observable via `/api/tor/status`
+    /// (etape 135). Nombre seul, jamais les origines (ADR-0028 §5).
+    pub fn isolation_entries(&self) -> usize {
+        self.isolation
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .tokens
+            .len()
     }
 }
 
@@ -487,6 +500,7 @@ pub fn serve(rt: TorRuntime, listen: SocketAddr, cfg: ProxyConfig) -> Result<Tor
     let isolation = Arc::new(Mutex::new(IsolationMap::new(cfg.isolation_max_entries)));
     let metrics = Arc::new(ProxyMetrics::default());
     let metrics2 = metrics.clone();
+    let isolation2 = isolation.clone();
     let accept_loop = tokio::spawn(async move {
         loop {
             let permit = match permits.clone().acquire_owned().await {
@@ -515,6 +529,7 @@ pub fn serve(rt: TorRuntime, listen: SocketAddr, cfg: ProxyConfig) -> Result<Tor
     Ok(TorProxyServer {
         addr,
         metrics,
+        isolation: isolation2,
         accept_loop,
     })
 }

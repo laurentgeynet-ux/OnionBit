@@ -1522,7 +1522,7 @@ impl Default for TorBrowserProxyFileConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct TorBrowserFileConfig {
-    /// Chemin du binaire (`bin/dillo.exe` dans le bundle Windows).
+    /// Chemin du binaire (`bin/onionbit-browser.exe` dans le bundle Windows).
     /// Vide = navigateur non configure → `browser_not_configured`.
     /// Relatif : resolu par rapport au repertoire de l'executable
     /// du daemon (arborescence portable ADR-0018).

@@ -27,11 +27,11 @@
 #                                       racine du bundle
 #     windows\onionbit-daemon.exe     - backend Rust (plan de controle)
 #     windows\onionbit-cli.exe
-#     windows\bin\dillo.exe           - navigateur .onion (DilloRust,
+#     windows\bin\onionbit-browser.exe - navigateur .onion (DilloRust,
 #                                       ADR-0030) si -DilloSource/-
 #                                       DilloBin le fournit ;
 #                                       tor.browser.binary_path =
-#                                       "bin\dillo.exe" resolu depuis
+#                                       "bin\onionbit-browser.exe" resolu depuis
 #                                       le dossier du daemon
 #     windows\OnionBit.exe + *.dll + data\  - UI Flutter Windows
 #     windows\web\                    - interface web servie sur
@@ -70,7 +70,7 @@ param(
     # existe), `-DilloBin` embarque un binaire pret, `-NoDillo`
     # force l'absence (la section Navigateur de l'UI rendra alors
     # `browser_not_configured` jusqu'a ce que binary_path soit
-    # renseigne). Le binaire est copie en `windows\bin\dillo.exe` —
+    # renseigne). Le binaire est copie en `windows\bin\onionbit-browser.exe` —
     # chemin relatif portable resolu depuis l'exe du daemon.
     [string]$DilloSource = "",
     [string]$DilloBin = "",
@@ -235,7 +235,7 @@ try {
     foreach ($bin in @("onionbit-daemon.exe", "onionbit-cli.exe")) {
         Copy-Item (Join-Path $cargoOut $bin) -Destination $osDir -Force
     }
-    # Navigateur .onion (ADR-0030) : `bin\dillo.exe` a cote du daemon —
+    # Navigateur .onion (ADR-0030, nom fige en 135 : `onionbit-browser.exe`)
     # `tor.browser.binary_path` le resout relativement au dossier de
     # l'exe. Optionnel : absence = `browser_not_configured` propre.
     $dilloSrc = ""
@@ -260,8 +260,8 @@ try {
         if (-not (Test-Path $dilloSrc)) { throw "dillo.exe introuvable : $dilloSrc" }
         $binDir = Join-Path $osDir "bin"
         New-Item -ItemType Directory -Force -Path $binDir | Out-Null
-        Copy-Item $dilloSrc (Join-Path $binDir "dillo.exe") -Force
-        Write-Host "   navigateur embarque : windows\bin\dillo.exe" -ForegroundColor Green
+        Copy-Item $dilloSrc (Join-Path $binDir "onionbit-browser.exe") -Force
+        Write-Host "   navigateur embarque : windows\bin\onionbit-browser.exe" -ForegroundColor Green
     }
     # Payload Flutter : exe + DLLs + data\ (l'etat utilisateur n'y est pas).
     Copy-Item (Join-Path $flutterOut "*") -Destination $osDir -Recurse -Force

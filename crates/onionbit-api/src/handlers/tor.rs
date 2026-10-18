@@ -55,7 +55,7 @@ pub async fn tor_status(State(state): State<AppState>) -> Json<serde_json::Value
     // ADR-0030 etape 132 : adresse reelle du proxy (port ephemere
     // choisi par l'OS) — `null` tant que le listener ne tourne pas,
     // jamais d'adresse fictive.
-    let (bp_enabled, bp_listen, bp_conns) = state.session.browser_proxy_status();
+    let (bp_enabled, bp_listen, bp_conns, bp_isolation) = state.session.browser_proxy_status();
     Json(serde_json::json!({
         "enabled": settings.enabled,
         "mode": mode,
@@ -84,6 +84,10 @@ pub async fn tor_status(State(state): State<AppState>) -> Json<serde_json::Value
             "enabled": bp_enabled,
             "listen": bp_listen.map(|a| a.to_string()),
             "conns_active": bp_conns,
+            // Etape 135 : origines d'isolation vivantes (un token =
+            // un groupe de circuits par service .onion) — rend la
+            // separation multi-origines observable, nombre seul.
+            "isolation_entries": bp_isolation,
         },
     }))
 }

@@ -2616,8 +2616,11 @@ impl CoreSession {
     /// Vue diagnostic du proxy navigateur pour `GET /api/tor/status`
     /// — `(enabled, listen, conns_active)` ; `listen=None` quand le
     /// proxy ne tourne pas (jamais d'adresse fictive). Sans la
-    /// feature `tor` : toujours `(false, None, 0)`.
-    pub fn browser_proxy_status(&self) -> (bool, Option<std::net::SocketAddr>, usize) {
+    /// feature `tor` : toujours `(false, None, 0, 0)`. Le 4e
+    /// element est le nombre d'origines d'isolation vivantes (un
+    /// token = un groupe de circuits par service `.onion`) —
+    /// rend la separation multi-origines observable (etape 135).
+    pub fn browser_proxy_status(&self) -> (bool, Option<std::net::SocketAddr>, usize, usize) {
         #[cfg(feature = "tor")]
         {
             let enabled = self.tor().settings().browser_proxy.enabled;
@@ -2626,20 +2629,21 @@ impl CoreSession {
                 .browser_proxy
                 .lock()
                 .unwrap_or_else(|e| e.into_inner());
-            let (listen, conns) = match slot.as_ref() {
+            let (listen, conns, isolation) = match slot.as_ref() {
                 Some(s) => (
                     Some(s.server.local_addr()),
                     s.server
                         .metrics()
                         .conns_active
                         .load(std::sync::atomic::Ordering::Relaxed),
+                    s.server.isolation_entries(),
                 ),
-                None => (None, 0),
+                None => (None, 0, 0),
             };
-            (enabled, listen, conns)
+            (enabled, listen, conns, isolation)
         }
         #[cfg(not(feature = "tor"))]
-        (false, None, 0)
+        (false, None, 0, 0)
     }
 
     /// `(adresse, token)` du proxy navigateur en cours — consomme

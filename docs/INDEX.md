@@ -52,6 +52,7 @@ chaque étape (cf. `AGENTS.md`, "Workflow par étape").
 | `docs/interop/public_dht_runs.md` | Registre des runs du banc DHT publique (paramètres, route observée, octets vérifiés, échecs) |
 | `docs/THREAT-MODEL.md` | Modèle de menace public (EN, court) — version détaillée FR : `docs/security/threat_model.md` |
 | `docs/adresses_onion.md` | Guide utilisateur « adresses `.onion` » (ADR-0029) : hébergement, associations contact/canal, coffre nomade, checklist E2E manuelle `[i]` |
+| `docs/navigateur_onion.md` | Guide utilisateur « navigateur `.onion` » (ADR-0030) : activation, lancement depuis l'allowlist, `allow_clearnet_exit`, garanties mesurées (NO_LEAK) et limites |
 | `docs/BUILDING.md` | Build & packaging publics (EN) : daemon/CLI/UI Flutter, zip Windows x64 |
 | `docs/diagnostics/memoire_charge_reelle.md` | Diagnostic empreinte mémoire d'un daemon public en charge (postes, caps, réfs code) + garde-fou `scripts/mem_watchdog.ps1` |
 | `docs/plans/mobile_execution_model.md` *(local)* | Étape 18 — modèle d'exécution Android/iOS (façade FFI, foreground service, contraintes) |

@@ -119,6 +119,54 @@ an `ipv8` key over tunnel circuits, never translated.
   key — the transport never grants credibility; a poisoned entry is
   rejected exactly as on IPv8.
 
+## Embedded `.onion` browser (ADR-0030)
+
+The bundle can ship `windows\bin\onionbit-browser.exe` (DilloRust) —
+a minimal `.onion` reader launched by `POST /api/browser/launch`
+through a loopback HTTP forward proxy served by `onionbit-tor`. The
+browser is "dumb": all Tor transport lives in the daemon's single
+`TorClient` (one bootstrap, one guard set). Measured
+`scripts/sec_browser_leak.ps1`: `NO_LEAK` — every TCP socket of the
+browser PID (and its descendants) ends at the loopback proxy, zero
+UDP, zero spawned child, ephemeral profile wiped at exit.
+
+**Residuals — listed honestly, not claimed solved:**
+
+- **Passive fingerprinting toward the `.onion` service**: Dillo's
+  `User-Agent`/`Accept` headers and rendering quirks identify *a
+  Dillo browser* — not OnionBit specifically. Tor Browser solves
+  this by uniformization across its whole user base; Dillo's
+  footprint is distinct and rare. Assumed, not mitigated.
+- **Loopback proxy is observable by local processes**: any process
+  running as the same user can see — and could use — the proxy
+  listener. `tor.browser_proxy.require_auth` (default off, token
+  per session delivered via the generated `dillorc`, never argv)
+  raises this to "local process must also have read the ephemeral
+  profile". A same-user compromise remains out of scope.
+- **`allow_clearnet_exit` exposes the destination to the exit
+  relay**: `https-only` keeps content encrypted but the exit learns
+  `CONNECT host:443`; `on` additionally lets plain HTTP leave the
+  exit. Default `off` — `.onion` only. User's choice, not silently
+  enabled.
+- **`.onion` subdomains are transmitted to the service**: arti
+  routes by the last two labels; the full hostname (`www.`+base)
+  reaches the destination service, which learns which of its
+  subdomains was asked. Subdomains share the isolation token —
+  matching Tor semantics, not a bug.
+- **Per-origin isolation, not per-tab**: circuits are grouped per
+  `.onion` service (first-party model) — `browser_proxy.
+  isolation_entries` in `GET /api/tor/status` makes the separation
+  observable. Two pages of the same service share circuits; Tor
+  Browser isolates finer (per first-party URL bar origin, similar).
+- **Persistent trace is opt-in only**: `keep_profile=false`
+  (default) wipes `state/browser/run-*` at exit; `true` keeps
+  HSTS/dpi keys/history **in cleartext** under `state/browser/` —
+  these files live outside the encrypted database.
+- **Same lane as search**: browsing and external search share the
+  `TorClient` and guard set — an observer watching guard traffic
+  volume/timing could correlate the two activities, though they
+  ride distinct circuits.
+
 ## Private download area (ADR-0018)
 
 The portable bundle splits downloads into a **public** area

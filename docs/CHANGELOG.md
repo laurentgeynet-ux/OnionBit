@@ -3,6 +3,31 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Étape 135 — clôture ADR-0030 : nommage, résiduel honnête, E2E multi-origines — fait (2026-10-18)
+
+**Nommage tranché** (§8.2) : `bin\onionbit-browser.exe` partout —
+`build_dist.ps1`, `sec_browser_leak.ps1`, `binary_path` de
+référence. Le binaire source reste `dillo.exe` (fidélité du port),
+renommé à la copie.
+
+**Isolation observable** : `TorProxyServer::isolation_entries()` →
+`GET /api/tor/status → browser_proxy.isolation_entries` (nombre
+d'origines d'isolation vivantes, jamais les origines — compteur
+seul). Le banc `sec_browser_leak.ps1 -SecondOnionHost` lance deux
+navigateurs sur deux `.onion` distincts dans la même session proxy
+et exige `>= 2`. **Run live : NO_LEAK** — `isolation_entries=2`,
+29 TCP toutes loopback→proxy, zéro UDP, zéro enfant, deux profils
+wipés — les origines roulent sur des groupes de circuits arti
+distincts.
+
+**THREAT-MODEL** : section ADR-0030 — fingerprinting passif Dillo
+assumé, loopback observable (`require_auth`), `allow_clearnet_exit`,
+sous-domaines transmis, isolation par origine (pas par onglet),
+`keep_profile` opt-in en clair, lane partagée avec la recherche.
+**Guide utilisateur** : `docs/navigateur_onion.md` + INDEX.
+
+ADR-0030 **Implantée**.
+
 ## Étape 134 — confinement navigateur + profil éphémère + banc de fuite (ADR-0030) — fait (2026-10-18)
 
 **DilloRust** (`dillorust@7434542`) : pref `no_dpi` — coupure

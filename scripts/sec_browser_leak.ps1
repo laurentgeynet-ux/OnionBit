@@ -5,7 +5,7 @@
 # sec_browser_leak.ps1 - banc ADR-0030 etape 134 : fuite navigateur.
 #
 #   Lance une session .onion REELLE via le proxy Tor loopback
-#   (onionbit-daemon --features tor + dillo.exe DilloRust), puis
+#   (onionbit-daemon --features tor + onionbit-browser.exe, le
 #   surveille les sockets du PID navigateur pendant la navigation :
 #
 #     INTERDIT : toute connexion TCP dont l'endpoint distant n'est
@@ -34,6 +34,11 @@ param(
     # entree de tor.allowed_hosts (la politique refuse tout le reste).
     [Parameter(Mandatory = $true)]
     [string]$OnionHost,
+    # Second .onion (etape 135) : lance un second navigateur dans la
+    # meme session proxy et verifie `isolation_entries >= 2` dans
+    # /api/tor/status — preuve live que les origines roulent sur des
+    # groupes de circuits arti distincts (isolation per_origin).
+    [string]$SecondOnionHost = "",
     # Source dillo : -DilloBin saute le build ; sinon -DilloSource
     # pointe le checkout dillorust (defaut : ..\dillorust).
     [string]$DilloBin = "",
@@ -101,11 +106,11 @@ try {
     if (-not (Test-Path $daemonExe)) { throw "onionbit-daemon.exe introuvable : $daemonExe" }
 
     # Stage portable : binary_path relatif = resolu depuis le
-    # repertoire de l'exe du daemon -> `bin\dillo.exe` a cote.
+    # repertoire de l'exe du daemon -> `bin\onionbit-browser.exe` a cote.
     $binStage = Join-Path (Split-Path -Parent $daemonExe) 'bin'
     New-Item -ItemType Directory -Force -Path $binStage | Out-Null
-    Copy-Item $DilloBin (Join-Path $binStage 'dillo.exe') -Force
-    Log "dillo stage -> $binStage\dillo.exe"
+    Copy-Item $DilloBin (Join-Path $binStage 'onionbit-browser.exe') -Force
+    Log "navigateur stage -> $binStage\onionbit-browser.exe"
 
     # ---------- 2) Config + daemon ----------
     $cfg = @{
@@ -113,13 +118,14 @@ try {
             enabled = $true
             mode    = 'embedded'
             bootstrap_timeout_ms = $BootstrapTimeoutSec * 1000
-            allowed_hosts = @($OnionHost)
+            allowed_hosts = @($OnionHost) +
+                $(if ($SecondOnionHost -ne '') { @($SecondOnionHost) } else { @() })
             browser_proxy = @{
                 enabled      = $true
                 require_auth = $true
             }
             browser = @{
-                binary_path  = 'bin\dillo.exe'
+                binary_path  = 'bin\onionbit-browser.exe'
                 keep_profile = $false
             }
         }
@@ -171,11 +177,24 @@ try {
     Log "proxy loopback : $proxyListen"
 
     # ---------- 4) Lancement navigateur ----------
+    $browserPids = @()
     $resp = Invoke-RestMethod -Method Post -Uri "$apiBase/browser/launch" `
         -Headers $hdr -ContentType 'application/json' `
         -Body (@{ url = "http://$OnionHost/" } | ConvertTo-Json) -TimeoutSec 10
     $browserPid = [int]$resp.pid
     Precond ($browserPid -gt 0) 'launch' "pid=$browserPid url=http://$OnionHost/"
+    $browserPids += $browserPid
+
+    # Second .onion (etape 135) : meme session proxy, origine
+    # distincte — `isolation_entries` doit alors etre >= 2.
+    if ($SecondOnionHost -ne '') {
+        $resp2 = Invoke-RestMethod -Method Post -Uri "$apiBase/browser/launch" `
+            -Headers $hdr -ContentType 'application/json' `
+            -Body (@{ url = "http://$SecondOnionHost/" } | ConvertTo-Json) -TimeoutSec 10
+        $browserPid2 = [int]$resp2.pid
+        Precond ($browserPid2 -gt 0) 'launch_2' "pid=$browserPid2 url=http://$SecondOnionHost/"
+        $browserPids += $browserPid2
+    }
 
     # ---------- 5) Observation sockets ----------
     # Ensembles : PID navigateur + descendants (un dpid/vwget enfant
@@ -186,18 +205,22 @@ try {
     $tcpToProxy = 0
     $deadline = (Get-Date).AddSeconds($ObsSeconds)
     while ((Get-Date) -lt $deadline) {
-        $pids = @($browserPid)
-        Get-CimInstance Win32_Process -Filter "ParentProcessId=$browserPid" `
-            -ErrorAction SilentlyContinue | ForEach-Object {
-                $pids += [int]$_.ProcessId
-                # `conhost.exe` est attache par le sous-systeme console
-                # Windows a tout processus GUI spawn depuis une
-                # console heritee — artefact OS, pas un spawn de
-                # dillo (ses sockets restent scruties plus bas).
-                if ($_.Name -ne 'conhost.exe') {
-                    $childProcs[[int]$_.ProcessId] = $_.Name
+        $pids = @()
+        foreach ($bp in $browserPids) {
+            $pids += $bp
+            Get-CimInstance Win32_Process -Filter "ParentProcessId=$bp" `
+                -ErrorAction SilentlyContinue | ForEach-Object {
+                    $pids += [int]$_.ProcessId
+                    # `conhost.exe` est attache par le sous-systeme
+                    # console Windows a tout processus GUI spawn
+                    # depuis une console heritee — artefact OS, pas
+                    # un spawn de dillo (ses sockets restent
+                    # scruties plus bas).
+                    if ($_.Name -ne 'conhost.exe') {
+                        $childProcs[[int]$_.ProcessId] = $_.Name
+                    }
                 }
-            }
+        }
         foreach ($p in $pids) {
             foreach ($u in (Get-NetUDPEndpoint -OwningProcess $p -ErrorAction SilentlyContinue)) {
                 $udpSeen += "pid=$p $($u.LocalAddress):$($u.LocalPort)"
@@ -214,14 +237,14 @@ try {
                 else { $badTcp += "pid=$p $($t.State) $remote" }
             }
         }
-        $alive = Get-Process -Id $browserPid -ErrorAction SilentlyContinue
-        if (-not $alive) { Log "navigateur termine avant la fin de la fenetre"; break }
+        $alive = Get-Process -Id $browserPids -ErrorAction SilentlyContinue
+        if (-not $alive) { Log "navigateur(s) termine(s) avant la fin de la fenetre"; break }
         Start-Sleep -Milliseconds $PollMs
     }
 
     # ---------- 6) Wipe du profil ephemere ----------
-    if ($browserPid -gt 0) {
-        Stop-Process -Id $browserPid -Force -ErrorAction SilentlyContinue
+    foreach ($bp in $browserPids) {
+        Stop-Process -Id $bp -Force -ErrorAction SilentlyContinue
     }
     $browserRoot = Join-Path $StateDir 'browser'
     $wiped = $false
@@ -237,14 +260,26 @@ try {
     Verdict ($badTcp.Count -eq 0) 'tcp_proxy_seul' "$(@($badTcp | Select-Object -First 5) -join '; ')"
     Verdict ($childProcs.Count -eq 0) 'pas_de_processus_enfant' "$(($childProcs.Values | Select-Object -Unique) -join ', ')"
     Verdict $wiped 'profil_ephemere_wipe' "browser\run-* supprime apres exit=$wiped"
+    # Etape 135 : deux origines `.onion` distinctes → deux tokens
+    # d'isolation arti → circuits distincts (per_origin).
+    if ($SecondOnionHost -ne '') {
+        try {
+            $st2 = Invoke-RestMethod -Uri "$apiBase/tor/status" -Headers $hdr -TimeoutSec 5
+            $iso = [int]$st2.browser_proxy.isolation_entries
+        } catch { $iso = -1 }
+        Verdict ($iso -ge 2) 'isolation_multi_origines' "isolation_entries=$iso (>=2 attendu)"
+    }
 }
 finally {
-    if ($browserPid -gt 0) { Stop-Process -Id $browserPid -Force -ErrorAction SilentlyContinue }
+    foreach ($bp in $browserPids) {
+        Stop-Process -Id $bp -Force -ErrorAction SilentlyContinue
+    }
     if ($daemonProc) { Stop-Process -Id $daemonProc.Id -Force -ErrorAction SilentlyContinue }
     $manifest = @{
         onion_host = $OnionHost
+        second_onion_host = $SecondOnionHost
         daemon_pid = if ($daemonProc) { $daemonProc.Id } else { 0 }
-        browser_pid = $browserPid
+        browser_pids = $browserPids
         fails = $script:fails
         precond_fails = $script:precondFails
         utc = (Get-Date).ToUniversalTime().ToString('o')
