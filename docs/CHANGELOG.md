@@ -3,6 +3,50 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Étape 132 — Proxy navigateur câblé + `/api/browser/launch` (ADR-0030) — fait (2026-10-18)
+
+Le `TorProxyServer` de 131 devient un service du daemon. **Politique
+de cibles dans `onionbit-network-policy`** : `check_browser_target`
+(propriétaire unique anti-SSRF, compilable sans `tor`) — `proxy.rs`
+délègue et `/api/browser/launch` applique la même règle avant spawn.
+**`allow_clearnet_exit` tri-state effectif** : `Off` (défaut) =
+`.onion` seul ; `HttpsOnly` = clearnet en `CONNECT :443` seulement
+(GET clearnet et `:80` toujours refusés) ; `On` = clearnet
+`:80`/`:443` via exit Tor — littéraux IP/privés/loopback refusés
+dans tous les modes, effet de chaque valeur testé. **Cycle de vie**
+: slot `BrowserProxySlot` dans `CoreSession`, spawn à la création et
+re-spawn sur `swap_tor_stack`/`swap_tor_runtime` (l'ancien est
+avorté), uniquement si `tor.enabled && browser_proxy.enabled` —
+jamais de blocage bootstrap. **`GET /api/tor/status`** expose
+`browser_proxy {enabled, listen, conns_active}` — adresse réellement
+liée (port éphémère résolu) et compteur vivant. **`POST
+/api/browser/launch {url}`** derrière `api_key_auth` : argv =
+`binary_path` + `extra_args` **config seule** (jamais d'args API) +
+URL validée ; token `require_auth` (hex 256 bits/incarnation) livré
+via le dillorc éphémère `state_dir/browser/.dillo/dillorc`
+(`http_proxypass`) sous `HOME` redirigé — **jamais en argv** (lisible
+par les processus du même utilisateur sous Windows), jamais logué.
+Erreurs typées : `invalid_url`/`denied_target` 400,
+`browser_not_configured`/`tor_disabled`/`tor_bootstrapping`/
+`tor_not_ready`/`bootstrap_failed` 503. Config : `tor.browser_proxy
+{enabled, listen, require_auth, allow_clearnet_exit, isolation,
+isolation_max_entries, max_conns, max_header_bytes,
+idle_timeout_ms}` + `tor.browser {binary_path, extra_args}`.
+**Incident `bundled` résolu (ADR-0031)** : `arti-client/static-sqlite`
+→ `rusqlite/bundled` unifié liait le SQLite vendored au lieu
+d'`onionbit-sqlite3mc` — pragmas `cipher`/`key` no-ops, le daemon
+`--features tor` écrivait `onionbit.db` en clair (révélé par
+`guards.rs` : la migration tentait un `rename` sur fichier tenu,
+erreur 32). `static-sqlite` retiré — le `rusqlite` de `tor-dirmgr`
+résout `sqlite3` sur sqlite3mc — et `onionbit-sqlite3mc` promu dep
+optionnelle d'`onionbit-tor` sous `tor` (provider présent dans tout
+binaire arti). Règle : jamais de feature tirant
+`libsqlite3-sys/bundled`. Tests : 17 `network-policy` + 43
+`onionbit-tor` + 115 `onionbit-api` + `onionbit-core --features tor`
+complet (guards inclus) verts ; clippy `-D warnings`, fmt propres.
+Reste : lecture de `http_proxypass` côté DilloRust et contrat UI
+(133), garde-fous bundle (134).
+
 ## Étape 131 — `TorProxyServer` produit (ADR-0030) — fait (2026-10-18)
 
 `onionbit-tor::proxy` passe du spike au produit. **Sous-domaines

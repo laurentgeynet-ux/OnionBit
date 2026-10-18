@@ -258,3 +258,34 @@ système (Linux), `libsqlite3-sys` pourrait lier l'autre bibliotheque
 — détectable au runtime (`PRAGMA cipher` vide → fail-closed) ; si
 le cas se présente, `SQLITE3_LIB_DIR`/`SQLITE3_INCLUDE_DIR` ou le
 vendoring `libsqlite3-sys` sont les corrections.
+
+## Incident `bundled` résolu (étape 132, 2026-10-18)
+
+Le bémol « mauvaise bibliothèque liée » s'est concrétisé par un autre
+canal : `arti-client` était déclaré avec `static-sqlite` →
+`tor-dirmgr/static` → `rusqlite/bundled` → `libsqlite3-sys/bundled`.
+L'unification cargo appliquait `bundled` à **tout** le graphe : le
+SQLite vendored remportait le lien et `onionbit-sqlite3mc` devenait
+inerte — les pragmas `cipher`/`key` se résolvaient en no-ops
+silencieux (SQLite ignore les pragmas inconnus) et le daemon
+`--features tor` écrivait `onionbit.db` **en clair**. Détection :
+le second `Database::open` sniffait du plaintext et engageait la
+migration — dont le `rename` canonique échouait (`ERROR 32`,
+fichier tenu par la première connexion vivante) dans les tests
+`guards.rs`. La migration transparente masquait la régression à
+chaque réouverture : elle n'était visible que lorsque la première
+connexion restait ouverte.
+
+Correction : `static-sqlite` retiré des features `arti-client` du
+workspace (le `rusqlite` de `tor-dirmgr`, non `bundled`, résout alors
+`sqlite3` sur la même bibliothèque sqlite3mc que tout le monde) +
+`onionbit-sqlite3mc` promu dépendance optionnelle de `onionbit-tor`
+sous `tor` — tout binaire liant arti embarque ainsi le provider
+`sqlite3` même sans `onionbit-db` dans son graphe.
+
+Règle retenue : **jamais** de feature qui tire `libsqlite3-sys/bundled`
+(`static-sqlite`/`static` d'arti, `bundled` de rusqlite) dans une
+déclaration de dépendance — le provider `sqlite3` est unique et il
+est à nous. Vérifié par `cargo tree -i libsqlite3-sys` (features
+sans `bundled`) et les tests `guards.rs` qui repassent sous
+`--features tor`.

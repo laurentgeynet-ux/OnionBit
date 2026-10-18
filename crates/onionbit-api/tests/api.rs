@@ -6235,3 +6235,196 @@ async fn pair_onion_endpoints_cycle() {
     assert!(!srv.session.tor().peer_onion_allowed(ONION));
     srv.session.stop().await;
 }
+
+// ---------------------------------------------------------------------------
+// ADR-0030 etape 132 — proxy navigateur : status expose + /api/browser/launch
+// ---------------------------------------------------------------------------
+
+const TPB_ONION: &str = "piratebayo3klnzokct3wt5yyxb2vpebbuyjl7m623iaxmqhsd52coid.onion";
+
+/// Session `tor Ready` (stub — aucune lane reelle) + proxy
+/// navigateur configure : listener loopback **reel** (bind
+/// 127.0.0.1:0 — aucune cible distante n'est contactee) et
+/// `binary_path` = le binaire de test courant (`--list` rend 0
+/// immediatement : le spawn est prouve sans processus parasite).
+/// `cfg_fn` ajuste la config avant demarrage.
+async fn spawn_browser_server(cfg_fn: impl FnOnce(&mut CoreConfig)) -> TestServer {
+    let dir = tempfile::tempdir().unwrap();
+    let mut cfg = CoreConfig::offline(dir.path().into());
+    cfg.tor.enabled = true;
+    // SOCKS5 mort si un stream partait — aucun ne part en test.
+    cfg.tor.mode = onionbit_tor::TorMode::External("127.0.0.1:1".parse().unwrap());
+    cfg.tor.browser_proxy.enabled = true;
+    cfg.tor.browser.binary_path = std::env::current_exe().unwrap();
+    cfg.tor.browser.extra_args = vec!["--list".to_string()];
+    cfg_fn(&mut cfg);
+    let session = CoreSession::start_offline(cfg, Notifier::new())
+        .await
+        .unwrap();
+    session.swap_tor_runtime(onionbit_tor::TorRuntime::stub_state(
+        session.tor().settings().clone(),
+        onionbit_tor::TorState::Ready,
+    ));
+    let state = AppState::new(session.clone());
+    let app = build(state.clone());
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    TestServer {
+        addr,
+        session,
+        state,
+        client: reqwest::Client::new(),
+        _dir: dir,
+    }
+}
+
+#[tokio::test]
+async fn tor_status_expose_browser_proxy() {
+    let srv = spawn_browser_server(|_| {}).await;
+    let resp = srv
+        .client
+        .get(srv.url("/api/tor/status"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["browser_proxy"]["enabled"], true);
+    let listen = body["browser_proxy"]["listen"].as_str().unwrap();
+    assert!(listen.starts_with("127.0.0.1:"), "{listen}");
+    assert_eq!(body["browser_proxy"]["conns_active"], 0);
+    srv.session.stop().await;
+}
+
+#[tokio::test]
+async fn tor_status_browser_proxy_absent() {
+    let srv = spawn_server().await;
+    let resp = srv
+        .client
+        .get(srv.url("/api/tor/status"))
+        .send()
+        .await
+        .unwrap();
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["browser_proxy"]["enabled"], false);
+    assert!(body["browser_proxy"]["listen"].is_null());
+    assert_eq!(body["browser_proxy"]["conns_active"], 0);
+    srv.session.stop().await;
+}
+
+#[tokio::test]
+async fn browser_launch_bootstrapping_503() {
+    let srv = spawn_tor_server(
+        onionbit_tor::TorState::Bootstrapping { progress: 30 },
+        vec![],
+    )
+    .await;
+    let resp = srv
+        .client
+        .post(srv.url("/api/browser/launch"))
+        .json(&serde_json::json!({"url": format!("http://{TPB_ONION}/")}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 503);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["error"]["code"], "tor_bootstrapping");
+    srv.session.stop().await;
+}
+
+#[tokio::test]
+async fn browser_launch_non_configure_503() {
+    let srv = spawn_browser_server(|c| c.tor.browser_proxy.enabled = false).await;
+    let resp = srv
+        .client
+        .post(srv.url("/api/browser/launch"))
+        .json(&serde_json::json!({"url": format!("http://{TPB_ONION}/")}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 503);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["error"]["code"], "browser_not_configured");
+    srv.session.stop().await;
+}
+
+#[tokio::test]
+async fn browser_launch_url_invalide_400() {
+    let srv = spawn_browser_server(|_| {}).await;
+    for url in ["pas une url", "ftp://x.onion/", "javascript:void(0)"] {
+        let resp = srv
+            .client
+            .post(srv.url("/api/browser/launch"))
+            .json(&serde_json::json!({"url": url}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 400, "{url}");
+        let body: serde_json::Value = resp.json().await.unwrap();
+        assert_eq!(body["error"]["code"], "invalid_url", "{url}");
+    }
+    srv.session.stop().await;
+}
+
+#[tokio::test]
+async fn browser_launch_denied_target_400() {
+    // `allow_clearnet_exit=off` (defaut) : clearnet, IP, port hors
+    // plage refuses — un faux `.onion` est `invalid_url`-adjacent →
+    // `denied_target` via la politique.
+    let srv = spawn_browser_server(|_| {}).await;
+    for url in [
+        "http://example.com/",
+        "https://example.com/",
+        "http://1.2.3.4/",
+        "http://127.0.0.1:8080/",
+        "http://pas-un.onion/",
+        &format!("http://{TPB_ONION}:8080/"),
+    ] {
+        let resp = srv
+            .client
+            .post(srv.url("/api/browser/launch"))
+            .json(&serde_json::json!({"url": url}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 400, "{url}");
+        let body: serde_json::Value = resp.json().await.unwrap();
+        assert_eq!(body["error"]["code"], "denied_target", "{url}");
+    }
+    srv.session.stop().await;
+}
+
+#[tokio::test]
+async fn browser_launch_ok_spawn_et_dillorc() {
+    let srv = spawn_browser_server(|_| {}).await;
+    let resp = srv
+        .client
+        .post(srv.url("/api/browser/launch"))
+        .json(&serde_json::json!({"url": format!("http://{TPB_ONION}/")}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["launched"], true);
+    assert!(body["pid"].as_u64().unwrap() > 0);
+    // Le dillorc ephemere porte le proxy — pas de `http_proxypass`
+    // tant que `require_auth=false` (defaut).
+    let dillorc = srv
+        ._dir
+        .path()
+        .join("browser")
+        .join(".dillo")
+        .join("dillorc");
+    let content = std::fs::read_to_string(&dillorc).unwrap();
+    assert!(
+        content.contains("http_proxy=\"http://127.0.0.1:"),
+        "{content}"
+    );
+    assert!(content.contains("http_proxyuser=\"onionbit\""), "{content}");
+    assert!(!content.contains("http_proxypass"), "{content}");
+    srv.session.stop().await;
+}

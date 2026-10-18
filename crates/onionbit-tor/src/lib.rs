@@ -55,5 +55,6 @@ pub use runtime::OnionLinkHandler;
 pub use runtime::{OnionServiceInfo, TorRuntime, TorState};
 pub use search::{build_backends, ExternalResult, OnionFetch, OnionSearchBackend};
 pub use settings::{
-    OnionBackendSettings, OnionServiceSettings, TorGatewaySettings, TorMode, TorSettings,
+    BrowserProxySettings, BrowserSettings, OnionBackendSettings, OnionServiceSettings,
+    TorGatewaySettings, TorMode, TorSettings,
 };

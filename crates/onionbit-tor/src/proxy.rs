@@ -74,6 +74,9 @@ pub struct ProxyConfig {
     /// origine `.onion` de premier niveau). Au-dela : eviction FIFO
     /// — borne la memoire et le nombre de circuits crees.
     pub isolation_max_entries: usize,
+    /// Sortie clearnet vía exit Tor (ADR-0030 §8.3, etape 132) —
+    /// `Off` par defaut : politique `.onion`-only.
+    pub clearnet_exit: onionbit_network_policy::ClearnetExit,
 }
 
 impl Default for ProxyConfig {
@@ -84,6 +87,7 @@ impl Default for ProxyConfig {
             idle_timeout: Duration::from_secs(120),
             auth_token: None,
             isolation_max_entries: 256,
+            clearnet_exit: onionbit_network_policy::ClearnetExit::Off,
         }
     }
 }
@@ -104,9 +108,18 @@ pub struct ProxyMetrics {
 }
 
 /// Handle du proxy lance — adresse reelle d'ecoute + metriques.
+/// `Drop` avorte la boucle d'ecoute : le proxy meurt avec son
+/// detenteur (swap du runtime, arret du daemon — etape 132).
 pub struct TorProxyServer {
     addr: SocketAddr,
     metrics: Arc<ProxyMetrics>,
+    accept_loop: tokio::task::JoinHandle<()>,
+}
+
+impl Drop for TorProxyServer {
+    fn drop(&mut self) {
+        self.accept_loop.abort();
+    }
 }
 
 impl TorProxyServer {
@@ -165,28 +178,18 @@ impl IsolationMap {
     }
 }
 
-/// Politique de cible du navigateur (ADR-0030 §4) — **inversee**
-/// par rapport a l'allowlist du fetcher : hote `.onion` v3 valide
-/// (sous-domaines toleres — `OnionAddr::parse_host`), ports
-/// {80,443} ; litteraux IP, clearnet, `.onion` malforme refuses.
-///
-/// Retourne `(host complet normalise, origine d'isolation)` — le
-/// host conserve les sous-domaines (envoye au pair par arti),
-/// l'origine est l'adresse du service (cle first-party).
-fn check_target(host: &str, port: u16) -> Result<(String, String)> {
-    let denied = |r: &'static str| {
-        TorError::DeniedTarget(onionbit_network_policy::PolicyError::DeniedDestination(r))
-    };
-    // Litteral IP refuse d'office — avant meme le parse `.onion`.
-    if host.parse::<std::net::IpAddr>().is_ok() {
-        return Err(denied("litteral IP interdit"));
-    }
-    let (host, addr) = onionbit_format::OnionAddr::parse_host(host)
-        .map_err(|_| denied("cible non-.onion ou .onion malforme"))?;
-    if !matches!(port, 80 | 443) {
-        return Err(denied("port hors {80, 443}"));
-    }
-    Ok((host, addr.host().to_string()))
+/// Politique de cible du navigateur (ADR-0030 §4) — deleguee a
+/// `onionbit_network_policy::check_browser_target` (proprietaire
+/// unique anti-SSRF ; partagee avec `POST /api/browser/launch`).
+/// Retourne `(host complet normalise, origine d'isolation)`.
+fn check_target(
+    host: &str,
+    port: u16,
+    exit: onionbit_network_policy::ClearnetExit,
+    is_connect: bool,
+) -> Result<(String, String)> {
+    onionbit_network_policy::check_browser_target(host, port, exit, is_connect)
+        .map_err(TorError::DeniedTarget)
 }
 
 /// En-tetes d'une requete proxy parsée.
@@ -397,8 +400,10 @@ async fn handle_conn(
         .await;
     }
     // Politique AVANT tout connect — aucun socket n'est ouvert pour
-    // une cible refusee.
-    let (host, origin) = match check_target(&host, port) {
+    // une cible refusee. `is_connect` distingue le tunnel TLS
+    // potentiel du HTTP clair pour `clearnet_exit = HttpsOnly`.
+    let is_connect = head.method.eq_ignore_ascii_case("connect");
+    let (host, origin) = match check_target(&host, port, cfg.clearnet_exit, is_connect) {
         Ok(v) => v,
         Err(_) => {
             metrics.denied_total.fetch_add(1, Ordering::Relaxed);
@@ -447,10 +452,14 @@ async fn handle_conn(
 
 /// Lance le proxy sur `listen` (loopback exige — non-loopback est
 /// une erreur de config, jamais une adresse acceptee silencieusement).
-/// Retourne le `TorProxyServer` : `local_addr` est l'adresse reelle
-/// (le port de `127.0.0.1:0` est choisi par l'OS et publie par
-/// `GET /api/tor/status` en etape 132), `metrics` les compteurs.
-pub async fn serve(rt: TorRuntime, listen: SocketAddr, cfg: ProxyConfig) -> Result<TorProxyServer> {
+/// Synchrone : le `bind` std est immediat, la boucle vit dans une
+/// tache — exige un contexte tokio courant (`Handle::current`),
+/// comme tout `tokio::spawn`. Retourne le `TorProxyServer` :
+/// `local_addr` est l'adresse reelle (le port de `127.0.0.1:0` est
+/// choisi par l'OS et publie par `GET /api/tor/status` en etape
+/// 132), `metrics` les compteurs ; `Drop` avorte la boucle (le
+/// proxy meurt avec le runtime qui le possede, `swap_tor_stack`).
+pub fn serve(rt: TorRuntime, listen: SocketAddr, cfg: ProxyConfig) -> Result<TorProxyServer> {
     if !listen.ip().is_loopback() {
         return Err(TorError::Request(format!(
             "ecoute proxy non-loopback refusee : {listen}"
@@ -463,9 +472,13 @@ pub async fn serve(rt: TorRuntime, listen: SocketAddr, cfg: ProxyConfig) -> Resu
             ));
         }
     }
-    let listener = TcpListener::bind(listen)
-        .await
+    let std_listener = std::net::TcpListener::bind(listen)
         .map_err(|e| TorError::Request(format!("bind proxy {listen} : {e}")))?;
+    std_listener
+        .set_nonblocking(true)
+        .map_err(|e| TorError::Request(format!("nonblocking proxy {listen} : {e}")))?;
+    let listener = TcpListener::from_std(std_listener)
+        .map_err(|e| TorError::Request(format!("listener proxy {listen} : {e}")))?;
     let addr = listener
         .local_addr()
         .map_err(|e| TorError::Request(format!("local_addr : {e}")))?;
@@ -474,7 +487,7 @@ pub async fn serve(rt: TorRuntime, listen: SocketAddr, cfg: ProxyConfig) -> Resu
     let isolation = Arc::new(Mutex::new(IsolationMap::new(cfg.isolation_max_entries)));
     let metrics = Arc::new(ProxyMetrics::default());
     let metrics2 = metrics.clone();
-    tokio::spawn(async move {
+    let accept_loop = tokio::spawn(async move {
         loop {
             let permit = match permits.clone().acquire_owned().await {
                 Ok(p) => p,
@@ -499,7 +512,11 @@ pub async fn serve(rt: TorRuntime, listen: SocketAddr, cfg: ProxyConfig) -> Resu
             });
         }
     });
-    Ok(TorProxyServer { addr, metrics })
+    Ok(TorProxyServer {
+        addr,
+        metrics,
+        accept_loop,
+    })
 }
 
 /// Decompte `conns_active` a la fin de la connexion, quel que soit
@@ -521,18 +538,32 @@ mod tests {
 
     #[test]
     fn politique_refuse_litteraux_et_clearnet() {
+        use onionbit_network_policy::ClearnetExit;
+        let off = ClearnetExit::Off;
         // .onion v3 valide + port 80/443 → accepte, normalise —
         // (host complet, origine d'isolation = service).
-        assert_eq!(check_target(TPB, 80).unwrap(), (TPB.into(), TPB.into()));
-        assert_eq!(check_target(TPB, 443).unwrap(), (TPB.into(), TPB.into()));
+        assert_eq!(
+            check_target(TPB, 80, off, false).unwrap(),
+            (TPB.into(), TPB.into())
+        );
+        assert_eq!(
+            check_target(TPB, 443, off, true).unwrap(),
+            (TPB.into(), TPB.into())
+        );
         // Sous-domaines toleres : host complet conserve, origine =
         // le service de base (first-party, etape 131).
         let sub = format!("www.{TPB}");
-        assert_eq!(check_target(&sub, 443).unwrap(), (sub.clone(), TPB.into()));
+        assert_eq!(
+            check_target(&sub, 443, off, true).unwrap(),
+            (sub.clone(), TPB.into())
+        );
         let deep = format!("a.b.c.{TPB}");
-        assert_eq!(check_target(&deep, 80).unwrap(), (deep, TPB.into()));
-        // Litteraux IP, privés, clearnet, sous-domaines malformes,
-        // ports hors plage : refuses.
+        assert_eq!(
+            check_target(&deep, 80, off, false).unwrap(),
+            (deep, TPB.into())
+        );
+        // Litteraux IP, privés, clearnet (mode Off), sous-domaines
+        // malformes, ports hors plage : refuses.
         for bad in [
             "1.2.3.4",
             "127.0.0.1",
@@ -547,10 +578,13 @@ mod tests {
             &format!("-a.{TPB}"),
             &format!("a..{TPB}"),
         ] {
-            assert!(check_target(bad, 80).is_err(), "{bad}");
+            assert!(check_target(bad, 80, off, false).is_err(), "{bad}");
         }
-        assert!(check_target(TPB, 8080).is_err(), "port hors plage");
-        assert!(check_target(TPB, 22).is_err(), "ssh hors plage");
+        assert!(
+            check_target(TPB, 8080, off, true).is_err(),
+            "port hors plage"
+        );
+        assert!(check_target(TPB, 22, off, true).is_err(), "ssh hors plage");
     }
 
     #[test]
@@ -694,9 +728,7 @@ mod tests {
             mode: TorMode::External(socks),
             ..TorSettings::default()
         });
-        let proxy = serve(rt, "127.0.0.1:0".parse().unwrap(), ProxyConfig::default())
-            .await
-            .unwrap();
+        let proxy = serve(rt, "127.0.0.1:0".parse().unwrap(), ProxyConfig::default()).unwrap();
         assert!(proxy.local_addr().ip().is_loopback());
         let mut c = TcpStream::connect(proxy.local_addr()).await.unwrap();
         c.write_all(format!("GET http://{TPB}/ HTTP/1.1\r\nHost: {TPB}\r\n\r\n").as_bytes())
@@ -722,9 +754,7 @@ mod tests {
             mode: TorMode::External(dead),
             ..TorSettings::default()
         });
-        let proxy = serve(rt, "127.0.0.1:0".parse().unwrap(), ProxyConfig::default())
-            .await
-            .unwrap();
+        let proxy = serve(rt, "127.0.0.1:0".parse().unwrap(), ProxyConfig::default()).unwrap();
         let mut c = TcpStream::connect(proxy.local_addr()).await.unwrap();
         c.write_all(b"CONNECT example.com:443 HTTP/1.1\r\n\r\n")
             .await
@@ -750,9 +780,7 @@ mod tests {
             auth_token: Some("s3cret".into()),
             ..ProxyConfig::default()
         };
-        let proxy = serve(rt, "127.0.0.1:0".parse().unwrap(), cfg)
-            .await
-            .unwrap();
+        let proxy = serve(rt, "127.0.0.1:0".parse().unwrap(), cfg).unwrap();
         // Sans credential : 407 + Proxy-Authenticate — jamais relaye
         // a la politique ni au connect.
         let mut c = TcpStream::connect(proxy.local_addr()).await.unwrap();
@@ -793,9 +821,7 @@ mod tests {
             mode: TorMode::External(socks),
             ..TorSettings::default()
         });
-        let proxy = serve(rt, "127.0.0.1:0".parse().unwrap(), ProxyConfig::default())
-            .await
-            .unwrap();
+        let proxy = serve(rt, "127.0.0.1:0".parse().unwrap(), ProxyConfig::default()).unwrap();
         let c = TcpStream::connect(proxy.local_addr()).await.unwrap();
         // Le compteur monte a l'accept (eventuellement — spawn
         // asynchrone : on attend qu'il apparaisse).

@@ -233,6 +233,8 @@ fn api_router(state: AppState) -> Router<AppState> {
         .route("/search/external", get(tor::external_search))
         .route("/tor/status", get(tor::tor_status))
         .route("/tor/probe", get(tor::tor_probe))
+        // -- Navigateur .onion (ADR-0030 §6 — extension Rust) ----------
+        .route("/browser/launch", post(browser::browser_launch))
         // -- Canaux suivis (channels_endpoint.py — ADR-0025 etape 97) ---
         .route("/channels", get(channels::list_channels))
         .route("/channels/personal", put(channels::personal_set_title))

@@ -77,7 +77,14 @@ sha3 = "0.10"
 # reference. `onion-service-client` (tor-hsclient) est
 # REQUIS pour joindre des cibles `.onion`. MIT/Apache-2.0. Tres
 # lourd en build — toujours optionnel derriere le feature flag.
-arti-client = { version = "0.47", default-features = false, features = ["rustls", "tokio", "compression", "onion-service-client", "static-sqlite", "bridge-client"] }
+# `static-sqlite` RETIRE (etape 132) : il active `rusqlite/bundled`
+# via `tor-dirmgr` — l'unification cargo liait alors le SQLite
+# vendored A LA PLACE d'`onionbit-sqlite3mc`, rendant les pragmas
+# `cipher`/`key` inertes : le daemon `--features tor` ecrivait
+# `onionbit.db` EN CLAIR. Le `sqlite3` unique reste fourni par
+# `onionbit-sqlite3mc` (dep `tor` d'`onionbit-tor`) et sert aussi
+# au dirmgr d'arti.
+arti-client = { version = "0.47", default-features = false, features = ["rustls", "tokio", "compression", "onion-service-client", "bridge-client"] }
 tor-rtcompat = "0.47"
 # SOCKS5 loopback (mode `external`, URL validee par
 # `proxy_guard::validate_local_socks5_url`) — deja dans l'arbre

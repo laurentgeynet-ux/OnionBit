@@ -346,9 +346,45 @@ struct Inner {
     search_backends: std::sync::Mutex<
         std::collections::BTreeMap<String, Arc<dyn onionbit_tor::OnionSearchBackend>>,
     >,
+    /// Slot du proxy navigateur (ADR-0030 etape 132) — handle +
+    /// token de session. Le serveur meurt avec le slot (Drop
+    /// avorte la boucle d'ecoute) : un `swap_tor_*` le remplace,
+    /// l'arret de session le jette. `None` quand
+    /// `tor.browser_proxy.enabled=false` ou hors contexte tokio.
+    #[cfg(feature = "tor")]
+    browser_proxy: std::sync::Mutex<Option<BrowserProxySlot>>,
     /// Horodatage de demarrage — expose via `uptime_secs`
     /// (`GET /api/statistics/tribler`).
     started_at: std::time::Instant,
+}
+
+/// Serveur proxy navigateur en cours + son token de session
+/// (ADR-0030 §3 : genere au demarrage du proxy, transmis au
+/// navigateur par le dillorc ephemere — jamais en argv, jamais
+/// persiste).
+#[cfg(feature = "tor")]
+struct BrowserProxySlot {
+    server: onionbit_tor::proxy::TorProxyServer,
+    auth_token: Option<Arc<str>>,
+}
+
+/// Erreurs typees de `launch_browser` — mappees par le handler
+/// HTTP sur les codes ADR-0030 §6 (`browser_not_configured`,
+/// `denied_target`, `invalid_url`, 500 interne).
+#[derive(Debug, thiserror::Error)]
+pub enum BrowserLaunchError {
+    /// Proxy navigateur ou binaire non configure.
+    #[error("navigateur non configure")]
+    NotConfigured,
+    /// Cible refusee par la politique navigateur (ADR-0030 §4).
+    #[error("cible refusee par la politique navigateur")]
+    DeniedTarget,
+    /// URL malformee ou schema non http(s).
+    #[error("url invalide")]
+    InvalidUrl,
+    /// Echec d'E/S (profil ephemere) ou de `spawn`.
+    #[error("lancement navigateur : {0}")]
+    Io(#[from] std::io::Error),
 }
 
 impl Inner {
@@ -1139,6 +1175,8 @@ impl CoreSession {
                 tor_hs_seed: std::sync::RwLock::new(None),
                 tor_vault_seeds: std::sync::RwLock::new(None),
                 search_backends: std::sync::Mutex::new(search_backends),
+                #[cfg(feature = "tor")]
+                browser_proxy: std::sync::Mutex::new(None),
                 started_at: std::time::Instant::now(),
             }),
         };
@@ -1151,6 +1189,10 @@ impl CoreSession {
                 tracing::warn!(error = %e, "tor : bootstrap au demarrage refuse");
             }
         }
+        // Proxy navigateur (ADR-0030) : demarre avec le runtime
+        // initial — meme cycle de vie que la lane (etape 132).
+        #[cfg(feature = "tor")]
+        session.respawn_browser_proxy();
         Ok(session)
     }
 
@@ -2466,6 +2508,9 @@ impl CoreSession {
         self.reseed_peer_onions();
         // Le handler des liens messagerie vit par runtime.
         self.wire_onion_links();
+        // Le proxy navigateur suit le runtime (etape 132).
+        #[cfg(feature = "tor")]
+        self.respawn_browser_proxy();
     }
 
     /// Permute runtime Tor **et** backends de recherche en un coup —
@@ -2495,6 +2540,203 @@ impl CoreSession {
         // tokio (tests non-async).
         if tokio::runtime::Handle::try_current().is_ok() {
             self.spawn_onion_service();
+        }
+        // Le proxy navigateur meurt et renait avec le runtime
+        // (ADR-0030 §6 — applique a chaud par les reglages).
+        #[cfg(feature = "tor")]
+        self.respawn_browser_proxy();
+    }
+
+    /// (Re)demarre le proxy navigateur selon les reglages du
+    /// runtime **courant** (ADR-0030 etape 132) : l'ancien slot est
+    /// jete en premier — `Drop` du `TorProxyServer` avorte sa boucle
+    /// d'ecoute — puis un nouveau `serve` est tente si
+    /// `browser_proxy.enabled`. Hors contexte tokio ou sans
+    /// feature : no-op silencieux.
+    #[cfg(feature = "tor")]
+    fn respawn_browser_proxy(&self) {
+        let mut slot = self
+            .inner
+            .browser_proxy
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        *slot = None;
+        let rt = self.tor();
+        let settings = rt.settings();
+        let bp = &settings.browser_proxy;
+        // Le proxy n'a de sens que sur une lane Tor active : un
+        // listener ouvert sans transport est du bruit (toute cible
+        // rendrait NotReady).
+        if !settings.enabled || !bp.enabled || tokio::runtime::Handle::try_current().is_err() {
+            return;
+        }
+        // Token de session aleatoire (ADR-0030 §3) — regenere a
+        // chaque incarnation du proxy ; transmis au navigateur par
+        // le dillorc ephemere, jamais en argv ni en logs.
+        let auth_token = bp.require_auth.then(|| {
+            let mut bytes = [0u8; 32];
+            rand::RngExt::fill(&mut rand::rng(), &mut bytes);
+            Arc::<str>::from(hex::encode(bytes))
+        });
+        match onionbit_tor::proxy::serve(
+            self.tor(),
+            bp.listen,
+            onionbit_tor::proxy::ProxyConfig {
+                max_header_bytes: bp.max_header_bytes,
+                max_conns: bp.max_conns,
+                idle_timeout: bp.idle_timeout,
+                auth_token: auth_token.clone(),
+                isolation_max_entries: bp.isolation_max_entries,
+                clearnet_exit: bp.clearnet_exit,
+            },
+        ) {
+            Ok(server) => {
+                *slot = Some(BrowserProxySlot { server, auth_token });
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "browser_proxy : demarrage refuse");
+            }
+        }
+    }
+
+    /// Vue diagnostic du proxy navigateur pour `GET /api/tor/status`
+    /// — `(enabled, listen, conns_active)` ; `listen=None` quand le
+    /// proxy ne tourne pas (jamais d'adresse fictive). Sans la
+    /// feature `tor` : toujours `(false, None, 0)`.
+    pub fn browser_proxy_status(&self) -> (bool, Option<std::net::SocketAddr>, usize) {
+        #[cfg(feature = "tor")]
+        {
+            let enabled = self.tor().settings().browser_proxy.enabled;
+            let slot = self
+                .inner
+                .browser_proxy
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            let (listen, conns) = match slot.as_ref() {
+                Some(s) => (
+                    Some(s.server.local_addr()),
+                    s.server
+                        .metrics()
+                        .conns_active
+                        .load(std::sync::atomic::Ordering::Relaxed),
+                ),
+                None => (None, 0),
+            };
+            (enabled, listen, conns)
+        }
+        #[cfg(not(feature = "tor"))]
+        (false, None, 0)
+    }
+
+    /// `(adresse, token)` du proxy navigateur en cours — consomme
+    /// par `POST /api/browser/launch` pour l'env du processus fils.
+    /// `None` si le proxy ne tourne pas.
+    #[cfg(feature = "tor")]
+    fn browser_proxy_credentials(&self) -> Option<(std::net::SocketAddr, Option<Arc<str>>)> {
+        self.inner
+            .browser_proxy
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+            .map(|s| (s.server.local_addr(), s.auth_token.clone()))
+    }
+
+    /// Lance le navigateur sur `url` deja validee (ADR-0030 §6 —
+    /// `POST /api/browser/launch`).
+    ///
+    /// - **jamais d'args pilotes par l'API** : argv = `binary_path` +
+    ///   `extra_args` (config seule) + l'URL validée en dernier argument ;
+    /// - **token jamais en argv** : il est ecrit dans le dillorc
+    ///   ephemere `<state_dir>/browser/.dillo/dillorc`
+    ///   (`http_proxypass` — extension documentee, lue par le
+    ///   navigateur en etape 133) et le profil est redirige par
+    ///   `env HOME=<state_dir>/browser` — sous Windows les argv
+    ///   sont lisibles par les processus du meme utilisateur, le
+    ///   token n'y apparait donc jamais ;
+    /// - le `.onion` de l'URL reste un argument visible — contrat
+    ///   ADR-0030 §6 `<binary> <url>` ; jamais d'URL dans les logs.
+    ///
+    /// Erreurs typees consommees par le handler : `NotConfigured`
+    /// (proxy/binary absents — aussi rendu sans la feature `tor`),
+    /// `DeniedTarget`, `InvalidUrl`, `Io`.
+    pub fn launch_browser(&self, url_str: &str) -> std::result::Result<u32, BrowserLaunchError> {
+        #[cfg(not(feature = "tor"))]
+        {
+            let _ = url_str;
+            return Err(BrowserLaunchError::NotConfigured);
+        }
+        #[cfg(feature = "tor")]
+        {
+            let settings = self.tor().settings().clone();
+            if !settings.browser_proxy.enabled {
+                return Err(BrowserLaunchError::NotConfigured);
+            }
+            let url =
+                url::Url::parse(url_str.trim()).map_err(|_| BrowserLaunchError::InvalidUrl)?;
+            let is_connect = match url.scheme() {
+                "https" => true,
+                "http" => false,
+                _ => return Err(BrowserLaunchError::InvalidUrl),
+            };
+            let host = url.host_str().ok_or(BrowserLaunchError::InvalidUrl)?;
+            let port = url
+                .port_or_known_default()
+                .ok_or(BrowserLaunchError::InvalidUrl)?;
+            onionbit_network_policy::check_browser_target(
+                host,
+                port,
+                settings.browser_proxy.clearnet_exit,
+                is_connect,
+            )
+            .map_err(|_| BrowserLaunchError::DeniedTarget)?;
+            let (listen, token) = self
+                .browser_proxy_credentials()
+                .ok_or(BrowserLaunchError::NotConfigured)?;
+            if settings.browser.binary_path.as_os_str().is_empty() {
+                return Err(BrowserLaunchError::NotConfigured);
+            }
+            let binary = if settings.browser.binary_path.is_absolute() {
+                settings.browser.binary_path.clone()
+            } else {
+                // Relatif : arborescence portable — resolu vs le
+                // repertoire de l'executable du daemon (ADR-0018).
+                std::env::current_exe()
+                    .ok()
+                    .and_then(|p| p.parent().map(|d| d.join(&settings.browser.binary_path)))
+                    .unwrap_or_else(|| settings.browser.binary_path.clone())
+            };
+            if !binary.is_file() {
+                return Err(BrowserLaunchError::NotConfigured);
+            }
+            // Profil ephemere : `$HOME/.dillo/dillorc` est le chemin rc
+            // du navigateur — `HOME` redirige tout le profil (prefs,
+            // cookies, hsts) sous `state_dir/browser`, reecrit a chaque
+            // lancement.
+            let profile = self.inner.config.state_dir.join("browser");
+            let dillo_dir = profile.join(".dillo");
+            std::fs::create_dir_all(&dillo_dir).map_err(BrowserLaunchError::Io)?;
+            let mut dillorc = format!(
+                "# Profil ephemere OnionBit — regenere a chaque lancement.\n\
+             http_proxy=\"http://{listen}/\"\n\
+             http_proxyuser=\"onionbit\"\n"
+            );
+            if let Some(t) = token.as_deref() {
+                // `http_proxypass` : extension OnionBit du format dillorc
+                // (amont n'a que `http_proxyuser` + dialog) — le pref
+                // est ignore en warn par les versions qui ne le lisent
+                // pas encore (etape 133).
+                dillorc.push_str(&format!("http_proxypass=\"{t}\"\n"));
+            }
+            std::fs::write(dillo_dir.join("dillorc"), dillorc).map_err(BrowserLaunchError::Io)?;
+            let proxy_url = format!("http://{listen}");
+            let child = std::process::Command::new(&binary)
+                .args(&settings.browser.extra_args)
+                .arg(url.as_str())
+                .env("HOME", &profile)
+                .env("http_proxy", &proxy_url)
+                .spawn()
+                .map_err(BrowserLaunchError::Io)?;
+            Ok(child.id())
         }
     }
 

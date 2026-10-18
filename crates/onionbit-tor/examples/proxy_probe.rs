@@ -59,9 +59,7 @@ fn main() {
             }
             tokio::time::sleep(Duration::from_secs(2)).await;
         }
-        let proxy = proxy::serve(runtime, listen, ProxyConfig::default())
-            .await
-            .expect("serve");
+        let proxy = proxy::serve(runtime, listen, ProxyConfig::default()).expect("serve");
         let addr = proxy.local_addr();
         println!("==> PROXY PRET http://{addr}");
         println!("    curl -x http://{addr} http://<miroir>.onion/");

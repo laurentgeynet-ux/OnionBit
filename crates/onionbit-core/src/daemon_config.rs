@@ -1457,6 +1457,94 @@ impl Default for TorOnionServiceFileConfig {
     }
 }
 
+/// Section `tor/browser_proxy` — proxy HTTP forward loopback pour
+/// le navigateur (ADR-0030, etape 132). **`enabled=false` par
+/// defaut** : le listener ne s'ouvre que sur geste explicite.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TorBrowserProxyFileConfig {
+    /// Listener `127.0.0.1` actif.
+    pub enabled: bool,
+    /// Adresse d'ecoute — `:0` = port ephemere choisi par l'OS,
+    /// publie par `GET /api/tor/status` (jamais de port fixe a
+    /// deviner). Non-loopback refuse par le proxy lui-meme.
+    pub listen: String,
+    /// Exige `Proxy-Authorization: Basic` — token de session
+    /// aleatoire transmis au navigateur par le dillorc ephemere
+    /// (`http_proxypass`, jamais en argv ni en env). Defaut `false`
+    /// tant que le pref n'est pas lu cote navigateur (etape 133) ;
+    /// le modele loopback seul est le repli documente ADR-0030.
+    pub require_auth: bool,
+    /// Sortie clearnet vía exit Tor : `"off"` (defaut — `.onion`
+    /// uniquement), `"https-only"` (CONNECT :443 clearnet, contenu
+    /// toujours chiffre — l'exit voit la destination), `"on"`
+    /// (ports {80,443} — l'exit voit le HTTP en clair).
+    pub allow_clearnet_exit: String,
+    /// Granularite d'isolation arti — seul `"per_origin"` existe
+    /// (un groupe de circuits par origine `.onion`, etape 131) ;
+    /// toute autre valeur est ignoree avec warn.
+    pub isolation: String,
+    /// Connexions simultanees max.
+    pub max_conns: u64,
+    /// En-tetes de requete max (octets).
+    pub max_header_bytes: u64,
+    /// Timeout d'inactivite d'une connexion (ms).
+    pub idle_timeout_ms: u64,
+    /// Entrees max de la map d'isolation par origine (eviction
+    /// FIFO au-dela).
+    pub isolation_max_entries: u64,
+    /// Clés inconnues — préservées.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, Value>,
+}
+
+impl Default for TorBrowserProxyFileConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            listen: "127.0.0.1:0".to_string(),
+            require_auth: false,
+            allow_clearnet_exit: "off".to_string(),
+            isolation: "per_origin".to_string(),
+            max_conns: 64,
+            max_header_bytes: 16 * 1024,
+            idle_timeout_ms: 120_000,
+            isolation_max_entries: 256,
+            extra: serde_json::Map::new(),
+        }
+    }
+}
+
+/// Section `tor/browser` — binaire navigateur lance par
+/// `POST /api/browser/launch` (ADR-0030 §6). Chemin et arguments
+/// viennent **uniquement** de la config : l'endpoint ne fait que
+/// declencher — jamais d'argv pilote par l'API.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TorBrowserFileConfig {
+    /// Chemin du binaire (`bin/dillo.exe` dans le bundle Windows).
+    /// Vide = navigateur non configure → `browser_not_configured`.
+    /// Relatif : resolu par rapport au repertoire de l'executable
+    /// du daemon (arborescence portable ADR-0018).
+    pub binary_path: String,
+    /// Arguments supplementaires fixes — l'URL validee est appendee
+    /// en dernier argument par le lanceur.
+    pub extra_args: Vec<String>,
+    /// Clés inconnues — préservées.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, Value>,
+}
+
+impl Default for TorBrowserFileConfig {
+    fn default() -> Self {
+        Self {
+            binary_path: String::new(),
+            extra_args: Vec::new(),
+            extra: serde_json::Map::new(),
+        }
+    }
+}
+
 /// Section `tor` — connectivité Tor embarquée (ADR-0028, extension
 /// sans équivalent Tribler). **`enabled=true` par défaut** : la lane
 /// permanente est un service de fond de l'application (recherche
@@ -1501,6 +1589,10 @@ pub struct TorFileConfig {
     pub gateway: TorGatewayFileConfig,
     /// Service `.onion` d'identite (`tor/onion_service`, ADR-0029).
     pub onion_service: TorOnionServiceFileConfig,
+    /// Proxy navigateur (`tor/browser_proxy`, ADR-0030 etape 132).
+    pub browser_proxy: TorBrowserProxyFileConfig,
+    /// Binaire navigateur (`tor/browser`, ADR-0030 §6).
+    pub browser: TorBrowserFileConfig,
     /// Clés inconnues — préservées.
     #[serde(flatten)]
     pub extra: serde_json::Map<String, Value>,
@@ -1521,6 +1613,8 @@ impl Default for TorFileConfig {
             search: TorSearchFileConfig::default(),
             gateway: TorGatewayFileConfig::default(),
             onion_service: TorOnionServiceFileConfig::default(),
+            browser_proxy: TorBrowserProxyFileConfig::default(),
+            browser: TorBrowserFileConfig::default(),
             extra: serde_json::Map::new(),
         }
     }
@@ -2363,6 +2457,55 @@ impl DaemonConfig {
             },
             ..onionbit_tor::TorSettings::default()
         };
+        // `tor/browser_proxy` (ADR-0030 §7) — listener loopback
+        // verifie par le proxy lui-meme ; ici on valide la forme
+        // (adresse parsable) et le tri-state clearnet.
+        {
+            use onionbit_network_policy::ClearnetExit;
+            let bp = &t.browser_proxy;
+            let mut listen_ok = true;
+            match bp.listen.trim().parse::<std::net::SocketAddr>() {
+                Ok(listen) => settings.browser_proxy.listen = listen,
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        value = %bp.listen,
+                        "tor/browser_proxy.listen invalide — proxy desactive"
+                    );
+                    listen_ok = false;
+                }
+            }
+            settings.browser_proxy.enabled = bp.enabled && listen_ok;
+            settings.browser_proxy.require_auth = bp.require_auth;
+            settings.browser_proxy.max_conns = bp.max_conns.max(1) as usize;
+            settings.browser_proxy.max_header_bytes = bp.max_header_bytes.max(1024) as usize;
+            settings.browser_proxy.idle_timeout =
+                std::time::Duration::from_millis(bp.idle_timeout_ms);
+            settings.browser_proxy.isolation_max_entries = bp.isolation_max_entries.max(1) as usize;
+            settings.browser_proxy.clearnet_exit = match bp.allow_clearnet_exit.trim() {
+                "off" => ClearnetExit::Off,
+                "https-only" => ClearnetExit::HttpsOnly,
+                "on" => ClearnetExit::On,
+                other => {
+                    tracing::warn!(
+                        value = %other,
+                        "tor/browser_proxy.allow_clearnet_exit inconnu \
+                         (off|https-only|on attendu) — off"
+                    );
+                    ClearnetExit::Off
+                }
+            };
+            if bp.isolation.trim() != "per_origin" {
+                tracing::warn!(
+                    value = %bp.isolation,
+                    "tor/browser_proxy.isolation inconnu — per_origin applique"
+                );
+            }
+            settings.browser = onionbit_tor::BrowserSettings {
+                binary_path: std::path::PathBuf::from(t.browser.binary_path.trim()),
+                extra_args: t.browser.extra_args.clone(),
+            };
+        }
         match t.mode.as_str() {
             "embedded" => settings.mode = TorMode::Embedded,
             "external" => {

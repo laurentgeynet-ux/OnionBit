@@ -545,3 +545,69 @@ relais via SOCKS5 factice, refus politique sans socket (403),
 auth 407 puis relais avec token, isolation (même origine → même
 token, origines distinctes → tokens distincts, éviction bornée),
 `conns_active` monté/descendu ; clippy `-D warnings` et fmt propres.
+
+## Verdict du câblage daemon + endpoint de lancement (étape 132, 2026-10-18) — fait
+
+Le proxy sort du laboratoire : le daemon le porte, l'API l'expose et
+le déclenche. Cinq décisions tranchées :
+
+1. **Politique de cibles = propriété de `onionbit-network-policy`** —
+   la validation navigateur (`check_browser_target`) vit dans le
+   crate anti-SSRF, compilable sans la feature `tor` : `check_target`
+   de `proxy.rs` délègue, le handler `/api/browser/launch` vérifie la
+   même fonction — une seule règle, deux points d'application.
+2. **`allow_clearnet_exit` tri-state effectif, testé** —
+   `ClearnetExit::{Off, HttpsOnly, On}` (défaut `Off`, valeurs
+   inconnues rejetées au parse config) distingue `CONNECT` de `GET`
+   absolue : `Off` = `.onion` seul ; `HttpsOnly` = clearnet
+   uniquement en `CONNECT :443` (GET clearnet et `:80` toujours
+   refusés — le compromis §8.3) ; `On` = clearnet `:80`/`:443` via
+   exit Tor. Littéraux IP, plages privées/loopback/CGNAT/link-local
+   et `.onion` malformés restent refusés dans **tous** les modes —
+   l'effet de chaque valeur est testé, pas seulement parsé.
+3. **Cycle de vie greffé au runtime** — `CoreSession` détient le
+   slot `BrowserProxySlot { server, auth_token }` ; spawn à la
+   création et re-spawn à chaque `swap_tor_stack`/`swap_tor_runtime`
+   (le vieux serveur est droppé, son `JoinHandle` avorté). Le proxy
+   ne démarre que si `tor.enabled && browser_proxy.enabled` ; un
+   échec de bind est logué en warn et reflété par `listen=null` dans
+   le status — jamais de blocage du bootstrap ni du démarrage.
+4. **`GET /api/tor/status` expose `browser_proxy`** —
+   `{enabled, listen, conns_active}` ; `listen` est l'adresse
+   **réellement liée** (port éphémère résolu quand `127.0.0.1:0` est
+   configuré), `conns_active` provient du handle `ProxyMetrics`
+   vivant — jamais de copie figée, jamais de token.
+5. **`POST /api/browser/launch` — déclencheur, pas exécuteur** —
+   corps `{url}` strict : le chemin du binaire et `extra_args`
+   viennent **exclusivement** de `tor.browser.*` en config (aucun
+   `args` piloté par l'API — pas de surface d'exécution de commande).
+   Erreurs typées : `invalid_url`/`denied_target` (400),
+   `browser_not_configured`/`tor_disabled`/`tor_bootstrapping`/
+   `tor_not_ready`/`bootstrap_failed` (503). **Token jamais en
+   argv** : `require_auth` génère un token hex 256 bits par
+   incarnation du proxy, livré au navigateur via le dillorc
+   éphémère `<state_dir>/browser/.dillo/dillorc`
+   (`http_proxypass`, extension documentée — le profil entier est
+   redirigé par `env HOME=<state_dir>/browser` ; `http_proxy` passe
+   aussi en env) — sous Windows les argv sont lisibles par les
+   processus du même utilisateur, le token n'y figure donc jamais.
+   L'URL validée reste le dernier argument (contrat
+   `<binary> <url>`) ; jamais d'URL ni de token dans les logs.
+
+**Tests** : 17 `onionbit-network-policy` verts (tri-state × méthode ×
+famille d'hôte, normalisation, refus transverses), 43 `onionbit-tor`,
+115 `onionbit-api` — dont les nouveaux : status expose
+`browser_proxy` (activé avec adresse liée réelle / absent),
+launch → 503 `tor_bootstrapping`/`browser_not_configured`,
+400 `invalid_url` (schéma, `ftp`, `javascript`), 400 `denied_target`
+(clearnet/IP/port hors plage en `Off`), 200 avec spawn réel du
+binaire de test (`--list`) + dillorc éphémère vérifié
+(`http_proxy`, `http_proxyuser`, pas de `http_proxypass` sans auth).
+La feature `tor` de `onionbit-core` est unifiée en dev-deps de
+`onionbit-api` — le runtime reste un stub, le listener proxy est
+réel. Clippy `-D warnings`, fmt propres.
+
+**Reste pour 133** : lecture effective de `http_proxypass` côté
+DilloRust (le pref est écrit, ignoré en warn tant que le parseur ne
+le connaît pas — amont n'a que `http_proxyuser` + dialog), contrat
+browser côté UI Flutter, garde-fous réseau/process du bundle (134).

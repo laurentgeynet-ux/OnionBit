@@ -37,6 +37,10 @@ base64.workspace = true
 
 [dev-dependencies]
 onionbit-test-support = { path = "../onionbit-test-support" }
+# Tests ADR-0030 (proxy navigateur, /api/browser/launch) : le chemin
+# `tor` de core (slot proxy, spawn) doit etre compile — la feature est
+# unifiee au build de test, le runtime reste un stub.
+onionbit-core = { path = "../onionbit-core", features = ["tor"] }
 # Signatures de liaison `.onion` des tests `peer_onions` (ADR-0029).
 onionbit-crypto = { path = "../onionbit-crypto" }
 # Doubles `OnionSearchBackend` des tests `/api/search/external` +

@@ -52,6 +52,10 @@ pub async fn tor_status(State(state): State<AppState>) -> Json<serde_json::Value
     };
     let svc = runtime.onion_service();
     let vault = runtime.onion_vault_service();
+    // ADR-0030 etape 132 : adresse reelle du proxy (port ephemere
+    // choisi par l'OS) — `null` tant que le listener ne tourne pas,
+    // jamais d'adresse fictive.
+    let (bp_enabled, bp_listen, bp_conns) = state.session.browser_proxy_status();
     Json(serde_json::json!({
         "enabled": settings.enabled,
         "mode": mode,
@@ -73,6 +77,13 @@ pub async fn tor_status(State(state): State<AppState>) -> Json<serde_json::Value
             "enabled": vault.enabled,
             "state": vault.state,
             "address": vault.address,
+        },
+        // Etape 132 : proxy navigateur — `listen` n'est renseigne
+        // que si le listener tourne reellement.
+        "browser_proxy": {
+            "enabled": bp_enabled,
+            "listen": bp_listen.map(|a| a.to_string()),
+            "conns_active": bp_conns,
         },
     }))
 }
@@ -216,7 +227,7 @@ fn result_json(r: &onionbit_tor::ExternalResult) -> serde_json::Value {
 
 /// Erreur 503 de disponibilite Tor avec code machine (`error.code`
 /// — l'UI distingue `tor_bootstrapping` d'un vrai echec).
-fn tor_unavailable(code: &'static str, message: impl Into<String>) -> ApiError {
+pub(crate) fn tor_unavailable(code: &'static str, message: impl Into<String>) -> ApiError {
     ApiError::with_code(StatusCode::SERVICE_UNAVAILABLE, code, message)
 }
 

@@ -20,7 +20,10 @@
 //! - validation du proxy SOCKS5 expose par les tunnels —
 //!   [`proxy_guard::validate_local_socks5_url`] ;
 //! - politique des cibles `.onion` du fetcher Tor (allowlist v3,
-//!   ports 80/443 — ADR-0028) — [`tor_policy::TorTargetPolicy`].
+//!   ports 80/443 — ADR-0028) — [`tor_policy::TorTargetPolicy`] ;
+//! - politique des cibles du proxy navigateur (inversee : `.onion`
+//!   + clearnet optionnel vía exit, tri-state — ADR-0030 §4) —
+//!     [`browser_policy::check_browser_target`].
 //!
 //! Ce crate est volontairement sans dependance vers `onionbit-ipv8` ou
 //! `onionbit-bittorrent` : il expose des politiques pures, appliquees
@@ -29,6 +32,7 @@
 //! `onionbit-tunnel::routing`.
 
 pub mod address_policy;
+pub mod browser_policy;
 pub mod error;
 pub mod exit_policy;
 pub mod kill_switch;
@@ -36,6 +40,7 @@ pub mod proxy_guard;
 pub mod tor_policy;
 
 pub use address_policy::IpPolicy;
+pub use browser_policy::{check_browser_target, ClearnetExit};
 pub use error::{PolicyError, Result};
 pub use kill_switch::KillSwitch;
 pub use tor_policy::TorTargetPolicy;

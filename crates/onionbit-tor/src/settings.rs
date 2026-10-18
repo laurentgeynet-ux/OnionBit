@@ -78,6 +78,67 @@ pub struct OnionServiceSettings {
     pub vault_enabled: bool,
 }
 
+/// Reglages du proxy navigateur (ADR-0030, `tor/browser_proxy`) —
+/// le `TorProxyServer` vit et meurt avec le runtime (`swap_tor_stack`).
+#[derive(Debug, Clone)]
+pub struct BrowserProxySettings {
+    /// Proxy HTTP forward loopback actif — **`false` par defaut**.
+    pub enabled: bool,
+    /// Adresse d'ecoute — loopback exige par le proxy lui-meme ;
+    /// `:0` = port ephemere choisi par l'OS, publie par
+    /// `GET /api/tor/status`.
+    pub listen: SocketAddr,
+    /// Exige `Proxy-Authorization: Basic` (token de session genere
+    /// au demarrage, transmis au navigateur par le dillorc
+    /// ephemere — jamais en argv, jamais persisté). **`false` par
+    /// defaut** tant que le canal `http_proxypass` n'est pas lu
+    /// cote navigateur (etape 133) — le modele loopback seul est le
+    /// repli documente ADR-0030 §Securite.
+    pub require_auth: bool,
+    /// Sortie clearnet vía exit Tor (ADR-0030 §4, tri-state §8.3) —
+    /// `Off` par defaut : la politique reste `.onion`-only.
+    pub clearnet_exit: onionbit_network_policy::ClearnetExit,
+    /// Connexions simultanees max.
+    pub max_conns: usize,
+    /// En-tetes de requete max avant rejet 400 (octets).
+    pub max_header_bytes: usize,
+    /// Fermeture d'une connexion inactive.
+    pub idle_timeout: Duration,
+    /// Entrees max de la map d'isolation par origine.
+    pub isolation_max_entries: usize,
+}
+
+impl Default for BrowserProxySettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            listen: SocketAddr::from(([127, 0, 0, 1], 0)),
+            require_auth: false,
+            clearnet_exit: onionbit_network_policy::ClearnetExit::Off,
+            max_conns: 64,
+            max_header_bytes: 16 * 1024,
+            idle_timeout: Duration::from_secs(120),
+            isolation_max_entries: 256,
+        }
+    }
+}
+
+/// Binaire navigateur lance par `POST /api/browser/launch`
+/// (ADR-0030, `tor/browser`) — chemin et args viennent
+/// **uniquement** de la config : l'API ne fait que declencher,
+/// jamais d'argv pilote par l'appelant.
+#[derive(Debug, Clone, Default)]
+pub struct BrowserSettings {
+    /// Chemin du binaire (`bin/dillo.exe` dans le bundle). Vide =
+    /// navigateur non configure → `browser_not_configured`.
+    /// Relatif : resolu par rapport au repertoire de l'executable
+    /// du daemon (arborescence portable ADR-0018).
+    pub binary_path: PathBuf,
+    /// Arguments supplementaires fixes (config, jamais d'API) —
+    /// l'URL validee est appendee en dernier argument.
+    pub extra_args: Vec<String>,
+}
+
 /// Reglages complets de la connectivite Tor.
 #[derive(Debug, Clone)]
 pub struct TorSettings {
@@ -118,6 +179,10 @@ pub struct TorSettings {
     pub gateway: TorGatewaySettings,
     /// Service `.onion` d'identite a heberger (ADR-0029).
     pub onion_service: OnionServiceSettings,
+    /// Proxy navigateur (`tor/browser_proxy`, ADR-0030).
+    pub browser_proxy: BrowserProxySettings,
+    /// Binaire navigateur (`tor/browser`, ADR-0030).
+    pub browser: BrowserSettings,
 }
 
 impl Default for TorSettings {
@@ -140,6 +205,8 @@ impl Default for TorSettings {
                 rate_limit_per_circuit: 10,
             },
             onion_service: OnionServiceSettings::default(),
+            browser_proxy: BrowserProxySettings::default(),
+            browser: BrowserSettings::default(),
         }
     }
 }

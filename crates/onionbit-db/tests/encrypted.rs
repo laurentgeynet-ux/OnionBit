@@ -225,3 +225,20 @@ fn memory_reste_hors_scope() {
         .expect("probe");
     assert!(n > 0);
 }
+
+/// Deux `Database::open` sur le meme chemin chiffre dans le meme
+/// processus (repli du pattern `guards.rs` : la premiere session
+/// n'est pas droppee avant la reouverture — diagnostic du verrou
+/// Windows 32 observe sous `--features tor` en etape 132).
+#[test]
+fn double_open_meme_chef_meme_processus() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("onionbit.db");
+    let k = onionbit_db::DbKey::new([7u8; 32]);
+    let db1 = Database::open(&path, Some(&k)).expect("open #1");
+    match Database::open(&path, Some(&k)) {
+        Ok(_) => eprintln!("second open OK"),
+        Err(e) => panic!("second open ERR: {e:?}"),
+    }
+    drop(db1);
+}
