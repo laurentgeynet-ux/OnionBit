@@ -34,7 +34,6 @@ tokio-stream = { version = "0.1", features = ["sync"] }
 tower-http.workspace = true
 hex.workspace = true
 base64.workspace = true
-sha2.workspace = true
 
 [dev-dependencies]
 onionbit-test-support = { path = "../onionbit-test-support" }
@@ -46,6 +45,7 @@ async-trait.workspace = true
 tracing-subscriber.workspace = true
 # Signature `OBUP` des tests `/api/versioning/import` (ADR-0032).
 ed25519-dalek.workspace = true
+sha2.workspace = true
 
 tempfile.workspace = true
 reqwest = { version = "0.13", features = ["json"] }

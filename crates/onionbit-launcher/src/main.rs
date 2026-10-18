@@ -95,6 +95,12 @@ fn apply_staged_update(dir: &Path) -> Result<bool, String> {
     if !staged.is_file() {
         return Ok(false);
     }
+    // Borne avant lecture — un blob geant droppe dans state/update/
+    // ne doit pas ralentir chaque boot (DoS de demarrage).
+    let meta = std::fs::metadata(&staged).map_err(|e| format!("staged.obup : {e}"))?;
+    if meta.len() as usize > onionbit_format::obupd::MAX_OBUP_SIZE {
+        return Err("staged.obup au-dela de la borne — staging invalide".to_string());
+    }
     let blob = std::fs::read(&staged).map_err(|e| format!("staged.obup : {e}"))?;
     let keys = onionbit_crypto::release::accepted_keys(&state_dir);
     let manifest = onionbit_format::obupd::verify(&blob, &keys)
@@ -102,13 +108,13 @@ fn apply_staged_update(dir: &Path) -> Result<bool, String> {
     if !payload.is_dir() {
         return Err("staging incomplet : payload/ absent".to_string());
     }
-    // Re-verification integrale des fichiers *stages*.
-    use sha2::Digest;
+    // Re-verification integrale des fichiers *stages* — hash en
+    // streaming : un fichier lourd ne charge pas la memoire du boot.
     for f in &manifest.files {
         let p = payload.join(&f.path);
-        let data = std::fs::read(&p).map_err(|_| format!("fichier stage absent : {}", f.path))?;
-        let sha: [u8; 32] = sha2::Sha256::digest(&data).into();
-        if data.len() as u64 != f.size || sha != f.sha256 {
+        let (sha, size) = onionbit_format::obupd::hash_file(&p)
+            .map_err(|_| format!("fichier stage absent : {}", f.path))?;
+        if size != f.size || sha != f.sha256 {
             return Err(format!("payload altere : {}", f.path));
         }
     }
@@ -511,6 +517,21 @@ mod tests {
             std::fs::read(dir.path().join("OnionBit.exe.update-old")).unwrap(),
             b"LAUNCHER-OLD"
         );
+    }
+
+    #[test]
+    fn blob_geant_borne_avant_lecture() {
+        // Un staged.obup > MAX_OBUP_SIZE est refuse sans swap —
+        // borne de demarrage (DoS), comme a l'import.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("state/update")).unwrap();
+        std::fs::write(
+            dir.path().join("state/update/staged.obup"),
+            vec![0u8; onionbit_format::obupd::MAX_OBUP_SIZE + 1],
+        )
+        .unwrap();
+        let err = apply_staged_update(dir.path()).unwrap_err();
+        assert!(err.contains("borne"), "{err}");
     }
 
     #[test]

@@ -225,3 +225,13 @@ racine), restauration best-effort sur échec, reprise
 automatique** : un binaire qui démarre et plante en boucle ne doit
 pas osciller — `windows.old` sert le retour manuel (procédure
 étape 146), purgé best-effort au run suivant sans staging.
+
+## Étape 145 (2026-10-18) — durcissement
+
+- `staged.obup` borné par `MAX_OBUP_SIZE` **avant lecture** côté
+  launcher (DoS de démarrage) — même borne qu'à l'import ;
+- hash `sha256`/`size` en streaming via `obupd::hash_file` (chunks
+  64 Kio, partagé daemon et launcher) — jamais de fichier entier en
+  mémoire ;
+- rejeu d'import idempotent : le staging est écrasé proprement,
+  `payload.tmp` résiduel purgé/rejoué (pattern `.enc.tmp`).

@@ -15,7 +15,6 @@ path = "src/main.rs"
 # la seconde porte de confiance, independante du daemon.
 onionbit-format = { path = "../onionbit-format" }
 onionbit-crypto = { path = "../onionbit-crypto" }
-sha2.workspace = true
 
 # MessageBox d'erreur quand la cible est introuvable (sous-systeme GUI :
 # sans lui un echec de lancement serait invisible). Threading+Foundation
@@ -32,6 +31,7 @@ windows-sys = { workspace = true, features = [
 [dev-dependencies]
 tempfile.workspace = true
 ed25519-dalek.workspace = true
+sha2.workspace = true
 
 # Icone OnionBit embarquee dans l'exe (resources.rc) — sert d'icone de
 # fichier pour les trois copies a la racine du bundle.

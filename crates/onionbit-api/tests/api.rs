@@ -1730,6 +1730,47 @@ async fn versioning_import_rejets_typed() {
 }
 
 #[tokio::test]
+async fn versioning_import_rejeu_idempotent_et_borne() {
+    let srv = spawn_server().await;
+    let state_dir = srv.session.config().state_dir.clone();
+    let (sk, pk) = obup_test_keypair();
+    std::fs::write(state_dir.join("release_key.next"), pk).unwrap();
+    let files = vec![("windows/a.exe".to_string(), b"A".to_vec())];
+    let blob = make_obup(&sk, "9.9.9", &files, None, false);
+    drop_incoming(&srv, &files, &blob);
+
+    // Rejeu : importer deux fois la meme release ecrase le staging,
+    // ne l'empile pas (`.enc.tmp` a montre la voie).
+    for _ in 0..2 {
+        let resp = srv
+            .client
+            .post(srv.url("/api/versioning/import"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 200);
+    }
+    let upd = state_dir.join("update");
+    assert!(upd.join("payload/windows/a.exe").is_file());
+    assert!(!upd.join("payload.tmp").exists(), "pas de residu tmp");
+
+    // Blob geant : borne avant lecture → 413.
+    std::fs::write(
+        state_dir.join("update/incoming/update.obup"),
+        vec![0u8; onionbit_format::obupd::MAX_OBUP_SIZE + 1],
+    )
+    .unwrap();
+    let resp = srv
+        .client
+        .post(srv.url("/api/versioning/import"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 413);
+    srv.session.stop().await;
+}
+
+#[tokio::test]
 async fn versioning_import_rotation_next_key() {
     let srv = spawn_server().await;
     let state_dir = srv.session.config().state_dir.clone();

@@ -302,6 +302,26 @@ pub fn parse(blob: &[u8]) -> std::result::Result<(u64, [u8; 64], &[u8]), ObupdEr
     Ok((key_id, sig, &blob[HEAD..]))
 }
 
+/// Hash `sha256`+`size` d'un fichier en **streaming** (chunks de
+/// 64 Kio) — le payload peut contenir des binaires lourds, jamais
+/// de lecture integrale en memoire (DoS de boot/d'import).
+pub fn hash_file(path: &std::path::Path) -> std::io::Result<([u8; 32], u64)> {
+    use sha2::Digest;
+    let mut f = std::fs::File::open(path)?;
+    let mut hasher = sha2::Sha256::new();
+    let mut buf = [0u8; 64 * 1024];
+    let mut total = 0u64;
+    loop {
+        let n = std::io::Read::read(&mut f, &mut buf)?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+        total += n as u64;
+    }
+    Ok((hasher.finalize().into(), total))
+}
+
 /// Compare deux versions semver `X.Y[.Z]` (pre-release/build
 /// ignores au-dela du troisieme composant, prefixe `v` toleré).
 /// `None` si l'une n'est pas un triplet numerique — le comparatif

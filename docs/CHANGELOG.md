@@ -3,6 +3,18 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Étape 145 — Durcissement OBUP : bornes et rejeu (ADR-0032) (2026-10-18)
+
+`staged.obup` borne par `MAX_OBUP_SIZE` **avant lecture** cote
+launcher aussi (blob geant drope dans `state/update/` = DoS de
+demarrage) ; hash `sha256`/`size` en streaming via
+`obupd::hash_file` (chunks 64 Kio, partage daemon+launcher — un
+fichier stage lourd ne charge plus la memoire du boot/import) ;
+rejeu d'import idempotent (double import = staging ecrase, zero
+residu `payload.tmp`) ; erreurs codees `obup_*` bout-en-bout.
+Tests : rejeu double sans residu, 413 blob geant, refus borne
+launcher.
+
 ## Étape 144 — Swap launcher `OBUP` : la seconde porte (ADR-0032) (2026-10-18)
 
 `apply_staged_update` au boot avant resolution de la cible :

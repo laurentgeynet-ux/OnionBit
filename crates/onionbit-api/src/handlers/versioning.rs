@@ -159,7 +159,6 @@ pub async fn import_update(
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     use onionbit_format::obupd as obup;
-    use sha2::Digest;
 
     gate(&state)?;
     let state_dir = state.session.config().state_dir.clone();
@@ -250,25 +249,25 @@ pub async fn import_update(
         ));
     }
 
-    // 5) sha256/size par fichier (couteux — en dernier). Le chemin
+    // 5) sha256/size par fichier (couteux — en dernier ; hash en
+    //    streaming, jamais le fichier entier en memoire). Le chemin
     //    est deja valide par le manifest (`..`/absolu interdits).
     for f in &manifest.files {
         let src = incoming.join(&f.path);
-        let data = std::fs::read(&src).map_err(|_| {
+        let (sha, size) = obup::hash_file(&src).map_err(|_| {
             ApiError::with_code(
                 StatusCode::UNPROCESSABLE_ENTITY,
                 "obup_missing_file",
                 format!("fichier du manifest absent : {}", f.path),
             )
         })?;
-        if data.len() as u64 != f.size {
+        if size != f.size {
             return Err(ApiError::with_code(
                 StatusCode::UNPROCESSABLE_ENTITY,
                 "obup_hash_mismatch",
                 format!("taille divergente : {}", f.path),
             ));
         }
-        let sha: [u8; 32] = sha2::Sha256::digest(&data).into();
         if sha != f.sha256 {
             return Err(ApiError::with_code(
                 StatusCode::UNPROCESSABLE_ENTITY,
