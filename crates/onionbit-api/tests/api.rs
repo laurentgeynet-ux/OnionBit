@@ -6399,7 +6399,9 @@ async fn browser_launch_denied_target_400() {
 
 #[tokio::test]
 async fn browser_launch_ok_spawn_et_dillorc() {
-    let srv = spawn_browser_server(|_| {}).await;
+    // `keep_profile=true` → profil stable `browser/` (le wipe du
+    // profil ephemere courserait la lecture du dillorc).
+    let srv = spawn_browser_server(|c| c.tor.browser.keep_profile = true).await;
     let resp = srv
         .client
         .post(srv.url("/api/browser/launch"))
@@ -6411,8 +6413,8 @@ async fn browser_launch_ok_spawn_et_dillorc() {
     let body: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(body["launched"], true);
     assert!(body["pid"].as_u64().unwrap() > 0);
-    // Le dillorc ephemere porte le proxy — pas de `http_proxypass`
-    // tant que `require_auth=false` (defaut).
+    // Le dillorc porte le proxy + le confinement dpi — pas de
+    // `http_proxypass` tant que `require_auth=false` (defaut).
     let dillorc = srv
         ._dir
         .path()
@@ -6425,6 +6427,58 @@ async fn browser_launch_ok_spawn_et_dillorc() {
         "{content}"
     );
     assert!(content.contains("http_proxyuser=\"onionbit\""), "{content}");
+    assert!(content.contains("no_dpi=yes"), "{content}");
     assert!(!content.contains("http_proxypass"), "{content}");
+    // dpidrc de defense en profondeur : aucun service dpi.
+    let dpidrc = std::fs::read_to_string(
+        srv._dir
+            .path()
+            .join("browser")
+            .join(".dillo")
+            .join("dpidrc"),
+    )
+    .unwrap();
+    assert!(!dpidrc.contains("service="), "{dpidrc}");
+    srv.session.stop().await;
+}
+
+#[tokio::test]
+async fn browser_launch_profil_ephemere_wipe() {
+    // `keep_profile=false` (defaut) → profil `browser/run-<rand>`
+    // wipe a la fermeture du processus fils (ADR-0030 §134).
+    let srv = spawn_browser_server(|_| {}).await;
+    let resp = srv
+        .client
+        .post(srv.url("/api/browser/launch"))
+        .json(&serde_json::json!({"url": format!("http://{TPB_ONION}/")}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let browser_root = srv._dir.path().join("browser");
+    let run_dirs = || -> Vec<std::path::PathBuf> {
+        std::fs::read_dir(&browser_root)
+            .map(|rd| {
+                rd.flatten()
+                    .filter(|e| e.file_name().to_string_lossy().starts_with("run-"))
+                    .map(|e| e.path())
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    // Le profil ephemere existe et porte le dillorc confine.
+    let dirs = run_dirs();
+    assert_eq!(dirs.len(), 1, "browser_root={browser_root:?} {dirs:?}");
+    let content = std::fs::read_to_string(dirs[0].join(".dillo").join("dillorc")).unwrap();
+    assert!(content.contains("no_dpi=yes"), "{content}");
+    // Le fils (binaire de test `--list`) sort vite → le watcher wipe
+    // le profil ; attendre (borne 10 s) que `run-*` disparaisse.
+    for _ in 0..100 {
+        if run_dirs().is_empty() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    assert!(run_dirs().is_empty(), "profil ephemere non wipe");
     srv.session.stop().await;
 }

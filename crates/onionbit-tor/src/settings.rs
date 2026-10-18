@@ -137,6 +137,12 @@ pub struct BrowserSettings {
     /// Arguments supplementaires fixes (config, jamais d'API) —
     /// l'URL validee est appendee en dernier argument.
     pub extra_args: Vec<String>,
+    /// `false` (defaut) : profil ephemere `browser/run-<rand>` supprime
+    /// a la fermeture du navigateur — la trace persistante (hsts,
+    /// comm_keys, fichiers dpi vivant hors DB) n'existe que le temps
+    /// de la session. `true` : profil stable `browser/` conserve —
+    /// persistance assumee en clair (ADR-0030 §134).
+    pub keep_profile: bool,
 }
 
 /// Reglages complets de la connectivite Tor.

@@ -646,3 +646,55 @@ lancement allowlist → URL + snackbar) ; `flutter analyze` et
 
 **Reste pour 134** : étanchéité réseau/DNS/process du bundle
 (fuites hors proxy, durcissement du profil éphémère).
+
+### Verdict étape 134 (2026-10) — confinement process/DPI + profil éphémère, mesure NO_LEAK
+
+**Inventaire des fuites possibles** : (a) `ftp.dpi` délègue à
+`wget -t1 -O-` — processus externe connectant **en direct**, hors
+proxy (unix-gated : mort sous Windows, fuite réelle sous Linux) ;
+(b) `start_dpid` essaie `~/.dillo/dpid` → `<bindir>/dpid` → **`dpid`
+dans le `PATH`** — un dpid étranger serait spawné ; (c) sans dpid,
+`blocking_start_dpid` retente 12×250 ms ≈ 3 s par requête (appelé
+via `send_blocking_cmd("cookies")`).
+
+**Confinement** (dillorust@`7434542` + daemon) : pref `no_dpi=yes`
+dans le dillorc généré — `blocking_start_dpid` rend immédiatement,
+aucun `dpid` spawné (même via `PATH`), aucune socket dpip, les
+commandes `cookies`/dpi répondent `DpidERROR` instantanément.
+Profondeur de défense : `dpidrc` généré sans `service=` et
+`dpi_dir` vide — même un binaire ancien ignorant `no_dpi` ne peut
+résoudre aucun service dpi.
+
+**Trace persistante tranchée** : `tor.browser.keep_profile` —
+`false` (défaut) : profil `browser/run-<rand>` supprimé par un
+thread-watcher à la mort du navigateur (la trace hsts/comm_keys/
+dpi vit hors DB, donc non chiffrée — elle n'existe que le temps de
+la session) ; `true` : profil stable `browser/` — persistance
+assumée en clair, choix utilisateur explicite. Balayage des
+`run-*` orphelins (daemon tué) à chaque `respawn_browser_proxy`.
+
+**Bundle** : `build_dist.ps1` stage `windows\bin\dillo.exe`
+(`-DilloSource`/`~\dillorust` par défaut, `-DilloBin` binaire prêt,
+`-NoDillo` forcer l'absence) — `binary_path="bin\dillo.exe"` résolu
+relativement au dossier du daemon, portable à 100 %.
+
+**Mesure** (`scripts/sec_browser_leak.ps1` — sans élévation,
+`Get-NetTCPConnection`/`Get-NetUDPEndpoint` filtrés par
+`OwningProcess`, scrute le PID navigateur **et ses descendants**) :
+session `.onion` réelle via le proxy (bootstrap arti ~24 s,
+consensus caché) — verdict **NO_LEAK** :
+
+- 18 connexions TCP observées, **toutes** vers `127.0.0.1:<proxy>`
+  — zéro remote non-proxy (états `Bound`/`Listen` exclus : un
+  socket `bind()`é sans `connect()` n'a émis aucun octet) ;
+- **zéro UDP** — le hostname `.onion` n'atteint jamais le resolver
+  local (invariant structurel : en mode proxy, `http_get` remplace
+  la cible par l'URL du proxy avant `lookup_host`) ;
+- **zéro processus enfant** — ni `dpid` ni `wget` (`conhost.exe`
+  blanchi : attaché par le sous-système console Windows, pas par
+  dillo — ses sockets restent scrutés) ;
+- `browser/run-*` supprimé après `exit` du navigateur.
+
+Faux positifs du banc documentés : `conhost.exe` (enfant OS),
+`Bound`/`Listen` (pas de remote). Le banc est rejouable :
+`pwsh -File scripts/sec_browser_leak.ps1 -OnionHost <hote>.onion`.

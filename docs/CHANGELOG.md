@@ -3,6 +3,41 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Étape 134 — confinement navigateur + profil éphémère + banc de fuite (ADR-0030) — fait (2026-10-18)
+
+**DilloRust** (`dillorust@7434542`) : pref `no_dpi` — coupure
+complète du sous-système dpi (`blocking_start_dpid` rend
+immédiatement, aucun `dpid` spawné même via `PATH`, aucune socket
+dpip, `send_blocking_cmd`/`dpi_ccc` échouent instantanément au lieu
+de retenter 12×250 ms ≈ 3 s par requête). Inventaire justifiant le
+pref : `ftp.dpi` délègue à `wget` en connexion **directe** hors
+proxy (fuite réelle sous Linux) ; le fallback `PATH` de
+`start_dpid` pouvait spawner un `dpid` étranger.
+
+**Daemon** : `tor.browser.keep_profile` (`false` défaut) — profil
+`browser/run-<rand>` supprimé par thread-watcher à la mort du
+navigateur ; `true` = profil stable `browser/` (persistance assumée
+en clair, opt-in). Le dillorc généré porte `no_dpi=yes` et un
+`dpidrc` restrictif (aucun `service=`, `dpi_dir` vide) en
+profondeur de défense ; les `run-*` orphelins sont balayés à chaque
+respawn du proxy.
+
+**Bundle** : `build_dist.ps1` stage `windows\bin\dillo.exe`
+(`-DilloSource`/`..\dillorust`, `-DilloBin`, `-NoDillo`) —
+`binary_path="bin\dillo.exe"` résolu relativement au daemon.
+
+**Banc de fuite** `scripts/sec_browser_leak.ps1` : session `.onion`
+réelle monitorée par PID (sockets + descendants, sans élévation) —
+verdict **NO_LEAK** : 18 connexions TCP toutes loopback→proxy,
+zéro UDP (pas de fuite DNS `.onion`), zéro processus enfant,
+profil wipé à l'exit. Faux positifs codifiés : `conhost.exe`
+(enfant OS), états `Bound`/`Listen`.
+
+**Tests** : `browser_launch_profil_ephemere_wipe` (run-* + wipe
+prouvés) ; `browser_launch_ok_spawn_et_dillorc` sous `keep_profile`
+vérifie `no_dpi=yes` + `dpidrc` sans service ; 10/10 tests browser
+API verts.
+
 ## Étape 133 — `http_proxypass` côté DilloRust + contrat UI Flutter (ADR-0030) — fait (2026-10-18)
 
 **DilloRust** (`dillorust@e1c656d`) : nouveau pref `dillorc`

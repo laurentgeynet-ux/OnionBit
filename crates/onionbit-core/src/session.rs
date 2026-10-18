@@ -2561,6 +2561,20 @@ impl CoreSession {
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         *slot = None;
+        // Reperes de profils ephemeres `browser/run-*` orphelins par
+        // un daemon precedemment tue : les navigateurs encore vivants
+        // ont perdu leur token de session (regenere ci-dessous) —
+        // le profil est balayable.
+        let browser_root = self.inner.config.state_dir.join("browser");
+        if let Ok(rd) = std::fs::read_dir(&browser_root) {
+            for ent in rd.flatten() {
+                if ent.file_name().to_string_lossy().starts_with("run-")
+                    && ent.file_type().is_ok_and(|t| t.is_dir())
+                {
+                    let _ = std::fs::remove_dir_all(ent.path());
+                }
+            }
+        }
         let rt = self.tor();
         let settings = rt.settings();
         let bp = &settings.browser_proxy;
@@ -2708,35 +2722,65 @@ impl CoreSession {
             if !binary.is_file() {
                 return Err(BrowserLaunchError::NotConfigured);
             }
-            // Profil ephemere : `$HOME/.dillo/dillorc` est le chemin rc
-            // du navigateur — `HOME` redirige tout le profil (prefs,
-            // cookies, hsts) sous `state_dir/browser`, reecrit a chaque
-            // lancement.
-            let profile = self.inner.config.state_dir.join("browser");
+            // Profil (ADR-0030 §134) : `keep_profile=false` (defaut) →
+            // `HOME=browser/run-<rand>` supprime a la fermeture du
+            // processus — la trace persistante (hsts, comm_keys,
+            // fichiers dpi hors DB donc non chiffres) ne vit que le
+            // temps de la session ; `keep_profile=true` →
+            // `HOME=browser/` stable, persistance assumee en clair.
+            let browser_root = self.inner.config.state_dir.join("browser");
+            let profile = if settings.browser.keep_profile {
+                browser_root
+            } else {
+                let mut tag = [0u8; 8];
+                rand::RngExt::fill(&mut rand::rng(), &mut tag);
+                browser_root.join(format!("run-{}", hex::encode(tag)))
+            };
             let dillo_dir = profile.join(".dillo");
             std::fs::create_dir_all(&dillo_dir).map_err(BrowserLaunchError::Io)?;
             let mut dillorc = format!(
-                "# Profil ephemere OnionBit — regenere a chaque lancement.\n\
+                "# Profil OnionBit — regenere a chaque lancement.\n\
              http_proxy=\"http://{listen}/\"\n\
-             http_proxyuser=\"onionbit\"\n"
+             http_proxyuser=\"onionbit\"\n\
+             no_dpi=yes\n"
             );
             if let Some(t) = token.as_deref() {
                 // `http_proxypass` : extension OnionBit du format dillorc
-                // (amont n'a que `http_proxyuser` + dialog) — le pref
-                // est ignore en warn par les versions qui ne le lisent
-                // pas encore (etape 133).
+                // (amont n'a que `http_proxyuser` + dialog).
                 dillorc.push_str(&format!("http_proxypass=\"{t}\"\n"));
             }
             std::fs::write(dillo_dir.join("dillorc"), dillorc).map_err(BrowserLaunchError::Io)?;
+            // Profondeur de defense dpi : `dpidrc` sans `service=` et
+            // `dpi_dir` vide — meme si un binaire ancien ignore
+            // `no_dpi`, dpid ne peut resoudre aucun service (le dpi
+            // `ftp:` delegue a `wget` = connexion directe hors proxy).
+            std::fs::write(
+                dillo_dir.join("dpidrc"),
+                "# Profil OnionBit — plugins dpi desactives en profil onion.\ndpi_dir=\n",
+            )
+            .map_err(BrowserLaunchError::Io)?;
             let proxy_url = format!("http://{listen}");
-            let child = std::process::Command::new(&binary)
+            let mut child = std::process::Command::new(&binary)
                 .args(&settings.browser.extra_args)
                 .arg(url.as_str())
                 .env("HOME", &profile)
                 .env("http_proxy", &proxy_url)
                 .spawn()
                 .map_err(BrowserLaunchError::Io)?;
-            Ok(child.id())
+            let pid = child.id();
+            if !settings.browser.keep_profile {
+                // Wipe du profil ephemere a la fermeture — thread
+                // dedie (launch_browser est appele depuis un handler
+                // sync, le wait est un syscall bloquant).
+                std::thread::Builder::new()
+                    .name("browser-profile-wipe".into())
+                    .spawn(move || {
+                        let _ = child.wait();
+                        let _ = std::fs::remove_dir_all(&profile);
+                    })
+                    .map_err(BrowserLaunchError::Io)?;
+            }
+            Ok(pid)
         }
     }
 

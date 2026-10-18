@@ -27,6 +27,12 @@
 #                                       racine du bundle
 #     windows\onionbit-daemon.exe     - backend Rust (plan de controle)
 #     windows\onionbit-cli.exe
+#     windows\bin\dillo.exe           - navigateur .onion (DilloRust,
+#                                       ADR-0030) si -DilloSource/-
+#                                       DilloBin le fournit ;
+#                                       tor.browser.binary_path =
+#                                       "bin\dillo.exe" resolu depuis
+#                                       le dossier du daemon
 #     windows\OnionBit.exe + *.dll + data\  - UI Flutter Windows
 #     windows\web\                    - interface web servie sur
 #                                       http://127.0.0.1:<port>/
@@ -59,6 +65,16 @@ param(
     # compatibilite avec les commandes anterieures (implicite).
     [switch]$Tor,
     [switch]$NoTor,
+    # Navigateur .onion (ADR-0030, etape 134) : `-DilloSource` pointe
+    # le checkout DilloRust a builder (defaut : ..\dillorust s'il
+    # existe), `-DilloBin` embarque un binaire pret, `-NoDillo`
+    # force l'absence (la section Navigateur de l'UI rendra alors
+    # `browser_not_configured` jusqu'a ce que binary_path soit
+    # renseigne). Le binaire est copie en `windows\bin\dillo.exe` —
+    # chemin relatif portable resolu depuis l'exe du daemon.
+    [string]$DilloSource = "",
+    [string]$DilloBin = "",
+    [switch]$NoDillo,
     [switch]$ZipRelease,
     # Filet ADR-0032 : un zip de release NE DOIT PAS embarquer la
     # clef placeholder `RELEASE_PUBKEY = [0;32]` (elle rendrait tout
@@ -219,6 +235,34 @@ try {
     foreach ($bin in @("onionbit-daemon.exe", "onionbit-cli.exe")) {
         Copy-Item (Join-Path $cargoOut $bin) -Destination $osDir -Force
     }
+    # Navigateur .onion (ADR-0030) : `bin\dillo.exe` a cote du daemon —
+    # `tor.browser.binary_path` le resout relativement au dossier de
+    # l'exe. Optionnel : absence = `browser_not_configured` propre.
+    $dilloSrc = ""
+    if (-not $NoDillo) {
+        if ($DilloBin -ne "") {
+            $dilloSrc = $DilloBin
+        } else {
+            if ($DilloSource -eq "") {
+                $DilloSource = Join-Path (Split-Path -Parent $root) 'dillorust'
+            }
+            if (Test-Path (Join-Path $DilloSource 'Cargo.toml')) {
+                Write-Host "== cargo build dillo ($BuildProfile, $DilloSource) ==" -ForegroundColor Cyan
+                cargo build --profile $cargoProfile -p dillo --manifest-path (Join-Path $DilloSource 'Cargo.toml')
+                if ($LASTEXITCODE -ne 0) { throw "cargo build dillo a echoue ($LASTEXITCODE)" }
+                $dilloSrc = Join-Path $DilloSource "target\$BuildProfile\dillo.exe"
+            } else {
+                Write-Host "   dillorust absent ($DilloSource) — bundle sans navigateur" -ForegroundColor Yellow
+            }
+        }
+    }
+    if ($dilloSrc -ne "") {
+        if (-not (Test-Path $dilloSrc)) { throw "dillo.exe introuvable : $dilloSrc" }
+        $binDir = Join-Path $osDir "bin"
+        New-Item -ItemType Directory -Force -Path $binDir | Out-Null
+        Copy-Item $dilloSrc (Join-Path $binDir "dillo.exe") -Force
+        Write-Host "   navigateur embarque : windows\bin\dillo.exe" -ForegroundColor Green
+    }
     # Payload Flutter : exe + DLLs + data\ (l'etat utilisateur n'y est pas).
     Copy-Item (Join-Path $flutterOut "*") -Destination $osDir -Recurse -Force
 
@@ -293,6 +337,7 @@ try {
         profile   = $BuildProfile
         daemon    = (cargo pkgid -p onionbit-daemon).Split("#")[-1]
         tor       = (-not $NoTor)
+        browser   = ($dilloSrc -ne "")
         ui        = "OnionBit.exe (Flutter windows $BuildProfile) + web/"
         layout    = "portable ADR-0018 (OnionBit.portable + <os>/)"
         api       = $listen

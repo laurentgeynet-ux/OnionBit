@@ -1530,6 +1530,12 @@ pub struct TorBrowserFileConfig {
     /// Arguments supplementaires fixes — l'URL validee est appendee
     /// en dernier argument par le lanceur.
     pub extra_args: Vec<String>,
+    /// `false` (defaut) : profil ephemere `browser/run-<rand>` wipe a
+    /// la fermeture du navigateur — la trace (hsts, comm_keys, tout
+    /// fichier ecrit hors DB, donc non chiffre) ne vit que le temps
+    /// de la session. `true` : profil stable `browser/` — persistance
+    /// assumee en clair (choix utilisateur documente, ADR-0030).
+    pub keep_profile: bool,
     /// Clés inconnues — préservées.
     #[serde(flatten)]
     pub extra: serde_json::Map<String, Value>,
@@ -1540,6 +1546,7 @@ impl Default for TorBrowserFileConfig {
         Self {
             binary_path: String::new(),
             extra_args: Vec::new(),
+            keep_profile: false,
             extra: serde_json::Map::new(),
         }
     }
@@ -2504,6 +2511,7 @@ impl DaemonConfig {
             settings.browser = onionbit_tor::BrowserSettings {
                 binary_path: std::path::PathBuf::from(t.browser.binary_path.trim()),
                 extra_args: t.browser.extra_args.clone(),
+                keep_profile: t.browser.keep_profile,
             };
         }
         match t.mode.as_str() {
