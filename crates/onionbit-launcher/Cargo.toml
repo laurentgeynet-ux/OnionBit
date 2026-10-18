@@ -15,13 +15,23 @@ path = "src/main.rs"
 # la seconde porte de confiance, independante du daemon.
 onionbit-format = { path = "../onionbit-format" }
 onionbit-crypto = { path = "../onionbit-crypto" }
+sha2.workspace = true
 
 # MessageBox d'erreur quand la cible est introuvable (sous-systeme GUI :
-# sans lui un echec de lancement serait invisible).
+# sans lui un echec de lancement serait invisible). Threading+Foundation
+# : sonde du mutex d'instance unique avant le swap de mise a jour.
 [target.'cfg(windows)'.dependencies]
 windows-sys = { workspace = true, features = [
     "Win32_UI_WindowsAndMessaging",
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_Threading",
 ] }
+
+# Tests du swap OBUP : bundles factices signes en tempdir.
+[dev-dependencies]
+tempfile.workspace = true
+ed25519-dalek.workspace = true
 
 # Icone OnionBit embarquee dans l'exe (resources.rc) — sert d'icone de
 # fichier pour les trois copies a la racine du bundle.

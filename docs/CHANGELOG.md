@@ -3,6 +3,23 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Étape 144 — Swap launcher `OBUP` : la seconde porte (ADR-0032) (2026-10-18)
+
+`apply_staged_update` au boot avant resolution de la cible :
+re-verification complete (signature+key_id du blob stage, sha256/
+size de `state/update/payload/` — jamais `incoming/`). Sonde du
+mutex d'instance unique sous Windows avant tout renommage. Swap en
+2 phases : retrait (`windows/`→`windows.old/` apres purge du
+precedent ; fichiers racine → `.update-old` — Windows renomme un
+exe en cours, le launcher met a jour ses propres copies) puis
+installation `payload/`→racine ; echec → restauration best-effort,
+staging conserve. Reprise `windows/`absent+`windows.old/`present au
+boot (pattern `.plain.bak`). Pas de rollback auto (boucle de
+plantage) : `windows.old` sert le retour manuel, purge au run
+suivant. 6 tests verts : swap complet, payload altere refuse+
+preserve, signature invalide, reprise, collision racine
+`.update-old`, purge `windows.old` preexistant.
+
 ## Étape 143 — Import daemon `POST /api/versioning/import` (ADR-0032) (2026-10-18)
 
 Premiere porte reseau des releases signees. **Payload par le

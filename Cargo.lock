@@ -4598,9 +4598,12 @@ dependencies = [
 name = "onionbit-launcher"
 version = "1.1.2"
 dependencies = [
+ "ed25519-dalek 3.0.0",
  "embed-resource",
  "onionbit-crypto",
  "onionbit-format",
+ "sha2 0.11.0",
+ "tempfile",
  "windows-sys 0.61.2",
 ]
 

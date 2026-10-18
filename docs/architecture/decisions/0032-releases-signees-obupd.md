@@ -212,3 +212,16 @@ confiance est valable dès vérification), pas « au premier démarrage
 post-swap » ; le paragraphe original mentionnait le post-swap, la
 sémantique est identique car seul un manifest signé par une clef
 acceptée peut déclarer la successeure.
+
+## Étape 144 (2026-10-18) — swap launcher
+
+`apply_staged_update` remplace la sonde du spike : re-vérification
+complète (signature + `sha256` des fichiers **stagés** — jamais
+`incoming/`), sonde du mutex d'instance unique sous Windows avant
+tout renommage, swap en 2 phases (retrait `windows/`→`windows.old/`
+et fichiers racine → `.update-old` ; installation `payload/`→
+racine), restauration best-effort sur échec, reprise
+`windows/`absent+`windows.old/`présent au boot. **Pas de rollback
+automatique** : un binaire qui démarre et plante en boucle ne doit
+pas osciller — `windows.old` sert le retour manuel (procédure
+étape 146), purgé best-effort au run suivant sans staging.
