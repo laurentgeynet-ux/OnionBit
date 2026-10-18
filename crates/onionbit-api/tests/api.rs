@@ -1535,6 +1535,238 @@ async fn versioning_et_logging() {
     srv.session.stop().await;
 }
 
+// ------------------------------------------------------------------
+// Import `OBUP` (ADR-0032, etape 143) : le payload est depose dans
+// `state/update/incoming/` par l'operateur — l'endpoint ne prend ni
+// upload ni chemin en parametre.
+// ------------------------------------------------------------------
+
+/// Clef de release de test : la placeholder `[0;32]` est fail-closed
+/// par construction — les tests inscrivent leur pubkey dans
+/// `state/release_key.next` (mecanisme de rotation, deja acceptee).
+fn obup_test_keypair() -> (ed25519_dalek::SigningKey, [u8; 32]) {
+    let sk = ed25519_dalek::SigningKey::from_bytes(&[0x5Au8; 32]);
+    let pk = sk.verifying_key().to_bytes();
+    (sk, pk)
+}
+
+/// Construit un blob `OBUP` signe pour `files` (`(chemin, contenu)`).
+fn make_obup(
+    sk: &ed25519_dalek::SigningKey,
+    version: &str,
+    files: &[(String, Vec<u8>)],
+    next_key: Option<[u8; 32]>,
+    rollback: bool,
+) -> Vec<u8> {
+    use onionbit_format::obupd as obup;
+    use sha2::Digest;
+    let pk = sk.verifying_key().to_bytes();
+    let manifest = obup::UpdateManifest {
+        version: version.into(),
+        target: "windows-x64".into(),
+        ts: 1_700_000_000,
+        files: files
+            .iter()
+            .map(|(p, d)| obup::ObupFile {
+                path: p.clone(),
+                sha256: sha2::Sha256::digest(d).into(),
+                size: d.len() as u64,
+            })
+            .collect(),
+        min_supported: None,
+        rollback,
+        next_key,
+        notes: None,
+        key_id: onionbit_crypto::release::release_key_id(&pk),
+    };
+    let enc = obup::encode_manifest(&manifest);
+    let sig = onionbit_crypto::release::sign_update_manifest(sk, &enc);
+    obup::build(&manifest, manifest.key_id, &sig)
+}
+
+/// Depose un `incoming/` complet dans le state_dir du serveur.
+fn drop_incoming(srv: &TestServer, files: &[(String, Vec<u8>)], blob: &[u8]) {
+    let incoming = srv
+        .session
+        .config()
+        .state_dir
+        .join("update")
+        .join("incoming");
+    for (p, d) in files {
+        let dst = incoming.join(p);
+        std::fs::create_dir_all(dst.parent().unwrap()).unwrap();
+        std::fs::write(&dst, d).unwrap();
+    }
+    std::fs::write(incoming.join("update.obup"), blob).unwrap();
+}
+
+#[tokio::test]
+async fn versioning_import_obup_cycle_complet() {
+    let srv = spawn_server().await;
+    let state_dir = srv.session.config().state_dir.clone();
+    let (sk, pk) = obup_test_keypair();
+    // Clef de test acceptee via le canal de rotation.
+    std::fs::write(state_dir.join("release_key.next"), pk).unwrap();
+
+    let files = vec![
+        ("windows/OnionBit.exe".to_string(), b"EXE-NEUF".to_vec()),
+        ("windows/daemon.exe".to_string(), b"DAEMON-NEUF".to_vec()),
+    ];
+    let blob = make_obup(&sk, "9.9.9", &files, None, false);
+    drop_incoming(&srv, &files, &blob);
+
+    let resp = srv
+        .client
+        .post(srv.url("/api/versioning/import"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200, "{:?}", resp.text().await.ok());
+    // Staging pose : payload + staged.obup.
+    let upd = state_dir.join("update");
+    assert!(upd.join("payload/windows/OnionBit.exe").is_file());
+    assert_eq!(
+        std::fs::read(upd.join("payload/windows/OnionBit.exe")).unwrap(),
+        b"EXE-NEUF"
+    );
+    assert!(upd.join("staged.obup").is_file());
+
+    // Statut : stagé + verifie.
+    let resp = srv
+        .client
+        .get(srv.url("/api/versioning/update"))
+        .send()
+        .await
+        .unwrap();
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["staged"], true);
+    assert_eq!(body["verified"], true);
+    assert_eq!(body["version"], "9.9.9");
+    srv.session.stop().await;
+}
+
+#[tokio::test]
+async fn versioning_import_rejets_typed() {
+    let srv = spawn_server().await;
+    let state_dir = srv.session.config().state_dir.clone();
+    let (sk, pk) = obup_test_keypair();
+    std::fs::write(state_dir.join("release_key.next"), pk).unwrap();
+    let files = vec![("windows/a.exe".to_string(), b"A".to_vec())];
+
+    // 404 sans incoming.
+    let resp = srv
+        .client
+        .post(srv.url("/api/versioning/import"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 404);
+
+    // Signature corrompue → 422 obup_sig_invalid.
+    let mut blob = make_obup(&sk, "9.9.9", &files, None, false);
+    blob[20] ^= 0xff; // dans la signature
+    drop_incoming(&srv, &files, &blob);
+    let resp = srv
+        .client
+        .post(srv.url("/api/versioning/import"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 422);
+
+    // key_id inconnu (clef jamais acceptee) → 422 obup_unknown_key.
+    let alien = ed25519_dalek::SigningKey::from_bytes(&[0x99u8; 32]);
+    let blob = make_obup(&alien, "9.9.9", &files, None, false);
+    drop_incoming(&srv, &files, &blob);
+    let resp = srv
+        .client
+        .post(srv.url("/api/versioning/import"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 422);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert!(body.to_string().contains("clef de release inconnue"));
+
+    // Downgrade non signe rollback → 409.
+    let blob = make_obup(&sk, "0.0.1", &files, None, false);
+    drop_incoming(&srv, &files, &blob);
+    let resp = srv
+        .client
+        .post(srv.url("/api/versioning/import"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 409);
+
+    // Downgrade avec `rollback` signe → accepte.
+    let blob = make_obup(&sk, "0.0.1", &files, None, true);
+    drop_incoming(&srv, &files, &blob);
+    let resp = srv
+        .client
+        .post(srv.url("/api/versioning/import"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    // Hash divergent → 422 en nommant le fichier.
+    let blob = make_obup(&sk, "9.9.9", &files, None, false);
+    drop_incoming(
+        &srv,
+        &[("windows/a.exe".to_string(), b"ALTERT".to_vec())],
+        &blob,
+    );
+    let resp = srv
+        .client
+        .post(srv.url("/api/versioning/import"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 422);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert!(body.to_string().contains("windows/a.exe"));
+    srv.session.stop().await;
+}
+
+#[tokio::test]
+async fn versioning_import_rotation_next_key() {
+    let srv = spawn_server().await;
+    let state_dir = srv.session.config().state_dir.clone();
+    let (sk1, pk1) = obup_test_keypair();
+    std::fs::write(state_dir.join("release_key.next"), pk1).unwrap();
+    let sk2 = ed25519_dalek::SigningKey::from_bytes(&[0x77u8; 32]);
+    let pk2 = sk2.verifying_key().to_bytes();
+
+    // Release signee k1 declarant next_key=k2 → import persiste k2.
+    let files = vec![("windows/a.exe".to_string(), b"A".to_vec())];
+    let blob = make_obup(&sk1, "9.9.9", &files, Some(pk2), false);
+    drop_incoming(&srv, &files, &blob);
+    let resp = srv
+        .client
+        .post(srv.url("/api/versioning/import"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    assert_eq!(
+        std::fs::read(state_dir.join("release_key.next")).unwrap(),
+        pk2
+    );
+
+    // Une release signee par k2 (desormais acceptee) passe.
+    let blob = make_obup(&sk2, "9.9.10", &files, None, false);
+    drop_incoming(&srv, &files, &blob);
+    let resp = srv
+        .client
+        .post(srv.url("/api/versioning/import"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200, "clef successeur acceptee");
+    srv.session.stop().await;
+}
+
 #[tokio::test]
 async fn events_info_et_dirspace_contrat_python() {
     let srv = spawn_server().await;

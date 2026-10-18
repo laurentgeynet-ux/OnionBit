@@ -191,3 +191,24 @@ release + clôture.
 Discipline clef : `ReleaseSecret` (32o zeroize au drop, pas de
 `Debug`/`Clone`) ; `--key -` lit stdin ; jamais d'hex privé dans
 argv ni de secret dans les logs.
+
+## Étape 143 (2026-10-18) — import daemon
+
+`POST /api/versioning/import` (gated `versioning.enabled`,
+`api_key_auth`) + `GET /api/versioning/update`. Choix d'architecture
+arrêté : **le payload arrive par le système de fichiers** —
+l'opérateur dépose le bundle dans `state/update/incoming/` ; pas
+d'upload multipart (contournement de `MAX_OBUP_SIZE` par les
+fichiers) ni de chemin en paramètre (un `path` arbitraire serait
+une lecture de fichier pilotée par l'API). Ordre de vérification
+du moins cher au plus coûteux : signature/`key_id` → anti-downgrade
+→ borne `versioning/update_max_bytes` (nouvelle clé de config — la
+signature protège l'intégrité, pas le volume) → `sha256` par fichier
+→ staging `payload.tmp`+rename atomique → `staged.obup`.
+
+**Écart au texte §2** : `release_key.next` est persistée **à
+l'import** (le manifest `next_key` est signé — la transition de
+confiance est valable dès vérification), pas « au premier démarrage
+post-swap » ; le paragraphe original mentionnait le post-swap, la
+sémantique est identique car seul un manifest signé par une clef
+acceptée peut déclarer la successeure.

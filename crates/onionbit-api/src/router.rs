@@ -512,6 +512,11 @@ fn api_router(state: AppState) -> Router<AppState> {
             delete(versioning::remove_version),
         )
         .route("/versioning/upgrade", post(versioning::perform_upgrade))
+        // Releases signees `OBUP` (ADR-0032) : import depuis
+        // `state/update/incoming/` + statut du staging. Le swap
+        // reste au launcher (re-verification au demarrage).
+        .route("/versioning/import", post(versioning::import_update))
+        .route("/versioning/update", get(versioning::get_update_status))
         .route(
             "/versioning/upgrade/available",
             get(versioning::can_upgrade),

@@ -1002,6 +1002,10 @@ impl Default for RssConfig {
 pub struct VersioningConfig {
     /// Endpoints `/api/versioning/*` enregistrés.
     pub enabled: bool,
+    /// Taille totale maximale du payload stagé par un import `OBUP`
+    /// (ADR-0032) — la signature protège l'intégrité, pas le volume :
+    /// un manifest signé valide ne doit pas pouvoir remplir le disque.
+    pub update_max_bytes: u64,
     /// Clés additionnelles (et reliquats inertes des anciennes clés
     /// de sonde, cf. doc de section).
     #[serde(flatten)]
@@ -1012,6 +1016,7 @@ impl Default for VersioningConfig {
     fn default() -> Self {
         Self {
             enabled: true,
+            update_max_bytes: 512 * 1024 * 1024,
             extra: serde_json::Map::new(),
         }
     }

@@ -302,6 +302,29 @@ pub fn parse(blob: &[u8]) -> std::result::Result<(u64, [u8; 64], &[u8]), ObupdEr
     Ok((key_id, sig, &blob[HEAD..]))
 }
 
+/// Compare deux versions semver `X.Y[.Z]` (pre-release/build
+/// ignores au-dela du troisieme composant, prefixe `v` toleré).
+/// `None` si l'une n'est pas un triplet numerique — le comparatif
+/// anti-downgrade refuse alors plutot que de deviner.
+pub fn semver_cmp(a: &str, b: &str) -> Option<std::cmp::Ordering> {
+    fn parts(v: &str) -> Option<[u64; 3]> {
+        let v = v.trim().trim_start_matches('v');
+        // Coupe au premier suffixe `-pre`/`+build`.
+        let core = v.split(['-', '+']).next()?;
+        let mut out = [0u64; 3];
+        let mut n = 0;
+        for seg in core.split('.') {
+            if n >= 3 || seg.is_empty() || !seg.chars().all(|c| c.is_ascii_digit()) {
+                return None;
+            }
+            out[n] = seg.parse().ok()?;
+            n += 1;
+        }
+        (n >= 2).then_some(out)
+    }
+    Some(parts(a)?.cmp(&parts(b)?))
+}
+
 /// Verifie un blob `OBUP` contre un ensemble de clefs acceptees :
 /// `key_id` resout la clef (inconnu → [`ObupdError::UnknownKeyId`]),
 /// puis Ed25519 domainee sur le manifest brut. Retourne le manifest

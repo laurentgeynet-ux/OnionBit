@@ -3,6 +3,24 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Étape 143 — Import daemon `POST /api/versioning/import` (ADR-0032) (2026-10-18)
+
+Premiere porte reseau des releases signees. **Payload par le
+filesystem** : depot dans `state/update/incoming/` — ni upload
+multipart (borne `MAX_OBUP_SIZE` contournable par les fichiers) ni
+chemin en parametre (lecture de fichier pilotee par l'API). Ordre
+cheap→couteux : signature/`key_id` → anti-downgrade (`rollback`
+signe, `min_supported`) → borne volume `versioning/update_max_bytes`
+(nouvelle clef config, defaut 512 Mio) → `sha256`/`size` nommant le
+fichier fautif → staging `payload.tmp`+rename → `staged.obup` →
+`release_key.next` persistee a l'import si `next_key` signee.
+`GET /api/versioning/update` rapporte le staging **verifie**. Codes
+d'erreur types : `obup_malformed`/`too_large`/`version_too_old`/
+`min_supported`/`unknown_key`/`sig_invalid`/`missing_file`/
+`hash_mismatch`. 3 tests verts : cycle complet, matrice de rejets
+(404/422/409 + rollback signe accepte), rotation `next_key`
+persistee puis successeur accepte.
+
 ## Étape 142 — `cli sign-release` : création d'OBUP côté release (ADR-0032) (2026-10-18)
 
 `onionbit-cli` hors-ligne : `gen-release-key --out <f>` (seed 32o,
