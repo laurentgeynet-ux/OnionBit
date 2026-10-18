@@ -3,6 +3,19 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Étape 146 — Cloture ADR-0032 : procedure release + filet placeholder (2026-10-18)
+
+`docs/release.md` : procedure complete — clef hors-ligne
+(`gen-release-key`), remplacement `RELEASE_PUBKEY`, `sign-release`,
+depot `incoming/`, import, swap, **rollback manuel `windows.old`
+en langage utilisateur**, compromission (rotation signee morte,
+nouveau binaire hors-bande). Decision deliberee : `build_dist.ps1`
+ne signe pas — la clef privee n'a rien a faire sur la machine de
+build. **Filet automatise** : `-ZipRelease` refuse un zip avec
+`RELEASE_PUBKEY == [0;32]` (fail-closed par construction, pas une
+case a cocher). threat_model « Releases signees OBUP » ; backlog
+coche ; ADR-0032 → **Implantee**.
+
 ## Étape 145 — Durcissement OBUP : bornes et rejeu (ADR-0032) (2026-10-18)
 
 `staged.obup` borne par `MAX_OBUP_SIZE` **avant lecture** cote

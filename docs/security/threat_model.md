@@ -348,6 +348,51 @@ Proprietes **demontrees** (bancs `encrypted.rs` + `hardened.rs`) :
   une base claire — choix explicite de l'utilisateur, jamais
   silencieux.
 
+## Releases signees `OBUP` (ADR-0032, etapes 141-145)
+
+Le canal de mise a jour est le seul vecteur de compromission
+**systemique** : un binaire patché detient la clef qui dechiffre la
+base. La signature transporte la confiance — le transport est
+indifferent (jamais de fetch reseau, l'operateur depose l'artefact
+dans `state/update/incoming/`).
+
+Proprietes **demontrees** (bancs `obupd.rs` + `api.rs` +
+launcher) :
+
+- **Double porte** : le daemon verifie a l'import (signature +
+  `key_id` + anti-downgrade + `sha256` par fichier), le launcher
+  **re-verifie tout** au boot avant le swap — un `state/`
+  tripatouille entre les deux ne fait pas foi.
+- **`verify_strict`** : clefs faibles et signatures non canoniques
+  rejetees — le placeholder `RELEASE_PUBKEY=[0;32]` ne verifie
+  rien (fail-closed), prouve par test.
+- **Bornes** : `MAX_OBUP_SIZE` avant lecture aux deux portes
+  (DoS import ET demarrage), `update_max_bytes` sur le total stage
+  (la signature protege l'integrite, pas le volume), hash en
+  streaming (jamais de fichier entier en memoire).
+- **Traversal** : `..`, `\\?\`, `C:\`, slashs mixtes, doublons —
+  rejetes au parse du manifest.
+- **Rotation** : `next_key` signee persiste `release_key.next` a
+  l'import — la successeure est acceptee sans rebuild.
+- **Swap** : deux phases retrait/installation, reprise
+  `windows.old` au boot apres crash mid-swap, sonde du mutex
+  d'instance avant tout renommage.
+
+**Non couvert** :
+
+- **Compromission de la clef privee** : une clef volee signe tout,
+  y compris sa successeure — `next_key` ne protege qu'avant la
+  compromission. Sortie : nouveau binaire hors-bande avec nouvelle
+  `RELEASE_PUBKEY` (procedure `docs/release.md` §5).
+- **Compromission de la machine de build** : signature valide d'un
+  artefact malveillant — la reproductibilite du build est un
+  chantier separe.
+- **Premier install** : la confiance initiale vient du canal de
+  distribution, non signable.
+- **Deni de service « refus de mettre a jour »** : un `incoming/`
+  invalide occupe le staging — l'ancien binaire continue de
+  fonctionner.
+
 ## Ce qui n'est PAS demontre
 
 Les points suivants sont hors perimetre de preuve des bancs actuels.

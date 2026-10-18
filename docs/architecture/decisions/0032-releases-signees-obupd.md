@@ -1,7 +1,7 @@
 # ADR-0032 — Releases signées `OBUPD` (import manuel, pas de sonde)
 
-- Statut : **Proposée** (2026-10-18) — jalon de décision : étape 141
-  (spike format + signature + vérification).
+- Statut : **Implantée** (2026-10-18) — étapes 141-146 livrées ;
+  procédure de release : `docs/release.md`.
 - Contexte : `backlog_priorites.md` « Releases signées +
   reproductibles + canal d'update » — **seul vecteur de
   compromission systémique** : une mise à jour compromise compromet

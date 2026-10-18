@@ -59,7 +59,17 @@ param(
     # compatibilite avec les commandes anterieures (implicite).
     [switch]$Tor,
     [switch]$NoTor,
-    [switch]$ZipRelease
+    [switch]$ZipRelease,
+    # Filet ADR-0032 : un zip de release NE DOIT PAS embarquer la
+    # clef placeholder `RELEASE_PUBKEY = [0;32]` (elle rendrait tout
+    # OBUP non verifiable — fail-closed, mais la release serait
+    # muette pour les updates). Refus par defaut ; ce drapeau sert
+    # uniquement aux builds de test de la chaine, jamais a une
+    # release publiee. Le script NE SIGNE PAS (decision deliberee,
+    # docs/release.md) : la clef privee n'a rien a faire sur la
+    # machine de build — `onionbit-cli sign-release` est un acte
+    # separe, idealement hors-ligne.
+    [switch]$AllowPlaceholderReleaseKey
 )
 
 # Encodage : sous Windows PowerShell 5.1, forcer UTF-8 (console +
@@ -80,6 +90,24 @@ $dist   = Join-Path $root "dist"
 $bundleRoot = Join-Path $dist "OnionBit"   # racine portable ADR-0018
 $osDir  = Join-Path $bundleRoot "windows"  # payload de l'OS hote
 $listen = "127.0.0.1:8085"   # DEFAULT_LISTEN de onionbit-daemon
+
+# Filet ADR-0032 — fail-fast avant tout build : un zip de release
+# avec `RELEASE_PUBKEY` placeholder serait non-updatable ET muet
+# (verify_strict refuse tout — personne ne s'en apercoit avant la
+# premiere vraie mise a jour). Controle par regex sur la source :
+# la valeur est une const Rust, pas de secret implique.
+if ($ZipRelease -and -not $AllowPlaceholderReleaseKey) {
+    $relSrc = Get-Content (Join-Path $root 'crates\onionbit-crypto\src\release.rs') -Raw
+    if ($relSrc -match 'RELEASE_PUBKEY\s*:\s*\[u8;\s*32\]\s*=\s*\[0\s*;\s*32\]') {
+        throw @"
+RELEASE_PUBKEY est encore le placeholder [0;32] — un zip de release
+serait incapable de verifier les updates OBUP.
+Procedure : docs/release.md — `onionbit-cli gen-release-key` hors-ligne,
+coller la clef publique affichee dans crates/onionbit-crypto/src/release.rs.
+(Contournement test uniquement : -AllowPlaceholderReleaseKey)
+"@
+    }
+}
 
 # Archi Windows de l'hote (x64 | arm64) — detectee depuis le triple
 # rustc hote. `flutter build windows` produit nativement dans
