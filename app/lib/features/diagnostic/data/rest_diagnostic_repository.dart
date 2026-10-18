@@ -282,9 +282,7 @@ class RestDiagnosticRepository implements DiagnosticRepository {
     final e = resp['ext'] as Map<String, dynamic>? ?? const {};
     return ExtInfo(
       enabled: e['enabled'] == true,
-      capsNames: [
-        for (final c in (e['caps_names'] as List?) ?? const []) '$c',
-      ],
+      capsNames: [for (final c in (e['caps_names'] as List?) ?? const []) '$c'],
       peers: [
         for (final p in (e['peers'] as List?) ?? const [])
           if (p is Map<String, dynamic>)
@@ -334,8 +332,8 @@ class RestDiagnosticRepository implements DiagnosticRepository {
   /// affiche simplement « aucune »).
   @override
   Future<List<ExtAttestation>> extAttestations() async {
-    final resp = await _api.get('/ipv8/ext/attestations')
-        as Map<String, dynamic>;
+    final resp =
+        await _api.get('/ipv8/ext/attestations') as Map<String, dynamic>;
     return [
       for (final a in _list(resp, 'attestations'))
         ExtAttestation(
@@ -364,8 +362,9 @@ class RestDiagnosticRepository implements DiagnosticRepository {
     required String kind,
     required String subject,
   }) async {
-    final resp = await _api.get('/ipv8/ext/trust/$kind/$subject')
-        as Map<String, dynamic>;
+    final resp = await _api.get(
+      '/ipv8/ext/trust/$kind/$subject',
+    ) as Map<String, dynamic>;
     final t = resp['trust'] as Map<String, dynamic>? ?? const {};
     return ExtTrust(
       score: (t['score'] as num?)?.toInt() ?? 0,
@@ -395,6 +394,15 @@ class RestDiagnosticRepository implements DiagnosticRepository {
   Future<TorRuntimeStatus> torStatus() async {
     final resp = await _api.get('/tor/status') as Map<String, dynamic>;
     return TorRuntimeStatus.fromJson(resp);
+  }
+
+  @override
+  Future<int> launchBrowser(String url) async {
+    final resp = await _api.post(
+      '/browser/launch',
+      body: {'url': url},
+    ) as Map<String, dynamic>;
+    return (resp['pid'] as num?)?.toInt() ?? 0;
   }
 
   @override

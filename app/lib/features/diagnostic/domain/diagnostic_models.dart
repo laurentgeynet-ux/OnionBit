@@ -550,6 +550,7 @@ class TorRuntimeStatus {
     this.externalSocks5,
     this.error,
     this.sources = const [],
+    this.browserProxy = BrowserProxyStatus.off,
   });
 
   /// `tor.enabled` — la fonctionnalité est opt-in, désactivée par
@@ -575,6 +576,9 @@ class TorRuntimeStatus {
   /// (`tor.search.backends.<source>`).
   final List<String> sources;
 
+  /// État du proxy navigateur loopback (`browser_proxy`, ADR-0030 §7).
+  final BrowserProxyStatus browserProxy;
+
   /// Runtime absent ou non compilé (`tor` feature off) — l'endpoint
   /// répond toujours : état « off » honnête.
   static const disabled = TorRuntimeStatus(
@@ -584,26 +588,62 @@ class TorRuntimeStatus {
     progress: 0,
   );
 
-  static TorRuntimeStatus fromJson(Map<String, dynamic> j) =>
-      TorRuntimeStatus(
+  static TorRuntimeStatus fromJson(Map<String, dynamic> j) => TorRuntimeStatus(
+    enabled: j['enabled'] == true,
+    mode: '${j['mode'] ?? 'embedded'}',
+    state: switch ('${j['state'] ?? ''}') {
+      'off' => TorRuntimeState.off,
+      'bootstrapping' => TorRuntimeState.bootstrapping,
+      'ready' => TorRuntimeState.ready,
+      'dormant' => TorRuntimeState.dormant,
+      'error' => TorRuntimeState.error,
+      _ => TorRuntimeState.unknown,
+    },
+    progress: (j['progress'] as num?)?.toInt() ?? 0,
+    externalSocks5: j['external_socks5'] is String
+        ? j['external_socks5'] as String
+        : null,
+    error: j['error'] is String ? j['error'] as String : null,
+    sources: [for (final s in (j['sources'] as List?) ?? const []) '$s'],
+    browserProxy: j['browser_proxy'] is Map<String, dynamic>
+        ? BrowserProxyStatus.fromJson(
+            j['browser_proxy'] as Map<String, dynamic>,
+          )
+        : BrowserProxyStatus.off,
+  );
+}
+
+/// État du proxy navigateur loopback (`tor/status → browser_proxy`,
+/// ADR-0030 §7) — listener `127.0.0.1` pour le navigateur `.onion`
+/// (dégradation `.onion` seulement ; clearnet via exit Tor tri-state).
+class BrowserProxyStatus {
+  const BrowserProxyStatus({
+    required this.enabled,
+    required this.listen,
+    required this.connsActive,
+  });
+
+  /// Listener ouvert (`tor.browser_proxy.enabled` appliqué).
+  final bool enabled;
+
+  /// Adresse réellement liée (`127.0.0.1:port` — port éphémère
+  /// résolu), `null` si non ouvert.
+  final String? listen;
+
+  /// Connexions navigateur actives (compteur RAII du proxy).
+  final int connsActive;
+
+  static const off = BrowserProxyStatus(
+    enabled: false,
+    listen: null,
+    connsActive: 0,
+  );
+
+  static BrowserProxyStatus fromJson(Map<String, dynamic> j) =>
+      BrowserProxyStatus(
         enabled: j['enabled'] == true,
-        mode: '${j['mode'] ?? 'embedded'}',
-        state: switch ('${j['state'] ?? ''}') {
-          'off' => TorRuntimeState.off,
-          'bootstrapping' => TorRuntimeState.bootstrapping,
-          'ready' => TorRuntimeState.ready,
-          'dormant' => TorRuntimeState.dormant,
-          'error' => TorRuntimeState.error,
-          _ => TorRuntimeState.unknown,
-        },
-        progress: (j['progress'] as num?)?.toInt() ?? 0,
-        externalSocks5: j['external_socks5'] is String
-            ? j['external_socks5'] as String
-            : null,
-        error: j['error'] is String ? j['error'] as String : null,
-        sources: [
-          for (final s in (j['sources'] as List?) ?? const []) '$s',
-        ],
+        listen: j['listen'] is String ? j['listen'] as String : null,
+        connsActive: (j['conns_active'] as num?)?.toInt() ?? 0,
       );
 }
 

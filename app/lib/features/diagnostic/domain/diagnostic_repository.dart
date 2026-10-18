@@ -84,6 +84,14 @@ abstract interface class DiagnosticRepository {
   /// emprunte un circuit de rendez-vous par miroir.
   Future<TorSourceProbe> torProbe(String source);
 
+  /// Lance le navigateur `.onion` sur `url`
+  /// (`POST /api/browser/launch`, ADR-0030 §6) — retourne le `pid`
+  /// du processus fils. L'URL est re-validée côté daemon (politique
+  /// anti-SSRF, `tor.browser_proxy.allow_clearnet_exit`) ; les
+  /// échecs portent `error.code` (`browser_not_configured`,
+  /// `tor_not_ready`, `denied_target`…).
+  Future<int> launchBrowser(String url);
+
   /// Bascule le mode debug (`PUT /api/ipv8/asyncio/debug`).
   Future<void> setDebug(bool enable);
 }

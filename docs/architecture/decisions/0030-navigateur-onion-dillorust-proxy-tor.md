@@ -611,3 +611,38 @@ réel. Clippy `-D warnings`, fmt propres.
 DilloRust (le pref est écrit, ignoré en warn tant que le parseur ne
 le connaît pas — amont n'a que `http_proxyuser` + dialog), contrat
 browser côté UI Flutter, garde-fous réseau/process du bundle (134).
+
+### Verdict étape 133 (2026-10) — `http_proxypass` lu + contrat UI Flutter
+
+**DilloRust** (`dillorust@e1c656d`) : pref `http_proxypass` ajouté à
+`Prefs`/`parse_option` — extension assumée, absente amont (qui n'a
+que `http_proxyuser` et lit le mot de passe par dialog
+`a_UIcmd_get_passwd`, impossible en spawn headless par le daemon).
+La valeur sème la cellule partagée `proxy_passwd` **avant** la
+factory de moteurs : chaque `HttpEngine` part authentifié
+(`set_proxy_passwd` → `Proxy-Authorization: Basic`), le dialog de
+démarrage saute quand le pref est renseigné. Clé absorbée par le
+parseur tolérant — un dillorc OnionBit reste lisible par un Dillo
+amont (warn + skip). Déviation documentée dans `docs/PORTING.md`
+(lignes `prefsparser` et `dillo.cc`).
+
+**Flutter** : sous-section « Navigateur (.onion) » dans Réglages →
+Réseau — toggle `tor.browser_proxy.enabled` (immédiat, hot-swap),
+politique `allow_clearnet_exit` tri-state avec hint honnête par
+valeur (« l'exit Tor voit la destination » en `https-only`, « le
+HTTP part en clair vers l'exit » en `on`), chemin `tor.browser.
+binary_path`, pastille d'état `listen`/`conns_active` depuis
+`GET /api/tor/status → browser_proxy`. Les hôtes `.onion` de
+l'allowlist deviennent actionnables (icône `open_in_new`) →
+`POST /api/browser/launch` sur `http://<hôte>/`, erreurs traduites
+par `error.code` (`browser_not_configured`, `tor_not_ready`,
+`denied_target`…) — jamais le message brut.
+
+**Tests** : prefs `parse_file` couvre `http_proxypass` +
+`http_proxyuser` ; 109 `dillo-browser` verts ; 118 tests Flutter dont
+`network_section_tor_test` étendu (toggle immédiat, hint de sortie,
+lancement allowlist → URL + snackbar) ; `flutter analyze` et
+`check_i18n.ps1` propres.
+
+**Reste pour 134** : étanchéité réseau/DNS/process du bundle
+(fuites hors proxy, durcissement du profil éphémère).

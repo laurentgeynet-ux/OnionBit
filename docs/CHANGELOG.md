@@ -3,6 +3,20 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Étape 133 — `http_proxypass` côté DilloRust + contrat UI Flutter (ADR-0030) — fait (2026-10-18)
+
+**DilloRust** (`dillorust@e1c656d`) : nouveau pref `dillorc`
+`http_proxypass` — extension assumée (amont n'a que `http_proxyuser`
++ dialog passwd, impossible en spawn headless). Sème la cellule
+partagée avant la factory → chaque `HttpEngine` part authentifié,
+le dialog saute. Déviation documentée dans `docs/PORTING.md`.
+**Flutter** : sous-section « Navigateur (.onion) » (Réglages →
+Réseau) — toggle proxy (immédiat), `allow_clearnet_exit` tri-state
+à hints honnêtes, chemin du binaire, pastille `listen`/
+`conns_active` ; hôtes `.onion` de l'allowlist actionnables →
+`POST /api/browser/launch`, erreurs traduites par `error.code`.
+Tests : 118 Flutter verts (dont le nouveau), analyze + i18n propres.
+
 ## Étape 132 — Proxy navigateur câblé + `/api/browser/launch` (ADR-0030) — fait (2026-10-18)
 
 Le `TorProxyServer` de 131 devient un service du daemon. **Politique

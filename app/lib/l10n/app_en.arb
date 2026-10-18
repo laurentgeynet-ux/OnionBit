@@ -1657,6 +1657,58 @@
   "torBackends": "Configured sources",
   "torBridges": "Tor bridges",
   "torBridgesHint": "One bridge line per line (address:port fingerprint) — use when Tor's public guards are IP-blocked. Non-empty list = bridges only. obfs4/Snowflake transports are not compiled in.",
+  "torBrowserSection": "Browser (.onion)",
+  "torBrowserProxy": "Local browser proxy",
+  "torBrowserProxyHint": "Loopback HTTP listener for the .onion browser — session token passed via dillorc, never on the command line. Applied instantly.",
+  "torExitLabel": "Clearnet exit via Tor",
+  "torExitOff": ".onion only",
+  "torExitHttpsOnly": "HTTPS only (:443)",
+  "torExitOn": "HTTP + HTTPS (:80/:443)",
+  "torExitOffHint": "The browser only reaches .onion services — no clearnet exit.",
+  "torExitHttpsOnlyHint": "CONNECT :443 only — content stays encrypted but the Tor exit sees the destination.",
+  "torExitOnHint": "Ports 80 and 443 through the exit — plain HTTP reaches the exit in cleartext.",
+  "torBrowserBinary": "Browser binary",
+  "torBrowserBinaryHint": "Executable path (relative to the daemon — e.g. bin/dillo.exe in the bundle). Empty = not configured.",
+  "torBrowserListen": "proxy {addr}",
+  "torBrowserConns": "{n} active",
+  "openInOnionBrowser": "Open in .onion browser",
+  "browserLaunched": "Browser launched (pid {pid})",
+  "browserErrNotConfigured": "Browser not configured — set the binary path below.",
+  "browserErrTorDisabled": "Tor is disabled — enable it to reach .onion services.",
+  "browserErrTorBootstrapping": "Tor is still bootstrapping — retry shortly.",
+  "browserErrTorNotReady": "Tor lane not ready.",
+  "browserErrBootstrapFailed": "Tor bootstrap failed.",
+  "browserErrDenied": "Target denied by policy (.onion only or exit disabled).",
+  "browserErrInvalidUrl": "Invalid URL (http/https expected).",
+  "browserErrGeneric": "Launch failed: {detail}",
+  "@torBrowserListen": {
+    "placeholders": {
+      "addr": {
+        "type": "String"
+      }
+    }
+  },
+  "@torBrowserConns": {
+    "placeholders": {
+      "n": {
+        "type": "int"
+      }
+    }
+  },
+  "@browserLaunched": {
+    "placeholders": {
+      "pid": {
+        "type": "int"
+      }
+    }
+  },
+  "@browserErrGeneric": {
+    "placeholders": {
+      "detail": {
+        "type": "String"
+      }
+    }
+  },
   "pairTitle": "Pair a mobile device",
   "pairBody": "Scan this QR from the mobile device — it carries a single-use, short-lived token. The API key is never in it.",
   "pairHostLabel": "Daemon address",

@@ -5,10 +5,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../core/api/api_client.dart' show ApiException;
 import '../../../../core/l10n/l10n_ext.dart';
 import '../../../../core/design/design_tokens.dart';
 import '../../../../l10n/app_localizations.dart' show AppLocalizations;
 import '../../../diagnostic/presentation/providers/diagnostic_providers.dart';
+import '../providers/settings_providers.dart';
 import 'settings_section.dart';
 import 'settings_defaults.dart';
 
@@ -43,11 +45,13 @@ class _NetworkSectionState extends ConsumerState<NetworkSection> {
 
   int _proxyType = 0;
   String _torMode = 'embedded';
+  String _clearnetExit = 'off';
   final _port = TextEditingController();
   final _proxyServer = TextEditingController();
   final _proxyAuth = TextEditingController();
   final _torSocks = TextEditingController();
   final _torBridges = TextEditingController();
+  final _browserPath = TextEditingController();
   bool _initialized = false;
   bool _saving = false;
 
@@ -65,6 +69,7 @@ class _NetworkSectionState extends ConsumerState<NetworkSection> {
     _proxyAuth.dispose();
     _torSocks.dispose();
     _torBridges.dispose();
+    _browserPath.dispose();
     super.dispose();
   }
 
@@ -91,6 +96,19 @@ class _NetworkSectionState extends ConsumerState<NetworkSection> {
         ? (settings['tor'] as Map)['bridges']
         : null;
     _torBridges.text = bridges is List ? bridges.join('\n') : '';
+    _clearnetExit = settingsString(settings, const [
+      'tor',
+      'browser_proxy',
+      'allow_clearnet_exit',
+    ]);
+    if (!const {'off', 'https-only', 'on'}.contains(_clearnetExit)) {
+      _clearnetExit = 'off';
+    }
+    _browserPath.text = settingsString(settings, const [
+      'tor',
+      'browser',
+      'binary_path',
+    ]);
     _initialized = true;
   }
 
@@ -116,6 +134,8 @@ class _NetworkSectionState extends ConsumerState<NetworkSection> {
             .map((l) => l.trim())
             .where((l) => l.isNotEmpty)
             .toList(),
+        'browser_proxy': {'allow_clearnet_exit': _clearnetExit},
+        'browser': {'binary_path': _browserPath.text.trim()},
       },
     }, successMessage: context.l10n.netSaved);
     _deferred.markClean();
@@ -231,10 +251,10 @@ class _NetworkSectionState extends ConsumerState<NetworkSection> {
                   obscureText: true,
                   decoration: InputDecoration(
                     labelText: l10n.proxyAuthLabel,
-                    suffixIcon: KeyInfoIcon(
-                      const ['libtorrent', 'proxy_username'],
-                      description: l10n.proxyAuthDesc,
-                    ),
+                    suffixIcon: KeyInfoIcon(const [
+                      'libtorrent',
+                      'proxy_username',
+                    ], description: l10n.proxyAuthDesc),
                   ),
                 ),
               ],
@@ -290,9 +310,7 @@ class _NetworkSectionState extends ConsumerState<NetworkSection> {
                   decoration: InputDecoration(
                     labelText: l10n.torSocks5,
                     helperText: l10n.torSocks5Hint,
-                    suffixIcon: const KeyInfoIcon(
-                      ['tor', 'external_socks5'],
-                    ),
+                    suffixIcon: const KeyInfoIcon(['tor', 'external_socks5']),
                     hintText: 'socks5h://127.0.0.1:9050',
                   ),
                 ),
@@ -320,7 +338,87 @@ class _NetworkSectionState extends ConsumerState<NetworkSection> {
               ),
             ),
             const SizedBox(height: AppSpace.xs),
-            _TorAllowlist(settings: settings),
+            const _TorAllowlist(),
+            const SizedBox(height: AppSpace.xs),
+            // Navigateur .onion (ADR-0030) — proxy loopback dédié à
+            // DilloRust ; le token de session voyage par dillorc
+            // (`http_proxypass`), jamais en argv. Le toggle
+            // s'applique à chaud (swap de la pile Tor) ; politique de
+            // sortie et binaire partent avec le lot différé.
+            Text(l10n.torBrowserSection, style: theme.textTheme.labelMedium),
+            const SizedBox(height: AppSpace.xs),
+            SettingsSwitch(
+              path: const ['tor', 'browser_proxy', 'enabled'],
+              value: settingsBool(settings, const [
+                'tor',
+                'browser_proxy',
+                'enabled',
+              ]),
+              title: l10n.torBrowserProxy,
+              subtitle: l10n.torBrowserProxyHint,
+              defaultValue: false,
+            ),
+            const _BrowserProxyStatus(),
+            const SizedBox(height: AppSpace.xs),
+            SizedBox(
+              width: 320,
+              child: DropdownButtonFormField<String>(
+                initialValue: _clearnetExit,
+                isExpanded: true,
+                decoration: InputDecoration(
+                  labelText: l10n.torExitLabel,
+                  suffixIcon: const KeyInfoIcon([
+                    'tor',
+                    'browser_proxy',
+                    'allow_clearnet_exit',
+                  ]),
+                ),
+                items: [
+                  DropdownMenuItem(value: 'off', child: Text(l10n.torExitOff)),
+                  DropdownMenuItem(
+                    value: 'https-only',
+                    child: Text(l10n.torExitHttpsOnly),
+                  ),
+                  DropdownMenuItem(value: 'on', child: Text(l10n.torExitOn)),
+                ],
+                onChanged: (v) => setState(() {
+                  _clearnetExit = v ?? 'off';
+                  _deferred.markDirty();
+                }),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(
+                switch (_clearnetExit) {
+                  'https-only' => l10n.torExitHttpsOnlyHint,
+                  'on' => l10n.torExitOnHint,
+                  _ => l10n.torExitOffHint,
+                },
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.outline,
+                ),
+              ),
+            ),
+            const SizedBox(height: AppSpace.sm),
+            SizedBox(
+              width: 480,
+              child: TextField(
+                controller: _browserPath,
+                onChanged: (_) => _deferred.markDirty(),
+                decoration: InputDecoration(
+                  labelText: l10n.torBrowserBinary,
+                  helperText: l10n.torBrowserBinaryHint,
+                  helperMaxLines: 2,
+                  suffixIcon: const KeyInfoIcon([
+                    'tor',
+                    'browser',
+                    'binary_path',
+                  ]),
+                  hintText: 'bin/dillo.exe',
+                ),
+              ),
+            ),
             const SizedBox(height: AppSpace.md),
             Align(
               alignment: Alignment.centerRight,
@@ -358,7 +456,8 @@ class _EffectiveState extends ConsumerWidget {
     final listenV6 = settingsString(settings, [...lt, 'listen_interface_v6']);
     final interfaces = [
       if (listenV4.isNotEmpty) '$listenV4:$port',
-      if (listenV6.isNotEmpty) '[$listenV6]:${settingsInt(settings, [...lt, 'port_v6'])}',
+      if (listenV6.isNotEmpty)
+        '[$listenV6]:${settingsInt(settings, [...lt, 'port_v6'])}',
     ];
     final proxyType = settingsInt(settings, [...lt, 'proxy_type']);
     final proxyServer = settingsString(settings, [...lt, 'proxy_server']);
@@ -393,9 +492,7 @@ class _EffectiveState extends ConsumerWidget {
           runSpacing: AppSpace.xs,
           children: [
             Chip(
-              label: Text(
-                l10n.listenPortChip(port > 0 ? '$port' : '—'),
-              ),
+              label: Text(l10n.listenPortChip(port > 0 ? '$port' : '—')),
               visualDensity: VisualDensity.compact,
               labelStyle: theme.textTheme.bodySmall,
             ),
@@ -444,22 +541,22 @@ class _EffectiveState extends ConsumerWidget {
 /// `tor.search.backends.<id>.mirrors` (le miroir TPB est allowlisté
 /// implicitement — le montrer évite une frontière invisible).
 /// Non éditable ici — la liste est une frontière de sécurité définie
-/// dans `configuration.json`.
-class _TorAllowlist extends StatelessWidget {
-  const _TorAllowlist({required this.settings});
-
-  final Map<String, dynamic> settings;
+/// dans `configuration.json`. Chaque hôte est actionnable :
+/// `POST /api/browser/launch` ouvre le `.onion` dans le navigateur
+/// embarqué (ADR-0030 §6) — le daemon re-valide la cible.
+class _TorAllowlist extends ConsumerWidget {
+  const _TorAllowlist();
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
     final l10n = context.l10n;
+    final settings = ref.watch(daemonSettingsProvider).value ?? const {};
     final tor = settings['tor'];
     final search = tor is Map ? tor['search'] : null;
-    final backendsMap =
-        search is Map && search['backends'] is Map
-            ? search['backends'] as Map
-            : const {};
+    final backendsMap = search is Map && search['backends'] is Map
+        ? search['backends'] as Map
+        : const {};
     // Union des hôtes : allowed_hosts + miroirs de chaque backend
     // (ordre stable, dédupliqué).
     final hosts = <String>{
@@ -476,10 +573,7 @@ class _TorAllowlist extends StatelessWidget {
       children: [
         const SizedBox(height: AppSpace.sm),
         if (hosts.isNotEmpty) ...[
-          Text(
-            l10n.torAllowedHosts,
-            style: theme.textTheme.bodySmall,
-          ),
+          Text(l10n.torAllowedHosts, style: theme.textTheme.bodySmall),
           const SizedBox(height: AppSpace.xs),
           Wrap(
             spacing: AppSpace.xs,
@@ -490,9 +584,26 @@ class _TorAllowlist extends StatelessWidget {
                   // Adresse intégrale + sélectionnable : les 56 chars
                   // portent la clé publique et le checksum — les
                   // tronquer empêcherait de vérifier la destination.
-                  label: SelectableText(
-                    h,
-                    style: AppTypography.mono(fontSize: 11),
+                  label: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      SelectableText(
+                        h,
+                        style: AppTypography.mono(fontSize: 11),
+                      ),
+                      const SizedBox(width: 4),
+                      Tooltip(
+                        message: l10n.openInOnionBrowser,
+                        child: InkWell(
+                          onTap: () => _launchOnion(context, ref, h),
+                          child: Icon(
+                            Icons.open_in_new,
+                            size: 13,
+                            color: theme.colorScheme.primary,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                   visualDensity: VisualDensity.compact,
                 ),
@@ -508,10 +619,7 @@ class _TorAllowlist extends StatelessWidget {
             runSpacing: AppSpace.xs,
             children: [
               for (final b in backends)
-                Chip(
-                  label: Text(b),
-                  visualDensity: VisualDensity.compact,
-                ),
+                Chip(label: Text(b), visualDensity: VisualDensity.compact),
             ],
           ),
         ],
@@ -519,3 +627,85 @@ class _TorAllowlist extends StatelessWidget {
     );
   }
 }
+
+/// Pastille d'état du proxy navigateur (`GET /api/tor/status` →
+/// `browser_proxy`, ADR-0030 §7) : adresse réellement liée (port
+/// éphémère résolu par l'OS) + connexions actives. Cachée quand le
+/// listener n'est pas ouvert — pas de « 0 connexion » trompeur.
+class _BrowserProxyStatus extends ConsumerWidget {
+  const _BrowserProxyStatus();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final theme = Theme.of(context);
+    final l10n = context.l10n;
+    final proxy = ref.watch(torStatusProvider).value?.browserProxy;
+    if (proxy == null || !proxy.enabled) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: AppSpace.xs),
+      child: Wrap(
+        spacing: AppSpace.xs,
+        runSpacing: AppSpace.xs,
+        children: [
+          if (proxy.listen != null)
+            Chip(
+              avatar: const Icon(Icons.router, size: 14),
+              label: Text(
+                l10n.torBrowserListen(proxy.listen!),
+                style: AppTypography.mono(fontSize: 11),
+              ),
+              visualDensity: VisualDensity.compact,
+              labelStyle: theme.textTheme.bodySmall,
+            ),
+          Chip(
+            avatar: const Icon(Icons.swap_calls, size: 14),
+            label: Text(l10n.torBrowserConns(proxy.connsActive)),
+            visualDensity: VisualDensity.compact,
+            labelStyle: theme.textTheme.bodySmall,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Lance le navigateur `.onion` sur `http://<hôte>/` —
+/// `POST /api/browser/launch` (le daemon re-valide la cible, la
+/// politique de sortie et l'état Tor). Snackbar honnête : le code
+/// machine `error.code` est traduit, jamais le message brut.
+Future<void> _launchOnion(
+  BuildContext context,
+  WidgetRef ref,
+  String host,
+) async {
+  final l10n = context.l10n;
+  final messenger = ScaffoldMessenger.of(context);
+  try {
+    final pid = await ref
+        .read(diagnosticRepositoryProvider)
+        .launchBrowser('http://$host/');
+    messenger.showSnackBar(SnackBar(content: Text(l10n.browserLaunched(pid))));
+  } on ApiException catch (e) {
+    messenger.showSnackBar(
+      SnackBar(content: Text(_browserErrorLabel(l10n, e))),
+    );
+  } catch (e) {
+    messenger.showSnackBar(
+      SnackBar(content: Text(l10n.browserErrGeneric('$e'))),
+    );
+  }
+}
+
+/// Libellé localisé d'un échec `POST /api/browser/launch` — le code
+/// machine (`error.code`, ADR-0030 §6) prime sur le message libre.
+String _browserErrorLabel(AppLocalizations l10n, ApiException e) =>
+    switch (e.code) {
+      'invalid_url' => l10n.browserErrInvalidUrl,
+      'denied_target' => l10n.browserErrDenied,
+      'browser_not_configured' => l10n.browserErrNotConfigured,
+      'tor_disabled' => l10n.browserErrTorDisabled,
+      'tor_bootstrapping' => l10n.browserErrTorBootstrapping,
+      'tor_not_ready' => l10n.browserErrTorNotReady,
+      'bootstrap_failed' => l10n.browserErrBootstrapFailed,
+      _ => l10n.browserErrGeneric(e.message),
+    };
