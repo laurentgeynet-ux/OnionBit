@@ -82,6 +82,9 @@ class _TopBarState extends ConsumerState<TopBar> {
               ),
               onChanged: (_) =>
                   setState(() {}), // Rafraîchit le suffixe « effacer ».
+              // Un clic dans le champ ouvre l'onglet Recherche — la
+              // requête reste soumise à « Entrée » uniquement.
+              onTap: () => context.go('/search'),
               onSubmitted: _submit,
             ),
           ),

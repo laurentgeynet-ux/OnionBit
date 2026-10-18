@@ -21,8 +21,10 @@ class AboutPage extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
     final l10n = context.l10n;
-    // `version`/`uptime_sec` du daemon (`GET /api/statistics/tribler`
-    // — provider partage avec la page Diagnostic).
+    // Version app : binaire (pubspec, `package_info_plus` au boot) ;
+    // `version`/`uptime_sec` du daemon : `GET /api/statistics/tribler`
+    // (provider partage avec la page Diagnostic).
+    final appVersion = ref.watch(appVersionProvider);
     final stats = ref.watch(onionbitStatsProvider).value;
 
     // Bandeau hero pleine largeur + grille de cartes qui remplit
@@ -81,7 +83,7 @@ class AboutPage extends ConsumerWidget {
                   borderRadius: BorderRadius.circular(999),
                 ),
                 child: Text(
-                  'v$kAppVersion — $kAppLicense',
+                  'v$appVersion — $kAppLicense',
                   style: theme.textTheme.labelMedium?.copyWith(
                     color: theme.colorScheme.primary,
                   ),
@@ -99,7 +101,7 @@ class AboutPage extends ConsumerWidget {
               icon: Icons.tag_outlined,
               title: l10n.aboutVersions,
               children: [
-                _infoRow(theme, l10n.aboutApp, 'v$kAppVersion'),
+                _infoRow(theme, l10n.aboutApp, 'v$appVersion'),
                 _infoRow(
                   theme,
                   l10n.aboutDaemon,
@@ -130,7 +132,7 @@ class AboutPage extends ConsumerWidget {
                     onPressed: () => showLicensePage(
                       context: context,
                       applicationName: kAppName,
-                      applicationVersion: 'v$kAppVersion',
+                      applicationVersion: 'v$appVersion',
                       applicationLegalese:
                           '© $kCopyrightYear $kAuthor — $kAppLicense',
                     ),

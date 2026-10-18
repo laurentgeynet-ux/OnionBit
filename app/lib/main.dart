@@ -6,8 +6,10 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 
 import 'app.dart';
+import 'core/app_info.dart';
 import 'core/config/connection_settings.dart';
 import 'core/di/providers.dart';
 import 'core/platform/desktop_shell.dart';
@@ -30,8 +32,14 @@ Future<void> main(List<String> args) async {
       .where((a) => a.toLowerCase().endsWith('.torrent') ||
           a.toLowerCase().endsWith('.magnet'))
       .toList();
+  // Version lue du binaire (pubspec → `package_info_plus`) — une
+  // seule source de verite pour « A propos ».
+  final appVersion = (await PackageInfo.fromPlatform()).version;
   final container = ProviderContainer(
-    overrides: [startupFilesProvider.overrideWithValue(startupFiles)],
+    overrides: [
+      startupFilesProvider.overrideWithValue(startupFiles),
+      appVersionProvider.overrideWithValue(appVersion),
+    ],
   );
   // Web : la résolution de la connexion (same-origin + clé injectée
   // dans index.html + localStorage) est quasi immédiate — l'attendre

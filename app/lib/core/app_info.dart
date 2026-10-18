@@ -6,11 +6,15 @@
 /// « A propos » et `showLicensePage`.
 library;
 
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
 const String kAppName = 'OnionBit';
 
-/// Version de l'app — a synchroniser avec `version:` de
-/// `app/pubspec.yaml` (le suffixe `+N` est le build number).
-const String kAppVersion = '0.8.0';
+/// Version de l'app — lue du binaire au demarrage via
+/// `package_info_plus` (`version:` de `app/pubspec.yaml` est la
+/// source unique ; `main.dart` injecte la valeur en override).
+/// `'dev'` en secours pour les widgets montes hors bootstrap.
+final appVersionProvider = Provider<String>((ref) => 'dev');
 
 const String kAppLicense = 'GPL-3.0-or-later';
 const String kAppLicenseUrl = 'https://www.gnu.org/licenses/gpl-3.0.html';

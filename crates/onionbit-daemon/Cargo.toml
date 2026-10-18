@@ -11,11 +11,13 @@ name = "onionbit-daemon"
 path = "src/main.rs"
 
 [features]
-# Un seul standard de compilation : `tor` est feature **par defaut**
-# (ADR-0028 — arti embarque + SOCKS5 externe). `--no-default-features`
-# redonne le runtime stub (`NotBuilt`) — lane `-NoTor` de
-# `build_dist.ps1`. `hs` reste opt-in (ADR-0029).
-default = ["tor"]
+# Un seul standard de compilation : `tor` et `hs` sont features
+# **par defaut** (ADR-0028 arti embarque + SOCKS5 externe ; ADR-0029
+# service `.onion` d'identite — fonction produit par defaut, la
+# publication reste conditionnee a `tor.onion_service.*` et a une
+# lane `Ready`). `--no-default-features` redonne le runtime stub
+# (`NotBuilt`) — lane `-NoTor` de `build_dist.ps1`.
+default = ["tor", "hs"]
 # ADR-0028 : transport Tor reel (arti embarque + SOCKS5 externe) —
 # propage `tor` a onionbit-core (dont l'arete est
 # `default-features = false` pour que `--no-default-features` coupe
