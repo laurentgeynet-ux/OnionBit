@@ -20,6 +20,8 @@ tor = [
     "dep:rustls",
     "dep:tokio-rustls",
     "dep:webpki-roots",
+    "dep:subtle",
+    "dep:base64",
 ]
 # `hs` : service `.onion` heberge (ADR-0029 — spike 120 puis
 # identite derivee etape 122) via tor-hsservice + keymgr.
@@ -85,6 +87,12 @@ safelog = { version = "0.10", optional = true }
 tor-proto = { version = "0.47", optional = true }
 tor-cell = { version = "0.47", optional = true }
 tokio-socks = { workspace = true, optional = true }
+# Comparaison en temps constant du token `Proxy-Authorization`
+# (proxy navigateur, etape 131) — timing-safe parce que la valeur
+# est un secret de session.
+subtle = { workspace = true, optional = true }
+# Decodage `Proxy-Authorization: Basic` du meme proxy.
+base64 = { workspace = true, optional = true }
 futures-util = { workspace = true, optional = true }
 # TLS sur le flux Tor — hotes clearnet de sortie `api_via_exit`
 # (https via exit ; integrite contre un exit malveillant).

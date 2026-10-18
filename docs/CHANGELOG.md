@@ -3,6 +3,33 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Étape 131 — `TorProxyServer` produit (ADR-0030) — fait (2026-10-18)
+
+`onionbit-tor::proxy` passe du spike au produit. **Sous-domaines
+`.onion` permis** : `OnionAddr::parse_host` (nouvel ajout dans
+`onionbit-format`, `parse` canonique strict inchangé) valide
+`*[label.]<56c>.onion` — labels `[a-z0-9-]{1,63}`, base v3 checksum
+comprise, `x.onion.evil.com` et labels malformés refusés ; arti
+transmet le hostname complet au pair (les formes publiées
+`www.bbcnews…onion` fonctionnent). **Isolation par service** :
+`IsolationToken` par adresse du service via
+`StreamPrefs`/`connect_with_prefs` sur le `TorClient` unique —
+facon first-party de Tor Browser ; `IsolationMap` bornée
+(`isolation_max_entries`, défaut 256, éviction FIFO) ; ignorée en
+mode `external` (SOCKS5 ne la transporte pas). **Auth** :
+`ProxyConfig::auth_token` — *password* de
+`Proxy-Authorization: Basic` comparé en temps constant (`subtle`),
+407 + `Proxy-Authenticate` avant politique et avant tout `connect`,
+jamais relayé ni logué ; canal `http_proxyuser`/`http_proxypass`
+prouvé côté dillorust en 130. **Métriques** : `TorProxyServer`
+handle (`local_addr` + `ProxyMetrics` : `conns_active` RAII,
+`conns_total`, `denied_total`, `auth_failed_total`) — matériau de
+`browser_proxy.conns_active` pour `/api/tor/status` (étape 132).
+43 tests `--features tor` verts (policy, auth 407+relais,
+isolation/éviction, métriques, relais SOCKS5 factice), clippy
+`-D warnings` et fmt propres. `allow_clearnet_exit` (§8.3)
+reporté à l'étape 132 — politique `.onion`-only inchangée.
+
 ## Étape 130 — Vérification proxy côté dillorust (ADR-0030) — conforme (2026-10-18)
 
 Trois tests filaires `dillo-net::http` (stub TCP loopback, octets

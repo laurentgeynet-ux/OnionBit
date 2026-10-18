@@ -486,3 +486,62 @@ topologie capi amont — deux liens (`OpStart` branche 2 puis 1) et le
 relais du `FD` remonté par `bfcb` (`capi.c` OpStart ×2 + relais
 `OpSend "FD"` 1F→2B). Sans ce relais la réponse au CONNECT n'est pas
 lue et `tls_wrap` ne démarre pas — le test le reproduit verbatim.
+
+## Verdict de la productisation (étape 131, 2026-10-18) — fait
+
+`onionbit-tor::proxy` passe du spike au produit ; `serve` retourne un
+`TorProxyServer` (`local_addr` + `metrics`) au lieu du `SocketAddr`
+nu. Quatre décisions tranchées :
+
+1. **Sous-domaines `.onion` : permis** — le constat du spike se
+   règle par `OnionAddr::parse_host` (ajout dans `onionbit-format`,
+   `parse` canonique inchangé) : `*[label.]<56c>.onion` avec chaque
+   label `[a-z0-9-]{1,63}` jamais de tiret en tête/queue, base v3
+   strictement vérifiée (checksum SHA3-256 inclus), nom total
+   ≤ 253. `x.onion.evil.com` reste refusé par le suffixe, les
+   labels invalides (`so_us`, `-a`, `a..`) aussi. Fondement :
+   `arti-client` identifie le service par les **deux derniers**
+   labels et transmet le hostname complet au pair
+   (`StreamInstructions::Hs { hsid, hostname }`) — les formes
+   publiées `www.bbcnews…onion` fonctionnent nativement.
+2. **Isolation par service, bornée** — un `IsolationToken` par
+   **adresse du service** (hôte de premier niveau, sous-domaines
+   inclus : `www.<base>` et `<base>` partagent le token — arti ne
+   les distingue qu'en `hostname` transmis, pas en routage), façon
+   first-party de Tor Browser. `open_stream_isolated` appelle
+   `connect_with_prefs` + `StreamPrefs::set_isolation` — le même
+   `TorClient` unique, jamais de second bootstrap. Map
+   `Mutex<IsolationMap>` bornée à `isolation_max_entries` (défaut
+   256) avec éviction FIFO : à saturation le plus ancien repart sur
+   un token frais (circuits neufs — jamais de partage silencieux
+   sans plafond, la borne contrôle mémoire et fan-out de circuits).
+   Mode `external` : le token est ignoré — SOCKS5 ne transporte pas
+   l'isolation ; un tor système applique sa propre politique
+   (`IsolateDestAddr`) — documenté, pas masqué.
+3. **Auth de session** — `ProxyConfig::auth_token` (`None` =
+   loopback seul, défaut ; `Some` = `require_auth` effectif). Le
+   *password* de `Proxy-Authorization: Basic <b64(user:pass)>` est
+   le token, comparé en **temps constant** (`subtle::ConstantTimeEq`,
+   même discipline que `onionbit-crypto`), le user est libre
+   (DilloRust le fournit par `http_proxyuser`/`http_proxypass` —
+   canal prouvé en 130). Échec → `407` + `Proxy-Authenticate`,
+   compté dans `auth_failed_total`, **avant** la politique et avant
+   tout `connect`. La valeur est capturée au parse puis jetée :
+   jamais loguée, jamais dans les en-têtes relayés.
+4. **Métriques exposées** — `ProxyMetrics` (`conns_active` via
+   guard RAII, `conns_total`, `denied_total`, `auth_failed_total`),
+   compteurs seuls (jamais d'hôte/contenu, ADR-0028 §5) — le
+   matériau de `browser_proxy.conns_active` pour `/api/tor/status`
+   (étape 132).
+
+**Reporté** : `allow_clearnet_exit` tri-state (§8.3) non implémenté —
+la politique reste `.onion`-only ; le tri-state est une extension de
+`check_target` à décider avec la config de l'étape 132, jamais par
+défaut.
+
+**Tests** : 43 `onionbit-tor --features tor` verts — acceptation et
+relais via SOCKS5 factice, refus politique sans socket (403),
+`parse_host` (sous-domaines valides acceptés / malformés refusés),
+auth 407 puis relais avec token, isolation (même origine → même
+token, origines distinctes → tokens distincts, éviction bornée),
+`conns_active` monté/descendu ; clippy `-D warnings` et fmt propres.

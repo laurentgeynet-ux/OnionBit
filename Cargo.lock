@@ -4653,6 +4653,7 @@ version = "1.1.2"
 dependencies = [
  "arti-client",
  "async-trait",
+ "base64 0.23.1",
  "fs-mistrust",
  "futures-util",
  "hex 0.4.3",
@@ -4663,6 +4664,7 @@ dependencies = [
  "safelog",
  "scraper",
  "serde_json",
+ "subtle",
  "thiserror 2.0.21",
  "tokio",
  "tokio-rustls",

@@ -91,6 +91,51 @@ impl OnionAddr {
         })
     }
 
+    /// Parse `*[sous-domaine.]<56 chars>.onion` — la forme **hote**
+    /// complete, sous-domaines toleres.
+    ///
+    /// Tor identifie le service par les **deux derniers** labels et
+    /// transmet le nom complet au pair (arti `Host::Onion` →
+    /// `StreamInstructions::Hs { hsid, hostname }`) :
+    /// `www.bbcnews….onion` — la forme *publiee* par BBC — est une
+    /// cible legitime qu'un parse strict casserait. Chaque label
+    /// prefixant reste soumis a la grammaire d'hote
+    /// (`[a-z0-9-]{1,63}`, jamais de tiret en tete/queue) ; un nom
+    /// qui ne finit pas en `.onion` (`x.onion.evil.com`) est refuse
+    /// par le suffixe, comme `parse`.
+    ///
+    /// Retourne `(host complet normalise, adresse du service)` — le
+    /// host se transmet au connecteur, l'adresse sert de cle
+    /// d'isolation (un sous-domaine ne change pas le service).
+    pub fn parse_host(s: &str) -> Result<(String, Self)> {
+        let bad = |r: &'static str| FormatError::BadOnionAddr(r.into());
+        let lower = s.trim().to_ascii_lowercase();
+        if lower.len() > 253 {
+            return Err(bad("hote trop long"));
+        }
+        let body = lower
+            .strip_suffix(ONION_SUFFIX)
+            .ok_or_else(|| bad("suffixe .onion absent"))?;
+        let (subs, base) = body
+            .rsplit_once('.')
+            .map_or((None, body), |(s, b)| (Some(s), b));
+        if let Some(subs) = subs {
+            for label in subs.split('.') {
+                let ok = (1..=63).contains(&label.len())
+                    && label
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+                    && !label.starts_with('-')
+                    && !label.ends_with('-');
+                if !ok {
+                    return Err(bad("label de sous-domaine invalide"));
+                }
+            }
+        }
+        let addr = Self::parse(&format!("{base}{ONION_SUFFIX}"))?;
+        Ok((lower, addr))
+    }
+
     /// Nom d'hote normalise complet (`"<56 chars>.onion"`).
     pub fn host(&self) -> &str {
         &self.host
@@ -255,6 +300,50 @@ mod tests {
             "d.onion"
         });
         assert!(OnionAddr::parse(&mutated).is_err());
+    }
+
+    #[test]
+    fn parse_host_sous_domaines_toleres() {
+        let base = "piratebayo3klnzokct3wt5yyxb2vpebbuyjl7m623iaxmqhsd52coid.onion";
+        // Forme nue : identique a `parse`.
+        let (h, a) = OnionAddr::parse_host(base).unwrap();
+        assert_eq!(h, base);
+        assert_eq!(a.host(), base);
+        // Forme publiee par BBC : sous-domaine + base v3.
+        let (h, a) = OnionAddr::parse_host(&format!("www.{base}")).unwrap();
+        assert_eq!(h, format!("www.{base}"));
+        assert_eq!(a.host(), base);
+        // Casse normalisee, multi-labels, cle d'isolation = service.
+        let (h, a2) = OnionAddr::parse_host(&format!("WWW.x.Y.{base}")).unwrap();
+        assert_eq!(h, format!("www.x.y.{base}"));
+        assert_eq!(a2, a);
+    }
+
+    #[test]
+    fn parse_host_rejette_les_formes_invalides() {
+        let base = "piratebayo3klnzokct3wt5yyxb2vpebbuyjl7m623iaxmqhsd52coid.onion";
+        for s in [
+            // Le suffixe `.onion` doit terminer le nom — pas de
+            // `.onion.evil.com`.
+            "x.onion.evil.com",
+            &format!("{base}.evil.com"),
+            // Labels vides, tirets mal places, alphabet invalide,
+            // label > 63.
+            &format!(".{base}"),
+            &format!("a..{base}"),
+            &format!("-www.{base}"),
+            &format!("www-.{base}"),
+            &format!("so_us.{base}"),
+            &format!("{}.{base}", "a".repeat(64)),
+            // La base reste strictement v3 — un sous-domaine ne
+            // raccourcit pas l'exigence.
+            "www.pas-un.onion",
+            "www.3g2upl4pq6kufc4m.onion",
+            // Checksum muté sur la base.
+            "www.piratebayo3klnzokct3wt5yyxb2vpebbuyjl7m623iaxmqhsd52coix.onion",
+        ] {
+            assert!(OnionAddr::parse_host(s).is_err(), "{s} devrait etre refuse");
+        }
     }
 
     #[test]

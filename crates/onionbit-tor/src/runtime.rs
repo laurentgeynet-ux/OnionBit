@@ -568,6 +568,32 @@ impl TorRuntime {
     /// de ce chemin, le fetcher n'est pas un proxy generique.
     #[cfg(feature = "tor")]
     pub(crate) async fn open_stream(&self, host: &str, port: u16) -> Result<Box<dyn OnionIo>> {
+        self.open_stream_iso(host, port, None).await
+    }
+
+    /// `open_stream` avec token d'isolation de circuit (proxy
+    /// navigateur, ADR-0030 etape 131 : un groupe de circuits par
+    /// hote `.onion` de premier niveau, facon first-party de Tor
+    /// Browser). Mode `external` : le token est ignore — SOCKS5 ne
+    /// transporte pas d'isolation, le tor systeme applique sa
+    /// propre politique (`IsolateDestAddr` si configure).
+    #[cfg(feature = "tor")]
+    pub(crate) async fn open_stream_isolated(
+        &self,
+        host: &str,
+        port: u16,
+        isolation: arti_client::IsolationToken,
+    ) -> Result<Box<dyn OnionIo>> {
+        self.open_stream_iso(host, port, Some(isolation)).await
+    }
+
+    #[cfg(feature = "tor")]
+    async fn open_stream_iso(
+        &self,
+        host: &str,
+        port: u16,
+        isolation: Option<arti_client::IsolationToken>,
+    ) -> Result<Box<dyn OnionIo>> {
         match self.inner.settings.mode {
             TorMode::Embedded => {
                 let client = self
@@ -577,10 +603,20 @@ impl TorRuntime {
                     .unwrap_or_else(|e| e.into_inner())
                     .clone()
                     .ok_or(TorError::NotReady)?;
-                let stream = client
-                    .connect((host, port))
-                    .await
-                    .map_err(|e| TorError::Request(e.to_string()))?;
+                let stream = match isolation {
+                    Some(iso) => {
+                        let mut prefs = arti_client::StreamPrefs::new();
+                        prefs.set_isolation(iso);
+                        client
+                            .connect_with_prefs((host, port), &prefs)
+                            .await
+                            .map_err(|e| TorError::Request(e.to_string()))?
+                    }
+                    None => client
+                        .connect((host, port))
+                        .await
+                        .map_err(|e| TorError::Request(e.to_string()))?,
+                };
                 Ok(Box::new(stream))
             }
             TorMode::External(addr) => {
