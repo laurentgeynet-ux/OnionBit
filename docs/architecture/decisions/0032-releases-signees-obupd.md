@@ -141,3 +141,30 @@ Voir `docs/plans/roadmap_adr0032.md` : **141** = spike format OBUP
 `windows.old`) ; **145** = durcissement (anti-rollback,
 `min_supported`, rejeu, erreurs typées) ; **146** = docs + procédure
 release + clôture.
+
+## Verdict du spike (étape 141, 2026-10-18) — GO
+
+- `onionbit-crypto::release` : `RELEASE_PUBKEY` (placeholder
+  `[0;32]`, fail-closed), `release_key_id` (`SHA-256(pk)[..8]`),
+  `sign/verify_update_manifest` domainés, `accepted_keys` =
+  embarquée + `state/release_key.next` ;
+- `onionbit-format::obupd` : blob `OBUP` (magic+version+key_id+sig+
+  manifest bencode canonique `BTreeMap`), `parse`/`build`/`verify`,
+  `ObupdError` typé (`Malformed`/`UnknownKeyId`/`SigInvalid`/
+  `BadPath`), bornes `MAX_OBUP_SIZE`/`MAX_OBUP_FILES`/
+  `MAX_OBUP_PATH` avant tout parse ;
+- **Trouvaille du spike** : `VerifyingKey::verify` accepte les
+  clefs faibles — `[0;32]` (point identité) validait la signature
+  `(0,0)` : le placeholder aurait été *fail-open*. Correction :
+  `verify_strict` obligatoire (rejette clefs non-canoniques et
+  points faibles) — le test `clef_placeholder_ne_verifie_rien` le
+  vérifie directement ;
+- **Launcher** : `onionbit-format`+`onionbit-crypto` liées,
+  `check_staged_update` câblé — **285 Ko → 422 Ko** (+147 Ko pour
+  Ed25519+bencode embarqués, acceptable pour la seconde porte) ;
+- 11 tests verts : traversal Windows complet (`..\`, `C:\`,
+  `\\?\`, `a//b`, `a/./b`, `/abs`, `../`), doublon de chemin,
+  `UnknownKeyId` vs `SigInvalid` distingués, borne taille avant
+  parse + troncation, chaîne `next_key` (A→k1 declare k2 acceptée,
+  C→k3 non chaînée refusée), cross-domaine rejeté, manifest altéré
+  post-signature rejeté.

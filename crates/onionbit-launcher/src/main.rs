@@ -30,6 +30,7 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 use std::ffi::OsStr;
+use std::path::Path;
 use std::process::ExitCode;
 
 /// Sous-repertoire du bundle contenant le payload de l'OS (ADR-0018 :
@@ -62,6 +63,24 @@ fn target_for(stem: &str) -> Target {
     }
 }
 
+/// Mise a jour stagee en attente (ADR-0032) : `state/update/
+/// staged.obup` — l'import daemon l'a deja verifiee, le launcher
+/// re-verifie avant le swap (le state dir est modifiable entre les
+/// deux). Pour le spike 141 : parse+verify seulement — le swap
+/// atomique arrive a l'etape 144.
+fn check_staged_update(bundle_dir: &Path) -> Result<Option<String>, String> {
+    let staged = bundle_dir.join("state").join("update").join("staged.obup");
+    if !staged.is_file() {
+        return Ok(None);
+    }
+    let blob = std::fs::read(&staged).map_err(|e| format!("staged.obup : {e}"))?;
+    let keys = onionbit_crypto::release::accepted_keys(&bundle_dir.join("state"));
+    match onionbit_format::obupd::verify(&blob, &keys) {
+        Ok(m) => Ok(Some(m.version)),
+        Err(e) => Err(format!("mise a jour rejetee : {e}")),
+    }
+}
+
 fn run() -> Result<(), String> {
     let self_exe =
         std::env::current_exe().map_err(|e| format!("chemin du lanceur illisible : {e}"))?;
@@ -72,6 +91,10 @@ fn run() -> Result<(), String> {
         .file_stem()
         .and_then(OsStr::to_str)
         .unwrap_or_default();
+    // Mise a jour stagee : verifiee ici (le swap complet arrive a
+    // l'etape 144 — un blob valide est logge/informatif pour le
+    // spike, un blob invalide est refuse explicitement).
+    let _ = check_staged_update(dir)?;
     let target = target_for(stem);
     let payload = dir.join(PAYLOAD_DIR);
     let exe = payload.join(target.exe);

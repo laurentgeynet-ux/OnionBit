@@ -3,6 +3,20 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Étape 141 — Spike OBUP format+signature (ADR-0032, GO) (2026-10-18)
+
+Format `OBUP` implantable : `onionbit-format::obupd` (blob magic+
+key_id+Ed25519+manifest bencode canonique, `ObupdError` type,
+bornes avant parse) + `onionbit-crypto::release` (RELEASE_PUBKEY
+placeholder fail-closed, key_id, sign/verify domaine
+`onionbit/update-manifest/v1`, accepted_keys). **Trouvaille** :
+`VerifyingKey::verify` accepte les clefs faibles — `[0;32]`
+verifiait la signature `(0,0)` ; `verify_strict` obligatoire.
+Launcher linke format+crypto : 285→422 Ko, `check_staged_update`
+cable (verification reelle au demarrage, swap en 144). 11 tests :
+traversal Windows complet, doublon, UnknownKeyId vs SigInvalid,
+borne, next_key chaine, cross-domaine, manifest altere.
+
 ## ADR-0032 — Releases signées `OBUPD` (Proposée, 2026-10-18)
 
 Format d'artefact de mise a jour signe `OBUP` : magic + Ed25519

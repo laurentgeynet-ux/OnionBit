@@ -19,6 +19,7 @@ pub mod error;
 pub mod limits;
 pub mod magnet;
 pub mod mdblob;
+pub mod obupd;
 pub mod onion;
 pub mod peer_addr;
 pub mod torrent;

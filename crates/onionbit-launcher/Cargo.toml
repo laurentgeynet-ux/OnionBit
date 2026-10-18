@@ -11,6 +11,10 @@ name = "onionbit-launcher"
 path = "src/main.rs"
 
 [dependencies]
+# Verification `OBUP` au swap de mise a jour (ADR-0032 etape 144) —
+# la seconde porte de confiance, independante du daemon.
+onionbit-format = { path = "../onionbit-format" }
+onionbit-crypto = { path = "../onionbit-crypto" }
 
 # MessageBox d'erreur quand la cible est introuvable (sous-systeme GUI :
 # sans lui un echec de lancement serait invisible).

@@ -36,6 +36,7 @@ pub mod obdfile;
 /// telechargements prives (ADR-0018 etape 62) : ecriture atomique,
 /// rotation `.bak`, borne a l'ouverture.
 pub mod obm;
+pub mod release;
 /// Primitives du transport furtif (ADR-0017) : cles ephemeres
 /// Elligator2, DH/HKDF domaine `onionbit/stealth/v1`, AEAD.
 pub mod stealth;
