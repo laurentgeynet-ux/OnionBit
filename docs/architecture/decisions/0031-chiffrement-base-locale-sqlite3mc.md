@@ -154,14 +154,17 @@ Détection au premier `open` :
 - sinon → base chiffrée → ouverture avec clef (échec typé
   `DbEncrypted` si la clef ne correspond pas — jamais « corrupt »).
 
-Migration : `ATTACH 'cible.db' AS enc KEY "x'<hex>'"` (clause
-`KEY` sqlite3mc — validée au spike ; `sqlite3mc_export` n'existe
-pas dans 2.5.1 et les paramètres URI `?hexkey=` exigeraient le
-flag `SQLITE_OPEN_URI` que `rusqlite::Connection::open` ne pose
-pas — la clause `KEY` est la voie) + copie `CREATE TABLE enc.*`,
-checkpoint WAL avant, fichier produit à côté puis **swap
-atomique** (`.plain.bak` conservé jusqu'à réouverture vérifiée,
-puis supprimé — effacement best-effort documenté : pas de
+Migration (étape 138) : `wal_checkpoint(TRUNCATE)` sur la source,
+`VACUUM INTO` vers `<db>.enc.tmp` (copie cohérente incluant les
+pages d'un WAL non checkpointé), puis `cipher` + **`PRAGMA rekey`**
+sur la copie — sur base claire, `rekey` chiffre le fichier entier
+en place : schéma, index, triggers, `user_version` et tables FTS
+préservés bit-pour-bit sans rejeu de DDL (voie retenue à
+l'implémentation, plus simple que `ATTACH ... KEY` + rejeu —
+`sqlite3mc_export` n'existe pas dans 2.5.1). Fichier produit à
+côté puis **swap atomique** (`.plain.bak` conservé jusqu'à
+réouverture vérifiée, puis supprimé — effacement best-effort
+documenté : pas de
 secure-delete garanti sur FS grand public). Toute interruption
 laisse l'ancienne base intacte (reprise idempotente).
 

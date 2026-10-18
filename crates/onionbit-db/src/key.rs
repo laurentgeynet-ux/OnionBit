@@ -35,30 +35,44 @@ impl DbKey {
     /// passer par son KDF interne (notre HKDF est le seul niveau de
     /// derivation, ADR-0031 §2).
     pub(crate) fn pragma(&self) -> KeyPragma {
-        let mut buf = [0u8; 80];
-        buf[..14].copy_from_slice(b"PRAGMA key=\"x'");
+        self.pragma_named("key")
+    }
+
+    /// Variante pour `rekey` (migration etape 138 : chiffrement en
+    /// place de la copie claire) et `hexrekey` si besoin.
+    pub(crate) fn pragma_named(&self, name: &str) -> KeyPragma {
+        let mut buf = [0u8; 96];
+        let head = format!("PRAGMA {name}=\"x'");
+        buf[..head.len()].copy_from_slice(head.as_bytes());
         for (i, b) in self.0.iter().enumerate() {
-            buf[14 + 2 * i] = b"0123456789abcdef"[(b >> 4) as usize];
-            buf[15 + 2 * i] = b"0123456789abcdef"[(b & 0xf) as usize];
+            let p = head.len() + 2 * i;
+            buf[p] = b"0123456789abcdef"[(b >> 4) as usize];
+            buf[p + 1] = b"0123456789abcdef"[(b & 0xf) as usize];
         }
-        buf[78] = b'\'';
-        buf[79] = b'"';
-        KeyPragma(buf)
+        let mut end = head.len() + 64;
+        buf[end] = b'\'';
+        buf[end + 1] = b'"';
+        end += 2;
+        KeyPragma { buf, len: end }
     }
 }
 
-/// Tampon du `PRAGMA key` — ASCII fixe, zeroize au drop.
-pub(crate) struct KeyPragma([u8; 80]);
+/// Tampon du `PRAGMA key`/`rekey` — ASCII fixe, zeroize au drop.
+/// `len` borne la tranche utile (le reste du buffer reste a zero).
+pub(crate) struct KeyPragma {
+    buf: [u8; 96],
+    len: usize,
+}
 
 impl KeyPragma {
     pub(crate) fn as_str(&self) -> &str {
         // Buffer construit ici : uniquement ASCII par construction.
-        std::str::from_utf8(&self.0).expect("pragma key ascii")
+        std::str::from_utf8(&self.buf[..self.len]).expect("pragma key ascii")
     }
 }
 
 impl Drop for KeyPragma {
     fn drop(&mut self) {
-        self.0.zeroize();
+        self.buf.zeroize();
     }
 }

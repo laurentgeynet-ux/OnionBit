@@ -10,7 +10,7 @@
 //! restent synchrones — les operations lourdes devront passer par
 //! `tokio::task::spawn_blocking` cote appelant.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use rusqlite::Connection;
@@ -64,7 +64,25 @@ impl Database {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let plaintext = sniff_plaintext(path)?;
+        // Reprise d'une migration interrompue au swap (ADR-0031
+        // etape 138) : canonique absente + `.plain.bak` presente →
+        // on restaure la claire avant toute detection — elle sera
+        // re-migree proprement juste apres.
+        let bak = with_suffix(path, ".plain.bak");
+        if !path.exists() && bak.exists() {
+            std::fs::rename(&bak, path)?;
+        }
+        let mut plaintext = sniff_plaintext(path)?;
+        // Base legacy claire + chiffrement actif → migration
+        // transparente (copie `.enc.tmp` + `rekey` + swap atomique).
+        // Interruption = reprise idempotente, la source n'est jamais
+        // touchee avant le swap verifie.
+        if plaintext == Some(true) {
+            if let Some(k) = key {
+                migrate_plain_to_encrypted(path, k)?;
+                plaintext = sniff_plaintext(path)?;
+            }
+        }
         let mut conn = Connection::open(path)?;
         if let Some(k) = key.filter(|_| plaintext != Some(true)) {
             // Ordre ADR-0031 §2 : `cipher` n'agit qu'a la creation/
@@ -78,10 +96,6 @@ impl Database {
         // = clef absente/invalide → erreur typee, pas `Corrupt`.
         if plaintext == Some(false) {
             probe_schema(&conn)?;
-        }
-        if plaintext == Some(true) && key.is_some() {
-            tracing::warn!(path = %path.display(),
-                "base legacy en clair — migration chiffree differee (ADR-0031 etape 138)");
         }
         configure(&conn)?;
         migrations::migrate(&mut conn)?;
@@ -251,6 +265,110 @@ fn probe_schema(conn: &Connection) -> Result<()> {
     })
     .map(|_| ())
     .map_err(|_| DbError::Encrypted)
+}
+
+/// Migration d'une base legacy claire vers chiffree (ADR-0031
+/// etape 138) — fichier canonique `path` presume clair (magic
+/// detecte par [`sniff_plaintext`]) :
+///
+/// 1. `<db>.enc.tmp` : `VACUUM INTO` depuis la source claire —
+///    copie compacte et coherente (les donnees d'un WAL non
+///    checkpointe sont incluses par la lecture) ;
+/// 2. `rekey` `chacha20` sur la copie : chiffrement en place
+///    (schema, index, triggers, FTS preserves a l'identique) ;
+/// 3. swap atomique : canonique → `.plain.bak`, `.enc.tmp` →
+///    canonique ; `-wal`/`-shm` orphelins supprimes ;
+/// 4. reouverture de la canonique sous clef + `integrity_check`
+///    — seulement ensuite le `.plain.bak` est efface (best-effort
+///    documente : pas de secure-delete sur FS grand public).
+///
+/// Reprise idempotente : canonique absente + `.plain.bak` → le bak
+/// est restaure ; `.enc.tmp` orphelin → supprime et rejoue. La
+/// source n'est jamais modifiee avant le swap.
+/// `<base><suffix>` — sidecars SQLite (`-wal`, `-shm`) et
+/// artefacts de migration (`.enc.tmp`, `.plain.bak`) : suffixe
+/// ajoute au nom complet, PAS remplacement d'extension (la base
+/// s'appelle `onionbit.db` → sidecar `onionbit.db-wal`).
+fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
+    let mut s = path.as_os_str().to_os_string();
+    s.push(suffix);
+    PathBuf::from(s)
+}
+
+fn migrate_plain_to_encrypted(path: &Path, key: &DbKey) -> Result<()> {
+    let enc_tmp = with_suffix(path, ".enc.tmp");
+    let bak = with_suffix(path, ".plain.bak");
+
+    // Orphelin d'un essai precedent : la source est intacte, on
+    // repart de zero plutot que de tenter de reprendre une copie
+    // partielle.
+    for p in [
+        &enc_tmp,
+        &with_suffix(&enc_tmp, "-wal"),
+        &with_suffix(&enc_tmp, "-shm"),
+    ] {
+        if p.exists() {
+            let _ = std::fs::remove_file(p);
+        }
+    }
+
+    // 1. Checkpoint WAL de la source (rabat les ecritures en
+    // attente dans le fichier principal), puis copie coherente.
+    {
+        let src = Connection::open(path)?;
+        src.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")?;
+        let target = enc_tmp.display().to_string().replace('\'', "''");
+        src.execute_batch(&format!("VACUUM INTO '{target}'"))?;
+    }
+
+    // 2. Chiffrement en place de la copie (rekey sur base claire =
+    //    encrypt, semantique sqlite3mc validee au spike).
+    {
+        let enc = Connection::open(&enc_tmp)?;
+        enc.execute_batch("PRAGMA cipher='chacha20'")?;
+        let pragma = key.pragma_named("rekey");
+        enc.execute_batch(pragma.as_str())?;
+        let check: String = enc
+            .pragma_query_value(None, "integrity_check", |r| r.get(0))
+            .unwrap_or_else(|_| "integrity_check illisible".into());
+        if check != "ok" {
+            return Err(DbError::Corrupt(format!(
+                "copie de migration invalide : {check}"
+            )));
+        }
+    }
+
+    // 3. Swap atomique : ancienne → .plain.bak, copie → canonique.
+    //    Les sidecars de l'ancienne ne doivent pas etre confondus
+    //    avec ceux de la nouvelle.
+    if bak.exists() {
+        let _ = std::fs::remove_file(&bak);
+    }
+    std::fs::rename(path, &bak)?;
+    if let Err(e) = std::fs::rename(&enc_tmp, path) {
+        // Canonique absente : restaure l'originale avant de rendre
+        // l'erreur — l'ouverture reste reessayable.
+        let _ = std::fs::rename(&bak, path);
+        return Err(e.into());
+    }
+    let _ = std::fs::remove_file(with_suffix(path, "-wal"));
+    let _ = std::fs::remove_file(with_suffix(path, "-shm"));
+
+    // 4. Verification finale sous clef sur le nom canonique, puis
+    //    seulement effacement du bak clair.
+    {
+        let conn = Connection::open(path)?;
+        conn.execute_batch("PRAGMA cipher='chacha20'")?;
+        let pragma = key.pragma();
+        conn.execute_batch(pragma.as_str())?;
+        probe_schema(&conn)?;
+    }
+    let _ = std::fs::remove_file(&bak);
+    let _ = std::fs::remove_file(with_suffix(&bak, "-wal"));
+    let _ = std::fs::remove_file(with_suffix(&bak, "-shm"));
+    tracing::info!(path = %path.display(),
+        "base sqlite migree vers le chiffrement chacha20 (ADR-0031)");
+    Ok(())
 }
 
 fn configure(conn: &Connection) -> Result<()> {

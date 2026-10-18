@@ -3,6 +3,24 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Étape 138 — Migration legacy clair → chiffré (ADR-0031) (2026-10-18)
+
+Les bases SQLite claires existantes migrent transparentement a la
+premiere ouverture avec clef : `VACUUM INTO` vers `<db>.enc.tmp`
+(copie coherente incluant les pages d'un `-wal` non checkpointe
+apres `wal_checkpoint(TRUNCATE)`), puis `PRAGMA rekey` `chacha20`
+sur la copie — chiffrement en place du fichier entier sans rejeu
+de schema (index, triggers, `user_version`, FTS preserves
+bit-pour-bit). Swap atomique : canonique → `.plain.bak`,
+`.enc.tmp` → canonique, purge des sidecars orphelins, reouverture
+verifiee sous clef puis suppression du `.bak` (best-effort). La
+source n'est jamais touchee avant le swap ; une coupure est
+reprise idempotentement (`.enc.tmp` orphelin → rejete et rejoue ;
+canonique absente + `.bak` → restauree puis re-migree).
+`db.encrypted=false` conserve la base claire sans migration
+forcee. Tests : migration contenu identique, residus partiels et
+coupure au swap → reprise, WAL non checkpointee suivie, opt-out.
+
 ## ADR-0030 amendée — services de profil délégués au daemon (2026-10-18)
 
 Ajout §6 « Services de profil » (v2, requiert DPI phase 8 dillorust) :

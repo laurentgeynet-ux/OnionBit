@@ -283,3 +283,40 @@ fn rekey_rotation_en_place() {
     let conn = open_keyed(&path, OTHER_KEY);
     assert!(lit_schema(&conn).is_ok());
 }
+
+/// Primitif pour l'etape 138 : `PRAGMA rekey` sur une base **claire**
+/// la chiffre en place (semantique sqlite3mc, heritee SQLCipher) —
+/// si oui, la migration = copie fichier + rekey (schema, index,
+/// triggers, FTS preserves a l'identique, sans rejeu de DDL).
+#[test]
+fn rekey_chiffre_une_base_claire() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("plain.db");
+    {
+        let conn = Connection::open(&path).expect("open");
+        conn.execute("CREATE TABLE t(s TEXT)", []).expect("create");
+        conn.execute("INSERT INTO t VALUES ('clair')", [])
+            .expect("insert");
+    }
+    assert!(std::fs::read(&path)
+        .expect("read")
+        .starts_with(b"SQLite format 3"));
+    {
+        let conn = Connection::open(&path).expect("reopen");
+        conn.execute_batch("PRAGMA cipher='chacha20'")
+            .expect("cipher");
+        conn.execute_batch(&format!("PRAGMA rekey=\"{KEY}\""))
+            .expect("rekey sur clair");
+    }
+    let brut = std::fs::read(&path).expect("read2");
+    assert!(
+        !brut.starts_with(b"SQLite format 3"),
+        "rekey doit chiffrer le fichier"
+    );
+    let conn = Connection::open(&path).expect("reopen enc");
+    conn.execute_batch(&pragma_key(KEY)).expect("key");
+    let s: String = conn
+        .query_one("SELECT s FROM t", [], |r| r.get(0))
+        .expect("select");
+    assert_eq!(s, "clair");
+}
