@@ -1,6 +1,6 @@
 # ADR-0031 — Chiffrement de la base locale : codec sqlite3mc (ChaCha20-Poly1305 par page)
 
-Statut : **Acceptée** (2026-10-18) — spike 136 = **GO** (voir
+Statut : **Implantée** (2026-10-18) — spike 136 = **GO** (voir
 « Verdict du spike » en fin de document).
 Plan d'implantation : `docs/plans/roadmap_adr0031.md`.
 Backlog P1 « Chiffrement DB locale » (`docs/plans/backlog_priorites.md`).

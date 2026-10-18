@@ -296,6 +296,58 @@ manuels `[i]` de `docs/adresses_onion.md` :
   l'hebergement sont un cout permanent ; aucune analyse formelle de
   l'empreinte ajoutee n'est faite.
 
+## Base locale chiffree au repos (ADR-0031, etapes 136-139)
+
+La base `onionbit.db` est chiffree par le codec sqlite3mc `chacha20`
+(AEAD par page) — clef HKDF `onionbit/db-key/v1` sur la racine
+d'identite, jamais de passphrase ni de KDF interne traverse.
+
+Proprietes **demontrees** (bancs `encrypted.rs` + `hardened.rs`) :
+
+- **Saisie du media** : le fichier n'a ni magic `SQLite format 3` ni
+  donnees en clair — messages, contacts, `peer_onions` (pont
+  inter-plans), historique, canaux suivis sont illisibles sans la
+  clef. Un SQLite sans codec ne peut meme pas enumerer le schema.
+- **Sidecars** : le `-wal` ne contient aucun octet de donnee claire
+  pendant l'ecriture (assertion directe sur les octets) ; le `-shm`
+  = wal-index (pointeurs/checksums, pas de contenu) ; les fichiers
+  temporaires de tri sont **structurellement impossibles**
+  (`SQLITE_TEMP_STORE=3` compile-time).
+- **Duree de vie** : la clef vit dans `DbKey` (zeroize au drop,
+  pas de `Copy`/`Debug`), installee via un pragma en buffer fixe
+  zeroize — aucune `String` heap ne porte la clef.
+- **Migration** : les bases claires pre-0031 sont converties
+  `VACUUM INTO` + `rekey` + swap atomique — reprise idempotente
+  apres coupure, source jamais touchee avant verification.
+- **Crash WAL** : commit non checkpointe rejoue, transaction non
+  commitee abandonnee, `integrity_check=ok` a la reouverture.
+- **Erreurs typees** : `DbEncrypted` (clef absente/mauvaise) vs
+  corruption reelle — l'UI peut dire « mauvaise identite ».
+- **`secure_delete=ON`** : les pages liberees par DELETE sont
+  zeroisees — rend honnete le flag applicatif `secure_delete` des
+  contacts.
+
+**Non couvert — la liste compte autant que le couvert** :
+
+- **RAM** : pages dechiffrees en page cache SQLite, structures en
+  memoire du daemon — un dump du processus expose tout.
+- **Page cache OS / hibernation / core-dump** : le systeme peut
+  ecrire des pages dechiffrees sur disque (swap, hiberfile,
+  minidump) — hors scope, releve du chiffrement de disque OS.
+- **Taille et cadence observables** : la taille du fichier et sa
+  frequence de modification restent un signal (nombre de contacts,
+  activite) — l'AEAD ne masque ni l'une ni l'autre.
+- **`.plain.bak` best-effort** : supprime apres reouverture
+  verifiee, mais sans secure-delete FS — un `undelete` peut le
+  retrouver. Documente : pour une machine sensible, le vrai efface
+  est `cipher -w` / SDelete, pas `remove_file`.
+- **Deniabilite** : le fichier est *evidemment* une base chiffree
+  (pas de magic lisible = signature inverse) — pas de plausible
+  deniability a la VeraCrypt.
+- **`db.encrypted=false`** (opt-out diagnostic/interop) : conserve
+  une base claire — choix explicite de l'utilisateur, jamais
+  silencieux.
+
 ## Ce qui n'est PAS demontre
 
 Les points suivants sont hors perimetre de preuve des bancs actuels.

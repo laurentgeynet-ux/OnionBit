@@ -3,6 +3,20 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Étape 140 — Clôture ADR-0031 (2026-10-18)
+
+Chiffrement de la base locale livre de bout en bout (codec
+sqlite3mc `chacha20`, clef HKDF `onionbit/db-key/v1`, migration
+transparente, durcissement) — ADR-0031 passee **Implantee**.
+`docs/security/threat_model.md` documente precisement le perimetre
+: couvert (media, sidecars, temp impossibles, cycle de vie de la
+clef, migration atomique, crash WAL, erreurs typees,
+`secure_delete`) et non couvert (RAM, page cache OS/hibernation,
+taille/cadence observables, `.plain.bak` sans secure-delete FS, pas
+de deniabilite). `database/encrypted` documente dans
+`configuration_cablage.md`. Revue `Connection::open` workspace :
+aucune ouverture hors `db.rs` en production.
+
 ## Étape 139 — Durcissement DB chiffrée (ADR-0031) (2026-10-18)
 
 `PRAGMA secure_delete=ON` dans `configure()` : les pages liberees

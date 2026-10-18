@@ -148,6 +148,13 @@ redémarrage) — parité `set_session_limits` Python + services :
 - `content_discovery_community/enabled` → gate de
   `ContentDiscoveryCommunity`.
 - `database/enabled=false` → `db_filename=":memory:"`.
+- `database/encrypted` (`true` par defaut, ADR-0031) → la base
+  fichier est chiffree `sqlite3mc chacha20`, clef HKDF
+  `onionbit/db-key/v1` sur la racine d'identite ; les bases claires
+  pre-0031 migrent transparentement au premier open sous clef
+  (`.plain.bak` best-effort). `false` = opt-out diagnostic/interop :
+  base claire conservee, aucune migration forcee. Sans effet sur
+  `:memory:` ni les sessions invitees.
 - `versioning/enabled=false` → routes `/api/versioning/*` absentes (404).
 - `versioning/github_repo` → dépôt `owner/repo` sondé par
   `versions/check` (défaut : champ `repository` du workspace, vide =
