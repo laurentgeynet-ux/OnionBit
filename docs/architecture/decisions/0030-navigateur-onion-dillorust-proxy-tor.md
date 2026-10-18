@@ -190,12 +190,17 @@ contrat minimal — chaque point est vérifiable par les tests §roadmap :
 - **Ressources locales uniquement hors proxy** : `file://`, `about:*`,
   `data:` servis en local ; tout `http(s)` passe par le proxy — y
   compris les sous-ressources (images, CSS, favicons, liens).
-- **Profil éphémère « session »** : cookies, HSTS, historique, dicache,
-  bookmarks — en mémoire ou dans un répertoire jetable supprimé à la
-  fermeture ; **aucun fichier persistant** d'amont (`cookies.txt`,
-  `hsts`, `bm.txt`) écrit en mode `.onion`, sauf téléchargement
-  explicite de l'utilisateur. Les DPI persistants (phase 8 dillorust)
-  seront confinés au même profil ; en v1 ils peuvent rester désactivés.
+- **Profil éphémère « session »** : cookies, HSTS, historique, dicache
+  — en mémoire ou dans un répertoire jetable supprimé à la fermeture ;
+  **aucun fichier persistant** d'amont (`cookies.txt`, `hsts`) écrit en
+  mode `.onion`, sauf téléchargement explicite de l'utilisateur.
+  **Exception voulue — les bookmarks** : ils ne vivent plus dans
+  `bm.txt` mais sont délégués au daemon (§6 « Services de profil ») :
+  la trace existe, mais chiffrée et liée à l'identité, pas à la
+  machine. L'historique, lui, reste **toujours éphémère** — les
+  bookmarks sont une donnée voulue, l'historique est une empreinte
+  subie. Les DPI persistants (phase 8 dillorust) seront confinés au
+  même profil ; en v1 ils peuvent rester désactivés.
 - **En-têtes normalisés** : UA neutre fixe (pas de version d'OS ni de
   build), `Accept-Language` fixe ou absent, `Referer` same-origin
   uniquement, ordre des en-têtes stable — réduire le fingerprinting
@@ -237,6 +242,21 @@ contrat minimal — chaque point est vérifiable par les tests §roadmap :
   « le nœud de sortie voit le trafic non-HTTPS »), chemin du binaire,
   état `conns_active`. Appliqué à chaud via `swap_tor_stack` (le
   proxy vit et meurt avec le runtime).
+- **Services de profil délégués au daemon** (v2 — requiert DPI, phase
+  8 dillorust) : chez Dillo amont, bookmarks et cookies sont déjà des
+  services dpi ; le port gardera le backend fichiers en standalone
+  (fidélité), mais en mode suite le plugin bookmarks parle l'**API
+  REST loopback** du daemon (`api_key_auth`) au lieu d'écrire
+  `bm.txt`. Côté OnionBit : tables `browser_bookmarks` (titre, URL,
+  horodatage) dans `onionbit-db` — chiffrées **gratuitement** par le
+  codec ADR-0031, **portables** : même identité → mêmes bookmarks sur
+  toute machine, synchronisables via le coffre `OBV1` comme les
+  contacts. Règle de propriété : jamais d'ouverture directe du
+  fichier DB par le navigateur — le daemon reste l'unique
+  propriétaire (une fonctionnalité = un propriétaire ; deux writers
+  SQLite inter-processus sur une base chiffrée = coordination
+  fragile entre deux dépôts). La dépendance croisée se réduit à un
+  contrat REST, pas à un fichier partagé ni à un crate importé.
 
 ### 7. Configuration
 
@@ -353,3 +373,7 @@ en dur : tout seuil vit ici (règle AGENTS).
   le binaire dillo n'est pas portable tel quel — futur chantier.
 - DPI servers dillorust (phase 8) : confinement dans le profil
   éphémère quand ils arriveront — pas d'intégration propre en v1.
+  La seule délégation prévue est le service bookmarks vers l'API
+  daemon (§6 « Services de profil », v2) ; tout plugin dpi qui ouvre
+  une socket sortante reste banni du profil `.onion` (le proxy est le
+  seul chemin réseau).
