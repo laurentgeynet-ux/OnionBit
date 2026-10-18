@@ -3,6 +3,30 @@
 Format : une entrée par étape de `docs/plans/roadmap.md`, la plus récente
 en haut.
 
+## Étape 129 — Spike proxy Tor loopback (ADR-0030) — GO (2026-10-18)
+
+`onionbit-tor::proxy` (feature `tor`) : forward proxy HTTP minimal —
+listener loopback strict (`127.0.0.1:0`), `CONNECT host:port` + `GET`
+URI absolue reecrite en forme origin, parsing borne (`httparse`),
+politique §4 avant tout `connect` (litteraux IP, clearnet, `.onion`
+malforme, ports hors {80,443} refuses), `Proxy-*` jamais relayes,
+`max_conns`/`idle_timeout` en config. `open_stream` passe
+`pub(crate)` — le proxy reutilise le `TorClient` unique. Sonde
+`proxy_probe` : **premier bootstrap arti standalone hors mocks**
+(~20 s a chaud), puis preuves reelles — GET `.onion` → 301,
+CONNECT+TLS → 200 end-to-end, CONNECT :80 → 200, clearnet/IP/
+origin-form refuses (403/403/400), zero `to_socket_addrs` (le nom
+passe brut a `client.connect`). **Trouvaille du spike** :
+`write_all` sur `DataStream` arti bufferise sans emettre — sans
+`flush()` la requete n'atteint jamais le service (`CircuitClosed`
+~60 s) ; corrige. Constat : sous-domaines `.onion` rejetes par le
+parse strict — decision repoussee a l'etape 131. Arbitrage §8 :
+auth = loopback seul en spike, `require_auth` optionnel en 131 ;
+clearnet exit = tri-state off/https-only/on, defaut **off** ;
+navigateur sans daemon **rejete** (un seul TorClient, guard set
+unique). Tests proxy : 5 verts (relai via faux SOCKS5, politique
+sans socket, headers jamais relayes, parsing).
+
 ## Étape 146 — Cloture ADR-0032 : procedure release + filet placeholder (2026-10-18)
 
 `docs/release.md` : procedure complete — clef hors-ligne

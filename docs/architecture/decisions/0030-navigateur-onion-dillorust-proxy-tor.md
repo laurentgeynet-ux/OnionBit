@@ -377,3 +377,72 @@ en dur : tout seuil vit ici (règle AGENTS).
   daemon (§6 « Services de profil », v2) ; tout plugin dpi qui ouvre
   une socket sortante reste banni du profil `.onion` (le proxy est le
   seul chemin réseau).
+
+## Verdict du spike (étape 129, 2026-10-18) — GO
+
+`onionbit-tor::proxy` (feature `tor`) : listener **loopback strict**
+(`127.0.0.1:0` refusé hors-loopback), `CONNECT host:port` + `GET` URI
+absolue réécrite en forme origin, parsing borné (`httparse`,
+`max_header_bytes`), politique §4 **avant tout `connect`**
+(littéraux IP, clearnet, `.onion` malformé, ports hors {80,443} →
+403), `Proxy-*` jamais relayés (incl. `Proxy-Authorization`),
+`max_conns` par sémaphore, `idle_timeout`. `open_stream` passé
+`pub(crate)` — le proxy réutilise le `TorClient` unique (isolation
+de circuits arti native), aucun second client.
+
+**Preuves sur réseau réel** (sonde `proxy_probe`, arti standalone,
+premier bootstrap hors mocks — ~20 s à chaud) :
+
+- `curl -x http://127.0.0.1:<port> http://<ddg>.onion/` → **301**
+  (redirection http→https du service — réponse réelle relayée) ;
+- `curl --proxytunnel -x … https://<ddg>.onion/` → **200**, handshake
+  TLS complet traversant le tunnel (ClientHello → Finished → données
+  chiffrées relayées par `copy_bidirectional`) ;
+- `curl --proxytunnel … http://<ddg>.onion/` (CONNECT :80) → 200 ;
+- clearnet `http://example.com/` → **403** ; littéral `http://1.1.1.1/`
+  → **403** ; forme origin `GET /` → **400** propre ;
+- **zéro DNS système** : aucun `to_socket_addrs`/`getaddrinfo` dans le
+  chemin proxy (grep + revue) — le nom est passé brut à
+  `arti_client::TorClient::connect`, qui résout le `.onion`
+  en interne ; le SOCKS5 externe ne résout pas non plus côté OnionBit.
+
+**Promesse §5.2 mesurée** — un flux qui n'arrive pas au handshake est
+coupé : la première exécution a exposé un bug réel — `write_all` sur
+le `DataStream` arti peut *bufferiser sans émettre* ; sans
+`flush()` explicite la requête n'atteint jamais le service, puis
+`CircuitClosed` ~60 s plus tard. Correction : `flush()` après
+écriture de la requête (et du `tail` CONNECT pipeliné) — le GET
+`.onion` passe ensuite en une requête. Le `tracing::debug` des
+compteurs de relais (octets, jamais de contenu) est conservé.
+
+**Constat produit** : `OnionAddr::parse` (strict 56 chars) rejette
+les sous-domaines `.onion` — `www.bbcnews…onion` (forme publiée par
+BBC) obtient 403. Tor résout `*.<base>.onion` vers le même service ;
+laisser un sous-domaine passer avec le `Host` intact est du ressort
+de l'étape 131 (décision : permettre `*.onion` ou exiger la forme
+canonique — à trancher à la productisation, documenté ici).
+
+**Arbitrage §8 — les quatre questions** :
+
+1. **Auth proxy** : le spike tourne loopback-seul sans auth (preuve
+   suffisante). Pour 131 : `require_auth` optionnel par token de
+   session via `Proxy-Authorization: Basic` — la propagation par
+   `http_proxy=http://user:pass@…` reste à constater côté dillorust
+   (étape 130) ; sinon `http_proxyuser`/`set_proxy_passwd` du
+   dillorc éphémère. Jamais d'auth en clair hors loopback — le
+   listener n'écoute de toute façon pas hors loopback.
+2. **Nom du binaire** : pas de décision au spike — le contrat est le
+   proxy, pas le CLI ; `onionbit-browser` (rebrandé) reste le nom
+   retenu, la forme `<binary> <url>` se fixera avec la phase 6
+   dillorust (`browser.binary_path` + `extra_args` en config).
+3. **`allow_clearnet_exit`** : confirmé **tri-state** `off` /
+   `https-only` / `on`, défaut **`off`** — le spike n'autorise que
+   `.onion` ; un mode `https-only` (CONNECT :443 clearnet vía exit,
+   GET :80 toujours refusé) est un compromis défendable à implémenter
+   en 131 si souhaité, jamais par défaut (contenu chiffré mais
+   métadonnées de destination en clair vers l'exit).
+4. **Navigateur sans daemon** : **confirmé rejeté en v1** — le proxy
+   vit dans `TorRuntime`, un seul `TorClient` (un seul bootstrap, un
+   seul guard set ; un arti dans dillorust doublerait le signal de
+   corrélation et la dépendance croisée). « Autonomie » couvre
+   l'app, pas le navigateur seul.

@@ -563,10 +563,11 @@ impl TorRuntime {
     }
 
     /// Ouvre un flux TCP anonymise vers `(host, port)` deja valide
-    /// par la politique. Jamais de `connect` expose hors de ce
-    /// chemin — le fetcher n'est pas un proxy generique.
+    /// par la politique. `pub(crate)` : consomme par le
+    /// `TorProxyServer` (ADR-0030) — jamais de `connect` expose hors
+    /// de ce chemin, le fetcher n'est pas un proxy generique.
     #[cfg(feature = "tor")]
-    async fn open_stream(&self, host: &str, port: u16) -> Result<Box<dyn OnionIo>> {
+    pub(crate) async fn open_stream(&self, host: &str, port: u16) -> Result<Box<dyn OnionIo>> {
         match self.inner.settings.mode {
             TorMode::Embedded => {
                 let client = self

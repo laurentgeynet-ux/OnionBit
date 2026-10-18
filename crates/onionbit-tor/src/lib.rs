@@ -33,6 +33,10 @@ pub mod error;
 // fonctions n'ont pas encore d'appelant : c'est attendu.
 #[cfg_attr(not(any(feature = "tor", test)), allow(dead_code))]
 pub(crate) mod http;
+// Proxy forward navigateur `.onion` (ADR-0030, spike etape 129) —
+// feature `tor` : il consomme `open_stream`.
+#[cfg(feature = "tor")]
+pub mod proxy;
 pub mod runtime;
 pub mod search;
 // Service `.onion` heberge (ADR-0029 etape 122) — feature `hs`.
@@ -42,6 +46,8 @@ pub mod settings;
 
 pub use error::{ExternalSearchError, Result, TorError};
 pub use http::OnionResponse;
+#[cfg(feature = "tor")]
+pub use proxy::ProxyConfig;
 #[cfg(feature = "tor")]
 pub use runtime::OnionIo;
 #[cfg(feature = "hs")]
