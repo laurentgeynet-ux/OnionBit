@@ -28,4 +28,13 @@ pub enum DbError {
     /// `Corrupt` — l'UI peut dire « mauvaise identite »).
     #[error("base chiffree illisible (clef absente ou invalide)")]
     Encrypted,
+    /// La bibliotheque `sqlite3` liee n'est pas sqlite3mc :
+    /// `PRAGMA cipher_version` repond vide (SQLite vanilla ignore
+    /// les pragmas inconnus). Cause typique : une feature de
+    /// dependance a impose une autre liaison (`libsqlite3-sys/
+    /// bundled`, `arti-client/static-sqlite` — incident ADR-0031,
+    /// etape 132). Refus d'ouvrir : une base « chiffree » serait
+    /// ecrite en clair en silence.
+    #[error("codec sqlite3mc absent de la bibliotheque liee (PRAGMA cipher_version vide)")]
+    CodecAbsent,
 }

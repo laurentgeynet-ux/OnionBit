@@ -73,6 +73,15 @@ impl Database {
             std::fs::rename(&bak, path)?;
         }
         let mut plaintext = sniff_plaintext(path)?;
+        // Invariant vivant (incident `bundled`, ADR-0031 §132) : une
+        // clef fournie exige que la lib `sqlite3` liee SOIT sqlite3mc
+        // — sinon `cipher`/`key` sont des no-ops et la base serait
+        // ecrite en clair sans erreur. Probe `sqlite3mc_version()`
+        // in-memory, avant tout contact fichier : une regression de
+        // liaison devient un echec bruyant, pas une base en clair.
+        if key.is_some() {
+            assert_codec_linked()?;
+        }
         // Base legacy claire + chiffrement actif → migration
         // transparente (copie `.enc.tmp` + `rekey` + swap atomique).
         // Interruption = reprise idempotente, la source n'est jamais
@@ -254,6 +263,24 @@ fn sniff_plaintext(path: &Path) -> Result<Option<bool>> {
         0 => None,
         _ => Some(n == 16 && &head == b"SQLite format 3\0"),
     })
+}
+
+/// Invariant vivant (incident `bundled`, ADR-0031 §etape 132) :
+/// quand une clef est fournie, la bibliotheque `sqlite3` liee doit
+/// etre sqlite3mc — `SELECT sqlite3mc_version()` est enregistree par
+/// connexion dans le codec (`sqlite3mc_builtin_extensions`) et rend
+/// `"2.5.1"` ; un SQLite vanilla repond `no such function`. Connexion
+/// in-memory : la presence du codec est une propriete de la lib
+/// liee, pas du fichier — nul besoin de toucher la base pour la
+/// verifier. Echec dur [`DbError::CodecAbsent`] : jamais de base
+/// « chiffree » silencieusement claire.
+fn assert_codec_linked() -> Result<()> {
+    let probe = Connection::open_in_memory()?;
+    let version = probe.query_one("SELECT sqlite3mc_version()", [], |r| r.get::<_, String>(0));
+    match version {
+        Ok(v) if !v.is_empty() => Ok(()),
+        _ => Err(DbError::CodecAbsent),
+    }
 }
 
 /// Premiere lecture reelle du schema — sur base chiffree, echec =

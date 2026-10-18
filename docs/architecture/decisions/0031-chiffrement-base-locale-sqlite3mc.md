@@ -289,3 +289,18 @@ déclaration de dépendance — le provider `sqlite3` est unique et il
 est à nous. Vérifié par `cargo tree -i libsqlite3-sys` (features
 sans `bundled`) et les tests `guards.rs` qui repassent sous
 `--features tor`.
+
+**Invariant vivant** : la règle documentée ne suffit pas — la
+détection de la liaison est devenue un probe runtime fail-closed.
+`Database::open` avec clef exécute `SELECT sqlite3mc_version()` sur
+une connexion in-memory **avant** tout contact fichier : la fonction
+est enregistrée par le codec dans `sqlite3mc_builtin_extensions` et
+répond `2.5.1` ; un SQLite vanilla répond `no such function` →
+`DbError::CodecAbsent`, ouverture refusée. Toute future régression
+de liaison (`bundled` revenu par une autre dépendance, vendoring
+exotique, `pkg-config` système sous Linux) échoue bruyamment au
+premier `open` à clef au lieu d'écrire en clair. Le probe a failli
+une première fois avec `PRAGMA cipher_version` — pragma inexistant
+dans sqlite3mc (faux négatif : codec présent mais probe aveugle) —
+d'où le choix de la fonction SQL, elle qui n'existe que si le codec
+est chargé.

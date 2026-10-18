@@ -41,7 +41,12 @@ erreur 32). `static-sqlite` retiré — le `rusqlite` de `tor-dirmgr`
 résout `sqlite3` sur sqlite3mc — et `onionbit-sqlite3mc` promu dep
 optionnelle d'`onionbit-tor` sous `tor` (provider présent dans tout
 binaire arti). Règle : jamais de feature tirant
-`libsqlite3-sys/bundled`. Tests : 17 `network-policy` + 43
+`libsqlite3-sys/bundled` — durcie en **probe runtime fail-closed** :
+`Database::open` avec clef exécute `SELECT sqlite3mc_version()` en
+in-memory avant tout contact fichier ; réponse absente (SQLite
+vanilla lié à la place) → `DbError::CodecAbsent`, refus d'ouvrir —
+toute future régression de liaison devient un échec bruyant au lieu
+d'une base en clair. Tests : 17 `network-policy` + 43
 `onionbit-tor` + 115 `onionbit-api` + `onionbit-core --features tor`
 complet (guards inclus) verts ; clippy `-D warnings`, fmt propres.
 Reste : lecture de `http_proxypass` côté DilloRust et contrat UI

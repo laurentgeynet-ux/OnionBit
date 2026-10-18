@@ -226,6 +226,19 @@ fn memory_reste_hors_scope() {
     assert!(n > 0);
 }
 
+/// Invariant vivant (incident `bundled`, ADR-0031 §etape 132) :
+/// `open` avec clef exige le codec sqlite3mc dans la lib liee —
+/// `SELECT sqlite3mc_version()` doit repondre, sinon `CodecAbsent`
+/// (un SQLite vanilla issue de `libsqlite3-sys/bundled` repondrait
+/// `no such function` → refus dur, jamais de base claire silencieuse).
+#[test]
+fn codec_sqlite3mc_probe_vivante() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("enc.db");
+    let k = key(&ROOT);
+    Database::open(&path, Some(&k)).expect("codec present");
+}
+
 /// Deux `Database::open` sur le meme chemin chiffre dans le meme
 /// processus (repli du pattern `guards.rs` : la premiere session
 /// n'est pas droppee avant la reouverture — diagnostic du verrou
