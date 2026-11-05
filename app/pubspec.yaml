@@ -45,7 +45,7 @@ dependencies:
   file_selector: ^1.1.0
   intl: ^0.20.3
   desktop_drop: ^0.8.4
-  flutter_svg: ^2.3.0
+  flutter_svg: ^2.3.2
   fetch_client: ^1.2.1
   web: ^1.1.1
   qr_flutter: ^4.1.0
